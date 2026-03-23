@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Julnes & Sons Works Inc | Licensed Contractors</title>
+  <meta name="description" content="Julnes & Sons Works Inc — Professional construction, renovations, and general contracting. Licensed and insured. Call for a free quote." />
+  <meta name="robots" content="index, follow" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Source+Sans+3:wght@300;400;600&display=swap" rel="stylesheet" />
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --black:   #ffffff;
+      --dark:    #f0f4f9;
+      --card:    #ffffff;
+      --border:  rgba(0,0,0,0.1);
+      --blue:    #1a5fb4;
+      --text:    #111827;
+      --muted:   #6b7280;
+      --head:    'Oswald', sans-serif;
+      --body:    'Source Sans 3', sans-serif;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--dark);
+      color: var(--text);
+      font-family: var(--body);
+      font-size: 16px;
+      line-height: 1.65;
+    }
+
+    a { color: inherit; text-decoration: none; }
+    img { display: block; max-width: 100%; }
+
+    /* ── NAV ── */
+    nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 100;
+      background: rgba(255,255,255,0.97);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 6%;
+      height: 64px;
+    }
+
+    .nav-name {
+      font-family: var(--head);
+      font-size: 1.1rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--text);
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 2rem;
+      list-style: none;
+    }
+
+    .nav-links a {
+      font-family: var(--body);
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--muted);
+      transition: color 0.2s;
+    }
+    .nav-links a:hover { color: var(--text); }
+
+    .nav-links .nav-cta {
+      background: var(--blue);
+      color: var(--text);
+      padding: 0.5rem 1.2rem;
+      border-radius: 3px;
+      font-weight: 600;
+      transition: opacity 0.2s;
+    }
+    .nav-links .nav-cta:hover { opacity: 0.88; color: var(--text); }
+
+    /* hamburger */
+    .burger {
+      display: none;
+      flex-direction: column;
+      gap: 5px;
+      cursor: pointer;
+      background: none;
+      border: none;
+      padding: 4px;
+    }
+    .burger span {
+      display: block;
+      width: 24px; height: 2px;
+      background: var(--text);
+      border-radius: 2px;
+      transition: all 0.3s;
+    }
+    .burger.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+    .burger.open span:nth-child(2) { opacity: 0; }
+    .burger.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+    .mobile-nav {
+      display: none;
+      position: fixed;
+      top: 64px; left: 0; right: 0;
+      background: var(--black);
+      border-bottom: 1px solid var(--border);
+      padding: 1.5rem 6% 2rem;
+      flex-direction: column;
+      gap: 1.2rem;
+      z-index: 99;
+    }
+    .mobile-nav.open { display: flex; }
+    .mobile-nav a {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--muted);
+      transition: color 0.2s;
+    }
+    .mobile-nav a:hover { color: var(--blue); }
+    .mobile-nav .m-cta {
+      background: var(--blue);
+      color: var(--text) !important;
+      text-align: center;
+      padding: 0.75rem;
+      border-radius: 3px;
+      margin-top: 0.5rem;
+    }
+
+    /* ── HERO ── */
+    #hero {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      background: #dbeafe;
+      padding: 100px 6% 80px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* subtle diagonal lines background */
+    #hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        -50deg,
+        transparent,
+        transparent 30px,
+        rgba(26,95,180,0.06) 30px,
+        rgba(26,95,180,0.06) 31px
+      );
+      pointer-events: none;
+    }
+
+    .hero-content {
+      position: relative;
+      max-width: 620px;
+    }
+
+    .hero-badge {
+      display: inline-block;
+      background: rgba(26,95,180,0.1);
+      border: 1px solid rgba(26,95,180,0.35);
+      color: var(--blue);
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      padding: 0.35rem 0.9rem;
+      border-radius: 2px;
+      margin-bottom: 1.4rem;
+    }
+
+    .hero-title {
+      font-family: var(--head);
+      font-size: clamp(2.8rem, 6vw, 5rem);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      line-height: 1.05;
+      color: var(--text);
+      margin-bottom: 1.2rem;
+    }
+
+    .hero-title em {
+      font-style: normal;
+      color: var(--blue);
+    }
+
+    .hero-sub {
+      font-size: 1.05rem;
+      font-weight: 300;
+      color: var(--muted);
+      margin-bottom: 2.2rem;
+      max-width: 460px;
+    }
+
+    .btn {
+      display: inline-block;
+      background: var(--blue);
+      color: var(--text);
+      font-family: var(--body);
+      font-weight: 600;
+      font-size: 0.92rem;
+      letter-spacing: 0.06em;
+      padding: 0.9rem 2rem;
+      border-radius: 3px;
+      transition: opacity 0.2s, transform 0.15s;
+      border: none;
+      cursor: pointer;
+    }
+    .btn:hover { opacity: 0.88; transform: translateY(-1px); }
+    .btn:active { transform: translateY(0); }
+
+    .btn-outline {
+      background: transparent;
+      border: 1px solid rgba(255,255,255,0.2);
+      color: var(--muted);
+      margin-left: 1rem;
+    }
+    .btn-outline:hover { border-color: var(--blue); color: var(--blue); opacity: 1; }
+
+    /* ── SECTION SHARED ── */
+    section { padding: 80px 6%; }
+
+    .section-label {
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--blue);
+      margin-bottom: 0.6rem;
+    }
+
+    h2 {
+      font-family: var(--head);
+      font-size: clamp(1.9rem, 4vw, 2.8rem);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--text);
+      margin-bottom: 2.5rem;
+      line-height: 1.1;
+    }
+
+    .container { max-width: 1100px; margin: 0 auto; }
+
+    /* ── SERVICES ── */
+    #services { background: var(--dark); }
+
+    .services-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+    }
+
+    .service-card {
+      background: var(--card);
+      padding: 2.2rem 2rem;
+      position: relative;
+    }
+
+    .service-card::after {
+      content: '';
+      position: absolute;
+      bottom: 0; left: 0;
+      width: 0; height: 2px;
+      background: var(--blue);
+      transition: width 0.35s ease;
+    }
+    .service-card:hover::after { width: 100%; }
+    .service-card:hover { background: #f0f6ff; }
+
+    .service-icon {
+      width: 40px; height: 40px;
+      color: var(--blue);
+      margin-bottom: 1.2rem;
+    }
+
+    .service-card h3 {
+      font-family: var(--head);
+      font-size: 1.2rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text);
+      margin-bottom: 0.75rem;
+    }
+
+    .service-card p {
+      font-size: 0.9rem;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    /* ── WHY US ── */
+    #why { background: #e0ecfb; }
+
+    .why-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1.5rem;
+    }
+
+    .why-item {
+      padding: 1.8rem 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      background: var(--card);
+      transition: border-color 0.25s;
+    }
+    .why-item:hover { border-color: rgba(26,95,180,0.4); }
+
+    .why-item svg {
+      width: 32px; height: 32px;
+      color: var(--blue);
+      margin-bottom: 1rem;
+    }
+
+    .why-item h3 {
+      font-family: var(--head);
+      font-size: 1rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text);
+      margin-bottom: 0.5rem;
+    }
+
+    .why-item p {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.65;
+    }
+
+    /* ── CONTACT ── */
+    #contact { background: var(--dark); }
+
+    .contact-wrap {
+      display: grid;
+      grid-template-columns: 1fr 1.5fr;
+      gap: 5rem;
+      align-items: start;
+    }
+
+    .contact-info h3 {
+      font-family: var(--head);
+      font-size: 1.3rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.75rem;
+    }
+
+    .contact-info p {
+      font-size: 0.9rem;
+      color: var(--muted);
+      margin-bottom: 2rem;
+      line-height: 1.7;
+    }
+
+    .contact-line {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+      margin-bottom: 1.2rem;
+      font-size: 0.92rem;
+    }
+
+    .contact-line svg {
+      width: 18px; height: 18px;
+      color: var(--blue);
+      flex-shrink: 0;
+    }
+
+    .contact-line strong { color: var(--text); font-weight: 600; }
+    .contact-line span { color: var(--muted); font-size: 0.85rem; }
+
+    /* form */
+    form {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-top: 3px solid var(--blue);
+      padding: 2.5rem;
+      border-radius: 3px;
+    }
+
+    .form-group {
+      margin-bottom: 1.2rem;
+    }
+
+    label {
+      display: block;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.4rem;
+    }
+
+    input, textarea, select {
+      width: 100%;
+      background: #f0f6ff;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0.75rem 1rem;
+      color: var(--text);
+      font-family: var(--body);
+      font-size: 0.92rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input::placeholder, textarea::placeholder { color: #bbb; }
+    input:focus, textarea:focus, select:focus { border-color: rgba(26,95,180,0.5); }
+    textarea { resize: vertical; min-height: 120px; }
+
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+
+    .submit-btn {
+      width: 100%;
+      margin-top: 0.5rem;
+      background: var(--blue);
+      color: var(--text);
+      font-family: var(--body);
+      font-weight: 600;
+      font-size: 0.95rem;
+      padding: 0.9rem;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    .submit-btn:hover { opacity: 0.88; }
+
+    .form-note {
+      font-size: 0.75rem;
+      color: var(--muted);
+      text-align: center;
+      margin-top: 0.85rem;
+    }
+
+    /* success */
+    .success-msg {
+      display: none;
+      text-align: center;
+      padding: 3rem 1rem;
+    }
+    .success-msg.show { display: block; }
+    .success-msg svg { color: var(--blue); margin: 0 auto 1rem; display: block; }
+    .success-msg h4 {
+      font-family: var(--head);
+      font-size: 1.3rem;
+      text-transform: uppercase;
+      margin-bottom: 0.5rem;
+    }
+    .success-msg p { font-size: 0.9rem; color: var(--muted); }
+
+    /* ── FOOTER ── */
+    footer {
+      background: #1a1a1a;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      padding: 2rem 6%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .footer-name {
+      font-family: var(--head);
+      font-size: 0.95rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #e8e4de;
+    }
+
+    .footer-right {
+      font-size: 0.78rem;
+      color: #888;
+    }
+
+    .footer-right a { color: rgba(26,95,180,0.7); transition: color 0.2s; }
+    .footer-right a:hover { color: var(--blue); }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 900px) {
+      .services-grid { grid-template-columns: 1fr 1fr; }
+      .why-grid { grid-template-columns: 1fr 1fr; }
+      .contact-wrap { grid-template-columns: 1fr; gap: 2.5rem; }
+    }
+
+    @media (max-width: 600px) {
+      .nav-links { display: none; }
+      .burger { display: flex; }
+      .services-grid { grid-template-columns: 1fr; }
+      .why-grid { grid-template-columns: 1fr 1fr; }
+      .form-row { grid-template-columns: 1fr; }
+      .hero-title { font-size: 2.6rem; }
+      .btn-outline { margin-left: 0; margin-top: 0.75rem; }
+      section { padding: 60px 5%; }
+      nav { padding: 0 5%; }
+      footer { padding: 1.5rem 5%; flex-direction: column; text-align: center; }
+    }
+
+    @media (max-width: 400px) {
+      .why-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- NAV -->
+  <nav>
+    <div class="nav-name">Julnes &amp; Sons Works Inc</div>
+    <ul class="nav-links">
+      <li><a href="#services">Services</a></li>
+      <li><a href="#why">Why Us</a></li>
+      <li><a href="#contact">Contact</a></li>
+      <li><a href="#contact" class="nav-cta">Free Quote</a></li>
+    </ul>
+    <button class="burger" id="burger" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+
+  <div class="mobile-nav" id="mobileNav">
+    <a href="#services">Services</a>
+    <a href="#why">Why Us</a>
+    <a href="#contact">Contact</a>
+    <a href="#contact" class="m-cta">Get a Free Quote</a>
+  </div>
+
+  <!-- HERO -->
+  <section id="hero">
+    <div class="hero-content">
+      <div class="hero-badge">Licensed &amp; Insured Contractors</div>
+      <h1 class="hero-title">
+        Julnes &amp; Sons<br /><em>Works Inc</em>
+      </h1>
+      <p class="hero-sub">
+        Professional construction, renovations, and general contracting. Built right, on time, and at a fair price.
+      </p>
+      <a href="#contact" class="btn">Get a Free Quote</a>
+      <a href="#services" class="btn btn-outline">Our Services</a>
+    </div>
+  </section>
+
+  <!-- SERVICES -->
+  <section id="services">
+    <div class="container">
+      <div class="section-label">What We Do</div>
+      <h2>Our Services</h2>
+      <div class="services-grid">
+        <div class="service-card">
+          <svg class="service-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="6" y="26" width="36" height="16" rx="1"/>
+            <path d="M12 26V18l12-10 12 10v8"/>
+            <path d="M18 42V32h12v10"/>
+            <path d="M2 26h44"/>
+          </svg>
+          <h3>New Construction</h3>
+          <p>From foundation to finish, we build homes and structures that are built to last. Clear timelines, honest pricing, and quality workmanship on every job.</p>
+        </div>
+        <div class="service-card">
+          <svg class="service-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 40h32"/>
+            <path d="M12 40V20l12-14 12 14v20"/>
+            <path d="M19 40v-12h10v12"/>
+            <path d="M6 20h36"/>
+          </svg>
+          <h3>Renovations</h3>
+          <p>Kitchen, bathroom, basement, or full interior — we renovate with minimal disruption and maximum results. Your vision, our expertise.</p>
+        </div>
+        <div class="service-card">
+          <svg class="service-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="8" y="8" width="32" height="32" rx="2"/>
+            <path d="M8 18h32"/>
+            <path d="M18 18v22"/>
+            <path d="M28 26h8"/>
+            <path d="M28 32h8"/>
+            <path d="M28 38h5"/>
+          </svg>
+          <h3>General Contracting</h3>
+          <p>We manage the entire project — permits, subs, scheduling, and final walkthrough. One point of contact, no headaches.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- WHY US -->
+  <section id="why">
+    <div class="container">
+      <div class="section-label">Why Julnes &amp; Sons</div>
+      <h2>You Can Count On Us</h2>
+      <div class="why-grid">
+        <div class="why-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>
+          </svg>
+          <h3>Licensed &amp; Insured</h3>
+          <p>Fully licensed with comprehensive liability coverage on every project. You're protected.</p>
+        </div>
+        <div class="why-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M9 22V12h6v10"/>
+          </svg>
+          <h3>Locally Owned</h3>
+          <p>We live and work in this community. Our reputation is earned one project at a time.</p>
+        </div>
+        <div class="why-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
+          </svg>
+          <h3>20+ Years Experience</h3>
+          <p>Two decades in the trades. We've handled every type of project and we know how to deliver.</p>
+        </div>
+        <div class="why-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81 19.79 19.79 0 01.01 1.18 2 2 0 012 .01h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 7.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/>
+          </svg>
+          <h3>Fast Response</h3>
+          <p>We respond within 24 hours — usually same day. Free estimates, no pressure, no runaround.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CONTACT -->
+  <section id="contact">
+    <div class="container">
+      <div class="section-label">Get In Touch</div>
+      <h2>Request a Free Quote</h2>
+      <div class="contact-wrap">
+        <div class="contact-info">
+          <h3>Let's Talk About Your Project</h3>
+          <p>Fill out the form and we'll get back to you within 24 hours with a free, no-obligation estimate.</p>
+          <div class="contact-line">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81 19.79 19.79 0 01.01 1.18 2 2 0 012 .01h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 7.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
+            <div>
+              <strong>(555) 555-5555</strong><br />
+              <span>Mon–Fri, 7am–6pm</span>
+            </div>
+          </div>
+          <div class="contact-line">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+            <div>
+              <strong>info@julnesworks.com</strong><br />
+              <span>We reply within 24 hours</span>
+            </div>
+          </div>
+        </div>
+
+        <form id="contactForm">
+          <div id="formFields">
+            <div class="form-row">
+              <div class="form-group">
+                <label for="name">Full Name *</label>
+                <input type="text" id="name" placeholder="John Smith" required />
+              </div>
+              <div class="form-group">
+                <label for="phone">Phone *</label>
+                <input type="tel" id="phone" placeholder="(555) 123-4567" required />
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="email">Email *</label>
+              <input type="email" id="email" placeholder="you@example.com" required />
+            </div>
+            <div class="form-group">
+              <label for="desc">Project Description *</label>
+              <textarea id="desc" placeholder="Tell us what you need — type of project, rough size, timeline…" required></textarea>
+            </div>
+            <button type="submit" class="submit-btn">Send My Request</button>
+            <p class="form-note">No spam. We'll just reach out to discuss your project.</p>
+          </div>
+          <div class="success-msg" id="successMsg">
+            <svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
+            <h4>Message Sent!</h4>
+            <p>We'll be in touch within 24 hours with your free estimate.</p>
+          </div>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer>
+    <div class="footer-name">Julnes &amp; Sons Works Inc</div>
+    <div class="footer-right">
+      © 2025 All Rights Reserved &nbsp;·&nbsp; Built by <a href="#">Launch Petal</a>
+    </div>
+  </footer>
+
+  <script>
+    // Mobile menu
+    const burger = document.getElementById('burger');
+    const mobileNav = document.getElementById('mobileNav');
+    burger.addEventListener('click', () => {
+      burger.classList.toggle('open');
+      mobileNav.classList.toggle('open');
+    });
+    mobileNav.querySelectorAll('a').forEach(a => {
+      a.addEventListener('click', () => {
+        burger.classList.remove('open');
+        mobileNav.classList.remove('open');
+      });
+    });
+
+    // Smooth scroll
+    document.querySelectorAll('a[href^="#"]').forEach(a => {
+      a.addEventListener('click', e => {
+        const el = document.querySelector(a.getAttribute('href'));
+        if (el) {
+          e.preventDefault();
+          window.scrollTo({ top: el.offsetTop - 64, behavior: 'smooth' });
+        }
+      });
+    });
+
+    // Form submit
+    document.getElementById('contactForm').addEventListener('submit', e => {
+      e.preventDefault();
+      const btn = e.target.querySelector('.submit-btn');
+      btn.textContent = 'Sending…';
+      btn.disabled = true;
+      setTimeout(() => {
+        document.getElementById('formFields').style.display = 'none';
+        document.getElementById('successMsg').classList.add('show');
+      }, 800);
+    });
+  </script>
+
+
+  <script>
+    window.ScaleLabConfig = {
+      backendUrl: "https://scalelab-agent-production.up.railway.app",
+      agentName: "Julnes Appointment Assist"
+    };
+  </script>
+  <script src="https://scalelab-agent-production.up.railway.app/widget.js"></script>
+
+</body>
+</html>
