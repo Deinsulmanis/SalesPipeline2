@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ScaleLab AI — AI Automation for Growing Businesses</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- LOADER -->
+  <div id="loader">
+    <div class="loader-stage">
+      <div class="loader-hex-wrap">
+        <svg class="loader-svg" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Outer hex — draws in first -->
+          <polygon class="lh-outer" points="100,10 180,55 180,145 100,190 20,145 20,55" stroke="#00D4FF" stroke-width="1.5" fill="none"/>
+          <!-- Inner hex — draws in second -->
+          <polygon class="lh-inner" points="100,40 155,70 155,130 100,160 45,130 45,70" stroke="#00D4FF" stroke-width="1" fill="none" opacity="0.5"/>
+          <!-- Connector lines — draw in third -->
+          <line class="lh-line lh-l1" x1="20" y1="55"  x2="45" y2="70"  stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+          <line class="lh-line lh-l2" x1="180" y1="55" x2="155" y2="70" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+          <line class="lh-line lh-l3" x1="20" y1="145" x2="45" y2="130" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+          <line class="lh-line lh-l4" x1="180" y1="145" x2="155" y2="130" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+          <line class="lh-line lh-l5" x1="100" y1="10"  x2="100" y2="40"  stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+          <line class="lh-line lh-l6" x1="100" y1="190" x2="100" y2="160" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+          <!-- Center glow + dot — pulse in last -->
+          <circle class="lh-glow" cx="100" cy="100" r="12" fill="#00D4FF" opacity="0"/>
+          <circle class="lh-dot"  cx="100" cy="100" r="6"  fill="#00D4FF"/>
+          <circle class="lh-core" cx="100" cy="100" r="3"  fill="#ffffff"/>
+          <!-- Outer corner dots -->
+          <circle class="lh-node lh-n1" cx="100" cy="10"  r="4" fill="#00D4FF"/>
+          <circle class="lh-node lh-n2" cx="180" cy="55"  r="4" fill="#00D4FF"/>
+          <circle class="lh-node lh-n3" cx="180" cy="145" r="4" fill="#00D4FF"/>
+          <circle class="lh-node lh-n4" cx="100" cy="190" r="4" fill="#00D4FF"/>
+          <circle class="lh-node lh-n5" cx="20"  cy="145" r="4" fill="#00D4FF"/>
+          <circle class="lh-node lh-n6" cx="20"  cy="55"  r="4" fill="#00D4FF"/>
+        </svg>
+      </div>
+      <div class="loader-text">
+        <span class="lt-name">ScaleLab</span><span class="lt-ai"> AI</span>
+        <span class="lt-tag">AI AUTOMATION FOR GROWING BUSINESSES</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- NAV -->
+  <nav class="nav" id="nav">
+    <div class="nav-inner">
+      <a href="#" class="nav-logo">
+        <svg class="nav-logo-icon" viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <polygon points="28,4 52,17 52,39 28,52 4,39 4,17" stroke="#00D4FF" stroke-width="1.5" fill="none"/>
+          <polygon points="28,14 44,23 44,33 28,42 12,33 12,23" stroke="#00D4FF" stroke-width="1" fill="none" opacity="0.5"/>
+          <line x1="4" y1="17" x2="12" y2="23" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+          <line x1="52" y1="17" x2="44" y2="23" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+          <line x1="4" y1="39" x2="12" y2="33" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+          <line x1="52" y1="39" x2="44" y2="33" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+          <line x1="28" y1="4" x2="28" y2="14" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+          <line x1="28" y1="52" x2="28" y2="42" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+          <circle cx="28" cy="28" r="4" fill="#00D4FF" opacity="0.9"/>
+          <circle cx="28" cy="28" r="2" fill="#ffffff"/>
+          <circle cx="28" cy="4" r="2.5" fill="#00D4FF"/>
+          <circle cx="52" cy="17" r="2.5" fill="#00D4FF"/>
+          <circle cx="52" cy="39" r="2.5" fill="#00D4FF"/>
+          <circle cx="28" cy="52" r="2.5" fill="#00D4FF"/>
+          <circle cx="4" cy="39" r="2.5" fill="#00D4FF"/>
+          <circle cx="4" cy="17" r="2.5" fill="#00D4FF"/>
+        </svg>
+        <span class="nav-logo-text">ScaleLab <span class="cyan">AI</span></span>
+      </a>
+      <ul class="nav-links">
+        <li><a href="#services">Services</a></li>
+        <li><a href="#how">How It Works</a></li>
+        <li><a href="#agents">Agents</a></li>
+        <li><a href="#contact">Contact</a></li>
+      </ul>
+      <a href="#contact" class="btn btn-sm">Get Started</a>
+      <button class="nav-toggle" id="navToggle" aria-label="Menu">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero" id="hero">
+    <div class="hero-grid-bg"></div>
+    <div class="hero-glow"></div>
+    <div class="hero-glow hero-glow--2"></div>
+
+    <div class="container">
+      <div class="hero-eyebrow">
+        <span class="dot"></span>
+        <span class="dm-mono">AI AUTOMATION FOR GROWING BUSINESSES</span>
+      </div>
+
+      <h1 class="hero-headline">
+        Never Miss<br/>
+        <span class="hero-headline-accent">a Lead</span><br/>
+        Again.
+      </h1>
+
+      <p class="hero-sub">
+        Intelligent AI agents that work 24/7 — qualifying leads,
+        responding to customers, and automating your business
+        operations while you sleep.
+      </p>
+
+      <div class="hero-cta-row">
+        <a href="#contact" class="btn btn-primary">Start Automating</a>
+        <a href="#how" class="btn btn-ghost">See How It Works →</a>
+      </div>
+
+      <div class="hero-stats">
+        <div class="stat">
+          <span class="stat-num">24/7</span>
+          <span class="stat-label">Always On</span>
+        </div>
+        <div class="stat-divider"></div>
+        <div class="stat">
+          <span class="stat-num">&lt;60s</span>
+          <span class="stat-label">Lead Response</span>
+        </div>
+        <div class="stat-divider"></div>
+        <div class="stat">
+          <span class="stat-num">10×</span>
+          <span class="stat-label">Faster Growth</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Floating hex cube -->
+    <div class="hero-cube" aria-hidden="true">
+      <svg viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <polygon points="100,10 180,55 180,145 100,190 20,145 20,55" stroke="#00D4FF" stroke-width="1.5" fill="none" opacity="0.9"/>
+        <polygon points="100,40 155,70 155,130 100,160 45,130 45,70" stroke="#00D4FF" stroke-width="1" fill="none" opacity="0.5"/>
+        <polygon points="100,65 135,83 135,117 100,135 65,117 65,83" stroke="#00D4FF" stroke-width="0.8" fill="none" opacity="0.3"/>
+        <line x1="20" y1="55" x2="45" y2="70" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+        <line x1="180" y1="55" x2="155" y2="70" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+        <line x1="20" y1="145" x2="45" y2="130" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+        <line x1="180" y1="145" x2="155" y2="130" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+        <line x1="100" y1="10" x2="100" y2="40" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+        <line x1="100" y1="190" x2="100" y2="160" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+        <line x1="45" y1="70" x2="65" y2="83" stroke="#00D4FF" stroke-width="0.8" opacity="0.4"/>
+        <line x1="155" y1="70" x2="135" y2="83" stroke="#00D4FF" stroke-width="0.8" opacity="0.4"/>
+        <line x1="45" y1="130" x2="65" y2="117" stroke="#00D4FF" stroke-width="0.8" opacity="0.4"/>
+        <line x1="155" y1="130" x2="135" y2="117" stroke="#00D4FF" stroke-width="0.8" opacity="0.4"/>
+        <circle cx="100" cy="100" r="12" fill="#00D4FF" opacity="0.15"/>
+        <circle cx="100" cy="100" r="6" fill="#00D4FF" opacity="0.6"/>
+        <circle cx="100" cy="100" r="3" fill="#ffffff"/>
+        <circle cx="100" cy="10" r="4" fill="#00D4FF"/>
+        <circle cx="180" cy="55" r="4" fill="#00D4FF"/>
+        <circle cx="180" cy="145" r="4" fill="#00D4FF"/>
+        <circle cx="100" cy="190" r="4" fill="#00D4FF"/>
+        <circle cx="20" cy="145" r="4" fill="#00D4FF"/>
+        <circle cx="20" cy="55" r="4" fill="#00D4FF"/>
+        <circle cx="100" cy="40" r="3" fill="#00D4FF" opacity="0.7"/>
+        <circle cx="155" cy="70" r="3" fill="#00D4FF" opacity="0.7"/>
+        <circle cx="155" cy="130" r="3" fill="#00D4FF" opacity="0.7"/>
+        <circle cx="100" cy="160" r="3" fill="#00D4FF" opacity="0.7"/>
+        <circle cx="45" cy="130" r="3" fill="#00D4FF" opacity="0.7"/>
+        <circle cx="45" cy="70" r="3" fill="#00D4FF" opacity="0.7"/>
+      </svg>
+    </div>
+  </section>
+
+  <!-- TICKER -->
+  <div class="ticker-wrap">
+    <div class="ticker">
+      <span>Lead Response Agent</span>
+      <span class="ticker-dot">◆</span>
+      <span>Appointment Setter</span>
+      <span class="ticker-dot">◆</span>
+      <span>CRM Automation</span>
+      <span class="ticker-dot">◆</span>
+      <span>Customer Support AI</span>
+      <span class="ticker-dot">◆</span>
+      <span>Sales Pipeline Agent</span>
+      <span class="ticker-dot">◆</span>
+      <span>Follow-Up Sequences</span>
+      <span class="ticker-dot">◆</span>
+      <span>Reporting & Analytics</span>
+      <span class="ticker-dot">◆</span>
+      <span>Lead Response Agent</span>
+      <span class="ticker-dot">◆</span>
+      <span>Appointment Setter</span>
+      <span class="ticker-dot">◆</span>
+      <span>CRM Automation</span>
+      <span class="ticker-dot">◆</span>
+      <span>Customer Support AI</span>
+      <span class="ticker-dot">◆</span>
+      <span>Sales Pipeline Agent</span>
+      <span class="ticker-dot">◆</span>
+      <span>Follow-Up Sequences</span>
+      <span class="ticker-dot">◆</span>
+      <span>Reporting & Analytics</span>
+      <span class="ticker-dot">◆</span>
+    </div>
+  </div>
+
+  <!-- SERVICES -->
+  <section class="section" id="services">
+    <div class="container">
+      <div class="section-header">
+        <p class="section-eyebrow dm-mono">WHAT WE BUILD</p>
+        <h2 class="section-title">AI Automation<br/><span class="cyan">Built for Revenue</span></h2>
+        <p class="section-sub">We deploy intelligent agents that plug into your existing tools and handle the repetitive work — so your team can focus on what humans do best.</p>
+      </div>
+
+      <div class="services-grid">
+        <div class="service-card service-card--featured">
+          <div class="service-card-icon">
+            <svg viewBox="0 0 40 40" fill="none"><circle cx="20" cy="20" r="18" stroke="#00D4FF" stroke-width="1.5"/><path d="M13 20c0-3.866 3.134-7 7-7s7 3.134 7 7-3.134 7-7 7" stroke="#00D4FF" stroke-width="1.5" stroke-linecap="round"/><circle cx="20" cy="20" r="3" fill="#00D4FF"/><path d="M20 10v3M20 27v3M10 20h3M27 20h3" stroke="#00D4FF" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </div>
+          <h3>Lead Response Agent</h3>
+          <p>Responds to every inbound lead within 60 seconds, qualifies them with smart questions, and books appointments — automatically.</p>
+          <div class="service-tag">Most Popular</div>
+        </div>
+
+        <div class="service-card">
+          <div class="service-card-icon">
+            <svg viewBox="0 0 40 40" fill="none"><rect x="6" y="8" width="28" height="24" rx="4" stroke="#00D4FF" stroke-width="1.5"/><path d="M6 14h28" stroke="#00D4FF" stroke-width="1.5"/><circle cx="12" cy="11" r="1.5" fill="#00D4FF"/><circle cx="17" cy="11" r="1.5" fill="#00D4FF"/><path d="M12 22h8M12 26h5" stroke="#00D4FF" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </div>
+          <h3>CRM Automation</h3>
+          <p>Auto-update your CRM, log every interaction, tag contacts, and trigger follow-up sequences without lifting a finger.</p>
+        </div>
+
+        <div class="service-card">
+          <div class="service-card-icon">
+            <svg viewBox="0 0 40 40" fill="none"><path d="M20 6l14 8v12L20 34 6 26V14L20 6z" stroke="#00D4FF" stroke-width="1.5"/><path d="M20 6v28M6 14l14 8 14-8" stroke="#00D4FF" stroke-width="1.5"/></svg>
+          </div>
+          <h3>Appointment Setter</h3>
+          <p>AI that engages cold prospects across SMS, email, and chat — then books them directly into your calendar.</p>
+        </div>
+
+        <div class="service-card">
+          <div class="service-card-icon">
+            <svg viewBox="0 0 40 40" fill="none"><path d="M8 32l6-6 5 3 8-10 5 5" stroke="#00D4FF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><rect x="6" y="6" width="28" height="28" rx="4" stroke="#00D4FF" stroke-width="1.5"/></svg>
+          </div>
+          <h3>Sales Pipeline Agent</h3>
+          <p>Monitors every deal, sends timely nudges to reps, flags stalled opportunities, and generates daily pipeline reports.</p>
+        </div>
+
+        <div class="service-card">
+          <div class="service-card-icon">
+            <svg viewBox="0 0 40 40" fill="none"><circle cx="20" cy="16" r="6" stroke="#00D4FF" stroke-width="1.5"/><path d="M8 34c0-6.627 5.373-12 12-12s12 5.373 12 12" stroke="#00D4FF" stroke-width="1.5" stroke-linecap="round"/><circle cx="32" cy="12" r="4" stroke="#00D4FF" stroke-width="1.5"/><path d="M36 28c0-4.418-1.79-8-4-8" stroke="#00D4FF" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </div>
+          <h3>Customer Support AI</h3>
+          <p>24/7 AI support agent that resolves common questions, routes escalations, and maintains your brand voice perfectly.</p>
+        </div>
+
+        <div class="service-card service-card--cta">
+          <p class="dm-mono">CUSTOM BUILDS</p>
+          <h3>Need something specific?</h3>
+          <p>We design bespoke AI workflows tailored to your unique business processes.</p>
+          <a href="#contact" class="btn btn-primary btn-sm">Let's Talk →</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section class="section section--alt" id="how">
+    <div class="container">
+      <div class="section-header">
+        <p class="section-eyebrow dm-mono">THE PROCESS</p>
+        <h2 class="section-title">Up & Running<br/><span class="cyan">in Days, Not Months</span></h2>
+      </div>
+
+      <div class="steps">
+        <div class="step">
+          <div class="step-num dm-mono">01</div>
+          <div class="step-content">
+            <h3>Discovery Call</h3>
+            <p>We map your current workflows, identify the highest-value automation opportunities, and define success metrics together.</p>
+          </div>
+          <div class="step-connector"></div>
+        </div>
+        <div class="step">
+          <div class="step-num dm-mono">02</div>
+          <div class="step-content">
+            <h3>Custom Build</h3>
+            <p>Our team designs and deploys AI agents that integrate with your existing CRM, calendar, and communication tools.</p>
+          </div>
+          <div class="step-connector"></div>
+        </div>
+        <div class="step">
+          <div class="step-num dm-mono">03</div>
+          <div class="step-content">
+            <h3>Launch & Optimize</h3>
+            <p>We go live, monitor performance in real time, and continuously fine-tune your agents to improve results every week.</p>
+          </div>
+          <div class="step-connector"></div>
+        </div>
+        <div class="step">
+          <div class="step-num dm-mono">04</div>
+          <div class="step-content">
+            <h3>Automate. Scale. Win.</h3>
+            <p>Your business runs smarter. Your team focuses on growth. The agents handle everything else — always on, never tired.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- AGENTS SHOWCASE -->
+  <section class="section" id="agents">
+    <div class="container">
+      <div class="section-header">
+        <p class="section-eyebrow dm-mono">LIVE AGENTS</p>
+        <h2 class="section-title">Watch Your<br/><span class="cyan">Agents Work</span></h2>
+        <p class="section-sub">Real-time automation happening right now for businesses like yours.</p>
+      </div>
+
+      <div class="terminal-wrap">
+        <div class="terminal">
+          <div class="terminal-bar">
+            <span class="terminal-dot t-red"></span>
+            <span class="terminal-dot t-yellow"></span>
+            <span class="terminal-dot t-green"></span>
+            <span class="terminal-title dm-mono">scalelab-agents — live feed</span>
+          </div>
+          <div class="terminal-body" id="terminalBody">
+            <div class="t-line"><span class="t-time dm-mono">09:42:01</span><span class="t-tag t-tag--lead">LEAD</span><span>New form submission from <strong>James Carter</strong> — Plumbing Services Co.</span></div>
+            <div class="t-line"><span class="t-time dm-mono">09:42:02</span><span class="t-tag t-tag--agent">AGENT</span><span>Qualifying message sent via SMS within <strong>3 seconds</strong></span></div>
+            <div class="t-line"><span class="t-time dm-mono">09:42:47</span><span class="t-tag t-tag--lead">LEAD</span><span>James replied: <em>"Yes I need 5 units installed next week"</em></span></div>
+            <div class="t-line"><span class="t-time dm-mono">09:42:48</span><span class="t-tag t-tag--agent">AGENT</span><span>Lead scored: <strong>HIGH VALUE</strong> — booking link sent</span></div>
+            <div class="t-line"><span class="t-time dm-mono">09:44:12</span><span class="t-tag t-tag--success">BOOKED</span><span>Appointment confirmed — Monday 10am — CRM updated automatically</span></div>
+            <div class="t-line t-line--dim"><span class="t-time dm-mono">09:51:33</span><span class="t-tag t-tag--lead">LEAD</span><span>Inbound chat from <strong>Sarah Nguyen</strong> — Real Estate Agency</span></div>
+            <div class="t-line t-line--dim"><span class="t-time dm-mono">09:51:34</span><span class="t-tag t-tag--agent">AGENT</span><span>Greeting sent, gathering requirements...</span></div>
+            <div class="t-line t-cursor"><span class="t-time dm-mono" id="liveTime">--:--:--</span><span class="t-tag t-tag--agent">AGENT</span><span>Processing<span class="blink">█</span></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SOCIAL PROOF / RESULTS -->
+  <section class="section section--alt">
+    <div class="container">
+      <div class="section-header">
+        <p class="section-eyebrow dm-mono">RESULTS</p>
+        <h2 class="section-title">Real Numbers.<br/><span class="cyan">Real Growth.</span></h2>
+      </div>
+
+      <div class="results-grid">
+        <div class="result-card">
+          <div class="result-num">3.2×</div>
+          <div class="result-label">Increase in booked appointments</div>
+          <div class="result-client dm-mono">HOME SERVICES CLIENT</div>
+        </div>
+        <div class="result-card result-card--accent">
+          <div class="result-num">94%</div>
+          <div class="result-label">Of leads responded to within 2 minutes</div>
+          <div class="result-client dm-mono">REAL ESTATE AGENCY</div>
+        </div>
+        <div class="result-card">
+          <div class="result-num">18hrs</div>
+          <div class="result-label">Saved per week in manual follow-up</div>
+          <div class="result-client dm-mono">MEDICAL PRACTICE</div>
+        </div>
+        <div class="result-card">
+          <div class="result-num">$0</div>
+          <div class="result-label">Leads lost while the team was offline</div>
+          <div class="result-client dm-mono">LEGAL SERVICES FIRM</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA STRIP -->
+  <section class="cta-strip">
+    <div class="cta-strip-glow"></div>
+    <div class="container">
+      <div class="cta-strip-inner">
+        <div>
+          <p class="dm-mono cta-eyebrow">AUTOMATE. SCALE. WIN.</p>
+          <h2 class="cta-title">Ready to run your<br/>business on autopilot?</h2>
+        </div>
+        <div class="cta-strip-actions">
+          <a href="#contact" class="btn btn-primary btn-lg">Book a Free Strategy Call</a>
+          <p class="cta-note">No commitment. 30-minute call. Real insights.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CONTACT -->
+  <section class="section" id="contact">
+    <div class="container">
+      <div class="contact-wrap">
+        <div class="contact-left">
+          <p class="section-eyebrow dm-mono">GET IN TOUCH</p>
+          <h2 class="section-title">Let's Build Your<br/><span class="cyan">AI System</span></h2>
+          <p class="contact-desc">Tell us about your business and we'll show you exactly which agents will have the biggest impact — completely free.</p>
+          <div class="contact-info">
+            <div class="contact-info-item">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" stroke="#00D4FF" stroke-width="1.5"/><polyline points="22,6 12,13 2,6" stroke="#00D4FF" stroke-width="1.5"/></svg>
+              <span>hello@scalelab.ai</span>
+            </div>
+            <div class="contact-info-item">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" stroke="#00D4FF" stroke-width="1.5"/><circle cx="12" cy="9" r="2.5" stroke="#00D4FF" stroke-width="1.5"/></svg>
+              <span>Remote-first · Worldwide</span>
+            </div>
+          </div>
+        </div>
+
+        <form class="contact-form" id="contactForm">
+          <div class="form-row">
+            <div class="form-group">
+              <label for="name">Full Name</label>
+              <input type="text" id="name" name="name" placeholder="James Carter" required />
+            </div>
+            <div class="form-group">
+              <label for="email">Email Address</label>
+              <input type="email" id="email" name="email" placeholder="james@company.com" required />
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="business">Business Type</label>
+            <input type="text" id="business" name="business" placeholder="e.g. Real Estate, Home Services, Legal..." />
+          </div>
+          <div class="form-group">
+            <label for="message">What would you like to automate?</label>
+            <textarea id="message" name="message" rows="4" placeholder="Tell us about your biggest time-consuming tasks or where you're losing leads..."></textarea>
+          </div>
+          <button type="submit" class="btn btn-primary btn-full">Send Message →</button>
+          <div class="form-success" id="formSuccess">
+            <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="#00D4FF" stroke-width="1.5"/><path d="M9 12l2 2 4-4" stroke="#00D4FF" stroke-width="1.5" stroke-linecap="round"/></svg>
+            Message received! We'll be in touch within 24 hours.
+          </div>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-inner">
+        <div class="footer-brand">
+          <a href="#" class="nav-logo">
+            <svg class="nav-logo-icon" viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <polygon points="28,4 52,17 52,39 28,52 4,39 4,17" stroke="#00D4FF" stroke-width="1.5" fill="none"/>
+              <polygon points="28,14 44,23 44,33 28,42 12,33 12,23" stroke="#00D4FF" stroke-width="1" fill="none" opacity="0.5"/>
+              <line x1="4" y1="17" x2="12" y2="23" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+              <line x1="52" y1="17" x2="44" y2="23" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+              <line x1="4" y1="39" x2="12" y2="33" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+              <line x1="52" y1="39" x2="44" y2="33" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+              <line x1="28" y1="4" x2="28" y2="14" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+              <line x1="28" y1="52" x2="28" y2="42" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+              <circle cx="28" cy="28" r="4" fill="#00D4FF" opacity="0.9"/>
+              <circle cx="28" cy="28" r="2" fill="#ffffff"/>
+              <circle cx="28" cy="4" r="2.5" fill="#00D4FF"/>
+              <circle cx="52" cy="17" r="2.5" fill="#00D4FF"/>
+              <circle cx="52" cy="39" r="2.5" fill="#00D4FF"/>
+              <circle cx="28" cy="52" r="2.5" fill="#00D4FF"/>
+              <circle cx="4" cy="39" r="2.5" fill="#00D4FF"/>
+              <circle cx="4" cy="17" r="2.5" fill="#00D4FF"/>
+            </svg>
+            <span class="nav-logo-text">ScaleLab <span class="cyan">AI</span></span>
+          </a>
+          <p class="footer-tagline">Intelligent automation agents<br/>powered by AI</p>
+        </div>
+        <div class="footer-links">
+          <div class="footer-col">
+            <p class="footer-col-title dm-mono">PRODUCT</p>
+            <ul>
+              <li><a href="#services">Services</a></li>
+              <li><a href="#agents">Agents</a></li>
+              <li><a href="#how">How It Works</a></li>
+            </ul>
+          </div>
+          <div class="footer-col">
+            <p class="footer-col-title dm-mono">COMPANY</p>
+            <ul>
+              <li><a href="#contact">Contact</a></li>
+              <li><a href="#">Privacy Policy</a></li>
+              <li><a href="#">Terms of Service</a></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <p class="dm-mono">© 2025 SCALELAB AI · ALL RIGHTS RESERVED</p>
+        <div class="footer-socials">
+          <a href="https://www.instagram.com/scalelab_ai/" class="social-btn" aria-label="Instagram" target="_blank" rel="noopener noreferrer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M16 11.37A4 4 0 1112.63 8 4 4 0 0116 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>
+          </a>
+          <a href="#" class="social-btn" aria-label="Facebook" target="_blank" rel="noopener noreferrer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 2h-3a5 5 0 00-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 011-1h3z"/></svg>
+          </a>
+          <a href="#" class="social-btn" aria-label="LinkedIn" target="_blank" rel="noopener noreferrer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 8a6 6 0 016 6v7h-4v-7a2 2 0 00-2-2 2 2 0 00-2 2v7h-4v-7a6 6 0 016-6z"/><rect x="2" y="9" width="4" height="12"/><circle cx="4" cy="4" r="2"/></svg>
+          </a>
+        </div>
+        <p class="dm-mono">AUTOMATE. SCALE. WIN.</p>
+      </div>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+  <script>
+    window.ScaleLabConfig = {
+      backendUrl: "https://scalelab-agent-production.up.railway.app"
+    };
+  </script>
+  <script src="https://scalelab-agent-production.up.railway.app/widget.js"></script>
+</body>
+</html>
