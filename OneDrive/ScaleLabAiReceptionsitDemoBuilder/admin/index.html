@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Proposal Link Generator · ScaleLab AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --navy-900: #070b16; --navy-800: #0b1120; --navy-700: #111a2e;
+    --cyan: #22d3ee; --cyan-soft: #67e8f9; --violet: #8b5cf6; --violet-soft: #a78bfa;
+    --ink: #eef2fb; --muted: #93a0bd; --muted-dim: #66718c;
+    --line: rgba(146, 160, 189, 0.16); --card: rgba(255, 255, 255, 0.03);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Outfit", system-ui, sans-serif; background: var(--navy-900);
+    color: var(--ink); min-height: 100vh; padding: 48px 20px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .panel { max-width: 560px; margin: 0 auto; }
+  .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 600; margin-bottom: 8px; }
+  .brand .hex {
+    width: 20px; height: 20px;
+    background: conic-gradient(from 200deg, var(--cyan), var(--violet), var(--cyan));
+    clip-path: polygon(50% 0, 93% 25%, 93% 75%, 50% 100%, 7% 75%, 7% 25%);
+    box-shadow: 0 0 16px rgba(34, 211, 238, 0.5);
+  }
+  h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.01em; margin: 14px 0 6px; }
+  .sub { color: var(--muted); font-size: 0.95rem; margin-bottom: 28px; }
+
+  .warn {
+    background: rgba(139, 92, 246, 0.1); border: 1px solid rgba(139, 92, 246, 0.3);
+    border-radius: 12px; padding: 12px 16px; font-size: 0.85rem; color: var(--violet-soft);
+    margin-bottom: 26px; line-height: 1.5;
+  }
+
+  .field { margin-bottom: 18px; }
+  label { display: block; font-size: 0.82rem; color: var(--muted); margin-bottom: 7px; font-weight: 500; }
+  label .req { color: var(--cyan); }
+  label .opt { color: var(--muted-dim); font-weight: 400; }
+  input {
+    width: 100%; background: var(--card); border: 1px solid var(--line); border-radius: 11px;
+    padding: 13px 15px; color: var(--ink); font-family: inherit; font-size: 0.98rem;
+    transition: border-color 0.15s ease;
+  }
+  input:focus { outline: none; border-color: var(--cyan); }
+  input::placeholder { color: var(--muted-dim); }
+
+  .gen {
+    width: 100%; margin-top: 8px; cursor: pointer; border: none;
+    background: linear-gradient(100deg, var(--cyan), var(--violet)); color: #07101e;
+    font-family: inherit; font-weight: 700; font-size: 1rem; padding: 15px; border-radius: 12px;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    box-shadow: 0 10px 28px rgba(34, 211, 238, 0.22);
+  }
+  .gen:hover { transform: translateY(-1px); box-shadow: 0 14px 34px rgba(139, 92, 246, 0.32); }
+
+  .out { margin-top: 26px; display: none; }
+  .out.show { display: block; animation: fade 0.3s ease; }
+  @keyframes fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .out .k { font-size: 0.78rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--cyan); margin-bottom: 9px; }
+  .linkbox {
+    background: var(--navy-700); border: 1px solid rgba(34, 211, 238, 0.25); border-radius: 11px;
+    padding: 14px 15px; font-size: 0.88rem; color: var(--cyan-soft); word-break: break-all; line-height: 1.5;
+  }
+  .actions { display: flex; gap: 10px; margin-top: 12px; }
+  .actions button, .actions a {
+    flex: 1; text-align: center; cursor: pointer; text-decoration: none;
+    border-radius: 10px; padding: 12px; font-family: inherit; font-weight: 600; font-size: 0.9rem;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink);
+    transition: border-color 0.15s ease, color 0.15s ease;
+  }
+  .actions button:hover, .actions a:hover { border-color: var(--cyan); color: var(--cyan-soft); }
+  .copied { color: var(--cyan) !important; border-color: var(--cyan) !important; }
+</style>
+</head>
+<body>
+  <div class="panel">
+    <div class="brand"><span class="hex"></span> ScaleLab AI</div>
+    <h1>Proposal link generator</h1>
+    <p class="sub">Fill in the prospect's details, generate a personalized AI receptionist proposal link, and send it.</p>
+
+    <div class="warn">⚠️ Use this page on the <b>live site URL</b> (not Live Server / 127.0.0.1). The links are built off whatever address this page is open on — open it locally and the links will break for the prospect.</div>
+
+    <div class="field">
+      <label>Business name <span class="req">*</span></label>
+      <input id="company" type="text" placeholder="e.g. Apollo Pest Control" />
+    </div>
+    <div class="field">
+      <label>Contact / owner name <span class="opt">(optional)</span></label>
+      <input id="contact" type="text" placeholder="e.g. John" />
+    </div>
+    <div class="field">
+      <label>Niche / trade <span class="opt">(optional)</span></label>
+      <input id="niche" type="text" placeholder="e.g. pest control, roofing, HVAC" />
+    </div>
+    <div class="field">
+      <label>Approx. calls per day <span class="opt">(optional — adds tailored ROI math)</span></label>
+      <input id="calls" type="number" min="1" placeholder="e.g. 10" />
+    </div>
+
+    <button class="gen" onclick="generate()">Generate proposal link</button>
+
+    <div class="out" id="out">
+      <div class="k">Personalized link</div>
+      <div class="linkbox" id="link"></div>
+      <div class="actions">
+        <button id="copyBtn" onclick="copyLink()">Copy link</button>
+        <a id="previewBtn" target="_blank" rel="noopener">Preview ↗</a>
+      </div>
+    </div>
+  </div>
+
+<script>
+  function val(id) { return document.getElementById(id).value.trim(); }
+
+  function generate() {
+    var company = val("company");
+    if (!company) {
+      var c = document.getElementById("company");
+      c.style.borderColor = "#f87171";
+      c.focus();
+      return;
+    }
+    document.getElementById("company").style.borderColor = "";
+
+    var params = new URLSearchParams();
+    params.set("company", company);
+    if (val("contact")) params.set("contact", val("contact"));
+    if (val("niche")) params.set("niche", val("niche"));
+    if (val("calls")) params.set("calls", val("calls"));
+
+    // Build off the current origin + path (drops /admin/ to point at the root proposal page)
+    var base = window.location.origin + window.location.pathname.replace(/admin\/?(index\.html)?$/, "");
+    if (!base.endsWith("/")) base += "/";
+    var url = base + "?" + params.toString();
+
+    document.getElementById("link").textContent = url;
+    document.getElementById("previewBtn").href = url;
+    document.getElementById("out").classList.add("show");
+
+    var btn = document.getElementById("copyBtn");
+    btn.textContent = "Copy link";
+    btn.classList.remove("copied");
+  }
+
+  function copyLink() {
+    var url = document.getElementById("link").textContent;
+    var btn = document.getElementById("copyBtn");
+    navigator.clipboard.writeText(url).then(function () {
+      btn.textContent = "Copied ✓";
+      btn.classList.add("copied");
+      setTimeout(function () { btn.textContent = "Copy link"; btn.classList.remove("copied"); }, 2200);
+    }).catch(function () {
+      // Fallback for older browsers
+      var t = document.createElement("textarea");
+      t.value = url; document.body.appendChild(t); t.select();
+      document.execCommand("copy"); document.body.removeChild(t);
+      btn.textContent = "Copied ✓"; btn.classList.add("copied");
+      setTimeout(function () { btn.textContent = "Copy link"; btn.classList.remove("copied"); }, 2200);
+    });
+  }
+
+  // Enter key generates
+  document.querySelectorAll("input").forEach(function (el) {
+    el.addEventListener("keydown", function (e) { if (e.key === "Enter") generate(); });
+  });
+</script>
+</body>
+</html>

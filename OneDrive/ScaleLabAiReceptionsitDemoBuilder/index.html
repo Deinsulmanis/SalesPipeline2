@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI Receptionist Proposal · ScaleLab AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --navy-900: #070b16;
+    --navy-800: #0b1120;
+    --navy-700: #111a2e;
+    --navy-600: #18233d;
+    --cyan: #22d3ee;
+    --cyan-soft: #67e8f9;
+    --violet: #8b5cf6;
+    --violet-soft: #a78bfa;
+    --ink: #eef2fb;
+    --muted: #93a0bd;
+    --muted-dim: #66718c;
+    --line: rgba(146, 160, 189, 0.14);
+    --card: rgba(255, 255, 255, 0.025);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: "Outfit", system-ui, sans-serif;
+    background: var(--navy-900);
+    color: var(--ink);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  .wrap { max-width: 860px; margin: 0 auto; padding: 0 28px; }
+
+  /* ---------- Hero ---------- */
+  .hero {
+    position: relative;
+    padding: 88px 0 76px;
+    text-align: center;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: "";
+    position: absolute;
+    top: -180px; left: 50%;
+    width: 760px; height: 760px;
+    transform: translateX(-50%);
+    background: radial-gradient(circle, rgba(34, 211, 238, 0.13), rgba(139, 92, 246, 0.06) 42%, transparent 68%);
+    pointer-events: none;
+  }
+  .brand {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-weight: 600; letter-spacing: 0.02em;
+    color: var(--ink); margin-bottom: 56px;
+    position: relative; z-index: 2;
+  }
+  .brand .hex {
+    width: 22px; height: 22px;
+    background: conic-gradient(from 200deg, var(--cyan), var(--violet), var(--cyan));
+    clip-path: polygon(50% 0, 93% 25%, 93% 75%, 50% 100%, 7% 75%, 7% 25%);
+    box-shadow: 0 0 18px rgba(34, 211, 238, 0.5);
+  }
+  .brand small { color: var(--muted); font-weight: 400; }
+
+  /* signature: voice orb */
+  .orb {
+    position: relative; z-index: 2;
+    width: 92px; height: 92px; margin: 0 auto 30px;
+  }
+  .orb i {
+    position: absolute; inset: 0; border-radius: 50%;
+    border: 1.5px solid rgba(34, 211, 238, 0.4);
+    animation: ring 3.4s ease-out infinite;
+  }
+  .orb i:nth-child(2) { animation-delay: 1.1s; }
+  .orb i:nth-child(3) { animation-delay: 2.2s; }
+  .orb b {
+    position: absolute; inset: 26px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, var(--cyan-soft), var(--cyan) 40%, var(--violet) 130%);
+    box-shadow: 0 0 28px rgba(34, 211, 238, 0.55);
+    animation: pulse 2.6s ease-in-out infinite;
+  }
+  @keyframes ring {
+    0% { transform: scale(0.42); opacity: 0; }
+    18% { opacity: 0.9; }
+    100% { transform: scale(1); opacity: 0; }
+  }
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.08); }
+  }
+
+  .eyebrow {
+    position: relative; z-index: 2;
+    font-size: 0.78rem; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--cyan); font-weight: 600; margin-bottom: 18px;
+  }
+  .hero h1 {
+    position: relative; z-index: 2;
+    font-size: clamp(2.1rem, 6vw, 3.3rem);
+    font-weight: 700; line-height: 1.08; letter-spacing: -0.02em;
+    margin-bottom: 18px;
+  }
+  .hero h1 .accent {
+    background: linear-gradient(100deg, var(--cyan-soft), var(--violet-soft));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .hero .sub {
+    position: relative; z-index: 2;
+    color: var(--muted); font-size: 1.08rem; max-width: 560px; margin: 0 auto;
+  }
+  .prepared {
+    position: relative; z-index: 2;
+    margin-top: 34px; font-size: 0.9rem; color: var(--muted-dim);
+  }
+  .prepared b { color: var(--ink); font-weight: 500; }
+
+  /* ---------- Sections ---------- */
+  section.block { padding: 56px 0; border-top: 1px solid var(--line); }
+  .label {
+    font-size: 0.72rem; letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--violet-soft); font-weight: 600; margin-bottom: 16px;
+  }
+  h2 {
+    font-size: clamp(1.5rem, 3.6vw, 2.05rem);
+    font-weight: 700; letter-spacing: -0.015em; line-height: 1.15; margin-bottom: 18px;
+  }
+  p.lead { color: var(--muted); font-size: 1.05rem; margin-bottom: 14px; }
+  p.body { color: var(--muted); margin-bottom: 14px; }
+  p.body strong, p.lead strong { color: var(--ink); font-weight: 600; }
+
+  /* stat strip */
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 30px 0 8px; }
+  .stat {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 22px 18px; text-align: center;
+  }
+  .stat .n {
+    font-size: 1.9rem; font-weight: 800; letter-spacing: -0.02em;
+    background: linear-gradient(120deg, var(--cyan-soft), var(--violet-soft));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .stat .t { font-size: 0.82rem; color: var(--muted); margin-top: 6px; line-height: 1.4; }
+
+  /* capability list */
+  .caps { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 26px; }
+  .cap {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px 18px 18px 16px; display: flex; gap: 13px;
+  }
+  .cap .dot {
+    flex: none; width: 9px; height: 9px; margin-top: 7px; border-radius: 50%;
+    background: var(--cyan); box-shadow: 0 0 10px var(--cyan);
+  }
+  .cap h4 { font-size: 0.98rem; font-weight: 600; margin-bottom: 3px; }
+  .cap p { font-size: 0.86rem; color: var(--muted); line-height: 1.45; }
+
+  /* steps */
+  .steps { margin-top: 24px; counter-reset: s; }
+  .step {
+    display: flex; gap: 18px; padding: 18px 0; border-bottom: 1px solid var(--line);
+  }
+  .step:last-child { border-bottom: none; }
+  .step .num {
+    flex: none; counter-increment: s; width: 38px; height: 38px; border-radius: 50%;
+    border: 1.5px solid rgba(34, 211, 238, 0.45);
+    display: grid; place-items: center; font-weight: 700; color: var(--cyan-soft);
+    font-size: 0.95rem;
+  }
+  .step .num::before { content: counter(s); }
+  .step h4 { font-size: 1rem; font-weight: 600; margin-bottom: 2px; }
+  .step p { color: var(--muted); font-size: 0.9rem; }
+
+  /* pricing */
+  .price-card {
+    background: linear-gradient(165deg, var(--navy-700), var(--navy-800));
+    border: 1px solid rgba(34, 211, 238, 0.22);
+    border-radius: 20px; padding: 34px; margin-top: 26px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4);
+  }
+  .price-row { display: flex; flex-wrap: wrap; gap: 28px; }
+  .price-box { flex: 1; min-width: 200px; }
+  .price-box .k { font-size: 0.8rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+  .price-box .v { font-size: 2.3rem; font-weight: 800; letter-spacing: -0.02em; }
+  .price-box .v span { font-size: 1rem; font-weight: 500; color: var(--muted); }
+  .price-box .d { font-size: 0.86rem; color: var(--muted); margin-top: 6px; }
+  .price-incl { margin-top: 26px; padding-top: 24px; border-top: 1px solid var(--line); }
+  .price-incl li { list-style: none; color: var(--muted); font-size: 0.92rem; padding: 5px 0 5px 26px; position: relative; }
+  .price-incl li::before {
+    content: ""; position: absolute; left: 4px; top: 11px; width: 7px; height: 7px;
+    border-radius: 50%; background: var(--cyan); box-shadow: 0 0 8px var(--cyan);
+  }
+  .terms { margin-top: 20px; font-size: 0.9rem; color: var(--cyan-soft); font-weight: 500; }
+
+  /* cta */
+  .cta { text-align: center; padding: 64px 0 40px; }
+  .cta h2 { margin-bottom: 14px; }
+  .cta p { color: var(--muted); max-width: 480px; margin: 0 auto 28px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 9px;
+    background: linear-gradient(100deg, var(--cyan), var(--violet));
+    color: #07101e; font-weight: 700; font-size: 1rem;
+    padding: 15px 30px; border-radius: 999px; text-decoration: none;
+    box-shadow: 0 12px 34px rgba(34, 211, 238, 0.3);
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+  }
+  .btn:hover { transform: translateY(-2px); box-shadow: 0 16px 40px rgba(139, 92, 246, 0.4); }
+  .contact { margin-top: 26px; font-size: 0.9rem; color: var(--muted-dim); }
+  .contact a { color: var(--cyan-soft); text-decoration: none; }
+
+  footer { text-align: center; padding: 30px 0 50px; color: var(--muted-dim); font-size: 0.82rem; border-top: 1px solid var(--line); }
+
+  @media (max-width: 640px) {
+    .stats { grid-template-columns: 1fr; }
+    .caps { grid-template-columns: 1fr; }
+    .price-card { padding: 24px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .orb i, .orb b { animation: none; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+</head>
+<body>
+
+  <header class="hero">
+    <div class="wrap">
+      <div class="brand"><span class="hex"></span> ScaleLab AI <small>· Proposal</small></div>
+      <div class="orb"><i></i><i></i><i></i><b></b></div>
+      <div class="eyebrow">24/7 AI Receptionist</div>
+      <h1>Never miss another call for <span class="accent" data-field="company">your business</span></h1>
+      <p class="sub">A receptionist that answers every call, day or night, books the job, and makes sure the next ready-to-hire customer is yours — not a competitor's.</p>
+      <p class="prepared">Prepared for <b data-field="company">your business</b><span data-field="contact-line"></span> · by Deins Ulmanis, ScaleLab AI</p>
+    </div>
+  </header>
+
+  <main>
+    <section class="block">
+      <div class="wrap">
+        <div class="label">The opportunity</div>
+        <h2>Every missed call is a job that went to someone else</h2>
+        <p class="lead" data-field="opportunity-open">Calls come in all day — and the ones that ring out while you're on a job, on another line, or after hours don't wait around.</p>
+        <p class="body">Here's what the research consistently shows about calls to home and field service businesses:</p>
+        <div class="stats">
+          <div class="stat"><div class="n">62%</div><div class="t">of calls to small businesses go unanswered</div></div>
+          <div class="stat"><div class="n">85%</div><div class="t">who hit voicemail never call back</div></div>
+          <div class="stat"><div class="n">10–15×</div><div class="t">phone leads convert better than web forms</div></div>
+        </div>
+        <p class="body" style="margin-top:24px;">Your existing customers will call back — they're loyal. It's the <strong>new</strong> customers you never even hear about: they hit voicemail, hang up, and dial the next name on the list. <strong>The fix isn't longer hours. It's making sure every single call gets answered — professionally, instantly, 24/7.</strong></p>
+      </div>
+    </section>
+
+    <section class="block">
+      <div class="wrap">
+        <div class="label">What you get</div>
+        <h2>A receptionist trained on <span data-field="company">your business</span></h2>
+        <p class="lead">It answers in a natural, human-sounding voice — trained on your services, your service area, and how you like calls handled. It picks up on the first ring at 2 PM on a Tuesday or 11 PM on a Sunday, and it sounds like a real member of your team.</p>
+        <div class="caps">
+          <div class="cap"><span class="dot"></span><div><h4>Answers 24/7</h4><p>No voicemail, no busy signal, no missed call — ever.</p></div></div>
+          <div class="cap"><span class="dot"></span><div><h4>Talks like a person</h4><p>Natural conversation, not a rigid phone tree. Callers just talk.</p></div></div>
+          <div class="cap"><span class="dot"></span><div><h4>Books appointments</h4><p>Collects details and drops the job straight into your calendar.</p></div></div>
+          <div class="cap"><span class="dot"></span><div><h4>Answers questions</h4><p>Your services, areas, hours and how you work — all in its knowledge.</p></div></div>
+          <div class="cap"><span class="dot"></span><div><h4>Takes messages</h4><p>Captures name, number and reason, and texts them straight to you.</p></div></div>
+          <div class="cap"><span class="dot"></span><div><h4>Flags emergencies</h4><p>Urgent calls get escalated or connected to you right away.</p></div></div>
+          <div class="cap"><span class="dot"></span><div><h4>Transfers to you</h4><p>If a caller insists on a person, it hands off gracefully.</p></div></div>
+          <div class="cap"><span class="dot"></span><div><h4>Logs every call</h4><p>A clean record of who called, when, and what they wanted.</p></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block">
+      <div class="wrap">
+        <div class="label">The return</div>
+        <h2>It pays for itself with a single recovered job</h2>
+        <p class="body">You're already paying — in time, marketing, and reputation — to make that phone ring. The receptionist simply makes sure <strong>none of those calls go to waste.</strong></p>
+        <p class="body">For a trade, one job is worth far more than a month of service. So if even <strong>one or two</strong> of the calls you're currently missing each month turn into booked jobs that would have gone to a competitor, the system has already paid for itself — and everything after that is profit you weren't capturing before.</p>
+      </div>
+    </section>
+
+    <section class="block">
+      <div class="wrap">
+        <div class="label">Getting set up</div>
+        <h2>Live within about a week — I handle the heavy lifting</h2>
+        <div class="steps">
+          <div class="step"><div class="num"></div><div><h4>Discovery (15–20 min)</h4><p>You tell me your services, area, hours, what counts as an emergency, and where messages should go.</p></div></div>
+          <div class="step"><div class="num"></div><div><h4>Build &amp; customization</h4><p>I set up and train your receptionist — its voice, knowledge, booking flow, and call-handling rules.</p></div></div>
+          <div class="step"><div class="num"></div><div><h4>Testing together</h4><p>We run live test calls so you hear exactly how it sounds before it ever touches a customer.</p></div></div>
+          <div class="step"><div class="num"></div><div><h4>Launch</h4><p>We point your calls to it — a new number, or forward your existing line. You're live.</p></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block">
+      <div class="wrap">
+        <div class="label">Investment</div>
+        <h2>Simple, flat pricing — no per-call surprises</h2>
+        <div class="price-card">
+          <div class="price-row">
+            <div class="price-box">
+              <div class="k">One-time setup</div>
+              <div class="v">$349</div>
+              <div class="d">Full build, customization, training on your business, test calls, and launch.</div>
+            </div>
+            <div class="price-box">
+              <div class="k">Monthly service</div>
+              <div class="v">$399<span> / month</span></div>
+              <div class="d">Everything below, hosted and maintained.</div>
+            </div>
+          </div>
+          <ul class="price-incl">
+            <li>Up to ~1,000 talk-minutes per month (comfortably covers 300+ calls)</li>
+            <li>24/7 answering, booking, message-taking, emergency routing and transfers</li>
+            <li>Call logs and ongoing adjustments</li>
+            <li>Additional minutes beyond the bucket billed at $0.35/min</li>
+          </ul>
+          <div class="terms">Month-to-month · No long-term contract · Cancel anytime</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="cta">
+      <div class="wrap">
+        <h2>Ready to stop losing calls?</h2>
+        <p>The next step is a quick 15–20 minute discovery call. We'll have your receptionist live within about a week.</p>
+        <a class="btn" href="mailto:deins@scalelabai.ca?subject=AI%20Receptionist%20-%20Let's%20book%20a%20call">Book the discovery call →</a>
+        <p class="contact">Or reach me directly · <a href="mailto:deins@scalelabai.ca">deins@scalelabai.ca</a></p>
+      </div>
+    </section>
+  </main>
+
+  <footer>ScaleLab AI · New Westminster, BC · scalelabai.ca</footer>
+
+<script>
+  (function () {
+    var p = new URLSearchParams(window.location.search);
+    var get = function (k) { return (p.get(k) || "").trim(); };
+
+    var company = get("company");
+    var contact = get("contact");
+    var niche = get("niche");
+    var calls = get("calls");
+
+    // Fill all [data-field="company"] spots
+    if (company) {
+      document.querySelectorAll('[data-field="company"]').forEach(function (el) {
+        el.textContent = company;
+      });
+      document.title = "AI Receptionist Proposal for " + company + " · ScaleLab AI";
+    }
+
+    // "Prepared for ... " contact line
+    var cl = document.querySelector('[data-field="contact-line"]');
+    if (cl && contact) cl.textContent = " · Attn: " + contact;
+
+    // Opportunity opener — tailor with niche + call volume if provided
+    var opp = document.querySelector('[data-field="opportunity-open"]');
+    if (opp) {
+      var nichePhrase = niche ? niche + " business" : "business";
+      if (calls) {
+        opp.innerHTML = "You mentioned " + (company || "you") +
+          " handles around <strong>" + calls + " calls a day</strong> — that's roughly <strong>" +
+          (parseInt(calls, 10) * 30 || (calls + "0")) +
+          " calls a month</strong>. Even answering more than most owners, the after-hours calls and the overflow when two ring at once still add up to dozens of missed jobs.";
+      } else if (niche) {
+        opp.textContent = "In " + nichePhrase +
+          ", calls come in all day — and the ones that ring out while you're on a job, on another line, or after hours don't wait around.";
+      }
+    }
+  })();
+</script>
+</body>
+</html>
