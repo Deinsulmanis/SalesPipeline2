@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express    = require('express');
 const { google } = require('googleapis');
+const { spawn }  = require('child_process');
 const fs         = require('fs');
 const path       = require('path');
 
@@ -17,6 +18,9 @@ const COLUMNS        = [
   'city','cityTrade','phone','email','website',
   'stage','priority','followup','notes','created',
 ];
+// Agent bookkeeping columns (R:T) — read-only in the Leads GET, never written by dashboard routes
+const AGENT_COLS      = ['emailStatus', 'lastEmailedAt', 'emailStep'];
+const AGENT_READ_RANGE = `${SHEET_NAME}!A:T`;
 
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
@@ -101,6 +105,17 @@ function sheets() {
 // In-memory row index: lead.id → 1-based sheet row number
 const rowMap = new Map();
 let sheetIdCache = null;
+
+// ── AGENT RUNNER STATE ────────────────────────────────────────────────────────
+
+const LOG_CAP    = 300;
+const agentState = { running: false, dryRun: true, startedAt: null, log: [], exitCode: null };
+let   agentChild = null;
+
+function agentPushLine(line) {
+  agentState.log.push({ ts: new Date().toISOString(), line });
+  if (agentState.log.length > LOG_CAP) agentState.log.shift();
+}
 
 // ── AUTH ROUTES ───────────────────────────────────────────────────────────────
 
@@ -197,13 +212,14 @@ app.get('/api/leads', requireAuth, async (_req, res) => {
       await ensureHeader();
       const resp = await sheets().spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
-        range:         COL_RANGE,
+        range:         AGENT_READ_RANGE,   // A:T — includes agent bookkeeping cols R:T
       });
       const rows = resp.data.values || [];
       rowMap.clear();
       return rows.slice(1).map((row, idx) => {
         const lead = {};
         COLUMNS.forEach((col, i) => { lead[col] = row[i] || ''; });
+        AGENT_COLS.forEach((col, i) => { lead[col] = row[17 + i] || ''; });
         lead.created = parseInt(lead.created) || Date.now();
         if (lead.id) rowMap.set(lead.id, idx + 2);
         return lead;
@@ -292,6 +308,68 @@ app.delete('/api/leads/:id', requireAuth, async (req, res) => {
     console.error('[Leads DELETE]', e.message);
     res.status(500).json({ error: e.message });
   }
+});
+
+// ── AGENT ROUTES ─────────────────────────────────────────────────────────────
+
+app.post('/api/agent/run', requireAuth, (req, res) => {
+  if (agentState.running) return res.status(409).json({ error: 'already running' });
+
+  const dryRun = req.body.dryRun !== false; // default true
+  agentState.running   = true;
+  agentState.dryRun    = dryRun;
+  agentState.startedAt = new Date().toISOString();
+  agentState.log       = [];
+  agentState.exitCode  = null;
+
+  const child = spawn('node', ['outreach-agent.js'], {
+    cwd: __dirname,
+    env: { ...process.env, DRY_RUN: dryRun ? 'true' : 'false' },
+  });
+  agentChild = child;
+
+  let outBuf = '', errBuf = '';
+
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', chunk => {
+    outBuf += chunk;
+    const lines = outBuf.split('\n');
+    outBuf = lines.pop();
+    lines.forEach(l => agentPushLine(l));
+  });
+
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', chunk => {
+    errBuf += chunk;
+    const lines = errBuf.split('\n');
+    errBuf = lines.pop();
+    lines.filter(Boolean).forEach(l => agentPushLine('[stderr] ' + l));
+  });
+
+  child.on('exit', code => {
+    if (outBuf) { agentPushLine(outBuf); outBuf = ''; }
+    if (errBuf) { agentPushLine('[stderr] ' + errBuf); errBuf = ''; }
+    agentState.running  = false;
+    agentState.exitCode = code;
+    agentChild = null;
+  });
+
+  res.json({ started: true, dryRun });
+});
+
+app.post('/api/agent/stop', requireAuth, (_req, res) => {
+  if (agentChild) agentChild.kill('SIGTERM');
+  res.json({ stopped: true });
+});
+
+app.get('/api/agent/status', requireAuth, (_req, res) => {
+  res.json({
+    running:   agentState.running,
+    dryRun:    agentState.dryRun,
+    startedAt: agentState.startedAt,
+    log:       agentState.log,
+    exitCode:  agentState.exitCode,
+  });
 });
 
 app.listen(3000, () => console.log('ScaleLab Pipeline → http://localhost:3000'));
