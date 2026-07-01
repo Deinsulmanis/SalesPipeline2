@@ -61,13 +61,18 @@ const PROPOSAL_BASE     = (process.env.PROPOSAL_BASE || 'https://scalelabairecep
 const MIN_DELAY = 45 * 1000;
 const MAX_DELAY = 120 * 1000;
 
-// ColdEmail columns (A:N) — siteContext (N) is agent-managed, written once after first scrape
+// ColdEmail columns (A:Q)
+//   N=siteContext (agent-managed, written once after first scrape)
+//   O=tier        imported from enrich-leads.js — "busy" or "medium"
+//   P=reviewCount imported from enrich-leads.js
+//   Q=rating      imported from enrich-leads.js
 const COLUMNS = [
   'id','company','contactName','email','city','tradeType','website',
   'stage','emailStatus','lastEmailedAt','emailStep','notes','created','siteContext',
+  'tier','reviewCount','rating',
 ];
 const AGENT_COLS  = []; // integrated into COLUMNS for ColdEmail
-const READ_RANGE  = `${SHEET_NAME}!A:N`;
+const READ_RANGE  = `${SHEET_NAME}!A:Q`;
 const SCRAPE_SKIP = '__scraped__'; // stored in siteContext when site returned no usable text
 
 // ── AUTH (same pattern as server.js) ──────────────────────────────────────────
@@ -124,43 +129,79 @@ const gmail  = () => google.gmail({ version: 'v1', auth: oauth2Client });
 // ── FOLLOW-UP SEQUENCE (Phase 3) ──────────────────────────────────────────────
 // Index 0 = step-2 template (3 days after initial send)
 // Index 1 = step-3 template (5 days after step 2)   Max 3 steps total.
+// Each template reads lead.tier to stay consistent with the step-1 angle.
 const FOLLOW_UP_SEQUENCE = [
   {
     delayDays: 3,
-    subject: (lead) => `Re: Quick question about ${lead.company || 'your business'}`,
+    subject: (lead) => lead.tier === 'busy'
+      ? `Re: ${lead.company || 'your business'}'s after-hours calls`
+      : `Re: quick question about ${lead.company || 'your business'}'s bookings`,
     body: (lead) => {
-      const link = buildProposalLink(lead);
-      return `Hi ${lead.first || 'there'},
+      const link    = buildProposalLink(lead);
+      const name    = lead.first || 'there';
+      const company = lead.company || 'your business';
+      const casl    = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.`;
 
-Just following up on my note from a few days ago — I help ${lead.tradeType || 'trade'} businesses in ${lead.city || 'your area'} turn more inbound calls into booked jobs without adding to your workload.
+      if (lead.tier === 'busy') {
+        return `Hi ${name},
 
-The overview I put together for ${lead.company || 'your business'}: ${link}
+Following up from earlier this week — just wanted to close the loop on the after-hours angle.
 
-Worth a quick 15-minute call to see if it'd be a fit?
+The AI receptionist I mentioned books overnight and weekend enquiries automatically, so your team doesn't miss a beat when the desk is occupied.
+
+Quick overview for ${company}: ${link}
+
+Worth 15 minutes to see if the numbers make sense?
 
 — ${FROM_NAME}
 
----
-${MAILING_ADDRESS}
-You're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.`;
+${casl}`;
+      }
+
+      return `Hi ${name},
+
+Just circling back on my note about ${company}'s booking flow.
+
+The short version: an AI receptionist answers when you can't, books the appointment, and the confirmation goes out automatically — no voicemails left hanging.
+
+Quick overview for ${company}: ${link}
+
+Worth a 15-minute call to see what that looks like for your setup?
+
+— ${FROM_NAME}
+
+${casl}`;
     },
   },
   {
     delayDays: 5,
     subject: (lead) => `Last note — ${lead.company || 'your business'}`,
     body: (lead) => {
-      const link = buildProposalLink(lead);
-      return `Hi ${lead.first || 'there'},
+      const link    = buildProposalLink(lead);
+      const name    = lead.first || 'there';
+      const casl    = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.`;
 
-Last one from me, I promise.
+      if (lead.tier === 'busy') {
+        return `Hi ${name},
 
-If the timing isn't right, no worries at all. But if you'd like to see how we help ${lead.tradeType || 'trade'} companies in ${lead.city || 'your area'} book more jobs, here's the overview I put together: ${link}
+Last one, I promise.
+
+If after-hours and overflow bookings are already handled, ignore this. If there's a gap, here's the overview I put together: ${link}
 
 — ${FROM_NAME}
 
----
-${MAILING_ADDRESS}
-You're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.`;
+${casl}`;
+      }
+
+      return `Hi ${name},
+
+Last one from me.
+
+If missed evening or weekend bookings aren't a pain point, this won't be for you. But if there's a gap there, here's the overview I put together: ${link}
+
+— ${FROM_NAME}
+
+${casl}`;
     },
   },
 ];
@@ -179,6 +220,65 @@ function buildProposalLink(lead) {
   if (!params.length) return `${PROPOSAL_BASE}/`;
   const qs = params.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
   return `${PROPOSAL_BASE}/?${qs}`;
+}
+
+// Builds the tier-keyed subject + body for step-1 sends.
+// pitchTier = 'busy' | 'medium'. reviewCount may be blank — handled gracefully.
+function buildPitch(lead, opener, link, pitchTier) {
+  const name    = lead.first || 'there';
+  const company = lead.company || 'your business';
+  const count   = parseInt(lead.reviewCount, 10);
+  const hasCount = !isNaN(count) && count > 0;
+
+  const casl = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply with\n"unsubscribe" and I'll remove you immediately — no hard feelings.`;
+
+  if (pitchTier === 'busy') {
+    // Lead sentence varies: include review count only when present
+    const busyLead = hasCount
+      ? `You're clearly busy — ${count}+ reviews doesn't happen by accident.`
+      : `You're clearly running a busy practice.`;
+
+    return {
+      subject: `${company}'s after-hours calls`,
+      body:
+`Hi ${name},
+
+${opener}
+
+${busyLead} So this isn't about the calls you answer. It's about the ones that come in while your staff's with a client, or after you've closed — booked appointments walking to the clinic down the street.
+
+I build AI receptionists that quietly catch exactly those, booking after hours and when the desk is slammed, without changing how you run the front.
+
+Quick overview for ${company}: ${link}
+
+If you're not the right person for this, mind pointing me to whoever handles bookings?
+
+— ${FROM_NAME}
+
+${casl}`,
+    };
+  }
+
+  // medium (default when tier is blank or anything other than 'busy')
+  return {
+    subject: `quick question about ${company}'s bookings`,
+    body:
+`Hi ${name},
+
+${opener}
+
+When someone calls ${company} after hours or when the desk can't pick up — what happens to that booking? Usually it's "goes to voicemail, half don't call back."
+
+I build AI receptionists that answer and book 24/7, so evening and weekend inquiries turn into booked clients instead of missed ones. At your stage that's often the difference between a full calendar and a patchy one.
+
+Quick overview for ${company}: ${link}
+
+If bookings aren't your area, could you point me to who handles them?
+
+— ${FROM_NAME}
+
+${casl}`,
+  };
 }
 
 // Tier-2 scraper: fetches a lead's homepage and extracts visible text for personalization.
@@ -309,9 +409,6 @@ async function generateOpener(lead, siteText) {
 }
 
 async function buildEmail(lead) {
-  const name    = lead.first || 'there';
-  const company = lead.company || 'your business';
-
   // Resolve site context: cached value → skip scrape; empty + website → scrape once
   let siteText = '';
   if (lead.siteContext && lead.siteContext !== SCRAPE_SKIP) {
@@ -325,34 +422,17 @@ async function buildEmail(lead) {
     if (!siteText) console.log(`[Scrape] No usable text from ${lead.website} — using Tier-1`);
   }
 
-  const tier   = siteText ? 'SITE' : 'TIER-1';
-  const opener = await generateOpener(lead, siteText)
+  const openerTier = siteText ? 'SITE' : 'TIER-1';
+  const company    = lead.company || 'your business';
+  const opener     = await generateOpener(lead, siteText)
     || `I noticed ${company} and wanted to reach out.`;
 
-  const link    = buildProposalLink(lead);
-  const subject = `Quick question about ${company}`;
+  const pitchTier = lead.tier === 'busy' ? 'busy' : 'medium';
+  const link      = buildProposalLink(lead);
 
-  const body =
-`Hi ${name},
+  const { subject, body } = buildPitch(lead, opener, link, pitchTier);
 
-${opener}
-
-I help local ${lead.tradeType || 'trade'} businesses turn more of their inbound calls and
-leads into booked jobs — without adding to your workload. Worth a quick chat
-to see if it'd move the needle for ${company}?
-
-Here's a quick overview I put together for ${company}: ${link}
-
-Either way, appreciate your time.
-
-— ${FROM_NAME}
-
----
-${MAILING_ADDRESS}
-You're receiving this because your business is publicly listed. Reply with
-"unsubscribe" and I'll remove you immediately — no hard feelings.`;
-
-  return { subject, body, link, opener, tier };
+  return { subject, body, link, opener, openerTier, pitchTier };
 }
 
 // RFC-822 message → base64url for the Gmail API
@@ -543,12 +623,13 @@ async function run() {
 
   // ── New sends (step 1) ────────────────────────────────────────────────────
   for (const lead of newBatch) {
-    const { subject, body, link, opener, tier } = await buildEmail(lead);
+    const { subject, body, link, opener, openerTier, pitchTier } = await buildEmail(lead);
 
     if (DRY_RUN) {
       console.log(`— WOULD SEND (step 1) →  ${lead.email}  (${lead.company || lead.first || lead.id})`);
+      console.log(`   Pitch:   ${pitchTier}`);
       console.log(`   Subject: ${subject}`);
-      console.log(`   Opener:  ${opener}  [${tier}]`);
+      console.log(`   Opener:  ${opener}  [${openerTier}]`);
       console.log(`   Link:    ${link}\n`);
       continue;
     }
@@ -579,7 +660,9 @@ async function run() {
     const preview     = body.split('\n')[2] || '';
 
     if (DRY_RUN) {
+      const fupPitchTier = lead.tier === 'busy' ? 'busy' : 'medium';
       console.log(`— WOULD SEND (step ${nextStepNum}) →  ${lead.email}  (${lead.company || lead.first || lead.id})`);
+      console.log(`   Pitch:   ${fupPitchTier}`);
       console.log(`   Subject: ${subject}`);
       console.log(`   Preview: ${preview}`);
       console.log(`   Link:    ${buildProposalLink(lead)}\n`);
