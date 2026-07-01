@@ -44,6 +44,20 @@ const GENERIC_DOMAINS = new Set([
   'live.com','icloud.com','yahoo.ca','hotmail.ca','msn.com',
 ]);
 
+// Maps actual (lowercased, trimmed) column headers to the internal field names
+// the script uses. Only columns that differ need entries; others pass through.
+const FIELD_MAP = {
+  'business name':   'name',         // → r.name  (used as company)
+  'reviews':         'reviewcount',  // → r.reviewcount
+  'google rating':   'rating',       // → r.rating
+  'google maps url': 'mapsurl',      // stored but not used in output
+};
+
+function normalizeHeader(raw) {
+  const key = raw.trim().toLowerCase();
+  return FIELD_MAP[key] ?? key;
+}
+
 const CSV_HEADER = [
   'company','email','contactName','city','tradeType',
   'website','reviewCount','rating','tier','siteContext',
@@ -93,9 +107,9 @@ function parseInput(filePath) {
   const raw   = fs.readFileSync(filePath, 'utf8').replace(/\r\n/g, '\n');
   const delim = detectDelimiter(raw.slice(0, 4_000));
   const lines = raw.split('\n').filter(l => l.trim());
-  // Lowercase and strip BOM / outer quotes from headers
+  // Strip BOM / outer quotes, then normalize via FIELD_MAP (case-insensitive, space-tolerant)
   const header = splitLine(lines[0], delim)
-    .map(h => h.trim().replace(/^﻿/, '').replace(/^"|"$/g, '').toLowerCase());
+    .map(h => normalizeHeader(h.replace(/^﻿/, '').replace(/^"|"$/g, '')));
 
   return lines.slice(1).map(line => {
     const cells = splitLine(line, delim).map(c => c.trim().replace(/^"|"$/g, ''));
@@ -252,8 +266,7 @@ async function main() {
   const rows = parseInput(INPUT_FILE);
   console.log(`\nLoaded ${rows.length} rows from ${path.resolve(INPUT_FILE)}`);
 
-  // Filter: reviewCount must be present and ≥ MIN_REVIEWS
-  // Apify header becomes 'reviewcount' after toLowerCase()
+  // Filter: "Reviews" header → normalizeHeader → 'reviewcount' key
   const qualified = rows.filter(r => {
     const n = parseInt(r.reviewcount ?? '', 10);
     return !isNaN(n) && n >= MIN_REVIEWS;
