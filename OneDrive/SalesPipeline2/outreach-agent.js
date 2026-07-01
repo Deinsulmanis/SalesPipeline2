@@ -56,6 +56,7 @@ const FROM_NAME   = process.env.FROM_NAME || 'ScaleLab AI';
 const MAILING_ADDRESS   = process.env.MAILING_ADDRESS || 'ScaleLab AI, New Westminster, BC';
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const PROPOSAL_BASE     = (process.env.PROPOSAL_BASE || 'https://scalelabaireceptionistproposal.netlify.app').replace(/\/$/, '');
+const OUTREACH_TAG      = 'slab-outreach'; // appended to every sent body for Gmail filter targeting
 
 // Random pause between sends so traffic looks human (ms)
 const MIN_DELAY = 45 * 1000;
@@ -460,7 +461,8 @@ function toRawMessage({ to, subject, body }) {
     'MIME-Version: 1.0',
     'Content-Type: text/plain; charset="UTF-8"',
   ];
-  const msg = headers.join('\r\n') + '\r\n\r\n' + body;
+  const taggedBody = `${body}\n\nRef: ${OUTREACH_TAG}`;
+  const msg = headers.join('\r\n') + '\r\n\r\n' + taggedBody;
   return Buffer.from(msg)
     .toString('base64')
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
