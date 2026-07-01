@@ -133,12 +133,12 @@ const FOLLOW_UP_SEQUENCE = [
   {
     delayDays: 3,
     subject: (lead) => lead.tier === 'busy'
-      ? `Re: ${lead.company || 'your business'}'s after-hours calls`
-      : `Re: quick question about ${lead.company || 'your business'}'s bookings`,
+      ? `Re: ${cleanCompanyName(lead.company) || 'your business'}'s after-hours calls`
+      : `Re: quick question about ${cleanCompanyName(lead.company) || 'your business'}'s bookings`,
     body: (lead) => {
       const link    = buildProposalLink(lead);
       const name    = lead.first || 'there';
-      const company = lead.company || 'your business';
+      const company = cleanCompanyName(lead.company) || 'your business';
       const casl    = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.`;
 
       if (lead.tier === 'busy') {
@@ -174,7 +174,7 @@ ${casl}`;
   },
   {
     delayDays: 5,
-    subject: (lead) => `Last note — ${lead.company || 'your business'}`,
+    subject: (lead) => `Last note — ${cleanCompanyName(lead.company) || 'your business'}`,
     body: (lead) => {
       const link    = buildProposalLink(lead);
       const name    = lead.first || 'there';
@@ -207,12 +207,27 @@ ${casl}`;
 
 // ── EMAIL TEMPLATE ────────────────────────────────────────────────────────────
 
+// Returns the display name of a business by stripping location suffixes and
+// multi-listing noise (e.g. "Yaletown Wellness - Hamilton | RMT Vancouver").
+// Takes the segment before the first "|" or " - ", whichever comes first.
+// Never mutates stored data — call only at send/display time.
+function cleanCompanyName(raw) {
+  if (!raw) return '';
+  const pipIdx  = raw.indexOf('|');
+  const dashIdx = raw.indexOf(' - ');
+  let cutAt = raw.length;
+  if (pipIdx  !== -1) cutAt = Math.min(cutAt, pipIdx);
+  if (dashIdx !== -1) cutAt = Math.min(cutAt, dashIdx);
+  return raw.slice(0, cutAt).trim() || raw.trim();
+}
+
 // Builds a personalised proposal URL. Omits any param whose value is empty.
 // Uses function declaration so it hoists — the follow-up templates call it at
 // runtime, not definition time, but being hoisted keeps things clear.
 function buildProposalLink(lead) {
+  const co = cleanCompanyName(lead.company);
   const params = [
-    lead.company     ? ['company', lead.company]     : null,
+    co             ? ['company', co]               : null,
     lead.contactName ? ['contact', lead.contactName] : null,
     lead.tradeType   ? ['niche',   lead.tradeType]   : null,
   ].filter(Boolean);
@@ -225,7 +240,7 @@ function buildProposalLink(lead) {
 // pitchTier = 'busy' | 'medium'. reviewCount may be blank — handled gracefully.
 function buildPitch(lead, opener, link, pitchTier) {
   const name    = lead.first || 'there';
-  const company = lead.company || 'your business';
+  const company = cleanCompanyName(lead.company) || 'your business';
   const count   = parseInt(lead.reviewCount, 10);
   const hasCount = !isNaN(count) && count > 0;
 
@@ -337,8 +352,9 @@ async function generateOpener(lead, siteText) {
 
     if (siteText) {
       // Tier-2: reference ONE concrete detail from the scraped page
+      const cleanCo = cleanCompanyName(lead.company);
       const facts = [
-        lead.company   && `company: "${lead.company}"`,
+        cleanCo        && `company: "${cleanCo}"`,
         lead.city      && `city: ${lead.city}`,
         lead.tradeType && `trade: ${lead.tradeType}`,
       ].filter(Boolean).join(' | ');
@@ -368,8 +384,9 @@ async function generateOpener(lead, siteText) {
       ].join('\n');
     } else {
       // Tier-1: company + city + trade only
+      const cleanCo = cleanCompanyName(lead.company);
       const details = [
-        lead.company   && `company: "${lead.company}"`,
+        cleanCo        && `company: "${cleanCo}"`,
         lead.city      && `city: ${lead.city}`,
         lead.tradeType && `trade: ${lead.tradeType}`,
         lead.website   && `website: ${lead.website}`,
@@ -422,7 +439,7 @@ async function buildEmail(lead) {
   }
 
   const openerTier = siteText ? 'SITE' : 'TIER-1';
-  const company    = lead.company || 'your business';
+  const company    = cleanCompanyName(lead.company) || 'your business';
   const opener     = await generateOpener(lead, siteText)
     || `I noticed ${company} and wanted to reach out.`;
 
@@ -625,7 +642,10 @@ async function run() {
     const { subject, body, link, opener, openerTier, pitchTier } = await buildEmail(lead);
 
     if (DRY_RUN) {
-      console.log(`— WOULD SEND (step 1) →  ${lead.email}  (${lead.company || lead.first || lead.id})`);
+      const rawCo  = lead.company || '';
+      const cleanCo = cleanCompanyName(rawCo);
+      console.log(`— WOULD SEND (step 1) →  ${lead.email}  (${rawCo || lead.first || lead.id})`);
+      if (rawCo && rawCo !== cleanCo) console.log(`   Company: "${rawCo}" → "${cleanCo}"`);
       console.log(`   Pitch:   ${pitchTier}`);
       console.log(`   Subject: ${subject}`);
       console.log(`   Opener:  ${opener}  [${openerTier}]`);
@@ -660,7 +680,10 @@ async function run() {
 
     if (DRY_RUN) {
       const fupPitchTier = lead.tier === 'busy' ? 'busy' : 'medium';
-      console.log(`— WOULD SEND (step ${nextStepNum}) →  ${lead.email}  (${lead.company || lead.first || lead.id})`);
+      const rawCo  = lead.company || '';
+      const cleanCo = cleanCompanyName(rawCo);
+      console.log(`— WOULD SEND (step ${nextStepNum}) →  ${lead.email}  (${rawCo || lead.first || lead.id})`);
+      if (rawCo && rawCo !== cleanCo) console.log(`   Company: "${rawCo}" → "${cleanCo}"`);
       console.log(`   Pitch:   ${fupPitchTier}`);
       console.log(`   Subject: ${subject}`);
       console.log(`   Preview: ${preview}`);
