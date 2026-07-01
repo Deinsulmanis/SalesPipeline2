@@ -164,18 +164,35 @@ async function generateOpener(lead) {
   try {
     const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
     const details = [
-      lead.company   && `company "${lead.company}"`,
-      lead.city      && `based in ${lead.city}`,
-      lead.tradeType && `a ${lead.tradeType} business`,
+      lead.company   && `company: "${lead.company}"`,
+      lead.city      && `city: ${lead.city}`,
+      lead.tradeType && `trade: ${lead.tradeType}`,
       lead.website   && `website: ${lead.website}`,
-    ].filter(Boolean).join(', ');
+    ].filter(Boolean).join(' | ');
+
+    const prompt = [
+      'Write ONE opening sentence for a cold email to a trade business owner.',
+      'Use ONLY the facts listed below — never invent or assume anything about their operations, reviews, call volume, customers, or projects.',
+      details ? `Known facts: ${details}` : `Known facts: (none — use generic company reference only)`,
+      '',
+      'Rules:',
+      '- One sentence only, max 18 words, plain English, no em-dashes',
+      '- Sound like a real person who glanced at their public listing — casual and honest',
+      '- Reference city and trade if provided; if missing, just use the company name naturally',
+      '- No invented pain points, no "this is costing you", no assumptions about their business',
+      '',
+      'Examples of the correct style (do not copy — just match the tone):',
+      '• HVAC company in Vancouver → "Came across Peak Climate HVAC while looking at HVAC contractors in Vancouver."',
+      '• Plumber in Calgary → "Saw Mountain Plumbing while browsing plumbers around Calgary."',
+      '• Electrician, no city → "Noticed Bright Spark Electric while looking into local electricians."',
+      '',
+      'Output only the sentence.',
+    ].join('\n');
+
     const msg = await anthropic.messages.create({
       model: 'claude-haiku-4-5',
       max_tokens: 60,
-      messages: [{
-        role: 'user',
-        content: `Write ONE specific opening sentence (under 25 words) for a cold sales email to ${lead.first || 'the owner'} at a trade business${details ? ` — ${details}` : ''}. Sound genuine, not salesy. Output only the sentence, no greeting.`,
-      }],
+      messages: [{ role: 'user', content: prompt }],
     });
     return msg.content[0]?.text?.trim() || null;
   } catch (e) {
@@ -237,7 +254,8 @@ async function sendEmail({ to, subject, body }) {
 }
 
 // Phase 4: check Gmail inbox for a reply from lead.email received after lastEmailedAt.
-// Fails open — returns false on any API error so a lookup failure never blocks a send.
+// Returns: true = reply found, false = no reply, null = check failed (caller must skip follow-up).
+// Fails CLOSED — an error returns null so the caller never sends to an unverified lead.
 async function checkForReply(lead) {
   if (!lead.lastEmailedAt || !isValidEmail(lead.email)) return false;
   try {
@@ -249,8 +267,8 @@ async function checkForReply(lead) {
     });
     return (resp.data.messages || []).length > 0;
   } catch (e) {
-    console.warn(`[ReplyCheck] ${lead.email}: ${e.message}`);
-    return false;
+    console.warn(`[ReplyCheck] API error for ${lead.email}: ${e.message}`);
+    return null; // fail closed — caller will skip this follow-up
   }
 }
 
@@ -366,8 +384,12 @@ async function run() {
   const followUpCandidates = selectFollowUps(all);
   const followUps = [];
   for (const lead of followUpCandidates) {
-    const replied = await withAuth(() => checkForReply(lead));
-    if (replied) {
+    const replyStatus = await withAuth(() => checkForReply(lead));
+    if (replyStatus === null) {
+      console.log(`[ReplyCheck] reply-check failed for ${lead.email} — skipping follow-up this run`);
+      continue;
+    }
+    if (replyStatus === true) {
       console.log(`[ReplyCheck] Reply detected from ${lead.email} — marking replied, skipping`);
       if (!DRY_RUN) await withAuth(() => markReplied(lead._row));
       continue;
