@@ -43,7 +43,7 @@ const path = require('path');
 
 const TOKEN_PATH     = path.join(__dirname, 'token.json');
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
-const SHEET_NAME     = 'Leads';
+const SHEET_NAME     = 'ColdEmail';
 
 const DRY_RUN     = process.env.DRY_RUN !== 'false';          // default TRUE
 const DAILY_CAP   = parseInt(process.env.DAILY_CAP || '12', 10);
@@ -58,15 +58,13 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const MIN_DELAY = 45 * 1000;
 const MAX_DELAY = 120 * 1000;
 
-// Dashboard columns (A:Q) — must match server.js exactly, read by position
+// ColdEmail columns (A:M) — emailStatus/lastEmailedAt/emailStep are part of the main schema
 const COLUMNS = [
-  'id','type','first','last','brokerage','tradeType','company',
-  'city','cityTrade','phone','email','website',
-  'stage','priority','followup','notes','created',
+  'id','company','contactName','email','city','tradeType','website',
+  'stage','emailStatus','lastEmailedAt','emailStep','notes','created',
 ];
-// Agent bookkeeping columns appended after Q → R, S, T
-const AGENT_COLS = ['emailStatus','lastEmailedAt','emailStep'];
-const READ_RANGE = `${SHEET_NAME}!A:T`;
+const AGENT_COLS = []; // integrated into COLUMNS for ColdEmail
+const READ_RANGE = `${SHEET_NAME}!A:M`;
 
 // ── AUTH (same pattern as server.js) ──────────────────────────────────────────
 
@@ -259,13 +257,7 @@ async function checkForReply(lead) {
 // ── SHEET I/O ─────────────────────────────────────────────────────────────────
 
 async function ensureAgentHeaders() {
-  // Label R1:T1 so the bookkeeping columns are readable in the sheet
-  await sheets().spreadsheets.values.update({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!R1:T1`,
-    valueInputOption: 'RAW',
-    requestBody: { values: [AGENT_COLS] },
-  });
+  // ColdEmail headers are set by server.js on sheet creation — nothing to do here.
 }
 
 async function readLeads() {
@@ -277,7 +269,7 @@ async function readLeads() {
   return rows.slice(1).map((row, idx) => {
     const lead = { _row: idx + 2 };              // 1-based sheet row (after header)
     COLUMNS.forEach((c, i) => { lead[c] = row[i] || ''; });
-    AGENT_COLS.forEach((c, i) => { lead[c] = row[17 + i] || ''; });
+    lead.first = (lead.contactName || '').split(' ')[0] || ''; // convenience alias used by templates
     return lead;
   }).filter(l => l.id);
 }
@@ -293,8 +285,8 @@ async function markSent(rowNum, step) {
     requestBody: {
       valueInputOption: 'RAW',
       data: [
-        { range: `${SHEET_NAME}!M${rowNum}`,            values: [[SENT_STAGE]] },
-        { range: `${SHEET_NAME}!R${rowNum}:T${rowNum}`, values: [[status, now, String(step)]] },
+        { range: `${SHEET_NAME}!H${rowNum}`,            values: [[SENT_STAGE]] },
+        { range: `${SHEET_NAME}!I${rowNum}:K${rowNum}`, values: [[status, now, String(step)]] },
       ],
     },
   });
@@ -307,8 +299,8 @@ async function markReplied(rowNum) {
     requestBody: {
       valueInputOption: 'RAW',
       data: [
-        { range: `${SHEET_NAME}!M${rowNum}`, values: [['Replied']] },
-        { range: `${SHEET_NAME}!R${rowNum}`, values: [['replied']] },
+        { range: `${SHEET_NAME}!H${rowNum}`, values: [['Replied']] },
+        { range: `${SHEET_NAME}!I${rowNum}`, values: [['replied']] },
       ],
     },
   });

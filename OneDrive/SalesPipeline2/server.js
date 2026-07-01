@@ -22,6 +22,11 @@ const COLUMNS        = [
 const AGENT_COLS      = ['emailStatus', 'lastEmailedAt', 'emailStep'];
 const AGENT_READ_RANGE = `${SHEET_NAME}!A:T`;
 
+// ── COLD EMAIL SHEET ──────────────────────────────────────────────────────────
+const CE_SHEET_NAME = 'ColdEmail';
+const CE_COLUMNS    = ['id','company','contactName','email','city','tradeType','website','stage','emailStatus','lastEmailedAt','emailStep','notes','created'];
+const CE_COL_RANGE  = `${CE_SHEET_NAME}!A:M`;
+
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
@@ -105,6 +110,10 @@ function sheets() {
 // In-memory row index: lead.id → 1-based sheet row number
 const rowMap = new Map();
 let sheetIdCache = null;
+
+// In-memory row index for ColdEmail sheet
+const ceRowMap = new Map();
+let ceSheetIdCache = null;
 
 // ── AGENT RUNNER STATE ────────────────────────────────────────────────────────
 
@@ -306,6 +315,266 @@ app.delete('/api/leads/:id', requireAuth, async (req, res) => {
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
     console.error('[Leads DELETE]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── COLD EMAIL HELPERS ────────────────────────────────────────────────────────
+
+async function ensureColdEmailSheet() {
+  const s  = sheets();
+  const ss = await s.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  const existing = ss.data.sheets.find(sh => sh.properties.title === CE_SHEET_NAME);
+  if (!existing) {
+    const addResp = await s.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: { requests: [{ addSheet: { properties: { title: CE_SHEET_NAME } } }] },
+    });
+    ceSheetIdCache = addResp.data.replies[0].addSheet.properties.sheetId;
+    await s.spreadsheets.values.update({
+      spreadsheetId:   SPREADSHEET_ID,
+      range:           `${CE_SHEET_NAME}!A1`,
+      valueInputOption:'RAW',
+      requestBody:     { values: [CE_COLUMNS] },
+    });
+    console.log('[ColdEmail] Sheet created with headers');
+  } else {
+    ceSheetIdCache = existing.properties.sheetId;
+    const hResp = await s.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range:         `${CE_SHEET_NAME}!A1:M1`,
+    });
+    if (!hResp.data.values?.[0]?.[0] || hResp.data.values[0][0] !== 'id') {
+      await s.spreadsheets.values.update({
+        spreadsheetId:   SPREADSHEET_ID,
+        range:           `${CE_SHEET_NAME}!A1`,
+        valueInputOption:'RAW',
+        requestBody:     { values: [CE_COLUMNS] },
+      });
+    }
+  }
+}
+
+async function findCERow(id) {
+  if (ceRowMap.has(id)) return ceRowMap.get(id);
+  const resp = await sheets().spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range:         CE_COL_RANGE,
+  });
+  (resp.data.values || []).forEach((row, i) => {
+    if (i > 0 && row[0]) ceRowMap.set(row[0], i + 1);
+  });
+  return ceRowMap.get(id) || null;
+}
+
+// ── COLD EMAIL ROUTES ─────────────────────────────────────────────────────────
+
+app.get('/api/coldemail', requireAuth, async (_req, res) => {
+  try {
+    const leads = await withAuth(async () => {
+      await ensureColdEmailSheet();
+      const resp = await sheets().spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range:         CE_COL_RANGE,
+      });
+      const rows = resp.data.values || [];
+      ceRowMap.clear();
+      return rows.slice(1).map((row, idx) => {
+        const lead = {};
+        CE_COLUMNS.forEach((col, i) => { lead[col] = row[i] || ''; });
+        lead.created = parseInt(lead.created) || Date.now();
+        if (lead.id) ceRowMap.set(lead.id, idx + 2);
+        return lead;
+      }).filter(l => l.id);
+    });
+    res.json(leads);
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ColdEmail GET]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/coldemail/import', requireAuth, async (req, res) => {
+  const rows = req.body;
+  if (!Array.isArray(rows)) return res.status(400).json({ error: 'body must be an array' });
+  try {
+    const result = await withAuth(async () => {
+      await ensureColdEmailSheet();
+      const existing = await sheets().spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range:         `${CE_SHEET_NAME}!D:D`,   // email column
+      });
+      const existingEmails = new Set(
+        (existing.data.values || []).slice(1)
+          .map(r => (r[0] || '').toLowerCase().trim()).filter(Boolean)
+      );
+      const now   = Date.now();
+      const toAdd = [];
+      let skipped = 0;
+      for (const row of rows) {
+        const email = (row.email || '').toLowerCase().trim();
+        if (!email || existingEmails.has(email)) { skipped++; continue; }
+        existingEmails.add(email);
+        const id   = now.toString(36) + Math.random().toString(36).slice(2);
+        const lead = {
+          id, company: row.company || '', contactName: row.contactName || '',
+          email: row.email || '', city: row.city || '', tradeType: row.tradeType || '',
+          website: row.website || '', stage: 'Import',
+          emailStatus: '', lastEmailedAt: '', emailStep: '',
+          notes: row.notes || '', created: String(Date.now()),
+        };
+        toAdd.push(CE_COLUMNS.map(col => String(lead[col] ?? '')));
+      }
+      if (toAdd.length > 0) {
+        await sheets().spreadsheets.values.append({
+          spreadsheetId:   SPREADSHEET_ID,
+          range:           CE_COL_RANGE,
+          valueInputOption:'RAW',
+          insertDataOption:'INSERT_ROWS',
+          requestBody:     { values: toAdd },
+        });
+        ceRowMap.clear();
+      }
+      return { added: toAdd.length, skipped };
+    });
+    res.json(result);
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ColdEmail Import]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/coldemail', requireAuth, async (req, res) => {
+  const lead = req.body;
+  const vals = [CE_COLUMNS.map(col => lead[col] !== undefined ? String(lead[col]) : '')];
+  try {
+    await withAuth(async () => {
+      const resp = await sheets().spreadsheets.values.append({
+        spreadsheetId:   SPREADSHEET_ID,
+        range:           CE_COL_RANGE,
+        valueInputOption:'RAW',
+        insertDataOption:'INSERT_ROWS',
+        requestBody:     { values: vals },
+      });
+      const m = (resp.data.updates?.updatedRange || '').match(/!A(\d+)/);
+      if (m) ceRowMap.set(lead.id, parseInt(m[1]));
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ColdEmail POST]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put('/api/coldemail/:id', requireAuth, async (req, res) => {
+  const lead = req.body;
+  const vals = [CE_COLUMNS.map(col => lead[col] !== undefined ? String(lead[col]) : '')];
+  try {
+    const rowNum = await withAuth(() => findCERow(req.params.id));
+    if (!rowNum) return res.status(404).json({ error: 'not found' });
+    await withAuth(async () => {
+      await sheets().spreadsheets.values.update({
+        spreadsheetId:   SPREADSHEET_ID,
+        range:           `${CE_SHEET_NAME}!A${rowNum}:M${rowNum}`,
+        valueInputOption:'RAW',
+        requestBody:     { values: vals },
+      });
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ColdEmail PUT]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/coldemail/:id', requireAuth, async (req, res) => {
+  try {
+    const rowNum = await withAuth(() => findCERow(req.params.id));
+    if (!rowNum) return res.status(404).json({ error: 'not found' });
+    if (ceSheetIdCache === null) await withAuth(() => ensureColdEmailSheet());
+    await withAuth(async () => {
+      await sheets().spreadsheets.batchUpdate({
+        spreadsheetId: SPREADSHEET_ID,
+        requestBody: {
+          requests: [{
+            deleteDimension: {
+              range: {
+                sheetId:    ceSheetIdCache,
+                dimension:  'ROWS',
+                startIndex: rowNum - 1,
+                endIndex:   rowNum,
+              },
+            },
+          }],
+        },
+      });
+    });
+    ceRowMap.delete(req.params.id);
+    ceRowMap.forEach((r, lid) => { if (r > rowNum) ceRowMap.set(lid, r - 1); });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ColdEmail DELETE]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/coldemail/:id/promote', requireAuth, async (req, res) => {
+  try {
+    await withAuth(async () => {
+      const ceResp = await sheets().spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range:         CE_COL_RANGE,
+      });
+      const ceRows = ceResp.data.values || [];
+      let ceRowNum = null;
+      let ceLead   = null;
+      for (let i = 1; i < ceRows.length; i++) {
+        if (ceRows[i][0] === req.params.id) {
+          ceRowNum = i + 1;
+          ceLead   = {};
+          CE_COLUMNS.forEach((c, j) => { ceLead[c] = ceRows[i][j] || ''; });
+          break;
+        }
+      }
+      if (!ceLead) { res.status(404).json({ error: 'not found' }); return; }
+
+      const parts = (ceLead.contactName || '').trim().split(/\s+/);
+      const first = parts[0] || '';
+      const last  = parts.slice(1).join(' ') || '';
+      const newId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+      const leadsLead = {
+        id: newId, type: 'trade', first, last, brokerage: '',
+        tradeType: ceLead.tradeType || '', company: ceLead.company || '',
+        city: ceLead.city || '', cityTrade: ceLead.city || '',
+        phone: '', email: ceLead.email || '', website: ceLead.website || '',
+        stage: 'new', priority: 'cold', followup: '',
+        notes: ceLead.notes || '', created: String(Date.now()),
+      };
+      await sheets().spreadsheets.values.append({
+        spreadsheetId:   SPREADSHEET_ID,
+        range:           COL_RANGE,
+        valueInputOption:'RAW',
+        insertDataOption:'INSERT_ROWS',
+        requestBody:     { values: [COLUMNS.map(col => String(leadsLead[col] ?? ''))] },
+      });
+      // Mark ColdEmail row stage = Promoted (col H)
+      await sheets().spreadsheets.values.update({
+        spreadsheetId:   SPREADSHEET_ID,
+        range:           `${CE_SHEET_NAME}!H${ceRowNum}`,
+        valueInputOption:'RAW',
+        requestBody:     { values: [['Promoted']] },
+      });
+      ceRowMap.delete(req.params.id);
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ColdEmail Promote]', e.message);
     res.status(500).json({ error: e.message });
   }
 });
