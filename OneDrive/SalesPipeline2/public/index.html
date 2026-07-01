@@ -2417,6 +2417,10 @@ function parseCSV(text) {
     tradeType:   ['tradetype','trade_type','trade','type','industry'],
     website:     ['website','url','web','site'],
     notes:       ['notes','note','comments'],
+    reviewCount: ['reviewcount','review_count','reviews','numreviews','num_reviews'],
+    rating:      ['rating','google_rating','googlerating','stars','score'],
+    tier:        ['tier','segment','priority_tier'],
+    siteContext: ['sitecontext','site_context','context','site_text'],
   };
   const colMap = {};
   for (const [field, aliases] of Object.entries(MAP)) {

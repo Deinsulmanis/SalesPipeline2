@@ -24,8 +24,12 @@ const AGENT_READ_RANGE = `${SHEET_NAME}!A:T`;
 
 // ── COLD EMAIL SHEET ──────────────────────────────────────────────────────────
 const CE_SHEET_NAME = 'ColdEmail';
-const CE_COLUMNS    = ['id','company','contactName','email','city','tradeType','website','stage','emailStatus','lastEmailedAt','emailStep','notes','created'];
-const CE_COL_RANGE  = `${CE_SHEET_NAME}!A:M`;
+const CE_COLUMNS    = [
+  'id','company','contactName','email','city','tradeType','website',
+  'stage','emailStatus','lastEmailedAt','emailStep','notes',
+  'reviewCount','rating','tier','siteContext',                        // M N O P
+];
+const CE_COL_RANGE  = `${CE_SHEET_NAME}!A:P`;
 
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
@@ -342,15 +346,18 @@ async function ensureColdEmailSheet() {
     ceSheetIdCache = existing.properties.sheetId;
     const hResp = await s.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range:         `${CE_SHEET_NAME}!A1:M1`,
+      range:         `${CE_SHEET_NAME}!A1:P1`,
     });
-    if (!hResp.data.values?.[0]?.[0] || hResp.data.values[0][0] !== 'id') {
+    const existingHdr = hResp.data.values?.[0] || [];
+    // Repair if header is missing, wrong, or shorter than CE_COLUMNS (new columns added)
+    if (existingHdr[0] !== 'id' || existingHdr.length < CE_COLUMNS.length) {
       await s.spreadsheets.values.update({
         spreadsheetId:   SPREADSHEET_ID,
         range:           `${CE_SHEET_NAME}!A1`,
         valueInputOption:'RAW',
         requestBody:     { values: [CE_COLUMNS] },
       });
+      console.log('[ColdEmail] Header repaired/extended to include new columns');
     }
   }
 }
@@ -422,7 +429,9 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
           email: row.email || '', city: row.city || '', tradeType: row.tradeType || '',
           website: row.website || '', stage: 'Import',
           emailStatus: '', lastEmailedAt: '', emailStep: '',
-          notes: row.notes || '', created: String(Date.now()),
+          notes: row.notes || '',
+          reviewCount: row.reviewCount || '', rating: row.rating || '',
+          tier: row.tier || '',         siteContext: row.siteContext || '',
         };
         toAdd.push(CE_COLUMNS.map(col => String(lead[col] ?? '')));
       }
@@ -478,7 +487,7 @@ app.put('/api/coldemail/:id', requireAuth, async (req, res) => {
     await withAuth(async () => {
       await sheets().spreadsheets.values.update({
         spreadsheetId:   SPREADSHEET_ID,
-        range:           `${CE_SHEET_NAME}!A${rowNum}:M${rowNum}`,
+        range:           `${CE_SHEET_NAME}!A${rowNum}:P${rowNum}`,
         valueInputOption:'RAW',
         requestBody:     { values: vals },
       });

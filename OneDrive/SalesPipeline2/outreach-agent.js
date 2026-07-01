@@ -61,18 +61,17 @@ const PROPOSAL_BASE     = (process.env.PROPOSAL_BASE || 'https://scalelabairecep
 const MIN_DELAY = 45 * 1000;
 const MAX_DELAY = 120 * 1000;
 
-// ColdEmail columns (A:Q)
-//   N=siteContext (agent-managed, written once after first scrape)
-//   O=tier        imported from enrich-leads.js — "busy" or "medium"
-//   P=reviewCount imported from enrich-leads.js
-//   Q=rating      imported from enrich-leads.js
+// ColdEmail columns A:P — must stay in sync with CE_COLUMNS in server.js
+//   A=id  B=company  C=contactName  D=email  E=city  F=tradeType  G=website
+//   H=stage  I=emailStatus  J=lastEmailedAt  K=emailStep  L=notes
+//   M=reviewCount  N=rating  O=tier  P=siteContext
 const COLUMNS = [
   'id','company','contactName','email','city','tradeType','website',
-  'stage','emailStatus','lastEmailedAt','emailStep','notes','created','siteContext',
-  'tier','reviewCount','rating',
+  'stage','emailStatus','lastEmailedAt','emailStep','notes',
+  'reviewCount','rating','tier','siteContext',
 ];
 const AGENT_COLS  = []; // integrated into COLUMNS for ColdEmail
-const READ_RANGE  = `${SHEET_NAME}!A:Q`;
+const READ_RANGE  = `${SHEET_NAME}!A:P`;
 const SCRAPE_SKIP = '__scraped__'; // stored in siteContext when site returned no usable text
 
 // ── AUTH (same pattern as server.js) ──────────────────────────────────────────
@@ -322,7 +321,7 @@ async function scrapeSite(url) {
 async function writeSiteContext(rowNum, text) {
   await sheets().spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!N${rowNum}`,
+    range: `${SHEET_NAME}!P${rowNum}`,
     valueInputOption: 'RAW',
     requestBody: { values: [[text]] },
   });
@@ -482,7 +481,7 @@ async function ensureAgentHeaders() {
   // Write siteContext header to N1 — idempotent, server.js only created A:M on sheet init.
   await sheets().spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!N1`,
+    range: `${SHEET_NAME}!P1`,
     valueInputOption: 'RAW',
     requestBody: { values: [['siteContext']] },
   });
