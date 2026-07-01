@@ -53,6 +53,7 @@ const FROM_EMAIL  = process.env.FROM_EMAIL;                   // must be the aut
 const FROM_NAME   = process.env.FROM_NAME || 'ScaleLab AI';
 const MAILING_ADDRESS   = process.env.MAILING_ADDRESS || 'ScaleLab AI, New Westminster, BC';
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const PROPOSAL_BASE     = (process.env.PROPOSAL_BASE || 'https://scalelabaireceptionistproposal.netlify.app').replace(/\/$/, '');
 
 // Random pause between sends so traffic looks human (ms)
 const MIN_DELAY = 45 * 1000;
@@ -124,38 +125,58 @@ const FOLLOW_UP_SEQUENCE = [
   {
     delayDays: 3,
     subject: (lead) => `Re: Quick question about ${lead.company || 'your business'}`,
-    body: (lead) =>
-`Hi ${lead.first || 'there'},
+    body: (lead) => {
+      const link = buildProposalLink(lead);
+      return `Hi ${lead.first || 'there'},
 
 Just following up on my note from a few days ago — I help ${lead.tradeType || 'trade'} businesses in ${lead.city || 'your area'} turn more inbound calls into booked jobs without adding to your workload.
 
-Worth a quick 15-minute call to see if it'd be a fit for ${lead.company || 'your business'}?
+The overview I put together for ${lead.company || 'your business'}: ${link}
+
+Worth a quick 15-minute call to see if it'd be a fit?
 
 — ${FROM_NAME}
 
 ---
 ${MAILING_ADDRESS}
-You're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.`,
+You're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.`;
+    },
   },
   {
     delayDays: 5,
     subject: (lead) => `Last note — ${lead.company || 'your business'}`,
-    body: (lead) =>
-`Hi ${lead.first || 'there'},
+    body: (lead) => {
+      const link = buildProposalLink(lead);
+      return `Hi ${lead.first || 'there'},
 
 Last one from me, I promise.
 
-If the timing isn't right, no worries at all. But if you'd like to see how we help ${lead.tradeType || 'trade'} companies in ${lead.city || 'your area'} book more jobs — in under 15 minutes — just reply and I'll send a link.
+If the timing isn't right, no worries at all. But if you'd like to see how we help ${lead.tradeType || 'trade'} companies in ${lead.city || 'your area'} book more jobs, here's the overview I put together: ${link}
 
 — ${FROM_NAME}
 
 ---
 ${MAILING_ADDRESS}
-You're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.`,
+You're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.`;
+    },
   },
 ];
 
 // ── EMAIL TEMPLATE ────────────────────────────────────────────────────────────
+
+// Builds a personalised proposal URL. Omits any param whose value is empty.
+// Uses function declaration so it hoists — the follow-up templates call it at
+// runtime, not definition time, but being hoisted keeps things clear.
+function buildProposalLink(lead) {
+  const params = [
+    lead.company     ? ['company', lead.company]     : null,
+    lead.contactName ? ['contact', lead.contactName] : null,
+    lead.tradeType   ? ['niche',   lead.tradeType]   : null,
+  ].filter(Boolean);
+  if (!params.length) return `${PROPOSAL_BASE}/`;
+  const qs = params.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+  return `${PROPOSAL_BASE}/?${qs}`;
+}
 
 // Phase 2: calls Haiku to generate one specific opening sentence.
 // Graceful: on any error returns null and the caller falls back to a generic line.
@@ -208,6 +229,7 @@ async function buildEmail(lead) {
   const opener = await generateOpener(lead)
     || `I noticed ${company} and wanted to reach out.`;
 
+  const link    = buildProposalLink(lead);
   const subject = `Quick question about ${company}`;
 
   const body =
@@ -219,6 +241,8 @@ I help local ${lead.tradeType || 'trade'} businesses turn more of their inbound 
 leads into booked jobs — without adding to your workload. Worth a quick chat
 to see if it'd move the needle for ${company}?
 
+Here's a quick overview I put together for ${company}: ${link}
+
 Either way, appreciate your time.
 
 — ${FROM_NAME}
@@ -228,7 +252,7 @@ ${MAILING_ADDRESS}
 You're receiving this because your business is publicly listed. Reply with
 "unsubscribe" and I'll remove you immediately — no hard feelings.`;
 
-  return { subject, body };
+  return { subject, body, link };
 }
 
 // RFC-822 message → base64url for the Gmail API
@@ -413,13 +437,14 @@ async function run() {
 
   // ── New sends (step 1) ────────────────────────────────────────────────────
   for (const lead of newBatch) {
-    const { subject, body } = await buildEmail(lead);
+    const { subject, body, link } = await buildEmail(lead);
     const opener = body.split('\n')[2] || ''; // line 2 = Claude opener (after "Hi name," + blank)
 
     if (DRY_RUN) {
       console.log(`— WOULD SEND (step 1) →  ${lead.email}  (${lead.company || lead.first || lead.id})`);
       console.log(`   Subject: ${subject}`);
-      console.log(`   Opener:  ${opener}\n`);
+      console.log(`   Opener:  ${opener}`);
+      console.log(`   Link:    ${link}\n`);
       continue;
     }
 
@@ -451,7 +476,8 @@ async function run() {
     if (DRY_RUN) {
       console.log(`— WOULD SEND (step ${nextStepNum}) →  ${lead.email}  (${lead.company || lead.first || lead.id})`);
       console.log(`   Subject: ${subject}`);
-      console.log(`   Preview: ${preview}\n`);
+      console.log(`   Preview: ${preview}`);
+      console.log(`   Link:    ${buildProposalLink(lead)}\n`);
       continue;
     }
 
