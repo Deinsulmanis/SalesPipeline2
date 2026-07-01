@@ -36,6 +36,8 @@
 require('dotenv').config();
 const { google }  = require('googleapis');
 const Anthropic    = require('@anthropic-ai/sdk');
+const axios        = require('axios');
+const cheerio      = require('cheerio');
 const fs   = require('fs');
 const path = require('path');
 
@@ -59,13 +61,14 @@ const PROPOSAL_BASE     = (process.env.PROPOSAL_BASE || 'https://scalelabairecep
 const MIN_DELAY = 45 * 1000;
 const MAX_DELAY = 120 * 1000;
 
-// ColdEmail columns (A:M) — emailStatus/lastEmailedAt/emailStep are part of the main schema
+// ColdEmail columns (A:N) — siteContext (N) is agent-managed, written once after first scrape
 const COLUMNS = [
   'id','company','contactName','email','city','tradeType','website',
-  'stage','emailStatus','lastEmailedAt','emailStep','notes','created',
+  'stage','emailStatus','lastEmailedAt','emailStep','notes','created','siteContext',
 ];
-const AGENT_COLS = []; // integrated into COLUMNS for ColdEmail
-const READ_RANGE = `${SHEET_NAME}!A:M`;
+const AGENT_COLS  = []; // integrated into COLUMNS for ColdEmail
+const READ_RANGE  = `${SHEET_NAME}!A:N`;
+const SCRAPE_SKIP = '__scraped__'; // stored in siteContext when site returned no usable text
 
 // ── AUTH (same pattern as server.js) ──────────────────────────────────────────
 
@@ -178,37 +181,120 @@ function buildProposalLink(lead) {
   return `${PROPOSAL_BASE}/?${qs}`;
 }
 
+// Tier-2 scraper: fetches a lead's homepage and extracts visible text for personalization.
+// Returns '' on ANY failure (timeout, 403, DNS, non-200, malformed URL) — never throws.
+async function scrapeSite(url) {
+  if (!url || typeof url !== 'string' || !url.trim()) return '';
+  let normalized = url.trim();
+  if (!/^https?:\/\//i.test(normalized)) normalized = `https://${normalized}`;
+  try { new URL(normalized); } catch (_e) { return ''; }
+
+  try {
+    const resp = await axios.get(normalized, {
+      timeout: 8000,
+      maxRedirects: 3,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      },
+      validateStatus: s => s >= 200 && s < 300,
+    });
+    const $ = cheerio.load(resp.data);
+    $('script, style, nav, footer').remove();
+
+    const parts = [];
+    $('h1, h2, h3').each((_, el) => parts.push($(el).text()));
+    $('p').each((_, el) => parts.push($(el).text()));
+    $('[class*="about"],[class*="service"],[id*="about"],[id*="service"]').each((_, el) => {
+      parts.push($(el).text());
+    });
+
+    return parts
+      .map(t => t.replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .join(' ')
+      .slice(0, 1500);
+  } catch (_e) {
+    return '';
+  }
+}
+
+// Writes scraped siteContext (or SCRAPE_SKIP marker) to column N for one lead row.
+async function writeSiteContext(rowNum, text) {
+  await sheets().spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_NAME}!N${rowNum}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[text]] },
+  });
+}
+
 // Phase 2: calls Haiku to generate one specific opening sentence.
 // Graceful: on any error returns null and the caller falls back to a generic line.
-async function generateOpener(lead) {
+async function generateOpener(lead, siteText) {
   if (!ANTHROPIC_API_KEY) return null;
   try {
     const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
-    const details = [
-      lead.company   && `company: "${lead.company}"`,
-      lead.city      && `city: ${lead.city}`,
-      lead.tradeType && `trade: ${lead.tradeType}`,
-      lead.website   && `website: ${lead.website}`,
-    ].filter(Boolean).join(' | ');
+    let prompt;
 
-    const prompt = [
-      'Write ONE opening sentence for a cold email to a trade business owner.',
-      'Use ONLY the facts listed below — never invent or assume anything about their operations, reviews, call volume, customers, or projects.',
-      details ? `Known facts: ${details}` : `Known facts: (none — use generic company reference only)`,
-      '',
-      'Rules:',
-      '- One sentence only, max 18 words, plain English, no em-dashes',
-      '- Sound like a real person who glanced at their public listing — casual and honest',
-      '- Reference city and trade if provided; if missing, just use the company name naturally',
-      '- No invented pain points, no "this is costing you", no assumptions about their business',
-      '',
-      'Examples of the correct style (do not copy — just match the tone):',
-      '• HVAC company in Vancouver → "Came across Peak Climate HVAC while looking at HVAC contractors in Vancouver."',
-      '• Plumber in Calgary → "Saw Mountain Plumbing while browsing plumbers around Calgary."',
-      '• Electrician, no city → "Noticed Bright Spark Electric while looking into local electricians."',
-      '',
-      'Output only the sentence.',
-    ].join('\n');
+    if (siteText) {
+      // Tier-2: reference ONE concrete detail from the scraped page
+      const facts = [
+        lead.company   && `company: "${lead.company}"`,
+        lead.city      && `city: ${lead.city}`,
+        lead.tradeType && `trade: ${lead.tradeType}`,
+      ].filter(Boolean).join(' | ');
+
+      prompt = [
+        'Write ONE opening sentence for a cold email to a trade business owner.',
+        'You have scraped text from their website. Find EXACTLY ONE specific, concrete detail that literally appears in the text.',
+        '',
+        `Known facts: ${facts || '(none)'}`,
+        '',
+        'Website text (extracted from their homepage — use ONLY what is explicitly stated here):',
+        '---',
+        siteText,
+        '---',
+        '',
+        'Rules:',
+        '- Reference exactly ONE verifiable detail from the text: a specific service they list, an area they serve, a stated value like "family-owned", or years in business ONLY if explicitly stated.',
+        '- If you cannot find a clear, specific, verifiable detail, fall back to the Tier-1 style below instead — do NOT force a vague or invented detail.',
+        '- NEVER infer, assume, or embellish. If it is not literally in the text, do not say it.',
+        '- One sentence only, max 18 words, plain English, no em-dashes, no marketer voice.',
+        '',
+        'Tier-1 fallback (use when no clear site detail found):',
+        '• HVAC in Vancouver → "Came across Peak Climate HVAC while looking at HVAC contractors in Vancouver."',
+        '• Plumber in Calgary → "Saw Mountain Plumbing while browsing plumbers around Calgary."',
+        '',
+        'Output only the sentence.',
+      ].join('\n');
+    } else {
+      // Tier-1: company + city + trade only
+      const details = [
+        lead.company   && `company: "${lead.company}"`,
+        lead.city      && `city: ${lead.city}`,
+        lead.tradeType && `trade: ${lead.tradeType}`,
+        lead.website   && `website: ${lead.website}`,
+      ].filter(Boolean).join(' | ');
+
+      prompt = [
+        'Write ONE opening sentence for a cold email to a trade business owner.',
+        'Use ONLY the facts listed below — never invent or assume anything about their operations, reviews, call volume, customers, or projects.',
+        details ? `Known facts: ${details}` : `Known facts: (none — use generic company reference only)`,
+        '',
+        'Rules:',
+        '- One sentence only, max 18 words, plain English, no em-dashes',
+        '- Sound like a real person who glanced at their public listing — casual and honest',
+        '- Reference city and trade if provided; if missing, just use the company name naturally',
+        '- No invented pain points, no "this is costing you", no assumptions about their business',
+        '',
+        'Examples of the correct style (do not copy — just match the tone):',
+        '• HVAC company in Vancouver → "Came across Peak Climate HVAC while looking at HVAC contractors in Vancouver."',
+        '• Plumber in Calgary → "Saw Mountain Plumbing while browsing plumbers around Calgary."',
+        '• Electrician, no city → "Noticed Bright Spark Electric while looking into local electricians."',
+        '',
+        'Output only the sentence.',
+      ].join('\n');
+    }
 
     const msg = await anthropic.messages.create({
       model: 'claude-haiku-4-5',
@@ -226,7 +312,21 @@ async function buildEmail(lead) {
   const name    = lead.first || 'there';
   const company = lead.company || 'your business';
 
-  const opener = await generateOpener(lead)
+  // Resolve site context: cached value → skip scrape; empty + website → scrape once
+  let siteText = '';
+  if (lead.siteContext && lead.siteContext !== SCRAPE_SKIP) {
+    siteText = lead.siteContext;
+  } else if (!lead.siteContext && lead.website) {
+    console.log(`[Scrape] Fetching ${lead.website} for ${lead.email}...`);
+    siteText = await scrapeSite(lead.website);
+    if (!DRY_RUN) {
+      await withAuth(() => writeSiteContext(lead._row, siteText || SCRAPE_SKIP));
+    }
+    if (!siteText) console.log(`[Scrape] No usable text from ${lead.website} — using Tier-1`);
+  }
+
+  const tier   = siteText ? 'SITE' : 'TIER-1';
+  const opener = await generateOpener(lead, siteText)
     || `I noticed ${company} and wanted to reach out.`;
 
   const link    = buildProposalLink(lead);
@@ -252,7 +352,7 @@ ${MAILING_ADDRESS}
 You're receiving this because your business is publicly listed. Reply with
 "unsubscribe" and I'll remove you immediately — no hard feelings.`;
 
-  return { subject, body, link };
+  return { subject, body, link, opener, tier };
 }
 
 // RFC-822 message → base64url for the Gmail API
@@ -299,7 +399,13 @@ async function checkForReply(lead) {
 // ── SHEET I/O ─────────────────────────────────────────────────────────────────
 
 async function ensureAgentHeaders() {
-  // ColdEmail headers are set by server.js on sheet creation — nothing to do here.
+  // Write siteContext header to N1 — idempotent, server.js only created A:M on sheet init.
+  await sheets().spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_NAME}!N1`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [['siteContext']] },
+  });
 }
 
 async function readLeads() {
@@ -394,7 +500,7 @@ async function run() {
   console.log(`Mode:       ${DRY_RUN ? 'DRY RUN (nothing sent)' : '🔴 LIVE — sending real emails'}`);
   console.log(`Daily cap:  ${DAILY_CAP}`);
   console.log(`Queue stage:"${QUEUE_STAGE}"  →  on send: "${SENT_STAGE}"`);
-  console.log(`Opener API: ${ANTHROPIC_API_KEY ? 'Haiku (claude-haiku-4-5)' : 'not set — using generic fallback'}`);
+  console.log(`Opener API: ${ANTHROPIC_API_KEY ? 'Haiku (claude-haiku-4-5) — Tier-2 (site) when website present, Tier-1 otherwise' : 'not set — using generic fallback'}`);
   console.log('────────────────────────────────────────');
 
   if (!DRY_RUN) await withAuth(ensureAgentHeaders);
@@ -437,13 +543,12 @@ async function run() {
 
   // ── New sends (step 1) ────────────────────────────────────────────────────
   for (const lead of newBatch) {
-    const { subject, body, link } = await buildEmail(lead);
-    const opener = body.split('\n')[2] || ''; // line 2 = Claude opener (after "Hi name," + blank)
+    const { subject, body, link, opener, tier } = await buildEmail(lead);
 
     if (DRY_RUN) {
       console.log(`— WOULD SEND (step 1) →  ${lead.email}  (${lead.company || lead.first || lead.id})`);
       console.log(`   Subject: ${subject}`);
-      console.log(`   Opener:  ${opener}`);
+      console.log(`   Opener:  ${opener}  [${tier}]`);
       console.log(`   Link:    ${link}\n`);
       continue;
     }
