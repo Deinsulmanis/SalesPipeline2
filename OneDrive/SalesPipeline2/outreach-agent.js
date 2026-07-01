@@ -56,7 +56,6 @@ const FROM_NAME   = process.env.FROM_NAME || 'ScaleLab AI';
 const MAILING_ADDRESS   = process.env.MAILING_ADDRESS || 'ScaleLab AI, New Westminster, BC';
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const PROPOSAL_BASE     = (process.env.PROPOSAL_BASE || 'https://scalelabaireceptionistproposal.netlify.app').replace(/\/$/, '');
-const OUTREACH_TAG      = 'slab-outreach'; // appended to every sent body for Gmail filter targeting
 
 // Random pause between sends so traffic looks human (ms)
 const MIN_DELAY = 45 * 1000;
@@ -140,7 +139,7 @@ const FOLLOW_UP_SEQUENCE = [
       const link    = buildProposalLink(lead);
       const name    = lead.first || 'there';
       const company = cleanCompanyName(lead.company) || 'your business';
-      const casl    = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.`;
+      const casl    = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.  ·  Ref: SL-${refCode(lead)}`;
 
       if (lead.tier === 'busy') {
         return `Hi ${name},
@@ -179,7 +178,7 @@ ${casl}`;
     body: (lead) => {
       const link    = buildProposalLink(lead);
       const name    = lead.first || 'there';
-      const casl    = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.`;
+      const casl    = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.  ·  Ref: SL-${refCode(lead)}`;
 
       if (lead.tier === 'busy') {
         return `Hi ${name},
@@ -207,6 +206,14 @@ ${casl}`;
 ];
 
 // ── EMAIL TEMPLATE ────────────────────────────────────────────────────────────
+
+// Derives a stable 4-digit reference code from the lead's id.
+// Used to append "Ref: SL-XXXX" to the CASL line so every outgoing message
+// carries a filterable "SL-" prefix without a visible automation marker.
+function refCode(lead) {
+  const digits = String(lead.id || '').replace(/\D/g, '') || '0';
+  return String(parseInt(digits.slice(-6), 10) % 10000).padStart(4, '0');
+}
 
 // Returns the display name of a business by stripping location suffixes and
 // multi-listing noise (e.g. "Yaletown Wellness - Hamilton | RMT Vancouver").
@@ -245,7 +252,7 @@ function buildPitch(lead, opener, link, pitchTier) {
   const count   = parseInt(lead.reviewCount, 10);
   const hasCount = !isNaN(count) && count > 0;
 
-  const casl = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply with\n"unsubscribe" and I'll remove you immediately — no hard feelings.`;
+  const casl = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply with\n"unsubscribe" and I'll remove you immediately — no hard feelings.  ·  Ref: SL-${refCode(lead)}`;
 
   if (pitchTier === 'busy') {
     // Lead sentence varies: include review count only when present
@@ -461,8 +468,7 @@ function toRawMessage({ to, subject, body }) {
     'MIME-Version: 1.0',
     'Content-Type: text/plain; charset="UTF-8"',
   ];
-  const taggedBody = `${body}\n\nRef: ${OUTREACH_TAG}`;
-  const msg = headers.join('\r\n') + '\r\n\r\n' + taggedBody;
+  const msg = headers.join('\r\n') + '\r\n\r\n' + body;
   return Buffer.from(msg)
     .toString('base64')
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
