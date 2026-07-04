@@ -558,6 +558,36 @@ async function markReplied(rowNum) {
   });
 }
 
+// ── REPLY-CHECK PASS ─────────────────────────────────────────────────────────
+// Runs unconditionally on every agent invocation — independent of whether there
+// are queued sends or follow-ups due. Checks every 'emailed' lead for replies
+// and marks the ones that replied. Mutates lead.emailStatus in-place so that
+// selectFollowUps() naturally excludes replied leads without an extra sheet read.
+async function runReplyCheckPass(leads) {
+  const candidates = leads.filter(l => l.emailStatus === 'emailed' && isValidEmail(l.email));
+  if (!candidates.length) {
+    console.log('[ReplyCheck] No emailed leads to check.\n');
+    return;
+  }
+  console.log(`[ReplyCheck] Checking ${candidates.length} emailed lead${candidates.length === 1 ? '' : 's'} for replies...`);
+  let found = 0;
+  for (const lead of candidates) {
+    const status = await withAuth(() => checkForReply(lead));
+    if (status === null) {
+      console.log(`  ⚠ reply-check failed for ${lead.email} — skipping`);
+      continue;
+    }
+    if (status === true) {
+      found++;
+      const label = cleanCompanyName(lead.company) || lead.email;
+      console.log(`  ↩ Reply from ${lead.email} (${label}) — marking Replied`);
+      lead.emailStatus = 'replied'; // exclude from follow-ups this run
+      if (!DRY_RUN) await withAuth(() => markReplied(lead._row));
+    }
+  }
+  console.log(`[ReplyCheck] ${found} repl${found === 1 ? 'y' : 'ies'} found / ${candidates.length} checked.\n`);
+}
+
 // ── SELECTION ─────────────────────────────────────────────────────────────────
 
 function isValidEmail(e) {
@@ -611,25 +641,15 @@ async function run() {
 
   const all = await withAuth(readLeads);
 
+  // Reply-check pass — unconditional; runs even when nothing is queued or due.
+  // Mutates emailStatus on replied leads so selectFollowUps excludes them below.
+  await runReplyCheckPass(all);
+
   // Phase 1 — new sends (stage === QUEUE_STAGE, never emailed)
   const queued = selectQueued(all);
 
-  // Phase 3+4 — follow-ups with reply detection
-  const followUpCandidates = selectFollowUps(all);
-  const followUps = [];
-  for (const lead of followUpCandidates) {
-    const replyStatus = await withAuth(() => checkForReply(lead));
-    if (replyStatus === null) {
-      console.log(`[ReplyCheck] reply-check failed for ${lead.email} — skipping follow-up this run`);
-      continue;
-    }
-    if (replyStatus === true) {
-      console.log(`[ReplyCheck] Reply detected from ${lead.email} — marking replied, skipping`);
-      if (!DRY_RUN) await withAuth(() => markReplied(lead._row));
-      continue;
-    }
-    followUps.push(lead);
-  }
+  // Phase 3 — follow-ups (replied leads already excluded by runReplyCheckPass)
+  const followUps = selectFollowUps(all);
 
   console.log(`${all.length} leads · ${queued.length} queued · ${followUps.length} follow-ups due · cap ${DAILY_CAP}\n`);
 
