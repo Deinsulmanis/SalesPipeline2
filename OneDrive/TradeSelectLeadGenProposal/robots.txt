@@ -1,0 +1,5 @@
+# ScaleLab AI — Trade Select Proposal
+# Private sales asset. Do NOT index.
+
+User-agent: *
+Disallow: /
