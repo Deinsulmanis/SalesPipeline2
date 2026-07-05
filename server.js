@@ -7,6 +7,35 @@ const path       = require('path');
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 
+// ── PROPOSAL OPEN TRACKING (public — no auth) ─────────────────────────────────
+const BOT_PATTERNS = /curl|wget|python|java|go-http|axios|node-fetch|spider|crawler|bot|preview|scan|mimecast|barracuda|proofpoint|cloudmark|symantec/i;
+
+app.get('/p', (req, res) => {
+  const company = req.query.company || 'Unknown';
+  const niche   = req.query.niche   || 'Unknown';
+  const id      = req.query.id      || '';
+  const ua      = req.headers['user-agent'] || '';
+  const dest    = process.env.PROPOSAL_URL || 'https://scalelabaireceptionistproposal.netlify.app';
+
+  if (BOT_PATTERNS.test(ua)) {
+    console.warn(`[/p] Bot skipped — company: ${company}, ua: ${ua}`);
+    return res.redirect(302, dest);
+  }
+
+  const ip  = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.ip;
+  const row = [new Date().toISOString(), company, niche, id, ip, ua];
+
+  sheets().spreadsheets.values.append({
+    spreadsheetId:   SPREADSHEET_ID,
+    range:           'ProposalOpens!A:F',
+    valueInputOption:'RAW',
+    insertDataOption:'INSERT_ROWS',
+    requestBody:     { values: [row] },
+  }).catch(e => console.error('[/p] Sheet write failed:', e.message));
+
+  res.redirect(302, dest);
+});
+
 // ── DASHBOARD ACCESS CONTROL ──────────────────────────────────────────────────
 // HTTP Basic Auth applied globally — covers static files and all API routes.
 // Set DASHBOARD_USER and DASHBOARD_PASSWORD in .env / Railway env vars.
