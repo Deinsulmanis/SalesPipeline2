@@ -1317,21 +1317,11 @@ async function ensureSheetSetup() {
 }
 
 async function loadLeads() {
-  const resp = await gapi.client.sheets.spreadsheets.values.get({
-    spreadsheetId: GOOGLE_CONFIG.SPREADSHEET_ID,
-    range: COL_RANGE,
-  });
-  const rows = resp.result.values || [];
+  const resp = await fetch('/api/leads');
+  if (!resp.ok) throw new Error('leads fetch failed: ' + resp.status);
+  leads = await resp.json();
   rowMap.clear();
-  leads = rows.slice(1)
-    .map((row, idx) => {
-      const lead = {};
-      COLUMNS.forEach((col, i) => { lead[col] = row[i] || ''; });
-      lead.created = parseInt(lead.created) || Date.now();
-      if (lead.id) rowMap.set(lead.id, idx + 2); // +2: row 1 is header
-      return lead;
-    })
-    .filter(l => l.id);
+  leads.forEach((lead, idx) => { if (lead.id) rowMap.set(lead.id, idx + 2); });
 }
 
 async function syncLead(lead) {
@@ -2196,8 +2186,17 @@ document.getElementById('search').addEventListener('input', function() {
   renderBoard();
 });
 
-// Initial empty render so board structure is present
-renderBoard();
+async function init() {
+  showLoadingOverlay('Loading your leads…');
+  try {
+    await loadLeads();
+  } catch(e) {
+    showToast('Could not load leads: ' + e.message, 'error');
+  }
+  hideLoadingOverlay();
+  renderBoard();
+}
+init();
 </script>
 
 </body>
