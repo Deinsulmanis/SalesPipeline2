@@ -2,14 +2,27 @@ require('dotenv').config();
 const express    = require('express');
 const { google } = require('googleapis');
 const { spawn }  = require('child_process');
-const fs         = require('fs');
 const path       = require('path');
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
+
+// ── DASHBOARD ACCESS CONTROL ──────────────────────────────────────────────────
+// HTTP Basic Auth applied globally — covers static files and all API routes.
+// Set DASHBOARD_USER and DASHBOARD_PASSWORD in .env / Railway env vars.
+function requireAuth(req, res, next) {
+  const header = req.headers.authorization || '';
+  const b64    = header.startsWith('Basic ') ? header.slice(6) : '';
+  const [user, pass] = Buffer.from(b64, 'base64').toString().split(':');
+  if (user === process.env.DASHBOARD_USER && pass === process.env.DASHBOARD_PASSWORD) {
+    return next();
+  }
+  res.setHeader('WWW-Authenticate', 'Basic realm="ScaleLab Pipeline"');
+  res.status(401).send('Unauthorized');
+}
+app.use(requireAuth);
 app.use(express.static(path.join(__dirname, 'public')));
 
-const TOKEN_PATH     = path.join(__dirname, 'token.json');
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const SHEET_NAME     = 'Leads';
 const COL_RANGE      = `${SHEET_NAME}!A:Q`;
@@ -31,85 +44,21 @@ const CE_COLUMNS    = [
 ];
 const CE_COL_RANGE  = `${CE_SHEET_NAME}!A:P`;
 
-const oauth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  process.env.GOOGLE_REDIRECT_URI,
-);
+// ── SERVICE ACCOUNT AUTH ──────────────────────────────────────────────────────
+// Credentials are read from an env var (JSON string) — no key file on disk.
+// GoogleAuth mints and auto-refreshes access tokens internally.
 
-// ── TOKEN HELPERS ─────────────────────────────────────────────────────────────
-
-function saveToken(newTokens) {
-  const existing = fs.existsSync(TOKEN_PATH)
-    ? JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8'))
-    : {};
-  // Merge so refresh_token is never lost when Google omits it on a refresh
-  const merged = { ...existing, ...newTokens };
-  fs.writeFileSync(TOKEN_PATH, JSON.stringify(merged));
-  return merged;
-}
-
-// Persist any auto-refreshed access tokens back to disk
-oauth2Client.on('tokens', tokens => {
-  console.log('[Auth] Token event — saving refreshed credentials');
-  saveToken(tokens);
+const auth = new google.auth.GoogleAuth({
+  credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON),
+  scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
-// Read token.json and arm oauth2Client before every Sheets call
-function loadToken() {
-  if (!fs.existsSync(TOKEN_PATH)) return false;
-  try {
-    const tokens = JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8'));
-    oauth2Client.setCredentials(tokens);
-    return true;
-  } catch (e) {
-    console.error('[Auth] Failed to load token.json:', e.message);
-    return false;
-  }
-}
-
-function isTokenError(e) {
-  const status = e?.response?.status || e?.code;
-  const msg    = (e?.message || '').toLowerCase();
-  return (
-    status === 401 ||
-    msg.includes('invalid_grant') ||
-    msg.includes('token has been expired') ||
-    msg.includes('invalid credentials') ||
-    msg.includes('unauthorized')
-  );
-}
-
-// Run a Sheets call; on auth failure refresh once and retry.
-// Throws { isAuthError: true } if refresh also fails.
-async function withAuth(fn) {
-  loadToken(); // always re-read from disk (survives restarts)
-  try {
-    return await fn();
-  } catch (e) {
-    if (!isTokenError(e)) throw e;
-
-    console.error('[Auth] Token error on API call:', e.message);
-    console.log('[Auth] Attempting refresh with refresh_token...');
-
-    try {
-      const { credentials } = await oauth2Client.refreshAccessToken();
-      oauth2Client.setCredentials(credentials);
-      saveToken(credentials);
-      console.log('[Auth] Refresh succeeded — retrying request');
-      return await fn();
-    } catch (refreshErr) {
-      console.error('[Auth] Refresh failed:', refreshErr.message);
-      const err = new Error('unauthenticated');
-      err.isAuthError = true;
-      throw err;
-    }
-  }
-}
-
 function sheets() {
-  return google.sheets({ version: 'v4', auth: oauth2Client });
+  return google.sheets({ version: 'v4', auth });
 }
+
+// Compatibility shim — call sites are unchanged; token management is now internal.
+const withAuth = fn => fn();
 
 // In-memory row index: lead.id → 1-based sheet row number
 const rowMap = new Map();
@@ -128,58 +77,6 @@ let   agentChild = null;
 function agentPushLine(line) {
   agentState.log.push({ ts: new Date().toISOString(), line });
   if (agentState.log.length > LOG_CAP) agentState.log.shift();
-}
-
-// ── AUTH ROUTES ───────────────────────────────────────────────────────────────
-
-app.get('/auth/google', (_req, res) => {
-  const url = oauth2Client.generateAuthUrl({
-    access_type: 'offline',
-    prompt:      'consent',    // forces a fresh refresh_token every time
-    scope: [
-      'https://www.googleapis.com/auth/spreadsheets',
-      'https://www.googleapis.com/auth/gmail.send',
-      'https://www.googleapis.com/auth/gmail.readonly',
-    ],
-  });
-  res.redirect(url);
-});
-
-app.get('/oauth2callback', async (req, res) => {
-  try {
-    const { tokens } = await oauth2Client.getToken(req.query.code);
-    if (!tokens.refresh_token) {
-      console.warn('[Auth] WARNING: refresh_token missing from callback — user may need to revoke & re-auth');
-    } else {
-      console.log('[Auth] refresh_token received and saved');
-    }
-    oauth2Client.setCredentials(tokens);
-    saveToken(tokens); // saveToken (not writeFile) so we never stomp a prior refresh_token
-    res.redirect('/');
-  } catch (e) {
-    console.error('[Auth] OAuth callback error:', e.message);
-    res.status(500).send('OAuth error: ' + e.message);
-  }
-});
-
-app.get('/auth/signout', (_req, res) => {
-  if (fs.existsSync(TOKEN_PATH)) fs.unlinkSync(TOKEN_PATH);
-  oauth2Client.setCredentials({});
-  rowMap.clear();
-  sheetIdCache = null;
-  res.redirect('/');
-});
-
-app.get('/auth/status', (_req, res) => {
-  res.json({ authenticated: fs.existsSync(TOKEN_PATH) });
-});
-
-// ── MIDDLEWARE ────────────────────────────────────────────────────────────────
-
-// Quick gate: no token file at all → 401 immediately (no disk hit for Sheets)
-function requireAuth(req, res, next) {
-  if (!fs.existsSync(TOKEN_PATH)) return res.status(401).json({ error: 'unauthenticated' });
-  next();
 }
 
 // ── SHEET HELPERS ─────────────────────────────────────────────────────────────
@@ -650,4 +547,5 @@ app.get('/api/agent/status', requireAuth, (_req, res) => {
   });
 });
 
-app.listen(3000, () => console.log('ScaleLab Pipeline → http://localhost:3000'));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`ScaleLab Pipeline → http://localhost:${PORT}`));
