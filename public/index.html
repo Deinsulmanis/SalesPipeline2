@@ -1,0 +1,2470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ScaleLab AI — Sales Pipeline</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0A0A0A;
+    --surface: #141414;
+    --card: #1A1A1A;
+    --border: #2A2A2A;
+    --border-hover: #3A3A3A;
+    --text: #F5F5F5;
+    --text-secondary: #888;
+    --text-muted: #555;
+    --accent: #6366F1;
+    --accent-glow: rgba(99,102,241,0.3);
+    --warm: #F59E0B;
+    --warm-bg: rgba(245,158,11,0.1);
+    --hot: #EF4444;
+    --hot-bg: rgba(239,68,68,0.1);
+    --green: #10B981;
+    --green-bg: rgba(16,185,129,0.1);
+    --blue: #3B82F6;
+    --blue-bg: rgba(59,130,246,0.1);
+    --lost: #6B7280;
+    --lost-bg: rgba(107,114,128,0.1);
+    --trade-color: #F97316;
+    --trade-bg: rgba(249,115,22,0.12);
+    --realtor-color: #38BDF8;
+    --realtor-bg: rgba(56,189,248,0.12);
+    --radius: 10px;
+    --radius-sm: 6px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── HEADER ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.3px;
+  }
+
+  .logo-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent-glow);
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .search-wrap { position: relative; }
+
+  .search-wrap svg {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+    pointer-events: none;
+  }
+
+  #search {
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px;
+    padding: 7px 12px 7px 34px;
+    border-radius: var(--radius-sm);
+    width: 220px;
+    outline: none;
+    transition: border-color 200ms;
+  }
+
+  #search::placeholder { color: var(--text-muted); }
+  #search:focus { border-color: var(--accent); }
+
+  .btn-add {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 16px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 200ms cubic-bezier(0.4,0,0.2,1);
+    white-space: nowrap;
+  }
+
+  .btn-add:hover { transform: translateY(-1px); box-shadow: 0 4px 16px var(--accent-glow); }
+
+  /* ── SAVING BADGE ── */
+  .saving-badge {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: var(--card);
+    border: 1px solid var(--border);
+    padding: 5px 10px;
+    border-radius: 20px;
+    white-space: nowrap;
+  }
+
+  .spinner-sm {
+    width: 11px; height: 11px;
+    border: 2px solid var(--border-hover);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+
+  /* ── AUTH CHIP ── */
+  .auth-chip {
+    display: none;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: var(--card);
+    border: 1px solid var(--border);
+    padding: 5px 12px;
+    border-radius: 20px;
+    white-space: nowrap;
+  }
+
+  .auth-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 6px rgba(16,185,129,0.7);
+    flex-shrink: 0;
+  }
+
+  .auth-signout {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11px;
+    padding: 0;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .auth-signout:hover { color: var(--hot); }
+
+  /* ── STATS BAR ── */
+  .stats-bar {
+    display: flex;
+    gap: 1px;
+    background: var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .stat {
+    flex: 1;
+    background: var(--surface);
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .stat-icon {
+    width: 32px; height: 32px;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .stat-val { font-size: 20px; font-weight: 700; line-height: 1; }
+  .stat-label { font-size: 11px; color: var(--text-secondary); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  /* ── FILTER TABS ── */
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .filter-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 500;
+    margin-right: 4px;
+  }
+
+  .filter-tab {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 150ms;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .filter-tab:hover { border-color: var(--border-hover); color: var(--text); }
+  .filter-tab.active { background: var(--card); border-color: var(--border-hover); color: var(--text); }
+  .filter-tab[data-f="realtor"].active { background: var(--realtor-bg); border-color: var(--realtor-color); color: var(--realtor-color); }
+  .filter-tab[data-f="trade"].active   { background: var(--trade-bg);   border-color: var(--trade-color);   color: var(--trade-color); }
+
+  .tab-count {
+    font-size: 10px;
+    background: rgba(255,255,255,0.08);
+    padding: 1px 6px;
+    border-radius: 10px;
+    font-weight: 700;
+  }
+
+  /* ── MAIN ── */
+  .main { padding: 24px 28px; overflow-x: auto; }
+
+  .board { display: flex; gap: 16px; min-width: max-content; align-items: flex-start; }
+
+  /* ── COLUMNS ── */
+  .col { width: 270px; flex-shrink: 0; }
+
+  .col-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    padding: 0 4px;
+  }
+
+  .col-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text-secondary);
+  }
+
+  .col-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+  .col-count {
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--card);
+    border: 1px solid var(--border);
+    padding: 2px 7px;
+    border-radius: 20px;
+    font-weight: 500;
+  }
+
+  .col-body { display: flex; flex-direction: column; gap: 10px; min-height: 80px; }
+
+  /* ── CARDS ── */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    cursor: pointer;
+    transition: all 250ms cubic-bezier(0.4,0,0.2,1);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .card::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    border-radius: 10px 0 0 10px;
+    opacity: 0;
+    transition: opacity 200ms;
+  }
+
+  .card:hover { border-color: var(--border-hover); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+  .card:hover::before { opacity: 1; }
+
+  .card[data-stage="new"]::before      { background: var(--blue); }
+  .card[data-stage="called"]::before   { background: var(--accent); }
+  .card[data-stage="warm"]::before     { background: var(--warm); }
+  .card[data-stage="hot"]::before      { background: var(--hot); }
+  .card[data-stage="proposal"]::before { background: #8B5CF6; }
+  .card[data-stage="closed"]::before   { background: var(--green); }
+  .card[data-stage="lost"]::before     { background: var(--lost); }
+
+  .card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .card-name { font-size: 14px; font-weight: 600; color: var(--text); line-height: 1.3; }
+  .card-sub  { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+
+  .card-badges { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+
+  .type-badge { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 20px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .type-realtor { background: var(--realtor-bg); color: var(--realtor-color); }
+  .type-trade   { background: var(--trade-bg);   color: var(--trade-color); }
+
+  .priority-badge { font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 20px; text-transform: uppercase; letter-spacing: 0.4px; }
+  .priority-hot  { background: var(--hot-bg);  color: var(--hot); }
+  .priority-warm { background: var(--warm-bg); color: var(--warm); }
+
+  .card-meta { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+
+  .meta-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+  .meta-row svg { flex-shrink: 0; color: var(--text-muted); }
+
+  .card-note {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    background: rgba(255,255,255,0.03);
+    border-left: 2px solid var(--border);
+    padding: 6px 8px;
+    border-radius: 0 4px 4px 0;
+    margin-bottom: 10px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 60px;
+    overflow: hidden;
+  }
+
+  .card-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
+
+  .followup-tag { font-size: 11px; padding: 2px 8px; border-radius: 20px; background: var(--warm-bg); color: var(--warm); display: flex; align-items: center; gap: 4px; }
+  .followup-tag.overdue { background: var(--hot-bg);   color: var(--hot); }
+  .followup-tag.ok      { background: var(--green-bg); color: var(--green); }
+
+  .card-actions { display: flex; gap: 4px; opacity: 0; transition: opacity 150ms; }
+  .card:hover .card-actions { opacity: 1; }
+
+  .action-btn {
+    width: 26px; height: 26px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 150ms;
+  }
+
+  .action-btn:hover { background: var(--border); color: var(--text); }
+  .action-btn.delete:hover { background: var(--hot-bg); border-color: var(--hot); color: var(--hot); }
+
+  /* ── EMPTY STATE ── */
+  .empty-col { border: 1px dashed var(--border); border-radius: var(--radius); padding: 20px; text-align: center; font-size: 12px; color: var(--text-muted); }
+
+  /* ── MODAL ── */
+  .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); z-index: 200; align-items: center; justify-content: center; padding: 20px; }
+  .overlay.open { display: flex; }
+
+  .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px; width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; }
+
+  .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+  .modal-title { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
+
+  .modal-close {
+    width: 30px; height: 30px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 150ms;
+    font-size: 16px;
+  }
+
+  .modal-close:hover { background: var(--card); color: var(--text); }
+
+  /* Type toggle */
+  .type-toggle { display: flex; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 3px; margin-bottom: 20px; }
+
+  .type-toggle-btn {
+    flex: 1;
+    padding: 8px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: 5px;
+    transition: all 150ms;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+  }
+
+  .type-toggle-btn:hover { color: var(--text); }
+  .type-toggle-btn.active-realtor { background: var(--realtor-bg); color: var(--realtor-color); border: 1px solid rgba(56,189,248,0.3); }
+  .type-toggle-btn.active-trade   { background: var(--trade-bg);   color: var(--trade-color);   border: 1px solid rgba(249,115,22,0.3); }
+
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .form-group { display: flex; flex-direction: column; gap: 6px; }
+  .form-group.full { grid-column: 1 / -1; }
+
+  label { font-size: 12px; font-weight: 500; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.4px; }
+
+  input, select, textarea {
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px;
+    padding: 9px 12px;
+    border-radius: var(--radius-sm);
+    outline: none;
+    transition: border-color 200ms;
+    width: 100%;
+  }
+
+  input::placeholder, textarea::placeholder { color: var(--text-muted); }
+  input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 80px; }
+  select option { background: var(--card); }
+
+  .form-actions { display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }
+
+  .btn-cancel { padding: 9px 18px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: transparent; color: var(--text-secondary); font-family: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 150ms; }
+  .btn-cancel:hover { background: var(--card); color: var(--text); }
+
+  .btn-save { padding: 9px 22px; border-radius: var(--radius-sm); border: none; background: var(--accent); color: #fff; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 200ms; }
+  .btn-save:hover { transform: translateY(-1px); box-shadow: 0 4px 16px var(--accent-glow); }
+
+  /* ── DETAIL PANEL ── */
+  .detail-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 200; }
+  .detail-overlay.open { display: block; }
+
+  .detail-panel {
+    position: fixed;
+    right: 0; top: 0; bottom: 0;
+    width: 420px;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    z-index: 201;
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 300ms cubic-bezier(0.4,0,0.2,1);
+    overflow: hidden;
+  }
+
+  .detail-overlay.open .detail-panel { transform: translateX(0); }
+
+  .detail-header { padding: 20px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-shrink: 0; }
+  .detail-header-left { display: flex; flex-direction: column; gap: 6px; }
+  .detail-name { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; }
+  .detail-sub  { font-size: 13px; color: var(--text-secondary); }
+
+  .detail-body { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 20px; }
+
+  .detail-section-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-muted); margin-bottom: 10px; }
+  .detail-fields { display: flex; flex-direction: column; gap: 10px; }
+
+  .detail-field { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; font-size: 13px; }
+  .detail-field-label { color: var(--text-secondary); flex-shrink: 0; }
+  .detail-field-val   { color: var(--text); text-align: right; word-break: break-all; }
+  .detail-field-val a { color: var(--accent); text-decoration: none; }
+  .detail-field-val a:hover { text-decoration: underline; }
+
+  .stage-select-wrap { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  .stage-chip { font-size: 11px; font-weight: 600; padding: 5px 12px; border-radius: 20px; border: 1px solid var(--border); background: transparent; color: var(--text-secondary); cursor: pointer; transition: all 150ms; font-family: inherit; }
+  .stage-chip:hover { border-color: var(--border-hover); color: var(--text); }
+  .stage-chip.active { color: #fff; border-color: transparent; }
+  .stage-chip[data-s="new"].active      { background: var(--blue); }
+  .stage-chip[data-s="called"].active   { background: var(--accent); }
+  .stage-chip[data-s="warm"].active     { background: var(--warm); }
+  .stage-chip[data-s="hot"].active      { background: var(--hot); }
+  .stage-chip[data-s="proposal"].active { background: #8B5CF6; }
+  .stage-chip[data-s="closed"].active   { background: var(--green); }
+  .stage-chip[data-s="lost"].active     { background: var(--lost); }
+
+  .notes-area { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-family: inherit; font-size: 13px; padding: 12px; line-height: 1.6; resize: vertical; min-height: 120px; width: 100%; outline: none; transition: border-color 200ms; }
+  .notes-area:focus { border-color: var(--accent); }
+
+  .btn-save-notes { margin-top: 8px; padding: 7px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--card); color: var(--text-secondary); font-family: inherit; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 150ms; }
+  .btn-save-notes:hover { border-color: var(--accent); color: var(--accent); }
+
+  .detail-footer { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; gap: 10px; flex-shrink: 0; }
+
+  .btn-edit-full { flex: 1; padding: 9px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: transparent; color: var(--text); font-family: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 150ms; }
+  .btn-edit-full:hover { background: var(--card); }
+
+  .btn-del-lead { padding: 9px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: transparent; color: var(--text-secondary); font-family: inherit; font-size: 13px; cursor: pointer; transition: all 150ms; }
+  .btn-del-lead:hover { background: var(--hot-bg); border-color: var(--hot); color: var(--hot); }
+
+  /* ── CONNECT OVERLAY ── */
+  .connect-overlay {
+    display: flex;
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    z-index: 400;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+
+  .connect-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 44px 40px;
+    max-width: 420px;
+    width: 100%;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .connect-icon {
+    width: 52px; height: 52px;
+    background: rgba(99,102,241,0.15);
+    border: 1px solid rgba(99,102,241,0.3);
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 4px;
+  }
+
+  .connect-title { font-size: 22px; font-weight: 700; letter-spacing: -0.4px; }
+  .connect-desc  { font-size: 14px; color: var(--text-secondary); line-height: 1.6; max-width: 320px; }
+
+  .connect-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 12px 28px;
+    border-radius: var(--radius-sm);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 200ms cubic-bezier(0.4,0,0.2,1);
+    margin-top: 6px;
+  }
+
+  .connect-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 20px var(--accent-glow); }
+  .connect-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+  .config-warning {
+    display: none;
+    background: rgba(239,68,68,0.08);
+    border: 1px solid rgba(239,68,68,0.25);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    font-size: 12px;
+    color: #FCA5A5;
+    text-align: left;
+    line-height: 1.7;
+    width: 100%;
+  }
+
+  .config-warning code {
+    background: rgba(239,68,68,0.15);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+  }
+
+  /* ── LOADING OVERLAY ── */
+  .loading-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(10,10,10,0.75);
+    z-index: 300;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .spinner {
+    width: 38px; height: 38px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .loading-text { font-size: 14px; color: var(--text-secondary); }
+
+  /* ── TOAST ── */
+  .toast-container {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+  }
+
+  .toast {
+    padding: 11px 16px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 500;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: all 250ms cubic-bezier(0.4,0,0.2,1);
+    pointer-events: auto;
+    max-width: 340px;
+    line-height: 1.4;
+  }
+
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast-success { background: var(--green-bg); border: 1px solid var(--green); color: var(--green); }
+  .toast-error   { background: var(--hot-bg);   border: 1px solid var(--hot);   color: var(--hot); }
+  .toast-info    { background: var(--blue-bg);  border: 1px solid var(--blue);  color: var(--blue); }
+  .toast-warning { background: var(--warm-bg);  border: 1px solid var(--warm);  color: var(--warm); }
+
+  /* ── SCROLLBAR ── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+
+  /* ── AGENT TAB ── */
+  .filter-tab[data-f="agent"].active {
+    background: rgba(99,102,241,0.1);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* ── MOTION NAV ── */
+  .motion-nav {
+    display: flex;
+    gap: 0;
+    padding: 0 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .motion-tab {
+    padding: 11px 20px;
+    font-size: 13px;
+    font-weight: 600;
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: inherit;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    transition: all 150ms;
+    margin-bottom: -1px;
+  }
+
+  .motion-tab:hover { color: var(--text); }
+  .motion-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+  /* ── COLD EMAIL SECTION ── */
+  #ce-section { display: none; }
+
+  .ce-filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-wrap: wrap;
+  }
+
+  .ce-tab {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 150ms;
+  }
+
+  .ce-tab:hover { border-color: var(--border-hover); color: var(--text); }
+  .ce-tab.active { background: var(--card); border-color: var(--border-hover); color: var(--text); }
+  .ce-tab[data-ce="Queued"].active { background: rgba(99,102,241,0.1); border-color: var(--accent); color: var(--accent); }
+  .ce-tab[data-ce="agent"].active  { background: rgba(99,102,241,0.1); border-color: var(--accent); color: var(--accent); }
+
+  .ce-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .btn-import-csv {
+    padding: 6px 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 150ms;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .btn-import-csv:hover { border-color: var(--border-hover); color: var(--text); }
+
+  .btn-bulk-queue {
+    padding: 6px 14px;
+    border-radius: var(--radius-sm);
+    border: none;
+    background: var(--accent);
+    color: #fff;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 200ms;
+  }
+
+  .btn-bulk-queue:disabled { opacity: 0.35; cursor: not-allowed; }
+  .btn-bulk-queue:not(:disabled):hover { transform: translateY(-1px); box-shadow: 0 3px 12px var(--accent-glow); }
+
+  /* CE Table */
+  .ce-table-wrap { padding: 20px 28px; overflow-x: auto; }
+
+  .ce-table { width: 100%; border-collapse: collapse; }
+
+  .ce-table th {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  .ce-table th:first-child { width: 32px; padding-right: 6px; }
+  .ce-table td { padding: 9px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 13px; color: var(--text-secondary); vertical-align: middle; }
+  .ce-table tr:hover td { background: rgba(255,255,255,0.02); }
+  .ce-td-company { font-weight: 600; color: var(--text); }
+  .ce-td-email a { color: var(--accent); text-decoration: none; }
+  .ce-td-email a:hover { text-decoration: underline; }
+
+  .ce-stage-select {
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 20px;
+    cursor: pointer;
+    outline: none;
+  }
+
+  .ce-stage-select:focus { border-color: var(--accent); }
+
+  .btn-promote {
+    padding: 3px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 150ms;
+    white-space: nowrap;
+  }
+
+  .btn-promote:hover { border-color: var(--green); color: var(--green); background: var(--green-bg); }
+
+  .btn-ce-del {
+    width: 24px; height: 24px;
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 150ms;
+    vertical-align: middle;
+  }
+
+  .btn-ce-del:hover { background: var(--hot-bg); border-color: var(--hot); color: var(--hot); }
+
+  .ce-empty { padding: 48px 28px; text-align: center; font-size: 14px; color: var(--text-muted); }
+
+  #agent-panel { padding: 24px 28px; max-width: 860px; }
+
+  .agent-summary {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .agent-stat-card {
+    flex: 1;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    text-align: center;
+  }
+
+  .agent-stat-val { font-size: 28px; font-weight: 700; line-height: 1; }
+  .agent-stat-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary); margin-top: 6px; }
+
+  .agent-hint { font-size: 12px; color: var(--text-muted); margin-bottom: 20px; }
+
+  .agent-ctl-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  /* Dry-run toggle */
+  .dry-run-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    user-select: none;
+  }
+
+  .dry-run-label input { display: none; }
+
+  .toggle-switch {
+    width: 36px;
+    height: 20px;
+    background: var(--border);
+    border-radius: 10px;
+    position: relative;
+    transition: background 200ms;
+    flex-shrink: 0;
+  }
+
+  .toggle-switch::after {
+    content: '';
+    position: absolute;
+    top: 3px; left: 3px;
+    width: 14px; height: 14px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 200ms;
+  }
+
+  .dry-run-label input:checked + .toggle-switch { background: var(--accent); }
+  .dry-run-label input:checked + .toggle-switch::after { transform: translateX(16px); }
+
+  /* Run / Stop buttons */
+  .btn-agent-run {
+    padding: 9px 20px;
+    border-radius: var(--radius-sm);
+    border: none;
+    background: var(--accent);
+    color: #fff;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 200ms cubic-bezier(0.4,0,0.2,1);
+  }
+
+  .btn-agent-run:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 16px var(--accent-glow); }
+  .btn-agent-run:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+  .btn-agent-run.live { background: var(--hot); }
+  .btn-agent-run.live:hover:not(:disabled) { box-shadow: 0 4px 16px rgba(239,68,68,0.4); }
+
+  .btn-agent-stop {
+    padding: 9px 16px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 150ms;
+  }
+
+  .btn-agent-stop:not(:disabled):hover { background: var(--hot-bg); border-color: var(--hot); color: var(--hot); }
+  .btn-agent-stop:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  /* Log panel */
+  .agent-log-wrap {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .agent-log-hdr {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+  }
+
+  .agent-badge-idle    { font-size: 11px; padding: 2px 8px; border-radius: 20px; background: var(--border); color: var(--text-muted); font-weight: 500; text-transform: none; }
+  .agent-badge-running { font-size: 11px; padding: 2px 8px; border-radius: 20px; background: var(--green-bg); color: var(--green); font-weight: 500; text-transform: none; }
+  .agent-badge-done    { font-size: 11px; padding: 2px 8px; border-radius: 20px; background: var(--blue-bg);  color: var(--blue);  font-weight: 500; text-transform: none; }
+  .agent-badge-error   { font-size: 11px; padding: 2px 8px; border-radius: 20px; background: var(--hot-bg);  color: var(--hot);   font-weight: 500; text-transform: none; }
+
+  .agent-log {
+    font-family: 'Consolas', 'Menlo', 'Monaco', monospace;
+    font-size: 12px;
+    line-height: 1.75;
+    padding: 12px 16px;
+    height: 380px;
+    overflow-y: auto;
+    color: var(--text-secondary);
+  }
+
+  .agent-log-empty { font-family: 'Inter', system-ui, sans-serif; font-size: 13px; color: var(--text-muted); }
+  .log-line { display: flex; gap: 12px; }
+  .log-ts { color: var(--text-muted); flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="logo">
+    <div class="logo-dot"></div>
+    ScaleLab AI &nbsp;<span style="color:var(--text-muted);font-weight:400">/ Sales Pipeline</span>
+  </div>
+  <div class="header-right">
+    <div id="saving-badge" class="saving-badge">
+      <div class="spinner-sm"></div> Saving…
+    </div>
+    <div class="search-wrap">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input type="text" id="search" placeholder="Search leads…">
+    </div>
+    <button class="btn-add" onclick="openAdd()">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      Add Lead
+    </button>
+    <div id="auth-chip" class="auth-chip">
+      <div class="auth-dot"></div>
+      <span>Connected</span>
+      <button class="auth-signout" onclick="signOut()">Sign out</button>
+    </div>
+  </div>
+</header>
+
+<!-- MOTION NAV -->
+<div class="motion-nav">
+  <button class="motion-tab active" data-m="cold-calls" onclick="setMotion('cold-calls')">
+    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.45 2 2 0 0 1 3.59 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.49a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21.73 16z"/></svg>
+    Cold Calls
+  </button>
+  <button class="motion-tab" data-m="cold-email" onclick="setMotion('cold-email')">
+    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+    Cold Email
+  </button>
+</div>
+
+<!-- STATS -->
+<div class="stats-bar">
+  <div class="stat">
+    <div class="stat-icon" style="background:var(--blue-bg);">
+      <svg width="16" height="16" fill="none" stroke="var(--blue)" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+    </div>
+    <div class="stat-info">
+      <div class="stat-val" id="stat-total">0</div>
+      <div class="stat-label">Total</div>
+    </div>
+  </div>
+  <div class="stat">
+    <div class="stat-icon" style="background:var(--realtor-bg);">
+      <svg width="16" height="16" fill="none" stroke="var(--realtor-color)" stroke-width="2" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+    </div>
+    <div class="stat-info">
+      <div class="stat-val" id="stat-realtors">0</div>
+      <div class="stat-label">Realtors</div>
+    </div>
+  </div>
+  <div class="stat">
+    <div class="stat-icon" style="background:var(--trade-bg);">
+      <svg width="16" height="16" fill="none" stroke="var(--trade-color)" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+    </div>
+    <div class="stat-info">
+      <div class="stat-val" id="stat-trades">0</div>
+      <div class="stat-label">Trades</div>
+    </div>
+  </div>
+  <div class="stat">
+    <div class="stat-icon" style="background:var(--warm-bg);">
+      <svg width="16" height="16" fill="none" stroke="var(--warm)" stroke-width="2" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+    </div>
+    <div class="stat-info">
+      <div class="stat-val" id="stat-hot">0</div>
+      <div class="stat-label">Hot</div>
+    </div>
+  </div>
+  <div class="stat">
+    <div class="stat-icon" style="background:var(--green-bg);">
+      <svg width="16" height="16" fill="none" stroke="var(--green)" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+    </div>
+    <div class="stat-info">
+      <div class="stat-val" id="stat-closed">0</div>
+      <div class="stat-label">Closed</div>
+    </div>
+  </div>
+  <div class="stat">
+    <div class="stat-icon" style="background:rgba(139,92,246,0.1);">
+      <svg width="16" height="16" fill="none" stroke="#8B5CF6" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+    </div>
+    <div class="stat-info">
+      <div class="stat-val" id="stat-proposal">0</div>
+      <div class="stat-label">Proposals</div>
+    </div>
+  </div>
+</div>
+
+<!-- FILTER TABS -->
+<div class="filter-bar">
+  <span class="filter-label">View:</span>
+  <button class="filter-tab active" data-f="all" onclick="setFilter('all')">
+    All Leads <span class="tab-count" id="tab-all">0</span>
+  </button>
+  <button class="filter-tab" data-f="realtor" onclick="setFilter('realtor')">
+    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+    Realtors <span class="tab-count" id="tab-realtor">0</span>
+  </button>
+  <button class="filter-tab" data-f="trade" onclick="setFilter('trade')">
+    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+    Trades <span class="tab-count" id="tab-trade">0</span>
+  </button>
+</div>
+
+<!-- BOARD -->
+<div class="main">
+  <div class="board" id="board"></div>
+</div>
+
+<!-- COLD EMAIL SECTION -->
+<div id="ce-section" style="display:none">
+
+  <!-- CE sub-nav -->
+  <div class="ce-filter-bar">
+    <span class="filter-label">Stage:</span>
+    <button class="ce-tab active" data-ce="all"          onclick="setCeFilter('all')">All</button>
+    <button class="ce-tab"        data-ce="Import"       onclick="setCeFilter('Import')">Import</button>
+    <button class="ce-tab"        data-ce="Queued"       onclick="setCeFilter('Queued')">Queued</button>
+    <button class="ce-tab"        data-ce="Contacted"    onclick="setCeFilter('Contacted')">Contacted</button>
+    <button class="ce-tab"        data-ce="Replied"      onclick="setCeFilter('Replied')">Replied</button>
+    <button class="ce-tab"        data-ce="Done"         onclick="setCeFilter('Done')">Done</button>
+    <button class="ce-tab"        data-ce="Promoted"     onclick="setCeFilter('Promoted')">Promoted</button>
+    <button class="ce-tab"        data-ce="Unsubscribed" onclick="setCeFilter('Unsubscribed')">Unsub</button>
+    <div class="ce-actions">
+      <label class="btn-import-csv" title="Import leads from a CSV file">
+        <input type="file" accept=".csv" id="csv-file-input" style="display:none" onchange="handleCsvImport(event)">
+        <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+        Import CSV
+      </label>
+      <button class="btn-bulk-queue" id="bulk-queue-btn" onclick="bulkQueueSelected()" disabled>
+        Queue Selected (<span id="bulk-count">0</span>)
+      </button>
+      <button class="ce-tab" data-ce="agent" onclick="setCeFilter('agent')" style="margin-left:6px">
+        <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.45 2 2 0 0 1 3.59 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.49a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21.73 16z"/></svg>
+        Agent
+      </button>
+    </div>
+  </div>
+
+  <!-- CE Lead table -->
+  <div id="ce-leads-panel">
+    <div class="ce-table-wrap">
+      <table class="ce-table">
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="select-all-ce" onchange="toggleSelectAllCe(this)"></th>
+            <th>Company</th>
+            <th>Contact</th>
+            <th>Email</th>
+            <th>City</th>
+            <th>Trade</th>
+            <th>Stage</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="ce-tbody"></tbody>
+      </table>
+      <div class="ce-empty" id="ce-empty" style="display:none">No leads found. Import a CSV to get started.</div>
+    </div>
+  </div>
+
+  <!-- Agent panel (lives under Cold Email) -->
+  <div id="agent-panel" style="display:none">
+    <div style="padding:24px 28px;max-width:860px">
+      <div class="agent-summary">
+        <div class="agent-stat-card"><div class="agent-stat-val" id="as-queued">–</div><div class="agent-stat-label">Queued</div></div>
+        <div class="agent-stat-card"><div class="agent-stat-val" id="as-emailed">–</div><div class="agent-stat-label">Emailed</div></div>
+        <div class="agent-stat-card"><div class="agent-stat-val" id="as-replied">–</div><div class="agent-stat-label">Replied</div></div>
+        <div class="agent-stat-card"><div class="agent-stat-val" id="as-done">–</div><div class="agent-stat-label">Done</div></div>
+      </div>
+      <p class="agent-hint">Set a lead's stage to "Queued" in the Cold Email tab to add it to the outreach queue.</p>
+      <div class="agent-ctl-row">
+        <label class="dry-run-label">
+          <input type="checkbox" id="dry-run-toggle" checked onchange="updateRunButtonLabel()">
+          <span class="toggle-switch"></span>
+          Dry Run
+        </label>
+        <button class="btn-agent-run" id="btn-run-agent" onclick="runAgent()">Run Outreach</button>
+        <button class="btn-agent-stop" id="btn-stop-agent" onclick="stopAgent()" disabled>&#9632; Stop</button>
+      </div>
+      <div class="agent-log-wrap">
+        <div class="agent-log-hdr">
+          <span>Agent Log</span>
+          <span id="agent-status-badge" class="agent-badge-idle">Idle</span>
+        </div>
+        <div class="agent-log" id="agent-log">
+          <div class="agent-log-empty">No runs yet. Click "Run Outreach" to preview what the agent would send.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- CONNECT OVERLAY -->
+<div class="connect-overlay" id="connect-overlay">
+  <div class="connect-card">
+    <div class="connect-icon">
+      <svg width="26" height="26" fill="none" stroke="var(--accent)" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+    </div>
+    <div class="connect-title">ScaleLab AI Pipeline</div>
+    <div class="connect-desc">Your leads are stored in Google Sheets. Sign in with Google to load your pipeline.</div>
+    <div class="config-warning" id="config-warning">
+      <strong>Setup required</strong><br>
+      Fill in <code>GOOGLE_CONFIG</code> at the top of the script block before using the app. See <code>SETUP.md</code> for step-by-step instructions.
+    </div>
+    <button class="connect-btn" id="connect-btn" onclick="signIn()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+      Sign in with Google
+    </button>
+  </div>
+</div>
+
+<!-- LOADING OVERLAY -->
+<div class="loading-overlay" id="loading-overlay">
+  <div class="spinner"></div>
+  <div class="loading-text" id="loading-text">Loading your leads…</div>
+</div>
+
+<!-- TOAST CONTAINER -->
+<div class="toast-container" id="toast-container"></div>
+
+<!-- ADD/EDIT MODAL -->
+<div class="overlay" id="modal-overlay" onclick="closeModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-title">New Lead</div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <form id="lead-form" onsubmit="saveLead(event)">
+      <div class="type-toggle">
+        <button type="button" class="type-toggle-btn active-realtor" id="toggle-realtor" onclick="setFormType('realtor')">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          Realtor
+        </button>
+        <button type="button" class="type-toggle-btn" id="toggle-trade" onclick="setFormType('trade')">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+          Tradesman
+        </button>
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>First Name *</label>
+          <input type="text" id="f-first" placeholder="John" required>
+        </div>
+        <div class="form-group">
+          <label>Last Name *</label>
+          <input type="text" id="f-last" placeholder="Smith" required>
+        </div>
+        <div class="form-group" id="field-brokerage">
+          <label>Brokerage</label>
+          <input type="text" id="f-brokerage" placeholder="RE/MAX, Sutton, etc.">
+        </div>
+        <div class="form-group" id="field-trade-type" style="display:none">
+          <label>Trade Type</label>
+          <select id="f-trade-type">
+            <option value="">Select trade…</option>
+            <option>Electrician</option><option>Plumber</option><option>HVAC</option>
+            <option>Roofer</option><option>Landscaper</option><option>General Contractor</option>
+            <option>Painter</option><option>Concrete</option><option>Flooring</option>
+            <option>Carpenter</option><option>Pest Control</option><option>Other</option>
+          </select>
+        </div>
+        <div class="form-group" id="field-company" style="display:none">
+          <label>Company Name</label>
+          <input type="text" id="f-company" placeholder="Smith Electric Ltd.">
+        </div>
+        <div class="form-group" id="field-city-realtor">
+          <label>City / Area</label>
+          <input type="text" id="f-city" placeholder="Vancouver, BC">
+        </div>
+        <div class="form-group" id="field-city-trade" style="display:none">
+          <label>City / Area</label>
+          <input type="text" id="f-city-trade" placeholder="Vancouver, BC">
+        </div>
+        <div class="form-group">
+          <label>Phone</label>
+          <input type="tel" id="f-phone" placeholder="604-555-0100">
+        </div>
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" id="f-email" placeholder="john@email.com">
+        </div>
+        <div class="form-group full">
+          <label>Current Website</label>
+          <input type="text" id="f-website" placeholder="johnsmith.com">
+        </div>
+        <div class="form-group">
+          <label>Stage</label>
+          <select id="f-stage">
+            <option value="new">New Lead</option>
+            <option value="called">Called</option>
+            <option value="warm">Warm</option>
+            <option value="hot">Hot</option>
+            <option value="proposal">Proposal Sent</option>
+            <option value="closed">Closed Won</option>
+            <option value="lost">Lost</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Priority</label>
+          <select id="f-priority">
+            <option value="cold">Cold</option>
+            <option value="warm">Warm</option>
+            <option value="hot">Hot</option>
+          </select>
+        </div>
+        <div class="form-group full">
+          <label>Follow-up Date</label>
+          <input type="date" id="f-followup">
+        </div>
+        <div class="form-group full">
+          <label>Notes</label>
+          <textarea id="f-notes" placeholder="Call notes, interests, objections…"></textarea>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn-save">Save Lead</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- DETAIL PANEL -->
+<div class="detail-overlay" id="detail-overlay" onclick="closeDetail(event)">
+  <div class="detail-panel" onclick="event.stopPropagation()">
+    <div class="detail-header">
+      <div class="detail-header-left">
+        <div class="detail-name" id="d-name"></div>
+        <div class="detail-sub"  id="d-sub"></div>
+        <div id="d-type-badge"></div>
+      </div>
+      <button class="modal-close" onclick="closeDetail()">✕</button>
+    </div>
+    <div class="detail-body">
+      <div>
+        <div class="detail-section-title">Stage</div>
+        <div class="stage-select-wrap" id="d-stages"></div>
+      </div>
+      <div>
+        <div class="detail-section-title">Contact Info</div>
+        <div class="detail-fields" id="d-fields"></div>
+      </div>
+      <div>
+        <div class="detail-section-title">Call Notes</div>
+        <textarea class="notes-area" id="d-notes" placeholder="Add call notes…"></textarea>
+        <button class="btn-save-notes" onclick="saveNotes()">Save Notes</button>
+      </div>
+    </div>
+    <div class="detail-footer">
+      <button class="btn-edit-full" onclick="editFromDetail()">Edit Lead</button>
+      <button class="btn-del-lead" onclick="deleteFromDetail()">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// CONFIGURATION — fill these in before first use (see SETUP.md)
+// ============================================================
+const GOOGLE_CONFIG = {
+  CLIENT_ID:      '506691003653-aed7r4uc8nrm6o6ovicg7t1f6822vrj6.apps.googleusercontent.com',
+  API_KEY:        'AIzaSyD5c7lXadzcw1-Gj-7VaU4EecEVDDA2RAk',
+  SPREADSHEET_ID: '1Ake-WYT3pq61IABTXjsEmPNDwl5gSMIedXlZmU6D2Mg',
+  SHEET_NAME:     'Leads'
+};
+
+// ============================================================
+// CONSTANTS
+// ============================================================
+const COLUMNS = [
+  'id','type','first','last','brokerage','tradeType','company',
+  'city','cityTrade','phone','email','website',
+  'stage','priority','followup','notes','created'
+];
+
+const COL_RANGE = `${GOOGLE_CONFIG.SHEET_NAME}!A:Q`;
+
+const STAGES = [
+  { id: 'new',      label: 'New Lead',      color: '#3B82F6' },
+  { id: 'called',   label: 'Called',        color: '#6366F1' },
+  { id: 'warm',     label: 'Warm',          color: '#F59E0B' },
+  { id: 'hot',      label: 'Hot',           color: '#EF4444' },
+  { id: 'proposal', label: 'Proposal Sent', color: '#8B5CF6' },
+  { id: 'closed',   label: 'Closed Won',    color: '#10B981' },
+  { id: 'lost',     label: 'Lost',          color: '#6B7280' },
+];
+
+// ============================================================
+// STATE
+// ============================================================
+let leads       = [];
+let rowMap      = new Map(); // lead.id → sheet row number (1-based, row 1 = header)
+let cachedSheetId = null;
+let editingId   = null;
+let detailId    = null;
+let searchQuery = '';
+let activeFilter = 'all';
+let formType    = 'realtor';
+let gapiInited  = false;
+let gisInited   = false;
+let tokenClient;
+let savingCount = 0;
+let savingTimer;
+
+// ============================================================
+// GOOGLE AUTH
+// ============================================================
+function isConfigured() {
+  return GOOGLE_CONFIG.CLIENT_ID      !== 'PASTE_HERE' &&
+         GOOGLE_CONFIG.API_KEY        !== 'PASTE_HERE' &&
+         GOOGLE_CONFIG.SPREADSHEET_ID !== 'PASTE_HERE';
+}
+
+function gapiLoaded() {
+  gapi.load('client', async () => {
+    try {
+      await gapi.client.init({
+        apiKey: GOOGLE_CONFIG.API_KEY,
+        discoveryDocs: ['https://sheets.googleapis.com/$discovery/rest?version=v4'],
+      });
+    } catch(e) {
+      console.warn('gapi init:', e.message || e);
+    }
+    gapiInited = true;
+    maybeEnableAuth();
+  });
+}
+
+function gisLoaded() {
+  if (isConfigured()) {
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CONFIG.CLIENT_ID,
+      scope: 'https://www.googleapis.com/auth/spreadsheets',
+      callback: handleTokenResponse,
+    });
+  }
+  gisInited = true;
+  maybeEnableAuth();
+}
+
+function maybeEnableAuth() {
+  if (!gapiInited || !gisInited) return;
+
+  if (!isConfigured()) {
+    document.getElementById('config-warning').style.display = 'block';
+    document.getElementById('connect-btn').style.display    = 'none';
+    return;
+  }
+
+  const token  = localStorage.getItem('scalelab_goog_token');
+  const expiry = parseInt(localStorage.getItem('scalelab_goog_expiry') || '0');
+  if (token && Date.now() < expiry) {
+    gapi.client.setToken({ access_token: token });
+    onAuthenticated();
+  } else {
+    document.getElementById('connect-overlay').style.display = 'flex';
+  }
+}
+
+function handleTokenResponse(resp) {
+  if (resp.error) {
+    showToast('Sign-in failed: ' + resp.error, 'error');
+    document.getElementById('connect-overlay').style.display = 'flex';
+    return;
+  }
+  const expiry = Date.now() + (resp.expires_in * 1000) - 60000;
+  localStorage.setItem('scalelab_goog_token', resp.access_token);
+  localStorage.setItem('scalelab_goog_expiry', String(expiry));
+  onAuthenticated();
+}
+
+async function signIn() {
+  if (!isConfigured() || !tokenClient) return;
+  document.getElementById('connect-btn').disabled = true;
+  tokenClient.requestAccessToken({ prompt: 'consent' });
+}
+
+function signOut() {
+  const tok = gapi.client.getToken();
+  if (tok) {
+    try { google.accounts.oauth2.revoke(tok.access_token, () => {}); } catch(e) {}
+  }
+  gapi.client.setToken('');
+  localStorage.removeItem('scalelab_goog_token');
+  localStorage.removeItem('scalelab_goog_expiry');
+  leads = [];
+  rowMap.clear();
+  cachedSheetId = null;
+  renderBoard();
+  document.getElementById('auth-chip').style.display    = 'none';
+  document.getElementById('connect-overlay').style.display = 'flex';
+  document.getElementById('connect-btn').disabled = false;
+}
+
+async function onAuthenticated() {
+  document.getElementById('connect-overlay').style.display = 'none';
+  document.getElementById('auth-chip').style.display = 'flex';
+  showLoadingOverlay('Loading your leads…');
+  try {
+    await ensureSheetSetup();
+    await loadLeads();
+    await migrateFromLocalStorage();
+  } catch(e) {
+    console.error('Init error:', e);
+    showToast('Could not load from Google Sheets. Check config and permissions.', 'error');
+  }
+  hideLoadingOverlay();
+  renderBoard();
+}
+
+// ============================================================
+// SHEET OPERATIONS
+// ============================================================
+async function ensureSheetSetup() {
+  const ss = await gapi.client.sheets.spreadsheets.get({
+    spreadsheetId: GOOGLE_CONFIG.SPREADSHEET_ID,
+  });
+  const sheet = ss.result.sheets.find(s => s.properties.title === GOOGLE_CONFIG.SHEET_NAME);
+  if (sheet) cachedSheetId = sheet.properties.sheetId;
+
+  const hResp = await gapi.client.sheets.spreadsheets.values.get({
+    spreadsheetId: GOOGLE_CONFIG.SPREADSHEET_ID,
+    range: `${GOOGLE_CONFIG.SHEET_NAME}!A1:Q1`,
+  });
+  const hVals = hResp.result.values;
+  if (!hVals || !hVals[0] || hVals[0][0] !== 'id') {
+    await gapi.client.sheets.spreadsheets.values.update({
+      spreadsheetId: GOOGLE_CONFIG.SPREADSHEET_ID,
+      range: `${GOOGLE_CONFIG.SHEET_NAME}!A1`,
+      valueInputOption: 'RAW',
+      resource: { values: [COLUMNS] },
+    });
+  }
+}
+
+async function loadLeads() {
+  const resp = await gapi.client.sheets.spreadsheets.values.get({
+    spreadsheetId: GOOGLE_CONFIG.SPREADSHEET_ID,
+    range: COL_RANGE,
+  });
+  const rows = resp.result.values || [];
+  rowMap.clear();
+  leads = rows.slice(1)
+    .map((row, idx) => {
+      const lead = {};
+      COLUMNS.forEach((col, i) => { lead[col] = row[i] || ''; });
+      lead.created = parseInt(lead.created) || Date.now();
+      if (lead.id) rowMap.set(lead.id, idx + 2); // +2: row 1 is header
+      return lead;
+    })
+    .filter(l => l.id);
+}
+
+async function syncLead(lead) {
+  setSaving(true);
+  const rowVals = [COLUMNS.map(col => lead[col] !== undefined ? String(lead[col]) : '')];
+  try {
+    if (rowMap.has(lead.id)) {
+      const rowNum = rowMap.get(lead.id);
+      await gapi.client.sheets.spreadsheets.values.update({
+        spreadsheetId: GOOGLE_CONFIG.SPREADSHEET_ID,
+        range: `${GOOGLE_CONFIG.SHEET_NAME}!A${rowNum}:Q${rowNum}`,
+        valueInputOption: 'RAW',
+        resource: { values: rowVals },
+      });
+    } else {
+      const resp = await gapi.client.sheets.spreadsheets.values.append({
+        spreadsheetId: GOOGLE_CONFIG.SPREADSHEET_ID,
+        range: COL_RANGE,
+        valueInputOption: 'RAW',
+        insertDataOption: 'INSERT_ROWS',
+        resource: { values: rowVals },
+      });
+      const updatedRange = resp.result.updates.updatedRange; // e.g. "Leads!A5:Q5"
+      const m = updatedRange.match(/!A(\d+)/);
+      if (m) rowMap.set(lead.id, parseInt(m[1]));
+    }
+  } catch(e) {
+    handleApiError(e);
+  } finally {
+    setSaving(false);
+  }
+}
+
+async function deleteLeadFromSheet(id) {
+  if (!rowMap.has(id)) return;
+  const rowNum = rowMap.get(id);
+  setSaving(true);
+  try {
+    if (cachedSheetId === null) {
+      const ss = await gapi.client.sheets.spreadsheets.get({
+        spreadsheetId: GOOGLE_CONFIG.SPREADSHEET_ID,
+      });
+      const sheet = ss.result.sheets.find(s => s.properties.title === GOOGLE_CONFIG.SHEET_NAME);
+      cachedSheetId = sheet ? sheet.properties.sheetId : 0;
+    }
+    await gapi.client.sheets.spreadsheets.batchUpdate({
+      spreadsheetId: GOOGLE_CONFIG.SPREADSHEET_ID,
+      resource: {
+        requests: [{
+          deleteDimension: {
+            range: {
+              sheetId: cachedSheetId,
+              dimension: 'ROWS',
+              startIndex: rowNum - 1, // 0-based
+              endIndex: rowNum,
+            }
+          }
+        }]
+      }
+    });
+    rowMap.delete(id);
+    rowMap.forEach((r, lid) => { if (r > rowNum) rowMap.set(lid, r - 1); });
+  } catch(e) {
+    handleApiError(e);
+  } finally {
+    setSaving(false);
+  }
+}
+
+// ============================================================
+// MIGRATION — one-time copy from localStorage → Sheets
+// ============================================================
+async function migrateFromLocalStorage() {
+  if (localStorage.getItem('scalelab_migrated_to_sheets') === 'true') return;
+
+  let oldLeads = [];
+  // Read from any previous key (new or legacy)
+  for (const key of ['scalelab_pipeline_leads', 'lp_pipeline_leads']) {
+    const raw = localStorage.getItem(key);
+    if (raw) { try { oldLeads = JSON.parse(raw); break; } catch(e) {} }
+  }
+  // Fall back to old realtor-only keys
+  if (!oldLeads.length) {
+    for (const key of ['scalelab_realtor_leads', 'lp_realtor_leads']) {
+      const raw = localStorage.getItem(key);
+      if (raw) { try { oldLeads = JSON.parse(raw).map(l => ({...l, type: l.type || 'realtor'})); break; } catch(e) {} }
+    }
+  }
+
+  const existingIds = new Set(leads.map(l => l.id));
+  const toMigrate   = oldLeads.filter(l => l.id && !existingIds.has(l.id));
+
+  if (toMigrate.length > 0) {
+    showLoadingOverlay(`Migrating ${toMigrate.length} lead${toMigrate.length > 1 ? 's' : ''} to Google Sheets…`);
+    for (const lead of toMigrate) {
+      lead.type = lead.type || 'realtor';
+      await syncLead(lead);
+      leads.unshift(lead);
+    }
+    showToast(`Migrated ${toMigrate.length} lead${toMigrate.length > 1 ? 's' : ''} to Google Sheets.`, 'success');
+  }
+
+  localStorage.setItem('scalelab_migrated_to_sheets', 'true');
+}
+
+// ============================================================
+// UI HELPERS
+// ============================================================
+function handleApiError(err) {
+  console.error('Sheets API error:', err);
+  if (err.status === 401) {
+    showToast('Session expired — please sign in again.', 'error');
+    localStorage.removeItem('scalelab_goog_token');
+    localStorage.removeItem('scalelab_goog_expiry');
+    document.getElementById('auth-chip').style.display    = 'none';
+    document.getElementById('connect-overlay').style.display = 'flex';
+    document.getElementById('connect-btn').disabled = false;
+  } else {
+    showToast('Sync failed. Your changes are in memory but may not have saved.', 'error');
+  }
+}
+
+function setSaving(on) {
+  if (on) {
+    savingCount++;
+    document.getElementById('saving-badge').style.display = 'flex';
+    clearTimeout(savingTimer);
+  } else {
+    savingCount = Math.max(0, savingCount - 1);
+    if (savingCount === 0) {
+      savingTimer = setTimeout(() => {
+        document.getElementById('saving-badge').style.display = 'none';
+      }, 700);
+    }
+  }
+}
+
+function showLoadingOverlay(msg) {
+  document.getElementById('loading-text').textContent = msg || 'Loading…';
+  document.getElementById('loading-overlay').style.display = 'flex';
+}
+
+function hideLoadingOverlay() {
+  document.getElementById('loading-overlay').style.display = 'none';
+}
+
+let toastSeq = 0;
+function showToast(msg, type = 'info') {
+  const container = document.getElementById('toast-container');
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  el.textContent = msg;
+  container.appendChild(el);
+  requestAnimationFrame(() => { requestAnimationFrame(() => el.classList.add('show')); });
+  setTimeout(() => {
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 300);
+  }, 3500);
+}
+
+// ============================================================
+// FILTER TABS
+// ============================================================
+function setFilter(f) {
+  document.querySelectorAll('.filter-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.f === f);
+  });
+  activeFilter = f;
+  renderBoard();
+}
+
+// ============================================================
+// FORM TYPE TOGGLE
+// ============================================================
+function setFormType(type) {
+  formType = type;
+  const r = type === 'realtor';
+  document.getElementById('toggle-realtor').className = 'type-toggle-btn' + (r  ? ' active-realtor' : '');
+  document.getElementById('toggle-trade').className   = 'type-toggle-btn' + (!r ? ' active-trade'   : '');
+  document.getElementById('field-brokerage').style.display    = r  ? '' : 'none';
+  document.getElementById('field-trade-type').style.display   = r  ? 'none' : '';
+  document.getElementById('field-company').style.display      = r  ? 'none' : '';
+  document.getElementById('field-city-realtor').style.display = r  ? '' : 'none';
+  document.getElementById('field-city-trade').style.display   = r  ? 'none' : '';
+}
+
+// ============================================================
+// BOARD RENDERING
+// ============================================================
+function renderBoard() {
+  const board = document.getElementById('board');
+  const q     = searchQuery.toLowerCase();
+  board.innerHTML = '';
+
+  const filtered = leads.filter(l => {
+    if (activeFilter !== 'all' && l.type !== activeFilter) return false;
+    if (!q) return true;
+    return [l.first, l.last, l.brokerage, l.company, l.tradeType, l.city, l.cityTrade, l.phone, l.email, l.notes]
+      .some(f => f && f.toLowerCase().includes(q));
+  });
+
+  document.getElementById('tab-all').textContent     = leads.length;
+  document.getElementById('tab-realtor').textContent = leads.filter(l => l.type === 'realtor').length;
+  document.getElementById('tab-trade').textContent   = leads.filter(l => l.type === 'trade').length;
+  document.getElementById('stat-total').textContent    = leads.length;
+  document.getElementById('stat-realtors').textContent = leads.filter(l => l.type === 'realtor').length;
+  document.getElementById('stat-trades').textContent   = leads.filter(l => l.type === 'trade').length;
+  document.getElementById('stat-hot').textContent      = leads.filter(l => l.stage === 'hot').length;
+  document.getElementById('stat-closed').textContent   = leads.filter(l => l.stage === 'closed').length;
+  document.getElementById('stat-proposal').textContent = leads.filter(l => l.stage === 'proposal').length;
+
+  STAGES.forEach(stage => {
+    const stageLeads = filtered.filter(l => l.stage === stage.id);
+    const col = document.createElement('div');
+    col.className = 'col';
+    col.innerHTML = `
+      <div class="col-header">
+        <div class="col-title"><div class="col-dot" style="background:${stage.color}"></div>${stage.label}</div>
+        <div class="col-count">${stageLeads.length}</div>
+      </div>
+      <div class="col-body" id="col-${stage.id}">
+        ${stageLeads.length === 0 ? '<div class="empty-col">No leads</div>' : ''}
+      </div>`;
+    board.appendChild(col);
+    const body = col.querySelector(`#col-${stage.id}`);
+    stageLeads.forEach(lead => body.appendChild(buildCard(lead)));
+  });
+}
+
+function buildCard(lead) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.dataset.stage = lead.stage;
+
+  const fu = lead.followup ? formatDate(lead.followup) : null;
+  const priorityMap   = { hot: 'Hot', warm: 'Warm', cold: '' };
+  const priorityClass = { hot: 'priority-hot', warm: 'priority-warm', cold: '' };
+  const isRealtor = lead.type !== 'trade';
+  const subtitle  = isRealtor
+    ? lead.brokerage
+    : [lead.tradeType, lead.company].filter(Boolean).join(' · ');
+  const typeLabel = isRealtor ? 'Realtor' : (lead.tradeType || 'Trade');
+  const typeCls   = isRealtor ? 'type-realtor' : 'type-trade';
+  const city      = lead.city || lead.cityTrade || '';
+
+  let metaHtml = '';
+  if (lead.phone) metaHtml += `<div class="meta-row">${icon('phone')} ${lead.phone}</div>`;
+  if (city)       metaHtml += `<div class="meta-row">${icon('loc')} ${city}</div>`;
+  if (lead.website) metaHtml += `<div class="meta-row">${icon('web')} ${lead.website}</div>`;
+
+  const noteHtml = lead.notes
+    ? `<div class="card-note">${lead.notes.slice(0,120)}${lead.notes.length > 120 ? '…' : ''}</div>` : '';
+
+  const fuHtml = fu
+    ? `<span class="followup-tag ${fu.cls}">
+        <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        ${fu.label}</span>` : `<span></span>`;
+
+  card.innerHTML = `
+    <div class="card-top">
+      <div>
+        <div class="card-name">${lead.first} ${lead.last}</div>
+        ${subtitle ? `<div class="card-sub">${subtitle}</div>` : ''}
+      </div>
+      <div class="card-badges">
+        <div class="type-badge ${typeCls}">${typeLabel}</div>
+        ${lead.priority && lead.priority !== 'cold' ? `<div class="priority-badge ${priorityClass[lead.priority]}">${priorityMap[lead.priority]}</div>` : ''}
+      </div>
+    </div>
+    ${metaHtml ? `<div class="card-meta">${metaHtml}</div>` : ''}
+    ${noteHtml}
+    <div class="card-footer">
+      ${fuHtml}
+      <div class="card-actions">
+        <button class="action-btn" onclick="event.stopPropagation();openEdit('${lead.id}')" title="Edit">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+        <button class="action-btn delete" onclick="event.stopPropagation();deleteLead('${lead.id}')" title="Delete">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+        </button>
+      </div>
+    </div>`;
+
+  card.addEventListener('click', () => openDetail(lead.id));
+  return card;
+}
+
+// ============================================================
+// ADD / EDIT MODAL
+// ============================================================
+function openAdd() {
+  editingId = null;
+  document.getElementById('modal-title').textContent = 'New Lead';
+  document.getElementById('lead-form').reset();
+  setFormType('realtor');
+  document.getElementById('modal-overlay').classList.add('open');
+}
+
+function openEdit(id) {
+  const lead = leads.find(l => l.id === id);
+  if (!lead) return;
+  editingId = id;
+  document.getElementById('modal-title').textContent = 'Edit Lead';
+  setFormType(lead.type || 'realtor');
+  document.getElementById('f-first').value      = lead.first     || '';
+  document.getElementById('f-last').value       = lead.last      || '';
+  document.getElementById('f-brokerage').value  = lead.brokerage || '';
+  document.getElementById('f-trade-type').value = lead.tradeType || '';
+  document.getElementById('f-company').value    = lead.company   || '';
+  document.getElementById('f-city').value       = lead.city      || '';
+  document.getElementById('f-city-trade').value = lead.cityTrade || '';
+  document.getElementById('f-phone').value      = lead.phone     || '';
+  document.getElementById('f-email').value      = lead.email     || '';
+  document.getElementById('f-website').value    = lead.website   || '';
+  document.getElementById('f-stage').value      = lead.stage     || 'new';
+  document.getElementById('f-priority').value   = lead.priority  || 'cold';
+  document.getElementById('f-followup').value   = lead.followup  || '';
+  document.getElementById('f-notes').value      = lead.notes     || '';
+  document.getElementById('modal-overlay').classList.add('open');
+}
+
+function saveLead(e) {
+  e.preventDefault();
+  const r = formType === 'realtor';
+  const lead = {
+    id:        editingId || uid(),
+    type:      formType,
+    first:     document.getElementById('f-first').value.trim(),
+    last:      document.getElementById('f-last').value.trim(),
+    brokerage: r  ? document.getElementById('f-brokerage').value.trim()  : '',
+    tradeType: !r ? document.getElementById('f-trade-type').value        : '',
+    company:   !r ? document.getElementById('f-company').value.trim()    : '',
+    city:      r  ? document.getElementById('f-city').value.trim()       : '',
+    cityTrade: !r ? document.getElementById('f-city-trade').value.trim() : '',
+    phone:    document.getElementById('f-phone').value.trim(),
+    email:    document.getElementById('f-email').value.trim(),
+    website:  document.getElementById('f-website').value.trim(),
+    stage:    document.getElementById('f-stage').value,
+    priority: document.getElementById('f-priority').value,
+    followup: document.getElementById('f-followup').value,
+    notes:    document.getElementById('f-notes').value.trim(),
+    created:  editingId ? (leads.find(l => l.id === editingId)?.created || Date.now()) : Date.now(),
+  };
+
+  if (editingId) {
+    leads[leads.findIndex(l => l.id === editingId)] = lead;
+  } else {
+    leads.unshift(lead);
+  }
+  closeModal();
+  renderBoard();
+  syncLead(lead);
+}
+
+function deleteLead(id) {
+  if (!confirm('Delete this lead?')) return;
+  leads = leads.filter(l => l.id !== id);
+  renderBoard();
+  deleteLeadFromSheet(id);
+}
+
+function closeModal(e) {
+  if (e && e.target !== document.getElementById('modal-overlay')) return;
+  document.getElementById('modal-overlay').classList.remove('open');
+  editingId = null;
+}
+
+// ============================================================
+// DETAIL PANEL
+// ============================================================
+function openDetail(id) {
+  const lead = leads.find(l => l.id === id);
+  if (!lead) return;
+  detailId = id;
+
+  const r = lead.type !== 'trade';
+  const city = lead.city || lead.cityTrade || '';
+  const sub  = r
+    ? [lead.brokerage, city].filter(Boolean).join(' · ')
+    : [lead.tradeType, lead.company, city].filter(Boolean).join(' · ');
+
+  document.getElementById('d-name').textContent = `${lead.first} ${lead.last}`;
+  document.getElementById('d-sub').textContent  = sub;
+  document.getElementById('d-type-badge').innerHTML =
+    `<span class="type-badge ${r ? 'type-realtor' : 'type-trade'}">${r ? 'Realtor' : (lead.tradeType || 'Trade')}</span>`;
+
+  document.getElementById('d-stages').innerHTML = STAGES.map(s =>
+    `<button class="stage-chip ${lead.stage === s.id ? 'active' : ''}" data-s="${s.id}" onclick="setStage('${id}','${s.id}')">${s.label}</button>`
+  ).join('');
+
+  const rows = [
+    lead.phone    && { label: 'Phone',     val: `<a href="tel:${lead.phone}">${lead.phone}</a>` },
+    lead.email    && { label: 'Email',     val: `<a href="mailto:${lead.email}">${lead.email}</a>` },
+    lead.website  && { label: 'Website',   val: `<a href="http://${lead.website.replace(/^https?:\/\//,'')}" target="_blank">${lead.website}</a>` },
+    !r && lead.company && { label: 'Company', val: lead.company },
+    lead.followup && { label: 'Follow-up', val: new Date(lead.followup+'T00:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}) },
+    lead.priority && { label: 'Priority',  val: lead.priority.charAt(0).toUpperCase() + lead.priority.slice(1) },
+    { label: 'Added', val: new Date(lead.created).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) },
+  ].filter(Boolean);
+
+  document.getElementById('d-fields').innerHTML = rows.map(row =>
+    `<div class="detail-field"><span class="detail-field-label">${row.label}</span><span class="detail-field-val">${row.val}</span></div>`
+  ).join('');
+
+  document.getElementById('d-notes').value = lead.notes || '';
+  document.getElementById('detail-overlay').classList.add('open');
+}
+
+function setStage(id, stage) {
+  const lead = leads.find(l => l.id === id);
+  if (!lead) return;
+  lead.stage = stage;
+  renderBoard();
+  openDetail(id);
+  syncLead(lead);
+}
+
+function saveNotes() {
+  const lead = leads.find(l => l.id === detailId);
+  if (!lead) return;
+  lead.notes = document.getElementById('d-notes').value.trim();
+  renderBoard();
+  syncLead(lead);
+  const btn = document.querySelector('.btn-save-notes');
+  btn.textContent = 'Saved ✓';
+  setTimeout(() => btn.textContent = 'Save Notes', 1500);
+}
+
+function editFromDetail()   { closeDetail(); openEdit(detailId); }
+
+function deleteFromDetail() {
+  if (!confirm('Delete this lead?')) return;
+  const id = detailId;
+  leads = leads.filter(l => l.id !== id);
+  closeDetail();
+  renderBoard();
+  deleteLeadFromSheet(id);
+}
+
+function closeDetail(e) {
+  if (e && e.target !== document.getElementById('detail-overlay')) return;
+  document.getElementById('detail-overlay').classList.remove('open');
+}
+
+// ============================================================
+// UTILITIES
+// ============================================================
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
+function formatDate(d) {
+  if (!d) return null;
+  const today  = new Date(); today.setHours(0,0,0,0);
+  const target = new Date(d + 'T00:00:00');
+  const diff   = Math.ceil((target - today) / 86400000);
+  if (diff < 0)   return { label: 'Overdue',   cls: 'overdue' };
+  if (diff === 0) return { label: 'Today',     cls: 'ok' };
+  if (diff === 1) return { label: 'Tomorrow',  cls: 'ok' };
+  return { label: target.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), cls: '' };
+}
+
+function icon(type) {
+  const map = {
+    phone: `<svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.45 2 2 0 0 1 3.59 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.49a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21.73 16z"/></svg>`,
+    web:   `<svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`,
+    loc:   `<svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>`,
+  };
+  return map[type] || '';
+}
+
+// ============================================================
+// AGENT TAB
+// ============================================================
+let agentPollTimer = null;
+
+async function showAgentTab() {
+  try {
+    const sr = await fetch('/api/agent/status');
+    if (sr.status === 401) {
+      showToast('Server needs Google auth — visit /auth/google', 'warning');
+      return;
+    }
+    if (sr.ok) {
+      const state = await sr.json();
+      renderAgentLog(state.log);
+      if (state.running) {
+        setAgentRunning(true);
+        if (!agentPollTimer) agentPollTimer = setInterval(pollAgentStatus, 2000);
+      } else {
+        setAgentRunning(false);
+        updateAgentBadge(state.exitCode);
+      }
+    }
+  } catch (e) { /* server may not be running */ }
+  refreshAgentLeadCounts();
+}
+
+async function runAgent() {
+  const dryRun = document.getElementById('dry-run-toggle').checked;
+  try {
+    const resp = await fetch('/api/agent/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dryRun }),
+    });
+    if (resp.status === 409) { showToast('Agent is already running.', 'warning'); return; }
+    if (resp.status === 401) { showToast('Server not authenticated — visit /auth/google', 'error'); return; }
+    if (!resp.ok) { showToast('Could not start agent: ' + resp.status, 'error'); return; }
+    setAgentRunning(true);
+    document.getElementById('agent-log').innerHTML = '';
+    pollAgentStatus();
+    agentPollTimer = setInterval(pollAgentStatus, 2000);
+  } catch (e) { showToast('Agent request failed: ' + e.message, 'error'); }
+}
+
+async function stopAgent() {
+  try { await fetch('/api/agent/stop', { method: 'POST' }); } catch (e) {}
+}
+
+async function pollAgentStatus() {
+  try {
+    const resp = await fetch('/api/agent/status');
+    if (!resp.ok) return;
+    const state = await resp.json();
+    renderAgentLog(state.log);
+    if (!state.running) {
+      clearInterval(agentPollTimer);
+      agentPollTimer = null;
+      setAgentRunning(false);
+      updateAgentBadge(state.exitCode);
+      if (state.exitCode === 0 || state.exitCode === null) {
+        showToast('Agent run complete.', 'success');
+      } else {
+        showToast('Agent exited with code ' + state.exitCode + '.', 'warning');
+      }
+      refreshAgentLeadCounts();
+    }
+  } catch (e) {}
+}
+
+function setAgentRunning(running) {
+  const runBtn  = document.getElementById('btn-run-agent');
+  const stopBtn = document.getElementById('btn-stop-agent');
+  const badge   = document.getElementById('agent-status-badge');
+  runBtn.disabled  = running;
+  stopBtn.disabled = !running;
+  if (running) {
+    badge.className   = 'agent-badge-running';
+    badge.textContent = '● Running';
+    const dryRun = document.getElementById('dry-run-toggle').checked;
+    runBtn.textContent = dryRun ? 'Dry Running…' : 'Sending…';
+    runBtn.classList.remove('live');
+  } else {
+    updateRunButtonLabel();
+  }
+}
+
+function updateAgentBadge(exitCode) {
+  const badge = document.getElementById('agent-status-badge');
+  if (exitCode === null || exitCode === undefined) {
+    badge.className = 'agent-badge-idle'; badge.textContent = 'Idle';
+  } else if (exitCode === 0) {
+    badge.className = 'agent-badge-done'; badge.textContent = 'Done ✓';
+  } else {
+    badge.className = 'agent-badge-error'; badge.textContent = 'Error (exit ' + exitCode + ')';
+  }
+}
+
+function updateRunButtonLabel() {
+  const dryRun = document.getElementById('dry-run-toggle').checked;
+  const btn    = document.getElementById('btn-run-agent');
+  if (!btn) return;
+  if (dryRun) {
+    btn.textContent = 'Run Outreach';
+    btn.classList.remove('live');
+  } else {
+    btn.textContent = '⚠ SEND FOR REAL';
+    btn.classList.add('live');
+  }
+}
+
+function renderAgentLog(entries) {
+  const log = document.getElementById('agent-log');
+  if (!entries || entries.length === 0) {
+    log.innerHTML = '<div class="agent-log-empty">No output yet…</div>';
+    return;
+  }
+  const html = entries.map(e => {
+    const t  = new Date(e.ts);
+    const ts = [t.getHours(), t.getMinutes(), t.getSeconds()]
+      .map(n => String(n).padStart(2, '0')).join(':');
+    const safe = (e.line || '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return `<div class="log-line"><span class="log-ts">${ts}</span><span>${safe}</span></div>`;
+  }).join('');
+  log.innerHTML = html;
+  log.scrollTop = log.scrollHeight;
+}
+
+async function refreshAgentLeadCounts() {
+  try {
+    const resp = await fetch('/api/coldemail');
+    if (!resp.ok) { ['as-queued','as-emailed','as-replied','as-done'].forEach(id => document.getElementById(id).textContent = '–'); return; }
+    const all = await resp.json();
+    document.getElementById('as-queued').textContent  = all.filter(l => l.stage === 'Queued').length;
+    document.getElementById('as-emailed').textContent = all.filter(l => l.emailStatus === 'emailed').length;
+    document.getElementById('as-replied').textContent = all.filter(l => l.emailStatus === 'replied').length;
+    document.getElementById('as-done').textContent    = all.filter(l => l.emailStatus === 'done').length;
+  } catch (e) {}
+}
+
+// ============================================================
+// MOTION SWITCHER (Cold Calls ↔ Cold Email)
+// ============================================================
+let currentMotion  = 'cold-calls';
+let ceLeads        = [];
+let ceActiveFilter = 'all';
+let ceSelected     = new Set();
+
+const CE_STAGES = ['Import','Queued','Contacted','Replied','Done','Promoted','Unsubscribed'];
+
+function setMotion(m) {
+  currentMotion = m;
+  const isEmail = m === 'cold-email';
+  document.querySelector('.stats-bar').style.display   = isEmail ? 'none' : '';
+  document.querySelector('.filter-bar').style.display  = isEmail ? 'none' : '';
+  document.querySelector('.main').style.display        = isEmail ? 'none' : '';
+  document.getElementById('ce-section').style.display  = isEmail ? 'block' : 'none';
+  document.querySelectorAll('.motion-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.m === m)
+  );
+  if (isEmail) {
+    ceSelected.clear();
+    updateBulkQueueBtn();
+    loadCeLeads();
+  }
+}
+
+// ── CE FILTER & TABLE ────────────────────────────────────────────────────────
+
+function setCeFilter(f) {
+  ceActiveFilter = f;
+  const isAgent = f === 'agent';
+  document.getElementById('ce-leads-panel').style.display = isAgent ? 'none' : 'block';
+  document.getElementById('agent-panel').style.display    = isAgent ? 'block' : 'none';
+  document.querySelectorAll('.ce-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.ce === f)
+  );
+  if (isAgent) {
+    showAgentTab();
+  } else {
+    renderCeTable();
+  }
+}
+
+async function loadCeLeads() {
+  try {
+    const resp = await fetch('/api/coldemail');
+    if (resp.status === 401) { showToast('Server needs Google auth — visit /auth/google', 'warning'); return; }
+    if (!resp.ok) { showToast('Could not load cold email leads: ' + resp.status, 'error'); return; }
+    ceLeads = await resp.json();
+    renderCeTable();
+    refreshAgentLeadCounts();
+  } catch (e) { showToast('Could not reach server: ' + e.message, 'error'); }
+}
+
+function renderCeTable() {
+  const tbody    = document.getElementById('ce-tbody');
+  const empty    = document.getElementById('ce-empty');
+  const selAll   = document.getElementById('select-all-ce');
+  const filtered = ceActiveFilter === 'all' ? ceLeads : ceLeads.filter(l => l.stage === ceActiveFilter);
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = '';
+    empty.style.display = 'block';
+    if (selAll) selAll.checked = false;
+    return;
+  }
+  empty.style.display = 'none';
+
+  tbody.innerHTML = filtered.map(l => {
+    const checked  = ceSelected.has(l.id) ? 'checked' : '';
+    const stageOpts = CE_STAGES.map(s =>
+      `<option value="${s}"${l.stage === s ? ' selected' : ''}>${s}</option>`
+    ).join('');
+    const emailSafe = (l.email || '').replace(/"/g, '&quot;');
+    return `<tr data-id="${l.id}">
+      <td><input type="checkbox" class="ce-row-check" data-id="${l.id}" ${checked} onchange="toggleCeRow(this)"></td>
+      <td class="ce-td-company">${esc(l.company) || '<span style="color:var(--text-muted)">—</span>'}</td>
+      <td>${esc(l.contactName) || '—'}</td>
+      <td class="ce-td-email">${l.email ? `<a href="mailto:${emailSafe}">${esc(l.email)}</a>` : '—'}</td>
+      <td>${esc(l.city) || '—'}</td>
+      <td>${esc(l.tradeType) || '—'}</td>
+      <td><select class="ce-stage-select" onchange="setCeLeadStage('${l.id}',this.value)">${stageOpts}</select></td>
+      <td style="white-space:nowrap;display:flex;gap:6px;align-items:center">
+        <button class="btn-promote" onclick="promoteLead('${l.id}')">↗ Promote</button>
+        <button class="btn-ce-del"  onclick="deleteCeLead('${l.id}')" title="Delete">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+        </button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function esc(s) {
+  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function toggleCeRow(cb) {
+  if (cb.checked) ceSelected.add(cb.dataset.id); else ceSelected.delete(cb.dataset.id);
+  updateBulkQueueBtn();
+}
+
+function toggleSelectAllCe(cb) {
+  document.querySelectorAll('.ce-row-check').forEach(el => {
+    el.checked = cb.checked;
+    if (cb.checked) ceSelected.add(el.dataset.id); else ceSelected.delete(el.dataset.id);
+  });
+  updateBulkQueueBtn();
+}
+
+function updateBulkQueueBtn() {
+  const btn = document.getElementById('bulk-queue-btn');
+  const cnt = document.getElementById('bulk-count');
+  if (!btn) return;
+  btn.disabled = ceSelected.size === 0;
+  if (cnt) cnt.textContent = ceSelected.size;
+}
+
+// ── CE ACTIONS ───────────────────────────────────────────────────────────────
+
+async function setCeLeadStage(id, stage) {
+  const lead = ceLeads.find(l => l.id === id);
+  if (!lead) return;
+  const prev = lead.stage;
+  lead.stage = stage;
+  try {
+    const resp = await fetch(`/api/coldemail/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(lead),
+    });
+    if (!resp.ok) { lead.stage = prev; showToast('Could not update stage', 'error'); }
+    else renderCeTable();
+  } catch (e) { lead.stage = prev; showToast('Update failed: ' + e.message, 'error'); }
+}
+
+async function bulkQueueSelected() {
+  if (ceSelected.size === 0) return;
+  const ids = [...ceSelected];
+  let done = 0;
+  for (const id of ids) {
+    const lead = ceLeads.find(l => l.id === id);
+    if (!lead) continue;
+    const prev = lead.stage;
+    lead.stage = 'Queued';
+    try {
+      const resp = await fetch(`/api/coldemail/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(lead),
+      });
+      if (resp.ok) done++; else lead.stage = prev;
+    } catch (e) { lead.stage = prev; }
+  }
+  ceSelected.clear();
+  updateBulkQueueBtn();
+  showToast(`Queued ${done} lead${done !== 1 ? 's' : ''}.`, 'success');
+  renderCeTable();
+}
+
+async function promoteLead(id) {
+  const lead = ceLeads.find(l => l.id === id);
+  const name = lead ? (lead.contactName || lead.company || id) : id;
+  if (!confirm(`Promote "${name}" to the Cold Calls pipeline?`)) return;
+  try {
+    const resp = await fetch(`/api/coldemail/${id}/promote`, { method: 'POST' });
+    if (resp.status === 401) { showToast('Server not authenticated — visit /auth/google', 'error'); return; }
+    if (!resp.ok) { showToast('Promote failed: ' + resp.status, 'error'); return; }
+    showToast(`"${name}" added to Cold Calls pipeline.`, 'success');
+    loadCeLeads();
+  } catch (e) { showToast('Promote failed: ' + e.message, 'error'); }
+}
+
+async function deleteCeLead(id) {
+  const lead = ceLeads.find(l => l.id === id);
+  const name = lead ? (lead.company || lead.contactName || id) : id;
+  if (!confirm(`Delete "${name}" from Cold Email?`)) return;
+  try {
+    const resp = await fetch(`/api/coldemail/${id}`, { method: 'DELETE' });
+    if (!resp.ok) { showToast('Delete failed', 'error'); return; }
+    ceLeads = ceLeads.filter(l => l.id !== id);
+    ceSelected.delete(id);
+    updateBulkQueueBtn();
+    renderCeTable();
+    showToast(`"${name}" deleted.`, 'success');
+  } catch (e) { showToast('Delete failed: ' + e.message, 'error'); }
+}
+
+// ── CSV IMPORT ───────────────────────────────────────────────────────────────
+
+function handleCsvImport(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    try {
+      const rows = parseCSV(e.target.result);
+      if (!rows.length) { showToast('No data rows found in CSV.', 'warning'); return; }
+      showToast(`Importing ${rows.length} row(s)…`, 'info');
+      const resp = await fetch('/api/coldemail/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(rows),
+      });
+      if (resp.status === 401) { showToast('Server not authenticated — visit /auth/google', 'error'); return; }
+      if (!resp.ok) { showToast('Import failed: ' + resp.status, 'error'); return; }
+      const { added, skipped } = await resp.json();
+      showToast(`Imported: ${added} added, ${skipped} skipped (duplicate emails).`, added > 0 ? 'success' : 'warning');
+      loadCeLeads();
+    } catch (err) { showToast('CSV error: ' + err.message, 'error'); }
+    event.target.value = '';
+  };
+  reader.readAsText(file);
+}
+
+function parseCSV(text) {
+  const lines = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n').filter(l => l.trim());
+  if (lines.length < 2) return [];
+  const headers = splitCSVLine(lines[0]).map(h => h.trim().toLowerCase().replace(/[\s-]+/g,'_'));
+  const MAP = {
+    company:     ['company','business','company_name','business_name'],
+    email:       ['email','email_address','e_mail'],
+    contactName: ['contactname','contact_name','contact','name','full_name','owner'],
+    city:        ['city','location','city_area','area'],
+    tradeType:   ['tradetype','trade_type','trade','type','industry'],
+    website:     ['website','url','web','site'],
+    notes:       ['notes','note','comments'],
+    reviewCount: ['reviewcount','review_count','reviews','numreviews','num_reviews'],
+    rating:      ['rating','google_rating','googlerating','stars','score'],
+    tier:        ['tier','segment','priority_tier'],
+    siteContext: ['sitecontext','site_context','context','site_text'],
+  };
+  const colMap = {};
+  for (const [field, aliases] of Object.entries(MAP)) {
+    for (const alias of aliases) {
+      const idx = headers.indexOf(alias);
+      if (idx !== -1) { colMap[field] = idx; break; }
+    }
+  }
+  return lines.slice(1).map(line => {
+    const vals = splitCSVLine(line);
+    const row  = {};
+    for (const [field, idx] of Object.entries(colMap)) row[field] = (vals[idx] || '').trim();
+    return row;
+  }).filter(r => r.email);
+}
+
+function splitCSVLine(line) {
+  const result = [];
+  let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') {
+      if (inQ && line[i+1] === '"') { cur += '"'; i++; } else inQ = !inQ;
+    } else if (c === ',' && !inQ) { result.push(cur); cur = ''; }
+    else cur += c;
+  }
+  result.push(cur);
+  return result;
+}
+
+// ============================================================
+// INIT
+// ============================================================
+document.getElementById('search').addEventListener('input', function() {
+  searchQuery = this.value;
+  renderBoard();
+});
+
+// Initial empty render so board structure is present
+renderBoard();
+</script>
+
+<!-- Google API scripts must be after our script block so gapiLoaded/gisLoaded are defined first -->
+<script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
+<script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
+</body>
+</html>

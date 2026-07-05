@@ -1,0 +1,1394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LaunchPetal — Sales Pipeline</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0A0A0A;
+    --surface: #141414;
+    --card: #1A1A1A;
+    --border: #2A2A2A;
+    --border-hover: #3A3A3A;
+    --text: #F5F5F5;
+    --text-secondary: #888;
+    --text-muted: #555;
+    --accent: #6366F1;
+    --accent-glow: rgba(99,102,241,0.3);
+    --warm: #F59E0B;
+    --warm-bg: rgba(245,158,11,0.1);
+    --hot: #EF4444;
+    --hot-bg: rgba(239,68,68,0.1);
+    --green: #10B981;
+    --green-bg: rgba(16,185,129,0.1);
+    --blue: #3B82F6;
+    --blue-bg: rgba(59,130,246,0.1);
+    --lost: #6B7280;
+    --lost-bg: rgba(107,114,128,0.1);
+    --trade-color: #F97316;
+    --trade-bg: rgba(249,115,22,0.12);
+    --realtor-color: #38BDF8;
+    --realtor-bg: rgba(56,189,248,0.12);
+    --radius: 10px;
+    --radius-sm: 6px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── HEADER ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.3px;
+  }
+
+  .logo-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent-glow);
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .search-wrap { position: relative; }
+
+  .search-wrap svg {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+    pointer-events: none;
+  }
+
+  #search {
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px;
+    padding: 7px 12px 7px 34px;
+    border-radius: var(--radius-sm);
+    width: 220px;
+    outline: none;
+    transition: border-color 200ms;
+  }
+
+  #search::placeholder { color: var(--text-muted); }
+  #search:focus { border-color: var(--accent); }
+
+  .btn-add {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 16px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 200ms cubic-bezier(0.4,0,0.2,1);
+    white-space: nowrap;
+  }
+
+  .btn-add:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px var(--accent-glow);
+  }
+
+  /* ── STATS BAR ── */
+  .stats-bar {
+    display: flex;
+    gap: 1px;
+    background: var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .stat {
+    flex: 1;
+    background: var(--surface);
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .stat-icon {
+    width: 32px; height: 32px;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .stat-val { font-size: 20px; font-weight: 700; line-height: 1; }
+  .stat-label { font-size: 11px; color: var(--text-secondary); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  /* ── FILTER TABS ── */
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .filter-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 500;
+    margin-right: 4px;
+  }
+
+  .filter-tab {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 150ms;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .filter-tab:hover { border-color: var(--border-hover); color: var(--text); }
+
+  .filter-tab.active {
+    background: var(--card);
+    border-color: var(--border-hover);
+    color: var(--text);
+  }
+
+  .filter-tab[data-f="realtor"].active {
+    background: var(--realtor-bg);
+    border-color: var(--realtor-color);
+    color: var(--realtor-color);
+  }
+
+  .filter-tab[data-f="trade"].active {
+    background: var(--trade-bg);
+    border-color: var(--trade-color);
+    color: var(--trade-color);
+  }
+
+  .tab-count {
+    font-size: 10px;
+    background: rgba(255,255,255,0.08);
+    padding: 1px 6px;
+    border-radius: 10px;
+    font-weight: 700;
+  }
+
+  /* ── MAIN ── */
+  .main {
+    padding: 24px 28px;
+    overflow-x: auto;
+  }
+
+  .board {
+    display: flex;
+    gap: 16px;
+    min-width: max-content;
+    align-items: flex-start;
+  }
+
+  /* ── COLUMNS ── */
+  .col { width: 270px; flex-shrink: 0; }
+
+  .col-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    padding: 0 4px;
+  }
+
+  .col-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text-secondary);
+  }
+
+  .col-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+  .col-count {
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--card);
+    border: 1px solid var(--border);
+    padding: 2px 7px;
+    border-radius: 20px;
+    font-weight: 500;
+  }
+
+  .col-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 80px;
+  }
+
+  /* ── CARDS ── */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    cursor: pointer;
+    transition: all 250ms cubic-bezier(0.4,0,0.2,1);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .card::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    border-radius: 10px 0 0 10px;
+    opacity: 0;
+    transition: opacity 200ms;
+  }
+
+  .card:hover {
+    border-color: var(--border-hover);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+
+  .card:hover::before { opacity: 1; }
+
+  .card[data-stage="new"]::before      { background: var(--blue); }
+  .card[data-stage="called"]::before   { background: var(--accent); }
+  .card[data-stage="warm"]::before     { background: var(--warm); }
+  .card[data-stage="hot"]::before      { background: var(--hot); }
+  .card[data-stage="proposal"]::before { background: #8B5CF6; }
+  .card[data-stage="closed"]::before   { background: var(--green); }
+  .card[data-stage="lost"]::before     { background: var(--lost); }
+
+  .card-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .card-name { font-size: 14px; font-weight: 600; color: var(--text); line-height: 1.3; }
+  .card-sub  { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+
+  .card-badges {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .type-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 20px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .type-realtor { background: var(--realtor-bg); color: var(--realtor-color); }
+  .type-trade   { background: var(--trade-bg);   color: var(--trade-color); }
+
+  .priority-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 20px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+
+  .priority-hot  { background: var(--hot-bg);  color: var(--hot); }
+  .priority-warm { background: var(--warm-bg); color: var(--warm); }
+
+  .card-meta { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+
+  .meta-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .meta-row svg { flex-shrink: 0; color: var(--text-muted); }
+
+  .card-note {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    background: rgba(255,255,255,0.03);
+    border-left: 2px solid var(--border);
+    padding: 6px 8px;
+    border-radius: 0 4px 4px 0;
+    margin-bottom: 10px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 60px;
+    overflow: hidden;
+  }
+
+  .card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 2px;
+  }
+
+  .followup-tag {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    background: var(--warm-bg);
+    color: var(--warm);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .followup-tag.overdue { background: var(--hot-bg);   color: var(--hot); }
+  .followup-tag.ok      { background: var(--green-bg); color: var(--green); }
+
+  .card-actions { display: flex; gap: 4px; opacity: 0; transition: opacity 150ms; }
+  .card:hover .card-actions { opacity: 1; }
+
+  .action-btn {
+    width: 26px; height: 26px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 150ms;
+  }
+
+  .action-btn:hover { background: var(--border); color: var(--text); }
+  .action-btn.delete:hover { background: var(--hot-bg); border-color: var(--hot); color: var(--hot); }
+
+  /* ── EMPTY STATE ── */
+  .empty-col {
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  /* ── MODAL ── */
+  .overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    backdrop-filter: blur(4px);
+    z-index: 200;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+
+  .overlay.open { display: flex; }
+
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px;
+    width: 100%;
+    max-width: 500px;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+  }
+
+  .modal-title { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
+
+  .modal-close {
+    width: 30px; height: 30px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 150ms;
+    font-size: 16px;
+  }
+
+  .modal-close:hover { background: var(--card); color: var(--text); }
+
+  /* Type toggle */
+  .type-toggle {
+    display: flex;
+    gap: 0;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 3px;
+    margin-bottom: 20px;
+  }
+
+  .type-toggle-btn {
+    flex: 1;
+    padding: 8px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: 5px;
+    transition: all 150ms;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+  }
+
+  .type-toggle-btn:hover { color: var(--text); }
+
+  .type-toggle-btn.active-realtor {
+    background: var(--realtor-bg);
+    color: var(--realtor-color);
+    border: 1px solid rgba(56,189,248,0.3);
+  }
+
+  .type-toggle-btn.active-trade {
+    background: var(--trade-bg);
+    color: var(--trade-color);
+    border: 1px solid rgba(249,115,22,0.3);
+  }
+
+  .form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+
+  .form-group { display: flex; flex-direction: column; gap: 6px; }
+  .form-group.full { grid-column: 1 / -1; }
+
+  label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+
+  input, select, textarea {
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px;
+    padding: 9px 12px;
+    border-radius: var(--radius-sm);
+    outline: none;
+    transition: border-color 200ms;
+    width: 100%;
+  }
+
+  input::placeholder, textarea::placeholder { color: var(--text-muted); }
+  input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 80px; }
+  select option { background: var(--card); }
+
+  .form-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+    justify-content: flex-end;
+  }
+
+  .btn-cancel {
+    padding: 9px 18px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 150ms;
+  }
+
+  .btn-cancel:hover { background: var(--card); color: var(--text); }
+
+  .btn-save {
+    padding: 9px 22px;
+    border-radius: var(--radius-sm);
+    border: none;
+    background: var(--accent);
+    color: #fff;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 200ms;
+  }
+
+  .btn-save:hover { transform: translateY(-1px); box-shadow: 0 4px 16px var(--accent-glow); }
+
+  /* ── DETAIL PANEL ── */
+  .detail-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(4px);
+    z-index: 200;
+  }
+
+  .detail-overlay.open { display: block; }
+
+  .detail-panel {
+    position: fixed;
+    right: 0; top: 0; bottom: 0;
+    width: 420px;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    z-index: 201;
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 300ms cubic-bezier(0.4,0,0.2,1);
+    overflow: hidden;
+  }
+
+  .detail-overlay.open .detail-panel { transform: translateX(0); }
+
+  .detail-header {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+
+  .detail-header-left { display: flex; flex-direction: column; gap: 6px; }
+  .detail-name { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; }
+  .detail-sub  { font-size: 13px; color: var(--text-secondary); }
+
+  .detail-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .detail-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+  }
+
+  .detail-fields { display: flex; flex-direction: column; gap: 10px; }
+
+  .detail-field {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    font-size: 13px;
+  }
+
+  .detail-field-label { color: var(--text-secondary); flex-shrink: 0; }
+  .detail-field-val   { color: var(--text); text-align: right; word-break: break-all; }
+  .detail-field-val a { color: var(--accent); text-decoration: none; }
+  .detail-field-val a:hover { text-decoration: underline; }
+
+  .stage-select-wrap { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  .stage-chip {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 5px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 150ms;
+    font-family: inherit;
+  }
+
+  .stage-chip:hover { border-color: var(--border-hover); color: var(--text); }
+  .stage-chip.active { color: #fff; border-color: transparent; }
+  .stage-chip[data-s="new"].active      { background: var(--blue); }
+  .stage-chip[data-s="called"].active   { background: var(--accent); }
+  .stage-chip[data-s="warm"].active     { background: var(--warm); }
+  .stage-chip[data-s="hot"].active      { background: var(--hot); }
+  .stage-chip[data-s="proposal"].active { background: #8B5CF6; }
+  .stage-chip[data-s="closed"].active   { background: var(--green); }
+  .stage-chip[data-s="lost"].active     { background: var(--lost); }
+
+  .notes-area {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px;
+    padding: 12px;
+    line-height: 1.6;
+    resize: vertical;
+    min-height: 120px;
+    width: 100%;
+    outline: none;
+    transition: border-color 200ms;
+  }
+
+  .notes-area:focus { border-color: var(--accent); }
+
+  .btn-save-notes {
+    margin-top: 8px;
+    padding: 7px 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 150ms;
+  }
+
+  .btn-save-notes:hover { border-color: var(--accent); color: var(--accent); }
+
+  .detail-footer {
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  .btn-edit-full {
+    flex: 1;
+    padding: 9px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 150ms;
+  }
+
+  .btn-edit-full:hover { background: var(--card); }
+
+  .btn-del-lead {
+    padding: 9px 16px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 150ms;
+  }
+
+  .btn-del-lead:hover { background: var(--hot-bg); border-color: var(--hot); color: var(--hot); }
+
+  /* ── SCROLLBAR ── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="logo">
+    <div class="logo-dot"></div>
+    LaunchPetal &nbsp;<span style="color:var(--text-muted);font-weight:400">/ Sales Pipeline</span>
+  </div>
+  <div class="header-right">
+    <div class="search-wrap">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input type="text" id="search" placeholder="Search leads…">
+    </div>
+    <button class="btn-add" onclick="openAdd()">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      Add Lead
+    </button>
+  </div>
+</header>
+
+<!-- STATS -->
+<div class="stats-bar">
+  <div class="stat">
+    <div class="stat-icon" style="background:var(--blue-bg);">
+      <svg width="16" height="16" fill="none" stroke="var(--blue)" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+    </div>
+    <div class="stat-info">
+      <div class="stat-val" id="stat-total">0</div>
+      <div class="stat-label">Total</div>
+    </div>
+  </div>
+  <div class="stat">
+    <div class="stat-icon" style="background:var(--realtor-bg);">
+      <svg width="16" height="16" fill="none" stroke="var(--realtor-color)" stroke-width="2" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+    </div>
+    <div class="stat-info">
+      <div class="stat-val" id="stat-realtors">0</div>
+      <div class="stat-label">Realtors</div>
+    </div>
+  </div>
+  <div class="stat">
+    <div class="stat-icon" style="background:var(--trade-bg);">
+      <svg width="16" height="16" fill="none" stroke="var(--trade-color)" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+    </div>
+    <div class="stat-info">
+      <div class="stat-val" id="stat-trades">0</div>
+      <div class="stat-label">Trades</div>
+    </div>
+  </div>
+  <div class="stat">
+    <div class="stat-icon" style="background:var(--warm-bg);">
+      <svg width="16" height="16" fill="none" stroke="var(--warm)" stroke-width="2" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+    </div>
+    <div class="stat-info">
+      <div class="stat-val" id="stat-hot">0</div>
+      <div class="stat-label">Hot</div>
+    </div>
+  </div>
+  <div class="stat">
+    <div class="stat-icon" style="background:var(--green-bg);">
+      <svg width="16" height="16" fill="none" stroke="var(--green)" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+    </div>
+    <div class="stat-info">
+      <div class="stat-val" id="stat-closed">0</div>
+      <div class="stat-label">Closed</div>
+    </div>
+  </div>
+  <div class="stat">
+    <div class="stat-icon" style="background:rgba(139,92,246,0.1);">
+      <svg width="16" height="16" fill="none" stroke="#8B5CF6" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+    </div>
+    <div class="stat-info">
+      <div class="stat-val" id="stat-proposal">0</div>
+      <div class="stat-label">Proposals</div>
+    </div>
+  </div>
+</div>
+
+<!-- FILTER TABS -->
+<div class="filter-bar">
+  <span class="filter-label">View:</span>
+  <button class="filter-tab active" data-f="all" onclick="setFilter('all')">
+    All Leads <span class="tab-count" id="tab-all">0</span>
+  </button>
+  <button class="filter-tab" data-f="realtor" onclick="setFilter('realtor')">
+    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+    Realtors <span class="tab-count" id="tab-realtor">0</span>
+  </button>
+  <button class="filter-tab" data-f="trade" onclick="setFilter('trade')">
+    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+    Trades <span class="tab-count" id="tab-trade">0</span>
+  </button>
+</div>
+
+<!-- BOARD -->
+<div class="main">
+  <div class="board" id="board"></div>
+</div>
+
+<!-- ADD/EDIT MODAL -->
+<div class="overlay" id="modal-overlay" onclick="closeModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-title">New Lead</div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <form id="lead-form" onsubmit="saveLead(event)">
+
+      <!-- Type toggle -->
+      <div class="type-toggle">
+        <button type="button" class="type-toggle-btn active-realtor" id="toggle-realtor" onclick="setFormType('realtor')">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          Realtor
+        </button>
+        <button type="button" class="type-toggle-btn" id="toggle-trade" onclick="setFormType('trade')">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+          Tradesman
+        </button>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-group">
+          <label>First Name *</label>
+          <input type="text" id="f-first" placeholder="John" required>
+        </div>
+        <div class="form-group">
+          <label>Last Name *</label>
+          <input type="text" id="f-last" placeholder="Smith" required>
+        </div>
+
+        <!-- Realtor fields -->
+        <div class="form-group" id="field-brokerage">
+          <label>Brokerage</label>
+          <input type="text" id="f-brokerage" placeholder="RE/MAX, Sutton, etc.">
+        </div>
+
+        <!-- Trade fields -->
+        <div class="form-group" id="field-trade-type" style="display:none">
+          <label>Trade Type</label>
+          <select id="f-trade-type">
+            <option value="">Select trade…</option>
+            <option value="Electrician">Electrician</option>
+            <option value="Plumber">Plumber</option>
+            <option value="HVAC">HVAC</option>
+            <option value="Roofer">Roofer</option>
+            <option value="Landscaper">Landscaper</option>
+            <option value="General Contractor">General Contractor</option>
+            <option value="Painter">Painter</option>
+            <option value="Concrete">Concrete</option>
+            <option value="Flooring">Flooring</option>
+            <option value="Carpenter">Carpenter</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="form-group" id="field-company" style="display:none">
+          <label>Company Name</label>
+          <input type="text" id="f-company" placeholder="Smith Electric Ltd.">
+        </div>
+
+        <div class="form-group" id="field-city-realtor">
+          <label>City / Area</label>
+          <input type="text" id="f-city" placeholder="Vancouver, BC">
+        </div>
+        <div class="form-group" id="field-city-trade" style="display:none">
+          <label>City / Area</label>
+          <input type="text" id="f-city-trade" placeholder="Vancouver, BC">
+        </div>
+
+        <div class="form-group">
+          <label>Phone</label>
+          <input type="tel" id="f-phone" placeholder="604-555-0100">
+        </div>
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" id="f-email" placeholder="john@email.com">
+        </div>
+        <div class="form-group full">
+          <label>Current Website</label>
+          <input type="text" id="f-website" placeholder="johnsmith.com">
+        </div>
+        <div class="form-group">
+          <label>Stage</label>
+          <select id="f-stage">
+            <option value="new">New Lead</option>
+            <option value="called">Called</option>
+            <option value="warm">Warm</option>
+            <option value="hot">Hot</option>
+            <option value="proposal">Proposal Sent</option>
+            <option value="closed">Closed Won</option>
+            <option value="lost">Lost</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Priority</label>
+          <select id="f-priority">
+            <option value="cold">Cold</option>
+            <option value="warm">Warm</option>
+            <option value="hot">Hot</option>
+          </select>
+        </div>
+        <div class="form-group full">
+          <label>Follow-up Date</label>
+          <input type="date" id="f-followup">
+        </div>
+        <div class="form-group full">
+          <label>Notes</label>
+          <textarea id="f-notes" placeholder="Call notes, interests, objections…"></textarea>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn-save">Save Lead</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- DETAIL PANEL -->
+<div class="detail-overlay" id="detail-overlay" onclick="closeDetail(event)">
+  <div class="detail-panel" id="detail-panel" onclick="event.stopPropagation()">
+    <div class="detail-header">
+      <div class="detail-header-left">
+        <div class="detail-name" id="d-name"></div>
+        <div class="detail-sub" id="d-sub"></div>
+        <div id="d-type-badge"></div>
+      </div>
+      <button class="modal-close" onclick="closeDetail()">✕</button>
+    </div>
+    <div class="detail-body">
+      <div>
+        <div class="detail-section-title">Stage</div>
+        <div class="stage-select-wrap" id="d-stages"></div>
+      </div>
+      <div>
+        <div class="detail-section-title">Contact Info</div>
+        <div class="detail-fields" id="d-fields"></div>
+      </div>
+      <div>
+        <div class="detail-section-title">Call Notes</div>
+        <textarea class="notes-area" id="d-notes" placeholder="Add call notes…"></textarea>
+        <button class="btn-save-notes" onclick="saveNotes()">Save Notes</button>
+      </div>
+    </div>
+    <div class="detail-footer">
+      <button class="btn-edit-full" onclick="editFromDetail()">Edit Lead</button>
+      <button class="btn-del-lead" onclick="deleteFromDetail()">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const STAGES = [
+  { id: 'new',      label: 'New Lead',      color: '#3B82F6' },
+  { id: 'called',   label: 'Called',        color: '#6366F1' },
+  { id: 'warm',     label: 'Warm',          color: '#F59E0B' },
+  { id: 'hot',      label: 'Hot',           color: '#EF4444' },
+  { id: 'proposal', label: 'Proposal Sent', color: '#8B5CF6' },
+  { id: 'closed',   label: 'Closed Won',    color: '#10B981' },
+  { id: 'lost',     label: 'Lost',          color: '#6B7280' },
+];
+
+let leads = JSON.parse(localStorage.getItem('lp_pipeline_leads') || '[]');
+
+// Migrate old realtor-only data
+const oldData = localStorage.getItem('lp_realtor_leads');
+if (oldData && leads.length === 0) {
+  leads = JSON.parse(oldData).map(l => ({ ...l, type: 'realtor' }));
+  localStorage.setItem('lp_pipeline_leads', JSON.stringify(leads));
+}
+
+// Default missing type field
+leads = leads.map(l => ({ ...l, type: l.type || 'realtor' }));
+
+let editingId    = null;
+let detailId     = null;
+let searchQuery  = '';
+let activeFilter = 'all';
+let formType     = 'realtor';
+
+function save() {
+  localStorage.setItem('lp_pipeline_leads', JSON.stringify(leads));
+}
+
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
+function formatDate(d) {
+  if (!d) return null;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const target = new Date(d + 'T00:00:00');
+  const diff = Math.ceil((target - today) / 86400000);
+  if (diff < 0)  return { label: 'Overdue',  cls: 'overdue' };
+  if (diff === 0) return { label: 'Today',   cls: 'ok' };
+  if (diff === 1) return { label: 'Tomorrow', cls: 'ok' };
+  return { label: target.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), cls: '' };
+}
+
+function icon(type) {
+  const icons = {
+    phone: `<svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.45 2 2 0 0 1 3.59 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.49a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21.73 16z"/></svg>`,
+    web:   `<svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`,
+    loc:   `<svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>`,
+    tool:  `<svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>`,
+    biz:   `<svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>`,
+  };
+  return icons[type] || '';
+}
+
+// ── FILTER TABS ──
+function setFilter(f) {
+  activeFilter = f;
+  document.querySelectorAll('.filter-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.f === f);
+  });
+  renderBoard();
+}
+
+// ── FORM TYPE TOGGLE ──
+function setFormType(type) {
+  formType = type;
+  const isRealtor = type === 'realtor';
+
+  document.getElementById('toggle-realtor').className =
+    'type-toggle-btn' + (isRealtor ? ' active-realtor' : '');
+  document.getElementById('toggle-trade').className =
+    'type-toggle-btn' + (!isRealtor ? ' active-trade' : '');
+
+  document.getElementById('field-brokerage').style.display   = isRealtor ? '' : 'none';
+  document.getElementById('field-trade-type').style.display  = isRealtor ? 'none' : '';
+  document.getElementById('field-company').style.display     = isRealtor ? 'none' : '';
+  document.getElementById('field-city-realtor').style.display = isRealtor ? '' : 'none';
+  document.getElementById('field-city-trade').style.display   = isRealtor ? 'none' : '';
+}
+
+// ── RENDER BOARD ──
+function renderBoard() {
+  const board = document.getElementById('board');
+  const q = searchQuery.toLowerCase();
+  board.innerHTML = '';
+
+  const filtered = leads.filter(l => {
+    if (activeFilter !== 'all' && l.type !== activeFilter) return false;
+    if (!q) return true;
+    return [l.first, l.last, l.brokerage, l.company, l.tradeType, l.city, l.phone, l.email, l.notes]
+      .some(f => f && f.toLowerCase().includes(q));
+  });
+
+  // Update tab counts
+  document.getElementById('tab-all').textContent     = leads.length;
+  document.getElementById('tab-realtor').textContent = leads.filter(l=>l.type==='realtor').length;
+  document.getElementById('tab-trade').textContent   = leads.filter(l=>l.type==='trade').length;
+
+  // Stats (global, not filtered by view)
+  document.getElementById('stat-total').textContent    = leads.length;
+  document.getElementById('stat-realtors').textContent = leads.filter(l=>l.type==='realtor').length;
+  document.getElementById('stat-trades').textContent   = leads.filter(l=>l.type==='trade').length;
+  document.getElementById('stat-hot').textContent      = leads.filter(l=>l.stage==='hot').length;
+  document.getElementById('stat-closed').textContent   = leads.filter(l=>l.stage==='closed').length;
+  document.getElementById('stat-proposal').textContent = leads.filter(l=>l.stage==='proposal').length;
+
+  STAGES.forEach(stage => {
+    const stageLeads = filtered.filter(l => l.stage === stage.id);
+
+    const col = document.createElement('div');
+    col.className = 'col';
+    col.innerHTML = `
+      <div class="col-header">
+        <div class="col-title">
+          <div class="col-dot" style="background:${stage.color}"></div>
+          ${stage.label}
+        </div>
+        <div class="col-count">${stageLeads.length}</div>
+      </div>
+      <div class="col-body" id="col-${stage.id}">
+        ${stageLeads.length === 0 ? `<div class="empty-col">No leads</div>` : ''}
+      </div>
+    `;
+    board.appendChild(col);
+
+    const body = col.querySelector(`#col-${stage.id}`);
+    stageLeads.forEach(lead => body.appendChild(buildCard(lead)));
+  });
+}
+
+function buildCard(lead) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.dataset.stage = lead.stage;
+
+  const fu = lead.followup ? formatDate(lead.followup) : null;
+  const priorityMap   = { hot: 'Hot', warm: 'Warm', cold: '' };
+  const priorityClass = { hot: 'priority-hot', warm: 'priority-warm', cold: '' };
+
+  const isRealtor = lead.type !== 'trade';
+  const subtitle  = isRealtor
+    ? lead.brokerage
+    : [lead.tradeType, lead.company].filter(Boolean).join(' · ');
+
+  const typeLabel = isRealtor ? 'Realtor' : (lead.tradeType || 'Trade');
+  const typeCls   = isRealtor ? 'type-realtor' : 'type-trade';
+  const city      = lead.city || lead.cityTrade || '';
+
+  let metaHtml = '';
+  if (lead.phone)   metaHtml += `<div class="meta-row">${icon('phone')} ${lead.phone}</div>`;
+  if (city)         metaHtml += `<div class="meta-row">${icon('loc')} ${city}</div>`;
+  if (lead.website) metaHtml += `<div class="meta-row">${icon('web')} ${lead.website}</div>`;
+
+  const noteHtml = lead.notes
+    ? `<div class="card-note">${lead.notes.slice(0,120)}${lead.notes.length > 120 ? '…' : ''}</div>`
+    : '';
+
+  const fuHtml = fu
+    ? `<span class="followup-tag ${fu.cls}">
+        <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        ${fu.label}</span>`
+    : `<span></span>`;
+
+  card.innerHTML = `
+    <div class="card-top">
+      <div>
+        <div class="card-name">${lead.first} ${lead.last}</div>
+        ${subtitle ? `<div class="card-sub">${subtitle}</div>` : ''}
+      </div>
+      <div class="card-badges">
+        <div class="type-badge ${typeCls}">${typeLabel}</div>
+        ${lead.priority !== 'cold' ? `<div class="priority-badge ${priorityClass[lead.priority]}">${priorityMap[lead.priority]}</div>` : ''}
+      </div>
+    </div>
+    ${metaHtml ? `<div class="card-meta">${metaHtml}</div>` : ''}
+    ${noteHtml}
+    <div class="card-footer">
+      ${fuHtml}
+      <div class="card-actions">
+        <button class="action-btn" onclick="event.stopPropagation();openEdit('${lead.id}')" title="Edit">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+        <button class="action-btn delete" onclick="event.stopPropagation();deleteLead('${lead.id}')" title="Delete">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+        </button>
+      </div>
+    </div>
+  `;
+
+  card.addEventListener('click', () => openDetail(lead.id));
+  return card;
+}
+
+// ── ADD / EDIT MODAL ──
+function openAdd() {
+  editingId = null;
+  document.getElementById('modal-title').textContent = 'New Lead';
+  document.getElementById('lead-form').reset();
+  setFormType('realtor');
+  document.getElementById('modal-overlay').classList.add('open');
+}
+
+function openEdit(id) {
+  const lead = leads.find(l => l.id === id);
+  if (!lead) return;
+  editingId = id;
+  document.getElementById('modal-title').textContent = 'Edit Lead';
+
+  const type = lead.type || 'realtor';
+  setFormType(type);
+
+  document.getElementById('f-first').value     = lead.first || '';
+  document.getElementById('f-last').value      = lead.last  || '';
+  document.getElementById('f-brokerage').value = lead.brokerage || '';
+  document.getElementById('f-trade-type').value = lead.tradeType || '';
+  document.getElementById('f-company').value   = lead.company || '';
+  document.getElementById('f-city').value      = lead.city || '';
+  document.getElementById('f-city-trade').value = lead.cityTrade || '';
+  document.getElementById('f-phone').value     = lead.phone || '';
+  document.getElementById('f-email').value     = lead.email || '';
+  document.getElementById('f-website').value   = lead.website || '';
+  document.getElementById('f-stage').value     = lead.stage || 'new';
+  document.getElementById('f-priority').value  = lead.priority || 'cold';
+  document.getElementById('f-followup').value  = lead.followup || '';
+  document.getElementById('f-notes').value     = lead.notes || '';
+
+  document.getElementById('modal-overlay').classList.add('open');
+}
+
+function saveLead(e) {
+  e.preventDefault();
+  const isRealtor = formType === 'realtor';
+  const lead = {
+    id:        editingId || uid(),
+    type:      formType,
+    first:     document.getElementById('f-first').value.trim(),
+    last:      document.getElementById('f-last').value.trim(),
+    brokerage: isRealtor ? document.getElementById('f-brokerage').value.trim() : '',
+    tradeType: !isRealtor ? document.getElementById('f-trade-type').value : '',
+    company:   !isRealtor ? document.getElementById('f-company').value.trim() : '',
+    city:      isRealtor  ? document.getElementById('f-city').value.trim() : '',
+    cityTrade: !isRealtor ? document.getElementById('f-city-trade').value.trim() : '',
+    phone:     document.getElementById('f-phone').value.trim(),
+    email:     document.getElementById('f-email').value.trim(),
+    website:   document.getElementById('f-website').value.trim(),
+    stage:     document.getElementById('f-stage').value,
+    priority:  document.getElementById('f-priority').value,
+    followup:  document.getElementById('f-followup').value,
+    notes:     document.getElementById('f-notes').value.trim(),
+    created:   editingId ? (leads.find(l=>l.id===editingId)?.created || Date.now()) : Date.now(),
+  };
+
+  if (editingId) {
+    const idx = leads.findIndex(l => l.id === editingId);
+    leads[idx] = lead;
+  } else {
+    leads.unshift(lead);
+  }
+  save(); closeModal(); renderBoard();
+}
+
+function deleteLead(id) {
+  if (!confirm('Delete this lead?')) return;
+  leads = leads.filter(l => l.id !== id);
+  save(); renderBoard();
+}
+
+function closeModal(e) {
+  if (e && e.target !== document.getElementById('modal-overlay')) return;
+  document.getElementById('modal-overlay').classList.remove('open');
+  editingId = null;
+}
+
+// ── DETAIL PANEL ──
+function openDetail(id) {
+  const lead = leads.find(l => l.id === id);
+  if (!lead) return;
+  detailId = id;
+
+  const isRealtor = lead.type !== 'trade';
+  const city = lead.city || lead.cityTrade || '';
+  const subtitle = isRealtor
+    ? [lead.brokerage, city].filter(Boolean).join(' · ')
+    : [lead.tradeType, lead.company, city].filter(Boolean).join(' · ');
+
+  document.getElementById('d-name').textContent = `${lead.first} ${lead.last}`;
+  document.getElementById('d-sub').textContent  = subtitle;
+  document.getElementById('d-type-badge').innerHTML =
+    `<span class="type-badge ${isRealtor ? 'type-realtor' : 'type-trade'}">${isRealtor ? 'Realtor' : (lead.tradeType || 'Trade')}</span>`;
+
+  // Stage chips
+  document.getElementById('d-stages').innerHTML = STAGES.map(s =>
+    `<button class="stage-chip ${lead.stage === s.id ? 'active' : ''}" data-s="${s.id}" onclick="setStage('${id}','${s.id}')">${s.label}</button>`
+  ).join('');
+
+  // Fields
+  const rows = [
+    lead.phone    && { label: 'Phone',     val: `<a href="tel:${lead.phone}">${lead.phone}</a>` },
+    lead.email    && { label: 'Email',     val: `<a href="mailto:${lead.email}">${lead.email}</a>` },
+    lead.website  && { label: 'Website',   val: `<a href="http://${lead.website.replace(/^https?:\/\//,'')}" target="_blank">${lead.website}</a>` },
+    !isRealtor && lead.company && { label: 'Company', val: lead.company },
+    lead.followup && { label: 'Follow-up', val: new Date(lead.followup+'T00:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}) },
+    lead.priority && { label: 'Priority',  val: lead.priority.charAt(0).toUpperCase()+lead.priority.slice(1) },
+    { label: 'Added', val: new Date(lead.created).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) },
+  ].filter(Boolean);
+
+  document.getElementById('d-fields').innerHTML = rows.map(r =>
+    `<div class="detail-field"><span class="detail-field-label">${r.label}</span><span class="detail-field-val">${r.val}</span></div>`
+  ).join('');
+
+  document.getElementById('d-notes').value = lead.notes || '';
+  document.getElementById('detail-overlay').classList.add('open');
+}
+
+function setStage(id, stage) {
+  const lead = leads.find(l => l.id === id);
+  if (!lead) return;
+  lead.stage = stage;
+  save(); renderBoard(); openDetail(id);
+}
+
+function saveNotes() {
+  const lead = leads.find(l => l.id === detailId);
+  if (!lead) return;
+  lead.notes = document.getElementById('d-notes').value.trim();
+  save(); renderBoard();
+  const btn = document.querySelector('.btn-save-notes');
+  btn.textContent = 'Saved ✓';
+  setTimeout(() => btn.textContent = 'Save Notes', 1500);
+}
+
+function editFromDetail()   { closeDetail(); openEdit(detailId); }
+function deleteFromDetail() {
+  if (!confirm('Delete this lead?')) return;
+  leads = leads.filter(l => l.id !== detailId);
+  save(); closeDetail(); renderBoard();
+}
+
+function closeDetail(e) {
+  if (e && e.target !== document.getElementById('detail-overlay')) return;
+  document.getElementById('detail-overlay').classList.remove('open');
+}
+
+document.getElementById('search').addEventListener('input', function() {
+  searchQuery = this.value;
+  renderBoard();
+});
+
+renderBoard();
+</script>
+</body>
+</html>

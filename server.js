@@ -1,0 +1,551 @@
+require('dotenv').config();
+const express    = require('express');
+const { google } = require('googleapis');
+const { spawn }  = require('child_process');
+const path       = require('path');
+
+const app = express();
+app.use(express.json({ limit: '10mb' }));
+
+// ── DASHBOARD ACCESS CONTROL ──────────────────────────────────────────────────
+// HTTP Basic Auth applied globally — covers static files and all API routes.
+// Set DASHBOARD_USER and DASHBOARD_PASSWORD in .env / Railway env vars.
+function requireAuth(req, res, next) {
+  const header = req.headers.authorization || '';
+  const b64    = header.startsWith('Basic ') ? header.slice(6) : '';
+  const [user, pass] = Buffer.from(b64, 'base64').toString().split(':');
+  if (user === process.env.DASHBOARD_USER && pass === process.env.DASHBOARD_PASSWORD) {
+    return next();
+  }
+  res.setHeader('WWW-Authenticate', 'Basic realm="ScaleLab Pipeline"');
+  res.status(401).send('Unauthorized');
+}
+app.use(requireAuth);
+app.use(express.static(path.join(__dirname, 'public')));
+
+const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
+const SHEET_NAME     = 'Leads';
+const COL_RANGE      = `${SHEET_NAME}!A:Q`;
+const COLUMNS        = [
+  'id','type','first','last','brokerage','tradeType','company',
+  'city','cityTrade','phone','email','website',
+  'stage','priority','followup','notes','created',
+];
+// Agent bookkeeping columns (R:T) — read-only in the Leads GET, never written by dashboard routes
+const AGENT_COLS      = ['emailStatus', 'lastEmailedAt', 'emailStep'];
+const AGENT_READ_RANGE = `${SHEET_NAME}!A:T`;
+
+// ── COLD EMAIL SHEET ──────────────────────────────────────────────────────────
+const CE_SHEET_NAME = 'ColdEmail';
+const CE_COLUMNS    = [
+  'id','company','contactName','email','city','tradeType','website',
+  'stage','emailStatus','lastEmailedAt','emailStep','notes',
+  'reviewCount','rating','tier','siteContext',                        // M N O P
+];
+const CE_COL_RANGE  = `${CE_SHEET_NAME}!A:P`;
+
+// ── SERVICE ACCOUNT AUTH ──────────────────────────────────────────────────────
+// Credentials are read from an env var (JSON string) — no key file on disk.
+// GoogleAuth mints and auto-refreshes access tokens internally.
+
+const auth = new google.auth.GoogleAuth({
+  credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON),
+  scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+});
+
+function sheets() {
+  return google.sheets({ version: 'v4', auth });
+}
+
+// Compatibility shim — call sites are unchanged; token management is now internal.
+const withAuth = fn => fn();
+
+// In-memory row index: lead.id → 1-based sheet row number
+const rowMap = new Map();
+let sheetIdCache = null;
+
+// In-memory row index for ColdEmail sheet
+const ceRowMap = new Map();
+let ceSheetIdCache = null;
+
+// ── AGENT RUNNER STATE ────────────────────────────────────────────────────────
+
+const LOG_CAP    = 300;
+const agentState = { running: false, dryRun: true, startedAt: null, log: [], exitCode: null };
+let   agentChild = null;
+
+function agentPushLine(line) {
+  agentState.log.push({ ts: new Date().toISOString(), line });
+  if (agentState.log.length > LOG_CAP) agentState.log.shift();
+}
+
+// ── SHEET HELPERS ─────────────────────────────────────────────────────────────
+
+async function ensureHeader() {
+  const s    = sheets();
+  const resp = await s.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range:         `${SHEET_NAME}!A1:Q1`,
+  });
+  if (!resp.data.values?.[0]?.[0] || resp.data.values[0][0] !== 'id') {
+    await s.spreadsheets.values.update({
+      spreadsheetId:   SPREADSHEET_ID,
+      range:           `${SHEET_NAME}!A1`,
+      valueInputOption:'RAW',
+      requestBody:     { values: [COLUMNS] },
+    });
+  }
+  if (sheetIdCache === null) {
+    const ss    = await s.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+    const sheet = ss.data.sheets.find(sh => sh.properties.title === SHEET_NAME);
+    sheetIdCache = sheet ? sheet.properties.sheetId : 0;
+  }
+}
+
+async function findRow(id) {
+  if (rowMap.has(id)) return rowMap.get(id);
+  const resp = await sheets().spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range:         COL_RANGE,
+  });
+  (resp.data.values || []).forEach((row, i) => {
+    if (i > 0 && row[0]) rowMap.set(row[0], i + 1);
+  });
+  return rowMap.get(id) || null;
+}
+
+// ── API ROUTES ────────────────────────────────────────────────────────────────
+
+app.get('/api/leads', requireAuth, async (_req, res) => {
+  try {
+    const leads = await withAuth(async () => {
+      await ensureHeader();
+      const resp = await sheets().spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range:         AGENT_READ_RANGE,   // A:T — includes agent bookkeeping cols R:T
+      });
+      const rows = resp.data.values || [];
+      rowMap.clear();
+      return rows.slice(1).map((row, idx) => {
+        const lead = {};
+        COLUMNS.forEach((col, i) => { lead[col] = row[i] || ''; });
+        AGENT_COLS.forEach((col, i) => { lead[col] = row[17 + i] || ''; });
+        lead.created = parseInt(lead.created) || Date.now();
+        if (lead.id) rowMap.set(lead.id, idx + 2);
+        return lead;
+      }).filter(l => l.id);
+    });
+    res.json(leads);
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Leads GET]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/leads', requireAuth, async (req, res) => {
+  const lead = req.body;
+  const vals = [COLUMNS.map(col => lead[col] !== undefined ? String(lead[col]) : '')];
+  try {
+    await withAuth(async () => {
+      const resp = await sheets().spreadsheets.values.append({
+        spreadsheetId:   SPREADSHEET_ID,
+        range:           COL_RANGE,
+        valueInputOption:'RAW',
+        insertDataOption:'INSERT_ROWS',
+        requestBody:     { values: vals },
+      });
+      const m = (resp.data.updates?.updatedRange || '').match(/!A(\d+)/);
+      if (m) rowMap.set(lead.id, parseInt(m[1]));
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Leads POST]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put('/api/leads/:id', requireAuth, async (req, res) => {
+  const lead   = req.body;
+  const vals   = [COLUMNS.map(col => lead[col] !== undefined ? String(lead[col]) : '')];
+  try {
+    const rowNum = await withAuth(() => findRow(req.params.id));
+    if (!rowNum) return res.status(404).json({ error: 'not found' });
+    await withAuth(async () => {
+      await sheets().spreadsheets.values.update({
+        spreadsheetId:   SPREADSHEET_ID,
+        range:           `${SHEET_NAME}!A${rowNum}:Q${rowNum}`,
+        valueInputOption:'RAW',
+        requestBody:     { values: vals },
+      });
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Leads PUT]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/leads/:id', requireAuth, async (req, res) => {
+  try {
+    const rowNum = await withAuth(() => findRow(req.params.id));
+    if (!rowNum) return res.status(404).json({ error: 'not found' });
+    if (sheetIdCache === null) await withAuth(() => ensureHeader());
+    await withAuth(async () => {
+      await sheets().spreadsheets.batchUpdate({
+        spreadsheetId: SPREADSHEET_ID,
+        requestBody: {
+          requests: [{
+            deleteDimension: {
+              range: {
+                sheetId:    sheetIdCache,
+                dimension:  'ROWS',
+                startIndex: rowNum - 1,
+                endIndex:   rowNum,
+              },
+            },
+          }],
+        },
+      });
+    });
+    rowMap.delete(req.params.id);
+    rowMap.forEach((r, lid) => { if (r > rowNum) rowMap.set(lid, r - 1); });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Leads DELETE]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── COLD EMAIL HELPERS ────────────────────────────────────────────────────────
+
+async function ensureColdEmailSheet() {
+  const s  = sheets();
+  const ss = await s.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  const existing = ss.data.sheets.find(sh => sh.properties.title === CE_SHEET_NAME);
+  if (!existing) {
+    const addResp = await s.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: { requests: [{ addSheet: { properties: { title: CE_SHEET_NAME } } }] },
+    });
+    ceSheetIdCache = addResp.data.replies[0].addSheet.properties.sheetId;
+    await s.spreadsheets.values.update({
+      spreadsheetId:   SPREADSHEET_ID,
+      range:           `${CE_SHEET_NAME}!A1`,
+      valueInputOption:'RAW',
+      requestBody:     { values: [CE_COLUMNS] },
+    });
+    console.log('[ColdEmail] Sheet created with headers');
+  } else {
+    ceSheetIdCache = existing.properties.sheetId;
+    const hResp = await s.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range:         `${CE_SHEET_NAME}!A1:P1`,
+    });
+    const existingHdr = hResp.data.values?.[0] || [];
+    // Repair if header is missing, wrong, or shorter than CE_COLUMNS (new columns added)
+    if (existingHdr[0] !== 'id' || existingHdr.length < CE_COLUMNS.length) {
+      await s.spreadsheets.values.update({
+        spreadsheetId:   SPREADSHEET_ID,
+        range:           `${CE_SHEET_NAME}!A1`,
+        valueInputOption:'RAW',
+        requestBody:     { values: [CE_COLUMNS] },
+      });
+      console.log('[ColdEmail] Header repaired/extended to include new columns');
+    }
+  }
+}
+
+async function findCERow(id) {
+  if (ceRowMap.has(id)) return ceRowMap.get(id);
+  const resp = await sheets().spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range:         CE_COL_RANGE,
+  });
+  (resp.data.values || []).forEach((row, i) => {
+    if (i > 0 && row[0]) ceRowMap.set(row[0], i + 1);
+  });
+  return ceRowMap.get(id) || null;
+}
+
+// ── COLD EMAIL ROUTES ─────────────────────────────────────────────────────────
+
+app.get('/api/coldemail', requireAuth, async (_req, res) => {
+  try {
+    const leads = await withAuth(async () => {
+      await ensureColdEmailSheet();
+      const resp = await sheets().spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range:         CE_COL_RANGE,
+      });
+      const rows = resp.data.values || [];
+      ceRowMap.clear();
+      return rows.slice(1).map((row, idx) => {
+        const lead = {};
+        CE_COLUMNS.forEach((col, i) => { lead[col] = row[i] || ''; });
+        lead.created = parseInt(lead.created) || Date.now();
+        if (lead.id) ceRowMap.set(lead.id, idx + 2);
+        return lead;
+      }).filter(l => l.id);
+    });
+    res.json(leads);
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ColdEmail GET]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/coldemail/import', requireAuth, async (req, res) => {
+  const rows = req.body;
+  if (!Array.isArray(rows)) return res.status(400).json({ error: 'body must be an array' });
+  try {
+    const result = await withAuth(async () => {
+      await ensureColdEmailSheet();
+      const existing = await sheets().spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range:         `${CE_SHEET_NAME}!D:D`,   // email column
+      });
+      const existingEmails = new Set(
+        (existing.data.values || []).slice(1)
+          .map(r => (r[0] || '').toLowerCase().trim()).filter(Boolean)
+      );
+      const now   = Date.now();
+      const toAdd = [];
+      let skipped = 0;
+      for (const row of rows) {
+        const email = (row.email || '').toLowerCase().trim();
+        if (!email || existingEmails.has(email)) { skipped++; continue; }
+        existingEmails.add(email);
+        const id   = now.toString(36) + Math.random().toString(36).slice(2);
+        const lead = {
+          id, company: row.company || '', contactName: row.contactName || '',
+          email: row.email || '', city: row.city || '', tradeType: row.tradeType || '',
+          website: row.website || '', stage: 'Import',
+          emailStatus: '', lastEmailedAt: '', emailStep: '',
+          notes: row.notes || '',
+          reviewCount: row.reviewCount || '', rating: row.rating || '',
+          tier: row.tier || '',         siteContext: row.siteContext || '',
+        };
+        toAdd.push(CE_COLUMNS.map(col => String(lead[col] ?? '')));
+      }
+      if (toAdd.length > 0) {
+        await sheets().spreadsheets.values.append({
+          spreadsheetId:   SPREADSHEET_ID,
+          range:           CE_COL_RANGE,
+          valueInputOption:'RAW',
+          insertDataOption:'INSERT_ROWS',
+          requestBody:     { values: toAdd },
+        });
+        ceRowMap.clear();
+      }
+      return { added: toAdd.length, skipped };
+    });
+    res.json(result);
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ColdEmail Import]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/coldemail', requireAuth, async (req, res) => {
+  const lead = req.body;
+  const vals = [CE_COLUMNS.map(col => lead[col] !== undefined ? String(lead[col]) : '')];
+  try {
+    await withAuth(async () => {
+      const resp = await sheets().spreadsheets.values.append({
+        spreadsheetId:   SPREADSHEET_ID,
+        range:           CE_COL_RANGE,
+        valueInputOption:'RAW',
+        insertDataOption:'INSERT_ROWS',
+        requestBody:     { values: vals },
+      });
+      const m = (resp.data.updates?.updatedRange || '').match(/!A(\d+)/);
+      if (m) ceRowMap.set(lead.id, parseInt(m[1]));
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ColdEmail POST]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put('/api/coldemail/:id', requireAuth, async (req, res) => {
+  const lead = req.body;
+  const vals = [CE_COLUMNS.map(col => lead[col] !== undefined ? String(lead[col]) : '')];
+  try {
+    const rowNum = await withAuth(() => findCERow(req.params.id));
+    if (!rowNum) return res.status(404).json({ error: 'not found' });
+    await withAuth(async () => {
+      await sheets().spreadsheets.values.update({
+        spreadsheetId:   SPREADSHEET_ID,
+        range:           `${CE_SHEET_NAME}!A${rowNum}:P${rowNum}`,
+        valueInputOption:'RAW',
+        requestBody:     { values: vals },
+      });
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ColdEmail PUT]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/coldemail/:id', requireAuth, async (req, res) => {
+  try {
+    const rowNum = await withAuth(() => findCERow(req.params.id));
+    if (!rowNum) return res.status(404).json({ error: 'not found' });
+    if (ceSheetIdCache === null) await withAuth(() => ensureColdEmailSheet());
+    await withAuth(async () => {
+      await sheets().spreadsheets.batchUpdate({
+        spreadsheetId: SPREADSHEET_ID,
+        requestBody: {
+          requests: [{
+            deleteDimension: {
+              range: {
+                sheetId:    ceSheetIdCache,
+                dimension:  'ROWS',
+                startIndex: rowNum - 1,
+                endIndex:   rowNum,
+              },
+            },
+          }],
+        },
+      });
+    });
+    ceRowMap.delete(req.params.id);
+    ceRowMap.forEach((r, lid) => { if (r > rowNum) ceRowMap.set(lid, r - 1); });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ColdEmail DELETE]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/coldemail/:id/promote', requireAuth, async (req, res) => {
+  try {
+    await withAuth(async () => {
+      const ceResp = await sheets().spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range:         CE_COL_RANGE,
+      });
+      const ceRows = ceResp.data.values || [];
+      let ceRowNum = null;
+      let ceLead   = null;
+      for (let i = 1; i < ceRows.length; i++) {
+        if (ceRows[i][0] === req.params.id) {
+          ceRowNum = i + 1;
+          ceLead   = {};
+          CE_COLUMNS.forEach((c, j) => { ceLead[c] = ceRows[i][j] || ''; });
+          break;
+        }
+      }
+      if (!ceLead) { res.status(404).json({ error: 'not found' }); return; }
+
+      const parts = (ceLead.contactName || '').trim().split(/\s+/);
+      const first = parts[0] || '';
+      const last  = parts.slice(1).join(' ') || '';
+      const newId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+      const leadsLead = {
+        id: newId, type: 'trade', first, last, brokerage: '',
+        tradeType: ceLead.tradeType || '', company: ceLead.company || '',
+        city: ceLead.city || '', cityTrade: ceLead.city || '',
+        phone: '', email: ceLead.email || '', website: ceLead.website || '',
+        stage: 'new', priority: 'cold', followup: '',
+        notes: ceLead.notes || '', created: String(Date.now()),
+      };
+      await sheets().spreadsheets.values.append({
+        spreadsheetId:   SPREADSHEET_ID,
+        range:           COL_RANGE,
+        valueInputOption:'RAW',
+        insertDataOption:'INSERT_ROWS',
+        requestBody:     { values: [COLUMNS.map(col => String(leadsLead[col] ?? ''))] },
+      });
+      // Mark ColdEmail row stage = Promoted (col H)
+      await sheets().spreadsheets.values.update({
+        spreadsheetId:   SPREADSHEET_ID,
+        range:           `${CE_SHEET_NAME}!H${ceRowNum}`,
+        valueInputOption:'RAW',
+        requestBody:     { values: [['Promoted']] },
+      });
+      ceRowMap.delete(req.params.id);
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ColdEmail Promote]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── AGENT ROUTES ─────────────────────────────────────────────────────────────
+
+app.post('/api/agent/run', requireAuth, (req, res) => {
+  if (agentState.running) return res.status(409).json({ error: 'already running' });
+
+  const dryRun = req.body.dryRun !== false; // default true
+  agentState.running   = true;
+  agentState.dryRun    = dryRun;
+  agentState.startedAt = new Date().toISOString();
+  agentState.log       = [];
+  agentState.exitCode  = null;
+
+  const child = spawn('node', ['outreach-agent.js'], {
+    cwd: __dirname,
+    env: { ...process.env, DRY_RUN: dryRun ? 'true' : 'false' },
+  });
+  agentChild = child;
+
+  let outBuf = '', errBuf = '';
+
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', chunk => {
+    outBuf += chunk;
+    const lines = outBuf.split('\n');
+    outBuf = lines.pop();
+    lines.forEach(l => agentPushLine(l));
+  });
+
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', chunk => {
+    errBuf += chunk;
+    const lines = errBuf.split('\n');
+    errBuf = lines.pop();
+    lines.filter(Boolean).forEach(l => agentPushLine('[stderr] ' + l));
+  });
+
+  child.on('exit', code => {
+    if (outBuf) { agentPushLine(outBuf); outBuf = ''; }
+    if (errBuf) { agentPushLine('[stderr] ' + errBuf); errBuf = ''; }
+    agentState.running  = false;
+    agentState.exitCode = code;
+    agentChild = null;
+  });
+
+  res.json({ started: true, dryRun });
+});
+
+app.post('/api/agent/stop', requireAuth, (_req, res) => {
+  if (agentChild) agentChild.kill('SIGTERM');
+  res.json({ stopped: true });
+});
+
+app.get('/api/agent/status', requireAuth, (_req, res) => {
+  res.json({
+    running:   agentState.running,
+    dryRun:    agentState.dryRun,
+    startedAt: agentState.startedAt,
+    log:       agentState.log,
+    exitCode:  agentState.exitCode,
+  });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`ScaleLab Pipeline → http://localhost:${PORT}`));
