@@ -85,8 +85,13 @@ const oauth2Client = new google.auth.OAuth2(
 function saveToken(newTokens) {
   const existing = fs.existsSync(TOKEN_PATH)
     ? JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8'))
-    : {};
+    : (oauth2Client.credentials || {});
   const merged = { ...existing, ...newTokens };   // never lose refresh_token
+  oauth2Client.setCredentials(merged);
+  if (process.env.RAILWAY_ENVIRONMENT) {
+    console.log('[token] Railway env detected — skipping disk write, token refreshed in memory');
+    return merged;
+  }
   fs.writeFileSync(TOKEN_PATH, JSON.stringify(merged));
   return merged;
 }
@@ -94,10 +99,15 @@ function saveToken(newTokens) {
 oauth2Client.on('tokens', t => saveToken(t));
 
 function loadToken() {
+  if (process.env.GMAIL_TOKEN_JSON) {
+    oauth2Client.setCredentials(JSON.parse(process.env.GMAIL_TOKEN_JSON));
+    return true;
+  }
   if (!fs.existsSync(TOKEN_PATH)) {
     throw new Error('token.json not found — authenticate via the dashboard first.');
   }
   oauth2Client.setCredentials(JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8')));
+  return false;
 }
 
 function isTokenError(e) {

@@ -3,6 +3,7 @@ const express    = require('express');
 const { google } = require('googleapis');
 const { spawn }  = require('child_process');
 const path       = require('path');
+const cron       = require('node-cron');
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -106,6 +107,46 @@ let   agentChild = null;
 function agentPushLine(line) {
   agentState.log.push({ ts: new Date().toISOString(), line });
   if (agentState.log.length > LOG_CAP) agentState.log.shift();
+}
+
+function spawnAgent(dryRun) {
+  agentState.running   = true;
+  agentState.dryRun    = dryRun;
+  agentState.startedAt = new Date().toISOString();
+  agentState.log       = [];
+  agentState.exitCode  = null;
+
+  const child = spawn('node', ['outreach-agent.js'], {
+    cwd: __dirname,
+    env: { ...process.env, DRY_RUN: dryRun ? 'true' : 'false' },
+  });
+  agentChild = child;
+
+  let outBuf = '', errBuf = '';
+
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', chunk => {
+    outBuf += chunk;
+    const lines = outBuf.split('\n');
+    outBuf = lines.pop();
+    lines.forEach(l => agentPushLine(l));
+  });
+
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', chunk => {
+    errBuf += chunk;
+    const lines = errBuf.split('\n');
+    errBuf = lines.pop();
+    lines.filter(Boolean).forEach(l => agentPushLine('[stderr] ' + l));
+  });
+
+  child.on('exit', code => {
+    if (outBuf) { agentPushLine(outBuf); outBuf = ''; }
+    if (errBuf) { agentPushLine('[stderr] ' + errBuf); errBuf = ''; }
+    agentState.running  = false;
+    agentState.exitCode = code;
+    agentChild = null;
+  });
 }
 
 // ── SHEET HELPERS ─────────────────────────────────────────────────────────────
@@ -518,46 +559,8 @@ app.post('/api/coldemail/:id/promote', requireAuth, async (req, res) => {
 
 app.post('/api/agent/run', requireAuth, (req, res) => {
   if (agentState.running) return res.status(409).json({ error: 'already running' });
-
   const dryRun = req.body.dryRun !== false; // default true
-  agentState.running   = true;
-  agentState.dryRun    = dryRun;
-  agentState.startedAt = new Date().toISOString();
-  agentState.log       = [];
-  agentState.exitCode  = null;
-
-  const child = spawn('node', ['outreach-agent.js'], {
-    cwd: __dirname,
-    env: { ...process.env, DRY_RUN: dryRun ? 'true' : 'false' },
-  });
-  agentChild = child;
-
-  let outBuf = '', errBuf = '';
-
-  child.stdout.setEncoding('utf8');
-  child.stdout.on('data', chunk => {
-    outBuf += chunk;
-    const lines = outBuf.split('\n');
-    outBuf = lines.pop();
-    lines.forEach(l => agentPushLine(l));
-  });
-
-  child.stderr.setEncoding('utf8');
-  child.stderr.on('data', chunk => {
-    errBuf += chunk;
-    const lines = errBuf.split('\n');
-    errBuf = lines.pop();
-    lines.filter(Boolean).forEach(l => agentPushLine('[stderr] ' + l));
-  });
-
-  child.on('exit', code => {
-    if (outBuf) { agentPushLine(outBuf); outBuf = ''; }
-    if (errBuf) { agentPushLine('[stderr] ' + errBuf); errBuf = ''; }
-    agentState.running  = false;
-    agentState.exitCode = code;
-    agentChild = null;
-  });
-
+  spawnAgent(dryRun);
   res.json({ started: true, dryRun });
 });
 
@@ -575,6 +578,20 @@ app.get('/api/agent/status', requireAuth, (_req, res) => {
     exitCode:  agentState.exitCode,
   });
 });
+
+if (process.env.RAILWAY_ENVIRONMENT) {
+  cron.schedule('0 */4 * * *', () => {
+    console.log('[cron] Triggering scheduled outreach agent run...');
+    if (agentState.running) {
+      console.log('[cron] Agent already running — skipping this tick');
+      return;
+    }
+    spawnAgent(false);
+  }, {
+    timezone: 'America/Vancouver',
+  });
+  console.log('[cron] Outreach agent scheduled: every 4 hours (Vancouver time)');
+}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`ScaleLab Pipeline → http://localhost:${PORT}`));
