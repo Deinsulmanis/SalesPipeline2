@@ -122,6 +122,9 @@ function spawnAgent(dryRun) {
   });
   agentChild = child;
 
+  child.stdout.pipe(process.stdout);
+  child.stderr.pipe(process.stderr);
+
   let outBuf = '', errBuf = '';
 
   child.stdout.setEncoding('utf8');
