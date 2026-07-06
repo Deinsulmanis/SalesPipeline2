@@ -215,6 +215,28 @@ ${casl}`;
   },
 ];
 
+// Parallel warm-lead template — used only for open-triggered follow-ups.
+// Not part of FOLLOW_UP_SEQUENCE (triggered by ProposalOpens count, not elapsed days).
+const WARM_FOLLOW_UP_TEMPLATE = {
+  step: 'warm',
+  subject: (lead) => `Re: AI receptionist for ${cleanCompanyName(lead.company) || lead.company}`,
+  body: (lead) => {
+    const name    = lead.contactName || 'there';
+    const company = cleanCompanyName(lead.company) || lead.company;
+    return `Hi ${name},
+
+Wanted to follow up on the proposal I sent over — looks like you had a chance to take a look, which I appreciate.
+
+Happy to answer any questions or put together a quick demo built around ${company}'s setup so you can hear exactly how it would sound to your clients.
+
+Worth a quick chat?
+
+${FROM_NAME}
+ScaleLab AI
+${MAILING_ADDRESS}`;
+  },
+};
+
 // ── EMAIL TEMPLATE ────────────────────────────────────────────────────────────
 
 // Derives a stable 4-digit reference code from the lead's id.
@@ -536,6 +558,29 @@ async function readLeads() {
   }).filter(l => l.id);
 }
 
+async function readProposalOpens() {
+  try {
+    return await withAuth(async () => {
+      const resp = await sheets().spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range: 'ProposalOpens!A:F',
+      });
+      const rows = resp.data.values || [];
+      return rows.slice(1).map(row => ({
+        timestamp: row[0] || '',
+        company:   row[1] || '',
+        niche:     row[2] || '',
+        id:        row[3] || '',
+        ip:        row[4] || '',
+        userAgent: row[5] || '',
+      }));
+    });
+  } catch (e) {
+    console.error('[ProposalOpens] Failed to read:', e.message);
+    return [];
+  }
+}
+
 // Write stage (M) + agent columns (R:T) for one row, leaving A:L,N:Q untouched.
 // Sets emailStatus='done' when the last step in the sequence has been sent.
 async function markSent(rowNum, step) {
@@ -565,6 +610,16 @@ async function markReplied(rowNum) {
         { range: `${SHEET_NAME}!I${rowNum}`, values: [['replied']] },
       ],
     },
+  });
+}
+
+async function appendOpenTriggeredNote(rowNum, existingNotes) {
+  const updated = existingNotes ? `${existingNotes} | open-triggered` : 'open-triggered';
+  await sheets().spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_NAME}!L${rowNum}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[updated]] },
   });
 }
 
@@ -630,6 +685,39 @@ function selectFollowUps(leads) {
   });
 }
 
+function normalizeName(str) {
+  return (str || '').toLowerCase().trim().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function getOpenTriggeredLeads(allLeads, proposalOpens) {
+  const openCounts = new Map();
+  for (const open of proposalOpens) {
+    const key = normalizeName(cleanCompanyName(open.company));
+    if (!key) continue;
+    openCounts.set(key, (openCounts.get(key) || 0) + 1);
+  }
+
+  const now          = Date.now();
+  const TWELVE_HOURS = 12 * 60 * 60 * 1000;
+
+  return allLeads
+    .filter(lead => {
+      if (lead.emailStatus !== 'emailed') return false;
+      const step = parseInt(lead.emailStep || '0', 10);
+      if (step < 1 || step > FOLLOW_UP_SEQUENCE.length) return false;
+      if (lead.stage === 'Replied') return false;
+      const lastSent = new Date(lead.lastEmailedAt).getTime();
+      if (isNaN(lastSent) || (now - lastSent) < TWELVE_HOURS) return false;
+      const key = normalizeName(cleanCompanyName(lead.company));
+      return (openCounts.get(key) || 0) >= 2;
+    })
+    .sort((a, b) => {
+      const countA = openCounts.get(normalizeName(cleanCompanyName(a.company))) || 0;
+      const countB = openCounts.get(normalizeName(cleanCompanyName(b.company))) || 0;
+      return countB - countA;
+    });
+}
+
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const jitter = () => MIN_DELAY + Math.floor(Math.random() * (MAX_DELAY - MIN_DELAY));
 
@@ -661,12 +749,21 @@ async function run() {
   // Phase 3 — follow-ups (replied leads already excluded by runReplyCheckPass)
   const followUps = selectFollowUps(all);
 
-  console.log(`${all.length} leads · ${queued.length} queued · ${followUps.length} follow-ups due · cap ${DAILY_CAP}\n`);
+  // Open-triggered warm follow-ups
+  const proposalOpens = await readProposalOpens();
+  const warmLeads     = getOpenTriggeredLeads(all, proposalOpens);
+  console.log(`[opens] ${warmLeads.length} open-triggered lead${warmLeads.length === 1 ? '' : 's'} found`);
 
-  // New sends fill the cap first; follow-ups use remaining slots
-  const newBatch    = queued.slice(0, DAILY_CAP);
-  const followBatch = followUps.slice(0, Math.max(0, DAILY_CAP - newBatch.length));
-  const total       = newBatch.length + followBatch.length;
+  console.log(`${all.length} leads · ${queued.length} queued · ${warmLeads.length} warm · ${followUps.length} follow-ups due · cap ${DAILY_CAP}\n`);
+
+  // New sends fill the cap first; warm follow-ups second; standard follow-ups use remaining slots
+  const newBatch       = queued.slice(0, DAILY_CAP);
+  const slotsAfterNew  = Math.max(0, DAILY_CAP - newBatch.length);
+  const warmBatch      = warmLeads.slice(0, slotsAfterNew);
+  const warmIds        = new Set(warmBatch.map(l => l.id));
+  const slotsAfterWarm = Math.max(0, slotsAfterNew - warmBatch.length);
+  const followBatch    = followUps.filter(l => !warmIds.has(l.id)).slice(0, slotsAfterWarm);
+  const total          = newBatch.length + warmBatch.length + followBatch.length;
 
   if (total === 0) {
     console.log(`Nothing to send. Queue a lead (stage="${QUEUE_STAGE}") or wait for follow-up timers.`);
@@ -698,6 +795,41 @@ async function run() {
       console.log(`✅ Sent (step 1) → ${lead.email}  (${sent}/${total})`);
     } catch (e) {
       console.error(`❌ Failed (step 1) → ${lead.email}: ${e.message}`);
+    }
+
+    if (sent < total) {
+      const d = jitter();
+      console.log(`   …waiting ${Math.round(d / 1000)}s\n`);
+      await sleep(d);
+    }
+  }
+
+  // ── Warm follow-ups (open-triggered) ─────────────────────────────────────
+  for (const lead of warmBatch) {
+    const currentStep = parseInt(lead.emailStep, 10);
+    const nextStepNum = currentStep + 1;
+    const subject     = WARM_FOLLOW_UP_TEMPLATE.subject(lead);
+    const body        = WARM_FOLLOW_UP_TEMPLATE.body(lead);
+    const preview     = body.split('\n')[2] || '';
+
+    if (DRY_RUN) {
+      const rawCo   = lead.company || '';
+      const cleanCo = cleanCompanyName(rawCo);
+      console.log(`— WOULD SEND (warm) →  ${lead.email}  (${rawCo || lead.first || lead.id})`);
+      if (rawCo && rawCo !== cleanCo) console.log(`   Company: "${rawCo}" → "${cleanCo}"`);
+      console.log(`   Subject: ${subject}`);
+      console.log(`   Preview: ${preview}\n`);
+      continue;
+    }
+
+    try {
+      await sendEmail({ to: lead.email.trim(), subject, body });
+      await withAuth(() => markSent(lead._row, nextStepNum));
+      await withAuth(() => appendOpenTriggeredNote(lead._row, lead.notes));
+      sent++;
+      console.log(`✅ Sent (warm) → ${lead.email}  (${sent}/${total})`);
+    } catch (e) {
+      console.error(`❌ Failed (warm) → ${lead.email}: ${e.message}`);
     }
 
     if (sent < total) {
