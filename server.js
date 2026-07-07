@@ -372,6 +372,27 @@ app.get('/api/coldemail', requireAuth, async (_req, res) => {
   }
 });
 
+app.get('/api/proposalOpens', requireAuth, async (_req, res) => {
+  try {
+    const resp = await sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: 'ProposalOpens!A:F',
+    });
+    const rows = resp.data.values || [];
+    res.json(rows.slice(1).map(row => ({
+      timestamp: row[0] || '',
+      company:   row[1] || '',
+      niche:     row[2] || '',
+      id:        row[3] || '',
+      ip:        row[4] || '',
+      userAgent: row[5] || '',
+    })));
+  } catch (e) {
+    console.error('[ProposalOpens GET]', e.message);
+    res.json([]);
+  }
+});
+
 app.post('/api/coldemail/import', requireAuth, async (req, res) => {
   const rows = req.body;
   if (!Array.isArray(rows)) return res.status(400).json({ error: 'body must be an array' });

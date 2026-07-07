@@ -1037,6 +1037,7 @@
       <button class="btn-bulk-queue" id="bulk-queue-btn" onclick="bulkQueueSelected()" disabled>
         Queue Selected (<span id="bulk-count">0</span>)
       </button>
+      <button class="ce-tab" data-ce="opens" onclick="setCeFilter('opens')">📬 Opens</button>
       <button class="ce-tab" data-ce="agent" onclick="setCeFilter('agent')" style="margin-left:6px">
         <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.45 2 2 0 0 1 3.59 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.49a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21.73 16z"/></svg>
         Agent
@@ -1046,6 +1047,14 @@
 
   <!-- CE Lead table -->
   <div id="ce-leads-panel">
+    <div class="stats-bar" id="ce-stats-bar">
+      <div class="stat"><div><div class="stat-val" id="ce-stat-total">0</div><div class="stat-label">Total</div></div></div>
+      <div class="stat"><div><div class="stat-val" id="ce-stat-queued">0</div><div class="stat-label">Queued</div></div></div>
+      <div class="stat"><div><div class="stat-val" id="ce-stat-emailed">0</div><div class="stat-label">Emailed</div></div></div>
+      <div class="stat"><div><div class="stat-val" id="ce-stat-replied">0</div><div class="stat-label">Replied</div></div></div>
+      <div class="stat"><div><div class="stat-val" id="ce-stat-opens">0</div><div class="stat-label">Opens</div></div></div>
+      <div class="stat"><div><div class="stat-val" id="ce-stat-warm">0</div><div class="stat-label">🔥 Warm</div></div></div>
+    </div>
     <div class="ce-table-wrap">
       <table class="ce-table">
         <thead>
@@ -1056,6 +1065,7 @@
             <th>Email</th>
             <th>City</th>
             <th>Trade</th>
+            <th>Opens</th>
             <th>Stage</th>
             <th>Actions</th>
           </tr>
@@ -1063,6 +1073,24 @@
         <tbody id="ce-tbody"></tbody>
       </table>
       <div class="ce-empty" id="ce-empty" style="display:none">No leads found. Import a CSV to get started.</div>
+    </div>
+  </div>
+
+  <!-- Opens panel (proposal opens log) -->
+  <div id="ce-opens-panel" style="display:none">
+    <div style="padding:20px 28px">
+      <table class="ce-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Company</th>
+            <th>Niche</th>
+            <th>IP</th>
+          </tr>
+        </thead>
+        <tbody id="ce-opens-tbody"></tbody>
+      </table>
+      <div class="ce-empty" id="ce-opens-empty" style="display:none">No proposal opens recorded yet.</div>
     </div>
   </div>
 
@@ -1927,6 +1955,8 @@ let currentMotion  = 'cold-calls';
 let ceLeads        = [];
 let ceActiveFilter = 'all';
 let ceSelected     = new Set();
+let ceOpensMap     = new Map();
+let ceOpensData    = [];
 
 const CE_STAGES = ['Import','Queued','Contacted','Replied','Done','Promoted','Unsubscribed'];
 
@@ -1952,13 +1982,17 @@ function setMotion(m) {
 function setCeFilter(f) {
   ceActiveFilter = f;
   const isAgent = f === 'agent';
-  document.getElementById('ce-leads-panel').style.display = isAgent ? 'none' : 'block';
-  document.getElementById('agent-panel').style.display    = isAgent ? 'block' : 'none';
+  const isOpens = f === 'opens';
+  document.getElementById('ce-leads-panel').style.display  = (!isAgent && !isOpens) ? 'block' : 'none';
+  document.getElementById('agent-panel').style.display     = isAgent  ? 'block' : 'none';
+  document.getElementById('ce-opens-panel').style.display  = isOpens  ? 'block' : 'none';
   document.querySelectorAll('.ce-tab').forEach(t =>
     t.classList.toggle('active', t.dataset.ce === f)
   );
   if (isAgent) {
     showAgentTab();
+  } else if (isOpens) {
+    renderOpensPanel();
   } else {
     renderCeTable();
   }
@@ -1966,12 +2000,37 @@ function setCeFilter(f) {
 
 async function loadCeLeads() {
   try {
-    const resp = await fetch('/api/coldemail');
-    if (!resp.ok) { showToast('Could not load cold email leads: ' + resp.status, 'error'); return; }
-    ceLeads = await resp.json();
+    const [ceResp, opensResp] = await Promise.all([
+      fetch('/api/coldemail'),
+      fetch('/api/proposalOpens'),
+    ]);
+    if (!ceResp.ok) { showToast('Could not load cold email leads: ' + ceResp.status, 'error'); return; }
+    ceLeads     = await ceResp.json();
+    ceOpensData = opensResp.ok ? await opensResp.json() : [];
+    ceOpensMap  = new Map();
+    for (const o of ceOpensData) {
+      const key = (o.company || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+      if (key) ceOpensMap.set(key, (ceOpensMap.get(key) || 0) + 1);
+    }
+    updateCeStats();
     renderCeTable();
     refreshAgentLeadCounts();
   } catch (e) { showToast('Could not reach server: ' + e.message, 'error'); }
+}
+
+function updateCeStats() {
+  document.getElementById('ce-stat-total').textContent   = ceLeads.length;
+  document.getElementById('ce-stat-queued').textContent  = ceLeads.filter(l => l.stage === 'Queued').length;
+  document.getElementById('ce-stat-emailed').textContent = ceLeads.filter(l => l.emailStatus === 'emailed').length;
+  document.getElementById('ce-stat-replied').textContent = ceLeads.filter(l => l.emailStatus === 'replied').length;
+  let totalOpens = 0; ceOpensMap.forEach(v => { totalOpens += v; });
+  document.getElementById('ce-stat-opens').textContent   = totalOpens;
+  let warmCount = 0;
+  for (const l of ceLeads) {
+    const key = (l.company || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+    if ((ceOpensMap.get(key) || 0) >= 2) warmCount++;
+  }
+  document.getElementById('ce-stat-warm').textContent = warmCount;
 }
 
 function renderCeTable() {
@@ -1994,6 +2053,13 @@ function renderCeTable() {
       `<option value="${s}"${l.stage === s ? ' selected' : ''}>${s}</option>`
     ).join('');
     const emailSafe = (l.email || '').replace(/"/g, '&quot;');
+    const openKey   = (l.company || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+    const opens     = ceOpensMap.get(openKey) || 0;
+    const opensTd   = opens >= 2
+      ? `<td style="color:#f97316;font-weight:600">🔥 ${opens}</td>`
+      : opens === 1
+        ? `<td style="color:#888">1</td>`
+        : `<td style="color:#555">—</td>`;
     return `<tr data-id="${l.id}">
       <td><input type="checkbox" class="ce-row-check" data-id="${l.id}" ${checked} onchange="toggleCeRow(this)"></td>
       <td class="ce-td-company">${esc(l.company) || '<span style="color:var(--text-muted)">—</span>'}</td>
@@ -2001,6 +2067,7 @@ function renderCeTable() {
       <td class="ce-td-email">${l.email ? `<a href="mailto:${emailSafe}">${esc(l.email)}</a>` : '—'}</td>
       <td>${esc(l.city) || '—'}</td>
       <td>${esc(l.tradeType) || '—'}</td>
+      ${opensTd}
       <td><select class="ce-stage-select" onchange="setCeLeadStage('${l.id}',this.value)">${stageOpts}</select></td>
       <td style="white-space:nowrap;display:flex;gap:6px;align-items:center">
         <button class="btn-promote" onclick="promoteLead('${l.id}')">↗ Promote</button>
@@ -2008,6 +2075,27 @@ function renderCeTable() {
           <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
         </button>
       </td>
+    </tr>`;
+  }).join('');
+}
+
+function renderOpensPanel() {
+  const tbody  = document.getElementById('ce-opens-tbody');
+  const empty  = document.getElementById('ce-opens-empty');
+  const sorted = [...ceOpensData].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  if (sorted.length === 0) {
+    tbody.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+  tbody.innerHTML = sorted.map(o => {
+    const timeStr = o.timestamp ? new Date(o.timestamp).toLocaleString() : '—';
+    return `<tr>
+      <td style="white-space:nowrap;color:var(--text-secondary)">${esc(timeStr)}</td>
+      <td class="ce-td-company">${esc(o.company) || '—'}</td>
+      <td>${esc(o.niche) || '—'}</td>
+      <td style="color:var(--text-muted);font-size:12px">${esc(o.ip) || '—'}</td>
     </tr>`;
   }).join('');
 }
