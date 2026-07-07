@@ -47,8 +47,9 @@ const TOKEN_PATH     = path.join(__dirname, 'token.json');
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const SHEET_NAME     = 'ColdEmail';
 
-const DRY_RUN     = process.env.DRY_RUN !== 'false';          // default TRUE
-const DAILY_CAP   = parseInt(process.env.DAILY_CAP || '12', 10);
+const DRY_RUN          = process.env.DRY_RUN !== 'false';          // default TRUE
+const DAILY_CAP        = parseInt(process.env.DAILY_CAP || '12', 10);
+const DAILY_SEND_LIMIT = parseInt(process.env.DAILY_SEND_LIMIT || '40', 10);
 const QUEUE_STAGE = process.env.QUEUE_STAGE || 'Queued';      // set a lead's stage to this to queue it
 const SENT_STAGE  = process.env.SENT_STAGE  || 'Contacted';   // stage the agent moves it to after sending
 const FROM_EMAIL  = process.env.FROM_EMAIL;                   // must be the authed Google account
@@ -82,6 +83,8 @@ const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_REDIRECT_URI,
 );
 
+let _tokenRefreshLogged = false;
+
 function saveToken(newTokens) {
   const existing = fs.existsSync(TOKEN_PATH)
     ? JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8'))
@@ -89,7 +92,10 @@ function saveToken(newTokens) {
   const merged = { ...existing, ...newTokens };   // never lose refresh_token
   oauth2Client.setCredentials(merged);
   if (process.env.RAILWAY_ENVIRONMENT) {
-    console.log('[token] Railway env detected — skipping disk write, token refreshed in memory');
+    if (!_tokenRefreshLogged) {
+      console.log('[token] Railway env detected — token refreshes handled in memory');
+      _tokenRefreshLogged = true;
+    }
     return merged;
   }
   fs.writeFileSync(TOKEN_PATH, JSON.stringify(merged));
@@ -685,6 +691,15 @@ function selectFollowUps(leads) {
   });
 }
 
+function countTodaySends(allLeads) {
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+  return allLeads.filter(l => {
+    if (!l.lastEmailedAt) return false;
+    const sentDay = new Date(l.lastEmailedAt).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+    return sentDay === today;
+  }).length;
+}
+
 function normalizeName(str) {
   return (str || '').toLowerCase().trim().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
 }
@@ -739,7 +754,11 @@ async function run() {
 
   const all = await withAuth(readLeads);
 
-  // Reply-check pass — unconditional; runs even when nothing is queued or due.
+  const todaySent      = countTodaySends(all);
+  console.log(`[cap] ${todaySent}/${DAILY_SEND_LIMIT} emails sent today (Vancouver time)`);
+  const dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
+
+  // Reply-check pass — unconditional; runs even when cap is reached.
   // Mutates emailStatus on replied leads so selectFollowUps excludes them below.
   await runReplyCheckPass(all);
 
@@ -754,11 +773,17 @@ async function run() {
   const warmLeads     = getOpenTriggeredLeads(all, proposalOpens);
   console.log(`[opens] ${warmLeads.length} open-triggered lead${warmLeads.length === 1 ? '' : 's'} found`);
 
-  console.log(`${all.length} leads · ${queued.length} queued · ${warmLeads.length} warm · ${followUps.length} follow-ups due · cap ${DAILY_CAP}\n`);
+  const effectiveCap = Math.min(DAILY_CAP, dailyRemaining);
+  console.log(`${all.length} leads · ${queued.length} queued · ${warmLeads.length} warm · ${followUps.length} follow-ups due · cap ${effectiveCap} (${dailyRemaining} remaining today)\n`);
+
+  if (dailyRemaining === 0) {
+    console.log('[cap] Daily send limit reached — skipping sends this run');
+    return;
+  }
 
   // New sends fill the cap first; warm follow-ups second; standard follow-ups use remaining slots
-  const newBatch       = queued.slice(0, DAILY_CAP);
-  const slotsAfterNew  = Math.max(0, DAILY_CAP - newBatch.length);
+  const newBatch       = queued.slice(0, effectiveCap);
+  const slotsAfterNew  = Math.max(0, effectiveCap - newBatch.length);
   const warmBatch      = warmLeads.slice(0, slotsAfterNew);
   const warmIds        = new Set(warmBatch.map(l => l.id));
   const slotsAfterWarm = Math.max(0, slotsAfterNew - warmBatch.length);
