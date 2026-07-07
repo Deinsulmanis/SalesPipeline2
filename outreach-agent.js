@@ -75,6 +75,15 @@ const AGENT_COLS  = []; // integrated into COLUMNS for ColdEmail
 const READ_RANGE  = `${SHEET_NAME}!A:P`;
 const SCRAPE_SKIP = '__scraped__'; // stored in siteContext when site returned no usable text
 
+// Cold Calls (Leads) sheet — used when auto-promoting interested replies
+const LEADS_SHEET   = 'Leads';
+const LEADS_RANGE   = `${LEADS_SHEET}!A:Q`;
+const LEADS_COLUMNS = [
+  'id','type','first','last','brokerage','tradeType','company',
+  'city','cityTrade','phone','email','website',
+  'stage','priority','followup','notes','created',
+];
+
 // ── AUTH (same pattern as server.js) ──────────────────────────────────────────
 
 const oauth2Client = new google.auth.OAuth2(
@@ -520,21 +529,75 @@ async function sendEmail({ to, subject, body }) {
 }
 
 // Phase 4: check Gmail inbox for a reply from lead.email received after lastEmailedAt.
-// Returns: true = reply found, false = no reply, null = check failed (caller must skip follow-up).
+// Returns: { messageId, snippet, body } if a reply was found, null otherwise or on error.
 // Fails CLOSED — an error returns null so the caller never sends to an unverified lead.
-async function checkForReply(lead) {
-  if (!lead.lastEmailedAt || !isValidEmail(lead.email)) return false;
+async function getReplyMessage(lead) {
+  if (!lead.lastEmailedAt || !isValidEmail(lead.email)) return null;
   try {
     const afterSec = Math.floor(new Date(lead.lastEmailedAt).getTime() / 1000);
-    const resp = await gmail().users.messages.list({
+    const listResp = await gmail().users.messages.list({
       userId: 'me',
       q: `from:${lead.email.trim()} after:${afterSec}`,
       maxResults: 1,
     });
-    return (resp.data.messages || []).length > 0;
+    const messages = listResp.data.messages || [];
+    if (!messages.length) return null;
+
+    const msgResp = await gmail().users.messages.get({
+      userId: 'me',
+      id: messages[0].id,
+      format: 'full',
+    });
+    const msg     = msgResp.data;
+    const snippet = msg.snippet || '';
+
+    let body = '';
+    const payload = msg.payload || {};
+    if (payload.parts && payload.parts.length) {
+      const textPart = payload.parts.find(p => p.mimeType === 'text/plain');
+      if (textPart?.body?.data) {
+        body = Buffer.from(textPart.body.data, 'base64url').toString('utf8');
+      }
+    } else if (payload.body?.data) {
+      body = Buffer.from(payload.body.data, 'base64url').toString('utf8');
+    }
+    body = body.trim().slice(0, 1500);
+
+    return { messageId: messages[0].id, snippet, body };
   } catch (e) {
     console.warn(`[ReplyCheck] API error for ${lead.email}: ${e.message}`);
-    return null; // fail closed — caller will skip this follow-up
+    return null;
+  }
+}
+
+const REPLY_CATEGORIES = new Set(['INTERESTED','NOT_INTERESTED','UNSUBSCRIBE','OUT_OF_OFFICE','WRONG_PERSON']);
+
+async function classifyReply(company, replyBody) {
+  if (!ANTHROPIC_API_KEY) return 'INTERESTED';
+  try {
+    const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+    const msg = await anthropic.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 20,
+      system: [
+        'You are classifying a reply to a cold sales email about an AI receptionist product for small businesses.',
+        'Classify the reply into exactly one of these categories:',
+        '',
+        'INTERESTED — they want to learn more, asked a question, want to schedule a call, or showed positive engagement',
+        'NOT_INTERESTED — they explicitly declined, said no thanks, not interested, not a good fit, or similar',
+        'UNSUBSCRIBE — they asked to be removed, unsubscribed, or said stop emailing',
+        'OUT_OF_OFFICE — automated out-of-office or vacation reply',
+        'WRONG_PERSON — they indicated they are not the decision maker or the email reached the wrong person',
+        '',
+        'Reply with ONLY the category name, nothing else.',
+      ].join('\n'),
+      messages: [{ role: 'user', content: `Company: ${company}\nReply: ${replyBody}` }],
+    });
+    const raw = (msg.content[0]?.text || '').trim().toUpperCase();
+    return REPLY_CATEGORIES.has(raw) ? raw : 'INTERESTED';
+  } catch (e) {
+    console.warn(`[Classify] API error for ${company}: ${e.message}`);
+    return 'INTERESTED';
   }
 }
 
@@ -629,11 +692,122 @@ async function appendOpenTriggeredNote(rowNum, existingNotes) {
   });
 }
 
+// ── REPLY ROUTING ─────────────────────────────────────────────────────────────
+
+function prependNote(existing, tag) {
+  return existing ? `${tag} ${existing}` : tag;
+}
+
+async function handleInterested(lead) {
+  await sheets().spreadsheets.values.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: {
+      valueInputOption: 'RAW',
+      data: [
+        { range: `${SHEET_NAME}!H${lead._row}`, values: [['Replied']] },
+        { range: `${SHEET_NAME}!I${lead._row}`, values: [['replied']] },
+        { range: `${SHEET_NAME}!L${lead._row}`, values: [[prependNote(lead.notes, '[REPLY: Interested]')]] },
+      ],
+    },
+  });
+  const parts = (lead.contactName || '').split(' ');
+  const first = parts[0] || '';
+  const last  = parts.slice(1).join(' ') || '';
+  const promotedLead = {
+    id:        `CE-${lead.id}`,
+    type:      'trade',
+    first,
+    last,
+    brokerage: '',
+    tradeType: lead.tradeType || 'Med Spa',
+    company:   lead.company,
+    city:      lead.city || '',
+    cityTrade: lead.city || '',
+    phone:     '',
+    email:     lead.email,
+    website:   lead.website || '',
+    stage:     'new',
+    priority:  'hot',
+    followup:  new Date().toISOString().split('T')[0],
+    notes:     'Auto-promoted from cold email outreach. Reply classified: Interested.',
+    created:   new Date().toISOString(),
+  };
+  await sheets().spreadsheets.values.append({
+    spreadsheetId:    SPREADSHEET_ID,
+    range:            LEADS_RANGE,
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody:      { values: [LEADS_COLUMNS.map(col => String(promotedLead[col] ?? ''))] },
+  });
+  console.log(`  🔥 Auto-promoted ${lead.company} to Cold Calls kanban`);
+}
+
+async function handleNotInterested(lead) {
+  await sheets().spreadsheets.values.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: {
+      valueInputOption: 'RAW',
+      data: [
+        { range: `${SHEET_NAME}!H${lead._row}`, values: [['Done']] },
+        { range: `${SHEET_NAME}!I${lead._row}`, values: [['done']] },
+        { range: `${SHEET_NAME}!L${lead._row}`, values: [[prependNote(lead.notes, '[REPLY: Not Interested]')]] },
+      ],
+    },
+  });
+  console.log(`  ✗ ${lead.company} — marked Done (not interested)`);
+}
+
+async function handleUnsubscribe(lead) {
+  await sheets().spreadsheets.values.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: {
+      valueInputOption: 'RAW',
+      data: [
+        { range: `${SHEET_NAME}!H${lead._row}`, values: [['Unsub']] },
+        { range: `${SHEET_NAME}!I${lead._row}`, values: [['done']] },
+        { range: `${SHEET_NAME}!L${lead._row}`, values: [[prependNote(lead.notes, '[REPLY: Unsubscribed]')]] },
+      ],
+    },
+  });
+  console.log(`  ⊘ ${lead.company} — marked Unsub (unsubscribe request)`);
+}
+
+async function handleOutOfOffice(lead) {
+  const newDate = new Date(lead.lastEmailedAt);
+  newDate.setDate(newDate.getDate() + 7);
+  await sheets().spreadsheets.values.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: {
+      valueInputOption: 'RAW',
+      data: [
+        { range: `${SHEET_NAME}!J${lead._row}`, values: [[newDate.toISOString()]] },
+        { range: `${SHEET_NAME}!L${lead._row}`, values: [[prependNote(lead.notes, '[REPLY: OOO — retry in 7d]')]] },
+      ],
+    },
+  });
+  console.log(`  ⏸ ${lead.company} — OOO detected, follow-up delayed 7 days`);
+}
+
+async function handleWrongPerson(lead) {
+  await sheets().spreadsheets.values.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: {
+      valueInputOption: 'RAW',
+      data: [
+        { range: `${SHEET_NAME}!H${lead._row}`, values: [['Replied']] },
+        { range: `${SHEET_NAME}!I${lead._row}`, values: [['replied']] },
+        { range: `${SHEET_NAME}!L${lead._row}`, values: [[prependNote(lead.notes, '[REPLY: Wrong Person — needs re-enrichment]')]] },
+      ],
+    },
+  });
+  console.log(`  ↪ ${lead.company} — wrong person, flagged for re-enrichment`);
+}
+
 // ── REPLY-CHECK PASS ─────────────────────────────────────────────────────────
 // Runs unconditionally on every agent invocation — independent of whether there
-// are queued sends or follow-ups due. Checks every 'emailed' lead for replies
-// and marks the ones that replied. Mutates lead.emailStatus in-place so that
-// selectFollowUps() naturally excludes replied leads without an extra sheet read.
+// are queued sends or follow-ups due. Fetches each emailed lead's reply body,
+// classifies it with Haiku, and routes to the appropriate handler. Mutates
+// lead.emailStatus in-place so selectFollowUps() excludes replied leads.
 async function runReplyCheckPass(leads) {
   const candidates = leads.filter(l => l.emailStatus === 'emailed' && isValidEmail(l.email));
   if (!candidates.length) {
@@ -641,22 +815,51 @@ async function runReplyCheckPass(leads) {
     return;
   }
   console.log(`[ReplyCheck] Checking ${candidates.length} emailed lead${candidates.length === 1 ? '' : 's'} for replies...`);
+
   let found = 0;
+  const classCounts = {};
+
   for (const lead of candidates) {
-    const status = await withAuth(() => checkForReply(lead));
-    if (status === null) {
-      console.log(`  ⚠ reply-check failed for ${lead.email} — skipping`);
-      continue;
-    }
-    if (status === true) {
-      found++;
-      const label = cleanCompanyName(lead.company) || lead.email;
-      console.log(`  ↩ Reply from ${lead.email} (${label}) — marking Replied`);
-      lead.emailStatus = 'replied'; // exclude from follow-ups this run
-      if (!DRY_RUN) await withAuth(() => markReplied(lead._row));
+    const message = await withAuth(() => getReplyMessage(lead));
+    if (!message) continue;
+
+    found++;
+    const company        = cleanCompanyName(lead.company) || lead.email;
+    const replyText      = message.body || message.snippet;
+    const classification = await classifyReply(lead.company, replyText);
+    classCounts[classification] = (classCounts[classification] || 0) + 1;
+
+    console.log(`  ↩ Reply from ${lead.email} (${company}) — ${classification}`);
+    lead.emailStatus = 'replied'; // exclude from follow-ups this run regardless of classification
+
+    if (!DRY_RUN) {
+      await withAuth(async () => {
+        switch (classification) {
+          case 'NOT_INTERESTED': return handleNotInterested(lead);
+          case 'UNSUBSCRIBE':    return handleUnsubscribe(lead);
+          case 'OUT_OF_OFFICE':  return handleOutOfOffice(lead);
+          case 'WRONG_PERSON':   return handleWrongPerson(lead);
+          default:               return handleInterested(lead);
+        }
+      });
     }
   }
-  console.log(`[ReplyCheck] ${found} repl${found === 1 ? 'y' : 'ies'} found / ${candidates.length} checked.\n`);
+
+  const LABELS = {
+    INTERESTED:     'Interested (auto-promoted)',
+    NOT_INTERESTED: 'Not Interested',
+    UNSUBSCRIBE:    'Unsubscribe',
+    OUT_OF_OFFICE:  'OOO',
+    WRONG_PERSON:   'Wrong Person',
+  };
+  const breakdown = Object.entries(classCounts)
+    .filter(([, n]) => n > 0)
+    .map(([k, n]) => `${n} ${LABELS[k] || k}`)
+    .join(' · ');
+
+  console.log(`[ReplyCheck] ${found} repl${found === 1 ? 'y' : 'ies'} found / ${candidates.length} checked`);
+  if (breakdown) console.log(`  → ${breakdown}`);
+  console.log();
 }
 
 // ── SELECTION ─────────────────────────────────────────────────────────────────
