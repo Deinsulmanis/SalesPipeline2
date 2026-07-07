@@ -1272,6 +1272,41 @@
   </div>
 </div>
 
+<!-- CE DETAIL PANEL -->
+<div class="detail-overlay" id="ce-detail-overlay" onclick="closeCeDetail(event)">
+  <div class="detail-panel" onclick="event.stopPropagation()">
+    <div class="detail-header">
+      <div class="detail-header-left">
+        <div class="detail-name" id="ce-d-name"></div>
+        <div class="detail-sub"  id="ce-d-sub"></div>
+      </div>
+      <button class="modal-close" onclick="closeCeDetail()">✕</button>
+    </div>
+    <div class="detail-body">
+      <div>
+        <div class="detail-section-title">Email Sequence</div>
+        <div id="ce-d-sequence"></div>
+      </div>
+      <div>
+        <div class="detail-section-title">Next Action</div>
+        <div id="ce-d-next"></div>
+      </div>
+      <div>
+        <div class="detail-section-title">Proposal Opens</div>
+        <div id="ce-d-opens"></div>
+      </div>
+      <div>
+        <div class="detail-section-title">Contact Info</div>
+        <div class="detail-fields" id="ce-d-fields"></div>
+      </div>
+      <div>
+        <div class="detail-section-title">Notes</div>
+        <div id="ce-d-notes" style="font-size:13px;color:var(--text-muted);white-space:pre-wrap;line-height:1.5"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 // ============================================================
 // CONFIGURATION — fill these in before first use (see SETUP.md)
@@ -2060,16 +2095,16 @@ function renderCeTable() {
       : opens === 1
         ? `<td style="color:#888">1</td>`
         : `<td style="color:#555">—</td>`;
-    return `<tr data-id="${l.id}">
-      <td><input type="checkbox" class="ce-row-check" data-id="${l.id}" ${checked} onchange="toggleCeRow(this)"></td>
+    return `<tr data-id="${l.id}" onclick="openCeDetail('${l.id}')" style="cursor:pointer">
+      <td onclick="event.stopPropagation()"><input type="checkbox" class="ce-row-check" data-id="${l.id}" ${checked} onchange="toggleCeRow(this)"></td>
       <td class="ce-td-company">${esc(l.company) || '<span style="color:var(--text-muted)">—</span>'}</td>
       <td>${esc(l.contactName) || '—'}</td>
       <td class="ce-td-email">${l.email ? `<a href="mailto:${emailSafe}">${esc(l.email)}</a>` : '—'}</td>
       <td>${esc(l.city) || '—'}</td>
       <td>${esc(l.tradeType) || '—'}</td>
       ${opensTd}
-      <td><select class="ce-stage-select" onchange="setCeLeadStage('${l.id}',this.value)">${stageOpts}</select></td>
-      <td style="white-space:nowrap;display:flex;gap:6px;align-items:center">
+      <td onclick="event.stopPropagation()"><select class="ce-stage-select" onchange="setCeLeadStage('${l.id}',this.value)">${stageOpts}</select></td>
+      <td onclick="event.stopPropagation()" style="white-space:nowrap;display:flex;gap:6px;align-items:center">
         <button class="btn-promote" onclick="promoteLead('${l.id}')">↗ Promote</button>
         <button class="btn-ce-del"  onclick="deleteCeLead('${l.id}')" title="Delete">
           <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
@@ -2098,6 +2133,126 @@ function renderOpensPanel() {
       <td style="color:var(--text-muted);font-size:12px">${esc(o.ip) || '—'}</td>
     </tr>`;
   }).join('');
+}
+
+// ── CE DETAIL PANEL ──────────────────────────────────────────────────────────
+
+function closeCeDetail(e) {
+  if (e && e.target !== document.getElementById('ce-detail-overlay')) return;
+  document.getElementById('ce-detail-overlay').classList.remove('open');
+}
+
+function openCeDetail(id) {
+  const lead = ceLeads.find(l => l.id === id);
+  if (!lead) return;
+
+  // Header
+  document.getElementById('ce-d-name').textContent = lead.company || '—';
+  document.getElementById('ce-d-sub').textContent  = lead.contactName || lead.email || '';
+
+  // ── Sequence progress ────────────────────────────────────────
+  const currentStep = parseInt(lead.emailStep || '0');
+  const stepLabels  = [null, 'Initial outreach', 'Follow-up (3 days)', 'Final (5 days)'];
+  let seqHtml = '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px">';
+  for (let s = 1; s <= 3; s++) {
+    let dot, labelStyle;
+    if (s < currentStep) {
+      dot        = `<span style="color:var(--green);font-size:15px;line-height:1">●</span>`;
+      labelStyle = 'color:var(--text-secondary)';
+    } else if (s === currentStep) {
+      dot        = `<span style="color:#f97316;font-size:15px;line-height:1">◉</span>`;
+      labelStyle = 'color:var(--text);font-weight:600';
+    } else {
+      dot        = `<span style="color:var(--text-muted);font-size:15px;line-height:1">○</span>`;
+      labelStyle = 'color:var(--text-muted)';
+    }
+    seqHtml += `<div style="display:flex;align-items:center;gap:10px">${dot}<span style="font-size:13px;${labelStyle}">Step ${s} — ${stepLabels[s]}</span></div>`;
+  }
+  seqHtml += '</div>';
+
+  const es = (lead.emailStatus || '').toLowerCase();
+  let badge;
+  if      (es === 'replied') badge = `<span style="font-size:11px;padding:2px 8px;border-radius:20px;background:var(--green-bg);color:var(--green);font-weight:600">Replied ✓</span>`;
+  else if (es === 'done')    badge = `<span style="font-size:11px;padding:2px 8px;border-radius:20px;background:var(--border);color:var(--text-muted);font-weight:600">Sequence complete</span>`;
+  else if (es === 'emailed') badge = `<span style="font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--border);color:var(--text-secondary);font-weight:600">In sequence</span>`;
+  else if (lead.stage === 'Queued') badge = `<span style="font-size:11px;padding:2px 8px;border-radius:20px;background:var(--blue-bg);color:var(--blue);font-weight:600">Queued</span>`;
+  else   badge = `<span style="font-size:11px;padding:2px 8px;border-radius:20px;background:var(--border);color:var(--text-muted);font-weight:600">${esc(lead.emailStatus || '—')}</span>`;
+
+  document.getElementById('ce-d-sequence').innerHTML = seqHtml + badge;
+
+  // ── Next action ──────────────────────────────────────────────
+  const stepNum = parseInt(lead.emailStep || '0');
+  let nextHtml;
+  if (es === 'replied' || es === 'done') {
+    nextHtml = `<p style="font-size:13px;color:var(--text-muted)">No further automated sends.</p>`;
+  } else if (es === 'emailed' && stepNum >= 3) {
+    nextHtml = `<p style="font-size:13px;color:var(--text-muted)">Final follow-up sent — sequence ends here.</p>`;
+  } else if (es === 'emailed' && (stepNum === 1 || stepNum === 2)) {
+    const delayDays = stepNum === 1 ? 3 : 5;
+    const nextDate  = new Date(lead.lastEmailedAt);
+    nextDate.setDate(nextDate.getDate() + delayDays);
+    const daysUntil = Math.ceil((nextDate - new Date()) / (1000 * 60 * 60 * 24));
+    if (daysUntil <= 0)      nextHtml = `<p style="font-size:13px;color:#f97316;font-weight:600">Follow-up due now</p>`;
+    else if (daysUntil === 1) nextHtml = `<p style="font-size:13px;color:var(--text)">Follow-up sends tomorrow</p>`;
+    else                      nextHtml = `<p style="font-size:13px;color:var(--text)">Follow-up sends in ${daysUntil} days (${nextDate.toLocaleDateString()})</p>`;
+  } else if (lead.stage === 'Queued') {
+    nextHtml = `<p style="font-size:13px;color:var(--blue)">Pending — will send on next agent run</p>`;
+  } else {
+    nextHtml = `<p style="font-size:13px;color:var(--text-muted)">—</p>`;
+  }
+  document.getElementById('ce-d-next').innerHTML = nextHtml;
+
+  // ── Proposal opens ───────────────────────────────────────────
+  const openKey = (lead.company || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+  const opens   = ceOpensMap.get(openKey) || 0;
+  let opensHtml;
+  if (opens === 0) {
+    opensHtml = `<p style="font-size:13px;color:var(--text-muted)">No opens recorded.</p>`;
+  } else {
+    const matches = ceOpensData
+      .filter(o => (o.company || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '') === openKey)
+      .sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+    const capped = matches.slice(0, 5);
+    const extra  = matches.length - capped.length;
+    opensHtml  = `<p style="font-size:13px;font-weight:600;color:#f97316;margin-bottom:8px">🔥 ${opens} open${opens > 1 ? 's' : ''} recorded</p>`;
+    opensHtml += '<div style="display:flex;flex-direction:column;gap:4px">';
+    for (const o of capped) {
+      const ts = o.timestamp ? new Date(o.timestamp).toLocaleString() : '—';
+      opensHtml += `<div style="font-size:12px;color:var(--text-secondary)">${esc(ts)}${o.ip ? ` · <span style="color:var(--text-muted)">${esc(o.ip)}</span>` : ''}</div>`;
+    }
+    if (extra > 0) opensHtml += `<div style="font-size:12px;color:var(--text-muted)">+ ${extra} more</div>`;
+    opensHtml += '</div>';
+  }
+  document.getElementById('ce-d-opens').innerHTML = opensHtml;
+
+  // ── Contact fields ───────────────────────────────────────────
+  const fieldRows = [
+    lead.email       && { label: 'Email',        val: `<a href="mailto:${esc(lead.email)}">${esc(lead.email)}</a>` },
+    lead.website     && { label: 'Website',      val: `<a href="${/^https?:\/\//i.test(lead.website) ? '' : 'https://'}${esc(lead.website)}" target="_blank">${esc(lead.website)}</a>` },
+    lead.city        && { label: 'City',         val: esc(lead.city) },
+    lead.tradeType   && { label: 'Niche',        val: esc(lead.tradeType) },
+    lead.rating      && { label: 'Rating',       val: `${esc(lead.rating)} ★` },
+    lead.reviewCount && { label: 'Reviews',      val: esc(lead.reviewCount) },
+    { label: 'Last emailed', val: lead.lastEmailedAt ? new Date(lead.lastEmailedAt).toLocaleDateString() : '—' },
+  ].filter(Boolean);
+  document.getElementById('ce-d-fields').innerHTML = fieldRows.map(r =>
+    `<div class="detail-field"><span class="detail-field-label">${r.label}</span><span class="detail-field-val">${r.val}</span></div>`
+  ).join('');
+
+  // ── Notes ────────────────────────────────────────────────────
+  if (lead.notes) {
+    const notesHtml = esc(lead.notes)
+      .replace(/\[REPLY: Interested\]/g,        `<span style="background:rgba(16,185,129,0.15);color:var(--green);padding:1px 5px;border-radius:4px">[REPLY: Interested]</span>`)
+      .replace(/\[REPLY: Not Interested\]/g,    `<span style="background:rgba(239,68,68,0.15);color:var(--hot);padding:1px 5px;border-radius:4px">[REPLY: Not Interested]</span>`)
+      .replace(/\[REPLY: Unsubscribed\]/g,      `<span style="background:rgba(249,115,22,0.15);color:#f97316;padding:1px 5px;border-radius:4px">[REPLY: Unsubscribed]</span>`)
+      .replace(/\[REPLY: OOO[^\]]*\]/g,         `<span style="background:rgba(59,130,246,0.15);color:var(--blue);padding:1px 5px;border-radius:4px">$&</span>`)
+      .replace(/\[REPLY: Wrong Person[^\]]*\]/g, `<span style="background:rgba(234,179,8,0.15);color:#eab308;padding:1px 5px;border-radius:4px">$&</span>`);
+    document.getElementById('ce-d-notes').innerHTML = notesHtml;
+  } else {
+    document.getElementById('ce-d-notes').textContent = 'No notes';
+  }
+
+  document.getElementById('ce-detail-overlay').classList.add('open');
 }
 
 function esc(s) {
