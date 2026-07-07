@@ -409,10 +409,12 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
       );
       const now   = Date.now();
       const toAdd = [];
-      let skipped = 0;
+      let duplicates = 0;
+      let invalid    = 0;
       for (const row of rows) {
         const email = (row.email || '').toLowerCase().trim();
-        if (!email || existingEmails.has(email)) { skipped++; continue; }
+        if (!email) { invalid++; continue; }
+        if (existingEmails.has(email)) { duplicates++; continue; }
         existingEmails.add(email);
         const id   = now.toString(36) + Math.random().toString(36).slice(2);
         const lead = {
@@ -436,7 +438,7 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
         });
         ceRowMap.clear();
       }
-      return { added: toAdd.length, skipped };
+      return { imported: toAdd.length, duplicates, invalid };
     });
     res.json(result);
   } catch (e) {

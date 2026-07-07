@@ -2366,8 +2366,11 @@ function handleCsvImport(event) {
         body: JSON.stringify(rows),
       });
       if (!resp.ok) { showToast('Import failed: ' + resp.status, 'error'); return; }
-      const { added, skipped } = await resp.json();
-      showToast(`Imported: ${added} added, ${skipped} skipped (duplicate emails).`, added > 0 ? 'success' : 'warning');
+      const { imported, duplicates } = await resp.json();
+      const msg = duplicates > 0
+        ? `Imported ${imported} leads (${duplicates} duplicates skipped)`
+        : `Imported ${imported} leads successfully`;
+      showToast(msg, imported > 0 ? 'success' : 'warning');
       loadCeLeads();
     } catch (err) { showToast('CSV error: ' + err.message, 'error'); }
     event.target.value = '';
