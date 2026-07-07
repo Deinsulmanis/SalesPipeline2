@@ -149,8 +149,8 @@ function ownDomainOf(url) {
 
 // ── EMAIL EXTRACTION ──────────────────────────────────────────────────────────
 
-// Global flag — must reset lastIndex before each use
-const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
+// Lookbehind/lookahead prevent mid-string matches; TLD capped at 6 to block "comwe"/"comtel" bleed
+const EMAIL_RE = /(?<![a-zA-Z0-9._%+\-])([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6})(?![a-zA-Z])/g;
 
 function isJunk(email) {
   const lower = email.toLowerCase();
@@ -183,18 +183,34 @@ function extractEmails(html, ownDomain) {
 
   // mailto: links first — most reliable
   $('a[href^="mailto:"]').each((_, el) => {
-    const href = $(el).attr('href') || '';
+    let href = $(el).attr('href') || '';
+    try { href = decodeURIComponent(href); } catch(e) {}
     const e = href.replace(/^mailto:/i, '').split('?')[0].trim().toLowerCase();
     if (e.includes('@')) seen.add(e);
   });
 
-  // Regex on visible body text
+  // Inject spaces between elements to prevent text node concatenation bleed
+  $('body *').each((_, el) => {
+    const cur = $(el).text();
+    if (cur) $(el).before(' ').after(' ');
+  });
   const text = $('body').text();
   EMAIL_RE.lastIndex = 0;
   let m;
-  while ((m = EMAIL_RE.exec(text)) !== null) seen.add(m[0].toLowerCase());
+  while ((m = EMAIL_RE.exec(text)) !== null) {
+    if (m[1]) seen.add(m[1].toLowerCase());
+  }
 
-  return pickBestEmail([...seen], ownDomain);
+  const sanitized = [...seen].filter(e => {
+    if (!/^[a-zA-Z0-9]/.test(e)) return false;
+    const [local] = e.split('@');
+    if (!local || local.length < 2) return false;
+    const tld = e.split('.').pop();
+    if (!tld || !/^[a-zA-Z]{2,6}$/.test(tld)) return false;
+    return true;
+  });
+
+  return pickBestEmail(sanitized, ownDomain);
 }
 
 // ── SITE SCRAPING ─────────────────────────────────────────────────────────────
