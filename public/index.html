@@ -1055,6 +1055,11 @@
       <div class="stat"><div><div class="stat-val" id="ce-stat-opens">0</div><div class="stat-label">Opens</div></div></div>
       <div class="stat"><div><div class="stat-val" id="ce-stat-warm">0</div><div class="stat-label">🔥 Warm</div></div></div>
     </div>
+    <div id="ce-chart-wrap" style="padding:0 28px;margin-bottom:18px">
+      <div class="detail-section-title" style="margin-bottom:8px">Daily Sends — Last 30 Days</div>
+      <div id="ce-send-chart" style="display:flex;align-items:flex-end;gap:3px;height:60px;padding:0 2px"></div>
+      <div id="ce-chart-legend" style="font-size:11px;color:var(--text-muted);margin-top:4px;display:flex;justify-content:space-between"></div>
+    </div>
     <div class="ce-table-wrap">
       <table class="ce-table">
         <thead>
@@ -2048,6 +2053,7 @@ async function loadCeLeads() {
       if (key) ceOpensMap.set(key, (ceOpensMap.get(key) || 0) + 1);
     }
     updateCeStats();
+    buildSendChart();
     renderCeTable();
     refreshAgentLeadCounts();
   } catch (e) { showToast('Could not reach server: ' + e.message, 'error'); }
@@ -2066,6 +2072,43 @@ function updateCeStats() {
     if ((ceOpensMap.get(key) || 0) >= 2) warmCount++;
   }
   document.getElementById('ce-stat-warm').textContent = warmCount;
+}
+
+function buildSendChart() {
+  const chartEl  = document.getElementById('ce-send-chart');
+  const legendEl = document.getElementById('ce-chart-legend');
+  if (!chartEl || !legendEl) return;
+
+  const toVancouverDate = d => new Date(d).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+
+  const days = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    days.push(toVancouverDate(d));
+  }
+
+  const countMap = new Map(days.map(d => [d, 0]));
+  for (const lead of ceLeads) {
+    if (!lead.lastEmailedAt) continue;
+    const day = toVancouverDate(lead.lastEmailedAt);
+    if (countMap.has(day)) countMap.set(day, countMap.get(day) + 1);
+  }
+
+  const counts   = days.map(d => countMap.get(d));
+  const maxCount = Math.max(...counts, 1);
+  const total    = counts.reduce((s, c) => s + c, 0);
+
+  chartEl.innerHTML = days.map((date, i) => {
+    const count  = counts[i];
+    const height = Math.max(Math.round((count / maxCount) * 60), 2);
+    const bg     = count > 0 ? 'var(--accent)' : 'var(--border)';
+    const cursor = count > 0 ? 'pointer' : 'default';
+    return `<div style="flex:1;height:${height}px;background:${bg};border-radius:2px 2px 0 0;cursor:${cursor};transition:opacity 150ms" title="${date}: ${count} send${count !== 1 ? 's' : ''}" onmouseover="this.style.opacity='.7'" onmouseout="this.style.opacity='1'"></div>`;
+  }).join('');
+
+  const oldestLabel = new Date(days[0] + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  legendEl.innerHTML = `<span>${oldestLabel}</span><span>${total} send${total !== 1 ? 's' : ''} in last 30 days</span><span>Today</span>`;
 }
 
 function renderCeTable() {
