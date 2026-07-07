@@ -603,6 +603,16 @@ app.get('/api/agent/status', requireAuth, (_req, res) => {
   });
 });
 
+app.post('/api/enrich/names', requireAuth, (_req, res) => {
+  const child = spawn('node', ['enrich-names.js'], {
+    cwd: __dirname,
+    env: { ...process.env, DRY_RUN: 'false' },
+  });
+  child.stdout.pipe(process.stdout);
+  child.stderr.pipe(process.stderr);
+  res.json({ started: true });
+});
+
 if (process.env.RAILWAY_ENVIRONMENT) {
   cron.schedule('0 */4 * * *', () => {
     console.log('[cron] Triggering scheduled outreach agent run...');
