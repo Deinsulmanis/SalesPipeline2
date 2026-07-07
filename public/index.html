@@ -1362,28 +1362,6 @@ let savingTimer;
 // ============================================================
 // SHEET OPERATIONS
 // ============================================================
-async function ensureSheetSetup() {
-  const ss = await gapi.client.sheets.spreadsheets.get({
-    spreadsheetId: GOOGLE_CONFIG.SPREADSHEET_ID,
-  });
-  const sheet = ss.result.sheets.find(s => s.properties.title === GOOGLE_CONFIG.SHEET_NAME);
-  if (sheet) cachedSheetId = sheet.properties.sheetId;
-
-  const hResp = await gapi.client.sheets.spreadsheets.values.get({
-    spreadsheetId: GOOGLE_CONFIG.SPREADSHEET_ID,
-    range: `${GOOGLE_CONFIG.SHEET_NAME}!A1:Q1`,
-  });
-  const hVals = hResp.result.values;
-  if (!hVals || !hVals[0] || hVals[0][0] !== 'id') {
-    await gapi.client.sheets.spreadsheets.values.update({
-      spreadsheetId: GOOGLE_CONFIG.SPREADSHEET_ID,
-      range: `${GOOGLE_CONFIG.SHEET_NAME}!A1`,
-      valueInputOption: 'RAW',
-      resource: { values: [COLUMNS] },
-    });
-  }
-}
-
 async function loadLeads() {
   const resp = await fetch('/api/leads');
   if (!resp.ok) throw new Error('leads fetch failed: ' + resp.status);
@@ -1394,66 +1372,29 @@ async function loadLeads() {
 
 async function syncLead(lead) {
   setSaving(true);
-  const rowVals = [COLUMNS.map(col => lead[col] !== undefined ? String(lead[col]) : '')];
   try {
-    if (rowMap.has(lead.id)) {
-      const rowNum = rowMap.get(lead.id);
-      await gapi.client.sheets.spreadsheets.values.update({
-        spreadsheetId: GOOGLE_CONFIG.SPREADSHEET_ID,
-        range: `${GOOGLE_CONFIG.SHEET_NAME}!A${rowNum}:Q${rowNum}`,
-        valueInputOption: 'RAW',
-        resource: { values: rowVals },
-      });
-    } else {
-      const resp = await gapi.client.sheets.spreadsheets.values.append({
-        spreadsheetId: GOOGLE_CONFIG.SPREADSHEET_ID,
-        range: COL_RANGE,
-        valueInputOption: 'RAW',
-        insertDataOption: 'INSERT_ROWS',
-        resource: { values: rowVals },
-      });
-      const updatedRange = resp.result.updates.updatedRange; // e.g. "Leads!A5:Q5"
-      const m = updatedRange.match(/!A(\d+)/);
-      if (m) rowMap.set(lead.id, parseInt(m[1]));
-    }
+    const resp = await fetch(`/api/leads/${lead.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(lead),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   } catch(e) {
-    handleApiError(e);
+    console.error('[syncLead]', e.message);
+    showToast('Failed to save lead: ' + e.message, 'error');
   } finally {
     setSaving(false);
   }
 }
 
 async function deleteLeadFromSheet(id) {
-  if (!rowMap.has(id)) return;
-  const rowNum = rowMap.get(id);
   setSaving(true);
   try {
-    if (cachedSheetId === null) {
-      const ss = await gapi.client.sheets.spreadsheets.get({
-        spreadsheetId: GOOGLE_CONFIG.SPREADSHEET_ID,
-      });
-      const sheet = ss.result.sheets.find(s => s.properties.title === GOOGLE_CONFIG.SHEET_NAME);
-      cachedSheetId = sheet ? sheet.properties.sheetId : 0;
-    }
-    await gapi.client.sheets.spreadsheets.batchUpdate({
-      spreadsheetId: GOOGLE_CONFIG.SPREADSHEET_ID,
-      resource: {
-        requests: [{
-          deleteDimension: {
-            range: {
-              sheetId: cachedSheetId,
-              dimension: 'ROWS',
-              startIndex: rowNum - 1, // 0-based
-              endIndex: rowNum,
-            }
-          }
-        }]
-      }
-    });
-    rowMap.delete(id);
-    rowMap.forEach((r, lid) => { if (r > rowNum) rowMap.set(lid, r - 1); });
+    const resp = await fetch(`/api/leads/${id}`, { method: 'DELETE' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   } catch(e) {
-    handleApiError(e);
+    console.error('[deleteLeadFromSheet]', e.message);
+    showToast('Failed to delete lead: ' + e.message, 'error');
   } finally {
     setSaving(false);
   }
