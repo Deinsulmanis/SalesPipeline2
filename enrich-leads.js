@@ -251,6 +251,18 @@ async function enrichSite(websiteUrl) {
   return { email: email || '', siteContext };
 }
 
+// ── CITY EXTRACTION ──────────────────────────────────────────────────────────
+
+// PhantomBuster address: "Street, City, Province PostalCode, Country"
+// City is at index length-3 for 4-part addresses (e.g. "Vancouver" from
+// "123 Main St, Vancouver, BC V5K 1A1, Canada").
+function cityFromAddress(address) {
+  if (!address) return '';
+  const parts = address.split(',').map(s => s.trim()).filter(Boolean);
+  if (parts.length >= 3) return parts[parts.length - 3];
+  return parts[0] || '';
+}
+
 // ── MAIN ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -264,7 +276,9 @@ async function main() {
   }
 
   const rows = parseInput(INPUT_FILE);
+  const isPhantomBuster = rows.length > 0 && 'title' in rows[0] && 'placeurl' in rows[0];
   console.log(`\nLoaded ${rows.length} rows from ${path.resolve(INPUT_FILE)}`);
+  console.log(`Source: ${isPhantomBuster ? 'PhantomBuster' : 'Apify'}`);
 
   // Filter: "Reviews" header → normalizeHeader → 'reviewcount' key
   const qualified = rows.filter(r => {
@@ -283,7 +297,7 @@ async function main() {
     const reviewCount = parseInt(r.reviewcount, 10);
     const tier        = reviewCount >= 200 ? 'busy' : 'medium';
     const website     = cleanUrl(r.website || '');
-    const label       = (r.name || r.company || '').slice(0, 38).padEnd(38);
+    const label       = (r.name || r.title || r.company || '').slice(0, 38).padEnd(38);
 
     process.stdout.write(`[${String(i + 1).padStart(3)}/${qualified.length}] ${label}  `);
 
@@ -297,15 +311,26 @@ async function main() {
       process.stdout.write('(no website)  ');
     }
 
-    const out = {
-      company:      r.name || r.company || '',
+    const out = isPhantomBuster ? {
+      company:     r.title || '',
       email,
-      contactName:  '',
-      city:         r.city || '',
-      tradeType:    'med spa',
-      website:      website || r.website || '',
+      contactName: '',
+      city:        cityFromAddress(r.address),
+      tradeType:   r.category || 'Med Spa',
+      website:     website || r.website || '',
       reviewCount,
-      rating:       r.rating || '',
+      rating:      r.rating || '',
+      tier,
+      siteContext,
+    } : {
+      company:     r.name || r.company || '',
+      email,
+      contactName: '',
+      city:        r.city || '',
+      tradeType:   'med spa',
+      website:     website || r.website || '',
+      reviewCount,
+      rating:      r.rating || '',
       tier,
       siteContext,
     };
