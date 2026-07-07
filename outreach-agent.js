@@ -282,9 +282,9 @@ function cleanCompanyName(raw) {
 function buildProposalLink(lead) {
   const co = cleanCompanyName(lead.company);
   const params = [
-    co             ? ['company', co]               : null,
-    lead.contactName ? ['contact', lead.contactName] : null,
-    lead.tradeType   ? ['niche',   lead.tradeType]   : null,
+    co             ? ['biz',   co]               : null,
+    lead.contactName ? ['name',  lead.contactName] : null,
+    lead.tradeType   ? ['trade', lead.tradeType]   : null,
   ].filter(Boolean);
   if (!params.length) return `${PROPOSAL_BASE}/`;
   const qs = params.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
