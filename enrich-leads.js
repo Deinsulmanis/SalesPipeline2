@@ -276,13 +276,16 @@ async function main() {
   }
 
   const rows = parseInput(INPUT_FILE);
-  const isPhantomBuster = rows.length > 0 && 'title' in rows[0] && 'placeurl' in rows[0];
+  const isThunderbit    = rows.length > 0 && 'title' in rows[0] && 'review rating' in rows[0] && '# of reviews' in rows[0];
+  const isPhantomBuster = !isThunderbit && rows.length > 0 && 'title' in rows[0] && 'placeurl' in rows[0];
+  const sourceName      = isThunderbit ? 'Thunderbit' : isPhantomBuster ? 'PhantomBuster' : 'Apify';
   console.log(`\nLoaded ${rows.length} rows from ${path.resolve(INPUT_FILE)}`);
-  console.log(`Source: ${isPhantomBuster ? 'PhantomBuster' : 'Apify'}`);
+  console.log(`Source: ${sourceName}`);
 
-  // Filter: "Reviews" header → normalizeHeader → 'reviewcount' key
+  // Filter: normalizeHeader maps each source's review count column to a known key
   const qualified = rows.filter(r => {
-    const n = parseInt(r.reviewcount ?? '', 10);
+    const raw = isThunderbit ? (r['# of reviews'] ?? '') : (r.reviewcount ?? '');
+    const n   = parseInt(raw.replace(/,/g, ''), 10);
     return !isNaN(n) && n >= MIN_REVIEWS;
   });
   const skipped = rows.length - qualified.length;
@@ -294,8 +297,9 @@ async function main() {
 
   for (let i = 0; i < qualified.length; i++) {
     const r           = qualified[i];
-    const reviewCount = parseInt(r.reviewcount, 10);
-    const tier        = reviewCount >= 200 ? 'busy' : 'medium';
+    const rawReviewCount = isThunderbit ? (r['# of reviews'] || '') : (r.reviewcount || '');
+    const reviewCount    = parseInt(rawReviewCount.replace(/,/g, ''), 10);
+    const tier           = reviewCount >= 200 ? 'busy' : 'medium';
     const website     = cleanUrl(r.website || '');
     const label       = (r.name || r.title || r.company || '').slice(0, 38).padEnd(38);
 
@@ -311,7 +315,18 @@ async function main() {
       process.stdout.write('(no website)  ');
     }
 
-    const out = isPhantomBuster ? {
+    const out = isThunderbit ? {
+      company:     r.title || '',
+      email,
+      contactName: '',
+      city:        cityFromAddress(r.address),
+      tradeType:   r.type || 'Med Spa',
+      website:     website || r.website || '',
+      reviewCount,
+      rating:      r['review rating'] || '',
+      tier,
+      siteContext,
+    } : isPhantomBuster ? {
       company:     r.title || '',
       email,
       contactName: '',
