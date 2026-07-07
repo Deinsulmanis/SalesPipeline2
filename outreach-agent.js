@@ -173,7 +173,7 @@ Following up from earlier this week — just wanted to close the loop on the aft
 
 The AI receptionist I mentioned books overnight and weekend enquiries automatically, so your team doesn't miss a beat when the desk is occupied.
 
-Quick overview for ${company}: ${link}
+→ See what this looks like for ${company}: ${link}
 
 Worth 15 minutes to see if the numbers make sense?
 
@@ -188,7 +188,7 @@ Just circling back on my note about ${company}'s booking flow.
 
 The short version: an AI receptionist answers when you can't, books the appointment, and the confirmation goes out automatically — no voicemails left hanging.
 
-Quick overview for ${company}: ${link}
+→ See what this looks like for ${company}: ${link}
 
 Worth a 15-minute call to see what that looks like for your setup?
 
@@ -318,7 +318,7 @@ ${busyLead} So this isn't about the calls you answer. It's about the ones that c
 
 I build AI receptionists that quietly catch exactly those, booking after hours and when the desk is slammed, without changing how you run the front.
 
-Quick overview for ${company}: ${link}
+→ See what this looks like for ${company}: ${link}
 
 If you're not the right person for this, mind pointing me to whoever handles bookings?
 
@@ -340,7 +340,7 @@ When someone calls ${company} after hours or when the desk can't pick up — wha
 
 I build AI receptionists that answer and book 24/7, so evening and weekend inquiries turn into booked clients instead of missed ones. At your stage that's often the difference between a full calendar and a patchy one.
 
-Quick overview for ${company}: ${link}
+→ See what this looks like for ${company}: ${link}
 
 If bookings aren't your area, could you point me to who handles them?
 
