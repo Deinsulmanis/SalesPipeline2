@@ -535,9 +535,11 @@ async function getReplyMessage(lead) {
   if (!lead.lastEmailedAt || !isValidEmail(lead.email)) return null;
   try {
     const afterSec = Math.floor(new Date(lead.lastEmailedAt).getTime() / 1000);
+    const safeEmail = lead.email.trim().replace(/^[^a-zA-Z0-9]+/, '');
+    if (!safeEmail || !safeEmail.includes('@')) return null;
     const listResp = await gmail().users.messages.list({
       userId: 'me',
-      q: `from:${lead.email.trim()} after:${afterSec}`,
+      q: `from:"${safeEmail}" after:${afterSec}`,
       maxResults: 1,
     });
     const messages = listResp.data.messages || [];
