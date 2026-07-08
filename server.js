@@ -18,13 +18,19 @@ app.get('/p', (req, res) => {
   const ua      = req.headers['user-agent'] || '';
   const dest    = process.env.PROPOSAL_URL || 'https://scalelabaireceptionistproposal.netlify.app';
 
+  const clientIp    = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.ip;
+  const BLOCKED_IPS = ['75.155.151.158'];
+  if (BLOCKED_IPS.includes(clientIp)) {
+    console.log(`[/p] Skipping own IP: ${clientIp} — ${company}`);
+    return res.redirect(302, dest);
+  }
+
   if (BOT_PATTERNS.test(ua)) {
     console.warn(`[/p] Bot skipped — company: ${company}, ua: ${ua}`);
     return res.redirect(302, dest);
   }
 
-  const ip  = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.ip;
-  const row = [new Date().toISOString(), company, niche, id, ip, ua];
+  const row = [new Date().toISOString(), company, niche, id, clientIp, ua];
 
   sheets().spreadsheets.values.append({
     spreadsheetId:   SPREADSHEET_ID,
