@@ -56,7 +56,8 @@ const FROM_EMAIL  = process.env.FROM_EMAIL;                   // must be the aut
 const FROM_NAME   = process.env.FROM_NAME || 'ScaleLab AI';
 const MAILING_ADDRESS   = process.env.MAILING_ADDRESS || 'ScaleLab AI, New Westminster, BC';
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const PROPOSAL_BASE     = (process.env.PROPOSAL_BASE || 'https://scalelabaireceptionistproposal.netlify.app').replace(/\/$/, '');
+const _rawProposalBase = (process.env.PROPOSAL_BASE || '').trim();
+const PROPOSAL_BASE    = (/^https?:\/\//i.test(_rawProposalBase) ? _rawProposalBase : 'https://scalelabaireceptionistproposal.netlify.app').replace(/\/$/, '');
 
 // Random pause between sends so traffic looks human (ms)
 const MIN_DELAY = 45 * 1000;
