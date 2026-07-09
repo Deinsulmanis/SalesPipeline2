@@ -12,7 +12,9 @@ app.use(express.json({ limit: '10mb' }));
 const BOT_PATTERNS = /curl|wget|python|java|go-http|axios|node-fetch|spider|crawler|bot|preview|scan|mimecast|barracuda|proofpoint|cloudmark|symantec/i;
 
 app.get('/p', (req, res) => {
-  const company = req.query.company || 'Unknown';
+  // String() guards against ?company=a&company=b, which Express parses as an array.
+  const companyParam = String(req.query.company ?? '').trim();
+  const company = companyParam || 'Unknown';
   const niche   = req.query.niche   || 'Unknown';
   const id      = req.query.id      || '';
   const ua      = req.headers['user-agent'] || '';
@@ -27,6 +29,14 @@ app.get('/p', (req, res) => {
 
   if (BOT_PATTERNS.test(ua)) {
     console.warn(`[/p] Bot skipped — company: ${company}, ua: ${ua}`);
+    return res.redirect(302, dest);
+  }
+
+  // An open with no resolvable company can never be matched back to a lead, so
+  // it would only inflate the dashboard's Opens total. Redirect the visitor,
+  // log the URL so stale links in circulation can be traced, but write nothing.
+  if (!companyParam || companyParam.toLowerCase() === 'unknown') {
+    console.warn(`[/p] No resolvable company — not logging open. url: ${req.originalUrl} ip: ${clientIp}`);
     return res.redirect(302, dest);
   }
 
