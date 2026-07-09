@@ -758,6 +758,44 @@
 
   .ce-empty { padding: 48px 28px; text-align: center; font-size: 14px; color: var(--text-muted); }
 
+  .ce-search-wrap { position: relative; display: inline-flex; align-items: center; }
+
+  .ce-search-icon { position: absolute; left: 8px; pointer-events: none; color: var(--text-muted); }
+
+  #ce-search {
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12px;
+    padding: 5px 24px 5px 28px;
+    border-radius: var(--radius-sm);
+    width: 180px;
+    outline: none;
+    transition: border-color 200ms;
+  }
+
+  #ce-search::placeholder { color: var(--text-muted); }
+  #ce-search:focus { border-color: var(--accent); }
+
+  .ce-search-clear {
+    position: absolute;
+    right: 6px;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    line-height: 1;
+    transition: color 150ms;
+  }
+
+  .ce-search-clear:hover { color: var(--text); }
+
   #agent-panel { padding: 24px 28px; max-width: 860px; }
 
   .agent-summary {
@@ -1029,6 +1067,11 @@
     <button class="ce-tab"        data-ce="Promoted"     onclick="setCeFilter('Promoted')">Promoted</button>
     <button class="ce-tab"        data-ce="Unsubscribed" onclick="setCeFilter('Unsubscribed')">Unsub</button>
     <div class="ce-actions">
+      <div class="ce-search-wrap">
+        <svg class="ce-search-icon" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input type="text" id="ce-search" placeholder="Search leads…" oninput="onCeSearch(this.value)">
+        <button class="ce-search-clear" id="ce-search-clear" onclick="clearCeSearch()" title="Clear">×</button>
+      </div>
       <label class="btn-import-csv" title="Import leads from a CSV file">
         <input type="file" accept=".csv" id="csv-file-input" style="display:none" onchange="handleCsvImport(event)">
         <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
@@ -1060,6 +1103,7 @@
       <div id="ce-send-chart" style="display:flex;align-items:flex-end;gap:3px;height:60px;padding:0 2px"></div>
       <div id="ce-chart-legend" style="font-size:11px;color:var(--text-muted);margin-top:4px;display:flex;justify-content:space-between"></div>
     </div>
+    <div id="ce-result-info" style="display:none;padding:6px 28px 0;font-size:12px;color:var(--text-muted)"></div>
     <div class="ce-table-wrap">
       <table class="ce-table">
         <thead>
@@ -1936,6 +1980,7 @@ let currentMotion  = 'cold-calls';
 let ceLeads        = [];
 let ceActiveFilter = 'all';
 let ceSelected     = new Set();
+let ceSearchQuery  = '';
 let ceOpensMap     = new Map();
 let ceOpensData    = [];
 
@@ -2056,11 +2101,29 @@ function renderCeTable() {
   const tbody    = document.getElementById('ce-tbody');
   const empty    = document.getElementById('ce-empty');
   const selAll   = document.getElementById('select-all-ce');
-  const filtered = ceActiveFilter === 'all' ? ceLeads : ceLeads.filter(l => l.stage === ceActiveFilter);
+  const q        = ceSearchQuery.toLowerCase();
+
+  const stageFiltered = ceActiveFilter === 'all' ? ceLeads : ceLeads.filter(l => l.stage === ceActiveFilter);
+  const filtered = !q ? stageFiltered : stageFiltered.filter(l =>
+    [l.company, l.email, l.contactName].some(f => f && f.toLowerCase().includes(q))
+  );
+
+  const resultInfo = document.getElementById('ce-result-info');
+  if (resultInfo) {
+    if (q && filtered.length > 0) {
+      resultInfo.textContent = `${filtered.length} result${filtered.length !== 1 ? 's' : ''} for "${ceSearchQuery}"`;
+      resultInfo.style.display = 'block';
+    } else {
+      resultInfo.style.display = 'none';
+    }
+  }
 
   if (filtered.length === 0) {
     tbody.innerHTML = '';
     empty.style.display = 'block';
+    empty.textContent = q
+      ? `No leads match "${ceSearchQuery}"`
+      : 'No leads found. Import a CSV to get started.';
     if (selAll) selAll.checked = false;
     return;
   }
@@ -2096,6 +2159,20 @@ function renderCeTable() {
       </td>
     </tr>`;
   }).join('');
+}
+
+function onCeSearch(val) {
+  ceSearchQuery = val.trim();
+  document.getElementById('ce-search-clear').style.display = ceSearchQuery ? 'flex' : 'none';
+  renderCeTable();
+}
+
+function clearCeSearch() {
+  ceSearchQuery = '';
+  const input = document.getElementById('ce-search');
+  if (input) input.value = '';
+  document.getElementById('ce-search-clear').style.display = 'none';
+  renderCeTable();
 }
 
 function renderOpensPanel() {
