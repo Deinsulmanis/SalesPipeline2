@@ -575,8 +575,17 @@ async function getReplyMessage(lead) {
 
 const REPLY_CATEGORIES = new Set(['INTERESTED','NOT_INTERESTED','UNSUBSCRIBE','OUT_OF_OFFICE','WRONG_PERSON']);
 
+// Safe default when classification cannot be trusted. OUT_OF_OFFICE is the only
+// category that neither promotes the lead to the hot kanban nor closes it out —
+// it just delays follow-up 7 days, leaving a human to review what really happened.
+// Never default to INTERESTED: a transient API error would silently promote.
+const CLASSIFY_FALLBACK = 'OUT_OF_OFFICE';
+
 async function classifyReply(company, replyBody) {
-  if (!ANTHROPIC_API_KEY) return 'INTERESTED';
+  if (!ANTHROPIC_API_KEY) {
+    console.warn(`[Classify] ANTHROPIC_API_KEY not set — defaulting ${company} to ${CLASSIFY_FALLBACK}`);
+    return CLASSIFY_FALLBACK;
+  }
   try {
     const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
     const msg = await anthropic.messages.create({
@@ -597,10 +606,12 @@ async function classifyReply(company, replyBody) {
       messages: [{ role: 'user', content: `Company: ${company}\nReply: ${replyBody}` }],
     });
     const raw = (msg.content[0]?.text || '').trim().toUpperCase();
-    return REPLY_CATEGORIES.has(raw) ? raw : 'INTERESTED';
+    if (REPLY_CATEGORIES.has(raw)) return raw;
+    console.warn(`[Classify] Unrecognised category "${raw}" for ${company} — defaulting to ${CLASSIFY_FALLBACK}`);
+    return CLASSIFY_FALLBACK;
   } catch (e) {
-    console.warn(`[Classify] API error for ${company}: ${e.message}`);
-    return 'INTERESTED';
+    console.warn(`[Classify] API error for ${company}: ${e.message} — defaulting to ${CLASSIFY_FALLBACK}`);
+    return CLASSIFY_FALLBACK;
   }
 }
 
@@ -865,11 +876,13 @@ async function runReplyCheckPass(leads) {
     if (!DRY_RUN) {
       await withAuth(async () => {
         switch (classification) {
+          case 'INTERESTED':     return handleInterested(lead);
           case 'NOT_INTERESTED': return handleNotInterested(lead);
           case 'UNSUBSCRIBE':    return handleUnsubscribe(lead);
-          case 'OUT_OF_OFFICE':  return handleOutOfOffice(lead);
           case 'WRONG_PERSON':   return handleWrongPerson(lead);
-          default:               return handleInterested(lead);
+          // OUT_OF_OFFICE and anything unforeseen take the safe path: never promote.
+          case 'OUT_OF_OFFICE':
+          default:               return handleOutOfOffice(lead);
         }
       });
     }
