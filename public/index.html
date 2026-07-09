@@ -796,6 +796,35 @@
 
   .ce-search-clear:hover { color: var(--text); }
 
+  /* ── CAMPAIGN STATS TABLE ── */
+  .ce-campaigns-table { width: 100%; border-collapse: collapse; }
+  .ce-campaigns-table th {
+    font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--text-muted); padding: 8px 12px; border-bottom: 1px solid var(--border);
+    text-align: left; white-space: nowrap;
+  }
+  .ce-campaigns-table td {
+    padding: 9px 12px; border-bottom: 1px solid rgba(255,255,255,0.04);
+    font-size: 13px; color: var(--text-secondary); vertical-align: middle;
+  }
+  .ce-campaigns-table tbody tr { cursor: pointer; }
+  .ce-campaigns-table tbody tr:hover td { background: rgba(255,255,255,0.02); }
+  .ce-campaign-name-cell { font-weight: 600; color: var(--text); }
+  .ce-rate-green { color: var(--green); font-weight: 600; }
+  .ce-rate-orange { color: var(--warm); font-weight: 600; }
+  .ce-rate-red { color: var(--hot); font-weight: 600; }
+  .ce-campaign-filter-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.4);
+    color: var(--accent); padding: 3px 10px; border-radius: 20px;
+    font-size: 12px; font-weight: 600;
+  }
+  .ce-campaign-filter-chip button {
+    background: none; border: none; color: var(--accent); cursor: pointer;
+    padding: 0; font-size: 15px; line-height: 1; opacity: 0.7; transition: opacity 150ms;
+  }
+  .ce-campaign-filter-chip button:hover { opacity: 1; }
+
   #agent-panel { padding: 24px 28px; max-width: 860px; }
 
   .agent-summary {
@@ -1080,6 +1109,7 @@
       <button class="btn-bulk-queue" id="bulk-queue-btn" onclick="bulkQueueSelected()" disabled>
         Queue Selected (<span id="bulk-count">0</span>)
       </button>
+      <button class="ce-tab" data-ce="campaigns" onclick="setCeFilter('campaigns')">📊 Campaigns</button>
       <button class="ce-tab" data-ce="opens" onclick="setCeFilter('opens')">📬 Opens</button>
       <button class="ce-tab" data-ce="agent" onclick="setCeFilter('agent')" style="margin-left:6px">
         <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.45 2 2 0 0 1 3.59 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.49a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21.73 16z"/></svg>
@@ -1104,6 +1134,13 @@
       <div id="ce-chart-legend" style="font-size:11px;color:var(--text-muted);margin-top:4px;display:flex;justify-content:space-between"></div>
     </div>
     <div id="ce-result-info" style="display:none;padding:6px 28px 0;font-size:12px;color:var(--text-muted)"></div>
+    <div id="ce-campaign-filter-bar" style="display:none;padding:6px 28px 0;align-items:center;gap:8px">
+      <span style="font-size:12px;color:var(--text-muted)">Campaign:</span>
+      <span class="ce-campaign-filter-chip">
+        <span id="ce-campaign-filter-name"></span>
+        <button onclick="clearCampaignFilter()" title="Clear campaign filter">×</button>
+      </span>
+    </div>
     <div class="ce-table-wrap">
       <table class="ce-table">
         <thead>
@@ -1140,6 +1177,13 @@
         <tbody id="ce-opens-tbody"></tbody>
       </table>
       <div class="ce-empty" id="ce-opens-empty" style="display:none">No proposal opens recorded yet.</div>
+    </div>
+  </div>
+
+  <!-- Campaigns performance panel -->
+  <div id="ce-campaigns-panel" style="display:none">
+    <div style="padding:20px 28px">
+      <div id="ce-campaigns-table-wrap"></div>
     </div>
   </div>
 
@@ -2004,9 +2048,10 @@ let currentMotion  = 'cold-calls';
 let ceLeads        = [];
 let ceActiveFilter = 'all';
 let ceSelected     = new Set();
-let ceSearchQuery  = '';
-let _pendingCsvRows = null;
-let ceOpensMap     = new Map();
+let ceSearchQuery    = '';
+let ceCampaignFilter = '';
+let _pendingCsvRows  = null;
+let ceOpensMap       = new Map();
 let ceOpensData    = [];
 
 const CE_STAGES = ['Import','Queued','Contacted','Replied','Done','Promoted','Unsubscribed'];
@@ -2032,11 +2077,13 @@ function setMotion(m) {
 
 function setCeFilter(f) {
   ceActiveFilter = f;
-  const isAgent = f === 'agent';
-  const isOpens = f === 'opens';
-  document.getElementById('ce-leads-panel').style.display  = (!isAgent && !isOpens) ? 'block' : 'none';
-  document.getElementById('agent-panel').style.display     = isAgent  ? 'block' : 'none';
-  document.getElementById('ce-opens-panel').style.display  = isOpens  ? 'block' : 'none';
+  const isAgent     = f === 'agent';
+  const isOpens     = f === 'opens';
+  const isCampaigns = f === 'campaigns';
+  document.getElementById('ce-leads-panel').style.display      = (!isAgent && !isOpens && !isCampaigns) ? 'block' : 'none';
+  document.getElementById('agent-panel').style.display         = isAgent     ? 'block' : 'none';
+  document.getElementById('ce-opens-panel').style.display      = isOpens     ? 'block' : 'none';
+  document.getElementById('ce-campaigns-panel').style.display  = isCampaigns ? 'block' : 'none';
   document.querySelectorAll('.ce-tab').forEach(t =>
     t.classList.toggle('active', t.dataset.ce === f)
   );
@@ -2044,6 +2091,8 @@ function setCeFilter(f) {
     showAgentTab();
   } else if (isOpens) {
     renderOpensPanel();
+  } else if (isCampaigns) {
+    renderCampaignsPanel();
   } else {
     renderCeTable();
   }
@@ -2066,6 +2115,7 @@ async function loadCeLeads() {
     updateCeStats();
     buildSendChart();
     renderCeTable();
+    if (ceActiveFilter === 'campaigns') renderCampaignsPanel();
     refreshAgentLeadCounts();
   } catch (e) { showToast('Could not reach server: ' + e.message, 'error'); }
 }
@@ -2128,8 +2178,12 @@ function renderCeTable() {
   const selAll   = document.getElementById('select-all-ce');
   const q        = ceSearchQuery.toLowerCase();
 
-  const stageFiltered = ceActiveFilter === 'all' ? ceLeads : ceLeads.filter(l => l.stage === ceActiveFilter);
-  const filtered = !q ? stageFiltered : stageFiltered.filter(l =>
+  const stageFiltered    = ceActiveFilter === 'all' ? ceLeads : ceLeads.filter(l => l.stage === ceActiveFilter);
+  const campaignFiltered = !ceCampaignFilter ? stageFiltered : stageFiltered.filter(l => {
+    const c = (l.campaign || '').trim();
+    return ((!c || c.toLowerCase() === 'unlabeled') ? 'Unlabeled' : c) === ceCampaignFilter;
+  });
+  const filtered = !q ? campaignFiltered : campaignFiltered.filter(l =>
     [l.company, l.email, l.contactName].some(f => f && f.toLowerCase().includes(q))
   );
 
@@ -2219,6 +2273,124 @@ function renderOpensPanel() {
       <td style="color:var(--text-muted);font-size:12px">${esc(o.ip) || '—'}</td>
     </tr>`;
   }).join('');
+}
+
+// ── CAMPAIGN PERFORMANCE ─────────────────────────────────────────────────────
+
+function campaignGroupKey(lead) {
+  const c = (lead.campaign || '').trim();
+  return (!c || c.toLowerCase() === 'unlabeled') ? 'Unlabeled' : c;
+}
+
+function buildCampaignStats() {
+  const groups = new Map();
+  for (const l of ceLeads) {
+    const key = campaignGroupKey(l);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(l);
+  }
+
+  const rows = [];
+  for (const [name, leads] of groups) {
+    const total     = leads.length;
+    const delivered = leads.filter(l => l.emailStatus !== '').length;
+    const bounced   = leads.filter(l => (l.notes || '').includes('[BOUNCED')).length;
+    const bounceRate = delivered > 0 ? (bounced / delivered) * 100 : 0;
+
+    let opens = 0;
+    for (const l of leads) {
+      const openKey = (l.company || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+      if (openKey) opens += ceOpensMap.get(openKey) || 0;
+    }
+
+    const replied        = leads.filter(l => l.emailStatus === 'replied' || l.stage === 'Replied').length;
+    const replyRate      = delivered > 0 ? (replied / delivered) * 100 : 0;
+    const interested     = leads.filter(l => (l.notes || '').includes('[REPLY: Interested]')).length;
+    const interestedRate = replied > 0 ? (interested / replied) * 100 : 0;
+
+    rows.push({ name, total, delivered, bounced, bounceRate, opens, replied, replyRate, interested, interestedRate });
+  }
+
+  rows.sort((a, b) => b.total - a.total);
+  return rows;
+}
+
+function renderCampaignsPanel() {
+  const wrap = document.getElementById('ce-campaigns-table-wrap');
+  if (!wrap) return;
+
+  const hasRealCampaigns = ceLeads.some(l => {
+    const c = (l.campaign || '').trim();
+    return c && c.toLowerCase() !== 'unlabeled';
+  });
+  if (!hasRealCampaigns) {
+    wrap.innerHTML = '<div class="ce-empty">No campaigns tagged yet — campaign names are set when you import a CSV.</div>';
+    return;
+  }
+
+  const rows = buildCampaignStats();
+
+  const fmtPct = n => n.toFixed(1) + '%';
+
+  const bounceClass = rate => rate === 0 ? '' : rate < 5 ? 'ce-rate-green' : rate > 10 ? 'ce-rate-red' : 'ce-rate-orange';
+  const replyClass  = rate => rate > 3 ? 'ce-rate-green' : rate > 0 ? 'ce-rate-orange' : '';
+
+  wrap.innerHTML = `
+    <table class="ce-campaigns-table">
+      <thead>
+        <tr>
+          <th>Campaign</th>
+          <th>Total</th>
+          <th>Delivered</th>
+          <th>Bounced</th>
+          <th>Bounce %</th>
+          <th>Opens</th>
+          <th>Replied</th>
+          <th>Reply %</th>
+          <th>Interested</th>
+          <th>Int. %</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(r => `
+          <tr onclick="filterByCampaign(${JSON.stringify(r.name)})" title="Click to filter leads by this campaign">
+            <td class="ce-campaign-name-cell">${esc(r.name)}</td>
+            <td>${r.total}</td>
+            <td>${r.delivered}</td>
+            <td>${r.bounced || '—'}</td>
+            <td class="${bounceClass(r.bounceRate)}">${r.delivered > 0 ? fmtPct(r.bounceRate) : '—'}</td>
+            <td>${r.opens || '—'}</td>
+            <td>${r.replied || '—'}</td>
+            <td class="${replyClass(r.replyRate)}">${r.delivered > 0 ? fmtPct(r.replyRate) : '—'}</td>
+            <td>${r.interested || '—'}</td>
+            <td>${r.replied > 0 ? fmtPct(r.interestedRate) : '—'}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+function filterByCampaign(name) {
+  ceCampaignFilter = name;
+  updateCampaignFilterChip();
+  setCeFilter('all');
+}
+
+function clearCampaignFilter() {
+  ceCampaignFilter = '';
+  updateCampaignFilterChip();
+  renderCeTable();
+}
+
+function updateCampaignFilterChip() {
+  const bar  = document.getElementById('ce-campaign-filter-bar');
+  const name = document.getElementById('ce-campaign-filter-name');
+  if (!bar || !name) return;
+  if (ceCampaignFilter) {
+    name.textContent = ceCampaignFilter;
+    bar.style.display = 'flex';
+  } else {
+    bar.style.display = 'none';
+  }
 }
 
 // ── CE DETAIL PANEL ──────────────────────────────────────────────────────────
