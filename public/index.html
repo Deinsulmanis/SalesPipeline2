@@ -2319,11 +2319,7 @@ function renderCampaignsPanel() {
   const wrap = document.getElementById('ce-campaigns-table-wrap');
   if (!wrap) return;
 
-  const hasRealCampaigns = ceLeads.some(l => {
-    const c = (l.campaign || '').trim();
-    return c && c.toLowerCase() !== 'unlabeled';
-  });
-  if (!hasRealCampaigns) {
+  if (ceLeads.length === 0) {
     wrap.innerHTML = '<div class="ce-empty">No campaigns tagged yet — campaign names are set when you import a CSV.</div>';
     return;
   }
