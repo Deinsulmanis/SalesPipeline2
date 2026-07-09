@@ -1321,6 +1321,30 @@
   </div>
 </div>
 
+<!-- CAMPAIGN NAME MODAL -->
+<div class="overlay" id="campaign-modal-overlay" style="z-index:200" onclick="closeCampaignModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title">Name This Import</div>
+      <button class="modal-close" onclick="closeCampaignModal()">✕</button>
+    </div>
+    <div class="form-grid" style="padding:20px 24px 0">
+      <div class="form-group full">
+        <label>Campaign Name <span style="color:var(--hot)">*</span></label>
+        <input type="text" id="campaign-name-input" placeholder="e.g. Vancouver HVAC — July 2026" onkeydown="if(event.key==='Enter')confirmCampaignImport()">
+      </div>
+      <div class="form-group full">
+        <label>Campaign Notes <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
+        <textarea id="campaign-notes-input" placeholder="Source, targeting notes…" style="min-height:72px"></textarea>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn-cancel" onclick="closeCampaignModal()">Cancel</button>
+      <button type="button" class="btn-save" onclick="confirmCampaignImport()">Import</button>
+    </div>
+  </div>
+</div>
+
 <!-- CE DETAIL PANEL -->
 <div class="detail-overlay" id="ce-detail-overlay" onclick="closeCeDetail(event)">
   <div class="detail-panel" onclick="event.stopPropagation()">
@@ -1981,6 +2005,7 @@ let ceLeads        = [];
 let ceActiveFilter = 'all';
 let ceSelected     = new Set();
 let ceSearchQuery  = '';
+let _pendingCsvRows = null;
 let ceOpensMap     = new Map();
 let ceOpensData    = [];
 
@@ -2292,8 +2317,10 @@ function openCeDetail(id) {
     lead.website     && { label: 'Website',      val: `<a href="${/^https?:\/\//i.test(lead.website) ? '' : 'https://'}${esc(lead.website)}" target="_blank">${esc(lead.website)}</a>` },
     lead.city        && { label: 'City',         val: esc(lead.city) },
     lead.tradeType   && { label: 'Niche',        val: esc(lead.tradeType) },
-    lead.rating      && { label: 'Rating',       val: `${esc(lead.rating)} ★` },
-    lead.reviewCount && { label: 'Reviews',      val: esc(lead.reviewCount) },
+    lead.rating        && { label: 'Rating',       val: `${esc(lead.rating)} ★` },
+    lead.reviewCount   && { label: 'Reviews',      val: esc(lead.reviewCount) },
+    lead.campaign      && { label: 'Campaign',     val: esc(lead.campaign) },
+    lead.campaign_notes && { label: 'Camp. Notes', val: esc(lead.campaign_notes) },
     { label: 'Last emailed', val: lead.lastEmailedAt ? new Date(lead.lastEmailedAt).toLocaleDateString() : '—' },
   ].filter(Boolean);
   document.getElementById('ce-d-fields').innerHTML = fieldRows.map(r =>
@@ -2415,28 +2442,59 @@ async function deleteCeLead(id) {
 function handleCsvImport(event) {
   const file = event.target.files[0];
   if (!file) return;
+  event.target.value = '';
   const reader = new FileReader();
-  reader.onload = async (e) => {
+  reader.onload = (e) => {
     try {
       const rows = parseCSV(e.target.result);
       if (!rows.length) { showToast('No data rows found in CSV.', 'warning'); return; }
-      showToast(`Importing ${rows.length} row(s)…`, 'info');
-      const resp = await fetch('/api/coldemail/import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(rows),
-      });
-      if (!resp.ok) { showToast('Import failed: ' + resp.status, 'error'); return; }
-      const { imported, duplicates } = await resp.json();
-      const msg = duplicates > 0
-        ? `Imported ${imported} leads (${duplicates} duplicates skipped)`
-        : `Imported ${imported} leads successfully`;
-      showToast(msg, imported > 0 ? 'success' : 'warning');
-      loadCeLeads();
-    } catch (err) { showToast('CSV error: ' + err.message, 'error'); }
-    event.target.value = '';
+      _pendingCsvRows = rows;
+      showCampaignModal();
+    } catch (err) { showToast('CSV parse error: ' + err.message, 'error'); }
   };
   reader.readAsText(file);
+}
+
+function showCampaignModal() {
+  document.getElementById('campaign-name-input').value  = '';
+  document.getElementById('campaign-notes-input').value = '';
+  document.getElementById('campaign-modal-overlay').classList.add('open');
+  setTimeout(() => document.getElementById('campaign-name-input').focus(), 50);
+}
+
+function closeCampaignModal(e) {
+  if (e && e.target !== document.getElementById('campaign-modal-overlay')) return;
+  document.getElementById('campaign-modal-overlay').classList.remove('open');
+  _pendingCsvRows = null;
+}
+
+async function confirmCampaignImport() {
+  const campaign = document.getElementById('campaign-name-input').value.trim();
+  if (!campaign) {
+    document.getElementById('campaign-name-input').focus();
+    showToast('Campaign name is required.', 'warning');
+    return;
+  }
+  const campaign_notes = document.getElementById('campaign-notes-input').value.trim();
+  const rows = _pendingCsvRows;
+  if (!rows || !rows.length) { closeCampaignModal(); return; }
+  document.getElementById('campaign-modal-overlay').classList.remove('open');
+  _pendingCsvRows = null;
+  showToast(`Importing ${rows.length} row(s)…`, 'info');
+  try {
+    const resp = await fetch('/api/coldemail/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows, campaign, campaign_notes }),
+    });
+    if (!resp.ok) { showToast('Import failed: ' + resp.status, 'error'); return; }
+    const { imported, duplicates } = await resp.json();
+    const msg = duplicates > 0
+      ? `Imported ${imported} leads (${duplicates} duplicates skipped)`
+      : `Imported ${imported} leads successfully`;
+    showToast(msg, imported > 0 ? 'success' : 'warning');
+    loadCeLeads();
+  } catch (err) { showToast('Import error: ' + err.message, 'error'); }
 }
 
 function parseCSV(text) {

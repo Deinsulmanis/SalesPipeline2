@@ -401,8 +401,11 @@ app.get('/api/proposalOpens', requireAuth, async (_req, res) => {
 });
 
 app.post('/api/coldemail/import', requireAuth, async (req, res) => {
-  const rows = req.body;
-  if (!Array.isArray(rows)) return res.status(400).json({ error: 'body must be an array' });
+  const { rows, campaign, campaign_notes } = req.body || {};
+  if (!Array.isArray(rows)) return res.status(400).json({ error: 'body.rows must be an array' });
+  if (!campaign) console.warn('[ColdEmail Import] No campaign name provided — defaulting to "unlabeled"');
+  const campaignName  = (campaign || 'unlabeled').trim();
+  const campaignNotes = (campaign_notes || '').trim();
   try {
     const result = await withAuth(async () => {
       await ensureColdEmailSheet();
@@ -432,7 +435,7 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
           notes: row.notes || '',
           reviewCount: row.reviewCount || '', rating: row.rating || '',
           tier: row.tier || '',         siteContext: row.siteContext || '',
-          campaign: row.campaign || '', campaign_notes: row.campaign_notes || '',
+          campaign: campaignName, campaign_notes: campaignNotes,
         };
         toAdd.push(CE_COLUMNS.map(col => String(lead[col] ?? '')));
       }
