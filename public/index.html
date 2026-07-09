@@ -2305,13 +2305,7 @@ function buildCampaignStats() {
 
     const replied        = leads.filter(l => l.emailStatus === 'replied' || l.stage === 'Replied').length;
     const replyRate      = delivered > 0 ? (replied / delivered) * 100 : 0;
-    // Logs each lead counted as Interested. Read-only — runs beside the count,
-    // never inside the filter, so it cannot affect the result.
-    leads.filter(l => (l.notes || '').includes('[REPLY: Interested]'))
-      .forEach(l => console.log('[campaign-debug] interested lead:', { campaign: name, company: l.company, notes: l.notes }));
-
-    const interestedLeads = leads.filter(l => (l.notes || '').includes('[REPLY: Interested]'));
-    const interested     = interestedLeads.length;
+    const interested     = leads.filter(l => (l.notes || '').includes('[REPLY: Interested]')).length;
     const interestedRate = replied > 0 ? (interested / replied) * 100 : 0;
 
     rows.push({ name, total, delivered, bounced, bounceRate, opens, replied, replyRate, interested, interestedRate });
