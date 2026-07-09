@@ -865,6 +865,65 @@ async function runReplyCheckPass(leads) {
   console.log();
 }
 
+// ── BOUNCE-CHECK PASS ─────────────────────────────────────────────────────────
+// Queries Gmail for mailer-daemon bounce notifications for each emailed lead.
+// Returns true (bounced), false (not bounced), null (API error — fail closed).
+async function checkForBounce(lead) {
+  if (!lead.lastEmailedAt || !isValidEmail(lead.email)) return false;
+  try {
+    const afterSec  = Math.floor(new Date(lead.lastEmailedAt).getTime() / 1000);
+    const safeEmail = lead.email.trim().replace(/^[^a-zA-Z0-9]+/, '');
+    if (!safeEmail || !safeEmail.includes('@')) return false;
+    const listResp = await gmail().users.messages.list({
+      userId:     'me',
+      q:          `from:mailer-daemon@googlemail.com "${safeEmail}" after:${afterSec}`,
+      maxResults: 1,
+    });
+    return (listResp.data.messages || []).length > 0;
+  } catch (e) {
+    console.warn(`[BounceCheck] API error for ${lead.email}: ${e.message}`);
+    return null;
+  }
+}
+
+async function runBounceCheckPass(leads) {
+  const candidates = leads.filter(l => l.emailStatus === 'emailed' && isValidEmail(l.email));
+  if (!candidates.length) {
+    console.log('[BounceCheck] No emailed leads to check.\n');
+    return;
+  }
+  console.log(`[BounceCheck] Checking ${candidates.length} lead${candidates.length === 1 ? '' : 's'} for bounces...`);
+
+  let bounced = 0;
+  for (const lead of candidates) {
+    const isBounced = await withAuth(() => checkForBounce(lead));
+    if (isBounced !== true) continue;
+
+    const company = cleanCompanyName(lead.company) || lead.email;
+    console.log(`  ⚠ Bounce detected → ${lead.email} (${company}) — marking Done`);
+    lead.emailStatus = 'done';
+
+    if (!DRY_RUN) {
+      await withAuth(async () => {
+        await sheets().spreadsheets.values.batchUpdate({
+          spreadsheetId: SPREADSHEET_ID,
+          requestBody: {
+            valueInputOption: 'RAW',
+            data: [
+              { range: `${SHEET_NAME}!H${lead._row}`, values: [['Done']] },
+              { range: `${SHEET_NAME}!I${lead._row}`, values: [['done']] },
+              { range: `${SHEET_NAME}!L${lead._row}`, values: [[prependNote(lead.notes, '[BOUNCED]')]] },
+            ],
+          },
+        });
+      });
+    }
+    bounced++;
+  }
+
+  console.log(`[BounceCheck] ${bounced} bounce${bounced !== 1 ? 's' : ''} found / ${candidates.length} checked\n`);
+}
+
 // ── SELECTION ─────────────────────────────────────────────────────────────────
 
 function isValidEmail(e) {
@@ -967,6 +1026,9 @@ async function run() {
   // Reply-check pass — unconditional; runs even when cap is reached.
   // Mutates emailStatus on replied leads so selectFollowUps excludes them below.
   await runReplyCheckPass(all);
+
+  // Bounce-check pass — marks bounced leads Done before follow-up selection.
+  await runBounceCheckPass(all);
 
   // Phase 1 — new sends (stage === QUEUE_STAGE, never emailed)
   const queued = selectQueued(all);
