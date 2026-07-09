@@ -796,6 +796,15 @@
 
   .ce-search-clear:hover { color: var(--text); }
 
+  /* Secondary CE stats (Total, Emailed) — present but visually subordinate to
+     the actionable ones (Replied, Opens, Warm). Scoped so the Cold Calls
+     stats bar keeps its uniform weighting. */
+  #ce-stats-bar .stat-secondary .stat-val   { font-size: 15px; font-weight: 600; color: var(--text-muted); }
+  #ce-stats-bar .stat-secondary .stat-label { color: var(--text-muted); opacity: 0.75; }
+
+  /* Empty table cells: keep the column, drop the visual weight. */
+  .ce-cell-empty { color: var(--text-muted); font-size: 11px; opacity: 0.6; }
+
   /* ── CAMPAIGN STATS TABLE ── */
   .ce-campaigns-table { width: 100%; border-collapse: collapse; }
   .ce-campaigns-table th {
@@ -1121,15 +1130,15 @@
   <!-- CE Lead table -->
   <div id="ce-leads-panel">
     <div class="stats-bar" id="ce-stats-bar">
-      <div class="stat"><div><div class="stat-val" id="ce-stat-total">0</div><div class="stat-label">Total</div></div></div>
+      <div class="stat stat-secondary"><div><div class="stat-val" id="ce-stat-total">0</div><div class="stat-label">Total</div></div></div>
       <div class="stat"><div><div class="stat-val" id="ce-stat-queued">0</div><div class="stat-label">Queued</div></div></div>
-      <div class="stat"><div><div class="stat-val" id="ce-stat-emailed">0</div><div class="stat-label">Emailed</div></div></div>
+      <div class="stat stat-secondary"><div><div class="stat-val" id="ce-stat-emailed">0</div><div class="stat-label">Emailed</div></div></div>
       <div class="stat"><div><div class="stat-val" id="ce-stat-replied">0</div><div class="stat-label">Replied</div></div></div>
       <div class="stat"><div><div class="stat-val" id="ce-stat-opens">0</div><div class="stat-label">Opens</div></div></div>
       <div class="stat"><div><div class="stat-val" id="ce-stat-warm">0</div><div class="stat-label">🔥 Warm</div></div></div>
     </div>
     <div id="ce-chart-wrap" style="padding:0 28px;margin-bottom:18px">
-      <div class="detail-section-title" style="margin-bottom:8px">Daily Sends — Last 30 Days</div>
+      <div class="detail-section-title" style="margin-bottom:8px">Daily Sends — Last 14 Days</div>
       <div id="ce-send-chart" style="display:flex;align-items:flex-end;gap:3px;height:60px;padding:0 2px"></div>
       <div id="ce-chart-legend" style="font-size:11px;color:var(--text-muted);margin-top:4px;display:flex;justify-content:space-between"></div>
     </div>
@@ -2142,8 +2151,9 @@ function buildSendChart() {
 
   const toVancouverDate = d => new Date(d).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
 
+  const CHART_DAYS = 14;
   const days = [];
-  for (let i = 29; i >= 0; i--) {
+  for (let i = CHART_DAYS - 1; i >= 0; i--) {
     const d = new Date();
     d.setDate(d.getDate() - i);
     days.push(toVancouverDate(d));
@@ -2169,7 +2179,7 @@ function buildSendChart() {
   }).join('');
 
   const oldestLabel = new Date(days[0] + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  legendEl.innerHTML = `<span>${oldestLabel}</span><span>${total} send${total !== 1 ? 's' : ''} in last 30 days</span><span>Today</span>`;
+  legendEl.innerHTML = `<span>${oldestLabel}</span><span>${total} send${total !== 1 ? 's' : ''} in last ${CHART_DAYS} days</span><span>Today</span>`;
 }
 
 function renderCeTable() {
@@ -2224,9 +2234,9 @@ function renderCeTable() {
     return `<tr data-id="${l.id}" onclick="openCeDetail('${l.id}')" style="cursor:pointer">
       <td onclick="event.stopPropagation()"><input type="checkbox" class="ce-row-check" data-id="${l.id}" ${checked} onchange="toggleCeRow(this)"></td>
       <td class="ce-td-company">${esc(l.company) || '<span style="color:var(--text-muted)">—</span>'}</td>
-      <td>${esc(l.contactName) || '—'}</td>
+      <td>${cell(l.contactName)}</td>
       <td class="ce-td-email">${l.email ? `<a href="mailto:${emailSafe}">${esc(l.email)}</a>` : '—'}</td>
-      <td>${esc(l.city) || '—'}</td>
+      <td>${cell(l.city)}</td>
       <td>${esc(l.tradeType) || '—'}</td>
       ${opensTd}
       <td onclick="event.stopPropagation()"><select class="ce-stage-select" onchange="setCeLeadStage('${l.id}',this.value)">${stageOpts}</select></td>
@@ -2509,6 +2519,13 @@ function openCeDetail(id) {
   }
 
   document.getElementById('ce-detail-overlay').classList.add('open');
+}
+
+// Table cell text, with a de-emphasised placeholder when the field is blank —
+// keeps sparse columns (Contact, City) from competing with populated ones.
+function cell(s) {
+  const v = esc(s);
+  return v || '<span class="ce-cell-empty">—</span>';
 }
 
 // esc() is safe for element text but leaves quotes intact — use escAttr() for
