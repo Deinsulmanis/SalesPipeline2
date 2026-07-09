@@ -697,11 +697,34 @@ async function appendOpenTriggeredNote(rowNum, existingNotes) {
 
 // ── REPLY ROUTING ─────────────────────────────────────────────────────────────
 
+// Never accumulate the same tag twice — handlers may re-run on a lead whose
+// notes already carry their tag (retry, overlapping cron run, manual re-trigger).
 function prependNote(existing, tag) {
+  if (existing && existing.includes(tag)) return existing;
   return existing ? `${tag} ${existing}` : tag;
 }
 
+const TAG_INTERESTED = '[REPLY: Interested]';
+
+// True if this lead was already promoted to the Cold Calls sheet. Guards the
+// append against overlapping runs that both read before either wrote.
+async function isAlreadyPromoted(leadId) {
+  const resp = await sheets().spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range:         `${LEADS_SHEET}!A:A`,
+  });
+  const ids = (resp.data.values || []).flat();
+  return ids.includes(`CE-${leadId}`);
+}
+
+// Idempotent: a lead whose notes already carry the Interested tag is skipped
+// entirely. Callers must not rely on lead.emailStatus — runReplyCheckPass sets
+// it to 'replied' in memory before dispatching here.
 async function handleInterested(lead) {
+  if ((lead.notes || '').includes(TAG_INTERESTED)) {
+    console.log(`  ↺ ${lead.company} — already tagged Interested, skipping`);
+    return;
+  }
   await sheets().spreadsheets.values.batchUpdate({
     spreadsheetId: SPREADSHEET_ID,
     requestBody: {
@@ -709,10 +732,14 @@ async function handleInterested(lead) {
       data: [
         { range: `${SHEET_NAME}!H${lead._row}`, values: [['Replied']] },
         { range: `${SHEET_NAME}!I${lead._row}`, values: [['replied']] },
-        { range: `${SHEET_NAME}!L${lead._row}`, values: [[prependNote(lead.notes, '[REPLY: Interested]')]] },
+        { range: `${SHEET_NAME}!L${lead._row}`, values: [[prependNote(lead.notes, TAG_INTERESTED)]] },
       ],
     },
   });
+  if (await isAlreadyPromoted(lead.id)) {
+    console.log(`  ↺ ${lead.company} — already in Cold Calls, skipping promote`);
+    return;
+  }
   const parts = (lead.contactName || '').split(' ');
   const first = parts[0] || '';
   const last  = parts.slice(1).join(' ') || '';
