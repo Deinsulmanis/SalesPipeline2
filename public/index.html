@@ -2305,7 +2305,13 @@ function buildCampaignStats() {
 
     const replied        = leads.filter(l => l.emailStatus === 'replied' || l.stage === 'Replied').length;
     const replyRate      = delivered > 0 ? (replied / delivered) * 100 : 0;
-    const interested     = leads.filter(l => (l.notes || '').includes('[REPLY: Interested]')).length;
+    // Logs each lead counted as Interested. Read-only — runs beside the count,
+    // never inside the filter, so it cannot affect the result.
+    leads.filter(l => (l.notes || '').includes('[REPLY: Interested]'))
+      .forEach(l => console.log('[campaign-debug] interested lead:', { campaign: name, company: l.company, notes: l.notes }));
+
+    const interestedLeads = leads.filter(l => (l.notes || '').includes('[REPLY: Interested]'));
+    const interested     = interestedLeads.length;
     const interestedRate = replied > 0 ? (interested / replied) * 100 : 0;
 
     rows.push({ name, total, delivered, bounced, bounceRate, opens, replied, replyRate, interested, interestedRate });
@@ -2349,7 +2355,7 @@ function renderCampaignsPanel() {
       </thead>
       <tbody>
         ${rows.map(r => `
-          <tr onclick="filterByCampaign(${JSON.stringify(r.name)})" title="Click to filter leads by this campaign">
+          <tr data-campaign="${escAttr(r.name)}" onclick="filterByCampaign(this.dataset.campaign)" title="Click to filter leads by this campaign">
             <td class="ce-campaign-name-cell">${esc(r.name)}</td>
             <td>${r.total}</td>
             <td>${r.delivered}</td>
@@ -2509,6 +2515,12 @@ function openCeDetail(id) {
   }
 
   document.getElementById('ce-detail-overlay').classList.add('open');
+}
+
+// esc() is safe for element text but leaves quotes intact — use escAttr() for
+// anything interpolated into a double-quoted HTML attribute.
+function escAttr(s) {
+  return esc(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 function esc(s) {
