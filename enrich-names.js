@@ -23,7 +23,9 @@ const { google }  = require('googleapis');
 const Anthropic   = require('@anthropic-ai/sdk');
 const axios       = require('axios');
 const cheerio     = require('cheerio');
-const puppeteer   = require('puppeteer');
+// puppeteer is required lazily inside run() — it is optional at runtime. Railway
+// installs it without a Chromium binary (PUPPETEER_SKIP_DOWNLOAD), and may omit
+// the package entirely; neither must break this script at file load.
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 
@@ -271,11 +273,21 @@ async function run() {
 
   try {
     if (filtered.length > 0) {
-      browser = await puppeteer.launch({
-        headless: 'new',
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      });
-      console.log('[headless] browser launched\n');
+      // Both the require and the launch are optional. A missing package
+      // (MODULE_NOT_FOUND) or a missing Chromium binary must degrade this run to
+      // the fast path, never abort it — Railway has neither.
+      try {
+        const puppeteer = require('puppeteer');
+        browser = await puppeteer.launch({
+          headless: 'new',
+          args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        });
+        console.log('[headless] browser launched\n');
+      } catch (e) {
+        console.warn('[headless] Puppeteer launch failed — falling back to fast-path only for this run');
+        console.warn(`[headless] reason: ${(e.message || String(e)).split('\n')[0]}\n`);
+        browser = null;
+      }
     }
 
     for (const lead of filtered) {
@@ -285,7 +297,7 @@ async function run() {
       let result = await fetchAboutContent(lead.website, company);
       if (result) {
         viaFast++;
-      } else {
+      } else if (browser) {
         console.log(`[fallback] ${company} — trying headless browser`);
         result = await fetchAboutContentHeadless(browser, lead.website, company);
         if (result) viaHeadless++;
