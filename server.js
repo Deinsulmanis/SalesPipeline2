@@ -88,8 +88,9 @@ const CE_COLUMNS    = [
   'stage','emailStatus','lastEmailedAt','emailStep','notes',
   'reviewCount','rating','tier','siteContext',                        // M N O P
   'campaign','campaign_notes',                                        // Q R
+  'enrichment_attempted',                                             // S
 ];
-const CE_COL_RANGE  = `${CE_SHEET_NAME}!A:R`;
+const CE_COL_RANGE  = `${CE_SHEET_NAME}!A:S`;
 
 // ── SERVICE ACCOUNT AUTH ──────────────────────────────────────────────────────
 // Credentials are read from an env var (JSON string) — no key file on disk.
@@ -333,7 +334,7 @@ async function ensureColdEmailSheet() {
     ceSheetIdCache = existing.properties.sheetId;
     const hResp = await s.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range:         `${CE_SHEET_NAME}!A1:R1`,
+      range:         `${CE_SHEET_NAME}!A1:S1`,
     });
     const existingHdr = hResp.data.values?.[0] || [];
     // Repair if header is missing, wrong, or shorter than CE_COLUMNS (new columns added)
@@ -446,6 +447,7 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
           reviewCount: row.reviewCount || '', rating: row.rating || '',
           tier: row.tier || '',         siteContext: row.siteContext || '',
           campaign: campaignName, campaign_notes: campaignNotes,
+          enrichment_attempted: '',   // never attempted — enrich-names.js will pick these up
         };
         toAdd.push(CE_COLUMNS.map(col => String(lead[col] ?? '')));
       }
@@ -501,7 +503,7 @@ app.put('/api/coldemail/:id', requireAuth, async (req, res) => {
     await withAuth(async () => {
       await sheets().spreadsheets.values.update({
         spreadsheetId:   SPREADSHEET_ID,
-        range:           `${CE_SHEET_NAME}!A${rowNum}:R${rowNum}`,
+        range:           `${CE_SHEET_NAME}!A${rowNum}:S${rowNum}`,
         valueInputOption:'RAW',
         requestBody:     { values: vals },
       });

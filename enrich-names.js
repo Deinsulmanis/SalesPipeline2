@@ -6,6 +6,13 @@
  * About/Team page and uses Haiku to extract the owner/founder first name, then
  * writes it back to column C of the ColdEmail sheet.
  *
+ * ATTEMPT TRACKING
+ *   Every lead this script attempts gets enrichment_attempted = 'true' written to
+ *   column S, whether or not a name was found. Subsequent runs skip those leads,
+ *   so a site with no discoverable owner name is scraped once, not on every run.
+ *   Consequence: a failed lead is never retried automatically. To retry one,
+ *   clear its enrichment_attempted cell (column S) in the sheet by hand.
+ *
  * Usage (local):
  *   DRY_RUN=true  node -r dotenv/config enrich-names.js   (preview — no writes)
  *   DRY_RUN=false node -r dotenv/config enrich-names.js   (live — writes names)
@@ -49,14 +56,23 @@ const WRITE_DELAY         = 500;
 const MIN_CONTENT_LENGTH  = 100;
 
 const SHEET_NAME = 'ColdEmail';
-const CE_RANGE   = `${SHEET_NAME}!A:P`;
+const CE_RANGE   = `${SHEET_NAME}!A:S`;
 
 // Must stay in sync with CE_COLUMNS in server.js and COLUMNS in outreach-agent.js
 const COLUMNS = [
   'id', 'company', 'contactName', 'email', 'city', 'tradeType', 'website',
   'stage', 'emailStatus', 'lastEmailedAt', 'emailStep', 'notes',
   'reviewCount', 'rating', 'tier', 'siteContext',
+  'campaign', 'campaign_notes', 'enrichment_attempted',
 ];
+
+// Column letters derived from position, so they cannot drift out of sync with
+// COLUMNS if another field is inserted ahead of them.
+const colLetter    = field => String.fromCharCode(65 + COLUMNS.indexOf(field));
+const NAME_COL      = colLetter('contactName');          // C
+const ATTEMPTED_COL = colLetter('enrichment_attempted'); // S
+
+const isAttempted = lead => (lead.enrichment_attempted || '').trim().toLowerCase() === 'true';
 
 const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
@@ -227,14 +243,30 @@ async function extractOwnerName(company, content, websiteUrl) {
 
 // ── SHEET WRITE ───────────────────────────────────────────────────────────────
 
+// Name found: write the name and the attempt flag together, so a crash between
+// the two can never leave a named lead looking un-attempted.
 async function writeName(rowIndex, name, company) {
-  await sheets().spreadsheets.values.update({
+  await sheets().spreadsheets.values.batchUpdate({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!C${rowIndex}`,
-    valueInputOption: 'RAW',
-    requestBody: { values: [[name]] },
+    requestBody: {
+      valueInputOption: 'RAW',
+      data: [
+        { range: `${SHEET_NAME}!${NAME_COL}${rowIndex}`,      values: [[name]] },
+        { range: `${SHEET_NAME}!${ATTEMPTED_COL}${rowIndex}`, values: [['true']] },
+      ],
+    },
   });
   console.log(`[write] "${name}" → ${company} (row ${rowIndex})`);
+}
+
+// No name found: still record that we tried, so the lead is not re-scraped.
+async function markAttempted(rowIndex) {
+  await sheets().spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_NAME}!${ATTEMPTED_COL}${rowIndex}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [['true']] },
+  });
 }
 
 // ── MAIN ──────────────────────────────────────────────────────────────────────
@@ -251,14 +283,18 @@ async function run() {
 
   const allLeads = await readLeads();
 
-  const filtered = allLeads.filter(l =>
+  const candidates = allLeads.filter(l =>
     (!l.contactName || !l.contactName.trim()) &&
     l.website && l.website.trim() &&
     l.emailStatus !== 'replied' &&
     l.stage !== 'Replied'
   );
 
-  console.log(`[enrich] ${filtered.length} leads need name enrichment\n`);
+  // Leads tried on a previous run — skipped whether or not that run found a name.
+  const alreadyAttempted = candidates.filter(isAttempted).length;
+  const filtered         = candidates.filter(l => !isAttempted(l));
+
+  console.log(`[enrich] ${filtered.length} leads need name enrichment (${alreadyAttempted} already attempted, skipping)\n`);
 
   let attempted    = 0;
   let viaFast      = 0;
@@ -306,6 +342,12 @@ async function run() {
       if (!result) {
         console.log(`[skip] ${company} — no about page found`);
         noPage++;
+        if (DRY_RUN) {
+          console.log(`[dry-run] Would mark ${company} as attempted (row ${lead._row})`);
+        } else {
+          await markAttempted(lead._row);
+          await sleep(WRITE_DELAY);
+        }
         await sleep(DELAY_BETWEEN_LEADS);
         continue;
       }
@@ -314,13 +356,19 @@ async function run() {
       if (!name) {
         console.log(`[skip] ${company} — name not found in content`);
         noName++;
+        if (DRY_RUN) {
+          console.log(`[dry-run] Would mark ${company} as attempted (row ${lead._row})`);
+        } else {
+          await markAttempted(lead._row);
+          await sleep(WRITE_DELAY);
+        }
         await sleep(DELAY_BETWEEN_LEADS);
         continue;
       }
 
       namesFound++;
       if (DRY_RUN) {
-        console.log(`[dry-run] Would write "${name}" → ${company} (row ${lead._row})`);
+        console.log(`[dry-run] Would write "${name}" → ${company} and mark attempted (row ${lead._row})`);
       } else {
         await writeName(lead._row, name, company);
         written++;
@@ -340,13 +388,14 @@ async function run() {
 
   console.log('\n' + '─'.repeat(36));
   console.log('Enrichment complete');
-  console.log(`  Leads attempted:     ${attempted}`);
-  console.log(`  Found via fast path: ${viaFast}`);
-  console.log(`  Found via headless:  ${viaHeadless}`);
-  console.log(`  Names found:         ${namesFound}`);
-  console.log(`  Names written:       ${writtenLine}`);
-  console.log(`  Skipped (no page):   ${noPage}`);
-  console.log(`  Skipped (no name):   ${noName}`);
+  console.log(`  Leads attempted:            ${attempted}`);
+  console.log(`  Found via fast path:        ${viaFast}`);
+  console.log(`  Found via headless:         ${viaHeadless}`);
+  console.log(`  Names found:                ${namesFound}`);
+  console.log(`  Names written:              ${writtenLine}`);
+  console.log(`  Skipped (no page):          ${noPage}`);
+  console.log(`  Skipped (no name):          ${noName}`);
+  console.log(`  Skipped (already attempted): ${alreadyAttempted}`);
   console.log('─'.repeat(36));
 }
 
