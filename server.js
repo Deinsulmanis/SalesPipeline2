@@ -18,7 +18,21 @@ app.get('/p', (req, res) => {
   const niche   = req.query.niche   || 'Unknown';
   const id      = req.query.id      || '';
   const ua      = req.headers['user-agent'] || '';
-  const dest    = process.env.PROPOSAL_URL || 'https://scalelabaireceptionistproposal.netlify.app';
+
+  // Forward the incoming query params (company, contact, niche, …) to the
+  // proposal page so it renders personalized content instead of "your business".
+  // 'id' is an internal tracking param only and is not forwarded.
+  const proposalBase = process.env.PROPOSAL_URL || 'https://scalelabaireceptionistproposal.netlify.app';
+  let dest = proposalBase;
+  try {
+    const url = new URL(proposalBase);
+    const fwd = new URLSearchParams(req.query);
+    fwd.delete('id');
+    url.search = fwd.toString();
+    dest = url.toString();
+  } catch (e) {
+    console.warn(`[/p] Could not build redirect params, using base URL: ${e.message}`);
+  }
 
   const clientIp    = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.ip;
   const BLOCKED_IPS = ['75.155.151.158'];
