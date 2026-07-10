@@ -23,6 +23,7 @@ const { google }  = require('googleapis');
 const Anthropic   = require('@anthropic-ai/sdk');
 const axios       = require('axios');
 const cheerio     = require('cheerio');
+const puppeteer   = require('puppeteer');
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 
@@ -35,9 +36,15 @@ const ABOUT_PATHS = [
 ];
 
 const REQUEST_TIMEOUT     = 8_000;
+const HEADLESS_TIMEOUT    = 10_000;
 const DELAY_BETWEEN_LEADS = 3_000;
 const MAX_CONTENT_LENGTH  = 3_000;
 const WRITE_DELAY         = 500;
+
+// A JS-rendered page answers 200 with an empty shell, so cheerio extracts almost
+// nothing. Anything under this is treated as a miss and handed to the headless
+// fallback rather than fed to Haiku as an empty prompt.
+const MIN_CONTENT_LENGTH  = 100;
 
 const SHEET_NAME = 'ColdEmail';
 const CE_RANGE   = `${SHEET_NAME}!A:P`;
@@ -98,6 +105,28 @@ async function readLeads() {
 
 // ── SCRAPING ──────────────────────────────────────────────────────────────────
 
+// Single source of truth for turning page HTML into candidate text. Both the
+// axios path and the headless path parse identically — only the fetch differs.
+function extractText(html) {
+  const $ = cheerio.load(html);
+  $('script, style, nav, footer, header').remove();
+
+  const parts = [];
+  $('h1, h2, h3').each((_, el) => parts.push($(el).text()));
+  $('p').each((_, el) => parts.push($(el).text()));
+  $([
+    '[class*="about"]', '[class*="team"]', '[class*="founder"]',
+    '[class*="owner"]', '[class*="bio"]',  '[class*="doctor"]',
+    '[class*="dr"]',    '[class*="meet"]',
+  ].join(',')).each((_, el) => parts.push($(el).text()));
+
+  return parts
+    .map(t => t.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join(' ')
+    .slice(0, MAX_CONTENT_LENGTH);
+}
+
 async function fetchAboutContent(websiteUrl, company) {
   const base = siteOrigin(normalizeUrl(websiteUrl));
   if (!base) return null;
@@ -114,27 +143,45 @@ async function fetchAboutContent(websiteUrl, company) {
       });
       if (!resp.data || typeof resp.data !== 'string') continue;
 
-      const $ = cheerio.load(resp.data);
-      $('script, style, nav, footer, header').remove();
-
-      const parts = [];
-      $('h1, h2, h3').each((_, el) => parts.push($(el).text()));
-      $('p').each((_, el) => parts.push($(el).text()));
-      $([
-        '[class*="about"]', '[class*="team"]', '[class*="founder"]',
-        '[class*="owner"]', '[class*="bio"]',  '[class*="doctor"]',
-        '[class*="dr"]',    '[class*="meet"]',
-      ].join(',')).each((_, el) => parts.push($(el).text()));
-
-      const content = parts
-        .map(t => t.replace(/\s+/g, ' ').trim())
-        .filter(Boolean)
-        .join(' ')
-        .slice(0, MAX_CONTENT_LENGTH);
+      const content = extractText(resp.data);
+      // A 200 carrying an empty SPA shell is not a hit — keep looking, then let
+      // the caller fall back to the headless browser.
+      if (content.length < MIN_CONTENT_LENGTH) continue;
 
       return { url, content };
     } catch {
       // 4xx, 5xx, timeout — try next path
+    }
+  }
+  return null;
+}
+
+// Fallback for JavaScript-rendered sites. Reuses one browser for the whole run;
+// only the page is per-attempt. Returns null on any failure — a crashed page or
+// a browser-level fault must never take down the run.
+async function fetchAboutContentHeadless(browser, websiteUrl, company) {
+  const base = siteOrigin(normalizeUrl(websiteUrl));
+  if (!base || !browser) return null;
+
+  for (const path of ABOUT_PATHS) {
+    const url = base + path;
+    let page;
+    try {
+      page = await browser.newPage();
+      await page.setUserAgent(BROWSER_UA);
+      const resp = await page.goto(url, { waitUntil: 'networkidle2', timeout: HEADLESS_TIMEOUT });
+      if (!resp || !resp.ok()) continue;
+
+      const content = extractText(await page.content());
+      if (content.length < MIN_CONTENT_LENGTH) continue;
+
+      console.log(`[headless] ${company} → rendered ${url}`);
+      return { url, content };
+    } catch (e) {
+      console.warn(`[headless] ${company} → ${url} failed: ${e.message}`);
+    } finally {
+      // Close in finally so a mid-navigation throw cannot leak the page.
+      if (page) await page.close().catch(() => {});
     }
   }
   return null;
@@ -211,53 +258,83 @@ async function run() {
 
   console.log(`[enrich] ${filtered.length} leads need name enrichment\n`);
 
-  let attempted  = 0;
-  let namesFound = 0;
-  let written    = 0;
-  let noPage     = 0;
-  let noName     = 0;
+  let attempted    = 0;
+  let viaFast      = 0;
+  let viaHeadless  = 0;
+  let namesFound   = 0;
+  let written      = 0;
+  let noPage       = 0;
+  let noName       = 0;
 
-  for (const lead of filtered) {
-    const company = lead.company || lead.id;
-    attempted++;
+  // Launched lazily — no leads means no Chromium.
+  let browser = null;
 
-    const result = await fetchAboutContent(lead.website, company);
-    if (!result) {
-      console.log(`[skip] ${company} — no about page found`);
-      noPage++;
+  try {
+    if (filtered.length > 0) {
+      browser = await puppeteer.launch({
+        headless: 'new',
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      });
+      console.log('[headless] browser launched\n');
+    }
+
+    for (const lead of filtered) {
+      const company = lead.company || lead.id;
+      attempted++;
+
+      let result = await fetchAboutContent(lead.website, company);
+      if (result) {
+        viaFast++;
+      } else {
+        console.log(`[fallback] ${company} — trying headless browser`);
+        result = await fetchAboutContentHeadless(browser, lead.website, company);
+        if (result) viaHeadless++;
+      }
+
+      if (!result) {
+        console.log(`[skip] ${company} — no about page found`);
+        noPage++;
+        await sleep(DELAY_BETWEEN_LEADS);
+        continue;
+      }
+
+      const name = await extractOwnerName(company, result.content, result.url);
+      if (!name) {
+        console.log(`[skip] ${company} — name not found in content`);
+        noName++;
+        await sleep(DELAY_BETWEEN_LEADS);
+        continue;
+      }
+
+      namesFound++;
+      if (DRY_RUN) {
+        console.log(`[dry-run] Would write "${name}" → ${company} (row ${lead._row})`);
+      } else {
+        await writeName(lead._row, name, company);
+        written++;
+        await sleep(WRITE_DELAY);
+      }
+
       await sleep(DELAY_BETWEEN_LEADS);
-      continue;
     }
-
-    const name = await extractOwnerName(company, result.content, result.url);
-    if (!name) {
-      console.log(`[skip] ${company} — name not found in content`);
-      noName++;
-      await sleep(DELAY_BETWEEN_LEADS);
-      continue;
+  } finally {
+    if (browser) {
+      await browser.close().catch(e => console.warn(`[headless] close failed: ${e.message}`));
+      console.log('\n[headless] browser closed');
     }
-
-    namesFound++;
-    if (DRY_RUN) {
-      console.log(`[dry-run] Would write "${name}" → ${company} (row ${lead._row})`);
-    } else {
-      await writeName(lead._row, name, company);
-      written++;
-      await sleep(WRITE_DELAY);
-    }
-
-    await sleep(DELAY_BETWEEN_LEADS);
   }
 
   const writtenLine = DRY_RUN ? 'dry run — nothing written' : String(written);
 
   console.log('\n' + '─'.repeat(36));
   console.log('Enrichment complete');
-  console.log(`  Leads attempted:   ${attempted}`);
-  console.log(`  Names found:       ${namesFound}`);
-  console.log(`  Names written:     ${writtenLine}`);
-  console.log(`  Skipped (no page): ${noPage}`);
-  console.log(`  Skipped (no name): ${noName}`);
+  console.log(`  Leads attempted:     ${attempted}`);
+  console.log(`  Found via fast path: ${viaFast}`);
+  console.log(`  Found via headless:  ${viaHeadless}`);
+  console.log(`  Names found:         ${namesFound}`);
+  console.log(`  Names written:       ${writtenLine}`);
+  console.log(`  Skipped (no page):   ${noPage}`);
+  console.log(`  Skipped (no name):   ${noName}`);
   console.log('─'.repeat(36));
 }
 
