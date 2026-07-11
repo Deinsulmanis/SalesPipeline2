@@ -48,6 +48,10 @@ const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const SHEET_NAME     = 'ColdEmail';
 
 const DRY_RUN          = process.env.DRY_RUN !== 'false';          // default TRUE
+// CHECK_ONLY runs reply/bounce detection + open-triggered flagging with REAL
+// sheet writes, but skips every email send. Distinct from DRY_RUN, which also
+// skips the writes. Used by the 30-minute cron for near-real-time detection.
+const CHECK_ONLY       = process.env.CHECK_ONLY === 'true';
 const DAILY_CAP        = parseInt(process.env.DAILY_CAP || '12', 10);
 const DAILY_SEND_LIMIT = parseInt(process.env.DAILY_SEND_LIMIT || '40', 10);
 const QUEUE_STAGE = process.env.QUEUE_STAGE || 'Queued';      // set a lead's stage to this to queue it
@@ -1045,11 +1049,15 @@ const jitter = () => MIN_DELAY + Math.floor(Math.random() * (MAX_DELAY - MIN_DEL
 
 async function run() {
   if (!SPREADSHEET_ID) throw new Error('SPREADSHEET_ID missing from .env');
-  if (!DRY_RUN && !FROM_EMAIL) throw new Error('FROM_EMAIL missing from .env (required to send)');
+  if (!DRY_RUN && !CHECK_ONLY && !FROM_EMAIL) throw new Error('FROM_EMAIL missing from .env (required to send)');
+
+  const modeLabel = CHECK_ONLY ? 'CHECK-ONLY (reply/bounce detection, no sends)'
+                  : DRY_RUN     ? 'DRY RUN (nothing sent)'
+                  :               '🔴 LIVE — sending real emails';
 
   console.log('────────────────────────────────────────');
   console.log(`ScaleLab Outreach Agent — Phase 1–4`);
-  console.log(`Mode:       ${DRY_RUN ? 'DRY RUN (nothing sent)' : '🔴 LIVE — sending real emails'}`);
+  console.log(`Mode:       ${modeLabel}`);
   console.log(`Daily cap:  ${DAILY_CAP}`);
   console.log(`Queue stage:"${QUEUE_STAGE}"  →  on send: "${SENT_STAGE}"`);
   console.log(`Opener API: ${ANTHROPIC_API_KEY ? 'Haiku (claude-haiku-4-5) — Tier-2 (site) when website present, Tier-1 otherwise' : 'not set — using generic fallback'}`);
@@ -1080,6 +1088,13 @@ async function run() {
   const proposalOpens = await readProposalOpens();
   const warmLeads     = getOpenTriggeredLeads(all, proposalOpens);
   console.log(`[opens] ${warmLeads.length} open-triggered lead${warmLeads.length === 1 ? '' : 's'} found`);
+
+  // CHECK-ONLY stops here: reply-check, bounce-check and open detection have all
+  // run (with real writes), but no email is sent.
+  if (CHECK_ONLY) {
+    console.log('\n[check-only] Detection complete — skipping all sends.');
+    return;
+  }
 
   const effectiveCap = Math.min(DAILY_CAP, dailyRemaining);
   console.log(`${all.length} leads · ${queued.length} queued · ${warmLeads.length} warm · ${followUps.length} follow-ups due · cap ${effectiveCap} (${dailyRemaining} remaining today)\n`);

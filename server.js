@@ -141,7 +141,11 @@ function agentPushLine(line) {
   if (agentState.log.length > LOG_CAP) agentState.log.shift();
 }
 
-function spawnAgent(dryRun) {
+// Shared launcher for the outreach-agent subprocess. extraEnv overrides the
+// agent's mode (DRY_RUN / CHECK_ONLY). All three triggers — UI, the 4-hour send
+// cron and the 30-minute check-only cron — funnel through here and share
+// agentState, so agentState.running is a single mutual-exclusion flag across all.
+function startAgentProcess(extraEnv, dryRun) {
   agentState.running   = true;
   agentState.dryRun    = dryRun;
   agentState.startedAt = new Date().toISOString();
@@ -150,7 +154,7 @@ function spawnAgent(dryRun) {
 
   const child = spawn('node', ['outreach-agent.js'], {
     cwd: __dirname,
-    env: { ...process.env, DRY_RUN: dryRun ? 'true' : 'false' },
+    env: { ...process.env, ...extraEnv },
   });
   agentChild = child;
 
@@ -182,6 +186,21 @@ function spawnAgent(dryRun) {
     agentState.exitCode = code;
     agentChild = null;
   });
+}
+
+function spawnAgent(dryRun) {
+  startAgentProcess({ DRY_RUN: dryRun ? 'true' : 'false' }, dryRun);
+}
+
+// Check-only pass: real sheet writes (reply/bounce detection), no sends.
+// Guards on agentState.running so it never spawns a second concurrent process
+// while a full run is already going.
+function spawnAgentCheckOnly() {
+  if (agentState.running) {
+    console.log('[cron] Agent already running — skipping check-only pass this tick');
+    return;
+  }
+  startAgentProcess({ DRY_RUN: 'false', CHECK_ONLY: 'true' }, false);
 }
 
 // ── SHEET HELPERS ─────────────────────────────────────────────────────────────
@@ -664,6 +683,14 @@ if (process.env.RAILWAY_ENVIRONMENT) {
     timezone: 'America/Vancouver',
   });
   console.log('[cron] Outreach agent scheduled: every 4 hours (Vancouver time)');
+
+  cron.schedule('*/30 * * * *', () => {
+    console.log('[cron] Running 30-min check-only pass...');
+    spawnAgentCheckOnly();
+  }, {
+    timezone: 'America/Vancouver',
+  });
+  console.log('[cron] Check-only pass scheduled: every 30 minutes');
 }
 
 const PORT = process.env.PORT || 3000;
