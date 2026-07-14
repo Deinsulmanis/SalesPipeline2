@@ -4,3 +4,5 @@ token.json
 public/*.json
 *.csv
 .vscode/
+enrich-output.txt
+leads-*.txt
