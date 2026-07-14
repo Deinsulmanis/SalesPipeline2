@@ -533,57 +533,104 @@ async function sendEmail({ to, subject, body }) {
   });
 }
 
-// Phase 4: check Gmail inbox for a reply from lead.email received after lastEmailedAt.
-// Returns: { messageId, snippet, body } if a reply was found, null otherwise or on error.
-// Fails CLOSED — an error returns null so the caller never sends to an unverified lead.
+// Bounce/auto senders whose thread messages must never be treated as a reply.
+const DAEMON_FROM = /mailer-daemon|postmaster|no-?reply|do-?not-?reply/i;
+
+// Read a header value off a Gmail message payload (case-insensitive name).
+function headerValue(payload, name) {
+  const h = (payload?.headers || []).find(x => x.name.toLowerCase() === name.toLowerCase());
+  return h ? h.value : '';
+}
+
+// Extract the bare address from a From header ("Jill <jill@x.com>" → "jill@x.com").
+function parseAddr(fromHeader) {
+  const m = /<([^>]+)>/.exec(fromHeader || '');
+  return (m ? m[1] : (fromHeader || '')).trim().toLowerCase();
+}
+
+// Recursively pull the first text/plain body out of a (possibly deeply nested
+// multipart) Gmail payload. Returns '' when no plain-text part exists.
+function extractPlainText(payload) {
+  if (!payload) return '';
+  if (payload.mimeType === 'text/plain' && payload.body?.data) {
+    return Buffer.from(payload.body.data, 'base64url').toString('utf8');
+  }
+  if (payload.parts && payload.parts.length) {
+    for (const part of payload.parts) {
+      const t = extractPlainText(part);
+      if (t) return t;
+    }
+    return '';
+  }
+  // Leaf with no explicit mime type (rare) — treat as plain. Never fall through
+  // for text/html or other non-plain leaves, which would leak markup.
+  if (!payload.mimeType && payload.body?.data) {
+    return Buffer.from(payload.body.data, 'base64url').toString('utf8');
+  }
+  return '';
+}
+
+// Phase 4: find a genuine reply on our conversation thread with the lead.
+// Locates our most recent sent message to the address, walks its full thread,
+// and returns the newest INBOUND message after lastEmailedAt that is not from us
+// and not from a bounce daemon — so a reply sent from a different address (e.g.
+// the owner replying from jill@ after we emailed info@) is still caught.
+// Returns { messageId, snippet, body, fromAddr } or null. Fails CLOSED.
 async function getReplyMessage(lead) {
   if (!lead.lastEmailedAt || !isValidEmail(lead.email)) return null;
   try {
-    const afterSec = Math.floor(new Date(lead.lastEmailedAt).getTime() / 1000);
+    const afterMs   = new Date(lead.lastEmailedAt).getTime();
     const safeEmail = lead.email.trim().replace(/^[^a-zA-Z0-9]+/, '');
     if (!safeEmail || !safeEmail.includes('@')) return null;
-    const listResp = await gmail().users.messages.list({
+
+    // (a) our most recent sent message to this lead → its thread
+    const sentResp = await gmail().users.messages.list({
       userId: 'me',
-      q: `from:"${safeEmail}" after:${afterSec}`,
+      q: `in:sent to:"${safeEmail}"`,
       maxResults: 1,
     });
-    const messages = listResp.data.messages || [];
-    if (!messages.length) return null;
+    const sent = sentResp.data.messages || [];
+    if (!sent.length) return null;
 
-    const msgResp = await gmail().users.messages.get({
-      userId: 'me',
-      id: messages[0].id,
-      format: 'full',
-    });
-    const msg     = msgResp.data;
-    const snippet = msg.snippet || '';
+    const sentMsg  = await gmail().users.messages.get({ userId: 'me', id: sent[0].id, format: 'minimal' });
+    const threadId = sentMsg.data.threadId;
+    if (!threadId) return null;
 
-    let body = '';
-    const payload = msg.payload || {};
-    if (payload.parts && payload.parts.length) {
-      const textPart = payload.parts.find(p => p.mimeType === 'text/plain');
-      if (textPart?.body?.data) {
-        body = Buffer.from(textPart.body.data, 'base64url').toString('utf8');
-      }
-    } else if (payload.body?.data) {
-      body = Buffer.from(payload.body.data, 'base64url').toString('utf8');
+    // (b) the full thread
+    const thread = await gmail().users.threads.get({ userId: 'me', id: threadId, format: 'full' });
+    const msgs   = thread.data.messages || [];
+
+    // (c) newest inbound message after lastEmailedAt, not from us, not a daemon
+    const ourAddr = (FROM_EMAIL || '').trim().toLowerCase();
+    let best = null;
+    for (const m of msgs) {
+      const internalMs = parseInt(m.internalDate || '0', 10);
+      if (internalMs <= afterMs) continue;
+      if ((m.labelIds || []).includes('SENT')) continue;   // our own outbound
+      const fromAddr = parseAddr(headerValue(m.payload, 'From'));
+      if (!fromAddr) continue;
+      if (ourAddr && fromAddr === ourAddr) continue;        // our own address
+      if (DAEMON_FROM.test(fromAddr)) continue;             // bounce / auto-reply daemon
+      if (!best || internalMs > best.ms) best = { ms: internalMs, msg: m, fromAddr };
     }
-    body = body.trim().slice(0, 1500);
+    if (!best) return null;
 
-    return { messageId: messages[0].id, snippet, body };
+    const snippet = best.msg.snippet || '';
+    const body    = extractPlainText(best.msg.payload).trim().slice(0, 1500);
+    return { messageId: best.msg.id, snippet, body, fromAddr: best.fromAddr };
   } catch (e) {
     console.warn(`[ReplyCheck] API error for ${lead.email}: ${e.message}`);
     return null;
   }
 }
 
-const REPLY_CATEGORIES = new Set(['INTERESTED','NOT_INTERESTED','UNSUBSCRIBE','OUT_OF_OFFICE','WRONG_PERSON']);
+const REPLY_CATEGORIES = new Set(['INTERESTED','NOT_INTERESTED','UNSUBSCRIBE','OUT_OF_OFFICE','WRONG_PERSON','NEEDS_HUMAN']);
 
-// Safe default when classification cannot be trusted. OUT_OF_OFFICE is the only
-// category that neither promotes the lead to the hot kanban nor closes it out —
-// it just delays follow-up 7 days, leaving a human to review what really happened.
+// Safe default when classification cannot be trusted. NEEDS_HUMAN stops the
+// sequence and surfaces the lead for review rather than silently delaying it —
+// an ambiguous-but-real reply must reach a human, not sit for 7 days.
 // Never default to INTERESTED: a transient API error would silently promote.
-const CLASSIFY_FALLBACK = 'OUT_OF_OFFICE';
+const CLASSIFY_FALLBACK = 'NEEDS_HUMAN';
 
 async function classifyReply(company, replyBody) {
   if (!ANTHROPIC_API_KEY) {
@@ -599,11 +646,14 @@ async function classifyReply(company, replyBody) {
         'You are classifying a reply to a cold sales email about an AI receptionist product for small businesses.',
         'Classify the reply into exactly one of these categories:',
         '',
-        'INTERESTED — they want to learn more, asked a question, want to schedule a call, or showed positive engagement',
+        'INTERESTED — they want to learn more, asked a question about the product, want to schedule a call, or showed clear positive engagement',
         'NOT_INTERESTED — they explicitly declined, said no thanks, not interested, not a good fit, or similar',
         'UNSUBSCRIBE — they asked to be removed, unsubscribed, or said stop emailing',
         'OUT_OF_OFFICE — automated out-of-office or vacation reply',
         'WRONG_PERSON — they indicated they are not the decision maker or the email reached the wrong person',
+        'NEEDS_HUMAN — a real person engaged but their intent is unclear or does not cleanly fit the above (e.g. "what exactly is your question?", "who is this?", "can you send more info?" with no clear buying signal)',
+        '',
+        'Guidance: when a real person has clearly engaged but you are unsure of their intent, or you are unsure between INTERESTED and unclear, prefer NEEDS_HUMAN over guessing.',
         '',
         'Reply with ONLY the category name, nothing else.',
       ].join('\n'),
@@ -848,6 +898,28 @@ async function handleWrongPerson(lead) {
   console.log(`  ↪ ${lead.company} — wrong person, flagged for re-enrichment`);
 }
 
+// Ambiguous-but-real reply: stop the sequence and surface for a human. When the
+// reply came from a different address than the one we emailed, record it so the
+// human knows where to look.
+async function handleNeedsHuman(lead, fromAddr) {
+  const emailedAddr = (lead.email || '').trim().toLowerCase();
+  const from        = (fromAddr || '').trim().toLowerCase();
+  const differs     = from && from !== emailedAddr;
+  const note        = differs ? `[REPLY: Needs human] (replied from ${from})` : '[REPLY: Needs human]';
+  await sheets().spreadsheets.values.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: {
+      valueInputOption: 'RAW',
+      data: [
+        { range: `${SHEET_NAME}!H${lead._row}`, values: [['Review']] },
+        { range: `${SHEET_NAME}!I${lead._row}`, values: [['replied']] },
+        { range: `${SHEET_NAME}!L${lead._row}`, values: [[prependNote(lead.notes, note)]] },
+      ],
+    },
+  });
+  console.log(`  ⚑ ${lead.company} — needs human review${differs ? ` (replied from ${from})` : ''}`);
+}
+
 // ── REPLY-CHECK PASS ─────────────────────────────────────────────────────────
 // Runs unconditionally on every agent invocation — independent of whether there
 // are queued sends or follow-ups due. Fetches each emailed lead's reply body,
@@ -874,7 +946,9 @@ async function runReplyCheckPass(leads) {
     const classification = await classifyReply(lead.company, replyText);
     classCounts[classification] = (classCounts[classification] || 0) + 1;
 
-    console.log(`  ↩ Reply from ${lead.email} (${company}) — ${classification}`);
+    const fromNote = (message.fromAddr && message.fromAddr !== lead.email.trim().toLowerCase())
+      ? ` (from ${message.fromAddr})` : '';
+    console.log(`  ↩ Reply from ${lead.email}${fromNote} (${company}) — ${classification}`);
     lead.emailStatus = 'replied'; // exclude from follow-ups this run regardless of classification
 
     if (!DRY_RUN) {
@@ -884,9 +958,11 @@ async function runReplyCheckPass(leads) {
           case 'NOT_INTERESTED': return handleNotInterested(lead);
           case 'UNSUBSCRIBE':    return handleUnsubscribe(lead);
           case 'WRONG_PERSON':   return handleWrongPerson(lead);
-          // OUT_OF_OFFICE and anything unforeseen take the safe path: never promote.
-          case 'OUT_OF_OFFICE':
-          default:               return handleOutOfOffice(lead);
+          case 'OUT_OF_OFFICE':  return handleOutOfOffice(lead);
+          // NEEDS_HUMAN and anything unforeseen surface for review rather than
+          // silently delaying — never promote or close on an ambiguous reply.
+          case 'NEEDS_HUMAN':
+          default:               return handleNeedsHuman(lead, message.fromAddr);
         }
       });
     }
@@ -898,6 +974,7 @@ async function runReplyCheckPass(leads) {
     UNSUBSCRIBE:    'Unsubscribe',
     OUT_OF_OFFICE:  'OOO',
     WRONG_PERSON:   'Wrong Person',
+    NEEDS_HUMAN:    'Needs human review',
   };
   const breakdown = Object.entries(classCounts)
     .filter(([, n]) => n > 0)
@@ -910,20 +987,58 @@ async function runReplyCheckPass(leads) {
 }
 
 // ── BOUNCE-CHECK PASS ─────────────────────────────────────────────────────────
-// Queries Gmail for mailer-daemon bounce notifications for each emailed lead.
-// Returns true (bounced), false (not bounced), null (API error — fail closed).
+
+// Bounce/NDR subject lines seen across providers (Gmail, Office365, cPanel, …).
+const BOUNCE_SUBJECTS = [
+  'Undeliverable',
+  'Delivery Status Notification',
+  'Mail delivery failed',
+  'returning message to sender',
+  'Message blocked',
+  'Address not found',
+];
+
+// Permanent failure: the address is dead — safe to stop the sequence.
+// Enhanced status 5.x.x and SMTP 55x are permanent by SMTP convention.
+const PERMANENT_FAILURE = /permanent|address not found|no such (?:user|mailbox|address|recipient)|user unknown|does(?: not|n['’]?t) exist|mailbox (?:full|unavailable|is full)|recipient (?:rejected|not found|address rejected)|account (?:has been )?(?:disabled|closed|suspended)|\b55[013456]\b|\b5\.\d\.\d\b/i;
+
+// Transient failure: a delay that will retry — must NOT close the lead.
+const TRANSIENT_FAILURE = /delivery (?:is )?incomplete|will (?:retry|keep trying|try again)|temporar(?:y|ily)|being delayed|greylist|\b4\.\d\.\d\b/i;
+
+// Detects a PERMANENT bounce for this lead from any provider.
+// Returns true (permanent bounce), false (no bounce / transient delay only),
+// null (API error — fail closed, caller leaves the lead active).
 async function checkForBounce(lead) {
   if (!lead.lastEmailedAt || !isValidEmail(lead.email)) return false;
   try {
     const afterSec  = Math.floor(new Date(lead.lastEmailedAt).getTime() / 1000);
     const safeEmail = lead.email.trim().replace(/^[^a-zA-Z0-9]+/, '');
     if (!safeEmail || !safeEmail.includes('@')) return false;
+    const lowerEmail = safeEmail.toLowerCase();
+
+    const subjectQuery = BOUNCE_SUBJECTS.map(s => `"${s}"`).join(' OR ');
     const listResp = await gmail().users.messages.list({
       userId:     'me',
-      q:          `from:mailer-daemon@googlemail.com "${safeEmail}" after:${afterSec}`,
-      maxResults: 1,
+      q:          `after:${afterSec} "${safeEmail}" subject:(${subjectQuery})`,
+      maxResults: 5,
     });
-    return (listResp.data.messages || []).length > 0;
+    const messages = listResp.data.messages || [];
+    if (!messages.length) return false;
+
+    for (const m of messages) {
+      const full = await gmail().users.messages.get({ userId: 'me', id: m.id, format: 'full' });
+      const body = extractPlainText(full.data.payload).toLowerCase();
+      // Broad subject match can hit unrelated NDRs — require the lead's own
+      // address in the body before trusting it.
+      if (!body.includes(lowerEmail)) continue;
+      // A retry/delay notice is not a dead address — skip it.
+      if (TRANSIENT_FAILURE.test(body) && !PERMANENT_FAILURE.test(body)) {
+        console.log(`  ⏳ ${lead.email} — transient delivery delay, not marking bounced`);
+        continue;
+      }
+      if (PERMANENT_FAILURE.test(body)) return true;
+    }
+    return false;
   } catch (e) {
     console.warn(`[BounceCheck] API error for ${lead.email}: ${e.message}`);
     return null;

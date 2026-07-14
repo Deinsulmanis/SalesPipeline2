@@ -642,6 +642,8 @@
   .ce-tab:hover { border-color: var(--border-hover); color: var(--text); }
   .ce-tab.active { background: var(--card); border-color: var(--border-hover); color: var(--text); }
   .ce-tab[data-ce="Queued"].active { background: rgba(99,102,241,0.1); border-color: var(--accent); color: var(--accent); }
+  .ce-tab[data-ce="Review"]         { border-color: rgba(245,158,11,0.4); color: var(--warm); }
+  .ce-tab[data-ce="Review"].active  { background: var(--warm-bg); border-color: var(--warm); color: var(--warm); }
   .ce-tab[data-ce="agent"].active  { background: rgba(99,102,241,0.1); border-color: var(--accent); color: var(--accent); }
 
   .ce-actions {
@@ -1101,6 +1103,7 @@
     <button class="ce-tab"        data-ce="Queued"       onclick="setCeFilter('Queued')">Queued</button>
     <button class="ce-tab"        data-ce="Contacted"    onclick="setCeFilter('Contacted')">Contacted</button>
     <button class="ce-tab"        data-ce="Replied"      onclick="setCeFilter('Replied')">Replied</button>
+    <button class="ce-tab"        data-ce="Review"       onclick="setCeFilter('Review')">⚑ Review</button>
     <button class="ce-tab"        data-ce="Done"         onclick="setCeFilter('Done')">Done</button>
     <button class="ce-tab"        data-ce="Promoted"     onclick="setCeFilter('Promoted')">Promoted</button>
     <button class="ce-tab"        data-ce="Unsubscribed" onclick="setCeFilter('Unsubscribed')">Unsub</button>
@@ -2063,7 +2066,7 @@ let _pendingCsvRows  = null;
 let ceOpensMap       = new Map();
 let ceOpensData    = [];
 
-const CE_STAGES = ['Import','Queued','Contacted','Replied','Done','Promoted','Unsubscribed'];
+const CE_STAGES = ['Import','Queued','Contacted','Replied','Review','Done','Promoted','Unsubscribed'];
 
 function setMotion(m) {
   currentMotion = m;
