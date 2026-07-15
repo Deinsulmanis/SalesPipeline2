@@ -2121,7 +2121,7 @@ async function loadCeLeads() {
     ceOpensData = opensResp.ok ? await opensResp.json() : [];
     ceOpensMap  = new Map();
     for (const o of ceOpensData) {
-      const key = (o.company || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+      const key = ceCompanyKey(o.company);
       if (key) ceOpensMap.set(key, (ceOpensMap.get(key) || 0) + 1);
     }
     updateCeStats();
@@ -2132,10 +2132,28 @@ async function loadCeLeads() {
   } catch (e) { showToast('Could not reach server: ' + e.message, 'error'); }
 }
 
+// Verbatim port of cleanCompanyName() from outreach-agent.js. MUST stay in sync
+// with that copy: buildProposalLink() there cleans the company name before
+// putting it in the tracking URL, so ProposalOpens rows store the CLEANED name
+// (e.g. "Med Spa Toronto") while the lead sheet holds the raw value
+// ("Med Spa Toronto - Rejuvenation Med Clinic"). Both sides must clean before
+// normalizing or the keys never match and opens count as 0.
+function cleanCompanyName(raw) {
+  if (!raw) return '';
+  const pipIdx  = raw.indexOf('|');
+  const dashIdx = raw.indexOf(' - ');
+  let cutAt = raw.length;
+  if (pipIdx  !== -1) cutAt = Math.min(cutAt, pipIdx);
+  if (dashIdx !== -1) cutAt = Math.min(cutAt, dashIdx);
+  return raw.slice(0, cutAt).trim() || raw.trim();
+}
+
 // Canonical company key — the single normalization used to match a lead to its
-// ProposalOpens rows. Keep every opens lookup going through this.
+// ProposalOpens rows. Cleans the name first (see cleanCompanyName above), then
+// lowercases and strips non-alphanumerics. Every opens lookup routes through
+// this so both sides normalize identically.
 function ceCompanyKey(company) {
-  return (company || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+  return cleanCompanyName(company || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '');
 }
 
 // Set of company keys that belong to an actual lead. Opens whose key is absent
@@ -2149,11 +2167,22 @@ function ceLeadCompanyKeys() {
   return keys;
 }
 
+// A lead counts as "replied" if a human actually responded. emailStatus alone is
+// insufficient: handleNotInterested/handleUnsubscribe in outreach-agent.js set
+// emailStatus to 'done' (not 'replied'), so declines and unsubscribes — which
+// ARE replies — would be missed. Every reply handler prepends a [REPLY: …] tag,
+// so match on that, excluding [REPLY: OOO (an out-of-office autoresponder is not
+// a human reply). Keep emailStatus === 'replied' as a fallback so nothing
+// regresses on a lead that has the status but somehow no tag.
+function ceHasReplied(lead) {
+  return /\[REPLY: (?!OOO)/.test(lead.notes || '') || lead.emailStatus === 'replied';
+}
+
 function updateCeStats() {
   document.getElementById('ce-stat-total').textContent   = ceLeads.length;
   document.getElementById('ce-stat-queued').textContent  = ceLeads.filter(l => l.stage === 'Queued').length;
   document.getElementById('ce-stat-emailed').textContent = ceLeads.filter(l => l.emailStatus !== '').length;
-  document.getElementById('ce-stat-replied').textContent = ceLeads.filter(l => l.emailStatus === 'replied').length;
+  document.getElementById('ce-stat-replied').textContent = ceLeads.filter(ceHasReplied).length;
 
   // Opens: sum only over companies that match a lead (excludes orphaned open
   // rows). Warm: distinct such companies with >= 2 opens. ceOpensMap is already
@@ -2254,7 +2283,7 @@ function renderCeTable() {
       `<option value="${s}"${l.stage === s ? ' selected' : ''}>${s}</option>`
     ).join('');
     const emailSafe = (l.email || '').replace(/"/g, '&quot;');
-    const openKey   = (l.company || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+    const openKey   = ceCompanyKey(l.company);
     const opens     = ceOpensMap.get(openKey) || 0;
     const opensTd   = opens >= 2
       ? `<td style="color:#f97316;font-weight:600">🔥 ${opens}</td>`
@@ -2349,10 +2378,10 @@ function buildCampaignStats() {
       opens += ceOpensMap.get(k) || 0;
     }
 
-    const replied        = leads.filter(l => l.emailStatus === 'replied').length;    // canonical: emailStatus only
+    const replied        = leads.filter(ceHasReplied).length;                        // all reply types (see ceHasReplied)
     const replyRate      = delivered > 0 ? (replied / delivered) * 100 : 0;
     const interested     = leads.filter(l => (l.notes || '').includes('[REPLY: Interested]')).length;
-    const interestedRate = replied > 0 ? (interested / replied) * 100 : 0;
+    const interestedRate = replied > 0 ? (interested / replied) * 100 : 0;           // denominator now counts all replies
 
     rows.push({ name, total, sent, delivered, bounced, bounceRate, opens, replied, replyRate, interested, interestedRate });
   }
@@ -2503,14 +2532,14 @@ function openCeDetail(id) {
   document.getElementById('ce-d-next').innerHTML = nextHtml;
 
   // ── Proposal opens ───────────────────────────────────────────
-  const openKey = (lead.company || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+  const openKey = ceCompanyKey(lead.company);
   const opens   = ceOpensMap.get(openKey) || 0;
   let opensHtml;
   if (opens === 0) {
     opensHtml = `<p style="font-size:13px;color:var(--text-muted)">No opens recorded.</p>`;
   } else {
     const matches = ceOpensData
-      .filter(o => (o.company || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '') === openKey)
+      .filter(o => ceCompanyKey(o.company) === openKey)
       .sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
     const capped = matches.slice(0, 5);
     const extra  = matches.length - capped.length;
