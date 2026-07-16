@@ -576,6 +576,27 @@ function extractPlainText(payload) {
   return '';
 }
 
+// Concatenates the decoded bodies of ALL text-bearing leaves — text/plain,
+// text/html, message/delivery-status, attached-message headers, and untyped
+// leaves. Used by bounce confirmation: many NDRs carry the failed address only
+// in the machine-readable delivery-status part or the HTML rendering, which
+// extractPlainText (first text/plain wins, markup excluded) deliberately skips.
+function extractAllText(payload) {
+  const chunks = [];
+  const walk = p => {
+    if (!p) return;
+    if (p.parts && p.parts.length) { p.parts.forEach(walk); }
+    if (p.body?.data) {
+      const mt = p.mimeType || '';
+      if (!mt || mt.startsWith('text/') || mt.startsWith('message/')) {
+        chunks.push(Buffer.from(p.body.data, 'base64url').toString('utf8'));
+      }
+    }
+  };
+  walk(payload);
+  return chunks.join('\n');
+}
+
 // Phase 4: find a genuine reply from the lead. Two nets, unioned:
 //
 //   Net 1 — thread walk: our most recent sent message to the address → its full
@@ -1082,11 +1103,22 @@ async function runReplyCheckPass(leads) {
 
 // ── BOUNCE-CHECK PASS ─────────────────────────────────────────────────────────
 
-// Bounce/NDR subject lines seen across providers (Gmail, Office365, cPanel, …).
+// Bounce/NDR subject lines seen across providers.
+//   Gmail      → "Delivery Status Notification (Failure)" / "Address not found"
+//   Office365  → "Undeliverable: <subject>"
+//   Exchange   → "Delivery has failed to these recipients or groups"
+//   Postfix    → "Undelivered Mail Returned to Sender"  (NOT "Undeliverable"!)
+//   Sendmail   → "Returned mail: see transcript for details"
+//   qmail      → "failure notice"
+//   Exim/cPanel→ "Mail delivery failed: returning message to sender"
 const BOUNCE_SUBJECTS = [
   'Undeliverable',
+  'Undelivered',
   'Delivery Status Notification',
+  'Delivery has failed',
   'Mail delivery failed',
+  'Returned mail',
+  'failure notice',
   'returning message to sender',
   'Message blocked',
   'Address not found',
@@ -1110,19 +1142,41 @@ async function checkForBounce(lead) {
     if (!safeEmail || !safeEmail.includes('@')) return false;
     const lowerEmail = safeEmail.toLowerCase();
 
+    // Two nets, unioned by message id:
+    //   subject net — known NDR subjects from any sender;
+    //   sender net  — anything from a mailer-daemon/postmaster mentioning the
+    //                 address, catching NDR subjects we've never seen (other
+    //                 languages, exotic MTAs). False positives are gated below
+    //                 by the address-in-body and permanent-failure checks.
+    // includeSpamTrash on both: Gmail files forged-looking daemon mail to Spam,
+    // and messages.list excludes Spam/Trash by default (verified 2026-07-16).
     const subjectQuery = BOUNCE_SUBJECTS.map(s => `"${s}"`).join(' OR ');
-    const listResp = await gmail().users.messages.list({
-      userId:     'me',
-      q:          `after:${afterSec} "${safeEmail}" subject:(${subjectQuery})`,
-      maxResults: 5,
-    });
-    const messages = listResp.data.messages || [];
-    if (!messages.length) return false;
+    const [bySubject, bySender] = await Promise.all([
+      gmail().users.messages.list({
+        userId:     'me',
+        q:          `after:${afterSec} "${safeEmail}" subject:(${subjectQuery})`,
+        maxResults: 5,
+        includeSpamTrash: true,
+      }),
+      gmail().users.messages.list({
+        userId:     'me',
+        q:          `from:(mailer-daemon OR postmaster) "${safeEmail}" after:${afterSec}`,
+        maxResults: 5,
+        includeSpamTrash: true,
+      }),
+    ]);
+    const ids = new Set([
+      ...(bySubject.data.messages || []).map(m => m.id),
+      ...(bySender.data.messages  || []).map(m => m.id),
+    ]);
+    if (!ids.size) return false;
 
-    for (const m of messages) {
-      const full = await gmail().users.messages.get({ userId: 'me', id: m.id, format: 'full' });
-      const body = extractPlainText(full.data.payload).toLowerCase();
-      // Broad subject match can hit unrelated NDRs — require the lead's own
+    for (const id of ids) {
+      const full = await gmail().users.messages.get({ userId: 'me', id, format: 'full' });
+      // All text parts, including message/delivery-status — some NDRs carry the
+      // failed address only in the machine-readable part.
+      const body = extractAllText(full.data.payload).toLowerCase();
+      // Broad matches can hit unrelated NDRs — require the lead's own
       // address in the body before trusting it.
       if (!body.includes(lowerEmail)) continue;
       // A retry/delay notice is not a dead address — skip it.
