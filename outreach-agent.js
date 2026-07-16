@@ -1247,16 +1247,33 @@ function normalizeName(str) {
   return (str || '').toLowerCase().trim().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
 }
 
+// Scanner detonation is real (confirmed 2026-07): corporate mail filters fetch
+// the tracking link within seconds of delivery, with browser-like user agents
+// that pass the /p bot check — two such fetches used to read as a hot lead and
+// trigger a warm follow-up nobody asked for. Two defenses, both must pass:
+//   1. any open within OPEN_SCANNER_WINDOW_MS of the lead's recorded send
+//      timestamp is discounted (detonation happens at delivery; humans read
+//      later). Only lastEmailedAt is stored, so opens near EARLIER steps'
+//      deliveries can't be retro-discounted here — defense 2 covers those.
+//   2. the surviving opens must span >= 2 distinct calendar days (Vancouver):
+//      a scanner burst lands on one day; a human who returns does not.
+const OPEN_SCANNER_WINDOW_MS = 5 * 60 * 1000;
+
 function getOpenTriggeredLeads(allLeads, proposalOpens) {
-  const openCounts = new Map();
+  const opensByKey = new Map();   // normalized company → [open timestamp ms]
   for (const open of proposalOpens) {
     const key = normalizeName(cleanCompanyName(open.company));
     if (!key) continue;
-    openCounts.set(key, (openCounts.get(key) || 0) + 1);
+    const ts = new Date(open.timestamp).getTime();
+    if (isNaN(ts)) continue;
+    if (!opensByKey.has(key)) opensByKey.set(key, []);
+    opensByKey.get(key).push(ts);
   }
 
   const now          = Date.now();
   const TWELVE_HOURS = 12 * 60 * 60 * 1000;
+  const dayOf        = ts => new Date(ts).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+  const genuineCount = new Map();   // lead.id → surviving open count (for sort)
 
   return allLeads
     .filter(lead => {
@@ -1266,14 +1283,15 @@ function getOpenTriggeredLeads(allLeads, proposalOpens) {
       if (lead.stage === 'Replied') return false;
       const lastSent = new Date(lead.lastEmailedAt).getTime();
       if (isNaN(lastSent) || (now - lastSent) < TWELVE_HOURS) return false;
-      const key = normalizeName(cleanCompanyName(lead.company));
-      return (openCounts.get(key) || 0) >= 2;
+
+      const key     = normalizeName(cleanCompanyName(lead.company));
+      const opens   = opensByKey.get(key) || [];
+      const genuine = opens.filter(ts => Math.abs(ts - lastSent) > OPEN_SCANNER_WINDOW_MS);
+      const days    = new Set(genuine.map(dayOf));
+      genuineCount.set(lead.id, genuine.length);
+      return genuine.length >= 2 && days.size >= 2;
     })
-    .sort((a, b) => {
-      const countA = openCounts.get(normalizeName(cleanCompanyName(a.company))) || 0;
-      const countB = openCounts.get(normalizeName(cleanCompanyName(b.company))) || 0;
-      return countB - countA;
-    });
+    .sort((a, b) => (genuineCount.get(b.id) || 0) - (genuineCount.get(a.id) || 0));
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
