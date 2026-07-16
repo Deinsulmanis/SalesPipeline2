@@ -729,6 +729,26 @@ async function readLeads() {
   }).filter(l => l.id);
 }
 
+// Re-resolve a lead's CURRENT sheet row by id, immediately before writing.
+// The _row captured by readLeads() goes stale the moment a dashboard delete
+// shifts rows mid-run (a live run spans ~25 minutes of send jitter), and a
+// stale number lands the write on the WRONG lead — mislabelling an innocent
+// row while the real target looks untouched. One column-A read per write;
+// writes are rare, so the cost is negligible.
+// Returns null when the id is gone (row deleted mid-run): the caller must
+// SKIP the write — never fall back to the stale row number.
+async function resolveRow(leadId) {
+  const resp = await sheets().spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_NAME}!A:A`,
+  });
+  const col = resp.data.values || [];
+  for (let i = 1; i < col.length; i++) {
+    if ((col[i][0] || '') === leadId) return i + 1;
+  }
+  return null;
+}
+
 async function readProposalOpens() {
   try {
     return await withAuth(async () => {
@@ -754,7 +774,12 @@ async function readProposalOpens() {
 
 // Write stage (M) + agent columns (R:T) for one row, leaving A:L,N:Q untouched.
 // Sets emailStatus='done' when the last step in the sequence has been sent.
-async function markSent(rowNum, step) {
+async function markSent(lead, step) {
+  const rowNum = await resolveRow(lead.id);
+  if (!rowNum) {
+    console.warn(`[markSent] lead ${lead.id} (${lead.email}) no longer in sheet — row deleted mid-run? Skipping write.`);
+    return;
+  }
   const now        = new Date().toISOString();
   const isLastStep = step > FOLLOW_UP_SEQUENCE.length; // step 3 > 2 → done
   const status     = isLastStep ? 'done' : 'emailed';
@@ -784,8 +809,13 @@ async function markReplied(rowNum) {
   });
 }
 
-async function appendOpenTriggeredNote(rowNum, existingNotes) {
-  const updated = existingNotes ? `${existingNotes} | open-triggered` : 'open-triggered';
+async function appendOpenTriggeredNote(lead) {
+  const rowNum = await resolveRow(lead.id);
+  if (!rowNum) {
+    console.warn(`[openNote] lead ${lead.id} (${lead.email}) no longer in sheet — skipping note write.`);
+    return;
+  }
+  const updated = lead.notes ? `${lead.notes} | open-triggered` : 'open-triggered';
   await sheets().spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
     range: `${SHEET_NAME}!L${rowNum}`,
@@ -824,14 +854,19 @@ async function handleInterested(lead) {
     console.log(`  ↺ ${lead.company} — already tagged Interested, skipping`);
     return;
   }
+  const rowNum = await resolveRow(lead.id);
+  if (!rowNum) {
+    console.warn(`[handleInterested] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
+    return;
+  }
   await sheets().spreadsheets.values.batchUpdate({
     spreadsheetId: SPREADSHEET_ID,
     requestBody: {
       valueInputOption: 'RAW',
       data: [
-        { range: `${SHEET_NAME}!H${lead._row}`, values: [['Replied']] },
-        { range: `${SHEET_NAME}!I${lead._row}`, values: [['replied']] },
-        { range: `${SHEET_NAME}!L${lead._row}`, values: [[prependNote(lead.notes, TAG_INTERESTED)]] },
+        { range: `${SHEET_NAME}!H${rowNum}`, values: [['Replied']] },
+        { range: `${SHEET_NAME}!I${rowNum}`, values: [['replied']] },
+        { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, TAG_INTERESTED)]] },
       ],
     },
   });
@@ -872,14 +907,19 @@ async function handleInterested(lead) {
 }
 
 async function handleNotInterested(lead) {
+  const rowNum = await resolveRow(lead.id);
+  if (!rowNum) {
+    console.warn(`[handleNotInterested] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
+    return;
+  }
   await sheets().spreadsheets.values.batchUpdate({
     spreadsheetId: SPREADSHEET_ID,
     requestBody: {
       valueInputOption: 'RAW',
       data: [
-        { range: `${SHEET_NAME}!H${lead._row}`, values: [['Done']] },
-        { range: `${SHEET_NAME}!I${lead._row}`, values: [['done']] },
-        { range: `${SHEET_NAME}!L${lead._row}`, values: [[prependNote(lead.notes, '[REPLY: Not Interested]')]] },
+        { range: `${SHEET_NAME}!H${rowNum}`, values: [['Done']] },
+        { range: `${SHEET_NAME}!I${rowNum}`, values: [['done']] },
+        { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, '[REPLY: Not Interested]')]] },
       ],
     },
   });
@@ -887,14 +927,19 @@ async function handleNotInterested(lead) {
 }
 
 async function handleUnsubscribe(lead) {
+  const rowNum = await resolveRow(lead.id);
+  if (!rowNum) {
+    console.warn(`[handleUnsubscribe] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
+    return;
+  }
   await sheets().spreadsheets.values.batchUpdate({
     spreadsheetId: SPREADSHEET_ID,
     requestBody: {
       valueInputOption: 'RAW',
       data: [
-        { range: `${SHEET_NAME}!H${lead._row}`, values: [['Unsub']] },
-        { range: `${SHEET_NAME}!I${lead._row}`, values: [['done']] },
-        { range: `${SHEET_NAME}!L${lead._row}`, values: [[prependNote(lead.notes, '[REPLY: Unsubscribed]')]] },
+        { range: `${SHEET_NAME}!H${rowNum}`, values: [['Unsub']] },
+        { range: `${SHEET_NAME}!I${rowNum}`, values: [['done']] },
+        { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, '[REPLY: Unsubscribed]')]] },
       ],
     },
   });
@@ -902,6 +947,11 @@ async function handleUnsubscribe(lead) {
 }
 
 async function handleOutOfOffice(lead) {
+  const rowNum = await resolveRow(lead.id);
+  if (!rowNum) {
+    console.warn(`[handleOutOfOffice] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
+    return;
+  }
   const newDate = new Date(lead.lastEmailedAt);
   newDate.setDate(newDate.getDate() + 7);
   await sheets().spreadsheets.values.batchUpdate({
@@ -909,8 +959,8 @@ async function handleOutOfOffice(lead) {
     requestBody: {
       valueInputOption: 'RAW',
       data: [
-        { range: `${SHEET_NAME}!J${lead._row}`, values: [[newDate.toISOString()]] },
-        { range: `${SHEET_NAME}!L${lead._row}`, values: [[prependNote(lead.notes, '[REPLY: OOO — retry in 7d]')]] },
+        { range: `${SHEET_NAME}!J${rowNum}`, values: [[newDate.toISOString()]] },
+        { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, '[REPLY: OOO — retry in 7d]')]] },
       ],
     },
   });
@@ -918,14 +968,19 @@ async function handleOutOfOffice(lead) {
 }
 
 async function handleWrongPerson(lead) {
+  const rowNum = await resolveRow(lead.id);
+  if (!rowNum) {
+    console.warn(`[handleWrongPerson] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
+    return;
+  }
   await sheets().spreadsheets.values.batchUpdate({
     spreadsheetId: SPREADSHEET_ID,
     requestBody: {
       valueInputOption: 'RAW',
       data: [
-        { range: `${SHEET_NAME}!H${lead._row}`, values: [['Replied']] },
-        { range: `${SHEET_NAME}!I${lead._row}`, values: [['replied']] },
-        { range: `${SHEET_NAME}!L${lead._row}`, values: [[prependNote(lead.notes, '[REPLY: Wrong Person — needs re-enrichment]')]] },
+        { range: `${SHEET_NAME}!H${rowNum}`, values: [['Replied']] },
+        { range: `${SHEET_NAME}!I${rowNum}`, values: [['replied']] },
+        { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, '[REPLY: Wrong Person — needs re-enrichment]')]] },
       ],
     },
   });
@@ -936,6 +991,11 @@ async function handleWrongPerson(lead) {
 // reply came from a different address than the one we emailed, record it so the
 // human knows where to look.
 async function handleNeedsHuman(lead, fromAddr) {
+  const rowNum = await resolveRow(lead.id);
+  if (!rowNum) {
+    console.warn(`[handleNeedsHuman] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
+    return;
+  }
   const emailedAddr = (lead.email || '').trim().toLowerCase();
   const from        = (fromAddr || '').trim().toLowerCase();
   const differs     = from && from !== emailedAddr;
@@ -945,9 +1005,9 @@ async function handleNeedsHuman(lead, fromAddr) {
     requestBody: {
       valueInputOption: 'RAW',
       data: [
-        { range: `${SHEET_NAME}!H${lead._row}`, values: [['Review']] },
-        { range: `${SHEET_NAME}!I${lead._row}`, values: [['replied']] },
-        { range: `${SHEET_NAME}!L${lead._row}`, values: [[prependNote(lead.notes, note)]] },
+        { range: `${SHEET_NAME}!H${rowNum}`, values: [['Review']] },
+        { range: `${SHEET_NAME}!I${rowNum}`, values: [['replied']] },
+        { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, note)]] },
       ],
     },
   });
@@ -1098,14 +1158,19 @@ async function runBounceCheckPass(leads) {
 
     if (!DRY_RUN) {
       await withAuth(async () => {
+        const rowNum = await resolveRow(lead.id);
+        if (!rowNum) {
+          console.warn(`[BounceCheck] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
+          return;
+        }
         await sheets().spreadsheets.values.batchUpdate({
           spreadsheetId: SPREADSHEET_ID,
           requestBody: {
             valueInputOption: 'RAW',
             data: [
-              { range: `${SHEET_NAME}!H${lead._row}`, values: [['Done']] },
-              { range: `${SHEET_NAME}!I${lead._row}`, values: [['done']] },
-              { range: `${SHEET_NAME}!L${lead._row}`, values: [[prependNote(lead.notes, '[BOUNCED]')]] },
+              { range: `${SHEET_NAME}!H${rowNum}`, values: [['Done']] },
+              { range: `${SHEET_NAME}!I${rowNum}`, values: [['done']] },
+              { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, '[BOUNCED]')]] },
             ],
           },
         });
@@ -1320,7 +1385,7 @@ async function run() {
 
     try {
       await sendEmail({ to: lead.email.trim(), subject, body });
-      await withAuth(() => markSent(lead._row, 1));
+      await withAuth(() => markSent(lead, 1));
       sent++;
       console.log(`✅ Sent (step 1) → ${lead.email}  (${sent}/${total})`);
     } catch (e) {
@@ -1366,8 +1431,8 @@ async function run() {
 
     try {
       await sendEmail({ to: lead.email.trim(), subject, body });
-      await withAuth(() => markSent(lead._row, nextStepNum));
-      await withAuth(() => appendOpenTriggeredNote(lead._row, lead.notes));
+      await withAuth(() => markSent(lead, nextStepNum));
+      await withAuth(() => appendOpenTriggeredNote(lead));
       sent++;
       console.log(`✅ Sent (warm) → ${lead.email}  (${sent}/${total})`);
     } catch (e) {
@@ -1417,7 +1482,7 @@ async function run() {
 
     try {
       await sendEmail({ to: lead.email.trim(), subject, body });
-      await withAuth(() => markSent(lead._row, nextStepNum));
+      await withAuth(() => markSent(lead, nextStepNum));
       sent++;
       console.log(`✅ Sent (step ${nextStepNum}) → ${lead.email}  (${sent}/${total})`);
     } catch (e) {
