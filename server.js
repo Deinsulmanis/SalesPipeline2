@@ -718,13 +718,17 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   });
   console.log('[cron] Outreach agent scheduled: every 4 hours (Vancouver time)');
 
-  cron.schedule('*/30 * * * *', () => {
-    console.log('[cron] Running 30-min check-only pass...');
+  // :15/:45, never :00 — the old */30 fired on the 4-hour boundary six times a
+  // day, racing the full-send cron for the agentState.running guard; whichever
+  // lost was silently skipped that tick (a check-only win cost a whole send
+  // window). Offset schedules cannot collide.
+  cron.schedule('15,45 * * * *', () => {
+    console.log('[cron] Running check-only pass...');
     spawnAgentCheckOnly();
   }, {
     timezone: 'America/Vancouver',
   });
-  console.log('[cron] Check-only pass scheduled: every 30 minutes');
+  console.log('[cron] Check-only pass scheduled: :15 and :45 every hour');
 }
 
 const PORT = process.env.PORT || 3000;
