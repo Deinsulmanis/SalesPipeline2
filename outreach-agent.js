@@ -542,6 +542,35 @@ async function sendEmail({ to, subject, body }) {
   });
 }
 
+// Idempotency probe — STEP 1 ONLY. Step 1 fires once ever per lead, so any
+// prior send to the address can only mean (a) we already sent it and the
+// record write failed, or (b) another row for the same mailbox was emailed.
+// Both must skip. NEVER apply this to follow-ups: steps 2/3 are legitimate
+// repeat sends to the same address and the probe would block them.
+//
+// Window: newer_than:7d. Identical quota to 1d (one messages.list either way);
+// covers a multi-day outage that would blind a 1d probe, while a deliberate
+// re-prospecting of the same business months later stays possible.
+//
+// Fails CLOSED in the send direction: 'unverifiable' (query error) means we
+// cannot rule out a duplicate — the caller must refuse to send. A skipped
+// send costs nothing; a duplicate is permanent.
+async function stepOneAlreadySent(lead) {
+  try {
+    const safeEmail = lead.email.trim().replace(/^[^a-zA-Z0-9]+/, '');
+    if (!safeEmail || !safeEmail.includes('@')) return 'unverifiable';
+    const resp = await gmail().users.messages.list({
+      userId: 'me',
+      q: `in:sent to:"${safeEmail}" newer_than:7d`,
+      maxResults: 1,
+    });
+    return (resp.data.messages || []).length ? 'found' : 'clear';
+  } catch (e) {
+    console.warn(`[probe] Gmail error for ${lead.email}: ${e.message} — treating as unverifiable`);
+    return 'unverifiable';
+  }
+}
+
 // Bounce/auto senders whose thread messages must never be treated as a reply.
 const DAEMON_FROM = /mailer-daemon|postmaster|no-?reply|do-?not-?reply/i;
 
@@ -796,27 +825,49 @@ async function readProposalOpens() {
   }
 }
 
-// Write stage (M) + agent columns (R:T) for one row, leaving A:L,N:Q untouched.
+// Write stage (H) + agent columns (I:K) for one row, leaving the rest untouched.
 // Sets emailStatus='done' when the last step in the sequence has been sent.
+//
+// The email is ALREADY SENT when this runs — a failed write here is the
+// "sent but unrecorded" state that re-sends on the next run. So the whole
+// write (including row resolution) retries with exponential backoff, and a
+// final failure alarms loudly instead of throwing: the caller's catch would
+// log "Failed", which is false — the send succeeded.
 async function markSent(lead, step) {
-  const rowNum = await resolveRow(lead.id);
-  if (!rowNum) {
-    console.warn(`[markSent] lead ${lead.id} (${lead.email}) no longer in sheet — row deleted mid-run? Skipping write.`);
-    return;
+  const now          = new Date().toISOString();
+  const isLastStep   = step > FOLLOW_UP_SEQUENCE.length; // step 3 > 2 → done
+  const status       = isLastStep ? 'done' : 'emailed';
+  const MAX_ATTEMPTS = 4;                                 // backoff: 1s, 2s, 4s
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const rowNum = await resolveRow(lead.id);
+      if (!rowNum) {
+        console.warn(`[markSent] lead ${lead.id} (${lead.email}) no longer in sheet — row deleted mid-run? Skipping write.`);
+        return;
+      }
+      await sheets().spreadsheets.values.batchUpdate({
+        spreadsheetId: SPREADSHEET_ID,
+        requestBody: {
+          valueInputOption: 'RAW',
+          data: [
+            { range: `${SHEET_NAME}!H${rowNum}`,            values: [[SENT_STAGE]] },
+            { range: `${SHEET_NAME}!I${rowNum}:K${rowNum}`, values: [[status, now, String(step)]] },
+          ],
+        },
+      });
+      return;
+    } catch (e) {
+      if (attempt < MAX_ATTEMPTS) {
+        const delay = 1000 * 2 ** (attempt - 1);
+        console.warn(`[markSent] attempt ${attempt}/${MAX_ATTEMPTS} failed for ${lead.email}: ${e.message} — retrying in ${delay / 1000}s`);
+        await sleep(delay);
+      } else {
+        console.error(`‼️ [UNRECORDED SEND] step ${step} to ${lead.email} (${lead.id}) WAS SENT but could not be recorded after ${MAX_ATTEMPTS} attempts: ${e.message}`);
+        console.error(`‼️ [UNRECORDED SEND] step 1 is protected by the idempotency probe; a follow-up step MAY BE RE-SENT next run — fix the sheet row by hand (I=emailed/done, J=${now}, K=${step}).`);
+      }
+    }
   }
-  const now        = new Date().toISOString();
-  const isLastStep = step > FOLLOW_UP_SEQUENCE.length; // step 3 > 2 → done
-  const status     = isLastStep ? 'done' : 'emailed';
-  await sheets().spreadsheets.values.batchUpdate({
-    spreadsheetId: SPREADSHEET_ID,
-    requestBody: {
-      valueInputOption: 'RAW',
-      data: [
-        { range: `${SHEET_NAME}!H${rowNum}`,            values: [[SENT_STAGE]] },
-        { range: `${SHEET_NAME}!I${rowNum}:K${rowNum}`, values: [[status, now, String(step)]] },
-      ],
-    },
-  });
 }
 
 // Phase 4: mark a lead as replied — sets stage to 'Replied' and emailStatus to 'replied'.
@@ -1445,6 +1496,18 @@ async function run() {
     const suppressed = suppressionReason(lead);
     if (suppressed) {
       console.error(`🚫 [SUPPRESSED] refusing step-1 send → ${lead.email} (${cleanCompanyName(lead.company) || lead.id}) — notes contain ${suppressed}`);
+      continue;
+    }
+
+    // Step-1 idempotency probe (see stepOneAlreadySent). Runs in every mode so
+    // dry-run and gated reports show exactly what a live run would skip.
+    const probe = await withAuth(() => stepOneAlreadySent(lead));
+    if (probe !== 'clear') {
+      if (probe === 'found') {
+        console.warn(`⏭️  [probe] step-1 already sent to ${lead.email} within 7d — skipping (sent-but-unrecorded, or duplicate row for this address)`);
+      } else {
+        console.warn(`⏭️  [probe] cannot verify prior sends to ${lead.email} — failing closed, skipping this run`);
+      }
       continue;
     }
 
