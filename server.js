@@ -4,6 +4,9 @@ const { google } = require('googleapis');
 const { spawn }  = require('child_process');
 const path       = require('path');
 const cron       = require('node-cron');
+// Junk classifier shared with check-leads.js (CLI) and outreach-agent.js —
+// PLACEHOLDER / MALFORMED / THIRD_PARTY / BLANK / CLEAN. One source of truth.
+const { classify: classifyLeadEmail } = require('./check-leads');
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -465,9 +468,19 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
       const toAdd = [];
       let duplicates = 0;
       let invalid    = 0;
+      let junk       = 0;
       for (const row of rows) {
         const email = (row.email || '').toLowerCase().trim();
         if (!email) { invalid++; continue; }
+        // Junk choke point: placeholder dummies, phone-bleed addresses and
+        // third-party tracking domains are rejected at the door — they either
+        // guarantee a bounce or deliver to the wrong company entirely.
+        const verdict = classifyLeadEmail(email);
+        if (verdict !== 'CLEAN') {
+          junk++;
+          console.warn(`[ColdEmail Import] rejected ${verdict}: ${email} (${row.company || '—'})`);
+          continue;
+        }
         if (existingEmails.has(email)) { duplicates++; continue; }
         existingEmails.add(email);
         const id   = now.toString(36) + Math.random().toString(36).slice(2);
@@ -494,7 +507,7 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
         });
         ceRowMap.clear();
       }
-      return { imported: toAdd.length, duplicates, invalid };
+      return { imported: toAdd.length, duplicates, invalid, junk };
     });
     res.json(result);
   } catch (e) {
@@ -506,9 +519,29 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
 
 app.post('/api/coldemail', requireAuth, async (req, res) => {
   const lead = req.body;
+  // Same choke point as the CSV import: validate format and reject junk,
+  // then dedupe against the sheet — this path previously had neither, so a
+  // manual add could create a second sendable row for an existing address.
+  const email = (lead.email || '').toLowerCase().trim();
+  if (!email) return res.status(400).json({ error: 'email required' });
+  const verdict = classifyLeadEmail(email);
+  if (verdict !== 'CLEAN') {
+    return res.status(400).json({ error: `email rejected as ${verdict}` });
+  }
   const vals = [CE_COLUMNS.map(col => lead[col] !== undefined ? String(lead[col]) : '')];
   try {
     await withAuth(async () => {
+      const existing = await sheets().spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range:         `${CE_SHEET_NAME}!D:D`,   // email column
+      });
+      const dupe = (existing.data.values || []).slice(1)
+        .some(r => (r[0] || '').toLowerCase().trim() === email);
+      if (dupe) {
+        const err = new Error('a lead with this email already exists');
+        err.isDuplicate = true;
+        throw err;
+      }
       const resp = await sheets().spreadsheets.values.append({
         spreadsheetId:   SPREADSHEET_ID,
         range:           CE_COL_RANGE,
@@ -522,6 +555,7 @@ app.post('/api/coldemail', requireAuth, async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    if (e.isDuplicate) return res.status(409).json({ error: e.message });
     console.error('[ColdEmail POST]', e.message);
     res.status(500).json({ error: e.message });
   }

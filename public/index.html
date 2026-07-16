@@ -2779,9 +2779,12 @@ async function confirmCampaignImport() {
       body: JSON.stringify({ rows, campaign, campaign_notes }),
     });
     if (!resp.ok) { showToast('Import failed: ' + resp.status, 'error'); return; }
-    const { imported, duplicates } = await resp.json();
-    const msg = duplicates > 0
-      ? `Imported ${imported} leads (${duplicates} duplicates skipped)`
+    const { imported, duplicates, junk } = await resp.json();
+    const skipped = [];
+    if (duplicates > 0) skipped.push(`${duplicates} duplicates`);
+    if (junk > 0)       skipped.push(`${junk} junk/malformed rejected`);
+    const msg = skipped.length
+      ? `Imported ${imported} leads (${skipped.join(', ')})`
       : `Imported ${imported} leads successfully`;
     showToast(msg, imported > 0 ? 'success' : 'warning');
     loadCeLeads();

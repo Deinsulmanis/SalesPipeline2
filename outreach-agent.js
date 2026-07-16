@@ -40,6 +40,9 @@ const axios        = require('axios');
 const cheerio      = require('cheerio');
 const fs   = require('fs');
 const path = require('path');
+// Junk classifier shared with check-leads.js (CLI) and server.js import —
+// legacy junk rows predate the import choke point, so selection re-checks.
+const { classify: classifyLeadEmail } = require('./check-leads');
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 
@@ -1258,16 +1261,26 @@ function suppressionReason(lead) {
 }
 
 function selectQueued(leads) {
-  return leads.filter(l =>
-    l.stage === QUEUE_STAGE &&        // you queued it
-    isValidEmail(l.email) &&          // sendable address
+  return leads.filter(l => {
+    if (l.stage !== QUEUE_STAGE) return false;   // you queued it
+    if (!isValidEmail(l.email)) return false;    // sendable address
     // Only never-touched leads may enter step 1. The previous check
     // (!== 'emailed') let terminal leads ('done', 'replied') re-enter the
     // sequence via a stage change alone — a bounced or unsubscribed lead
     // could be re-mailed with one dropdown click. Re-sending now requires
     // explicitly clearing emailStatus as well as re-queueing the stage.
-    l.emailStatus === ''
-  );
+    if (l.emailStatus !== '') return false;
+    // Junk check (same classifier as the import choke point): isValidEmail
+    // accepts phone-bleed addresses like -687-1887x@gmail.com and third-party
+    // tracking domains — legacy rows imported before the choke point existed
+    // must not reach the send path.
+    const verdict = classifyLeadEmail(l.email);
+    if (verdict !== 'CLEAN') {
+      console.warn(`🚮 [junk] skipping queued lead ${l.email} (${l.company || l.id}) — classified ${verdict}`);
+      return false;
+    }
+    return true;
+  });
 }
 
 // Phase 3: find leads that are due for a follow-up step.

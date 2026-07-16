@@ -112,4 +112,8 @@ function main() {
   console.log(bar + '\n');
 }
 
-main();
+// CLI when run directly; importable classifier for server.js (import choke
+// point) and outreach-agent.js (selectQueued) otherwise — one source of truth.
+if (require.main === module) main();
+
+module.exports = { classify, PLACEHOLDER, THIRD_PARTY_DOMAINS };
