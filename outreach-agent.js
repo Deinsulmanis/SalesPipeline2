@@ -52,6 +52,12 @@ const DRY_RUN          = process.env.DRY_RUN !== 'false';          // default TR
 // sheet writes, but skips every email send. Distinct from DRY_RUN, which also
 // skips the writes. Used by the 30-minute cron for near-real-time detection.
 const CHECK_ONLY       = process.env.CHECK_ONLY === 'true';
+// Master kill switch. Fail-safe: sending is OFF unless the env var is the
+// literal string 'true' — an absent or mistyped value means no mail leaves.
+// Checked immediately before every sendEmail call, not at startup, so a
+// mid-run config change can never race past it. Reply/bounce detection is
+// unaffected: those passes only ever PREVENT mail.
+const SENDING_ENABLED  = process.env.SENDING_ENABLED === 'true';
 const DAILY_CAP        = parseInt(process.env.DAILY_CAP || '12', 10);
 const DAILY_SEND_LIMIT = parseInt(process.env.DAILY_SEND_LIMIT || '40', 10);
 const QUEUE_STAGE = process.env.QUEUE_STAGE || 'Queued';      // set a lead's stage to this to queue it
@@ -1173,6 +1179,7 @@ async function run() {
   console.log('────────────────────────────────────────');
   console.log(`ScaleLab Outreach Agent — Phase 1–4`);
   console.log(`Mode:       ${modeLabel}`);
+  console.log(`Sending:    ${SENDING_ENABLED ? 'ENABLED' : '⛔ DISABLED (kill switch — set SENDING_ENABLED=true to send)'}`);
   console.log(`Daily cap:  ${DAILY_CAP}`);
   console.log(`Queue stage:"${QUEUE_STAGE}"  →  on send: "${SENT_STAGE}"`);
   console.log(`Opener API: ${ANTHROPIC_API_KEY ? 'Haiku (claude-haiku-4-5) — Tier-2 (site) when website present, Tier-1 otherwise' : 'not set — using generic fallback'}`);
@@ -1251,6 +1258,12 @@ async function run() {
       continue;
     }
 
+    if (!SENDING_ENABLED) {
+      console.log(`⛔ [kill-switch] would send (step 1) → ${lead.email}  (${cleanCompanyName(lead.company) || lead.id})`);
+      console.log(`   Subject: ${subject}`);
+      continue;
+    }
+
     try {
       await sendEmail({ to: lead.email.trim(), subject, body });
       await withAuth(() => markSent(lead._row, 1));
@@ -1282,6 +1295,12 @@ async function run() {
       if (rawCo && rawCo !== cleanCo) console.log(`   Company: "${rawCo}" → "${cleanCo}"`);
       console.log(`   Subject: ${subject}`);
       console.log(`   Preview: ${preview}\n`);
+      continue;
+    }
+
+    if (!SENDING_ENABLED) {
+      console.log(`⛔ [kill-switch] would send (warm) → ${lead.email}  (${cleanCompanyName(lead.company) || lead.id})`);
+      console.log(`   Subject: ${subject}`);
       continue;
     }
 
@@ -1321,6 +1340,12 @@ async function run() {
       console.log(`   Subject: ${subject}`);
       console.log(`   Preview: ${preview}`);
       console.log(`   Link:    ${buildProposalLink(lead)}\n`);
+      continue;
+    }
+
+    if (!SENDING_ENABLED) {
+      console.log(`⛔ [kill-switch] would send (step ${nextStepNum}) → ${lead.email}  (${cleanCompanyName(lead.company) || lead.id})`);
+      console.log(`   Subject: ${subject}`);
       continue;
     }
 
