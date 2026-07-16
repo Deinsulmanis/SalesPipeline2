@@ -576,40 +576,68 @@ function extractPlainText(payload) {
   return '';
 }
 
-// Phase 4: find a genuine reply on our conversation thread with the lead.
-// Locates our most recent sent message to the address, walks its full thread,
-// and returns the newest INBOUND message after lastEmailedAt that is not from us
-// and not from a bounce daemon — so a reply sent from a different address (e.g.
-// the owner replying from jill@ after we emailed info@) is still caught.
-// Returns { messageId, snippet, body, fromAddr } or null. Fails CLOSED.
+// Phase 4: find a genuine reply from the lead. Two nets, unioned:
+//
+//   Net 1 — thread walk: our most recent sent message to the address → its full
+//           thread. Catches replies sent from a DIFFERENT address than the one
+//           we contacted (owner replies from jill@ after we emailed info@).
+//
+//   Net 2 — direct search: from:"<addr>" after:<lastEmailedAt>. Catches a
+//           prospect who composes a FRESH email to us instead of replying —
+//           such a message is on no thread of ours, so net 1 cannot see it.
+//           includeSpamTrash is set because messages.list EXCLUDES Spam/Trash
+//           by default (verified empirically 2026-07-16: identical from: query
+//           on a SPAM-labeled message — 0 hits without the flag, 1 with it).
+//
+// Candidates from both nets are deduped by message id, then the newest inbound
+// message wins (not ours, not SENT-labeled, not a bounce daemon, newer than
+// lastEmailedAt). Returns { messageId, snippet, body, fromAddr } or null.
+// Fails CLOSED — any error returns null.
 async function getReplyMessage(lead) {
   if (!lead.lastEmailedAt || !isValidEmail(lead.email)) return null;
   try {
     const afterMs   = new Date(lead.lastEmailedAt).getTime();
+    const afterSec  = Math.floor(afterMs / 1000);
     const safeEmail = lead.email.trim().replace(/^[^a-zA-Z0-9]+/, '');
     if (!safeEmail || !safeEmail.includes('@')) return null;
 
-    // (a) our most recent sent message to this lead → its thread
+    const candidates = new Map();   // message id → full message resource
+
+    // ── Net 1: thread of our most recent sent message to this address ──
     const sentResp = await gmail().users.messages.list({
       userId: 'me',
       q: `in:sent to:"${safeEmail}"`,
       maxResults: 1,
     });
     const sent = sentResp.data.messages || [];
-    if (!sent.length) return null;
+    if (sent.length) {
+      const sentMsg  = await gmail().users.messages.get({ userId: 'me', id: sent[0].id, format: 'minimal' });
+      const threadId = sentMsg.data.threadId;
+      if (threadId) {
+        const thread = await gmail().users.threads.get({ userId: 'me', id: threadId, format: 'full' });
+        for (const m of thread.data.messages || []) candidates.set(m.id, m);
+      }
+    }
 
-    const sentMsg  = await gmail().users.messages.get({ userId: 'me', id: sent[0].id, format: 'minimal' });
-    const threadId = sentMsg.data.threadId;
-    if (!threadId) return null;
+    // ── Net 2: anything the contacted address sent us after our last send ──
+    const directResp = await gmail().users.messages.list({
+      userId: 'me',
+      q: `from:"${safeEmail}" after:${afterSec}`,
+      maxResults: 5,
+      includeSpamTrash: true,
+    });
+    for (const stub of directResp.data.messages || []) {
+      if (candidates.has(stub.id)) continue;
+      const full = await gmail().users.messages.get({ userId: 'me', id: stub.id, format: 'full' });
+      candidates.set(stub.id, full.data);
+    }
 
-    // (b) the full thread
-    const thread = await gmail().users.threads.get({ userId: 'me', id: threadId, format: 'full' });
-    const msgs   = thread.data.messages || [];
+    if (!candidates.size) return null;
 
-    // (c) newest inbound message after lastEmailedAt, not from us, not a daemon
+    // ── Shared inbound filter over the union; newest wins ──
     const ourAddr = (FROM_EMAIL || '').trim().toLowerCase();
     let best = null;
-    for (const m of msgs) {
+    for (const m of candidates.values()) {
       const internalMs = parseInt(m.internalDate || '0', 10);
       if (internalMs <= afterMs) continue;
       if ((m.labelIds || []).includes('SENT')) continue;   // our own outbound
