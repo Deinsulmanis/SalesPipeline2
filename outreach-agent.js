@@ -1095,11 +1095,31 @@ function isValidEmail(e) {
   return typeof e === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
 }
 
+// Hard suppression: a lead whose notes carry one of these tags must NEVER be
+// emailed again, regardless of stage, status, or how it re-entered a batch.
+// '[BOUNCED' is a deliberate prefix — it matches both '[BOUNCED]' (agent) and
+// '[BOUNCED - manual cleanup]' (mark-bounced.js). Checked immediately before
+// every send as a last line of defense; selection filters are the first line.
+const SUPPRESSION_TAGS = ['[REPLY: Unsubscribed]', '[BOUNCED'];
+
+function suppressionReason(lead) {
+  const notes = lead.notes || '';
+  for (const tag of SUPPRESSION_TAGS) {
+    if (notes.includes(tag)) return tag;
+  }
+  return null;
+}
+
 function selectQueued(leads) {
   return leads.filter(l =>
     l.stage === QUEUE_STAGE &&        // you queued it
     isValidEmail(l.email) &&          // sendable address
-    l.emailStatus !== 'emailed'       // not already sent by the agent
+    // Only never-touched leads may enter step 1. The previous check
+    // (!== 'emailed') let terminal leads ('done', 'replied') re-enter the
+    // sequence via a stage change alone — a bounced or unsubscribed lead
+    // could be re-mailed with one dropdown click. Re-sending now requires
+    // explicitly clearing emailStatus as well as re-queueing the stage.
+    l.emailStatus === ''
   );
 }
 
@@ -1244,6 +1264,12 @@ async function run() {
 
   // ── New sends (step 1) ────────────────────────────────────────────────────
   for (const lead of newBatch) {
+    const suppressed = suppressionReason(lead);
+    if (suppressed) {
+      console.error(`🚫 [SUPPRESSED] refusing step-1 send → ${lead.email} (${cleanCompanyName(lead.company) || lead.id}) — notes contain ${suppressed}`);
+      continue;
+    }
+
     const { subject, body, link, opener, openerTier, pitchTier } = await buildEmail(lead);
 
     if (DRY_RUN) {
@@ -1282,6 +1308,12 @@ async function run() {
 
   // ── Warm follow-ups (open-triggered) ─────────────────────────────────────
   for (const lead of warmBatch) {
+    const suppressed = suppressionReason(lead);
+    if (suppressed) {
+      console.error(`🚫 [SUPPRESSED] refusing warm send → ${lead.email} (${cleanCompanyName(lead.company) || lead.id}) — notes contain ${suppressed}`);
+      continue;
+    }
+
     const currentStep = parseInt(lead.emailStep, 10);
     const nextStepNum = currentStep + 1;
     const subject     = WARM_FOLLOW_UP_TEMPLATE.subject(lead);
@@ -1323,6 +1355,12 @@ async function run() {
 
   // ── Follow-ups (steps 2 & 3) ──────────────────────────────────────────────
   for (const lead of followBatch) {
+    const suppressed = suppressionReason(lead);
+    if (suppressed) {
+      console.error(`🚫 [SUPPRESSED] refusing follow-up send → ${lead.email} (${cleanCompanyName(lead.company) || lead.id}) — notes contain ${suppressed}`);
+      continue;
+    }
+
     const currentStep = parseInt(lead.emailStep, 10);
     const nextStepNum = currentStep + 1;
     const template    = FOLLOW_UP_SEQUENCE[currentStep - 1];

@@ -2178,6 +2178,20 @@ function ceHasReplied(lead) {
   return /\[REPLY: (?!OOO)/.test(lead.notes || '') || lead.emailStatus === 'replied';
 }
 
+// Why a lead must not be re-queued for step 1, or '' if it may be. Mirrors the
+// agent's guards: unsubscribed/bounced leads are hard-suppressed there, and
+// selectQueued only accepts emailStatus === ''.
+function ceTerminalReason(lead) {
+  const notes = lead.notes || '';
+  if (notes.includes('[REPLY: Unsubscribed]') || lead.stage === 'Unsub' || lead.stage === 'Unsubscribed')
+    return 'unsubscribed — re-emailing them is a CASL violation';
+  if (notes.includes('[BOUNCED'))          return 'bounced (dead address)';
+  if (lead.emailStatus === 'replied')      return 'already replied';
+  if (lead.emailStatus === 'done')         return 'sequence finished (done)';
+  if (lead.stage === 'Done' || lead.stage === 'Replied') return `in terminal stage "${lead.stage}"`;
+  return '';
+}
+
 function updateCeStats() {
   document.getElementById('ce-stat-total').textContent   = ceLeads.length;
   document.getElementById('ce-stat-queued').textContent  = ceLeads.filter(l => l.stage === 'Queued').length;
@@ -2629,6 +2643,22 @@ function updateBulkQueueBtn() {
 async function setCeLeadStage(id, stage) {
   const lead = ceLeads.find(l => l.id === id);
   if (!lead) return;
+  // Queueing a terminal lead needs an explicit override — this is the exact
+  // path that could re-mail an unsubscribed or bounced address. Note the agent
+  // has its own guards (suppression tags + emailStatus must be blank), so an
+  // override here alone will NOT make it send.
+  if (stage === 'Queued') {
+    const reason = ceTerminalReason(lead);
+    if (reason) {
+      const ok = confirm(
+        `⚠ "${lead.company || lead.email}" is ${reason}.\n\n` +
+        `Queue it anyway?\n\n` +
+        `Note: the agent will still refuse to email it while its emailStatus ` +
+        `is set and its notes carry an unsubscribe/bounce tag.`
+      );
+      if (!ok) { renderCeTable(); return; }
+    }
+  }
   const prev = lead.stage;
   lead.stage = stage;
   try {
@@ -2645,10 +2675,14 @@ async function setCeLeadStage(id, stage) {
 async function bulkQueueSelected() {
   if (ceSelected.size === 0) return;
   const ids = [...ceSelected];
-  let done = 0;
+  let done = 0, skipped = 0;
   for (const id of ids) {
     const lead = ceLeads.find(l => l.id === id);
     if (!lead) continue;
+    // Bulk queue never overrides terminal leads — a select-all must not sweep
+    // unsubscribed/bounced/replied rows back into the send queue. To re-queue
+    // one deliberately, use the row's stage dropdown (which asks first).
+    if (ceTerminalReason(lead)) { skipped++; continue; }
     const prev = lead.stage;
     lead.stage = 'Queued';
     try {
@@ -2662,7 +2696,8 @@ async function bulkQueueSelected() {
   }
   ceSelected.clear();
   updateBulkQueueBtn();
-  showToast(`Queued ${done} lead${done !== 1 ? 's' : ''}.`, 'success');
+  const skippedMsg = skipped > 0 ? ` (${skipped} skipped: replied/unsubscribed/bounced/done)` : '';
+  showToast(`Queued ${done} lead${done !== 1 ? 's' : ''}.${skippedMsg}`, skipped > 0 ? 'warning' : 'success');
   renderCeTable();
 }
 
