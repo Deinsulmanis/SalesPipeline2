@@ -40,6 +40,7 @@ const axios        = require('axios');
 const cheerio      = require('cheerio');
 const fs   = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 // Junk classifier shared with check-leads.js (CLI) and server.js import —
 // legacy junk rows predate the import choke point, so selection re-checks.
 const { classify: classifyLeadEmail } = require('./check-leads');
@@ -290,10 +291,32 @@ function cleanCompanyName(raw) {
   return raw.slice(0, cutAt).trim() || raw.trim();
 }
 
-// Builds a personalised proposal URL. Omits any param whose value is empty.
+// Deterministic per-lead token for short proposal links: sha1(lead.id), first
+// 10 hex chars. Re-sends always produce the same link; the /p/:token route in
+// server.js resolves it back to the lead by hashing column A the same way —
+// MUST stay in sync with proposalToken() there.
+function proposalToken(lead) {
+  return crypto.createHash('sha1').update(String(lead.id)).digest('hex').slice(0, 10);
+}
+
+// Builds the proposal URL for the email body.
+//
+// Token style — <PROPOSAL_BASE>/<token> — when PROPOSAL_BASE points at the
+// /p tracker (production: https://receptionist.scalelabai.ca/p). The tracker
+// resolves the token to company/contact/niche, logs the open, and 302s to the
+// Netlify page with the same query params the old links carried — the page
+// itself is untouched and personalization is resolved at CLICK time from the
+// sheet, so post-send enrichment (e.g. a contactName found later) is picked up.
+//
+// Legacy query-param style is kept for any base that is NOT the tracker: if
+// PROPOSAL_BASE ever falls back to the bare Netlify URL, a token path would
+// 404 there, while ?company=… still personalizes.
 // Uses function declaration so it hoists — the follow-up templates call it at
 // runtime, not definition time, but being hoisted keeps things clear.
 function buildProposalLink(lead) {
+  if (/\/p$/.test(PROPOSAL_BASE)) {
+    return `${PROPOSAL_BASE}/${proposalToken(lead)}`;
+  }
   const co = cleanCompanyName(lead.company);
   const params = [
     co               ? ['company', co]                : null,

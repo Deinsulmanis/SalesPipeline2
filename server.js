@@ -4,6 +4,7 @@ const { google } = require('googleapis');
 const { spawn }  = require('child_process');
 const path       = require('path');
 const cron       = require('node-cron');
+const crypto     = require('crypto');
 // Junk classifier shared with check-leads.js (CLI) and outreach-agent.js —
 // PLACEHOLDER / MALFORMED / THIRD_PARTY / BLANK / CLEAN. One source of truth.
 const { classify: classifyLeadEmail } = require('./check-leads');
@@ -66,6 +67,89 @@ app.get('/p', (req, res) => {
     insertDataOption:'INSERT_ROWS',
     requestBody:     { values: [row] },
   }).catch(e => console.error('[/p] Sheet write failed:', e.message));
+
+  res.redirect(302, dest);
+});
+
+// Verbatim copy of cleanCompanyName() from outreach-agent.js (cuts at the
+// first " - " or "|"). MUST stay in sync: the old query-param links carried
+// the CLEANED name, so the token route must log and forward the same value or
+// open-tracking attribution and the page's displayed name would change.
+function cleanCompanyName(raw) {
+  if (!raw) return '';
+  const pipIdx  = raw.indexOf('|');
+  const dashIdx = raw.indexOf(' - ');
+  let cutAt = raw.length;
+  if (pipIdx  !== -1) cutAt = Math.min(cutAt, pipIdx);
+  if (dashIdx !== -1) cutAt = Math.min(cutAt, dashIdx);
+  return raw.slice(0, cutAt).trim() || raw.trim();
+}
+
+// Token used in short proposal links: sha1(lead id), first 10 hex chars.
+// MUST stay in sync with proposalToken() in outreach-agent.js.
+const proposalToken = id => crypto.createHash('sha1').update(String(id)).digest('hex').slice(0, 10);
+
+// Token-style proposal links: /p/<token> (additive — the query-param route
+// above keeps serving links already in circulation). Resolves the token to the
+// lead by hashing column A, logs the open with the SAME cleaned company the
+// old links carried (attribution preserved), then 302s to the Netlify page
+// with identical query params — the page itself is untouched.
+//
+// FALLBACK: an unresolvable token (unknown, sheet error, lead deleted) must
+// never show the prospect an error page — it degrades to the bare proposal
+// page and logs the failure.
+app.get('/p/:token', async (req, res) => {
+  const token    = String(req.params.token || '').trim();
+  const ua       = req.headers['user-agent'] || '';
+  const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.ip;
+  const BLOCKED_IPS  = ['75.155.151.158'];
+  const proposalBase = process.env.PROPOSAL_URL || 'https://scalelabaireceptionistproposal.netlify.app';
+
+  let dest = proposalBase;   // bare page — the guaranteed-safe landing
+  let lead = null;
+
+  try {
+    const resp = await sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range:         `${CE_SHEET_NAME}!A:F`,   // A=id B=company C=contactName F=tradeType
+    });
+    const rows = (resp.data.values || []).slice(1);
+    const hit  = rows.find(r => r[0] && proposalToken(r[0]) === token);
+    if (hit) {
+      lead = { id: hit[0], company: cleanCompanyName(hit[1] || ''), contactName: hit[2] || '', tradeType: hit[5] || '' };
+      const url = new URL(proposalBase);
+      const fwd = new URLSearchParams();
+      if (lead.company)     fwd.set('company', lead.company);
+      if (lead.contactName) fwd.set('contact', lead.contactName);
+      if (lead.tradeType)   fwd.set('niche',   lead.tradeType);
+      url.search = fwd.toString();
+      dest = url.toString();
+    } else {
+      console.warn(`[/p/:token] Unknown token "${token}" — redirecting to bare page. ip: ${clientIp}`);
+    }
+  } catch (e) {
+    console.warn(`[/p/:token] Resolution failed for "${token}": ${e.message} — redirecting to bare page.`);
+  }
+
+  if (!lead) return res.redirect(302, dest);
+
+  if (BLOCKED_IPS.includes(clientIp)) {
+    console.log(`[/p/:token] Skipping own IP: ${clientIp} — ${lead.company}`);
+    return res.redirect(302, dest);
+  }
+  if (BOT_PATTERNS.test(ua)) {
+    console.warn(`[/p/:token] Bot skipped — company: ${lead.company}, ua: ${ua}`);
+    return res.redirect(302, dest);
+  }
+
+  const row = [new Date().toISOString(), lead.company, lead.tradeType || 'Unknown', lead.id, clientIp, ua];
+  sheets().spreadsheets.values.append({
+    spreadsheetId:   SPREADSHEET_ID,
+    range:           'ProposalOpens!A:F',
+    valueInputOption:'RAW',
+    insertDataOption:'INSERT_ROWS',
+    requestBody:     { values: [row] },
+  }).catch(e => console.error('[/p/:token] Sheet write failed:', e.message));
 
   res.redirect(302, dest);
 });
