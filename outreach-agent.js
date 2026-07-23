@@ -257,16 +257,29 @@ function refCode(lead) {
 }
 
 // Returns the display name of a business by stripping location suffixes and
-// multi-listing noise (e.g. "Yaletown Wellness - Hamilton | RMT Vancouver").
-// Takes the segment before the first "|" or " - ", whichever comes first.
+// multi-listing noise (e.g. "Yaletown Wellness - Hamilton | RMT Vancouver",
+// "Kitsilano Smiles • Dr Sandra Huish"). Takes the segment before the first
+// occurrence of any separator below, whichever comes first in the string.
+// Separators other than "|" are space-padded (" - ", " • ", …) so a bare
+// hyphen/dash inside a real word — "Mary-Anne's Dental" — is never cut;
+// bullet/middle-dot/en-dash/em-dash never legitimately appear mid-word in a
+// business name, but are padded too for consistency with " - ".
 // Never mutates stored data — call only at send/display time.
 function cleanCompanyName(raw) {
   if (!raw) return '';
-  const pipIdx  = raw.indexOf('|');
-  const dashIdx = raw.indexOf(' - ');
+  const SEPARATORS = [
+    '|',
+    ' - ',
+    ' • ', // •  bullet
+    ' · ', // ·  middle dot
+    ' – ', // –  en dash
+    ' — ', // —  em dash
+  ];
   let cutAt = raw.length;
-  if (pipIdx  !== -1) cutAt = Math.min(cutAt, pipIdx);
-  if (dashIdx !== -1) cutAt = Math.min(cutAt, dashIdx);
+  for (const sep of SEPARATORS) {
+    const idx = raw.indexOf(sep);
+    if (idx !== -1) cutAt = Math.min(cutAt, idx);
+  }
   return raw.slice(0, cutAt).trim() || raw.trim();
 }
 

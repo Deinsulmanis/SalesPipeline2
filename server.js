@@ -72,16 +72,25 @@ app.get('/p', (req, res) => {
 });
 
 // Verbatim copy of cleanCompanyName() from outreach-agent.js (cuts at the
-// first " - " or "|"). MUST stay in sync: the old query-param links carried
-// the CLEANED name, so the token route must log and forward the same value or
-// open-tracking attribution and the page's displayed name would change.
+// first occurrence of any separator below). MUST stay in sync: the old
+// query-param links carried the CLEANED name, so the token route must log and
+// forward the same value or open-tracking attribution and the page's
+// displayed name would change.
 function cleanCompanyName(raw) {
   if (!raw) return '';
-  const pipIdx  = raw.indexOf('|');
-  const dashIdx = raw.indexOf(' - ');
+  const SEPARATORS = [
+    '|',
+    ' - ',
+    ' • ', // •  bullet
+    ' · ', // ·  middle dot
+    ' – ', // –  en dash
+    ' — ', // —  em dash
+  ];
   let cutAt = raw.length;
-  if (pipIdx  !== -1) cutAt = Math.min(cutAt, pipIdx);
-  if (dashIdx !== -1) cutAt = Math.min(cutAt, dashIdx);
+  for (const sep of SEPARATORS) {
+    const idx = raw.indexOf(sep);
+    if (idx !== -1) cutAt = Math.min(cutAt, idx);
+  }
   return raw.slice(0, cutAt).trim() || raw.trim();
 }
 
