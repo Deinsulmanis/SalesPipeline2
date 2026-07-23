@@ -154,6 +154,54 @@ app.get('/p/:token', async (req, res) => {
   res.redirect(302, dest);
 });
 
+// ── DEMO PLAY TRACKING (public — no auth) ──────────────────────────────────────
+// Fired as a tracking pixel from the proposal page when the demo audio actually
+// plays — a stronger intent signal than an open. Deliberately writes to its OWN
+// tab (DemoPlays), NOT ProposalOpens: that sheet feeds getOpenTriggeredLeads()
+// and the warm-follow-up trigger, and mixing a second event type into it would
+// risk a demo play being counted as an open and firing a warm send on a false
+// signal. Same guard shape as /p (IP block, bot UA, empty/Unknown company) —
+// bot/self-traffic matters even more here since this is meant to be high-intent.
+app.get('/demo-played', (req, res) => {
+  const companyParam = String(req.query.company ?? '').trim();
+  const company = companyParam || 'Unknown';
+  const niche   = req.query.niche || 'Unknown';
+  const ua      = req.headers['user-agent'] || '';
+  const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.ip;
+
+  // Always a no-op pixel response — nothing renders, nothing for the page to
+  // read, so there's no failure mode visible to the visitor either way.
+  const sendPixel = () => res.status(204).end();
+
+  const BLOCKED_IPS = ['75.155.151.158'];
+  if (BLOCKED_IPS.includes(clientIp)) {
+    console.log(`[/demo-played] Skipping own IP: ${clientIp} — ${company}`);
+    return sendPixel();
+  }
+
+  if (BOT_PATTERNS.test(ua)) {
+    console.warn(`[/demo-played] Bot skipped — company: ${company}, ua: ${ua}`);
+    return sendPixel();
+  }
+
+  if (!companyParam || companyParam.toLowerCase() === 'unknown') {
+    console.warn(`[/demo-played] No resolvable company — not logging. url: ${req.originalUrl} ip: ${clientIp}`);
+    return sendPixel();
+  }
+
+  const row = [new Date().toISOString(), company, niche, clientIp, ua];
+
+  sheets().spreadsheets.values.append({
+    spreadsheetId:   SPREADSHEET_ID,
+    range:           'DemoPlays!A:E',
+    valueInputOption:'RAW',
+    insertDataOption:'INSERT_ROWS',
+    requestBody:     { values: [row] },
+  }).catch(e => console.error('[/demo-played] Sheet write failed:', e.message));
+
+  sendPixel();
+});
+
 // ── DASHBOARD ACCESS CONTROL ──────────────────────────────────────────────────
 // HTTP Basic Auth applied globally — covers static files and all API routes.
 // Set DASHBOARD_USER and DASHBOARD_PASSWORD in .env / Railway env vars.
