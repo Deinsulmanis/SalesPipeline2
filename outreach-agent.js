@@ -168,44 +168,27 @@ const gmail  = () => google.gmail({ version: 'v1', auth: oauth2Client });
 // ── FOLLOW-UP SEQUENCE (Phase 3) ──────────────────────────────────────────────
 // Index 0 = step-2 template (3 days after initial send)
 // Index 1 = step-3 template (5 days after step 2)   Max 3 steps total.
-// Each template reads lead.tier to stay consistent with the step-1 angle.
+// Same invitation/sample-demo thread as step 1 (buildPitch) and the same
+// single-CTA-reply rule — no longer tier-branched, since the old busy/medium
+// split existed to continue the old "after-hours calls" angle that step 1 no
+// longer opens with.
 const FOLLOW_UP_SEQUENCE = [
   {
     delayDays: 3,
-    subject: (lead) => lead.tier === 'busy'
-      ? `Re: ${cleanCompanyName(lead.company) || 'your business'}'s after-hours calls`
-      : `Re: quick question about ${cleanCompanyName(lead.company) || 'your business'}'s bookings`,
+    subject: (lead) => `Re: a quick demo I built for ${cleanCompanyName(lead.company) || 'your business'}`,
     body: (lead) => {
       const link    = buildProposalLink(lead);
       const name    = lead.first || 'there';
       const company = cleanCompanyName(lead.company) || 'your business';
       const casl    = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.  ·  Ref: SL-${refCode(lead)}`;
 
-      if (lead.tier === 'busy') {
-        return `Hi ${name},
-
-Following up from earlier this week — just wanted to close the loop on the after-hours angle.
-
-The AI receptionist I mentioned books overnight and weekend enquiries automatically, so your team doesn't miss a beat when the desk is occupied.
-
-→ See what this looks like for ${company}: ${link}
-
-Worth 15 minutes to see if the numbers make sense?
-
-— ${FROM_NAME}
-
-${casl}`;
-      }
-
       return `Hi ${name},
 
-Just circling back on my note about ${company}'s booking flow.
+Just following up on the AI receptionist demo I mentioned for ${company} — still happy to build it if you'd like to hear it.
 
-The short version: an AI receptionist answers when you can't, books the appointment, and the confirmation goes out automatically — no voicemails left hanging.
+→ Here's a sample so you know what it sounds like: ${link}
 
-→ See what this looks like for ${company}: ${link}
-
-Worth a 15-minute call to see what that looks like for your setup?
+No pressure either way — just reply if you'd like yours.
 
 — ${FROM_NAME}
 
@@ -218,25 +201,16 @@ ${casl}`;
     body: (lead) => {
       const link    = buildProposalLink(lead);
       const name    = lead.first || 'there';
+      const company = cleanCompanyName(lead.company) || 'your business';
       const casl    = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.  ·  Ref: SL-${refCode(lead)}`;
-
-      if (lead.tier === 'busy') {
-        return `Hi ${name},
-
-Last one, I promise.
-
-If after-hours and overflow bookings are already handled, ignore this. If there's a gap, here's the overview I put together: ${link}
-
-— ${FROM_NAME}
-
-${casl}`;
-      }
 
       return `Hi ${name},
 
-Last one from me.
+Last note from me on this.
 
-If missed evening or weekend bookings aren't a pain point, this won't be for you. But if there's a gap there, here's the overview I put together: ${link}
+If a free AI receptionist demo for ${company} isn't useful right now, no worries — I'll leave it here. If it is, here's the sample again: ${link}
+
+Just reply and I'll build yours.
 
 — ${FROM_NAME}
 
@@ -247,23 +221,28 @@ ${casl}`;
 
 // Parallel warm-lead template — used only for open-triggered follow-ups.
 // Not part of FOLLOW_UP_SEQUENCE (triggered by ProposalOpens count, not elapsed days).
+// NOTE: this template was previously missing the CASL unsubscribe line and
+// Ref: SL- code entirely — a pre-existing gap, added here while touching this
+// body anyway (the casl-building pattern itself is unchanged, just now applied
+// here too).
 const WARM_FOLLOW_UP_TEMPLATE = {
   step: 'warm',
-  subject: (lead) => `Re: AI receptionist for ${cleanCompanyName(lead.company) || lead.company}`,
+  subject: (lead) => `Re: a quick demo I built for ${cleanCompanyName(lead.company) || lead.company}`,
   body: (lead) => {
     const name    = lead.contactName || 'there';
     const company = cleanCompanyName(lead.company) || lead.company;
+    const casl    = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.  ·  Ref: SL-${refCode(lead)}`;
     return `Hi ${name},
 
-Wanted to follow up on the proposal I sent over — looks like you had a chance to take a look, which I appreciate.
+Wanted to follow up — looks like you had a chance to check out the demo I sent over for ${company}, which I appreciate.
 
-Happy to answer any questions or put together a quick demo built around ${company}'s setup so you can hear exactly how it would sound to your clients.
+Happy to answer any questions, or go ahead and build the full version if you're ready.
 
-Worth a quick chat?
+Just reply and let me know.
 
-${FROM_NAME}
-ScaleLab AI
-${MAILING_ADDRESS}`;
+— ${FROM_NAME}
+
+${casl}`;
   },
 };
 
@@ -289,6 +268,62 @@ function cleanCompanyName(raw) {
   if (pipIdx  !== -1) cutAt = Math.min(cutAt, pipIdx);
   if (dashIdx !== -1) cutAt = Math.min(cutAt, dashIdx);
   return raw.slice(0, cutAt).trim() || raw.trim();
+}
+
+// ── NICHE CONFIG ──────────────────────────────────────────────────────────────
+// Every niche-specific word choice in the Haiku opener prompt and the email
+// templates comes from here. Adding a third vertical is adding one entry to
+// this array — never edit generateOpener()/buildPitch()/the follow-up bodies
+// to special-case a new industry.
+//
+// `match` is tested against lead.tradeType (case-insensitive), entries checked
+// in order, first hit wins. The last entry (`match: null`) is the fallback for
+// any tradeType that matches nothing above it — keep it last.
+const NICHE_CONFIG = [
+  {
+    key: 'dental',
+    match: /dent(?:ist|al)/i,
+    label: 'dental practice',
+    labelPlural: 'dental practices',
+    person: 'patients',
+    booking: 'appointments',
+    place: 'practice',
+    openerFewShot: [
+      '• Dentist in Surrey → "Came across Fraser Family Dental while looking at dental practices in Surrey."',
+      '• Dental clinic, no city → "Noticed Bright Smile Dental while looking into local dental practices."',
+    ],
+  },
+  {
+    key: 'medspa',
+    match: /med.?spa|\bspa\b|skin.?care|laser.*hair|esthetic|dermat|wellness.?cent|massage|beauty.?salon|cosmetic/i,
+    label: 'med spa',
+    labelPlural: 'med spas',
+    person: 'clients',
+    booking: 'bookings',
+    place: 'clinic',
+    openerFewShot: [
+      '• Med spa in Vancouver → "Came across Glow Aesthetics while looking at med spas in Vancouver."',
+      '• Skin clinic, no city → "Noticed Bright Skin Studio while looking into local skin clinics."',
+    ],
+  },
+  {
+    key: 'default',
+    match: null,
+    label: 'business',
+    labelPlural: 'businesses',
+    person: 'customers',
+    booking: 'appointments',
+    place: 'business',
+    openerFewShot: [
+      '• HVAC company in Vancouver → "Came across Peak Climate HVAC while looking at HVAC contractors in Vancouver."',
+      '• Plumber in Calgary → "Saw Mountain Plumbing while browsing plumbers around Calgary."',
+    ],
+  },
+];
+
+function nicheFor(tradeType) {
+  const t = (tradeType || '').trim();
+  return NICHE_CONFIG.find(c => c.match && c.match.test(t)) || NICHE_CONFIG[NICHE_CONFIG.length - 1];
 }
 
 // Deterministic per-lead token for short proposal links: sha1(lead.id), first
@@ -328,58 +363,33 @@ function buildProposalLink(lead) {
   return `${PROPOSAL_BASE}/?${qs}`;
 }
 
-// Builds the tier-keyed subject + body for step-1 sends.
-// pitchTier = 'busy' | 'medium'. reviewCount may be blank — handled gracefully.
-function buildPitch(lead, opener, link, pitchTier) {
+// Builds the step-1 subject + body — the invitation offer. Niche-aware via
+// NICHE_CONFIG; no longer tier-branched (the old "busy vs medium" pitch split
+// belonged to the old offer's after-hours-calls angle, which this replaces).
+// buildEmail() still computes/returns pitchTier separately for dry-run logging
+// — it no longer changes which copy goes out, so buildPitch doesn't need it.
+function buildPitch(lead, opener, link) {
   const name    = lead.first || 'there';
   const company = cleanCompanyName(lead.company) || 'your business';
-  const count   = parseInt(lead.reviewCount, 10);
-  const hasCount = !isNaN(count) && count > 0;
+  const niche   = nicheFor(lead.tradeType);
+  const city    = (lead.city || '').trim() || 'your area';
 
   const casl = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply with\n"unsubscribe" and I'll remove you immediately — no hard feelings.  ·  Ref: SL-${refCode(lead)}`;
 
-  if (pitchTier === 'busy') {
-    // Lead sentence varies: include review count only when present
-    const busyLead = hasCount
-      ? `You're clearly busy — ${count}+ reviews doesn't happen by accident.`
-      : `You're clearly running a busy practice.`;
-
-    return {
-      subject: `${company}'s after-hours calls`,
-      body:
-`Hi ${name},
-
-${opener}
-
-${busyLead} So this isn't about the calls you answer. It's about the ones that come in while your staff's with a client, or after you've closed — booked appointments walking to the clinic down the street.
-
-I build AI receptionists that quietly catch exactly those, booking after hours and when the desk is slammed, without changing how you run the front.
-
-→ See what this looks like for ${company}: ${link}
-
-If you're not the right person for this, mind pointing me to whoever handles bookings?
-
-— ${FROM_NAME}
-
-${casl}`,
-    };
-  }
-
-  // medium (default when tier is blank or anything other than 'busy')
   return {
-    subject: `quick question about ${company}'s bookings`,
+    subject: `A quick demo I built for ${company}`,
     body:
 `Hi ${name},
 
 ${opener}
 
-When someone calls ${company} after hours or when the desk can't pick up — what happens to that booking? Usually it's "goes to voicemail, half don't call back."
+I'm building custom AI receptionist demos for five ${niche.labelPlural} in ${city} this month, and I'd like ${company} to be one of them.
 
-I build AI receptionists that answer and book 24/7, so evening and weekend inquiries turn into booked clients instead of missed ones. At your stage that's often the difference between a full calendar and a patchy one.
+It's a free custom build, configured with ${company}'s actual ${niche.booking} and services for your ${niche.person} — so when they call, it sounds like it already works there. It never touches your real phone line, so there's zero risk or setup on your end.
 
-→ See what this looks like for ${company}: ${link}
+→ Here's one I already built, so you can hear what it sounds like: ${link}
 
-If bookings aren't your area, could you point me to who handles them?
+If that's useful, just reply and I'll have yours ready this week.
 
 — ${FROM_NAME}
 
@@ -440,6 +450,7 @@ async function generateOpener(lead, siteText) {
   if (!ANTHROPIC_API_KEY) return null;
   try {
     const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+    const niche = nicheFor(lead.tradeType);
     let prompt;
 
     if (siteText) {
@@ -452,7 +463,7 @@ async function generateOpener(lead, siteText) {
       ].filter(Boolean).join(' | ');
 
       prompt = [
-        'Write ONE opening sentence for a cold email to a trade business owner.',
+        `Write ONE opening sentence for a cold email to the owner or manager of a ${niche.label}.`,
         'You have scraped text from their website. Find EXACTLY ONE specific, concrete detail that literally appears in the text.',
         '',
         `Known facts: ${facts || '(none)'}`,
@@ -469,8 +480,7 @@ async function generateOpener(lead, siteText) {
         '- One sentence only, max 18 words, plain English, no em-dashes, no marketer voice.',
         '',
         'Tier-1 fallback (use when no clear site detail found):',
-        '• HVAC in Vancouver → "Came across Peak Climate HVAC while looking at HVAC contractors in Vancouver."',
-        '• Plumber in Calgary → "Saw Mountain Plumbing while browsing plumbers around Calgary."',
+        ...niche.openerFewShot,
         '',
         'Output only the sentence.',
       ].join('\n');
@@ -485,7 +495,7 @@ async function generateOpener(lead, siteText) {
       ].filter(Boolean).join(' | ');
 
       prompt = [
-        'Write ONE opening sentence for a cold email to a trade business owner.',
+        `Write ONE opening sentence for a cold email to the owner or manager of a ${niche.label}.`,
         'Use ONLY the facts listed below — never invent or assume anything about their operations, reviews, call volume, customers, or projects.',
         details ? `Known facts: ${details}` : `Known facts: (none — use generic company reference only)`,
         '',
@@ -496,9 +506,7 @@ async function generateOpener(lead, siteText) {
         '- No invented pain points, no "this is costing you", no assumptions about their business',
         '',
         'Examples of the correct style (do not copy — just match the tone):',
-        '• HVAC company in Vancouver → "Came across Peak Climate HVAC while looking at HVAC contractors in Vancouver."',
-        '• Plumber in Calgary → "Saw Mountain Plumbing while browsing plumbers around Calgary."',
-        '• Electrician, no city → "Noticed Bright Spark Electric while looking into local electricians."',
+        ...niche.openerFewShot,
         '',
         'Output only the sentence.',
       ].join('\n');
@@ -538,7 +546,7 @@ async function buildEmail(lead) {
   const pitchTier = lead.tier === 'busy' ? 'busy' : 'medium';
   const link      = buildProposalLink(lead);
 
-  const { subject, body } = buildPitch(lead, opener, link, pitchTier);
+  const { subject, body } = buildPitch(lead, opener, link);
 
   return { subject, body, link, opener, openerTier, pitchTier };
 }
