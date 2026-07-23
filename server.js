@@ -202,6 +202,53 @@ app.get('/demo-played', (req, res) => {
   sendPixel();
 });
 
+// ── HOT-LEAD ENGAGEMENT TRACKING (public — no auth) ────────────────────────────
+// Fired as a tracking pixel from the proposal page when a visitor hits 100%
+// scroll OR 120s of active time — whichever comes first, and only once (the
+// page enforces the once-per-view rule; this route just records what it's told).
+// Writes to its OWN tab (ProposalEngaged), NOT ProposalOpens or DemoPlays: those
+// feed getOpenTriggeredLeads() and the warm-follow-up trigger, and mixing a
+// third event type into either would risk a false warm-send trigger. Same guard
+// shape as /p and /demo-played (IP block, bot UA, empty/Unknown company).
+app.get('/engaged', (req, res) => {
+  const companyParam = String(req.query.company ?? '').trim();
+  const company = companyParam || 'Unknown';
+  const niche   = req.query.niche  || 'Unknown';
+  const signal  = req.query.signal || 'unknown';
+  const ua      = req.headers['user-agent'] || '';
+  const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.ip;
+
+  const sendPixel = () => res.status(204).end();
+
+  const BLOCKED_IPS = ['75.155.151.158'];
+  if (BLOCKED_IPS.includes(clientIp)) {
+    console.log(`[/engaged] Skipping own IP: ${clientIp} — ${company}`);
+    return sendPixel();
+  }
+
+  if (BOT_PATTERNS.test(ua)) {
+    console.warn(`[/engaged] Bot skipped — company: ${company}, ua: ${ua}`);
+    return sendPixel();
+  }
+
+  if (!companyParam || companyParam.toLowerCase() === 'unknown') {
+    console.warn(`[/engaged] No resolvable company — not logging. url: ${req.originalUrl} ip: ${clientIp}`);
+    return sendPixel();
+  }
+
+  const row = [new Date().toISOString(), company, niche, signal, clientIp, ua];
+
+  sheets().spreadsheets.values.append({
+    spreadsheetId:   SPREADSHEET_ID,
+    range:           'ProposalEngaged!A:F',
+    valueInputOption:'RAW',
+    insertDataOption:'INSERT_ROWS',
+    requestBody:     { values: [row] },
+  }).catch(e => console.error('[/engaged] Sheet write failed:', e.message));
+
+  sendPixel();
+});
+
 // ── DASHBOARD ACCESS CONTROL ──────────────────────────────────────────────────
 // HTTP Basic Auth applied globally — covers static files and all API routes.
 // Set DASHBOARD_USER and DASHBOARD_PASSWORD in .env / Railway env vars.
