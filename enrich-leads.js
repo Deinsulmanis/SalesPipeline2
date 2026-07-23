@@ -2,8 +2,9 @@
 /**
  * enrich-leads.js
  * ─────────────────────────────────────────────────────────────────────────────
- * Reads a raw Apify med-spa export (CSV or TSV), filters to reviewCount ≥ 50,
- * scrapes each site for an email address and siteContext, then writes:
+ * Reads a raw Apify/Thunderbit/PhantomBuster export (CSV or TSV), filters to
+ * reviewCount ≥ 50, scrapes each site for an email address and siteContext,
+ * then writes:
  *
  *   leads-enriched.csv  — rows where an email was found (import-ready)
  *   leads-noemail.csv   — qualifying rows with no email (handle manually)
@@ -358,7 +359,14 @@ async function main() {
       email,
       contactName: '',
       city:        r.city || '',
-      tradeType:   'med spa',
+      // Raw Apify export: category lives in "categoryName", or "categories/0"
+      // when the export flattens the categories array. Both come through
+      // lowercased by normalizeHeader() like every other column here. Was
+      // hardcoded to 'med spa' — silently mislabeled every non-med-spa import
+      // (e.g. dental) and bypassed the agent's niche-aware personalization
+      // entirely. Empty string (not a fake default) when neither is present —
+      // nicheFor() in outreach-agent.js already falls back gracefully.
+      tradeType:   r.categoryname || r['categories/0'] || '',
       website:     website || r.website || '',
       reviewCount,
       rating:      r.rating || '',
