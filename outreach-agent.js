@@ -951,7 +951,13 @@ async function readProposalOpens() {
 }
 
 // Write stage (H) + agent columns (I:K) for one row, leaving the rest untouched.
-// Sets emailStatus='done' when the last step in the sequence has been sent.
+// Sets emailStatus='done' when the last step in the sequence has been sent —
+// and, on that same last step, writes stage='Done' too (H), matching what
+// handleNotInterested and runBounceCheckPass already do for their own terminal
+// paths. Non-final steps keep writing SENT_STAGE, unchanged. This only affects
+// the display label: emailStatus is what every selector actually gates on
+// (selectQueued/selectFollowUps/getOpenTriggeredLeads — none of them key off
+// stage='Contacted'), so this cannot change what gets sent.
 //
 // The email is ALREADY SENT when this runs — a failed write here is the
 // "sent but unrecorded" state that re-sends on the next run. So the whole
@@ -962,6 +968,7 @@ async function markSent(lead, step) {
   const now          = new Date().toISOString();
   const isLastStep   = step > FOLLOW_UP_SEQUENCE.length; // step 3 > 2 → done
   const status       = isLastStep ? 'done' : 'emailed';
+  const stageValue   = isLastStep ? 'Done' : SENT_STAGE;
   const MAX_ATTEMPTS = 4;                                 // backoff: 1s, 2s, 4s
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -976,7 +983,7 @@ async function markSent(lead, step) {
         requestBody: {
           valueInputOption: 'RAW',
           data: [
-            { range: `${SHEET_NAME}!H${rowNum}`,            values: [[SENT_STAGE]] },
+            { range: `${SHEET_NAME}!H${rowNum}`,            values: [[stageValue]] },
             { range: `${SHEET_NAME}!I${rowNum}:K${rowNum}`, values: [[status, now, String(step)]] },
           ],
         },
