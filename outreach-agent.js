@@ -344,11 +344,23 @@ function nicheFor(tradeType) {
 // template branches on this instead of re-deriving it. ROLE_LOCAL_PARTS is the
 // known-shared-inbox list; anything NOT on it (dr*, *dmd, *dds, *md, or a plain
 // personal name) defaults to 'owner', since a personal address is far more
-// likely than a role inbox we haven't seen before.
-const ROLE_LOCAL_PARTS = ['info', 'reception', 'contact', 'frontdesk', 'office', 'appointments'];
+// likely than a role inbox we haven't seen before. This list can never be
+// exhaustive — ownerSalutationName() below is the actual fail-safe: it never
+// guesses a name from the address itself, so a role-ish local-part that slips
+// past this list still can't produce a nonsense "Hi Dr. Hello," salutation,
+// it just falls back to a neutral one.
+const ROLE_LOCAL_PARTS = [
+  'info', 'reception', 'contact', 'frontdesk', 'office', 'appointments',
+  'hello', 'hi', 'chat', 'appts', 'appt', 'smile', 'smiles',
+  'dentist', 'dental', 'clinic', 'care', 'team', 'admin', 'inquiry', 'inquiries',
+  'booking', 'bookings', 'welcome', 'mail', 'general', 'front', 'frontoffice',
+  'receptionist', 'newpatients', 'patients', 'service', 'support',
+];
 
 function recipientType(lead) {
-  const local = (lead.email || '').split('@')[0].trim().toLowerCase();
+  // Digits/dots/dashes/underscores are noise around the actual word
+  // ("front.office123", "hello-clinic") — strip them before matching.
+  const local = (lead.email || '').split('@')[0].trim().toLowerCase().replace(/[.\-_0-9]/g, '');
   return ROLE_LOCAL_PARTS.some(p => local === p || local.startsWith(p)) ? 'role' : 'owner';
 }
 
@@ -356,10 +368,12 @@ function recipientType(lead) {
 //   1. "Dr. <Last>" parsed from the raw company field (most reliable — pulls
 //      from the actual listed name, e.g. "Kitsilano Smiles • Dr Sandra Huish")
 //   2. lead.first, if a contactName is on file
-//   3. "Dr. <Guess>" parsed from the email local-part itself (strips a leading
-//      "dr" prefix, a trailing dmd/dds/md credential, and trailing digits)
-// Returns null if nothing usable is found — callers fall back to 'there'
-// rather than guess a name that could be flat wrong.
+// Returns null if neither is present — callers fall back to 'there' rather
+// than guess. Deliberately does NOT parse the email local-part for a name:
+// ROLE_LOCAL_PARTS can never enumerate every role-inbox word in existence, so
+// any address that slips past that classifier and reaches here (an
+// unrecognized role word like "chat@" or "smiles@") must degrade to a neutral
+// greeting, not a fabricated surname like "Dr. Chat" or "Dr. Smiles".
 function ownerSalutationName(lead) {
   const raw = lead.company || '';
   const drMatch = raw.match(/\bDr\.?\s+([A-Z][a-zA-Z'-]+)(?:\s+([A-Z][a-zA-Z'-]+))?/);
@@ -367,18 +381,13 @@ function ownerSalutationName(lead) {
 
   if (lead.first) return lead.first;
 
-  const local = (lead.email || '').split('@')[0];
-  let guess = local.replace(/^dr[.\-_]?/i, '').replace(/(dmd|dds|md)$/i, '').replace(/\d+$/, '').replace(/[._-]+/g, ' ').trim();
-  guess = guess.split(' ').pop();
-  if (!guess) return null;
-  return `Dr. ${guess.charAt(0).toUpperCase()}${guess.slice(1).toLowerCase()}`;
+  return null;
 }
 
 // Salutation name used by every template — resolves to a real name for an
-// owner inbox where derivable, otherwise falls back to 'there' exactly like
-// the old unconditional behavior did.
+// owner inbox where derivable, otherwise falls back to 'there'.
 function salutationName(lead) {
-  if (recipientType(lead) === 'owner') return ownerSalutationName(lead) || lead.first || 'there';
+  if (recipientType(lead) === 'owner') return ownerSalutationName(lead) || 'there';
   return lead.first || 'there';
 }
 
