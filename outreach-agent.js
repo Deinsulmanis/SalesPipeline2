@@ -614,12 +614,43 @@ async function buildEmail(lead) {
   return { subject, body, link, opener, openerTier, pitchTier };
 }
 
+// RFC 2047 encoded-word for a header value containing non-ASCII characters
+// (em dash, bullet, curly quotes, etc. from cleanCompanyName/company names).
+// Header field bodies are US-ASCII per RFC 5322 — raw UTF-8 bytes dropped
+// straight into a header get reinterpreted byte-by-byte by the receiving
+// client, which is exactly the "Ã¢Â€Â"" mojibake pattern. Pure-ASCII subjects
+// pass through unchanged — encoding them would be valid but needlessly ugly.
+// Long subjects are split into multiple encoded-words (RFC 2047 caps each
+// word, delimiters included, at 75 octets), folded with CRLF + space, and
+// split only on UTF-8 character boundaries so no multi-byte char is torn in
+// half across chunks.
+function encodeHeaderValue(value) {
+  if (!value) return '';
+  if (/^[\x00-\x7F]*$/.test(value)) return value; // pure ASCII — leave as-is
+
+  const PREFIX = '=?UTF-8?B?';
+  const SUFFIX = '?=';
+  const maxB64Len = 75 - PREFIX.length - SUFFIX.length;
+  const maxBytesPerChunk = Math.floor(maxB64Len / 4) * 3;
+
+  const bytes = Buffer.from(value, 'utf8');
+  const words = [];
+  let i = 0;
+  while (i < bytes.length) {
+    let end = Math.min(i + maxBytesPerChunk, bytes.length);
+    while (end < bytes.length && (bytes[end] & 0xC0) === 0x80) end--; // don't split mid-character
+    words.push(PREFIX + bytes.slice(i, end).toString('base64') + SUFFIX);
+    i = end;
+  }
+  return words.join('\r\n ');
+}
+
 // RFC-822 message → base64url for the Gmail API
 function toRawMessage({ to, subject, body }) {
   const headers = [
     `From: ${FROM_NAME} <${FROM_EMAIL}>`,
     `To: ${to}`,
-    `Subject: ${subject}`,
+    `Subject: ${encodeHeaderValue(subject)}`,
     'MIME-Version: 1.0',
     'Content-Type: text/plain; charset="UTF-8"',
   ];
