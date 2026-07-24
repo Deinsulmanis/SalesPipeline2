@@ -178,7 +178,7 @@ const FOLLOW_UP_SEQUENCE = [
     subject: (lead) => `Re: a quick demo I built for ${cleanCompanyName(lead.company) || 'your business'}`,
     body: (lead) => {
       const link    = buildProposalLink(lead);
-      const name    = lead.first || 'there';
+      const name    = salutationName(lead);
       const company = cleanCompanyName(lead.company) || 'your business';
       const casl    = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.  ·  Ref: SL-${refCode(lead)}`;
 
@@ -200,7 +200,7 @@ ${casl}`;
     subject: (lead) => `Last note — ${cleanCompanyName(lead.company) || 'your business'}`,
     body: (lead) => {
       const link    = buildProposalLink(lead);
-      const name    = lead.first || 'there';
+      const name    = salutationName(lead);
       const company = cleanCompanyName(lead.company) || 'your business';
       const casl    = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.  ·  Ref: SL-${refCode(lead)}`;
 
@@ -229,7 +229,7 @@ const WARM_FOLLOW_UP_TEMPLATE = {
   step: 'warm',
   subject: (lead) => `Re: a quick demo I built for ${cleanCompanyName(lead.company) || lead.company}`,
   body: (lead) => {
-    const name    = lead.contactName || 'there';
+    const name    = salutationName(lead);
     const company = cleanCompanyName(lead.company) || lead.company;
     const casl    = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.  ·  Ref: SL-${refCode(lead)}`;
     return `Hi ${name},
@@ -339,6 +339,49 @@ function nicheFor(tradeType) {
   return NICHE_CONFIG.find(c => c.match && c.match.test(t)) || NICHE_CONFIG[NICHE_CONFIG.length - 1];
 }
 
+// ── RECIPIENT TYPE ────────────────────────────────────────────────────────────
+// Single source of truth for "who is actually reading this inbox" — every
+// template branches on this instead of re-deriving it. ROLE_LOCAL_PARTS is the
+// known-shared-inbox list; anything NOT on it (dr*, *dmd, *dds, *md, or a plain
+// personal name) defaults to 'owner', since a personal address is far more
+// likely than a role inbox we haven't seen before.
+const ROLE_LOCAL_PARTS = ['info', 'reception', 'contact', 'frontdesk', 'office', 'appointments'];
+
+function recipientType(lead) {
+  const local = (lead.email || '').split('@')[0].trim().toLowerCase();
+  return ROLE_LOCAL_PARTS.some(p => local === p || local.startsWith(p)) ? 'role' : 'owner';
+}
+
+// Best-effort salutation name for an 'owner' recipient. Tries, in order:
+//   1. "Dr. <Last>" parsed from the raw company field (most reliable — pulls
+//      from the actual listed name, e.g. "Kitsilano Smiles • Dr Sandra Huish")
+//   2. lead.first, if a contactName is on file
+//   3. "Dr. <Guess>" parsed from the email local-part itself (strips a leading
+//      "dr" prefix, a trailing dmd/dds/md credential, and trailing digits)
+// Returns null if nothing usable is found — callers fall back to 'there'
+// rather than guess a name that could be flat wrong.
+function ownerSalutationName(lead) {
+  const raw = lead.company || '';
+  const drMatch = raw.match(/\bDr\.?\s+([A-Z][a-zA-Z'-]+)(?:\s+([A-Z][a-zA-Z'-]+))?/);
+  if (drMatch) return `Dr. ${drMatch[2] || drMatch[1]}`;
+
+  if (lead.first) return lead.first;
+
+  const local = (lead.email || '').split('@')[0];
+  let guess = local.replace(/^dr[.\-_]?/i, '').replace(/(dmd|dds|md)$/i, '').replace(/\d+$/, '').replace(/[._-]+/g, ' ').trim();
+  guess = guess.split(' ').pop();
+  if (!guess) return null;
+  return `Dr. ${guess.charAt(0).toUpperCase()}${guess.slice(1).toLowerCase()}`;
+}
+
+// Salutation name used by every template — resolves to a real name for an
+// owner inbox where derivable, otherwise falls back to 'there' exactly like
+// the old unconditional behavior did.
+function salutationName(lead) {
+  if (recipientType(lead) === 'owner') return ownerSalutationName(lead) || lead.first || 'there';
+  return lead.first || 'there';
+}
+
 // Deterministic per-lead token for short proposal links: sha1(lead.id), first
 // 10 hex chars. Re-sends always produce the same link; the /p/:token route in
 // server.js resolves it back to the lead by hashing column A the same way —
@@ -382,12 +425,19 @@ function buildProposalLink(lead) {
 // buildEmail() still computes/returns pitchTier separately for dry-run logging
 // — it no longer changes which copy goes out, so buildPitch doesn't need it.
 function buildPitch(lead, opener, link) {
-  const name    = lead.first || 'there';
+  const type    = recipientType(lead);
+  const name    = salutationName(lead);
   const company = cleanCompanyName(lead.company) || 'your business';
   const niche   = nicheFor(lead.tradeType);
   const city    = (lead.city || '').trim() || 'your area';
 
   const casl = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply with\n"unsubscribe" and I'll remove you immediately — no hard feelings.  ·  Ref: SL-${refCode(lead)}`;
+
+  // Owner/personal inbox: they ARE the decision-maker — no gatekeeper ask.
+  // Role inbox (info@, reception@, ...): invite a forward to whoever handles it.
+  const closing = type === 'owner'
+    ? `If that's useful, just reply and I'll have yours ready this week.`
+    : `If that's useful, just reply and I'll have yours ready this week. And if bookings aren't your area, feel free to forward this to whoever handles them.`;
 
   return {
     subject: `A quick demo I built for ${company}`,
@@ -402,7 +452,7 @@ It's a free custom build, configured with ${company}'s actual ${niche.booking} a
 
 → Here's one I already built, so you can hear what it sounds like: ${link}
 
-If that's useful, just reply and I'll have yours ready this week.
+${closing}
 
 — ${FROM_NAME}
 
