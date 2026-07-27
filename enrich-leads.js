@@ -280,6 +280,20 @@ function cityFromAddress(address) {
   return parts[0] || '';
 }
 
+// ── REVIEW COUNT ──────────────────────────────────────────────────────────────
+// The review-count column is named differently per source, and normalizeHeader()
+// lowercases every header:
+//   Apify          "reviewsCount"  → r.reviewscount
+//   PhantomBuster  "reviews"       → r.reviewcount   (via FIELD_MAP)
+//   Thunderbit     "# of reviews"  → r['# of reviews']
+// Reading only r.reviewcount (no "s") meant every genuine Apify row resolved to
+// undefined → parseInt(NaN) → dropped by the MIN_REVIEWS filter, so an Apify
+// scrape silently qualified ZERO rows. Coalesce all three names so no source is
+// blind. Returns a string (callers strip commas then parseInt).
+function reviewsRaw(r) {
+  return String(r.reviewscount ?? r.reviewcount ?? r['# of reviews'] ?? '');
+}
+
 // ── MAIN ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -299,10 +313,9 @@ async function main() {
   console.log(`\nLoaded ${rows.length} rows from ${path.resolve(INPUT_FILE)}`);
   console.log(`Source: ${sourceName}`);
 
-  // Filter: normalizeHeader maps each source's review count column to a known key
+  // Filter: reviewsRaw() coalesces the per-source review-count column names
   const qualified = rows.filter(r => {
-    const raw = isThunderbit ? (r['# of reviews'] ?? '') : (r.reviewcount ?? '');
-    const n   = parseInt(raw.replace(/,/g, ''), 10);
+    const n = parseInt(reviewsRaw(r).replace(/,/g, ''), 10);
     return !isNaN(n) && n >= MIN_REVIEWS;
   });
   const skipped = rows.length - qualified.length;
@@ -314,8 +327,7 @@ async function main() {
 
   for (let i = 0; i < qualified.length; i++) {
     const r           = qualified[i];
-    const rawReviewCount = isThunderbit ? (r['# of reviews'] || '') : (r.reviewcount || '');
-    const reviewCount    = parseInt(rawReviewCount.replace(/,/g, ''), 10);
+    const reviewCount    = parseInt(reviewsRaw(r).replace(/,/g, ''), 10);
     const tier           = reviewCount >= 200 ? 'busy' : 'medium';
     const website     = cleanUrl(r.website || '');
     const label       = (r.name || r.title || r.company || '').slice(0, 38).padEnd(38);
@@ -355,10 +367,20 @@ async function main() {
       tier,
       siteContext,
     } : {
-      company:     r.name || r.company || '',
+      // Apify Google Maps names the business column `title` (there is no `name`
+      // or `company` column); reading only r.name/r.company blanked the company
+      // on every Apify row, which collapses to "your business" in the email and
+      // breaks dedup/display. title first, then the generic fallbacks.
+      company:     r.title || r.name || r.company || '',
       email,
       contactName: '',
-      city:        r.city || '',
+      // Apify's structured `city` is the real per-row municipality (a Surrey
+      // practice reads "Surrey" even when the search covered Metro Vancouver),
+      // so it is NOT the search-query stamp. When it's blank (some listings
+      // have no structured city), fall back to parsing the municipality out of
+      // the full `address` string — same approach the Thunderbit/PhantomBuster
+      // branches use — before giving up on ''.
+      city:        r.city || cityFromAddress(r.address) || '',
       // Raw Apify export: category lives in "categoryName", or "categories/0"
       // when the export flattens the categories array. Both come through
       // lowercased by normalizeHeader() like every other column here. Was
