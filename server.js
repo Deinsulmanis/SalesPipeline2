@@ -333,9 +333,10 @@ function agentPushLine(line) {
 }
 
 // Shared launcher for the outreach-agent subprocess. extraEnv overrides the
-// agent's mode (DRY_RUN / CHECK_ONLY). All three triggers — UI, the 4-hour send
-// cron and the 30-minute check-only cron — funnel through here and share
-// agentState, so agentState.running is a single mutual-exclusion flag across all.
+// agent's mode (DRY_RUN / CHECK_ONLY) and per-run knobs (DAILY_CAP). All three
+// triggers — UI, the morning send cron and the :15/:45 check-only cron — funnel
+// through here and share agentState, so agentState.running is a single
+// mutual-exclusion flag across all.
 function startAgentProcess(extraEnv, dryRun) {
   agentState.running   = true;
   agentState.dryRun    = dryRun;
@@ -894,7 +895,13 @@ app.post('/api/enrich/names', requireAuth, (_req, res) => {
 });
 
 if (process.env.RAILWAY_ENVIRONMENT) {
-  cron.schedule('0 */4 * * *', () => {
+  // Sends fire only in a weekday morning window, evenly at :00 and :30 of
+  // 8am–11:30am Pacific (8 runs: 8:00, 8:30, 9:00, 9:30, 10:00, 10:30, 11:00,
+  // 11:30). That lands 9:00am–12:30pm for Mountain (AB) leads too. Overnight
+  // sends are gone — a human doesn't email at 4am, and inboxes are freshest
+  // mid-morning. The timezone pin below makes these fields Pacific-local and
+  // handles PDT/PST automatically; do NOT hand-convert to UTC.
+  cron.schedule('0,30 8-11 * * 1-5', () => {
     console.log('[cron] Triggering scheduled outreach agent run...');
     if (agentState.running) {
       console.log('[cron] Agent already running — skipping this tick');
@@ -904,12 +911,13 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   }, {
     timezone: 'America/Vancouver',
   });
-  console.log('[cron] Outreach agent scheduled: every 4 hours (Vancouver time)');
+  console.log('[cron] Outreach agent scheduled: :00 and :30, 8–11:30am Pacific, Mon–Fri');
 
-  // :15/:45, never :00 — the old */30 fired on the 4-hour boundary six times a
-  // day, racing the full-send cron for the agentState.running guard; whichever
-  // lost was silently skipped that tick (a check-only win cost a whole send
-  // window). Offset schedules cannot collide.
+  // :15/:45, never :00/:30 — the send cron above fires on :00 and :30, so the
+  // check-only pass is offset by 15 min to avoid racing it for the
+  // agentState.running guard (whichever lost a tick was silently skipped, and
+  // a check-only win used to cost a whole send window). Offset schedules cannot
+  // collide.
   cron.schedule('15,45 * * * *', () => {
     console.log('[cron] Running check-only pass...');
     spawnAgentCheckOnly();
