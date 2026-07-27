@@ -380,8 +380,8 @@ function startAgentProcess(extraEnv, dryRun) {
   });
 }
 
-function spawnAgent(dryRun) {
-  startAgentProcess({ DRY_RUN: dryRun ? 'true' : 'false' }, dryRun);
+function spawnAgent(dryRun, extraEnv = {}) {
+  startAgentProcess({ DRY_RUN: dryRun ? 'true' : 'false', ...extraEnv }, dryRun);
 }
 
 // Check-only pass: real sheet writes (reply/bounce detection), no sends.
@@ -895,6 +895,16 @@ app.post('/api/enrich/names', requireAuth, (_req, res) => {
 });
 
 if (process.env.RAILWAY_ENVIRONMENT) {
+  // Per-run send cap for the scheduled batches. The morning cron fires 8 times
+  // a day (:00/:30, 8–11:30am Pacific); 8 × 5 = 40 spreads the day's volume
+  // evenly across the window instead of dumping it in the first few runs. This
+  // is a per-RUN knob only — the agent's own DAILY_SEND_LIMIT (40) is the hard
+  // daily ceiling and is NOT changed, so the daily total is provably unchanged;
+  // this commit only redistributes WHEN those 40 go out. Passed via env so the
+  // agent's cap logic (effectiveCap = min(DAILY_CAP, dailyRemaining)) is reused
+  // untouched. Keep in sync with the 8-slot schedule below if either changes.
+  const SEND_PER_RUN_CAP = 5;
+
   // Sends fire only in a weekday morning window, evenly at :00 and :30 of
   // 8am–11:30am Pacific (8 runs: 8:00, 8:30, 9:00, 9:30, 10:00, 10:30, 11:00,
   // 11:30). That lands 9:00am–12:30pm for Mountain (AB) leads too. Overnight
@@ -907,11 +917,11 @@ if (process.env.RAILWAY_ENVIRONMENT) {
       console.log('[cron] Agent already running — skipping this tick');
       return;
     }
-    spawnAgent(false);
+    spawnAgent(false, { DAILY_CAP: String(SEND_PER_RUN_CAP) });
   }, {
     timezone: 'America/Vancouver',
   });
-  console.log('[cron] Outreach agent scheduled: :00 and :30, 8–11:30am Pacific, Mon–Fri');
+  console.log(`[cron] Outreach agent scheduled: :00 and :30, 8–11:30am Pacific, Mon–Fri (${SEND_PER_RUN_CAP}/run)`);
 
   // :15/:45, never :00/:30 — the send cron above fires on :00 and :30, so the
   // check-only pass is offset by 15 min to avoid racing it for the
