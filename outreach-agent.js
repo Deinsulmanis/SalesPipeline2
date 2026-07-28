@@ -1159,6 +1159,7 @@ async function handleUnsubscribe(lead) {
       ],
     },
   });
+  await addSuppression(lead.email, 'unsubscribe', lead.company, 'reply-auto');
   console.log(`  ⊘ ${lead.company} — marked Unsub (unsubscribe request)`);
 }
 
@@ -1424,6 +1425,7 @@ async function runBounceCheckPass(leads) {
           },
         });
       });
+      await withAuth(() => addSuppression(lead.email, 'bounce', lead.company, 'bounce-auto'));
     }
     bounced++;
   }
@@ -1444,11 +1446,72 @@ function isValidEmail(e) {
 // every send as a last line of defense; selection filters are the first line.
 const SUPPRESSION_TAGS = ['[REPLY: Unsubscribed]', '[BOUNCED'];
 
+// ── GLOBAL SUPPRESSION LIST (durable, keyed by email) ─────────────────────────
+// The per-row notes tag above is fragile: delete the row (manual cleanup, a
+// re-scrape churn) and the opt-out is gone, so a later re-import of the same
+// address re-enters as sendable — a CASL violation. The Suppression tab is the
+// durable record: keyed by EMAIL, it survives row deletion and is checked at
+// BOTH import (server.js) and send (here). Every suppression origin
+// (auto-unsubscribe, auto-bounce, manual dashboard unsubscribe) writes to it.
+const SUPPRESSION_SHEET = 'Suppression';
+const SUPPRESSION_HEADER = ['email', 'reason', 'company', 'suppressedAt', 'source'];
+let SUPPRESSED_EMAILS = new Set();   // populated by loadSuppressionList() at run() start
+
+const normEmail = e => (e || '').toLowerCase().trim();
+
+async function ensureSuppressionSheet() {
+  const s  = sheets();
+  const ss = await s.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  if (ss.data.sheets.find(sh => sh.properties.title === SUPPRESSION_SHEET)) return;
+  await s.spreadsheets.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: { requests: [{ addSheet: { properties: { title: SUPPRESSION_SHEET } } }] },
+  });
+  await s.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID, range: `${SUPPRESSION_SHEET}!A1`,
+    valueInputOption: 'RAW', requestBody: { values: [SUPPRESSION_HEADER] },
+  });
+  console.log('[Suppression] tab created with headers');
+}
+
+// Reads the tab into SUPPRESSED_EMAILS. Tolerant: a missing tab just yields an
+// empty set (nothing is ever un-suppressed by a read failure).
+async function loadSuppressionList() {
+  try {
+    const r = await sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${SUPPRESSION_SHEET}!A:A`,
+    });
+    SUPPRESSED_EMAILS = new Set((r.data.values || []).slice(1).map(row => normEmail(row[0])).filter(Boolean));
+    console.log(`[Suppression] loaded ${SUPPRESSED_EMAILS.size} suppressed email(s)`);
+  } catch (e) {
+    console.warn(`[Suppression] load failed (${e.message}) — treating as empty`);
+    SUPPRESSED_EMAILS = new Set();
+  }
+}
+
+// Appends an email to the durable tab (and the in-memory set). Idempotent: an
+// email already present is not re-appended. No-op in DRY_RUN.
+async function addSuppression(email, reason, company, source) {
+  const e = normEmail(email);
+  if (!e || SUPPRESSED_EMAILS.has(e)) return;
+  SUPPRESSED_EMAILS.add(e);
+  if (DRY_RUN) return;
+  await sheets().spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID, range: `${SUPPRESSION_SHEET}!A:E`,
+    valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: [[e, reason || '', cleanCompanyName(company) || company || '', new Date().toISOString(), source || '']] },
+  });
+  console.log(`[Suppression] + ${e} (${reason})`);
+}
+
+// A lead must not be emailed if EITHER its notes carry a suppression tag OR its
+// address is on the global suppression list (survives row deletion / re-import).
 function suppressionReason(lead) {
   const notes = lead.notes || '';
   for (const tag of SUPPRESSION_TAGS) {
     if (notes.includes(tag)) return tag;
   }
+  if (SUPPRESSED_EMAILS.has(normEmail(lead.email))) return 'suppression-list';
   return null;
 }
 
@@ -1462,6 +1525,12 @@ function selectQueued(leads) {
     // could be re-mailed with one dropdown click. Re-sending now requires
     // explicitly clearing emailStatus as well as re-queueing the stage.
     if (l.emailStatus !== '') return false;
+    // Global suppression list (durable, survives row deletion / re-import) —
+    // first-line exclusion; suppressionReason() is the last-line guard at send.
+    if (SUPPRESSED_EMAILS.has(normEmail(l.email))) {
+      console.warn(`⊘ [suppressed] skipping queued lead ${l.email} (${l.company || l.id}) — on global suppression list`);
+      return false;
+    }
     // Junk check (same classifier as the import choke point): isValidEmail
     // accepts phone-bleed addresses like -687-1887x@gmail.com and third-party
     // tracking domains — legacy rows imported before the choke point existed
@@ -1576,6 +1645,12 @@ async function run() {
   console.log('────────────────────────────────────────');
 
   if (!DRY_RUN) await withAuth(ensureAgentHeaders);
+
+  // Load the durable suppression list before any pass — the reply/bounce
+  // handlers add to it, and both selection and the send guard read it. Ensure
+  // the tab exists first (no-op if already there) so writes never fail.
+  if (!DRY_RUN) await withAuth(ensureSuppressionSheet);
+  await withAuth(loadSuppressionList);
 
   const all = await withAuth(readLeads);
 

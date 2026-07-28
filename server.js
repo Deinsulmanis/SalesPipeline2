@@ -297,6 +297,14 @@ const CE_COLUMNS    = [
 ];
 const CE_COL_RANGE  = `${CE_SHEET_NAME}!A:S`;
 
+// ── GLOBAL SUPPRESSION LIST ───────────────────────────────────────────────────
+// Durable, email-keyed opt-out record shared with outreach-agent.js. Checked at
+// import (below) so a suppressed address can never re-enter ColdEmail via a
+// re-scrape/re-import even if its original row was deleted. Written here on a
+// manual dashboard unsubscribe, and by the agent on auto unsubscribe/bounce.
+const SUPPRESSION_SHEET  = 'Suppression';
+const SUPPRESSION_HEADER = ['email','reason','company','suppressedAt','source'];
+
 // ── SERVICE ACCOUNT AUTH ──────────────────────────────────────────────────────
 // Credentials are read from an env var (JSON string) — no key file on disk.
 // GoogleAuth mints and auto-refreshes access tokens internally.
@@ -636,6 +644,44 @@ app.get('/api/proposalOpens', requireAuth, async (_req, res) => {
   }
 });
 
+// Reads the Suppression tab into a Set of lowercased emails. Tolerant: a missing
+// tab yields an empty set (a read failure must never un-suppress anyone).
+async function loadSuppressedEmails() {
+  try {
+    const r = await sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${SUPPRESSION_SHEET}!A:A`,
+    });
+    return new Set((r.data.values || []).slice(1).map(row => (row[0] || '').toLowerCase().trim()).filter(Boolean));
+  } catch (e) {
+    console.warn(`[Suppression] load failed (${e.message}) — treating as empty`);
+    return new Set();
+  }
+}
+
+// Appends an email to the Suppression tab (creating the tab if needed).
+// Idempotent against the passed-in set. Used by the manual-unsubscribe path.
+async function addSuppression(email, reason, company, source, known) {
+  const e = (email || '').toLowerCase().trim();
+  if (!e || (known && known.has(e))) return;
+  const ss = await sheets().spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  if (!ss.data.sheets.find(sh => sh.properties.title === SUPPRESSION_SHEET)) {
+    await sheets().spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: { requests: [{ addSheet: { properties: { title: SUPPRESSION_SHEET } } }] },
+    });
+    await sheets().spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID, range: `${SUPPRESSION_SHEET}!A1`,
+      valueInputOption: 'RAW', requestBody: { values: [SUPPRESSION_HEADER] },
+    });
+  }
+  await sheets().spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID, range: `${SUPPRESSION_SHEET}!A:E`,
+    valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: [[e, reason || '', company || '', new Date().toISOString(), source || '']] },
+  });
+  if (known) known.add(e);
+}
+
 app.post('/api/coldemail/import', requireAuth, async (req, res) => {
   const { rows, campaign, campaign_notes } = req.body || {};
   if (!Array.isArray(rows)) return res.status(400).json({ error: 'body.rows must be an array' });
@@ -653,11 +699,15 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
         (existing.data.values || []).slice(1)
           .map(r => (r[0] || '').toLowerCase().trim()).filter(Boolean)
       );
+      // Durable opt-out check: a suppressed address must never re-enter ColdEmail,
+      // even if its original row was deleted (so existingEmails no longer has it).
+      const suppressedEmails = await loadSuppressedEmails();
       const now   = Date.now();
       const toAdd = [];
       let duplicates = 0;
       let invalid    = 0;
       let junk       = 0;
+      let suppressed = 0;
       for (const row of rows) {
         const email = (row.email || '').toLowerCase().trim();
         if (!email) { invalid++; continue; }
@@ -668,6 +718,12 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
         if (verdict !== 'CLEAN') {
           junk++;
           console.warn(`[ColdEmail Import] rejected ${verdict}: ${email} (${row.company || '—'})`);
+          continue;
+        }
+        // Opt-out choke point: never re-import a globally-suppressed address.
+        if (suppressedEmails.has(email)) {
+          suppressed++;
+          console.warn(`[ColdEmail Import] rejected SUPPRESSED (opt-out): ${email} (${row.company || '—'})`);
           continue;
         }
         if (existingEmails.has(email)) { duplicates++; continue; }
@@ -696,7 +752,7 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
         });
         ceRowMap.clear();
       }
-      return { imported: toAdd.length, duplicates, invalid, junk };
+      return { imported: toAdd.length, duplicates, invalid, junk, suppressed };
     });
     res.json(result);
   } catch (e) {
@@ -767,7 +823,8 @@ app.put('/api/coldemail/:id', requireAuth, async (req, res) => {
   // So a bare stage change on a mid-sequence lead left it sendable — a real
   // follow-up could still go out. Enforcing both here (server-side) closes that
   // hole for every client, not just the current UI.
-  if (lead.stage === 'Unsubscribed' || lead.stage === 'Unsub') {
+  const isUnsub = lead.stage === 'Unsubscribed' || lead.stage === 'Unsub';
+  if (isUnsub) {
     lead.emailStatus = 'done';
     lead.notes = ensureNote(lead.notes, '[REPLY: Unsubscribed]');
   }
@@ -783,6 +840,9 @@ app.put('/api/coldemail/:id', requireAuth, async (req, res) => {
         requestBody:     { values: vals },
       });
     });
+    // Durable opt-out: a manual unsubscribe also lands on the global suppression
+    // list, so it survives this row being deleted and re-scraped later.
+    if (isUnsub) await withAuth(() => addSuppression(lead.email, 'unsubscribe', lead.company, 'manual-dashboard'));
     res.json({ ok: true });
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
