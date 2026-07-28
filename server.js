@@ -750,8 +750,27 @@ app.post('/api/coldemail', requireAuth, async (req, res) => {
   }
 });
 
+// Idempotent note prepend — mirrors prependNote() in outreach-agent.js. Never
+// duplicates a tag that's already present.
+function ensureNote(existing, tag) {
+  if (existing && existing.includes(tag)) return existing;
+  return existing ? `${tag} ${existing}` : tag;
+}
+
 app.put('/api/coldemail/:id', requireAuth, async (req, res) => {
   const lead = req.body;
+  // CASL hard-suppression invariant. Setting a lead's stage to Unsubscribed
+  // (this dashboard's label) — or Unsub (the agent's label) — must ALSO stamp
+  // the signals the SEND path actually checks, not just the stage. The stage
+  // alone is not enough: selectFollowUps() keys off emailStatus === 'emailed'
+  // (ignores stage), and the pre-send guard keys off the notes suppression tag.
+  // So a bare stage change on a mid-sequence lead left it sendable — a real
+  // follow-up could still go out. Enforcing both here (server-side) closes that
+  // hole for every client, not just the current UI.
+  if (lead.stage === 'Unsubscribed' || lead.stage === 'Unsub') {
+    lead.emailStatus = 'done';
+    lead.notes = ensureNote(lead.notes, '[REPLY: Unsubscribed]');
+  }
   const vals = [CE_COLUMNS.map(col => lead[col] !== undefined ? String(lead[col]) : '')];
   try {
     const rowNum = await withAuth(() => findCERow(req.params.id));
