@@ -42,6 +42,51 @@ const COLUMNS = [
   'reviewCount','rating','tier','siteContext','campaign','campaign_notes',
 ];
 
+// Durable global suppression list (see outreach-agent.js / server.js). A manual
+// CLI bounce must land here too, else it survives re-import only by luck of its
+// row not being deleted — the exact fragility the tab exists to remove.
+const SUPPRESSION_SHEET  = 'Suppression';
+const SUPPRESSION_HEADER = ['email','reason','company','suppressedAt','source'];
+
+async function ensureSuppressionSheet() {
+  const s  = sheets();
+  const ss = await s.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  if (ss.data.sheets.find(sh => sh.properties.title === SUPPRESSION_SHEET)) return;
+  await s.spreadsheets.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: { requests: [{ addSheet: { properties: { title: SUPPRESSION_SHEET } } }] },
+  });
+  await s.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID, range: `${SUPPRESSION_SHEET}!A1`,
+    valueInputOption: 'RAW', requestBody: { values: [SUPPRESSION_HEADER] },
+  });
+  console.log('[Suppression] tab created with headers');
+}
+
+// Reads existing suppressed emails (tolerant: empty set on any failure).
+async function loadSuppressedEmails() {
+  try {
+    const r = await sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${SUPPRESSION_SHEET}!A:A`,
+    });
+    return new Set((r.data.values || []).slice(1).map(row => (row[0] || '').toLowerCase().trim()).filter(Boolean));
+  } catch (_e) { return new Set(); }
+}
+
+// Appends one email to the tab. Idempotent against `known` (no duplicate rows
+// across re-runs or overlap with an earlier migration).
+async function addSuppression(email, company, known) {
+  const e = (email || '').toLowerCase().trim();
+  if (!e || known.has(e)) return false;
+  await sheets().spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID, range: `${SUPPRESSION_SHEET}!A:E`,
+    valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: [[e, 'bounce', company || '', new Date().toISOString(), 'manual-bounce-cli']] },
+  });
+  known.add(e);
+  return true;
+}
+
 async function run() {
   if (!SPREADSHEET_ID) throw new Error('SPREADSHEET_ID missing from .env');
   loadToken();
@@ -65,7 +110,11 @@ async function run() {
     return;
   }
 
+  await ensureSuppressionSheet();
+  const suppressed = await loadSuppressedEmails();
+
   console.log(`Found ${targets.length} lead(s) to mark as bounced:\n`);
+  let addedToTab = 0;
   for (const lead of targets) {
     const newNotes = lead.notes
       ? `[BOUNCED - manual cleanup] ${lead.notes}`
@@ -82,10 +131,12 @@ async function run() {
         ],
       },
     });
+    // Durable opt-out: also record on the global Suppression tab.
+    if (await addSuppression(lead.email, lead.company, suppressed)) addedToTab++;
     console.log(`  ✓ Done`);
   }
 
-  console.log(`\nCleanup complete: ${targets.length} lead(s) marked.`);
+  console.log(`\nCleanup complete: ${targets.length} lead(s) marked, ${addedToTab} newly added to the Suppression tab.`);
 }
 
 run().catch(e => {
