@@ -178,6 +178,18 @@ app.get('/demo-played', (req, res) => {
   const ua      = req.headers['user-agent'] || '';
   const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.ip;
 
+  // Which clip was played. The proposal page now renders a short spoken intro
+  // next to the receptionist demo on dental pages, and both fire this pixel —
+  // without this column the sheet cannot tell "heard the 14s hello" from "heard
+  // the receptionist", which is the signal that actually drives follow-up.
+  //
+  // Whitelisted, not passed through: this lands in a spreadsheet cell, so an
+  // arbitrary query string must never reach it. Anything unrecognised — and
+  // notably any pixel from an older cached page that sends no audio_type at
+  // all — falls back to 'demo', which is exactly what those pixels meant.
+  const rawType   = String(req.query.audio_type ?? '').trim().toLowerCase();
+  const audioType = (rawType === 'intro' || rawType === 'demo') ? rawType : 'demo';
+
   // Always a no-op pixel response — nothing renders, nothing for the page to
   // read, so there's no failure mode visible to the visitor either way.
   const sendPixel = () => res.status(204).end();
@@ -198,11 +210,15 @@ app.get('/demo-played', (req, res) => {
     return sendPixel();
   }
 
-  const row = [new Date().toISOString(), company, niche, clientIp, ua];
+  // audio_type is APPENDED as column F, never inserted mid-row: existing rows
+  // already have clientIp in D and ua in E, and shifting them would silently
+  // re-label historical data. Rows written before this change have F blank and
+  // were all receptionist-demo plays, so treat blank as 'demo' when filtering.
+  const row = [new Date().toISOString(), company, niche, clientIp, ua, audioType];
 
   sheets().spreadsheets.values.append({
     spreadsheetId:   SPREADSHEET_ID,
-    range:           'DemoPlays!A:E',
+    range:           'DemoPlays!A:F',
     valueInputOption:'RAW',
     insertDataOption:'INSERT_ROWS',
     requestBody:     { values: [row] },
