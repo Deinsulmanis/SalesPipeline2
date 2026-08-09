@@ -456,6 +456,59 @@
   .type-realtor { background: var(--realtor-bg); color: var(--realtor-color); }
   .type-trade   { background: var(--trade-bg);   color: var(--trade-color); }
 
+  /* ══ KANBAN DRAG & DROP ════════════════════════════════════════════════════
+     Implemented on Pointer Events rather than a library: pointer events cover
+     mouse AND touch with one code path, keyboard + ARIA had to be hand-written
+     either way, and this keeps the no-build/no-dependency shape of the file
+     (a CDN script would make the board's core interaction fail offline). */
+  .card { touch-action: manipulation; }
+  .card[data-draggable="1"] { cursor: grab; }
+  .card[data-draggable="1"]:active { cursor: grabbing; }
+
+  /* the element left behind while dragging */
+  .card.dragging { opacity: 0.35; }
+
+  /* the clone that follows the pointer */
+  .drag-ghost {
+    position: fixed;
+    z-index: var(--z-toast);
+    pointer-events: none;
+    width: var(--ghost-w, 260px);
+    transform: rotate(1.5deg) scale(1.02);
+    box-shadow: var(--shadow-lg);
+    opacity: 0.95;
+  }
+
+  /* column being hovered / keyboard-targeted */
+  .col-body.drop-target {
+    background: var(--tint-soft);
+    outline: 2px dashed var(--primary);
+    outline-offset: -4px;
+    border-radius: var(--radius);
+  }
+  .col-body { transition: background var(--t-fast) var(--ease-out); min-height: 60px; }
+
+  /* keyboard "picked up" state */
+  .card.kb-grabbed {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    box-shadow: var(--shadow-btn);
+  }
+  .kb-hint {
+    font-size: 11px;
+    color: var(--primary);
+    padding: 4px 8px;
+    background: var(--tint-soft);
+    border-radius: var(--radius-xs);
+    margin-bottom: 6px;
+  }
+  /* screen-reader-only live region */
+  .sr-only {
+    position: absolute; width: 1px; height: 1px;
+    padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+  }
+
   .priority-badge { font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: var(--radius-pill); text-transform: uppercase; letter-spacing: 0.4px; }
   .priority-hot  { background: var(--hot-bg);  color: var(--hot); }
   .priority-warm { background: var(--warm-bg); color: var(--warm); }
@@ -1312,6 +1365,8 @@
 <!-- BOARD -->
 <div class="main">
   <div class="board" id="board"></div>
+  <!-- Announces drag/keyboard stage changes to screen readers. -->
+  <div id="dnd-live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 </div>
 
 <!-- COLD EMAIL SECTION -->
@@ -1904,7 +1959,11 @@ function renderBoard() {
   document.getElementById('stat-proposal').textContent = leads.filter(l => l.stage === 'proposal').length;
 
   STAGES.forEach(stage => {
-    const stageLeads = filtered.filter(l => l.stage === stage.id);
+    // The Leads sheet has NO order column, so within-column position is not
+    // persisted and must not pretend to be. Sorting deterministically (priority,
+    // then newest) means a card lands in the same place on every render instead
+    // of appearing to remember a drag that was never saved.
+    const stageLeads = filtered.filter(l => l.stage === stage.id).sort(compareLeads);
     const col = document.createElement('div');
     col.className = 'col';
     col.innerHTML = `
@@ -1912,19 +1971,240 @@ function renderBoard() {
         <div class="col-title"><div class="col-dot" style="background:${stage.color}"></div>${stage.label}</div>
         <div class="col-count">${stageLeads.length}</div>
       </div>
-      <div class="col-body" id="col-${stage.id}">
+      <div class="col-body" id="col-${stage.id}" data-stage="${stage.id}"
+           role="list" aria-label="${stage.label}">
         ${stageLeads.length === 0 ? '<div class="empty-col">No leads</div>' : ''}
       </div>`;
     board.appendChild(col);
     const body = col.querySelector(`#col-${stage.id}`);
     stageLeads.forEach(lead => body.appendChild(buildCard(lead)));
   });
+
+  initBoardDnD();   // idempotent — listeners are bound once on the board element
+}
+
+// ============================================================
+// KANBAN DRAG & DROP  (Leads board only — not the ColdEmail view)
+// ============================================================
+// Pointer Events give mouse and touch one code path; keyboard + ARIA are
+// layered on top so the board is operable without a pointer at all.
+// A drop persists ONLY the stage (Leads column M) via the existing
+// PUT /api/leads/:id. Within-column order is deliberately not persisted —
+// the sheet has no order column, so faking it would silently lose the
+// arrangement on the next load.
+
+const STAGE_IDS = STAGES.map(s => s.id);
+const stageLabel = id => (STAGES.find(s => s.id === id) || {}).label || id;
+
+// Deterministic within-column ordering: priority (hot > warm > cold), then
+// newest first. Pure and stable, so re-renders don't reshuffle cards.
+const PRIORITY_RANK = { hot: 0, warm: 1, cold: 2 };
+function compareLeads(a, b) {
+  const pa = PRIORITY_RANK[a.priority] ?? 3;
+  const pb = PRIORITY_RANK[b.priority] ?? 3;
+  if (pa !== pb) return pa - pb;
+  return String(b.created || '').localeCompare(String(a.created || ''));
+}
+
+function announce(msg) {
+  const el = document.getElementById('dnd-live');
+  if (el) el.textContent = msg;
+}
+
+// Single source of truth for a stage change: optimistic move, write, verify,
+// revert on any failure.
+async function moveLeadToStage(leadId, toStage) {
+  const lead = leads.find(l => l.id === leadId);
+  // ── pre-write assertions ──
+  if (!lead) { showToast('Lead not found', 'error'); return false; }
+  if (!STAGE_IDS.includes(toStage)) { showToast(`Unknown stage "${toStage}"`, 'error'); return false; }
+  const fromStage = lead.stage;
+  if (fromStage === toStage) return true;            // no-op, don't write
+
+  // ── optimistic UI ──
+  lead.stage = toStage;
+  renderBoard();
+  announce(`${lead.first || ''} ${lead.last || ''} moved to ${stageLabel(toStage)}`);
+
+  try {
+    const resp = await fetch(`/api/leads/${leadId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(lead),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+
+    // ── post-write verification ── re-read and confirm the sheet actually holds
+    // the new stage; a 200 with an unwritten cell would otherwise go unnoticed.
+    const check = await fetch('/api/leads');
+    if (check.ok) {
+      const fresh = (await check.json()).find(l => l.id === leadId);
+      if (fresh && fresh.stage !== toStage) {
+        throw new Error(`sheet still reads "${fresh.stage}"`);
+      }
+    }
+    showToast(`Moved to ${stageLabel(toStage)}`);
+    return true;
+  } catch (e) {
+    lead.stage = fromStage;                          // revert
+    renderBoard();
+    announce(`Move failed. ${lead.first || ''} ${lead.last || ''} returned to ${stageLabel(fromStage)}`);
+    showToast(`Could not move lead: ${e.message}`, 'error');
+    return false;
+  }
+}
+
+// ── pointer dragging (mouse + touch) ──────────────────────────────────────
+let dragState = null;
+let suppressNextClick = false;
+const DRAG_THRESHOLD = 6;   // px before a press becomes a drag, so taps still open the card
+
+function boardPointerDown(e) {
+  if (e.button != null && e.button !== 0) return;              // primary button only
+  const card = e.target.closest('.card[data-draggable="1"]');
+  if (!card) return;
+  if (e.target.closest('button, a, select, input, textarea')) return;  // let controls work
+  dragState = {
+    card, id: card.dataset.id,
+    startX: e.clientX, startY: e.clientY,
+    ghost: null, active: false, lastCol: null, pointerId: e.pointerId,
+  };
+}
+
+function boardPointerMove(e) {
+  if (!dragState) return;
+  const dx = e.clientX - dragState.startX;
+  const dy = e.clientY - dragState.startY;
+
+  if (!dragState.active) {
+    if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;           // still a click
+    dragState.active = true;
+    const r = dragState.card.getBoundingClientRect();
+    const ghost = dragState.card.cloneNode(true);
+    ghost.classList.add('drag-ghost');
+    ghost.style.setProperty('--ghost-w', r.width + 'px');
+    ghost.style.left = r.left + 'px';
+    ghost.style.top  = r.top + 'px';
+    document.body.appendChild(ghost);
+    dragState.ghost = ghost;
+    dragState.offX = dragState.startX - r.left;
+    dragState.offY = dragState.startY - r.top;
+    dragState.card.classList.add('dragging');
+    dragState.card.setAttribute('aria-grabbed', 'true');
+    document.body.style.userSelect = 'none';
+  }
+
+  dragState.ghost.style.left = (e.clientX - dragState.offX) + 'px';
+  dragState.ghost.style.top  = (e.clientY - dragState.offY) + 'px';
+
+  const col = document.elementFromPoint(e.clientX, e.clientY)?.closest('.col-body');
+  if (col !== dragState.lastCol) {
+    dragState.lastCol?.classList.remove('drop-target');
+    col?.classList.add('drop-target');
+    dragState.lastCol = col;
+  }
+}
+
+async function boardPointerUp(e) {
+  if (!dragState) return;
+  const st = dragState; dragState = null;
+  document.body.style.userSelect = '';
+  st.ghost?.remove();
+  st.card.classList.remove('dragging');
+  st.card.setAttribute('aria-grabbed', 'false');
+  st.lastCol?.classList.remove('drop-target');
+  if (!st.active) return;                                       // was a click, not a drag
+  // A drag ends with a click event on the card; swallow it once so dropping
+  // doesn't also open the lead detail panel.
+  suppressNextClick = true;
+  setTimeout(() => { suppressNextClick = false; }, 0);
+  const col = st.lastCol;
+  if (col && col.dataset.stage) await moveLeadToStage(st.id, col.dataset.stage);
+}
+
+// ── keyboard operation ────────────────────────────────────────────────────
+// Space/Enter picks up, Left/Right moves stage, Space/Enter drops, Esc cancels.
+let kbGrabbed = null;
+
+function boardKeyDown(e) {
+  const card = e.target.closest?.('.card[data-draggable="1"]');
+  if (!card) return;
+
+  if (e.key === ' ' || e.key === 'Enter') {
+    e.preventDefault();
+    if (!kbGrabbed) {
+      kbGrabbed = { id: card.dataset.id, stage: card.dataset.stage };
+      card.classList.add('kb-grabbed');
+      card.setAttribute('aria-grabbed', 'true');
+      highlightStage(kbGrabbed.stage);
+      announce(`Picked up. Currently in ${stageLabel(kbGrabbed.stage)}. Use Left and Right arrows to choose a stage, Space to drop, Escape to cancel.`);
+    } else {
+      const target = kbGrabbed.stage;
+      const id = kbGrabbed.id;
+      clearKbGrab();
+      moveLeadToStage(id, target);
+    }
+    return;
+  }
+
+  if (!kbGrabbed) return;
+
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    announce('Move cancelled.');
+    clearKbGrab();
+    return;
+  }
+
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    e.preventDefault();
+    const i = STAGE_IDS.indexOf(kbGrabbed.stage);
+    const next = e.key === 'ArrowRight'
+      ? Math.min(STAGE_IDS.length - 1, i + 1)
+      : Math.max(0, i - 1);
+    kbGrabbed.stage = STAGE_IDS[next];
+    highlightStage(kbGrabbed.stage);
+    announce(stageLabel(kbGrabbed.stage));
+  }
+}
+
+function highlightStage(stageId) {
+  document.querySelectorAll('.col-body.drop-target').forEach(c => c.classList.remove('drop-target'));
+  document.querySelector(`.col-body[data-stage="${stageId}"]`)?.classList.add('drop-target');
+}
+
+function clearKbGrab() {
+  document.querySelectorAll('.card.kb-grabbed').forEach(c => {
+    c.classList.remove('kb-grabbed');
+    c.setAttribute('aria-grabbed', 'false');
+  });
+  document.querySelectorAll('.col-body.drop-target').forEach(c => c.classList.remove('drop-target'));
+  kbGrabbed = null;
+}
+
+function initBoardDnD() {
+  const board = document.getElementById('board');
+  if (!board || board.dataset.dndReady) return;
+  board.dataset.dndReady = '1';
+  board.addEventListener('pointerdown', boardPointerDown);
+  window.addEventListener('pointermove', boardPointerMove);
+  window.addEventListener('pointerup', boardPointerUp);
+  window.addEventListener('pointercancel', boardPointerUp);
+  board.addEventListener('keydown', boardKeyDown);
 }
 
 function buildCard(lead) {
   const card = document.createElement('div');
   card.className = 'card';
   card.dataset.stage = lead.stage;
+  card.dataset.id    = lead.id;
+  card.dataset.draggable = '1';
+  card.tabIndex = 0;
+  card.setAttribute('role', 'listitem');
+  card.setAttribute('aria-roledescription', 'draggable lead card');
+  card.setAttribute('aria-label',
+    `${lead.first || ''} ${lead.last || ''}`.trim() + ' — ' + stageLabel(lead.stage) +
+    '. Press Space to pick up, then Left or Right arrow to change stage.');
 
   const fu = lead.followup ? formatDate(lead.followup) : null;
   const priorityMap   = { hot: 'Hot', warm: 'Warm', cold: '' };
@@ -1975,7 +2255,10 @@ function buildCard(lead) {
       </div>
     </div>`;
 
-  card.addEventListener('click', () => openDetail(lead.id));
+  card.addEventListener('click', () => {
+    if (suppressNextClick) return;    // finished a drag, not a real click
+    openDetail(lead.id);
+  });
   return card;
 }
 
