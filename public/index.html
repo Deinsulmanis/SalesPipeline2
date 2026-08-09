@@ -1137,7 +1137,7 @@
       <div class="stat"><div><div class="stat-val" id="ce-stat-queued">0</div><div class="stat-label">Queued</div></div></div>
       <div class="stat stat-secondary"><div><div class="stat-val" id="ce-stat-emailed">0</div><div class="stat-label">Emailed</div></div></div>
       <div class="stat"><div><div class="stat-val" id="ce-stat-replied">0</div><div class="stat-label">Replied</div></div></div>
-      <div class="stat"><div><div class="stat-val" id="ce-stat-opens">0</div><div class="stat-label">Opens</div></div></div>
+      <div class="stat"><div><div class="stat-val" id="ce-stat-opens">0</div><div class="stat-label" id="ce-stat-opens-label">Opens</div></div></div>
       <div class="stat"><div><div class="stat-val" id="ce-stat-warm">0</div><div class="stat-label">🔥 Warm</div></div></div>
     </div>
     <div id="ce-chart-wrap" style="padding:0 28px;margin-bottom:18px">
@@ -2119,8 +2119,13 @@ async function loadCeLeads() {
     if (!ceResp.ok) { showToast('Could not load cold email leads: ' + ceResp.status, 'error'); return; }
     ceLeads     = await ceResp.json();
     ceOpensData = opensResp.ok ? await opensResp.json() : [];
+    // /api/proposalOpens annotates every row with `real` via the shared
+    // open-filter module (server-side), so mail-scanner detonations are already
+    // identified. Count only real opens; rows missing the flag (an older cached
+    // response) fall back to counting, so the stat can never silently read 0.
     ceOpensMap  = new Map();
     for (const o of ceOpensData) {
+      if (o.real === false) continue;
       const key = ceCompanyKey(o.company);
       if (key) ceOpensMap.set(key, (ceOpensMap.get(key) || 0) + 1);
     }
@@ -2198,17 +2203,23 @@ function updateCeStats() {
   document.getElementById('ce-stat-emailed').textContent = ceLeads.filter(l => l.emailStatus !== '').length;
   document.getElementById('ce-stat-replied').textContent = ceLeads.filter(ceHasReplied).length;
 
-  // Opens: sum only over companies that match a lead (excludes orphaned open
-  // rows). Warm: distinct such companies with >= 2 opens. ceOpensMap is already
-  // keyed one-entry-per-company, so iterating it is inherently deduplicated.
+  // Opens: count only companies that match a lead (excludes orphaned open rows)
+  // and only REAL opens — ceOpensMap already excludes scanner detonations, which
+  // otherwise fanned one delivery out into a dozen "opens" from cloud IPs.
+  // Headline is DISTINCT COMPANIES with >= 1 real open, so a single prospect
+  // hitting the page repeatedly (or a multi-IP fanout) counts once; the raw real
+  // hit count sits in the label. Warm: distinct such companies with >= 2 opens.
   const leadKeys = ceLeadCompanyKeys();
-  let totalOpens = 0, warmCount = 0;
+  let realHits = 0, openedCompanies = 0, warmCount = 0;
   ceOpensMap.forEach((v, k) => {
     if (!leadKeys.has(k)) return;
-    totalOpens += v;
+    realHits += v;
+    openedCompanies++;
     if (v >= 2) warmCount++;
   });
-  document.getElementById('ce-stat-opens').textContent = totalOpens;
+  document.getElementById('ce-stat-opens').textContent = openedCompanies;
+  const openLabel = document.getElementById('ce-stat-opens-label');
+  if (openLabel) openLabel.textContent = `Opens · ${realHits} hits`;
   document.getElementById('ce-stat-warm').textContent  = warmCount;
 }
 

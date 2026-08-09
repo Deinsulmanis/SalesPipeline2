@@ -44,6 +44,9 @@ const crypto = require('crypto');
 // Junk classifier shared with check-leads.js (CLI) and server.js import —
 // legacy junk rows predate the import choke point, so selection re-checks.
 const { classify: classifyLeadEmail } = require('./check-leads');
+// Scanner-detonation filtering for ProposalOpens, shared verbatim with
+// server.js's dashboard stats — one definition, no drift.
+const { annotateOpens } = require('./open-filter');
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 
@@ -1579,18 +1582,34 @@ function normalizeName(str) {
 // the tracking link within seconds of delivery, with browser-like user agents
 // that pass the /p bot check — two such fetches used to read as a hot lead and
 // trigger a warm follow-up nobody asked for. Two defenses, both must pass:
-//   1. any open within OPEN_SCANNER_WINDOW_MS of the lead's recorded send
-//      timestamp is discounted (detonation happens at delivery; humans read
-//      later). Only lastEmailedAt is stored, so opens near EARLIER steps'
-//      deliveries can't be retro-discounted here — defense 2 covers those.
+//   1. scanner-looking opens are discounted — the shared isScannerOpen() in
+//      open-filter.js owns that definition (send-window proximity + datacenter
+//      IP ranges) and server.js's dashboard stats call the exact same code, so
+//      the two can never drift.
 //   2. the surviving opens must span >= 2 distinct calendar days (Vancouver):
 //      a scanner burst lands on one day; a human who returns does not.
-const OPEN_SCANNER_WINDOW_MS = 5 * 60 * 1000;
-
+//
+// NOTE: this pass deliberately does NOT feed ProposalEngaged/DemoPlays rows to
+// annotateOpens, so the rescue can only fire on a genuine multi-day return
+// visit. Sending is the irreversible direction: the agent stays at least as
+// strict as the dashboard, never looser.
 function getOpenTriggeredLeads(allLeads, proposalOpens) {
-  const opensByKey = new Map();   // normalized company → [open timestamp ms]
-  for (const open of proposalOpens) {
-    const key = normalizeName(cleanCompanyName(open.company));
+  const leadByKey = new Map();
+  for (const l of allLeads) {
+    const k = normalizeName(cleanCompanyName(l.company));
+    if (k && !leadByKey.has(k)) leadByKey.set(k, l);
+  }
+
+  const annotated = annotateOpens({
+    opens:   proposalOpens,
+    keyOf:   row => normalizeName(cleanCompanyName(row.company)),
+    leadFor: row => leadByKey.get(normalizeName(cleanCompanyName(row.company))) || null,
+  });
+
+  const opensByKey = new Map();   // normalized company → [real open timestamp ms]
+  for (const open of annotated) {
+    if (!open.real) continue;     // scanner detonation — never counts toward warm
+    const key = open.key;
     if (!key) continue;
     const ts = new Date(open.timestamp).getTime();
     if (isNaN(ts)) continue;
@@ -1613,8 +1632,9 @@ function getOpenTriggeredLeads(allLeads, proposalOpens) {
       if (isNaN(lastSent) || (now - lastSent) < TWELVE_HOURS) return false;
 
       const key     = normalizeName(cleanCompanyName(lead.company));
-      const opens   = opensByKey.get(key) || [];
-      const genuine = opens.filter(ts => Math.abs(ts - lastSent) > OPEN_SCANNER_WINDOW_MS);
+      // opensByKey already holds only non-scanner opens (annotateOpens above),
+      // so no second timing filter is needed here.
+      const genuine = opensByKey.get(key) || [];
       const days    = new Set(genuine.map(dayOf));
       genuineCount.set(lead.id, genuine.length);
       return genuine.length >= 2 && days.size >= 2;

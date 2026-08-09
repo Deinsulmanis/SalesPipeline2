@@ -8,6 +8,9 @@ const crypto     = require('crypto');
 // Junk classifier shared with check-leads.js (CLI) and outreach-agent.js —
 // PLACEHOLDER / MALFORMED / THIRD_PARTY / BLANK / CLEAN. One source of truth.
 const { classify: classifyLeadEmail } = require('./check-leads');
+// Scanner-detonation filtering for ProposalOpens, shared verbatim with
+// outreach-agent.js's warm-follow-up gating — one definition, no drift.
+const { annotateOpens } = require('./open-filter');
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -92,6 +95,13 @@ function cleanCompanyName(raw) {
     if (idx !== -1) cutAt = Math.min(cutAt, idx);
   }
   return raw.slice(0, cutAt).trim() || raw.trim();
+}
+
+// Canonical company key for matching a ProposalOpens row to its lead. Mirrors
+// ceCompanyKey() in public/index.html: clean the name, lowercase, strip
+// non-alphanumerics. Used only for the open-filter lookups below.
+function openKey(company) {
+  return cleanCompanyName(company || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '');
 }
 
 // Token used in short proposal links: sha1(lead id), first 10 hex chars.
@@ -639,21 +649,53 @@ app.get('/api/coldemail', requireAuth, async (_req, res) => {
   }
 });
 
+// Serves the ProposalOpens log with each row annotated { scanner, rescued, real }
+// by the SHARED open-filter module — the same code outreach-agent.js gates warm
+// follow-ups with. The dashboard counts only `real` rows, so the headline "Opens"
+// stat stops being inflated by mail-scanner detonations.
+//
+// Read-time only: the raw ProposalOpens tab is never mutated or trimmed, so the
+// full log stays available for auditing and the filter can be revised later
+// without data loss.
 app.get('/api/proposalOpens', requireAuth, async (_req, res) => {
   try {
-    const resp = await sheets().spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: 'ProposalOpens!A:F',
-    });
-    const rows = resp.data.values || [];
-    res.json(rows.slice(1).map(row => ({
+    const [openResp, ceResp, engResp, demoResp] = await Promise.all([
+      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ProposalOpens!A:F' }),
+      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:S` }),
+      // Engagement signals rescue a real human who happened to trip a scanner
+      // rule. Both tabs are optional — a missing one just means no rescues.
+      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ProposalEngaged!A:F' }).catch(() => ({ data: {} })),
+      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A:F' }).catch(() => ({ data: {} })),
+    ]);
+
+    const opens = (openResp.data.values || []).slice(1).map(row => ({
       timestamp: row[0] || '',
       company:   row[1] || '',
       niche:     row[2] || '',
       id:        row[3] || '',
       ip:        row[4] || '',
       userAgent: row[5] || '',
-    })));
+    }));
+
+    // Lead lookup for the send-window rule: prefer the logged lead id, fall back
+    // to the company key (only ~60% of rows carry an id).
+    const leadRows  = (ceResp.data.values || []).slice(1).filter(r => r[0]);
+    const leadById  = new Map(leadRows.map(r => [r[0], { lastEmailedAt: r[9] || '' }]));
+    const leadByKey = new Map();
+    for (const r of leadRows) {
+      const k = openKey(r[1]);
+      if (k && !leadByKey.has(k)) leadByKey.set(k, { lastEmailedAt: r[9] || '' });
+    }
+
+    const annotated = annotateOpens({
+      opens,
+      keyOf:   row => openKey(row.company),
+      leadFor: row => (row.id && leadById.get(row.id)) || leadByKey.get(openKey(row.company)) || null,
+      engagedRows: (engResp.data.values || []).slice(1).map(r => ({ company: r[1] || '' })),
+      demoRows:    (demoResp.data.values || []).slice(1).map(r => ({ company: r[1] || '' })),
+    });
+
+    res.json(annotated);
   } catch (e) {
     console.error('[ProposalOpens GET]', e.message);
     res.json([]);
