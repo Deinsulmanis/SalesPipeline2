@@ -283,7 +283,17 @@ async function run() {
 
   const allLeads = await readLeads();
 
+  // Optional scope filter. Without CAMPAIGN set this is a no-op and the script
+  // behaves exactly as before (every blank-contactName lead sheet-wide). With
+  // it, only that campaign's leads are considered — needed because a run stamps
+  // enrichment_attempted='true' on everything it touches, so an unscoped run
+  // permanently burns the retry flag on leads you never meant to enrich.
+  const CAMPAIGN_FILTER = (process.env.CAMPAIGN || '').trim();
+  const inScope = l => !CAMPAIGN_FILTER || (l.campaign || '').trim() === CAMPAIGN_FILTER;
+  if (CAMPAIGN_FILTER) console.log(`[enrich] scoped to campaign "${CAMPAIGN_FILTER}"`);
+
   const candidates = allLeads.filter(l =>
+    inScope(l) &&
     (!l.contactName || !l.contactName.trim()) &&
     l.website && l.website.trim() &&
     l.emailStatus !== 'replied' &&
