@@ -1122,6 +1122,7 @@
         Queue Selected (<span id="bulk-count">0</span>)
       </button>
       <button class="ce-tab" data-ce="campaigns" onclick="setCeFilter('campaigns')">📊 Campaigns</button>
+      <button class="ce-tab" data-ce="demos" onclick="setCeFilter('demos')">▶️ Demo Plays</button>
       <button class="ce-tab" data-ce="opens" onclick="setCeFilter('opens')">📬 Opens</button>
       <button class="ce-tab" data-ce="agent" onclick="setCeFilter('agent')" style="margin-left:6px">
         <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.45 2 2 0 0 1 3.59 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.49a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21.73 16z"/></svg>
@@ -1171,6 +1172,25 @@
         <tbody id="ce-tbody"></tbody>
       </table>
       <div class="ce-empty" id="ce-empty" style="display:none">No leads found. Import a CSV to get started.</div>
+    </div>
+  </div>
+
+  <!-- Demo plays panel — placed ABOVE the opens panel: pressing play is a
+       stronger buying signal than loading the proposal page. -->
+  <div id="ce-demos-panel" style="display:none">
+    <div style="padding:20px 28px">
+      <table class="ce-table">
+        <thead>
+          <tr>
+            <th>Company</th>
+            <th>Played</th>
+            <th>Plays</th>
+            <th>Most recent</th>
+          </tr>
+        </thead>
+        <tbody id="ce-demos-tbody"></tbody>
+      </table>
+      <div class="ce-empty" id="ce-demos-empty" style="display:none">No demo plays recorded yet.</div>
     </div>
   </div>
 
@@ -1419,6 +1439,10 @@
       <div>
         <div class="detail-section-title">Next Action</div>
         <div id="ce-d-next"></div>
+      </div>
+      <div>
+        <div class="detail-section-title">Demo Plays</div>
+        <div id="ce-d-demos"></div>
       </div>
       <div>
         <div class="detail-section-title">Proposal Opens</div>
@@ -2065,6 +2089,10 @@ let ceCampaignFilter = '';
 let _pendingCsvRows  = null;
 let ceOpensMap       = new Map();
 let ceOpensData    = [];
+// Demo plays — a stronger buying signal than an open (they pressed play), so
+// these rank above opens everywhere the two appear together.
+let ceDemoMap      = new Map();   // companyKey → { count, demo, intro, last }
+let ceDemoData     = [];
 
 const CE_STAGES = ['Import','Queued','Contacted','Replied','Review','Done','Promoted','Unsubscribed'];
 
@@ -2091,9 +2119,11 @@ function setCeFilter(f) {
   ceActiveFilter = f;
   const isAgent     = f === 'agent';
   const isOpens     = f === 'opens';
+  const isDemos     = f === 'demos';
   const isCampaigns = f === 'campaigns';
-  document.getElementById('ce-leads-panel').style.display      = (!isAgent && !isOpens && !isCampaigns) ? 'block' : 'none';
+  document.getElementById('ce-leads-panel').style.display      = (!isAgent && !isOpens && !isDemos && !isCampaigns) ? 'block' : 'none';
   document.getElementById('agent-panel').style.display         = isAgent     ? 'block' : 'none';
+  document.getElementById('ce-demos-panel').style.display      = isDemos     ? 'block' : 'none';
   document.getElementById('ce-opens-panel').style.display      = isOpens     ? 'block' : 'none';
   document.getElementById('ce-campaigns-panel').style.display  = isCampaigns ? 'block' : 'none';
   document.querySelectorAll('.ce-tab').forEach(t =>
@@ -2101,6 +2131,8 @@ function setCeFilter(f) {
   );
   if (isAgent) {
     showAgentTab();
+  } else if (isDemos) {
+    renderDemosPanel();
   } else if (isOpens) {
     renderOpensPanel();
   } else if (isCampaigns) {
@@ -2112,9 +2144,10 @@ function setCeFilter(f) {
 
 async function loadCeLeads() {
   try {
-    const [ceResp, opensResp] = await Promise.all([
+    const [ceResp, opensResp, demoResp] = await Promise.all([
       fetch('/api/coldemail'),
       fetch('/api/proposalOpens'),
+      fetch('/api/demoPlays'),
     ]);
     if (!ceResp.ok) { showToast('Could not load cold email leads: ' + ceResp.status, 'error'); return; }
     ceLeads     = await ceResp.json();
@@ -2128,6 +2161,21 @@ async function loadCeLeads() {
       if (o.real === false) continue;
       const key = ceCompanyKey(o.company);
       if (key) ceOpensMap.set(key, (ceOpensMap.get(key) || 0) + 1);
+    }
+
+    // Demo plays — aggregated per company the same way opens are (one entry per
+    // ceCompanyKey), but carrying which clips were played and the most recent
+    // timestamp. No scanner filter: see /api/demoPlays in server.js for why.
+    ceDemoData = demoResp.ok ? await demoResp.json() : [];
+    ceDemoMap  = new Map();
+    for (const d of ceDemoData) {
+      const key = ceCompanyKey(d.company);
+      if (!key) continue;
+      const e = ceDemoMap.get(key) || { count: 0, demo: 0, intro: 0, last: '' };
+      e.count++;
+      if (d.audioType === 'intro') e.intro++; else e.demo++;
+      if ((d.timestamp || '') > e.last) e.last = d.timestamp || '';
+      ceDemoMap.set(key, e);
     }
     updateCeStats();
     buildSendChart();
@@ -2170,6 +2218,36 @@ function ceLeadCompanyKeys() {
     if (k) keys.add(k);
   }
   return keys;
+}
+
+// Engagement signal tiers, strongest first. Pressing play beats loading the
+// page, and hearing the receptionist beats the 14-second hello:
+//   played receptionist demo > played intro > opened proposal > nothing
+// One definition, used by the lead table, the detail panel and any sort, so the
+// ranking cannot drift between them.
+const CE_SIGNAL = { DEMO: 3, INTRO: 2, OPEN: 1, NONE: 0 };
+
+function ceSignalFor(company) {
+  const k = ceCompanyKey(company);
+  if (!k) return { tier: CE_SIGNAL.NONE, label: '—', plays: 0, opens: 0 };
+  const d = ceDemoMap.get(k);
+  const opens = ceOpensMap.get(k) || 0;
+  if (d && d.demo > 0)  return { tier: CE_SIGNAL.DEMO,  label: 'Receptionist demo', plays: d.count, opens, last: d.last };
+  if (d && d.intro > 0) return { tier: CE_SIGNAL.INTRO, label: 'Intro (14s hello)', plays: d.count, opens, last: d.last };
+  if (opens > 0)        return { tier: CE_SIGNAL.OPEN,  label: 'Opened proposal',   plays: 0, opens };
+  return { tier: CE_SIGNAL.NONE, label: '—', plays: 0, opens: 0 };
+}
+
+// Badge for which clip a company played. A company that played both is shown as
+// the stronger one (the receptionist demo), per the tiers above.
+function ceDemoBadge(entry) {
+  if (!entry || !entry.count) return '';
+  const isDemo = entry.demo > 0;
+  const text   = isDemo ? 'Receptionist demo' : 'Intro (14s hello)';
+  const color  = isDemo ? '#22c55e' : '#38bdf8';
+  const bg     = isDemo ? 'rgba(34,197,94,0.15)' : 'rgba(56,189,248,0.15)';
+  const both   = (entry.demo > 0 && entry.intro > 0) ? ' + intro' : '';
+  return `<span style="background:${bg};color:${color};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap">${text}${both}</span>`;
 }
 
 // A lead counts as "replied" if a human actually responded. emailStatus alone is
@@ -2310,11 +2388,16 @@ function renderCeTable() {
     const emailSafe = (l.email || '').replace(/"/g, '&quot;');
     const openKey   = ceCompanyKey(l.company);
     const opens     = ceOpensMap.get(openKey) || 0;
-    const opensTd   = opens >= 2
-      ? `<td style="color:#f97316;font-weight:600">🔥 ${opens}</td>`
-      : opens === 1
-        ? `<td style="color:#888">1</td>`
-        : `<td style="color:#555">—</td>`;
+    const demoEntry = ceDemoMap.get(openKey);
+    // A demo play outranks any number of opens — see CE_SIGNAL. Show the play
+    // when there is one, falling back to the open count otherwise.
+    const opensTd   = demoEntry
+      ? `<td style="color:#22c55e;font-weight:600" title="${demoEntry.demo > 0 ? 'Played the receptionist demo' : 'Played the intro'}">▶ ${demoEntry.count}${opens ? ` · ${opens} open${opens > 1 ? 's' : ''}` : ''}</td>`
+      : opens >= 2
+        ? `<td style="color:#f97316;font-weight:600">🔥 ${opens}</td>`
+        : opens === 1
+          ? `<td style="color:#888">1</td>`
+          : `<td style="color:#555">—</td>`;
     return `<tr data-id="${l.id}" onclick="openCeDetail('${l.id}')" style="cursor:pointer">
       <td onclick="event.stopPropagation()"><input type="checkbox" class="ce-row-check" data-id="${l.id}" ${checked} onchange="toggleCeRow(this)"></td>
       <td class="ce-td-company">${esc(l.company) || '<span style="color:var(--text-muted)">—</span>'}</td>
@@ -2346,6 +2429,46 @@ function clearCeSearch() {
   if (input) input.value = '';
   document.getElementById('ce-search-clear').style.display = 'none';
   renderCeTable();
+}
+
+// Demo plays, aggregated one row per company (ceDemoMap is already keyed that
+// way), newest activity first. Mirrors renderOpensPanel's shape; the difference
+// is that opens are logged as a flat event stream while a play is a strong
+// enough signal to be worth collapsing per company at a glance.
+function renderDemosPanel() {
+  const tbody = document.getElementById('ce-demos-tbody');
+  const empty = document.getElementById('ce-demos-empty');
+  if (!tbody || !empty) return;
+
+  // One display row per company. The company label comes from the most recent
+  // raw row so it reads the way it was logged.
+  const latestName = new Map();
+  [...ceDemoData]
+    .sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''))
+    .forEach(d => { const k = ceCompanyKey(d.company); if (k) latestName.set(k, d.company); });
+
+  const rows = [...ceDemoMap.entries()]
+    .map(([k, e]) => ({ key: k, company: latestName.get(k) || '—', ...e }))
+    .sort((a, b) => (b.last || '').localeCompare(a.last || ''));
+
+  if (rows.length === 0) {
+    tbody.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+  tbody.innerHTML = rows.map(r => {
+    const timeStr = r.last ? new Date(r.last).toLocaleString() : '—';
+    const playsTd = r.count >= 2
+      ? `<td style="color:#22c55e;font-weight:600">▶ ${r.count}</td>`
+      : `<td style="color:#888">${r.count}</td>`;
+    return `<tr>
+      <td class="ce-td-company">${esc(r.company) || '—'}</td>
+      <td>${ceDemoBadge(r)}</td>
+      ${playsTd}
+      <td style="white-space:nowrap;color:var(--text-secondary)">${esc(timeStr)}</td>
+    </tr>`;
+  }).join('');
 }
 
 function renderOpensPanel() {
@@ -2555,6 +2678,32 @@ function openCeDetail(id) {
     nextHtml = `<p style="font-size:13px;color:var(--text-muted)">—</p>`;
   }
   document.getElementById('ce-d-next').innerHTML = nextHtml;
+
+  // ── Demo plays ───────────────────────────────────────────────
+  // Rendered above opens: pressing play is the stronger signal.
+  const demoKey   = ceCompanyKey(lead.company);
+  const demoEntry = ceDemoMap.get(demoKey);
+  let demosHtml;
+  if (!demoEntry) {
+    demosHtml = `<p style="font-size:13px;color:var(--text-muted)">No demo plays recorded.</p>`;
+  } else {
+    const matches = ceDemoData
+      .filter(d => ceCompanyKey(d.company) === demoKey)
+      .sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+    const capped = matches.slice(0, 5);
+    const extra  = matches.length - capped.length;
+    demosHtml  = `<p style="font-size:13px;font-weight:600;color:#22c55e;margin-bottom:8px">▶ ${demoEntry.count} play${demoEntry.count > 1 ? 's' : ''} ${ceDemoBadge(demoEntry)}</p>`;
+    demosHtml += '<div style="display:flex;flex-direction:column;gap:4px">';
+    for (const d of capped) {
+      const ts = d.timestamp ? new Date(d.timestamp).toLocaleString() : '—';
+      const what = d.audioType === 'intro' ? 'intro' : 'demo';
+      demosHtml += `<div style="font-size:12px;color:var(--text-secondary)">${esc(ts)} · <span style="color:var(--text-muted)">${what}</span></div>`;
+    }
+    if (extra > 0) demosHtml += `<div style="font-size:12px;color:var(--text-muted)">+ ${extra} more</div>`;
+    demosHtml += '</div>';
+  }
+  const demosEl = document.getElementById('ce-d-demos');
+  if (demosEl) demosEl.innerHTML = demosHtml;
 
   // ── Proposal opens ───────────────────────────────────────────
   const openKey = ceCompanyKey(lead.company);

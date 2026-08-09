@@ -97,6 +97,16 @@ function cleanCompanyName(raw) {
   return raw.slice(0, cutAt).trim() || raw.trim();
 }
 
+// Which clip a DemoPlays row represents. Mirrors the /demo-played write-side
+// whitelist exactly — lowercase, only 'intro' or 'demo' accepted, anything else
+// (including a BLANK column F on rows written before the intro shipped, which
+// were all receptionist-demo plays) resolves to 'demo'. Kept here rather than
+// inlined so read and write can never disagree about what a row means.
+function normalizeAudioType(raw) {
+  const t = String(raw == null ? '' : raw).trim().toLowerCase();
+  return (t === 'intro' || t === 'demo') ? t : 'demo';
+}
+
 // Canonical company key for matching a ProposalOpens row to its lead. Mirrors
 // ceCompanyKey() in public/index.html: clean the name, lowercase, strip
 // non-alphanumerics. Used only for the open-filter lookups below.
@@ -646,6 +656,62 @@ app.get('/api/coldemail', requireAuth, async (_req, res) => {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
     console.error('[ColdEmail GET]', e.message);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// The DemoPlays header was written before audio_type existed, so it still reads
+// 5 columns while rows write 6. Positional data is already correct — this only
+// labels column F. Writes A1:F1 exclusively, so no row data can shift. Guarded
+// by a module flag: repaired at most once per process, never on every request.
+let demoPlaysHeaderChecked = false;
+async function ensureDemoPlaysHeader() {
+  if (demoPlaysHeaderChecked) return;
+  demoPlaysHeaderChecked = true;   // set first: a failure must not retry-loop
+  try {
+    const hdr = await sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A1:F1',
+    });
+    const row = (hdr.data.values || [])[0] || [];
+    if (row.length >= 6 && String(row[5]).trim()) return;   // already labelled
+    await sheets().spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A1:F1',
+      valueInputOption: 'RAW',
+      requestBody: { values: [['timestamp', 'company', 'niche', 'ip', 'ua', 'audio_type']] },
+    });
+    console.log('[DemoPlays] header extended to include audio_type (column F)');
+  } catch (e) {
+    console.warn('[DemoPlays] header check failed:', e.message);
+  }
+}
+
+// Serves the DemoPlays log, same shape as /api/proposalOpens plus the
+// normalized audioType per row.
+//
+// NOTE: the opens scanner filter is deliberately NOT applied here. A play event
+// requires someone to press play on an audio element — mail scanners fetch
+// links, they don't do that — and the live log confirms it: 0 of 20 demo plays
+// came from a datacenter IP. Running the opens filter over this data could only
+// discard real signal. The write-side guards (blocked IP / bot UA / empty
+// company) already ran in /demo-played, so a logged row is trustworthy.
+app.get('/api/demoPlays', requireAuth, async (_req, res) => {
+  try {
+    await ensureDemoPlaysHeader();
+    const resp = await sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: 'DemoPlays!A:F',
+    });
+    const rows = resp.data.values || [];
+    res.json(rows.slice(1).map(row => ({
+      timestamp: row[0] || '',
+      company:   row[1] || '',
+      niche:     row[2] || '',
+      ip:        row[3] || '',
+      userAgent: row[4] || '',
+      audioType: normalizeAudioType(row[5]),
+    })));
+  } catch (e) {
+    console.error('[DemoPlays GET]', e.message);
+    res.json([]);
   }
 });
 
