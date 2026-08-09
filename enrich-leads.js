@@ -391,7 +391,11 @@ async function main() {
       tradeType:   r.categoryname || r['categories/0'] || '',
       website:     website || r.website || '',
       reviewCount,
-      rating:      r.rating || '',
+      // Same field-trap class as reviewsCount: the star rating is "totalScore"
+      // on a raw Apify Google-Maps export (there is no "rating" column), so
+      // reading r.rating alone blanked the rating on every Apify row. Keep
+      // r.rating first for exports that do use that name.
+      rating:      r.rating || r.totalscore || '',
       tier,
       siteContext,
     };
