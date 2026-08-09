@@ -5,45 +5,116 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ScaleLab AI — Sales Pipeline</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
+  /* ══════════════════════════════════════════════════════════════════════════
+     SCALELAB AI DESIGN TOKENS
+     Extracted from the live marketing site (scalelabai.ca/style.css :root) —
+     real values, not an invented palette. Brand hues are carried over intact:
+     the navy surface stack, the cyan primary, the violet, the cyan-tinted
+     borders and the Outfit typeface.
+
+     ADAPTED for a dense data tool rather than copy-pasted from the hero design.
+     The site's body/caption greys fail WCAG AA on these surfaces — measured:
+        --sl-fg-secondary #64748B → 3.52:1 on the card surface  (AA needs 4.5)
+        --sl-fg-caption   #445566 → 2.18:1                      (fails badly)
+     so secondary/muted text is lifted to #94A3B8 / #7C93AB, which measure
+     >= 5.2:1 on EVERY surface below while staying visually recessed. The hero's
+     heavy glows are also dialled back: they read as polish on a landing page
+     and as noise behind a data table.
+     ══════════════════════════════════════════════════════════════════════════ */
   :root {
-    --bg: #0A0A0A;
-    --surface: #141414;
-    --card: #1A1A1A;
-    --border: #2A2A2A;
-    --border-hover: #3A3A3A;
-    --text: #F5F5F5;
-    --text-secondary: #888;
-    --text-muted: #555;
-    --accent: #6366F1;
-    --accent-glow: rgba(99,102,241,0.3);
-    --warm: #F59E0B;
-    --warm-bg: rgba(245,158,11,0.1);
-    --hot: #EF4444;
-    --hot-bg: rgba(239,68,68,0.1);
-    --green: #10B981;
-    --green-bg: rgba(16,185,129,0.1);
-    --blue: #3B82F6;
-    --blue-bg: rgba(59,130,246,0.1);
-    --lost: #6B7280;
-    --lost-bg: rgba(107,114,128,0.1);
-    --trade-color: #F97316;
-    --trade-bg: rgba(249,115,22,0.12);
-    --realtor-color: #38BDF8;
-    --realtor-bg: rgba(56,189,248,0.12);
-    --radius: 10px;
-    --radius-sm: 6px;
+    /* ── surfaces (site: --sl-bg-*) ── */
+    --bg:          #020D18;   /* sl-bg-primary   */
+    --surface:     #0A1628;   /* sl-bg-secondary */
+    --surface-2:   #0D1E35;   /* sl-bg-card      */
+    --surface-3:   #010810;   /* sl-bg-terminal — deepest, for insets */
+    --card:        var(--surface-2);   /* legacy alias, used widely below */
+
+    /* ── text (lifted for AA, see note above) ── */
+    --text:           #F2F2F2;   /* sl-fg-primary, unchanged — 14.96:1 on card */
+    --text-secondary: #94A3B8;   /* was #64748B — now 6.53:1 on card */
+    --text-muted:     #7C93AB;   /* was #445566 — now 5.28:1 on card */
+
+    /* ── brand ── */
+    --primary:       #00D4FF;   /* sl-cyan */
+    --primary-hover: #1ADAFF;   /* sl-cyan-hover */
+    --accent:        var(--primary);
+    /* Text/icon colour to use ON a --primary fill. The brand cyan is BRIGHT:
+       white on it measures 1.77:1 (fails), dark navy measures 11.05:1. */
+    --on-primary:    #020D18;
+    /* Text on a saturated DARK fill (red/violet/amber chips and badges). */
+    --on-solid:      #FFFFFF;
+    --accent-glow:   rgba(0,212,255,0.28);
+    /* sl-violet, kept at the brand value: it is used as a SOLID chip/marker
+       fill with --on-solid text (4.35:1), never as body text on a surface. */
+    --violet:        #7C5CFF;
+
+    /* ── borders / tints (site keeps these cyan-tinted, not grey) ── */
+    --border:       rgba(0,212,255,0.12);
+    --border-hover: rgba(0,212,255,0.30);
+    --tint-faint:   rgba(0,212,255,0.04);
+    --tint-soft:    rgba(0,212,255,0.08);
+
+    /* ── semantic ── */
+    --success:    #10B981;  --success-bg: rgba(16,185,129,0.12);
+    --warn:       #F59E0B;  --warn-bg:    rgba(245,158,11,0.12);
+    --danger:     #F15A5A;  --danger-bg:  rgba(241,90,90,0.14);
+    --info:       #38BDF8;  --info-bg:    rgba(56,189,248,0.12);
+
+    /* Domain aliases kept so existing markup keeps working; they now resolve to
+       the semantic tokens rather than to their own one-off hexes. */
+    --green: var(--success); --green-bg: var(--success-bg);
+    --warm:  var(--warn);    --warm-bg:  var(--warn-bg);
+    --hot:   var(--danger);  --hot-bg:   var(--danger-bg);
+    --blue:  var(--info);    --blue-bg:  var(--info-bg);
+    --lost:  #7C8CA3;        --lost-bg:  rgba(124,140,163,0.14);
+    --trade-color:   #F97316; --trade-bg:   rgba(249,115,22,0.12);
+    --realtor-color: var(--info); --realtor-bg: var(--info-bg);
+
+    /* ── shape (site: --sl-r-*) ── */
+    --radius:    12px;   /* between sl-r-button 8 and sl-r-card 16 */
+    --radius-sm: 8px;    /* sl-r-button */
+    --radius-lg: 16px;   /* sl-r-card   */
+    --radius-pill: 20px; /* sl-r-pill   */
+
+    /* ── elevation — softer than the hero's 24px-blur glows ── */
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.35);
+    --shadow:    0 4px 16px rgba(0,0,0,0.40);
+    --shadow-lg: 0 16px 40px rgba(0,0,0,0.50), 0 0 24px rgba(0,212,255,0.05);
+    --shadow-btn: 0 4px 20px rgba(0,212,255,0.28);
+
+    /* ── motion (site: --sl-ease-*) ── */
+    --ease-out:    cubic-bezier(0.40, 0.00, 0.20, 1);
+    --ease-spring: cubic-bezier(0.34, 1.20, 0.64, 1);
+    --t-fast:   120ms;
+    --t-base:   180ms;
+    --t-slow:   260ms;
+
+    /* ── type ── */
+    --font: 'Outfit', system-ui, -apple-system, sans-serif;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
   body {
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: var(--font);
     background: var(--bg);
     color: var(--text);
     min-height: 100vh;
     overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Brand eyebrow — the site's uppercase tracked-out label, at data-tool scale.
+     Used for section headers only; data rows stay plain for legibility. */
+  .eyebrow {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--primary);
   }
 
   /* ── HEADER ── */
@@ -59,6 +130,8 @@
     z-index: 100;
   }
 
+  /* Wordmark — the site sets "ScaleLab" tight and heavy; matched here at
+     dashboard scale (the marketing hero weight would shout in a toolbar). */
   .logo {
     display: flex;
     align-items: center;
@@ -66,14 +139,14 @@
     font-size: 15px;
     font-weight: 700;
     color: var(--text);
-    letter-spacing: -0.3px;
+    letter-spacing: -0.02em;
   }
 
   .logo-dot {
     width: 8px; height: 8px;
     border-radius: 50%;
-    background: var(--accent);
-    box-shadow: 0 0 8px var(--accent-glow);
+    background: var(--primary);
+    box-shadow: 0 0 10px var(--accent-glow);
   }
 
   .header-right {
@@ -114,7 +187,7 @@
     align-items: center;
     gap: 7px;
     background: var(--accent);
-    color: #fff;
+    color: var(--on-primary);
     border: none;
     font-family: inherit;
     font-size: 13px;
@@ -299,7 +372,7 @@
   .card[data-stage="called"]::before   { background: var(--accent); }
   .card[data-stage="warm"]::before     { background: var(--warm); }
   .card[data-stage="hot"]::before      { background: var(--hot); }
-  .card[data-stage="proposal"]::before { background: #8B5CF6; }
+  .card[data-stage="proposal"]::before { background: var(--violet); }
   .card[data-stage="closed"]::before   { background: var(--green); }
   .card[data-stage="lost"]::before     { background: var(--lost); }
 
@@ -444,7 +517,7 @@
   .btn-cancel { padding: 9px 18px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: transparent; color: var(--text-secondary); font-family: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 150ms; }
   .btn-cancel:hover { background: var(--card); color: var(--text); }
 
-  .btn-save { padding: 9px 22px; border-radius: var(--radius-sm); border: none; background: var(--accent); color: #fff; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 200ms; }
+  .btn-save { padding: 9px 22px; border-radius: var(--radius-sm); border: none; background: var(--accent); color: var(--on-primary); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 200ms; }
   .btn-save:hover { transform: translateY(-1px); box-shadow: 0 4px 16px var(--accent-glow); }
 
   /* ── DETAIL PANEL ── */
@@ -487,12 +560,14 @@
 
   .stage-chip { font-size: 11px; font-weight: 600; padding: 5px 12px; border-radius: 20px; border: 1px solid var(--border); background: transparent; color: var(--text-secondary); cursor: pointer; transition: all 150ms; font-family: inherit; }
   .stage-chip:hover { border-color: var(--border-hover); color: var(--text); }
-  .stage-chip.active { color: #fff; border-color: transparent; }
+  .stage-chip.active { color: var(--on-solid); border-color: transparent; }
+  /* the cyan chip is light — white on it fails contrast, so flip to dark */
+  .stage-chip[data-s="called"].active   { color: var(--on-primary); }
   .stage-chip[data-s="new"].active      { background: var(--blue); }
   .stage-chip[data-s="called"].active   { background: var(--accent); }
   .stage-chip[data-s="warm"].active     { background: var(--warm); }
   .stage-chip[data-s="hot"].active      { background: var(--hot); }
-  .stage-chip[data-s="proposal"].active { background: #8B5CF6; }
+  .stage-chip[data-s="proposal"].active { background: var(--violet); }
   .stage-chip[data-s="closed"].active   { background: var(--green); }
   .stage-chip[data-s="lost"].active     { background: var(--lost); }
 
@@ -677,7 +752,7 @@
     border-radius: var(--radius-sm);
     border: none;
     background: var(--accent);
-    color: #fff;
+    color: var(--on-primary);
     font-family: inherit;
     font-size: 12px;
     font-weight: 600;
@@ -894,7 +969,7 @@
     position: absolute;
     top: 3px; left: 3px;
     width: 14px; height: 14px;
-    background: #fff;
+    background: var(--text);
     border-radius: 50%;
     transition: transform 200ms;
   }
@@ -908,7 +983,7 @@
     border-radius: var(--radius-sm);
     border: none;
     background: var(--accent);
-    color: #fff;
+    color: var(--on-primary);
     font-family: inherit;
     font-size: 13px;
     font-weight: 600;
@@ -1062,7 +1137,7 @@
   </div>
   <div class="stat">
     <div class="stat-icon" style="background:rgba(139,92,246,0.1);">
-      <svg width="16" height="16" fill="none" stroke="#8B5CF6" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      <svg width="16" height="16" fill="none" stroke="var(--violet)" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
     </div>
     <div class="stat-info">
       <div class="stat-val" id="stat-proposal">0</div>
@@ -1483,13 +1558,13 @@ const COLUMNS = [
 const COL_RANGE = `${GOOGLE_CONFIG.SHEET_NAME}!A:Q`;
 
 const STAGES = [
-  { id: 'new',      label: 'New Lead',      color: '#3B82F6' },
-  { id: 'called',   label: 'Called',        color: '#6366F1' },
-  { id: 'warm',     label: 'Warm',          color: '#F59E0B' },
-  { id: 'hot',      label: 'Hot',           color: '#EF4444' },
-  { id: 'proposal', label: 'Proposal Sent', color: '#8B5CF6' },
-  { id: 'closed',   label: 'Closed Won',    color: '#10B981' },
-  { id: 'lost',     label: 'Lost',          color: '#6B7280' },
+  { id: 'new',      label: 'New Lead',      color: 'var(--info)' },
+  { id: 'called',   label: 'Called',        color: 'var(--primary)' },
+  { id: 'warm',     label: 'Warm',          color: 'var(--warn)' },
+  { id: 'hot',      label: 'Hot',           color: 'var(--danger)' },
+  { id: 'proposal', label: 'Proposal Sent', color: 'var(--violet)' },
+  { id: 'closed',   label: 'Closed Won',    color: 'var(--success)' },
+  { id: 'lost',     label: 'Lost',          color: 'var(--lost)' },
 ];
 
 // ============================================================
@@ -2244,8 +2319,8 @@ function ceDemoBadge(entry) {
   if (!entry || !entry.count) return '';
   const isDemo = entry.demo > 0;
   const text   = isDemo ? 'Receptionist demo' : 'Intro (14s hello)';
-  const color  = isDemo ? '#22c55e' : '#38bdf8';
-  const bg     = isDemo ? 'rgba(34,197,94,0.15)' : 'rgba(56,189,248,0.15)';
+  const color  = isDemo ? 'var(--success)' : 'var(--info)';
+  const bg     = isDemo ? 'var(--success-bg)' : 'var(--info-bg)';
   const both   = (entry.demo > 0 && entry.intro > 0) ? ' + intro' : '';
   return `<span style="background:${bg};color:${color};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap">${text}${both}</span>`;
 }
@@ -2392,12 +2467,12 @@ function renderCeTable() {
     // A demo play outranks any number of opens — see CE_SIGNAL. Show the play
     // when there is one, falling back to the open count otherwise.
     const opensTd   = demoEntry
-      ? `<td style="color:#22c55e;font-weight:600" title="${demoEntry.demo > 0 ? 'Played the receptionist demo' : 'Played the intro'}">▶ ${demoEntry.count}${opens ? ` · ${opens} open${opens > 1 ? 's' : ''}` : ''}</td>`
+      ? `<td style="color:var(--success);font-weight:600" title="${demoEntry.demo > 0 ? 'Played the receptionist demo' : 'Played the intro'}">▶ ${demoEntry.count}${opens ? ` · ${opens} open${opens > 1 ? 's' : ''}` : ''}</td>`
       : opens >= 2
-        ? `<td style="color:#f97316;font-weight:600">🔥 ${opens}</td>`
+        ? `<td style="color:var(--warn);font-weight:600">🔥 ${opens}</td>`
         : opens === 1
-          ? `<td style="color:#888">1</td>`
-          : `<td style="color:#555">—</td>`;
+          ? `<td style="color:var(--text-secondary)">1</td>`
+          : `<td style="color:var(--text-muted)">—</td>`;
     return `<tr data-id="${l.id}" onclick="openCeDetail('${l.id}')" style="cursor:pointer">
       <td onclick="event.stopPropagation()"><input type="checkbox" class="ce-row-check" data-id="${l.id}" ${checked} onchange="toggleCeRow(this)"></td>
       <td class="ce-td-company">${esc(l.company) || '<span style="color:var(--text-muted)">—</span>'}</td>
@@ -2460,8 +2535,8 @@ function renderDemosPanel() {
   tbody.innerHTML = rows.map(r => {
     const timeStr = r.last ? new Date(r.last).toLocaleString() : '—';
     const playsTd = r.count >= 2
-      ? `<td style="color:#22c55e;font-weight:600">▶ ${r.count}</td>`
-      : `<td style="color:#888">${r.count}</td>`;
+      ? `<td style="color:var(--success);font-weight:600">▶ ${r.count}</td>`
+      : `<td style="color:var(--text-secondary)">${r.count}</td>`;
     return `<tr>
       <td class="ce-td-company">${esc(r.company) || '—'}</td>
       <td>${ceDemoBadge(r)}</td>
@@ -2637,7 +2712,7 @@ function openCeDetail(id) {
       dot        = `<span style="color:var(--green);font-size:15px;line-height:1">●</span>`;
       labelStyle = 'color:var(--text-secondary)';
     } else if (s === currentStep) {
-      dot        = `<span style="color:#f97316;font-size:15px;line-height:1">◉</span>`;
+      dot        = `<span style="color:var(--warn);font-size:15px;line-height:1">◉</span>`;
       labelStyle = 'color:var(--text);font-weight:600';
     } else {
       dot        = `<span style="color:var(--text-muted);font-size:15px;line-height:1">○</span>`;
@@ -2669,7 +2744,7 @@ function openCeDetail(id) {
     const nextDate  = new Date(lead.lastEmailedAt);
     nextDate.setDate(nextDate.getDate() + delayDays);
     const daysUntil = Math.ceil((nextDate - new Date()) / (1000 * 60 * 60 * 24));
-    if (daysUntil <= 0)      nextHtml = `<p style="font-size:13px;color:#f97316;font-weight:600">Follow-up due now</p>`;
+    if (daysUntil <= 0)      nextHtml = `<p style="font-size:13px;color:var(--warn);font-weight:600">Follow-up due now</p>`;
     else if (daysUntil === 1) nextHtml = `<p style="font-size:13px;color:var(--text)">Follow-up sends tomorrow</p>`;
     else                      nextHtml = `<p style="font-size:13px;color:var(--text)">Follow-up sends in ${daysUntil} days (${nextDate.toLocaleDateString()})</p>`;
   } else if (lead.stage === 'Queued') {
@@ -2692,7 +2767,7 @@ function openCeDetail(id) {
       .sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
     const capped = matches.slice(0, 5);
     const extra  = matches.length - capped.length;
-    demosHtml  = `<p style="font-size:13px;font-weight:600;color:#22c55e;margin-bottom:8px">▶ ${demoEntry.count} play${demoEntry.count > 1 ? 's' : ''} ${ceDemoBadge(demoEntry)}</p>`;
+    demosHtml  = `<p style="font-size:13px;font-weight:600;color:var(--success);margin-bottom:8px">▶ ${demoEntry.count} play${demoEntry.count > 1 ? 's' : ''} ${ceDemoBadge(demoEntry)}</p>`;
     demosHtml += '<div style="display:flex;flex-direction:column;gap:4px">';
     for (const d of capped) {
       const ts = d.timestamp ? new Date(d.timestamp).toLocaleString() : '—';
@@ -2717,7 +2792,7 @@ function openCeDetail(id) {
       .sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
     const capped = matches.slice(0, 5);
     const extra  = matches.length - capped.length;
-    opensHtml  = `<p style="font-size:13px;font-weight:600;color:#f97316;margin-bottom:8px">🔥 ${opens} open${opens > 1 ? 's' : ''} recorded</p>`;
+    opensHtml  = `<p style="font-size:13px;font-weight:600;color:var(--warn);margin-bottom:8px">🔥 ${opens} open${opens > 1 ? 's' : ''} recorded</p>`;
     opensHtml += '<div style="display:flex;flex-direction:column;gap:4px">';
     for (const o of capped) {
       const ts = o.timestamp ? new Date(o.timestamp).toLocaleString() : '—';
@@ -2749,9 +2824,9 @@ function openCeDetail(id) {
     const notesHtml = esc(lead.notes)
       .replace(/\[REPLY: Interested\]/g,        `<span style="background:rgba(16,185,129,0.15);color:var(--green);padding:1px 5px;border-radius:4px">[REPLY: Interested]</span>`)
       .replace(/\[REPLY: Not Interested\]/g,    `<span style="background:rgba(239,68,68,0.15);color:var(--hot);padding:1px 5px;border-radius:4px">[REPLY: Not Interested]</span>`)
-      .replace(/\[REPLY: Unsubscribed\]/g,      `<span style="background:rgba(249,115,22,0.15);color:#f97316;padding:1px 5px;border-radius:4px">[REPLY: Unsubscribed]</span>`)
+      .replace(/\[REPLY: Unsubscribed\]/g,      `<span style="background:var(--warn-bg);color:var(--warn);padding:1px 5px;border-radius:4px">[REPLY: Unsubscribed]</span>`)
       .replace(/\[REPLY: OOO[^\]]*\]/g,         `<span style="background:rgba(59,130,246,0.15);color:var(--blue);padding:1px 5px;border-radius:4px">$&</span>`)
-      .replace(/\[REPLY: Wrong Person[^\]]*\]/g, `<span style="background:rgba(234,179,8,0.15);color:#eab308;padding:1px 5px;border-radius:4px">$&</span>`);
+      .replace(/\[REPLY: Wrong Person[^\]]*\]/g, `<span style="background:var(--warn-bg);color:var(--warn);padding:1px 5px;border-radius:4px">$&</span>`);
     document.getElementById('ce-d-notes').innerHTML = notesHtml;
   } else {
     document.getElementById('ce-d-notes').textContent = 'No notes';
