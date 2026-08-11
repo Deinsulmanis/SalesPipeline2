@@ -462,8 +462,40 @@ async function ensureHeader() {
   }
 }
 
+// Resolve a lead id to its sheet row, CONFIRMING the cached row still holds
+// that id before trusting it.
+//
+// rowMap is a long-lived in-memory cache rebuilt only on GET /api/leads. A cache
+// HIT previously returned without re-checking, so any structural edit made to
+// the sheet directly — inserting, deleting or sorting rows — left every cached
+// row number below the edit pointing at the wrong lead. Callers then acted on
+// that number: PUT overwrites the whole A:Q row (silently clobbering a different
+// lead and returning 200), and DELETE removes the row outright (deleting the
+// wrong lead). Both reported success.
+//
+// The probe is a single cell, so the guard costs far less than the full-sheet
+// rescan it prevents, and it only runs on the write paths.
 async function findRow(id) {
-  if (rowMap.has(id)) return rowMap.get(id);
+  const cached = rowMap.get(id);
+  if (cached) {
+    // The probe itself can fail — a cached row past the sheet's current grid
+    // limits (many rows deleted) makes Sheets reject the range outright. That
+    // is still just a stale cache, so treat ANY probe failure as a miss and
+    // rebuild rather than surfacing a 500 on the write.
+    let stillMine = false;
+    try {
+      const probe = await sheets().spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range:         `${SHEET_NAME}!A${cached}`,
+      });
+      stillMine = (probe.data.values?.[0]?.[0] || '') === id;
+    } catch (e) {
+      console.warn(`[findRow] row probe failed for ${id} at row ${cached} (${e.message}) — treating as stale`);
+    }
+    if (stillMine) return cached;
+    console.warn(`[findRow] stale row cache: ${id} was row ${cached} — rebuilding`);
+    rowMap.clear();
+  }
   const resp = await sheets().spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
     range:         COL_RANGE,
@@ -619,8 +651,25 @@ async function ensureColdEmailSheet() {
   }
 }
 
+// Same stale-cache guard as findRow() above — ceRowMap has the identical
+// exposure, and its callers are likewise a full-row PUT (A:S) and a DELETE.
 async function findCERow(id) {
-  if (ceRowMap.has(id)) return ceRowMap.get(id);
+  const cached = ceRowMap.get(id);
+  if (cached) {
+    let stillMine = false;
+    try {
+      const probe = await sheets().spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range:         `${CE_SHEET_NAME}!A${cached}`,
+      });
+      stillMine = (probe.data.values?.[0]?.[0] || '') === id;
+    } catch (e) {
+      console.warn(`[findCERow] row probe failed for ${id} at row ${cached} (${e.message}) — treating as stale`);
+    }
+    if (stillMine) return cached;
+    console.warn(`[findCERow] stale row cache: ${id} was row ${cached} — rebuilding`);
+    ceRowMap.clear();
+  }
   const resp = await sheets().spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
     range:         CE_COL_RANGE,
