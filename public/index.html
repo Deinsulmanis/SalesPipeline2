@@ -265,7 +265,7 @@
     padding: 8px 16px;
     border-radius: var(--radius-sm);
     cursor: pointer;
-    transition: all var(--t-base) cubic-bezier(0.4,0,0.2,1);
+    transition: background var(--t-base) cubic-bezier(0.4,0,0.2,1), border-color var(--t-base) cubic-bezier(0.4,0,0.2,1), color var(--t-base) cubic-bezier(0.4,0,0.2,1), opacity var(--t-base) cubic-bezier(0.4,0,0.2,1), transform var(--t-base) cubic-bezier(0.4,0,0.2,1), box-shadow var(--t-base) cubic-bezier(0.4,0,0.2,1);
     white-space: nowrap;
   }
 
@@ -353,7 +353,7 @@
     color: var(--text-secondary);
     cursor: pointer;
     font-family: inherit;
-    transition: all var(--t-fast) var(--ease-out);
+    transition: background var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out), opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out);
     display: flex;
     align-items: center;
     gap: 6px;
@@ -420,7 +420,12 @@
     border-radius: var(--radius);
     padding: 14px;
     cursor: pointer;
-    transition: all var(--t-slow) cubic-bezier(0.4,0,0.2,1);
+    /* Specific properties, not `all`: `transition: all` makes the browser watch
+       every animatable property on every card, and animates layout-affecting
+       ones it should not. */
+    transition: border-color var(--t-base) var(--ease-out),
+                transform var(--t-base) var(--ease-out),
+                box-shadow var(--t-base) var(--ease-out);
     position: relative;
     overflow: hidden;
   }
@@ -465,18 +470,42 @@
   .card[data-draggable="1"] { cursor: grab; }
   .card[data-draggable="1"]:active { cursor: grabbing; }
 
-  /* the element left behind while dragging */
-  .card.dragging { opacity: 0.35; }
+  /* The element left behind while dragging. Transitions are killed outright:
+     .card carries a transition on transform/box-shadow, and leaving it live
+     means every drag frame animates. */
+  .card.dragging {
+    opacity: 0.35;
+    transition: none !important;
+    box-shadow: none !important;
+  }
 
-  /* the clone that follows the pointer */
+  /* While ANY drag is in flight, suppress card hover effects board-wide. The
+     pointer sweeps across every card between source and target column, and each
+     hover would otherwise fire a transform + 24px-blur shadow repaint. */
+  body.dnd-active .card:hover {
+    transform: none;
+    box-shadow: none;
+    border-color: var(--border);
+  }
+  body.dnd-active .card,
+  body.dnd-active .card::before { transition: none !important; }
+
+  /* The clone that follows the pointer. Positioned once at 0,0 and moved ONLY
+     via translate3d so it stays on the compositor — animating left/top would
+     force layout on every frame. Shadow is deliberately cheap (a 40px blur on a
+     moving element is repainted every frame). */
   .drag-ghost {
     position: fixed;
+    left: 0;
+    top: 0;
     z-index: var(--z-toast);
     pointer-events: none;
     width: var(--ghost-w, 260px);
-    transform: rotate(1.5deg) scale(1.02);
-    box-shadow: var(--shadow-lg);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.45);
     opacity: 0.95;
+    transition: none !important;
+    will-change: transform;
+    contain: layout paint;
   }
 
   /* column being hovered / keyboard-targeted */
@@ -552,7 +581,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all var(--t-fast) var(--ease-out);
+    transition: background var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out), opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out);
   }
 
   .action-btn:hover { background: var(--border); color: var(--text); }
@@ -580,7 +609,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all var(--t-fast) var(--ease-out);
+    transition: background var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out), opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out);
     font-size: 16px;
   }
 
@@ -600,7 +629,7 @@
     font-weight: 600;
     cursor: pointer;
     border-radius: var(--radius-xs);
-    transition: all var(--t-fast) var(--ease-out);
+    transition: background var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out), opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -637,10 +666,10 @@
 
   .form-actions { display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }
 
-  .btn-cancel { padding: 9px 18px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: transparent; color: var(--text-secondary); font-family: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: all var(--t-fast) var(--ease-out); }
+  .btn-cancel { padding: 9px 18px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: transparent; color: var(--text-secondary); font-family: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: background var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out), opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out); }
   .btn-cancel:hover { background: var(--card); color: var(--text); }
 
-  .btn-save { padding: 9px 22px; border-radius: var(--radius-sm); border: none; background: var(--accent); color: var(--on-primary); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: all var(--t-base) var(--ease-out); }
+  .btn-save { padding: 9px 22px; border-radius: var(--radius-sm); border: none; background: var(--accent); color: var(--on-primary); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: background var(--t-base) var(--ease-out), border-color var(--t-base) var(--ease-out), color var(--t-base) var(--ease-out), opacity var(--t-base) var(--ease-out), transform var(--t-base) var(--ease-out), box-shadow var(--t-base) var(--ease-out); }
   .btn-save:hover { transform: translateY(-1px); box-shadow: 0 4px 16px var(--accent-glow); }
 
   /* ── DETAIL PANEL ── */
@@ -681,7 +710,7 @@
 
   .stage-select-wrap { display: flex; gap: 6px; flex-wrap: wrap; }
 
-  .stage-chip { font-size: 11px; font-weight: 600; padding: 5px 12px; border-radius: var(--radius-pill); border: 1px solid var(--border); background: transparent; color: var(--text-secondary); cursor: pointer; transition: all var(--t-fast) var(--ease-out); font-family: inherit; }
+  .stage-chip { font-size: 11px; font-weight: 600; padding: 5px 12px; border-radius: var(--radius-pill); border: 1px solid var(--border); background: transparent; color: var(--text-secondary); cursor: pointer; transition: background var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out), opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out); font-family: inherit; }
   .stage-chip:hover { border-color: var(--border-hover); color: var(--text); }
   .stage-chip.active { color: var(--on-solid); border-color: transparent; }
   /* the cyan chip is light — white on it fails contrast, so flip to dark */
@@ -697,15 +726,15 @@
   .notes-area { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-family: inherit; font-size: 13px; padding: 12px; line-height: 1.6; resize: vertical; min-height: 120px; width: 100%; outline: none; transition: border-color var(--t-base) var(--ease-out); }
   .notes-area:focus { border-color: var(--accent); }
 
-  .btn-save-notes { margin-top: 8px; padding: 7px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--card); color: var(--text-secondary); font-family: inherit; font-size: 12px; font-weight: 500; cursor: pointer; transition: all var(--t-fast) var(--ease-out); }
+  .btn-save-notes { margin-top: 8px; padding: 7px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--card); color: var(--text-secondary); font-family: inherit; font-size: 12px; font-weight: 500; cursor: pointer; transition: background var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out), opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out); }
   .btn-save-notes:hover { border-color: var(--accent); color: var(--accent); }
 
   .detail-footer { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; gap: 10px; flex-shrink: 0; }
 
-  .btn-edit-full { flex: 1; padding: 9px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: transparent; color: var(--text); font-family: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: all var(--t-fast) var(--ease-out); }
+  .btn-edit-full { flex: 1; padding: 9px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: transparent; color: var(--text); font-family: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: background var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out), opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out); }
   .btn-edit-full:hover { background: var(--card); }
 
-  .btn-del-lead { padding: 9px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: transparent; color: var(--text-secondary); font-family: inherit; font-size: 13px; cursor: pointer; transition: all var(--t-fast) var(--ease-out); }
+  .btn-del-lead { padding: 9px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: transparent; color: var(--text-secondary); font-family: inherit; font-size: 13px; cursor: pointer; transition: background var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out), opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out); }
   .btn-del-lead:hover { background: var(--hot-bg); border-color: var(--hot); color: var(--hot); }
 
 
@@ -753,7 +782,7 @@
     font-weight: 500;
     opacity: 0;
     transform: translateY(8px);
-    transition: all var(--t-slow) cubic-bezier(0.4,0,0.2,1);
+    transition: background var(--t-slow) cubic-bezier(0.4,0,0.2,1), border-color var(--t-slow) cubic-bezier(0.4,0,0.2,1), color var(--t-slow) cubic-bezier(0.4,0,0.2,1), opacity var(--t-slow) cubic-bezier(0.4,0,0.2,1), transform var(--t-slow) cubic-bezier(0.4,0,0.2,1), box-shadow var(--t-slow) cubic-bezier(0.4,0,0.2,1);
     pointer-events: auto;
     max-width: 340px;
     line-height: 1.4;
@@ -872,7 +901,7 @@
     display: flex;
     align-items: center;
     gap: 7px;
-    transition: all var(--t-fast) var(--ease-out);
+    transition: background var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out), opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out);
     margin-bottom: -1px;
   }
 
@@ -902,7 +931,7 @@
     color: var(--text-secondary);
     cursor: pointer;
     font-family: inherit;
-    transition: all var(--t-fast) var(--ease-out);
+    transition: background var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out), opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out);
   }
 
   .ce-tab:hover { border-color: var(--border-hover); color: var(--text); }
@@ -930,7 +959,7 @@
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
-    transition: all var(--t-fast) var(--ease-out);
+    transition: background var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out), opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out);
     display: inline-flex;
     align-items: center;
     gap: 5px;
@@ -948,7 +977,7 @@
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
-    transition: all var(--t-base) var(--ease-out);
+    transition: background var(--t-base) var(--ease-out), border-color var(--t-base) var(--ease-out), color var(--t-base) var(--ease-out), opacity var(--t-base) var(--ease-out), transform var(--t-base) var(--ease-out), box-shadow var(--t-base) var(--ease-out);
   }
 
   .btn-bulk-queue:disabled { opacity: 0.35; cursor: not-allowed; }
@@ -1011,7 +1040,7 @@
     font-size: 11px;
     font-weight: 600;
     cursor: pointer;
-    transition: all var(--t-fast) var(--ease-out);
+    transition: background var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out), opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out);
     white-space: nowrap;
   }
 
@@ -1027,7 +1056,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    transition: all var(--t-fast) var(--ease-out);
+    transition: background var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out), opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out);
     vertical-align: middle;
   }
 
@@ -1188,7 +1217,7 @@
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
-    transition: all var(--t-base) cubic-bezier(0.4,0,0.2,1);
+    transition: background var(--t-base) cubic-bezier(0.4,0,0.2,1), border-color var(--t-base) cubic-bezier(0.4,0,0.2,1), color var(--t-base) cubic-bezier(0.4,0,0.2,1), opacity var(--t-base) cubic-bezier(0.4,0,0.2,1), transform var(--t-base) cubic-bezier(0.4,0,0.2,1), box-shadow var(--t-base) cubic-bezier(0.4,0,0.2,1);
   }
 
   .btn-agent-run:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 16px var(--accent-glow); }
@@ -1206,7 +1235,7 @@
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    transition: all var(--t-fast) var(--ease-out);
+    transition: background var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out), opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out);
   }
 
   .btn-agent-stop:not(:disabled):hover { background: var(--hot-bg); border-color: var(--hot); color: var(--hot); }
@@ -2013,6 +2042,67 @@ function announce(msg) {
 
 // Single source of truth for a stage change: optimistic move, write, verify,
 // revert on any failure.
+// Refresh one column's header count and its empty-state placeholder. Cheap:
+// touches two nodes, no rebuild.
+function updateColumnChrome(colBody) {
+  if (!colBody) return;
+  const cards = colBody.querySelectorAll('.card').length;
+  const countEl = colBody.closest('.col')?.querySelector('.col-count');
+  if (countEl) countEl.textContent = cards;
+  const empty = colBody.querySelector('.empty-col');
+  if (cards === 0 && !empty) {
+    const d = document.createElement('div');
+    d.className = 'empty-col';
+    d.textContent = 'No leads';
+    colBody.appendChild(d);
+  } else if (cards > 0 && empty) {
+    empty.remove();
+  }
+}
+
+// Stage-derived counters in the stats bar. Recomputed from memory, not the DOM.
+function updateStageStats() {
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('stat-hot',      leads.filter(l => l.stage === 'hot').length);
+  set('stat-closed',   leads.filter(l => l.stage === 'closed').length);
+  set('stat-proposal', leads.filter(l => l.stage === 'proposal').length);
+}
+
+// Move ONE card node into its new column at the correct sorted position.
+// Replaces the old renderBoard() call, which rebuilt all 7 columns and every
+// card on a single drop.
+function patchCardIntoColumn(leadId, toStage) {
+  const card   = document.querySelector(`.card[data-id="${CSS.escape(leadId)}"]`);
+  const target = document.querySelector(`.col-body[data-stage="${toStage}"]`);
+  if (!card || !target) return null;
+  const from = card.closest('.col-body');
+  const lead = leads.find(l => l.id === leadId);
+
+  // Honour the same deterministic ordering renderBoard() uses, so a dropped
+  // card sits exactly where a fresh render would put it.
+  const before = [...target.querySelectorAll('.card')].find(sib => {
+    const sl = leads.find(l => l.id === sib.dataset.id);
+    return sl && compareLeads(lead, sl) < 0;
+  });
+  target.insertBefore(card, before || null);
+  card.dataset.stage = toStage;
+  card.setAttribute('aria-label',
+    `${lead.first || ''} ${lead.last || ''}`.trim() + ' — ' + stageLabel(toStage) +
+    '. Press Space to pick up, then Left or Right arrow to change stage.');
+
+  updateColumnChrome(from);
+  updateColumnChrome(target);
+  updateStageStats();
+  return from;
+}
+
+// Pending sheet writes, keyed by lead id. A card dragged three times in quick
+// succession issues ONE write for its final stage instead of three racing ones
+// (the sheet API is slow enough that overlapping writes can also land out of
+// order).
+const pendingStageWrites = new Map();
+const STAGE_WRITE_DEBOUNCE = 400;
+
 async function moveLeadToStage(leadId, toStage) {
   const lead = leads.find(l => l.id === leadId);
   // ── pre-write assertions ──
@@ -2021,37 +2111,38 @@ async function moveLeadToStage(leadId, toStage) {
   const fromStage = lead.stage;
   if (fromStage === toStage) return true;            // no-op, don't write
 
-  // ── optimistic UI ──
+  // ── optimistic UI: in-memory patch + single-node DOM move, no re-render ──
   lead.stage = toStage;
-  renderBoard();
+  const originCol = patchCardIntoColumn(leadId, toStage);
   announce(`${lead.first || ''} ${lead.last || ''} moved to ${stageLabel(toStage)}`);
 
-  try {
-    const resp = await fetch(`/api/leads/${leadId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(lead),
-    });
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+  // ── persistence: debounced, fired AFTER the card has already moved ──
+  const existing = pendingStageWrites.get(leadId);
+  if (existing) clearTimeout(existing.timer);
+  // The stage to revert to is the one from BEFORE this burst of moves began,
+  // not the intermediate one we just replaced.
+  const revertStage = existing ? existing.revertStage : fromStage;
 
-    // ── post-write verification ── re-read and confirm the sheet actually holds
-    // the new stage; a 200 with an unwritten cell would otherwise go unnoticed.
-    const check = await fetch('/api/leads');
-    if (check.ok) {
-      const fresh = (await check.json()).find(l => l.id === leadId);
-      if (fresh && fresh.stage !== toStage) {
-        throw new Error(`sheet still reads "${fresh.stage}"`);
-      }
+  const timer = setTimeout(async () => {
+    pendingStageWrites.delete(leadId);
+    try {
+      const resp = await fetch(`/api/leads/${leadId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(lead),
+      });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      showToast(`Moved to ${stageLabel(lead.stage)}`);
+    } catch (e) {
+      lead.stage = revertStage;                      // revert model…
+      patchCardIntoColumn(leadId, revertStage);      // …and the single node
+      announce(`Move failed. ${lead.first || ''} ${lead.last || ''} returned to ${stageLabel(revertStage)}`);
+      showToast(`Could not move lead: ${e.message}`, 'error');
     }
-    showToast(`Moved to ${stageLabel(toStage)}`);
-    return true;
-  } catch (e) {
-    lead.stage = fromStage;                          // revert
-    renderBoard();
-    announce(`Move failed. ${lead.first || ''} ${lead.last || ''} returned to ${stageLabel(fromStage)}`);
-    showToast(`Could not move lead: ${e.message}`, 'error');
-    return false;
-  }
+  }, STAGE_WRITE_DEBOUNCE);
+
+  pendingStageWrites.set(leadId, { timer, revertStage });
+  return true;
 }
 
 // ── pointer dragging (mouse + touch) ──────────────────────────────────────
@@ -2071,6 +2162,44 @@ function boardPointerDown(e) {
   };
 }
 
+// Column geometry is measured ONCE per drag and reused for hit-testing. The
+// previous version called document.elementFromPoint() on every pointermove —
+// that forces a style/layout flush per event, and pointermove fires at the
+// input device's rate (120+/s on a high-refresh screen), not the frame rate.
+function measureColumns() {
+  dragState.cols = [...document.querySelectorAll('.col-body')].map(el => ({
+    el, stage: el.dataset.stage, r: el.getBoundingClientRect(),
+  }));
+}
+function columnAt(x, y) {
+  for (const c of dragState.cols) {
+    if (x >= c.r.left && x <= c.r.right && y >= c.r.top && y <= c.r.bottom) return c.el;
+  }
+  return null;
+}
+
+// Pointer events are coalesced into one rAF tick, so we do at most one piece of
+// visual work per frame no matter how fast the device reports moves.
+function scheduleDragFrame() {
+  if (dragState.frame) return;
+  dragState.frame = requestAnimationFrame(() => {
+    dragState.frame = 0;
+    if (!dragState || !dragState.active) return;
+    const { x, y } = dragState.pending;
+
+    // translate3d keeps the ghost on the compositor — no layout, no repaint.
+    dragState.ghost.style.transform =
+      `translate3d(${x - dragState.offX}px, ${y - dragState.offY}px, 0) rotate(1.5deg)`;
+
+    const col = columnAt(x, y);
+    if (col !== dragState.lastCol) {
+      dragState.lastCol?.classList.remove('drop-target');
+      col?.classList.add('drop-target');
+      dragState.lastCol = col;
+    }
+  });
+}
+
 function boardPointerMove(e) {
   if (!dragState) return;
   const dx = e.clientX - dragState.startX;
@@ -2083,33 +2212,36 @@ function boardPointerMove(e) {
     const ghost = dragState.card.cloneNode(true);
     ghost.classList.add('drag-ghost');
     ghost.style.setProperty('--ghost-w', r.width + 'px');
-    ghost.style.left = r.left + 'px';
-    ghost.style.top  = r.top + 'px';
     document.body.appendChild(ghost);
     dragState.ghost = ghost;
+    // Offset from the card's top-left, so the ghost sits under the pointer
+    // exactly where the card was grabbed.
     dragState.offX = dragState.startX - r.left;
     dragState.offY = dragState.startY - r.top;
     dragState.card.classList.add('dragging');
     dragState.card.setAttribute('aria-grabbed', 'true');
     document.body.style.userSelect = 'none';
+    document.body.classList.add('dnd-active');   // suppresses hover repaints
+    measureColumns();
+    // The board scrolls horizontally on narrow viewports; re-measure if it does.
+    dragState.onScroll = () => measureColumns();
+    window.addEventListener('scroll', dragState.onScroll, { passive: true, capture: true });
   }
 
-  dragState.ghost.style.left = (e.clientX - dragState.offX) + 'px';
-  dragState.ghost.style.top  = (e.clientY - dragState.offY) + 'px';
-
-  const col = document.elementFromPoint(e.clientX, e.clientY)?.closest('.col-body');
-  if (col !== dragState.lastCol) {
-    dragState.lastCol?.classList.remove('drop-target');
-    col?.classList.add('drop-target');
-    dragState.lastCol = col;
-  }
+  dragState.pending = { x: e.clientX, y: e.clientY };
+  scheduleDragFrame();
 }
 
 async function boardPointerUp(e) {
   if (!dragState) return;
   const st = dragState; dragState = null;
+  // Drop every per-drag resource: a queued frame would run against a null
+  // dragState, and a stale scroll listener would keep re-measuring forever.
+  if (st.frame) cancelAnimationFrame(st.frame);
+  if (st.onScroll) window.removeEventListener('scroll', st.onScroll, { capture: true });
   document.body.style.userSelect = '';
-  st.ghost?.remove();
+  document.body.classList.remove('dnd-active');
+  st.ghost?.remove();                    // takes will-change with it
   st.card.classList.remove('dragging');
   st.card.setAttribute('aria-grabbed', 'false');
   st.lastCol?.classList.remove('drop-target');
