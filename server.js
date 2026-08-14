@@ -783,6 +783,166 @@ async function ensureDemoPlaysHeader() {
   }
 }
 
+// ── DAILY DIGEST ──────────────────────────────────────────────────────────────
+// One summary card per day, rendered on the dashboard (not SMS, not email).
+// Generated at 18:00 America/Vancouver and cached in its own tab so it is
+// idempotent: asking twice on the same day returns the same stored row.
+const DIGEST_SHEET  = 'DailyDigest';
+const DIGEST_HEADER = ['date','generatedAt','payload'];
+
+// Every date comparison in the digest uses the Vancouver calendar day, not UTC,
+// or an evening event would land in tomorrow's summary.
+const vanDay = (d = new Date()) =>
+  new Date(d).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+
+async function ensureDigestSheet() {
+  const s  = sheets();
+  const ss = await s.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  if (ss.data.sheets.find(sh => sh.properties.title === DIGEST_SHEET)) return;
+  await s.spreadsheets.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: { requests: [{ addSheet: { properties: { title: DIGEST_SHEET } } }] },
+  });
+  await s.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID, range: `${DIGEST_SHEET}!A1`,
+    valueInputOption: 'RAW', requestBody: { values: [DIGEST_HEADER] },
+  });
+}
+
+// Computes today's numbers from the source tabs. Read-only.
+async function computeDigest(day) {
+  const [ceR, opR, dpR, drR, inR] = await Promise.all([
+    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:S` }),
+    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ProposalOpens!A:F' }),
+    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A:F' }),
+    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ReplyDrafts!A:I' }).catch(() => ({ data: {} })),
+    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'IntentFired!A:E' }).catch(() => ({ data: {} })),
+  ]);
+
+  const leadRows = (ceR.data.values || []).slice(1).filter(r => r[0]);
+  const isToday  = ts => { try { return ts && vanDay(new Date(ts)) === day; } catch (_e) { return false; } };
+
+  // ── emails sent today (lastEmailedAt lands on every send path) ──
+  const emailsSent = leadRows.filter(r => isToday(r[9])).length;
+
+  // ── real opens today: the shared scanner filter, not raw rows ──
+  const opens = (opR.data.values || []).slice(1).map(r => ({
+    timestamp: r[0] || '', company: r[1] || '', id: r[3] || '', ip: r[4] || '',
+  }));
+  const leadById  = new Map(leadRows.map(r => [r[0], { lastEmailedAt: r[9] || '' }]));
+  const leadByKey = new Map();
+  for (const r of leadRows) { const k = openKey(r[1]); if (k && !leadByKey.has(k)) leadByKey.set(k, { lastEmailedAt: r[9] || '' }); }
+  const annotatedOpens = annotateOpens({
+    opens, keyOf: row => openKey(row.company),
+    leadFor: row => (row.id && leadById.get(row.id)) || leadByKey.get(openKey(row.company)) || null,
+  });
+  const todaysRealOpens = annotatedOpens.filter(o => o.real && isToday(o.timestamp));
+  const realOpens = { rows: todaysRealOpens.length, companies: new Set(todaysRealOpens.map(o => o.key).filter(Boolean)).size };
+
+  // ── demo plays today, split by clip, plus how many companies now hold a pair ──
+  const playsToday = (dpR.data.values || []).slice(1).filter(r => isToday(r[0]));
+  const introToday = playsToday.filter(r => normalizeAudioType(r[5]) === 'intro').length;
+  const demoToday  = playsToday.filter(r => normalizeAudioType(r[5]) !== 'intro').length;
+  const pairKeys = new Map();
+  for (const r of (dpR.data.values || []).slice(1)) {
+    const k = openKey(r[1] || ''); if (!k) continue;
+    const e = pairKeys.get(k) || { intro: false, demo: false };
+    if (normalizeAudioType(r[5]) === 'intro') e.intro = true; else e.demo = true;
+    pairKeys.set(k, e);
+  }
+  const bothPairs = [...pairKeys.values()].filter(v => v.intro && v.demo).length;
+
+  // ── replies today, by Haiku classification (read off the notes tags) ──
+  const TAGS = [
+    ['Question',       /\[REPLY: Question/],
+    ['Interested',     /\[REPLY: Interested\]/],
+    ['Not Interested', /\[REPLY: Not Interested\]/],
+    ['Unsubscribed',   /\[REPLY: Unsubscribed\]/],
+    ['Wrong Person',   /\[REPLY: Wrong Person/],
+    ['OOO',            /\[REPLY: OOO/],
+    ['Needs Human',    /\[REPLY: Needs Human|\[NEEDS REVIEW/],
+  ];
+  const repliedToday = leadRows.filter(r => isToday(r[9]) && /\[REPLY:/.test(r[11] || ''));
+  const replyBreakdown = {};
+  for (const [label, re] of TAGS) {
+    const n = repliedToday.filter(r => re.test(r[11] || '')).length;
+    if (n) replyBreakdown[label] = n;
+  }
+
+  // ── auto-answers vs drafts ──
+  const autoAnswered = leadRows.filter(r => isToday(r[9]) && /auto-answered/.test(r[11] || '')).length;
+  const draftRows = (drR.data.values || []).slice(1);
+  const draftsToday   = draftRows.filter(r => isToday(r[0])).length;
+  const draftsPending = draftRows.filter(r => (r[8] || 'pending').toLowerCase() === 'pending').length;
+
+  // ── booking links sent, by trigger ──
+  const intentRows = (inR.data.values || []).slice(1);
+  const bookingByTrigger = {
+    'question reply': autoAnswered,
+    'both audios':    intentRows.filter(r => isToday(r[0])).length,
+  };
+
+  return {
+    date: day,
+    generatedAt: new Date().toISOString(),
+    emailsSent,
+    realOpens,
+    demoPlays: { intro: introToday, demo: demoToday, total: playsToday.length, companiesWithBothPairs: bothPairs },
+    replies: { total: repliedToday.length, breakdown: replyBreakdown },
+    answers: { autoSent: autoAnswered, draftsCreated: draftsToday, draftsPending },
+    bookingLinksSent: { total: Object.values(bookingByTrigger).reduce((a, b) => a + b, 0), byTrigger: bookingByTrigger },
+  };
+}
+
+// Idempotent: returns the stored digest for the day if one exists, otherwise
+// computes and stores it. `force` recomputes but still overwrites in place, so
+// there is never more than one row per date.
+async function getOrCreateDigest(day, { force = false } = {}) {
+  await ensureDigestSheet();
+  const existing = await sheets().spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID, range: `${DIGEST_SHEET}!A:C`,
+  });
+  const rows = existing.data.values || [];
+  const idx  = rows.findIndex((r, i) => i > 0 && r[0] === day);
+
+  if (idx !== -1 && !force) {
+    try { return JSON.parse(rows[idx][2]); } catch (_e) { /* corrupt row — recompute below */ }
+  }
+
+  const digest  = await computeDigest(day);
+  const payload = [[digest.date, digest.generatedAt, JSON.stringify(digest)]];
+
+  if (idx !== -1) {
+    await sheets().spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID, range: `${DIGEST_SHEET}!A${idx + 1}:C${idx + 1}`,
+      valueInputOption: 'RAW', requestBody: { values: payload },
+    });
+  } else {
+    const before = rows.length;
+    await sheets().spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_ID, range: `${DIGEST_SHEET}!A:C`,
+      valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS', requestBody: { values: payload },
+    });
+    const after = await sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${DIGEST_SHEET}!A:A`,
+    });
+    const added = (after.data.values || []).length - before;
+    if (added !== 1) console.warn(`[Digest] expected 1 new row, saw ${added}`);
+  }
+  return digest;
+}
+
+app.get('/api/digest', requireAuth, async (req, res) => {
+  try {
+    const day = String(req.query.date || '').trim() || vanDay();
+    const digest = await withAuth(() => getOrCreateDigest(day, { force: req.query.force === 'true' }));
+    res.json(digest);
+  } catch (e) {
+    console.error('[Digest GET]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Serves the DemoPlays log, same shape as /api/proposalOpens plus the
 // normalized audioType per row.
 //
@@ -1247,6 +1407,19 @@ if (process.env.RAILWAY_ENVIRONMENT) {
     timezone: 'America/Vancouver',
   });
   console.log('[cron] Intent backstop scheduled: every 3 minutes');
+
+  // Daily digest — 18:00 America/Vancouver. getOrCreateDigest is idempotent, so
+  // a restart, a re-fire, or a dashboard load on the same day all reuse the
+  // stored row rather than producing a second one.
+  cron.schedule('0 18 * * *', () => {
+    console.log('[cron] Generating daily digest...');
+    withAuth(() => getOrCreateDigest(vanDay()))
+      .then(d => console.log(`[digest] ${d.date} — ${d.emailsSent} sent, ${d.realOpens.rows} real opens, ${d.answers.draftsPending} drafts pending review`))
+      .catch(e => console.error('[digest] generation failed:', e.message));
+  }, {
+    timezone: 'America/Vancouver',
+  });
+  console.log('[cron] Daily digest scheduled: 18:00 Pacific');
   console.log('[cron] Check-only pass scheduled: :15 and :45 every hour');
 }
 

@@ -1481,6 +1481,17 @@
     </div>
   </div>
 
+  <!-- Daily digest card. Rendered at the top of the cold-email view because the
+       drafts-awaiting-review count is an action queue, not a metric. -->
+  <div id="ce-digest-card" style="display:none;margin:16px 28px;padding:18px 20px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-lg)">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+      <div class="eyebrow">Today · <span id="digest-date">—</span></div>
+      <div style="font-size:11px;color:var(--text-muted)" id="digest-generated"></div>
+    </div>
+    <div id="digest-action" style="display:none;margin-bottom:14px"></div>
+    <div id="digest-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px"></div>
+  </div>
+
   <!-- Demo plays panel — placed ABOVE the opens panel: pressing play is a
        stronger buying signal than loading the proposal page. -->
   <div id="ce-demos-panel" style="display:none">
@@ -2758,7 +2769,10 @@ function setCeFilter(f) {
   const isOpens     = f === 'opens';
   const isDemos     = f === 'demos';
   const isCampaigns = f === 'campaigns';
-  document.getElementById('ce-leads-panel').style.display      = (!isAgent && !isOpens && !isDemos && !isCampaigns) ? 'block' : 'none';
+  const isLeadsView = (!isAgent && !isOpens && !isDemos && !isCampaigns);
+  document.getElementById('ce-leads-panel').style.display      = isLeadsView ? 'block' : 'none';
+  const digestCard = document.getElementById('ce-digest-card');
+  if (digestCard && digestCard.dataset.loaded === '1') digestCard.style.display = isLeadsView ? 'block' : 'none';
   document.getElementById('agent-panel').style.display         = isAgent     ? 'block' : 'none';
   document.getElementById('ce-demos-panel').style.display      = isDemos     ? 'block' : 'none';
   document.getElementById('ce-opens-panel').style.display      = isOpens     ? 'block' : 'none';
@@ -2815,6 +2829,7 @@ async function loadCeLeads() {
       ceDemoMap.set(key, e);
     }
     updateCeStats();
+    loadDigest();          // additive — failure never blocks the rest of the view
     buildSendChart();
     renderCeTable();
     if (ceActiveFilter === 'campaigns') renderCampaignsPanel();
@@ -3066,6 +3081,75 @@ function clearCeSearch() {
   if (input) input.value = '';
   document.getElementById('ce-search-clear').style.display = 'none';
   renderCeTable();
+}
+
+// ── DAILY DIGEST CARD ────────────────────────────────────────────────────────
+// Fetched once per dashboard load. The server owns idempotency (one stored row
+// per Vancouver day), so loading the page repeatedly never regenerates it.
+async function loadDigest() {
+  const card = document.getElementById('ce-digest-card');
+  if (!card) return;
+  try {
+    const resp = await fetch('/api/digest');
+    if (!resp.ok) return;                      // silent: the digest is additive
+    renderDigest(await resp.json());
+  } catch (e) {
+    console.warn('[digest] load failed:', e.message);
+  }
+}
+
+function digestTile(label, value, opts = {}) {
+  const color = opts.color || 'var(--text)';
+  const sub = opts.sub ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">${esc(opts.sub)}</div>` : '';
+  return `<div>
+    <div style="font-size:22px;font-weight:700;color:${color};line-height:1.1">${esc(String(value))}</div>
+    <div style="font-size:11px;color:var(--text-secondary);margin-top:3px">${esc(label)}</div>
+    ${sub}
+  </div>`;
+}
+
+function renderDigest(d) {
+  const card = document.getElementById('ce-digest-card');
+  if (!card || !d || !d.date) return;
+  card.style.display = 'block';
+  card.dataset.loaded = '1';
+  document.getElementById('digest-date').textContent = d.date;
+  const gen = d.generatedAt ? new Date(d.generatedAt).toLocaleTimeString() : '';
+  document.getElementById('digest-generated').textContent = gen ? `generated ${gen}` : '';
+
+  // Action queue first and loud — this is the only part that asks Deins to do
+  // something, so it is not buried among the counters.
+  const pending = d.answers?.draftsPending || 0;
+  const action = document.getElementById('digest-action');
+  if (pending > 0) {
+    action.style.display = 'block';
+    action.innerHTML = `<div style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--warn-bg);border:1px solid var(--warn);border-radius:var(--radius-sm)">
+      <div style="font-size:20px;font-weight:700;color:var(--warn)">${pending}</div>
+      <div style="font-size:13px;color:var(--text)">repl${pending === 1 ? 'y' : 'ies'} drafted and awaiting your review
+        <div style="font-size:11px;color:var(--text-secondary)">pricing questions, objections, and anything the model wasn't confident about</div>
+      </div>
+    </div>`;
+  } else {
+    action.style.display = 'none';
+  }
+
+  const rb = d.replies?.breakdown || {};
+  const replySub = Object.entries(rb).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(' · ');
+  const bt = d.bookingLinksSent?.byTrigger || {};
+  const bookingSub = Object.entries(bt).filter(([, v]) => v).map(([k, v]) => `${v} via ${k}`).join(' · ');
+
+  document.getElementById('digest-grid').innerHTML = [
+    digestTile('emails sent', d.emailsSent ?? 0),
+    digestTile('real opens', d.realOpens?.rows ?? 0, { sub: `${d.realOpens?.companies ?? 0} companies · bots filtered` }),
+    digestTile('demo plays', d.demoPlays?.total ?? 0, {
+      color: 'var(--success)',
+      sub: `${d.demoPlays?.intro ?? 0} intro · ${d.demoPlays?.demo ?? 0} demo`,
+    }),
+    digestTile('both-audio pairs', d.demoPlays?.companiesWithBothPairs ?? 0, { color: 'var(--success)', sub: 'companies, all time' }),
+    digestTile('replies', d.replies?.total ?? 0, { sub: replySub || '—' }),
+    digestTile('auto-answered', d.answers?.autoSent ?? 0, { sub: `${d.answers?.draftsCreated ?? 0} drafted instead` }),
+    digestTile('booking links sent', d.bookingLinksSent?.total ?? 0, { color: 'var(--primary)', sub: bookingSub || '—' }),
+  ].join('');
 }
 
 // Demo plays, aggregated one row per company (ceDemoMap is already keyed that
