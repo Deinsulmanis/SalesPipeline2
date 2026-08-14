@@ -1759,9 +1759,15 @@ const BOT_UA_PATTERN = /curl|wget|python|java|go-http|axios|node-fetch|spider|cr
 function buildIntentEmail(lead) {
   const company = cleanCompanyName(lead.company) || 'your clinic';
   const casl = `---\n${MAILING_ADDRESS}\nReply "unsubscribe" and I'll remove you immediately.`;
-  // Deliberately vague about WHO listened: the play may well have been a staff
-  // member, and "I saw you listen to both" reads as surveillance.
-  const lead_in = `Someone at ${company} listened to both the intro and the demo — so you've heard exactly how it handles a real call.`;
+  // Opens by naming the demo play directly and asking for a reaction, so the
+  // easiest response is a reply rather than a booking — the calendar link below
+  // is the second option, not the only one.
+  //
+  // Note this addresses "you" even though the listener may have been a staff
+  // member; that is a deliberate call, chosen over the vaguer "someone at your
+  // office" phrasing. The trigger itself still requires BOTH clips to have been
+  // played — the copy just refers to "the demo" rather than itemising them.
+  const lead_in = `I noticed you listened to the demo — I'm interested to hear your thoughts.`;
   return {
     subject: `Re: a quick demo I built for ${company}`,
     body: `Hi ${salutationName(lead)},\n\n${bookingSnippet(company, { lead: lead_in })}\n\n— ${FROM_NAME}\n\n${casl}`,
