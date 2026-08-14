@@ -47,6 +47,11 @@ const { classify: classifyLeadEmail } = require('./check-leads');
 // Scanner-detonation filtering for ProposalOpens, shared verbatim with
 // server.js's dashboard stats — one definition, no drift.
 const { annotateOpens } = require('./open-filter');
+// WARM-ONLY booking asset — see booking.js. Imported here for the two intent
+// triggers (question replies, both-audios-played) and NOT by any cold template.
+const { bookingSnippet, pricingDeflection, BOOKING_URL } = require('./booking');
+// The only source of truth the reply-answering model may state as fact.
+const { PRODUCT_FACTS, NEVER_AUTO_ANSWER } = require('./product-facts');
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 
@@ -67,6 +72,9 @@ const CHECK_ONLY       = process.env.CHECK_ONLY === 'true';
 const SENDING_ENABLED  = process.env.SENDING_ENABLED === 'true';
 const DAILY_CAP        = parseInt(process.env.DAILY_CAP || '12', 10);
 const DAILY_SEND_LIMIT = parseInt(process.env.DAILY_SEND_LIMIT || '40', 10);
+// Below this, a drafted answer goes to the review queue instead of the prospect.
+// Deliberately high: a wrong auto-answer costs more than a slower human one.
+const ANSWER_CONFIDENCE_FLOOR = parseInt(process.env.ANSWER_CONFIDENCE_FLOOR || '85', 10);
 const QUEUE_STAGE = process.env.QUEUE_STAGE || 'Queued';      // set a lead's stage to this to queue it
 const SENT_STAGE  = process.env.SENT_STAGE  || 'Contacted';   // stage the agent moves it to after sending
 const FROM_EMAIL  = process.env.FROM_EMAIL;                   // must be the authed Google account
@@ -848,7 +856,7 @@ async function getReplyMessage(lead) {
   }
 }
 
-const REPLY_CATEGORIES = new Set(['INTERESTED','NOT_INTERESTED','UNSUBSCRIBE','OUT_OF_OFFICE','WRONG_PERSON','NEEDS_HUMAN']);
+const REPLY_CATEGORIES = new Set(['QUESTION','INTERESTED','NOT_INTERESTED','UNSUBSCRIBE','OUT_OF_OFFICE','WRONG_PERSON','NEEDS_HUMAN']);
 
 // Safe default when classification cannot be trusted. NEEDS_HUMAN stops the
 // sequence and surfaces the lead for review rather than silently delaying it —
@@ -870,7 +878,8 @@ async function classifyReply(company, replyBody) {
         'You are classifying a reply to a cold sales email about an AI receptionist product for small businesses.',
         'Classify the reply into exactly one of these categories:',
         '',
-        'INTERESTED — they want to learn more, asked a question about the product, want to schedule a call, or showed clear positive engagement',
+        'QUESTION — they asked a specific answerable question about the product (how it works, accents, booking confirmations, what it does). Prefer this over INTERESTED when there is an actual question to answer.',
+        'INTERESTED — positive engagement with no specific question: they want to learn more, want a call, or said yes',
         'NOT_INTERESTED — they explicitly declined, said no thanks, not interested, not a good fit, or similar',
         'UNSUBSCRIBE — they asked to be removed, unsubscribed, or said stop emailing',
         'OUT_OF_OFFICE — automated out-of-office or vacation reply',
@@ -878,6 +887,7 @@ async function classifyReply(company, replyBody) {
         'NEEDS_HUMAN — a real person engaged but their intent is unclear or does not cleanly fit the above (e.g. "what exactly is your question?", "who is this?", "can you send more info?" with no clear buying signal)',
         '',
         'Guidance: when a real person has clearly engaged but you are unsure of their intent, or you are unsure between INTERESTED and unclear, prefer NEEDS_HUMAN over guessing.',
+        'An objection or pushback ("we already have someone", "not convinced") is NOT a QUESTION — use NEEDS_HUMAN so a person handles it.',
         '',
         'Reply with ONLY the category name, nothing else.',
       ].join('\n'),
@@ -891,6 +901,108 @@ async function classifyReply(company, replyBody) {
     console.warn(`[Classify] API error for ${company}: ${e.message} — defaulting to ${CLASSIFY_FALLBACK}`);
     return CLASSIFY_FALLBACK;
   }
+}
+
+// ── INBOUND QUESTION ANSWERING ────────────────────────────────────────────────
+// When a reply is a genuine question, Haiku drafts an answer from
+// product-facts.js ONLY, then the warm booking snippet is appended.
+//
+// The confidence gate is the point of this function. Auto-sending a wrong
+// answer to a prospect is worse than answering an hour later, so anything the
+// model is not sure of — plus pricing and objections, unconditionally — becomes
+// a DRAFT for review instead of an outbound email.
+//
+// Returns { mode: 'auto' | 'draft', body, reason, confidence }.
+// mode 'auto'  → safe to send as-is
+// mode 'draft' → write to the review queue, never send
+const ANSWER_MAX_TOKENS = 400;
+
+async function answerQuestion(lead, replyText) {
+  const company = cleanCompanyName(lead.company) || 'your clinic';
+  const draft = (body, reason, confidence = 0) => ({ mode: 'draft', body, reason, confidence });
+
+  if (!ANTHROPIC_API_KEY) {
+    return draft(bookingSnippet(company), 'no ANTHROPIC_API_KEY — cannot answer', 0);
+  }
+
+  try {
+    const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+    const msg = await anthropic.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: ANSWER_MAX_TOKENS,
+      system: [
+        'You draft short replies on behalf of Deins, who sells an AI receptionist to dental clinics.',
+        '',
+        'You may state ONLY what the FACTS below support. If the question needs anything not in',
+        'the facts, do not invent it — lower your confidence instead.',
+        '',
+        '=== FACTS (your only source of truth) ===',
+        PRODUCT_FACTS,
+        '=== END FACTS ===',
+        '',
+        'NEVER auto-answer questions about:',
+        ...NEVER_AUTO_ANSWER.map(t => `- ${t}`),
+        'For any of those, set confidence to 0 and set needs_human to true.',
+        '',
+        'STYLE — this matters, previous replies have been called out for sounding like AI:',
+        '- Plain and short. 2-4 sentences. Answer the question and stop.',
+        '- No filler openers ("Great question!", "Thanks for reaching out!", "I hope this finds you well").',
+        '- No marketing adjectives, no exclamation marks, no bullet lists.',
+        '- Write like a person typing a quick reply on their phone.',
+        '- Do NOT add a sign-off, greeting, or booking link — those are added separately.',
+        '',
+        'Respond with ONLY a JSON object, no prose around it:',
+        '{"answer": "<the reply body>", "confidence": <0-100>, "needs_human": <true|false>, "topic": "<2-4 words>"}',
+        '',
+        'confidence is how sure you are the answer is accurate AND fully supported by the facts.',
+        'Use 0-60 if the facts do not clearly cover it. Only use 85+ when the facts answer it directly.',
+      ].join('\n'),
+      messages: [{ role: 'user', content: `Clinic: ${company}\nTheir reply:\n${replyText}` }],
+    });
+
+    const raw = (msg.content[0]?.text || '').trim();
+    let parsed;
+    try {
+      parsed = JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, ''));
+    } catch (_e) {
+      return draft(bookingSnippet(company), `model returned unparseable output: ${raw.slice(0, 120)}`, 0);
+    }
+
+    const confidence = Number(parsed.confidence) || 0;
+    const answer = String(parsed.answer || '').trim();
+    const topic = String(parsed.topic || '').trim();
+
+    // Belt-and-braces pricing catch: the model is told never to answer pricing,
+    // but a regex on the INBOUND text means a price question can't slip through
+    // on a model mistake either.
+    const pricingAsked = /\b(pric|cost|fee|charge|how much|\$|rate|budget|quote|monthly|per month)/i.test(replyText);
+    if (pricingAsked) {
+      return draft(pricingDeflection(company), 'pricing question — never auto-sent, price is delivered on the call', confidence);
+    }
+
+    // Same belt-and-braces treatment for objections. classifyReply() is the
+    // primary gate and routes pushback to NEEDS_HUMAN (verified), so this only
+    // fires if an objection is ever mis-routed here as a QUESTION — at which
+    // point the model has been observed rating it answerable at exactly the
+    // confidence floor. An objection is a sales conversation, not a fact
+    // lookup; it goes to a human.
+    const OBJECTION_PATTERNS = /\b(already have|already use|already using|not convinced|don'?t think|do not think|doesn'?t work|won'?t work|skeptical|sceptical|we'?re (fine|good|happy|all set)|no thanks|not for us|waste of|scam|spam)\b/i;
+    if (OBJECTION_PATTERNS.test(replyText)) {
+      return draft(withBooking(answer, company), 'reads as an objection — routed to review, not auto-sent', confidence);
+    }
+    if (parsed.needs_human === true) return draft(withBooking(answer, company), `model flagged needs_human (${topic})`, confidence);
+    if (confidence < ANSWER_CONFIDENCE_FLOOR) return draft(withBooking(answer, company), `confidence ${confidence} < ${ANSWER_CONFIDENCE_FLOOR} (${topic})`, confidence);
+    if (!answer) return draft(bookingSnippet(company), 'model returned an empty answer', confidence);
+
+    return { mode: 'auto', body: withBooking(answer, company), reason: `confident answer (${topic})`, confidence };
+  } catch (e) {
+    return draft(bookingSnippet(company), `answer API error: ${e.message}`, 0);
+  }
+}
+
+// Answer + the warm booking snippet, in the house voice.
+function withBooking(answer, company) {
+  return `${answer.trim()}\n\n${bookingSnippet(company)}`;
 }
 
 // ── SHEET I/O ─────────────────────────────────────────────────────────────────
@@ -1210,6 +1322,133 @@ async function handleWrongPerson(lead) {
 // Ambiguous-but-real reply: stop the sequence and surface for a human. When the
 // reply came from a different address than the one we emailed, record it so the
 // human knows where to look.
+// Review queue for answers that must not auto-send. One row per drafted reply;
+// the dashboard surfaces the pending count as Deins's action queue.
+const DRAFTS_SHEET  = 'ReplyDrafts';
+const DRAFTS_HEADER = ['createdAt','leadId','company','email','topic','confidence','reason','draftBody','status'];
+
+async function ensureDraftsSheet() {
+  const s  = sheets();
+  const ss = await s.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  if (ss.data.sheets.find(sh => sh.properties.title === DRAFTS_SHEET)) return;
+  await s.spreadsheets.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: { requests: [{ addSheet: { properties: { title: DRAFTS_SHEET } } }] },
+  });
+  await s.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID, range: `${DRAFTS_SHEET}!A1`,
+    valueInputOption: 'RAW', requestBody: { values: [DRAFTS_HEADER] },
+  });
+  console.log(`[Drafts] ${DRAFTS_SHEET} tab created`);
+}
+
+async function queueDraft(lead, answer) {
+  await ensureDraftsSheet();
+  const before = await sheets().spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID, range: `${DRAFTS_SHEET}!A:A`,
+  });
+  const beforeRows = (before.data.values || []).length;
+
+  await sheets().spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID, range: `${DRAFTS_SHEET}!A:I`,
+    valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: [[
+      new Date().toISOString(), lead.id, cleanCompanyName(lead.company) || lead.company || '',
+      lead.email, answer.reason || '', String(answer.confidence ?? ''), answer.reason || '',
+      answer.body || '', 'pending',
+    ]] },
+  });
+
+  // post-write verification — exactly one row added
+  const after = await sheets().spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID, range: `${DRAFTS_SHEET}!A:A`,
+  });
+  const added = (after.data.values || []).length - beforeRows;
+  if (added !== 1) console.warn(`[Drafts] expected 1 new row, saw ${added}`);
+  console.log(`  ✎ Draft queued for review — ${lead.email} (${answer.reason})`);
+}
+
+// A genuine question. Answer it from the facts if we're confident; otherwise
+// draft it for Deins. Either way the lead is tagged so the dashboard shows it.
+async function handleQuestion(lead, replyText, todaySent) {
+  const rowNum = await resolveRow(lead.id);
+  const answer = await answerQuestion(lead, replyText);
+
+  // ── gates that apply to auto-send only ──
+  // A drafted reply is never sent by the agent, so it needs no send gate; a
+  // human reviews and sends it, at which point these no longer apply.
+  let mode = answer.mode;
+  let gateReason = '';
+  if (mode === 'auto') {
+    const suppressed = suppressionReason(lead);
+    if (suppressed) {
+      mode = 'blocked';
+      gateReason = `suppressed (${suppressed})`;
+    } else if (todaySent >= DAILY_SEND_LIMIT) {
+      // Touch cap: an auto-answer is a real send and counts against the same
+      // daily ceiling as outreach, so a busy day can't over-mail.
+      mode = 'draft';
+      gateReason = `daily send cap reached (${todaySent}/${DAILY_SEND_LIMIT})`;
+      answer.reason = `${answer.reason} — held: ${gateReason}`;
+    }
+  }
+
+  if (mode === 'blocked') {
+    console.warn(`  🚫 [SUPPRESSED] not answering ${lead.email} — ${gateReason}`);
+    if (rowNum) {
+      await sheets().spreadsheets.values.batchUpdate({
+        spreadsheetId: SPREADSHEET_ID,
+        requestBody: { valueInputOption: 'RAW', data: [
+          { range: `${SHEET_NAME}!H${rowNum}`, values: [['Replied']] },
+          { range: `${SHEET_NAME}!I${rowNum}`, values: [['replied']] },
+          { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, `[REPLY: Question — not answered, ${gateReason}]`)]] },
+        ] },
+      });
+    }
+    return;
+  }
+
+  if (mode === 'draft') {
+    await queueDraft(lead, answer);
+    if (rowNum) {
+      await sheets().spreadsheets.values.batchUpdate({
+        spreadsheetId: SPREADSHEET_ID,
+        requestBody: { valueInputOption: 'RAW', data: [
+          { range: `${SHEET_NAME}!H${rowNum}`, values: [['Review']] },
+          { range: `${SHEET_NAME}!I${rowNum}`, values: [['replied']] },
+          { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, '[REPLY: Question — draft awaiting review]')]] },
+        ] },
+      });
+    }
+    return;
+  }
+
+  // ── auto-send ──
+  const company = cleanCompanyName(lead.company) || 'your clinic';
+  const subject = `Re: a quick demo I built for ${company}`;
+  const casl = `---\n${MAILING_ADDRESS}\nReply "unsubscribe" and I'll remove you immediately.`;
+  const body = `Hi ${salutationName(lead)},\n\n${answer.body}\n\n— ${FROM_NAME}\n\n${casl}`;
+
+  if (!SENDING_ENABLED) {
+    console.log(`⛔ [kill-switch] would auto-answer → ${lead.email}`);
+    return;
+  }
+  await sendEmail({ to: lead.email.trim(), subject, body });
+  console.log(`  ✅ Auto-answered ${lead.email} (confidence ${answer.confidence})`);
+
+  if (rowNum) {
+    await sheets().spreadsheets.values.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: { valueInputOption: 'RAW', data: [
+        { range: `${SHEET_NAME}!H${rowNum}`, values: [['Replied']] },
+        { range: `${SHEET_NAME}!I${rowNum}`, values: [['replied']] },
+        { range: `${SHEET_NAME}!J${rowNum}`, values: [[new Date().toISOString()]] },
+        { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, `[REPLY: Question — auto-answered, booking link sent]`)]] },
+      ] },
+    });
+  }
+}
+
 async function handleNeedsHuman(lead, fromAddr) {
   const rowNum = await resolveRow(lead.id);
   if (!rowNum) {
@@ -1249,6 +1488,9 @@ async function runReplyCheckPass(leads) {
 
   let found = 0;
   const classCounts = {};
+  // Auto-answers are real sends and share the daily ceiling with outreach, so
+  // the pass starts from today's actual count rather than assuming zero.
+  let replyPassTodaySent = countTodaySends(leads);
 
   for (const lead of candidates) {
     const message = await withAuth(() => getReplyMessage(lead));
@@ -1268,6 +1510,10 @@ async function runReplyCheckPass(leads) {
     if (!DRY_RUN) {
       await withAuth(async () => {
         switch (classification) {
+          // A genuine question is answered from product-facts.js when we're
+          // confident, otherwise drafted for review. Both paths append the
+          // warm booking snippet. todaySent enforces the touch cap.
+          case 'QUESTION':       return handleQuestion(lead, replyText, replyPassTodaySent);
           case 'INTERESTED':     return handleInterested(lead);
           case 'NOT_INTERESTED': return handleNotInterested(lead);
           case 'UNSUBSCRIBE':    return handleUnsubscribe(lead);
