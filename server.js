@@ -242,7 +242,12 @@ app.get('/demo-played', (req, res) => {
     valueInputOption:'RAW',
     insertDataOption:'INSERT_ROWS',
     requestBody:     { values: [row] },
-  }).catch(e => console.error('[/demo-played] Sheet write failed:', e.message));
+  })
+    // Event-driven intent trigger: if THIS play just completed an intro+demo
+    // pair for this company, fire the follow-up now rather than waiting for the
+    // cron. Chained after the append so the pass sees the row it is reacting to.
+    .then(() => maybeFireIntent(company))
+    .catch(e => console.error('[/demo-played] Sheet write failed:', e.message));
 
   sendPixel();
 });
@@ -431,6 +436,51 @@ function spawnAgent(dryRun, extraEnv = {}) {
 // Check-only pass: real sheet writes (reply/bounce detection), no sends.
 // Guards on agentState.running so it never spawns a second concurrent process
 // while a full run is already going.
+// Fires the both-audios intent pass. Spawned on demand when a demo play
+// completes a pair, and by a safety cron. Cheap: the agent's INTENT_ONLY mode
+// skips reply/bounce detection and all outreach.
+// Does this company now have BOTH a real intro play and a real demo play?
+// Cheap read of DemoPlays only — the agent re-derives everything authoritatively
+// and owns the fired-state check, so a false positive here costs one no-op
+// spawn, never a duplicate email.
+async function companyHasBothAudios(company) {
+  const key = openKey(company);
+  if (!key) return false;
+  const r = await sheets().spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A:F',
+  });
+  let intro = false, demo = false;
+  for (const row of (r.data.values || []).slice(1)) {
+    if (openKey(row[1] || '') !== key) continue;
+    const ip = (row[3] || '').trim();
+    if (['75.155.151.158'].includes(ip)) continue;      // own IP
+    if (BOT_PATTERNS.test(row[4] || '')) continue;      // bot UA
+    if (normalizeAudioType(row[5]) === 'intro') intro = true; else demo = true;
+  }
+  return intro && demo;
+}
+
+async function maybeFireIntent(company) {
+  try {
+    if (await companyHasBothAudios(company)) {
+      spawnAgentIntentOnly(`both audios played — ${company}`);
+    }
+  } catch (e) {
+    // Never let intent detection break the tracking pixel; the cron backstop
+    // will catch this play on its next tick.
+    console.warn('[intent] pair check failed:', e.message);
+  }
+}
+
+function spawnAgentIntentOnly(why) {
+  if (agentState.running) {
+    console.log(`[intent] agent busy — skipping intent spawn (${why}); the cron backstop will retry`);
+    return;
+  }
+  console.log(`[intent] spawning intent-only pass (${why})`);
+  startAgentProcess({ DRY_RUN: 'false', INTENT_ONLY: 'true' }, false);
+}
+
 function spawnAgentCheckOnly() {
   if (agentState.running) {
     console.log('[cron] Agent already running — skipping check-only pass this tick');
@@ -1186,6 +1236,17 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   }, {
     timezone: 'America/Vancouver',
   });
+
+  // Safety net for the both-audios trigger. The /demo-played route fires it
+  // event-driven, so this only picks up plays whose spawn was skipped because
+  // the agent was busy, or that arrived while the process was restarting.
+  // Every 3 minutes keeps the worst case inside the ~5-minute target.
+  cron.schedule('*/3 * * * *', () => {
+    spawnAgentIntentOnly('cron backstop');
+  }, {
+    timezone: 'America/Vancouver',
+  });
+  console.log('[cron] Intent backstop scheduled: every 3 minutes');
   console.log('[cron] Check-only pass scheduled: :15 and :45 every hour');
 }
 

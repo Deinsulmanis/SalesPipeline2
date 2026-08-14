@@ -46,7 +46,7 @@ const crypto = require('crypto');
 const { classify: classifyLeadEmail } = require('./check-leads');
 // Scanner-detonation filtering for ProposalOpens, shared verbatim with
 // server.js's dashboard stats — one definition, no drift.
-const { annotateOpens } = require('./open-filter');
+const { annotateOpens, isDatacenterIp } = require('./open-filter');
 // WARM-ONLY booking asset — see booking.js. Imported here for the two intent
 // triggers (question replies, both-audios-played) and NOT by any cold template.
 const { bookingSnippet, pricingDeflection, BOOKING_URL } = require('./booking');
@@ -64,6 +64,10 @@ const DRY_RUN          = process.env.DRY_RUN !== 'false';          // default TR
 // sheet writes, but skips every email send. Distinct from DRY_RUN, which also
 // skips the writes. Used by the 30-minute cron for near-real-time detection.
 const CHECK_ONLY       = process.env.CHECK_ONLY === 'true';
+// INTENT_ONLY runs ONLY the both-audios intent pass and exits. Kept separate
+// from CHECK_ONLY so the /demo-played route can fire a fast, narrow pass within
+// minutes of a play without triggering reply/bounce detection or any outreach.
+const INTENT_ONLY      = process.env.INTENT_ONLY === 'true';
 // Master kill switch. Fail-safe: sending is OFF unless the env var is the
 // literal string 'true' — an absent or mistyped value means no mail leaves.
 // Checked immediately before every sendEmail call, not at startup, so a
@@ -1682,6 +1686,158 @@ async function runBounceCheckPass(leads) {
   console.log(`[BounceCheck] ${bounced} bounce${bounced !== 1 ? 's' : ''} found / ${candidates.length} checked\n`);
 }
 
+// ── INTENT TRIGGER: BOTH AUDIOS PLAYED ────────────────────────────────────────
+// Playing the spoken intro AND the receptionist demo is the strongest signal
+// short of a reply: someone sat through both. This fires ONE email per lead,
+// within minutes, offering the call.
+//
+// "Real" plays only. A play is discarded if it came from Deins's own IP (the
+// same BLOCKED_IPS list the tracking pixels use), a bot UA, or a datacenter IP
+// via the shared open-filter. Multiple plays of the same clip collapse.
+//
+// Fired state lives in its own tab so a repeat play — or a server restart —
+// can never re-fire it.
+const INTENT_SHEET  = 'IntentFired';
+const INTENT_HEADER = ['firedAt','leadId','company','email','trigger'];
+const INTENT_BLOCKED_IPS = ['75.155.151.158'];   // keep in sync with server.js pixels
+
+async function ensureIntentSheet() {
+  const s  = sheets();
+  const ss = await s.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  if (ss.data.sheets.find(sh => sh.properties.title === INTENT_SHEET)) return;
+  await s.spreadsheets.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: { requests: [{ addSheet: { properties: { title: INTENT_SHEET } } }] },
+  });
+  await s.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID, range: `${INTENT_SHEET}!A1`,
+    valueInputOption: 'RAW', requestBody: { values: [INTENT_HEADER] },
+  });
+  console.log(`[Intent] ${INTENT_SHEET} tab created`);
+}
+
+async function loadFiredIntents() {
+  try {
+    const r = await sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${INTENT_SHEET}!A:E`,
+    });
+    // key on leadId + trigger so a future second trigger type is independent
+    return new Set((r.data.values || []).slice(1)
+      .filter(row => row[1]).map(row => `${row[1]}|${row[4] || 'both-audios'}`));
+  } catch (_e) {
+    return new Set();   // missing tab = nothing fired yet
+  }
+}
+
+// Reads DemoPlays and returns Map<companyKey, {intro, demo}> of REAL plays.
+async function readRealDemoPlays() {
+  const r = await sheets().spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A:F',
+  });
+  const byKey = new Map();
+  for (const row of (r.data.values || []).slice(1)) {
+    const [ts, company, , ip, ua, audioTypeRaw] = row;
+    if (!company) continue;
+    if (INTENT_BLOCKED_IPS.includes((ip || '').trim())) continue;      // own IP
+    if (BOT_UA_PATTERN.test(ua || '')) continue;                        // bot UA
+    if (isDatacenterIp(ip)) continue;                                   // cloud egress
+    const key = normalizeName(cleanCompanyName(company));
+    if (!key) continue;
+    // blank column F predates the intro and was always a receptionist demo
+    const type = String(audioTypeRaw || '').trim().toLowerCase() === 'intro' ? 'intro' : 'demo';
+    if (!byKey.has(key)) byKey.set(key, { intro: 0, demo: 0, last: '' });
+    const e = byKey.get(key);
+    e[type]++;                                    // repeat plays collapse via the pair test below
+    if ((ts || '') > e.last) e.last = ts || '';
+  }
+  return byKey;
+}
+
+// Mirrors the pixel routes' bot check so a UA rejected there is rejected here.
+const BOT_UA_PATTERN = /curl|wget|python|java|go-http|axios|node-fetch|spider|crawler|bot|preview|scan|mimecast|barracuda|proofpoint|cloudmark|symantec/i;
+
+function buildIntentEmail(lead) {
+  const company = cleanCompanyName(lead.company) || 'your clinic';
+  const casl = `---\n${MAILING_ADDRESS}\nReply "unsubscribe" and I'll remove you immediately.`;
+  // Deliberately vague about WHO listened: the play may well have been a staff
+  // member, and "I saw you listen to both" reads as surveillance.
+  const lead_in = `Someone at ${company} listened to both the intro and the demo — so you've heard exactly how it handles a real call.`;
+  return {
+    subject: `Re: a quick demo I built for ${company}`,
+    body: `Hi ${salutationName(lead)},\n\n${bookingSnippet(company, { lead: lead_in })}\n\n— ${FROM_NAME}\n\n${casl}`,
+  };
+}
+
+async function runIntentTriggerPass(allLeads) {
+  await ensureIntentSheet();
+  const [plays, fired] = await Promise.all([readRealDemoPlays(), loadFiredIntents()]);
+
+  const due = [];
+  for (const lead of allLeads) {
+    const key = normalizeName(cleanCompanyName(lead.company));
+    if (!key) continue;
+    const p = plays.get(key);
+    if (!p || p.intro < 1 || p.demo < 1) continue;        // needs BOTH
+    if (fired.has(`${lead.id}|both-audios`)) continue;     // already fired, ever
+    // A lead who has already replied is in a HUMAN conversation — Deins may
+    // have answered, booked them, or been told no. An automated "someone
+    // listened, here's my calendar" nudge on top of that is at best redundant
+    // and at worst contradicts what was already agreed. Verified against live
+    // data: without this, an INTERESTED lead already promoted to the call
+    // pipeline would have been mailed again.
+    if (lead.emailStatus === 'replied' || lead.stage === 'Replied' || lead.stage === 'Promoted') {
+      console.log(`  ⏭️  ${lead.email} played both but has already replied (${lead.stage}) — human has it`);
+      continue;
+    }
+    due.push(lead);
+  }
+
+  if (!due.length) { console.log('[Intent] no leads with both audios pending.'); return 0; }
+  console.log(`[Intent] ${due.length} lead(s) played BOTH audios and have not been contacted.`);
+
+  let sent = 0;
+  let todaySent = countTodaySends(allLeads);
+  for (const lead of due) {
+    // ── same gates as every other send path ──
+    const suppressed = suppressionReason(lead);
+    if (suppressed) { console.warn(`  🚫 [SUPPRESSED] skipping intent email → ${lead.email} (${suppressed})`); continue; }
+    if (!isValidEmail(lead.email)) { console.warn(`  ⏭️  invalid address ${lead.email}`); continue; }
+    if (todaySent >= DAILY_SEND_LIMIT) { console.warn(`  ⏸️  daily cap reached (${todaySent}/${DAILY_SEND_LIMIT}) — deferring to next pass`); break; }
+
+    const { subject, body } = buildIntentEmail(lead);
+    if (DRY_RUN)          { console.log(`— WOULD SEND (intent) → ${lead.email}\n   ${subject}`); continue; }
+    if (!SENDING_ENABLED) { console.log(`⛔ [kill-switch] would send intent email → ${lead.email}`); continue; }
+
+    try {
+      await sendEmail({ to: lead.email.trim(), subject, body });
+      // Record the fire BEFORE anything else can fail, so a crash after send
+      // can never produce a duplicate on the next pass.
+      await sheets().spreadsheets.values.append({
+        spreadsheetId: SPREADSHEET_ID, range: `${INTENT_SHEET}!A:E`,
+        valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+        requestBody: { values: [[new Date().toISOString(), lead.id,
+          cleanCompanyName(lead.company) || '', lead.email, 'both-audios']] },
+      });
+      const rowNum = await resolveRow(lead.id);
+      if (rowNum) {
+        await sheets().spreadsheets.values.batchUpdate({
+          spreadsheetId: SPREADSHEET_ID,
+          requestBody: { valueInputOption: 'RAW', data: [
+            { range: `${SHEET_NAME}!J${rowNum}`, values: [[new Date().toISOString()]] },
+            { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, '[INTENT: both audios played — booking link sent]')]] },
+          ] },
+        });
+      }
+      sent++; todaySent++;
+      console.log(`  🎧 Intent email sent → ${lead.email} (${cleanCompanyName(lead.company)})`);
+    } catch (e) {
+      console.error(`  ❌ intent send failed → ${lead.email}: ${e.message}`);
+    }
+  }
+  console.log(`[Intent] ${sent} intent email(s) sent.`);
+  return sent;
+}
+
 // ── SELECTION ─────────────────────────────────────────────────────────────────
 
 function isValidEmail(e) {
@@ -1897,7 +2053,8 @@ async function run() {
   if (!SPREADSHEET_ID) throw new Error('SPREADSHEET_ID missing from .env');
   if (!DRY_RUN && !CHECK_ONLY && !FROM_EMAIL) throw new Error('FROM_EMAIL missing from .env (required to send)');
 
-  const modeLabel = CHECK_ONLY ? 'CHECK-ONLY (reply/bounce detection, no sends)'
+  const modeLabel = INTENT_ONLY ? 'INTENT-ONLY (both-audios trigger only)'
+                  : CHECK_ONLY ? 'CHECK-ONLY (reply/bounce detection, no sends)'
                   : DRY_RUN     ? 'DRY RUN (nothing sent)'
                   :               '🔴 LIVE — sending real emails';
 
@@ -1920,6 +2077,14 @@ async function run() {
 
   const all = await withAuth(readLeads);
 
+  // INTENT_ONLY: run just the both-audios trigger and stop. No reply check, no
+  // bounce check, no outreach — this path exists to be cheap enough to spawn on
+  // demand when a demo play completes a pair.
+  if (INTENT_ONLY) {
+    await withAuth(() => runIntentTriggerPass(all));
+    return;
+  }
+
   const todaySent      = countTodaySends(all);
   console.log(`[cap] ${todaySent}/${DAILY_SEND_LIMIT} emails sent today (Vancouver time)`);
   const dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
@@ -1930,6 +2095,10 @@ async function run() {
 
   // Bounce-check pass — marks bounced leads Done before follow-up selection.
   await runBounceCheckPass(all);
+
+  // Intent trigger — both-audios. Runs in every normal pass as a backstop to
+  // the event-driven spawn, so a missed webhook still gets picked up.
+  await withAuth(() => runIntentTriggerPass(all));
 
   // Phase 1 — new sends (stage === QUEUE_STAGE, never emailed)
   const queued = selectQueued(all);
