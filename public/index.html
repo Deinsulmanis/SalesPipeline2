@@ -844,32 +844,209 @@
   .ce-table { min-width: 720px; }        /* forces the wrapper's overflow-x to engage */
   .ce-table-wrap, .table-wrap { -webkit-overflow-scrolling: touch; }
 
+  /* ══════════════════════════════════════════════════════════════════════════
+     RESPONSIVE
+     ─────────────────────────────────────────────────────────────────────────
+     Measured in headless Chromium at 375 / 390 / 414 / 768. Before this block
+     all 36 view×breakpoint combinations scrolled horizontally — including
+     tablet — because three containers never wrapped:
+       .ce-filter-bar  holds 9 stage tabs AND a nested .ce-actions
+                       (margin-left:auto; flex-shrink:0) → 870px hard floor
+       .stats-bar      flex row of 5 stats → ~800px
+       .board          min-width:max-content over 7 × 270px columns → 1890px
+     An earlier attempt targeted .ce-tabs/.motion-tabs, which do not exist in
+     this markup, so it silently did nothing. The selectors below are the real
+     ones.
+
+     Layout is genuinely restructured per breakpoint — no transform/zoom
+     shrinking. The page itself never scrolls sideways; only containers that
+     opt in (the leads table, the tab strips) do.
+     ══════════════════════════════════════════════════════════════════════════ */
+
+  /* NOTE: deliberately NO `overflow-x: hidden` on html/body. It was tried and it
+     silently HID ten genuinely-overflowing views (the demos/opens tables, the
+     agent stat grid, the campaigns table) — the page measured clean while
+     content was still clipped off-screen. Every overflow below is fixed at its
+     source instead; a container only scrolls when it opts in. */
+
   @media (max-width: 900px) {
     header { padding: 14px 16px; flex-wrap: wrap; gap: 10px; }
     .header-right { gap: 8px; flex-wrap: wrap; }
-    .stats-bar, .filter-bar, .ce-stats { padding-left: 16px; padding-right: 16px; }
+    .stats-bar, .ce-stats { padding-left: 0; padding-right: 0; }
     .ce-table-wrap, .table-wrap { padding-left: 16px; padding-right: 16px; }
-    .ce-actions { flex-wrap: wrap; gap: 8px; }
+    /* The demos/opens panels wrap their table in a bare padded div, so the
+       720px min-width had nothing to scroll inside. Make those panels the
+       scroll container. */
+    #ce-demos-panel > div, #ce-opens-panel > div {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      padding-left: 16px;
+      padding-right: 16px;
+    }
+    /* Agent summary tiles: fixed row -> responsive grid. */
+    .agent-summary {
+      display: grid !important;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .agent-stat-card { min-width: 0; }
+    #agent-panel > div { max-width: 100% !important; padding: 16px !important; }
+    #agent-panel { padding: 16px; max-width: 100%; }
     .board { gap: 12px; }
+  }
+
+  @media (max-width: 768px) {
+    /* ── nav / filter rows: tabs scroll, actions drop to their own full row ── */
+    .filter-bar, .ce-filter-bar {
+      flex-wrap: wrap;
+      padding: 10px 16px;
+      gap: 8px;
+      row-gap: 10px;
+    }
+    .filter-bar > .filter-btn, .ce-filter-bar > .ce-tab { flex: 0 0 auto; }
+    .ce-actions {
+      margin-left: 0;
+      width: 100%;
+      order: -1;              /* search/actions above the tab row on mobile */
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .ce-search-wrap { flex: 1 1 100%; }
+    .ce-search-wrap input, #search { width: 100%; }
+
+    /* ── stats: 5-across flex row → 2-up grid ── */
+    .stats-bar, .ce-stats {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1px;
+    }
+    .stat { padding: 12px 14px; }
+
+    /* ── KANBAN: 7 × 270px side-by-side cannot fit a phone.
+       Stages stack vertically, full width, each with its own header. Cards keep
+       working with pointer drag, and gain a stage <select> (below) so a move is
+       never blocked by fiddly touch dragging. ── */
+    .board {
+      flex-direction: column;
+      min-width: 0;
+      gap: 18px;
+      padding-left: 16px;
+      padding-right: 16px;
+    }
+    .col { width: 100%; flex-shrink: 1; }
+    .col-body { min-height: 0; }
+    .col-header {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: var(--bg);
+      padding: 8px 4px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 10px;
+    }
+
+    /* ── panels & modals must never exceed the viewport ── */
+    .detail-panel { width: 100%; max-width: 100%; }
+    .modal-overlay { padding: 12px; align-items: flex-start; }
+    .modal {
+      width: 100%;
+      max-width: 100%;
+      padding: 20px 16px;
+      max-height: calc(100vh - 24px);
+      margin: 12px 0;
+    }
+    .form-grid, .detail-fields { grid-template-columns: 1fr !important; }
   }
 
   @media (max-width: 640px) {
     header { padding: 12px 14px; }
     .logo { font-size: 14px; }
-    .ce-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
     .stat-val { font-size: 20px; }
-    /* Tab strips scroll sideways instead of wrapping into a tall ragged block */
-    .ce-tabs, .motion-tabs, .filter-bar {
-      overflow-x: auto;
-      flex-wrap: nowrap;
-      scrollbar-width: none;
+    /* Body copy floor — nothing informational below 14px on a phone. */
+    .card-name, .card-sub, .meta-row, .card-note,
+    .ce-td-company, .ce-table td, .detail-fields, .notes-area { font-size: 14px; }
+    .ce-table td, .ce-table th { padding: 12px 10px; }   /* roomier rows */
+  }
+
+  /* ── TAP TARGETS ──
+     44px is the accessible minimum. Applied by role rather than per-element so
+     new controls inherit it automatically. */
+  @media (max-width: 768px) {
+    .ce-tab, .filter-btn, .motion-tab, .btn-add, .btn-save, .btn-cancel,
+    .btn-agent-run, .btn-agent-stop, .btn-bulk-queue, .btn-import-csv,
+    .btn-promote, .btn-save-notes, .stage-chip, .type-toggle-btn {
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
     }
-    .ce-tabs::-webkit-scrollbar, .motion-tabs::-webkit-scrollbar,
-    .filter-bar::-webkit-scrollbar { display: none; }
-    .ce-tab, .motion-tab { flex: 0 0 auto; }
-    .detail-panel, .modal { width: 100% !important; max-width: 100% !important; }
-    /* Touch targets — 44px is the accessible minimum */
-    .btn-add, .btn-save, .btn-agent-run, .btn-bulk-queue { min-height: 40px; }
+    .action-btn, .btn-ce-del, .btn-del-lead {
+      min-height: 44px;
+      min-width: 44px;
+    }
+    .card-actions { opacity: 1 !important; }   /* no hover on touch */
+    input, select, textarea {
+      min-height: 44px;
+      font-size: 16px;   /* < 16px makes iOS Safari zoom the page on focus */
+    }
+    .notes-area { font-size: 16px; }
+  }
+
+  /* ── CAMPAIGN STATS: 10 columns cannot fit a phone ──
+     ≤480px each campaign becomes a stacked card (name as header, metrics as
+     label:value rows). Above that it stays a table, scrollable inside its own
+     container so the page never moves. */
+  #ce-campaigns-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .campaign-cards { display: none; }
+
+  @media (max-width: 480px) {
+    .ce-campaigns-table { display: none; }
+    #ce-campaigns-table-wrap { overflow-x: visible; }
+    .campaign-cards { display: flex; flex-direction: column; gap: 12px; padding: 4px 0; }
+    .campaign-card {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      cursor: pointer;
+    }
+    .campaign-card-name {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 10px;
+      word-break: break-word;
+    }
+    .campaign-card-metrics {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 7px 12px;
+      font-size: 14px;
+    }
+    .campaign-card-metrics dt { color: var(--text-secondary); }
+    .campaign-card-metrics dd { color: var(--text); font-weight: 600; text-align: right; }
+  }
+
+  /* ── card stage picker (mobile only) ──
+     Touch dragging between vertically stacked stages means dragging while the
+     page scrolls, which is awkward on a phone. This gives every card a direct,
+     reliable way to change stage; pointer drag still works for those who want
+     it. Hidden on desktop, where dragging is the better interaction. */
+  .card-stage-select { display: none; }
+  @media (max-width: 768px) {
+    .card-stage-select {
+      display: block;
+      width: 100%;
+      margin-top: 10px;
+      padding: 10px;
+      min-height: 44px;
+      font-family: inherit;
+      font-size: 16px;
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+    }
   }
 
   /* ── AGENT TAB ── */
@@ -1280,6 +1457,88 @@
   .agent-log-empty { font-family: 'Inter', system-ui, sans-serif; font-size: 13px; color: var(--text-muted); }
   .log-line { display: flex; gap: 12px; }
   .log-ts { color: var(--text-muted); flex-shrink: 0; }
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     RESPONSIVE OVERRIDES — MUST BE LAST
+     ─────────────────────────────────────────────────────────────────────────
+     These duplicate a few declarations from the RESPONSIVE section above on
+     purpose. Several component rules (.ce-table td, .agent-summary, .ce-actions)
+     are defined LATER in this stylesheet than that section, and a media query
+     adds no specificity — so those base rules were winning and the mobile type
+     scale silently did nothing. Anything here must stay at the very end of the
+     stylesheet; if you add a component rule below this block, it will override
+     the mobile layout.
+     ══════════════════════════════════════════════════════════════════════════ */
+  @media (max-width: 768px) {
+    .ce-actions { margin-left: 0; width: 100%; order: -1; flex-wrap: wrap; }
+    /* .filter-tab is the cold-call type filter (All / Realtor / Trade). The
+       earlier rule targeted .filter-btn, which is not a class in this markup. */
+    .filter-tab, .ce-tab, .motion-tab, .filter-btn {
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .ce-search-wrap { flex: 1 1 100%; }
+    .agent-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .agent-stat-card { min-width: 0; }
+    /* iOS Safari zooms the whole page when a focused field is under 16px. */
+    input, select, textarea, .notes-area { font-size: 16px; min-height: 44px; }
+
+    /* Inline links inside data cells: expand the hit area with negative margin
+       so the target grows without changing row layout. Applies from tablet down
+       — an earlier version scoped this to <=640px, so 768 kept 16px links. */
+    .ce-table td a, .card-meta a {
+      display: inline-block;
+      padding: 14px 4px;
+      margin: -14px -4px;
+    }
+
+    /* Row checkboxes render 13px wide natively. Enlarge the control and widen
+       its cell so the whole first column is a comfortable target. */
+    .ce-row-check, .select-all-ce, input[type="checkbox"] {
+      width: 22px;
+      height: 22px;
+      min-height: 22px;
+      accent-color: var(--primary);
+    }
+    /* Browsers ignore padding on a native checkbox, so the hit area cannot be
+       grown on the input itself. A wrapping <label> supplies the 44x44 target
+       and toggles the checkbox natively — no extra JS. */
+    .check-hit {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 44px;
+      height: 44px;
+      cursor: pointer;
+    }
+    .ce-table th:first-child,
+    .ce-table td:first-child { width: 44px; padding-left: 12px; padding-right: 8px; }
+  }
+
+  @media (max-width: 640px) {
+    /* Readability floor: nothing informational under 14px on a phone. */
+    .ce-table td, .ce-table th, .ce-td-company,
+    .card-name, .card-sub, .meta-row, .card-note,
+    .detail-fields, .agent-stat-label, .stat-label,
+    .col-title, .campaign-card-metrics { font-size: 14px; }
+    .ce-table td { padding: 12px 10px; }
+    .ce-table th { padding: 12px 10px; font-size: 12px; }  /* headers may stay smaller */
+    .ce-cell-empty { font-size: 14px; }
+    .btn-promote, .ce-tab, .filter-btn, .filter-tab { font-size: 14px; }
+    /* Badges are short labels, but 10px is below comfortable on a phone. */
+    .type-badge, .priority-badge, .col-count, .tab-count { font-size: 12px; }
+
+    /* Supporting copy is still body text on a phone. Several digest strings
+       are generated with inline 11px styles, so these selectors deliberately
+       override those values at the mobile readability breakpoint. Compact
+       table headings and short badges remain at 12px by design. */
+    .filter-label,
+    #digest-generated,
+    #ce-digest-card [style*="font-size:11px"] { font-size: 14px !important; }
+
+  }
 </style>
 </head>
 <body>
@@ -1464,7 +1723,7 @@
       <table class="ce-table">
         <thead>
           <tr>
-            <th><input type="checkbox" id="select-all-ce" onchange="toggleSelectAllCe(this)"></th>
+            <th><label class="check-hit"><input type="checkbox" id="select-all-ce" onchange="toggleSelectAllCe(this)"></label></th>
             <th>Company</th>
             <th>Contact</th>
             <th>Email</th>
@@ -2398,6 +2657,22 @@ function buildCard(lead) {
       </div>
     </div>`;
 
+  // Mobile stage picker. Dragging between vertically stacked stages on a phone
+  // means dragging while the page scrolls, so every card also gets a direct
+  // control. Hidden by CSS on desktop, where dragging is the better interaction.
+  const picker = document.createElement('select');
+  picker.className = 'card-stage-select';
+  picker.setAttribute('aria-label', `Stage for ${lead.first || ''} ${lead.last || ''}`.trim());
+  picker.innerHTML = STAGES.map(st =>
+    `<option value="${st.id}"${st.id === lead.stage ? ' selected' : ''}>${esc(st.label)}</option>`).join('');
+  picker.addEventListener('click', e => e.stopPropagation());       // don't open the detail panel
+  picker.addEventListener('pointerdown', e => e.stopPropagation()); // don't start a drag
+  picker.addEventListener('change', e => {
+    e.stopPropagation();
+    moveLeadToStage(lead.id, e.target.value);   // same path as drag: optimistic + revert
+  });
+  card.appendChild(picker);
+
   card.addEventListener('click', () => {
     if (suppressNextClick) return;    // finished a drag, not a real click
     openDetail(lead.id);
@@ -3051,7 +3326,7 @@ function renderCeTable() {
           ? `<td style="color:var(--text-secondary)">1</td>`
           : `<td style="color:var(--text-muted)">—</td>`;
     return `<tr data-id="${l.id}" onclick="openCeDetail('${l.id}')" style="cursor:pointer">
-      <td onclick="event.stopPropagation()"><input type="checkbox" class="ce-row-check" data-id="${l.id}" ${checked} onchange="toggleCeRow(this)"></td>
+      <td onclick="event.stopPropagation()"><label class="check-hit"><input type="checkbox" class="ce-row-check" data-id="${l.id}" ${checked} onchange="toggleCeRow(this)"></label></td>
       <td class="ce-td-company">${esc(l.company) || '<span style="color:var(--text-muted)">—</span>'}</td>
       <td>${cell(l.contactName)}</td>
       <td class="ce-td-email">${l.email ? `<a href="mailto:${emailSafe}">${esc(l.email)}</a>` : '—'}</td>
@@ -3275,7 +3550,29 @@ function renderCampaignsPanel() {
   const bounceClass = rate => rate === 0 ? '' : rate < 5 ? 'ce-rate-green' : rate > 10 ? 'ce-rate-red' : 'ce-rate-orange';
   const replyClass  = rate => rate > 3 ? 'ce-rate-green' : rate > 0 ? 'ce-rate-orange' : '';
 
-  wrap.innerHTML = `
+  // Both representations are rendered; the CSS shows exactly one per breakpoint
+  // (table >480px, stacked cards <=480px). Same data, same click-to-filter
+  // behaviour, so nothing diverges between them.
+  const cardsHtml = `
+    <div class="campaign-cards">
+      ${rows.map(r => `
+        <div class="campaign-card" data-campaign="${escAttr(r.name)}"
+             onclick="filterByCampaign(this.dataset.campaign)"
+             role="button" tabindex="0"
+             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();filterByCampaign(this.dataset.campaign);}">
+          <div class="campaign-card-name">${esc(r.name)}</div>
+          <dl class="campaign-card-metrics">
+            <dt>Total</dt><dd>${r.total}</dd>
+            <dt>Delivered</dt><dd>${r.delivered}</dd>
+            <dt>Bounced</dt><dd class="${bounceClass(r.bounceRate)}">${r.bounced || '—'}${r.sent > 0 ? ` · ${fmtPct(r.bounceRate)}` : ''}</dd>
+            <dt>Opens</dt><dd>${r.opens || '—'}</dd>
+            <dt>Replied</dt><dd class="${replyClass(r.replyRate)}">${r.replied || '—'}${r.delivered > 0 ? ` · ${fmtPct(r.replyRate)}` : ''}</dd>
+            <dt>Interested</dt><dd>${r.interested || '—'}${r.replied > 0 ? ` · ${fmtPct(r.interestedRate)}` : ''}</dd>
+          </dl>
+        </div>`).join('')}
+    </div>`;
+
+  wrap.innerHTML = cardsHtml + `
     <table class="ce-campaigns-table">
       <thead>
         <tr>
