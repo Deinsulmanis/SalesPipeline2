@@ -52,6 +52,9 @@ const { annotateOpens, isDatacenterIp } = require('./open-filter');
 const { bookingSnippet, pricingDeflection, BOOKING_URL } = require('./booking');
 // The only source of truth the reply-answering model may state as fact.
 const { PRODUCT_FACTS, NEVER_AUTO_ANSWER } = require('./product-facts');
+const { GmailOutreachProvider } = require('./integrations/outreach-providers');
+const { SmartleadClient } = require('./integrations/smartlead-client');
+const { SmartleadOutreachProvider } = require('./integrations/outreach-providers');
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 
@@ -92,17 +95,21 @@ const PROPOSAL_BASE    = (/^https?:\/\//i.test(_rawProposalBase) ? _rawProposalB
 const MIN_DELAY = 45 * 1000;
 const MAX_DELAY = 120 * 1000;
 
-// ColdEmail columns A:P — must stay in sync with CE_COLUMNS in server.js
+// ColdEmail columns A:S — must stay in sync with CE_COLUMNS in server.js
 //   A=id  B=company  C=contactName  D=email  E=city  F=tradeType  G=website
 //   H=stage  I=emailStatus  J=lastEmailedAt  K=emailStep  L=notes
 //   M=reviewCount  N=rating  O=tier  P=siteContext
 const COLUMNS = [
   'id','company','contactName','email','city','tradeType','website',
   'stage','emailStatus','lastEmailedAt','emailStep','notes',
-  'reviewCount','rating','tier','siteContext',
+  'reviewCount','rating','tier','siteContext','campaign','campaign_notes','enrichment_attempted',
 ];
 const AGENT_COLS  = []; // integrated into COLUMNS for ColdEmail
-const READ_RANGE  = `${SHEET_NAME}!A:P`;
+const READ_RANGE  = `${SHEET_NAME}!A:S`;
+const CAMPAIGN_INTEGRATIONS_SHEET = 'CampaignIntegrations';
+const PROVIDER_LEADS_SHEET = 'ProviderLeadMappings';
+let CAMPAIGN_PROVIDERS = new Map();
+let ACTIVE_PROVIDER_LEADS = new Set();
 const SCRAPE_SKIP = '__scraped__'; // stored in siteContext when site returned no usable text
 
 // Cold Calls (Leads) sheet — used when auto-promoting interested replies
@@ -685,10 +692,57 @@ function toRawMessage({ to, subject, body }) {
 }
 
 async function sendEmail({ to, subject, body }) {
-  return gmail().users.messages.send({
+  const provider = new GmailOutreachProvider({ send: message => gmail().users.messages.send({
     userId: 'me',
-    requestBody: { raw: toRawMessage({ to, subject, body }) },
-  });
+    requestBody: { raw: toRawMessage(message) },
+  }) });
+  return provider.sendEmail({ to, subject, body });
+}
+
+async function loadOutreachProviderState() {
+  CAMPAIGN_PROVIDERS = new Map();
+  ACTIVE_PROVIDER_LEADS = new Set();
+  try {
+    const campaigns = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CAMPAIGN_INTEGRATIONS_SHEET}!A:I` });
+    for (const row of (campaigns.data.values || []).slice(1)) CAMPAIGN_PROVIDERS.set(row[0], { provider: row[1] || 'gmail', externalCampaignId: row[2] || '' });
+  } catch (e) {
+    console.warn(`[Providers] no campaign mappings (${e.message}) — existing Gmail behavior retained`);
+  }
+  try {
+    const mappings = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A:L` });
+    for (const row of (mappings.data.values || []).slice(1)) if (row[0] && !/completed|unsubscribed|bounced|failed|skipped|test mode/i.test(row[5] || '')) ACTIVE_PROVIDER_LEADS.add(row[0]);
+  } catch (e) {
+    console.warn(`[Providers] no lead mappings yet (${e.message})`);
+  }
+}
+
+function providerForLead(lead) {
+  return CAMPAIGN_PROVIDERS.get(String(lead.campaign || '').trim()) || { provider: 'gmail', externalCampaignId: '' };
+}
+
+async function enqueueSmartleadLead(lead, mapping) {
+  if (!mapping.externalCampaignId) throw new Error('Smartlead campaign mapping has no external campaign ID');
+  if (ACTIVE_PROVIDER_LEADS.has(lead.id)) throw new Error('lead already has an active provider assignment');
+  const workbook = await sheets().spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  if (!workbook.data.sheets.find(sh => sh.properties.title === PROVIDER_LEADS_SHEET)) {
+    await sheets().spreadsheets.batchUpdate({ spreadsheetId: SPREADSHEET_ID, requestBody: { requests: [{ addSheet: { properties: { title: PROVIDER_LEADS_SHEET } } }] } });
+    await sheets().spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A1`, valueInputOption: 'RAW', requestBody: { values: [['internalLeadId','provider','externalLeadId','externalCampaignId','mappingId','normalizedStatus','rawStatus','lastProviderEventAt','lastSynchronizedAt','unsubscribedAt','complianceNote','metadata']] } });
+  }
+  const names = String(lead.contactName || '').trim().split(/\s+/);
+  const client = new SmartleadClient();
+  const provider = new SmartleadOutreachProvider({ client });
+  const result = await provider.addLeads({ externalCampaignId: mapping.externalCampaignId }, [{
+    email: lead.email.trim().toLowerCase(), first_name: names[0] || '', last_name: names.slice(1).join(' '), company_name: lead.company || '', website: lead.website || '', location: lead.city || '',
+    custom_fields: { practice_name: lead.company || '', city: lead.city || '', website: lead.website || '', niche: lead.tradeType || '', custom_first_line: lead.siteContext || '', service_reference: lead.tier || '', lead_score: lead.rating || '', internal_lead_id: lead.id },
+  }]);
+  const now = new Date().toISOString();
+  await sheets().spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A:L`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS', requestBody: { values: [[lead.id, 'smartlead', result.lead_ids?.[0] || '', mapping.externalCampaignId, '', result.testMode ? 'Test mode' : (result.added_count ? 'Queued' : 'Skipped'), result.message || '', '', now, '', '', JSON.stringify({ addedCount: result.added_count || 0, skippedCount: result.skipped_count || 0 })]] } });
+  if (!result.testMode && result.added_count) {
+    const rowNum = await resolveRow(lead.id);
+    await sheets().spreadsheets.values.batchUpdate({ spreadsheetId: SPREADSHEET_ID, requestBody: { valueInputOption: 'RAW', data: [{ range: `${SHEET_NAME}!H${rowNum}`, values: [['Contacted']] }, { range: `${SHEET_NAME}!I${rowNum}`, values: [['queued']] }] } });
+  }
+  ACTIVE_PROVIDER_LEADS.add(lead.id);
+  return result;
 }
 
 // Idempotency probe — STEP 1 ONLY. Step 1 fires once ever per lead, so any
@@ -2080,6 +2134,7 @@ async function run() {
   // the tab exists first (no-op if already there) so writes never fail.
   if (!DRY_RUN) await withAuth(ensureSuppressionSheet);
   await withAuth(loadSuppressionList);
+  await withAuth(loadOutreachProviderState);
 
   const all = await withAuth(readLeads);
 
@@ -2168,6 +2223,15 @@ async function run() {
       continue;
     }
 
+    const campaignProvider = providerForLead(lead);
+    if (campaignProvider.provider === 'smartlead') {
+      if (DRY_RUN) { console.log(`— WOULD ADD TO SMARTLEAD → ${lead.email} (campaign ${campaignProvider.externalCampaignId || 'missing mapping'})`); continue; }
+      try {
+        const result = await withAuth(() => enqueueSmartleadLead(lead, campaignProvider));
+        console.log(result.testMode ? `🧪 Smartlead test mode — no upload → ${lead.email}` : `✅ Added to Smartlead campaign → ${lead.email}`);
+      } catch (e) { console.error(`❌ Smartlead enqueue failed → ${lead.email}: ${e.message}`); }
+      continue;
+    }
     const { subject, body, link, opener, openerTier, pitchTier } = await buildEmail(lead);
 
     if (DRY_RUN) {

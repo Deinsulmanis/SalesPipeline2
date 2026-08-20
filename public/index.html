@@ -1791,6 +1791,9 @@
   <!-- Campaigns performance panel -->
   <div id="ce-campaigns-panel" style="display:none">
     <div style="padding:20px 28px">
+      <div id="smartlead-health" style="display:flex;align-items:center;gap:10px;padding:10px 12px;margin-bottom:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--wash-1);font-size:12px;color:var(--text-secondary)">
+        <strong style="color:var(--text)">Sending providers</strong><span>Existing campaigns default to Gmail. Smartlead live imports remain locked unless enabled on the server.</span>
+      </div>
       <div id="ce-campaigns-table-wrap"></div>
     </div>
   </div>
@@ -1994,6 +1997,25 @@
       <button type="button" class="btn-cancel" onclick="closeCampaignModal()">Cancel</button>
       <button type="button" class="btn-save" onclick="confirmCampaignImport()">Import</button>
     </div>
+  </div>
+</div>
+
+<!-- CAMPAIGN PROVIDER MAPPING MODAL -->
+<div class="overlay" id="provider-modal-overlay" style="z-index:210" onclick="closeProviderModal(event)">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="provider-modal-title" onclick="event.stopPropagation()">
+    <div class="modal-header"><div class="modal-title" id="provider-modal-title">Sending Provider</div><button class="modal-close" onclick="closeProviderModal()" aria-label="Close">✕</button></div>
+    <div class="form-grid" style="padding:20px 24px 0">
+      <input type="hidden" id="provider-campaign-name">
+      <div class="form-group full"><label for="provider-select">Provider</label><select id="provider-select" onchange="toggleSmartleadFields()"><option value="gmail">Gmail</option><option value="smartlead">Smartlead</option></select></div>
+      <div id="smartlead-mapping-fields" class="form-group full">
+        <label for="smartlead-campaign-id">Smartlead Campaign ID</label><input id="smartlead-campaign-id" inputmode="numeric" placeholder="e.g. 123456">
+        <div style="font-size:11px;color:var(--text-muted);margin-top:6px">Create the campaign and sequence in Smartlead first. Testing never uploads a lead.</div>
+        <label for="smartlead-sending-pool" style="margin-top:14px">Mailbox Pool / Niche</label><input id="smartlead-sending-pool" placeholder="e.g. dental-ca">
+        <div style="margin-top:14px;padding:10px 12px;border-left:3px solid var(--accent);background:var(--wash-1);font-size:12px;color:var(--text-secondary)">Variables: contact name, company, city, website, niche, research first line, service reference, and lead score.</div>
+      </div>
+      <div id="provider-test-result" class="form-group full" role="status" style="min-height:18px;font-size:12px;color:var(--text-secondary)"></div>
+    </div>
+    <div class="form-actions"><button type="button" class="btn-cancel" onclick="testProviderMapping()">Test Mapping</button><button type="button" class="btn-save" onclick="saveProviderMapping()">Save Changes</button></div>
   </div>
 </div>
 
@@ -3490,6 +3512,26 @@ function renderOpensPanel() {
 
 // ── CAMPAIGN PERFORMANCE ─────────────────────────────────────────────────────
 
+let smartleadIntegration = null;
+let smartleadIntegrationLoading = false;
+
+async function loadSmartleadIntegration() {
+  if (smartleadIntegrationLoading) return;
+  smartleadIntegrationLoading = true;
+  try {
+    const response = await fetch('/api/integrations/smartlead');
+    if (response.ok) smartleadIntegration = await response.json();
+  } finally {
+    smartleadIntegrationLoading = false;
+    if (ceActiveFilter === 'campaigns') renderCampaignsPanel();
+  }
+}
+
+function campaignProvider(name) {
+  const mapping = smartleadIntegration?.campaigns?.find(c => c.internalCampaignId === name);
+  return mapping || { provider: 'gmail', syncStatus: 'local', externalCampaignId: '', sendingPool: '' };
+}
+
 function campaignGroupKey(lead) {
   const c = (lead.campaign || '').trim();
   return (!c || c.toLowerCase() === 'unlabeled') ? 'Unlabeled' : c;
@@ -3527,7 +3569,17 @@ function buildCampaignStats() {
     const interested     = leads.filter(l => (l.notes || '').includes('[REPLY: Interested]')).length;
     const interestedRate = replied > 0 ? (interested / replied) * 100 : 0;           // denominator now counts all replies
 
-    rows.push({ name, total, sent, delivered, bounced, bounceRate, opens, replied, replyRate, interested, interestedRate });
+    const providerStats = smartleadIntegration?.stats?.find(s => s.internalCampaignId === name && s.provider === 'smartlead');
+    if (providerStats) {
+      const slTotal = Number(providerStats.totalLeads || total);
+      const slSent = Number(providerStats.sent || 0);
+      const slBounced = Number(providerStats.bounced || 0);
+      const slReplied = Number(providerStats.replied || 0);
+      const slInterested = Number(providerStats.interested || interested);
+      rows.push({ name, total: slTotal, sent: slSent, delivered: Math.max(0, slSent - slBounced), bounced: slBounced, bounceRate: slSent ? slBounced / slSent * 100 : 0, opens, replied: slReplied, replyRate: Number(providerStats.replyRate || 0), interested: slInterested, interestedRate: Number(providerStats.interestedRate || (slReplied ? slInterested / slReplied * 100 : 0)) });
+    } else {
+      rows.push({ name, total, sent, delivered, bounced, bounceRate, opens, replied, replyRate, interested, interestedRate });
+    }
   }
 
   rows.sort((a, b) => b.total - a.total);
@@ -3544,6 +3596,13 @@ function renderCampaignsPanel() {
   }
 
   const rows = buildCampaignStats();
+  if (!smartleadIntegration && !smartleadIntegrationLoading) loadSmartleadIntegration();
+  const health = document.getElementById('smartlead-health');
+  if (health && smartleadIntegration) {
+    health.querySelector('span').textContent = smartleadIntegration.testMode
+      ? 'Smartlead is in safe test mode — API reads work, but lead uploads and other mutations are blocked.'
+      : 'Smartlead live mutations are enabled. Local suppression and campaign-conflict checks still apply.';
+  }
 
   const fmtPct = n => n.toFixed(1) + '%';
 
@@ -3568,6 +3627,7 @@ function renderCampaignsPanel() {
             <dt>Opens</dt><dd>${r.opens || '—'}</dd>
             <dt>Replied</dt><dd class="${replyClass(r.replyRate)}">${r.replied || '—'}${r.delivered > 0 ? ` · ${fmtPct(r.replyRate)}` : ''}</dd>
             <dt>Interested</dt><dd>${r.interested || '—'}${r.replied > 0 ? ` · ${fmtPct(r.interestedRate)}` : ''}</dd>
+            <dt>Provider</dt><dd><button class="btn-cancel" style="padding:5px 8px" data-campaign="${escAttr(r.name)}" onclick="event.stopPropagation();openProviderModal(this.dataset.campaign)">${esc(campaignProvider(r.name).provider === 'smartlead' ? 'Smartlead' : 'Gmail')}</button></dd>
           </dl>
         </div>`).join('')}
     </div>`;
@@ -3586,6 +3646,7 @@ function renderCampaignsPanel() {
           <th>Reply %</th>
           <th>Interested</th>
           <th>Int. %</th>
+          <th>Provider</th>
         </tr>
       </thead>
       <tbody>
@@ -3601,9 +3662,53 @@ function renderCampaignsPanel() {
             <td class="${replyClass(r.replyRate)}">${r.delivered > 0 ? fmtPct(r.replyRate) : '—'}</td>
             <td>${r.interested || '—'}</td>
             <td>${r.replied > 0 ? fmtPct(r.interestedRate) : '—'}</td>
+            <td><button class="btn-cancel" style="padding:5px 8px" data-campaign="${escAttr(r.name)}" onclick="event.stopPropagation();openProviderModal(this.dataset.campaign)">${esc(campaignProvider(r.name).provider === 'smartlead' ? 'Smartlead' : 'Gmail')}</button></td>
           </tr>`).join('')}
       </tbody>
     </table>`;
+}
+
+function openProviderModal(campaignName) {
+  const mapping = campaignProvider(campaignName);
+  document.getElementById('provider-campaign-name').value = campaignName;
+  document.getElementById('provider-select').value = mapping.provider || 'gmail';
+  document.getElementById('smartlead-campaign-id').value = mapping.externalCampaignId || '';
+  document.getElementById('smartlead-sending-pool').value = mapping.sendingPool || '';
+  document.getElementById('provider-test-result').textContent = mapping.syncStatus ? `Status: ${mapping.syncStatus}${mapping.lastSynchronizedAt ? ' · ' + new Date(mapping.lastSynchronizedAt).toLocaleString() : ''}` : '';
+  toggleSmartleadFields();
+  document.getElementById('provider-modal-overlay').classList.add('open');
+}
+
+function closeProviderModal(e) {
+  if (e && e.target !== document.getElementById('provider-modal-overlay')) return;
+  document.getElementById('provider-modal-overlay').classList.remove('open');
+}
+
+function toggleSmartleadFields() {
+  document.getElementById('smartlead-mapping-fields').style.display = document.getElementById('provider-select').value === 'smartlead' ? '' : 'none';
+}
+
+async function saveProviderMapping() {
+  const campaignName = document.getElementById('provider-campaign-name').value;
+  const provider = document.getElementById('provider-select').value;
+  const externalCampaignId = document.getElementById('smartlead-campaign-id').value.trim();
+  if (provider === 'smartlead' && !/^\d+$/.test(externalCampaignId)) return showToast('Enter a numeric Smartlead campaign ID.', 'warning');
+  const response = await fetch(`/api/integrations/smartlead/campaigns/${encodeURIComponent(campaignName)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, externalCampaignId, sendingPool: document.getElementById('smartlead-sending-pool').value.trim() }) });
+  const result = await response.json();
+  if (!response.ok) return showToast(result.error || 'Could not save provider mapping.', 'error');
+  smartleadIntegration = null;
+  closeProviderModal();
+  showToast(`${campaignName} will use ${provider === 'smartlead' ? 'Smartlead' : 'Gmail'}.`, 'success');
+  loadSmartleadIntegration();
+}
+
+async function testProviderMapping() {
+  const campaignName = document.getElementById('provider-campaign-name').value;
+  const resultEl = document.getElementById('provider-test-result');
+  resultEl.textContent = 'Testing API access…';
+  const response = await fetch(`/api/integrations/smartlead/campaigns/${encodeURIComponent(campaignName)}/test`, { method: 'POST' });
+  const result = await response.json();
+  resultEl.textContent = response.ok ? `Connected: ${result.campaign.name || result.campaign.id} · ${result.campaign.status}` : (result.error || 'Mapping test failed.');
 }
 
 function filterByCampaign(name) {

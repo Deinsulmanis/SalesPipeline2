@@ -11,8 +11,15 @@ const { classify: classifyLeadEmail } = require('./check-leads');
 // Scanner-detonation filtering for ProposalOpens, shared verbatim with
 // outreach-agent.js's warm-follow-up gating — one definition, no drift.
 const { annotateOpens } = require('./open-filter');
+const { SmartleadClient } = require('./integrations/smartlead-client');
+const { SmartleadOutreachProvider } = require('./integrations/outreach-providers');
+const { verifySignature, verifySharedSecret, normalizeEvent, sanitizePayload } = require('./integrations/smartlead-events');
+const { leadEligibility, shouldApplyRemoteEvent, isDuplicateRequest } = require('./integrations/outreach-policy');
 
 const app = express();
+// Smartlead signs the exact request bytes. This public route must be registered
+// before the global JSON parser and dashboard authentication middleware.
+app.post('/api/webhooks/smartlead', express.raw({ type: 'application/json', limit: '1mb' }), handleSmartleadWebhook);
 app.use(express.json({ limit: '10mb' }));
 
 // ── PROPOSAL OPEN TRACKING (public — no auth) ─────────────────────────────────
@@ -346,6 +353,22 @@ const CE_COL_RANGE  = `${CE_SHEET_NAME}!A:S`;
 const SUPPRESSION_SHEET  = 'Suppression';
 const SUPPRESSION_HEADER = ['email','reason','company','suppressedAt','source'];
 
+// Additive Smartlead persistence. Google Sheets is the application's existing
+// database, so these tabs are its backward-compatible/reversible migration.
+const CAMPAIGN_INTEGRATIONS_SHEET = 'CampaignIntegrations';
+const CAMPAIGN_INTEGRATIONS_HEADER = ['internalCampaignId','provider','externalCampaignId','externalCampaignName','syncStatus','lastSynchronizedAt','sendingPool','fieldMappings','updatedAt'];
+const PROVIDER_LEADS_SHEET = 'ProviderLeadMappings';
+const PROVIDER_LEADS_HEADER = ['internalLeadId','provider','externalLeadId','externalCampaignId','mappingId','normalizedStatus','rawStatus','lastProviderEventAt','lastSynchronizedAt','unsubscribedAt','complianceNote','metadata'];
+const PROVIDER_EVENTS_SHEET = 'ProviderEvents';
+const PROVIDER_EVENTS_HEADER = ['eventId','provider','requestId','eventType','internalCampaignId','internalLeadId','externalCampaignId','externalLeadId','receivedAt','processedAt','processingStatus','payload','error'];
+const INTEGRATION_HEALTH_SHEET = 'IntegrationHealth';
+const INTEGRATION_HEALTH_HEADER = ['provider','lastSuccessfulApiCall','lastReceivedWebhook','lastSuccessfulReconciliation','failedEventCount','lastError','updatedAt'];
+const PROVIDER_STATS_SHEET = 'ProviderCampaignStats';
+const PROVIDER_STATS_HEADER = ['internalCampaignId','provider','externalCampaignId','totalLeads','scheduled','sent','replied','interested','unsubscribed','bounced','meetings','problems','replyRate','interestedRate','lastSynchronizedAt'];
+
+const smartleadClient = new SmartleadClient();
+const smartleadProvider = new SmartleadOutreachProvider({ client: smartleadClient });
+
 // ── SERVICE ACCOUNT AUTH ──────────────────────────────────────────────────────
 // Credentials are read from an env var (JSON string) — no key file on disk.
 // GoogleAuth mints and auto-refreshes access tokens internally.
@@ -361,6 +384,45 @@ function sheets() {
 
 // Compatibility shim — call sites are unchanged; token management is now internal.
 const withAuth = fn => fn();
+
+async function ensureIntegrationSheet(title, header) {
+  const s = sheets();
+  const ss = await s.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  if (!ss.data.sheets.find(sh => sh.properties.title === title)) {
+    await s.spreadsheets.batchUpdate({ spreadsheetId: SPREADSHEET_ID, requestBody: { requests: [{ addSheet: { properties: { title } } }] } });
+    await s.spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${title}!A1`, valueInputOption: 'RAW', requestBody: { values: [header] } });
+  }
+}
+
+async function readIntegrationRows(title, header) {
+  await ensureIntegrationSheet(title, header);
+  const response = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${title}!A:${String.fromCharCode(64 + header.length)}` });
+  return (response.data.values || []).slice(1).map((row, index) => ({
+    ...Object.fromEntries(header.map((key, i) => [key, row[i] || ''])),
+    _row: index + 2,
+  }));
+}
+
+async function appendIntegrationRow(title, header, record) {
+  await ensureIntegrationSheet(title, header);
+  await sheets().spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID, range: `${title}!A:${String.fromCharCode(64 + header.length)}`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS', requestBody: { values: [header.map(key => String(record[key] ?? ''))] } });
+}
+
+async function upsertIntegrationRow(title, header, key, record) {
+  const rows = await readIntegrationRows(title, header);
+  const found = rows.find(row => row[key] === String(record[key]));
+  const values = [header.map(field => String(record[field] ?? found?.[field] ?? ''))];
+  if (found) {
+    await sheets().spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${title}!A${found._row}:${String.fromCharCode(64 + header.length)}${found._row}`, valueInputOption: 'RAW', requestBody: { values } });
+  } else {
+    await sheets().spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID, range: `${title}!A:${String.fromCharCode(64 + header.length)}`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS', requestBody: { values } });
+  }
+}
+
+async function updateIntegrationHealth(patch) {
+  const now = new Date().toISOString();
+  await upsertIntegrationRow(INTEGRATION_HEALTH_SHEET, INTEGRATION_HEALTH_HEADER, 'provider', { provider: 'smartlead', ...patch, updatedAt: now });
+}
 
 // In-memory row index: lead.id → 1-based sheet row number
 const rowMap = new Map();
@@ -1322,6 +1384,214 @@ app.post('/api/coldemail/:id/promote', requireAuth, async (req, res) => {
   }
 });
 
+// ── OUTREACH PROVIDER INTEGRATION ────────────────────────────────────────────
+
+async function findColdEmailLead({ id, email }) {
+  await ensureColdEmailSheet();
+  const response = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE });
+  const rows = response.data.values || [];
+  for (let i = 1; i < rows.length; i++) {
+    const candidate = {};
+    CE_COLUMNS.forEach((field, index) => { candidate[field] = rows[i][index] || ''; });
+    if ((id && candidate.id === id) || (email && candidate.email.trim().toLowerCase() === email.trim().toLowerCase())) return { lead: candidate, row: i + 1 };
+  }
+  return null;
+}
+
+async function campaignIntegration(internalCampaignId) {
+  const rows = await readIntegrationRows(CAMPAIGN_INTEGRATIONS_SHEET, CAMPAIGN_INTEGRATIONS_HEADER);
+  return rows.find(row => row.internalCampaignId === internalCampaignId) || null;
+}
+
+function smartleadLeadPayload(lead) {
+  const names = String(lead.contactName || '').trim().split(/\s+/);
+  return {
+    email: lead.email.trim().toLowerCase(),
+    first_name: names[0] || '',
+    last_name: names.slice(1).join(' '),
+    company_name: lead.company || '',
+    website: lead.website || '',
+    location: lead.city || '',
+    custom_fields: {
+      practice_name: lead.company || '', city: lead.city || '', website: lead.website || '', niche: lead.tradeType || '',
+      custom_first_line: lead.siteContext || '', service_reference: lead.tier || '', lead_score: lead.rating || '',
+      internal_lead_id: lead.id,
+    },
+  };
+}
+
+app.get('/api/integrations/smartlead', requireAuth, async (_req, res) => {
+  try {
+    const [campaigns, leadMappings, events, health, stats] = await Promise.all([
+      readIntegrationRows(CAMPAIGN_INTEGRATIONS_SHEET, CAMPAIGN_INTEGRATIONS_HEADER),
+      readIntegrationRows(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER),
+      readIntegrationRows(PROVIDER_EVENTS_SHEET, PROVIDER_EVENTS_HEADER),
+      readIntegrationRows(INTEGRATION_HEALTH_SHEET, INTEGRATION_HEALTH_HEADER),
+      readIntegrationRows(PROVIDER_STATS_SHEET, PROVIDER_STATS_HEADER),
+    ]);
+    res.json({ enabled: smartleadClient.integrationEnabled, testMode: !smartleadClient.liveMutationsEnabled, campaigns, leadMappings, stats, recentEvents: events.slice(-20).reverse(), health: health.find(h => h.provider === 'smartlead') || null });
+  } catch (error) {
+    console.error('[Smartlead status]', error.message);
+    res.status(500).json({ error: 'Could not load Smartlead integration status' });
+  }
+});
+
+app.put('/api/integrations/smartlead/campaigns/:internalCampaignId', requireAuth, async (req, res) => {
+  const internalCampaignId = String(req.params.internalCampaignId || '').trim();
+  const provider = req.body.provider === 'smartlead' ? 'smartlead' : 'gmail';
+  const externalCampaignId = String(req.body.externalCampaignId || '').trim();
+  if (!internalCampaignId) return res.status(400).json({ error: 'Internal campaign ID is required' });
+  if (provider === 'smartlead' && !/^\d+$/.test(externalCampaignId)) return res.status(422).json({ error: 'A numeric Smartlead campaign ID is required' });
+  const now = new Date().toISOString();
+  try {
+    await upsertIntegrationRow(CAMPAIGN_INTEGRATIONS_SHEET, CAMPAIGN_INTEGRATIONS_HEADER, 'internalCampaignId', {
+      internalCampaignId, provider, externalCampaignId: provider === 'smartlead' ? externalCampaignId : '',
+      externalCampaignName: String(req.body.externalCampaignName || ''), syncStatus: 'mapped-not-tested',
+      lastSynchronizedAt: '', sendingPool: String(req.body.sendingPool || ''),
+      fieldMappings: JSON.stringify(req.body.fieldMappings || { first_name: 'contactName', company_name: 'company', city: 'city', website: 'website', niche: 'tradeType', custom_first_line: 'siteContext' }), updatedAt: now,
+    });
+    res.json({ ok: true, provider, testMode: !smartleadClient.liveMutationsEnabled });
+  } catch (error) {
+    console.error('[Smartlead mapping save]', error.message);
+    res.status(500).json({ error: 'Could not save campaign mapping' });
+  }
+});
+
+app.post('/api/integrations/smartlead/campaigns/:internalCampaignId/test', requireAuth, async (req, res) => {
+  try {
+    const mapping = await campaignIntegration(req.params.internalCampaignId);
+    if (!mapping || mapping.provider !== 'smartlead' || !mapping.externalCampaignId) return res.status(422).json({ error: 'Map this campaign to Smartlead first' });
+    const campaign = await smartleadClient.getCampaign(mapping.externalCampaignId);
+    const now = new Date().toISOString();
+    await upsertIntegrationRow(CAMPAIGN_INTEGRATIONS_SHEET, CAMPAIGN_INTEGRATIONS_HEADER, 'internalCampaignId', { ...mapping, externalCampaignName: campaign.name || mapping.externalCampaignName, syncStatus: 'connected', lastSynchronizedAt: now, updatedAt: now });
+    await updateIntegrationHealth({ lastSuccessfulApiCall: now, lastError: '' });
+    res.json({ ok: true, campaign: { id: campaign.id || mapping.externalCampaignId, name: campaign.name || mapping.externalCampaignName, status: campaign.status || 'unknown' } });
+  } catch (error) {
+    console.warn('[Smartlead mapping test]', error.code || error.message);
+    res.status(error.status === 401 ? 401 : 502).json({ error: error.message });
+  }
+});
+
+app.post('/api/integrations/smartlead/campaigns/:internalCampaignId/leads/:leadId', requireAuth, async (req, res) => {
+  try {
+    const mapping = await campaignIntegration(req.params.internalCampaignId);
+    if (!mapping || mapping.provider !== 'smartlead' || !mapping.externalCampaignId) return res.status(422).json({ error: 'Campaign is not mapped to Smartlead' });
+    const found = await findColdEmailLead({ id: req.params.leadId });
+    if (!found || !found.lead.email) return res.status(422).json({ error: 'Lead with an email address is required' });
+    const suppressed = await loadSuppressedEmails();
+    const providerLeads = await readIntegrationRows(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER);
+    const eligibility = leadEligibility({ lead: found.lead, suppressedEmails: suppressed, providerMappings: providerLeads });
+    if (!eligibility.ok) return res.status(409).json({ error: eligibility.reason });
+    const result = await smartleadProvider.addLeads({ externalCampaignId: mapping.externalCampaignId }, [smartleadLeadPayload(found.lead)]);
+    const now = new Date().toISOString();
+    await appendIntegrationRow(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER, {
+      internalLeadId: found.lead.id, provider: 'smartlead', externalLeadId: result.lead_ids?.[0] || '', externalCampaignId: mapping.externalCampaignId,
+      mappingId: '', normalizedStatus: result.testMode ? 'Test mode' : (result.added_count ? 'Queued' : 'Skipped'), rawStatus: result.message || '',
+      lastProviderEventAt: '', lastSynchronizedAt: now, unsubscribedAt: '', complianceNote: String(req.body.complianceNote || ''), metadata: JSON.stringify({ addedCount: result.added_count || 0, skippedCount: result.skipped_count || 0, skippedLeads: result.skipped_leads || [] }),
+    });
+    res.json({ ok: true, testMode: Boolean(result.testMode), result });
+  } catch (error) {
+    console.warn('[Smartlead add lead]', error.code || error.message);
+    res.status(error.status === 422 ? 422 : 502).json({ error: error.message });
+  }
+});
+
+async function handleSmartleadWebhook(req, res) {
+  const signature = req.get('X-Smartlead-Signature') || '';
+  const requestId = req.get('X-Request-Id') || '';
+  const secret = process.env.SMARTLEAD_WEBHOOK_SECRET || '';
+  const authenticated = signature
+    ? verifySignature(req.body, signature, secret)
+    : verifySharedSecret(req.query.token, secret);
+  if (!authenticated) return res.status(401).json({ error: 'Invalid webhook authentication' });
+  if (!requestId) return res.status(400).json({ error: 'Missing request ID' });
+  let event;
+  try { event = JSON.parse(req.body.toString('utf8')); } catch (_) { return res.status(400).json({ error: 'Invalid JSON' }); }
+  try {
+    const existing = await readIntegrationRows(PROVIDER_EVENTS_SHEET, PROVIDER_EVENTS_HEADER);
+    if (isDuplicateRequest(existing, requestId)) return res.status(200).json({ status: 'already_processed' });
+    const normalized = normalizeEvent(event);
+    const mapping = (await readIntegrationRows(CAMPAIGN_INTEGRATIONS_SHEET, CAMPAIGN_INTEGRATIONS_HEADER)).find(row => row.externalCampaignId === normalized.campaignId && row.provider === 'smartlead');
+    const found = normalized.email ? await findColdEmailLead({ email: normalized.email }) : null;
+    const receivedAt = new Date().toISOString();
+    await appendIntegrationRow(PROVIDER_EVENTS_SHEET, PROVIDER_EVENTS_HEADER, {
+      eventId: crypto.randomUUID(), provider: 'smartlead', requestId, eventType: normalized.type, internalCampaignId: mapping?.internalCampaignId || '', internalLeadId: found?.lead.id || '',
+      externalCampaignId: normalized.campaignId, externalLeadId: normalized.leadId, receivedAt, processedAt: receivedAt, processingStatus: normalized.status === 'Ignored' ? 'ignored' : 'processed', payload: JSON.stringify(sanitizePayload(event)), error: '',
+    });
+    if (found) {
+      const noteByStatus = { Replied: '[SMARTLEAD: Reply received]', Bounced: '[BOUNCED: Smartlead]', Unsubscribed: '[REPLY: Unsubscribed]', Interested: '[REPLY: Interested]', 'Not interested': '[REPLY: Not interested]', 'Meeting requested': '[REPLY: Meeting requested]' };
+      const note = noteByStatus[normalized.status];
+      const nextNotes = note ? ensureNote(found.lead.notes, note) : found.lead.notes;
+      let stage = found.lead.stage;
+      if (normalized.status === 'Replied') stage = 'Replied';
+      if (normalized.status === 'Interested' || normalized.status === 'Meeting requested') stage = 'Replied';
+      if (normalized.status === 'Unsubscribed') stage = 'Unsub';
+      if (normalized.status === 'Bounced' || normalized.status === 'Not interested') stage = 'Done';
+      const status = normalized.status === 'Sent' ? 'emailed' : /Replied|Interested|Meeting|Question|Not interested/.test(normalized.status) ? 'replied' : /Unsubscribed|Bounced/.test(normalized.status) ? 'done' : found.lead.emailStatus;
+      await sheets().spreadsheets.values.batchUpdate({ spreadsheetId: SPREADSHEET_ID, requestBody: { valueInputOption: 'RAW', data: [
+        { range: `${CE_SHEET_NAME}!H${found.row}`, values: [[stage]] }, { range: `${CE_SHEET_NAME}!I${found.row}`, values: [[status]] }, { range: `${CE_SHEET_NAME}!L${found.row}`, values: [[nextNotes]] },
+      ] } });
+      if (normalized.status === 'Unsubscribed') {
+        const suppressed = await loadSuppressedEmails();
+        await addSuppression(normalized.email, 'unsubscribe', found.lead.company, 'smartlead-webhook', suppressed);
+      }
+      const providerRows = await readIntegrationRows(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER);
+      const providerRow = providerRows.find(row => row.internalLeadId === found.lead.id && row.externalCampaignId === normalized.campaignId);
+      await upsertIntegrationRow(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER, 'internalLeadId', {
+        ...(providerRow || {}), internalLeadId: found.lead.id, provider: 'smartlead', externalLeadId: normalized.leadId || providerRow?.externalLeadId || '', externalCampaignId: normalized.campaignId,
+        normalizedStatus: normalized.status, rawStatus: normalized.rawStatus, lastProviderEventAt: normalized.occurredAt, lastSynchronizedAt: receivedAt,
+        unsubscribedAt: normalized.status === 'Unsubscribed' ? receivedAt : providerRow?.unsubscribedAt || '', metadata: JSON.stringify({ category: normalized.category || '', replyPreview: String(normalized.reply || '').slice(0, 500), subject: normalized.subject || '' }),
+      });
+    }
+    await updateIntegrationHealth({ lastReceivedWebhook: receivedAt, lastError: '' });
+    return res.status(200).json({ received: true });
+  } catch (error) {
+    console.error('[Smartlead webhook]', error.message);
+    return res.status(500).json({ error: 'Temporary processing failure' });
+  }
+}
+
+async function reconcileSmartlead() {
+  if (!smartleadClient.integrationEnabled) return { skipped: true };
+  const mappings = (await readIntegrationRows(CAMPAIGN_INTEGRATIONS_SHEET, CAMPAIGN_INTEGRATIONS_HEADER)).filter(row => row.provider === 'smartlead' && row.externalCampaignId);
+  const now = new Date().toISOString();
+  for (const mapping of mappings) {
+    try {
+      const [stats, leadsPage] = await Promise.all([smartleadProvider.getCampaignStats(mapping.externalCampaignId), smartleadProvider.getCampaignLeads(mapping.externalCampaignId)]);
+      const totalSent = Number(stats.total_sent || stats.contacted || 0);
+      const totalReplied = Number(stats.total_replied || stats.replied || 0);
+      const totalLeads = Number(stats.total_leads || leadsPage.total || leadsPage.total_leads || 0);
+      await upsertIntegrationRow(PROVIDER_STATS_SHEET, PROVIDER_STATS_HEADER, 'internalCampaignId', {
+        internalCampaignId: mapping.internalCampaignId, provider: 'smartlead', externalCampaignId: mapping.externalCampaignId,
+        totalLeads, scheduled: Math.max(0, totalLeads - totalSent), sent: totalSent, replied: totalReplied,
+        interested: 0, unsubscribed: Number(stats.total_unsubscribed || stats.unsubscribed || 0), bounced: Number(stats.total_bounced || stats.bounced || 0), meetings: 0, problems: 0,
+        replyRate: Number(stats.reply_rate || (totalSent ? (totalReplied / totalSent) * 100 : 0)), interestedRate: 0, lastSynchronizedAt: now,
+      });
+      await upsertIntegrationRow(CAMPAIGN_INTEGRATIONS_SHEET, CAMPAIGN_INTEGRATIONS_HEADER, 'internalCampaignId', { ...mapping, syncStatus: 'connected', lastSynchronizedAt: now, updatedAt: now, fieldMappings: mapping.fieldMappings, externalCampaignName: stats.campaign_name || mapping.externalCampaignName });
+      const localMappings = await readIntegrationRows(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER);
+      for (const item of (leadsPage.leads || leadsPage.data || [])) {
+        const remote = item.lead ? { ...item.lead, status: item.status, campaign_lead_map_id: item.campaign_lead_map_id, created_at: item.created_at } : item;
+        const found = await findColdEmailLead({ email: remote.email });
+        if (!found) continue;
+        const existing = localMappings.find(row => row.internalLeadId === found.lead.id && row.externalCampaignId === mapping.externalCampaignId);
+        const remoteTime = remote.last_sent_time || remote.updated_at || remote.created_at || now;
+        if (!shouldApplyRemoteEvent(existing?.lastProviderEventAt, remoteTime)) continue;
+        const normalizedStatus = remote.email_stats?.is_replied ? 'Replied' : remote.email_stats?.is_bounced ? 'Bounced' : String(remote.status || 'Queued').replace(/_/g, ' ');
+        await upsertIntegrationRow(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER, 'internalLeadId', { ...(existing || {}), internalLeadId: found.lead.id, provider: 'smartlead', externalLeadId: remote.id || '', externalCampaignId: mapping.externalCampaignId, mappingId: remote.campaign_lead_map_id || existing?.mappingId || '', normalizedStatus, rawStatus: remote.status || '', lastProviderEventAt: remoteTime, lastSynchronizedAt: now, metadata: JSON.stringify({ category: remote.category_name || '', emailStats: remote.email_stats || {} }) });
+      }
+    } catch (error) {
+      console.warn(`[Smartlead reconcile] campaign ${mapping.internalCampaignId}: ${error.code || error.message}`);
+      await updateIntegrationHealth({ lastError: `${mapping.internalCampaignId}: ${error.code || 'request failed'}` });
+    }
+  }
+  await updateIntegrationHealth({ lastSuccessfulReconciliation: now, lastSuccessfulApiCall: now, lastError: '' });
+  return { campaigns: mappings.length };
+}
+
+app.post('/api/integrations/smartlead/reconcile', requireAuth, async (_req, res) => {
+  try { res.json(await reconcileSmartlead()); } catch (error) { res.status(502).json({ error: error.message }); }
+});
+
 // ── AGENT ROUTES ─────────────────────────────────────────────────────────────
 
 app.post('/api/agent/run', requireAuth, (req, res) => {
@@ -1419,6 +1689,11 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   }, {
     timezone: 'America/Vancouver',
   });
+  // Webhooks are primary; this repairs missed/stale Smartlead state hourly.
+  cron.schedule('12 * * * *', () => {
+    reconcileSmartlead().catch(e => console.error('[Smartlead reconcile]', e.message));
+  }, { timezone: 'America/Vancouver' });
+  console.log('[cron] Smartlead reconciliation scheduled: hourly at :12');
   console.log('[cron] Daily digest scheduled: 18:00 Pacific');
   console.log('[cron] Check-only pass scheduled: :15 and :45 every hour');
 }
