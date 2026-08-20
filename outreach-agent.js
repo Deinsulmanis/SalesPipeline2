@@ -55,6 +55,8 @@ const { PRODUCT_FACTS, NEVER_AUTO_ANSWER } = require('./product-facts');
 const { GmailOutreachProvider } = require('./integrations/outreach-providers');
 const { SmartleadClient } = require('./integrations/smartlead-client');
 const { SmartleadOutreachProvider } = require('./integrations/outreach-providers');
+const { classifyReply: classifyProviderReply } = require('./integrations/reply-classifier');
+const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 
@@ -110,6 +112,8 @@ const CAMPAIGN_INTEGRATIONS_SHEET = 'CampaignIntegrations';
 const PROVIDER_LEADS_SHEET = 'ProviderLeadMappings';
 let CAMPAIGN_PROVIDERS = new Map();
 let ACTIVE_PROVIDER_LEADS = new Set();
+let ACTIVE_PROVIDER_EMAILS = new Set();
+let EXISTING_PROVIDER_CAMPAIGN_EMAILS = new Set();
 const SCRAPE_SKIP = '__scraped__'; // stored in siteContext when site returned no usable text
 
 // Cold Calls (Leads) sheet — used when auto-promoting interested replies
@@ -702,6 +706,8 @@ async function sendEmail({ to, subject, body }) {
 async function loadOutreachProviderState() {
   CAMPAIGN_PROVIDERS = new Map();
   ACTIVE_PROVIDER_LEADS = new Set();
+  ACTIVE_PROVIDER_EMAILS = new Set();
+  EXISTING_PROVIDER_CAMPAIGN_EMAILS = new Set();
   try {
     const campaigns = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CAMPAIGN_INTEGRATIONS_SHEET}!A:I` });
     for (const row of (campaigns.data.values || []).slice(1)) CAMPAIGN_PROVIDERS.set(row[0], { provider: row[1] || 'gmail', externalCampaignId: row[2] || '' });
@@ -709,8 +715,12 @@ async function loadOutreachProviderState() {
     console.warn(`[Providers] no campaign mappings (${e.message}) — existing Gmail behavior retained`);
   }
   try {
-    const mappings = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A:L` });
-    for (const row of (mappings.data.values || []).slice(1)) if (row[0] && !/completed|unsubscribed|bounced|failed|skipped|test mode/i.test(row[5] || '')) ACTIVE_PROVIDER_LEADS.add(row[0]);
+    const mappings = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A:N` });
+    for (const row of (mappings.data.values || []).slice(1)) {
+      const email = normalizeEmail(row[13]);
+      if (row[3] && email) EXISTING_PROVIDER_CAMPAIGN_EMAILS.add(`${row[3]}:${email}`);
+      if (ACTIVE_STATUSES.has(String(row[5] || '').trim().toLowerCase().replace(/_/g, ' '))) { if (row[0]) ACTIVE_PROVIDER_LEADS.add(row[0]); if (email) ACTIVE_PROVIDER_EMAILS.add(email); }
+    }
   } catch (e) {
     console.warn(`[Providers] no lead mappings yet (${e.message})`);
   }
@@ -722,11 +732,16 @@ function providerForLead(lead) {
 
 async function enqueueSmartleadLead(lead, mapping) {
   if (!mapping.externalCampaignId) throw new Error('Smartlead campaign mapping has no external campaign ID');
-  if (ACTIVE_PROVIDER_LEADS.has(lead.id)) throw new Error('lead already has an active provider assignment');
+  if (ACTIVE_PROVIDER_LEADS.has(lead.id) || ACTIVE_PROVIDER_EMAILS.has(normalizeEmail(lead.email))) throw new Error('lead email already has an active provider assignment');
+  if (EXISTING_PROVIDER_CAMPAIGN_EMAILS.has(`${mapping.externalCampaignId}:${normalizeEmail(lead.email)}`)) throw new Error('lead email already has a mapping in this Smartlead campaign');
   const workbook = await sheets().spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
   if (!workbook.data.sheets.find(sh => sh.properties.title === PROVIDER_LEADS_SHEET)) {
     await sheets().spreadsheets.batchUpdate({ spreadsheetId: SPREADSHEET_ID, requestBody: { requests: [{ addSheet: { properties: { title: PROVIDER_LEADS_SHEET } } }] } });
-    await sheets().spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A1`, valueInputOption: 'RAW', requestBody: { values: [['internalLeadId','provider','externalLeadId','externalCampaignId','mappingId','normalizedStatus','rawStatus','lastProviderEventAt','lastSynchronizedAt','unsubscribedAt','complianceNote','metadata']] } });
+    await sheets().spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A1`, valueInputOption: 'RAW', requestBody: { values: [['internalLeadId','provider','externalLeadId','externalCampaignId','mappingId','normalizedStatus','rawStatus','lastProviderEventAt','lastSynchronizedAt','unsubscribedAt','complianceNote','metadata','mappingKey','normalizedEmail']] } });
+  } else {
+    const header = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A1:N1` });
+    const values = header.data.values?.[0] || [];
+    if (!values.includes('mappingKey')) await sheets().spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A1`, valueInputOption: 'RAW', requestBody: { values: [['internalLeadId','provider','externalLeadId','externalCampaignId','mappingId','normalizedStatus','rawStatus','lastProviderEventAt','lastSynchronizedAt','unsubscribedAt','complianceNote','metadata','mappingKey','normalizedEmail']] } });
   }
   const names = String(lead.contactName || '').trim().split(/\s+/);
   const client = new SmartleadClient();
@@ -736,12 +751,17 @@ async function enqueueSmartleadLead(lead, mapping) {
     custom_fields: { practice_name: lead.company || '', city: lead.city || '', website: lead.website || '', niche: lead.tradeType || '', custom_first_line: lead.siteContext || '', service_reference: lead.tier || '', lead_score: lead.rating || '', internal_lead_id: lead.id },
   }]);
   const now = new Date().toISOString();
-  await sheets().spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A:L`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS', requestBody: { values: [[lead.id, 'smartlead', result.lead_ids?.[0] || '', mapping.externalCampaignId, '', result.testMode ? 'Test mode' : (result.added_count ? 'Queued' : 'Skipped'), result.message || '', '', now, '', '', JSON.stringify({ addedCount: result.added_count || 0, skippedCount: result.skipped_count || 0 })]] } });
+  const externalLeadId = result.lead_ids?.[0] || '';
+  const normalizedEmail = normalizeEmail(lead.email);
+  const mappingKey = buildMappingKey({ externalCampaignId: mapping.externalCampaignId, externalLeadId, email: normalizedEmail });
+  await sheets().spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A:N`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS', requestBody: { values: [[lead.id, 'smartlead', externalLeadId, mapping.externalCampaignId, '', result.testMode ? 'Test mode' : (result.added_count ? 'Queued' : 'Skipped'), result.message || '', '', now, '', '', JSON.stringify({ addedCount: result.added_count || 0, skippedCount: result.skipped_count || 0 }), mappingKey, normalizedEmail]] } });
   if (!result.testMode && result.added_count) {
     const rowNum = await resolveRow(lead.id);
     await sheets().spreadsheets.values.batchUpdate({ spreadsheetId: SPREADSHEET_ID, requestBody: { valueInputOption: 'RAW', data: [{ range: `${SHEET_NAME}!H${rowNum}`, values: [['Contacted']] }, { range: `${SHEET_NAME}!I${rowNum}`, values: [['queued']] }] } });
   }
   ACTIVE_PROVIDER_LEADS.add(lead.id);
+  ACTIVE_PROVIDER_EMAILS.add(normalizedEmail);
+  EXISTING_PROVIDER_CAMPAIGN_EMAILS.add(`${mapping.externalCampaignId}:${normalizedEmail}`);
   return result;
 }
 
@@ -923,42 +943,7 @@ const REPLY_CATEGORIES = new Set(['QUESTION','INTERESTED','NOT_INTERESTED','UNSU
 const CLASSIFY_FALLBACK = 'NEEDS_HUMAN';
 
 async function classifyReply(company, replyBody) {
-  if (!ANTHROPIC_API_KEY) {
-    console.warn(`[Classify] ANTHROPIC_API_KEY not set — defaulting ${company} to ${CLASSIFY_FALLBACK}`);
-    return CLASSIFY_FALLBACK;
-  }
-  try {
-    const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
-    const msg = await anthropic.messages.create({
-      model: 'claude-haiku-4-5',
-      max_tokens: 20,
-      system: [
-        'You are classifying a reply to a cold sales email about an AI receptionist product for small businesses.',
-        'Classify the reply into exactly one of these categories:',
-        '',
-        'QUESTION — they asked a specific answerable question about the product (how it works, accents, booking confirmations, what it does). Prefer this over INTERESTED when there is an actual question to answer.',
-        'INTERESTED — positive engagement with no specific question: they want to learn more, want a call, or said yes',
-        'NOT_INTERESTED — they explicitly declined, said no thanks, not interested, not a good fit, or similar',
-        'UNSUBSCRIBE — they asked to be removed, unsubscribed, or said stop emailing',
-        'OUT_OF_OFFICE — automated out-of-office or vacation reply',
-        'WRONG_PERSON — they indicated they are not the decision maker or the email reached the wrong person',
-        'NEEDS_HUMAN — a real person engaged but their intent is unclear or does not cleanly fit the above (e.g. "what exactly is your question?", "who is this?", "can you send more info?" with no clear buying signal)',
-        '',
-        'Guidance: when a real person has clearly engaged but you are unsure of their intent, or you are unsure between INTERESTED and unclear, prefer NEEDS_HUMAN over guessing.',
-        'An objection or pushback ("we already have someone", "not convinced") is NOT a QUESTION — use NEEDS_HUMAN so a person handles it.',
-        '',
-        'Reply with ONLY the category name, nothing else.',
-      ].join('\n'),
-      messages: [{ role: 'user', content: `Company: ${company}\nReply: ${replyBody}` }],
-    });
-    const raw = (msg.content[0]?.text || '').trim().toUpperCase();
-    if (REPLY_CATEGORIES.has(raw)) return raw;
-    console.warn(`[Classify] Unrecognised category "${raw}" for ${company} — defaulting to ${CLASSIFY_FALLBACK}`);
-    return CLASSIFY_FALLBACK;
-  } catch (e) {
-    console.warn(`[Classify] API error for ${company}: ${e.message} — defaulting to ${CLASSIFY_FALLBACK}`);
-    return CLASSIFY_FALLBACK;
-  }
+  return classifyProviderReply({ provider: 'gmail', lead: { company }, plainTextReply: replyBody, apiKey: ANTHROPIC_API_KEY });
 }
 
 // ── INBOUND QUESTION ANSWERING ────────────────────────────────────────────────

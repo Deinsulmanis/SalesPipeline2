@@ -13,8 +13,10 @@ const { classify: classifyLeadEmail } = require('./check-leads');
 const { annotateOpens } = require('./open-filter');
 const { SmartleadClient } = require('./integrations/smartlead-client');
 const { SmartleadOutreachProvider } = require('./integrations/outreach-providers');
-const { verifySignature, verifySharedSecret, normalizeEvent, sanitizePayload } = require('./integrations/smartlead-events');
-const { leadEligibility, shouldApplyRemoteEvent, isDuplicateRequest } = require('./integrations/outreach-policy');
+const { verifySignature, verifySharedSecret, normalizeEvent } = require('./integrations/smartlead-events');
+const { leadEligibility } = require('./integrations/outreach-policy');
+const { buildEventKey, buildMappingKey, mappingMatchesEvent, normalizeEmail, canApplyProviderTransition, safeAuditPayload, executeEventAttempt, KeyedLock, fetchAllCampaignLeads, aggregateProviderStats, reconciliationHealth } = require('./integrations/smartlead-safety');
+const { classifyReply: classifyProviderReply, CLASSIFICATION_TO_STATUS } = require('./integrations/reply-classifier');
 
 const app = express();
 // Smartlead signs the exact request bytes. This public route must be registered
@@ -358,16 +360,17 @@ const SUPPRESSION_HEADER = ['email','reason','company','suppressedAt','source'];
 const CAMPAIGN_INTEGRATIONS_SHEET = 'CampaignIntegrations';
 const CAMPAIGN_INTEGRATIONS_HEADER = ['internalCampaignId','provider','externalCampaignId','externalCampaignName','syncStatus','lastSynchronizedAt','sendingPool','fieldMappings','updatedAt'];
 const PROVIDER_LEADS_SHEET = 'ProviderLeadMappings';
-const PROVIDER_LEADS_HEADER = ['internalLeadId','provider','externalLeadId','externalCampaignId','mappingId','normalizedStatus','rawStatus','lastProviderEventAt','lastSynchronizedAt','unsubscribedAt','complianceNote','metadata'];
+const PROVIDER_LEADS_HEADER = ['internalLeadId','provider','externalLeadId','externalCampaignId','mappingId','normalizedStatus','rawStatus','lastProviderEventAt','lastSynchronizedAt','unsubscribedAt','complianceNote','metadata','mappingKey','normalizedEmail'];
 const PROVIDER_EVENTS_SHEET = 'ProviderEvents';
-const PROVIDER_EVENTS_HEADER = ['eventId','provider','requestId','eventType','internalCampaignId','internalLeadId','externalCampaignId','externalLeadId','receivedAt','processedAt','processingStatus','payload','error'];
+const PROVIDER_EVENTS_HEADER = ['eventId','provider','requestId','eventType','internalCampaignId','internalLeadId','externalCampaignId','externalLeadId','receivedAt','processedAt','processingStatus','payload','error','eventKey','attemptCount','lastAttemptAt'];
 const INTEGRATION_HEALTH_SHEET = 'IntegrationHealth';
-const INTEGRATION_HEALTH_HEADER = ['provider','lastSuccessfulApiCall','lastReceivedWebhook','lastSuccessfulReconciliation','failedEventCount','lastError','updatedAt'];
+const INTEGRATION_HEALTH_HEADER = ['provider','lastSuccessfulApiCall','lastReceivedWebhook','lastSuccessfulReconciliation','failedEventCount','lastError','updatedAt','lastReconciliationAttempt','lastPartialReconciliation','campaignsAttempted','campaignsSuccessful','campaignsFailed','campaignErrorSummary'];
 const PROVIDER_STATS_SHEET = 'ProviderCampaignStats';
 const PROVIDER_STATS_HEADER = ['internalCampaignId','provider','externalCampaignId','totalLeads','scheduled','sent','replied','interested','unsubscribed','bounced','meetings','problems','replyRate','interestedRate','lastSynchronizedAt'];
 
 const smartleadClient = new SmartleadClient();
 const smartleadProvider = new SmartleadOutreachProvider({ client: smartleadClient });
+const webhookLocks = new KeyedLock();
 
 // ── SERVICE ACCOUNT AUTH ──────────────────────────────────────────────────────
 // Credentials are read from an env var (JSON string) — no key file on disk.
@@ -391,12 +394,24 @@ async function ensureIntegrationSheet(title, header) {
   if (!ss.data.sheets.find(sh => sh.properties.title === title)) {
     await s.spreadsheets.batchUpdate({ spreadsheetId: SPREADSHEET_ID, requestBody: { requests: [{ addSheet: { properties: { title } } }] } });
     await s.spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${title}!A1`, valueInputOption: 'RAW', requestBody: { values: [header] } });
+  } else {
+    const current = await s.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${title}!1:1` });
+    const existing = current.data.values?.[0] || [];
+    const extended = [...existing];
+    for (const field of header) if (!extended.includes(field)) extended.push(field);
+    if (extended.length !== existing.length) await s.spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${title}!A1`, valueInputOption: 'RAW', requestBody: { values: [extended] } });
   }
+}
+
+function sheetColumn(number) {
+  let result = '', n = number;
+  while (n > 0) { n--; result = String.fromCharCode(65 + (n % 26)) + result; n = Math.floor(n / 26); }
+  return result;
 }
 
 async function readIntegrationRows(title, header) {
   await ensureIntegrationSheet(title, header);
-  const response = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${title}!A:${String.fromCharCode(64 + header.length)}` });
+  const response = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${title}!A:${sheetColumn(header.length)}` });
   return (response.data.values || []).slice(1).map((row, index) => ({
     ...Object.fromEntries(header.map((key, i) => [key, row[i] || ''])),
     _row: index + 2,
@@ -405,7 +420,7 @@ async function readIntegrationRows(title, header) {
 
 async function appendIntegrationRow(title, header, record) {
   await ensureIntegrationSheet(title, header);
-  await sheets().spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID, range: `${title}!A:${String.fromCharCode(64 + header.length)}`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS', requestBody: { values: [header.map(key => String(record[key] ?? ''))] } });
+  await sheets().spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID, range: `${title}!A:${sheetColumn(header.length)}`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS', requestBody: { values: [header.map(key => String(record[key] ?? ''))] } });
 }
 
 async function upsertIntegrationRow(title, header, key, record) {
@@ -413,9 +428,9 @@ async function upsertIntegrationRow(title, header, key, record) {
   const found = rows.find(row => row[key] === String(record[key]));
   const values = [header.map(field => String(record[field] ?? found?.[field] ?? ''))];
   if (found) {
-    await sheets().spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${title}!A${found._row}:${String.fromCharCode(64 + header.length)}${found._row}`, valueInputOption: 'RAW', requestBody: { values } });
+    await sheets().spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${title}!A${found._row}:${sheetColumn(header.length)}${found._row}`, valueInputOption: 'RAW', requestBody: { values } });
   } else {
-    await sheets().spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID, range: `${title}!A:${String.fromCharCode(64 + header.length)}`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS', requestBody: { values } });
+    await sheets().spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID, range: `${title}!A:${sheetColumn(header.length)}`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS', requestBody: { values } });
   }
 }
 
@@ -1398,6 +1413,35 @@ async function findColdEmailLead({ id, email }) {
   return null;
 }
 
+async function findColdEmailLeadForCampaign(email, internalCampaignId) {
+  await ensureColdEmailSheet();
+  const response = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE });
+  const matches = [];
+  for (let i = 1; i < (response.data.values || []).length; i++) {
+    const lead = {}; CE_COLUMNS.forEach((field, index) => { lead[field] = response.data.values[i][index] || ''; });
+    if (normalizeEmail(lead.email) === normalizeEmail(email) && (!internalCampaignId || lead.campaign === internalCampaignId)) matches.push({ lead, row: i + 1 });
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
+
+async function updateIntegrationRowAt(title, header, rowNumber, record) {
+  const values = [header.map(field => String(record[field] ?? ''))];
+  await sheets().spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${title}!A${rowNumber}:${sheetColumn(header.length)}${rowNumber}`, valueInputOption: 'RAW', requestBody: { values } });
+}
+
+async function migrateProviderMappings() {
+  const rows = await readIntegrationRows(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER);
+  for (const row of rows) {
+    if (row.mappingKey && row.normalizedEmail) continue;
+    const found = row.internalLeadId ? await findColdEmailLead({ id: row.internalLeadId }) : null;
+    const email = normalizeEmail(row.normalizedEmail || found?.lead.email);
+    const mappingKey = row.mappingKey || buildMappingKey({ provider: row.provider || 'smartlead', externalCampaignId: row.externalCampaignId, externalLeadId: row.externalLeadId, email });
+    if (!mappingKey) continue;
+    await updateIntegrationRowAt(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER, row._row, { ...row, mappingKey, normalizedEmail: email });
+  }
+  return readIntegrationRows(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER);
+}
+
 async function campaignIntegration(internalCampaignId) {
   const rows = await readIntegrationRows(CAMPAIGN_INTEGRATIONS_SHEET, CAMPAIGN_INTEGRATIONS_HEADER);
   return rows.find(row => row.internalCampaignId === internalCampaignId) || null;
@@ -1479,15 +1523,17 @@ app.post('/api/integrations/smartlead/campaigns/:internalCampaignId/leads/:leadI
     const found = await findColdEmailLead({ id: req.params.leadId });
     if (!found || !found.lead.email) return res.status(422).json({ error: 'Lead with an email address is required' });
     const suppressed = await loadSuppressedEmails();
-    const providerLeads = await readIntegrationRows(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER);
-    const eligibility = leadEligibility({ lead: found.lead, suppressedEmails: suppressed, providerMappings: providerLeads });
+    const providerLeads = await migrateProviderMappings();
+    const eligibility = leadEligibility({ lead: found.lead, suppressedEmails: suppressed, providerMappings: providerLeads, externalCampaignId: mapping.externalCampaignId });
     if (!eligibility.ok) return res.status(409).json({ error: eligibility.reason });
     const result = await smartleadProvider.addLeads({ externalCampaignId: mapping.externalCampaignId }, [smartleadLeadPayload(found.lead)]);
     const now = new Date().toISOString();
-    await appendIntegrationRow(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER, {
+    const externalLeadId = result.lead_ids?.[0] || '';
+    const mappingKey = buildMappingKey({ externalCampaignId: mapping.externalCampaignId, externalLeadId, email: eligibility.email });
+    await upsertIntegrationRow(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER, 'mappingKey', {
       internalLeadId: found.lead.id, provider: 'smartlead', externalLeadId: result.lead_ids?.[0] || '', externalCampaignId: mapping.externalCampaignId,
       mappingId: '', normalizedStatus: result.testMode ? 'Test mode' : (result.added_count ? 'Queued' : 'Skipped'), rawStatus: result.message || '',
-      lastProviderEventAt: '', lastSynchronizedAt: now, unsubscribedAt: '', complianceNote: String(req.body.complianceNote || ''), metadata: JSON.stringify({ addedCount: result.added_count || 0, skippedCount: result.skipped_count || 0, skippedLeads: result.skipped_leads || [] }),
+      lastProviderEventAt: '', lastSynchronizedAt: now, unsubscribedAt: '', complianceNote: String(req.body.complianceNote || ''), metadata: JSON.stringify({ addedCount: result.added_count || 0, skippedCount: result.skipped_count || 0 }), mappingKey, normalizedEmail: eligibility.email,
     });
     res.json({ ok: true, testMode: Boolean(result.testMode), result });
   } catch (error) {
@@ -1496,57 +1542,80 @@ app.post('/api/integrations/smartlead/campaigns/:internalCampaignId/leads/:leadI
   }
 });
 
+function findStoredEvent(rows, eventKey, requestId) {
+  return rows.find(row => row.eventKey === eventKey || (!row.eventKey && requestId && row.requestId === requestId));
+}
+
+async function processStoredSmartleadEvent(eventRow) {
+  const audit = JSON.parse(eventRow.payload || '{}');
+  const supported = new Set(['EMAIL_SENT','FIRST_EMAIL_SENT','EMAIL_REPLY','EMAIL_BOUNCE','EMAIL_BOUNCED','LEAD_UNSUBSCRIBED','EMAIL_UNSUBSCRIBED','LEAD_CATEGORY_UPDATED','CAMPAIGN_STATUS_CHANGED']);
+  if (!supported.has(eventRow.eventType)) return 'ignored';
+  let incomingStatus = normalizeEvent({ event_type: eventRow.eventType, campaign_id: eventRow.externalCampaignId, lead_id: eventRow.externalLeadId, lead_email: audit.email, timestamp: audit.timestamp, category: audit.category, preview_text: audit.replyPreview, subject: audit.subject }).status;
+  if (eventRow.eventType === 'EMAIL_REPLY' && audit.replyPreview) {
+    const classification = await classifyProviderReply({ provider: 'smartlead', lead: { company: '' }, campaign: { id: eventRow.externalCampaignId }, subject: audit.subject, plainTextReply: audit.replyPreview });
+    incomingStatus = CLASSIFICATION_TO_STATUS[classification] || 'Replied';
+  }
+  const providerRows = await migrateProviderMappings();
+  const eventIdentity = { campaignId: eventRow.externalCampaignId, leadId: eventRow.externalLeadId, mappingId: audit.mappingId, email: audit.email };
+  let providerRow = providerRows.find(row => mappingMatchesEvent(row, eventIdentity));
+  let found = providerRow?.internalLeadId ? await findColdEmailLead({ id: providerRow.internalLeadId }) : null;
+  if (!found && audit.email && eventRow.externalCampaignId) {
+    const campaign = (await readIntegrationRows(CAMPAIGN_INTEGRATIONS_SHEET, CAMPAIGN_INTEGRATIONS_HEADER)).find(row => row.provider === 'smartlead' && row.externalCampaignId === eventRow.externalCampaignId);
+    if (campaign) found = await findColdEmailLeadForCampaign(audit.email, campaign.internalCampaignId);
+  }
+  const now = new Date().toISOString();
+  if (providerRow && !canApplyProviderTransition({ currentStatus: providerRow.normalizedStatus, currentEventAt: providerRow.lastProviderEventAt, incomingStatus, incomingEventAt: audit.timestamp })) return 'processed';
+  if (found) {
+    const noteByStatus = { Replied: '[SMARTLEAD: Reply received]', Bounced: '[BOUNCED: Smartlead]', Unsubscribed: '[REPLY: Unsubscribed]', Interested: '[REPLY: Interested]', 'Not interested': '[REPLY: Not interested]', 'Meeting requested': '[REPLY: Meeting requested]', Question: '[REPLY: Question — review required]', 'Out of office': '[REPLY: Out of office]' };
+    const nextNotes = noteByStatus[incomingStatus] ? ensureNote(found.lead.notes, noteByStatus[incomingStatus]) : found.lead.notes;
+    let stage = found.lead.stage;
+    if (['Replied','Interested','Meeting requested','Question','Out of office'].includes(incomingStatus)) stage = incomingStatus === 'Question' ? 'Review' : 'Replied';
+    if (incomingStatus === 'Unsubscribed') stage = 'Unsub';
+    if (['Bounced','Not interested'].includes(incomingStatus)) stage = 'Done';
+    const emailStatus = incomingStatus === 'Sent' ? 'emailed' : ['Replied','Interested','Meeting requested','Question','Not interested','Out of office'].includes(incomingStatus) ? 'replied' : ['Unsubscribed','Bounced'].includes(incomingStatus) ? 'done' : found.lead.emailStatus;
+    await sheets().spreadsheets.values.batchUpdate({ spreadsheetId: SPREADSHEET_ID, requestBody: { valueInputOption: 'RAW', data: [{ range: `${CE_SHEET_NAME}!H${found.row}`, values: [[stage]] }, { range: `${CE_SHEET_NAME}!I${found.row}`, values: [[emailStatus]] }, { range: `${CE_SHEET_NAME}!L${found.row}`, values: [[nextNotes]] }] } });
+    if (incomingStatus === 'Unsubscribed') await addSuppression(audit.email, 'unsubscribe', found.lead.company, 'smartlead-webhook', await loadSuppressedEmails());
+  }
+  const email = normalizeEmail(audit.email || found?.lead.email || providerRow?.normalizedEmail);
+  const mappingKey = providerRow?.mappingKey || buildMappingKey({ externalCampaignId: eventRow.externalCampaignId, externalLeadId: eventRow.externalLeadId, email });
+  if (mappingKey) await upsertIntegrationRow(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER, 'mappingKey', { ...(providerRow || {}), internalLeadId: found?.lead.id || providerRow?.internalLeadId || '', provider: 'smartlead', externalLeadId: eventRow.externalLeadId || providerRow?.externalLeadId || '', externalCampaignId: eventRow.externalCampaignId, mappingId: audit.mappingId || providerRow?.mappingId || '', normalizedStatus: incomingStatus, rawStatus: audit.providerStatus || eventRow.eventType, lastProviderEventAt: audit.timestamp || now, lastSynchronizedAt: now, unsubscribedAt: incomingStatus === 'Unsubscribed' ? now : providerRow?.unsubscribedAt || '', metadata: JSON.stringify({ category: audit.category || '', replyPreview: audit.replyPreview || '', subject: audit.subject || '' }), mappingKey, normalizedEmail: email });
+  return 'processed';
+}
+
+async function runStoredEvent(eventRow) {
+  const result = await executeEventAttempt(eventRow, () => processStoredSmartleadEvent(eventRow), { onState: state => updateIntegrationRowAt(PROVIDER_EVENTS_SHEET, PROVIDER_EVENTS_HEADER, eventRow._row, state) });
+  return result.processingStatus;
+}
+
 async function handleSmartleadWebhook(req, res) {
   const signature = req.get('X-Smartlead-Signature') || '';
   const requestId = req.get('X-Request-Id') || '';
   const secret = process.env.SMARTLEAD_WEBHOOK_SECRET || '';
-  const authenticated = signature
-    ? verifySignature(req.body, signature, secret)
-    : verifySharedSecret(req.query.token, secret);
+  const authenticated = signature ? verifySignature(req.body, signature, secret) : verifySharedSecret(req.query.token, secret);
   if (!authenticated) return res.status(401).json({ error: 'Invalid webhook authentication' });
-  if (!requestId) return res.status(400).json({ error: 'Missing request ID' });
   let event;
   try { event = JSON.parse(req.body.toString('utf8')); } catch (_) { return res.status(400).json({ error: 'Invalid JSON' }); }
+  const eventKey = buildEventKey(req.body, requestId);
   try {
-    const existing = await readIntegrationRows(PROVIDER_EVENTS_SHEET, PROVIDER_EVENTS_HEADER);
-    if (isDuplicateRequest(existing, requestId)) return res.status(200).json({ status: 'already_processed' });
-    const normalized = normalizeEvent(event);
-    const mapping = (await readIntegrationRows(CAMPAIGN_INTEGRATIONS_SHEET, CAMPAIGN_INTEGRATIONS_HEADER)).find(row => row.externalCampaignId === normalized.campaignId && row.provider === 'smartlead');
-    const found = normalized.email ? await findColdEmailLead({ email: normalized.email }) : null;
-    const receivedAt = new Date().toISOString();
-    await appendIntegrationRow(PROVIDER_EVENTS_SHEET, PROVIDER_EVENTS_HEADER, {
-      eventId: crypto.randomUUID(), provider: 'smartlead', requestId, eventType: normalized.type, internalCampaignId: mapping?.internalCampaignId || '', internalLeadId: found?.lead.id || '',
-      externalCampaignId: normalized.campaignId, externalLeadId: normalized.leadId, receivedAt, processedAt: receivedAt, processingStatus: normalized.status === 'Ignored' ? 'ignored' : 'processed', payload: JSON.stringify(sanitizePayload(event)), error: '',
-    });
-    if (found) {
-      const noteByStatus = { Replied: '[SMARTLEAD: Reply received]', Bounced: '[BOUNCED: Smartlead]', Unsubscribed: '[REPLY: Unsubscribed]', Interested: '[REPLY: Interested]', 'Not interested': '[REPLY: Not interested]', 'Meeting requested': '[REPLY: Meeting requested]' };
-      const note = noteByStatus[normalized.status];
-      const nextNotes = note ? ensureNote(found.lead.notes, note) : found.lead.notes;
-      let stage = found.lead.stage;
-      if (normalized.status === 'Replied') stage = 'Replied';
-      if (normalized.status === 'Interested' || normalized.status === 'Meeting requested') stage = 'Replied';
-      if (normalized.status === 'Unsubscribed') stage = 'Unsub';
-      if (normalized.status === 'Bounced' || normalized.status === 'Not interested') stage = 'Done';
-      const status = normalized.status === 'Sent' ? 'emailed' : /Replied|Interested|Meeting|Question|Not interested/.test(normalized.status) ? 'replied' : /Unsubscribed|Bounced/.test(normalized.status) ? 'done' : found.lead.emailStatus;
-      await sheets().spreadsheets.values.batchUpdate({ spreadsheetId: SPREADSHEET_ID, requestBody: { valueInputOption: 'RAW', data: [
-        { range: `${CE_SHEET_NAME}!H${found.row}`, values: [[stage]] }, { range: `${CE_SHEET_NAME}!I${found.row}`, values: [[status]] }, { range: `${CE_SHEET_NAME}!L${found.row}`, values: [[nextNotes]] },
-      ] } });
-      if (normalized.status === 'Unsubscribed') {
-        const suppressed = await loadSuppressedEmails();
-        await addSuppression(normalized.email, 'unsubscribe', found.lead.company, 'smartlead-webhook', suppressed);
+    const outcome = await webhookLocks.run(eventKey, async () => {
+      let rows = await readIntegrationRows(PROVIDER_EVENTS_SHEET, PROVIDER_EVENTS_HEADER);
+      let stored = findStoredEvent(rows, eventKey, requestId);
+      if (stored && ['processed','ignored'].includes(stored.processingStatus)) return 'already_processed';
+      if (!stored) {
+        const normalized = normalizeEvent(event); const receivedAt = new Date().toISOString(); const eventId = crypto.randomUUID();
+        const campaign = (await readIntegrationRows(CAMPAIGN_INTEGRATIONS_SHEET, CAMPAIGN_INTEGRATIONS_HEADER)).find(row => row.provider === 'smartlead' && row.externalCampaignId === normalized.campaignId);
+        await appendIntegrationRow(PROVIDER_EVENTS_SHEET, PROVIDER_EVENTS_HEADER, { eventId, provider: 'smartlead', requestId, eventType: normalized.type, internalCampaignId: campaign?.internalCampaignId || '', internalLeadId: '', externalCampaignId: normalized.campaignId, externalLeadId: normalized.leadId, receivedAt, processedAt: '', processingStatus: 'received', payload: JSON.stringify(safeAuditPayload(event, normalized)), error: '', eventKey, attemptCount: 0, lastAttemptAt: '' });
+        rows = await readIntegrationRows(PROVIDER_EVENTS_SHEET, PROVIDER_EVENTS_HEADER); stored = findStoredEvent(rows, eventKey, requestId);
       }
-      const providerRows = await readIntegrationRows(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER);
-      const providerRow = providerRows.find(row => row.internalLeadId === found.lead.id && row.externalCampaignId === normalized.campaignId);
-      await upsertIntegrationRow(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER, 'internalLeadId', {
-        ...(providerRow || {}), internalLeadId: found.lead.id, provider: 'smartlead', externalLeadId: normalized.leadId || providerRow?.externalLeadId || '', externalCampaignId: normalized.campaignId,
-        normalizedStatus: normalized.status, rawStatus: normalized.rawStatus, lastProviderEventAt: normalized.occurredAt, lastSynchronizedAt: receivedAt,
-        unsubscribedAt: normalized.status === 'Unsubscribed' ? receivedAt : providerRow?.unsubscribedAt || '', metadata: JSON.stringify({ category: normalized.category || '', replyPreview: String(normalized.reply || '').slice(0, 500), subject: normalized.subject || '' }),
-      });
-    }
-    await updateIntegrationHealth({ lastReceivedWebhook: receivedAt, lastError: '' });
-    return res.status(200).json({ received: true });
+      return runStoredEvent(stored);
+    });
+    const now = new Date().toISOString();
+    const events = await readIntegrationRows(PROVIDER_EVENTS_SHEET, PROVIDER_EVENTS_HEADER);
+    await updateIntegrationHealth({ lastReceivedWebhook: now, failedEventCount: events.filter(row => ['failed','received','processing'].includes(row.processingStatus)).length });
+    return res.status(200).json({ status: outcome });
   } catch (error) {
-    console.error('[Smartlead webhook]', error.message);
+    const internalRef = crypto.createHash('sha256').update(eventKey).digest('hex').slice(0, 12);
+    console.error(`[Smartlead webhook] processing failed for event ${internalRef}`);
     return res.status(500).json({ error: 'Temporary processing failure' });
   }
 }
@@ -1554,42 +1623,68 @@ async function handleSmartleadWebhook(req, res) {
 async function reconcileSmartlead() {
   if (!smartleadClient.integrationEnabled) return { skipped: true };
   const mappings = (await readIntegrationRows(CAMPAIGN_INTEGRATIONS_SHEET, CAMPAIGN_INTEGRATIONS_HEADER)).filter(row => row.provider === 'smartlead' && row.externalCampaignId);
-  const now = new Date().toISOString();
+  const startedAt = new Date().toISOString();
+  const result = { attempted: mappings.length, successful: 0, failed: 0, pages: 0, leads: 0, errors: [] };
   for (const mapping of mappings) {
     try {
-      const [stats, leadsPage] = await Promise.all([smartleadProvider.getCampaignStats(mapping.externalCampaignId), smartleadProvider.getCampaignLeads(mapping.externalCampaignId)]);
-      const totalSent = Number(stats.total_sent || stats.contacted || 0);
-      const totalReplied = Number(stats.total_replied || stats.replied || 0);
-      const totalLeads = Number(stats.total_leads || leadsPage.total || leadsPage.total_leads || 0);
-      await upsertIntegrationRow(PROVIDER_STATS_SHEET, PROVIDER_STATS_HEADER, 'internalCampaignId', {
-        internalCampaignId: mapping.internalCampaignId, provider: 'smartlead', externalCampaignId: mapping.externalCampaignId,
-        totalLeads, scheduled: Math.max(0, totalLeads - totalSent), sent: totalSent, replied: totalReplied,
-        interested: 0, unsubscribed: Number(stats.total_unsubscribed || stats.unsubscribed || 0), bounced: Number(stats.total_bounced || stats.bounced || 0), meetings: 0, problems: 0,
-        replyRate: Number(stats.reply_rate || (totalSent ? (totalReplied / totalSent) * 100 : 0)), interestedRate: 0, lastSynchronizedAt: now,
-      });
-      await upsertIntegrationRow(CAMPAIGN_INTEGRATIONS_SHEET, CAMPAIGN_INTEGRATIONS_HEADER, 'internalCampaignId', { ...mapping, syncStatus: 'connected', lastSynchronizedAt: now, updatedAt: now, fieldMappings: mapping.fieldMappings, externalCampaignName: stats.campaign_name || mapping.externalCampaignName });
-      const localMappings = await readIntegrationRows(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER);
-      for (const item of (leadsPage.leads || leadsPage.data || [])) {
+      const [analytics, pageResult] = await Promise.all([smartleadProvider.getCampaignStats(mapping.externalCampaignId), fetchAllCampaignLeads(({ offset, limit }) => smartleadClient.getCampaignLeads(mapping.externalCampaignId, { offset, limit }))]);
+      result.pages += pageResult.pages; result.leads += pageResult.leads.length;
+      let localMappings = await migrateProviderMappings();
+      for (const item of pageResult.leads) {
         const remote = item.lead ? { ...item.lead, status: item.status, campaign_lead_map_id: item.campaign_lead_map_id, created_at: item.created_at } : item;
-        const found = await findColdEmailLead({ email: remote.email });
+        const found = await findColdEmailLeadForCampaign(remote.email, mapping.internalCampaignId);
         if (!found) continue;
-        const existing = localMappings.find(row => row.internalLeadId === found.lead.id && row.externalCampaignId === mapping.externalCampaignId);
-        const remoteTime = remote.last_sent_time || remote.updated_at || remote.created_at || now;
-        if (!shouldApplyRemoteEvent(existing?.lastProviderEventAt, remoteTime)) continue;
-        const normalizedStatus = remote.email_stats?.is_replied ? 'Replied' : remote.email_stats?.is_bounced ? 'Bounced' : String(remote.status || 'Queued').replace(/_/g, ' ');
-        await upsertIntegrationRow(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER, 'internalLeadId', { ...(existing || {}), internalLeadId: found.lead.id, provider: 'smartlead', externalLeadId: remote.id || '', externalCampaignId: mapping.externalCampaignId, mappingId: remote.campaign_lead_map_id || existing?.mappingId || '', normalizedStatus, rawStatus: remote.status || '', lastProviderEventAt: remoteTime, lastSynchronizedAt: now, metadata: JSON.stringify({ category: remote.category_name || '', emailStats: remote.email_stats || {} }) });
+        const identity = { campaignId: mapping.externalCampaignId, leadId: remote.id, mappingId: remote.campaign_lead_map_id, email: remote.email };
+        const existing = localMappings.find(row => mappingMatchesEvent(row, identity));
+        const remoteTime = remote.last_sent_time || remote.updated_at || remote.created_at || startedAt;
+        const normalizedStatus = remote.email_stats?.is_replied ? 'Replied' : remote.email_stats?.is_bounced ? 'Bounced' : remote.is_unsubscribed ? 'Unsubscribed' : String(remote.category_name || remote.status || 'Queued').replace(/_/g, ' ');
+        if (existing && !canApplyProviderTransition({ currentStatus: existing.normalizedStatus, currentEventAt: existing.lastProviderEventAt, incomingStatus: normalizedStatus, incomingEventAt: remoteTime })) continue;
+        const email = normalizeEmail(remote.email);
+        const mappingKey = existing?.mappingKey || buildMappingKey({ externalCampaignId: mapping.externalCampaignId, externalLeadId: remote.id, email });
+        await upsertIntegrationRow(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER, 'mappingKey', { ...(existing || {}), internalLeadId: found.lead.id, provider: 'smartlead', externalLeadId: remote.id || '', externalCampaignId: mapping.externalCampaignId, mappingId: remote.campaign_lead_map_id || existing?.mappingId || '', normalizedStatus, rawStatus: remote.status || '', lastProviderEventAt: remoteTime, lastSynchronizedAt: startedAt, metadata: JSON.stringify({ category: remote.category_name || '', emailStats: remote.email_stats || {} }), mappingKey, normalizedEmail: email });
+        localMappings = localMappings.filter(row => row.mappingKey !== mappingKey).concat([{ ...(existing || {}), mappingKey, normalizedStatus, externalCampaignId: mapping.externalCampaignId }]);
       }
+      const campaignMappings = (await migrateProviderMappings()).filter(row => row.provider === 'smartlead' && row.externalCampaignId === mapping.externalCampaignId);
+      const localStats = aggregateProviderStats(campaignMappings);
+      const sent = Number(analytics.total_sent ?? analytics.contacted ?? localStats.sent);
+      const replied = Number(analytics.total_replied ?? analytics.replied ?? localStats.replied);
+      await upsertIntegrationRow(PROVIDER_STATS_SHEET, PROVIDER_STATS_HEADER, 'internalCampaignId', { internalCampaignId: mapping.internalCampaignId, provider: 'smartlead', externalCampaignId: mapping.externalCampaignId, ...localStats, totalLeads: Number(analytics.total_leads ?? pageResult.total ?? localStats.totalLeads), sent, replied, replyRate: sent ? replied / sent * 100 : 0, interestedRate: replied ? localStats.interested / replied * 100 : 0, unsubscribed: Number(analytics.total_unsubscribed ?? analytics.unsubscribed ?? localStats.unsubscribed), bounced: Number(analytics.total_bounced ?? analytics.bounced ?? localStats.bounced), lastSynchronizedAt: startedAt });
+      await upsertIntegrationRow(CAMPAIGN_INTEGRATIONS_SHEET, CAMPAIGN_INTEGRATIONS_HEADER, 'internalCampaignId', { ...mapping, syncStatus: 'connected', lastSynchronizedAt: startedAt, updatedAt: startedAt, fieldMappings: mapping.fieldMappings, externalCampaignName: analytics.campaign_name || mapping.externalCampaignName });
+      result.successful++;
     } catch (error) {
+      result.failed++;
+      result.errors.push({ campaign: mapping.internalCampaignId, error: String(error.code || error.message || 'request failed').slice(0, 160) });
       console.warn(`[Smartlead reconcile] campaign ${mapping.internalCampaignId}: ${error.code || error.message}`);
-      await updateIntegrationHealth({ lastError: `${mapping.internalCampaignId}: ${error.code || 'request failed'}` });
     }
   }
-  await updateIntegrationHealth({ lastSuccessfulReconciliation: now, lastSuccessfulApiCall: now, lastError: '' });
-  return { campaigns: mappings.length };
+  const finishedAt = new Date().toISOString();
+  const events = await readIntegrationRows(PROVIDER_EVENTS_SHEET, PROVIDER_EVENTS_HEADER);
+  const healthPatch = { ...reconciliationHealth(result, finishedAt), failedEventCount: events.filter(row => ['failed','received','processing'].includes(row.processingStatus)).length };
+  if (result.successful) healthPatch.lastSuccessfulApiCall = finishedAt;
+  await updateIntegrationHealth(healthPatch);
+  return result;
 }
 
 app.post('/api/integrations/smartlead/reconcile', requireAuth, async (_req, res) => {
   try { res.json(await reconcileSmartlead()); } catch (error) { res.status(502).json({ error: error.message }); }
+});
+
+app.get('/api/integrations/smartlead/events/attention', requireAuth, async (_req, res) => {
+  try {
+    const rows = await readIntegrationRows(PROVIDER_EVENTS_SHEET, PROVIDER_EVENTS_HEADER);
+    res.json(rows.filter(row => ['failed','received','processing'].includes(row.processingStatus)).map(row => ({ eventId: row.eventId, eventKey: row.eventKey || (row.requestId ? `smartlead:request:${row.requestId}` : ''), eventType: row.eventType, internalCampaignId: row.internalCampaignId, internalLeadId: row.internalLeadId, processingStatus: row.processingStatus, attemptCount: Number(row.attemptCount || 0), error: row.error, lastAttemptAt: row.lastAttemptAt })));
+  } catch (error) { res.status(500).json({ error: 'Could not load provider events' }); }
+});
+
+app.post('/api/integrations/smartlead/events/:eventId/retry', requireAuth, async (req, res) => {
+  try {
+    const rows = await readIntegrationRows(PROVIDER_EVENTS_SHEET, PROVIDER_EVENTS_HEADER);
+    const row = rows.find(item => item.eventId === req.params.eventId && ['failed','received','processing'].includes(item.processingStatus));
+    if (!row) return res.status(404).json({ error: 'Retryable event not found' });
+    const key = row.eventKey || (row.requestId ? `smartlead:request:${row.requestId}` : `stored:${row.eventId}`);
+    const status = await webhookLocks.run(key, () => runStoredEvent(row));
+    res.json({ ok: true, status });
+  } catch (error) { res.status(500).json({ error: 'Event retry failed' }); }
 });
 
 // ── AGENT ROUTES ─────────────────────────────────────────────────────────────

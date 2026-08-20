@@ -7,14 +7,22 @@ The existing Google Sheets workbook remains the database and source of truth. Gm
 The integration creates these tabs on first use; deleting them rolls back the integration without changing historical Gmail rows:
 
 - `CampaignIntegrations`: provider and external campaign mapping.
-- `ProviderLeadMappings`: internal-to-provider lead links and normalized/raw status.
-- `ProviderEvents`: idempotent webhook audit records keyed by `X-Request-Id`.
+- `ProviderLeadMappings`: composite campaign/lead links and normalized/raw status.
+- `ProviderEvents`: idempotent webhook state and allowlisted audit summaries.
 - `ProviderCampaignStats`: normalized reconciled statistics.
 - `IntegrationHealth`: last API call, webhook, reconciliation, and sanitized error.
 
 ## Environment
 
-Copy the Smartlead entries from `.env.example`. `SMARTLEAD_INTEGRATION_ENABLED=true` permits API reads. Mutating API calls remain mocked/skipped unless `SMARTLEAD_LIVE_MUTATIONS_ENABLED=true`; leave it `false` through mapping and webhook tests. The API key stays in server process environment and is sent as Smartlead's documented `api_key` query parameter. Request URLs and authentication values are never logged.
+Copy the Smartlead entries from `.env.example`. `SMARTLEAD_INTEGRATION_ENABLED=true` permits API reads. Leave `SMARTLEAD_LIVE_MUTATIONS_ENABLED=false` through mapping and webhook tests. Pilot writes require that flag plus `SMARTLEAD_PILOT_MODE=true`, the external campaign ID in `SMARTLEAD_APPROVED_CAMPAIGN_IDS`, and every normalized recipient in `SMARTLEAD_TEST_RECIPIENT_ALLOWLIST`. Empty allowlists fail closed. Outside pilot mode, an approved campaign ID remains mandatory. The API key stays server-side and is sent as Smartlead's documented `api_key` query parameter.
+
+## Event and mapping safety
+
+Idempotency uses `smartlead:request:<X-Request-Id>` when the header exists and otherwise `smartlead:payload:<SHA-256(raw body)>`. Events move through `received → processing → processed`; failures become `failed` and can be retried. Unknown events end as `ignored`. A keyed in-process lock serializes duplicate deliveries on one instance.
+
+`ProviderEvents` stores only event/campaign/lead identifiers, normalized email, timestamp, category/status, a short plain-text subject/reply preview, delivery code, and indicators that omitted sensitive structures existed. It never stores full HTML, conversation history, authentication values, or webhook query parameters.
+
+Provider mapping identity is `smartlead:<externalCampaignId>:<externalLeadId-or-normalizedEmail>`. Historical mappings in different campaigns remain separate. Timestamp-aware transitions prevent delayed sent events from regressing reply or terminal states.
 
 ## Setup
 
@@ -41,7 +49,9 @@ No code path creates or activates a Smartlead campaign or sends an immediate Sma
 
 ## Reconciliation and statistics
 
-Webhooks are primary. On Railway, reconciliation runs hourly at `:12` and can also be invoked manually with `POST /api/integrations/smartlead/reconcile`. It reads mapped campaign analytics and paginated lead state, ignores remote observations older than the newest local provider event, and updates normalized provider tabs. Gmail statistics remain derived from the existing rows; mapped Smartlead campaigns use reconciled Smartlead totals in the same table. Open tracking remains visible but is not used for critical decisions.
+Webhooks are primary. On Railway, reconciliation runs hourly at `:12` and can also be invoked manually with `POST /api/integrations/smartlead/reconcile`. It reads all lead pages at up to 100 records per page, guards against repeated/non-advancing pages, and applies the same transition rules as webhooks. Interested and meeting counts come from unique local mappings. Reply rate is replies/sent; interested rate is interested/replies. Gmail statistics remain unchanged. Health distinguishes complete, partial, and failed reconciliation.
+
+The authenticated Campaigns view lists failed/stuck events and can retry only previously authenticated stored events through the same processor.
 
 ## Gmail coexistence and rollback
 
@@ -53,11 +63,14 @@ To roll back one campaign, change its provider to Gmail in Campaigns. To disable
 
 - `401` mapping test: verify the API key and that integration reads are enabled.
 - Webhook `401`: verify the signing secret and ensure no proxy rewrites the request body.
-- Duplicate delivery: Smartlead retries; the same `X-Request-Id` is safely acknowledged once.
+- Duplicate delivery: request IDs are preferred; identical bodies without one use a stable payload hash.
 - `5xx` webhook response: a Sheets write failed temporarily and Smartlead should retry. `4xx` indicates a permanent malformed/signature failure.
 - Lead skipped: inspect sanitized provider metadata for duplicate/block/unsubscribe reasons and keep local suppression authoritative.
-- Statistics are repaired hourly. Lead-page pagination is represented by the client but the first rollout reconciles the first 100 leads per campaign; extend paging before campaigns exceed that size.
+- Google Sheets provides no cross-instance transactional event lock. True cross-instance atomicity would require a transactional ledger such as Railway Postgres, which is not required for this owned-recipient pilot. Sheet scans will slow as event volume grows.
 - Reply text is kept only as a short local preview; full HTML bodies are redacted from event audit payloads.
 - Smartlead webhook examples do not consistently include `lead_id` on reply/sent events, so matching falls back to normalized email plus campaign. Capture and compare a real approved test payload before production rollout.
+- If the complete tokenized webhook URL is exposed, rotate `SMARTLEAD_WEBHOOK_SECRET` and replace the webhook URL without sharing either value.
 
 Official references used: Smartlead's Add Leads to Campaign, Get Campaign Leads, Campaign Analytics, Pause/Resume/Unsubscribe, Message History, Category Update, and Webhook Integration/Event documentation at `https://api.smartlead.ai`.
+
+Verified client routes (August 2026 documentation): `GET /campaigns`, `GET /campaigns/:id`, `POST/GET /campaigns/:id/leads`, `GET /campaigns/:id/analytics`, `POST /campaigns/:id/leads/:leadId/pause`, `POST /campaigns/:id/leads/:leadId/resume`, `POST /leads/:leadId/unsubscribe`, `GET /campaigns/:id/leads/:leadId/message-history`, and `POST /campaigns/:id/leads/:leadId/category`. Mutations are tested only with mocked HTTP clients.

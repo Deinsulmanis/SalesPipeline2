@@ -1792,8 +1792,9 @@
   <div id="ce-campaigns-panel" style="display:none">
     <div style="padding:20px 28px">
       <div id="smartlead-health" style="display:flex;align-items:center;gap:10px;padding:10px 12px;margin-bottom:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--wash-1);font-size:12px;color:var(--text-secondary)">
-        <strong style="color:var(--text)">Sending providers</strong><span>Existing campaigns default to Gmail. Smartlead live imports remain locked unless enabled on the server.</span>
+        <strong style="color:var(--text)">Sending providers</strong><span>Existing campaigns default to Gmail. Smartlead live imports remain locked unless enabled on the server.</span><button class="btn-cancel" style="margin-left:auto;padding:5px 8px" onclick="loadProviderEvents(event)">Check failures</button>
       </div>
+      <div id="provider-events-attention" style="display:none;margin-bottom:12px"></div>
       <div id="ce-campaigns-table-wrap"></div>
     </div>
   </div>
@@ -3709,6 +3710,22 @@ async function testProviderMapping() {
   const response = await fetch(`/api/integrations/smartlead/campaigns/${encodeURIComponent(campaignName)}/test`, { method: 'POST' });
   const result = await response.json();
   resultEl.textContent = response.ok ? `Connected: ${result.campaign.name || result.campaign.id} · ${result.campaign.status}` : (result.error || 'Mapping test failed.');
+}
+
+async function loadProviderEvents(event) {
+  event?.stopPropagation();
+  const wrap = document.getElementById('provider-events-attention');
+  const response = await fetch('/api/integrations/smartlead/events/attention');
+  const rows = response.ok ? await response.json() : [];
+  wrap.style.display = 'block';
+  wrap.innerHTML = rows.length ? rows.map(row => `<div style="display:flex;gap:8px;align-items:center;padding:8px;border-bottom:1px solid var(--border);font-size:12px"><strong>${esc(row.eventType)}</strong><span>${esc(row.processingStatus)} · attempt ${row.attemptCount}</span><span style="color:var(--hot)">${esc(row.error)}</span><button class="btn-cancel" style="margin-left:auto;padding:5px 8px" data-id="${escAttr(row.eventId)}" onclick="retryProviderEvent(this.dataset.id)">Retry</button></div>`).join('') : '<div style="padding:8px;font-size:12px;color:var(--green)">No provider events require attention.</div>';
+}
+
+async function retryProviderEvent(eventId) {
+  const response = await fetch(`/api/integrations/smartlead/events/${encodeURIComponent(eventId)}/retry`, { method: 'POST' });
+  const result = await response.json();
+  showToast(response.ok ? 'Provider event processed.' : (result.error || 'Retry failed.'), response.ok ? 'success' : 'error');
+  loadProviderEvents();
 }
 
 function filterByCampaign(name) {
