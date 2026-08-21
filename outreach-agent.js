@@ -52,6 +52,10 @@ const { annotateOpens, isDatacenterIp } = require('./open-filter');
 const { bookingSnippet, pricingDeflection, BOOKING_URL } = require('./booking');
 // The only source of truth the reply-answering model may state as fact.
 const { PRODUCT_FACTS, NEVER_AUTO_ANSWER } = require('./product-facts');
+// Fixed commercial promise for the cold email. Deliberately NOT in booking.js:
+// that module is the warm-only Calendly asset and the cold path is guarded
+// against importing it.
+const { guaranteeFor, hasIntactGuarantee } = require('./guarantee');
 const { GmailOutreachProvider } = require('./integrations/outreach-providers');
 const { SmartleadClient } = require('./integrations/smartlead-client');
 const { SmartleadOutreachProvider } = require('./integrations/outreach-providers');
@@ -464,33 +468,66 @@ function buildProposalLink(lead) {
 // belonged to the old offer's after-hours-calls angle, which this replaces).
 // buildEmail() still computes/returns pitchTier separately for dry-run logging
 // — it no longer changes which copy goes out, so buildPitch doesn't need it.
+// ── COLD SUBJECT LINES ────────────────────────────────────────────────────────
+// Three approved variants, verbatim as supplied. {{company}} is the only
+// substitution. Assignment is DETERMINISTIC per lead (sha1 of the lead id), not
+// random, for two reasons:
+//   1. steps 2 and 3 reply into the same thread with "Re: <subject>" — a lead
+//      whose subject changed between runs would start a second thread.
+//   2. a re-run, retry or restart must reproduce the same choice.
+// Because it is a pure function of lead.id, which variant a lead received is
+// always recomputable — no column needed to measure performance later.
+const COLD_SUBJECTS = [
+  `3 new patients in 30 days — or you don't pay`,
+  `A guarantee for {{company}}`,
+  `{{company}}'s missed calls`,
+];
+
+function coldSubjectFor(lead, company) {
+  const h = crypto.createHash('sha1').update(String(lead.id || '')).digest();
+  const variant = COLD_SUBJECTS[h[0] % COLD_SUBJECTS.length];
+  return variant.split('{{company}}').join(company);
+}
+
+// Which variant index a lead maps to — used by dry-run logging so a preview
+// shows the real distribution before anything sends.
+function coldSubjectIndex(lead) {
+  return crypto.createHash('sha1').update(String(lead.id || '')).digest()[0] % COLD_SUBJECTS.length;
+}
+
+// Guarantee-led cold pitch. The guarantee is the FIRST sentence of the body,
+// inserted verbatim from guarantee.js — see validateColdEmail() below, which
+// refuses to send if that sentence has been altered in any way.
+//
+// The per-lead opener still runs (generateOpener, grounded in the lead's own
+// scraped site text) but now sits AFTER the guarantee rather than leading, so
+// the promise lands before anything else.
 function buildPitch(lead, opener, link) {
   const type    = recipientType(lead);
   const name    = salutationName(lead);
-  const company = cleanCompanyName(lead.company) || 'your business';
+  const company = cleanCompanyName(lead.company) || '';
   const niche   = nicheFor(lead.tradeType);
-  const city    = (lead.city || '').trim() || 'your area';
 
   const casl = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply with\n"unsubscribe" and I'll remove you immediately — no hard feelings.  ·  Ref: SL-${refCode(lead)}`;
 
-  // Owner/personal inbox: they ARE the decision-maker — no gatekeeper ask.
-  // Role inbox (info@, reception@, ...): invite a forward to whoever handles it.
+  // Cold CTA is reply-to-book. The Calendly link stays warm-only and must not
+  // appear here (booking.js is deliberately not imported by this file's cold path).
   const closing = type === 'owner'
-    ? `If that's useful, just reply and I'll have yours ready this week.`
-    : `If that's useful, just reply and I'll have yours ready this week. And if bookings aren't your area, feel free to forward this to whoever handles them.`;
+    ? `Worth a look? Reply and I'll send it over.`
+    : `Worth a look? Reply and I'll send it over — and if bookings aren't your area, feel free to forward this to whoever handles them.`;
 
   return {
-    subject: `A quick demo I built for ${company}`,
+    subject: coldSubjectFor(lead, company),
     body:
 `Hi ${name},
 
+${guaranteeFor(company)}
+
 ${opener}
 
-I'm building custom AI receptionist demos for five ${niche.labelPlural} in ${city} this month, and I'd like ${company} to be one of them.
+I build the receptionist with ${company}'s actual ${niche.booking} and services, so when a ${niche.person.replace(/s$/, '')} calls it already sounds like it works there. It never touches your real phone line, so there's nothing to switch over to try it.
 
-It's a free custom build, configured with ${company}'s actual ${niche.booking} and services for your ${niche.person} — so when they call, it sounds like it already works there. It never touches your real phone line, so there's zero risk or setup on your end.
-
-→ Here's one I already built, so you can hear what it sounds like: ${link}
+→ Here's one I already built, so you can hear it: ${link}
 
 ${closing}
 
@@ -498,6 +535,45 @@ ${EMAIL_SIGNATURE}
 
 ${casl}`,
   };
+}
+
+// ── PRE-SEND VALIDATION FOR COLD EMAIL ────────────────────────────────────────
+// The guarantee is line one of a commercial promise, so an unresolved merge
+// field is not a cosmetic bug — "…for  in the first 30 days" or a literal
+// {{company}} would be sent as a contractual claim. Every one of these routes
+// to a DRAFT rather than blocking the run, so the lead is preserved for review.
+//
+// Returns null when the email is safe to send, or a string reason when it is not.
+function validateColdEmail(lead, subject, body, link) {
+  const company = cleanCompanyName(lead.company) || '';
+
+  // 1. company must have resolved to something real — no empty, no old fallback
+  if (!company) return 'company did not resolve (blank after cleanCompanyName)';
+  if (/^your (business|clinic)$/i.test(company)) return `company resolved to the placeholder "${company}"`;
+
+  // 2. no unmerged handlebars anywhere in what would be sent
+  const unmerged = `${subject}\n${body}`.match(/\{\{\s*[a-zA-Z_]+\s*\}\}/g);
+  if (unmerged) return `unresolved merge field(s): ${[...new Set(unmerged)].join(', ')}`;
+
+  // 3. the guarantee must be present, character-for-character, for THIS company
+  if (!hasIntactGuarantee(body, company)) {
+    return 'guarantee sentence missing or altered — refusing to send a modified commercial promise';
+  }
+
+  // 4. the proposal link must have actually built into a per-lead URL. A bare
+  //    base with no token and no params means the personalization silently
+  //    failed and every recipient would get the same generic page.
+  if (!link || !/^https?:\/\//i.test(link)) return 'proposal link did not build';
+  const isTokenLink = /\/p\/[0-9a-f]{6,}$/i.test(link);
+  const isParamLink = /[?&]company=/.test(link);
+  if (!isTokenLink && !isParamLink) return `proposal link is not lead-specific: ${link}`;
+  if (!body.includes(link)) return 'proposal link missing from the body';
+
+  // 5. cold email never carries the warm booking asset or a price
+  if (/calendly\.com/i.test(body)) return 'cold email contains the warm-only booking link';
+  if (/\$\s?\d|\bper month\b|\bpricing\b/i.test(body)) return 'cold email appears to contain pricing';
+
+  return null;
 }
 
 // Tier-2 scraper: fetches a lead's homepage and extracts visible text for personalization.
@@ -2222,7 +2298,21 @@ async function run() {
       } catch (e) { console.error(`❌ Smartlead enqueue failed → ${lead.email}: ${e.message}`); }
       continue;
     }
-    const { subject, body, link, opener, openerTier, pitchTier } = await buildEmail(lead);
+    // buildEmail can THROW rather than emit a half-merged guarantee (see
+    // guaranteeFor). That must become a draft for review, not an unhandled
+    // error or a "send failed" log line — the lead is fine, the data isn't.
+    let built;
+    try {
+      built = await buildEmail(lead);
+    } catch (e) {
+      console.error(`✎ [draft] could not build step 1 → ${lead.email} — ${e.message}`);
+      await withAuth(() => queueDraft(lead, {
+        mode: 'draft', body: '', confidence: 0,
+        reason: `cold email could not be built: ${e.message}`,
+      }));
+      continue;
+    }
+    const { subject, body, link, opener, openerTier, pitchTier } = built;
 
     if (DRY_RUN) {
       const rawCo  = lead.company || '';
@@ -2230,9 +2320,22 @@ async function run() {
       console.log(`— WOULD SEND (step 1) →  ${lead.email}  (${rawCo || lead.first || lead.id})`);
       if (rawCo && rawCo !== cleanCo) console.log(`   Company: "${rawCo}" → "${cleanCo}"`);
       console.log(`   Pitch:   ${pitchTier}`);
-      console.log(`   Subject: ${subject}`);
+      console.log(`   Subject: ${subject}  [variant ${coldSubjectIndex(lead) + 1}/${COLD_SUBJECTS.length}]`);
       console.log(`   Opener:  ${opener}  [${openerTier}]`);
       console.log(`   Link:    ${link}\n`);
+      continue;
+    }
+
+    // Personalization + guarantee gate. Runs BEFORE the kill switch so a
+    // dry/gated run still surfaces bad merges, and before any send so a
+    // malformed guarantee can never leave the building.
+    const invalid = validateColdEmail(lead, subject, body, link);
+    if (invalid) {
+      console.error(`✎ [draft] not sending step 1 → ${lead.email} — ${invalid}`);
+      await withAuth(() => queueDraft(lead, {
+        mode: 'draft', body, confidence: 0,
+        reason: `cold email failed validation: ${invalid}`,
+      }));
       continue;
     }
 
