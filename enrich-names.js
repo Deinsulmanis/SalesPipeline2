@@ -289,8 +289,18 @@ async function run() {
   // enrichment_attempted='true' on everything it touches, so an unscoped run
   // permanently burns the retry flag on leads you never meant to enrich.
   const CAMPAIGN_FILTER = (process.env.CAMPAIGN || '').trim();
-  const inScope = l => !CAMPAIGN_FILTER || (l.campaign || '').trim() === CAMPAIGN_FILTER;
+  const CAMPAIGN_NOTES_FILTER = (process.env.CAMPAIGN_NOTES || '').trim();
+  const CAMPAIGN_NOTES_CONTAINS = (process.env.CAMPAIGN_NOTES_CONTAINS || '').trim();
+  const STAGE_FILTER = (process.env.STAGE || '').trim();
+  const inScope = l =>
+    (!CAMPAIGN_FILTER || (l.campaign || '').trim() === CAMPAIGN_FILTER) &&
+    (!CAMPAIGN_NOTES_FILTER || (l.campaign_notes || '').trim() === CAMPAIGN_NOTES_FILTER) &&
+    (!CAMPAIGN_NOTES_CONTAINS || (l.campaign_notes || '').includes(CAMPAIGN_NOTES_CONTAINS)) &&
+    (!STAGE_FILTER || (l.stage || '').trim() === STAGE_FILTER);
   if (CAMPAIGN_FILTER) console.log(`[enrich] scoped to campaign "${CAMPAIGN_FILTER}"`);
+  if (CAMPAIGN_NOTES_FILTER) console.log(`[enrich] scoped to campaign notes "${CAMPAIGN_NOTES_FILTER}"`);
+  if (CAMPAIGN_NOTES_CONTAINS) console.log(`[enrich] scoped to campaign notes containing "${CAMPAIGN_NOTES_CONTAINS}"`);
+  if (STAGE_FILTER) console.log(`[enrich] scoped to stage "${STAGE_FILTER}"`);
 
   const candidates = allLeads.filter(l =>
     inScope(l) &&

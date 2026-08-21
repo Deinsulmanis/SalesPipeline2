@@ -334,12 +334,16 @@ async function main() {
 
     process.stdout.write(`[${String(i + 1).padStart(3)}/${qualified.length}] ${label}  `);
 
-    let email = '', siteContext = '';
+    // Pipeline-ready exports may already contain an email and context. Keep
+    // those values as fallbacks instead of erasing them when a site scrape
+    // finds nothing newer.
+    let email = (r.email || '').trim();
+    let siteContext = r.sitecontext || '';
 
     if (website) {
       const result = await enrichSite(website);
-      email       = result.email;
-      siteContext = result.siteContext;
+      email       = result.email || email;
+      siteContext = result.siteContext || siteContext;
     } else {
       process.stdout.write('(no website)  ');
     }
@@ -388,7 +392,7 @@ async function main() {
       // (e.g. dental) and bypassed the agent's niche-aware personalization
       // entirely. Empty string (not a fake default) when neither is present —
       // nicheFor() in outreach-agent.js already falls back gracefully.
-      tradeType:   r.categoryname || r['categories/0'] || '',
+      tradeType:   r.tradetype || r.category || r.categoryname || r['categories/0'] || '',
       website:     website || r.website || '',
       reviewCount,
       // Same field-trap class as reviewsCount: the star rating is "totalScore"
