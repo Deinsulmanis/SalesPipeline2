@@ -89,6 +89,11 @@ const SENT_STAGE  = process.env.SENT_STAGE  || 'Contacted';   // stage the agent
 const FROM_EMAIL  = process.env.FROM_EMAIL;                   // must be the authed Google account
 const FROM_NAME   = process.env.FROM_NAME || 'ScaleLab AI';
 const MAILING_ADDRESS   = process.env.MAILING_ADDRESS || 'ScaleLab AI, New Westminster, BC';
+const SIGNATURE_NAME    = process.env.SIGNATURE_NAME    || 'Deins Ulmanis';
+const SIGNATURE_COMPANY = process.env.SIGNATURE_COMPANY || 'ScaleLabAi';
+const SIGNATURE_SITE    = process.env.SIGNATURE_SITE    || 'scalelabai.ca';
+const SIGNATURE_PHONE   = process.env.SIGNATURE_PHONE   || '604 836 9902';
+const EMAIL_SIGNATURE   = `— ${SIGNATURE_NAME}\n${SIGNATURE_COMPANY}\n${SIGNATURE_SITE}\n${SIGNATURE_PHONE}`;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const _rawProposalBase = (process.env.PROPOSAL_BASE || '').trim();
 const PROPOSAL_BASE    = (/^https?:\/\//i.test(_rawProposalBase) ? _rawProposalBase : 'https://scalelabaireceptionistproposal.netlify.app').replace(/\/$/, '');
@@ -216,7 +221,7 @@ Just following up on the AI receptionist demo I mentioned for ${company} — sti
 
 No pressure either way — just reply if you'd like yours.
 
-— ${FROM_NAME}
+${EMAIL_SIGNATURE}
 
 ${casl}`;
     },
@@ -238,7 +243,7 @@ If a free AI receptionist demo for ${company} isn't useful right now, no worries
 
 Just reply and I'll build yours.
 
-— ${FROM_NAME}
+${EMAIL_SIGNATURE}
 
 ${casl}`;
     },
@@ -266,7 +271,7 @@ Happy to answer any questions, or go ahead and build the full version if you're 
 
 Just reply and let me know.
 
-— ${FROM_NAME}
+${EMAIL_SIGNATURE}
 
 ${casl}`;
   },
@@ -489,7 +494,7 @@ It's a free custom build, configured with ${company}'s actual ${niche.booking} a
 
 ${closing}
 
-— ${FROM_NAME}
+${EMAIL_SIGNATURE}
 
 ${casl}`,
   };
@@ -1470,7 +1475,7 @@ async function handleQuestion(lead, replyText, todaySent) {
   const company = cleanCompanyName(lead.company) || 'your clinic';
   const subject = `Re: a quick demo I built for ${company}`;
   const casl = `---\n${MAILING_ADDRESS}\nReply "unsubscribe" and I'll remove you immediately.`;
-  const body = `Hi ${salutationName(lead)},\n\n${answer.body}\n\n— ${FROM_NAME}\n\n${casl}`;
+  const body = `Hi ${salutationName(lead)},\n\n${answer.body}\n\n${EMAIL_SIGNATURE}\n\n${casl}`;
 
   if (!SENDING_ENABLED) {
     console.log(`⛔ [kill-switch] would auto-answer → ${lead.email}`);
@@ -1809,7 +1814,7 @@ function buildIntentEmail(lead) {
   const lead_in = `I noticed you listened to the demo — I'm interested to hear your thoughts.`;
   return {
     subject: `Re: a quick demo I built for ${company}`,
-    body: `Hi ${salutationName(lead)},\n\n${bookingSnippet(company, { lead: lead_in })}\n\n— ${FROM_NAME}\n\n${casl}`,
+    body: `Hi ${salutationName(lead)},\n\n${bookingSnippet(company, { lead: lead_in })}\n\n${EMAIL_SIGNATURE}\n\n${casl}`,
   };
 }
 
