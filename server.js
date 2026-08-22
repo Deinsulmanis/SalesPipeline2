@@ -17,6 +17,7 @@ const { verifySignature, verifySharedSecret, normalizeEvent } = require('./integ
 const { leadEligibility } = require('./integrations/outreach-policy');
 const { buildEventKey, buildMappingKey, mappingMatchesEvent, normalizeEmail, canApplyProviderTransition, safeAuditPayload, executeEventAttempt, KeyedLock, fetchAllCampaignLeads, aggregateProviderStats, reconciliationHealth } = require('./integrations/smartlead-safety');
 const { classifyReply: classifyProviderReply, CLASSIFICATION_TO_STATUS } = require('./integrations/reply-classifier');
+const { parseRegistry: parseGmailInboxRegistry, publicRegistry: publicGmailInboxRegistry, verifyInbox: verifyGmailInbox } = require('./integrations/gmail-inbox-registry');
 
 const app = express();
 // Smartlead signs the exact request bytes. This public route must be registered
@@ -1478,6 +1479,22 @@ app.get('/api/integrations/smartlead', requireAuth, async (_req, res) => {
     console.error('[Smartlead status]', error.message);
     res.status(500).json({ error: 'Could not load Smartlead integration status' });
   }
+});
+
+// Secondary Gmail inbox readiness only. These endpoints never participate in
+// sender selection and never expose credential values. The live legacy sender
+// continues to use only FROM_EMAIL + GMAIL_TOKEN_JSON in outreach-agent.js.
+app.get('/api/integrations/gmail-inboxes', requireAuth, (_req, res) => {
+  try { res.json({ inboxes: publicGmailInboxRegistry(parseGmailInboxRegistry()) }); }
+  catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/integrations/gmail-inboxes/:id/verify', requireAuth, async (req, res) => {
+  try {
+    const entry = parseGmailInboxRegistry().find(item => item.id === req.params.id);
+    if (!entry) return res.status(404).json({ error: 'Gmail inbox is not registered' });
+    res.json(await verifyGmailInbox(entry));
+  } catch (error) { res.status(422).json({ error: error.message }); }
 });
 
 app.put('/api/integrations/smartlead/campaigns/:internalCampaignId', requireAuth, async (req, res) => {

@@ -8,6 +8,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
+    "gmail:connect": "node connect-gmail-inbox.js",
     "test": "node --test",
     "check": "node --check server.js && node --check outreach-agent.js && node --test"
   },
