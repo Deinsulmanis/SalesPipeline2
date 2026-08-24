@@ -51,6 +51,18 @@ function qualifyLead(lead) {
   return { ok: true, confidence: relevantRole ? 0.95 : (lead.contactName ? 0.75 : 0.6), reasonCode: relevantRole ? 'roofing_decision_maker' : 'roofing_company_contact' };
 }
 
+function stripQuotedReply(text) {
+  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+  const kept = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^On .+wrote:$/i.test(trimmed) || /^-{2,}\s*Original Message\s*-{2,}$/i.test(trimmed) || /^From:\s/i.test(trimmed)) break;
+    if (/^>/.test(trimmed)) continue;
+    kept.push(line);
+  }
+  return kept.join('\n').trim();
+}
+
 function deterministicClassification(text) {
   const value = String(text || '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().toLowerCase();
   if (/\b(unsubscribe|remove me|stop (emailing|contacting)|do not contact|don'?t contact)\b/.test(value)) return result('unsubscribe', .99, false, false, 'explicit_unsubscribe');
@@ -98,14 +110,15 @@ function validateClassification(value) {
 }
 
 async function classifyReply({ replyText = '', createMessage } = {}) {
-  const deterministic = deterministicClassification(replyText);
+  const latestReply = stripQuotedReply(replyText);
+  const deterministic = deterministicClassification(latestReply);
   if (deterministic) return deterministic;
   if (!createMessage) return result('ambiguous', 0, false, true, 'invalid_model_output');
   try {
     const response = await createMessage({
       model: MODEL, max_tokens: 120, temperature: 0,
       system: `You classify replies to a neutral roofing-industry survey invitation. Return ONLY JSON with category, confidence (0-1), should_send_survey, requires_human_review, reason_code. Categories: ${[...CATEGORIES].join(', ')}. Never infer permission. Questions, ambiguity, hostility, privacy/legal concerns, conflicting intent, and already-completed claims require human review. Allowed reason codes: ${[...REASON_CODES].join(', ')}.`,
-      messages: [{ role: 'user', content: `Reply:\n${String(replyText || '').slice(0, 3000)}` }],
+      messages: [{ role: 'user', content: `Reply:\n${latestReply.slice(0, 3000)}` }],
     });
     const raw = String(response.content?.[0]?.text || '').trim().replace(/^```(?:json)?\s*|\s*```$/g, '');
     return validateClassification(JSON.parse(raw)) || result('ambiguous', 0, false, true, 'invalid_model_output');
@@ -141,4 +154,4 @@ function decideReplyAction({ classification, surveyUrl = '', autoReplyEnabled = 
   return { action: autoReplyEnabled ? 'send' : 'draft' };
 }
 
-module.exports = { PROFILE_ID, TEMPLATE_ID, MODEL, CATEGORIES, KNOWLEDGE, safeFirstName, renderInitialEmail, validateInitialEmail, qualifyLead, deterministicClassification, validateClassification, classifyReply, renderPositiveReply, renderQuestionDraft, decideReplyAction };
+module.exports = { PROFILE_ID, TEMPLATE_ID, MODEL, CATEGORIES, KNOWLEDGE, safeFirstName, renderInitialEmail, validateInitialEmail, qualifyLead, stripQuotedReply, deterministicClassification, validateClassification, classifyReply, renderPositiveReply, renderQuestionDraft, decideReplyAction };

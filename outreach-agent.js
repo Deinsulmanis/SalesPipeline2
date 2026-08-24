@@ -113,6 +113,10 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const ROOFING_SURVEY_REPLY_FLOW_ENABLED = process.env.ROOFING_SURVEY_REPLY_FLOW_ENABLED === 'true';
 const ROOFING_SURVEY_AUTO_REPLY_ENABLED = process.env.ROOFING_SURVEY_AUTO_REPLY_ENABLED === 'true';
 const ROOFING_SURVEY_URL = String(process.env.ROOFING_SURVEY_URL || '').trim();
+// Optional safety scope for controlled owned-address tests. When set, every
+// detection and send phase is restricted to this one durable lead ID. Normal
+// scheduled runs leave it unset and retain their existing behavior.
+const TARGET_LEAD_ID = String(process.env.TARGET_LEAD_ID || '').trim();
 const anthropicClient = ANTHROPIC_API_KEY ? new Anthropic({ apiKey: ANTHROPIC_API_KEY }) : null;
 const _rawProposalBase = (process.env.PROPOSAL_BASE || '').trim();
 const PROPOSAL_BASE    = (/^https?:\/\//i.test(_rawProposalBase) ? _rawProposalBase : 'https://scalelabaireceptionistproposal.netlify.app').replace(/\/$/, '');
@@ -1683,7 +1687,7 @@ async function handleRoofingSurveyReply(lead, message, replyText, todaySent) {
 // are queued sends or follow-ups due. Fetches each emailed lead's reply body,
 // classifies it with Haiku, and routes to the appropriate handler. Mutates
 // lead.emailStatus in-place so selectFollowUps() excludes replied leads.
-async function runReplyCheckPass(leads) {
+async function runReplyCheckPass(leads, todaySentOverride = null) {
   const candidates = leads.filter(l => l.emailStatus === 'emailed' && isValidEmail(l.email));
   if (!candidates.length) {
     console.log('[ReplyCheck] No emailed leads to check.\n');
@@ -1695,7 +1699,7 @@ async function runReplyCheckPass(leads) {
   const classCounts = {};
   // Auto-answers are real sends and share the daily ceiling with outreach, so
   // the pass starts from today's actual count rather than assuming zero.
-  let replyPassTodaySent = countTodaySends(leads);
+  let replyPassTodaySent = todaySentOverride ?? countTodaySends(leads);
 
   for (const lead of candidates) {
     const message = await withAuth(() => getReplyMessage(lead));
@@ -2308,6 +2312,13 @@ async function run() {
   await withAuth(loadOutreachProviderState);
 
   const all = await withAuth(readLeads);
+  const allLeadsForDailyCap = [...all];
+  if (TARGET_LEAD_ID) {
+    const target = all.find(lead => lead.id === TARGET_LEAD_ID);
+    if (!target) throw new Error(`TARGET_LEAD_ID ${TARGET_LEAD_ID} was not found`);
+    all.splice(0, all.length, target);
+    console.log(`[target] Controlled run restricted to lead ${TARGET_LEAD_ID}`);
+  }
 
   // INTENT_ONLY: run just the both-audios trigger and stop. No reply check, no
   // bounce check, no outreach — this path exists to be cheap enough to spawn on
@@ -2317,13 +2328,13 @@ async function run() {
     return;
   }
 
-  const todaySent      = countTodaySends(all);
+  const todaySent      = countTodaySends(allLeadsForDailyCap);
   console.log(`[cap] ${todaySent}/${DAILY_SEND_LIMIT} emails sent today (Vancouver time)`);
   const dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
 
   // Reply-check pass — unconditional; runs even when cap is reached.
   // Mutates emailStatus on replied leads so selectFollowUps excludes them below.
-  await runReplyCheckPass(all);
+  await runReplyCheckPass(all, todaySent);
 
   // Bounce-check pass — marks bounced leads Done before follow-up selection.
   await runBounceCheckPass(all);

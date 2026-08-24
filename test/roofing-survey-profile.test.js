@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {
   PROFILE_ID, MODEL, renderInitialEmail, validateInitialEmail, qualifyLead,
-  deterministicClassification, classifyReply, renderPositiveReply,
+  stripQuotedReply, deterministicClassification, classifyReply, renderPositiveReply,
   renderQuestionDraft, decideReplyAction,
 } = require('../integrations/roofing-survey-profile');
 
@@ -37,6 +37,11 @@ test('first email contains no link or sales language', () => {
 test('missing first name uses the approved fallback', () => assert.match(renderInitialEmail({ company: 'ABC Roofing', tradeType: 'roofing' }).body, /^Hi there,/));
 test('clear yes reply becomes positive', () => assert.equal(deterministicClassification('Yes').category, 'positive'));
 test('send it over becomes positive', () => assert.equal(deterministicClassification('Send it over').category, 'positive'));
+test('quoted compliance footer cannot turn a positive reply into unsubscribe', async () => {
+  const raw = `Sure\n\nOn Sun, Aug 23, 2026 at 10:00 AM Deins wrote:\n> Want me to send it over?\n> Reply "unsubscribe" and I'll remove you immediately.`;
+  assert.equal(stripQuotedReply(raw), 'Sure');
+  assert.equal((await classifyReply({ replyText: raw })).category, 'positive');
+});
 test('what is this for requires review', () => assert.deepEqual(deterministicClassification('What is this for?').requires_human_review, true));
 test('maybe requires review', () => assert.deepEqual(deterministicClassification('Maybe').requires_human_review, true));
 test('unsubscribe yields no reply action', () => assert.equal(decideReplyAction({ classification: deterministicClassification('Unsubscribe') }).action, 'no_reply'));
