@@ -2,7 +2,12 @@
 
 const EMAIL_TEMPLATES = Object.freeze([
   Object.freeze({ id: 'dental-guarantee-v1', name: 'Dental guarantee pitch', niche: 'dental', ready: true, sequenceSteps: 3 }),
-  Object.freeze({ id: 'roofing-survey-v1', name: 'Roofing survey', niche: 'roofing', ready: false, sequenceSteps: 0, reason: 'Approved roofing survey copy has not been added yet' }),
+  Object.freeze({
+    id: 'roofing-survey-v1', name: 'Roofing survey — reply first', niche: 'roofing',
+    ready: process.env.ROOFING_SURVEY_REPLY_FLOW_ENABLED === 'true',
+    reason: 'Roofing survey workflow is disabled; set ROOFING_SURVEY_REPLY_FLOW_ENABLED=true only for an approved pilot',
+    sequenceSteps: 1, profile: 'roofing_survey_reply_first',
+  }),
 ]);
 
 function normalizeNiche(value) {

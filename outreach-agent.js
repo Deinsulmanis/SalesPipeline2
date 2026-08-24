@@ -62,6 +62,16 @@ const { SmartleadOutreachProvider } = require('./integrations/outreach-providers
 const { classifyReply: classifyProviderReply } = require('./integrations/reply-classifier');
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
 const { routedLeadReady } = require('./integrations/campaign-routing');
+const {
+  PROFILE_ID: ROOFING_SURVEY_PROFILE,
+  TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE,
+  renderInitialEmail: renderRoofingSurveyInitial,
+  validateInitialEmail: validateRoofingSurveyInitial,
+  qualifyLead: qualifyRoofingLead,
+  classifyReply: classifyRoofingReply,
+  renderPositiveReply: renderRoofingSurveyReply,
+  renderQuestionDraft: renderRoofingQuestionDraft,
+} = require('./integrations/roofing-survey-profile');
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 
@@ -100,6 +110,10 @@ const SIGNATURE_SITE    = process.env.SIGNATURE_SITE    || 'scalelabai.ca';
 const SIGNATURE_PHONE   = process.env.SIGNATURE_PHONE   || '604 836 9902';
 const EMAIL_SIGNATURE   = `— ${SIGNATURE_NAME}\n${SIGNATURE_COMPANY}\n${SIGNATURE_SITE}\n${SIGNATURE_PHONE}`;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const ROOFING_SURVEY_REPLY_FLOW_ENABLED = process.env.ROOFING_SURVEY_REPLY_FLOW_ENABLED === 'true';
+const ROOFING_SURVEY_AUTO_REPLY_ENABLED = process.env.ROOFING_SURVEY_AUTO_REPLY_ENABLED === 'true';
+const ROOFING_SURVEY_URL = String(process.env.ROOFING_SURVEY_URL || '').trim();
+const anthropicClient = ANTHROPIC_API_KEY ? new Anthropic({ apiKey: ANTHROPIC_API_KEY }) : null;
 const _rawProposalBase = (process.env.PROPOSAL_BASE || '').trim();
 const PROPOSAL_BASE    = (/^https?:\/\//i.test(_rawProposalBase) ? _rawProposalBase : 'https://scalelabaireceptionistproposal.netlify.app').replace(/\/$/, '');
 
@@ -630,7 +644,6 @@ async function writeSiteContext(rowNum, text) {
 async function generateOpener(lead, siteText) {
   if (!ANTHROPIC_API_KEY) return null;
   try {
-    const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
     const niche = nicheFor(lead.tradeType);
     let prompt;
 
@@ -693,7 +706,7 @@ async function generateOpener(lead, siteText) {
       ].join('\n');
     }
 
-    const msg = await anthropic.messages.create({
+    const msg = await anthropicClient.messages.create({
       model: 'claude-haiku-4-5',
       max_tokens: 60,
       messages: [{ role: 'user', content: prompt }],
@@ -764,7 +777,7 @@ function encodeHeaderValue(value) {
 }
 
 // RFC-822 message → base64url for the Gmail API
-function toRawMessage({ to, subject, body }) {
+function toRawMessage({ to, subject, body, inReplyTo, references }) {
   const headers = [
     `From: ${FROM_NAME} <${FROM_EMAIL}>`,
     `To: ${to}`,
@@ -772,18 +785,20 @@ function toRawMessage({ to, subject, body }) {
     'MIME-Version: 1.0',
     'Content-Type: text/plain; charset="UTF-8"',
   ];
+  if (inReplyTo) headers.push(`In-Reply-To: ${inReplyTo}`);
+  if (references) headers.push(`References: ${references}`);
   const msg = headers.join('\r\n') + '\r\n\r\n' + body;
   return Buffer.from(msg)
     .toString('base64')
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-async function sendEmail({ to, subject, body }) {
+async function sendEmail({ to, subject, body, threadId, inReplyTo, references }) {
   const provider = new GmailOutreachProvider({ send: message => gmail().users.messages.send({
     userId: 'me',
-    requestBody: { raw: toRawMessage(message) },
+    requestBody: { raw: toRawMessage(message), ...(message.threadId ? { threadId: message.threadId } : {}) },
   }) });
-  return provider.sendEmail({ to, subject, body });
+  return provider.sendEmail({ to, subject, body, threadId, inReplyTo, references });
 }
 
 async function loadOutreachProviderState() {
@@ -1010,7 +1025,8 @@ async function getReplyMessage(lead) {
 
     const snippet = best.msg.snippet || '';
     const body    = extractPlainText(best.msg.payload).trim().slice(0, 1500);
-    return { messageId: best.msg.id, snippet, body, fromAddr: best.fromAddr };
+    const rfcMessageId = headerValue(best.msg.payload, 'Message-ID');
+    return { messageId: best.msg.id, rfcMessageId, threadId: best.msg.threadId || '', snippet, body, fromAddr: best.fromAddr };
   } catch (e) {
     console.warn(`[ReplyCheck] API error for ${lead.email}: ${e.message}`);
     return null;
@@ -1052,8 +1068,7 @@ async function answerQuestion(lead, replyText) {
   }
 
   try {
-    const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
-    const msg = await anthropic.messages.create({
+    const msg = await anthropicClient.messages.create({
       model: 'claude-haiku-4-5',
       max_tokens: ANSWER_MAX_TOKENS,
       system: [
@@ -1451,21 +1466,23 @@ async function handleWrongPerson(lead) {
 // Review queue for answers that must not auto-send. One row per drafted reply;
 // the dashboard surfaces the pending count as Deins's action queue.
 const DRAFTS_SHEET  = 'ReplyDrafts';
-const DRAFTS_HEADER = ['createdAt','leadId','company','email','topic','confidence','reason','draftBody','status'];
+const DRAFTS_HEADER = ['createdAt','leadId','company','email','topic','confidence','reason','draftBody','status','campaignProfile','classification','reasonCode'];
 
 async function ensureDraftsSheet() {
   const s  = sheets();
   const ss = await s.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
-  if (ss.data.sheets.find(sh => sh.properties.title === DRAFTS_SHEET)) return;
-  await s.spreadsheets.batchUpdate({
-    spreadsheetId: SPREADSHEET_ID,
-    requestBody: { requests: [{ addSheet: { properties: { title: DRAFTS_SHEET } } }] },
-  });
+  const exists = ss.data.sheets.find(sh => sh.properties.title === DRAFTS_SHEET);
+  if (!exists) await s.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: { requests: [{ addSheet: { properties: { title: DRAFTS_SHEET } } }] },
+    });
+  const current = exists ? await s.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${DRAFTS_SHEET}!A1:L1` }) : null;
+  if (current && DRAFTS_HEADER.every((value, index) => current.data.values?.[0]?.[index] === value)) return;
   await s.spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID, range: `${DRAFTS_SHEET}!A1`,
     valueInputOption: 'RAW', requestBody: { values: [DRAFTS_HEADER] },
   });
-  console.log(`[Drafts] ${DRAFTS_SHEET} tab created`);
+  console.log(`[Drafts] ${DRAFTS_SHEET} headers ready`);
 }
 
 async function queueDraft(lead, answer) {
@@ -1476,12 +1493,12 @@ async function queueDraft(lead, answer) {
   const beforeRows = (before.data.values || []).length;
 
   await sheets().spreadsheets.values.append({
-    spreadsheetId: SPREADSHEET_ID, range: `${DRAFTS_SHEET}!A:I`,
+    spreadsheetId: SPREADSHEET_ID, range: `${DRAFTS_SHEET}!A:L`,
     valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
     requestBody: { values: [[
       new Date().toISOString(), lead.id, cleanCompanyName(lead.company) || lead.company || '',
       lead.email, answer.reason || '', String(answer.confidence ?? ''), answer.reason || '',
-      answer.body || '', 'pending',
+      answer.body || '', 'pending', answer.campaignProfile || '', answer.classification || '', answer.reasonCode || '',
     ]] },
   });
 
@@ -1599,6 +1616,68 @@ async function handleNeedsHuman(lead, fromAddr) {
   console.log(`  ⚑ ${lead.company} — needs human review${differs ? ` (replied from ${from})` : ''}`);
 }
 
+const ROOFING_LINK_SENT_TAG = '[ROOFING_SURVEY_LINK_SENT]';
+const ROOFING_DRAFTED_TAG = '[ROOFING_SURVEY_DRAFTED]';
+
+async function markRoofingReplyState(lead, stage, status, tag) {
+  const rowNum = await resolveRow(lead.id);
+  if (!rowNum) return;
+  const notes = prependNote(lead.notes, tag);
+  await sheets().spreadsheets.values.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: { valueInputOption: 'RAW', data: [
+      { range: `${SHEET_NAME}!H${rowNum}`, values: [[stage]] },
+      { range: `${SHEET_NAME}!I${rowNum}`, values: [[status]] },
+      { range: `${SHEET_NAME}!L${rowNum}`, values: [[notes]] },
+    ] },
+  });
+  lead.notes = notes;
+}
+
+async function handleRoofingSurveyReply(lead, message, replyText, todaySent) {
+  if (!ROOFING_SURVEY_REPLY_FLOW_ENABLED) {
+    await handleNeedsHuman(lead, message.fromAddr);
+    return 'flow_disabled';
+  }
+  const classification = await classifyRoofingReply({ replyText, createMessage: anthropicClient ? input => anthropicClient.messages.create(input) : null });
+  console.log(`  [roofing-reply] profile=${ROOFING_SURVEY_PROFILE} classification=${classification.category} reason=${classification.reason_code}`);
+  if (classification.category === 'unsubscribe') { await handleUnsubscribe(lead); return classification.category; }
+  if (classification.category === 'negative') { await handleNotInterested(lead); return classification.category; }
+  if (classification.category === 'wrong_person') { await handleWrongPerson(lead); return classification.category; }
+  if (['out_of_office','automated'].includes(classification.category)) { await markRoofingReplyState(lead, 'Done', 'done', `[ROOFING_SURVEY: ${classification.category}]`); return classification.category; }
+  if (classification.category === 'already_completed') { await markRoofingReplyState(lead, 'Done', 'done', '[ROOFING_SURVEY: already completed]'); return classification.category; }
+
+  if (classification.category === 'positive' && classification.should_send_survey && !classification.requires_human_review && classification.confidence >= ANSWER_CONFIDENCE_FLOOR / 100) {
+    if ((lead.notes || '').includes(ROOFING_LINK_SENT_TAG) || (lead.notes || '').includes(ROOFING_DRAFTED_TAG)) return 'duplicate_blocked';
+    let body = '';
+    try { body = renderRoofingSurveyReply(lead, ROOFING_SURVEY_URL, { mailingAddress: MAILING_ADDRESS, reference: `SL-${refCode(lead)}` }); }
+    catch (_) {
+      await queueDraft(lead, { body: '', confidence: classification.confidence, reason: 'roofing survey URL is missing or invalid', campaignProfile: ROOFING_SURVEY_PROFILE, classification: classification.category, reasonCode: 'missing_survey_url' });
+      await markRoofingReplyState(lead, 'Review', 'replied', ROOFING_DRAFTED_TAG);
+      return 'missing_url';
+    }
+    if (!ROOFING_SURVEY_AUTO_REPLY_ENABLED) {
+      await queueDraft(lead, { body, confidence: classification.confidence, reason: 'roofing survey response requires approval', campaignProfile: ROOFING_SURVEY_PROFILE, classification: classification.category, reasonCode: classification.reason_code });
+      await markRoofingReplyState(lead, 'Review', 'replied', ROOFING_DRAFTED_TAG);
+      return 'drafted';
+    }
+    const blocked = suppressionReason(lead) || (!SENDING_ENABLED && 'sending disabled') || (todaySent >= DAILY_SEND_LIMIT && 'daily limit reached');
+    if (blocked) {
+      await queueDraft(lead, { body, confidence: classification.confidence, reason: `roofing survey auto-reply blocked: ${blocked}`, campaignProfile: ROOFING_SURVEY_PROFILE, classification: classification.category, reasonCode: 'send_gate_blocked' });
+      await markRoofingReplyState(lead, 'Review', 'replied', ROOFING_DRAFTED_TAG);
+      return 'blocked';
+    }
+    await sendEmail({ to: lead.email.trim(), subject: 'Re: quick roofing question', body, threadId: message.threadId, inReplyTo: message.rfcMessageId, references: message.rfcMessageId });
+    await markRoofingReplyState(lead, 'Replied', 'replied', ROOFING_LINK_SENT_TAG);
+    return 'sent';
+  }
+
+  const body = classification.category === 'question' ? renderRoofingQuestionDraft(lead) : '';
+  await queueDraft(lead, { body, confidence: classification.confidence, reason: 'roofing survey reply requires human review', campaignProfile: ROOFING_SURVEY_PROFILE, classification: classification.category, reasonCode: classification.reason_code });
+  await markRoofingReplyState(lead, 'Review', 'replied', ROOFING_DRAFTED_TAG);
+  return 'review';
+}
+
 // ── REPLY-CHECK PASS ─────────────────────────────────────────────────────────
 // Runs unconditionally on every agent invocation — independent of whether there
 // are queued sends or follow-ups due. Fetches each emailed lead's reply body,
@@ -1625,6 +1704,12 @@ async function runReplyCheckPass(leads) {
     found++;
     const company        = cleanCompanyName(lead.company) || lead.email;
     const replyText      = message.body || message.snippet;
+    if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE) {
+      lead.emailStatus = 'replied';
+      if (!DRY_RUN) await withAuth(() => handleRoofingSurveyReply(lead, message, replyText, replyPassTodaySent));
+      else console.log(`  ↩ Roofing survey reply from ${lead.email} (${company}) — no writes in dry run`);
+      continue;
+    }
     const classification = await classifyReply(lead.company, replyText);
     classCounts[classification] = (classCounts[classification] || 0) + 1;
 
@@ -2098,6 +2183,7 @@ function selectFollowUps(leads) {
   const now = Date.now();
   return leads.filter(l => {
     if (l.emailStatus !== 'emailed') return false;
+    if (l.emailTemplateId === ROOFING_SURVEY_TEMPLATE) return false;
     if (!isValidEmail(l.email)) return false;
     if (!routedLeadCanUseCurrentSender(l)) return false;
     const currentStep = parseInt(l.emailStep || '0', 10);
@@ -2170,6 +2256,7 @@ function getOpenTriggeredLeads(allLeads, proposalOpens) {
   return allLeads
     .filter(lead => {
       if (lead.emailStatus !== 'emailed') return false;
+      if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE) return false;
       if (!routedLeadCanUseCurrentSender(lead)) return false;
       const step = parseInt(lead.emailStep || '0', 10);
       if (step < 1 || step > FOLLOW_UP_SEQUENCE.length) return false;
@@ -2321,7 +2408,16 @@ async function run() {
     // error or a "send failed" log line — the lead is fine, the data isn't.
     let built;
     try {
-      built = await buildEmail(lead);
+      if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE) {
+        const qualification = qualifyRoofingLead(lead);
+        if (!qualification.ok) throw new Error(`roofing lead qualification failed (${qualification.reasonCode})`);
+        const email = renderRoofingSurveyInitial(lead, { mailingAddress: MAILING_ADDRESS, reference: `SL-${refCode(lead)}` });
+        const invalid = validateRoofingSurveyInitial(email);
+        if (invalid) throw new Error(invalid);
+        built = { ...email, link: '', opener: 'locked roofing survey copy', openerTier: 'LOCKED', pitchTier: ROOFING_SURVEY_PROFILE };
+      } else {
+        built = await buildEmail(lead);
+      }
     } catch (e) {
       console.error(`✎ [draft] could not build step 1 → ${lead.email} — ${e.message}`);
       await withAuth(() => queueDraft(lead, {
@@ -2347,7 +2443,9 @@ async function run() {
     // Personalization + guarantee gate. Runs BEFORE the kill switch so a
     // dry/gated run still surfaces bad merges, and before any send so a
     // malformed guarantee can never leave the building.
-    const invalid = validateColdEmail(lead, subject, body, link);
+    const invalid = lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE
+      ? validateRoofingSurveyInitial({ subject, body })
+      : validateColdEmail(lead, subject, body, link);
     if (invalid) {
       console.error(`✎ [draft] not sending step 1 → ${lead.email} — ${invalid}`);
       await withAuth(() => queueDraft(lead, {

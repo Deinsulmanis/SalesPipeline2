@@ -19,6 +19,7 @@ const { buildEventKey, buildMappingKey, mappingMatchesEvent, normalizeEmail, can
 const { classifyReply: classifyProviderReply, CLASSIFICATION_TO_STATUS } = require('./integrations/reply-classifier');
 const { parseRegistry: parseGmailInboxRegistry, publicRegistry: publicGmailInboxRegistry, verifyInbox: verifyGmailInbox } = require('./integrations/gmail-inbox-registry');
 const { EMAIL_TEMPLATES, normalizeNiche, validateRoute } = require('./integrations/campaign-routing');
+const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE, qualifyLead: qualifyRoofingLead } = require('./integrations/roofing-survey-profile');
 
 const app = express();
 // Smartlead signs the exact request bytes. This public route must be registered
@@ -1250,6 +1251,10 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
         if (lead.emailStatus || ['Replied','Done','Promoted','Unsubscribed'].includes(lead.stage)) return { error: `${lead.company || lead.email} is not eligible to queue`, status: 409 };
         const route = validateRoute({ niche: lead.leadNiche || lead.tradeType, senderInboxId, emailTemplateId, inboxes });
         if (!route.ok) return { error: route.reason, status: 422 };
+        if (emailTemplateId === ROOFING_SURVEY_TEMPLATE) {
+          const qualification = qualifyRoofingLead(lead);
+          if (!qualification.ok) return { error: `${lead.company || lead.email} does not have enough roofing-business evidence`, status: 422 };
+        }
       }
       const data = selected.map(({ lead, rowNumber }) => {
         lead.stage = 'Queued'; lead.senderInboxId = senderInboxId; lead.emailTemplateId = emailTemplateId; lead.routingRequired = 'true';

@@ -18,7 +18,8 @@ test('niche normalization keeps dental and roofing separated', () => {
 test('route validation requires compatible ready copy and delivery-capable inbox', () => {
   assert.equal(validateRoute({ niche: 'dental', senderInboxId: 'primary', emailTemplateId: 'dental-guarantee-v1', inboxes: [primary] }).ok, true);
   assert.match(validateRoute({ niche: 'roofing', senderInboxId: 'primary', emailTemplateId: 'dental-guarantee-v1', inboxes: [primary] }).reason, /cannot be used/);
-  assert.match(validateRoute({ niche: 'roofing', senderInboxId: 'primary', emailTemplateId: 'roofing-survey-v1', inboxes: [primary] }).reason, /has not been added/);
+  assert.match(validateRoute({ niche: 'roofing', senderInboxId: 'primary', emailTemplateId: 'roofing-survey-v1', inboxes: [primary] }).reason, /workflow is disabled/);
+  assert.equal(validateRoute({ niche: 'roofing', senderInboxId: 'primary', emailTemplateId: 'roofing-survey-v1', inboxes: [primary], requireReady: false }).ok, true);
   assert.match(validateRoute({ niche: 'dental', senderInboxId: 'warm', emailTemplateId: 'dental-guarantee-v1', inboxes: [warming] }).reason, /not eligible/);
 });
 
@@ -48,8 +49,10 @@ test('campaign import and queue UI require durable routing choices', () => {
   assert.match(server, /app\.post\('\/api\/coldemail\/queue', requireAuth/);
 });
 
-test('roofing copy remains visibly registered but unsendable until approved', () => {
+test('roofing copy is registered as a one-step niche-specific profile and disabled by default', () => {
   const roofing = EMAIL_TEMPLATES.find(template => template.id === 'roofing-survey-v1');
   assert.equal(roofing.ready, false);
   assert.equal(roofing.niche, 'roofing');
+  assert.equal(roofing.sequenceSteps, 1);
+  assert.equal(roofing.profile, 'roofing_survey_reply_first');
 });
