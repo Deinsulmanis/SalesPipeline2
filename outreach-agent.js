@@ -61,6 +61,7 @@ const { SmartleadClient } = require('./integrations/smartlead-client');
 const { SmartleadOutreachProvider } = require('./integrations/outreach-providers');
 const { classifyReply: classifyProviderReply } = require('./integrations/reply-classifier');
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
+const { routedLeadReady } = require('./integrations/campaign-routing');
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 
@@ -106,7 +107,7 @@ const PROPOSAL_BASE    = (/^https?:\/\//i.test(_rawProposalBase) ? _rawProposalB
 const MIN_DELAY = 45 * 1000;
 const MAX_DELAY = 120 * 1000;
 
-// ColdEmail columns A:S — must stay in sync with CE_COLUMNS in server.js
+// ColdEmail columns A:W — must stay in sync with CE_COLUMNS in server.js
 //   A=id  B=company  C=contactName  D=email  E=city  F=tradeType  G=website
 //   H=stage  I=emailStatus  J=lastEmailedAt  K=emailStep  L=notes
 //   M=reviewCount  N=rating  O=tier  P=siteContext
@@ -114,9 +115,10 @@ const COLUMNS = [
   'id','company','contactName','email','city','tradeType','website',
   'stage','emailStatus','lastEmailedAt','emailStep','notes',
   'reviewCount','rating','tier','siteContext','campaign','campaign_notes','enrichment_attempted',
+  'leadNiche','senderInboxId','emailTemplateId','routingRequired',
 ];
 const AGENT_COLS  = []; // integrated into COLUMNS for ColdEmail
-const READ_RANGE  = `${SHEET_NAME}!A:S`;
+const READ_RANGE  = `${SHEET_NAME}!A:W`;
 const CAMPAIGN_INTEGRATIONS_SHEET = 'CampaignIntegrations';
 const PROVIDER_LEADS_SHEET = 'ProviderLeadMappings';
 let CAMPAIGN_PROVIDERS = new Map();
@@ -2056,6 +2058,15 @@ function selectQueued(leads) {
     // could be re-mailed with one dropdown click. Re-sending now requires
     // explicitly clearing emailStatus as well as re-queueing the stage.
     if (l.emailStatus !== '') return false;
+    const routing = routedLeadReady(l);
+    if (!routing.ok) {
+      console.warn(`🧭 [routing] skipping queued lead ${l.email} (${l.company || l.id}) — ${routing.reason}`);
+      return false;
+    }
+    if (!routing.legacy && l.senderInboxId !== 'primary') {
+      console.warn(`🧭 [routing] skipping queued lead ${l.email} (${l.company || l.id}) — assigned inbox routing is not active`);
+      return false;
+    }
     // Global suppression list (durable, survives row deletion / re-import) —
     // first-line exclusion; suppressionReason() is the last-line guard at send.
     if (SUPPRESSED_EMAILS.has(normEmail(l.email))) {
@@ -2075,6 +2086,11 @@ function selectQueued(leads) {
   });
 }
 
+function routedLeadCanUseCurrentSender(lead) {
+  const routing = routedLeadReady(lead);
+  return routing.ok && (routing.legacy || lead.senderInboxId === 'primary');
+}
+
 // Phase 3: find leads that are due for a follow-up step.
 // currentStep 1 → send step 2 (FOLLOW_UP_SEQUENCE[0], 3 days)
 // currentStep 2 → send step 3 (FOLLOW_UP_SEQUENCE[1], 5 days)
@@ -2083,6 +2099,7 @@ function selectFollowUps(leads) {
   return leads.filter(l => {
     if (l.emailStatus !== 'emailed') return false;
     if (!isValidEmail(l.email)) return false;
+    if (!routedLeadCanUseCurrentSender(l)) return false;
     const currentStep = parseInt(l.emailStep || '0', 10);
     // currentStep must be 1..FOLLOW_UP_SEQUENCE.length (i.e. 1 or 2)
     if (currentStep < 1 || currentStep > FOLLOW_UP_SEQUENCE.length) return false;
@@ -2153,6 +2170,7 @@ function getOpenTriggeredLeads(allLeads, proposalOpens) {
   return allLeads
     .filter(lead => {
       if (lead.emailStatus !== 'emailed') return false;
+      if (!routedLeadCanUseCurrentSender(lead)) return false;
       const step = parseInt(lead.emailStep || '0', 10);
       if (step < 1 || step > FOLLOW_UP_SEQUENCE.length) return false;
       if (lead.stage === 'Replied') return false;

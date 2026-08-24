@@ -32,7 +32,7 @@ function parseRegistry(raw = process.env.GMAIL_INBOX_REGISTRY_JSON || '[]') {
 function publicRegistry(entries, env = process.env) {
   return entries.map(entry => ({
     id: entry.id, email: entry.email, status: entry.status, dailyLimit: entry.dailyLimit,
-    credentialConfigured: Boolean(env[entry.tokenEnv]), sendEligible: entry.status === 'active' && entry.dailyLimit > 0,
+    credentialConfigured: Boolean(env[entry.tokenEnv]), sendEligible: entry.status === 'active' && entry.dailyLimit > 0 && Boolean(env[entry.tokenEnv]),
   }));
 }
 

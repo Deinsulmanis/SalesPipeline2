@@ -1687,6 +1687,7 @@
     <button class="ce-tab"        data-ce="Promoted"     onclick="setCeFilter('Promoted')">Promoted</button>
     <button class="ce-tab"        data-ce="Unsubscribed" onclick="setCeFilter('Unsubscribed')">Unsub</button>
     <div class="ce-actions">
+      <select id="ce-niche-filter" aria-label="Filter by lead type" onchange="setCeNicheFilter(this.value)" style="width:auto;min-width:118px;padding:7px 10px"><option value="all">All lead types</option><option value="dental">Dental</option><option value="roofing">Roofing</option></select>
       <div class="ce-search-wrap">
         <svg class="ce-search-icon" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
         <input type="text" id="ce-search" placeholder="Search leads…" oninput="onCeSearch(this.value)">
@@ -2004,6 +2005,11 @@
         <input type="text" id="campaign-name-input" placeholder="e.g. Vancouver HVAC — July 2026" onkeydown="if(event.key==='Enter')confirmCampaignImport()">
       </div>
       <div class="form-group full">
+        <label for="campaign-niche-input">Lead type <span style="color:var(--hot)">*</span></label>
+        <select id="campaign-niche-input"><option value="">Choose lead type…</option><option value="dental">Dental</option><option value="roofing">Roofing</option></select>
+        <div style="font-size:11px;color:var(--text-muted)">This keeps imports separated and limits which email copy can be selected later.</div>
+      </div>
+      <div class="form-group full">
         <label>Campaign Notes <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
         <textarea id="campaign-notes-input" placeholder="Source, targeting notes…" style="min-height:72px"></textarea>
       </div>
@@ -2012,6 +2018,20 @@
       <button type="button" class="btn-cancel" onclick="closeCampaignModal()">Cancel</button>
       <button type="button" class="btn-save" onclick="confirmCampaignImport()">Import</button>
     </div>
+  </div>
+</div>
+
+<!-- QUEUE ROUTING MODAL -->
+<div class="overlay" id="queue-route-modal-overlay" style="z-index:220" onclick="closeQueueRouteModal(event)">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="queue-route-title" onclick="event.stopPropagation()">
+    <div class="modal-header"><div><div class="modal-title" id="queue-route-title">Choose sending route</div><div id="queue-route-summary" style="font-size:11px;color:var(--text-muted);margin-top:3px"></div></div><button class="modal-close" onclick="closeQueueRouteModal()" aria-label="Close">✕</button></div>
+    <div class="form-grid" style="padding:20px 24px 0">
+      <div class="form-group full"><label for="queue-route-inbox">Sending inbox</label><select id="queue-route-inbox"></select></div>
+      <div class="form-group full"><label for="queue-route-template">Email copy</label><select id="queue-route-template"></select></div>
+      <div class="form-group full"><div id="queue-route-line" class="inbox-route-shell" style="padding:12px;font-size:12px;color:var(--text-secondary)">Choose an inbox and email copy.</div></div>
+      <div id="queue-route-error" class="form-group full" role="alert" style="min-height:18px;font-size:12px;color:var(--hot)"></div>
+    </div>
+    <div class="form-actions"><button type="button" class="btn-cancel" onclick="closeQueueRouteModal()">Cancel</button><button type="button" class="btn-save" onclick="confirmQueueRoute()">Queue leads</button></div>
   </div>
 </div>
 
@@ -3052,7 +3072,10 @@ let ceActiveFilter = 'all';
 let ceSelected     = new Set();
 let ceSearchQuery    = '';
 let ceCampaignFilter = '';
+let ceNicheFilter = 'all';
 let _pendingCsvRows  = null;
+let queueRouteIds = [];
+let outreachRoutingOptions = null;
 let ceOpensMap       = new Map();
 let ceOpensData    = [];
 // Demo plays — a stronger buying signal than an open (they pressed play), so
@@ -3061,6 +3084,11 @@ let ceDemoMap      = new Map();   // companyKey → { count, demo, intro, last }
 let ceDemoData     = [];
 
 const CE_STAGES = ['Import','Queued','Contacted','Replied','Review','Done','Promoted','Unsubscribed'];
+
+function setCeNicheFilter(value) {
+  ceNicheFilter = value || 'all';
+  ceSelected.clear(); updateBulkQueueBtn(); renderCeTable();
+}
 
 function setMotion(m) {
   currentMotion = m;
@@ -3325,7 +3353,8 @@ function renderCeTable() {
     const c = (l.campaign || '').trim();
     return ((!c || c.toLowerCase() === 'unlabeled') ? 'Unlabeled' : c) === ceCampaignFilter;
   });
-  const filtered = !q ? campaignFiltered : campaignFiltered.filter(l =>
+  const nicheFiltered = ceNicheFilter === 'all' ? campaignFiltered : campaignFiltered.filter(l => normalizedRouteNiche(l) === ceNicheFilter);
+  const filtered = !q ? nicheFiltered : nicheFiltered.filter(l =>
     [l.company, l.email, l.contactName].some(f => f && f.toLowerCase().includes(q))
   );
 
@@ -3934,6 +3963,9 @@ function openCeDetail(id) {
     lead.rating        && { label: 'Rating',       val: `${esc(lead.rating)} ★` },
     lead.reviewCount   && { label: 'Reviews',      val: esc(lead.reviewCount) },
     lead.campaign      && { label: 'Campaign',     val: esc(lead.campaign) },
+    (lead.leadNiche || lead.tradeType) && { label: 'Lead Type', val: esc(normalizedRouteNiche(lead) || lead.tradeType) },
+    lead.senderInboxId && { label: 'Sending Inbox', val: esc(lead.senderInboxId === 'primary' ? 'Current Gmail inbox' : lead.senderInboxId) },
+    lead.emailTemplateId && { label: 'Email Copy', val: esc(lead.emailTemplateId) },
     lead.campaign_notes && { label: 'Camp. Notes', val: esc(lead.campaign_notes) },
     { label: 'Last emailed', val: lead.lastEmailedAt ? new Date(lead.lastEmailedAt).toLocaleDateString() : '—' },
   ].filter(Boolean);
@@ -3997,6 +4029,78 @@ function updateBulkQueueBtn() {
 
 // ── CE ACTIONS ───────────────────────────────────────────────────────────────
 
+function normalizedRouteNiche(lead) {
+  const value = String(lead.leadNiche || lead.tradeType || '').trim().toLowerCase();
+  if (value.includes('roof')) return 'roofing';
+  if (value.includes('dent')) return 'dental';
+  return value;
+}
+
+async function loadOutreachRoutingOptions() {
+  if (outreachRoutingOptions) return outreachRoutingOptions;
+  const response = await fetch('/api/outreach/routing-options');
+  if (!response.ok) throw new Error('Could not load sending routes');
+  outreachRoutingOptions = await response.json();
+  return outreachRoutingOptions;
+}
+
+async function openQueueRouteModal(ids) {
+  const leads = ids.map(id => ceLeads.find(lead => lead.id === id)).filter(Boolean);
+  if (!leads.length) return;
+  const niches = [...new Set(leads.map(normalizedRouteNiche).filter(Boolean))];
+  if (niches.length !== 1) return showToast('Select leads from one lead type at a time.', 'warning');
+  const campaigns = [...new Set(leads.map(lead => String(lead.campaign || '').trim()))];
+  if (campaigns.length !== 1) return showToast('Select leads from one campaign at a time.', 'warning');
+  queueRouteIds = leads.map(lead => lead.id);
+  const niche = niches[0];
+  const summary = document.getElementById('queue-route-summary');
+  const error = document.getElementById('queue-route-error');
+  summary.textContent = `${leads.length} lead${leads.length === 1 ? '' : 's'} · ${niche} · ${leads[0].campaign || 'Unlabeled'}`;
+  error.textContent = '';
+  document.getElementById('queue-route-modal-overlay').classList.add('open');
+  try {
+    const options = await loadOutreachRoutingOptions();
+    const inboxSelect = document.getElementById('queue-route-inbox');
+    const templateSelect = document.getElementById('queue-route-template');
+    inboxSelect.innerHTML = '<option value="">Choose sending inbox…</option>' + options.inboxes.map(inbox => `<option value="${escAttr(inbox.id)}" ${inbox.sendEligible && inbox.deliveryImplemented ? '' : 'disabled'}>${esc(inbox.email)} — ${inbox.currentRoute ? 'Current' : inbox.status}${inbox.sendEligible && inbox.deliveryImplemented ? '' : ' (unavailable)'}</option>`).join('');
+    templateSelect.innerHTML = '<option value="">Choose email copy…</option>' + options.templates.filter(template => template.niche === niche).map(template => `<option value="${escAttr(template.id)}" ${template.ready ? '' : 'disabled'}>${esc(template.name)}${template.ready ? '' : ' — copy required'}</option>`).join('');
+    inboxSelect.onchange = updateQueueRouteLine;
+    templateSelect.onchange = updateQueueRouteLine;
+    updateQueueRouteLine();
+  } catch (e) { error.textContent = e.message; }
+}
+
+function updateQueueRouteLine() {
+  const inbox = document.getElementById('queue-route-inbox');
+  const template = document.getElementById('queue-route-template');
+  const lead = ceLeads.find(item => item.id === queueRouteIds[0]);
+  const niche = lead ? normalizedRouteNiche(lead) : 'Lead type';
+  const inboxText = inbox.selectedOptions[0]?.textContent || 'Inbox';
+  const templateText = template.selectedOptions[0]?.textContent || 'Email copy';
+  document.getElementById('queue-route-line').textContent = `${niche} → ${templateText} → ${inboxText}`;
+}
+
+function closeQueueRouteModal(e) {
+  if (e && e.target !== document.getElementById('queue-route-modal-overlay')) return;
+  document.getElementById('queue-route-modal-overlay').classList.remove('open');
+  queueRouteIds = [];
+}
+
+async function confirmQueueRoute() {
+  const senderInboxId = document.getElementById('queue-route-inbox').value;
+  const emailTemplateId = document.getElementById('queue-route-template').value;
+  const error = document.getElementById('queue-route-error');
+  if (!senderInboxId || !emailTemplateId) { error.textContent = 'Choose both a sending inbox and email copy.'; return; }
+  const ids = [...queueRouteIds];
+  const response = await fetch('/api/coldemail/queue', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, senderInboxId, emailTemplateId }) });
+  const result = await response.json();
+  if (!response.ok) { error.textContent = result.error || 'Could not queue these leads.'; return; }
+  closeQueueRouteModal();
+  ceSelected.clear(); updateBulkQueueBtn();
+  showToast(`Queued ${result.queued} lead${result.queued === 1 ? '' : 's'} with a locked sending route.`, 'success');
+  loadCeLeads();
+}
+
 async function setCeLeadStage(id, stage) {
   const lead = ceLeads.find(l => l.id === id);
   if (!lead) return;
@@ -4015,6 +4119,9 @@ async function setCeLeadStage(id, stage) {
       );
       if (!ok) { renderCeTable(); return; }
     }
+    openQueueRouteModal([id]);
+    renderCeTable();
+    return;
   }
   const prev = lead.stage;
   lead.stage = stage;
@@ -4031,31 +4138,12 @@ async function setCeLeadStage(id, stage) {
 
 async function bulkQueueSelected() {
   if (ceSelected.size === 0) return;
-  const ids = [...ceSelected];
-  let done = 0, skipped = 0;
-  for (const id of ids) {
-    const lead = ceLeads.find(l => l.id === id);
-    if (!lead) continue;
-    // Bulk queue never overrides terminal leads — a select-all must not sweep
-    // unsubscribed/bounced/replied rows back into the send queue. To re-queue
-    // one deliberately, use the row's stage dropdown (which asks first).
-    if (ceTerminalReason(lead)) { skipped++; continue; }
-    const prev = lead.stage;
-    lead.stage = 'Queued';
-    try {
-      const resp = await fetch(`/api/coldemail/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(lead),
-      });
-      if (resp.ok) done++; else lead.stage = prev;
-    } catch (e) { lead.stage = prev; }
-  }
-  ceSelected.clear();
-  updateBulkQueueBtn();
-  const skippedMsg = skipped > 0 ? ` (${skipped} skipped: replied/unsubscribed/bounced/done)` : '';
-  showToast(`Queued ${done} lead${done !== 1 ? 's' : ''}.${skippedMsg}`, skipped > 0 ? 'warning' : 'success');
-  renderCeTable();
+  const eligible = [...ceSelected].filter(id => {
+    const lead = ceLeads.find(item => item.id === id);
+    return lead && !ceTerminalReason(lead);
+  });
+  if (!eligible.length) return showToast('Selected leads are not eligible to queue.', 'warning');
+  openQueueRouteModal(eligible);
 }
 
 async function promoteLead(id) {
@@ -4105,6 +4193,7 @@ function handleCsvImport(event) {
 
 function showCampaignModal() {
   document.getElementById('campaign-name-input').value  = '';
+  document.getElementById('campaign-niche-input').value = '';
   document.getElementById('campaign-notes-input').value = '';
   document.getElementById('campaign-modal-overlay').classList.add('open');
   setTimeout(() => document.getElementById('campaign-name-input').focus(), 50);
@@ -4123,6 +4212,12 @@ async function confirmCampaignImport() {
     showToast('Campaign name is required.', 'warning');
     return;
   }
+  const lead_niche = document.getElementById('campaign-niche-input').value;
+  if (!lead_niche) {
+    document.getElementById('campaign-niche-input').focus();
+    showToast('Lead type is required.', 'warning');
+    return;
+  }
   const campaign_notes = document.getElementById('campaign-notes-input').value.trim();
   const rows = _pendingCsvRows;
   if (!rows || !rows.length) { closeCampaignModal(); return; }
@@ -4133,7 +4228,7 @@ async function confirmCampaignImport() {
     const resp = await fetch('/api/coldemail/import', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rows, campaign, campaign_notes }),
+      body: JSON.stringify({ rows, campaign, campaign_notes, lead_niche }),
     });
     if (!resp.ok) { showToast('Import failed: ' + resp.status, 'error'); return; }
     const { imported, duplicates, junk } = await resp.json();

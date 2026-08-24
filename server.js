@@ -18,6 +18,7 @@ const { leadEligibility } = require('./integrations/outreach-policy');
 const { buildEventKey, buildMappingKey, mappingMatchesEvent, normalizeEmail, canApplyProviderTransition, safeAuditPayload, executeEventAttempt, KeyedLock, fetchAllCampaignLeads, aggregateProviderStats, reconciliationHealth } = require('./integrations/smartlead-safety');
 const { classifyReply: classifyProviderReply, CLASSIFICATION_TO_STATUS } = require('./integrations/reply-classifier');
 const { parseRegistry: parseGmailInboxRegistry, publicRegistry: publicGmailInboxRegistry, verifyInbox: verifyGmailInbox } = require('./integrations/gmail-inbox-registry');
+const { EMAIL_TEMPLATES, normalizeNiche, validateRoute } = require('./integrations/campaign-routing');
 
 const app = express();
 // Smartlead signs the exact request bytes. This public route must be registered
@@ -345,8 +346,9 @@ const CE_COLUMNS    = [
   'reviewCount','rating','tier','siteContext',                        // M N O P
   'campaign','campaign_notes',                                        // Q R
   'enrichment_attempted',                                             // S
+  'leadNiche','senderInboxId','emailTemplateId','routingRequired',     // T U V W
 ];
-const CE_COL_RANGE  = `${CE_SHEET_NAME}!A:S`;
+const CE_COL_RANGE  = `${CE_SHEET_NAME}!A:W`;
 
 // ── GLOBAL SUPPRESSION LIST ───────────────────────────────────────────────────
 // Durable, email-keyed opt-out record shared with outreach-agent.js. Checked at
@@ -763,7 +765,7 @@ async function ensureColdEmailSheet() {
     ceSheetIdCache = existing.properties.sheetId;
     const hResp = await s.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range:         `${CE_SHEET_NAME}!A1:S1`,
+      range:         `${CE_SHEET_NAME}!A1:W1`,
     });
     const existingHdr = hResp.data.values?.[0] || [];
     // Repair if header is missing, wrong, or shorter than CE_COLUMNS (new columns added)
@@ -890,7 +892,7 @@ async function ensureDigestSheet() {
 // Computes today's numbers from the source tabs. Read-only.
 async function computeDigest(day) {
   const [ceR, opR, dpR, drR, inR] = await Promise.all([
-    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:S` }),
+    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE }),
     sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ProposalOpens!A:F' }),
     sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A:F' }),
     sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ReplyDrafts!A:I' }).catch(() => ({ data: {} })),
@@ -1064,7 +1066,7 @@ app.get('/api/proposalOpens', requireAuth, async (_req, res) => {
   try {
     const [openResp, ceResp, engResp, demoResp] = await Promise.all([
       sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ProposalOpens!A:F' }),
-      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:S` }),
+      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE }),
       // Engagement signals rescue a real human who happened to trip a scanner
       // rule. Both tabs are optional — a missing one just means no rescues.
       sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ProposalEngaged!A:F' }).catch(() => ({ data: {} })),
@@ -1144,10 +1146,12 @@ async function addSuppression(email, reason, company, source, known) {
 }
 
 app.post('/api/coldemail/import', requireAuth, async (req, res) => {
-  const { rows, campaign, campaign_notes } = req.body || {};
+  const { rows, campaign, campaign_notes, lead_niche } = req.body || {};
   if (!Array.isArray(rows)) return res.status(400).json({ error: 'body.rows must be an array' });
-  if (!campaign) console.warn('[ColdEmail Import] No campaign name provided — defaulting to "unlabeled"');
-  const campaignName  = (campaign || 'unlabeled').trim();
+  if (!campaign || !String(campaign).trim()) return res.status(422).json({ error: 'Campaign name is required' });
+  const leadNiche = normalizeNiche(lead_niche);
+  if (!leadNiche) return res.status(422).json({ error: 'Lead niche is required' });
+  const campaignName  = String(campaign).trim();
   const campaignNotes = (campaign_notes || '').trim();
   try {
     const result = await withAuth(async () => {
@@ -1200,6 +1204,7 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
           tier: row.tier || '',         siteContext: row.siteContext || '',
           campaign: campaignName, campaign_notes: campaignNotes,
           enrichment_attempted: '',   // never attempted — enrich-names.js will pick these up
+          leadNiche, senderInboxId: '', emailTemplateId: '', routingRequired: 'true',
         };
         toAdd.push(CE_COLUMNS.map(col => String(lead[col] ?? '')));
       }
@@ -1220,6 +1225,46 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
     console.error('[ColdEmail Import]', e.message);
     res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
+  const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(value => String(value || '').trim()).filter(Boolean))];
+  const senderInboxId = String(req.body?.senderInboxId || '').trim();
+  const emailTemplateId = String(req.body?.emailTemplateId || '').trim();
+  if (!ids.length || ids.length > 500) return res.status(422).json({ error: 'Select between 1 and 500 leads' });
+  try {
+    const result = await withAuth(async () => {
+      await ensureColdEmailSheet();
+      const response = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE });
+      const rows = response.data.values || [];
+      const selected = [];
+      for (let index = 1; index < rows.length; index++) {
+        const lead = {}; CE_COLUMNS.forEach((field, column) => { lead[field] = rows[index][column] || ''; });
+        if (ids.includes(lead.id)) selected.push({ lead, rowNumber: index + 1 });
+      }
+      if (selected.length !== ids.length) return { error: 'One or more selected leads no longer exist', status: 409 };
+      if (new Set(selected.map(({ lead }) => String(lead.campaign || '').trim())).size !== 1) return { error: 'Queue leads from one campaign at a time', status: 422 };
+      const inboxes = gmailInboxOptions();
+      for (const { lead } of selected) {
+        if (lead.emailStatus || ['Replied','Done','Promoted','Unsubscribed'].includes(lead.stage)) return { error: `${lead.company || lead.email} is not eligible to queue`, status: 409 };
+        const route = validateRoute({ niche: lead.leadNiche || lead.tradeType, senderInboxId, emailTemplateId, inboxes });
+        if (!route.ok) return { error: route.reason, status: 422 };
+      }
+      const data = selected.map(({ lead, rowNumber }) => {
+        lead.stage = 'Queued'; lead.senderInboxId = senderInboxId; lead.emailTemplateId = emailTemplateId; lead.routingRequired = 'true';
+        return { range: `${CE_SHEET_NAME}!A${rowNumber}:W${rowNumber}`, values: [CE_COLUMNS.map(field => String(lead[field] ?? ''))] };
+      });
+      await sheets().spreadsheets.values.batchUpdate({ spreadsheetId: SPREADSHEET_ID, requestBody: { valueInputOption: 'RAW', data } });
+      ceRowMap.clear();
+      return { queued: selected.length, senderInboxId, emailTemplateId };
+    });
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ColdEmail Queue]', error.message);
+    res.status(500).json({ error: 'Could not queue selected leads' });
   }
 });
 
@@ -1484,16 +1529,25 @@ app.get('/api/integrations/smartlead', requireAuth, async (_req, res) => {
 // Secondary Gmail inbox readiness only. These endpoints never participate in
 // sender selection and never expose credential values. The live legacy sender
 // continues to use only FROM_EMAIL + GMAIL_TOKEN_JSON in outreach-agent.js.
-app.get('/api/integrations/gmail-inboxes', requireAuth, (_req, res) => {
-  try {
-    const secondary = publicGmailInboxRegistry(parseGmailInboxRegistry());
-    const primary = {
+function gmailInboxOptions() {
+  const secondary = publicGmailInboxRegistry(parseGmailInboxRegistry());
+  secondary.forEach(inbox => { inbox.deliveryImplemented = false; });
+  const primary = {
       id: 'primary', email: process.env.FROM_EMAIL || 'Current Gmail inbox', status: 'active',
       dailyLimit: Number(process.env.DAILY_SEND_LIMIT || 40), credentialConfigured: Boolean(process.env.GMAIL_TOKEN_JSON),
-      identityVerified: true, sendEligible: process.env.SENDING_ENABLED === 'true', currentRoute: true,
-    };
-    res.json({ inboxes: [primary, ...secondary] });
-  }
+      identityVerified: true, sendEligible: Boolean(process.env.GMAIL_TOKEN_JSON), currentRoute: true,
+      deliveryImplemented: true,
+  };
+  return [primary, ...secondary];
+}
+
+app.get('/api/integrations/gmail-inboxes', requireAuth, (_req, res) => {
+  try { res.json({ inboxes: gmailInboxOptions() }); }
+  catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/api/outreach/routing-options', requireAuth, (_req, res) => {
+  try { res.json({ niches: ['dental','roofing'], inboxes: gmailInboxOptions(), templates: EMAIL_TEMPLATES }); }
   catch (error) { res.status(500).json({ error: error.message }); }
 });
 
