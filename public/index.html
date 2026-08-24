@@ -664,6 +664,20 @@
   textarea { resize: vertical; min-height: 80px; }
   select option { background: var(--card); }
 
+  .inbox-route-shell { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--wash-1); overflow: hidden; }
+  .inbox-route-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  .inbox-route-kicker { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); }
+  .inbox-route-readonly { font-size: 10px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 999px; padding: 2px 7px; }
+  .inbox-route-list { display: grid; }
+  .inbox-route-row { display: grid; grid-template-columns: 10px minmax(0,1fr) auto; align-items: center; gap: 10px; padding: 10px 12px; }
+  .inbox-route-row + .inbox-route-row { border-top: 1px solid var(--border); }
+  .inbox-route-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 14%, transparent); }
+  .inbox-route-row.warming .inbox-route-dot { background: var(--orange); box-shadow: 0 0 0 3px color-mix(in srgb, var(--orange) 14%, transparent); }
+  .inbox-route-email { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; font-weight: 600; color: var(--text); }
+  .inbox-route-meta { margin-top: 2px; font-size: 10px; color: var(--text-muted); }
+  .inbox-route-badge { white-space: nowrap; border-radius: 999px; padding: 3px 8px; font-size: 10px; font-weight: 700; color: var(--green); background: color-mix(in srgb, var(--green) 10%, transparent); }
+  .inbox-route-row.warming .inbox-route-badge { color: var(--orange); background: color-mix(in srgb, var(--orange) 10%, transparent); }
+
   .form-actions { display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }
 
   .btn-cancel { padding: 9px 18px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: transparent; color: var(--text-secondary); font-family: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: background var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out), opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out); }
@@ -2008,6 +2022,12 @@
     <div class="form-grid" style="padding:20px 24px 0">
       <input type="hidden" id="provider-campaign-name">
       <div class="form-group full"><label for="provider-select">Provider</label><select id="provider-select" onchange="toggleSmartleadFields()"><option value="gmail">Gmail</option><option value="smartlead">Smartlead</option></select></div>
+      <div id="gmail-inbox-fields" class="form-group full">
+        <label for="gmail-inbox-select">Sending inbox</label>
+        <select id="gmail-inbox-select" aria-describedby="gmail-inbox-help"><option>Loading inboxes…</option></select>
+        <div id="gmail-inbox-help" style="font-size:11px;color:var(--text-muted)">Status only. Warming inboxes cannot be selected or used for sending.</div>
+        <div id="gmail-inbox-status" class="inbox-route-shell" aria-live="polite"></div>
+      </div>
       <div id="smartlead-mapping-fields" class="form-group full">
         <label for="smartlead-campaign-id">Smartlead Campaign ID</label><input id="smartlead-campaign-id" inputmode="numeric" placeholder="e.g. 123456">
         <div style="font-size:11px;color:var(--text-muted);margin-top:6px">Create the campaign and sequence in Smartlead first. Testing never uploads a lead.</div>
@@ -3515,6 +3535,8 @@ function renderOpensPanel() {
 
 let smartleadIntegration = null;
 let smartleadIntegrationLoading = false;
+let gmailInboxIntegration = null;
+let gmailInboxIntegrationLoading = false;
 
 async function loadSmartleadIntegration() {
   if (smartleadIntegrationLoading) return;
@@ -3526,6 +3548,37 @@ async function loadSmartleadIntegration() {
     smartleadIntegrationLoading = false;
     if (ceActiveFilter === 'campaigns') renderCampaignsPanel();
   }
+}
+
+async function loadGmailInboxIntegration() {
+  if (gmailInboxIntegrationLoading) return;
+  gmailInboxIntegrationLoading = true;
+  try {
+    const response = await fetch('/api/integrations/gmail-inboxes');
+    gmailInboxIntegration = response.ok ? await response.json() : { inboxes: [] };
+  } finally {
+    gmailInboxIntegrationLoading = false;
+    renderGmailInboxSelector();
+  }
+}
+
+function renderGmailInboxSelector() {
+  const select = document.getElementById('gmail-inbox-select');
+  const status = document.getElementById('gmail-inbox-status');
+  if (!select || !status) return;
+  const inboxes = gmailInboxIntegration?.inboxes || [];
+  if (!inboxes.length) {
+    select.innerHTML = '<option>No inbox status available</option>';
+    status.innerHTML = '<div class="inbox-route-row"><div></div><div class="inbox-route-meta">Inbox status could not be loaded.</div></div>';
+    return;
+  }
+  select.innerHTML = inboxes.map(inbox => `<option value="${escAttr(inbox.id)}" ${inbox.currentRoute ? 'selected' : ''} ${inbox.currentRoute ? '' : 'disabled'}>${esc(inbox.email)}${inbox.currentRoute ? ' — Current sender' : ` — ${inbox.status}`}</option>`).join('');
+  status.innerHTML = `<div class="inbox-route-head"><span class="inbox-route-kicker">Gmail sending rail</span><span class="inbox-route-readonly">View only</span></div><div class="inbox-route-list">${inboxes.map(inbox => {
+    const warming = inbox.status === 'warming';
+    const label = inbox.currentRoute ? 'Current' : (warming ? 'Warming · locked' : inbox.status);
+    const meta = inbox.currentRoute ? `${inbox.dailyLimit}/day configured` : `${inbox.dailyLimit}/day · ${inbox.identityVerified ? 'Identity verified' : (inbox.credentialConfigured ? 'Credential ready' : 'Credential missing')}`;
+    return `<div class="inbox-route-row ${warming ? 'warming' : ''}"><span class="inbox-route-dot" aria-hidden="true"></span><div><div class="inbox-route-email">${esc(inbox.email)}</div><div class="inbox-route-meta">${esc(meta)}</div></div><span class="inbox-route-badge">${esc(label)}</span></div>`;
+  }).join('')}</div>`;
 }
 
 function campaignProvider(name) {
@@ -3677,6 +3730,8 @@ function openProviderModal(campaignName) {
   document.getElementById('smartlead-sending-pool').value = mapping.sendingPool || '';
   document.getElementById('provider-test-result').textContent = mapping.syncStatus ? `Status: ${mapping.syncStatus}${mapping.lastSynchronizedAt ? ' · ' + new Date(mapping.lastSynchronizedAt).toLocaleString() : ''}` : '';
   toggleSmartleadFields();
+  if (!gmailInboxIntegration && !gmailInboxIntegrationLoading) loadGmailInboxIntegration();
+  else renderGmailInboxSelector();
   document.getElementById('provider-modal-overlay').classList.add('open');
 }
 
@@ -3686,7 +3741,9 @@ function closeProviderModal(e) {
 }
 
 function toggleSmartleadFields() {
-  document.getElementById('smartlead-mapping-fields').style.display = document.getElementById('provider-select').value === 'smartlead' ? '' : 'none';
+  const smartlead = document.getElementById('provider-select').value === 'smartlead';
+  document.getElementById('smartlead-mapping-fields').style.display = smartlead ? '' : 'none';
+  document.getElementById('gmail-inbox-fields').style.display = smartlead ? 'none' : '';
 }
 
 async function saveProviderMapping() {

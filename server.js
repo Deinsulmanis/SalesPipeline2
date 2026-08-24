@@ -1485,7 +1485,15 @@ app.get('/api/integrations/smartlead', requireAuth, async (_req, res) => {
 // sender selection and never expose credential values. The live legacy sender
 // continues to use only FROM_EMAIL + GMAIL_TOKEN_JSON in outreach-agent.js.
 app.get('/api/integrations/gmail-inboxes', requireAuth, (_req, res) => {
-  try { res.json({ inboxes: publicGmailInboxRegistry(parseGmailInboxRegistry()) }); }
+  try {
+    const secondary = publicGmailInboxRegistry(parseGmailInboxRegistry());
+    const primary = {
+      id: 'primary', email: process.env.FROM_EMAIL || 'Current Gmail inbox', status: 'active',
+      dailyLimit: Number(process.env.DAILY_SEND_LIMIT || 40), credentialConfigured: Boolean(process.env.GMAIL_TOKEN_JSON),
+      identityVerified: true, sendEligible: process.env.SENDING_ENABLED === 'true', currentRoute: true,
+    };
+    res.json({ inboxes: [primary, ...secondary] });
+  }
   catch (error) { res.status(500).json({ error: error.message }); }
 });
 

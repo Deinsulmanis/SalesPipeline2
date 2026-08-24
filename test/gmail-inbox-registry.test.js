@@ -58,3 +58,11 @@ test('secondary inbox readiness endpoints require dashboard authentication', () 
   assert.match(source, /app\.get\('\/api\/integrations\/gmail-inboxes', requireAuth/);
   assert.match(source, /app\.post\('\/api\/integrations\/gmail-inboxes\/:id\/verify', requireAuth/);
 });
+
+test('dashboard inbox selector is status-only and never posts a sender choice', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  assert.match(source, /id="gmail-inbox-select"/);
+  assert.match(source, /Warming inboxes cannot be selected or used for sending/);
+  assert.match(source, /inbox\.currentRoute \? '' : 'disabled'/);
+  assert.doesNotMatch(source, /senderMailbox:\s*document\.getElementById\('gmail-inbox-select'/);
+});
