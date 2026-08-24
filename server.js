@@ -803,12 +803,43 @@ async function findCERow(id) {
   }
   const resp = await sheets().spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range:         CE_COL_RANGE,
+    range:         `${CE_SHEET_NAME}!A:A`,
   });
   (resp.data.values || []).forEach((row, i) => {
     if (i > 0 && row[0]) ceRowMap.set(row[0], i + 1);
   });
   return ceRowMap.get(id) || null;
+}
+
+// Dashboard list reads deliberately skip column P (siteContext). That scrape
+// cache is used only by the sending agent, which reads the sheet directly.
+// A blank placeholder preserves the existing A:W object shape without moving
+// or modifying any Google Sheets data.
+async function readColdEmailDashboardRows() {
+  const response = await sheets().spreadsheets.values.batchGet({
+    spreadsheetId: SPREADSHEET_ID,
+    ranges: [`${CE_SHEET_NAME}!A:O`, `${CE_SHEET_NAME}!Q:W`],
+  });
+  const left = response.data.valueRanges?.[0]?.values || [];
+  const right = response.data.valueRanges?.[1]?.values || [];
+  const length = Math.max(left.length, right.length);
+  return Array.from({ length }, (_, index) => [
+    ...Array.from({ length: 15 }, (_value, column) => left[index]?.[column] || ''),
+    '',
+    ...Array.from({ length: 7 }, (_value, column) => right[index]?.[column] || ''),
+  ]);
+}
+
+async function readColdEmailSignalRows() {
+  const response = await sheets().spreadsheets.values.batchGet({
+    spreadsheetId: SPREADSHEET_ID,
+    ranges: [`${CE_SHEET_NAME}!A:B`, `${CE_SHEET_NAME}!J:J`],
+  });
+  const identity = response.data.valueRanges?.[0]?.values || [];
+  const sentAt = response.data.valueRanges?.[1]?.values || [];
+  return identity.slice(1).map((row, index) => ({
+    id: row[0] || '', company: row[1] || '', lastEmailedAt: sentAt[index + 1]?.[0] || '',
+  })).filter(row => row.id);
 }
 
 // ── COLD EMAIL ROUTES ─────────────────────────────────────────────────────────
@@ -817,11 +848,7 @@ app.get('/api/coldemail', requireAuth, async (_req, res) => {
   try {
     const leads = await withAuth(async () => {
       await ensureColdEmailSheet();
-      const resp = await sheets().spreadsheets.values.get({
-        spreadsheetId: SPREADSHEET_ID,
-        range:         CE_COL_RANGE,
-      });
-      const rows = resp.data.values || [];
+      const rows = await readColdEmailDashboardRows();
       ceRowMap.clear();
       return rows.slice(1).map((row, idx) => {
         const lead = {};
@@ -1065,9 +1092,9 @@ app.get('/api/demoPlays', requireAuth, async (_req, res) => {
 // without data loss.
 app.get('/api/proposalOpens', requireAuth, async (_req, res) => {
   try {
-    const [openResp, ceResp, engResp, demoResp] = await Promise.all([
+    const [openResp, leadRows, engResp, demoResp] = await Promise.all([
       sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ProposalOpens!A:F' }),
-      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE }),
+      readColdEmailSignalRows(),
       // Engagement signals rescue a real human who happened to trip a scanner
       // rule. Both tabs are optional — a missing one just means no rescues.
       sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ProposalEngaged!A:F' }).catch(() => ({ data: {} })),
@@ -1085,12 +1112,11 @@ app.get('/api/proposalOpens', requireAuth, async (_req, res) => {
 
     // Lead lookup for the send-window rule: prefer the logged lead id, fall back
     // to the company key (only ~60% of rows carry an id).
-    const leadRows  = (ceResp.data.values || []).slice(1).filter(r => r[0]);
-    const leadById  = new Map(leadRows.map(r => [r[0], { lastEmailedAt: r[9] || '' }]));
+    const leadById  = new Map(leadRows.map(row => [row.id, { lastEmailedAt: row.lastEmailedAt }]));
     const leadByKey = new Map();
-    for (const r of leadRows) {
-      const k = openKey(r[1]);
-      if (k && !leadByKey.has(k)) leadByKey.set(k, { lastEmailedAt: r[9] || '' });
+    for (const row of leadRows) {
+      const k = openKey(row.company);
+      if (k && !leadByKey.has(k)) leadByKey.set(k, { lastEmailedAt: row.lastEmailedAt });
     }
 
     const annotated = annotateOpens({
@@ -1273,6 +1299,34 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
   }
 });
 
+app.get('/api/coldemail/stats', requireAuth, async (_req, res) => {
+  try {
+    const response = await sheets().spreadsheets.values.batchGet({
+      spreadsheetId: SPREADSHEET_ID,
+      ranges: [`${CE_SHEET_NAME}!A:A`, `${CE_SHEET_NAME}!H:I`, `${CE_SHEET_NAME}!L:L`],
+    });
+    const ids = response.data.valueRanges?.[0]?.values || [];
+    const states = response.data.valueRanges?.[1]?.values || [];
+    const notes = response.data.valueRanges?.[2]?.values || [];
+    const counts = { queued: 0, emailed: 0, replied: 0, done: 0 };
+    for (let index = 1; index < ids.length; index++) {
+      if (!ids[index]?.[0]) continue;
+      const stage = states[index]?.[0] || '';
+      const emailStatus = states[index]?.[1] || '';
+      const note = notes[index]?.[0] || '';
+      if (stage === 'Queued') counts.queued++;
+      if (emailStatus) counts.emailed++;
+      if (emailStatus === 'replied' || /\[REPLY: (?!OOO)/.test(note)) counts.replied++;
+      if (emailStatus === 'done') counts.done++;
+    }
+    res.json(counts);
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ColdEmail Stats GET]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/coldemail', requireAuth, async (req, res) => {
   const lead = req.body;
   // Same choke point as the CSV import: validate format and reject junk,
@@ -1323,6 +1377,48 @@ function ensureNote(existing, tag) {
   if (existing && existing.includes(tag)) return existing;
   return existing ? `${tag} ${existing}` : tag;
 }
+
+const COLD_EMAIL_DASHBOARD_STAGES = new Set(['Import','Contacted','Replied','Review','Done','Promoted','Unsubscribed']);
+
+app.patch('/api/coldemail/:id/stage', requireAuth, async (req, res) => {
+  const stage = String(req.body?.stage || '').trim();
+  if (!COLD_EMAIL_DASHBOARD_STAGES.has(stage)) return res.status(422).json({ error: 'invalid stage' });
+  try {
+    const rowNum = await withAuth(() => findCERow(req.params.id));
+    if (!rowNum) return res.status(404).json({ error: 'not found' });
+    if (stage !== 'Unsubscribed') {
+      await withAuth(() => sheets().spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `${CE_SHEET_NAME}!H${rowNum}`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [[stage]] },
+      }));
+      return res.json({ ok: true });
+    }
+
+    const current = await withAuth(() => sheets().spreadsheets.values.batchGet({
+      spreadsheetId: SPREADSHEET_ID,
+      ranges: [`${CE_SHEET_NAME}!B${rowNum}`, `${CE_SHEET_NAME}!D${rowNum}`, `${CE_SHEET_NAME}!L${rowNum}`],
+    }));
+    const company = current.data.valueRanges?.[0]?.values?.[0]?.[0] || '';
+    const email = current.data.valueRanges?.[1]?.values?.[0]?.[0] || '';
+    const notes = ensureNote(current.data.valueRanges?.[2]?.values?.[0]?.[0] || '', '[REPLY: Unsubscribed]');
+    await withAuth(() => sheets().spreadsheets.values.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: { valueInputOption: 'RAW', data: [
+        { range: `${CE_SHEET_NAME}!H${rowNum}`, values: [['Unsubscribed']] },
+        { range: `${CE_SHEET_NAME}!I${rowNum}`, values: [['done']] },
+        { range: `${CE_SHEET_NAME}!L${rowNum}`, values: [[notes]] },
+      ] },
+    }));
+    await withAuth(() => addSuppression(email, 'unsubscribe', company, 'manual-dashboard'));
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ColdEmail Stage PATCH]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 app.put('/api/coldemail/:id', requireAuth, async (req, res) => {
   const lead = req.body;

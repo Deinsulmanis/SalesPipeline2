@@ -3051,15 +3051,22 @@ function renderAgentLog(entries) {
   log.scrollTop = log.scrollHeight;
 }
 
-async function refreshAgentLeadCounts() {
+async function refreshAgentLeadCounts(loadedLeads = null) {
   try {
-    const resp = await fetch('/api/coldemail');
+    if (loadedLeads) {
+      document.getElementById('as-queued').textContent  = loadedLeads.filter(l => l.stage === 'Queued').length;
+      document.getElementById('as-emailed').textContent = loadedLeads.filter(l => l.emailStatus !== '').length;
+      document.getElementById('as-replied').textContent = loadedLeads.filter(ceHasReplied).length;
+      document.getElementById('as-done').textContent    = loadedLeads.filter(l => l.emailStatus === 'done').length;
+      return;
+    }
+    const resp = await fetch('/api/coldemail/stats');
     if (!resp.ok) { ['as-queued','as-emailed','as-replied','as-done'].forEach(id => document.getElementById(id).textContent = '–'); return; }
-    const all = await resp.json();
-    document.getElementById('as-queued').textContent  = all.filter(l => l.stage === 'Queued').length;
-    document.getElementById('as-emailed').textContent = all.filter(l => l.emailStatus !== '').length;
-    document.getElementById('as-replied').textContent = all.filter(l => l.emailStatus === 'replied').length;
-    document.getElementById('as-done').textContent    = all.filter(l => l.emailStatus === 'done').length;
+    const counts = await resp.json();
+    document.getElementById('as-queued').textContent  = counts.queued;
+    document.getElementById('as-emailed').textContent = counts.emailed;
+    document.getElementById('as-replied').textContent = counts.replied;
+    document.getElementById('as-done').textContent    = counts.done;
   } catch (e) {}
 }
 
@@ -3179,7 +3186,7 @@ async function loadCeLeads() {
     buildSendChart();
     renderCeTable();
     if (ceActiveFilter === 'campaigns') renderCampaignsPanel();
-    refreshAgentLeadCounts();
+    refreshAgentLeadCounts(ceLeads);
   } catch (e) { showToast('Could not reach server: ' + e.message, 'error'); }
 }
 
@@ -4126,10 +4133,10 @@ async function setCeLeadStage(id, stage) {
   const prev = lead.stage;
   lead.stage = stage;
   try {
-    const resp = await fetch(`/api/coldemail/${id}`, {
-      method: 'PUT',
+    const resp = await fetch(`/api/coldemail/${id}/stage`, {
+      method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(lead),
+      body: JSON.stringify({ stage }),
     });
     if (!resp.ok) { lead.stage = prev; showToast('Could not update stage', 'error'); }
     else renderCeTable();
