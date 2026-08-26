@@ -1589,11 +1589,11 @@
 <div class="motion-nav">
   <button class="motion-tab active" data-m="cold-calls" onclick="setMotion('cold-calls')">
     <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.45 2 2 0 0 1 3.59 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.49a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21.73 16z"/></svg>
-    Cold Calls
+    Pipeline
   </button>
   <button class="motion-tab" data-m="cold-email" onclick="setMotion('cold-email')">
     <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
-    Cold Email
+    Outreach
   </button>
 </div>
 
@@ -1830,7 +1830,7 @@
         <div class="agent-stat-card"><div class="agent-stat-val" id="as-replied">–</div><div class="agent-stat-label">Replied</div></div>
         <div class="agent-stat-card"><div class="agent-stat-val" id="as-done">–</div><div class="agent-stat-label">Done</div></div>
       </div>
-      <p class="agent-hint">Set a lead's stage to "Queued" in the Cold Email tab to add it to the outreach queue.</p>
+      <p class="agent-hint">Set a lead's stage to "Queued" in the Outreach tab to add it to the outreach queue.</p>
       <div class="agent-ctl-row">
         <label class="dry-run-label">
           <input type="checkbox" id="dry-run-toggle" checked onchange="updateRunButtonLabel()">
@@ -2151,6 +2151,8 @@ const GOOGLE_CONFIG = {
 // CONSTANTS
 // ============================================================
 const COLUMNS = [
+  // TODO(source-filter): add an append-only source column before exposing a
+  // channel filter; existing leads must remain blank/Unknown, never inferred.
   'id','type','first','last','brokerage','tradeType','company',
   'city','cityTrade','phone','email','website',
   'stage','priority','followup','notes','created'
@@ -4295,11 +4297,11 @@ async function bulkQueueSelected() {
 async function promoteLead(id) {
   const lead = ceLeads.find(l => l.id === id);
   const name = lead ? (lead.contactName || lead.company || id) : id;
-  if (!confirm(`Promote "${name}" to the Cold Calls pipeline?`)) return;
+  if (!confirm(`Promote "${name}" to the Pipeline?`)) return;
   try {
     const resp = await fetch(`/api/coldemail/${id}/promote`, { method: 'POST' });
     if (!resp.ok) { showToast('Promote failed: ' + resp.status, 'error'); return; }
-    showToast(`"${name}" added to Cold Calls pipeline.`, 'success');
+    showToast(`"${name}" added to the Pipeline.`, 'success');
     loadCeLeads();
   } catch (e) { showToast('Promote failed: ' + e.message, 'error'); }
 }
@@ -4307,7 +4309,7 @@ async function promoteLead(id) {
 async function deleteCeLead(id) {
   const lead = ceLeads.find(l => l.id === id);
   const name = lead ? (lead.company || lead.contactName || id) : id;
-  if (!confirm(`Delete "${name}" from Cold Email?`)) return;
+  if (!confirm(`Delete "${name}" from Outreach?`)) return;
   try {
     const resp = await fetch(`/api/coldemail/${id}`, { method: 'DELETE' });
     if (!resp.ok) { showToast('Delete failed', 'error'); return; }

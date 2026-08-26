@@ -58,3 +58,13 @@ test('dashboard uses the four-stage view and its inline script parses', () => {
   assert.ok(script);
   assert.doesNotThrow(() => new vm.Script(script));
 });
+
+test('dashboard reframes the two views as one Pipeline with Outreach', () => {
+  assert.match(browser, /data-m="cold-calls"[^>]*[\s\S]*?Pipeline/);
+  assert.match(browser, /data-m="cold-email"[^>]*[\s\S]*?Outreach/);
+  assert.match(browser, /Queued" in the Outreach tab/);
+  assert.match(browser, /added to the Pipeline/);
+  assert.match(browser, /TODO\(source-filter\)/);
+  assert.doesNotMatch(browser, />\s*Cold Calls\s*</);
+  assert.doesNotMatch(browser, />\s*Cold Email\s*</);
+});
