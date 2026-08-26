@@ -615,6 +615,12 @@
   }
 
   .modal-close:hover { background: var(--card); color: var(--text); }
+  /* 30px is fine for a mouse but below the 44px touch guideline — measured at
+     375/390/414px, this was the only control under size. Grown for touch
+     pointers only, so desktop density is unchanged. */
+  @media (pointer: coarse), (max-width: 640px) {
+    .modal-close { width: 44px; height: 44px; }
+  }
 
   /* Type toggle */
   .type-toggle { display: flex; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 3px; margin-bottom: 20px; }
@@ -744,6 +750,21 @@
   .activity-event-time { color:var(--text-muted);white-space:nowrap; }
   .activity-event-subject { margin-top:5px;font-size:12px;font-weight:600;color:var(--text-secondary); }
   .activity-event-copy { margin-top:6px;padding:8px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:11px;line-height:1.5;color:var(--text-secondary);white-space:pre-wrap;max-height:150px;overflow:auto; }
+  /* Derived pipeline state. Answers "what happens next, and when?" — and, when
+     the board stage and the sending agent disagree, says so loudly. */
+  .pipeline-state { display:grid;gap:8px;padding:11px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--wash-1);margin-bottom:12px; }
+  .pipeline-row { display:flex;align-items:baseline;justify-content:space-between;gap:12px;font-size:12px; }
+  .pipeline-row-label { color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.06em;white-space:nowrap; }
+  .pipeline-row-val { color:var(--text);font-weight:600;text-align:right; }
+  .pipeline-row-val small { display:block;font-weight:400;color:var(--text-muted);font-size:11px;margin-top:2px; }
+  .automation-pill { display:inline-block;padding:2px 9px;border-radius:var(--radius-pill);font-size:11px;font-weight:700; }
+  .automation-pill[data-s="active"]  { background:var(--warn-bg);   color:var(--warn); }
+  .automation-pill[data-s="stopped"] { background:var(--success-bg);color:var(--success); }
+  .automation-pill[data-s="never"]   { background:var(--wash-2);    color:var(--text-secondary); }
+  .automation-pill[data-s="unknown"] { background:var(--wash-2);    color:var(--text-muted); }
+  .needs-attention { color:var(--warn); }
+  .automation-conflict { display:flex;gap:9px;padding:10px 11px;border:1px solid var(--danger);border-radius:var(--radius-sm);background:var(--danger-bg);font-size:12px;line-height:1.5;color:var(--text); }
+  .automation-conflict strong { color:var(--danger);display:block;margin-bottom:2px; }
   .activity-empty { padding:14px;border:1px dashed var(--border);border-radius:var(--radius-sm);font-size:12px;color:var(--text-muted); }
 
   .notes-area { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-family: inherit; font-size: 13px; padding: 12px; line-height: 1.6; resize: vertical; min-height: 120px; width: 100%; outline: none; transition: border-color var(--t-base) var(--ease-out); }
@@ -2011,10 +2032,12 @@
               <option value="">No outcome yet</option>
               <option value="active">Active conversation</option>
               <option value="booked">Call booked</option>
-              <option value="closed_won">Closed won</option>
               <option value="no_show">No-show</option>
               <option value="ghosted">Ghosted</option>
-              <option value="not_fit">Not a fit</option>
+              <option value="not_interested">Not interested</option>
+              <option value="not_fit">Bad fit</option>
+              <option value="timing">Wrong timing</option>
+              <option value="other">Other</option>
             </select>
           </div>
           <div class="form-group full">
@@ -2026,6 +2049,7 @@
       </div>
       <div>
         <div class="detail-section-title">Activity timeline</div>
+        <div id="d-pipeline-state"></div>
         <div class="activity-timeline" id="d-activity"><div class="activity-empty">Open a lead to load its email and conversation history.</div></div>
       </div>
       <div>
@@ -2183,6 +2207,11 @@ const STAGES = [
 // Deliberately unchanged by the closed_won addition. 'closed' keeps pointing at
 // closed_lost: two live leads store that bare value, and re-bucketing them into
 // the new Won column would move leads that nobody chose to move.
+// Loss reasons accepted by the Closed / Lost gate. Mirrors LOSS_OUTCOME_IDS in
+// integrations/pipeline-state.js — test/pipeline-state.test.js fails if the two
+// drift. closed_won is deliberately absent: it is a stage, not a loss.
+const LOSS_OUTCOMES = ['no_show','ghosted','not_interested','not_fit','timing','other'];
+
 const LEGACY_STAGE_BUCKETS = {
   new: 'follow_up', called: 'follow_up', warm: 'follow_up',
   proposal: 'call_booked', closed: 'closed_lost', lost: 'closed_lost',
@@ -2509,8 +2538,8 @@ async function moveLeadToStage(leadId, toStage) {
     openDetail(leadId);
     return false;
   }
-  if (toStage === 'closed_lost' && !['closed_won','no_show','ghosted','not_fit'].includes(lead.outcome)) {
-    showToast('Choose a final outcome before moving this lead to Closed / Lost.', 'warning');
+  if (toStage === 'closed_lost' && !LOSS_OUTCOMES.includes(lead.outcome)) {
+    showToast('Choose a loss reason before moving this lead to Closed / Lost.', 'warning');
     openDetail(leadId);
     return false;
   }
@@ -2943,6 +2972,7 @@ function openDetail(id) {
   document.getElementById('d-conversation-context').value = lead.conversationContext || '';
   document.getElementById('d-lead-score').textContent = 'Score —';
   document.getElementById('d-activity').innerHTML = '<div class="activity-empty">Loading activity…</div>';
+  document.getElementById('d-pipeline-state').innerHTML = '';
   document.getElementById('detail-overlay').classList.add('open');
   loadColdCallActivity(id);
 }
@@ -2955,8 +2985,8 @@ function setStage(id, stage) {
     document.getElementById('d-meeting-at')?.focus();
     return;
   }
-  if (stage === 'closed_lost' && !['closed_won','no_show','ghosted','not_fit'].includes(lead.outcome)) {
-    showToast('Choose a final outcome before moving this lead to Closed / Lost.', 'warning');
+  if (stage === 'closed_lost' && !LOSS_OUTCOMES.includes(lead.outcome)) {
+    showToast('Choose a loss reason before moving this lead to Closed / Lost.', 'warning');
     document.getElementById('d-outcome')?.focus();
     return;
   }
@@ -3217,6 +3247,7 @@ async function loadColdCallActivity(id) {
     const data = await response.json();
     if (detailId !== id) return;
     document.getElementById('d-lead-score').textContent = `Score ${Number(data.leadScore || 0)}/100`;
+    renderPipelineState(data.pipeline);
     const activities = Array.isArray(data.activities) ? data.activities : [];
     document.getElementById('d-activity').innerHTML = activities.length ? activities.map(event => {
       const when = event.occurredAt && !Number.isNaN(Date.parse(event.occurredAt))
@@ -3255,6 +3286,50 @@ async function saveCallDetails() {
   } finally {
     setSaving(false);
   }
+}
+
+// Renders the derived state from /api/leads/:id/activity. Everything here is
+// computed server-side by integrations/pipeline-state.js — the browser holds no
+// second copy of the rules, so the two cannot drift.
+function renderPipelineState(pipeline) {
+  const host = document.getElementById('d-pipeline-state');
+  if (!host) return;
+  if (!pipeline) { host.innerHTML = ''; return; }
+
+  const automation = pipeline.automation || { state: 'unknown', reason: '' };
+  const next = pipeline.nextAction || { action: 'Unknown', dueAt: null, needsAttention: false };
+  const AUTOMATION_LABELS = { active: 'Active', stopped: 'Stopped', never: 'Not started', unknown: 'Unknown' };
+
+  const due = next.dueAt
+    ? new Date(next.dueAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    : 'no date set';
+
+  // The board says one thing, the sending agent another. This is the leak the
+  // audit exists to catch, so it gets the loudest treatment in the drawer.
+  const conflict = pipeline.conflict
+    ? `<div class="automation-conflict">
+         <span aria-hidden="true">&#9888;</span>
+         <span><strong>Automation is still running</strong>${esc(pipeline.conflict.message)}
+         Moving the card did not stop the cold sequence — clear it in the Outreach tab.</span>
+       </div>`
+    : '';
+
+  host.innerHTML = `${conflict}
+    <div class="pipeline-state">
+      <div class="pipeline-row">
+        <span class="pipeline-row-label">Automation</span>
+        <span class="pipeline-row-val">
+          <span class="automation-pill" data-s="${esc(automation.state)}">${esc(AUTOMATION_LABELS[automation.state] || automation.state)}</span>
+          <small>${esc(automation.reason || '')}</small>
+        </span>
+      </div>
+      <div class="pipeline-row">
+        <span class="pipeline-row-label">Next action</span>
+        <span class="pipeline-row-val${next.needsAttention ? ' needs-attention' : ''}">${esc(next.action)}
+          <small>${esc(due)}</small>
+        </span>
+      </div>
+    </div>`;
 }
 
 function setMotion(m) {

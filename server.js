@@ -25,6 +25,10 @@ const {
   COLD_CALL_ACTIVITY_HEADER,
   scoreColdCallLead,
 } = require('./integrations/cold-call-pipeline');
+const {
+  deriveAutomationState, automationConflict, deriveNextAction,
+  stageTransitionCheck, reopenEligibility, OUTCOME_IDS, LOSS_OUTCOME_IDS,
+} = require('./integrations/pipeline-state');
 
 const app = express();
 // Smartlead signs the exact request bytes. This public route must be registered
@@ -702,6 +706,18 @@ app.put('/api/leads/:id', requireAuth, async (req, res) => {
   try {
     const rowNum = await withAuth(() => findRow(req.params.id));
     if (!rowNum) return res.status(404).json({ error: 'not found' });
+    // Read the row BEFORE overwriting so a stage change can be recorded with the
+    // stage it came from. The write range is A:Q, so U:W (meetingAt, outcome,
+    // conversationContext) are untouched by this endpoint and survive the save.
+    let previousStage = '';
+    try {
+      const prior = await sheets().spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${rowNum}:Q${rowNum}`,
+      });
+      previousStage = prior.data.values?.[0]?.[12] || '';
+    } catch (readError) {
+      console.warn('[Leads PUT] prior-stage read failed:', readError.message);
+    }
     await withAuth(async () => {
       await sheets().spreadsheets.values.update({
         spreadsheetId:   SPREADSHEET_ID,
@@ -710,6 +726,28 @@ app.put('/api/leads/:id', requireAuth, async (req, res) => {
         requestBody:     { values: vals },
       });
     });
+    // Stage history. Append-only and best-effort: the lead is already saved, so
+    // a logging failure must not turn a successful save into a 500. Only a real
+    // transition is recorded, which is what keeps repeated saves of the same
+    // card from stacking duplicate stage-entry rows.
+    const nextStage = String(lead.stage || '');
+    if (displayStageFor(nextStage) !== displayStageFor(previousStage)) {
+      try {
+        await appendIntegrationRow(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER, {
+          eventId: crypto.randomUUID(), leadId: req.params.id, sourceLeadId: '',
+          email: lead.email || '', company: lead.company || '',
+          eventType: 'stage_changed', occurredAt: new Date().toISOString(),
+          subject: `${displayStageFor(previousStage)} -> ${displayStageFor(nextStage)}`,
+          content: '',
+          metadata: JSON.stringify({
+            fromStage: displayStageFor(previousStage), toStage: displayStageFor(nextStage),
+            fromStageRaw: previousStage, toStageRaw: nextStage, trigger: 'manual',
+          }),
+        });
+      } catch (activityError) {
+        console.warn('[Leads PUT] saved, but stage-history append failed:', activityError.message);
+      }
+    }
     res.json({ ok: true });
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
@@ -1262,6 +1300,31 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
   }
 });
 
+// A board lead and its ColdEmail row are separate records; the ColdEmail one is
+// what the sending agent gates on. Match by the CE- id first (exact, set at
+// promotion time) and fall back to email, which is how a hand-added board lead
+// lines up with an imported one. Reads only A:L — the columns that decide
+// sending — so this stays one cheap call.
+async function findColdEmailTwin(boardLeadId, boardEmail) {
+  const wanted = String(boardLeadId || '').replace(/^CE-/, '');
+  const email = normalizeEmail(boardEmail || '');
+  const response = await sheets().spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:L`,
+  });
+  const rows = (response.data.values || []).slice(1);
+  let byEmail = null;
+  for (const row of rows) {
+    const twin = {
+      id: row[0] || '', company: row[1] || '', email: row[3] || '',
+      stage: row[7] || '', emailStatus: row[8] || '', lastEmailedAt: row[9] || '',
+      emailStep: row[10] || '', notes: row[11] || '',
+    };
+    if (wanted && twin.id === wanted) return twin;
+    if (!byEmail && email && normalizeEmail(twin.email) === email) byEmail = twin;
+  }
+  return byEmail;
+}
+
 app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
   try {
     const rowNum = await withAuth(() => findRow(req.params.id));
@@ -1280,7 +1343,23 @@ app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
       .filter(row => row.leadId === req.params.id || (email && normalizeEmail(row.email) === email))
       .sort((a, b) => new Date(b.occurredAt || 0) - new Date(a.occurredAt || 0))
       .map(({ _row, ...row }) => row);
-    res.json({ activities, leadScore: scoreColdCallLead(lead, activities) });
+    // Derived, never stored: the board row and the ColdEmail row can disagree,
+    // and the UI needs to show which one actually governs what happens next.
+    let pipeline = null;
+    try {
+      const twin = await findColdEmailTwin(req.params.id, lead.email);
+      pipeline = {
+        automation: deriveAutomationState(twin),
+        conflict: automationConflict(lead, twin),
+        nextAction: deriveNextAction(lead, twin),
+        reopen: reopenEligibility(lead, twin),
+        twin: twin ? { id: twin.id, emailStatus: twin.emailStatus, emailStep: twin.emailStep, lastEmailedAt: twin.lastEmailedAt } : null,
+      };
+    } catch (stateError) {
+      // Derivation is additive: a failure here must not break the timeline.
+      console.warn('[pipeline-state] derivation failed:', stateError.message);
+    }
+    res.json({ activities, leadScore: scoreColdCallLead(lead, activities), pipeline });
   } catch (e) {
     console.error('[Cold call activity GET]', e.message);
     res.status(500).json({ error: e.message });
@@ -1298,7 +1377,7 @@ app.patch('/api/leads/:id/call-details', requireAuth, async (req, res) => {
     const meetingAt = String(req.body?.meetingAt || '').trim();
     const outcome = String(req.body?.outcome || '').trim();
     const conversationContext = String(req.body?.conversationContext || '').trim().slice(0, 10000);
-    const validOutcomes = new Set(['', 'active', 'booked', 'closed_won', 'no_show', 'ghosted', 'not_fit']);
+    const validOutcomes = new Set(['', ...OUTCOME_IDS]);
     if (meetingAt && Number.isNaN(Date.parse(meetingAt))) return res.status(422).json({ error: 'invalid meeting time' });
     if (!validOutcomes.has(outcome)) return res.status(422).json({ error: 'invalid outcome' });
     await sheets().spreadsheets.values.update({
@@ -1310,7 +1389,7 @@ app.patch('/api/leads/:id/call-details', requireAuth, async (req, res) => {
     const oldContext = current[22] || '';
     let eventType = '';
     if (meetingAt && meetingAt !== oldMeetingAt) eventType = 'call_booked';
-    else if (outcome && outcome !== oldOutcome && ['closed_won','no_show','ghosted','not_fit'].includes(outcome)) eventType = 'closed_lost';
+    else if (outcome && outcome !== oldOutcome && LOSS_OUTCOME_IDS.includes(outcome)) eventType = 'closed_lost';
     else if (conversationContext && conversationContext !== oldContext) eventType = 'conversation_note';
     if (eventType) {
       try {
