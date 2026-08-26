@@ -4,13 +4,19 @@ const COLD_CALL_STAGES = Object.freeze([
   { id: 'follow_up', label: 'Follow Up' },
   { id: 'hot', label: 'Hot' },
   { id: 'call_booked', label: 'Call Booked' },
+  { id: 'closed_won', label: 'Closed / Won' },
   { id: 'closed_lost', label: 'Closed / Lost' },
 ]);
 
 const COLD_CALL_STAGE_IDS = new Set(COLD_CALL_STAGES.map(stage => stage.id));
 
 // Existing rows are deliberately not migrated. These aliases keep every legacy
-// card visible in the new four-column view until the user explicitly changes it.
+// card visible in the new view until the user explicitly changes it.
+//
+// NOTE: legacy 'closed' stays mapped to closed_lost on purpose. Two live leads
+// (suresky.inc, tradeselect) store the bare value 'closed'; re-pointing it at
+// the new closed_won column would silently move them, which is exactly what
+// adding this stage must not do. Won deals are set explicitly by a human.
 function displayStageFor(stage) {
   const value = String(stage || '').trim().toLowerCase();
   if (COLD_CALL_STAGE_IDS.has(value)) return value;

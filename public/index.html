@@ -449,6 +449,7 @@
   .card[data-stage="follow_up"]::before   { background: var(--primary); }
   .card[data-stage="hot"]::before         { background: var(--hot); }
   .card[data-stage="call_booked"]::before { background: var(--violet); }
+  .card[data-stage="closed_won"]::before  { background: var(--success); }
   .card[data-stage="closed_lost"]::before { background: var(--lost); }
 
   .card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
@@ -731,6 +732,7 @@
   .stage-chip[data-s="follow_up"].active   { background: var(--primary); color: var(--on-primary); }
   .stage-chip[data-s="hot"].active         { background: var(--hot); }
   .stage-chip[data-s="call_booked"].active { background: var(--violet); }
+  .stage-chip[data-s="closed_won"].active   { background: var(--success); color: var(--on-solid); }
   .stage-chip[data-s="closed_lost"].active { background: var(--lost); }
 
   .lead-score { display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border:1px solid var(--border);border-radius:var(--radius-pill);font-size:11px;font-weight:700;color:var(--text);background:var(--wash-1); }
@@ -1636,8 +1638,8 @@
     </div>
   </div>
   <div class="stat">
-    <div class="stat-icon" style="background:var(--green-bg);">
-      <svg width="16" height="16" fill="none" stroke="var(--green)" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+    <div class="stat-icon" style="background:rgba(124,92,255,0.12);">
+      <svg width="16" height="16" fill="none" stroke="var(--violet)" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
     </div>
     <div class="stat-info">
       <div class="stat-val" id="stat-booked">0</div>
@@ -1651,6 +1653,15 @@
     <div class="stat-info">
       <div class="stat-val" id="stat-closed-lost">0</div>
       <div class="stat-label">Closed / Lost</div>
+    </div>
+  </div>
+  <div class="stat">
+    <div class="stat-icon" style="background:var(--success-bg);">
+      <svg width="16" height="16" fill="none" stroke="var(--success)" stroke-width="2" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/><path d="M22 4v6h-6"/></svg>
+    </div>
+    <div class="stat-info">
+      <div class="stat-val" id="stat-closed-won">0</div>
+      <div class="stat-label">Closed / Won</div>
     </div>
   </div>
 </div>
@@ -1935,6 +1946,7 @@
             <option value="follow_up">Follow Up</option>
             <option value="hot">Hot</option>
             <option value="call_booked">Call Booked</option>
+            <option value="closed_won">Closed / Won</option>
             <option value="closed_lost">Closed / Lost</option>
           </select>
         </div>
@@ -2164,9 +2176,13 @@ const STAGES = [
   { id: 'follow_up',   label: 'Follow Up',     color: 'var(--primary)', rule: 'Auto: both demo clips played' },
   { id: 'hot',         label: 'Hot',           color: 'var(--danger)',  rule: 'Auto: positive email reply' },
   { id: 'call_booked', label: 'Call Booked',   color: 'var(--violet)',  rule: 'Meeting time required' },
+  { id: 'closed_won',  label: 'Closed / Won',  color: 'var(--success)', rule: 'Won — set by hand' },
   { id: 'closed_lost', label: 'Closed / Lost', color: 'var(--lost)',    rule: 'Final outcome required' },
 ];
 
+// Deliberately unchanged by the closed_won addition. 'closed' keeps pointing at
+// closed_lost: two live leads store that bare value, and re-bucketing them into
+// the new Won column would move leads that nobody chose to move.
 const LEGACY_STAGE_BUCKETS = {
   new: 'follow_up', called: 'follow_up', warm: 'follow_up',
   proposal: 'call_booked', closed: 'closed_lost', lost: 'closed_lost',
@@ -2363,6 +2379,7 @@ function renderBoard() {
   document.getElementById('stat-hot').textContent         = leads.filter(l => displayStageFor(l.stage) === 'hot').length;
   document.getElementById('stat-booked').textContent      = leads.filter(l => displayStageFor(l.stage) === 'call_booked').length;
   document.getElementById('stat-closed-lost').textContent = leads.filter(l => displayStageFor(l.stage) === 'closed_lost').length;
+  document.getElementById('stat-closed-won').textContent  = leads.filter(l => displayStageFor(l.stage) === 'closed_won').length;
 
   STAGES.forEach(stage => {
     // The Leads sheet has NO order column, so within-column position is not
@@ -2443,6 +2460,7 @@ function updateStageStats() {
   set('stat-hot',         leads.filter(l => displayStageFor(l.stage) === 'hot').length);
   set('stat-booked',      leads.filter(l => displayStageFor(l.stage) === 'call_booked').length);
   set('stat-closed-lost', leads.filter(l => displayStageFor(l.stage) === 'closed_lost').length);
+  set('stat-closed-won',  leads.filter(l => displayStageFor(l.stage) === 'closed_won').length);
 }
 
 // Move ONE card node into its new column at the correct sorted position.
@@ -3187,6 +3205,7 @@ const ACTIVITY_LABELS = {
   positive_reply: 'Positive reply received',
   meeting_requested: 'Meeting requested',
   call_booked: 'Call booked',
+  closed_won: 'Closed / won',
   closed_lost: 'Closed / lost outcome recorded',
   conversation_note: 'Conversation context updated',
 };

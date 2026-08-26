@@ -16,8 +16,8 @@ const agent = fs.readFileSync(path.join(root, 'outreach-agent.js'), 'utf8');
 const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 const browser = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
 
-test('cold-call pipeline has exactly four stages and legacy rows remain visible without migration', () => {
-  assert.deepEqual(COLD_CALL_STAGES.map(stage => stage.id), ['follow_up', 'hot', 'call_booked', 'closed_lost']);
+test('cold-call pipeline has exactly five stages and legacy rows remain visible without migration', () => {
+  assert.deepEqual(COLD_CALL_STAGES.map(stage => stage.id), ['follow_up', 'hot', 'call_booked', 'closed_won', 'closed_lost']);
   assert.equal(displayStageFor('new'), 'follow_up');
   assert.equal(displayStageFor('proposal'), 'call_booked');
   assert.equal(displayStageFor('lost'), 'closed_lost');
@@ -50,8 +50,10 @@ test('cold-call detail APIs use additive columns and do not mutate ColdEmail', (
   assert.doesNotMatch(detailsRoute, /CE_SHEET_NAME|ColdEmail|sendEmail|spawnAgent/);
 });
 
-test('dashboard uses the four-stage view and its inline script parses', () => {
-  for (const id of ['follow_up','hot','call_booked','closed_lost']) assert.match(browser, new RegExp(`id: '${id}'`));
+test('dashboard stage columns mirror the canonical list and its inline script parses', () => {
+  // The SPA keeps its own STAGES array; drift between the two is the bug this
+  // catches, so assert against the module rather than a hardcoded copy.
+  for (const { id } of COLD_CALL_STAGES) assert.match(browser, new RegExp(`id: '${id}'`));
   assert.match(browser, /Legacy stage:/);
   assert.match(browser, /Add the booked meeting time before moving/);
   const script = browser.match(/<script>([\s\S]*)<\/script>/)?.[1];
@@ -67,4 +69,19 @@ test('dashboard reframes the two views as one Pipeline with Outreach', () => {
   assert.match(browser, /TODO\(source-filter\)/);
   assert.doesNotMatch(browser, />\s*Cold Calls\s*</);
   assert.doesNotMatch(browser, />\s*Cold Email\s*</);
+});
+
+test('adding closed_won moved no existing rows: legacy values keep their old buckets', () => {
+  // 'closed' reads like it belongs in the new Won column, but two live leads
+  // store that bare value and were never marked won by a human. Every legacy
+  // alias must still land exactly where it landed before closed_won existed.
+  assert.equal(displayStageFor('closed'), 'closed_lost');
+  assert.equal(displayStageFor('lost'), 'closed_lost');
+  assert.equal(displayStageFor('new'), 'follow_up');
+  assert.equal(displayStageFor('warm'), 'follow_up');
+  assert.equal(displayStageFor('proposal'), 'call_booked');
+  assert.equal(displayStageFor('hot'), 'hot');
+  assert.equal(displayStageFor(''), 'follow_up');
+  // Only an explicit closed_won reaches the new column.
+  assert.equal(displayStageFor('closed_won'), 'closed_won');
 });
