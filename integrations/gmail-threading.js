@@ -14,6 +14,21 @@ function escapeGmailQuery(value) {
   return String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
+function decodeBody(payload) {
+  if (!payload) return '';
+  if (payload.mimeType === 'text/plain' && payload.body?.data) {
+    return Buffer.from(payload.body.data, 'base64url').toString('utf8').trim();
+  }
+  for (const part of payload.parts || []) {
+    const body = decodeBody(part);
+    if (body) return body;
+  }
+  if (!payload.mimeType && payload.body?.data) {
+    return Buffer.from(payload.body.data, 'base64url').toString('utf8').trim();
+  }
+  return '';
+}
+
 async function findOriginalSentThread({ gmail, email, expectedSubject, maxResults = 20 } = {}) {
   if (!gmail || !email || !expectedSubject) return null;
   const response = await gmail.users.messages.list({
@@ -34,6 +49,7 @@ async function findOriginalSentThread({ gmail, email, expectedSubject, maxResult
       inReplyTo: messageId,
       references: appendReference(headerValue(message.payload, 'References'), messageId),
       subject,
+      content: decodeBody(message.payload),
       internalDate: Number(message.internalDate || 0),
     });
   }
@@ -41,4 +57,4 @@ async function findOriginalSentThread({ gmail, email, expectedSubject, maxResult
   return candidates[0] || null;
 }
 
-module.exports = { headerValue, appendReference, escapeGmailQuery, findOriginalSentThread };
+module.exports = { headerValue, appendReference, escapeGmailQuery, decodeBody, findOriginalSentThread };

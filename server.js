@@ -20,6 +20,11 @@ const { classifyReply: classifyProviderReply, CLASSIFICATION_TO_STATUS } = requi
 const { parseRegistry: parseGmailInboxRegistry, publicRegistry: publicGmailInboxRegistry, verifyInbox: verifyGmailInbox } = require('./integrations/gmail-inbox-registry');
 const { EMAIL_TEMPLATES, normalizeNiche, validateRoute } = require('./integrations/campaign-routing');
 const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE, qualifyLead: qualifyRoofingLead } = require('./integrations/roofing-survey-profile');
+const {
+  COLD_CALL_ACTIVITY_SHEET,
+  COLD_CALL_ACTIVITY_HEADER,
+  scoreColdCallLead,
+} = require('./integrations/cold-call-pipeline');
 
 const app = express();
 // Smartlead signs the exact request bytes. This public route must be registered
@@ -337,7 +342,8 @@ const COLUMNS        = [
 ];
 // Agent bookkeeping columns (R:T) — read-only in the Leads GET, never written by dashboard routes
 const AGENT_COLS      = ['emailStatus', 'lastEmailedAt', 'emailStep'];
-const AGENT_READ_RANGE = `${SHEET_NAME}!A:T`;
+const CALL_DETAIL_COLS = ['meetingAt', 'outcome', 'conversationContext'];
+const AGENT_READ_RANGE = `${SHEET_NAME}!A:W`;
 
 // ── COLD EMAIL SHEET ──────────────────────────────────────────────────────────
 const CE_SHEET_NAME = 'ColdEmail';
@@ -645,7 +651,7 @@ app.get('/api/leads', requireAuth, async (_req, res) => {
       await ensureHeader();
       const resp = await sheets().spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
-        range:         AGENT_READ_RANGE,   // A:T — includes agent bookkeeping cols R:T
+        range:         AGENT_READ_RANGE,   // A:W — bookkeeping R:T + cold-call details U:W
       });
       const rows = resp.data.values || [];
       rowMap.clear();
@@ -653,6 +659,7 @@ app.get('/api/leads', requireAuth, async (_req, res) => {
         const lead = {};
         COLUMNS.forEach((col, i) => { lead[col] = row[i] || ''; });
         AGENT_COLS.forEach((col, i) => { lead[col] = row[17 + i] || ''; });
+        CALL_DETAIL_COLS.forEach((col, i) => { lead[col] = row[20 + i] || ''; });
         lead.created = parseInt(lead.created) || Date.now();
         if (lead.id) rowMap.set(lead.id, idx + 2);
         return lead;
@@ -1255,6 +1262,77 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
   }
 });
 
+app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
+  try {
+    const rowNum = await withAuth(() => findRow(req.params.id));
+    if (!rowNum) return res.status(404).json({ error: 'not found' });
+    const leadResponse = await sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${rowNum}:W${rowNum}`,
+    });
+    const leadRow = leadResponse.data.values?.[0] || [];
+    const lead = {};
+    COLUMNS.forEach((col, i) => { lead[col] = leadRow[i] || ''; });
+    AGENT_COLS.forEach((col, i) => { lead[col] = leadRow[17 + i] || ''; });
+    CALL_DETAIL_COLS.forEach((col, i) => { lead[col] = leadRow[20 + i] || ''; });
+    const email = normalizeEmail(lead.email);
+    const rows = await readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER);
+    const activities = rows
+      .filter(row => row.leadId === req.params.id || (email && normalizeEmail(row.email) === email))
+      .sort((a, b) => new Date(b.occurredAt || 0) - new Date(a.occurredAt || 0))
+      .map(({ _row, ...row }) => row);
+    res.json({ activities, leadScore: scoreColdCallLead(lead, activities) });
+  } catch (e) {
+    console.error('[Cold call activity GET]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/api/leads/:id/call-details', requireAuth, async (req, res) => {
+  try {
+    const rowNum = await withAuth(() => findRow(req.params.id));
+    if (!rowNum) return res.status(404).json({ error: 'not found' });
+    const currentResponse = await sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${rowNum}:W${rowNum}`,
+    });
+    const current = currentResponse.data.values?.[0] || [];
+    const meetingAt = String(req.body?.meetingAt || '').trim();
+    const outcome = String(req.body?.outcome || '').trim();
+    const conversationContext = String(req.body?.conversationContext || '').trim().slice(0, 10000);
+    const validOutcomes = new Set(['', 'active', 'booked', 'closed_won', 'no_show', 'ghosted', 'not_fit']);
+    if (meetingAt && Number.isNaN(Date.parse(meetingAt))) return res.status(422).json({ error: 'invalid meeting time' });
+    if (!validOutcomes.has(outcome)) return res.status(422).json({ error: 'invalid outcome' });
+    await sheets().spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!U${rowNum}:W${rowNum}`,
+      valueInputOption: 'RAW', requestBody: { values: [[meetingAt, outcome, conversationContext]] },
+    });
+    const oldMeetingAt = current[20] || '';
+    const oldOutcome = current[21] || '';
+    const oldContext = current[22] || '';
+    let eventType = '';
+    if (meetingAt && meetingAt !== oldMeetingAt) eventType = 'call_booked';
+    else if (outcome && outcome !== oldOutcome && ['closed_won','no_show','ghosted','not_fit'].includes(outcome)) eventType = 'closed_lost';
+    else if (conversationContext && conversationContext !== oldContext) eventType = 'conversation_note';
+    if (eventType) {
+      try {
+        await appendIntegrationRow(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER, {
+          eventId: crypto.randomUUID(), leadId: req.params.id, sourceLeadId: '',
+          email: current[10] || '', company: current[6] || current[4] || '',
+          eventType, occurredAt: new Date().toISOString(),
+          subject: eventType === 'call_booked' ? 'Meeting scheduled' : '',
+          content: conversationContext,
+          metadata: JSON.stringify({ meetingAt, outcome }),
+        });
+      } catch (activityError) {
+        console.warn('[Cold call details] saved, but timeline append failed:', activityError.message);
+      }
+    }
+    res.json({ ok: true, meetingAt, outcome, conversationContext });
+  } catch (e) {
+    console.error('[Cold call details PATCH]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
   const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(value => String(value || '').trim()).filter(Boolean))];
   const senderInboxId = String(req.body?.senderInboxId || '').trim();
@@ -1519,7 +1597,7 @@ app.post('/api/coldemail/:id/promote', requireAuth, async (req, res) => {
         tradeType: ceLead.tradeType || '', company: ceLead.company || '',
         city: ceLead.city || '', cityTrade: ceLead.city || '',
         phone: '', email: ceLead.email || '', website: ceLead.website || '',
-        stage: 'new', priority: 'cold', followup: '',
+        stage: 'follow_up', priority: 'cold', followup: '',
         notes: ceLead.notes || '', created: String(Date.now()),
       };
       await sheets().spreadsheets.values.append({

@@ -399,6 +399,9 @@
     color: var(--text-secondary);
   }
 
+  .col-title-block { min-width: 0; }
+  .col-rule { margin-top: 4px; font-size: 10px; line-height: 1.35; color: var(--text-muted); }
+
   .col-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 
   .col-count {
@@ -443,13 +446,10 @@
   .card:hover { border-color: var(--border-hover); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
   .card:hover::before { opacity: 1; }
 
-  .card[data-stage="new"]::before      { background: var(--blue); }
-  .card[data-stage="called"]::before   { background: var(--accent); }
-  .card[data-stage="warm"]::before     { background: var(--warm); }
-  .card[data-stage="hot"]::before      { background: var(--hot); }
-  .card[data-stage="proposal"]::before { background: var(--violet); }
-  .card[data-stage="closed"]::before   { background: var(--green); }
-  .card[data-stage="lost"]::before     { background: var(--lost); }
+  .card[data-stage="follow_up"]::before   { background: var(--primary); }
+  .card[data-stage="hot"]::before         { background: var(--hot); }
+  .card[data-stage="call_booked"]::before { background: var(--violet); }
+  .card[data-stage="closed_lost"]::before { background: var(--lost); }
 
   .card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
   .card-name { font-size: 14px; font-weight: 600; color: var(--text); line-height: 1.3; }
@@ -728,14 +728,21 @@
   .stage-chip:hover { border-color: var(--border-hover); color: var(--text); }
   .stage-chip.active { color: var(--on-solid); border-color: transparent; }
   /* the cyan chip is light — white on it fails contrast, so flip to dark */
-  .stage-chip[data-s="called"].active   { color: var(--on-primary); }
-  .stage-chip[data-s="new"].active      { background: var(--blue); }
-  .stage-chip[data-s="called"].active   { background: var(--accent); }
-  .stage-chip[data-s="warm"].active     { background: var(--warm); }
-  .stage-chip[data-s="hot"].active      { background: var(--hot); }
-  .stage-chip[data-s="proposal"].active { background: var(--violet); }
-  .stage-chip[data-s="closed"].active   { background: var(--green); }
-  .stage-chip[data-s="lost"].active     { background: var(--lost); }
+  .stage-chip[data-s="follow_up"].active   { background: var(--primary); color: var(--on-primary); }
+  .stage-chip[data-s="hot"].active         { background: var(--hot); }
+  .stage-chip[data-s="call_booked"].active { background: var(--violet); }
+  .stage-chip[data-s="closed_lost"].active { background: var(--lost); }
+
+  .lead-score { display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border:1px solid var(--border);border-radius:var(--radius-pill);font-size:11px;font-weight:700;color:var(--text);background:var(--wash-1); }
+  .activity-timeline { display:grid;gap:10px; }
+  .activity-event { position:relative;padding:10px 11px 10px 14px;border-left:2px solid var(--border);background:var(--wash-1);border-radius:0 var(--radius-sm) var(--radius-sm) 0; }
+  .activity-event::before { content:'';position:absolute;left:-5px;top:14px;width:8px;height:8px;border-radius:50%;background:var(--primary);box-shadow:0 0 0 3px var(--surface); }
+  .activity-event-head { display:flex;justify-content:space-between;gap:10px;font-size:11px; }
+  .activity-event-title { font-weight:700;color:var(--text); }
+  .activity-event-time { color:var(--text-muted);white-space:nowrap; }
+  .activity-event-subject { margin-top:5px;font-size:12px;font-weight:600;color:var(--text-secondary); }
+  .activity-event-copy { margin-top:6px;padding:8px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:11px;line-height:1.5;color:var(--text-secondary);white-space:pre-wrap;max-height:150px;overflow:auto; }
+  .activity-empty { padding:14px;border:1px dashed var(--border);border-radius:var(--radius-sm);font-size:12px;color:var(--text-muted); }
 
   .notes-area { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-family: inherit; font-size: 13px; padding: 12px; line-height: 1.6; resize: vertical; min-height: 120px; width: 100%; outline: none; transition: border-color var(--t-base) var(--ease-out); }
   .notes-area:focus { border-color: var(--accent); }
@@ -1633,8 +1640,8 @@
       <svg width="16" height="16" fill="none" stroke="var(--green)" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
     </div>
     <div class="stat-info">
-      <div class="stat-val" id="stat-closed">0</div>
-      <div class="stat-label">Closed</div>
+      <div class="stat-val" id="stat-booked">0</div>
+      <div class="stat-label">Call Booked</div>
     </div>
   </div>
   <div class="stat">
@@ -1642,8 +1649,8 @@
       <svg width="16" height="16" fill="none" stroke="var(--violet)" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
     </div>
     <div class="stat-info">
-      <div class="stat-val" id="stat-proposal">0</div>
-      <div class="stat-label">Proposals</div>
+      <div class="stat-val" id="stat-closed-lost">0</div>
+      <div class="stat-label">Closed / Lost</div>
     </div>
   </div>
 </div>
@@ -1925,13 +1932,10 @@
         <div class="form-group">
           <label>Stage</label>
           <select id="f-stage">
-            <option value="new">New Lead</option>
-            <option value="called">Called</option>
-            <option value="warm">Warm</option>
+            <option value="follow_up">Follow Up</option>
             <option value="hot">Hot</option>
-            <option value="proposal">Proposal Sent</option>
-            <option value="closed">Closed Won</option>
-            <option value="lost">Lost</option>
+            <option value="call_booked">Call Booked</option>
+            <option value="closed_lost">Closed / Lost</option>
           </select>
         </div>
         <div class="form-group">
@@ -1978,6 +1982,39 @@
       <div>
         <div class="detail-section-title">Contact Info</div>
         <div class="detail-fields" id="d-fields"></div>
+      </div>
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px">
+          <div class="detail-section-title" style="margin:0">Lead intelligence</div>
+          <span class="lead-score" id="d-lead-score">Score —</span>
+        </div>
+        <div class="form-grid">
+          <div class="form-group full">
+            <label for="d-meeting-at">Meeting time</label>
+            <input type="datetime-local" id="d-meeting-at">
+          </div>
+          <div class="form-group full">
+            <label for="d-outcome">Outcome</label>
+            <select id="d-outcome">
+              <option value="">No outcome yet</option>
+              <option value="active">Active conversation</option>
+              <option value="booked">Call booked</option>
+              <option value="closed_won">Closed won</option>
+              <option value="no_show">No-show</option>
+              <option value="ghosted">Ghosted</option>
+              <option value="not_fit">Not a fit</option>
+            </select>
+          </div>
+          <div class="form-group full">
+            <label for="d-conversation-context">Conversation context</label>
+            <textarea id="d-conversation-context" placeholder="Key needs, objections, promises, decision-makers and next step…"></textarea>
+          </div>
+        </div>
+        <button class="btn-save-notes" onclick="saveCallDetails()">Save call details</button>
+      </div>
+      <div>
+        <div class="detail-section-title">Activity timeline</div>
+        <div class="activity-timeline" id="d-activity"><div class="activity-empty">Open a lead to load its email and conversation history.</div></div>
       </div>
       <div>
         <div class="detail-section-title">Call Notes</div>
@@ -2122,14 +2159,19 @@ const COLUMNS = [
 const COL_RANGE = `${GOOGLE_CONFIG.SHEET_NAME}!A:Q`;
 
 const STAGES = [
-  { id: 'new',      label: 'New Lead',      color: 'var(--info)' },
-  { id: 'called',   label: 'Called',        color: 'var(--primary)' },
-  { id: 'warm',     label: 'Warm',          color: 'var(--warn)' },
-  { id: 'hot',      label: 'Hot',           color: 'var(--danger)' },
-  { id: 'proposal', label: 'Proposal Sent', color: 'var(--violet)' },
-  { id: 'closed',   label: 'Closed Won',    color: 'var(--success)' },
-  { id: 'lost',     label: 'Lost',          color: 'var(--lost)' },
+  { id: 'follow_up',   label: 'Follow Up',     color: 'var(--primary)', rule: 'Auto: both demo clips played' },
+  { id: 'hot',         label: 'Hot',           color: 'var(--danger)',  rule: 'Auto: positive email reply' },
+  { id: 'call_booked', label: 'Call Booked',   color: 'var(--violet)',  rule: 'Meeting time required' },
+  { id: 'closed_lost', label: 'Closed / Lost', color: 'var(--lost)',    rule: 'Final outcome required' },
 ];
+
+const LEGACY_STAGE_BUCKETS = {
+  new: 'follow_up', called: 'follow_up', warm: 'follow_up',
+  proposal: 'call_booked', closed: 'closed_lost', lost: 'closed_lost',
+};
+const displayStageFor = stage => STAGES.some(item => item.id === stage)
+  ? stage
+  : (LEGACY_STAGE_BUCKETS[String(stage || '').toLowerCase()] || 'follow_up');
 
 // ============================================================
 // STATE
@@ -2316,21 +2358,21 @@ function renderBoard() {
   document.getElementById('stat-total').textContent    = leads.length;
   document.getElementById('stat-realtors').textContent = leads.filter(l => l.type === 'realtor').length;
   document.getElementById('stat-trades').textContent   = leads.filter(l => l.type === 'trade').length;
-  document.getElementById('stat-hot').textContent      = leads.filter(l => l.stage === 'hot').length;
-  document.getElementById('stat-closed').textContent   = leads.filter(l => l.stage === 'closed').length;
-  document.getElementById('stat-proposal').textContent = leads.filter(l => l.stage === 'proposal').length;
+  document.getElementById('stat-hot').textContent         = leads.filter(l => displayStageFor(l.stage) === 'hot').length;
+  document.getElementById('stat-booked').textContent      = leads.filter(l => displayStageFor(l.stage) === 'call_booked').length;
+  document.getElementById('stat-closed-lost').textContent = leads.filter(l => displayStageFor(l.stage) === 'closed_lost').length;
 
   STAGES.forEach(stage => {
     // The Leads sheet has NO order column, so within-column position is not
     // persisted and must not pretend to be. Sorting deterministically (priority,
     // then newest) means a card lands in the same place on every render instead
     // of appearing to remember a drag that was never saved.
-    const stageLeads = filtered.filter(l => l.stage === stage.id).sort(compareLeads);
+    const stageLeads = filtered.filter(l => displayStageFor(l.stage) === stage.id).sort(compareLeads);
     const col = document.createElement('div');
     col.className = 'col';
     col.innerHTML = `
       <div class="col-header">
-        <div class="col-title"><div class="col-dot" style="background:${stage.color}"></div>${stage.label}</div>
+        <div class="col-title-block"><div class="col-title"><div class="col-dot" style="background:${stage.color}"></div>${stage.label}</div><div class="col-rule">${esc(stage.rule)}</div></div>
         <div class="col-count">${stageLeads.length}</div>
       </div>
       <div class="col-body" id="col-${stage.id}" data-stage="${stage.id}"
@@ -2396,9 +2438,9 @@ function updateColumnChrome(colBody) {
 // Stage-derived counters in the stats bar. Recomputed from memory, not the DOM.
 function updateStageStats() {
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-  set('stat-hot',      leads.filter(l => l.stage === 'hot').length);
-  set('stat-closed',   leads.filter(l => l.stage === 'closed').length);
-  set('stat-proposal', leads.filter(l => l.stage === 'proposal').length);
+  set('stat-hot',         leads.filter(l => displayStageFor(l.stage) === 'hot').length);
+  set('stat-booked',      leads.filter(l => displayStageFor(l.stage) === 'call_booked').length);
+  set('stat-closed-lost', leads.filter(l => displayStageFor(l.stage) === 'closed_lost').length);
 }
 
 // Move ONE card node into its new column at the correct sorted position.
@@ -2406,7 +2448,8 @@ function updateStageStats() {
 // card on a single drop.
 function patchCardIntoColumn(leadId, toStage) {
   const card   = document.querySelector(`.card[data-id="${CSS.escape(leadId)}"]`);
-  const target = document.querySelector(`.col-body[data-stage="${toStage}"]`);
+  const targetStage = displayStageFor(toStage);
+  const target = document.querySelector(`.col-body[data-stage="${targetStage}"]`);
   if (!card || !target) return null;
   const from = card.closest('.col-body');
   const lead = leads.find(l => l.id === leadId);
@@ -2418,7 +2461,7 @@ function patchCardIntoColumn(leadId, toStage) {
     return sl && compareLeads(lead, sl) < 0;
   });
   target.insertBefore(card, before || null);
-  card.dataset.stage = toStage;
+  card.dataset.stage = targetStage;
   card.setAttribute('aria-label',
     `${lead.first || ''} ${lead.last || ''}`.trim() + ' — ' + stageLabel(toStage) +
     '. Press Space to pick up, then Left or Right arrow to change stage.');
@@ -2441,6 +2484,16 @@ async function moveLeadToStage(leadId, toStage) {
   // ── pre-write assertions ──
   if (!lead) { showToast('Lead not found', 'error'); return false; }
   if (!STAGE_IDS.includes(toStage)) { showToast(`Unknown stage "${toStage}"`, 'error'); return false; }
+  if (toStage === 'call_booked' && !lead.meetingAt) {
+    showToast('Add the booked meeting time before moving this lead to Call Booked.', 'warning');
+    openDetail(leadId);
+    return false;
+  }
+  if (toStage === 'closed_lost' && !['closed_won','no_show','ghosted','not_fit'].includes(lead.outcome)) {
+    showToast('Choose a final outcome before moving this lead to Closed / Lost.', 'warning');
+    openDetail(leadId);
+    return false;
+  }
   const fromStage = lead.stage;
   if (fromStage === toStage) return true;            // no-op, don't write
 
@@ -2661,14 +2714,14 @@ function initBoardDnD() {
 function buildCard(lead) {
   const card = document.createElement('div');
   card.className = 'card';
-  card.dataset.stage = lead.stage;
+  card.dataset.stage = displayStageFor(lead.stage);
   card.dataset.id    = lead.id;
   card.dataset.draggable = '1';
   card.tabIndex = 0;
   card.setAttribute('role', 'listitem');
   card.setAttribute('aria-roledescription', 'draggable lead card');
   card.setAttribute('aria-label',
-    `${lead.first || ''} ${lead.last || ''}`.trim() + ' — ' + stageLabel(lead.stage) +
+    `${lead.first || ''} ${lead.last || ''}`.trim() + ' — ' + stageLabel(displayStageFor(lead.stage)) +
     '. Press Space to pick up, then Left or Right arrow to change stage.');
 
   const fu = lead.followup ? formatDate(lead.followup) : null;
@@ -2687,6 +2740,8 @@ function buildCard(lead) {
   if (city)       metaHtml += `<div class="meta-row">${icon('loc')} ${city}</div>`;
   if (lead.website) metaHtml += `<div class="meta-row">${icon('web')} ${lead.website}</div>`;
 
+  const legacyStageHtml = !STAGE_IDS.includes(lead.stage)
+    ? `<div class="meta-row">Legacy stage: ${esc(lead.stage || 'unassigned')} · grouped under ${esc(stageLabel(displayStageFor(lead.stage)))}</div>` : '';
   const noteHtml = lead.notes
     ? `<div class="card-note">${lead.notes.slice(0,120)}${lead.notes.length > 120 ? '…' : ''}</div>` : '';
 
@@ -2706,7 +2761,7 @@ function buildCard(lead) {
         ${lead.priority && lead.priority !== 'cold' ? `<div class="priority-badge ${priorityClass[lead.priority]}">${priorityMap[lead.priority]}</div>` : ''}
       </div>
     </div>
-    ${metaHtml ? `<div class="card-meta">${metaHtml}</div>` : ''}
+    ${(metaHtml || legacyStageHtml) ? `<div class="card-meta">${metaHtml}${legacyStageHtml}</div>` : ''}
     ${noteHtml}
     <div class="card-footer">
       ${fuHtml}
@@ -2727,7 +2782,7 @@ function buildCard(lead) {
   picker.className = 'card-stage-select';
   picker.setAttribute('aria-label', `Stage for ${lead.first || ''} ${lead.last || ''}`.trim());
   picker.innerHTML = STAGES.map(st =>
-    `<option value="${st.id}"${st.id === lead.stage ? ' selected' : ''}>${esc(st.label)}</option>`).join('');
+    `<option value="${st.id}"${st.id === displayStageFor(lead.stage) ? ' selected' : ''}>${esc(st.label)}</option>`).join('');
   picker.addEventListener('click', e => e.stopPropagation());       // don't open the detail panel
   picker.addEventListener('pointerdown', e => e.stopPropagation()); // don't start a drag
   picker.addEventListener('change', e => {
@@ -2770,7 +2825,7 @@ function openEdit(id) {
   document.getElementById('f-phone').value      = lead.phone     || '';
   document.getElementById('f-email').value      = lead.email     || '';
   document.getElementById('f-website').value    = lead.website   || '';
-  document.getElementById('f-stage').value      = lead.stage     || 'new';
+  document.getElementById('f-stage').value      = displayStageFor(lead.stage);
   document.getElementById('f-priority').value   = lead.priority  || 'cold';
   document.getElementById('f-followup').value   = lead.followup  || '';
   document.getElementById('f-notes').value      = lead.notes     || '';
@@ -2780,7 +2835,9 @@ function openEdit(id) {
 function saveLead(e) {
   e.preventDefault();
   const r = formType === 'realtor';
+  const existingLead = editingId ? (leads.find(l => l.id === editingId) || {}) : {};
   const lead = {
+    ...existingLead,
     id:        editingId || uid(),
     type:      formType,
     first:     document.getElementById('f-first').value.trim(),
@@ -2843,7 +2900,7 @@ function openDetail(id) {
     `<span class="type-badge ${r ? 'type-realtor' : 'type-trade'}">${r ? 'Realtor' : (lead.tradeType || 'Trade')}</span>`;
 
   document.getElementById('d-stages').innerHTML = STAGES.map(s =>
-    `<button class="stage-chip ${lead.stage === s.id ? 'active' : ''}" data-s="${s.id}" onclick="setStage('${id}','${s.id}')">${s.label}</button>`
+    `<button class="stage-chip ${displayStageFor(lead.stage) === s.id ? 'active' : ''}" data-s="${s.id}" onclick="setStage('${id}','${s.id}')">${s.label}</button>`
   ).join('');
 
   const rows = [
@@ -2861,12 +2918,28 @@ function openDetail(id) {
   ).join('');
 
   document.getElementById('d-notes').value = lead.notes || '';
+  document.getElementById('d-meeting-at').value = toLocalDateTimeInput(lead.meetingAt);
+  document.getElementById('d-outcome').value = lead.outcome || '';
+  document.getElementById('d-conversation-context').value = lead.conversationContext || '';
+  document.getElementById('d-lead-score').textContent = 'Score —';
+  document.getElementById('d-activity').innerHTML = '<div class="activity-empty">Loading activity…</div>';
   document.getElementById('detail-overlay').classList.add('open');
+  loadColdCallActivity(id);
 }
 
 function setStage(id, stage) {
   const lead = leads.find(l => l.id === id);
   if (!lead) return;
+  if (stage === 'call_booked' && !lead.meetingAt) {
+    showToast('Add the booked meeting time before moving this lead to Call Booked.', 'warning');
+    document.getElementById('d-meeting-at')?.focus();
+    return;
+  }
+  if (stage === 'closed_lost' && !['closed_won','no_show','ghosted','not_fit'].includes(lead.outcome)) {
+    showToast('Choose a final outcome before moving this lead to Closed / Lost.', 'warning');
+    document.getElementById('d-outcome')?.focus();
+    return;
+  }
   lead.stage = stage;
   renderBoard();
   openDetail(id);
@@ -3095,6 +3168,72 @@ const CE_STAGES = ['Import','Queued','Contacted','Replied','Review','Done','Prom
 function setCeNicheFilter(value) {
   ceNicheFilter = value || 'all';
   ceSelected.clear(); updateBulkQueueBtn(); renderCeTable();
+}
+
+function toLocalDateTimeInput(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+const ACTIVITY_LABELS = {
+  initial_email_sent: 'Initial email sent',
+  demo_pair_played: 'Both demo clips played',
+  booking_link_sent: 'Booking-link follow-up sent',
+  positive_reply: 'Positive reply received',
+  meeting_requested: 'Meeting requested',
+  call_booked: 'Call booked',
+  closed_lost: 'Closed / lost outcome recorded',
+  conversation_note: 'Conversation context updated',
+};
+
+async function loadColdCallActivity(id) {
+  try {
+    const response = await fetch(`/api/leads/${encodeURIComponent(id)}/activity`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (detailId !== id) return;
+    document.getElementById('d-lead-score').textContent = `Score ${Number(data.leadScore || 0)}/100`;
+    const activities = Array.isArray(data.activities) ? data.activities : [];
+    document.getElementById('d-activity').innerHTML = activities.length ? activities.map(event => {
+      const when = event.occurredAt && !Number.isNaN(Date.parse(event.occurredAt))
+        ? new Date(event.occurredAt).toLocaleString('en-CA', { dateStyle: 'medium', timeStyle: 'short' }) : 'Time unavailable';
+      return `<div class="activity-event">
+        <div class="activity-event-head"><span class="activity-event-title">${esc(ACTIVITY_LABELS[event.eventType] || event.eventType || 'Activity')}</span><span class="activity-event-time">${esc(when)}</span></div>
+        ${event.subject ? `<div class="activity-event-subject">${esc(event.subject)}</div>` : ''}
+        ${event.content ? `<div class="activity-event-copy">${esc(event.content)}</div>` : ''}
+      </div>`;
+    }).join('') : '<div class="activity-empty">No automated activity has been recorded for this lead yet. Existing notes remain unchanged below.</div>';
+  } catch (error) {
+    if (detailId === id) document.getElementById('d-activity').innerHTML = '<div class="activity-empty">Activity could not be loaded. Lead data was not changed.</div>';
+  }
+}
+
+async function saveCallDetails() {
+  const lead = leads.find(item => item.id === detailId);
+  if (!lead) return;
+  const localMeeting = document.getElementById('d-meeting-at').value;
+  const payload = {
+    meetingAt: localMeeting ? new Date(localMeeting).toISOString() : '',
+    outcome: document.getElementById('d-outcome').value,
+    conversationContext: document.getElementById('d-conversation-context').value.trim(),
+  };
+  setSaving(true);
+  try {
+    const response = await fetch(`/api/leads/${encodeURIComponent(lead.id)}/call-details`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    Object.assign(lead, payload);
+    showToast('Call details saved.', 'success');
+    await loadColdCallActivity(lead.id);
+  } catch (error) {
+    showToast('Call details were not saved: ' + error.message, 'error');
+  } finally {
+    setSaving(false);
+  }
 }
 
 function setMotion(m) {

@@ -64,6 +64,11 @@ const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrat
 const { routedLeadReady } = require('./integrations/campaign-routing');
 const { findOriginalSentThread } = require('./integrations/gmail-threading');
 const {
+  COLD_CALL_ACTIVITY_SHEET,
+  COLD_CALL_ACTIVITY_HEADER,
+  COLD_CALL_STAGE_IDS,
+} = require('./integrations/cold-call-pipeline');
+const {
   PROFILE_ID: ROOFING_SURVEY_PROFILE,
   TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE,
   renderInitialEmail: renderRoofingSurveyInitial,
@@ -154,6 +159,87 @@ const LEADS_COLUMNS = [
   'city','cityTrade','phone','email','website',
   'stage','priority','followup','notes','created',
 ];
+
+let coldCallActivityReady = false;
+
+async function ensureColdCallActivitySheet() {
+  if (coldCallActivityReady) return;
+  const s = sheets();
+  const ss = await s.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  const exists = ss.data.sheets.find(sh => sh.properties.title === COLD_CALL_ACTIVITY_SHEET);
+  if (!exists) {
+    await s.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: { requests: [{ addSheet: { properties: { title: COLD_CALL_ACTIVITY_SHEET } } }] },
+    });
+  }
+  await s.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${COLD_CALL_ACTIVITY_SHEET}!A1`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [COLD_CALL_ACTIVITY_HEADER] },
+  });
+  coldCallActivityReady = true;
+}
+
+// Activity recording is additive and best-effort. A logging problem must never
+// turn a successful Gmail send into a retry or change outbound selection.
+async function recordColdCallActivity(record) {
+  try {
+    await ensureColdCallActivitySheet();
+    const complete = { eventId: crypto.randomUUID(), occurredAt: new Date().toISOString(), ...record };
+    await sheets().spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${COLD_CALL_ACTIVITY_SHEET}!A:J`,
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: { values: [COLD_CALL_ACTIVITY_HEADER.map(key => String(complete[key] ?? ''))] },
+    });
+  } catch (error) {
+    console.warn(`[ColdCallActivity] non-blocking log failure for ${record.email || record.leadId}: ${error.message}`);
+  }
+}
+
+async function upsertColdCallLeadFromEvent(lead, stage, note, { moveExisting = false } = {}) {
+  if (!COLD_CALL_STAGE_IDS.has(stage)) return null;
+  try {
+    const response = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: LEADS_RANGE });
+    const rows = response.data.values || [];
+    const targetId = `CE-${lead.id}`;
+    const email = normalizeEmail(lead.email);
+    const existingIndex = rows.findIndex((row, index) => index > 0 && (row[0] === targetId || normalizeEmail(row[10]) === email));
+    if (existingIndex >= 1) {
+      const existingId = rows[existingIndex][0] || targetId;
+      if (moveExisting && rows[existingIndex][12] !== stage) {
+        await sheets().spreadsheets.values.update({
+          spreadsheetId: SPREADSHEET_ID,
+          range: `${LEADS_SHEET}!M${existingIndex + 1}`,
+          valueInputOption: 'RAW',
+          requestBody: { values: [[stage]] },
+        });
+      }
+      return existingId;
+    }
+
+    const parts = String(lead.contactName || '').trim().split(/\s+/).filter(Boolean);
+    const promotedLead = {
+      id: targetId, type: 'trade', first: parts[0] || '', last: parts.slice(1).join(' '),
+      brokerage: '', tradeType: lead.tradeType || 'Dental', company: lead.company || '',
+      city: lead.city || '', cityTrade: lead.city || '', phone: '', email: lead.email || '',
+      website: lead.website || '', stage, priority: stage === 'hot' ? 'hot' : 'warm',
+      followup: new Date().toISOString().split('T')[0], notes: note || '', created: new Date().toISOString(),
+    };
+    await sheets().spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_ID, range: LEADS_RANGE,
+      valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+      requestBody: { values: [LEADS_COLUMNS.map(col => String(promotedLead[col] ?? ''))] },
+    });
+    return targetId;
+  } catch (error) {
+    console.warn(`[ColdCalls] non-blocking automation failure for ${lead.email}: ${error.message}`);
+    return null;
+  }
+}
 
 // ── AUTH (same pattern as server.js) ──────────────────────────────────────────
 
@@ -1031,14 +1117,17 @@ async function getReplyMessage(lead) {
     const snippet = best.msg.snippet || '';
     const body    = extractPlainText(best.msg.payload).trim().slice(0, 1500);
     const rfcMessageId = headerValue(best.msg.payload, 'Message-ID');
-    return { messageId: best.msg.id, rfcMessageId, threadId: best.msg.threadId || '', snippet, body, fromAddr: best.fromAddr };
+    return {
+      messageId: best.msg.id, rfcMessageId, threadId: best.msg.threadId || '', snippet, body,
+      fromAddr: best.fromAddr, occurredAt: new Date(best.ms).toISOString(),
+    };
   } catch (e) {
     console.warn(`[ReplyCheck] API error for ${lead.email}: ${e.message}`);
     return null;
   }
 }
 
-const REPLY_CATEGORIES = new Set(['QUESTION','INTERESTED','NOT_INTERESTED','UNSUBSCRIBE','OUT_OF_OFFICE','WRONG_PERSON','NEEDS_HUMAN']);
+const REPLY_CATEGORIES = new Set(['QUESTION','INTERESTED','MEETING_REQUEST','NOT_INTERESTED','UNSUBSCRIBE','OUT_OF_OFFICE','WRONG_PERSON','NEEDS_HUMAN']);
 
 // Safe default when classification cannot be trusted. NEEDS_HUMAN stops the
 // sequence and surfaces the lead for review rather than silently delaying it —
@@ -1326,7 +1415,7 @@ async function isAlreadyPromoted(leadId) {
 // Idempotent: a lead whose notes already carry the Interested tag is skipped
 // entirely. Callers must not rely on lead.emailStatus — runReplyCheckPass sets
 // it to 'replied' in memory before dispatching here.
-async function handleInterested(lead) {
+async function handleInterested(lead, message = {}, replyText = '', eventType = 'positive_reply') {
   if ((lead.notes || '').includes(TAG_INTERESTED)) {
     console.log(`  ↺ ${lead.company} — already tagged Interested, skipping`);
     return;
@@ -1347,38 +1436,17 @@ async function handleInterested(lead) {
       ],
     },
   });
-  if (await isAlreadyPromoted(lead.id)) {
-    console.log(`  ↺ ${lead.company} — already in Cold Calls, skipping promote`);
-    return;
-  }
-  const parts = (lead.contactName || '').split(' ');
-  const first = parts[0] || '';
-  const last  = parts.slice(1).join(' ') || '';
-  const promotedLead = {
-    id:        `CE-${lead.id}`,
-    type:      'trade',
-    first,
-    last,
-    brokerage: '',
-    tradeType: lead.tradeType || 'Med Spa',
-    company:   lead.company,
-    city:      lead.city || '',
-    cityTrade: lead.city || '',
-    phone:     '',
-    email:     lead.email,
-    website:   lead.website || '',
-    stage:     'new',
-    priority:  'hot',
-    followup:  new Date().toISOString().split('T')[0],
-    notes:     'Auto-promoted from cold email outreach. Reply classified: Interested.',
-    created:   new Date().toISOString(),
-  };
-  await sheets().spreadsheets.values.append({
-    spreadsheetId:    SPREADSHEET_ID,
-    range:            LEADS_RANGE,
-    valueInputOption: 'RAW',
-    insertDataOption: 'INSERT_ROWS',
-    requestBody:      { values: [LEADS_COLUMNS.map(col => String(promotedLead[col] ?? ''))] },
+  const coldCallLeadId = await upsertColdCallLeadFromEvent(
+    lead, 'hot',
+    `Auto-promoted from cold email outreach. Reply classified: ${eventType === 'meeting_requested' ? 'Meeting requested' : 'Interested'}.`,
+    { moveExisting: true },
+  );
+  await recordColdCallActivity({
+    leadId: coldCallLeadId || `CE-${lead.id}`, sourceLeadId: lead.id,
+    email: lead.email, company: cleanCompanyName(lead.company) || lead.company || '',
+    eventType, occurredAt: message.occurredAt || new Date().toISOString(),
+    subject: '', content: replyText || message.snippet || '',
+    metadata: JSON.stringify({ from: message.fromAddr || lead.email, classification: eventType }),
   });
   console.log(`  🔥 Auto-promoted ${lead.company} to Cold Calls kanban`);
 }
@@ -1730,7 +1798,8 @@ async function runReplyCheckPass(leads, todaySentOverride = null) {
           // confident, otherwise drafted for review. Both paths append the
           // warm booking snippet. todaySent enforces the touch cap.
           case 'QUESTION':       return handleQuestion(lead, replyText, replyPassTodaySent);
-          case 'INTERESTED':     return handleInterested(lead);
+          case 'INTERESTED':     return handleInterested(lead, message, replyText);
+          case 'MEETING_REQUEST': return handleInterested(lead, message, replyText, 'meeting_requested');
           case 'NOT_INTERESTED': return handleNotInterested(lead);
           case 'UNSUBSCRIBE':    return handleUnsubscribe(lead);
           case 'WRONG_PERSON':   return handleWrongPerson(lead);
@@ -2038,12 +2107,13 @@ async function runIntentTriggerPass(allLeads) {
         to: lead.email.trim(), subject: thread.subject, body,
         threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references,
       });
+      const intentSentAt = new Date().toISOString();
       // Record the fire BEFORE anything else can fail, so a crash after send
       // can never produce a duplicate on the next pass.
       await sheets().spreadsheets.values.append({
         spreadsheetId: SPREADSHEET_ID, range: `${INTENT_SHEET}!A:E`,
         valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
-        requestBody: { values: [[new Date().toISOString(), lead.id,
+        requestBody: { values: [[intentSentAt, lead.id,
           cleanCompanyName(lead.company) || '', lead.email, 'both-audios']] },
       });
       const rowNum = await resolveRow(lead.id);
@@ -2051,11 +2121,38 @@ async function runIntentTriggerPass(allLeads) {
         await sheets().spreadsheets.values.batchUpdate({
           spreadsheetId: SPREADSHEET_ID,
           requestBody: { valueInputOption: 'RAW', data: [
-            { range: `${SHEET_NAME}!J${rowNum}`, values: [[new Date().toISOString()]] },
+            { range: `${SHEET_NAME}!J${rowNum}`, values: [[intentSentAt]] },
             { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, '[INTENT: both audios played — booking link sent]')]] },
           ] },
         });
       }
+      const coldCallLeadId = await upsertColdCallLeadFromEvent(
+        lead, 'follow_up',
+        'Demo pair played. Booking-link follow-up sent automatically.',
+      );
+      const timelineLeadId = coldCallLeadId || `CE-${lead.id}`;
+      const play = plays.get(normalizeName(cleanCompanyName(lead.company))) || {};
+      await recordColdCallActivity({
+        leadId: timelineLeadId, sourceLeadId: lead.id, email: lead.email,
+        company: cleanCompanyName(lead.company) || lead.company || '',
+        eventType: 'initial_email_sent',
+        occurredAt: thread.internalDate ? new Date(thread.internalDate).toISOString() : '',
+        subject: thread.subject, content: thread.content || '',
+        metadata: JSON.stringify({ gmailThreadId: thread.threadId }),
+      });
+      await recordColdCallActivity({
+        leadId: timelineLeadId, sourceLeadId: lead.id, email: lead.email,
+        company: cleanCompanyName(lead.company) || lead.company || '',
+        eventType: 'demo_pair_played', occurredAt: play.last || intentSentAt,
+        subject: '', content: 'Both demo audio clips were played.', metadata: '',
+      });
+      await recordColdCallActivity({
+        leadId: timelineLeadId, sourceLeadId: lead.id, email: lead.email,
+        company: cleanCompanyName(lead.company) || lead.company || '',
+        eventType: 'booking_link_sent', occurredAt: intentSentAt,
+        subject: thread.subject, content: body,
+        metadata: JSON.stringify({ gmailThreadId: thread.threadId, trigger: 'both_audios' }),
+      });
       sent++; todaySent++;
       console.log(`  🎧 Intent email sent → ${lead.email} (${cleanCompanyName(lead.company)})`);
     } catch (e) {
