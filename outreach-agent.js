@@ -62,6 +62,7 @@ const { SmartleadOutreachProvider } = require('./integrations/outreach-providers
 const { classifyReply: classifyProviderReply } = require('./integrations/reply-classifier');
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
 const { routedLeadReady } = require('./integrations/campaign-routing');
+const { findOriginalSentThread } = require('./integrations/gmail-threading');
 const {
   PROFILE_ID: ROOFING_SURVEY_PROFILE,
   TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE,
@@ -2026,7 +2027,17 @@ async function runIntentTriggerPass(allLeads) {
     if (!SENDING_ENABLED) { console.log(`⛔ [kill-switch] would send intent email → ${lead.email}`); continue; }
 
     try {
-      await sendEmail({ to: lead.email.trim(), subject, body });
+      const company = cleanCompanyName(lead.company) || 'your business';
+      const originalSubject = coldSubjectFor(lead, company);
+      const thread = await findOriginalSentThread({ gmail: gmail(), email: lead.email.trim(), expectedSubject: originalSubject });
+      if (!thread) {
+        console.warn(`  ⏸️  intent email deferred → ${lead.email} (original Gmail thread could not be verified)`);
+        continue;
+      }
+      await sendEmail({
+        to: lead.email.trim(), subject: thread.subject, body,
+        threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references,
+      });
       // Record the fire BEFORE anything else can fail, so a crash after send
       // can never produce a duplicate on the next pass.
       await sheets().spreadsheets.values.append({
