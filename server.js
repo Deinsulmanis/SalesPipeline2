@@ -28,6 +28,8 @@ const {
 const {
   deriveAutomationState, automationConflict, deriveNextAction,
   stageTransitionCheck, reopenEligibility, OUTCOME_IDS, LOSS_OUTCOME_IDS,
+  MANUAL_HOLD_TAG, HUMAN_OWNED_STAGES,
+  applyHoldToNotes, stageRequiresHold,
 } = require('./integrations/pipeline-state');
 
 const app = express();
@@ -706,18 +708,39 @@ app.put('/api/leads/:id', requireAuth, async (req, res) => {
   try {
     const rowNum = await withAuth(() => findRow(req.params.id));
     if (!rowNum) return res.status(404).json({ error: 'not found' });
-    // Read the row BEFORE overwriting so a stage change can be recorded with the
-    // stage it came from. The write range is A:Q, so U:W (meetingAt, outcome,
-    // conversationContext) are untouched by this endpoint and survive the save.
+    // Read the row BEFORE overwriting: the transition gate needs meetingAt and
+    // outcome, which live in U:W and are NOT carried in the request body. The
+    // write range stays A:Q, so U:W survive this endpoint untouched.
     let previousStage = '';
+    let priorRow = [];
     try {
       const prior = await sheets().spreadsheets.values.get({
-        spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${rowNum}:Q${rowNum}`,
+        spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${rowNum}:W${rowNum}`,
       });
-      previousStage = prior.data.values?.[0]?.[12] || '';
+      priorRow = prior.data.values?.[0] || [];
+      previousStage = priorRow[12] || '';
     } catch (readError) {
-      console.warn('[Leads PUT] prior-stage read failed:', readError.message);
+      console.warn('[Leads PUT] prior-row read failed:', readError.message);
     }
+
+    const nextStage = String(lead.stage || '');
+    const isTransition = displayStageFor(nextStage) !== displayStageFor(previousStage);
+
+    // Server-side gate. Enforced ONLY on a real transition: the 11 legacy rows
+    // sitting at raw stage "lost" carry no outcome, and validating every save
+    // would make them unsavable without first changing data this task must not
+    // touch. Same shared rules the browser uses — stageTransitionCheck is the
+    // single source, not a second copy.
+    if (isTransition) {
+      const gate = stageTransitionCheck(nextStage, {
+        meetingAt: priorRow[20] || '',
+        outcome: priorRow[21] || '',
+      });
+      if (!gate.ok) {
+        return res.status(422).json({ error: gate.message, field: gate.field, stage: displayStageFor(nextStage) });
+      }
+    }
+
     await withAuth(async () => {
       await sheets().spreadsheets.values.update({
         spreadsheetId:   SPREADSHEET_ID,
@@ -726,12 +749,36 @@ app.put('/api/leads/:id', requireAuth, async (req, res) => {
         requestBody:     { values: vals },
       });
     });
-    // Stage history. Append-only and best-effort: the lead is already saved, so
-    // a logging failure must not turn a successful save into a 500. Only a real
-    // transition is recorded, which is what keeps repeated saves of the same
-    // card from stacking duplicate stage-entry rows.
-    const nextStage = String(lead.stage || '');
-    if (displayStageFor(nextStage) !== displayStageFor(previousStage)) {
+    // Stage history + manual hold. Append-only and best-effort: the lead is
+    // already saved, so a failure here must not turn a successful save into a
+    // 500. Only a real transition runs this, which is what keeps repeated saves
+    // of the same card from stacking duplicate stage-entry or hold events.
+    if (isTransition) {
+      // THE P0 FIX. Moving a card into a human-owned stage now stops the sending
+      // agent, because [MANUAL HOLD] lands in the ColdEmail notes that
+      // suppressionReason() reads before every send.
+      if (stageRequiresHold(nextStage)) {
+        try {
+          const held = await applyManualHold(req.params.id, lead.email || priorRow[10] || '');
+          for (const row of held) {
+            await appendIntegrationRow(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER, {
+              eventId: crypto.randomUUID(), leadId: req.params.id, sourceLeadId: row.id,
+              email: lead.email || '', company: lead.company || '',
+              eventType: 'automation_held', occurredAt: new Date().toISOString(),
+              subject: 'Automated follow-up suppressed', content: '',
+              metadata: JSON.stringify({
+                stage: displayStageFor(nextStage), trigger: 'stage_transition',
+                coldEmailId: row.id, matchedBy: row.matchedBy,
+                emailStatusAtHold: row.emailStatus, tag: MANUAL_HOLD_TAG,
+              }),
+            });
+          }
+          if (held.length) console.log(`[hold] ${MANUAL_HOLD_TAG} applied to ${held.length} ColdEmail row(s) for ${req.params.id}`);
+        } catch (holdError) {
+          // Loud: a failed hold means automation may still be live.
+          console.error('[hold] FAILED to apply manual hold for', req.params.id, '-', holdError.message);
+        }
+      }
       try {
         await appendIntegrationRow(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER, {
           eventId: crypto.randomUUID(), leadId: req.params.id, sourceLeadId: '',
@@ -1305,24 +1352,64 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
 // promotion time) and fall back to email, which is how a hand-added board lead
 // lines up with an imported one. Reads only A:L — the columns that decide
 // sending — so this stays one cheap call.
-async function findColdEmailTwin(boardLeadId, boardEmail) {
+// Returns EVERY ColdEmail row that belongs to this board lead, each carrying its
+// 1-based sheet row so a caller can write to it.
+//
+// Matching is deliberately limited to two exact keys, in this order:
+//   1. the CE- foreign key stamped on the board row at promotion time, and
+//   2. the normalized email address.
+// Company name is never used: near-identical practice names are common in this
+// data, and a fuzzy match would suppress an unrelated contact. An address with
+// duplicate ColdEmail rows yields all of them, because holding only one of a
+// duplicated pair would still leak a send.
+async function findColdEmailTwins(boardLeadId, boardEmail) {
   const wanted = String(boardLeadId || '').replace(/^CE-/, '');
   const email = normalizeEmail(boardEmail || '');
   const response = await sheets().spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:L`,
   });
   const rows = (response.data.values || []).slice(1);
-  let byEmail = null;
-  for (const row of rows) {
+  const matches = [];
+  rows.forEach((row, index) => {
     const twin = {
       id: row[0] || '', company: row[1] || '', email: row[3] || '',
       stage: row[7] || '', emailStatus: row[8] || '', lastEmailedAt: row[9] || '',
       emailStep: row[10] || '', notes: row[11] || '',
+      _row: index + 2, // +1 for the header, +1 for 1-based rows
     };
-    if (wanted && twin.id === wanted) return twin;
-    if (!byEmail && email && normalizeEmail(twin.email) === email) byEmail = twin;
+    const idHit = Boolean(wanted) && twin.id === wanted;
+    const emailHit = Boolean(email) && normalizeEmail(twin.email) === email;
+    if (idHit || emailHit) matches.push({ ...twin, _matchedBy: idHit ? 'id' : 'email' });
+  });
+  // An id match is the authoritative one, so it sorts first.
+  matches.sort((a, b) => (a._matchedBy === 'id' ? -1 : 0) - (b._matchedBy === 'id' ? -1 : 0));
+  return matches;
+}
+
+// The single twin that governs this lead — the id match when there is one.
+async function findColdEmailTwin(boardLeadId, boardEmail) {
+  const matches = await findColdEmailTwins(boardLeadId, boardEmail);
+  return matches.length ? matches[0] : null;
+}
+
+// Writes [MANUAL HOLD] into the notes of every ColdEmail row for this lead.
+// ensureNote is idempotent, so re-saving a card already on hold rewrites nothing
+// and logs nothing. Returns the rows actually changed.
+async function applyManualHold(boardLeadId, boardEmail) {
+  const twins = await findColdEmailTwins(boardLeadId, boardEmail);
+  const changed = [];
+  for (const twin of twins) {
+    const updated = applyHoldToNotes(twin.notes || '');
+    if (updated === (twin.notes || '')) continue;   // already held — no write, no event
+    await sheets().spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${CE_SHEET_NAME}!L${twin._row}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [[updated]] },
+    });
+    changed.push({ id: twin.id, row: twin._row, matchedBy: twin._matchedBy, emailStatus: twin.emailStatus });
   }
-  return byEmail;
+  return changed;
 }
 
 app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {

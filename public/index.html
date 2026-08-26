@@ -2254,7 +2254,19 @@ async function syncLead(lead) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(lead),
     });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    if (!resp.ok) {
+      // The server enforces the same stage gates the UI does. A 422 means the
+      // transition was refused, so the board is now showing a stage the sheet
+      // does not have — reload rather than leave the card lying about its state.
+      let detail = `HTTP ${resp.status}`;
+      try { detail = (await resp.json()).error || detail; } catch (_) { /* keep the status */ }
+      if (resp.status === 422) {
+        showToast(detail, 'warning');
+        await loadLeads();
+        return;
+      }
+      throw new Error(detail);
+    }
   } catch(e) {
     console.error('[syncLead]', e.message);
     showToast('Failed to save lead: ' + e.message, 'error');
@@ -3238,6 +3250,9 @@ const ACTIVITY_LABELS = {
   closed_won: 'Closed / won',
   closed_lost: 'Closed / lost outcome recorded',
   conversation_note: 'Conversation context updated',
+  follow_up_sent: 'Sequence follow-up sent',
+  stage_changed: 'Stage changed',
+  automation_held: 'Automation held (manual takeover)',
 };
 
 async function loadColdCallActivity(id) {

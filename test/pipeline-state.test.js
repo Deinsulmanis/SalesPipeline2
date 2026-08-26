@@ -115,10 +115,22 @@ test('scenario 7: THE LEAK — a human-owned board stage does not stop the sendi
   assert.equal(automationConflict({ stage: 'follow_up' }, twin), null);
 });
 
-test('scenario 7b: the manual-hold tag is reported as NOT yet enforced', () => {
-  const held = deriveAutomationState({ emailStatus: 'emailed', emailStep: '1', notes: MANUAL_HOLD_TAG });
-  assert.equal(held.state, AUTOMATION_STATES.ACTIVE);
-  assert.match(held.reason, /not yet enforced/);
+test('scenario 7b: the manual-hold tag stops automation and clears the conflict', () => {
+  const twin = { emailStatus: 'emailed', emailStep: '1', notes: MANUAL_HOLD_TAG };
+  const held = deriveAutomationState(twin);
+  assert.equal(held.state, AUTOMATION_STATES.STOPPED);
+  assert.match(held.reason, /manual hold/);
+  // the red banner must clear because the DATA changed, not because it is hidden
+  for (const stage of HUMAN_OWNED_STAGES) {
+    assert.equal(automationConflict({ stage }, twin), null, 'conflict should clear for ' + stage);
+  }
+});
+
+test('a manual hold does not disqualify a lead from being reopened', () => {
+  // unlike unsubscribe/bounce, which must never be reversed
+  const r = reopenEligibility({ stage: 'closed_lost', outcome: 'ghosted' }, { notes: MANUAL_HOLD_TAG });
+  assert.equal(r.reopenable, true);
+  assert.match(r.caution, /MANUAL HOLD/);
 });
 
 // ── 8. Call booked ──────────────────────────────────────────────────────────

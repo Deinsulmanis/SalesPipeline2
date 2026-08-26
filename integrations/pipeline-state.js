@@ -39,11 +39,42 @@ const AUTOMATION_STATES = Object.freeze({
 // Kept in sync deliberately: see SUPPRESSION_TAGS in outreach-agent.js.
 const SUPPRESSION_NOTE_TAGS = Object.freeze(['[REPLY: Unsubscribed]', '[BOUNCED']);
 
-// A human took over. Not yet enforced by the sending agent — surfacing only.
+// A human took over. Written into ColdEmail notes by PUT /api/leads/:id when a
+// lead enters a human-owned stage, and listed in SUPPRESSION_TAGS in
+// outreach-agent.js — so it genuinely stops every send loop.
+//
+// Kept OUT of SUPPRESSION_NOTE_TAGS above on purpose: those are opt-out and
+// bounce, which must never be reversed. A hold is a pause a human chose, so it
+// must not permanently disqualify a lead from being reopened.
 const MANUAL_HOLD_TAG = '[MANUAL HOLD]';
 
 function noteHas(notes, tag) {
   return String(notes || '').includes(tag);
+}
+
+/** Is this lead already on manual hold? */
+function hasManualHold(notes) {
+  return noteHas(notes, MANUAL_HOLD_TAG);
+}
+
+/**
+ * Idempotent hold application. Returns the notes unchanged when the tag is
+ * already present — which is what stops a re-saved card from writing the sheet
+ * again and stacking a second automation_held event.
+ */
+function applyHoldToNotes(notes) {
+  const existing = String(notes || '');
+  if (hasManualHold(existing)) return existing;
+  return existing ? MANUAL_HOLD_TAG + ' ' + existing : MANUAL_HOLD_TAG;
+}
+
+/**
+ * Does entering this stage mean a human owns the lead, and therefore that
+ * automated follow-up must stop? Driven off HUMAN_OWNED_STAGES so a stage added
+ * to the canonical list later cannot silently miss the hold.
+ */
+function stageRequiresHold(stage) {
+  return HUMAN_OWNED_STAGES.includes(displayStageFor(stage));
 }
 
 /**
@@ -58,8 +89,10 @@ function deriveAutomationState(twin) {
     if (noteHas(notes, tag)) return { state: AUTOMATION_STATES.STOPPED, reason: 'suppressed (' + tag + ')' };
   }
   if (noteHas(notes, MANUAL_HOLD_TAG)) {
-    // Surfaced, but NOT enforced by the agent yet — say so rather than imply safety.
-    return { state: AUTOMATION_STATES.ACTIVE, reason: 'manual hold requested but not yet enforced by the sending agent' };
+    // Enforced: suppressionReason() in outreach-agent.js reads this tag before
+    // every send, so the sequence really is stopped. Releasing it is manual by
+    // design — see reopenEligibility().
+    return { state: AUTOMATION_STATES.STOPPED, reason: 'on manual hold — a human owns this lead' };
   }
 
   const status = String(twin.emailStatus || '').trim().toLowerCase();
@@ -220,12 +253,14 @@ function reopenEligibility(boardLead, twin) {
     reason: outcome ? 'outcome "' + outcome + '" is recoverable' : 'no definitive loss recorded',
     // Reopening must not resurrect the old sequence — that is how a lead gets
     // re-mailed a sequence they already received.
-    caution: 'reopen to Hot for human follow-up; do NOT clear emailStatus (that would re-enter the cold sequence)',
+    caution: 'reopen to Hot for human follow-up; do NOT clear emailStatus or remove '
+      + MANUAL_HOLD_TAG + ' (either would let the cold sequence resume immediately, because lastEmailedAt is already past its delay)',
   };
 }
 
 module.exports = {
   AUTOMATION_STATES, SUPPRESSION_NOTE_TAGS, MANUAL_HOLD_TAG, HUMAN_OWNED_STAGES,
+  hasManualHold, applyHoldToNotes, stageRequiresHold,
   OUTCOMES, OUTCOME_IDS, LOSS_OUTCOME_IDS, RECOVERABLE_OUTCOME_IDS,
   FOLLOW_UP_DELAY_DAYS,
   deriveAutomationState, automationConflict, deriveNextAction,

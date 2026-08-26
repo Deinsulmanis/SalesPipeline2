@@ -33,7 +33,12 @@ test('lead score reflects verified engagement without exceeding 100', () => {
 
 test('future trigger automations are additive and the standard sending loop stays isolated', () => {
   const standardSend = agent.slice(agent.indexOf('// ── New sends (step 1)'), agent.indexOf('// ── Warm follow-ups'));
-  assert.match(standardSend, /sendEmail\([\s\S]*?markSent\(lead, 1\)[\s\S]*?sent\+\+/);
+  // markSent now takes optional send metadata so the activity row can carry the
+  // real Gmail message id. The ORDER is what this guards: send, then record,
+  // then count.
+  assert.match(standardSend, /sendEmail\([\s\S]*?markSent\(lead, 1,[\s\S]*?sent\+\+/);
+  // The loop itself must still contain no trigger automation. Activity logging
+  // lives inside markSent, which only runs after a send has already succeeded.
   assert.doesNotMatch(standardSend, /recordColdCallActivity|upsertColdCallLeadFromEvent/);
   assert.match(agent, /non-blocking log failure/);
   assert.match(agent, /upsertColdCallLeadFromEvent\([\s\S]*?'follow_up'/);

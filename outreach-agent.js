@@ -1309,6 +1309,41 @@ async function readProposalOpens() {
   }
 }
 
+// Append-only record of a real outbound send. Step 1 is the cold email itself;
+// later steps are sequence follow-ups and are typed distinctly so that
+// initial_email_sent keeps meaning exactly one thing (lead scoring and the
+// demo-trigger backfill both rely on that).
+//
+// eventId is derived from the Gmail message id when we have one, so a duplicate
+// row is detectable rather than anonymous. No credentials, tokens or provider
+// internals are stored — only ids the dashboard already displays.
+async function recordSendActivity(lead, step, sendMeta, sentAt) {
+  const result    = (sendMeta && sendMeta.result) || null;
+  const messageId = result && result.data ? result.data.id || '' : '';
+  const threadId  = result && result.data ? result.data.threadId || '' : '';
+  const isInitial = Number(step) === 1;
+  await recordColdCallActivity({
+    eventId: messageId ? `gmail:${messageId}` : `${lead.id}:step${step}:${sentAt}`,
+    leadId: `CE-${lead.id}`,
+    sourceLeadId: lead.id,
+    email: lead.email || '',
+    company: cleanCompanyName(lead.company) || lead.company || '',
+    eventType: isInitial ? 'initial_email_sent' : 'follow_up_sent',
+    occurredAt: sentAt,
+    subject: String((sendMeta && sendMeta.subject) || '').slice(0, 500),
+    content: '',
+    metadata: JSON.stringify({
+      step: Number(step), trigger: isInitial ? 'cold_sequence_step_1' : 'cold_sequence_follow_up',
+      gmailMessageId: messageId, gmailThreadId: threadId,
+      templateId: lead.emailTemplateId || '', campaign: lead.campaign || '',
+    }),
+  });
+}
+
+// sendMeta is the Gmail API response from sendEmail() — passed in by the send
+// loops purely so the activity row can carry the real message/thread id. It is
+// optional: markSent's existing behaviour is unchanged when it is absent.
+
 // Write stage (H) + agent columns (I:K) for one row, leaving the rest untouched.
 // Sets emailStatus='done' when the last step in the sequence has been sent —
 // and, on that same last step, writes stage='Done' too (H), matching what
@@ -1323,7 +1358,7 @@ async function readProposalOpens() {
 // write (including row resolution) retries with exponential backoff, and a
 // final failure alarms loudly instead of throwing: the caller's catch would
 // log "Failed", which is false — the send succeeded.
-async function markSent(lead, step) {
+async function markSent(lead, step, sendMeta = null) {
   const now          = new Date().toISOString();
   const isLastStep   = step > FOLLOW_UP_SEQUENCE.length; // step 3 > 2 → done
   const status       = isLastStep ? 'done' : 'emailed';
@@ -1347,6 +1382,12 @@ async function markSent(lead, step) {
           ],
         },
       });
+      // History for future automation. Reached only after a send has actually
+      // succeeded (every markSent call site sits after an awaited sendEmail) and
+      // only after the bookkeeping write returns, so the retry loop above cannot
+      // append it twice. recordColdCallActivity swallows its own errors, so a
+      // logging failure can never turn a completed send into a retry.
+      await recordSendActivity(lead, step, sendMeta, now);
       return;
     } catch (e) {
       if (attempt < MAX_ATTEMPTS) {
@@ -2174,7 +2215,14 @@ function isValidEmail(e) {
 // '[BOUNCED' is a deliberate prefix — it matches both '[BOUNCED]' (agent) and
 // '[BOUNCED - manual cleanup]' (mark-bounced.js). Checked immediately before
 // every send as a last line of defense; selection filters are the first line.
-const SUPPRESSION_TAGS = ['[REPLY: Unsubscribed]', '[BOUNCED'];
+// [MANUAL HOLD] is written by the CRM when a lead is moved into a human-owned
+// or terminal stage (Hot / Call Booked / Closed Won / Closed Lost). Adding it
+// here is the entire agent-side change: suppressionReason() is the single guard
+// every send loop already calls, so one tag closes new sends, warm follow-ups,
+// standard follow-ups, intent emails, auto-answers and the roofing path at once.
+// This can only ever REMOVE a lead from a send — it can never cause one.
+const MANUAL_HOLD_TAG = '[MANUAL HOLD]';
+const SUPPRESSION_TAGS = ['[REPLY: Unsubscribed]', '[BOUNCED', MANUAL_HOLD_TAG];
 
 // ── GLOBAL SUPPRESSION LIST (durable, keyed by email) ─────────────────────────
 // The per-row notes tag above is fragile: delete the row (manual cleanup, a
@@ -2581,8 +2629,8 @@ async function run() {
     }
 
     try {
-      await sendEmail({ to: lead.email.trim(), subject, body });
-      await withAuth(() => markSent(lead, 1));
+      const sendResult = await sendEmail({ to: lead.email.trim(), subject, body });
+      await withAuth(() => markSent(lead, 1, { result: sendResult, subject }));
       sent++;
       console.log(`✅ Sent (step 1) → ${lead.email}  (${sent}/${total})`);
     } catch (e) {
@@ -2627,8 +2675,8 @@ async function run() {
     }
 
     try {
-      await sendEmail({ to: lead.email.trim(), subject, body });
-      await withAuth(() => markSent(lead, nextStepNum));
+      const sendResult = await sendEmail({ to: lead.email.trim(), subject, body });
+      await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject }));
       await withAuth(() => appendOpenTriggeredNote(lead));
       sent++;
       console.log(`✅ Sent (warm) → ${lead.email}  (${sent}/${total})`);
@@ -2678,8 +2726,8 @@ async function run() {
     }
 
     try {
-      await sendEmail({ to: lead.email.trim(), subject, body });
-      await withAuth(() => markSent(lead, nextStepNum));
+      const sendResult = await sendEmail({ to: lead.email.trim(), subject, body });
+      await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject }));
       sent++;
       console.log(`✅ Sent (step ${nextStepNum}) → ${lead.email}  (${sent}/${total})`);
     } catch (e) {
