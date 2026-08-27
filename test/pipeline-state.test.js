@@ -197,10 +197,11 @@ test('scenario 14/15: reopening is allowed but must never re-enter the cold sequ
   assert.equal(reopenEligibility({ stage: 'hot' }, null).reopenable, false);
 });
 
-test('scenario 14b: terminal leads are permanently excluded from reply checking', () => {
-  // Documents the real limitation: only emailStatus === 'emailed' is polled, so
-  // a reply arriving after the sequence completes is never detected by the agent.
+test('scenario 14b: active reply polling stays isolated from the bounded terminal watcher', () => {
+  // Active polling keeps its original selector. Terminal polling is a separate,
+  // once-daily path and therefore cannot re-enter the active automation flow.
   assert.match(agent, /const candidates = leads\.filter\(l => l\.emailStatus === 'emailed' && isValidEmail\(l\.email\)\);/);
+  assert.match(agent, /await runLateReplyCheckPass\(all\);/);
 });
 
 // ── Cross-cutting invariants ────────────────────────────────────────────────

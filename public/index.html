@@ -1250,6 +1250,14 @@
   }
 
   .ce-stage-select:focus { border-color: var(--accent); }
+  .ce-stage-stack { display:flex; flex-direction:column; align-items:flex-start; gap:5px; }
+  .ce-late-reply {
+    display:inline-flex; align-items:center; gap:5px; padding:3px 7px;
+    border:1px solid color-mix(in srgb, var(--warn) 35%, var(--border));
+    border-radius:var(--radius-pill); background:var(--warn-bg); color:var(--warn);
+    font-size:10px; font-weight:700; letter-spacing:.02em; white-space:nowrap;
+  }
+  .ce-late-reply::before { content:''; width:5px; height:5px; border-radius:50%; background:currentColor; }
 
   .btn-promote {
     padding: 3px 10px;
@@ -3276,6 +3284,7 @@ const ACTIVITY_LABELS = {
   follow_up_sent: 'Sequence follow-up sent',
   stage_changed: 'Stage changed',
   automation_held: 'Automation held (manual takeover)',
+  late_reply: 'Late reply — needs attention',
 };
 
 async function loadColdCallActivity(id) {
@@ -3676,6 +3685,7 @@ function renderCeTable() {
     const openKey   = ceCompanyKey(l.company);
     const opens     = ceOpensMap.get(openKey) || 0;
     const demoEntry = ceDemoMap.get(openKey);
+    const hasLateReply = /\[LATE REPLY:/i.test(l.notes || '');
     // A demo play outranks any number of opens — see CE_SIGNAL. Show the play
     // when there is one, falling back to the open count otherwise.
     const opensTd   = demoEntry
@@ -3693,7 +3703,7 @@ function renderCeTable() {
       <td>${cell(l.city)}</td>
       <td>${esc(l.tradeType) || '—'}</td>
       ${opensTd}
-      <td onclick="event.stopPropagation()"><select class="ce-stage-select" onchange="setCeLeadStage('${l.id}',this.value)">${stageOpts}</select></td>
+      <td onclick="event.stopPropagation()"><div class="ce-stage-stack"><select class="ce-stage-select" onchange="setCeLeadStage('${l.id}',this.value)">${stageOpts}</select>${hasLateReply ? '<span class="ce-late-reply" title="Reply received after the sequence ended. Automation is still stopped.">Late reply</span>' : ''}</div></td>
       <td onclick="event.stopPropagation()" style="white-space:nowrap;display:flex;gap:6px;align-items:center">
         <button class="btn-promote" onclick="promoteLead('${l.id}')">↗ Promote</button>
         <button class="btn-ce-del"  onclick="deleteCeLead('${l.id}')" title="Delete">

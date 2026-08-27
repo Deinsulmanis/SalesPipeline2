@@ -81,6 +81,13 @@ const {
   COLD_CALL_STAGE_IDS,
 } = require('./integrations/cold-call-pipeline');
 const {
+  DEFAULT_LATE_REPLY_LOOKBACK_DAYS,
+  DEFAULT_LATE_REPLY_BATCH_LIMIT,
+  selectLateReplyCandidates,
+  existingLateReplyEventIds,
+  processLateReply,
+} = require('./integrations/late-reply');
+const {
   PROFILE_ID: ROOFING_SURVEY_PROFILE,
   TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE,
   renderInitialEmail: renderRoofingSurveyInitial,
@@ -106,6 +113,11 @@ const CHECK_ONLY       = process.env.CHECK_ONLY === 'true';
 // from CHECK_ONLY so the /demo-played route can fire a fast, narrow pass within
 // minutes of a play without triggering reply/bounce detection or any outreach.
 const INTENT_ONLY      = process.env.INTENT_ONLY === 'true';
+// Terminal leads are checked only when the existing check-only scheduler
+// explicitly enables this flag for its once-daily window.
+const LATE_REPLY_CHECK = process.env.LATE_REPLY_CHECK === 'true';
+const LATE_REPLY_LOOKBACK_DAYS = parseInt(process.env.LATE_REPLY_LOOKBACK_DAYS || String(DEFAULT_LATE_REPLY_LOOKBACK_DAYS), 10);
+const LATE_REPLY_BATCH_LIMIT = parseInt(process.env.LATE_REPLY_BATCH_LIMIT || String(DEFAULT_LATE_REPLY_BATCH_LIMIT), 10);
 // Master kill switch. Fail-safe: sending is OFF unless the env var is the
 // literal string 'true' — an absent or mistyped value means no mail leaves.
 // Checked immediately before every sendEmail call, not at startup, so a
@@ -638,6 +650,34 @@ function buildPitch(lead, opener, link, structuredPersonalization = null) {
   };
 }
 
+// Inbound late replies use strict append semantics: if the activity write
+// fails, the next daily pass must retry instead of silently losing the event.
+// Outbound activity remains best-effort so a logging failure cannot cause a
+// successfully sent email to be retried.
+async function recordColdCallActivityStrict(record) {
+  await ensureColdCallActivitySheet();
+  const complete = { eventId: crypto.randomUUID(), occurredAt: new Date().toISOString(), ...record };
+  await sheets().spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${COLD_CALL_ACTIVITY_SHEET}!A:J`,
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: [COLD_CALL_ACTIVITY_HEADER.map(key => String(complete[key] ?? ''))] },
+  });
+}
+
+async function readColdCallActivities() {
+  const response = await sheets().spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${COLD_CALL_ACTIVITY_SHEET}!A:J`,
+  });
+  return (response.data.values || []).slice(1).map(row => {
+    const record = {};
+    COLD_CALL_ACTIVITY_HEADER.forEach((field, index) => { record[field] = row[index] || ''; });
+    return record;
+  });
+}
+
 // ── PRE-SEND VALIDATION FOR COLD EMAIL ────────────────────────────────────────
 // The guarantee is a commercial promise, so an unresolved merge
 // field is not a cosmetic bug — "…for  in the first 30 days" or a literal
@@ -1138,6 +1178,42 @@ async function getReplyMessage(lead) {
   } catch (e) {
     console.warn(`[ReplyCheck] API error for ${lead.email}: ${e.message}`);
     return null;
+  }
+}
+
+// Terminal polling is intentionally narrower than active polling: it opens a
+// known Gmail thread from recorded outbound activity and never searches the
+// mailbox. This makes one bounded thread request per eligible lead.
+async function getLateReplyMessages(lead, outbound) {
+  if (!lead.lastEmailedAt || !outbound?.threadId || !outbound?.messageId) return [];
+  try {
+    const afterMs = new Date(lead.lastEmailedAt).getTime();
+    if (!Number.isFinite(afterMs)) return [];
+    const thread = await gmail().users.threads.get({
+      userId: 'me', id: outbound.threadId, format: 'full',
+    });
+    const ourAddr = (FROM_EMAIL || '').trim().toLowerCase();
+    return (thread.data.messages || [])
+      .map(m => ({ m, ms: parseInt(m.internalDate || '0', 10) }))
+      .filter(({ m, ms }) => {
+        if (ms <= afterMs || (m.labelIds || []).includes('SENT')) return false;
+        const fromAddr = parseAddr(headerValue(m.payload, 'From'));
+        return fromAddr && (!ourAddr || fromAddr !== ourAddr) && !DAEMON_FROM.test(fromAddr);
+      })
+      .sort((a, b) => a.ms - b.ms)
+      .map(({ m, ms }) => ({
+        messageId: m.id,
+        rfcMessageId: headerValue(m.payload, 'Message-ID'),
+        threadId: m.threadId || outbound.threadId,
+        subject: headerValue(m.payload, 'Subject'),
+        snippet: m.snippet || '',
+        body: extractPlainText(m.payload).trim().slice(0, 1500),
+        fromAddr: parseAddr(headerValue(m.payload, 'From')),
+        occurredAt: new Date(ms).toISOString(),
+      }));
+  } catch (error) {
+    console.warn(`[LateReply] thread read failed for ${lead.email}: ${error.message}`);
+    return [];
   }
 }
 
@@ -1887,6 +1963,60 @@ async function runReplyCheckPass(leads, todaySentOverride = null) {
   console.log();
 }
 
+async function writeLateReplyNotes(lead, notes) {
+  const rowNum = await resolveRow(lead.id);
+  if (!rowNum) throw new Error(`lead ${lead.id} disappeared before late-reply note write`);
+  await sheets().spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_NAME}!L${rowNum}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[notes]] },
+  });
+}
+
+// Once-daily, bounded watcher for completed sequences. It performs no mailbox
+// search, no stage/status/timestamp writes, and has no path to sendEmail.
+async function runLateReplyCheckPass(leads) {
+  if (!LATE_REPLY_CHECK) return;
+  if (DRY_RUN) {
+    console.log('[LateReply] Dry run — terminal watcher skipped (no classification or writes).');
+    return;
+  }
+
+  const activities = await withAuth(readColdCallActivities);
+  const plan = selectLateReplyCandidates(leads, activities, {
+    lookbackDays: LATE_REPLY_LOOKBACK_DAYS,
+    batchLimit: LATE_REPLY_BATCH_LIMIT,
+    suppressedEmails: SUPPRESSED_EMAILS,
+  });
+  console.log(`[LateReply] ${plan.stats.terminal} terminal · ${plan.stats.insideLookback} inside ${plan.lookbackDays}d · ${plan.stats.usableIdentity} with Gmail identity · ${plan.candidates.length}/${plan.stats.eligible} checking`);
+  if (!plan.candidates.length) return;
+
+  const eventIds = existingLateReplyEventIds(activities);
+  let recorded = 0;
+  const classes = {};
+  for (const { lead, outbound } of plan.candidates) {
+    const messages = await withAuth(() => getLateReplyMessages(lead, outbound));
+    for (const message of messages) {
+      const result = await processLateReply({
+        lead,
+        message,
+        classify: classifyReply,
+        existingEventIds: eventIds,
+        writeNotes: (target, notes) => withAuth(() => writeLateReplyNotes(target, notes)),
+        addSuppression: target => withAuth(() => addSuppression(target.email, 'unsubscribe', target.company, 'late-reply-auto')),
+        recordActivity: activity => withAuth(() => recordColdCallActivityStrict(activity)),
+      });
+      if (result.status !== 'recorded') continue;
+      recorded++;
+      classes[result.classification] = (classes[result.classification] || 0) + 1;
+      console.log(`  ↩ Late reply from ${lead.email} — ${result.classification} (human review; automation remains stopped)`);
+    }
+  }
+  const breakdown = Object.entries(classes).map(([key, count]) => `${count} ${key}`).join(' · ');
+  console.log(`[LateReply] ${recorded} new late repl${recorded === 1 ? 'y' : 'ies'} recorded${breakdown ? ` · ${breakdown}` : ''}`);
+}
+
 // ── BOUNCE-CHECK PASS ─────────────────────────────────────────────────────────
 
 // Bounce/NDR subject lines seen across providers.
@@ -2510,6 +2640,10 @@ async function run() {
   // Reply-check pass — unconditional; runs even when cap is reached.
   // Mutates emailStatus on replied leads so selectFollowUps excludes them below.
   await runReplyCheckPass(all, todaySent);
+
+  // Terminal replies are hosted by the same process only during the existing
+  // scheduler's once-daily flag. Active polling above keeps its old cadence.
+  await runLateReplyCheckPass(all);
 
   // Bounce-check pass — marks bounced leads Done before follow-up selection.
   await runBounceCheckPass(all);

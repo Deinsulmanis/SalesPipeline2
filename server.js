@@ -575,12 +575,20 @@ function spawnAgentIntentOnly(why) {
   startAgentProcess({ DRY_RUN: 'false', INTENT_ONLY: 'true' }, false);
 }
 
-function spawnAgentCheckOnly() {
+function spawnAgentCheckOnly(extraEnv = {}) {
   if (agentState.running) {
     console.log('[cron] Agent already running — skipping check-only pass this tick');
     return;
   }
-  startAgentProcess({ DRY_RUN: 'false', CHECK_ONLY: 'true' }, false);
+  startAgentProcess({ DRY_RUN: 'false', CHECK_ONLY: 'true', ...extraEnv }, false);
+}
+
+function isDailyLateReplyWindow(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Vancouver', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(date);
+  const clock = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return clock.hour === '12' && clock.minute === '15';
 }
 
 // ── SHEET HELPERS ─────────────────────────────────────────────────────────────
@@ -2197,7 +2205,8 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   // collide.
   cron.schedule('15,45 * * * *', () => {
     console.log('[cron] Running check-only pass...');
-    spawnAgentCheckOnly();
+    const lateReplyDue = isDailyLateReplyWindow();
+    spawnAgentCheckOnly(lateReplyDue ? { LATE_REPLY_CHECK: 'true' } : {});
   }, {
     timezone: 'America/Vancouver',
   });
@@ -2231,6 +2240,7 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   console.log('[cron] Smartlead reconciliation scheduled: hourly at :12');
   console.log('[cron] Daily digest scheduled: 18:00 Pacific');
   console.log('[cron] Check-only pass scheduled: :15 and :45 every hour');
+  console.log('[cron] Late-reply terminal watcher hosted by check-only: daily at 12:15 Pacific');
 }
 
 const PORT = process.env.PORT || 3000;
