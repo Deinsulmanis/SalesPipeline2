@@ -68,6 +68,10 @@ function agentSuppression({ suppressedEmails = [] } = {}) {
     SUPPRESSION_TAGS,
     SUPPRESSED_EMAILS: SUPPRESSED,
     normEmail: e => (e || '').toLowerCase().trim(),
+    MANUAL_HOLD_TAG: MANUAL_HOLD_TAG_LOCAL,
+    // The REAL shared gate, not a stand-in: if the release rule ever loosened,
+    // these suppression tests would start letting held leads through.
+    manualHoldReleased: require('../integrations/pipeline-state').manualHoldReleased,
   });
   return { suppressionReason, SUPPRESSION_TAGS };
 }

@@ -762,6 +762,32 @@
   .automation-pill[data-s="stopped"] { background:var(--success-bg);color:var(--success); }
   .automation-pill[data-s="never"]   { background:var(--wash-2);    color:var(--text-secondary); }
   .automation-pill[data-s="unknown"] { background:var(--wash-2);    color:var(--text-muted); }
+  .automation-pill[data-s="scheduled"] { background:var(--info-bg); color:var(--info); }
+  .automation-pill[data-s="suppressed"] { background:var(--danger-bg); color:var(--danger); }
+  /* Reactivation controls — deliberately quiet. Reactivating is a considered
+     decision, not a primary call to action. */
+  .react-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:9px; }
+  .btn-reactivate {
+    appearance:none; font:inherit; font-size:11px; font-weight:700; padding:5px 11px;
+    border-radius:var(--radius-sm); cursor:pointer; background:transparent;
+    color:var(--accent); border:1px solid var(--accent);
+  }
+  .btn-reactivate:hover { background:var(--tint-soft); }
+  .btn-reactivate:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .btn-reactivate[data-variant="cancel"] { color:var(--text-muted); border-color:var(--border); }
+  .react-note { font-size:11px; color:var(--text-muted); line-height:1.5; }
+  .react-note[data-tone="blocked"] { color:var(--danger); }
+  .react-facts { margin:10px 0; border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden; }
+  .react-fact { display:flex; justify-content:space-between; gap:12px; padding:7px 11px; font-size:12px; border-bottom:1px solid var(--border); }
+  .react-fact:last-child { border-bottom:none; }
+  .react-fact-k { color:var(--text-muted); }
+  .react-fact-v { color:var(--text); font-weight:600; text-align:right; }
+  .react-opt { display:block; padding:10px 11px; border:1px solid var(--border); border-radius:var(--radius-sm); margin-bottom:8px; cursor:pointer; }
+  .react-opt[data-sel="true"] { border-color:var(--accent); background:var(--tint-faint); }
+  .react-opt-t { font-size:12px; font-weight:700; color:var(--text); }
+  .react-opt-d { font-size:11px; color:var(--text-muted); margin-top:3px; line-height:1.5; }
+  .react-reassure { font-size:11px; color:var(--text-muted); margin-top:4px; }
+  @media (max-width: 700px) { .btn-reactivate { min-height:44px; } }
   .needs-attention { color:var(--warn); }
   .automation-conflict { display:flex;gap:9px;padding:10px 11px;border:1px solid var(--danger);border-radius:var(--radius-sm);background:var(--danger-bg);font-size:12px;line-height:1.5;color:var(--text); }
   .automation-conflict strong { color:var(--danger);display:block;margin-bottom:2px; }
@@ -2323,6 +2349,17 @@
   </div>
 </div>
 
+<!-- REACTIVATION MODAL — schedules eligibility; never sends anything -->
+<div class="modal-overlay" id="react-overlay" onclick="closeReactivateModal(event)">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="react-title" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title" id="react-title">Reactivate lead</div>
+      <button class="modal-close" onclick="closeReactivateModal()" aria-label="Close">&#10005;</button>
+    </div>
+    <div style="padding:16px 18px" id="react-body"></div>
+  </div>
+</div>
+
 <!-- REPLY DRILL-DOWN PANEL — read-only view over the canonical reply records -->
 <div class="detail-overlay" id="reply-drill-overlay" onclick="closeReplyDrill(event)">
   <div class="detail-panel rd-panel" role="dialog" aria-modal="true" aria-labelledby="rd-title" onclick="event.stopPropagation()">
@@ -3689,7 +3726,7 @@ function renderPipelineState(pipeline) {
 
   const automation = pipeline.automation || { state: 'unknown', reason: '' };
   const next = pipeline.nextAction || { action: 'Unknown', dueAt: null, needsAttention: false };
-  const AUTOMATION_LABELS = { active: 'Active', stopped: 'Stopped', never: 'Not started', unknown: 'Unknown' };
+  const AUTOMATION_LABELS = { active: 'Active', stopped: 'Manual hold', never: 'Not started', scheduled: 'Scheduled to resume', unknown: 'Unknown' };
 
   const due = next.dueAt
     ? new Date(next.dueAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
@@ -3740,7 +3777,154 @@ function renderPipelineState(pipeline) {
         <span class="pipeline-row-label">Derived from</span>
         <span class="pipeline-row-val"><small>${esc(next.source || 'none')}</small></span>
       </div>
+    </div>
+    <div id="d-reactivation"></div>`;
+
+  // Options are decided server-side; the browser only renders what it is told.
+  renderReactivationControls(detailId);
+}
+
+// ── REACTIVATION ────────────────────────────────────────────────────────────
+// Reactivating never removes [MANUAL HOLD] and never sends. It writes a resume
+// time the sending agent honours, so the worst outcome of anything failing here
+// is that the lead stays held.
+let reactState = null;
+
+async function renderReactivationControls(leadId) {
+  const host = document.getElementById('d-reactivation');
+  if (!host || !leadId) return;
+  host.innerHTML = '<div class="react-note">Checking reactivation options…</div>';
+  try {
+    const resp = await fetch(`/api/leads/${encodeURIComponent(leadId)}/reactivation`);
+    if (!resp.ok) { host.innerHTML = ''; return; }
+    const data = await resp.json();
+    reactState = data;
+    if (leadId !== detailId) return;    // drawer moved on while we were loading
+
+    // Permanently suppressed leads get an explanation and no button at all.
+    if (data.code === 'suppressed') {
+      host.innerHTML = `<div class="react-row"><span class="react-note" data-tone="blocked">
+        Cannot be reactivated — ${esc(data.message)}</span></div>`;
+      return;
+    }
+    if (data.code === 'ambiguous_twins') {
+      host.innerHTML = `<div class="react-row"><span class="react-note" data-tone="blocked">
+        ${esc(data.message)}</span></div>`;
+      return;
+    }
+    if (!data.ok || !data.eligibility) { host.innerHTML = ''; return; }
+
+    const e = data.eligibility;
+    const buttons = [];
+    if (e.canCancel) {
+      buttons.push(`<button type="button" class="btn-reactivate" data-variant="cancel"
+        onclick="openReactivateModal('cancel')">Cancel reactivation</button>`);
+    }
+    if (e.eligible) {
+      buttons.push(`<button type="button" class="btn-reactivate" onclick="openReactivateModal('open')">Reactivate…</button>`);
+    }
+    const scheduled = e.resumeAt
+      ? `<span class="react-note">Automation resumes ${esc(new Date(e.resumeAt).toLocaleString())}.</span>`
+      : '<span class="react-note">Cold-email automation is paused for this lead.</span>';
+    host.innerHTML = `<div class="react-row">${scheduled}${buttons.join('')}</div>`;
+  } catch (_) {
+    host.innerHTML = '';
+  }
+}
+
+function closeReactivateModal(e) {
+  if (e && e.target !== document.getElementById('react-overlay')) return;
+  document.getElementById('react-overlay').classList.remove('open');
+}
+
+function openReactivateModal(intent) {
+  const data = reactState;
+  if (!data || !data.eligibility) return;
+  const e = data.eligibility;
+  const twin = data.twin || {};
+  const lastSent = twin.lastEmailedAt ? new Date(twin.lastEmailedAt).toLocaleDateString() : 'never';
+  const stepSent = twin.emailStep ? `Step ${esc(twin.emailStep)}` : 'none';
+  // Default the picker to a week out rather than today: the whole point is that
+  // resuming is a decision about WHEN, not an implicit "now".
+  const suggested = new Date(Date.now() + 7 * 86400000);
+  suggested.setMinutes(suggested.getMinutes() - suggested.getTimezoneOffset());
+  const defaultLocal = suggested.toISOString().slice(0, 16);
+
+  const facts = `
+    <div class="react-facts">
+      <div class="react-fact"><span class="react-fact-k">Automation</span><span class="react-fact-v">${e.resumeAt ? 'Scheduled to resume' : 'Manual hold'}</span></div>
+      <div class="react-fact"><span class="react-fact-k">Last email sent</span><span class="react-fact-v">${stepSent} — ${esc(lastSent)}</span></div>
+      <div class="react-fact"><span class="react-fact-k">Would resume with</span><span class="react-fact-v">${e.nextStep ? 'Step ' + e.nextStep : 'no further step'}</span></div>
+      ${e.resumeAt ? `<div class="react-fact"><span class="react-fact-k">Currently eligible after</span><span class="react-fact-v">${esc(new Date(e.resumeAt).toLocaleString())}</span></div>` : ''}
     </div>`;
+
+  const body = intent === 'cancel'
+    ? `${facts}
+       <div class="react-note">Cancelling returns this lead to an indefinite manual hold. Send history and sequence step are untouched.</div>
+       <div class="form-actions" style="margin-top:14px">
+         <button type="button" class="btn-cancel" onclick="closeReactivateModal()">Keep schedule</button>
+         <button type="button" class="btn-save" onclick="submitReactivation('cancel')">Cancel reactivation</button>
+       </div>`
+    : `${facts}
+       <label class="react-opt" data-sel="true" onclick="selectReactOption(this,'keep_manual')">
+         <input type="radio" name="react-mode" value="keep_manual" checked style="margin-right:7px">
+         <span class="react-opt-t">Keep automation paused</span>
+         <div class="react-opt-d">Work this lead by hand. The manual hold stays, so no cold email can go out. This is the safe default.</div>
+       </label>
+       ${e.canSchedule ? `
+       <label class="react-opt" onclick="selectReactOption(this,'schedule')">
+         <input type="radio" name="react-mode" value="schedule" style="margin-right:7px">
+         <span class="react-opt-t">Let automation resume at step ${e.nextStep}</span>
+         <div class="react-opt-d">The sequence picks up at step ${e.nextStep} — the step that never sent. Nothing sends before the time you choose.</div>
+         <div style="margin-top:8px"><input type="datetime-local" id="react-resume-at" value="${defaultLocal}" style="width:100%"></div>
+       </label>` : `
+       <div class="react-note">Automated resume is unavailable: ${esc(e.reason)}</div>`}
+       <div class="react-reassure">No email is sent by this action. The sending agent decides later, using its normal cadence, daily cap and suppression checks.</div>
+       <div class="form-actions" style="margin-top:14px">
+         <button type="button" class="btn-cancel" onclick="closeReactivateModal()">Cancel</button>
+         <button type="button" class="btn-save" onclick="submitReactivation()">Confirm</button>
+       </div>`;
+
+  document.getElementById('react-title').textContent = intent === 'cancel' ? 'Cancel scheduled reactivation' : 'Reactivate lead';
+  document.getElementById('react-body').innerHTML = body;
+  document.getElementById('react-overlay').classList.add('open');
+}
+
+function selectReactOption(el, mode) {
+  document.querySelectorAll('.react-opt').forEach(o => o.dataset.sel = 'false');
+  el.dataset.sel = 'true';
+  const radio = el.querySelector('input[type=radio]');
+  if (radio) radio.checked = true;
+}
+
+async function submitReactivation(forcedMode) {
+  const leadId = detailId;
+  if (!leadId) return;
+  const picked = forcedMode
+    || (document.querySelector('input[name=react-mode]:checked') || {}).value
+    || 'keep_manual';
+  const payload = { mode: picked };
+  if (picked === 'schedule') {
+    const local = (document.getElementById('react-resume-at') || {}).value;
+    if (!local) { showToast('Choose when automation may resume.', 'error'); return; }
+    payload.resumeAt = new Date(local).toISOString();
+    payload.resumeStep = reactState?.eligibility?.nextStep;
+  }
+  setSaving(true);
+  try {
+    const resp = await fetch(`/api/leads/${encodeURIComponent(leadId)}/reactivate`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) { showToast(data.error || `Reactivation refused (${resp.status})`, 'error'); return; }
+    showToast(data.message || 'Reactivation saved.', 'success');
+    closeReactivateModal();
+    await loadColdCallActivity(leadId);
+  } catch (error) {
+    showToast('Reactivation failed: ' + error.message, 'error');
+  } finally {
+    setSaving(false);
+  }
 }
 
 function setMotion(m) {

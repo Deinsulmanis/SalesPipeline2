@@ -31,10 +31,11 @@ const { ANALYTICS_CATEGORY, categoriesFromNotes, classificationFromLead } = requ
 // Derived from the ColdEmail twin, because emailStatus — not stage — is what
 // every selector in outreach-agent.js actually gates on.
 const AUTOMATION_STATES = Object.freeze({
-  NEVER: 'never',      // no sending record; nothing scheduled
-  ACTIVE: 'active',    // a sequence is live and WILL send again
-  STOPPED: 'stopped',  // terminal; no further automated send
-  UNKNOWN: 'unknown',  // no ColdEmail twin — board-only lead
+  NEVER: 'never',        // no sending record; nothing scheduled
+  ACTIVE: 'active',      // a sequence is live and WILL send again
+  STOPPED: 'stopped',    // terminal; no further automated send
+  SCHEDULED: 'scheduled',// held, but a reactivation time is set and still future
+  UNKNOWN: 'unknown',    // no ColdEmail twin — board-only lead
 });
 
 // Notes tags that outreach-agent.js treats as hard suppression. Mirrored (not
@@ -71,6 +72,145 @@ function applyHoldToNotes(notes) {
   return existing ? MANUAL_HOLD_TAG + ' ' + existing : MANUAL_HOLD_TAG;
 }
 
+// ── SCHEDULED REACTIVATION ──────────────────────────────────────────────────
+// Removing [MANUAL HOLD] by hand is dangerous: selectFollowUps() in the agent
+// asks only "has delayDays elapsed since lastEmailedAt?", so a lead held for 14
+// days with a 3-day step-2 delay is ALREADY overdue the instant the tag goes.
+// It would send on the very next pass.
+//
+// So reactivation never removes the hold. It adds a second tag beside it:
+//
+//   [MANUAL HOLD]                          → held indefinitely (unchanged)
+//   [MANUAL HOLD] [RESUME: <ISO8601>]      → automation eligible from that time
+//
+// The hold tag stays put forever. suppressionReason() keeps returning it until
+// the resume time passes, and only then steps aside and lets the ordinary
+// cadence / cap / suppression checks decide. That is what makes the whole
+// operation a SINGLE cell write which, on its own, cannot enable an immediate
+// send — there is no window in which the lead is unheld and ungated.
+const RESUME_TAG_RE = /\[RESUME:\s*([^\]]+)\]/i;
+
+/** The scheduled resume instant in ms, or null when none is set/parseable. */
+function resumeAtFromNotes(notes) {
+  const match = RESUME_TAG_RE.exec(String(notes || ''));
+  if (!match) return null;
+  const ms = new Date(match[1].trim()).getTime();
+  return Number.isFinite(ms) ? ms : null;   // unparseable reads as "no resume"
+}
+
+/**
+ * Has a manual hold been released by a scheduled reactivation whose time has
+ * arrived? Fail-closed: no tag, an unparseable tag, or a future time all mean
+ * "still held".
+ */
+function manualHoldReleased(notes, now = Date.now()) {
+  const resumeAt = resumeAtFromNotes(notes);
+  if (resumeAt === null) return false;
+  return new Date(now).getTime() >= resumeAt;
+}
+
+/** Idempotent: scheduling twice writes the same notes the second time. */
+function applyResumeToNotes(notes, resumeAtIso) {
+  const iso = new Date(resumeAtIso).toISOString();
+  const tag = '[RESUME: ' + iso + ']';
+  const existing = String(notes || '');
+  // Test for the tag rather than comparing before/after: rescheduling to the
+  // SAME instant produces an identical string, and treating that as "no tag
+  // present" would append a second one.
+  if (RESUME_TAG_RE.test(existing)) return existing.replace(RESUME_TAG_RE, tag);
+  return existing ? tag + ' ' + existing : tag;
+}
+
+/** Cancelling only ever REDUCES eligibility: the hold tag is left untouched. */
+function clearResumeFromNotes(notes) {
+  return String(notes || '').replace(RESUME_TAG_RE, '').replace(/\s{2,}/g, ' ').trim();
+}
+
+const REACTIVATION_MODES = Object.freeze({
+  KEEP_MANUAL: 'keep_manual',   // reopen for human work; automation stays held
+  SCHEDULE: 'schedule',         // automation may resume at a chosen time
+  CANCEL: 'cancel',             // drop a scheduled resume, back to indefinite
+});
+
+/**
+ * Can this ColdEmail row be reactivated, and how? Extends the shared model that
+ * deriveAutomationState() and reopenEligibility() already use — there is no
+ * second eligibility system.
+ *
+ * @param twin           a ColdEmail row
+ * @param opts.suppressedEmails durable Suppression-tab addresses
+ * @param opts.stepCount how many follow-up steps the sequence actually has
+ */
+function reactivationEligibility(twin, opts = {}) {
+  const row = twin || {};
+  const notes = String(row.notes || '');
+  const now = opts.now ? new Date(opts.now).getTime() : Date.now();
+  const stepCount = Number.isFinite(opts.stepCount) ? opts.stepCount : FOLLOW_UP_DELAY_DAYS.length;
+  const suppressedEmails = opts.suppressedEmails || new Set();
+
+  const deny = (blocked, reason) => ({
+    eligible: false, blocked, reason, state: blocked,
+    canKeepManual: false, canSchedule: false, canCancel: false,
+    resumeAt: null, nextStep: null,
+  });
+
+  if (!twin) return deny('unknown', 'no ColdEmail record is linked to this lead');
+
+  // Permanent suppression always wins — over a manual hold, over a recoverable
+  // loss outcome, over a late positive reply. It is never reactivatable here.
+  for (const tag of SUPPRESSION_NOTE_TAGS) {
+    if (noteHas(notes, tag)) return deny('suppressed', 'permanently suppressed (' + tag + ')');
+  }
+  if (suppressedEmails.has(String(row.email || '').trim().toLowerCase())) {
+    return deny('suppressed', 'on the durable suppression list — opt-out survives row deletion');
+  }
+
+  if (!hasManualHold(notes)) {
+    return deny('not_held', 'this lead is not on manual hold, so there is nothing to reactivate');
+  }
+
+  const resumeAt = resumeAtFromNotes(notes);
+  const step = parseInt(row.emailStep || '0', 10);
+  const status = String(row.emailStatus || '').trim().toLowerCase();
+  // The step the sequence would send next. emailStep already records the last
+  // step that actually went out, so resuming needs no step rewrite at all —
+  // which is precisely why nothing here resets to step 1 or repeats a step.
+  const nextStep = status === 'emailed' && step >= 1 && step <= stepCount ? step + 1 : null;
+  const sequenceComplete = status === 'emailed' && step > stepCount;
+
+  // Reopening for human work is always safe: it touches no ColdEmail state.
+  const base = {
+    eligible: true,
+    blocked: null,
+    canKeepManual: true,
+    canCancel: resumeAt !== null,
+    resumeAt: resumeAt === null ? null : new Date(resumeAt).toISOString(),
+    nextStep,
+  };
+
+  if (nextStep === null) {
+    // No further automated step exists. Human reopen stays available; automated
+    // resume does not, and no step is invented to make it possible.
+    return {
+      ...base,
+      canSchedule: false,
+      state: resumeAt !== null ? 'scheduled' : 'held',
+      reason: sequenceComplete || status === 'done'
+        ? 'the sequence has already run every step — automated resume needs a recovery sequence that does not exist yet'
+        : 'this lead has no sent step to resume from',
+    };
+  }
+
+  return {
+    ...base,
+    canSchedule: true,
+    state: resumeAt !== null ? 'scheduled' : 'held',
+    reason: resumeAt !== null
+      ? 'automation is scheduled to resume at ' + new Date(resumeAt).toISOString()
+      : 'on manual hold; step ' + nextStep + ' can be scheduled to resume',
+  };
+}
+
 /**
  * Does entering this stage mean a human owns the lead, and therefore that
  * automated follow-up must stop? Driven off HUMAN_OWNED_STAGES so a stage added
@@ -84,7 +224,10 @@ function stageRequiresHold(stage) {
  * What will the sending agent do with this lead next?
  * @param twin a ColdEmail row ({ emailStatus, emailStep, lastEmailedAt, notes, stage })
  */
-function deriveAutomationState(twin) {
+// `now` is injectable so the whole engine can be evaluated at a fixed instant;
+// without it the scheduled-resume comparison would silently use the wall clock
+// even when the caller asked for a different moment.
+function deriveAutomationState(twin, now = Date.now()) {
   if (!twin) return { state: AUTOMATION_STATES.UNKNOWN, reason: 'no ColdEmail record linked to this lead' };
 
   const notes = twin.notes || '';
@@ -93,8 +236,16 @@ function deriveAutomationState(twin) {
   }
   if (noteHas(notes, MANUAL_HOLD_TAG)) {
     // Enforced: suppressionReason() in outreach-agent.js reads this tag before
-    // every send, so the sequence really is stopped. Releasing it is manual by
-    // design — see reopenEligibility().
+    // every send, so the sequence really is stopped. A scheduled reactivation
+    // does not remove the tag — it adds a time gate the agent honours, so the
+    // lead stays STOPPED right up until that instant.
+    const resumeAt = resumeAtFromNotes(notes);
+    if (resumeAt !== null) {
+      const iso = new Date(resumeAt).toISOString();
+      return manualHoldReleased(notes, now)
+        ? { state: AUTOMATION_STATES.ACTIVE, reason: 'scheduled reactivation reached (' + iso + ') — normal send checks now apply', resumeAt: iso }
+        : { state: AUTOMATION_STATES.SCHEDULED, reason: 'held until the scheduled reactivation at ' + iso, resumeAt: iso };
+    }
     return { state: AUTOMATION_STATES.STOPPED, reason: 'on manual hold — a human owns this lead' };
   }
 
@@ -182,6 +333,7 @@ const ACTION_TYPE = Object.freeze({
   CLOSE_OUT_CALL:        'close_out_call',
   MANUAL_FOLLOW_UP:      'manual_follow_up',
   BLOCKED_BY_HOLD:       'blocked_by_hold',
+  AUTOMATION_RESUMES:    'automation_resumes',
   NONE_WON:              'none_won',
   NONE_LOST:             'none_lost',
   NO_NEXT_ACTION:        'no_next_action',
@@ -287,7 +439,7 @@ function deriveNextAction(boardLead, twin, context = {}) {
   const now = context.now || new Date();
   const activities = context.activities || [];
   const stage = displayStageFor(lead.stage);
-  const derived = deriveAutomationState(twin || null);
+  const derived = deriveAutomationState(twin || null, now);
   const manualDate = String(lead.followup || '').trim();
 
   // A human-set follow-up date is an explicit decision, so it wins wherever the
@@ -412,10 +564,23 @@ function deriveNextAction(boardLead, twin, context = {}) {
   // ── Follow Up — automation territory ─────────────────────────────────────
   // A hold on a lead the board still treats as automated is a genuine conflict:
   // the sequence would run, but a human stopped it and nothing replaced it.
-  if (hasManualHold((twin && twin.notes) || '')) {
+  // A released reactivation falls through to the ordinary automation path —
+  // the lead is no longer held, so its next action is the real next step.
+  if (hasManualHold((twin && twin.notes) || '') && !manualHoldReleased((twin && twin.notes) || '', now)) {
     const step = parseInt((twin && twin.emailStep) || '0', 10);
     const wouldSend = String((twin && twin.emailStatus) || '').trim().toLowerCase() === 'emailed'
       && step >= 1 && step <= FOLLOW_UP_DELAY_DAYS.length;
+    // A scheduled reactivation is a real, dated, automation-owned next action —
+    // not a gap and never overdue, because the hold is doing its job until the
+    // resume instant arrives.
+    const resumeAt = resumeAtFromNotes((twin && twin.notes) || '');
+    if (wouldSend && resumeAt !== null && !manualHoldReleased(twin.notes, now)) {
+      return buildAction({
+        type: ACTION_TYPE.AUTOMATION_RESUMES, label: 'Automation resumes at step ' + (step + 1),
+        dueAt: new Date(resumeAt).toISOString(), owner: ACTION_OWNER.AUTOMATION, source: 'reactivation',
+        reason: 'scheduled reactivation; the manual hold keeps the sequence stopped until then', now,
+      });
+    }
     if (wouldSend) {
       return withManual('Manual follow-up')
         || buildAction({
@@ -573,6 +738,8 @@ function reopenEligibility(boardLead, twin) {
 
 module.exports = {
   AUTOMATION_STATES, SUPPRESSION_NOTE_TAGS, MANUAL_HOLD_TAG, HUMAN_OWNED_STAGES,
+  REACTIVATION_MODES, resumeAtFromNotes, manualHoldReleased,
+  applyResumeToNotes, clearResumeFromNotes, reactivationEligibility,
   hasManualHold, applyHoldToNotes, stageRequiresHold,
   OUTCOMES, OUTCOME_IDS, LOSS_OUTCOME_IDS, RECOVERABLE_OUTCOME_IDS,
   FOLLOW_UP_DELAY_DAYS,

@@ -62,6 +62,8 @@ const { SmartleadOutreachProvider } = require('./integrations/outreach-providers
 const { classifyReply: classifyProviderReply } = require('./integrations/reply-classifier');
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
 const { routedLeadReady } = require('./integrations/campaign-routing');
+// The reactivation gate is defined once, in the shared pipeline-state model.
+const { manualHoldReleased } = require('./integrations/pipeline-state');
 const { findOriginalSentThread } = require('./integrations/gmail-threading');
 const {
   assembleFinalEmail,
@@ -2371,6 +2373,8 @@ function isValidEmail(e) {
 // standard follow-ups, intent emails, auto-answers and the roofing path at once.
 // This can only ever REMOVE a lead from a send — it can never cause one.
 const MANUAL_HOLD_TAG = '[MANUAL HOLD]';
+// Order matters: the permanent tags come first, so a lead that is BOTH opted
+// out and scheduled to reactivate reports the opt-out and stays blocked.
 const SUPPRESSION_TAGS = ['[REPLY: Unsubscribed]', '[BOUNCED', MANUAL_HOLD_TAG];
 
 // ── GLOBAL SUPPRESSION LIST (durable, keyed by email) ─────────────────────────
@@ -2436,7 +2440,14 @@ async function addSuppression(email, reason, company, source) {
 function suppressionReason(lead) {
   const notes = lead.notes || '';
   for (const tag of SUPPRESSION_TAGS) {
-    if (notes.includes(tag)) return tag;
+    if (!notes.includes(tag)) continue;
+    // A scheduled reactivation releases the REVERSIBLE manual hold, and only
+    // once its resume instant has passed. The hold tag itself is never removed,
+    // so this is the single point where a lead stops being held — and it fails
+    // closed: no resume tag, an unparseable one, or a future one all keep the
+    // lead suppressed. Opt-out and bounce are permanent and never released.
+    if (tag === MANUAL_HOLD_TAG && manualHoldReleased(notes)) continue;
+    return tag;
   }
   if (SUPPRESSED_EMAILS.has(normEmail(lead.email))) return 'suppression-list';
   return null;

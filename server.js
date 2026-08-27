@@ -34,6 +34,8 @@ const {
   compareNextActions, summarizeNextActions,
   stageTransitionCheck, reopenEligibility, OUTCOME_IDS, LOSS_OUTCOME_IDS,
   MANUAL_HOLD_TAG, HUMAN_OWNED_STAGES,
+  REACTIVATION_MODES, reactivationEligibility, FOLLOW_UP_DELAY_DAYS,
+  applyResumeToNotes, clearResumeFromNotes, resumeAtFromNotes,
   applyHoldToNotes, stageRequiresHold,
 } = require('./integrations/pipeline-state');
 
@@ -1592,6 +1594,109 @@ async function findColdEmailTwin(boardLeadId, boardEmail) {
   return matches.length ? matches[0] : null;
 }
 
+// How many follow-up steps the sequence actually has. Mirrors FOLLOW_UP_SEQUENCE
+// in outreach-agent.js via the shared cadence constant, so "is there a next
+// step?" can never disagree with what the agent would really send.
+const FOLLOW_UP_STEP_COUNT = FOLLOW_UP_DELAY_DAYS.length;
+// A resume date beyond this is almost certainly a typo (a mis-parsed year).
+const REACTIVATION_MAX_HORIZON_MS = 365 * 24 * 60 * 60 * 1000;
+
+// STRICT suppression read for the reactivation path. loadSuppressedEmails()
+// deliberately returns an empty set when the tab cannot be read, which is right
+// for a send-time check layered behind the notes tags — but here an empty set
+// would make a suppressed lead look reactivatable. So this one throws, and the
+// endpoint turns that into a refusal: fail closed.
+async function loadSuppressionEmails() {
+  const response = await sheets().spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID, range: `${SUPPRESSION_SHEET}!A:A`,
+  });
+  return new Set((response.data.values || []).slice(1)
+    .map(row => (row[0] || '').toLowerCase().trim()).filter(Boolean));
+}
+
+// Writes the notes cell for exactly one ColdEmail row. Column L only — the
+// same single cell applyManualHold touches, so no other lead state can move.
+async function writeColdEmailNotes(twin, notes) {
+  await sheets().spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${CE_SHEET_NAME}!L${twin._row}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[notes]] },
+  });
+}
+
+// Append-only audit row. The event id is derived from the lead, the mode and the
+// resume instant, so re-submitting the same decision cannot stack duplicates.
+async function recordReactivationEvent(boardLeadId, twin, { eventType, email, company, subject, metadata }) {
+  const fingerprint = [boardLeadId, twin.id, eventType, metadata.mode, metadata.resumeAt || metadata.cancelledResumeAt || ''].join('|');
+  await appendIntegrationRow(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER, {
+    eventId: 'reactivation:' + crypto.createHash('sha1').update(fingerprint).digest('hex').slice(0, 24),
+    leadId: boardLeadId, sourceLeadId: twin.id,
+    email: email || '', company: company || '',
+    eventType, occurredAt: new Date().toISOString(),
+    subject: subject || '', content: '',
+    metadata: JSON.stringify(metadata),
+  });
+}
+
+// ── REACTIVATION ────────────────────────────────────────────────────────────
+// Turning cold-email automation back on for a held lead. The dangerous version
+// of this is "delete the [MANUAL HOLD] tag": selectFollowUps() only asks whether
+// delayDays have elapsed since lastEmailedAt, so a lead held two weeks past a
+// three-day delay is already overdue and fires on the next pass.
+//
+// So nothing here removes the hold. Scheduling writes a [RESUME: <iso>] tag
+// BESIDE it, and the agent's suppressionReason() keeps reporting the hold until
+// that instant arrives. Consequences worth stating plainly:
+//
+//   * It is ONE cell write. There is no ordering in which the lead ends up
+//     unheld-and-ungated, so the partial-failure case cannot exist.
+//   * The write only ever ADDS a time-gated permission. If it half-succeeds,
+//     lands twice, or is rolled back, the lead stays held. Fail-closed.
+//   * Cancelling removes the resume tag and leaves the hold — strictly a
+//     reduction in eligibility.
+//
+// Nothing in this file can send: reactivation schedules eligibility and the
+// sending agent remains the only thing that mails anyone, through all of its
+// existing cadence, cap and suppression checks.
+
+// Which ColdEmail twin should resume? Duplicates exist because the same address
+// can be imported more than once, and applyManualHold deliberately holds ALL of
+// them. Reactivation must not blindly reverse that: only a row that is actually
+// mid-sequence can resume, and if two of them are, the situation is ambiguous
+// and a human has to look.
+function resolveReactivationTarget(twins, opts = {}) {
+  const rows = twins || [];
+  if (!rows.length) return { ok: false, code: 'no_twin', message: 'No ColdEmail record is linked to this lead.' };
+
+  const scored = rows.map(twin => ({ twin, eligibility: reactivationEligibility(twin, opts) }));
+  const suppressed = scored.find(entry => entry.eligibility.blocked === 'suppressed');
+  if (suppressed) {
+    // One opted-out duplicate poisons the address for all of them: the
+    // suppression list is keyed by email, not by row.
+    return { ok: false, code: 'suppressed', message: suppressed.eligibility.reason, eligibility: suppressed.eligibility };
+  }
+
+  const held = scored.filter(entry => entry.eligibility.eligible);
+  if (!held.length) {
+    const first = scored[0].eligibility;
+    return { ok: false, code: first.blocked || 'not_held', message: first.reason, eligibility: first };
+  }
+
+  const resumable = held.filter(entry => entry.eligibility.canSchedule);
+  if (resumable.length > 1) {
+    return {
+      ok: false, code: 'ambiguous_twins',
+      message: `${resumable.length} duplicate ColdEmail rows for this address are mid-sequence. `
+        + 'Automated resume is blocked until the duplicates are reconciled by hand.',
+      candidates: resumable.map(entry => ({ id: entry.twin.id, emailStatus: entry.twin.emailStatus, emailStep: entry.twin.emailStep })),
+    };
+  }
+  // Exactly one row can resume, or none can and only a human reopen is offered.
+  const chosen = resumable[0] || held[0];
+  return { ok: true, twin: chosen.twin, eligibility: chosen.eligibility, heldCount: held.length };
+}
+
 // Writes [MANUAL HOLD] into the notes of every ColdEmail row for this lead.
 // ensureNote is idempotent, so re-saving a card already on hold rewrites nothing
 // and logs nothing. Returns the rows actually changed.
@@ -1722,6 +1827,174 @@ app.get('/api/leads/next-actions', requireAuth, async (_req, res) => {
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
     console.error('[Next Actions GET]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET the reactivation options for a lead — what the drawer renders, decided
+// server-side so the browser never invents an option the server would reject.
+app.get('/api/leads/:id/reactivation', requireAuth, async (req, res) => {
+  try {
+    const rowNum = await withAuth(() => findRow(req.params.id));
+    if (!rowNum) return res.status(404).json({ error: 'not found' });
+    const leadResponse = await sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${rowNum}:W${rowNum}`,
+    });
+    const row = leadResponse.data.values?.[0] || [];
+    const email = row[10] || '';
+    const twins = await findColdEmailTwins(req.params.id, email);
+    const suppressedEmails = await loadSuppressionEmails().catch(() => null);
+    if (!suppressedEmails) {
+      return res.json({ leadId: req.params.id, ok: false, code: 'suppression_unavailable',
+        message: 'Suppression list unavailable — reactivation options are hidden.', twinCount: twins.length });
+    }
+    const target = resolveReactivationTarget(twins, { suppressedEmails });
+    res.json({
+      leadId: req.params.id,
+      ok: target.ok,
+      code: target.code || null,
+      message: target.message || '',
+      candidates: target.candidates || null,
+      twinCount: twins.length,
+      eligibility: target.eligibility || null,
+      twin: target.twin
+        ? {
+            id: target.twin.id, emailStatus: target.twin.emailStatus,
+            emailStep: target.twin.emailStep, lastEmailedAt: target.twin.lastEmailedAt,
+            company: target.twin.company,
+          }
+        : null,
+      stepCount: FOLLOW_UP_STEP_COUNT,
+    });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Reactivation GET]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Apply a reactivation decision. Every precondition is re-checked here — the
+// browser's view of eligibility is a convenience, never the authority.
+app.post('/api/leads/:id/reactivate', requireAuth, async (req, res) => {
+  const mode = String(req.body?.mode || '');
+  try {
+    if (!Object.values(REACTIVATION_MODES).includes(mode)) {
+      return res.status(400).json({ error: `Unknown reactivation mode "${mode}".`, field: 'mode' });
+    }
+
+    const rowNum = await withAuth(() => findRow(req.params.id));
+    if (!rowNum) return res.status(404).json({ error: 'not found' });
+    const leadResponse = await sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${rowNum}:W${rowNum}`,
+    });
+    const row = leadResponse.data.values?.[0] || [];
+    const email = row[10] || '';
+    const company = row[6] || '';
+
+    const twins = await findColdEmailTwins(req.params.id, email);
+    let suppressedEmails;
+    try {
+      suppressedEmails = await loadSuppressionEmails();
+    } catch (suppressionError) {
+      // Cannot prove the lead is not opted out, so do not reactivate it.
+      return res.status(503).json({
+        error: 'The suppression list could not be read, so reactivation is refused.',
+        code: 'suppression_unavailable',
+      });
+    }
+    const target = resolveReactivationTarget(twins, { suppressedEmails });
+    if (!target.ok) {
+      // 409 for "the data says no", 400 for a malformed ask.
+      const status = target.code === 'no_twin' ? 404 : 409;
+      return res.status(status).json({ error: target.message, code: target.code, candidates: target.candidates || undefined });
+    }
+
+    const { twin, eligibility } = target;
+
+    // ── Option A: reopen for human work, automation stays held ──────────────
+    // Deliberately writes nothing to ColdEmail. The hold survives untouched,
+    // which is exactly what makes this the safe default.
+    if (mode === REACTIVATION_MODES.KEEP_MANUAL) {
+      await recordReactivationEvent(req.params.id, twin, {
+        eventType: 'reactivation_scheduled', email, company,
+        subject: 'Reopened for human follow-up',
+        metadata: { mode, resumeAt: null, automationResumed: false, coldEmailId: twin.id,
+          emailStepAtDecision: twin.emailStep, previousStage: row[12] || '', trigger: 'crm_reactivate' },
+      });
+      return res.json({ ok: true, mode, automationHeld: true, resumeAt: null,
+        message: 'Reopened for human follow-up. Cold-email automation stays paused.' });
+    }
+
+    // ── Option C (cancel): back to an indefinite hold ────────────────────────
+    if (mode === REACTIVATION_MODES.CANCEL) {
+      if (!eligibility.canCancel) {
+        return res.status(409).json({ error: 'This lead has no scheduled reactivation to cancel.', code: 'not_scheduled' });
+      }
+      const cleared = clearResumeFromNotes(twin.notes || '');
+      await writeColdEmailNotes(twin, cleared);
+      await recordReactivationEvent(req.params.id, twin, {
+        eventType: 'reactivation_cancelled', email, company,
+        subject: 'Scheduled reactivation cancelled',
+        metadata: { mode, cancelledResumeAt: eligibility.resumeAt, coldEmailId: twin.id,
+          emailStepAtDecision: twin.emailStep, trigger: 'crm_reactivate' },
+      });
+      return res.json({ ok: true, mode, automationHeld: true, resumeAt: null,
+        message: 'Scheduled reactivation cancelled. The lead is held indefinitely again.' });
+    }
+
+    // ── Option B: schedule automation to resume ─────────────────────────────
+    if (!eligibility.canSchedule) {
+      return res.status(409).json({
+        error: eligibility.reason, code: 'no_resumable_step',
+        detail: 'Automated resume needs a sent step with a following step in the sequence.',
+      });
+    }
+    const resumeAtRaw = String(req.body?.resumeAt || '');
+    const resumeMs = new Date(resumeAtRaw).getTime();
+    if (!resumeAtRaw || !Number.isFinite(resumeMs)) {
+      return res.status(400).json({ error: 'A valid resume date/time is required.', field: 'resumeAt' });
+    }
+    if (resumeMs > Date.now() + REACTIVATION_MAX_HORIZON_MS) {
+      return res.status(400).json({ error: 'Resume date is further out than a year.', field: 'resumeAt' });
+    }
+    // A requested step is accepted only if it matches the step the sequence
+    // would genuinely send next. Nothing here rewrites emailStep: the sheet
+    // already records the last step that went out, so resuming cannot reset to
+    // step 1 or repeat a step that was already sent.
+    const requestedStep = req.body?.resumeStep === undefined ? eligibility.nextStep : parseInt(req.body.resumeStep, 10);
+    if (requestedStep !== eligibility.nextStep) {
+      return res.status(400).json({
+        error: `Step ${requestedStep} is not the next step for this lead; the sequence resumes at step ${eligibility.nextStep}.`,
+        field: 'resumeStep', nextStep: eligibility.nextStep,
+      });
+    }
+
+    // THE write. One cell. It adds a time gate beside a hold that stays in
+    // place, so there is no instant at which this lead is sendable earlier than
+    // the chosen time — including if this request is retried or lands twice.
+    const scheduled = applyResumeToNotes(twin.notes || '', new Date(resumeMs).toISOString());
+    await writeColdEmailNotes(twin, scheduled);
+
+    await recordReactivationEvent(req.params.id, twin, {
+      eventType: 'reactivation_scheduled', email, company,
+      subject: `Automation resumes ${new Date(resumeMs).toISOString()}`,
+      metadata: {
+        mode, resumeAt: new Date(resumeMs).toISOString(), resumeStep: eligibility.nextStep,
+        coldEmailId: twin.id, emailStepAtDecision: twin.emailStep,
+        lastEmailedAt: twin.lastEmailedAt, previousStage: row[12] || '',
+        heldRowsForAddress: target.heldCount, trigger: 'crm_reactivate',
+      },
+    });
+
+    res.json({
+      ok: true, mode, automationHeld: true,
+      resumeAt: new Date(resumeMs).toISOString(),
+      resumeStep: eligibility.nextStep,
+      message: `Automation may resume at step ${eligibility.nextStep} from ${new Date(resumeMs).toISOString()}. Nothing sends before then.`,
+    });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Reactivate POST]', e.message);
     res.status(500).json({ error: e.message });
   }
 });
