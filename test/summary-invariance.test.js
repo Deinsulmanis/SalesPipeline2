@@ -170,9 +170,9 @@ test('open semantics are preserved exactly: distinct companies, matched to leads
   assert.match(loader, /signals\.hits \+= n;/, 'hits is the raw real-open count');
 });
 
-test('13. the fix adds no extra Sheets read', () => {
+test('13. the master view adds one fixed board read, never a per-lead read', () => {
   const loader = server.slice(server.indexOf('async function loadOutreachDataset'), server.indexOf('async function getOutreachDataset'));
-  assert.equal((loader.match(/spreadsheets\.values\.get/g) || []).length, 6, 'still six fixed reads');
+  assert.equal((loader.match(/spreadsheets\.values\.get/g) || []).length, 7, 'seven fixed reads including the board join');
   assert.match(loader, /readColdEmailDashboardRows\(\)/);
   // The opens are annotated once and reused rather than recomputed per request.
   assert.match(loader, /const annotatedOpens = annotateOpens\(\{/);
@@ -197,9 +197,10 @@ test('14. the first page is still bounded to 100 rows by default', () => {
 
 test('15/16. the payload stays light and the DOM stays bounded', () => {
   const fields = server.slice(server.indexOf('const CE_LIGHT_FIELDS'), server.indexOf('];', server.indexOf('const CE_LIGHT_FIELDS')));
-  for (const heavy of ['notes', 'siteContext', 'campaign_notes', 'website']) {
+  for (const heavy of ['notes', 'siteContext', 'campaign_notes']) {
     assert.ok(!new RegExp(`'${heavy}'`).test(fields), `${heavy} is still not shipped`);
   }
+  assert.match(fields, /'website'/, 'website is intentionally present for domain search');
   assert.match(browser, /const filtered = ceLeads;/, 'the table still renders only the page');
   assert.ok(!/const stageFiltered =/.test(browser), 'no client-side full-set filtering returned');
 });

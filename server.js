@@ -27,6 +27,7 @@ const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE, qualifyLead: qualifyRoofingLead } 
 const {
   COLD_CALL_ACTIVITY_SHEET,
   COLD_CALL_ACTIVITY_HEADER,
+  displayStageFor,
   scoreColdCallLead,
 } = require('./integrations/cold-call-pipeline');
 const { buildActivityTimeline, inspectActivityIntegrity } = require('./integrations/activity-timeline');
@@ -1038,7 +1039,7 @@ function invalidateOutreachCache(reason) {
 
 const CE_LIGHT_FIELDS = [
   'id', 'company', 'contactName', 'email', 'city', 'tradeType',
-  'stage', 'emailStatus', 'lastEmailedAt', 'campaign', 'leadNiche',
+  'website', 'stage', 'emailStatus', 'lastEmailedAt', 'emailStep', 'campaign', 'leadNiche',
 ];
 
 // Server-side mirror of the SPA's niche normaliser, so niche filtering can be
@@ -1065,7 +1066,75 @@ function toLightRow(lead, category) {
   row.replyCategory = category || '';
   row.lateReply = /\[LATE REPLY:/i.test(lead.notes || '');
   row.bounced = /\[BOUNCED/i.test(lead.notes || '');
+  row.manualHold = /\[MANUAL HOLD\]/i.test(lead.notes || '');
+  row.suppressed = row.bounced || /\[(?:UNSUBSCRIBED|SUPPRESSED|BOUNCED)/i.test(lead.notes || '') || /^(?:Unsub|Unsubscribed)$/i.test(lead.stage || '');
   return row;
+}
+
+// Join the two deliberately separate lead stores without using company names.
+// A CE- foreign key on the board is authoritative. Exact normalized email is
+// only a fallback, and duplicate candidates fail closed as a mapping conflict.
+function buildOutreachPipelineIndex(coldEmailLeads, boardLeads) {
+  const boardByCeId = new Map();
+  const boardByEmail = new Map();
+  const coldEmailByEmail = new Map();
+  const push = (map, key, value) => {
+    if (!key) return;
+    const values = map.get(key) || [];
+    values.push(value);
+    map.set(key, values);
+  };
+
+  for (const lead of coldEmailLeads || []) push(coldEmailByEmail, normalizeEmail(lead.email), lead);
+  for (const lead of boardLeads || []) {
+    const ceId = String(lead.id || '').startsWith('CE-') ? String(lead.id).slice(3) : '';
+    push(boardByCeId, ceId, lead);
+    push(boardByEmail, normalizeEmail(lead.email), lead);
+  }
+
+  const byColdEmailId = new Map();
+  let ambiguousMappings = 0;
+  for (const lead of coldEmailLeads || []) {
+    const idMatches = boardByCeId.get(String(lead.id || '')) || [];
+    const email = normalizeEmail(lead.email);
+    const emailMatches = email ? (boardByEmail.get(email) || []) : [];
+    const coldEmailTwins = email ? (coldEmailByEmail.get(email) || []) : [];
+    let match = null;
+    let matchedBy = '';
+    let mappingConflict = false;
+
+    if (idMatches.length === 1) {
+      match = idMatches[0];
+      matchedBy = 'ce_id';
+    } else if (idMatches.length > 1) {
+      mappingConflict = true;
+    } else if (emailMatches.length === 1 && coldEmailTwins.length === 1) {
+      match = emailMatches[0];
+      matchedBy = 'email';
+    } else if (emailMatches.length || coldEmailTwins.length > 1) {
+      mappingConflict = true;
+    }
+
+    if (mappingConflict) ambiguousMappings++;
+    byColdEmailId.set(lead.id, {
+      pipelinePresence: Boolean(match),
+      pipelineStage: match ? displayStageFor(match.stage) : '',
+      boardLeadId: match ? match.id : '',
+      mappingStatus: mappingConflict ? 'conflict' : (match ? 'matched' : 'not_in_pipeline'),
+      matchedBy,
+    });
+  }
+  return { byColdEmailId, ambiguousMappings };
+}
+
+function outreachSequenceState(lead) {
+  const status = String(lead.emailStatus || '').trim().toLowerCase();
+  const step = parseInt(lead.emailStep || '0', 10) || 0;
+  if (status === 'done' || step > FOLLOW_UP_STEP_COUNT) return 'complete';
+  if (status === 'emailed' && step >= 1 && step <= FOLLOW_UP_STEP_COUNT) return 'active';
+  if (status === 'replied') return 'replied';
+  if (String(lead.stage || '').toLowerCase() === 'queued') return 'queued';
+  return 'not_started';
 }
 
 async function loadOutreachDataset() {
@@ -1076,7 +1145,7 @@ async function loadOutreachDataset() {
   // One batch per tab, all in flight together — this is the whole external cost
   // of an Outreach load.
   const [ceRows, draftResponse, activityResponse, providerResponse, demoResponse,
-         openResponse, engagedResponse] = await Promise.all([
+         openResponse, engagedResponse, boardResponse] = await Promise.all([
     readColdEmailDashboardRows(),
     sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ReplyDrafts!A:L' }).catch(() => ({ data: {} })),
     sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${COLD_CALL_ACTIVITY_SHEET}!A:J` }).catch(() => ({ data: {} })),
@@ -1084,6 +1153,7 @@ async function loadOutreachDataset() {
     sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A:F' }).catch(() => ({ data: {} })),
     sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ProposalOpens!A:F' }).catch(() => ({ data: {} })),
     sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ProposalEngaged!A:F' }).catch(() => ({ data: {} })),
+    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: AGENT_READ_RANGE }).catch(() => ({ data: {} })),
   ]);
 
   ceRowMap.clear();
@@ -1095,6 +1165,12 @@ async function loadOutreachDataset() {
   }).filter(lead => lead.id);
 
   const activities = rowObjects(activityResponse.data.values, COLD_CALL_ACTIVITY_HEADER);
+  const boardLeads = (boardResponse.data.values || []).slice(1).map(row => {
+    const lead = {};
+    COLUMNS.forEach((field, index) => { lead[field] = row[index] || ''; });
+    return lead;
+  }).filter(lead => lead.id);
+  const pipelineIndex = buildOutreachPipelineIndex(leads, boardLeads);
   const classificationsByLeadId = buildStoredClassificationMap({
     drafts: rowObjects(draftResponse.data.values, ['createdAt','leadId','company','email','topic','confidence','reason','draftBody','status','campaignProfile','classification','reasonCode']),
     activities,
@@ -1113,6 +1189,8 @@ async function loadOutreachDataset() {
   const counts = { queued: 0, emailed: 0, replied: metrics.totalReplies, done: 0 };
   const facets = { stages: {}, niches: {}, campaigns: {} };
   const leadKeys = new Set();
+  const demoCompanyKeys = new Set((demoResponse.data.values || []).slice(1).map(row => openKey(row[1])).filter(Boolean));
+  const realOpenCounts = new Map();
   const rows = leads.map(lead => {
     if (lead.stage === 'Queued') counts.queued++;
     if (lead.emailStatus) counts.emailed++;
@@ -1125,7 +1203,14 @@ async function loadOutreachDataset() {
     facets.campaigns[campaign] = (facets.campaigns[campaign] || 0) + 1;
     const companyKey = openKey(lead.company);
     if (companyKey) leadKeys.add(companyKey);
-    return toLightRow(lead, categoryByLeadId.get(lead.id));
+    const row = toLightRow(lead, categoryByLeadId.get(lead.id));
+    Object.assign(row, pipelineIndex.byColdEmailId.get(lead.id));
+    row.demoEngaged = demoCompanyKeys.has(openKey(lead.company));
+    row.sequenceState = outreachSequenceState(lead);
+    const automation = deriveAutomationState(lead);
+    row.automationState = automation.state;
+    row.automationReason = automation.reason;
+    return row;
   });
   counts.total = rows.length;
 
@@ -1166,7 +1251,7 @@ async function loadOutreachDataset() {
     engagedRows: proposalEngaged.slice(1).map(row => ({ company: row[1] || '' })),
     demoRows: demoRows.map(row => ({ company: row.company })),
   });
-  const realOpensByCompany = new Map();
+  const realOpensByCompany = realOpenCounts;
   for (const open of annotatedOpens) {
     if (open.real === false) continue;
     const k = openKey(open.company);
@@ -1180,6 +1265,19 @@ async function loadOutreachDataset() {
     signals.hits += n;
     if (n >= 2) signals.warm++;
   }
+  for (const row of rows) row.warm = (realOpensByCompany.get(openKey(row.company)) || 0) >= 2;
+  const outside = rows.filter(row => !row.pipelinePresence && row.mappingStatus !== 'conflict');
+  const pipelineAudit = {
+    total: rows.length,
+    inPipeline: rows.filter(row => row.pipelinePresence).length,
+    notInPipeline: outside.length,
+    positiveNotInPipeline: outside.filter(row => row.replyCategory === 'positive').length,
+    needsHumanNotInPipeline: outside.filter(row => row.replyCategory === 'needs_human').length,
+    demoEngagedNotInPipeline: outside.filter(row => row.demoEngaged).length,
+    sequenceCompleteNotInPipeline: outside.filter(row => row.sequenceState === 'complete').length,
+    activeSequenceNotInPipeline: outside.filter(row => row.sequenceState === 'active' || row.sequenceState === 'queued').length,
+    ambiguousMappings: pipelineIndex.ambiguousMappings,
+  };
 
   return {
     at: Date.now(),
@@ -1187,6 +1285,7 @@ async function loadOutreachDataset() {
     rows,                  // light rows, safe to serialise
     activities, classificationsByLeadId, replyRecords,
     metrics, counts, facets, signals,
+    pipelineAudit,
     demoPlays, demoRows, proposalOpens, proposalEngaged,
     annotatedOpens,        // computed once; the Opens panel reuses it
   };
@@ -1211,6 +1310,11 @@ function filterOutreachRows(rows, query) {
   const campaign = String(query.campaign || '').trim();
   const niche = String(query.niche || 'all');
   const category = String(query.replyCategory || '').trim().toLowerCase();
+  const pipelinePresence = String(query.pipelinePresence || '').trim().toLowerCase();
+  const pipelineStage = String(query.pipelineStage || '').trim().toLowerCase();
+  const engagement = String(query.engagement || '').trim().toLowerCase();
+  const sequenceState = String(query.sequenceState || '').trim().toLowerCase();
+  const automationState = String(query.automationState || '').trim().toLowerCase();
   const search = String(query.search || '').trim().toLowerCase();
 
   return rows.filter(row => {
@@ -1222,9 +1326,21 @@ function filterOutreachRows(rows, query) {
     }
     if (campaign && campaignLabelFor(row) !== campaign) return false;
     if (niche !== 'all' && normalizedRouteNicheFor(row) !== niche) return false;
-    if (category && category !== 'all' && row.replyCategory !== category) return false;
-    if (search && ![row.company, row.email, row.contactName]
-      .some(field => field && field.toLowerCase().includes(search))) return false;
+    if (category === 'none') { if (row.replyCategory) return false; }
+    else if (category && category !== 'all' && row.replyCategory !== category) return false;
+    if (pipelinePresence === 'in' && !row.pipelinePresence) return false;
+    if (pipelinePresence === 'out' && (row.pipelinePresence || row.mappingStatus === 'conflict')) return false;
+    if (pipelinePresence === 'conflict' && row.mappingStatus !== 'conflict') return false;
+    if (pipelineStage && pipelineStage !== 'all' && row.pipelineStage !== pipelineStage) return false;
+    if (engagement === 'demo' && !row.demoEngaged) return false;
+    if (engagement === 'warm' && !row.warm) return false;
+    if (engagement === 'none' && (row.demoEngaged || row.warm)) return false;
+    if (sequenceState && sequenceState !== 'all' && row.sequenceState !== sequenceState) return false;
+    if (automationState === 'suppressed' && !row.suppressed) return false;
+    else if (automationState === 'held' && !row.manualHold) return false;
+    else if (automationState && !['all','suppressed','held'].includes(automationState) && row.automationState !== automationState) return false;
+    if (search && ![row.company, row.email, row.contactName, row.website]
+      .some(field => field && String(field).toLowerCase().includes(search))) return false;
     return true;
   });
 }
@@ -1249,6 +1365,7 @@ app.get('/api/coldemail', requireAuth, async (req, res) => {
       hasMore: limit ? offset + page.length < filtered.length : false,
       counts: dataset.counts,
       facets: dataset.facets,
+      pipelineAudit: dataset.pipelineAudit,
       fetchedAt: new Date(dataset.at).toISOString(),
     });
   } catch (e) {
@@ -2224,6 +2341,7 @@ app.get('/api/coldemail/stats', requireAuth, async (req, res) => {
       replied: dataset.metrics.totalReplies,
       replyMetrics: dataset.metrics,
       signals: dataset.signals,
+      pipelineAudit: dataset.pipelineAudit,
       totalLeads: dataset.rows.length,
       fetchedAt: new Date(dataset.at).toISOString(),
     });
@@ -2259,10 +2377,15 @@ app.get('/api/coldemail/replies', requireAuth, async (req, res) => {
   try {
     const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
     const category = String(req.query.category || 'all');
+    const rowById = new Map(dataset.rows.map(row => [row.id, row]));
+    const records = filterReplyRecords(dataset.replyRecords, category).map(record => {
+      const row = rowById.get(record.leadId) || {};
+      return { ...record, pipelinePresence: Boolean(row.pipelinePresence), pipelineStage: row.pipelineStage || '', mappingStatus: row.mappingStatus || 'not_in_pipeline' };
+    });
     res.json({
       category,
       total: dataset.replyRecords.length,
-      records: filterReplyRecords(dataset.replyRecords, category),
+      records,
       fetchedAt: new Date(dataset.at).toISOString(),
     });
   } catch (e) {
@@ -2335,7 +2458,16 @@ app.get('/api/coldemail/:id/activity', requireAuth, async (req, res) => {
     if (!lead) return res.status(404).json({ error: 'not found' });
     const activities = dataset.activities.filter(row => activityMatchesLead(row, lead));
     const timeline = timelineForLead(lead, dataset, activities);
-    res.json({ lead, activities: timeline, integrity: inspectActivityIntegrity(activities, new Set([lead.id])) });
+    const row = dataset.rows.find(item => item.id === lead.id) || {};
+    res.json({
+      lead: { ...lead, ...row }, activities: timeline,
+      pipeline: {
+        presence: Boolean(row.pipelinePresence), stage: row.pipelineStage || '',
+        boardLeadId: row.boardLeadId || '', mappingStatus: row.mappingStatus || 'not_in_pipeline',
+        matchedBy: row.matchedBy || '', automation: deriveAutomationState(lead),
+      },
+      integrity: inspectActivityIntegrity(activities, new Set([lead.id])),
+    });
   } catch (error) {
     console.error('[ColdEmail activity GET]', error.message);
     res.status(500).json({ error: 'Could not load lead activity' });

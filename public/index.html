@@ -1513,6 +1513,28 @@
   }
 
   .ce-search-clear:hover { color: var(--text); }
+  .ce-master-filters { display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:12px 28px;border-bottom:1px solid var(--border);background:var(--surface-2); }
+  .ce-master-filters select { min-height:36px;max-width:180px;padding:6px 30px 6px 10px;font-size:12px; }
+  .ce-quick-views { display:flex;gap:6px;flex-wrap:wrap;padding:10px 28px 0; }
+  .ce-quick-view { min-height:32px;padding:5px 10px;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--text-secondary);font-size:11px;font-weight:600;cursor:pointer; }
+  .ce-quick-view:hover,.ce-quick-view:focus-visible { border-color:var(--accent);color:var(--text); }
+  .pipeline-marker { display:inline-flex;align-items:center;gap:6px;max-width:150px;padding:4px 8px;border:1px solid var(--border);border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap; }
+  .pipeline-marker::before { content:'';width:6px;height:6px;border-radius:50%;background:var(--text-muted); }
+  .pipeline-marker[data-state="in"]::before { background:var(--success);box-shadow:0 0 0 3px rgba(16,185,129,.12); }
+  .pipeline-marker[data-state="conflict"]::before { background:var(--warn); }
+  .ce-row-badges { display:flex;gap:4px;flex-wrap:wrap;margin-top:4px; }
+  .ce-row-badge { padding:2px 6px;border-radius:999px;background:var(--surface-2);color:var(--text-muted);font-size:10px;font-weight:700; }
+  @media (max-width: 700px) {
+    .ce-master-filters { padding:10px 12px;display:grid;grid-template-columns:1fr 1fr; }
+    .ce-master-filters select { max-width:none;width:100%;min-height:44px; }
+    .ce-master-filters .btn-cancel { min-height:44px; }
+    .ce-quick-views { padding:10px 12px 0;overflow-x:auto;flex-wrap:nowrap; }
+    .ce-quick-view { min-height:44px;flex:0 0 auto; }
+    .ce-table th:nth-child(5),.ce-table td:nth-child(5),
+    .ce-table th:nth-child(6),.ce-table td:nth-child(6),
+    .ce-table th:nth-child(7),.ce-table td:nth-child(7),
+    .ce-table th:nth-child(10),.ce-table td:nth-child(10) { display:none; }
+  }
 
   /* Secondary CE stats (Total, Emailed) — present but visually subordinate to
      the actionable ones (Replied, Opens, Warm). Scoped so the Cold Calls
@@ -1971,6 +1993,22 @@
 
   <!-- CE Lead table -->
   <div id="ce-leads-panel">
+    <div class="ce-master-filters" aria-label="Master prospect filters">
+      <select id="ce-reply-filter" aria-label="Reply category" onchange="setCeMasterFilter('reply',this.value)"><option value="">All replies</option><option value="positive">Positive</option><option value="negative">Negative</option><option value="needs_human">Needs Human</option><option value="unclassified">Unclassified</option><option value="none">No Reply</option></select>
+      <select id="ce-pipeline-filter" aria-label="Sales Pipeline presence" onchange="setCeMasterFilter('presence',this.value)"><option value="">All pipeline relationships</option><option value="in">In Sales Pipeline</option><option value="out">Not in Sales Pipeline</option><option value="conflict">Mapping conflict</option></select>
+      <select id="ce-pipeline-stage-filter" aria-label="Sales Pipeline stage" onchange="setCeMasterFilter('pipelineStage',this.value)"><option value="">All pipeline stages</option><option value="follow_up">Follow Up</option><option value="hot">Hot</option><option value="call_booked">Call Booked</option><option value="closed_won">Closed / Won</option><option value="closed_lost">Closed / Lost</option></select>
+      <select id="ce-engagement-filter" aria-label="Engagement" onchange="setCeMasterFilter('engagement',this.value)"><option value="">All engagement</option><option value="demo">Demo played</option><option value="warm">Warm</option><option value="none">No demo activity</option></select>
+      <select id="ce-sequence-filter" aria-label="Sequence state" onchange="setCeMasterFilter('sequence',this.value)"><option value="">All sequence states</option><option value="active">Active sequence</option><option value="complete">Sequence complete</option><option value="queued">Queued</option><option value="not_started">Not started</option></select>
+      <button type="button" class="btn-cancel" onclick="clearCeMasterFilters()">Clear filters</button>
+    </div>
+    <div class="ce-quick-views" aria-label="Quick views">
+      <button class="ce-quick-view" onclick="applyCeQuickView('attention')">Needs Attention</button>
+      <button class="ce-quick-view" onclick="applyCeQuickView('positive')">Positive Replies</button>
+      <button class="ce-quick-view" onclick="applyCeQuickView('demo')">Demo Engaged</button>
+      <button class="ce-quick-view" onclick="applyCeQuickView('not-in-pipeline')">Not in Pipeline</button>
+      <button class="ce-quick-view" onclick="applyCeQuickView('complete')">Sequence Complete</button>
+      <button class="ce-quick-view" onclick="applyCeQuickView('suppressed')">Suppressed</button>
+    </div>
     <div class="stats-bar" id="ce-stats-bar">
       <div class="stat stat-secondary"><div><div class="stat-val" id="ce-stat-total">0</div><div class="stat-label">Total</div></div></div>
       <div class="stat"><div><div class="stat-val" id="ce-stat-queued">0</div><div class="stat-label">Queued</div></div></div>
@@ -2010,6 +2048,7 @@
             <th>City</th>
             <th>Trade</th>
             <th>Opens</th>
+            <th>Pipeline</th>
             <th>Stage</th>
             <th>Actions</th>
           </tr>
@@ -2408,6 +2447,10 @@
       <div>
         <div class="detail-section-title">Next Action</div>
         <div id="ce-d-next"></div>
+      </div>
+      <div>
+        <div class="detail-section-title">Sales Pipeline relationship</div>
+        <div id="ce-d-pipeline"></div>
       </div>
       <div>
         <div class="detail-section-title">Demo Plays</div>
@@ -3644,6 +3687,11 @@ let ceSearchQuery    = '';
 let ceCampaignFilter = '';
 let ceReplyCategoryFilter = '';   // set by a reply stat card drill-down
 let ceNicheFilter = 'all';
+let cePipelinePresenceFilter = '';
+let cePipelineStageFilter = '';
+let ceEngagementFilter = '';
+let ceSequenceFilter = '';
+let ceAutomationFilter = '';
 let _pendingCsvRows  = null;
 let queueRouteIds = [];
 let outreachRoutingOptions = null;
@@ -3661,6 +3709,41 @@ const CE_STAGES = ['Import','Queued','Contacted','Replied','Review','Done','Prom
 function setCeNicheFilter(value) {
   ceNicheFilter = value || 'all';
   ceSelected.clear(); updateBulkQueueBtn(); reloadCePage();
+}
+
+function setCeMasterFilter(kind, value) {
+  if (kind === 'reply') ceReplyCategoryFilter = value;
+  if (kind === 'presence') cePipelinePresenceFilter = value;
+  if (kind === 'pipelineStage') cePipelineStageFilter = value;
+  if (kind === 'engagement') ceEngagementFilter = value;
+  if (kind === 'sequence') ceSequenceFilter = value;
+  ceSelected.clear(); updateBulkQueueBtn(); reloadCePage();
+}
+
+function syncCeMasterFilters() {
+  const values = {
+    'ce-reply-filter': ceReplyCategoryFilter, 'ce-pipeline-filter': cePipelinePresenceFilter,
+    'ce-pipeline-stage-filter': cePipelineStageFilter, 'ce-engagement-filter': ceEngagementFilter,
+    'ce-sequence-filter': ceSequenceFilter,
+  };
+  for (const [id, value] of Object.entries(values)) { const el = document.getElementById(id); if (el) el.value = value; }
+}
+
+function clearCeMasterFilters(shouldReload = true) {
+  ceReplyCategoryFilter = cePipelinePresenceFilter = cePipelineStageFilter = '';
+  ceEngagementFilter = ceSequenceFilter = ceAutomationFilter = '';
+  syncCeMasterFilters(); if (shouldReload) reloadCePage();
+}
+
+function applyCeQuickView(view) {
+  clearCeMasterFilters(false);
+  if (view === 'attention') { ceReplyCategoryFilter = 'needs_human'; cePipelinePresenceFilter = 'out'; }
+  if (view === 'positive') ceReplyCategoryFilter = 'positive';
+  if (view === 'demo') ceEngagementFilter = 'demo';
+  if (view === 'not-in-pipeline') cePipelinePresenceFilter = 'out';
+  if (view === 'complete') ceSequenceFilter = 'complete';
+  if (view === 'suppressed') ceAutomationFilter = 'suppressed';
+  syncCeMasterFilters(); reloadCePage();
 }
 
 function toLocalDateTimeInput(value) {
@@ -4036,6 +4119,11 @@ function ceQuery(extra = {}) {
   if (ceNicheFilter && ceNicheFilter !== 'all') params.set('niche', ceNicheFilter);
   if (ceSearchQuery) params.set('search', ceSearchQuery);
   if (ceReplyCategoryFilter) params.set('replyCategory', ceReplyCategoryFilter);
+  if (cePipelinePresenceFilter) params.set('pipelinePresence', cePipelinePresenceFilter);
+  if (cePipelineStageFilter) params.set('pipelineStage', cePipelineStageFilter);
+  if (ceEngagementFilter) params.set('engagement', ceEngagementFilter);
+  if (ceSequenceFilter) params.set('sequenceState', ceSequenceFilter);
+  if (ceAutomationFilter) params.set('automationState', ceAutomationFilter);
   params.set('limit', String(CE_PAGE_SIZE));
   params.set('offset', String(extra.offset || 0));
   if (extra.refresh) params.set('refresh', '1');
@@ -4325,7 +4413,7 @@ function renderCeTable() {
     // A loading page must not read as "no leads" — that was indistinguishable
     // from an empty sheet while the request was in flight.
     tbody.innerHTML = ceLoading
-      ? '<tr><td colspan="9" class="ce-loading-row">Loading leads…</td></tr>'
+      ? '<tr><td colspan="10" class="ce-loading-row">Loading leads…</td></tr>'
       : '';
     empty.style.display = ceLoading ? 'none' : 'block';
     empty.textContent = q
@@ -4347,6 +4435,10 @@ function renderCeTable() {
     const opens     = ceOpensMap.get(openKey) || 0;
     const demoEntry = ceDemoMap.get(openKey);
     const hasLateReply = l.lateReply === true || /\[LATE REPLY:/i.test(l.notes || '');
+    const pipelineLabel = l.mappingStatus === 'conflict' ? 'Mapping conflict'
+      : l.pipelinePresence ? ((STAGES.find(stage => stage.id === l.pipelineStage) || {}).label || l.pipelineStage)
+      : 'Not in Pipeline';
+    const pipelineState = l.mappingStatus === 'conflict' ? 'conflict' : (l.pipelinePresence ? 'in' : 'out');
     // A demo play outranks any number of opens — see CE_SIGNAL. Show the play
     // when there is one, falling back to the open count otherwise.
     const opensTd   = demoEntry
@@ -4358,12 +4450,13 @@ function renderCeTable() {
           : `<td style="color:var(--text-muted)">—</td>`;
     return `<tr data-id="${l.id}" onclick="openCeDetail('${l.id}')" style="cursor:pointer">
       <td onclick="event.stopPropagation()"><label class="check-hit"><input type="checkbox" class="ce-row-check" data-id="${l.id}" ${checked} onchange="toggleCeRow(this)"></label></td>
-      <td class="ce-td-company">${esc(l.company) || '<span style="color:var(--text-muted)">—</span>'}</td>
+      <td class="ce-td-company">${esc(l.company) || '<span style="color:var(--text-muted)">—</span>'}<div class="ce-row-badges">${l.replyCategory ? `<span class="ce-row-badge">${esc((RD_CATEGORY_LABEL[l.replyCategory] || l.replyCategory))}</span>` : ''}${l.demoEngaged ? '<span class="ce-row-badge">Demo played</span>' : ''}${l.manualHold ? '<span class="ce-row-badge">Manual hold</span>' : ''}</div></td>
       <td>${cell(l.contactName)}</td>
       <td class="ce-td-email">${l.email ? `<a href="mailto:${emailSafe}">${esc(l.email)}</a>` : '—'}</td>
       <td>${cell(l.city)}</td>
       <td>${esc(l.tradeType) || '—'}</td>
       ${opensTd}
+      <td><span class="pipeline-marker" data-state="${pipelineState}" title="${escAttr(pipelineLabel)}">${esc(pipelineLabel)}</span></td>
       <td onclick="event.stopPropagation()"><div class="ce-stage-stack"><select class="ce-stage-select" onchange="setCeLeadStage('${l.id}',this.value)">${stageOpts}</select>${hasLateReply ? '<span class="ce-late-reply" title="Reply received after the sequence ended. Automation is still stopped.">Late reply</span>' : ''}</div></td>
       <td onclick="event.stopPropagation()" style="white-space:nowrap;display:flex;gap:6px;align-items:center">
         <button class="btn-promote" onclick="promoteLead('${l.id}')">↗ Promote</button>
@@ -4909,13 +5002,9 @@ function rdFilter(category) {
 // Display-only stage resolution. Prefers the cold-call board stage when the
 // lead was promoted, otherwise reports the Outreach status. Never writes.
 function rdStageLabel(record) {
-  const key = ceCompanyKey(record.company);
-  const boardLead = key && leads.find(l => ceCompanyKey(l.company) === key);
-  if (boardLead) {
-    const stage = displayStageFor(boardLead.stage);
-    return (STAGES.find(item => item.id === stage) || {}).label || stage;
-  }
-  return record.stage || record.emailStatus || 'not on board';
+  if (record.mappingStatus === 'conflict') return 'Mapping conflict';
+  if (!record.pipelinePresence) return 'Not in Sales Pipeline';
+  return (STAGES.find(item => item.id === record.pipelineStage) || {}).label || record.pipelineStage;
 }
 
 function rdFormatTime(value) {
@@ -5028,6 +5117,14 @@ function openCeDetail(id) {
   // Header
   document.getElementById('ce-d-name').textContent = lead.company || '—';
   document.getElementById('ce-d-sub').textContent  = lead.contactName || lead.email || '';
+  const pipelineLabel = lead.mappingStatus === 'conflict' ? 'Mapping conflict — no board record was selected'
+    : lead.pipelinePresence
+      ? ((STAGES.find(stage => stage.id === lead.pipelineStage) || {}).label || lead.pipelineStage)
+      : 'Not in Sales Pipeline';
+  const pipelineState = lead.mappingStatus === 'conflict' ? 'conflict' : (lead.pipelinePresence ? 'in' : 'out');
+  const mappingDetail = lead.mappingStatus === 'conflict' ? 'Duplicate identity candidates require manual review.'
+    : lead.pipelinePresence ? `Matched by ${lead.matchedBy === 'ce_id' ? 'ColdEmail foreign key' : 'exact email'}.` : 'This is an Outreach-only prospect.';
+  document.getElementById('ce-d-pipeline').innerHTML = `<span class="pipeline-marker" data-state="${pipelineState}">${esc(pipelineLabel)}</span><p style="font-size:12px;color:var(--text-muted);margin-top:8px">${esc(mappingDetail)}</p>`;
 
   // ── Sequence progress ────────────────────────────────────────
   const currentStep = parseInt(lead.emailStep || '0');

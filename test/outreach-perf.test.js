@@ -128,12 +128,13 @@ test('the browser sends filters to the server instead of filtering in memory', (
 
 // ── 6/10. Payload weight and lazy detail ────────────────────────────────────
 
-test('lead rows are light: no notes, siteContext, campaign_notes or website', () => {
+test('lead rows keep heavy notes/context lazy while website supports master search', () => {
   assert.match(server, /const CE_LIGHT_FIELDS = \[/);
   const fields = server.slice(server.indexOf('const CE_LIGHT_FIELDS'), server.indexOf('];', server.indexOf('const CE_LIGHT_FIELDS')));
-  for (const heavy of ['notes', 'siteContext', 'campaign_notes', 'website']) {
+  for (const heavy of ['notes', 'siteContext', 'campaign_notes']) {
     assert.ok(!new RegExp(`'${heavy}'`).test(fields), `${heavy} is not sent to the table`);
   }
+  assert.match(fields, /'website'/, 'website is the one added searchable identity field');
   // The two facts the UI read out of notes survive as precomputed flags.
   assert.match(server, /row\.lateReply = /);
   assert.match(server, /row\.bounced = /);
@@ -170,7 +171,7 @@ test('12. no endpoint on the Outreach load path performs a per-lead read', () =>
   // the lead count is.
   const loader = server.slice(server.indexOf('async function loadOutreachDataset'), server.indexOf('async function getOutreachDataset'));
   const reads = (loader.match(/spreadsheets\.values\.get/g) || []).length;
-  assert.equal(reads, 6, 'six fixed reads plus the ColdEmail batch, whatever the lead count');
+  assert.equal(reads, 7, 'seven fixed reads (including the board join) plus the ColdEmail batch, whatever the lead count');
   assert.match(loader, /readColdEmailDashboardRows\(\)/);
   assert.ok(!/for\s*\(/.test(loader.slice(0, loader.indexOf('const leads ='))), 'no loop before the fetch');
 });
