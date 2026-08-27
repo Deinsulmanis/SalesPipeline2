@@ -63,7 +63,12 @@ const { classifyReply: classifyProviderReply } = require('./integrations/reply-c
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
 const { routedLeadReady } = require('./integrations/campaign-routing');
 // The reactivation gate is defined once, in the shared pipeline-state model.
-const { manualHoldReleased, applyHoldToNotes, stageRequiresHold } = require('./integrations/pipeline-state');
+const { manualHoldReleased, applyHoldToNotes, stageRequiresHold,
+  deriveCallLifecycle, deriveHotState } = require('./integrations/pipeline-state');
+const {
+  evaluateStageSequence, buildSequenceEmail, sequenceStepEventId, SEQUENCE_EVENTS,
+  resolveSequenceThread,
+} = require('./integrations/stage-sequences');
 const { PROMOTION_TRIGGER, resolvePromotionIdentity, promotionDecision } = require('./integrations/promotion-policy');
 const { findOriginalSentThread } = require('./integrations/gmail-threading');
 const {
@@ -127,6 +132,12 @@ const LATE_REPLY_BATCH_LIMIT = parseInt(process.env.LATE_REPLY_BATCH_LIMIT || St
 // mid-run config change can never race past it. Reply/bounce detection is
 // unaffected: those passes only ever PREVENT mail.
 const SENDING_ENABLED  = process.env.SENDING_ENABLED === 'true';
+// Stage-specific recovery journeys (Hot follow-up, no-show, cancelled call,
+// demo, timing). SEPARATE from SENDING_ENABLED on purpose: the original cold
+// campaign keeps running on its own switch, and this one defaults OFF so the
+// engine can ship, be previewed and be tested without a single stage email
+// leaving. Both must be true for a stage step to send.
+const STAGE_SEQUENCES_ENABLED = process.env.STAGE_SEQUENCES_ENABLED === 'true';
 const DAILY_CAP        = parseInt(process.env.DAILY_CAP || '12', 10);
 const DAILY_SEND_LIMIT = parseInt(process.env.DAILY_SEND_LIMIT || '40', 10);
 // Below this, a drafted answer goes to the review queue instead of the prospect.
@@ -2714,6 +2725,123 @@ const jitter = () => MIN_DELAY + Math.floor(Math.random() * (MAX_DELAY - MIN_DEL
 
 // ── MAIN ──────────────────────────────────────────────────────────────────────
 
+// ── STAGE-SPECIFIC FOLLOW-UP PASS ───────────────────────────────────────────
+// The recovery journeys. This is a SELECTOR, not a new sending engine: it works
+// out which lead is due which step, then goes through the same sendEmail, the
+// same daily cap, the same kill switch and the same suppression as everything
+// else.
+//
+// It never touches the cold sequence: emailStep, lastEmailedAt and emailStatus
+// are neither read nor written here, and [MANUAL HOLD] is never removed — the
+// cold selectors stay blocked exactly as before. See stage-sequences.js.
+async function runStageSequencePass(allLeads) {
+  // The gate comes first, before any read. With the flag off this pass cannot
+  // select a lead, let alone send to one.
+  if (!STAGE_SEQUENCES_ENABLED) {
+    console.log('[StageSeq] disabled (STAGE_SEQUENCES_ENABLED is not "true") — no stage follow-ups considered.');
+    return 0;
+  }
+  if (DRY_RUN) { console.log('[StageSeq] dry run — skipped.'); return 0; }
+
+  const boardResponse = await withAuth(() => sheets().spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID, range: LEADS_RANGE,
+  }));
+  const boardLeads = (boardResponse.data.values || []).slice(1)
+    .map(row => Object.fromEntries(LEADS_COLUMNS.map((field, index) => [field, row[index] || ''])))
+    .filter(lead => lead.id);
+  const activities = await withAuth(readColdCallActivities);
+  const byKey = new Map();
+  for (const row of activities) {
+    for (const key of [row.leadId, normEmail(row.email)]) {
+      if (!key) continue;
+      byKey.set(key, [...(byKey.get(key) || []), row]);
+    }
+  }
+  const twinByEmail = new Map();
+  for (const lead of allLeads) {
+    const key = normEmail(lead.email);
+    if (key && !twinByEmail.has(key)) twinByEmail.set(key, lead);
+  }
+
+  let sent = 0;
+  let todaySent = countTodaySends(allLeads);
+  for (const boardLead of boardLeads) {
+    const email = normEmail(boardLead.email);
+    const mine = [...(byKey.get(boardLead.id) || []), ...(email ? byKey.get(email) || [] : [])];
+    const twin = twinByEmail.get(email) || null;
+    const verdict = evaluateStageSequence({
+      boardLead, twin: twin || {}, activities: mine,
+      callState: deriveCallLifecycle(boardLead, { activities: mine }),
+      hotState: deriveHotState(boardLead, { activities: mine }),
+      suppressedEmails: SUPPRESSED_EMAILS,
+      featureEnabled: true,     // reaching here already proved the flag is on
+    });
+    if (!verdict.eligible) continue;
+
+    const step = (verdict.step || 0) + 1;
+    const eventId = sequenceStepEventId(boardLead.id, verdict.sequenceId, step);
+    // Idempotent by construction: the id is derived from lead + sequence + step,
+    // so a repeated run that already recorded this step selects nothing.
+    if (activities.some(row => row.eventId === eventId)) continue;
+    if (!isValidEmail(boardLead.email)) continue;
+
+    // Every existing global gate still applies. A recovery email is not exempt
+    // from the daily cap or the kill switch because the lead is high intent.
+    if (todaySent >= DAILY_SEND_LIMIT) {
+      console.warn(`  [StageSeq] daily cap reached (${todaySent}/${DAILY_SEND_LIMIT}) - deferring to next pass`);
+      break;
+    }
+    if (!SENDING_ENABLED) {
+      console.log(`[kill-switch] would send ${verdict.sequenceId} step ${step} -> ${boardLead.email}`);
+      continue;
+    }
+
+    // Reply into the real conversation when the timeline proves one exists.
+    // Without a verifiable thread the copy falls back to a standalone subject
+    // rather than faking "Re:" on a message that is not part of that thread.
+    const thread = resolveSequenceThread(mine);
+    const built = buildSequenceEmail(verdict.sequenceId, step, boardLead, { thread });
+    if (built.error) { console.warn(`[StageSeq] ${built.error}`); continue; }
+
+    try {
+      const result = await sendEmail({
+        to: boardLead.email.trim(), subject: built.subject, body: built.body,
+        ...(built.replyToThread ? {
+          threadId: built.threadId,
+          inReplyTo: built.inReplyTo || undefined,
+          references: built.references || undefined,
+        } : {}),
+      });
+      todaySent++;
+      sent++;
+      // Recorded only after the send resolved, under the derived id, so a retry
+      // cannot duplicate the step.
+      await recordColdCallActivity({
+        eventId, leadId: boardLead.id, sourceLeadId: twin ? twin.id : '',
+        email: boardLead.email, company: boardLead.company || '',
+        eventType: SEQUENCE_EVENTS.STEP_SENT, occurredAt: new Date().toISOString(),
+        subject: built.subject, content: built.body,
+        metadata: JSON.stringify({
+          sequenceId: verdict.sequenceId, step, maxSteps: verdict.maxSteps,
+          // Structured so Step 12 can attach copy/subject version attribution.
+          sequenceVersion: verdict.sequenceId.split('_').pop(),
+          providerMessageId: (result && result.messageId) || '',
+          // Recorded so the next step can chain onto this message too.
+          gmailThreadId: (result && result.threadId) || built.threadId || '',
+          rfcMessageId: (result && result.rfcMessageId) || '',
+          repliedInThread: built.replyToThread,
+        }),
+      });
+      console.log(`  [StageSeq] ${verdict.sequenceId} step ${step} -> ${boardLead.email}`);
+    } catch (error) {
+      // A failed send records no step event, so the next run may safely retry.
+      console.error(`[StageSeq] send failed for ${boardLead.email}: ${error.message}`);
+    }
+  }
+  console.log(`[StageSeq] ${sent} stage follow-up(s) sent.`);
+  return sent;
+}
+
 async function run() {
   if (!SPREADSHEET_ID) throw new Error('SPREADSHEET_ID missing from .env');
   if (!DRY_RUN && !CHECK_ONLY && !FROM_EMAIL) throw new Error('FROM_EMAIL missing from .env (required to send)');
@@ -2772,6 +2900,11 @@ async function run() {
 
   // Bounce-check pass — marks bounced leads Done before follow-up selection.
   await runBounceCheckPass(all);
+
+  // Stage-specific recovery journeys. Gated OFF by default and entirely
+  // separate from the cold sequence: it selects on CRM state, never on
+  // emailStep, and it cannot resume a held cold sequence.
+  await runStageSequencePass(all);
 
   // Intent trigger — both-audios. Runs in every normal pass as a backstop to
   // the event-driven spawn, so a missed webhook still gets picked up.

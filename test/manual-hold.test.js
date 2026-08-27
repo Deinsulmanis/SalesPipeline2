@@ -413,9 +413,21 @@ test('sending cadence, caps and delays are untouched', () => {
   assert.match(agentSrc, /delayDays: 5,/);
 });
 
-test('no new send path was introduced', () => {
+test('every send path is accounted for and gated', () => {
+  // Step 10 added exactly one new call site: the stage-sequence pass. Counting
+  // alone would be a weak guard, so this also proves the new one is behind BOTH
+  // the stage feature flag and the existing kill switch, and that the six
+  // original cold paths are untouched.
   const calls = agentSrc.match(/await sendEmail\(/g) || [];
-  assert.equal(calls.length, 6, 'sendEmail call count changed: ' + calls.length);
+  assert.equal(calls.length, 7, 'sendEmail call count changed: ' + calls.length);
+
+  const pass = agentSrc.slice(agentSrc.indexOf('async function runStageSequencePass'), agentSrc.indexOf('async function run()'));
+  assert.equal((pass.match(/await sendEmail\(/g) || []).length, 1, 'the stage pass sends from one place');
+  assert.match(pass, /if \(!STAGE_SEQUENCES_ENABLED\) \{/, 'gated by the stage flag');
+  assert.match(pass, /if \(!SENDING_ENABLED\) \{/, 'and by the global kill switch');
+  assert.ok(pass.indexOf('STAGE_SEQUENCES_ENABLED') < pass.indexOf('sendEmail'), 'the flag is checked first');
+  // The stage pass must never touch cold-sequence state.
+  assert.ok(!/emailStep|lastEmailedAt|markSent/.test(pass), 'cold sequence state is untouched');
 });
 
 test('recipient selection is unchanged apart from suppression', () => {

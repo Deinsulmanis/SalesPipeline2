@@ -1310,6 +1310,46 @@
     .ce-footer-row .btn-cancel { min-height: 44px; }
   }
 
+  /* ── Stage follow-up sequences ─────────────────────────────────────────── */
+  .seq-chip {
+    display:inline-flex; align-items:center; gap:5px; margin-top:6px;
+    font-size:10px; font-weight:700; letter-spacing:.02em; padding:2px 7px;
+    border-radius:var(--radius-pill); white-space:nowrap;
+  }
+  .seq-chip[data-s="active"]    { background:var(--info-bg);    color:var(--info); }
+  .seq-chip[data-s="paused"]    { background:var(--warn-bg);    color:var(--warn); }
+  .seq-chip[data-s="available"] { background:var(--surface-2);  color:var(--text-muted); border:1px solid var(--border); }
+  .seq-chip[data-s="complete"]  { background:var(--success-bg); color:var(--success); }
+  .seq-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  .btn-seq {
+    appearance:none; font:inherit; font-size:11px; font-weight:700; padding:5px 11px;
+    border-radius:var(--radius-sm); cursor:pointer; background:transparent;
+    color:var(--accent); border:1px solid var(--accent);
+  }
+  .btn-seq:hover { background:var(--tint-soft); }
+  .btn-seq:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .btn-seq[data-tone="quiet"] { color:var(--text-muted); border-color:var(--border); }
+  .btn-seq[data-tone="quiet"]:hover { color:var(--danger); border-color:var(--danger); background:var(--danger-bg); }
+  .seq-preview {
+    margin-top:10px; border:1px solid var(--border); border-radius:var(--radius-sm);
+    background:var(--surface-2); overflow:hidden;
+  }
+  .seq-preview-head {
+    padding:6px 11px; font-size:10px; font-weight:700; letter-spacing:.03em;
+    text-transform:uppercase; color:var(--text-muted); border-bottom:1px solid var(--border);
+    display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;
+  }
+  .seq-preview-sub { padding:7px 11px; font-size:12px; font-weight:600; color:var(--text); border-bottom:1px solid var(--border); word-break:break-word; }
+  .seq-preview-body { padding:9px 11px; font-size:12px; line-height:1.55; color:var(--text-secondary); white-space:pre-wrap; word-break:break-word; }
+  .seq-thread { font-size:10px; font-weight:700; padding:1px 6px; border-radius:var(--radius-pill); white-space:nowrap; }
+  .seq-thread[data-t="true"]  { background:var(--success-bg); color:var(--success); }
+  .seq-thread[data-t="false"] { background:var(--surface);    color:var(--text-muted); border:1px solid var(--border); }
+  @media (max-width: 700px) {
+    .btn-seq { min-height:44px; flex:1 1 auto; }
+    .seq-preview-head { flex-direction:column; gap:3px; }
+    .seq-preview-body { font-size:13px; }
+  }
+
   /* ── Call lifecycle ────────────────────────────────────────────────────── */
   .call-chip {
     display:inline-flex; align-items:center; gap:5px; margin-top:6px;
@@ -2468,6 +2508,17 @@
       <div id="provider-test-result" class="form-group full" role="status" style="min-height:18px;font-size:12px;color:var(--text-secondary)"></div>
     </div>
     <div class="form-actions"><button type="button" class="btn-cancel" onclick="testProviderMapping()">Test Mapping</button><button type="button" class="btn-save" onclick="saveProviderMapping()">Save Changes</button></div>
+  </div>
+</div>
+
+<!-- STAGE SEQUENCE MODAL — enrols/pauses state only; it never sends -->
+<div class="modal-overlay" id="seq-overlay" onclick="closeSeqModal(event)">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="seq-title" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title" id="seq-title">Follow-up sequence</div>
+      <button class="modal-close" onclick="closeSeqModal()" aria-label="Close">&#10005;</button>
+    </div>
+    <div style="padding:16px 18px" id="seq-body"></div>
   </div>
 </div>
 
@@ -4077,7 +4128,11 @@ function renderPipelineState(pipeline) {
       ${hotDrawerRows(next)}
       ${callDrawerRows(next)}
     </div>
+    <div id="d-sequence"></div>
     <div id="d-reactivation"></div>`;
+
+  // Loaded separately: the server owns eligibility and builds the preview.
+  renderSequenceControls(detailId);
 
   // Options are decided server-side; the browser only renders what it is told.
   renderReactivationControls(detailId);
@@ -4138,6 +4193,170 @@ async function logHumanResponse() {
     renderBoard();
   } catch (error) {
     showToast('Could not record the response: ' + error.message, 'error');
+  } finally {
+    setSaving(false);
+  }
+}
+
+// ── STAGE FOLLOW-UP SEQUENCES ───────────────────────────────────────────────
+// Enrol, pause, resume and cancel a stage-specific recovery journey, and show
+// the exact email that would go out. Every decision — which journeys are on
+// offer, whether a step is due, what the copy says — is made server-side. These
+// controls move state only: no button here can send an email. The sending agent
+// remains the only thing that mails anyone, behind its own feature flag.
+let seqState = null;
+
+const SEQ_STATUS_LABEL = {
+  active: 'Running', paused: 'Paused', cancelled: 'Cancelled',
+  complete: 'Finished', stopped: 'Stopped', none: 'Available',
+};
+
+async function renderSequenceControls(leadId) {
+  const host = document.getElementById('d-sequence');
+  if (!host || !leadId) return;
+  host.innerHTML = '';
+  try {
+    const resp = await fetch(`/api/leads/${encodeURIComponent(leadId)}/sequence`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    seqState = data;
+    if (leadId !== detailId) return;    // the drawer moved on while loading
+
+    const running = data.status === 'active' || data.status === 'paused';
+    if (!running && !data.offer) return;   // nothing to offer, show nothing
+
+    const label = data.label || (data.offer && data.catalogue.find(c => c.id === data.offer)?.label) || 'Follow-up';
+    const chipState = data.status === 'none' ? 'available' : data.status;
+    const buttons = [];
+    if (!running && data.offer) {
+      buttons.push(`<button type="button" class="btn-seq" onclick="openSeqModal('enroll')">Start ${esc(label)}</button>`);
+    }
+    if (data.status === 'active') {
+      buttons.push(`<button type="button" class="btn-seq" data-tone="quiet" onclick="openSeqModal('pause')">Pause</button>`);
+      buttons.push(`<button type="button" class="btn-seq" data-tone="quiet" onclick="openSeqModal('cancel')">Cancel sequence</button>`);
+    }
+    if (data.status === 'paused') {
+      buttons.push(`<button type="button" class="btn-seq" onclick="openSeqModal('resume')">Resume</button>`);
+      buttons.push(`<button type="button" class="btn-seq" data-tone="quiet" onclick="openSeqModal('cancel')">Cancel sequence</button>`);
+    }
+
+    const step = (data.step || 0) + 1;
+    const preview = data.preview
+      ? `<div class="seq-preview">
+           <div class="seq-preview-head">
+             <span>Preview — step ${step} of ${esc(String(data.maxSteps || '?'))}${data.nextDueAt ? ' · ' + esc(callWhen(data.nextDueAt)) : ''}</span>
+             <span class="seq-thread" data-t="${Boolean(data.preview.replyToThread)}">${data.preview.replyToThread ? 'replies in thread' : 'new message'}</span>
+           </div>
+           <div class="seq-preview-sub">${esc(data.preview.subject)}</div>
+           <div class="seq-preview-body">${esc(data.preview.body)}</div>
+         </div>`
+      : '';
+
+    host.innerHTML = `
+      <div class="pipeline-state" style="margin-top:12px">
+        <div class="pipeline-row">
+          <span class="pipeline-row-label">Follow-up</span>
+          <span class="pipeline-row-val">
+            <span class="seq-chip" data-s="${esc(chipState)}">${esc(label)} · ${esc(SEQ_STATUS_LABEL[data.status] || data.status)}</span>
+          </span>
+        </div>
+        <div class="pipeline-row">
+          <span class="pipeline-row-label">Why</span>
+          <span class="pipeline-row-val"><small>${esc(data.stopReason || data.reason || '')}</small></span>
+        </div>
+        ${data.featureEnabled ? '' : `<div class="pipeline-row">
+          <span class="pipeline-row-label">Sending</span>
+          <span class="pipeline-row-val"><small>Automated stage follow-ups are switched off, so nothing will actually send yet. Enrolling still records the decision.</small></span>
+        </div>`}
+        ${preview}
+        <div class="seq-actions">${buttons.join('')}</div>
+      </div>`;
+  } catch (_) { host.innerHTML = ''; }
+}
+
+function closeSeqModal(e) {
+  if (e && e.target !== document.getElementById('seq-overlay')) return;
+  document.getElementById('seq-overlay').classList.remove('open');
+}
+
+// Opens the confirmation ONLY. Nothing is written until Confirm is pressed.
+function openSeqModal(action) {
+  const data = seqState;
+  if (!data) return;
+  const id = data.sequenceId || data.offer;
+  const def = (data.catalogue || []).find(c => c.id === id) || {};
+  const label = data.label || def.label || 'Follow-up';
+  const isTiming = id === 'timing_recontact_v1';
+  const suggested = new Date(Date.now() + 30 * 86400000);
+  suggested.setMinutes(suggested.getMinutes() - suggested.getTimezoneOffset());
+
+  const explain = {
+    enroll: `Hands this lead to the ${label.toLowerCase()} journey: up to ${def.maxSteps || '?'} message(s), sent by the agent on the schedule below.`,
+    pause: 'Keeps the sequence and its progress, but sends nothing until you resume it.',
+    resume: 'Puts the sequence back on its schedule from where it left off.',
+    cancel: 'Stops the sequence permanently. You can enrol again later if you change your mind.',
+  }[action];
+
+  const stops = `<div class="react-note" style="margin-top:8px">It stops on its own if the prospect replies, a meeting is booked, you reply by hand, or the opportunity closes. Unsubscribes and bounces block it outright.</div>`;
+
+  document.getElementById('seq-title').textContent = {
+    enroll: `Start ${label}`, pause: 'Pause sequence', resume: 'Resume sequence', cancel: 'Cancel sequence',
+  }[action];
+  document.getElementById('seq-body').innerHTML = `
+    <div class="ghost-facts">
+      <div class="ghost-fact"><span class="ghost-fact-k">Sequence</span><span class="ghost-fact-v">${esc(label)}</span></div>
+      <div class="ghost-fact"><span class="ghost-fact-k">Messages</span><span class="ghost-fact-v">up to ${esc(String(def.maxSteps || data.maxSteps || '?'))}</span></div>
+      <div class="ghost-fact"><span class="ghost-fact-k">Current state</span><span class="ghost-fact-v">${esc(SEQ_STATUS_LABEL[data.status] || data.status)}</span></div>
+      ${data.nextDueAt ? `<div class="ghost-fact"><span class="ghost-fact-k">Next step</span><span class="ghost-fact-v">${esc(callWhen(data.nextDueAt))}</span></div>` : ''}
+      ${data.featureEnabled ? '' : `<div class="ghost-fact"><span class="ghost-fact-k">Sending</span><span class="ghost-fact-v">currently switched off</span></div>`}
+    </div>
+    <div class="react-note">${esc(explain)}</div>
+    ${action === 'enroll' ? stops : ''}
+    ${action === 'enroll' && isTiming ? `<div style="margin:10px 0">
+      <label for="seq-recontact" style="font-size:11px;color:var(--text-muted)">Re-contact on</label>
+      <input type="datetime-local" id="seq-recontact" value="${suggested.toISOString().slice(0, 16)}" style="width:100%;margin-top:4px">
+    </div>` : ''}
+    <div class="form-actions" style="margin-top:14px">
+      <button type="button" class="btn-cancel" onclick="closeSeqModal()">Cancel</button>
+      <button type="button" class="btn-save" onclick="submitSeqAction('${action}')">Confirm</button>
+    </div>`;
+  document.getElementById('seq-overlay').classList.add('open');
+}
+
+async function submitSeqAction(action) {
+  const leadId = detailId;
+  if (!leadId || !seqState) return;
+  const payload = { action };
+  if (action === 'enroll') {
+    payload.sequenceId = seqState.sequenceId || seqState.offer;
+    const when = document.getElementById('seq-recontact');
+    if (when) {
+      if (!when.value) { showToast('Choose a re-contact date.', 'error'); return; }
+      payload.recontactAt = new Date(when.value).toISOString();
+    }
+  }
+  setSaving(true);
+  try {
+    const resp = await fetch(`/api/leads/${encodeURIComponent(leadId)}/sequence`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      showToast(data.error || `Could not update the sequence (${resp.status})`, 'error');
+      // The lead's state moved on, so reload rather than leave stale controls.
+      if (['not_offered', 'already_active', 'blocked'].includes(data.code)) {
+        closeSeqModal(); await renderSequenceControls(leadId);
+      }
+      return;
+    }
+    showToast(`Sequence ${action}${action.endsWith('e') ? 'd' : 'ed'}.`, 'success');
+    closeSeqModal();
+    await renderSequenceControls(leadId);
+    await loadNextActions();
+    renderBoard();
+    await loadColdCallActivity(leadId);
+  } catch (error) {
+    showToast('Could not update the sequence: ' + error.message, 'error');
   } finally {
     setSaving(false);
   }

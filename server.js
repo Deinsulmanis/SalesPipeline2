@@ -33,12 +33,16 @@ const {
 const { buildActivityTimeline, inspectActivityIntegrity } = require('./integrations/activity-timeline');
 const { PROMOTION_TRIGGER, resolvePromotionIdentity, promotionDecision } = require('./integrations/promotion-policy');
 const {
+  SEQUENCES, SEQUENCE_EVENTS, SEQUENCE_STATUS, evaluateStageSequence,
+  buildSequenceEmail, deriveSequenceState, resolveSequenceThread,
+} = require('./integrations/stage-sequences');
+const {
   deriveAutomationState, automationConflict, deriveNextAction,
   compareNextActions, summarizeNextActions,
   stageTransitionCheck, reopenEligibility, OUTCOME_IDS, LOSS_OUTCOME_IDS,
   MANUAL_HOLD_TAG, HUMAN_OWNED_STAGES,
   REACTIVATION_MODES, reactivationEligibility, FOLLOW_UP_DELAY_DAYS,
-  CALL_STATUS, deriveCallLifecycle, callLifecycleActions,
+  CALL_STATUS, deriveCallLifecycle, callLifecycleActions, deriveHotState,
   applyResumeToNotes, clearResumeFromNotes, resumeAtFromNotes,
   applyHoldToNotes, stageRequiresHold,
 } = require('./integrations/pipeline-state');
@@ -2256,6 +2260,162 @@ app.post('/api/leads/:id/human-response', requireAuth, async (req, res) => {
 // refuses closed_lost without a loss outcome, and PUT writes A:Q while the
 // outcome lives in V. Doing that from the browser would be two requests with a
 // race between them. Here it is one read, one validated batch write.
+// ── STAGE SEQUENCES ─────────────────────────────────────────────────────────
+// Enrolment, pause, resume and cancel — plus a dry-run preview. Deliberately
+// NO send path: these routes only move canonical state, and the sending agent
+// decides when (and whether) anything actually goes out, behind its own feature
+// flag. A button here can never mail a prospect.
+const SEQUENCE_ACTIONS = new Set(['enroll', 'pause', 'resume', 'cancel']);
+
+async function loadSequenceContext(leadId) {
+  const rowNum = await withAuth(() => findRow(leadId));
+  if (!rowNum) return null;
+  const prior = await sheets().spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${rowNum}:W${rowNum}`,
+  });
+  const row = prior.data.values?.[0] || [];
+  const lead = {};
+  COLUMNS.forEach((col, i) => { lead[col] = row[i] || ''; });
+  lead.meetingAt = row[20] || '';
+  lead.outcome = row[21] || '';
+  const email = normalizeEmail(lead.email);
+  const all = await readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER);
+  const activities = all.filter(a => a.leadId === leadId || (email && normalizeEmail(a.email) === email));
+  const twin = await findColdEmailTwin(leadId, lead.email).catch(() => null);
+  return { rowNum, lead, email, activities, allActivities: all, twin };
+}
+
+function evaluateFor(ctx) {
+  return evaluateStageSequence({
+    boardLead: ctx.lead, twin: ctx.twin || {}, activities: ctx.activities,
+    callState: deriveCallLifecycle(ctx.lead, { activities: ctx.activities }),
+    hotState: deriveHotState(ctx.lead, { activities: ctx.activities }),
+    // The server reports what WOULD happen; the agent owns the real flag.
+    featureEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true',
+  });
+}
+
+// What journey is available/active, and what the next email would say. Pure
+// read — this is the dry-run preview.
+app.get('/api/leads/:id/sequence', requireAuth, async (req, res) => {
+  try {
+    const ctx = await loadSequenceContext(req.params.id);
+    if (!ctx) return res.status(404).json({ error: 'not found' });
+    const verdict = evaluateFor(ctx);
+    // Preview the journey that is running OR the one on offer, so the exact
+    // copy can be inspected before anyone decides to enrol.
+    const previewId = verdict.sequenceId || verdict.offer || null;
+    const step = (verdict.step || 0) + 1;
+    const maxSteps = verdict.maxSteps || (previewId && SEQUENCES[previewId] ? SEQUENCES[previewId].maxSteps : 0);
+    // The preview resolves the same thread the sender would, so what is shown
+    // here is byte-identical to what would go out.
+    const thread = resolveSequenceThread(ctx.activities);
+    const preview = previewId && step <= maxSteps
+      ? buildSequenceEmail(previewId, step, ctx.lead, { thread })
+      : null;
+    res.json({
+      leadId: req.params.id,
+      ...verdict,
+      catalogue: Object.values(SEQUENCES).map(def => ({
+        id: def.id, label: def.label, maxSteps: def.maxSteps, requiresEnrollment: def.requiresEnrollment,
+      })),
+      preview: preview && !preview.error
+        ? { sequenceId: previewId, step, subject: preview.subject, body: preview.body,
+            replyToThread: preview.replyToThread, threadId: preview.threadId || '', wouldSend: false }
+        : null,
+      previewError: preview && preview.error ? preview.error : null,
+    });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Sequence GET]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Move sequence state. Records an activity row and nothing else — no lead
+// column is written, so enrolment cannot disturb stage, sequence or send state.
+app.post('/api/leads/:id/sequence', requireAuth, async (req, res) => {
+  const action = String(req.body?.action || '').trim();
+  try {
+    if (!SEQUENCE_ACTIONS.has(action)) {
+      return res.status(400).json({ error: `Unknown sequence action "${action}".`, field: 'action' });
+    }
+    const ctx = await loadSequenceContext(req.params.id);
+    if (!ctx) return res.status(404).json({ error: 'not found' });
+    const verdict = evaluateFor(ctx);
+    const state = deriveSequenceState(ctx.activities);
+
+    let sequenceId = state.sequenceId;
+    let recontactAt = '';
+    if (action === 'enroll') {
+      sequenceId = String(req.body?.sequenceId || verdict.offer || '').trim();
+      if (!SEQUENCES[sequenceId]) {
+        return res.status(422).json({ error: 'Choose a valid follow-up sequence.', field: 'sequenceId' });
+      }
+      // Only a journey this lead's CURRENT state actually offers may be started.
+      if (!verdict.offers || !verdict.offers.includes(sequenceId)) {
+        if (sequenceId !== 'timing_recontact_v1') {
+          return res.status(409).json({
+            error: `This lead does not currently qualify for "${SEQUENCES[sequenceId].label}".`,
+            code: 'not_offered', offers: verdict.offers || [],
+          });
+        }
+      }
+      if (state.status === SEQUENCE_STATUS.ACTIVE) {
+        return res.status(409).json({
+          error: `A follow-up sequence is already running for this lead.`,
+          code: 'already_active', sequenceId: state.sequenceId,
+        });
+      }
+      // A blocked lead must never be enrolled, even by hand.
+      if (verdict.stopReason) {
+        return res.status(409).json({ error: `Cannot enrol: ${verdict.stopReason}.`, code: 'blocked' });
+      }
+      if (sequenceId === 'timing_recontact_v1') {
+        recontactAt = String(req.body?.recontactAt || '').trim();
+        const ms = recontactAt ? new Date(recontactAt).getTime() : NaN;
+        if (!Number.isFinite(ms) || ms <= Date.now()) {
+          return res.status(422).json({ error: 'Choose a future re-contact date.', field: 'recontactAt' });
+        }
+        recontactAt = new Date(ms).toISOString();
+      }
+    } else if (state.status !== SEQUENCE_STATUS.ACTIVE && action === 'pause') {
+      return res.status(409).json({ error: 'No active sequence to pause.', code: 'not_active' });
+    } else if (state.status !== SEQUENCE_STATUS.PAUSED && action === 'resume') {
+      return res.status(409).json({ error: 'No paused sequence to resume.', code: 'not_paused' });
+    } else if (!state.sequenceId) {
+      return res.status(409).json({ error: 'No sequence on this lead.', code: 'not_enrolled' });
+    }
+
+    const eventType = {
+      enroll: SEQUENCE_EVENTS.ENROLLED, pause: SEQUENCE_EVENTS.PAUSED,
+      resume: SEQUENCE_EVENTS.RESUMED, cancel: SEQUENCE_EVENTS.CANCELLED,
+    }[action];
+    const occurredAt = new Date().toISOString();
+    const eventId = stableActivityId('sequence', [req.params.id, eventType, sequenceId, recontactAt || occurredAt.slice(0, 16)]);
+    if (!ctx.allActivities.some(a => a.eventId === eventId)) {
+      await appendColdCallActivities([{
+        eventId, leadId: req.params.id, sourceLeadId: ctx.twin ? ctx.twin.id : '',
+        email: ctx.lead.email || '', company: ctx.lead.company || '',
+        eventType, occurredAt,
+        subject: `${SEQUENCES[sequenceId] ? SEQUENCES[sequenceId].label : sequenceId} ${action}ed`,
+        content: String(req.body?.reason || '').trim().slice(0, 500),
+        metadata: JSON.stringify({
+          sequenceId, recontactAt, action, trigger: 'crm_sequence',
+          reason: String(req.body?.reason || '').trim().slice(0, 200),
+          // Structured for Step 12's version attribution.
+          sequenceVersion: sequenceId ? sequenceId.split('_').pop() : '',
+        }),
+      }]);
+    }
+    res.json({ ok: true, action, sequenceId, recontactAt: recontactAt || null, automationResumed: false });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Sequence POST]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── CALL LIFECYCLE ──────────────────────────────────────────────────────────
 // One route for the whole booked-call journey: book, reschedule, cancel,
 // complete, no-show. Every mutation re-derives the lifecycle from STORED state

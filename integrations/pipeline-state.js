@@ -338,6 +338,8 @@ const ACTION_TYPE = Object.freeze({
   HOT_REVIEW:            'hot_review',
   CALL_CANCELLED_REVIEW: 'call_cancelled_review',
   NO_SHOW_FOLLOW_UP:     'no_show_follow_up',
+  SEQUENCE_STEP:         'sequence_step',
+  SEQUENCE_REVIEW:       'sequence_review',
   NONE_WON:              'none_won',
   NONE_LOST:             'none_lost',
   NO_NEXT_ACTION:        'no_next_action',
@@ -776,7 +778,57 @@ function buildAction(fields) {
     hotState: fields.hotState || null,
     // Likewise for Call Booked leads — the browser derives no lifecycle state.
     callState: fields.callState || null,
+    // And for a lead enrolled in a stage recovery journey.
+    sequenceState: fields.sequenceState || null,
   };
+}
+
+// Maps stage-sequence state onto the existing vocabulary. The engine that
+// decides eligibility lives in stage-sequences.js; this only labels it, so
+// there is no second task engine.
+function sequenceNextAction(lead, context, withManual) {
+  const now = context.now || new Date();
+  const seq = context.sequenceState || {};
+  const label = seq.label || seq.sequenceId || 'stage follow-up';
+
+  if (seq.status === 'active' && !seq.stopReason) {
+    const step = (seq.step || 0) + 1;
+    return buildAction({
+      type: ACTION_TYPE.SEQUENCE_STEP, label: `${label} #${step}`,
+      dueAt: seq.nextDueAt || null, owner: ACTION_OWNER.AUTOMATION,
+      source: 'stage-sequence', sequenceState: seq, now,
+      reason: seq.featureEnabled
+        ? (seq.reason || 'scheduled recovery step')
+        : (seq.reason || 'scheduled') + ' — stage sending is currently disabled',
+    });
+  }
+
+  if (seq.status === 'paused') {
+    return buildAction({
+      type: ACTION_TYPE.SEQUENCE_REVIEW, label: `Review paused ${label}`,
+      dueAt: null, owner: ACTION_OWNER.HUMAN, status: ACTION_STATUS.BLOCKED,
+      source: 'stage-sequence', sequenceState: seq, needsAttention: true, now,
+      reason: seq.stopReason || 'paused by hand',
+    });
+  }
+
+  if (seq.stopReason) {
+    return buildAction({
+      type: ACTION_TYPE.SEQUENCE_REVIEW, label: `${label} stopped — decide next step`,
+      dueAt: null, owner: ACTION_OWNER.HUMAN, status: ACTION_STATUS.BLOCKED,
+      source: 'stage-sequence', sequenceState: seq, needsAttention: true, now,
+      reason: seq.stopReason,
+    });
+  }
+
+  // Complete or cancelled: the journey is over and a human decides what follows.
+  return withManual(`${label} finished — decide next step`, ACTION_TYPE.SEQUENCE_REVIEW)
+    || buildAction({
+      type: ACTION_TYPE.SEQUENCE_REVIEW, label: `${label} finished — decide next step`,
+      dueAt: null, owner: ACTION_OWNER.HUMAN, status: ACTION_STATUS.BLOCKED,
+      source: 'stage-sequence', sequenceState: seq, needsAttention: true, now,
+      reason: 'every step has been sent and the prospect has not replied',
+    });
 }
 
 // Maps the call lifecycle onto the existing action vocabulary. A meeting result
@@ -945,6 +997,13 @@ function deriveNextAction(boardLead, twin, context = {}) {
     closed.recoverable = recoverable;
     return closed;
   }
+
+  // ── An enrolled stage sequence owns the next action ──────────────────────
+  // Once a human explicitly hands a recovery journey to automation, that IS what
+  // happens next, so this outranks the Hot and Call Booked branches below.
+  // Terminal stages still come first: a closed opportunity has no next action,
+  // and the engine stops any sequence on one anyway.
+  if (context.sequenceState) return sequenceNextAction(lead, context, withManual);
 
   // ── Call Booked — the call lifecycle is the authority ────────────────────
   if (stage === 'call_booked') return callNextAction(lead, { activities, now });
