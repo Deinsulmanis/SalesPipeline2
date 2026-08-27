@@ -42,9 +42,27 @@ test('thread resolver preserves the reference chain and fails closed without req
   assert.equal(await findOriginalSentThread({ gmail, email: 'owned@example.com', expectedSubject: 'Subject' }), null);
 });
 
+test('thread resolver accepts current and historical exact subjects', async () => {
+  const records = {
+    historical: message('historical', "Cooper Dental's missed calls", 'thread-old', '<old@gmail>', 100),
+    current: message('current', 'quick question about Invisalign', 'thread-current', '<current@gmail>', 200),
+    impostor: message('impostor', 'quick question about implants', 'thread-wrong', '<wrong@gmail>', 300),
+  };
+  const gmail = { users: { messages: {
+    list: async () => ({ data: { messages: Object.keys(records).map(id => ({ id })) } }),
+    get: async ({ id }) => ({ data: records[id] }),
+  } } };
+  const result = await findOriginalSentThread({
+    gmail, email: 'owner@example.com',
+    expectedSubjects: ['quick question about Invisalign', "Cooper Dental's missed calls"],
+  });
+  assert.equal(result.threadId, 'thread-current');
+  assert.equal(result.subject, 'quick question about Invisalign');
+});
+
 test('dental intent path supplies all Gmail thread requirements and remains fail closed', () => {
   const agent = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
-  assert.match(agent, /findOriginalSentThread\(\{ gmail: gmail\(\), email: lead\.email\.trim\(\), expectedSubject: originalSubject \}\)/);
+  assert.match(agent, /expectedSubjects: \[currentSubject, legacySubject\]/);
   assert.match(agent, /threadId: thread\.threadId, inReplyTo: thread\.inReplyTo, references: thread\.references/);
   assert.match(agent, /original Gmail thread could not be verified/);
   assert.match(agent, /if \(fired\.has\(`\$\{lead\.id\}\|both-audios`\)\) continue/);

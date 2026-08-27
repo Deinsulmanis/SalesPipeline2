@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const { guaranteeFor } = require('../guarantee');
 const { assembleFinalEmail, canonicalCta } = require('./final-email');
+const { buildDentalSubject } = require('./dental-subject');
 
 const COLD_SUBJECTS = Object.freeze([
   `3 new patients in 30 days — or you don't pay`,
@@ -35,9 +36,10 @@ function buildDentalColdEmail({
   const cta = canonicalCta({ demoIncluded, recipientType });
   const demoBlock = demoIncluded ? `${personalization.demo.text}\n${link}` : '';
   const requiredBlocks = [personalization.offerBridge, offer, productContext, demoBlock, signature, casl];
+  const subjectMetadata = buildDentalSubject({ lead, company, personalization });
 
   return {
-    subject: coldSubjectFor(lead, company),
+    subject: subjectMetadata.subject,
     body: assembleFinalEmail([
       `Hi ${name},`, ...personalizationBlocks.map(block => block.text),
       personalization.offerBridge, offer, productContext,
@@ -52,6 +54,7 @@ function buildDentalColdEmail({
     demoCta: personalization.demo,
     approvedGuarantee: offer,
     personalizationMetadata: personalization.metadata,
+    subjectMetadata,
   };
 }
 

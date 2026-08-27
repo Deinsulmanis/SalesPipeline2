@@ -122,7 +122,7 @@ function validateFinalEmail({
   subject, body, demoUrl = '', proposalBase = '', demoIncluded = Boolean(demoUrl),
   cta = '', personalizationBlocks = [], entityHint = '', requiredBlocks = [],
   personalizationClaims = [], verifiedFactIds = [], demoCta = null,
-  approvedGuarantee = '',
+  approvedGuarantee = '', subjectValidation = null,
 }) {
   const errors = [];
   const finalSubject = normalizeBlock(subject);
@@ -130,6 +130,14 @@ function validateFinalEmail({
   const add = (code, message) => errors.push({ code, message });
 
   if (!finalSubject) add('empty_subject', 'subject is empty');
+  if (subjectValidation && (!subjectValidation.valid || subjectValidation.subject !== finalSubject)) {
+    const subjectErrors = subjectValidation.errors || [];
+    if (subjectErrors.length) {
+      for (const error of subjectErrors) add(error.code || 'invalid_subject', error.message || 'subject failed campaign validation');
+    } else {
+      add('invalid_subject', 'subject differs from the validated campaign subject');
+    }
+  }
   if (!finalBody) add('empty_body', 'body is empty');
   if (finalBody && !/^Hi [^,\n]+,\n\n/.test(finalBody)) add('greeting_separator', 'greeting is not separated from the body by a blank line');
   if (/^Hi [^,\n]+,(?:If|I|We|Our|The|A)\b/m.test(finalBody)) add('merged_greeting', 'body text is merged into the greeting');

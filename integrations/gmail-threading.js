@@ -29,19 +29,24 @@ function decodeBody(payload) {
   return '';
 }
 
-async function findOriginalSentThread({ gmail, email, expectedSubject, maxResults = 20 } = {}) {
-  if (!gmail || !email || !expectedSubject) return null;
-  const response = await gmail.users.messages.list({
-    userId: 'me',
-    q: `in:sent to:"${escapeGmailQuery(email)}" subject:"${escapeGmailQuery(expectedSubject)}"`,
-    maxResults,
-  });
+async function findOriginalSentThread({ gmail, email, expectedSubject, expectedSubjects, maxResults = 20 } = {}) {
+  const subjects = [...new Set((expectedSubjects || [expectedSubject]).map(value => String(value || '').trim()).filter(Boolean))];
+  if (!gmail || !email || !subjects.length) return null;
+  const stubs = new Map();
+  for (const expected of subjects) {
+    const response = await gmail.users.messages.list({
+      userId: 'me',
+      q: `in:sent to:"${escapeGmailQuery(email)}" subject:"${escapeGmailQuery(expected)}"`,
+      maxResults,
+    });
+    for (const stub of response.data.messages || []) stubs.set(stub.id, stub);
+  }
   const candidates = [];
-  for (const stub of response.data.messages || []) {
+  for (const stub of stubs.values()) {
     const full = await gmail.users.messages.get({ userId: 'me', id: stub.id, format: 'full' });
     const message = full.data || {};
     const subject = headerValue(message.payload, 'Subject');
-    if (subject !== expectedSubject) continue;
+    if (!subjects.includes(subject)) continue;
     const messageId = headerValue(message.payload, 'Message-ID').trim();
     if (!message.threadId || !messageId) continue;
     candidates.push({

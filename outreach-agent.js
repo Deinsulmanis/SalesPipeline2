@@ -71,6 +71,7 @@ const {
   validateFinalEmail,
 } = require('./integrations/final-email');
 const { buildDentalPersonalization } = require('./integrations/dental-personalization');
+const { buildDentalSubject } = require('./integrations/dental-subject');
 const {
   COLD_SUBJECTS, coldSubjectIndex, coldSubjectFor, buildDentalColdEmail,
 } = require('./integrations/dental-email');
@@ -668,6 +669,7 @@ function validateColdEmail(lead, subject, body, link, assembly = {}) {
     personalizationClaims: assembly.personalizationClaims || [],
     verifiedFactIds: assembly.verifiedFactIds || [], demoCta: assembly.demoCta || null,
     approvedGuarantee: assembly.approvedGuarantee || guaranteeFor(company),
+    subjectValidation: assembly.subjectMetadata?.validation || null,
   });
   if (!finalValidation.valid) {
     return finalValidation.errors.map(error => `${error.code}: ${error.message}`).join('; ');
@@ -2151,8 +2153,12 @@ async function runIntentTriggerPass(allLeads) {
 
     try {
       const company = cleanCompanyName(lead.company) || 'your business';
-      const originalSubject = coldSubjectFor(lead, company);
-      const thread = await findOriginalSentThread({ gmail: gmail(), email: lead.email.trim(), expectedSubject: originalSubject });
+      const personalization = buildDentalPersonalization({ ...lead, company }, { siteText: lead.siteContext || '' });
+      const currentSubject = buildDentalSubject({ lead, company, personalization }).subject;
+      const legacySubject = coldSubjectFor(lead, company);
+      const thread = await findOriginalSentThread({
+        gmail: gmail(), email: lead.email.trim(), expectedSubjects: [currentSubject, legacySubject],
+      });
       if (!thread) {
         console.warn(`  ⏸️  intent email deferred → ${lead.email} (original Gmail thread could not be verified)`);
         continue;
@@ -2610,7 +2616,7 @@ async function run() {
       subject, body, link, opener, openerTier, pitchTier,
       cta, personalizationBlocks, demoIncluded, requiredBlocks,
       personalizationClaims, verifiedFactIds, demoCta, approvedGuarantee,
-      personalizationMetadata,
+      personalizationMetadata, subjectMetadata,
     } = built;
 
     // Validate the exact assembled body in every mode. Dry runs preview this
@@ -2620,6 +2626,7 @@ async function run() {
       : validateColdEmail(lead, subject, body, link, {
         cta, personalizationBlocks, demoIncluded, requiredBlocks,
         personalizationClaims, verifiedFactIds, demoCta, approvedGuarantee,
+        subjectMetadata,
       });
     if (invalid) {
       console.error(`✎ [draft] not sending step 1 → ${lead.email} — ${invalid}`);
@@ -2641,7 +2648,10 @@ async function run() {
       console.log(`— WOULD SEND (step 1) →  ${lead.email}  (${rawCo || lead.first || lead.id})`);
       if (rawCo && rawCo !== cleanCo) console.log(`   Company: "${rawCo}" → "${cleanCo}"`);
       console.log(`   Pitch:   ${pitchTier}`);
-      console.log(`   Subject: ${subject}  [variant ${coldSubjectIndex(lead) + 1}/${COLD_SUBJECTS.length}]`);
+      const subjectLabel = subjectMetadata
+        ? `level ${subjectMetadata.level}, ${subjectMetadata.angleId}`
+        : `variant ${coldSubjectIndex(lead) + 1}/${COLD_SUBJECTS.length}`;
+      console.log(`   Subject: ${subject}  [${subjectLabel}]`);
       console.log(`   Opener:  ${opener}  [${openerTier}]`);
       console.log(`   Link:    ${link}`);
       if (validatedPersonalizationMetadata) console.log(`   Personalization: ${JSON.stringify(validatedPersonalizationMetadata)}`);
