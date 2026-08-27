@@ -149,7 +149,21 @@ function buildFunnelAnalytics(input = {}, query = {}) {
     }
   }
 
-  const stageSets = Object.fromEntries([...FUNNEL_STAGES, 'negative', 'needsHuman', 'unclassified', 'noShow', 'cancelled', 'lost', 'pending'].map(key => [key, new Set()]));
+  // `unknown` and `automatedReply` are first-class buckets, not leftovers.
+  // A lead with no reply evidence must land somewhere nameable rather than
+  // being quietly folded into "unclassified" or, worse, "negative".
+  const stageSets = Object.fromEntries([...FUNNEL_STAGES, 'negative', 'needsHuman', 'unclassified',
+    'unknown', 'automatedReply', 'contactChangeReview',
+    'noShow', 'cancelled', 'lost', 'pending'].map(key => [key, new Set()]));
+  // Categories that mean "a real person wrote back". Autoresponders and
+  // evidence-free rows are deliberately excluded so they cannot inflate the
+  // reply rate or the positive rate.
+  const GENUINE_REPLY_CATEGORIES = ['positive', 'negative', 'needs_human', 'unclassified'];
+  const bucketFor = category => (
+    category === 'needs_human' ? 'needsHuman'
+      : category === 'automated_reply' ? 'automatedReply'
+        : category === 'contact_change_review' ? 'contactChangeReview'
+          : stageSets[category] ? category : 'unknown');
   const replyTouch = new Map();
   const replyMessages = [];
   const categoryByLead = new Map(replyRecords.map(row => [String(row.leadId || ''), row.category]));
@@ -180,13 +194,16 @@ function buildFunnelAnalytics(input = {}, query = {}) {
     }
     if (attributedReply) {
       const category = categoryByLead.get(id) || attributedFallbackCategory || 'unclassified';
-      stageSets.replied.add(id); stageSets[category === 'needs_human' ? 'needsHuman' : category].add(id);
+      stageSets[bucketFor(category)].add(id);
+      // Only a genuine human reply counts toward the reply funnel stage.
+      if (GENUINE_REPLY_CATEGORIES.includes(category)) stageSets.replied.add(id);
     }
     // Historical Lifetime/legacy rows can truthfully establish that a reply
     // happened even when the old activity omitted thread attribution.
     if (!stageSets.replied.has(id) && categoryByLead.has(id) && ['lifetime', LEGACY_UNKNOWN].includes(version)) {
       const category = categoryByLead.get(id) || 'unclassified';
-      stageSets.replied.add(id); stageSets[category === 'needs_human' ? 'needsHuman' : category].add(id);
+      stageSets[bucketFor(category)].add(id);
+      if (GENUINE_REPLY_CATEGORIES.includes(category)) stageSets.replied.add(id);
     }
 
     const demoEvents = rows.filter(row => row.eventType === 'demo_pair_played');
@@ -317,6 +334,9 @@ function buildFunnelAnalytics(input = {}, query = {}) {
     facets: Object.fromEntries(Object.entries(facets).map(([key, set]) => [key, [...set].sort()])),
     reconciliation: {
       repliesPartition: counts.replied === counts.positive + counts.negative + counts.needsHuman + counts.unclassified,
+      // Inbound messages of every kind, genuine or not. Reported separately so
+      // autoresponders stay visible operationally without touching reply rate.
+      inboundMessageLeads: counts.replied + counts.automatedReply + counts.contactChangeReview + counts.unknown,
       // Every stage count must be exactly the length of its drill-down list, or
       // a displayed number is not auditable.
       stagesMatchLeadIds: Object.entries(stageSets).every(([key, set]) => set.size === counts[key]),

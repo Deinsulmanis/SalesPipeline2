@@ -92,15 +92,17 @@ test('Needs Human opens only the canonical needs-human bucket', () => {
   assert.ok(rows.every(r => r.category === ANALYTICS_CATEGORY.NEEDS_HUMAN));
 });
 
-test('Unclassified opens only unclassified records', () => {
-  const rows = filterReplyRecords(records(), 'unclassified');
-  assert.deepEqual(rows.map(r => r.leadId), ['e']);
-  assert.ok(rows.every(r => r.category === ANALYTICS_CATEGORY.UNCLASSIFIED));
+test('a row with no reply evidence is UNKNOWN, not Unclassified', () => {
+  // Lead 'e' only has emailStatus 'replied' — a spreadsheet cell, not a message.
+  assert.deepEqual(filterReplyRecords(records(), 'unclassified').map(r => r.leadId), []);
+  const unknown = filterReplyRecords(records(), 'unknown');
+  assert.deepEqual(unknown.map(r => r.leadId), ['e']);
+  assert.ok(unknown.every(r => r.category === ANALYTICS_CATEGORY.UNKNOWN));
 });
 
 test('categories partition the total exactly, leaving no orphan rows', () => {
   const all = records();
-  const sum = ['positive', 'negative', 'needs_human', 'unclassified']
+  const sum = ['positive', 'negative', 'needs_human', 'unclassified', 'unknown']
     .reduce((total, category) => total + filterReplyRecords(all, category).length, 0);
   assert.equal(sum, all.length);
 });
@@ -152,7 +154,7 @@ test('reply text is inspectable and identifying fields are present', () => {
 });
 
 test('missing reply text is an explicit flag, not a blank string', () => {
-  const row = filterReplyRecords(records(), 'unclassified')[0];
+  const row = filterReplyRecords(records(), 'unknown')[0];
   assert.equal(row.hasText, false);
   assert.equal(row.replyText, '');
   assert.match(browser, /Reply text unavailable/);
@@ -179,7 +181,8 @@ test('existing reply counts are unchanged by the drill-down refactor', () => {
   assert.equal(metrics.positive, 2);
   assert.equal(metrics.negative, 1);
   assert.equal(metrics.needsHuman, 1);
-  assert.equal(metrics.unclassified, 1);
+  assert.equal(metrics.unclassified, 0, 'no row is merely unclassified any more');
+  assert.equal(metrics.unknown, 1, 'the evidence-free row is explicitly unknown');
   assert.equal(metrics.reconciles, true);
 });
 

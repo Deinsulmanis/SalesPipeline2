@@ -60,6 +60,7 @@ const { GmailOutreachProvider } = require('./integrations/outreach-providers');
 const { SmartleadClient } = require('./integrations/smartlead-client');
 const { SmartleadOutreachProvider } = require('./integrations/outreach-providers');
 const { classifyReply: classifyProviderReply } = require('./integrations/reply-classifier');
+const { classifyReplyText, isUsableReplyIdentity, REPLY_STATE } = require('./integrations/canonical-reply');
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
 const { routedLeadReady } = require('./integrations/campaign-routing');
 // The reactivation gate is defined once, in the shared pipeline-state model.
@@ -1656,12 +1657,44 @@ const ACTIVE_REPLY_EVENT_TYPES = Object.freeze({
   WRONG_PERSON: 'wrong_person_reply', OUT_OF_OFFICE: 'out_of_office_reply', NEEDS_HUMAN: 'needs_human_reply',
 });
 
+// The legacy category the send path routes on, mapped to the canonical state
+// analytics reads. Both are stored on every event, so a later change to either
+// vocabulary can still be traced back to what was actually observed.
+const LEGACY_TO_CANONICAL_STATE = Object.freeze({
+  INTERESTED: REPLY_STATE.POSITIVE, MEETING_REQUEST: REPLY_STATE.POSITIVE,
+  NOT_INTERESTED: REPLY_STATE.NEGATIVE, UNSUBSCRIBE: REPLY_STATE.NEGATIVE,
+  QUESTION: REPLY_STATE.NEEDS_HUMAN, NEEDS_HUMAN: REPLY_STATE.NEEDS_HUMAN,
+  WRONG_PERSON: REPLY_STATE.NEEDS_HUMAN, OUT_OF_OFFICE: REPLY_STATE.AUTOMATED_REPLY,
+});
+
 async function recordActiveReplyActivity(lead, message, replyText, classification, activities = []) {
   const eventType = ACTIVE_REPLY_EVENT_TYPES[classification];
   if (!eventType) return; // positive/meeting replies are logged by handleInterested after promotion
+  // Fail closed on identity: a malformed address cannot have received our mail,
+  // so anything "matched" through it would be manufactured evidence.
+  if (!isUsableReplyIdentity(lead.email)) {
+    console.warn(`[reply] refusing to record reply for malformed identity ${lead.email}`);
+    return;
+  }
+  // Idempotency. recordColdCallActivity appends unconditionally, so a stable
+  // event id prevents nothing on its own — the duplicate has to be caught here,
+  // against the activities already loaded for this pass. Keyed on the Gmail
+  // message id, so reprocessing the same inbound message is a no-op no matter
+  // how many times the reply scan sees it.
+  const eventId = message.messageId
+    ? `gmail-reply:${message.messageId}`
+    : `${lead.id}:reply:${message.occurredAt || Date.now()}`;
+  if (activities.some(row => String(row.eventId || '') === eventId)) {
+    return; // already recorded
+  }
   const touch = replyTouchAttribution({ occurredAt: message.occurredAt, threadId: message.threadId }, activities);
+  // Re-derive the canonical meaning from the message text, so the stored event
+  // carries evidence rather than only a category label.
+  const canonical = classifyReplyText(String(replyText || message.snippet || ''), {
+    subject: message.subject || '', currentEmail: lead.email,
+  });
   await recordColdCallActivity({
-    eventId: message.messageId ? `gmail-reply:${message.messageId}` : `${lead.id}:reply:${message.occurredAt || Date.now()}`,
+    eventId,
     leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email,
     company: cleanCompanyName(lead.company) || lead.company || '', eventType,
     occurredAt: message.occurredAt || new Date().toISOString(), subject: message.subject || '',
@@ -1672,6 +1705,24 @@ async function recordActiveReplyActivity(lead, message, replyText, classificatio
       rfcMessageId: message.rfcMessageId || '', detectedAfterSequence: false,
       requiresHumanAttention: ['QUESTION', 'WRONG_PERSON', 'NEEDS_HUMAN'].includes(classification),
       replyTouch: touch,
+      // ── canonical reply evidence ──────────────────────────────────────────
+      // Stored so analytics never re-reads Gmail, and so a reply's meaning is
+      // provable from the event itself rather than reconstructed from a notes
+      // tag years later.
+      provider: 'gmail',
+      matchedColdEmailId: lead.id,
+      receivedAt: message.occurredAt || new Date().toISOString(),
+      canonicalState: canonical.state || LEGACY_TO_CANONICAL_STATE[classification] || null,
+      subtype: canonical.subtype || null,
+      reason: canonical.reason || null,
+      classifierVersion: canonical.classifierVersion || null,
+      confidence: canonical.confidence || null,
+      evidenceSignals: canonical.signals || [],
+      genuineHuman: canonical.genuineHuman === undefined ? null : canonical.genuineHuman,
+      returnDate: canonical.returnDate || null,
+      // Evidence only. Nothing may act on this without a human approving it.
+      proposedEmail: canonical.proposedEmail || null,
+      identityMutationAllowed: false,
     }),
   });
 }

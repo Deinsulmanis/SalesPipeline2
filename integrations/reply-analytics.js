@@ -5,6 +5,11 @@ const { deterministicReplyCategory } = require('./reply-classifier');
 const ANALYTICS_CATEGORY = Object.freeze({
   POSITIVE: 'positive', NEGATIVE: 'negative', NEEDS_HUMAN: 'needs_human',
   UNCLASSIFIED: 'unclassified', EXCLUDED: 'excluded',
+  // Distinct from UNCLASSIFIED. "Unclassified" means a message arrived that we
+  // could not categorise; UNKNOWN means we have no trustworthy evidence a reply
+  // happened at all. Collapsing the two is what allowed a CRM stage to be read
+  // as sentiment.
+  UNKNOWN: 'unknown',
 });
 
 function normalizedCategoryKey(value) {
@@ -44,7 +49,21 @@ function leadHasReply(lead = {}) {
   return hasHumanReplyTag || String(lead.emailStatus || '').trim().toLowerCase() === 'replied';
 }
 
+/**
+ * A lead's reply category, from EVIDENCE ONLY.
+ *
+ * A reply tag and a stored classification are both records of a real inbound
+ * message. A CRM stage is not: it records what someone did to a spreadsheet
+ * row. This function used to fall back to `stage === 'Unsubscribed'` and return
+ * NEGATIVE, which is how two production leads with no tag, no stored
+ * classification and no activity are labelled Negative today. That fallback is
+ * gone; the honest answer when nothing is known is UNKNOWN.
+ */
 function classificationFromLead(lead = {}, storedClassifications = []) {
+  // NOTE: a malformed address is NOT filtered here. A stored tag is still a
+  // record that a message was once processed, whatever the address looks like.
+  // Malformed identity is enforced where it actually matters — matching new
+  // inbound mail — in canonical-reply.resolveReplyState.
   for (const category of categoriesFromNotes(lead.notes)) {
     if (category !== ANALYTICS_CATEGORY.EXCLUDED && category !== ANALYTICS_CATEGORY.UNCLASSIFIED) return category;
   }
@@ -52,8 +71,13 @@ function classificationFromLead(lead = {}, storedClassifications = []) {
     const category = analyticsCategoryFor(value);
     if (category !== ANALYTICS_CATEGORY.EXCLUDED && category !== ANALYTICS_CATEGORY.UNCLASSIFIED) return category;
   }
-  if (/^unsub(?:scribed)?$/i.test(String(lead.stage || '').trim())) return ANALYTICS_CATEGORY.NEGATIVE;
-  return ANALYTICS_CATEGORY.UNCLASSIFIED;
+  // The distinction that matters. A tag or stored classification means a real
+  // message was processed, even if we cannot categorise it -> UNCLASSIFIED.
+  // Nothing at all means we have no evidence a message ever arrived -> UNKNOWN.
+  // Only the second case used to be filled in from the lead's CRM stage.
+  const sawSomeEvidence = String(lead.notes || '').match(/\[(?:REPLY|ROOFING_SURVEY):/i)
+    || (storedClassifications || []).length > 0;
+  return sawSomeEvidence ? ANALYTICS_CATEGORY.UNCLASSIFIED : ANALYTICS_CATEGORY.UNKNOWN;
 }
 
 // Canonical reply evidence. Reply bodies live in the activity sheet; many
@@ -132,6 +156,7 @@ const CATEGORY_METRIC_KEY = Object.freeze({
   [ANALYTICS_CATEGORY.NEGATIVE]: 'negative',
   [ANALYTICS_CATEGORY.NEEDS_HUMAN]: 'needsHuman',
   [ANALYTICS_CATEGORY.UNCLASSIFIED]: 'unclassified',
+  [ANALYTICS_CATEGORY.UNKNOWN]: 'unknown',
 });
 
 function filterReplyRecords(records = [], category = '') {
@@ -144,7 +169,7 @@ function filterReplyRecords(records = [], category = '') {
 // its detail view cannot drift apart.
 function buildReplyMetrics(leads = [], { classificationsByLeadId = new Map(), evidenceByLeadId = new Map() } = {}) {
   const metrics = {
-    totalReplies: 0, positive: 0, negative: 0, needsHuman: 0, unclassified: 0,
+    totalReplies: 0, positive: 0, negative: 0, needsHuman: 0, unclassified: 0, unknown: 0,
     contacted: 0, delivered: 0, positiveReplyRate: 0,
   };
   const seen = new Set();
@@ -160,7 +185,8 @@ function buildReplyMetrics(leads = [], { classificationsByLeadId = new Map(), ev
   metrics.totalReplies = records.length;
   for (const record of records) metrics[CATEGORY_METRIC_KEY[record.category] || 'unclassified']++;
   metrics.positiveReplyRate = metrics.delivered ? metrics.positive / metrics.delivered * 100 : 0;
-  metrics.reconciles = metrics.totalReplies === metrics.positive + metrics.negative + metrics.needsHuman + metrics.unclassified;
+  metrics.reconciles = metrics.totalReplies
+    === metrics.positive + metrics.negative + metrics.needsHuman + metrics.unclassified + metrics.unknown;
   return metrics;
 }
 

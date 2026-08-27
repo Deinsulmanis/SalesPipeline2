@@ -147,7 +147,11 @@ test('metrics reconcile including Unclassified', () => {
   ]);
   assert.equal(metrics.totalReplies, 4);
   assert.equal(metrics.reconciles, true);
-  assert.equal(metrics.totalReplies, metrics.positive + metrics.negative + metrics.needsHuman + metrics.unclassified);
+  // Lead 'u' carries no tag and no stored classification, so it is UNKNOWN
+  // rather than Unclassified: nothing proves a message ever arrived.
+  assert.equal(metrics.unknown, 1);
+  assert.equal(metrics.totalReplies,
+    metrics.positive + metrics.negative + metrics.needsHuman + metrics.unclassified + metrics.unknown);
 });
 
 test('Positive Reply Rate uses positive unique leads over delivered contacted leads', () => {
