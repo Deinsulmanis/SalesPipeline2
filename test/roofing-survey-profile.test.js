@@ -14,7 +14,7 @@ const lead = { id: 'opaque-123', company: 'Summit Roofing Ltd', contactName: 'Av
 
 test('existing dental prompt behavior remains present and isolated', () => {
   const agent = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
-  assert.match(agent, /buildPitch\(lead, opener, link\)/);
+  assert.match(agent, /buildPitch\(lead, opener, link, structuredPersonalization\)/);
   assert.match(agent, /lead\.emailTemplateId === ROOFING_SURVEY_TEMPLATE/);
   assert.equal(PROFILE_ID, 'roofing_survey_reply_first');
 });

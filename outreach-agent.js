@@ -70,6 +70,10 @@ const {
   canonicalCta,
   validateFinalEmail,
 } = require('./integrations/final-email');
+const { buildDentalPersonalization } = require('./integrations/dental-personalization');
+const {
+  COLD_SUBJECTS, coldSubjectIndex, coldSubjectFor, buildDentalColdEmail,
+} = require('./integrations/dental-email');
 const {
   COLD_CALL_ACTIVITY_SHEET,
   COLD_CALL_ACTIVITY_HEADER,
@@ -582,45 +586,24 @@ function buildProposalLink(lead) {
 // belonged to the old offer's after-hours-calls angle, which this replaces).
 // buildEmail() still computes/returns pitchTier separately for dry-run logging
 // — it no longer changes which copy goes out, so buildPitch doesn't need it.
-// ── COLD SUBJECT LINES ────────────────────────────────────────────────────────
-// Three approved variants, verbatim as supplied. {{company}} is the only
-// substitution. Assignment is DETERMINISTIC per lead (sha1 of the lead id), not
-// random, for two reasons:
-//   1. steps 2 and 3 reply into the same thread with "Re: <subject>" — a lead
-//      whose subject changed between runs would start a second thread.
-//   2. a re-run, retry or restart must reproduce the same choice.
-// Because it is a pure function of lead.id, which variant a lead received is
-// always recomputable — no column needed to measure performance later.
-const COLD_SUBJECTS = [
-  `3 new patients in 30 days — or you don't pay`,
-  `A guarantee for {{company}}`,
-  `{{company}}'s missed calls`,
-];
-
-function coldSubjectFor(lead, company) {
-  const h = crypto.createHash('sha1').update(String(lead.id || '')).digest();
-  const variant = COLD_SUBJECTS[h[0] % COLD_SUBJECTS.length];
-  return variant.split('{{company}}').join(company);
-}
-
-// Which variant index a lead maps to — used by dry-run logging so a preview
-// shows the real distribution before anything sends.
-function coldSubjectIndex(lead) {
-  return crypto.createHash('sha1').update(String(lead.id || '')).digest()[0] % COLD_SUBJECTS.length;
-}
-
-// Guarantee-led cold pitch. The guarantee is the FIRST sentence of the body,
-// inserted verbatim from guarantee.js — see validateColdEmail() below, which
-// refuses to send if that sentence has been altered in any way.
-//
-// The per-lead opener still runs (generateOpener, grounded in the lead's own
-// scraped site text) but now sits AFTER the guarantee rather than leading, so
-// the promise lands before anything else.
-function buildPitch(lead, opener, link) {
+// Dental leads take the structured renderer in integrations/dental-email.js.
+// Other niches retain the established opener path below. Both paths insert the
+// guarantee verbatim from guarantee.js and pass through validateColdEmail().
+function buildPitch(lead, opener, link, structuredPersonalization = null) {
   const type    = recipientType(lead);
   const name    = salutationName(lead);
   const company = cleanCompanyName(lead.company) || '';
   const niche   = nicheFor(lead.tradeType);
+
+  if (structuredPersonalization) {
+    return buildDentalColdEmail({
+      lead, name, company, recipientType: type, link,
+      personalization: structuredPersonalization,
+      mailingAddress: MAILING_ADDRESS,
+      signature: EMAIL_SIGNATURE,
+      reference: `SL-${refCode(lead)}`,
+    });
+  }
 
   const offer = guaranteeFor(company);
   const productContext = `I build the receptionist with ${company}'s actual ${niche.booking} and services, so when a ${niche.person.replace(/s$/, '')} calls it already sounds like it works there. It never touches your real phone line, so there's nothing to switch over to try it.`;
@@ -634,22 +617,28 @@ function buildPitch(lead, opener, link) {
   const demoBlock = demoIncluded
     ? `→ Here's one I already built, so you can hear it:\n${link}`
     : '';
+  const bodyBlocks = [
+    `Hi ${name},`, offer, ...personalizationBlocks.map(block => block.text),
+    productContext, demoBlock, cta, EMAIL_SIGNATURE, casl,
+  ];
 
   return {
     subject: coldSubjectFor(lead, company),
-    body: assembleFinalEmail([
-      `Hi ${name},`, offer, ...personalizationBlocks.map(block => block.text),
-      productContext, demoBlock, cta, EMAIL_SIGNATURE, casl,
-    ]),
+    body: assembleFinalEmail(bodyBlocks),
     cta,
     personalizationBlocks,
     demoIncluded,
-    requiredBlocks: [offer, productContext, EMAIL_SIGNATURE, casl],
+    requiredBlocks: [offer, productContext, demoBlock, EMAIL_SIGNATURE, casl],
+    personalizationClaims: [],
+    verifiedFactIds: [],
+    demoCta: null,
+    approvedGuarantee: offer,
+    personalizationMetadata: null,
   };
 }
 
 // ── PRE-SEND VALIDATION FOR COLD EMAIL ────────────────────────────────────────
-// The guarantee is line one of a commercial promise, so an unresolved merge
+// The guarantee is a commercial promise, so an unresolved merge
 // field is not a cosmetic bug — "…for  in the first 30 days" or a literal
 // {{company}} would be sent as a contractual claim. Every one of these routes
 // to a DRAFT rather than blocking the run, so the lead is preserved for review.
@@ -676,6 +665,9 @@ function validateColdEmail(lead, subject, body, link, assembly = {}) {
     demoIncluded: assembly.demoIncluded !== false,
     cta: assembly.cta || '', personalizationBlocks: assembly.personalizationBlocks || [],
     entityHint: company, requiredBlocks: assembly.requiredBlocks || [],
+    personalizationClaims: assembly.personalizationClaims || [],
+    verifiedFactIds: assembly.verifiedFactIds || [], demoCta: assembly.demoCta || null,
+    approvedGuarantee: assembly.approvedGuarantee || guaranteeFor(company),
   });
   if (!finalValidation.valid) {
     return finalValidation.errors.map(error => `${error.code}: ${error.message}`).join('; ');
@@ -839,13 +831,18 @@ async function buildEmail(lead) {
 
   const openerTier = siteText ? 'SITE' : 'TIER-1';
   const company    = cleanCompanyName(lead.company) || 'your business';
-  const opener     = await generateOpener(lead, siteText)
-    || `I noticed ${company} and wanted to reach out.`;
+  const isDental = nicheFor(lead.tradeType).key === 'dental';
+  const structuredPersonalization = isDental
+    ? buildDentalPersonalization({ ...lead, company }, { siteText })
+    : null;
+  const opener = structuredPersonalization
+    ? structuredPersonalization.personalizationBlocks.join('\n\n')
+    : await generateOpener(lead, siteText) || `I noticed ${company} and wanted to reach out.`;
 
   const pitchTier = lead.tier === 'busy' ? 'busy' : 'medium';
   const link      = buildProposalLink(lead);
 
-  const assembled = buildPitch(lead, opener, link);
+  const assembled = buildPitch(lead, opener, link, structuredPersonalization);
   const { subject, body } = assembled;
 
   return { ...assembled, subject, body, link, opener, openerTier, pitchTier };
@@ -1351,6 +1348,7 @@ async function recordSendActivity(lead, step, sendMeta, sentAt) {
       step: Number(step), trigger: isInitial ? 'cold_sequence_step_1' : 'cold_sequence_follow_up',
       gmailMessageId: messageId, gmailThreadId: threadId,
       templateId: lead.emailTemplateId || '', campaign: lead.campaign || '',
+      personalization: (sendMeta && sendMeta.personalizationMetadata) || null,
     }),
   });
 }
@@ -2611,6 +2609,8 @@ async function run() {
     const {
       subject, body, link, opener, openerTier, pitchTier,
       cta, personalizationBlocks, demoIncluded, requiredBlocks,
+      personalizationClaims, verifiedFactIds, demoCta, approvedGuarantee,
+      personalizationMetadata,
     } = built;
 
     // Validate the exact assembled body in every mode. Dry runs preview this
@@ -2619,6 +2619,7 @@ async function run() {
       ? validateRoofingSurveyInitial({ subject, body })
       : validateColdEmail(lead, subject, body, link, {
         cta, personalizationBlocks, demoIncluded, requiredBlocks,
+        personalizationClaims, verifiedFactIds, demoCta, approvedGuarantee,
       });
     if (invalid) {
       console.error(`✎ [draft] not sending step 1 → ${lead.email} — ${invalid}`);
@@ -2630,6 +2631,9 @@ async function run() {
       }
       continue;
     }
+    const validatedPersonalizationMetadata = personalizationMetadata
+      ? { ...personalizationMetadata, validationStatus: 'valid' }
+      : null;
 
     if (DRY_RUN) {
       const rawCo  = lead.company || '';
@@ -2640,6 +2644,7 @@ async function run() {
       console.log(`   Subject: ${subject}  [variant ${coldSubjectIndex(lead) + 1}/${COLD_SUBJECTS.length}]`);
       console.log(`   Opener:  ${opener}  [${openerTier}]`);
       console.log(`   Link:    ${link}`);
+      if (validatedPersonalizationMetadata) console.log(`   Personalization: ${JSON.stringify(validatedPersonalizationMetadata)}`);
       console.log('   ── FINAL SUBJECT ──');
       console.log(subject);
       console.log('   ── FINAL BODY ──');
@@ -2656,7 +2661,10 @@ async function run() {
 
     try {
       const sendResult = await sendEmail({ to: lead.email.trim(), subject, body });
-      await withAuth(() => markSent(lead, 1, { result: sendResult, subject, body }));
+      await withAuth(() => markSent(lead, 1, {
+        result: sendResult, subject, body,
+        personalizationMetadata: validatedPersonalizationMetadata,
+      }));
       sent++;
       console.log(`✅ Sent (step 1) → ${lead.email}  (${sent}/${total})`);
     } catch (e) {

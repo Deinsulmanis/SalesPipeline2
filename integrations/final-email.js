@@ -121,6 +121,8 @@ function inferredPersonalizationBlocks(body) {
 function validateFinalEmail({
   subject, body, demoUrl = '', proposalBase = '', demoIncluded = Boolean(demoUrl),
   cta = '', personalizationBlocks = [], entityHint = '', requiredBlocks = [],
+  personalizationClaims = [], verifiedFactIds = [], demoCta = null,
+  approvedGuarantee = '',
 }) {
   const errors = [];
   const finalSubject = normalizeBlock(subject);
@@ -137,6 +139,15 @@ function validateFinalEmail({
     if (required && !finalBody.includes(normalizeBlock(required))) add('missing_component', 'a required email component is missing');
   }
 
+  if (approvedGuarantee) {
+    const exact = normalizeBlock(approvedGuarantee);
+    if (countOccurrences(finalBody, exact) !== 1) add('guarantee_count', 'approved guarantee must appear exactly once');
+    const outsideGuarantee = finalBody.replace(exact, '');
+    if (/\b\d+\s+new[- ]patient appointments?\b|\b(?:guarantee|don['’]?t pay|do not pay|no charge)\b/i.test(outsideGuarantee)) {
+      add('offer_conflict', 'copy outside the approved guarantee appears to modify or restate the commercial promise');
+    }
+  }
+
   const urls = finalBody.match(URL_PATTERN) || [];
   if (demoIncluded) {
     if (!demoUrl) add('missing_demo_url', 'demo state is present but the structured URL is empty');
@@ -151,11 +162,35 @@ function validateFinalEmail({
 
   if (cta && countOccurrences(finalBody, normalizeBlock(cta)) !== 1) add('cta_count', 'canonical CTA must appear exactly once');
 
+  if (demoCta) {
+    const demoText = normalizeBlock(demoCta.text);
+    if (!demoText || countOccurrences(finalBody, demoText) !== 1) add('demo_cta_count', 'selected demo CTA must appear exactly once');
+    if (demoCta.capabilityId !== 'generic_listen' && (!demoCta.capabilityConfirmed || !demoCta.capabilityEvidence)) {
+      add('unsupported_demo_capability', 'practice-specific demo CTA is not backed by a confirmed demo capability');
+    }
+  }
+
   const supplied = (personalizationBlocks || []).map(item => typeof item === 'string' ? { text: item } : item);
   const candidates = supplied.length ? supplied : inferredPersonalizationBlocks(finalBody).map(text => ({ text }));
   if (dedupePersonalizationBlocks(candidates, { entityHint }).length !== candidates.filter(x => normalizeBlock(x.text)).length) {
     add('duplicate_personalization', 'email contains repeated personalization for the same fact');
   }
+
+  const verified = new Set(verifiedFactIds || []);
+  const claimFactIds = [];
+  for (const claim of personalizationClaims || []) {
+    const claimText = normalizeBlock(claim.text);
+    if (!claim.supported || !claim.factId || !verified.has(claim.factId)) {
+      add('unsupported_personalization', 'personalization claim does not map to a verified fact');
+      continue;
+    }
+    if (!claim.evidence || !claim.evidence.field || !normalizeBlock(claim.evidence.snippet)) {
+      add('missing_personalization_evidence', 'verified personalization claim is missing source evidence');
+    }
+    if (!claimText || !finalBody.includes(claimText)) add('personalization_claim_missing', 'validated personalization claim is missing from the final body');
+    claimFactIds.push(claim.factId);
+  }
+  if (new Set(claimFactIds).size !== claimFactIds.length) add('duplicate_personalization_fact', 'the same verified fact is used more than once');
 
   return { valid: errors.length === 0, errors, subject: finalSubject, body: finalBody };
 }

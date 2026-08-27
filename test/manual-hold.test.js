@@ -307,7 +307,16 @@ test('a successful step-1 send records initial_email_sent with safe metadata', a
   const { recordSendActivity, logged } = sendActivity();
   await recordSendActivity(
     { id: 'lead1', email: 'a@example.test', company: 'Galaxy Dental', campaign: 'Surrey Dentists', emailTemplateId: 'dental-guarantee-v1' },
-    1, { result: { data: { id: 'msg-123', threadId: 'thr-9' } }, subject: 'A guarantee for Galaxy Dental', body: 'Hi there,\n\nExact final body.' },
+    1, {
+      result: { data: { id: 'msg-123', threadId: 'thr-9' } },
+      subject: 'A guarantee for Galaxy Dental', body: 'Hi there,\n\nExact final body.',
+      personalizationMetadata: {
+        selectedAngle: 'invisalign', personalizationLevel: 2,
+        evidence: { field: 'siteContext', snippet: 'Offers Invisalign' },
+        demoCapabilityId: 'generic_listen', demoCapabilityConfirmed: true,
+        validationStatus: 'valid',
+      },
+    },
     '2026-08-25T10:00:00Z',
   );
   assert.equal(logged.length, 1);
@@ -323,6 +332,9 @@ test('a successful step-1 send records initial_email_sent with safe metadata', a
   assert.equal(meta.gmailMessageId, 'msg-123');
   assert.equal(meta.gmailThreadId, 'thr-9');
   assert.equal(meta.trigger, 'cold_sequence_step_1');
+  assert.equal(meta.personalization.selectedAngle, 'invisalign');
+  assert.equal(meta.personalization.personalizationLevel, 2);
+  assert.equal(meta.personalization.validationStatus, 'valid');
   // no secrets or provider internals
   const blob = JSON.stringify(e).toLowerCase();
   for (const banned of ['token', 'apikey', 'api_key', 'secret', 'refresh', 'credential', 'authorization']) {
