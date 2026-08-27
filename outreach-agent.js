@@ -64,6 +64,13 @@ const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrat
 const { routedLeadReady } = require('./integrations/campaign-routing');
 const { findOriginalSentThread } = require('./integrations/gmail-threading');
 const {
+  assembleFinalEmail,
+  splitPersonalization,
+  dedupePersonalizationBlocks,
+  canonicalCta,
+  validateFinalEmail,
+} = require('./integrations/final-email');
+const {
   COLD_CALL_ACTIVITY_SHEET,
   COLD_CALL_ACTIVITY_HEADER,
   COLD_CALL_STAGE_IDS,
@@ -615,32 +622,29 @@ function buildPitch(lead, opener, link) {
   const company = cleanCompanyName(lead.company) || '';
   const niche   = nicheFor(lead.tradeType);
 
+  const offer = guaranteeFor(company);
+  const productContext = `I build the receptionist with ${company}'s actual ${niche.booking} and services, so when a ${niche.person.replace(/s$/, '')} calls it already sounds like it works there. It never touches your real phone line, so there's nothing to switch over to try it.`;
   const casl = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply with\n"unsubscribe" and I'll remove you immediately — no hard feelings.  ·  Ref: SL-${refCode(lead)}`;
-
-  // Cold CTA is reply-to-book. The Calendly link stays warm-only and must not
-  // appear here (booking.js is deliberately not imported by this file's cold path).
-  const closing = type === 'owner'
-    ? `Worth a look? Reply and I'll send it over.`
-    : `Worth a look? Reply and I'll send it over — and if bookings aren't your area, feel free to forward this to whoever handles them.`;
+  const personalizationBlocks = dedupePersonalizationBlocks(
+    splitPersonalization(opener).map(text => ({ text, sourceField: 'siteContext' })),
+    { entityHint: company },
+  );
+  const demoIncluded = Boolean(link);
+  const cta = canonicalCta({ demoIncluded, recipientType: type });
+  const demoBlock = demoIncluded
+    ? `→ Here's one I already built, so you can hear it:\n${link}`
+    : '';
 
   return {
     subject: coldSubjectFor(lead, company),
-    body:
-`Hi ${name},
-
-${guaranteeFor(company)}
-
-${opener}
-
-I build the receptionist with ${company}'s actual ${niche.booking} and services, so when a ${niche.person.replace(/s$/, '')} calls it already sounds like it works there. It never touches your real phone line, so there's nothing to switch over to try it.
-
-→ Here's one I already built, so you can hear it: ${link}
-
-${closing}
-
-${EMAIL_SIGNATURE}
-
-${casl}`,
+    body: assembleFinalEmail([
+      `Hi ${name},`, offer, ...personalizationBlocks.map(block => block.text),
+      productContext, demoBlock, cta, EMAIL_SIGNATURE, casl,
+    ]),
+    cta,
+    personalizationBlocks,
+    demoIncluded,
+    requiredBlocks: [offer, productContext, EMAIL_SIGNATURE, casl],
   };
 }
 
@@ -651,7 +655,7 @@ ${casl}`,
 // to a DRAFT rather than blocking the run, so the lead is preserved for review.
 //
 // Returns null when the email is safe to send, or a string reason when it is not.
-function validateColdEmail(lead, subject, body, link) {
+function validateColdEmail(lead, subject, body, link, assembly = {}) {
   const company = cleanCompanyName(lead.company) || '';
 
   // 1. company must have resolved to something real — no empty, no old fallback
@@ -665,6 +669,16 @@ function validateColdEmail(lead, subject, body, link) {
   // 3. the guarantee must be present, character-for-character, for THIS company
   if (!hasIntactGuarantee(body, company)) {
     return 'guarantee sentence missing or altered — refusing to send a modified commercial promise';
+  }
+
+  const finalValidation = validateFinalEmail({
+    subject, body, demoUrl: link, proposalBase: PROPOSAL_BASE,
+    demoIncluded: assembly.demoIncluded !== false,
+    cta: assembly.cta || '', personalizationBlocks: assembly.personalizationBlocks || [],
+    entityHint: company, requiredBlocks: assembly.requiredBlocks || [],
+  });
+  if (!finalValidation.valid) {
+    return finalValidation.errors.map(error => `${error.code}: ${error.message}`).join('; ');
   }
 
   // 4. the proposal link must have actually built into a per-lead URL. A bare
@@ -831,9 +845,10 @@ async function buildEmail(lead) {
   const pitchTier = lead.tier === 'busy' ? 'busy' : 'medium';
   const link      = buildProposalLink(lead);
 
-  const { subject, body } = buildPitch(lead, opener, link);
+  const assembled = buildPitch(lead, opener, link);
+  const { subject, body } = assembled;
 
-  return { subject, body, link, opener, openerTier, pitchTier };
+  return { ...assembled, subject, body, link, opener, openerTier, pitchTier };
 }
 
 // RFC 2047 encoded-word for a header value containing non-ASCII characters
@@ -1331,7 +1346,7 @@ async function recordSendActivity(lead, step, sendMeta, sentAt) {
     eventType: isInitial ? 'initial_email_sent' : 'follow_up_sent',
     occurredAt: sentAt,
     subject: String((sendMeta && sendMeta.subject) || '').slice(0, 500),
-    content: '',
+    content: String((sendMeta && sendMeta.body) || ''),
     metadata: JSON.stringify({
       step: Number(step), trigger: isInitial ? 'cold_sequence_step_1' : 'cold_sequence_follow_up',
       gmailMessageId: messageId, gmailThreadId: threadId,
@@ -2593,7 +2608,28 @@ async function run() {
       }));
       continue;
     }
-    const { subject, body, link, opener, openerTier, pitchTier } = built;
+    const {
+      subject, body, link, opener, openerTier, pitchTier,
+      cta, personalizationBlocks, demoIncluded, requiredBlocks,
+    } = built;
+
+    // Validate the exact assembled body in every mode. Dry runs preview this
+    // same normalized value; live runs fail closed and preserve the lead.
+    const invalid = lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE
+      ? validateRoofingSurveyInitial({ subject, body })
+      : validateColdEmail(lead, subject, body, link, {
+        cta, personalizationBlocks, demoIncluded, requiredBlocks,
+      });
+    if (invalid) {
+      console.error(`✎ [draft] not sending step 1 → ${lead.email} — ${invalid}`);
+      if (!DRY_RUN) {
+        await withAuth(() => queueDraft(lead, {
+          mode: 'draft', body, confidence: 0,
+          reason: `cold email failed validation: ${invalid}`,
+        }));
+      }
+      continue;
+    }
 
     if (DRY_RUN) {
       const rawCo  = lead.company || '';
@@ -2603,22 +2639,12 @@ async function run() {
       console.log(`   Pitch:   ${pitchTier}`);
       console.log(`   Subject: ${subject}  [variant ${coldSubjectIndex(lead) + 1}/${COLD_SUBJECTS.length}]`);
       console.log(`   Opener:  ${opener}  [${openerTier}]`);
-      console.log(`   Link:    ${link}\n`);
-      continue;
-    }
-
-    // Personalization + guarantee gate. Runs BEFORE the kill switch so a
-    // dry/gated run still surfaces bad merges, and before any send so a
-    // malformed guarantee can never leave the building.
-    const invalid = lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE
-      ? validateRoofingSurveyInitial({ subject, body })
-      : validateColdEmail(lead, subject, body, link);
-    if (invalid) {
-      console.error(`✎ [draft] not sending step 1 → ${lead.email} — ${invalid}`);
-      await withAuth(() => queueDraft(lead, {
-        mode: 'draft', body, confidence: 0,
-        reason: `cold email failed validation: ${invalid}`,
-      }));
+      console.log(`   Link:    ${link}`);
+      console.log('   ── FINAL SUBJECT ──');
+      console.log(subject);
+      console.log('   ── FINAL BODY ──');
+      console.log(body);
+      console.log('   ── END FINAL EMAIL ──\n');
       continue;
     }
 
@@ -2630,7 +2656,7 @@ async function run() {
 
     try {
       const sendResult = await sendEmail({ to: lead.email.trim(), subject, body });
-      await withAuth(() => markSent(lead, 1, { result: sendResult, subject }));
+      await withAuth(() => markSent(lead, 1, { result: sendResult, subject, body }));
       sent++;
       console.log(`✅ Sent (step 1) → ${lead.email}  (${sent}/${total})`);
     } catch (e) {
@@ -2676,7 +2702,7 @@ async function run() {
 
     try {
       const sendResult = await sendEmail({ to: lead.email.trim(), subject, body });
-      await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject }));
+      await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject, body }));
       await withAuth(() => appendOpenTriggeredNote(lead));
       sent++;
       console.log(`✅ Sent (warm) → ${lead.email}  (${sent}/${total})`);
@@ -2727,7 +2753,7 @@ async function run() {
 
     try {
       const sendResult = await sendEmail({ to: lead.email.trim(), subject, body });
-      await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject }));
+      await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject, body }));
       sent++;
       console.log(`✅ Sent (step ${nextStepNum}) → ${lead.email}  (${sent}/${total})`);
     } catch (e) {

@@ -307,7 +307,7 @@ test('a successful step-1 send records initial_email_sent with safe metadata', a
   const { recordSendActivity, logged } = sendActivity();
   await recordSendActivity(
     { id: 'lead1', email: 'a@example.test', company: 'Galaxy Dental', campaign: 'Surrey Dentists', emailTemplateId: 'dental-guarantee-v1' },
-    1, { result: { data: { id: 'msg-123', threadId: 'thr-9' } }, subject: 'A guarantee for Galaxy Dental' },
+    1, { result: { data: { id: 'msg-123', threadId: 'thr-9' } }, subject: 'A guarantee for Galaxy Dental', body: 'Hi there,\n\nExact final body.' },
     '2026-08-25T10:00:00Z',
   );
   assert.equal(logged.length, 1);
@@ -317,6 +317,7 @@ test('a successful step-1 send records initial_email_sent with safe metadata', a
   assert.equal(e.sourceLeadId, 'lead1');
   assert.equal(e.occurredAt, '2026-08-25T10:00:00Z');
   assert.equal(e.subject, 'A guarantee for Galaxy Dental');
+  assert.equal(e.content, 'Hi there,\n\nExact final body.');
   const meta = JSON.parse(e.metadata);
   assert.equal(meta.step, 1);
   assert.equal(meta.gmailMessageId, 'msg-123');
