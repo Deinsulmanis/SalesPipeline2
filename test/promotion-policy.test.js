@@ -191,7 +191,9 @@ test('the twin-count guard is supplied on EVERY promotion path, not just the ser
   }
   assert.match(agent, /function coldEmailTwinCount\(allLeads, email\)/);
   // The server paths already supplied it and must keep doing so.
-  assert.equal((server.match(/coldEmailTwinCount:/g) || []).length, 2);
+  // Manual promotion, Master Outreach promotion, and Calendar booking all
+  // resolve duplicate twins through the same fail-closed policy.
+  assert.equal((server.match(/coldEmailTwinCount:/g) || []).length, 3);
 });
 
 // ── 18–24. Idempotency, manual promotion, validation ────────────────────────

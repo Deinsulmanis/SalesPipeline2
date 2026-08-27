@@ -147,8 +147,8 @@ test('28. the gate lives in suppressionReason, which every send loop calls', () 
 });
 
 test('10. no reactivation code path can send', () => {
-  const start = serverSrc.indexOf('// ── REACTIVATION ─');
-  const block = serverSrc.slice(start, serverSrc.indexOf("// ── CALL LIFECYCLE ─"));
+  const start = serverSrc.indexOf("app.post('/api/leads/:id/reactivate'");
+  const block = serverSrc.slice(start, serverSrc.indexOf("app.post('/api/leads/:id/human-response'"));
   assert.ok(!/sendEmail|nodemailer|transporter|gmail\(/i.test(block), 'no send path in reactivation');
   const uiStart = browser.indexOf('// ── REACTIVATION ─');
   const ui = browser.slice(uiStart, browser.indexOf('function closeReactivateModal'));
@@ -161,16 +161,16 @@ test('10. no reactivation code path can send', () => {
 // The slice ends at the next route deliberately: these assertions are about the
 // reactivation endpoints only, and a neighbouring route's writes are not theirs.
 test('11/12/13. the step and send history are never rewritten', () => {
-  const start = serverSrc.indexOf('// ── REACTIVATION ─');
-  const block = serverSrc.slice(start, serverSrc.indexOf("// ── CALL LIFECYCLE ─"));
+  const start = serverSrc.indexOf("app.post('/api/leads/:id/reactivate'");
+  const block = serverSrc.slice(start, serverSrc.indexOf("app.post('/api/leads/:id/human-response'"));
   // The only cell reactivation writes is the notes column — step and timestamp
   // are read for display and audit, and no write targets them.
-  assert.match(block, /range: `\$\{CE_SHEET_NAME\}!L\$\{twin\._row\}`/);
-  // Exactly one mutating Sheets call exists in the whole block, and it targets
-  // column L. (A:L also appears, but that is the twins *read*.)
+  assert.match(serverSrc, /range: `\$\{CE_SHEET_NAME\}!L\$\{twin\._row\}`/);
+  assert.match(block, /writeColdEmailNotes\(twin,/);
+  // The route delegates its only state write to the narrow notes helper; no
+  // direct sheet mutation can expand that write to send-history columns.
   const updates = block.match(/values\.(update|append|batchUpdate|clear)\(\{[\s\S]{0,200}?range: `[^`]+`/g) || [];
-  assert.equal(updates.length, 1, 'one mutating call in the reactivation block');
-  assert.match(updates[0], /range: `\$\{CE_SHEET_NAME\}!L\$\{twin\._row\}`/);
+  assert.equal(updates.length, 0, 'reactivation route delegates to the one-cell notes writer');
   assert.ok(!/emailStep:\s*[^,\n}]*(\+|=)/.test(block), 'emailStep is never recomputed into a write');
   // Resuming reads the step; it does not reset it.
   const e = reactivationEligibility(held({ emailStep: '2' }), { now: NOW });

@@ -49,11 +49,11 @@ const { classify: classifyLeadEmail } = require('./check-leads');
 const { annotateOpens, isDatacenterIp } = require('./open-filter');
 // WARM-ONLY booking asset — see booking.js. Imported here for the two intent
 // triggers (question replies, both-audios-played) and NOT by any cold template.
-const { bookingSnippet, pricingDeflection, BOOKING_URL } = require('./booking');
+const { bookingSnippet, pricingDeflection, BOOKING_URL, containsBookingLink } = require('./booking');
 // The only source of truth the reply-answering model may state as fact.
 const { PRODUCT_FACTS, NEVER_AUTO_ANSWER } = require('./product-facts');
 // Fixed commercial promise for the cold email. Deliberately NOT in booking.js:
-// that module is the warm-only Calendly asset and the cold path is guarded
+// that module is the warm-only booking asset and the cold path is guarded
 // against importing it.
 const { guaranteeFor, hasIntactGuarantee } = require('./guarantee');
 const { GmailOutreachProvider } = require('./integrations/outreach-providers');
@@ -761,7 +761,10 @@ function validateColdEmail(lead, subject, body, link, assembly = {}) {
   if (!body.includes(link)) return 'proposal link missing from the body';
 
   // 5. cold email never carries the warm booking asset or a price
-  if (/calendly\.com/i.test(body)) return 'cold email contains the warm-only booking link';
+  // Checked against the CONFIGURED link, not a provider name: the old
+  // /calendly\.com/ test would have silently stopped guarding anything the
+  // moment the booking link moved to Google Calendar.
+  if (containsBookingLink(body)) return 'cold email contains the warm-only booking link';
   if (/\$\s?\d|\bper month\b|\bpricing\b/i.test(body)) return 'cold email appears to contain pricing';
 
   return null;

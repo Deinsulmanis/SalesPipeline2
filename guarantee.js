@@ -8,7 +8,7 @@
  * re-state any of it. Same lock as pricing: the model has no path to producing
  * this text, because the text is assembled here and only checked afterwards.
  *
- * Why this is NOT in booking.js: booking.js is the warm-only Calendly asset and
+ * Why this is NOT in booking.js: booking.js is the warm-only booking asset and
  * the cold templates are guarded against importing it. The guarantee belongs in
  * the COLD email, so it needs its own home or that guard would have to be
  * weakened.

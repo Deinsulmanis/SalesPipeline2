@@ -33,6 +33,12 @@ const {
 const { buildActivityTimeline, inspectActivityIntegrity } = require('./integrations/activity-timeline');
 const { PROMOTION_TRIGGER, resolvePromotionIdentity, promotionDecision } = require('./integrations/promotion-policy');
 const {
+  classifyCalendarEvent, matchBookingIdentity, bookingLifecycleAction,
+  nextSyncState, providerEventKey, runGoogleCalendarSync: orchestrateGoogleCalendarSync,
+  BOOKING_DECISION, PROVIDER: CALENDAR_PROVIDER,
+} = require('./integrations/google-calendar');
+const { BOOKING_URL } = require('./booking');
+const {
   SEQUENCES, SEQUENCE_EVENTS, SEQUENCE_STATUS, evaluateStageSequence,
   buildSequenceEmail, deriveSequenceState, resolveSequenceThread,
 } = require('./integrations/stage-sequences');
@@ -2260,6 +2266,410 @@ app.post('/api/leads/:id/human-response', requireAuth, async (req, res) => {
 // refuses closed_lost without a loss outcome, and PUT writes A:Q while the
 // outcome lives in V. Doing that from the browser would be two requests with a
 // race between them. Here it is one read, one validated batch write.
+// ── GOOGLE CALENDAR BOOKING SYNC ────────────────────────────────────────────
+// Google Calendar is the booking EVENT SOURCE. It feeds the canonical Step 9
+// call lifecycle and the Step 7 promotion policy; it decides nothing itself.
+//
+// Gated separately from sending, because a calendar read is not a send. Default
+// OFF so this ships inert and can be dry-run first.
+const CALENDAR_SYNC_ENABLED = process.env.GOOGLE_CALENDAR_BOOKING_SYNC_ENABLED === 'true';
+const BOOKING_CALENDAR_ID = String(process.env.GOOGLE_BOOKING_CALENDAR_ID || '').trim();
+// Pins bookings to ONE appointment schedule, so a second booking page on the
+// same calendar never feeds this pipeline. The id is Google's
+// extendedProperties.shared["goo.createdByAvailId"]; it is configuration, never
+// source, because it identifies a specific private booking page.
+const BOOKING_APPOINTMENT_SCHEDULE_ID = String(process.env.GOOGLE_BOOKING_APPOINTMENT_SCHEDULE_ID || '').trim();
+
+/**
+ * Is LIVE booking sync actually safe to run? Strict by design: the flag alone is
+ * not enough. Without a pinned appointment schedule the detector would accept a
+ * booking from ANY schedule on the calendar, which is precisely the weakness the
+ * pin exists to close — so a missing pin means "not configured", not "run
+ * loosely".
+ *
+ * Returns a reason instead of a bare false, because a silently inert sync is
+ * exactly the failure mode that hides a misconfiguration.
+ */
+function calendarSyncReadiness() {
+  const missing = [];
+  if (!BOOKING_CALENDAR_ID) missing.push('GOOGLE_BOOKING_CALENDAR_ID');
+  if (!BOOKING_APPOINTMENT_SCHEDULE_ID) missing.push('GOOGLE_BOOKING_APPOINTMENT_SCHEDULE_ID');
+  return {
+    enabled: CALENDAR_SYNC_ENABLED,
+    configured: missing.length === 0,
+    // Live sync needs BOTH the flag and complete configuration.
+    ready: CALENDAR_SYNC_ENABLED && missing.length === 0,
+    missing,
+    schedulePinned: Boolean(BOOKING_APPOINTMENT_SCHEDULE_ID),
+    reason: missing.length
+      ? `booking sync is not configured: ${missing.join(', ')} not set`
+      : (CALENDAR_SYNC_ENABLED ? 'ready' : 'GOOGLE_CALENDAR_BOOKING_SYNC_ENABLED is off'),
+  };
+}
+
+const CALENDAR_SYNC_SHEET = 'CalendarSync';
+const CALENDAR_SYNC_HEADER = ['key', 'value', 'updatedAt'];
+
+// The calendar client is separate from the Sheets client: it needs its own
+// scope, and the service account currently holds only the Sheets scope. Kept
+// behind a function so nothing is constructed (or fails) until sync is enabled.
+function calendarClient() {
+  const auth = new google.auth.GoogleAuth({
+    credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON),
+    scopes: ['https://www.googleapis.com/auth/calendar.readonly'],
+  });
+  return google.calendar({ version: 'v3', auth });
+}
+
+async function readCalendarSyncState() {
+  const rows = await readIntegrationRows(CALENDAR_SYNC_SHEET, CALENDAR_SYNC_HEADER).catch(() => []);
+  const state = {};
+  for (const row of rows) if (row.key) state[row.key] = row.value;
+  if (state.state) {
+    try { return JSON.parse(state.state); } catch (_) { /* legacy rows below */ }
+  }
+  return {
+    syncToken: state.syncToken || null,
+    needsFullSync: state.needsFullSync === 'true',
+    lastSyncAt: state.lastSyncAt || null,
+    lastError: state.lastError || null,
+  };
+}
+
+async function writeCalendarSyncState(state) {
+  await ensureIntegrationSheet(CALENDAR_SYNC_SHEET, CALENDAR_SYNC_HEADER);
+  const now = new Date().toISOString();
+  // One row / one Sheets request: a token can never be updated while the rest
+  // of its checkpoint remains stale after a partial multi-row write.
+  await upsertIntegrationRow(CALENDAR_SYNC_SHEET, CALENDAR_SYNC_HEADER, 'key',
+    { key: 'state', value: JSON.stringify(state), updatedAt: now });
+}
+
+/**
+ * One page-walk of the Calendar API. Returns a result shaped for nextSyncState,
+ * so a failure or an expired token can never advance the checkpoint.
+ *
+ * Injectable so the whole sync can be exercised without network access.
+ */
+async function fetchCalendarChanges({ syncToken, calendarId, listEvents } = {}) {
+  const list = listEvents || (params => calendarClient().events.list(params));
+  const events = [];
+  let pageToken;
+  let nextSyncToken = null;
+  try {
+    do {
+      const params = {
+        calendarId, singleEvents: true, showDeleted: true, maxResults: 250,
+        ...(syncToken ? { syncToken } : { timeMin: new Date(Date.now() - 30 * 86400000).toISOString() }),
+        ...(pageToken ? { pageToken } : {}),
+      };
+      const response = await list(params);
+      const data = response.data || {};
+      events.push(...(data.items || []));
+      pageToken = data.nextPageToken;
+      // The token is only present on the LAST page of a completed walk.
+      nextSyncToken = data.nextSyncToken || nextSyncToken;
+    } while (pageToken);
+    return { ok: true, complete: true, events, nextSyncToken, at: new Date().toISOString() };
+  } catch (error) {
+    // 410 GONE is the documented "your sync token is no longer valid" signal.
+    const status = error && (error.code || error.status);
+    if (Number(status) === 410) {
+      return { ok: true, tokenInvalid: true, events: [], at: new Date().toISOString() };
+    }
+    return { ok: false, error: error.message, events: [], at: new Date().toISOString() };
+  }
+}
+
+/**
+ * Decide what each provider event means for the CRM. PURE with respect to the
+ * CRM: it reads state and returns a plan, writing nothing. The dry run and the
+ * live sync share it, so a preview cannot drift from what would happen.
+ */
+async function planCalendarBookings(events, { dataset, boardLeads, activities }) {
+  const ownerEmails = new Set([String(process.env.FROM_EMAIL || '').toLowerCase().trim()].filter(Boolean));
+  const processed = new Set(activities
+    .filter(row => String(row.eventType || '') === 'call_booked' || String(row.eventType || '').startsWith('meeting_'))
+    .map(row => { try { return JSON.parse(row.metadata || '{}').providerEventKey || ''; } catch (_) { return ''; } })
+    .filter(Boolean));
+  const priorByProviderEvent = new Map();
+  for (const row of activities) {
+    let metadata = {};
+    try { metadata = JSON.parse(row.metadata || '{}'); } catch (_) { continue; }
+    const providerEventId = String(metadata.providerEventId || '').trim();
+    const key = String(metadata.providerEventKey || '');
+    if (!providerEventId || !key || !key.startsWith(`gcal:${providerEventId}:`)) continue;
+    priorByProviderEvent.set(providerEventId, row);
+  }
+
+  const plan = [];
+  for (const raw of events) {
+    const classified = classifyCalendarEvent(raw, {
+      ownerEmails, bookingCalendarId: BOOKING_CALENDAR_ID, calendarId: BOOKING_CALENDAR_ID,
+      appointmentScheduleId: BOOKING_APPOINTMENT_SCHEDULE_ID,
+      // A NEW booking must come from the pinned schedule. A CANCELLATION is
+      // judged before this check ever runs, because Google strips the marker on
+      // delete — cancellations are validated against our own prior record
+      // instead (see eventWasBooked).
+      requireAppointmentScheduleId: true,
+    });
+    if (classified.decision === BOOKING_DECISION.IGNORED) {
+      plan.push({ classified, outcome: 'ignored', reason: classified.reason });
+      continue;
+    }
+    // A cancelled event may be stripped down to {id,status}; resolve it ONLY
+    // through our own prior canonical booking event. This is both safer than
+    // attendee matching and the only truthful identity when Google removes the
+    // attendee/marker. A cancellation we never booked remains review-only.
+    let identity;
+    if (classified.decision === BOOKING_DECISION.CANCELLED) {
+      const prior = priorByProviderEvent.get(classified.event.providerEventId);
+      const boardLead = prior && boardLeads.find(row => row.id === prior.leadId);
+      const coldEmailLead = prior && dataset.leads.find(row => row.id === prior.sourceLeadId);
+      identity = boardLead
+        ? { status: 'matched', matchedBy: 'prior_provider_event', boardLead, coldEmailLead: coldEmailLead || null }
+        : { status: 'unmatched', reason: 'this CRM never booked this provider event' };
+    } else {
+      identity = matchBookingIdentity(classified.attendeeEmail, {
+        coldEmailLeads: dataset.leads, boardLeads,
+      });
+    }
+    if (identity.status !== 'matched') {
+      // Never discarded and never invented into a lead — surfaced for a human.
+      plan.push({ classified, outcome: identity.status, reason: identity.reason, identity });
+      continue;
+    }
+    const boardLead = identity.boardLead || null;
+    const action = bookingLifecycleAction(classified, {
+      meetingAt: boardLead ? boardLead.meetingAt : '',
+      processedEventIds: processed,
+    });
+    plan.push({
+      classified, identity, boardLead,
+      outcome: action.action || (action.duplicate ? 'duplicate' : action.unchanged ? 'unchanged' : 'no_action'),
+      action: action.action, meetingAt: action.meetingAt, previousMeetingAt: action.previousMeetingAt,
+      providerEventKey: action.key, reason: action.reason,
+    });
+  }
+  return plan;
+}
+
+async function loadBookingContext() {
+  const dataset = await getOutreachDataset();
+  const boardResponse = await sheets().spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID, range: AGENT_READ_RANGE,
+  });
+  const boardLeads = (boardResponse.data.values || []).slice(1).map(row => {
+    const lead = {};
+    COLUMNS.forEach((col, i) => { lead[col] = row[i] || ''; });
+    lead.meetingAt = row[20] || '';
+    lead.outcome = row[21] || '';
+    return lead;
+  }).filter(lead => lead.id);
+  const activities = await readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER);
+  return { dataset, boardLeads, activities };
+}
+
+/**
+ * Calendar adapter for the existing Step 7 + Step 9 rules. It deliberately
+ * writes only the canonical board cells and canonical lifecycle activity rows;
+ * Google-specific state lives solely in activity metadata.
+ */
+async function applyCalendarPlanItem(item, context) {
+  const action = item.action;
+  if (!['book', 'reschedule', 'cancel'].includes(action)) {
+    return { ok: true, changed: false, leadId: item.boardLead?.id || '' };
+  }
+  const identity = item.identity;
+  const ceLead = identity?.coldEmailLead || null;
+  let boardLead = identity?.boardLead || null;
+  const meetingAt = String(item.meetingAt || '').trim();
+  const previousMeetingAt = String(item.previousMeetingAt || boardLead?.meetingAt || '').trim();
+  const providerId = item.classified?.event?.providerEventId || '';
+  const providerKey = item.providerEventKey || providerEventKey(providerId,
+    action === 'cancel' ? 'cancelled' : meetingAt);
+  const occurredAt = item.classified?.event?.updatedAt || new Date().toISOString();
+  let createdBoard = false;
+
+  // A CE-only booking enters the board exclusively through the shared Step 7
+  // promotion policy. Identity and suppression are rechecked at mutation time.
+  if (!boardLead) {
+    if (action !== 'book' || !ceLead) {
+      return { ok: false, error: 'booking identity no longer maps to a board or Outreach lead' };
+    }
+    const email = normalizeEmail(ceLead.email);
+    const twinCount = context.dataset.leads.filter(row => email && normalizeEmail(row.email) === email).length;
+    const promotionIdentity = resolvePromotionIdentity(ceLead, context.boardLeads, { coldEmailTwinCount: twinCount });
+    const suppressedEmails = await loadSuppressionEmails().catch(() => new Set());
+    const decision = promotionDecision({
+      trigger: PROMOTION_TRIGGER.MEETING_BOOKED, coldEmailLead: ceLead,
+      identity: promotionIdentity, meetingAt, suppressedEmails,
+    });
+    if (!decision.shouldPromote) return { ok: false, error: decision.reason || 'promotion policy blocked booking' };
+
+    if (promotionIdentity.boardLead) {
+      boardLead = promotionIdentity.boardLead;
+    } else {
+      const parts = String(ceLead.contactName || '').trim().split(/\s+/).filter(Boolean);
+      const boardId = `CE-${ceLead.id}`;
+      boardLead = {
+        id: boardId, type: 'trade', first: parts[0] || '', last: parts.slice(1).join(' '),
+        brokerage: '', tradeType: ceLead.tradeType || '', company: ceLead.company || '',
+        city: ceLead.city || '', cityTrade: ceLead.city || '', phone: '', email: ceLead.email || '',
+        website: ceLead.website || '', stage: 'call_booked', priority: 'warm', followup: '',
+        notes: ceLead.notes || '', created: new Date().toISOString(), meetingAt,
+      };
+      // Human-owned stage safety is fail-closed: hold before creating the card.
+      if (stageRequiresHold('call_booked')) await withAuth(() => applyManualHold(boardId, boardLead.email));
+      await withAuth(() => sheets().spreadsheets.values.append({
+        spreadsheetId: SPREADSHEET_ID, range: AGENT_READ_RANGE,
+        valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+        requestBody: { values: [[...COLUMNS.map(field => String(boardLead[field] ?? '')), '', '', '', meetingAt, '', '']] },
+      }));
+      createdBoard = true;
+      context.boardLeads.push(boardLead);
+      const promotionEventId = stableActivityId('pipeline-promotion', [ceLead.id, boardId, 'call_booked', PROMOTION_TRIGGER.MEETING_BOOKED]);
+      if (!context.activities.some(row => row.eventId === promotionEventId)) {
+        const promotionEvent = {
+          eventId: promotionEventId, leadId: boardId, sourceLeadId: ceLead.id,
+          email: boardLead.email, company: boardLead.company, eventType: 'pipeline_promoted',
+          occurredAt, subject: 'Added to Sales Pipeline — call_booked', content: '',
+          metadata: JSON.stringify({ fromStage: '', toStage: 'call_booked', trigger: PROMOTION_TRIGGER.MEETING_BOOKED, provider: CALENDAR_PROVIDER, providerEventKey: providerKey }),
+        };
+        await appendColdCallActivities([promotionEvent]);
+        context.activities.push(promotionEvent);
+      }
+    }
+  }
+
+  const leadId = boardLead.id;
+  const rowNum = await withAuth(() => findRow(leadId));
+  if (!rowNum) return { ok: false, error: 'matched board lead disappeared before Calendar mutation' };
+  const prior = await sheets().spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${rowNum}:W${rowNum}`,
+  });
+  const row = prior.data.values?.[0] || [];
+  const current = { stage: row[12] || '', meetingAt: row[20] || '', outcome: row[21] || '' };
+  const email = row[10] || boardLead.email || '';
+  const company = row[6] || row[4] || boardLead.company || '';
+  const activities = context.activities.filter(a => a.leadId === leadId
+    || (email && normalizeEmail(a.email) === normalizeEmail(email)));
+  const lifecycle = deriveCallLifecycle(current, { activities });
+  const allowed = callLifecycleActions(lifecycle);
+
+  if (!createdBoard && !allowed[action]) {
+    // A replay after the canonical state already changed is a no-op only when
+    // the provider key is already present. Everything else is a stale conflict.
+    if (activities.some(a => {
+      try { return JSON.parse(a.metadata || '{}').providerEventKey === providerKey; } catch (_) { return false; }
+    })) return { ok: true, changed: false, leadId };
+    return { ok: false, error: `canonical call lifecycle rejects ${action} from ${lifecycle.status}` };
+  }
+  if (action === 'reschedule' && previousMeetingAt
+    && new Date(current.meetingAt).getTime() !== new Date(previousMeetingAt).getTime()) {
+    return { ok: false, error: 'meeting changed after the Calendar plan was created' };
+  }
+
+  if (!createdBoard && (action === 'book' || action === 'reschedule')) {
+    const ms = new Date(meetingAt).getTime();
+    if (!Number.isFinite(ms)) return { ok: false, error: 'Calendar supplied an invalid meeting time' };
+    if (stageRequiresHold('call_booked')) await withAuth(() => applyManualHold(leadId, email));
+    const gate = stageTransitionCheck('call_booked', { meetingAt, outcome: current.outcome });
+    if (!gate.ok) return { ok: false, error: gate.message };
+    await withAuth(() => sheets().spreadsheets.values.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: { valueInputOption: 'RAW', data: [
+        { range: `${SHEET_NAME}!U${rowNum}`, values: [[new Date(ms).toISOString()]] },
+        { range: `${SHEET_NAME}!M${rowNum}`, values: [['call_booked']] },
+      ] },
+    }));
+  }
+
+  const eventType = CALL_ACTION_EVENT[action];
+  const eventId = stableActivityId('calendar-call-lifecycle', [leadId, providerKey]);
+  if (context.activities.some(a => a.eventId === eventId)) return { ok: true, changed: false, leadId };
+  const event = {
+    eventId, leadId, sourceLeadId: ceLead?.id || '', email, company, eventType, occurredAt,
+    subject: action === 'book' ? 'Call booked' : action === 'reschedule' ? 'Call rescheduled' : 'Call cancelled',
+    content: '',
+    metadata: JSON.stringify({
+      meetingAt: action === 'cancel' ? current.meetingAt : new Date(meetingAt).toISOString(),
+      previousMeetingAt: action === 'reschedule' ? previousMeetingAt : '',
+      trigger: 'google_calendar', action, provider: CALENDAR_PROVIDER,
+      providerEventId: providerId, providerEventKey: providerKey,
+      salesOutcomeUnchanged: true,
+    }),
+  };
+  await appendColdCallActivities([event]);
+  context.activities.push(event);
+  return { ok: true, changed: true, leadId };
+}
+
+async function runGoogleCalendarSync() {
+  const readiness = calendarSyncReadiness();
+  return orchestrateGoogleCalendarSync({
+    enabled: readiness.enabled,
+    calendarId: BOOKING_CALENDAR_ID,
+    appointmentScheduleId: BOOKING_APPOINTMENT_SCHEDULE_ID,
+    readState: readCalendarSyncState,
+    fetchChanges: fetchCalendarChanges,
+    loadContext: loadBookingContext,
+    planBookings: planCalendarBookings,
+    applyPlan: applyCalendarPlanItem,
+    writeState: writeCalendarSyncState,
+    logger: console,
+  });
+}
+
+// Read-only preview: what WOULD happen if sync were enabled. Writes nothing —
+// not even the sync checkpoint.
+app.get('/api/integrations/google-calendar/dry-run', requireAuth, async (_req, res) => {
+  try {
+    if (!BOOKING_CALENDAR_ID) {
+      return res.json({
+        ok: false, configured: false, syncEnabled: CALENDAR_SYNC_ENABLED, bookingUrl: BOOKING_URL,
+        error: 'GOOGLE_BOOKING_CALENDAR_ID is not set, so no calendar can be read.',
+      });
+    }
+    const state = await readCalendarSyncState();
+    let result = await fetchCalendarChanges({ syncToken: state.syncToken, calendarId: BOOKING_CALENDAR_ID });
+    if (result.tokenInvalid) {
+      // Dry run mirrors the writer's 410 recovery but deliberately stores no
+      // replacement token or checkpoint.
+      result = await fetchCalendarChanges({ syncToken: null, calendarId: BOOKING_CALENDAR_ID });
+    }
+    if (!result.ok) {
+      return res.json({ ok: false, configured: true, syncEnabled: CALENDAR_SYNC_ENABLED, bookingUrl: BOOKING_URL, error: result.error });
+    }
+    const context = await loadBookingContext();
+    const plan = await planCalendarBookings(result.events, context);
+    const counts = plan.reduce((acc, item) => ({ ...acc, [item.outcome]: (acc[item.outcome] || 0) + 1 }), {});
+    res.json({
+      ok: true, configured: true, syncEnabled: CALENDAR_SYNC_ENABLED, dryRun: true,
+      bookingUrl: BOOKING_URL, calendarId: BOOKING_CALENDAR_ID,
+      appointmentScheduleId: BOOKING_APPOINTMENT_SCHEDULE_ID || null,
+      appointmentSchedulePinned: Boolean(BOOKING_APPOINTMENT_SCHEDULE_ID),
+      readiness: calendarSyncReadiness(),
+      eventsInspected: result.events.length, counts,
+      tokenInvalid: Boolean(result.tokenInvalid),
+      plan: plan.map(item => ({
+        providerEventId: item.classified.event.providerEventId,
+        decision: item.classified.decision,
+        outcome: item.outcome,
+        reason: item.reason,
+        attendeeEmail: item.classified.attendeeEmail || null,
+        meetingAt: item.meetingAt || item.classified.meetingAt || null,
+        previousMeetingAt: item.previousMeetingAt || null,
+        leadId: item.boardLead ? item.boardLead.id : (item.identity && item.identity.coldEmailLead ? item.identity.coldEmailLead.id : null),
+      })),
+    });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Calendar dry-run]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── STAGE SEQUENCES ─────────────────────────────────────────────────────────
 // Enrolment, pause, resume and cancel — plus a dry-run preview. Deliberately
 // NO send path: these routes only move canonical state, and the sending agent
@@ -3537,6 +3947,18 @@ if (process.env.RAILWAY_ENVIRONMENT) {
     timezone: 'America/Vancouver',
   });
   console.log('[cron] Intent backstop scheduled: every 3 minutes');
+
+  // Calendar incremental sync is independently gated. With the flag OFF the
+  // first line of the orchestrator returns before reading Calendar, Sheets, or
+  // checkpoint state. Registering the cadence now therefore cannot activate it.
+  cron.schedule('1,6,11,16,21,26,31,36,41,46,51,56 * * * *', () => {
+    runGoogleCalendarSync()
+      .then(result => {
+        if (!result.skipped) console.log(`[Calendar sync] complete — ${result.mutations || 0} mutation(s)`);
+      })
+      .catch(error => console.error('[Calendar sync] unhandled failure:', error.message));
+  }, { timezone: 'America/Vancouver' });
+  console.log('[cron] Google Calendar booking sync scheduled every 5 minutes (feature-gated)');
 
   // Daily digest — 18:00 America/Vancouver. getOrCreateDigest is idempotent, so
   // a restart, a re-fire, or a dashboard load on the same day all reuse the

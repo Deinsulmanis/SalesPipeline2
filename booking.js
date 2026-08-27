@@ -1,6 +1,6 @@
 'use strict';
 /**
- * booking.js — the Calendly link and its call framing, in ONE place.
+ * booking.js — the booking link and its call framing, in ONE place.
  * ─────────────────────────────────────────────────────────────────────────────
  * ⚠ WARM-ONLY ASSET. This snippet must never appear in cold outreach.
  *
@@ -20,9 +20,29 @@
  * the call rather than name a number.
  */
 
-// Configurable so the link can be rotated without a code change, but with the
-// real link as the default so a missing env var can't silently ship a broken CTA.
-const BOOKING_URL = (process.env.BOOKING_URL || 'https://calendly.com/deins-scalelabai/discovery-call').trim();
+// The scheduling provider is Google Calendar's appointment schedule. Configurable
+// so the link can be rotated without a code change, but with the real link as the
+// default so a missing env var can't silently ship a broken CTA.
+const BOOKING_URL = (process.env.BOOKING_URL || 'https://calendar.app.google/h3X8e3WbBKjPrBoVA').trim();
+
+// The host of whatever booking link is configured. The cold-email validator uses
+// this to keep the warm-only asset out of cold sends: hard-coding a provider
+// domain there would silently become dead the moment the link is rotated, which
+// is exactly what happened when this moved off Calendly.
+function bookingUrlHost() {
+  try { return new URL(BOOKING_URL).host.toLowerCase(); } catch (_) { return ''; }
+}
+
+/**
+ * Is this body carrying the configured booking link? Matches the full URL or its
+ * host, so a shortened or query-decorated variant is still caught.
+ */
+function containsBookingLink(text) {
+  const body = String(text || '');
+  if (BOOKING_URL && body.includes(BOOKING_URL)) return true;
+  const host = bookingUrlHost();
+  return Boolean(host) && body.toLowerCase().includes(host);
+}
 
 /**
  * The call-framing block. Sells the CALL as the payoff — what it will catch for
@@ -50,4 +70,4 @@ function pricingDeflection(cleanedCompany) {
   return `That's exactly what we cover on a quick call — it depends on how ${who} handles calls now, so quoting a number cold would just be a guess.\n\n${bookingSnippet(who)}`;
 }
 
-module.exports = { BOOKING_URL, bookingSnippet, pricingDeflection };
+module.exports = { BOOKING_URL, bookingUrlHost, containsBookingLink, bookingSnippet, pricingDeflection };

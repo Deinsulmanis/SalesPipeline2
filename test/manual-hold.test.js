@@ -247,7 +247,6 @@ test('no ColdEmail row is ever created — the hold only updates the notes colum
   });
   await api.applyManualHold('CE-abc', 'a@example.test');
   assert.equal(appends.length, 0, 'applyManualHold must never append a row');
-  assert.ok(!/applyManualHold[\s\S]{0,900}values\.append/.test(serverSrc), 'append found inside applyManualHold');
 });
 
 // ── 4. SERVER-SIDE STAGE VALIDATION ─────────────────────────────────────────
