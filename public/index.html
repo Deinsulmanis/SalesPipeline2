@@ -2111,8 +2111,10 @@
       <select id="ce-pipeline-stage-filter" aria-label="Sales Pipeline stage" onchange="setCeMasterFilter('pipelineStage',this.value)"><option value="">All pipeline stages</option><option value="follow_up">Follow Up</option><option value="hot">Hot</option><option value="call_booked">Call Booked</option><option value="closed_won">Closed / Won</option><option value="closed_lost">Closed / Lost</option></select>
       <select id="ce-engagement-filter" aria-label="Engagement" onchange="setCeMasterFilter('engagement',this.value)"><option value="">All engagement</option><option value="demo">Demo played</option><option value="warm">Warm</option><option value="none">No demo activity</option></select>
       <select id="ce-sequence-filter" aria-label="Sequence state" onchange="setCeMasterFilter('sequence',this.value)"><option value="">All sequence states</option><option value="active">Active sequence</option><option value="complete">Sequence complete</option><option value="queued">Queued</option><option value="not_started">Not started</option></select>
+      <select id="ce-version-filter" aria-label="Campaign version" onchange="setCeMasterFilter('campaignVersion',this.value)"><option value="">All campaign versions</option></select>
       <button type="button" class="btn-cancel" onclick="clearCeMasterFilters()">Clear filters</button>
     </div>
+    <div id="ce-current-campaign" style="padding:6px 28px 0;font-size:12px;color:var(--text-muted)">Current campaign: loading…</div>
     <div class="ce-quick-views" aria-label="Quick views">
       <button class="ce-quick-view" onclick="applyCeQuickView('attention')">Needs Attention</button>
       <button class="ce-quick-view" onclick="applyCeQuickView('positive')">Positive Replies</button>
@@ -3909,6 +3911,7 @@ let cePipelineStageFilter = '';
 let ceEngagementFilter = '';
 let ceSequenceFilter = '';
 let ceAutomationFilter = '';
+let ceCampaignVersionFilter = '';
 let _pendingCsvRows  = null;
 let queueRouteIds = [];
 let outreachRoutingOptions = null;
@@ -3934,6 +3937,7 @@ function setCeMasterFilter(kind, value) {
   if (kind === 'pipelineStage') cePipelineStageFilter = value;
   if (kind === 'engagement') ceEngagementFilter = value;
   if (kind === 'sequence') ceSequenceFilter = value;
+  if (kind === 'campaignVersion') ceCampaignVersionFilter = value;
   ceSelected.clear(); updateBulkQueueBtn(); reloadCePage();
 }
 
@@ -3941,7 +3945,7 @@ function syncCeMasterFilters() {
   const values = {
     'ce-reply-filter': ceReplyCategoryFilter, 'ce-pipeline-filter': cePipelinePresenceFilter,
     'ce-pipeline-stage-filter': cePipelineStageFilter, 'ce-engagement-filter': ceEngagementFilter,
-    'ce-sequence-filter': ceSequenceFilter,
+    'ce-sequence-filter': ceSequenceFilter, 'ce-version-filter': ceCampaignVersionFilter,
   };
   for (const [id, value] of Object.entries(values)) { const el = document.getElementById(id); if (el) el.value = value; }
 }
@@ -3949,6 +3953,7 @@ function syncCeMasterFilters() {
 function clearCeMasterFilters(shouldReload = true) {
   ceReplyCategoryFilter = cePipelinePresenceFilter = cePipelineStageFilter = '';
   ceEngagementFilter = ceSequenceFilter = ceAutomationFilter = '';
+  ceCampaignVersionFilter = '';
   syncCeMasterFilters(); if (shouldReload) reloadCePage();
 }
 
@@ -4124,6 +4129,10 @@ function renderPipelineState(pipeline) {
       <div class="pipeline-row">
         <span class="pipeline-row-label">Derived from</span>
         <span class="pipeline-row-val"><small>${esc(next.source || 'none')}</small></span>
+      </div>
+      <div class="pipeline-row">
+        <span class="pipeline-row-label">Acquired via</span>
+        <span class="pipeline-row-val"><small>${esc(pipeline.acquisition?.campaignVersion || 'legacy_unknown')}</small></span>
       </div>
       ${hotDrawerRows(next)}
       ${callDrawerRows(next)}
@@ -4784,6 +4793,7 @@ function ceQuery(extra = {}) {
   if (ceEngagementFilter) params.set('engagement', ceEngagementFilter);
   if (ceSequenceFilter) params.set('sequenceState', ceSequenceFilter);
   if (ceAutomationFilter) params.set('automationState', ceAutomationFilter);
+  if (ceCampaignVersionFilter) params.set('campaignVersion', ceCampaignVersionFilter);
   params.set('limit', String(CE_PAGE_SIZE));
   params.set('offset', String(extra.offset || 0));
   if (extra.refresh) params.set('refresh', '1');
@@ -4829,11 +4839,12 @@ async function loadCeLeads() {
   try {
     ceLoading = true;
     renderCeTable();
-    const [ceResp, opensResp, demoResp, statsResp] = await Promise.all([
+    const [ceResp, opensResp, demoResp, statsResp, versionsResp] = await Promise.all([
       fetch('/api/coldemail?' + ceQuery()),
       fetch('/api/proposalOpens'),
       fetch('/api/demoPlays'),
       fetch('/api/coldemail/stats'),
+      fetch('/api/campaign-versions'),
     ]);
     if (!ceResp.ok) { showToast('Could not load cold email leads: ' + ceResp.status, 'error'); return; }
     const cePage = await ceResp.json();
@@ -4841,6 +4852,15 @@ async function loadCeLeads() {
     ceTotal     = cePage.total || 0;
     ceHasMore   = Boolean(cePage.hasMore);
     ceFacets    = cePage.facets || ceFacets;
+    if (versionsResp.ok) {
+      const registry = await versionsResp.json();
+      const current = registry.active?.dental_ai_receptionist || '—';
+      document.getElementById('ce-current-campaign').textContent = `Current campaign: ${current}`;
+      const select = document.getElementById('ce-version-filter');
+      select.innerHTML = '<option value="">All campaign versions</option>' + Object.keys(registry.versions || {}).concat(['legacy_unknown'])
+        .map(id => `<option value="${escAttr(id)}">${esc(id)}</option>`).join('');
+      select.value = ceCampaignVersionFilter;
+    }
     ceFetchedAt = cePage.fetchedAt || null;
     ceAllLeads  = null;
     ceOpensData = opensResp.ok ? await opensResp.json() : [];
@@ -5622,7 +5642,8 @@ async function openReplyDrill(category = 'all') {
     try {
       // Fetch the full canonical set once, then switch categories client-side.
       // Only replying leads cross the wire, never the whole lead table.
-      const resp = await fetch('/api/coldemail/replies?category=all');
+      const version = ceCampaignVersionFilter ? `&campaignVersion=${encodeURIComponent(ceCampaignVersionFilter)}` : '';
+      const resp = await fetch('/api/coldemail/replies?category=all' + version);
       rdRecords = resp.ok ? ((await resp.json()).records || []) : [];
     } catch (_) { rdRecords = []; }
     rdLoading = false;
@@ -5896,6 +5917,7 @@ function openCeDetail(id) {
     lead.rating        && { label: 'Rating',       val: `${esc(lead.rating)} ★` },
     lead.reviewCount   && { label: 'Reviews',      val: esc(lead.reviewCount) },
     lead.campaign      && { label: 'Campaign',     val: esc(lead.campaign) },
+    lead.campaignVersion && { label: 'Campaign Version', val: esc(lead.campaignVersion) },
     (lead.leadNiche || lead.tradeType) && { label: 'Lead Type', val: esc(normalizedRouteNiche(lead) || lead.tradeType) },
     lead.senderInboxId && { label: 'Sending Inbox', val: esc(lead.senderInboxId === 'primary' ? 'Current Gmail inbox' : lead.senderInboxId) },
     lead.emailTemplateId && { label: 'Email Copy', val: esc(lead.emailTemplateId) },

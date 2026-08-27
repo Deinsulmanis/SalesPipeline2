@@ -209,7 +209,7 @@ test('the replies endpoint is read-only, authenticated, and category-filtered', 
 });
 
 test('drill-down reuses canonical records instead of reclassifying in the browser', () => {
-  assert.match(browser, /fetch\('\/api\/coldemail\/replies\?category=all'\)/);
+  assert.match(browser, /fetch\('\/api\/coldemail\/replies\?category=all' \+ version\)/);
   // No second category mapping in the browser: rows carry the server's category.
   assert.ok(!/INTERESTED|MEETING_REQUEST|NOT_INTERESTED/.test(browser.slice(
     browser.indexOf('function openReplyDrill'), browser.indexOf('function renderReplyDrill'))));

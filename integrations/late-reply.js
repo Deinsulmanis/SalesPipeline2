@@ -1,5 +1,7 @@
 'use strict';
 
+const { attributionFromActivity, LEGACY_UNKNOWN } = require('./campaign-versions');
+
 const DEFAULT_LATE_REPLY_LOOKBACK_DAYS = 60;
 const DEFAULT_LATE_REPLY_BATCH_LIMIT = 75;
 const OUTBOUND_EVENT_TYPES = new Set(['initial_email_sent', 'follow_up_sent']);
@@ -55,7 +57,9 @@ function latestOutboundReferences(activities = []) {
     if (!leadId || !threadId || !messageId) continue;
     const occurredAt = String(row.occurredAt || '');
     const current = refs.get(leadId);
-    if (!current || occurredAt > current.occurredAt) refs.set(leadId, { threadId, messageId, occurredAt });
+    if (!current || occurredAt > current.occurredAt) refs.set(leadId, {
+      threadId, messageId, occurredAt, attribution: attributionFromActivity(row),
+    });
   }
   return refs;
 }
@@ -120,7 +124,7 @@ function lateReplyNotes(notes, classification) {
   return prependUniqueNote(prependUniqueNote(notes, canonical), `[LATE REPLY: ${label}]`);
 }
 
-function buildLateReplyActivity(lead, message, classification) {
+function buildLateReplyActivity(lead, message, classification, outbound = null) {
   const messageId = String(message.messageId || '').trim();
   return {
     eventId: lateReplyEventId(messageId),
@@ -141,11 +145,12 @@ function buildLateReplyActivity(lead, message, classification) {
       detectedAfterSequence: true,
       priorEmailStatus: String(lead.emailStatus || ''),
       requiresHumanAttention: classification !== 'OUT_OF_OFFICE',
+      replyTouch: outbound?.attribution || { campaignVersion: LEGACY_UNKNOWN },
     }),
   };
 }
 
-async function processLateReply({ lead, message, classify, existingEventIds, writeNotes, addSuppression, recordActivity }) {
+async function processLateReply({ lead, message, outbound, classify, existingEventIds, writeNotes, addSuppression, recordActivity }) {
   if (!lead || !message?.messageId) return { status: 'invalid' };
   const eventId = lateReplyEventId(message.messageId);
   if (existingEventIds.has(eventId)) {
@@ -166,7 +171,7 @@ async function processLateReply({ lead, message, classify, existingEventIds, wri
   await writeNotes(lead, notes);
   lead.notes = notes;
 
-  const activity = buildLateReplyActivity(lead, message, safeClassification);
+  const activity = buildLateReplyActivity(lead, message, safeClassification, outbound);
   await recordActivity(activity);
   existingEventIds.add(eventId);
   if (safeClassification === 'UNSUBSCRIBE') await addSuppression(lead);

@@ -33,6 +33,10 @@ const {
 const { buildActivityTimeline, inspectActivityIntegrity } = require('./integrations/activity-timeline');
 const { PROMOTION_TRIGGER, resolvePromotionIdentity, promotionDecision } = require('./integrations/promotion-policy');
 const {
+  LEGACY_UNKNOWN, CAMPAIGN_VERSIONS, ACTIVE_CAMPAIGN_VERSION,
+  buildCampaignVersionIndex, latestSendAttribution, acquisitionAttribution, promotionAttribution, coldSendAttribution,
+} = require('./integrations/campaign-versions');
+const {
   classifyCalendarEvent, matchBookingIdentity, bookingLifecycleAction,
   nextSyncState, providerEventKey, runGoogleCalendarSync: orchestrateGoogleCalendarSync,
   BOOKING_DECISION, PROVIDER: CALENDAR_PROVIDER,
@@ -1072,7 +1076,7 @@ function campaignLabelFor(lead) {
 // campaign_notes and website: they are ~70% of the old payload and no column
 // renders them. The two facts the UI DID read out of notes are precomputed
 // here as flags instead.
-function toLightRow(lead, category) {
+function toLightRow(lead, category, attribution = {}) {
   const row = {};
   for (const field of CE_LIGHT_FIELDS) row[field] = lead[field] || '';
   row.replyCategory = category || '';
@@ -1080,6 +1084,8 @@ function toLightRow(lead, category) {
   row.bounced = /\[BOUNCED/i.test(lead.notes || '');
   row.manualHold = /\[MANUAL HOLD\]/i.test(lead.notes || '');
   row.suppressed = row.bounced || /\[(?:UNSUBSCRIBED|SUPPRESSED|BOUNCED)/i.test(lead.notes || '') || /^(?:Unsub|Unsubscribed)$/i.test(lead.stage || '');
+  row.campaignVersion = attribution.campaignVersion || LEGACY_UNKNOWN;
+  row.campaignFamily = attribution.campaignFamily || '';
   return row;
 }
 
@@ -1175,9 +1181,10 @@ async function loadOutreachDataset() {
     evidenceByLeadId: buildReplyEvidenceMap(activities),
   });
   const categoryByLeadId = new Map(replyRecords.map(record => [record.leadId, record.category]));
+  const campaignVersionByLeadId = buildCampaignVersionIndex(leads, activities);
 
   const counts = { queued: 0, emailed: 0, replied: metrics.totalReplies, done: 0 };
-  const facets = { stages: {}, niches: {}, campaigns: {} };
+  const facets = { stages: {}, niches: {}, campaigns: {}, campaignVersions: {} };
   const leadKeys = new Set();
   const demoCompanyKeys = new Set((demoResponse.data.values || []).slice(1).map(row => openKey(row[1])).filter(Boolean));
   const realOpenCounts = new Map();
@@ -1193,7 +1200,9 @@ async function loadOutreachDataset() {
     facets.campaigns[campaign] = (facets.campaigns[campaign] || 0) + 1;
     const companyKey = openKey(lead.company);
     if (companyKey) leadKeys.add(companyKey);
-    const row = toLightRow(lead, categoryByLeadId.get(lead.id));
+    const attribution = campaignVersionByLeadId.get(lead.id) || { campaignVersion: LEGACY_UNKNOWN };
+    facets.campaignVersions[attribution.campaignVersion] = (facets.campaignVersions[attribution.campaignVersion] || 0) + 1;
+    const row = toLightRow(lead, categoryByLeadId.get(lead.id), attribution);
     Object.assign(row, pipelineIndex.byColdEmailId.get(lead.id));
     row.demoEngaged = demoCompanyKeys.has(openKey(lead.company));
     row.sequenceState = outreachSequenceState(lead);
@@ -1298,6 +1307,7 @@ const MAX_CE_PAGE = 500;
 function filterOutreachRows(rows, query) {
   const stage = String(query.stage || 'all');
   const campaign = String(query.campaign || '').trim();
+  const campaignVersion = String(query.campaignVersion || '').trim();
   const niche = String(query.niche || 'all');
   const category = String(query.replyCategory || '').trim().toLowerCase();
   const pipelinePresence = String(query.pipelinePresence || '').trim().toLowerCase();
@@ -1315,6 +1325,7 @@ function filterOutreachRows(rows, query) {
       else if (row.stage !== stage) return false;
     }
     if (campaign && campaignLabelFor(row) !== campaign) return false;
+    if (campaignVersion && campaignVersion !== 'all' && row.campaignVersion !== campaignVersion) return false;
     if (niche !== 'all' && normalizedRouteNicheFor(row) !== niche) return false;
     if (category === 'none') { if (row.replyCategory) return false; }
     else if (category && category !== 'all' && row.replyCategory !== category) return false;
@@ -1363,6 +1374,10 @@ app.get('/api/coldemail', requireAuth, async (req, res) => {
     console.error('[ColdEmail GET]', e.message);
     res.status(500).json({ error: e.message });
   }
+});
+
+app.get('/api/campaign-versions', requireAuth, (req, res) => {
+  res.json({ active: ACTIVE_CAMPAIGN_VERSION, versions: CAMPAIGN_VERSIONS });
 });
 
 // The DemoPlays header was written before audio_type existed, so it still reads
@@ -1940,6 +1955,7 @@ app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
         automation: deriveAutomationState(twin),
         conflict: automationConflict(lead, twin),
         nextAction: deriveNextAction(lead, twin, { activities }),
+        acquisition: acquisitionAttribution(activities),
         reopen: reopenEligibility(lead, twin),
         twin: twin ? { id: twin.id, emailStatus: twin.emailStatus, emailStep: twin.emailStep, lastEmailedAt: twin.lastEmailedAt } : null,
       };
@@ -2530,11 +2546,12 @@ async function applyCalendarPlanItem(item, context) {
       context.boardLeads.push(boardLead);
       const promotionEventId = stableActivityId('pipeline-promotion', [ceLead.id, boardId, 'call_booked', PROMOTION_TRIGGER.MEETING_BOOKED]);
       if (!context.activities.some(row => row.eventId === promotionEventId)) {
+        const acquisition = latestSendAttribution(context.activities.filter(row => row.sourceLeadId === ceLead.id || row.leadId === `CE-${ceLead.id}`));
         const promotionEvent = {
           eventId: promotionEventId, leadId: boardId, sourceLeadId: ceLead.id,
           email: boardLead.email, company: boardLead.company, eventType: 'pipeline_promoted',
           occurredAt, subject: 'Added to Sales Pipeline — call_booked', content: '',
-          metadata: JSON.stringify({ fromStage: '', toStage: 'call_booked', trigger: PROMOTION_TRIGGER.MEETING_BOOKED, provider: CALENDAR_PROVIDER, providerEventKey: providerKey }),
+          metadata: JSON.stringify({ fromStage: '', toStage: 'call_booked', trigger: PROMOTION_TRIGGER.MEETING_BOOKED, provider: CALENDAR_PROVIDER, providerEventKey: providerKey, ...promotionAttribution(acquisition) }),
         };
         await appendColdCallActivities([promotionEvent]);
         context.activities.push(promotionEvent);
@@ -3235,10 +3252,11 @@ app.get('/api/coldemail/replies', requireAuth, async (req, res) => {
     const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
     const category = String(req.query.category || 'all');
     const rowById = new Map(dataset.rows.map(row => [row.id, row]));
+    const campaignVersion = String(req.query.campaignVersion || '').trim();
     const records = filterReplyRecords(dataset.replyRecords, category).map(record => {
       const row = rowById.get(record.leadId) || {};
-      return { ...record, pipelinePresence: Boolean(row.pipelinePresence), pipelineStage: row.pipelineStage || '', mappingStatus: row.mappingStatus || 'not_in_pipeline' };
-    });
+      return { ...record, campaignVersion: row.campaignVersion || LEGACY_UNKNOWN, pipelinePresence: Boolean(row.pipelinePresence), pipelineStage: row.pipelineStage || '', mappingStatus: row.mappingStatus || 'not_in_pipeline' };
+    }).filter(record => !campaignVersion || campaignVersion === 'all' || record.campaignVersion === campaignVersion);
     res.json({
       category,
       total: dataset.replyRecords.length,
@@ -3525,11 +3543,24 @@ app.post('/api/coldemail/:id/promote', requireAuth, async (req, res) => {
 
     const eventId = stableActivityId('pipeline-promotion', [ceLead.id, boardId, decision.targetStage, PROMOTION_TRIGGER.MANUAL]);
     if (!dataset.activities.some(row => row.eventId === eventId)) {
-      await appendIntegrationRow(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER, {
+      const existingAcquisition = dataset.activities
+        .filter(row => row.leadId === boardId || row.sourceLeadId === ceLead.id)
+        .map(row => { try { return JSON.parse(row.metadata || '{}'); } catch (_) { return {}; } })
+        .find(metadata => metadata.acquisitionCampaignVersion);
+      const touch = latestSendAttribution(dataset.activities.filter(row => row.sourceLeadId === ceLead.id || row.leadId === `CE-${ceLead.id}`));
+      await upsertIntegrationRow(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER, 'eventId', {
         eventId, leadId: boardId, sourceLeadId: ceLead.id, email: ceLead.email || '', company: ceLead.company || '',
         eventType: 'pipeline_promoted', occurredAt: new Date().toISOString(),
         subject: `Added to Sales Pipeline — ${decision.targetStage}`, content: '',
-        metadata: JSON.stringify({ fromStage: previousStage, toStage: decision.targetStage, trigger: PROMOTION_TRIGGER.MANUAL, sourceEventId: '' }),
+        metadata: JSON.stringify({
+          fromStage: previousStage, toStage: decision.targetStage, trigger: PROMOTION_TRIGGER.MANUAL, sourceEventId: '',
+          ...promotionAttribution(touch, existingAcquisition ? {
+            campaignVersion: existingAcquisition.acquisitionCampaignVersion,
+            campaignFamily: existingAcquisition.acquisitionCampaignFamily || '',
+            sourceSendEventId: existingAcquisition.acquisitionSourceEventId || '',
+            sourceMessageId: existingAcquisition.acquisitionSourceMessageId || '',
+          } : {}),
+        }),
       });
     }
     res.json({ ok: true, boardLeadId: boardId, created: !identity.boardLead, stage: decision.targetStage, automationResumed: false });
@@ -3704,10 +3735,11 @@ app.post('/api/integrations/smartlead/campaigns/:internalCampaignId/leads/:leadI
     const now = new Date().toISOString();
     const externalLeadId = result.lead_ids?.[0] || '';
     const mappingKey = buildMappingKey({ externalCampaignId: mapping.externalCampaignId, externalLeadId, email: eligibility.email });
+    const attribution = coldSendAttribution(found.lead, 1);
     await upsertIntegrationRow(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER, 'mappingKey', {
       internalLeadId: found.lead.id, provider: 'smartlead', externalLeadId: result.lead_ids?.[0] || '', externalCampaignId: mapping.externalCampaignId,
       mappingId: '', normalizedStatus: result.testMode ? 'Test mode' : (result.added_count ? 'Queued' : 'Skipped'), rawStatus: result.message || '',
-      lastProviderEventAt: '', lastSynchronizedAt: now, unsubscribedAt: '', complianceNote: String(req.body.complianceNote || ''), metadata: JSON.stringify({ addedCount: result.added_count || 0, skippedCount: result.skipped_count || 0 }), mappingKey, normalizedEmail: eligibility.email,
+      lastProviderEventAt: '', lastSynchronizedAt: now, unsubscribedAt: '', complianceNote: String(req.body.complianceNote || ''), metadata: JSON.stringify({ addedCount: result.added_count || 0, skippedCount: result.skipped_count || 0, attribution }), mappingKey, normalizedEmail: eligibility.email,
     });
     res.json({ ok: true, testMode: Boolean(result.testMode), result });
   } catch (error) {
@@ -3749,10 +3781,27 @@ async function processStoredSmartleadEvent(eventRow) {
     const emailStatus = incomingStatus === 'Sent' ? 'emailed' : ['Replied','Interested','Meeting requested','Question','Not interested','Out of office'].includes(incomingStatus) ? 'replied' : ['Unsubscribed','Bounced'].includes(incomingStatus) ? 'done' : found.lead.emailStatus;
     await sheets().spreadsheets.values.batchUpdate({ spreadsheetId: SPREADSHEET_ID, requestBody: { valueInputOption: 'RAW', data: [{ range: `${CE_SHEET_NAME}!H${found.row}`, values: [[stage]] }, { range: `${CE_SHEET_NAME}!I${found.row}`, values: [[emailStatus]] }, { range: `${CE_SHEET_NAME}!L${found.row}`, values: [[nextNotes]] }] } });
     if (incomingStatus === 'Unsubscribed') await addSuppression(audit.email, 'unsubscribe', found.lead.company, 'smartlead-webhook', await loadSuppressedEmails());
+    if (incomingStatus === 'Sent') {
+      let providerMetadata = {};
+      try { providerMetadata = JSON.parse(providerRow?.metadata || '{}'); } catch (_) {}
+      const attribution = providerMetadata.attribution;
+      if (!attribution?.campaignVersion) throw new Error('Smartlead send has no immutable campaign attribution');
+      await upsertIntegrationRow(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER, 'eventId', {
+        eventId: `smartlead:${eventRow.eventId}`, leadId: `CE-${found.lead.id}`, sourceLeadId: found.lead.id,
+        email: found.lead.email || audit.email || '', company: found.lead.company || '',
+        eventType: eventRow.eventType === 'FIRST_EMAIL_SENT' ? 'initial_email_sent' : 'follow_up_sent',
+        occurredAt: audit.timestamp || now, subject: audit.subject || '', content: '',
+        metadata: JSON.stringify({ provider: 'smartlead', providerEventId: eventRow.eventId, ...attribution }),
+      });
+    }
   }
   const email = normalizeEmail(audit.email || found?.lead.email || providerRow?.normalizedEmail);
   const mappingKey = providerRow?.mappingKey || buildMappingKey({ externalCampaignId: eventRow.externalCampaignId, externalLeadId: eventRow.externalLeadId, email });
-  if (mappingKey) await upsertIntegrationRow(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER, 'mappingKey', { ...(providerRow || {}), internalLeadId: found?.lead.id || providerRow?.internalLeadId || '', provider: 'smartlead', externalLeadId: eventRow.externalLeadId || providerRow?.externalLeadId || '', externalCampaignId: eventRow.externalCampaignId, mappingId: audit.mappingId || providerRow?.mappingId || '', normalizedStatus: incomingStatus, rawStatus: audit.providerStatus || eventRow.eventType, lastProviderEventAt: audit.timestamp || now, lastSynchronizedAt: now, unsubscribedAt: incomingStatus === 'Unsubscribed' ? now : providerRow?.unsubscribedAt || '', metadata: JSON.stringify({ category: audit.category || '', replyPreview: audit.replyPreview || '', subject: audit.subject || '' }), mappingKey, normalizedEmail: email });
+  if (mappingKey) {
+    let priorMetadata = {};
+    try { priorMetadata = JSON.parse(providerRow?.metadata || '{}'); } catch (_) {}
+    await upsertIntegrationRow(PROVIDER_LEADS_SHEET, PROVIDER_LEADS_HEADER, 'mappingKey', { ...(providerRow || {}), internalLeadId: found?.lead.id || providerRow?.internalLeadId || '', provider: 'smartlead', externalLeadId: eventRow.externalLeadId || providerRow?.externalLeadId || '', externalCampaignId: eventRow.externalCampaignId, mappingId: audit.mappingId || providerRow?.mappingId || '', normalizedStatus: incomingStatus, rawStatus: audit.providerStatus || eventRow.eventType, lastProviderEventAt: audit.timestamp || now, lastSynchronizedAt: now, unsubscribedAt: incomingStatus === 'Unsubscribed' ? now : providerRow?.unsubscribedAt || '', metadata: JSON.stringify({ ...priorMetadata, category: audit.category || '', replyPreview: audit.replyPreview || '', subject: audit.subject || '' }), mappingKey, normalizedEmail: email });
+  }
   return 'processed';
 }
 

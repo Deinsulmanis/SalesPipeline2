@@ -70,6 +70,11 @@ const {
   resolveSequenceThread,
 } = require('./integrations/stage-sequences');
 const { PROMOTION_TRIGGER, resolvePromotionIdentity, promotionDecision } = require('./integrations/promotion-policy');
+const {
+  coldSendAttribution, stageSequenceAttribution, acquisitionAttribution,
+  attributionFromActivity, replyTouchAttribution, latestSendAttribution, promotionAttribution,
+  LEGACY_UNKNOWN,
+} = require('./integrations/campaign-versions');
 const { findOriginalSentThread } = require('./integrations/gmail-threading');
 const {
   assembleFinalEmail,
@@ -1452,6 +1457,10 @@ async function recordSendActivity(lead, step, sendMeta, sentAt) {
   const messageId = result && result.data ? result.data.id || '' : '';
   const threadId  = result && result.data ? result.data.threadId || '' : '';
   const isInitial = Number(step) === 1;
+  // Callers build this before provider delivery. Unknown/missing active
+  // versions therefore fail before send rather than silently becoming legacy.
+  const attribution = sendMeta && sendMeta.attribution;
+  if (!attribution || !attribution.campaignVersion) throw new Error('successful send is missing campaign attribution');
   await recordColdCallActivity({
     eventId: messageId ? `gmail:${messageId}` : `${lead.id}:step${step}:${sentAt}`,
     leadId: `CE-${lead.id}`,
@@ -1467,6 +1476,7 @@ async function recordSendActivity(lead, step, sendMeta, sentAt) {
       gmailMessageId: messageId, gmailThreadId: threadId,
       templateId: lead.emailTemplateId || '', campaign: lead.campaign || '',
       personalization: (sendMeta && sendMeta.personalizationMetadata) || null,
+      ...attribution,
     }),
   });
 }
@@ -1587,7 +1597,7 @@ async function isAlreadyPromoted(leadId) {
 // Idempotent: a lead whose notes already carry the Interested tag is skipped
 // entirely. Callers must not rely on lead.emailStatus — runReplyCheckPass sets
 // it to 'replied' in memory before dispatching here.
-async function handleInterested(lead, message = {}, replyText = '', eventType = 'positive_reply', allLeads = null) {
+async function handleInterested(lead, message = {}, replyText = '', eventType = 'positive_reply', allLeads = null, activities = []) {
   if ((lead.notes || '').includes(TAG_INTERESTED)) {
     console.log(`  ↺ ${lead.company} — already tagged Interested, skipping`);
     return;
@@ -1615,6 +1625,7 @@ async function handleInterested(lead, message = {}, replyText = '', eventType = 
     `Auto-promoted from cold email outreach. Reply classified: ${eventType === 'meeting_requested' ? 'Meeting requested' : 'Interested'}.`,
     { trigger: PROMOTION_TRIGGER.POSITIVE_REPLY, coldEmailTwinCount: coldEmailTwinCount(allLeads, lead.email) },
   );
+  const touch = replyTouchAttribution({ occurredAt: message.occurredAt, threadId: message.threadId }, activities);
   await recordColdCallActivity({
     eventId: message.messageId ? `gmail-reply:${message.messageId}` : `${lead.id}:reply:${message.occurredAt || Date.now()}`,
     leadId: coldCallLeadId || `CE-${lead.id}`, sourceLeadId: lead.id,
@@ -1626,6 +1637,7 @@ async function handleInterested(lead, message = {}, replyText = '', eventType = 
       classification: eventType === 'meeting_requested' ? 'MEETING_REQUEST' : 'INTERESTED',
       gmailMessageId: message.messageId || '', gmailThreadId: message.threadId || '',
       rfcMessageId: message.rfcMessageId || '', detectedAfterSequence: false,
+      replyTouch: touch,
     }),
   });
   await recordColdCallActivity({
@@ -1634,7 +1646,7 @@ async function handleInterested(lead, message = {}, replyText = '', eventType = 
     email: lead.email, company: cleanCompanyName(lead.company) || lead.company || '',
     eventType: 'pipeline_promoted', occurredAt: message.occurredAt || new Date().toISOString(),
     subject: 'Promoted to Hot — positive reply', content: '',
-    metadata: JSON.stringify({ fromStage: '', toStage: 'hot', trigger: 'positive_reply', sourceEventId: message.messageId ? `gmail-reply:${message.messageId}` : '' }),
+    metadata: JSON.stringify({ fromStage: '', toStage: 'hot', trigger: 'positive_reply', sourceEventId: message.messageId ? `gmail-reply:${message.messageId}` : '', ...promotionAttribution(touch) }),
   });
   console.log(`  🔥 Auto-promoted ${lead.company} to Cold Calls kanban`);
 }
@@ -1644,9 +1656,10 @@ const ACTIVE_REPLY_EVENT_TYPES = Object.freeze({
   WRONG_PERSON: 'wrong_person_reply', OUT_OF_OFFICE: 'out_of_office_reply', NEEDS_HUMAN: 'needs_human_reply',
 });
 
-async function recordActiveReplyActivity(lead, message, replyText, classification) {
+async function recordActiveReplyActivity(lead, message, replyText, classification, activities = []) {
   const eventType = ACTIVE_REPLY_EVENT_TYPES[classification];
   if (!eventType) return; // positive/meeting replies are logged by handleInterested after promotion
+  const touch = replyTouchAttribution({ occurredAt: message.occurredAt, threadId: message.threadId }, activities);
   await recordColdCallActivity({
     eventId: message.messageId ? `gmail-reply:${message.messageId}` : `${lead.id}:reply:${message.occurredAt || Date.now()}`,
     leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email,
@@ -1658,6 +1671,7 @@ async function recordActiveReplyActivity(lead, message, replyText, classificatio
       gmailMessageId: message.messageId || '', gmailThreadId: message.threadId || '',
       rfcMessageId: message.rfcMessageId || '', detectedAfterSequence: false,
       requiresHumanAttention: ['QUESTION', 'WRONG_PERSON', 'NEEDS_HUMAN'].includes(classification),
+      replyTouch: touch,
     }),
   });
 }
@@ -1797,7 +1811,7 @@ async function queueDraft(lead, answer) {
 
 // A genuine question. Answer it from the facts if we're confident; otherwise
 // draft it for Deins. Either way the lead is tagged so the dashboard shows it.
-async function handleQuestion(lead, replyText, todaySent) {
+async function handleQuestion(lead, replyText, todaySent, activities = []) {
   const rowNum = await resolveRow(lead.id);
   const answer = await answerQuestion(lead, replyText);
 
@@ -1860,7 +1874,21 @@ async function handleQuestion(lead, replyText, todaySent) {
     console.log(`⛔ [kill-switch] would auto-answer → ${lead.email}`);
     return;
   }
-  await sendEmail({ to: lead.email.trim(), subject, body });
+  const attribution = stageSequenceAttribution({
+    acquisition: latestSendAttribution(activities), sequenceId: 'question_auto_answer_v1', step: 1,
+  });
+  const result = await sendEmail({ to: lead.email.trim(), subject, body });
+  const sentAt = new Date().toISOString();
+  await recordColdCallActivity({
+    eventId: result?.data?.id ? `gmail:${result.data.id}` : `${lead.id}:question-auto-answer:${sentAt}`,
+    leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email,
+    company: cleanCompanyName(lead.company) || lead.company || '', eventType: 'follow_up_sent',
+    occurredAt: sentAt, subject, content: body,
+    metadata: JSON.stringify({
+      gmailMessageId: result?.data?.id || '', gmailThreadId: result?.data?.threadId || '',
+      trigger: 'question_auto_answer', ...attribution,
+    }),
+  });
   console.log(`  ✅ Auto-answered ${lead.email} (confidence ${answer.confidence})`);
 
   if (rowNum) {
@@ -1918,7 +1946,7 @@ async function markRoofingReplyState(lead, stage, status, tag) {
   lead.notes = notes;
 }
 
-async function handleRoofingSurveyReply(lead, message, replyText, todaySent) {
+async function handleRoofingSurveyReply(lead, message, replyText, todaySent, activities = []) {
   if (!ROOFING_SURVEY_REPLY_FLOW_ENABLED) {
     await handleNeedsHuman(lead, message.fromAddr);
     return 'flow_disabled';
@@ -1970,7 +1998,21 @@ async function handleRoofingSurveyReply(lead, message, replyText, todaySent) {
       await markRoofingReplyState(lead, 'Review', 'replied', ROOFING_DRAFTED_TAG);
       return 'blocked';
     }
-    await sendEmail({ to: lead.email.trim(), subject: 'Re: quick roofing question', body, threadId: message.threadId, inReplyTo: message.rfcMessageId, references: message.rfcMessageId });
+    const attribution = stageSequenceAttribution({
+      acquisition: latestSendAttribution(activities), sequenceId: 'roofing_survey_reply_v1', step: 1,
+    });
+    const result = await sendEmail({ to: lead.email.trim(), subject: 'Re: quick roofing question', body, threadId: message.threadId, inReplyTo: message.rfcMessageId, references: message.rfcMessageId });
+    const sentAt = new Date().toISOString();
+    await recordColdCallActivity({
+      eventId: result?.data?.id ? `gmail:${result.data.id}` : `${lead.id}:roofing-survey-reply:${sentAt}`,
+      leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email,
+      company: cleanCompanyName(lead.company) || lead.company || '', eventType: 'follow_up_sent',
+      occurredAt: sentAt, subject: 'Re: quick roofing question', content: body,
+      metadata: JSON.stringify({
+        gmailMessageId: result?.data?.id || '', gmailThreadId: result?.data?.threadId || message.threadId || '',
+        trigger: 'roofing_survey_reply', campaignProfile: ROOFING_SURVEY_PROFILE, ...attribution,
+      }),
+    });
     await markRoofingReplyState(lead, 'Replied', 'replied', ROOFING_LINK_SENT_TAG);
     return 'sent';
   }
@@ -1999,6 +2041,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null) {
   // Auto-answers are real sends and share the daily ceiling with outreach, so
   // the pass starts from today's actual count rather than assuming zero.
   let replyPassTodaySent = todaySentOverride ?? countTodaySends(leads);
+  let attributionActivities = null;
 
   for (const lead of candidates) {
     const message = await withAuth(() => getReplyMessage(lead));
@@ -2009,7 +2052,10 @@ async function runReplyCheckPass(leads, todaySentOverride = null) {
     const replyText      = message.body || message.snippet;
     if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE) {
       lead.emailStatus = 'replied';
-      if (!DRY_RUN) await withAuth(() => handleRoofingSurveyReply(lead, message, replyText, replyPassTodaySent));
+      if (!DRY_RUN) {
+        if (!attributionActivities) attributionActivities = await withAuth(() => readColdCallActivities());
+        await withAuth(() => handleRoofingSurveyReply(lead, message, replyText, replyPassTodaySent, attributionActivities));
+      }
       else console.log(`  ↩ Roofing survey reply from ${lead.email} (${company}) — no writes in dry run`);
       continue;
     }
@@ -2023,14 +2069,15 @@ async function runReplyCheckPass(leads, todaySentOverride = null) {
 
     if (!DRY_RUN) {
       await withAuth(async () => {
-        await recordActiveReplyActivity(lead, message, replyText, classification);
+        if (!attributionActivities) attributionActivities = await readColdCallActivities();
+        await recordActiveReplyActivity(lead, message, replyText, classification, attributionActivities);
         switch (classification) {
           // A genuine question is answered from product-facts.js when we're
           // confident, otherwise drafted for review. Both paths append the
           // warm booking snippet. todaySent enforces the touch cap.
-          case 'QUESTION':       return handleQuestion(lead, replyText, replyPassTodaySent);
-          case 'INTERESTED':     return handleInterested(lead, message, replyText, 'positive_reply', leads);
-          case 'MEETING_REQUEST': return handleInterested(lead, message, replyText, 'meeting_requested', leads);
+          case 'QUESTION':       return handleQuestion(lead, replyText, replyPassTodaySent, attributionActivities);
+          case 'INTERESTED':     return handleInterested(lead, message, replyText, 'positive_reply', leads, attributionActivities);
+          case 'MEETING_REQUEST': return handleInterested(lead, message, replyText, 'meeting_requested', leads, attributionActivities);
           case 'NOT_INTERESTED': return handleNotInterested(lead);
           case 'UNSUBSCRIBE':    return handleUnsubscribe(lead);
           case 'WRONG_PERSON':   return handleWrongPerson(lead);
@@ -2098,7 +2145,7 @@ async function runLateReplyCheckPass(leads) {
     const messages = await withAuth(() => getLateReplyMessages(lead, outbound));
     for (const message of messages) {
       const result = await processLateReply({
-        lead,
+        lead, outbound,
         message,
         classify: classifyReply,
         existingEventIds: eventIds,
@@ -2124,7 +2171,10 @@ async function runLateReplyCheckPass(leads) {
             company: cleanCompanyName(lead.company) || lead.company || '',
             eventType: 'pipeline_promoted', occurredAt: result.activity.occurredAt,
             subject: 'Promoted to Hot — late positive reply', content: '',
-            metadata: JSON.stringify({ fromStage: '', toStage: 'hot', trigger: 'late_positive_reply', sourceEventId: result.activity.eventId }),
+            metadata: JSON.stringify({
+              fromStage: '', toStage: 'hot', trigger: 'late_positive_reply', sourceEventId: result.activity.eventId,
+              ...promotionAttribution((JSON.parse(result.activity.metadata || '{}').replyTouch || {})),
+            }),
           }));
         }
       }
@@ -2363,7 +2413,9 @@ function buildIntentEmail(lead) {
 
 async function runIntentTriggerPass(allLeads) {
   await ensureIntentSheet();
-  const [plays, fired] = await Promise.all([readRealDemoPlays(), loadFiredIntents()]);
+  const [plays, fired, activities] = await Promise.all([
+    readRealDemoPlays(), loadFiredIntents(), readColdCallActivities(),
+  ]);
 
   const due = [];
   for (const lead of allLeads) {
@@ -2418,6 +2470,8 @@ async function runIntentTriggerPass(allLeads) {
         threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references,
       });
       const intentSentAt = new Date().toISOString();
+      const relatedActivities = activities.filter(row => row.sourceLeadId === lead.id || row.leadId === `CE-${lead.id}`);
+      const influence = replyTouchAttribution({ occurredAt: intentSentAt, threadId: thread.threadId }, relatedActivities);
       // Record the fire BEFORE anything else can fail, so a crash after send
       // can never produce a duplicate on the next pass.
       await sheets().spreadsheets.values.append({
@@ -2450,7 +2504,7 @@ async function runIntentTriggerPass(allLeads) {
         eventType: 'initial_email_sent',
         occurredAt: thread.internalDate ? new Date(thread.internalDate).toISOString() : '',
         subject: thread.subject, content: thread.content || '',
-        metadata: JSON.stringify({ gmailThreadId: thread.threadId }),
+        metadata: JSON.stringify({ gmailThreadId: thread.threadId, campaignVersion: LEGACY_UNKNOWN }),
       });
       await recordColdCallActivity({
         leadId: timelineLeadId, sourceLeadId: lead.id, email: lead.email,
@@ -2463,7 +2517,10 @@ async function runIntentTriggerPass(allLeads) {
         company: cleanCompanyName(lead.company) || lead.company || '',
         eventType: 'booking_link_sent', occurredAt: intentSentAt,
         subject: thread.subject, content: body,
-        metadata: JSON.stringify({ gmailThreadId: thread.threadId, trigger: 'both_audios' }),
+        metadata: JSON.stringify({
+          gmailThreadId: thread.threadId, trigger: 'both_audios',
+          ...stageSequenceAttribution({ acquisition: influence, sequenceId: 'demo_booking_link_v1', step: 1 }),
+        }),
       });
       await recordColdCallActivity({
         eventId: `promotion:${lead.id}:both-audios:follow_up`,
@@ -2471,7 +2528,10 @@ async function runIntentTriggerPass(allLeads) {
         company: cleanCompanyName(lead.company) || lead.company || '',
         eventType: 'pipeline_promoted', occurredAt: intentSentAt,
         subject: 'Promoted to Follow Up — verified demo engagement', content: '',
-        metadata: JSON.stringify({ fromStage: '', toStage: 'follow_up', trigger: 'verified_demo_pair', sourceEventId: `${lead.id}|both-audios` }),
+        metadata: JSON.stringify({
+          fromStage: '', toStage: 'follow_up', trigger: 'verified_demo_pair', sourceEventId: `${lead.id}|both-audios`,
+          ...promotionAttribution(influence),
+        }),
       });
       sent++; todaySent++;
       console.log(`  🎧 Intent email sent → ${lead.email} (${cleanCompanyName(lead.company)})`);
@@ -2805,6 +2865,9 @@ async function runStageSequencePass(allLeads) {
     const thread = resolveSequenceThread(mine);
     const built = buildSequenceEmail(verdict.sequenceId, step, boardLead, { thread });
     if (built.error) { console.warn(`[StageSeq] ${built.error}`); continue; }
+    const sequenceAttribution = stageSequenceAttribution({
+      acquisition: acquisitionAttribution(mine), sequenceId: verdict.sequenceId, step,
+    });
 
     try {
       const result = await sendEmail({
@@ -2833,6 +2896,7 @@ async function runStageSequencePass(allLeads) {
           gmailThreadId: (result && result.threadId) || built.threadId || '',
           rfcMessageId: (result && result.rfcMessageId) || '',
           repliedInThread: built.replyToThread,
+          ...sequenceAttribution,
         }),
       });
       console.log(`  [StageSeq] ${verdict.sequenceId} step ${step} -> ${boardLead.email}`);
@@ -3065,10 +3129,12 @@ async function run() {
     }
 
     try {
+      const attribution = coldSendAttribution(lead, 1, { personalizationMetadata: validatedPersonalizationMetadata });
       const sendResult = await sendEmail({ to: lead.email.trim(), subject, body });
       await withAuth(() => markSent(lead, 1, {
         result: sendResult, subject, body,
         personalizationMetadata: validatedPersonalizationMetadata,
+        attribution,
       }));
       sent++;
       console.log(`✅ Sent (step 1) → ${lead.email}  (${sent}/${total})`);
@@ -3114,8 +3180,9 @@ async function run() {
     }
 
     try {
+      const attribution = coldSendAttribution(lead, nextStepNum);
       const sendResult = await sendEmail({ to: lead.email.trim(), subject, body });
-      await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject, body }));
+      await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject, body, attribution }));
       await withAuth(() => appendOpenTriggeredNote(lead));
       sent++;
       console.log(`✅ Sent (warm) → ${lead.email}  (${sent}/${total})`);
@@ -3165,8 +3232,9 @@ async function run() {
     }
 
     try {
+      const attribution = coldSendAttribution(lead, nextStepNum);
       const sendResult = await sendEmail({ to: lead.email.trim(), subject, body });
-      await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject, body }));
+      await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject, body, attribution }));
       sent++;
       console.log(`✅ Sent (step ${nextStepNum}) → ${lead.email}  (${sent}/${total})`);
     } catch (e) {

@@ -305,6 +305,7 @@ function sendActivity() {
   });
   return { recordSendActivity, logged };
 }
+const ATTRIBUTION = Object.freeze({ campaignVersion: 'dental_v1_measured', campaignFamily: 'dental_ai_receptionist', sequenceId: 'cold_outreach', sequenceStep: 1, copyVersion: 'dental_risk_reversal_hp_v1', subjectStrategy: 'service_curiosity_v1' });
 
 test('a successful step-1 send records initial_email_sent with safe metadata', async () => {
   const { recordSendActivity, logged } = sendActivity();
@@ -319,6 +320,7 @@ test('a successful step-1 send records initial_email_sent with safe metadata', a
         demoCapabilityId: 'generic_listen', demoCapabilityConfirmed: true,
         validationStatus: 'valid',
       },
+      attribution: ATTRIBUTION,
     },
     '2026-08-25T10:00:00Z',
   );
@@ -348,9 +350,9 @@ test('a successful step-1 send records initial_email_sent with safe metadata', a
 test('later steps are typed as follow_up_sent so initial_email_sent keeps one meaning', async () => {
   const { recordSendActivity, logged } = sendActivity();
   await recordSendActivity({ id: 'l', email: 'a@e.test', company: 'C' }, 2,
-    { result: { data: { id: 'm2' } }, subject: 's' }, '2026-08-25T10:00:00Z');
+    { result: { data: { id: 'm2' } }, subject: 's', attribution: { ...ATTRIBUTION, sequenceStep: 2 } }, '2026-08-25T10:00:00Z');
   await recordSendActivity({ id: 'l', email: 'a@e.test', company: 'C' }, 3,
-    { result: { data: { id: 'm3' } }, subject: 's' }, '2026-08-25T11:00:00Z');
+    { result: { data: { id: 'm3' } }, subject: 's', attribution: { ...ATTRIBUTION, sequenceStep: 3 } }, '2026-08-25T11:00:00Z');
   assert.deepEqual(logged.map(e => e.eventType), ['follow_up_sent', 'follow_up_sent']);
   assert.deepEqual(logged.map(e => JSON.parse(e.metadata).step), [2, 3]);
 });
@@ -358,7 +360,7 @@ test('later steps are typed as follow_up_sent so initial_email_sent keeps one me
 test('the event id is derived from the Gmail message id, so retries are detectable', async () => {
   const { recordSendActivity, logged } = sendActivity();
   const lead = { id: 'l1', email: 'a@e.test', company: 'C' };
-  const meta = { result: { data: { id: 'msg-abc' } }, subject: 's' };
+  const meta = { result: { data: { id: 'msg-abc' } }, subject: 's', attribution: ATTRIBUTION };
   await recordSendActivity(lead, 1, meta, '2026-08-25T10:00:00Z');
   await recordSendActivity(lead, 1, meta, '2026-08-25T10:05:00Z'); // simulated double-callback
   assert.equal(logged[0].eventId, 'gmail:msg-abc');
@@ -367,9 +369,14 @@ test('the event id is derived from the Gmail message id, so retries are detectab
 
 test('a send with no provider id still records, using a deterministic fallback id', async () => {
   const { recordSendActivity, logged } = sendActivity();
-  await recordSendActivity({ id: 'l1', email: 'a@e.test', company: 'C' }, 1, null, '2026-08-25T10:00:00Z');
+  await recordSendActivity({ id: 'l1', email: 'a@e.test', company: 'C' }, 1, { attribution: ATTRIBUTION }, '2026-08-25T10:00:00Z');
   assert.equal(logged[0].eventId, 'l1:step1:2026-08-25T10:00:00Z');
   assert.equal(JSON.parse(logged[0].metadata).gmailMessageId, '');
+});
+
+test('a future send without a registered attribution is rejected', async () => {
+  const { recordSendActivity } = sendActivity();
+  await assert.rejects(() => recordSendActivity({ id: 'l1' }, 1, null, '2026-08-25T10:00:00Z'), /missing campaign attribution/);
 });
 
 test('activity is recorded only after a real send and a successful write', () => {

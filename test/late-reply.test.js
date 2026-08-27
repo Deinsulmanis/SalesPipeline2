@@ -89,7 +89,7 @@ test('latest usable outbound identity is selected', () => {
     outbound(),
     outbound({ eventId: 'gmail:sent-2', occurredAt: '2026-08-21T00:00:00Z', metadata: JSON.stringify({ gmailMessageId: 'sent-2', gmailThreadId: 'thread-2' }) }),
   ]);
-  assert.deepEqual(refs.get('lead-1'), { messageId: 'sent-2', threadId: 'thread-2', occurredAt: '2026-08-21T00:00:00Z' });
+  assert.deepEqual(refs.get('lead-1'), { messageId: 'sent-2', threadId: 'thread-2', occurredAt: '2026-08-21T00:00:00Z', attribution: { campaignVersion: 'legacy_unknown' } });
 });
 
 test('unsubscribed, bounced, suppressed, malformed, and non-done leads are excluded', () => {
