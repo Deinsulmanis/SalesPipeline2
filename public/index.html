@@ -1310,6 +1310,30 @@
     .ce-footer-row .btn-cancel { min-height: 44px; }
   }
 
+  /* Mark Ghosted — a real decision, so it is clear without shouting. */
+  .btn-ghost-lead {
+    appearance:none; font:inherit; font-size:11px; font-weight:700; padding:5px 11px;
+    border-radius:var(--radius-sm); cursor:pointer; background:transparent;
+    color:var(--text-muted); border:1px solid var(--border); margin-top:9px; margin-left:8px;
+  }
+  .btn-ghost-lead:hover { color:var(--danger); border-color:var(--danger); background:var(--danger-bg); }
+  .btn-ghost-lead:focus-visible { outline:2px solid var(--danger); outline-offset:2px; }
+  .ghost-facts { margin:10px 0; border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden; }
+  .ghost-fact { display:flex; justify-content:space-between; gap:12px; padding:7px 11px; font-size:12px; border-bottom:1px solid var(--border); }
+  .ghost-fact:last-child { border-bottom:none; }
+  .ghost-fact-k { color:var(--text-muted); }
+  .ghost-fact-v { color:var(--text); font-weight:600; text-align:right; word-break:break-word; }
+  .ghost-warn {
+    font-size:12px; line-height:1.55; color:var(--text); padding:10px 11px; margin-top:4px;
+    border:1px solid color-mix(in srgb, var(--danger) 40%, var(--border));
+    border-radius:var(--radius-sm); background:var(--danger-bg);
+  }
+  @media (max-width: 700px) {
+    .btn-ghost-lead { min-height:44px; margin-left:0; width:100%; }
+    .ghost-fact { flex-direction:column; gap:2px; }
+    .ghost-fact-v { text-align:left; }
+  }
+
   /* ── Hot staleness ─────────────────────────────────────────────────────── */
   .hot-chip {
     display:inline-flex; align-items:center; gap:5px; margin-top:6px;
@@ -2419,6 +2443,17 @@
       <div id="provider-test-result" class="form-group full" role="status" style="min-height:18px;font-size:12px;color:var(--text-secondary)"></div>
     </div>
     <div class="form-actions"><button type="button" class="btn-cancel" onclick="testProviderMapping()">Test Mapping</button><button type="button" class="btn-save" onclick="saveProviderMapping()">Save Changes</button></div>
+  </div>
+</div>
+
+<!-- MARK GHOSTED MODAL — explicit human close; nothing here is automatic -->
+<div class="modal-overlay" id="ghost-overlay" onclick="closeGhostModal(event)">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ghost-title" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title" id="ghost-title">Mark lead Ghosted</div>
+      <button class="modal-close" onclick="closeGhostModal()" aria-label="Close">&#10005;</button>
+    </div>
+    <div style="padding:16px 18px" id="ghost-body"></div>
   </div>
 </div>
 
@@ -4010,7 +4045,8 @@ function hotDrawerRows(next) {
       <span class="pipeline-row-label">Note</span>
       <span class="pipeline-row-val"><small>This opportunity predates the activity timeline, so its age cannot be proven. Set a follow-up date or log a response to start the clock.</small></span>
     </div>`}
-    <button type="button" class="btn-log-response" onclick="logHumanResponse()">Log response sent</button>`;
+    <button type="button" class="btn-log-response" onclick="logHumanResponse()">Log response sent</button>
+    <button type="button" class="btn-ghost-lead" onclick="openGhostModal()">Mark Ghosted</button>`;
 }
 
 // Records that a reply already went out — it does not send anything. Flipping
@@ -4035,6 +4071,87 @@ async function logHumanResponse() {
     renderBoard();
   } catch (error) {
     showToast('Could not record the response: ' + error.message, 'error');
+  } finally {
+    setSaving(false);
+  }
+}
+
+// ── MARK GHOSTED ────────────────────────────────────────────────────────────
+// Only reachable from a Hot lead's drawer (hotDrawerRows renders the button,
+// and hotState exists only for Hot leads). Staleness never triggers this — it
+// only makes the decision visible. The server re-checks the stage from stored
+// state and refuses anything that is no longer Hot.
+
+function closeGhostModal(e) {
+  if (e && e.target !== document.getElementById('ghost-overlay')) return;
+  document.getElementById('ghost-overlay').classList.remove('open');
+}
+
+// Opens the confirmation ONLY. Nothing is written until Confirm is pressed.
+function openGhostModal() {
+  const lead = leads.find(item => item.id === detailId);
+  if (!lead) return;
+  const entry = nextActions.get(detailId);
+  const action = entry && entry.nextAction;
+  const hot = action && action.hotState;
+  const who = (hot && HOT_WAITING_LABEL[hot.waitingOn]) || 'Unknown';
+  const last = hot && hot.lastInteractionAt
+    ? new Date(hot.lastInteractionAt).toLocaleString()
+    : 'no dated conversation on record';
+  const age = !hot ? 'Unknown'
+    : hot.staleness === 'unknown' ? 'Unknown — cannot be proven'
+    : hot.staleness.replace(/_/g, ' ') + (hot.daysPastDue ? ` (${hot.daysPastDue} days past due)` : '');
+  const name = [lead.first, lead.last].filter(Boolean).join(' ') || lead.company || lead.email || detailId;
+
+  document.getElementById('ghost-body').innerHTML = `
+    <div class="ghost-facts">
+      <div class="ghost-fact"><span class="ghost-fact-k">Lead</span><span class="ghost-fact-v">${esc(name)}</span></div>
+      ${lead.company ? `<div class="ghost-fact"><span class="ghost-fact-k">Company</span><span class="ghost-fact-v">${esc(lead.company)}</span></div>` : ''}
+      <div class="ghost-fact"><span class="ghost-fact-k">Current stage</span><span class="ghost-fact-v">${esc(stageLabel(displayStageFor(lead.stage)))}</span></div>
+      <div class="ghost-fact"><span class="ghost-fact-k">Waiting on</span><span class="ghost-fact-v">${esc(who)}</span></div>
+      <div class="ghost-fact"><span class="ghost-fact-k">Last interaction</span><span class="ghost-fact-v">${esc(last)}</span></div>
+      <div class="ghost-fact"><span class="ghost-fact-k">Conversation age</span><span class="ghost-fact-v">${esc(age)}</span></div>
+      <div class="ghost-fact"><span class="ghost-fact-k">Next action</span><span class="ghost-fact-v">${esc(action ? action.label : '—')}</span></div>
+    </div>
+    <div class="ghost-warn">This will move the lead to <strong>Closed Lost</strong> with outcome <strong>Ghosted</strong>.
+      Its history, notes and send record are kept, and cold-email automation stays stopped. Ghosted is a recoverable
+      outcome, so the lead can be reopened later.</div>
+    <div class="form-actions" style="margin-top:14px">
+      <button type="button" class="btn-cancel" onclick="closeGhostModal()">Cancel</button>
+      <button type="button" class="btn-save" onclick="submitMarkGhosted()">Mark Ghosted</button>
+    </div>`;
+  document.getElementById('ghost-overlay').classList.add('open');
+}
+
+async function submitMarkGhosted() {
+  const leadId = detailId;
+  if (!leadId) return;
+  setSaving(true);
+  try {
+    const resp = await fetch(`/api/leads/${encodeURIComponent(leadId)}/mark-ghosted`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      showToast(data.error || `Could not close the lead (${resp.status})`, 'error');
+      // A raced stage means the board is out of date — reload so the drawer
+      // stops showing controls that no longer apply.
+      if (data.code === 'stage_changed') { closeGhostModal(); await loadLeads(); renderBoard(); }
+      return;
+    }
+    showToast(data.alreadyGhosted ? 'This lead was already marked Ghosted.' : 'Closed Lost — Ghosted.', 'success');
+    closeGhostModal();
+    // Refresh from the server so the drawer shows the terminal state rather
+    // than the Hot controls it was opened with.
+    await loadLeads();
+    await loadNextActions();
+    renderBoard();
+    if (detailId === leadId) {
+      openDetail(leadId);
+      await loadColdCallActivity(leadId);
+    }
+  } catch (error) {
+    showToast('Could not close the lead: ' + error.message, 'error');
   } finally {
     setSaving(false);
   }

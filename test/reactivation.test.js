@@ -148,7 +148,7 @@ test('28. the gate lives in suppressionReason, which every send loop calls', () 
 
 test('10. no reactivation code path can send', () => {
   const start = serverSrc.indexOf('// ── REACTIVATION ─');
-  const block = serverSrc.slice(start, serverSrc.indexOf("app.patch('/api/leads/:id/call-details'"));
+  const block = serverSrc.slice(start, serverSrc.indexOf("app.post('/api/leads/:id/mark-ghosted'"));
   assert.ok(!/sendEmail|nodemailer|transporter|gmail\(/i.test(block), 'no send path in reactivation');
   const uiStart = browser.indexOf('// ── REACTIVATION ─');
   const ui = browser.slice(uiStart, browser.indexOf('function closeReactivateModal'));
@@ -158,9 +158,11 @@ test('10. no reactivation code path can send', () => {
 
 // ── 11–15. Sequence state is preserved ──────────────────────────────────────
 
+// The slice ends at the next route deliberately: these assertions are about the
+// reactivation endpoints only, and a neighbouring route's writes are not theirs.
 test('11/12/13. the step and send history are never rewritten', () => {
   const start = serverSrc.indexOf('// ── REACTIVATION ─');
-  const block = serverSrc.slice(start, serverSrc.indexOf("app.patch('/api/leads/:id/call-details'"));
+  const block = serverSrc.slice(start, serverSrc.indexOf("app.post('/api/leads/:id/mark-ghosted'"));
   // The only cell reactivation writes is the notes column — step and timestamp
   // are read for display and audit, and no write targets them.
   assert.match(block, /range: `\$\{CE_SHEET_NAME\}!L\$\{twin\._row\}`/);

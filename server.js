@@ -1757,6 +1757,12 @@ async function findColdEmailTwin(boardLeadId, boardEmail) {
 // in outreach-agent.js via the shared cadence constant, so "is there a next
 // step?" can never disagree with what the agent would really send.
 const FOLLOW_UP_STEP_COUNT = FOLLOW_UP_DELAY_DAYS.length;
+// The canonical 'ghosted' loss outcome, asserted against the shared taxonomy so
+// a rename there fails loudly here instead of silently writing a dead value.
+const GHOSTED_OUTCOME = 'ghosted';
+if (!LOSS_OUTCOME_IDS.includes(GHOSTED_OUTCOME)) {
+  throw new Error('pipeline-state no longer defines a "ghosted" loss outcome');
+}
 // A resume date beyond this is almost certainly a typo (a mis-parsed year).
 const REACTIVATION_MAX_HORIZON_MS = 365 * 24 * 60 * 60 * 1000;
 
@@ -2232,6 +2238,108 @@ app.post('/api/leads/:id/human-response', requireAuth, async (req, res) => {
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
     console.error('[Human response]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Resolve a dead Hot opportunity as Closed Lost / Ghosted. NOTHING about
+// staleness triggers this: the Hot clock only surfaces the decision, and a
+// human has to confirm it. Time passing is not proof a deal is lost.
+//
+// This composes the canonical pieces rather than adding a second stage-mutation
+// system: stageTransitionCheck is the same gate PUT /api/leads/:id uses,
+// stageRequiresHold + applyManualHold are the same hold writer, and the
+// timeline gets the same stage_changed event shape.
+//
+// It exists as its own route because the transition needs BOTH cells: the gate
+// refuses closed_lost without a loss outcome, and PUT writes A:Q while the
+// outcome lives in V. Doing that from the browser would be two requests with a
+// race between them. Here it is one read, one validated batch write.
+app.post('/api/leads/:id/mark-ghosted', requireAuth, async (req, res) => {
+  try {
+    const rowNum = await withAuth(() => findRow(req.params.id));
+    if (!rowNum) return res.status(404).json({ error: 'not found' });
+
+    // Current STORED state decides — never what the browser believed when the
+    // modal was opened.
+    const prior = await sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${rowNum}:W${rowNum}`,
+    });
+    const row = prior.data.values?.[0] || [];
+    const rawStage = row[12] || '';
+    const currentStage = displayStageFor(rawStage);
+    const currentOutcome = String(row[21] || '').trim();
+    const company = row[6] || '';
+    const email = row[10] || '';
+
+    // Idempotent: an already-ghosted lead is a success with no second write and
+    // no second timeline entry.
+    if (currentStage === 'closed_lost' && currentOutcome === GHOSTED_OUTCOME) {
+      return res.json({ ok: true, alreadyGhosted: true, stage: currentStage, outcome: currentOutcome });
+    }
+
+    // Raced: the lead moved on (booked, won, closed another way) between the
+    // modal opening and this request. Refuse rather than overwrite the newer
+    // stage — the person who moved it knew something this request does not.
+    if (currentStage !== 'hot') {
+      return res.status(409).json({
+        error: `This lead is no longer Hot — it is now ${currentStage.replace(/_/g, ' ')}. Reload before closing it.`,
+        code: 'stage_changed', currentStage, currentOutcome,
+      });
+    }
+
+    // The same shared gate every other transition passes through.
+    const gate = stageTransitionCheck('closed_lost', { meetingAt: row[20] || '', outcome: GHOSTED_OUTCOME });
+    if (!gate.ok) return res.status(422).json({ error: gate.message, field: gate.field });
+
+    // Hold first, exactly as the manual-promotion path does: closed_lost is a
+    // human-owned stage, so if the later write fails the safe failure is a held
+    // lead rather than one that could still be mailed. applyManualHold is
+    // idempotent, so an already-held lead is not touched.
+    if (stageRequiresHold('closed_lost')) {
+      await withAuth(() => applyManualHold(req.params.id, email));
+    }
+
+    // One batch: stage (M) and outcome (V). Deliberately targeted cells — this
+    // cannot clobber notes, follow-up date, sequence state or send history the
+    // way a full-row write could.
+    await withAuth(() => sheets().spreadsheets.values.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: {
+        valueInputOption: 'RAW',
+        data: [
+          { range: `${SHEET_NAME}!M${rowNum}`, values: [['closed_lost']] },
+          { range: `${SHEET_NAME}!V${rowNum}`, values: [[GHOSTED_OUTCOME]] },
+        ],
+      },
+    }));
+
+    // Same event shape the PUT transition records, with a derived id so a retry
+    // cannot stack a second entry. Prior history is untouched: this appends.
+    const eventId = stableActivityId('stage-changed', [req.params.id, currentStage, 'closed_lost', GHOSTED_OUTCOME]);
+    try {
+      const existing = await readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER);
+      if (!existing.some(activity => activity.eventId === eventId)) {
+        await appendColdCallActivities([{
+          eventId, leadId: req.params.id, sourceLeadId: '', email, company,
+          eventType: 'stage_changed', occurredAt: new Date().toISOString(),
+          subject: `${currentStage} -> closed_lost`, content: 'Closed Lost — Ghosted',
+          metadata: JSON.stringify({
+            fromStage: currentStage, toStage: 'closed_lost', fromStageRaw: rawStage,
+            toStageRaw: 'closed_lost', outcome: GHOSTED_OUTCOME, trigger: 'manual_mark_ghosted',
+          }),
+        }]);
+      }
+    } catch (activityError) {
+      // The lead is already closed; a timeline failure must not turn a
+      // successful close into a 500.
+      console.warn('[Mark ghosted] closed, but activity write failed:', activityError.message);
+    }
+
+    res.json({ ok: true, alreadyGhosted: false, stage: 'closed_lost', outcome: GHOSTED_OUTCOME, previousStage: currentStage });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Mark ghosted]', e.message);
     res.status(500).json({ error: e.message });
   }
 });
