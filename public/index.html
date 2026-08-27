@@ -1259,6 +1259,20 @@
   }
   .ce-late-reply::before { content:''; width:5px; height:5px; border-radius:50%; background:currentColor; }
 
+  /* ── Outreach paging chrome ────────────────────────────────────────────── */
+  .ce-loading-row { padding: 22px 14px; text-align: center; color: var(--text-muted); font-size: 12px; }
+  .ce-footer-row {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 12px 14px; border-top: 1px solid var(--border); font-size: 12px;
+  }
+  .ce-footer-count { color: var(--text); font-weight: 600; }
+  .ce-footer-age { color: var(--text-muted); margin-left: auto; }
+  @media (max-width: 700px) {
+    .ce-footer-row { gap: 8px; }
+    .ce-footer-age { margin-left: 0; width: 100%; }
+    .ce-footer-row .btn-cancel { min-height: 44px; }
+  }
+
   /* ── Next Action ───────────────────────────────────────────────────────── */
   /* Compact on the card: one line of what, one of when. Full reasoning lives
      in the drawer so cards stay scannable. */
@@ -1966,6 +1980,7 @@
         <tbody id="ce-tbody"></tbody>
       </table>
       <div class="ce-empty" id="ce-empty" style="display:none">No leads found. Import a CSV to get started.</div>
+      <div id="ce-table-footer"></div>
     </div>
   </div>
 
@@ -3557,9 +3572,22 @@ async function refreshAgentLeadCounts(loadedLeads = null) {
 let currentMotion  = 'cold-calls';
 let ceLeads        = [];
 let ceActiveFilter = 'all';
+// The table holds one bounded page, not the whole sheet. Filtering and search
+// are answered by the server, so narrowing never ships rows the table will not
+// draw. ceTotal/ceFacets describe the full set for the tabs and counters.
+const CE_PAGE_SIZE = 100;
+let ceTotal = 0;
+let ceHasMore = false;
+let ceFacets = { stages: {}, niches: {}, campaigns: {} };
+let ceFetchedAt = null;
+let ceLoading = false;
+let ceAllLeads = null;      // full light set, loaded only for the Campaigns panel
+let ceSearchTimer = null;
+let ceRequestSeq = 0;       // guards against an older response landing last
 let ceSelected     = new Set();
 let ceSearchQuery    = '';
 let ceCampaignFilter = '';
+let ceReplyCategoryFilter = '';   // set by a reply stat card drill-down
 let ceNicheFilter = 'all';
 let _pendingCsvRows  = null;
 let queueRouteIds = [];
@@ -3576,7 +3604,7 @@ const CE_STAGES = ['Import','Queued','Contacted','Replied','Review','Done','Prom
 
 function setCeNicheFilter(value) {
   ceNicheFilter = value || 'all';
-  ceSelected.clear(); updateBulkQueueBtn(); renderCeTable();
+  ceSelected.clear(); updateBulkQueueBtn(); reloadCePage();
 }
 
 function toLocalDateTimeInput(value) {
@@ -3735,6 +3763,7 @@ function setMotion(m) {
 // ── CE FILTER & TABLE ────────────────────────────────────────────────────────
 
 function setCeFilter(f) {
+  const stageChanged = ceActiveFilter !== f;
   ceActiveFilter = f;
   const isAgent     = f === 'agent';
   const isOpens     = f === 'opens';
@@ -3760,20 +3789,81 @@ function setCeFilter(f) {
   } else if (isCampaigns) {
     renderCampaignsPanel();
   } else {
+    // A stage tab is a server-side filter now: re-query rather than re-filter a
+    // full in-memory copy the browser no longer holds.
+    if (stageChanged) reloadCePage(); else renderCeTable();
+  }
+}
+
+// Query describing the current view. The server applies exactly these filters,
+// so the browser never holds rows it is not showing.
+function ceQuery(extra = {}) {
+  const params = new URLSearchParams();
+  const stage = ['all', 'agent', 'opens', 'demos', 'campaigns'].includes(ceActiveFilter) ? 'all' : ceActiveFilter;
+  params.set('stage', stage);
+  if (ceCampaignFilter) params.set('campaign', ceCampaignFilter);
+  if (ceNicheFilter && ceNicheFilter !== 'all') params.set('niche', ceNicheFilter);
+  if (ceSearchQuery) params.set('search', ceSearchQuery);
+  if (ceReplyCategoryFilter) params.set('replyCategory', ceReplyCategoryFilter);
+  params.set('limit', String(CE_PAGE_SIZE));
+  params.set('offset', String(extra.offset || 0));
+  if (extra.refresh) params.set('refresh', '1');
+  return params.toString();
+}
+
+// Re-fetch just the lead page. Used by every filter, tab and search change —
+// the summary cards and signal maps are untouched, so narrowing is one small
+// request rather than a full page reload.
+async function reloadCePage({ append = false, offset = 0 } = {}) {
+  const seq = ++ceRequestSeq;
+  ceLoading = true;
+  renderCeTable();
+  try {
+    const resp = await fetch('/api/coldemail?' + ceQuery({ offset }));
+    if (!resp.ok || seq !== ceRequestSeq) return;
+    const data = await resp.json();
+    ceLeads = append ? [...ceLeads, ...(data.leads || [])] : (data.leads || []);
+    ceTotal = data.total || 0;
+    ceHasMore = Boolean(data.hasMore);
+    ceFacets = data.facets || ceFacets;
+    ceFetchedAt = data.fetchedAt || null;
+  } catch (e) {
+    showToast('Could not load leads: ' + e.message, 'error');
+  } finally {
+    if (seq === ceRequestSeq) ceLoading = false;
     renderCeTable();
   }
 }
 
+function loadMoreCeLeads() { reloadCePage({ append: true, offset: ceLeads.length }); }
+
+// The Campaigns panel is the one view that genuinely aggregates across every
+// lead, so it pulls the full light set on demand rather than on every load.
+async function ensureAllCeLeads() {
+  if (ceAllLeads) return ceAllLeads;
+  const resp = await fetch('/api/coldemail?limit=0');
+  ceAllLeads = resp.ok ? ((await resp.json()).leads || []) : [];
+  return ceAllLeads;
+}
+
 async function loadCeLeads() {
   try {
+    ceLoading = true;
+    renderCeTable();
     const [ceResp, opensResp, demoResp, statsResp] = await Promise.all([
-      fetch('/api/coldemail'),
+      fetch('/api/coldemail?' + ceQuery()),
       fetch('/api/proposalOpens'),
       fetch('/api/demoPlays'),
       fetch('/api/coldemail/stats'),
     ]);
     if (!ceResp.ok) { showToast('Could not load cold email leads: ' + ceResp.status, 'error'); return; }
-    ceLeads     = await ceResp.json();
+    const cePage = await ceResp.json();
+    ceLeads     = cePage.leads || [];
+    ceTotal     = cePage.total || 0;
+    ceHasMore   = Boolean(cePage.hasMore);
+    ceFacets    = cePage.facets || ceFacets;
+    ceFetchedAt = cePage.fetchedAt || null;
+    ceAllLeads  = null;
     ceOpensData = opensResp.ok ? await opensResp.json() : [];
     // /api/proposalOpens annotates every row with `real` via the shared
     // open-filter module (server-side), so mail-scanner detonations are already
@@ -3802,13 +3892,18 @@ async function loadCeLeads() {
       if ((d.timestamp || '') > e.last) e.last = d.timestamp || '';
       ceDemoMap.set(key, e);
     }
+    ceLoading = false;
     updateCeStats();
     loadDigest();          // additive — failure never blocks the rest of the view
     buildSendChart();
     renderCeTable();
     if (ceActiveFilter === 'campaigns') renderCampaignsPanel();
     refreshAgentLeadCounts(ceLeads);
-  } catch (e) { showToast('Could not reach server: ' + e.message, 'error'); }
+  } catch (e) {
+    showToast('Could not reach server: ' + e.message, 'error');
+  } finally {
+    ceLoading = false;
+  }
 }
 
 // Verbatim port of cleanCompanyName() from outreach-agent.js. MUST stay in sync
@@ -3977,25 +4072,15 @@ function renderCeTable() {
   const selAll   = document.getElementById('select-all-ce');
   const q        = ceSearchQuery.toLowerCase();
 
-  // The agent writes stage 'Unsub' while the dashboard uses 'Unsubscribed' — the
-  // tab matches both so no unsubscribed lead is unreachable.
-  const stageFiltered =
-    ceActiveFilter === 'all'          ? ceLeads :
-    ceActiveFilter === 'Unsubscribed' ? ceLeads.filter(l => l.stage === 'Unsubscribed' || l.stage === 'Unsub') :
-                                        ceLeads.filter(l => l.stage === ceActiveFilter);
-  const campaignFiltered = !ceCampaignFilter ? stageFiltered : stageFiltered.filter(l => {
-    const c = (l.campaign || '').trim();
-    return ((!c || c.toLowerCase() === 'unlabeled') ? 'Unlabeled' : c) === ceCampaignFilter;
-  });
-  const nicheFiltered = ceNicheFilter === 'all' ? campaignFiltered : campaignFiltered.filter(l => normalizedRouteNiche(l) === ceNicheFilter);
-  const filtered = !q ? nicheFiltered : nicheFiltered.filter(l =>
-    [l.company, l.email, l.contactName].some(f => f && f.toLowerCase().includes(q))
-  );
+  // Stage, campaign, niche, reply-category and search are all applied by the
+  // server (see ceQuery). ceLeads IS the current page, so it renders as-is —
+  // there is no second filter pass over a full in-memory copy any more.
+  const filtered = ceLeads;
 
   const resultInfo = document.getElementById('ce-result-info');
   if (resultInfo) {
-    if (q && filtered.length > 0) {
-      resultInfo.textContent = `${filtered.length} result${filtered.length !== 1 ? 's' : ''} for "${ceSearchQuery}"`;
+    if (q && ceTotal > 0) {
+      resultInfo.textContent = `${ceTotal} result${ceTotal !== 1 ? 's' : ''} for "${ceSearchQuery}"`;
       resultInfo.style.display = 'block';
     } else {
       resultInfo.style.display = 'none';
@@ -4003,12 +4088,17 @@ function renderCeTable() {
   }
 
   if (filtered.length === 0) {
-    tbody.innerHTML = '';
-    empty.style.display = 'block';
+    // A loading page must not read as "no leads" — that was indistinguishable
+    // from an empty sheet while the request was in flight.
+    tbody.innerHTML = ceLoading
+      ? '<tr><td colspan="9" class="ce-loading-row">Loading leads…</td></tr>'
+      : '';
+    empty.style.display = ceLoading ? 'none' : 'block';
     empty.textContent = q
       ? `No leads match "${ceSearchQuery}"`
       : 'No leads found. Import a CSV to get started.';
     if (selAll) selAll.checked = false;
+    renderCeFooter();
     return;
   }
   empty.style.display = 'none';
@@ -4022,7 +4112,7 @@ function renderCeTable() {
     const openKey   = ceCompanyKey(l.company);
     const opens     = ceOpensMap.get(openKey) || 0;
     const demoEntry = ceDemoMap.get(openKey);
-    const hasLateReply = /\[LATE REPLY:/i.test(l.notes || '');
+    const hasLateReply = l.lateReply === true || /\[LATE REPLY:/i.test(l.notes || '');
     // A demo play outranks any number of opens — see CE_SIGNAL. Show the play
     // when there is one, falling back to the open count otherwise.
     const opensTd   = demoEntry
@@ -4049,12 +4139,40 @@ function renderCeTable() {
       </td>
     </tr>`;
   }).join('');
+  renderCeFooter();
 }
 
+// Progress + Load More. Bounded rendering is what keeps the table responsive:
+// each click appends one page rather than rebuilding the whole body.
+function renderCeFooter() {
+  const host = document.getElementById('ce-table-footer');
+  if (!host) return;
+  if (!ceTotal) { host.innerHTML = ''; return; }
+  const age = ceFetchedAt
+    ? Math.max(0, Math.round((Date.now() - new Date(ceFetchedAt).getTime()) / 1000))
+    : null;
+  host.innerHTML = `
+    <div class="ce-footer-row">
+      <span class="ce-footer-count">Showing ${ceLeads.length} of ${ceTotal}</span>
+      ${ceHasMore ? `<button type="button" class="btn-cancel" onclick="loadMoreCeLeads()"${ceLoading ? ' disabled' : ''}>${ceLoading ? 'Loading…' : 'Load more'}</button>` : ''}
+      ${age === null ? '' : `<span class="ce-footer-age" title="Data is cached briefly; a write refreshes it immediately">Updated ${age < 60 ? age + 's' : Math.round(age / 60) + 'm'} ago</span>`}
+      <button type="button" class="btn-cancel" onclick="refreshCeLeads()" title="Re-read the sheet now">Refresh</button>
+    </div>`;
+}
+
+function refreshCeLeads() {
+  ceAllLeads = null;
+  rdRecords = [];
+  fetch('/api/coldemail/stats?refresh=1').then(() => loadCeLeads());
+}
+
+// Debounced so typing does not fire a request per keystroke; the server answers
+// the filter, so the table never re-filters a full in-memory copy.
 function onCeSearch(val) {
   ceSearchQuery = val.trim();
   document.getElementById('ce-search-clear').style.display = ceSearchQuery ? 'flex' : 'none';
-  renderCeTable();
+  clearTimeout(ceSearchTimer);
+  ceSearchTimer = setTimeout(() => reloadCePage(), 250);
 }
 
 function clearCeSearch() {
@@ -4062,7 +4180,8 @@ function clearCeSearch() {
   const input = document.getElementById('ce-search');
   if (input) input.value = '';
   document.getElementById('ce-search-clear').style.display = 'none';
-  renderCeTable();
+  clearTimeout(ceSearchTimer);
+  reloadCePage();
 }
 
 // ── DAILY DIGEST CARD ────────────────────────────────────────────────────────
@@ -4257,7 +4376,7 @@ function campaignGroupKey(lead) {
 
 function buildCampaignStats() {
   const groups = new Map();
-  for (const l of ceLeads) {
+  for (const l of (ceAllLeads || ceLeads)) {
     const key = campaignGroupKey(l);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(l);
@@ -4267,7 +4386,7 @@ function buildCampaignStats() {
   for (const [name, leads] of groups) {
     const total     = leads.length;
     const sent      = leads.filter(l => l.emailStatus !== '').length;               // attempted delivery
-    const bounced   = leads.filter(l => (l.notes || '').includes('[BOUNCED')).length;
+    const bounced   = leads.filter(l => l.bounced || (l.notes || '').includes('[BOUNCED')).length;
     const delivered = sent - bounced;                                               // a bounce is not a delivery
     const bounceRate = sent > 0 ? (bounced / sent) * 100 : 0;                        // bounced / attempted (standard)
 
@@ -4304,11 +4423,18 @@ function buildCampaignStats() {
   return rows;
 }
 
-function renderCampaignsPanel() {
+// Campaign stats genuinely aggregate across every lead, so this view — and only
+// this view — pulls the full light set. It is fetched on demand and cached for
+// the session, so the default table load never pays for it.
+async function renderCampaignsPanel() {
   const wrap = document.getElementById('ce-campaigns-table-wrap');
   if (!wrap) return;
+  if (!ceAllLeads) {
+    wrap.innerHTML = '<div class="ce-empty">Loading campaigns…</div>';
+    await ensureAllCeLeads();
+  }
 
-  if (ceLeads.length === 0) {
+  if (ceAllLeads.length === 0) {
     wrap.innerHTML = '<div class="ce-empty">No campaigns tagged yet — campaign names are set when you import a CSV.</div>';
     return;
   }
@@ -4451,12 +4577,14 @@ async function retryProviderEvent(eventId) {
 
 function filterByCampaign(name) {
   ceCampaignFilter = name;
+  reloadCePage();
   updateCampaignFilterChip();
   setCeFilter('all');
 }
 
 function clearCampaignFilter() {
   ceCampaignFilter = '';
+  reloadCePage();
   updateCampaignFilterChip();
   renderCeTable();
 }
@@ -4572,6 +4700,15 @@ function toggleRdReply(leadId) {
 function rdOpenLead(leadId) {
   closeReplyDrill();
   openCeDetail(leadId);
+}
+
+// Narrow the main table to one reply bucket. The server applies the filter, so
+// showing the 4 positive replies costs a 4-row response, not 1,849.
+function rdFilterTable(category) {
+  ceReplyCategoryFilter = category === 'all' ? '' : category;
+  closeReplyDrill();
+  setCeFilter('all');
+  reloadCePage();
 }
 
 function renderReplyDrill() {

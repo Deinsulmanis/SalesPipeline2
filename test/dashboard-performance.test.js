@@ -12,14 +12,18 @@ test('dashboard lead list skips siteContext without changing the sheet or sendin
   assert.match(server, /ranges: \[`\$\{CE_SHEET_NAME\}!A:O`, `\$\{CE_SHEET_NAME\}!Q:W`\]/);
   assert.match(server, /length: 15[^\n]+left\[index\]\?\.\[column\]/);
   assert.match(server, /length: 7[^\n]+right\[index\]\?\.\[column\]/);
-  assert.match(server, /const rows = await readColdEmailDashboardRows\(\)/);
+  // Still the single reader for the lead list — now called once by the shared
+  // outreach snapshot rather than per request.
+  assert.match(server, /readColdEmailDashboardRows\(\),/);
   assert.doesNotMatch(browser, /siteContext[^\n]+renderCeTable/);
   assert.match(fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8'), /const READ_RANGE\s*=\s*`\$\{SHEET_NAME\}!A:W`/);
 });
 
-test('engagement lookup reads only identity and sent timestamp columns', () => {
-  assert.match(server, /ranges: \[`\$\{CE_SHEET_NAME\}!A:B`, `\$\{CE_SHEET_NAME\}!J:J`\]/);
-  assert.match(server, /readColdEmailSignalRows\(\)/);
+test('engagement lookup no longer costs a second ColdEmail read', () => {
+  // It used to fetch A:B + J:J on its own; it now projects the columns it needs
+  // out of the shared snapshot, so /api/proposalOpens reads ColdEmail zero times.
+  assert.doesNotMatch(server, /readColdEmailSignalRows\(\)/);
+  assert.match(server, /getOutreachDataset\(\)\.then\(dataset => dataset\.leads\.map/);
 });
 
 test('dashboard counters reuse loaded data and otherwise use the compact stats endpoint', () => {

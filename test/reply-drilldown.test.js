@@ -13,8 +13,12 @@ const {
 } = require('../integrations/reply-analytics');
 
 const root = path.join(__dirname, '..');
-const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
-const browser = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
+// core.autocrlf is on for this repo, so a fresh checkout hands these tests CRLF
+// source while an editor-written file is LF. Normalising on read keeps the
+// slicing and regexes below independent of how git materialised the file.
+const readSource = file => fs.readFileSync(file, 'utf8').split('\r\n').join('\n');
+const server = readSource(path.join(root, 'server.js'));
+const browser = readSource(path.join(root, 'public', 'index.html'));
 
 function lead(id, notes = '', overrides = {}) {
   return {
@@ -198,8 +202,9 @@ test('the replies endpoint is read-only, authenticated, and category-filtered', 
   assert.match(server, /app\.get\('\/api\/coldemail\/replies', requireAuth/);
   const handler = server.slice(server.indexOf("app.get('/api/coldemail/replies'"));
   const body = handler.slice(0, handler.indexOf('\napp.'));
-  assert.match(body, /buildReplyRecords\(/);
-  assert.match(body, /filterReplyRecords\(records, category\)/);
+  // Records are built once in the shared snapshot; the endpoint filters them.
+  assert.match(server, /buildReplyRecords\(leads, \{/);
+  assert.match(body, /filterReplyRecords\(dataset\.replyRecords, category\)/);
   assert.ok(!/values\.(update|append|batchUpdate|clear)/.test(body), 'endpoint performs no sheet writes');
 });
 
@@ -256,6 +261,6 @@ test('no card interaction can mutate: the drill-down issues only GETs', () => {
 });
 
 test('the analytics module stays free of sending and suppression paths', () => {
-  const source = fs.readFileSync(path.join(root, 'integrations', 'reply-analytics.js'), 'utf8');
+  const source = readSource(path.join(root, 'integrations', 'reply-analytics.js'));
   assert.ok(!/sendEmail|addSuppression|gmail\(|sheets\(/.test(source));
 });

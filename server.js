@@ -402,8 +402,33 @@ const auth = new google.auth.GoogleAuth({
   scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
+// Every mutating Sheets call in this process funnels through here, so cache
+// invalidation cannot be forgotten at one of the ~30 write sites. A write that
+// names a cached tab drops the cached dataset immediately — the next read is
+// fresh, which is why a stage change never appears to be swallowed by the TTL.
+const MUTATING_VALUE_METHODS = ['update', 'append', 'batchUpdate', 'clear'];
+
+function rangesTouched(params) {
+  const out = [];
+  if (params && params.range) out.push(String(params.range));
+  const data = params && params.requestBody && params.requestBody.data;
+  if (Array.isArray(data)) for (const entry of data) if (entry && entry.range) out.push(String(entry.range));
+  return out;
+}
+
 function sheets() {
-  return google.sheets({ version: 'v4', auth });
+  const client = google.sheets({ version: 'v4', auth });
+  const values = client.spreadsheets.values;
+  for (const method of MUTATING_VALUE_METHODS) {
+    const original = values[method].bind(values);
+    values[method] = params => {
+      const ranges = rangesTouched(params);
+      if (ranges.some(range => range.includes(CE_SHEET_NAME))) invalidateOutreachCache(`write:${method}`);
+      if (ranges.some(range => /DemoPlays|ProposalOpens|ProposalEngaged/.test(range))) invalidateOutreachCache(`write:${method}`);
+      return original(params);
+    };
+  }
+  return client;
 }
 
 // Compatibility shim — call sites are unchanged; token management is now internal.
@@ -850,7 +875,13 @@ app.delete('/api/leads/:id', requireAuth, async (req, res) => {
 
 // ── COLD EMAIL HELPERS ────────────────────────────────────────────────────────
 
+// Verifying the sheet exists and its header is intact costs a spreadsheets.get
+// plus a header read — measured at ~780ms, paid on EVERY dashboard load for a
+// check whose answer cannot change while the process runs. Guarded the same way
+// ensureDemoPlaysHeader is: at most once per process.
+let ceSheetChecked = false;
 async function ensureColdEmailSheet() {
+  if (ceSheetChecked) return;
   const s  = sheets();
   const ss = await s.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
   const existing = ss.data.sheets.find(sh => sh.properties.title === CE_SHEET_NAME);
@@ -869,6 +900,7 @@ async function ensureColdEmailSheet() {
     console.log('[ColdEmail] Sheet created with headers');
   } else {
     ceSheetIdCache = existing.properties.sheetId;
+    ceSheetChecked = true;
     const hResp = await s.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
       range:         `${CE_SHEET_NAME}!A1:W1`,
@@ -935,35 +967,191 @@ async function readColdEmailDashboardRows() {
   ]);
 }
 
-async function readColdEmailSignalRows() {
-  const response = await sheets().spreadsheets.values.batchGet({
-    spreadsheetId: SPREADSHEET_ID,
-    ranges: [`${CE_SHEET_NAME}!A:B`, `${CE_SHEET_NAME}!J:J`],
-  });
-  const identity = response.data.valueRanges?.[0]?.values || [];
-  const sentAt = response.data.valueRanges?.[1]?.values || [];
-  return identity.slice(1).map((row, index) => ({
-    id: row[0] || '', company: row[1] || '', lastEmailedAt: sentAt[index + 1]?.[0] || '',
-  })).filter(row => row.id);
-}
+// The engagement-signal reader was removed: /api/proposalOpens used it for a
+// second full ColdEmail read that the shared outreach snapshot now supplies.
 
 // ── COLD EMAIL ROUTES ─────────────────────────────────────────────────────────
 
-app.get('/api/coldemail', requireAuth, async (_req, res) => {
+// ── SHARED OUTREACH DATASET ─────────────────────────────────────────────────
+// The Outreach page used to read the ColdEmail sheet three times per load (the
+// lead list, the stats card, and the reply drill-down each fetched it), plus
+// DemoPlays twice. All of them now derive from this one cached snapshot.
+//
+// Freshness: a short TTL bounds staleness, and any write this process makes to
+// ColdEmail or DemoPlays busts the cache synchronously (see sheets()), so a
+// stage change or an import is visible on the very next read. The TTL only ever
+// hides changes made OUTSIDE this process — e.g. someone editing the sheet by
+// hand or the agent writing from its own process.
+const OUTREACH_CACHE_TTL_MS = 30000;
+let outreachCache = null;
+let outreachCacheLoad = null;
+
+function invalidateOutreachCache(reason) {
+  if (outreachCache) console.log(`[outreach-cache] invalidated (${reason})`);
+  outreachCache = null;
+}
+
+const CE_LIGHT_FIELDS = [
+  'id', 'company', 'contactName', 'email', 'city', 'tradeType',
+  'stage', 'emailStatus', 'lastEmailedAt', 'campaign', 'leadNiche',
+];
+
+// Server-side mirror of the SPA's niche normaliser, so niche filtering can be
+// answered without shipping every row to the browser.
+function normalizedRouteNicheFor(lead) {
+  const value = String(lead.leadNiche || lead.tradeType || '').trim().toLowerCase();
+  if (value.includes('roof')) return 'roofing';
+  if (value.includes('dent')) return 'dental';
+  return value;
+}
+
+function campaignLabelFor(lead) {
+  const value = String(lead.campaign || '').trim();
+  return (!value || value.toLowerCase() === 'unlabeled') ? 'Unlabeled' : value;
+}
+
+// The row the table actually needs. Deliberately excludes notes, siteContext,
+// campaign_notes and website: they are ~70% of the old payload and no column
+// renders them. The two facts the UI DID read out of notes are precomputed
+// here as flags instead.
+function toLightRow(lead, category) {
+  const row = {};
+  for (const field of CE_LIGHT_FIELDS) row[field] = lead[field] || '';
+  row.replyCategory = category || '';
+  row.lateReply = /\[LATE REPLY:/i.test(lead.notes || '');
+  row.bounced = /\[BOUNCED/i.test(lead.notes || '');
+  return row;
+}
+
+async function loadOutreachDataset() {
+  await ensureColdEmailSheet();
+  const rowObjects = (rows, header) => (rows || []).slice(1)
+    .map(row => Object.fromEntries(header.map((field, column) => [field, row[column] || ''])));
+
+  // One batch per tab, all in flight together — this is the whole external cost
+  // of an Outreach load.
+  const [ceRows, draftResponse, activityResponse, providerResponse, demoResponse,
+         openResponse, engagedResponse] = await Promise.all([
+    readColdEmailDashboardRows(),
+    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ReplyDrafts!A:L' }).catch(() => ({ data: {} })),
+    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${COLD_CALL_ACTIVITY_SHEET}!A:J` }).catch(() => ({ data: {} })),
+    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A:N` }).catch(() => ({ data: {} })),
+    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A:F' }).catch(() => ({ data: {} })),
+    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ProposalOpens!A:F' }).catch(() => ({ data: {} })),
+    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ProposalEngaged!A:F' }).catch(() => ({ data: {} })),
+  ]);
+
+  ceRowMap.clear();
+  const leads = ceRows.slice(1).map((row, index) => {
+    const lead = {};
+    CE_COLUMNS.forEach((col, i) => { lead[col] = row[i] || ''; });
+    lead.created = parseInt(lead.created) || Date.now();
+    if (lead.id) ceRowMap.set(lead.id, index + 2);
+    return lead;
+  }).filter(lead => lead.id);
+
+  const activities = rowObjects(activityResponse.data.values, COLD_CALL_ACTIVITY_HEADER);
+  const classificationsByLeadId = buildStoredClassificationMap({
+    drafts: rowObjects(draftResponse.data.values, ['createdAt','leadId','company','email','topic','confidence','reason','draftBody','status','campaignProfile','classification','reasonCode']),
+    activities,
+    providerMappings: rowObjects(providerResponse.data.values, PROVIDER_LEADS_HEADER),
+  });
+
+  // Counts and reply records come from the canonical analytics module, exactly
+  // as before — this only changes how many times the sheet is read.
+  const metrics = buildReplyMetrics(leads, { classificationsByLeadId });
+  const replyRecords = buildReplyRecords(leads, {
+    classificationsByLeadId,
+    evidenceByLeadId: buildReplyEvidenceMap(activities),
+  });
+  const categoryByLeadId = new Map(replyRecords.map(record => [record.leadId, record.category]));
+
+  const counts = { queued: 0, emailed: 0, replied: metrics.totalReplies, done: 0 };
+  const facets = { stages: {}, niches: {}, campaigns: {} };
+  const rows = leads.map(lead => {
+    if (lead.stage === 'Queued') counts.queued++;
+    if (lead.emailStatus) counts.emailed++;
+    if (lead.emailStatus === 'done') counts.done++;
+    const stage = lead.stage || 'Import';
+    facets.stages[stage] = (facets.stages[stage] || 0) + 1;
+    const niche = normalizedRouteNicheFor(lead);
+    if (niche) facets.niches[niche] = (facets.niches[niche] || 0) + 1;
+    const campaign = campaignLabelFor(lead);
+    facets.campaigns[campaign] = (facets.campaigns[campaign] || 0) + 1;
+    return toLightRow(lead, categoryByLeadId.get(lead.id));
+  });
+
+  return {
+    at: Date.now(),
+    leads,                 // full rows, server-side only
+    rows,                  // light rows, safe to serialise
+    activities, classificationsByLeadId, replyRecords,
+    metrics, counts, facets,
+    demoPlays: demoResponse.data.values || [],
+    proposalOpens: openResponse.data.values || [],
+    proposalEngaged: engagedResponse.data.values || [],
+  };
+}
+
+// Concurrent callers share one in-flight load rather than each starting their
+// own — four parallel dashboard requests cost one set of reads, not four.
+async function getOutreachDataset({ force = false } = {}) {
+  if (!force && outreachCache && Date.now() - outreachCache.at < OUTREACH_CACHE_TTL_MS) return outreachCache;
+  if (!force && outreachCacheLoad) return outreachCacheLoad;
+  outreachCacheLoad = loadOutreachDataset()
+    .then(dataset => { outreachCache = dataset; return dataset; })
+    .finally(() => { outreachCacheLoad = null; });
+  return outreachCacheLoad;
+}
+
+const DEFAULT_CE_PAGE = 100;
+const MAX_CE_PAGE = 500;
+
+function filterOutreachRows(rows, query) {
+  const stage = String(query.stage || 'all');
+  const campaign = String(query.campaign || '').trim();
+  const niche = String(query.niche || 'all');
+  const category = String(query.replyCategory || '').trim().toLowerCase();
+  const search = String(query.search || '').trim().toLowerCase();
+
+  return rows.filter(row => {
+    // 'Unsub' is what the agent writes and 'Unsubscribed' what the dashboard
+    // shows; both must match the same tab or a lead becomes unreachable.
+    if (stage !== 'all') {
+      if (stage === 'Unsubscribed') { if (row.stage !== 'Unsubscribed' && row.stage !== 'Unsub') return false; }
+      else if (row.stage !== stage) return false;
+    }
+    if (campaign && campaignLabelFor(row) !== campaign) return false;
+    if (niche !== 'all' && normalizedRouteNicheFor(row) !== niche) return false;
+    if (category && category !== 'all' && row.replyCategory !== category) return false;
+    if (search && ![row.company, row.email, row.contactName]
+      .some(field => field && field.toLowerCase().includes(search))) return false;
+    return true;
+  });
+}
+
+// Bounded, filtered page of light rows. Filtering happens here rather than in
+// the browser so a search never ships 1,849 records to find three.
+// `limit=0` returns every matching light row — used only by the Campaigns
+// panel, which genuinely aggregates across the whole set.
+app.get('/api/coldemail', requireAuth, async (req, res) => {
   try {
-    const leads = await withAuth(async () => {
-      await ensureColdEmailSheet();
-      const rows = await readColdEmailDashboardRows();
-      ceRowMap.clear();
-      return rows.slice(1).map((row, idx) => {
-        const lead = {};
-        CE_COLUMNS.forEach((col, i) => { lead[col] = row[i] || ''; });
-        lead.created = parseInt(lead.created) || Date.now();
-        if (lead.id) ceRowMap.set(lead.id, idx + 2);
-        return lead;
-      }).filter(l => l.id);
+    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const filtered = filterOutreachRows(dataset.rows, req.query);
+    const requested = req.query.limit === undefined ? DEFAULT_CE_PAGE : parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(requested) && requested > 0 ? Math.min(requested, MAX_CE_PAGE) : 0;
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+    const page = limit ? filtered.slice(offset, offset + limit) : filtered;
+    res.json({
+      leads: page,
+      total: filtered.length,
+      totalUnfiltered: dataset.rows.length,
+      offset, limit,
+      hasMore: limit ? offset + page.length < filtered.length : false,
+      counts: dataset.counts,
+      facets: dataset.facets,
+      fetchedAt: new Date(dataset.at).toISOString(),
     });
-    res.json(leads);
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
     console.error('[ColdEmail GET]', e.message);
@@ -1168,11 +1356,8 @@ app.get('/api/digest', requireAuth, async (req, res) => {
 app.get('/api/demoPlays', requireAuth, async (_req, res) => {
   try {
     await ensureDemoPlaysHeader();
-    const resp = await sheets().spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: 'DemoPlays!A:F',
-    });
-    const rows = resp.data.values || [];
+    // Served from the shared snapshot rather than its own read.
+    const rows = (await getOutreachDataset()).demoPlays;
     res.json(rows.slice(1).map(row => ({
       timestamp: row[0] || '',
       company:   row[1] || '',
@@ -1198,12 +1383,14 @@ app.get('/api/demoPlays', requireAuth, async (_req, res) => {
 app.get('/api/proposalOpens', requireAuth, async (_req, res) => {
   try {
     const [openResp, leadRows, engResp, demoResp] = await Promise.all([
-      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ProposalOpens!A:F' }),
-      readColdEmailSignalRows(),
+      getOutreachDataset().then(dataset => ({ data: { values: dataset.proposalOpens } })),
+      // Was a second full ColdEmail read; the shared snapshot already holds it.
+      getOutreachDataset().then(dataset => dataset.leads.map(lead => ({ id: lead.id, company: lead.company, lastEmailedAt: lead.lastEmailedAt }))),
       // Engagement signals rescue a real human who happened to trip a scanner
       // rule. Both tabs are optional — a missing one just means no rescues.
-      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ProposalEngaged!A:F' }).catch(() => ({ data: {} })),
-      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A:F' }).catch(() => ({ data: {} })),
+      getOutreachDataset().then(dataset => ({ data: { values: dataset.proposalEngaged } })),
+      // Was a second DemoPlays read; the shared snapshot already holds it.
+      getOutreachDataset().then(dataset => ({ data: { values: dataset.demoPlays } })),
     ]);
 
     const opens = (openResp.data.values || []).slice(1).map(row => ({
@@ -1629,42 +1816,20 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/coldemail/stats', requireAuth, async (_req, res) => {
+// The Outreach summary. Lightweight by construction (~200 bytes): it returns
+// counts only, never lead rows, so the metric cards can paint without waiting
+// on the lead list. Now reads the shared snapshot instead of fetching the
+// ColdEmail sheet a second time.
+app.get('/api/coldemail/stats', requireAuth, async (req, res) => {
   try {
-    const [response, draftResponse, activityResponse, providerResponse] = await Promise.all([
-      sheets().spreadsheets.values.batchGet({
-        spreadsheetId: SPREADSHEET_ID,
-        ranges: [`${CE_SHEET_NAME}!A:A`, `${CE_SHEET_NAME}!H:I`, `${CE_SHEET_NAME}!L:L`],
-      }),
-      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ReplyDrafts!A:L' }).catch(() => ({ data: {} })),
-      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${COLD_CALL_ACTIVITY_SHEET}!A:J` }).catch(() => ({ data: {} })),
-      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A:N` }).catch(() => ({ data: {} })),
-    ]);
-    const ids = response.data.valueRanges?.[0]?.values || [];
-    const states = response.data.valueRanges?.[1]?.values || [];
-    const notes = response.data.valueRanges?.[2]?.values || [];
-    const counts = { queued: 0, emailed: 0, replied: 0, done: 0 };
-    const leads = [];
-    for (let index = 1; index < ids.length; index++) {
-      if (!ids[index]?.[0]) continue;
-      const stage = states[index]?.[0] || '';
-      const emailStatus = states[index]?.[1] || '';
-      const note = notes[index]?.[0] || '';
-      leads.push({ id: ids[index]?.[0] || '', stage, emailStatus, notes: note });
-      if (stage === 'Queued') counts.queued++;
-      if (emailStatus) counts.emailed++;
-      if (emailStatus === 'replied' || /\[REPLY: (?!OOO)/.test(note)) counts.replied++;
-      if (emailStatus === 'done') counts.done++;
-    }
-    const rowObjects = (rows, header) => (rows || []).slice(1)
-      .map(row => Object.fromEntries(header.map((field, column) => [field, row[column] || ''])));
-    const classificationsByLeadId = buildStoredClassificationMap({
-      drafts: rowObjects(draftResponse.data.values, ['createdAt','leadId','company','email','topic','confidence','reason','draftBody','status','campaignProfile','classification','reasonCode']),
-      activities: rowObjects(activityResponse.data.values, COLD_CALL_ACTIVITY_HEADER),
-      providerMappings: rowObjects(providerResponse.data.values, PROVIDER_LEADS_HEADER),
+    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    res.json({
+      ...dataset.counts,
+      replied: dataset.metrics.totalReplies,
+      replyMetrics: dataset.metrics,
+      totalLeads: dataset.rows.length,
+      fetchedAt: new Date(dataset.at).toISOString(),
     });
-    const replyMetrics = buildReplyMetrics(leads, { classificationsByLeadId });
-    res.json({ ...counts, replied: replyMetrics.totalReplies, replyMetrics });
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
     console.error('[ColdEmail Stats GET]', e.message);
@@ -1672,32 +1837,36 @@ app.get('/api/coldemail/stats', requireAuth, async (_req, res) => {
   }
 });
 
+// Alias under the newer naming. Same shared snapshot, same numbers.
+app.get('/api/coldemail/summary', requireAuth, async (req, res) => {
+  try {
+    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    res.json({
+      ...dataset.counts,
+      totalLeads: dataset.rows.length,
+      replyMetrics: dataset.metrics,
+      fetchedAt: new Date(dataset.at).toISOString(),
+    });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ColdEmail Summary GET]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Read-only drill-down behind the reply stat cards. Returns the same canonical
-// records `buildReplyMetrics` counts, so a card and its list cannot disagree.
-// Only replying leads cross the wire — never the full lead table.
+// records the counters are built from — now straight off the shared snapshot,
+// so opening a drill-down costs no sheet read at all.
 app.get('/api/coldemail/replies', requireAuth, async (req, res) => {
   try {
-    const [response, draftResponse, activityResponse, providerResponse] = await Promise.all([
-      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:L` }),
-      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ReplyDrafts!A:L' }).catch(() => ({ data: {} })),
-      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${COLD_CALL_ACTIVITY_SHEET}!A:J` }).catch(() => ({ data: {} })),
-      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A:N` }).catch(() => ({ data: {} })),
-    ]);
-    const rowObjects = (rows, header) => (rows || []).slice(1)
-      .map(row => Object.fromEntries(header.map((field, column) => [field, row[column] || ''])));
-    const leads = rowObjects(response.data.values, CE_COLUMNS.slice(0, 12)).filter(lead => lead.id);
-    const activities = rowObjects(activityResponse.data.values, COLD_CALL_ACTIVITY_HEADER);
-    const classificationsByLeadId = buildStoredClassificationMap({
-      drafts: rowObjects(draftResponse.data.values, ['createdAt','leadId','company','email','topic','confidence','reason','draftBody','status','campaignProfile','classification','reasonCode']),
-      activities,
-      providerMappings: rowObjects(providerResponse.data.values, PROVIDER_LEADS_HEADER),
-    });
-    const records = buildReplyRecords(leads, {
-      classificationsByLeadId,
-      evidenceByLeadId: buildReplyEvidenceMap(activities),
-    });
+    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
     const category = String(req.query.category || 'all');
-    res.json({ category, total: records.length, records: filterReplyRecords(records, category) });
+    res.json({
+      category,
+      total: dataset.replyRecords.length,
+      records: filterReplyRecords(dataset.replyRecords, category),
+      fetchedAt: new Date(dataset.at).toISOString(),
+    });
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
     console.error('[ColdEmail Replies GET]', e.message);

@@ -162,8 +162,10 @@ test('Positive Reply Rate uses positive unique leads over delivered contacted le
 });
 
 test('existing Outreach counts remain in the compact stats response', () => {
-  assert.match(server, /const counts = \{ queued: 0, emailed: 0, replied: 0, done: 0 \}/);
-  assert.match(server, /res\.json\(\{ \.\.\.counts, replied: replyMetrics\.totalReplies, replyMetrics \}\)/);
+  // The counts are now tallied once in the shared snapshot and served from it;
+  // the response still carries the same fields the cards read.
+  assert.match(server, /const counts = \{ queued: 0, emailed: 0, replied: metrics\.totalReplies, done: 0 \}/);
+  assert.match(server, /replied: dataset\.metrics\.totalReplies,[\s\S]{0,60}replyMetrics: dataset\.metrics,/);
   assert.match(browser, /ce-stat-total/);
   assert.match(browser, /ce-stat-queued/);
   assert.match(browser, /ce-stat-emailed/);

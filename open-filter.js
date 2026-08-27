@@ -68,7 +68,10 @@ function isDatacenterIp(ip) {
   return DATACENTER_IP_PREFIXES.some(p => s.startsWith(p));
 }
 
-const dayOf = ts => new Date(ts).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+// The formatter is built once: constructing an Intl formatter per call costs
+// ~0.2ms, which is ~35ms across a page of opens. Same output, same timezone.
+const VANCOUVER_DAY_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Vancouver' });
+const dayOf = ts => VANCOUVER_DAY_FMT.format(new Date(ts));
 
 /**
  * Is this single open row machine-generated?
