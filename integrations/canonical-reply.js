@@ -66,6 +66,63 @@ const EVIDENCE_SOURCE = Object.freeze({
 // can always be traced to the logic that produced it.
 const CLASSIFIER_VERSION = 'reply_v2_evidence';
 
+/**
+ * The instant canonical reply ingestion became LIVE in production.
+ *
+ * This is a historical fact, not a setting, so it is committed to source rather
+ * than left to an environment variable that could be lost on a restart or a new
+ * environment. It is the moment Railway deployment
+ * 69810784-33d6-4a77-a5f5-659ff18510d7 (commit a190c22, "classify replies from
+ * evidence instead of CRM state") reached SUCCESS and began serving:
+ *
+ *   git commit a190c22   2026-08-27T23:33:39Z
+ *   build started        2026-08-27T23:33:57.290Z
+ *   reached SUCCESS      2026-08-27T23:34:39.552Z   <- the boundary
+ *
+ * The SUCCESS instant is used, not the commit or build-start time: until the
+ * deployment was actually serving, replies were processed by the OLD code,
+ * which had no canonical writer at all. Choosing the latest of the three is
+ * also the conservative choice — it can only ever suppress a false ingestion
+ * failure, never invent one.
+ *
+ * An env override exists for tests and for future re-deployments of the writer.
+ */
+const CANONICAL_REPLY_BOUNDARY = '2026-08-27T23:34:39.552Z';
+
+/**
+ * Resolve the boundary, failing SAFE.
+ *
+ * Semantics are strict: a reply counts as post-boundary only when it occurred
+ * STRICTLY AFTER the boundary instant. A reply landing exactly on it is
+ * ambiguous — it could have been handled by either build — so it is treated as
+ * historical. Ambiguity must never manufacture an ingestion failure.
+ *
+ * An unparseable override is reported rather than silently ignored, because a
+ * boundary that quietly stops working would disable the detection it exists for.
+ */
+function resolveCanonicalReplyBoundary(override) {
+  const raw = override === undefined || override === null || override === ''
+    ? CANONICAL_REPLY_BOUNDARY
+    : String(override);
+  const ms = Date.parse(raw);
+  if (!Number.isFinite(ms)) {
+    return { at: null, source: 'invalid', configured: raw, error: `"${raw}" is not a parseable timestamp` };
+  }
+  return {
+    at: new Date(ms).toISOString(),
+    source: override ? 'override' : 'built_in',
+    configured: raw, error: null,
+  };
+}
+
+/** Strictly after the boundary. Equal instants are historical (fail safe). */
+function isAfterBoundary(occurredAt, boundaryAt) {
+  if (!boundaryAt) return false;
+  const at = Date.parse(occurredAt || '');
+  if (!Number.isFinite(at)) return false;   // no timestamp -> cannot be proven post-boundary
+  return at > Date.parse(boundaryAt);
+}
+
 const GENUINE_HUMAN_STATES = Object.freeze([
   REPLY_STATE.POSITIVE, REPLY_STATE.NEGATIVE, REPLY_STATE.NEEDS_HUMAN,
 ]);
@@ -459,6 +516,7 @@ const isInboundMessage = resolved =>
 module.exports = {
   REPLY_STATE, AUTOMATED_SUBTYPE, NEEDS_HUMAN_REASON, EVIDENCE_SOURCE,
   CLASSIFIER_VERSION, GENUINE_HUMAN_STATES, INBOUND_REPLY_EVENT, LEGACY_REPLY_EVENT_TYPES,
+  CANONICAL_REPLY_BOUNDARY, resolveCanonicalReplyBoundary, isAfterBoundary,
   classifyReplyText, resolveReplyState, isGenuineHumanReply, isInboundMessage,
   extractReturnDate, extractProposedEmail, malformedEmailReason, isUsableReplyIdentity,
   legacyTagsFrom, stateFromLegacyTag,

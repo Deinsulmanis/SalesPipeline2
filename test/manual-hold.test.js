@@ -56,24 +56,13 @@ function load(src, names, context) {
 
 function agentSuppression({ suppressedEmails = [] } = {}) {
   const SUPPRESSED = new Set(suppressedEmails.map(e => e.toLowerCase().trim()));
-  // SUPPRESSION_TAGS is lifted from the real source, so the test fails if the
-  // MANUAL HOLD entry is ever removed from it.
-  // The array literal contains ']' inside its own strings, so match to line end.
-  const tagLine = agentSrc.match(/const SUPPRESSION_TAGS = (\[.+\]);/);
-  assert.ok(tagLine, 'SUPPRESSION_TAGS not found in outreach-agent.js');
-  const MANUAL_HOLD_TAG_LOCAL = '[MANUAL HOLD]';
-  // eslint-disable-next-line no-eval
-  const SUPPRESSION_TAGS = eval(tagLine[1].replace(/MANUAL_HOLD_TAG/g, JSON.stringify(MANUAL_HOLD_TAG_LOCAL)));
-  const { suppressionReason } = load(agentSrc, ['suppressionReason'], {
-    SUPPRESSION_TAGS,
-    SUPPRESSED_EMAILS: SUPPRESSED,
-    normEmail: e => (e || '').toLowerCase().trim(),
-    MANUAL_HOLD_TAG: MANUAL_HOLD_TAG_LOCAL,
-    // The REAL shared gate, not a stand-in: if the release rule ever loosened,
-    // these suppression tests would start letting held leads through.
-    manualHoldReleased: require('../integrations/pipeline-state').manualHoldReleased,
-  });
-  return { suppressionReason, SUPPRESSION_TAGS };
+  const { sendSuppressionReason, SEND_SUPPRESSION_TAGS } = require('../integrations/pipeline-state');
+  // The agent's suppressionReason is now a one-line delegation to this shared
+  // rule, so exercising the shared rule IS exercising the production guard --
+  // no source-slicing sandbox needed. A separate assertion below proves the
+  // agent still delegates rather than growing its own copy.
+  const suppressionReason = lead => sendSuppressionReason(lead, { suppressedEmails: SUPPRESSED });
+  return { suppressionReason, SUPPRESSION_TAGS: [...SEND_SUPPRESSION_TAGS] };
 }
 
 test('MANUAL HOLD is registered in the agent suppression tag list', () => {
@@ -104,9 +93,13 @@ test('existing opt-out and bounce suppression still work unchanged', () => {
 test('every send loop consults suppressionReason, so one tag covers them all', () => {
   const guards = agentSrc.match(/const suppressed = suppressionReason\(lead\);/g) || [];
   assert.ok(guards.length >= 4, 'expected >=4 send-loop guards, found ' + guards.length);
-  // and the tag list is read only through suppressionReason — no second copy
-  const uses = agentSrc.match(/SUPPRESSION_TAGS/g) || [];
-  assert.equal(uses.length, 2, 'SUPPRESSION_TAGS should be declared once and read once');
+  // The tag list has exactly one definition, in pipeline-state, shared by the
+  // sender and the health checker. The agent must not keep a second copy.
+  assert.ok(!/const SUPPRESSION_TAGS\s*=/.test(agentSrc), 'the agent must not redeclare the tag list');
+  const { SEND_SUPPRESSION_TAGS } = require('../integrations/pipeline-state');
+  assert.deepEqual([...SEND_SUPPRESSION_TAGS],
+    ['[REPLY: Unsubscribed]', '[BOUNCED', '[MANUAL HOLD]'],
+    'the permanent opt-out tags must still come before the reversible hold');
 });
 
 // ── 2. CRM SIDE: which stages apply the hold ────────────────────────────────

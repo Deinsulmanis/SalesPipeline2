@@ -130,8 +130,11 @@ test('12. an identity conflict blocks the journey', () => {
 
 test('13/14. MANUAL HOLD still blocks COLD sending and is never removed', () => {
   // The cold guard is untouched: suppressionReason keeps returning the tag.
-  assert.match(agent, /if \(tag === MANUAL_HOLD_TAG && manualHoldReleased\(notes\)\) continue;/);
-  assert.match(agent, /const SUPPRESSION_TAGS = \['\[REPLY: Unsubscribed\]', '\[BOUNCED', MANUAL_HOLD_TAG\]/);
+  // The cold-send guard now lives in pipeline-state, shared with health checks.
+  assert.match(readSource(path.join(root, 'integrations', 'pipeline-state.js')),
+    /if \(tag === MANUAL_HOLD_TAG && manualHoldReleased\(notes\)\) continue;/);
+  const { SEND_SUPPRESSION_TAGS } = require('../integrations/pipeline-state');
+  assert.ok(SEND_SUPPRESSION_TAGS.includes('[MANUAL HOLD]'), 'the hold must stay a cold-send suppression tag');
   // The stage pass never removes it, and never touches cold state.
   assert.ok(!/applyHoldToNotes|removeHold|clearHold/.test(pass), 'the stage pass never rewrites the hold');
   assert.ok(!/emailStep|lastEmailedAt|markSent/.test(pass), 'and never touches cold sequence state');

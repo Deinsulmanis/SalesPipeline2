@@ -21,6 +21,7 @@ const root = path.join(__dirname, '..');
 // core.autocrlf is on for this repo, so a fresh checkout yields CRLF source.
 const readSource = file => fs.readFileSync(file, 'utf8').split('\r\n').join('\n');
 const agentSrc = readSource(path.join(root, 'outreach-agent.js'));
+const stateSrc = readSource(path.join(root, 'integrations', 'pipeline-state.js'));
 const serverSrc = readSource(path.join(root, 'server.js'));
 const browser = readSource(path.join(root, 'public', 'index.html'));
 
@@ -40,20 +41,11 @@ const scheduled = (at = FUTURE, o = {}) => twin({ notes: applyResumeToNotes(MANU
 
 // Lift the real suppressionReason out of the agent, wired to the real gate.
 function agentGate({ suppressedEmails = [] } = {}) {
-  const tagLine = agentSrc.match(/const SUPPRESSION_TAGS = (\[.+\]);/);
-  const HOLD = '[MANUAL HOLD]';
-  // eslint-disable-next-line no-eval
-  const SUPPRESSION_TAGS = eval(tagLine[1].replace(/MANUAL_HOLD_TAG/g, JSON.stringify(HOLD)));
-  const body = agentSrc.match(/function suppressionReason\(lead\) \{[\s\S]*?\n\}/)[0];
-  const sandbox = {
-    SUPPRESSION_TAGS, MANUAL_HOLD_TAG: HOLD, manualHoldReleased,
-    SUPPRESSED_EMAILS: new Set(suppressedEmails.map(e => e.toLowerCase().trim())),
-    normEmail: e => (e || '').toLowerCase().trim(),
-    module: {}, exports: {},
-  };
-  vm.createContext(sandbox);
-  vm.runInContext(body + '\nthis.__fn = suppressionReason;', sandbox);
-  return sandbox.__fn;
+  // The agent delegates to the shared rule in pipeline-state, so this returns
+  // the real production guard directly instead of eval-ing a source slice.
+  const { sendSuppressionReason } = require('../integrations/pipeline-state');
+  const SUPPRESSED = new Set(suppressedEmails.map(e => e.toLowerCase().trim()));
+  return lead => sendSuppressionReason(lead, { suppressedEmails: SUPPRESSED });
 }
 
 // ── 1–4. Who may reactivate ─────────────────────────────────────────────────
@@ -139,7 +131,11 @@ test('9. reaching resumeAt releases only the hold — every other check still ap
 test('28. the gate lives in suppressionReason, which every send loop calls', () => {
   const guards = agentSrc.match(/const suppressed = suppressionReason\(lead\);/g) || [];
   assert.ok(guards.length >= 4, 'expected the shared guard on every send loop');
-  assert.match(agentSrc, /if \(tag === MANUAL_HOLD_TAG && manualHoldReleased\(notes\)\) continue;/);
+  // The release rule moved into pipeline-state with the rest of the guard; the
+  // assertion follows it, and still fails if the rule is ever weakened.
+  assert.match(stateSrc, /if \(tag === MANUAL_HOLD_TAG && manualHoldReleased\(notes\)\) continue;/);
+  // ...and the agent must still route through that shared rule.
+  assert.match(agentSrc, /return sendSuppressionReason\(lead, \{ suppressedEmails: SUPPRESSED_EMAILS \}\);/);
   // The gate is imported from the shared model, not re-implemented in the
   // agent. Matched loosely: other names may be destructured alongside it.
   assert.match(agentSrc, /const \{[^}]*\bmanualHoldReleased\b[^}]*\} = require\('\.\/integrations\/pipeline-state'\)/);

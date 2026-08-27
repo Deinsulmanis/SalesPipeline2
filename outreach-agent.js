@@ -65,7 +65,7 @@ const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrat
 const { routedLeadReady } = require('./integrations/campaign-routing');
 // The reactivation gate is defined once, in the shared pipeline-state model.
 const { manualHoldReleased, applyHoldToNotes, stageRequiresHold,
-  deriveCallLifecycle, deriveHotState } = require('./integrations/pipeline-state');
+  deriveCallLifecycle, deriveHotState, sendSuppressionReason } = require('./integrations/pipeline-state');
 const {
   evaluateStageSequence, buildSequenceEmail, sequenceStepEventId, SEQUENCE_EVENTS,
   resolveSequenceThread,
@@ -2612,9 +2612,9 @@ function isValidEmail(e) {
 // standard follow-ups, intent emails, auto-answers and the roofing path at once.
 // This can only ever REMOVE a lead from a send — it can never cause one.
 const MANUAL_HOLD_TAG = '[MANUAL HOLD]';
-// Order matters: the permanent tags come first, so a lead that is BOTH opted
-// out and scheduled to reactivate reports the opt-out and stays blocked.
-const SUPPRESSION_TAGS = ['[REPLY: Unsubscribed]', '[BOUNCED', MANUAL_HOLD_TAG];
+// The tag list itself now lives in pipeline-state as SEND_SUPPRESSION_TAGS,
+// beside the rule that reads it, so there is exactly one copy for the sender
+// and the health checker to share.
 
 // ── GLOBAL SUPPRESSION LIST (durable, keyed by email) ─────────────────────────
 // The per-row notes tag above is fragile: delete the row (manual cleanup, a
@@ -2676,20 +2676,11 @@ async function addSuppression(email, reason, company, source) {
 
 // A lead must not be emailed if EITHER its notes carry a suppression tag OR its
 // address is on the global suppression list (survives row deletion / re-import).
+// Delegates to the canonical definition in pipeline-state. The rule itself is
+// unchanged — moving it out means the health checker can ask the SAME function
+// the sender asks, instead of reimplementing it and quietly disagreeing.
 function suppressionReason(lead) {
-  const notes = lead.notes || '';
-  for (const tag of SUPPRESSION_TAGS) {
-    if (!notes.includes(tag)) continue;
-    // A scheduled reactivation releases the REVERSIBLE manual hold, and only
-    // once its resume instant has passed. The hold tag itself is never removed,
-    // so this is the single point where a lead stops being held — and it fails
-    // closed: no resume tag, an unparseable one, or a future one all keep the
-    // lead suppressed. Opt-out and bounce are permanent and never released.
-    if (tag === MANUAL_HOLD_TAG && manualHoldReleased(notes)) continue;
-    return tag;
-  }
-  if (SUPPRESSED_EMAILS.has(normEmail(lead.email))) return 'suppression-list';
-  return null;
+  return sendSuppressionReason(lead, { suppressedEmails: SUPPRESSED_EMAILS });
 }
 
 function selectQueued(leads) {

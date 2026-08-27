@@ -52,6 +52,40 @@ const SUPPRESSION_NOTE_TAGS = Object.freeze(['[REPLY: Unsubscribed]', '[BOUNCED'
 // must not permanently disqualify a lead from being reopened.
 const MANUAL_HOLD_TAG = '[MANUAL HOLD]';
 
+// The send-time suppression tags, in priority order. The permanent ones come
+// FIRST so a lead that is both opted out and scheduled to reactivate reports
+// the opt-out and stays blocked.
+const SEND_SUPPRESSION_TAGS = Object.freeze([...SUPPRESSION_NOTE_TAGS, MANUAL_HOLD_TAG]);
+
+/**
+ * Why this lead may not be cold-emailed, or null if it may.
+ *
+ * THE single definition, shared by the sender and by the health checker. It
+ * used to live only inside outreach-agent.js, which exports nothing, so any
+ * other component wanting to reason about eligibility had to reimplement it —
+ * and a health check that disagrees with the sender is worse than no health
+ * check, because it reports green while the sender does something else.
+ *
+ * The global suppression list is injected rather than imported: it is runtime
+ * state loaded from a sheet, and this module stays pure.
+ */
+function sendSuppressionReason(lead = {}, { suppressedEmails = new Set() } = {}) {
+  const notes = lead.notes || '';
+  for (const tag of SEND_SUPPRESSION_TAGS) {
+    if (!notes.includes(tag)) continue;
+    // A scheduled reactivation releases the REVERSIBLE manual hold, and only
+    // once its resume instant has passed. The hold tag itself is never removed,
+    // so this is the single point where a lead stops being held — and it fails
+    // closed: no resume tag, an unparseable one, or a future one all keep the
+    // lead suppressed. Opt-out and bounce are permanent and never released.
+    if (tag === MANUAL_HOLD_TAG && manualHoldReleased(notes)) continue;
+    return tag;
+  }
+  const email = String(lead.email || '').trim().toLowerCase();
+  if (email && suppressedEmails.has(email)) return 'suppression-list';
+  return null;
+}
+
 function noteHas(notes, tag) {
   return String(notes || '').includes(tag);
 }
@@ -1235,7 +1269,8 @@ function reopenEligibility(boardLead, twin) {
 }
 
 module.exports = {
-  AUTOMATION_STATES, SUPPRESSION_NOTE_TAGS, MANUAL_HOLD_TAG, HUMAN_OWNED_STAGES,
+  AUTOMATION_STATES, SUPPRESSION_NOTE_TAGS, MANUAL_HOLD_TAG,
+  SEND_SUPPRESSION_TAGS, sendSuppressionReason, HUMAN_OWNED_STAGES,
   REACTIVATION_MODES, resumeAtFromNotes, manualHoldReleased,
   HOT_FOLLOW_UP, WAITING_ON, HOT_STALENESS, MEANINGFUL_INBOUND_EVENTS, MEANINGFUL_HUMAN_EVENTS,
   CALL_STATUS, CALL_EVENTS, CALL_BOOKING_EVENTS, CALL_RESOLUTION_EVENTS,

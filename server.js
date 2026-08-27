@@ -37,6 +37,7 @@ const {
   buildCampaignVersionIndex, latestSendAttribution, acquisitionAttribution, promotionAttribution, coldSendAttribution,
 } = require('./integrations/campaign-versions');
 const { buildFunnelAnalytics } = require('./integrations/funnel-analytics');
+const { buildCrmHealth } = require('./integrations/crm-health');
 const {
   classifyCalendarEvent, matchBookingIdentity, bookingLifecycleAction,
   nextSyncState, providerEventKey, runGoogleCalendarSync: orchestrateGoogleCalendarSync,
@@ -55,7 +56,7 @@ const {
   REACTIVATION_MODES, reactivationEligibility, FOLLOW_UP_DELAY_DAYS,
   CALL_STATUS, deriveCallLifecycle, callLifecycleActions, deriveHotState,
   applyResumeToNotes, clearResumeFromNotes, resumeAtFromNotes,
-  applyHoldToNotes, stageRequiresHold,
+  applyHoldToNotes, stageRequiresHold, sendSuppressionReason,
 } = require('./integrations/pipeline-state');
 
 const app = express();
@@ -1422,6 +1423,77 @@ app.get('/api/coldemail/funnel', requireAuth, async (req, res) => {
   } catch (error) {
     if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
     console.error('[Funnel Analytics GET]', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── CRM HEALTH (Step 14) ────────────────────────────────────────────────────
+// Read-only diagnostics. Detects problems; never repairs them. There is
+// deliberately no companion POST/repair route: everything here answers "what
+// requires investigation", and acting on it stays a human decision.
+//
+// Runs entirely off the shared Outreach snapshot plus two small reads that are
+// already cached elsewhere, so opening the health panel costs no extra Sheets
+// traffic per lead.
+app.get('/api/crm/health', requireAuth, async (req, res) => {
+  try {
+    const startedAt = process.hrtime.bigint();
+    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    // The sender's OWN suppression rule, bound to the live suppression list, so
+    // health cannot disagree with what the sender would actually do.
+    const suppressedEmails = await loadSuppressedEmails();
+    const calendarSyncState = CALENDAR_SYNC_ENABLED
+      ? await readCalendarSyncState().catch(() => null)
+      : null;
+    // The funnel is CONSUMED, never rebuilt: reconciliation has one owner.
+    const funnel = buildFunnelAnalytics({
+      leads: dataset.leads, boardLeads: dataset.boardLeads, activities: dataset.activities,
+      replyRecords: dataset.replyRecords,
+      currentVersion: ACTIVE_CAMPAIGN_VERSION.dental_ai_receptionist,
+    }, { version: 'lifetime' });
+
+    const health = buildCrmHealth({
+      leads: dataset.leads, boardLeads: dataset.boardLeads, activities: dataset.activities,
+      replyRecords: dataset.replyRecords,
+      suppressionReason: lead => sendSuppressionReason(lead, { suppressedEmails }),
+      sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true',
+      calendarSyncEnabled: CALENDAR_SYNC_ENABLED,
+      bookingCalendarId: BOOKING_CALENDAR_ID,
+      appointmentScheduleId: BOOKING_APPOINTMENT_SCHEDULE_ID,
+      calendarSyncState,
+      canonicalReplyBoundary: process.env.CANONICAL_REPLY_BOUNDARY || null,
+      funnel,
+    });
+
+    // Drill-down: one check's full affected set, bounded and paginated exactly
+    // like every other list endpoint in this CRM.
+    const checkId = String(req.query.check || '').trim();
+    let drill;
+    if (checkId) {
+      const requested = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 100));
+      const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+      const match = health.findings.find(item => item.id === checkId);
+      const rows = match ? match.sample : [];
+      drill = {
+        check: checkId,
+        records: rows.slice(offset, offset + requested),
+        pagination: {
+          total: match ? match.affected : 0, offset, limit: requested,
+          hasMore: offset + Math.min(rows.length, requested) < (match ? match.affected : 0),
+          sampleOnly: Boolean(match && match.sampleTruncated),
+        },
+      };
+    }
+
+    res.json({
+      ...health,
+      ...(drill ? { drill } : {}),
+      generatedMs: Number(process.hrtime.bigint() - startedAt) / 1e6,
+      fetchedAt: new Date(dataset.at).toISOString(),
+    });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[CRM Health GET]', error.message);
     res.status(500).json({ error: error.message });
   }
 });
