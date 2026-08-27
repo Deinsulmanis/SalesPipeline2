@@ -373,7 +373,10 @@ function addDays(iso, days) {
 
 // Activity event types that represent an inbound reply, and the ones that
 // represent us having already answered. Mirrors the recorded event vocabulary.
-const REPLY_EVENTS = Object.freeze(['positive_reply', 'meeting_requested', 'late_reply']);
+const REPLY_EVENTS = Object.freeze([
+  'positive_reply', 'meeting_requested', 'late_reply', 'question_reply',
+  'negative_reply', 'unsubscribe_reply', 'wrong_person_reply', 'needs_human_reply',
+]);
 const HUMAN_TOUCH_EVENTS = Object.freeze(['conversation_note', 'call_booked']);
 
 function latestEventAt(activities, types) {

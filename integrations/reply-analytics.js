@@ -59,7 +59,11 @@ function classificationFromLead(lead = {}, storedClassifications = []) {
 // Canonical reply evidence. Reply bodies live in the activity sheet; many
 // replies (negatives, unsubscribes) never stored text, so `hasText` is an
 // explicit signal rather than an empty string the UI has to guess about.
-const REPLY_EVIDENCE_TYPES = new Set(['positive_reply', 'meeting_requested', 'late_reply']);
+const REPLY_EVIDENCE_TYPES = new Set([
+  'positive_reply', 'meeting_requested', 'late_reply', 'question_reply',
+  'negative_reply', 'unsubscribe_reply', 'wrong_person_reply',
+  'needs_human_reply', 'out_of_office_reply',
+]);
 
 function buildReplyEvidenceMap(activities = []) {
   const byLead = new Map();

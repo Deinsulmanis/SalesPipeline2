@@ -1175,6 +1175,7 @@ async function getReplyMessage(lead) {
     const rfcMessageId = headerValue(best.msg.payload, 'Message-ID');
     return {
       messageId: best.msg.id, rfcMessageId, threadId: best.msg.threadId || '', snippet, body,
+      subject: headerValue(best.msg.payload, 'Subject'),
       fromAddr: best.fromAddr, occurredAt: new Date(best.ms).toISOString(),
     };
   } catch (e) {
@@ -1576,13 +1577,42 @@ async function handleInterested(lead, message = {}, replyText = '', eventType = 
     { moveExisting: true },
   );
   await recordColdCallActivity({
+    eventId: message.messageId ? `gmail-reply:${message.messageId}` : `${lead.id}:reply:${message.occurredAt || Date.now()}`,
     leadId: coldCallLeadId || `CE-${lead.id}`, sourceLeadId: lead.id,
     email: lead.email, company: cleanCompanyName(lead.company) || lead.company || '',
     eventType, occurredAt: message.occurredAt || new Date().toISOString(),
     subject: '', content: replyText || message.snippet || '',
-    metadata: JSON.stringify({ from: message.fromAddr || lead.email, classification: eventType }),
+    metadata: JSON.stringify({
+      from: message.fromAddr || lead.email,
+      classification: eventType === 'meeting_requested' ? 'MEETING_REQUEST' : 'INTERESTED',
+      gmailMessageId: message.messageId || '', gmailThreadId: message.threadId || '',
+      rfcMessageId: message.rfcMessageId || '', detectedAfterSequence: false,
+    }),
   });
   console.log(`  🔥 Auto-promoted ${lead.company} to Cold Calls kanban`);
+}
+
+const ACTIVE_REPLY_EVENT_TYPES = Object.freeze({
+  QUESTION: 'question_reply', NOT_INTERESTED: 'negative_reply', UNSUBSCRIBE: 'unsubscribe_reply',
+  WRONG_PERSON: 'wrong_person_reply', OUT_OF_OFFICE: 'out_of_office_reply', NEEDS_HUMAN: 'needs_human_reply',
+});
+
+async function recordActiveReplyActivity(lead, message, replyText, classification) {
+  const eventType = ACTIVE_REPLY_EVENT_TYPES[classification];
+  if (!eventType) return; // positive/meeting replies are logged by handleInterested after promotion
+  await recordColdCallActivity({
+    eventId: message.messageId ? `gmail-reply:${message.messageId}` : `${lead.id}:reply:${message.occurredAt || Date.now()}`,
+    leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email,
+    company: cleanCompanyName(lead.company) || lead.company || '', eventType,
+    occurredAt: message.occurredAt || new Date().toISOString(), subject: message.subject || '',
+    content: String(replyText || message.snippet || '').slice(0, 1500),
+    metadata: JSON.stringify({
+      classification, from: message.fromAddr || lead.email,
+      gmailMessageId: message.messageId || '', gmailThreadId: message.threadId || '',
+      rfcMessageId: message.rfcMessageId || '', detectedAfterSequence: false,
+      requiresHumanAttention: ['QUESTION', 'WRONG_PERSON', 'NEEDS_HUMAN'].includes(classification),
+    }),
+  });
 }
 
 async function handleNotInterested(lead) {
@@ -1848,6 +1878,25 @@ async function handleRoofingSurveyReply(lead, message, replyText, todaySent) {
   }
   const classification = await classifyRoofingReply({ replyText, createMessage: anthropicClient ? input => anthropicClient.messages.create(input) : null });
   console.log(`  [roofing-reply] profile=${ROOFING_SURVEY_PROFILE} classification=${classification.category} reason=${classification.reason_code}`);
+  const roofingEventType = classification.category === 'positive' ? 'positive_reply'
+    : classification.category === 'negative' ? 'negative_reply'
+      : classification.category === 'unsubscribe' ? 'unsubscribe_reply'
+        : classification.category === 'wrong_person' ? 'wrong_person_reply'
+          : ['out_of_office', 'automated'].includes(classification.category) ? 'out_of_office_reply'
+            : 'needs_human_reply';
+  await recordColdCallActivity({
+    eventId: message.messageId ? `gmail-reply:${message.messageId}` : `${lead.id}:reply:${message.occurredAt || Date.now()}`,
+    leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email,
+    company: cleanCompanyName(lead.company) || lead.company || '', eventType: roofingEventType,
+    occurredAt: message.occurredAt || new Date().toISOString(), subject: message.subject || '',
+    content: String(replyText || message.snippet || '').slice(0, 1500),
+    metadata: JSON.stringify({
+      classification: classification.category, reasonCode: classification.reason_code,
+      campaignProfile: ROOFING_SURVEY_PROFILE, gmailMessageId: message.messageId || '',
+      gmailThreadId: message.threadId || '', rfcMessageId: message.rfcMessageId || '', detectedAfterSequence: false,
+      requiresHumanAttention: classification.requires_human_review === true,
+    }),
+  });
   if (classification.category === 'unsubscribe') { await handleUnsubscribe(lead); return classification.category; }
   if (classification.category === 'negative') { await handleNotInterested(lead); return classification.category; }
   if (classification.category === 'wrong_person') { await handleWrongPerson(lead); return classification.category; }
@@ -1927,6 +1976,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null) {
 
     if (!DRY_RUN) {
       await withAuth(async () => {
+        await recordActiveReplyActivity(lead, message, replyText, classification);
         switch (classification) {
           // A genuine question is answered from product-facts.js when we're
           // confident, otherwise drafted for review. Both paths append the

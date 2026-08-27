@@ -29,6 +29,7 @@ const {
   COLD_CALL_ACTIVITY_HEADER,
   scoreColdCallLead,
 } = require('./integrations/cold-call-pipeline');
+const { buildActivityTimeline, inspectActivityIntegrity } = require('./integrations/activity-timeline');
 const {
   deriveAutomationState, automationConflict, deriveNextAction,
   compareNextActions, summarizeNextActions,
@@ -471,6 +472,21 @@ async function appendIntegrationRow(title, header, record) {
   await sheets().spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID, range: `${title}!A:${sheetColumn(header.length)}`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS', requestBody: { values: [header.map(key => String(record[key] ?? ''))] } });
 }
 
+function stableActivityId(prefix, parts) {
+  return `${prefix}:${crypto.createHash('sha1').update(parts.map(value => String(value || '')).join('|')).digest('hex').slice(0, 24)}`;
+}
+
+async function appendColdCallActivities(records) {
+  if (!records?.length) return;
+  await ensureIntegrationSheet(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER);
+  await sheets().spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${COLD_CALL_ACTIVITY_SHEET}!A:J`,
+    valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: records.map(record => COLD_CALL_ACTIVITY_HEADER.map(key => String(record[key] ?? ''))) },
+  });
+}
+
 async function upsertIntegrationRow(title, header, key, record) {
   const rows = await readIntegrationRows(title, header);
   const found = rows.find(row => row[key] === String(record[key]));
@@ -734,6 +750,18 @@ app.post('/api/leads', requireAuth, async (req, res) => {
       const m = (resp.data.updates?.updatedRange || '').match(/!A(\d+)/);
       if (m) rowMap.set(lead.id, parseInt(m[1]));
     });
+    try {
+      const occurredAt = Number.isFinite(Date.parse(String(lead.created || '')))
+        ? new Date(lead.created).toISOString() : new Date().toISOString();
+      await appendColdCallActivities([{
+        eventId: stableActivityId('lead-created', [lead.id]), leadId: lead.id, sourceLeadId: '',
+        email: lead.email || '', company: lead.company || '', eventType: 'lead_created',
+        occurredAt, subject: 'Lead added to Sales Pipeline', content: '',
+        metadata: JSON.stringify({ trigger: 'crm_create' }),
+      }]);
+    } catch (activityError) {
+      console.warn('[Leads POST] saved, but lead-created activity failed:', activityError.message);
+    }
     res.json({ ok: true });
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
@@ -833,6 +861,21 @@ app.put('/api/leads/:id', requireAuth, async (req, res) => {
         });
       } catch (activityError) {
         console.warn('[Leads PUT] saved, but stage-history append failed:', activityError.message);
+      }
+    }
+    const previousNotes = String(priorRow[15] || '');
+    const nextNotes = String(lead.notes || '').trim();
+    if (nextNotes && nextNotes !== previousNotes.trim()) {
+      try {
+        await appendColdCallActivities([{
+          eventId: stableActivityId('conversation-note', [req.params.id, nextNotes]),
+          leadId: req.params.id, sourceLeadId: '', email: lead.email || priorRow[10] || '',
+          company: lead.company || priorRow[6] || '', eventType: 'conversation_note',
+          occurredAt: new Date().toISOString(), subject: 'Lead note updated', content: nextNotes,
+          metadata: JSON.stringify({ trigger: 'crm_notes' }),
+        }]);
+      } catch (activityError) {
+        console.warn('[Leads PUT] saved, but note activity failed:', activityError.message);
       }
     }
     res.json({ ok: true });
@@ -1047,7 +1090,6 @@ async function loadOutreachDataset() {
   const leads = ceRows.slice(1).map((row, index) => {
     const lead = {};
     CE_COLUMNS.forEach((col, i) => { lead[col] = row[i] || ''; });
-    lead.created = parseInt(lead.created) || Date.now();
     if (lead.id) ceRowMap.set(lead.id, index + 2);
     return lead;
   }).filter(lead => lead.id);
@@ -1738,6 +1780,25 @@ async function applyManualHold(boardLeadId, boardEmail) {
   return changed;
 }
 
+function activityMatchesLead(row, lead) {
+  const id = String(lead.id || '').replace(/^CE-/, '');
+  const rowIds = [row.leadId, row.sourceLeadId].map(value => String(value || '').replace(/^CE-/, ''));
+  const email = normalizeEmail(lead.email || '');
+  return rowIds.includes(id) || (email && normalizeEmail(row.email) === email);
+}
+
+function signalMatchesLead(row, lead) {
+  const id = String(lead.id || '').replace(/^CE-/, '');
+  if (row.id) return String(row.id).replace(/^CE-/, '') === id;
+  return Boolean(openKey(lead.company) && openKey(row.company) === openKey(lead.company));
+}
+
+function timelineForLead(lead, dataset, activities, signalLead = lead) {
+  const opens = (dataset?.annotatedOpens || []).filter(row => row.real !== false && signalMatchesLead(row, signalLead));
+  const demos = (dataset?.demoRows || []).filter(row => signalMatchesLead(row, signalLead));
+  return buildActivityTimeline({ lead, activities, opens, demos });
+}
+
 app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
   try {
     const rowNum = await withAuth(() => findRow(req.params.id));
@@ -1759,8 +1820,9 @@ app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
     // Derived, never stored: the board row and the ColdEmail row can disagree,
     // and the UI needs to show which one actually governs what happens next.
     let pipeline = null;
+    let twin = null;
     try {
-      const twin = await findColdEmailTwin(req.params.id, lead.email);
+      twin = await findColdEmailTwin(req.params.id, lead.email);
       pipeline = {
         automation: deriveAutomationState(twin),
         conflict: automationConflict(lead, twin),
@@ -1772,7 +1834,16 @@ app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
       // Derivation is additive: a failure here must not break the timeline.
       console.warn('[pipeline-state] derivation failed:', stateError.message);
     }
-    res.json({ activities, leadScore: scoreColdCallLead(lead, activities), pipeline });
+    const dataset = await getOutreachDataset();
+    const timelineLead = twin ? {
+      ...lead, lastEmailedAt: twin.lastEmailedAt || lead.lastEmailedAt,
+      emailStep: twin.emailStep || lead.emailStep, emailStatus: twin.emailStatus || lead.emailStatus,
+    } : lead;
+    const timeline = timelineForLead(timelineLead, dataset, activities, twin || lead);
+    res.json({
+      activities: timeline, leadScore: scoreColdCallLead(lead, activities), pipeline,
+      integrity: inspectActivityIntegrity(activities, new Set([lead.id, twin?.id].filter(Boolean))),
+    });
   } catch (e) {
     console.error('[Cold call activity GET]', e.message);
     res.status(500).json({ error: e.message });
@@ -2041,20 +2112,40 @@ app.patch('/api/leads/:id/call-details', requireAuth, async (req, res) => {
     const oldMeetingAt = current[20] || '';
     const oldOutcome = current[21] || '';
     const oldContext = current[22] || '';
-    let eventType = '';
-    if (meetingAt && meetingAt !== oldMeetingAt) eventType = 'call_booked';
-    else if (outcome && outcome !== oldOutcome && LOSS_OUTCOME_IDS.includes(outcome)) eventType = 'closed_lost';
-    else if (conversationContext && conversationContext !== oldContext) eventType = 'conversation_note';
-    if (eventType) {
+    const occurredAt = new Date().toISOString();
+    const activityEvents = [];
+    if (meetingAt !== oldMeetingAt) {
+      const eventType = !oldMeetingAt && meetingAt ? 'call_booked'
+        : oldMeetingAt && meetingAt ? 'meeting_rescheduled'
+          : 'meeting_cancelled';
+      activityEvents.push({
+        eventId: stableActivityId('meeting', [req.params.id, eventType, oldMeetingAt, meetingAt]),
+        leadId: req.params.id, sourceLeadId: '', email: current[10] || '', company: current[6] || current[4] || '',
+        eventType, occurredAt,
+        subject: eventType === 'call_booked' ? 'Meeting scheduled' : eventType === 'meeting_rescheduled' ? 'Meeting time changed' : 'Meeting removed',
+        content: '', metadata: JSON.stringify({ meetingAt, previousMeetingAt: oldMeetingAt, outcome }),
+      });
+    }
+    if (outcome && outcome !== oldOutcome) {
+      const eventType = LOSS_OUTCOME_IDS.includes(outcome) ? 'closed_lost' : 'meeting_outcome';
+      activityEvents.push({
+        eventId: stableActivityId('meeting-outcome', [req.params.id, oldOutcome, outcome]),
+        leadId: req.params.id, sourceLeadId: '', email: current[10] || '', company: current[6] || current[4] || '',
+        eventType, occurredAt, subject: '', content: conversationContext,
+        metadata: JSON.stringify({ meetingAt, outcome, previousOutcome: oldOutcome }),
+      });
+    }
+    if (conversationContext && conversationContext !== oldContext) {
+      activityEvents.push({
+        eventId: stableActivityId('conversation-context', [req.params.id, conversationContext]),
+        leadId: req.params.id, sourceLeadId: '', email: current[10] || '', company: current[6] || current[4] || '',
+        eventType: 'conversation_note', occurredAt, subject: 'Conversation context updated', content: conversationContext,
+        metadata: JSON.stringify({ meetingAt, outcome, trigger: 'call_details' }),
+      });
+    }
+    if (activityEvents.length) {
       try {
-        await appendIntegrationRow(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER, {
-          eventId: crypto.randomUUID(), leadId: req.params.id, sourceLeadId: '',
-          email: current[10] || '', company: current[6] || current[4] || '',
-          eventType, occurredAt: new Date().toISOString(),
-          subject: eventType === 'call_booked' ? 'Meeting scheduled' : '',
-          content: conversationContext,
-          metadata: JSON.stringify({ meetingAt, outcome }),
-        });
+        await appendColdCallActivities(activityEvents);
       } catch (activityError) {
         console.warn('[Cold call details] saved, but timeline append failed:', activityError.message);
       }
@@ -2093,11 +2184,22 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
           if (!qualification.ok) return { error: `${lead.company || lead.email} does not have enough roofing-business evidence`, status: 422 };
         }
       }
+      const queuedAt = new Date().toISOString();
+      const queueActivities = [];
       const data = selected.map(({ lead, rowNumber }) => {
+        const changed = lead.stage !== 'Queued' || lead.senderInboxId !== senderInboxId || lead.emailTemplateId !== emailTemplateId;
         lead.stage = 'Queued'; lead.senderInboxId = senderInboxId; lead.emailTemplateId = emailTemplateId; lead.routingRequired = 'true';
+        if (changed) queueActivities.push({
+          eventId: stableActivityId('lead-queued', [lead.id, senderInboxId, emailTemplateId, queuedAt]),
+          leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email || '', company: lead.company || '',
+          eventType: 'lead_queued', occurredAt: queuedAt, subject: 'Queued for outreach', content: '',
+          metadata: JSON.stringify({ senderInboxId, emailTemplateId, campaign: lead.campaign || '', trigger: 'outreach_queue' }),
+        });
         return { range: `${CE_SHEET_NAME}!A${rowNumber}:W${rowNumber}`, values: [CE_COLUMNS.map(field => String(lead[field] ?? ''))] };
       });
       await sheets().spreadsheets.values.batchUpdate({ spreadsheetId: SPREADSHEET_ID, requestBody: { valueInputOption: 'RAW', data } });
+      try { await appendColdCallActivities(queueActivities); }
+      catch (activityError) { console.warn('[ColdEmail Queue] queued, activity append failed:', activityError.message); }
       ceRowMap.clear();
       return { queued: selected.length, senderInboxId, emailTemplateId };
     });
@@ -2223,12 +2325,38 @@ function ensureNote(existing, tag) {
 
 const COLD_EMAIL_DASHBOARD_STAGES = new Set(['Import','Contacted','Replied','Review','Done','Promoted','Unsubscribed']);
 
+// Lazy, canonical Outreach lead detail. Initial page load remains a bounded
+// light page; full notes plus the timeline are fetched only when its drawer
+// opens. Signals reuse the shared 30-second snapshot and never add an N+1 read.
+app.get('/api/coldemail/:id/activity', requireAuth, async (req, res) => {
+  try {
+    const dataset = await getOutreachDataset();
+    const lead = dataset.leads.find(row => row.id === req.params.id);
+    if (!lead) return res.status(404).json({ error: 'not found' });
+    const activities = dataset.activities.filter(row => activityMatchesLead(row, lead));
+    const timeline = timelineForLead(lead, dataset, activities);
+    res.json({ lead, activities: timeline, integrity: inspectActivityIntegrity(activities, new Set([lead.id])) });
+  } catch (error) {
+    console.error('[ColdEmail activity GET]', error.message);
+    res.status(500).json({ error: 'Could not load lead activity' });
+  }
+});
+
 app.patch('/api/coldemail/:id/stage', requireAuth, async (req, res) => {
   const stage = String(req.body?.stage || '').trim();
   if (!COLD_EMAIL_DASHBOARD_STAGES.has(stage)) return res.status(422).json({ error: 'invalid stage' });
   try {
     const rowNum = await withAuth(() => findCERow(req.params.id));
     if (!rowNum) return res.status(404).json({ error: 'not found' });
+    const current = await withAuth(() => sheets().spreadsheets.values.batchGet({
+      spreadsheetId: SPREADSHEET_ID,
+      ranges: [`${CE_SHEET_NAME}!B${rowNum}`, `${CE_SHEET_NAME}!D${rowNum}`, `${CE_SHEET_NAME}!H${rowNum}`, `${CE_SHEET_NAME}!L${rowNum}`],
+    }));
+    const company = current.data.valueRanges?.[0]?.values?.[0]?.[0] || '';
+    const email = current.data.valueRanges?.[1]?.values?.[0]?.[0] || '';
+    const previousStage = current.data.valueRanges?.[2]?.values?.[0]?.[0] || '';
+    const existingNotes = current.data.valueRanges?.[3]?.values?.[0]?.[0] || '';
+    if (previousStage === stage) return res.json({ ok: true, unchanged: true });
     if (stage !== 'Unsubscribed') {
       await withAuth(() => sheets().spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
@@ -2236,16 +2364,20 @@ app.patch('/api/coldemail/:id/stage', requireAuth, async (req, res) => {
         valueInputOption: 'RAW',
         requestBody: { values: [[stage]] },
       }));
+      try {
+        await appendColdCallActivities([{
+          eventId: crypto.randomUUID(), leadId: `CE-${req.params.id}`, sourceLeadId: req.params.id,
+          email, company, eventType: 'stage_changed', occurredAt: new Date().toISOString(),
+          subject: `${previousStage || 'Unknown'} -> ${stage}`, content: '',
+          metadata: JSON.stringify({ fromStage: previousStage, toStage: stage, trigger: 'outreach_manual' }),
+        }]);
+      } catch (activityError) {
+        console.warn('[ColdEmail Stage PATCH] stage saved, activity append failed:', activityError.message);
+      }
       return res.json({ ok: true });
     }
 
-    const current = await withAuth(() => sheets().spreadsheets.values.batchGet({
-      spreadsheetId: SPREADSHEET_ID,
-      ranges: [`${CE_SHEET_NAME}!B${rowNum}`, `${CE_SHEET_NAME}!D${rowNum}`, `${CE_SHEET_NAME}!L${rowNum}`],
-    }));
-    const company = current.data.valueRanges?.[0]?.values?.[0]?.[0] || '';
-    const email = current.data.valueRanges?.[1]?.values?.[0]?.[0] || '';
-    const notes = ensureNote(current.data.valueRanges?.[2]?.values?.[0]?.[0] || '', '[REPLY: Unsubscribed]');
+    const notes = ensureNote(existingNotes, '[REPLY: Unsubscribed]');
     await withAuth(() => sheets().spreadsheets.values.batchUpdate({
       spreadsheetId: SPREADSHEET_ID,
       requestBody: { valueInputOption: 'RAW', data: [
@@ -2255,6 +2387,16 @@ app.patch('/api/coldemail/:id/stage', requireAuth, async (req, res) => {
       ] },
     }));
     await withAuth(() => addSuppression(email, 'unsubscribe', company, 'manual-dashboard'));
+    try {
+      await appendColdCallActivities([{
+        eventId: crypto.randomUUID(), leadId: `CE-${req.params.id}`, sourceLeadId: req.params.id,
+        email, company, eventType: 'stage_changed', occurredAt: new Date().toISOString(),
+        subject: `${previousStage || 'Unknown'} -> Unsubscribed`, content: '',
+        metadata: JSON.stringify({ fromStage: previousStage, toStage: 'Unsubscribed', trigger: 'outreach_manual' }),
+      }]);
+    } catch (activityError) {
+      console.warn('[ColdEmail Stage PATCH] unsubscribe saved, activity append failed:', activityError.message);
+    }
     res.json({ ok: true });
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });

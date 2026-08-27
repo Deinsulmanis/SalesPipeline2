@@ -750,6 +750,17 @@
   .activity-event-time { color:var(--text-muted);white-space:nowrap; }
   .activity-event-subject { margin-top:5px;font-size:12px;font-weight:600;color:var(--text-secondary); }
   .activity-event-copy { margin-top:6px;padding:8px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:11px;line-height:1.5;color:var(--text-secondary);white-space:pre-wrap;max-height:150px;overflow:auto; }
+  .activity-event-meta { display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px; }
+  .activity-source, .activity-category { display:inline-flex;align-items:center;padding:2px 7px;border-radius:var(--radius-pill);font-size:10px;font-weight:700; }
+  .activity-source { background:var(--wash-2);color:var(--text-muted); }
+  .activity-category { background:var(--tint-faint);color:var(--accent); }
+  .activity-category[data-cat="positive"] { background:var(--success-bg);color:var(--success); }
+  .activity-category[data-cat="negative"] { background:var(--danger-bg);color:var(--danger); }
+  .activity-category[data-cat="needs_human"] { background:var(--warn-bg);color:var(--warn); }
+  .activity-summary { margin-top:5px;font-size:12px;line-height:1.45;color:var(--text-secondary); }
+  .activity-details { margin-top:6px;border:1px solid var(--border);border-radius:var(--radius-xs);overflow:hidden; }
+  .activity-details summary { padding:7px 8px;cursor:pointer;font-size:11px;font-weight:700;color:var(--text-secondary);background:var(--card); }
+  .activity-details .activity-event-copy { margin:0;border:0;border-top:1px solid var(--border);border-radius:0;max-height:220px; }
   /* Derived pipeline state. Answers "what happens next, and when?" — and, when
      the board stage and the sending agent disagree, says so loudly. */
   .pipeline-state { display:grid;gap:8px;padding:11px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--wash-1);margin-bottom:12px; }
@@ -2407,6 +2418,10 @@
         <div id="ce-d-opens"></div>
       </div>
       <div>
+        <div class="detail-section-title">Activity timeline</div>
+        <div class="activity-timeline" id="ce-d-activity"><div class="activity-empty">Open a lead to load its full history.</div></div>
+      </div>
+      <div>
         <div class="detail-section-title">Contact Info</div>
         <div class="detail-fields" id="ce-d-fields"></div>
       </div>
@@ -3639,6 +3654,7 @@ let ceOpensData    = [];
 let ceDemoMap      = new Map();   // companyKey → { count, demo, intro, last }
 let ceDemoData     = [];
 let ceOutreachStats = null;
+let ceDetailId = '';
 
 const CE_STAGES = ['Import','Queued','Contacted','Replied','Review','Done','Promoted','Unsubscribed'];
 
@@ -3656,7 +3672,11 @@ function toLocalDateTimeInput(value) {
 }
 
 const ACTIVITY_LABELS = {
+  lead_created: 'Lead created',
+  lead_queued: 'Lead queued for outreach',
   initial_email_sent: 'Initial email sent',
+  email_opened: 'Email opened',
+  demo_played: 'Demo played',
   demo_pair_played: 'Both demo clips played',
   booking_link_sent: 'Booking-link follow-up sent',
   positive_reply: 'Positive reply received',
@@ -3668,8 +3688,41 @@ const ACTIVITY_LABELS = {
   follow_up_sent: 'Sequence follow-up sent',
   stage_changed: 'Stage changed',
   automation_held: 'Automation held (manual takeover)',
+  reactivation_scheduled: 'Reactivation scheduled',
+  reactivation_cancelled: 'Reactivation cancelled',
+  meeting_rescheduled: 'Meeting rescheduled',
+  meeting_cancelled: 'Meeting cancelled',
+  meeting_outcome: 'Meeting outcome updated',
   late_reply: 'Late reply — needs attention',
 };
+
+function renderActivityTimeline(activities, hostId = 'd-activity') {
+  const host = document.getElementById(hostId);
+  if (!host) return;
+  const events = Array.isArray(activities) ? activities : [];
+  if (!events.length) {
+    host.innerHTML = '<div class="activity-empty">No reliable activity has been recorded for this lead yet. Current state is not shown as invented history.</div>';
+    return;
+  }
+  host.innerHTML = events.map(event => {
+    const type = event.type || event.eventType || 'activity';
+    const when = event.occurredAt && !Number.isNaN(Date.parse(event.occurredAt))
+      ? new Date(event.occurredAt).toLocaleString('en-CA', { dateStyle: 'medium', timeStyle: 'short' }) : 'Time unavailable';
+    const content = String(event.content || '');
+    const copy = !content ? '' : content.length <= 220
+      ? `<div class="activity-event-copy">${esc(content)}</div>`
+      : `<details class="activity-details"><summary>View full details</summary><div class="activity-event-copy">${esc(content)}</div></details>`;
+    const category = event.classification && event.classification !== 'unclassified' && event.classification !== 'excluded'
+      ? `<span class="activity-category" data-cat="${escAttr(event.classification)}">${esc(event.classification.replace('_', ' '))}</span>` : '';
+    return `<article class="activity-event" data-type="${escAttr(type)}">
+      <div class="activity-event-head"><span class="activity-event-title">${esc(event.title || ACTIVITY_LABELS[type] || type)}</span><time class="activity-event-time">${esc(when)}</time></div>
+      ${event.summary ? `<div class="activity-summary">${esc(event.summary)}</div>` : ''}
+      ${event.subject && !event.summary ? `<div class="activity-event-subject">${esc(event.subject)}</div>` : ''}
+      <div class="activity-event-meta"><span class="activity-source">${esc(event.source || 'CRM')}</span>${category}${event.late ? '<span class="activity-category" data-cat="needs_human">Late reply</span>' : ''}${event.needsHuman ? '<span class="activity-category" data-cat="needs_human">Needs attention</span>' : ''}</div>
+      ${copy}
+    </article>`;
+  }).join('');
+}
 
 async function loadColdCallActivity(id) {
   try {
@@ -3679,16 +3732,7 @@ async function loadColdCallActivity(id) {
     if (detailId !== id) return;
     document.getElementById('d-lead-score').textContent = `Score ${Number(data.leadScore || 0)}/100`;
     renderPipelineState(data.pipeline);
-    const activities = Array.isArray(data.activities) ? data.activities : [];
-    document.getElementById('d-activity').innerHTML = activities.length ? activities.map(event => {
-      const when = event.occurredAt && !Number.isNaN(Date.parse(event.occurredAt))
-        ? new Date(event.occurredAt).toLocaleString('en-CA', { dateStyle: 'medium', timeStyle: 'short' }) : 'Time unavailable';
-      return `<div class="activity-event">
-        <div class="activity-event-head"><span class="activity-event-title">${esc(ACTIVITY_LABELS[event.eventType] || event.eventType || 'Activity')}</span><span class="activity-event-time">${esc(when)}</span></div>
-        ${event.subject ? `<div class="activity-event-subject">${esc(event.subject)}</div>` : ''}
-        ${event.content ? `<div class="activity-event-copy">${esc(event.content)}</div>` : ''}
-      </div>`;
-    }).join('') : '<div class="activity-empty">No automated activity has been recorded for this lead yet. Existing notes remain unchanged below.</div>';
+    renderActivityTimeline(data.activities, 'd-activity');
   } catch (error) {
     if (detailId === id) document.getElementById('d-activity').innerHTML = '<div class="activity-empty">Activity could not be loaded. Lead data was not changed.</div>';
   }
@@ -4956,11 +5000,30 @@ function renderReplyDrill() {
 function closeCeDetail(e) {
   if (e && e.target !== document.getElementById('ce-detail-overlay')) return;
   document.getElementById('ce-detail-overlay').classList.remove('open');
+  ceDetailId = '';
+}
+
+async function loadCeActivity(id) {
+  try {
+    const response = await fetch(`/api/coldemail/${encodeURIComponent(id)}/activity`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (ceDetailId !== id) return;
+    const lead = ceLeads.find(row => row.id === id);
+    if (lead && data.lead) Object.assign(lead, data.lead);
+    openCeDetail(id, { skipActivity: true });
+    renderActivityTimeline(data.activities, 'ce-d-activity');
+  } catch (error) {
+    if (ceDetailId === id) document.getElementById('ce-d-activity').innerHTML = '<div class="activity-empty">Activity could not be loaded. Lead data was not changed.</div>';
+  }
 }
 
 function openCeDetail(id) {
+  const options = arguments[1] || {};
   const lead = ceLeads.find(l => l.id === id);
   if (!lead) return;
+  ceDetailId = id;
+  if (!options.skipActivity) document.getElementById('ce-d-activity').innerHTML = '<div class="activity-empty">Loading full activity…</div>';
 
   // Header
   document.getElementById('ce-d-name').textContent = lead.company || '—';
@@ -5100,6 +5163,7 @@ function openCeDetail(id) {
   }
 
   document.getElementById('ce-detail-overlay').classList.add('open');
+  if (!options.skipActivity) loadCeActivity(id);
 }
 
 // Table cell text, with a de-emphasised placeholder when the field is blank —
