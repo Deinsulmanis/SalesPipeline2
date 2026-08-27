@@ -17,7 +17,10 @@ const { verifySignature, verifySharedSecret, normalizeEvent } = require('./integ
 const { leadEligibility } = require('./integrations/outreach-policy');
 const { buildEventKey, buildMappingKey, mappingMatchesEvent, normalizeEmail, canApplyProviderTransition, safeAuditPayload, executeEventAttempt, KeyedLock, fetchAllCampaignLeads, aggregateProviderStats, reconciliationHealth } = require('./integrations/smartlead-safety');
 const { classifyReply: classifyProviderReply, CLASSIFICATION_TO_STATUS } = require('./integrations/reply-classifier');
-const { buildReplyMetrics, buildStoredClassificationMap } = require('./integrations/reply-analytics');
+const {
+  buildReplyMetrics, buildStoredClassificationMap,
+  buildReplyRecords, buildReplyEvidenceMap, filterReplyRecords,
+} = require('./integrations/reply-analytics');
 const { parseRegistry: parseGmailInboxRegistry, publicRegistry: publicGmailInboxRegistry, verifyInbox: verifyGmailInbox } = require('./integrations/gmail-inbox-registry');
 const { EMAIL_TEMPLATES, normalizeNiche, validateRoute } = require('./integrations/campaign-routing');
 const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE, qualifyLead: qualifyRoofingLead } = require('./integrations/roofing-survey-profile');
@@ -1591,6 +1594,39 @@ app.get('/api/coldemail/stats', requireAuth, async (_req, res) => {
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
     console.error('[ColdEmail Stats GET]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Read-only drill-down behind the reply stat cards. Returns the same canonical
+// records `buildReplyMetrics` counts, so a card and its list cannot disagree.
+// Only replying leads cross the wire — never the full lead table.
+app.get('/api/coldemail/replies', requireAuth, async (req, res) => {
+  try {
+    const [response, draftResponse, activityResponse, providerResponse] = await Promise.all([
+      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:L` }),
+      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ReplyDrafts!A:L' }).catch(() => ({ data: {} })),
+      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${COLD_CALL_ACTIVITY_SHEET}!A:J` }).catch(() => ({ data: {} })),
+      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A:N` }).catch(() => ({ data: {} })),
+    ]);
+    const rowObjects = (rows, header) => (rows || []).slice(1)
+      .map(row => Object.fromEntries(header.map((field, column) => [field, row[column] || ''])));
+    const leads = rowObjects(response.data.values, CE_COLUMNS.slice(0, 12)).filter(lead => lead.id);
+    const activities = rowObjects(activityResponse.data.values, COLD_CALL_ACTIVITY_HEADER);
+    const classificationsByLeadId = buildStoredClassificationMap({
+      drafts: rowObjects(draftResponse.data.values, ['createdAt','leadId','company','email','topic','confidence','reason','draftBody','status','campaignProfile','classification','reasonCode']),
+      activities,
+      providerMappings: rowObjects(providerResponse.data.values, PROVIDER_LEADS_HEADER),
+    });
+    const records = buildReplyRecords(leads, {
+      classificationsByLeadId,
+      evidenceByLeadId: buildReplyEvidenceMap(activities),
+    });
+    const category = String(req.query.category || 'all');
+    res.json({ category, total: records.length, records: filterReplyRecords(records, category) });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ColdEmail Replies GET]', e.message);
     res.status(500).json({ error: e.message });
   }
 });

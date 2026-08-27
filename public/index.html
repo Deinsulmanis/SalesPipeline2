@@ -1259,6 +1259,78 @@
   }
   .ce-late-reply::before { content:''; width:5px; height:5px; border-radius:50%; background:currentColor; }
 
+  /* ── Reply drill-down ──────────────────────────────────────────────────── */
+  /* Stat cards become real buttons so keyboard and screen-reader users get
+     the same affordance as the pointer. Visual weight is unchanged. */
+  .stat-clickable {
+    appearance:none; width:100%; text-align:left; font:inherit; color:inherit;
+    border:none; border-radius:0; cursor:pointer;
+    transition: background var(--t-fast) ease, box-shadow var(--t-fast) ease;
+  }
+  .stat-clickable:hover { background: var(--surface-2); }
+  .stat-clickable:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+  .stat-clickable .stat-label::after { content:' ›'; opacity:.55; font-weight:700; }
+
+  .rd-panel { width: 640px; max-width: 100vw; }
+  .rd-tabs { display:flex; gap:6px; flex-wrap:wrap; padding:10px 18px; border-bottom:1px solid var(--border); }
+  .rd-tab {
+    appearance:none; font:inherit; font-size:11px; font-weight:700; letter-spacing:.02em;
+    padding:5px 11px; border-radius:var(--radius-pill); cursor:pointer;
+    background:transparent; color:var(--text-muted); border:1px solid var(--border);
+    transition: all var(--t-fast) ease;
+  }
+  .rd-tab:hover { color:var(--text); border-color:var(--accent); }
+  .rd-tab:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .rd-tab[aria-selected="true"] { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .rd-search {
+    width:calc(100% - 36px); margin:10px 18px 0; padding:7px 10px; font:inherit; font-size:12px;
+    background:var(--surface-2); color:var(--text);
+    border:1px solid var(--border); border-radius:var(--radius-md);
+  }
+  .rd-search:focus { outline:none; border-color:var(--accent); }
+  .rd-list { padding:12px 18px 24px; display:flex; flex-direction:column; gap:9px; }
+  .rd-row { background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius-md); padding:11px 13px; }
+  .rd-row-top { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+  .rd-company {
+    appearance:none; background:none; border:none; padding:0; font:inherit;
+    font-size:13px; font-weight:700; color:var(--text); cursor:pointer; text-align:left;
+  }
+  .rd-company:hover { color:var(--accent); text-decoration:underline; }
+  .rd-company:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:3px; }
+  .rd-sub { font-size:11px; color:var(--text-muted); margin-top:2px; word-break:break-word; }
+  .rd-badges { display:flex; gap:5px; flex-wrap:wrap; align-items:center; }
+  .rd-badge {
+    font-size:10px; font-weight:700; padding:2px 7px; border-radius:var(--radius-pill);
+    letter-spacing:.02em; white-space:nowrap;
+  }
+  .rd-badge[data-cat="positive"]     { background:var(--success-bg); color:var(--success); }
+  .rd-badge[data-cat="negative"]     { background:var(--danger-bg);  color:var(--danger); }
+  .rd-badge[data-cat="needs_human"]  { background:var(--warn-bg);    color:var(--warn); }
+  .rd-badge[data-cat="unclassified"] { background:var(--surface);    color:var(--text-muted); border:1px solid var(--border); }
+  .rd-badge[data-kind="stage"] { background:var(--surface); color:var(--text-muted); border:1px solid var(--border); }
+  .rd-badge[data-kind="late"]  { background:var(--warn-bg); color:var(--warn); }
+  .rd-meta { font-size:11px; color:var(--text-muted); margin-top:7px; display:flex; gap:8px; flex-wrap:wrap; }
+  .rd-reply { margin-top:8px; font-size:12px; color:var(--text); line-height:1.55; white-space:pre-wrap; word-break:break-word; }
+  .rd-reply[data-clamped="true"] { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  .rd-missing { margin-top:8px; font-size:12px; color:var(--text-muted); font-style:italic; }
+  .rd-expand {
+    appearance:none; background:none; border:none; padding:4px 0 0; font:inherit;
+    font-size:11px; font-weight:700; color:var(--accent); cursor:pointer;
+  }
+  .rd-expand:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:3px; }
+  .rd-empty { padding:28px 18px; text-align:center; font-size:12px; color:var(--text-muted); }
+
+  @media (max-width: 700px) {
+    /* Full-bleed sheet on phones: rows stack, nothing scrolls sideways, and the
+       close control keeps the app's 44px touch target. */
+    .rd-panel { width:100vw; border-left:none; }
+    .rd-list { padding:12px 14px 32px; }
+    .rd-row-top { flex-direction:column; align-items:stretch; }
+    .rd-search { width:calc(100% - 28px); margin:10px 14px 0; }
+    .rd-tabs { padding:10px 14px; }
+    #reply-drill-overlay .modal-close { min-width:44px; min-height:44px; }
+  }
+
   .btn-promote {
     padding: 3px 10px;
     border-radius: var(--radius-sm);
@@ -1783,11 +1855,11 @@
       <div class="stat"><div><div class="stat-val" id="ce-stat-warm">0</div><div class="stat-label">🔥 Warm</div></div></div>
     </div>
     <div class="reply-metrics-bar" id="ce-reply-metrics" aria-label="Reply outcomes">
-      <div class="stat"><div><div class="stat-val" id="ce-stat-replied">0</div><div class="stat-label">Total Replies</div></div></div>
-      <div class="stat"><div><div class="stat-val" id="ce-stat-positive" data-tone="positive">0</div><div class="stat-label">Positive</div></div></div>
-      <div class="stat"><div><div class="stat-val" id="ce-stat-negative" data-tone="negative">0</div><div class="stat-label">Negative</div></div></div>
-      <div class="stat"><div><div class="stat-val" id="ce-stat-needs-human" data-tone="review">0</div><div class="stat-label">Needs Human</div></div></div>
-      <div class="stat stat-secondary"><div><div class="stat-val" id="ce-stat-unclassified">0</div><div class="stat-label">Unclassified</div></div></div>
+      <button type="button" class="stat stat-clickable" onclick="openReplyDrill('all')" aria-label="Total Replies — open reply list"><div><div class="stat-val" id="ce-stat-replied">0</div><div class="stat-label">Total Replies</div></div></button>
+      <button type="button" class="stat stat-clickable" onclick="openReplyDrill('positive')" aria-label="Positive — open reply list"><div><div class="stat-val" id="ce-stat-positive" data-tone="positive">0</div><div class="stat-label">Positive</div></div></button>
+      <button type="button" class="stat stat-clickable" onclick="openReplyDrill('negative')" aria-label="Negative — open reply list"><div><div class="stat-val" id="ce-stat-negative" data-tone="negative">0</div><div class="stat-label">Negative</div></div></button>
+      <button type="button" class="stat stat-clickable" onclick="openReplyDrill('needs_human')" aria-label="Needs Human — open reply list"><div><div class="stat-val" id="ce-stat-needs-human" data-tone="review">0</div><div class="stat-label">Needs Human</div></div></button>
+      <button type="button" class="stat stat-secondary stat-clickable" onclick="openReplyDrill('unclassified')" aria-label="Unclassified — open reply list"><div><div class="stat-val" id="ce-stat-unclassified">0</div><div class="stat-label">Unclassified</div></div></button>
       <div class="stat"><div><div class="stat-val" id="ce-stat-positive-rate">0%</div><div class="stat-label">Positive Reply Rate</div></div></div>
     </div>
     <div id="ce-chart-wrap" style="padding:0 28px;margin-bottom:18px">
@@ -2160,6 +2232,25 @@
       <div id="provider-test-result" class="form-group full" role="status" style="min-height:18px;font-size:12px;color:var(--text-secondary)"></div>
     </div>
     <div class="form-actions"><button type="button" class="btn-cancel" onclick="testProviderMapping()">Test Mapping</button><button type="button" class="btn-save" onclick="saveProviderMapping()">Save Changes</button></div>
+  </div>
+</div>
+
+<!-- REPLY DRILL-DOWN PANEL — read-only view over the canonical reply records -->
+<div class="detail-overlay" id="reply-drill-overlay" onclick="closeReplyDrill(event)">
+  <div class="detail-panel rd-panel" role="dialog" aria-modal="true" aria-labelledby="rd-title" onclick="event.stopPropagation()">
+    <div class="detail-header">
+      <div class="detail-header-left">
+        <div class="detail-name" id="rd-title">Replies</div>
+        <div class="detail-sub"  id="rd-sub"></div>
+      </div>
+      <button class="modal-close" onclick="closeReplyDrill()" aria-label="Close replies">✕</button>
+    </div>
+    <div class="rd-tabs" role="tablist" aria-label="Reply category" id="rd-tabs"></div>
+    <label class="sr-only" for="rd-search">Search replies by company, contact, or email</label>
+    <input class="rd-search" id="rd-search" type="search" placeholder="Search company, contact, or email…" oninput="renderReplyDrill()">
+    <div class="detail-body" style="padding:0">
+      <div class="rd-list" id="rd-list"></div>
+    </div>
   </div>
 </div>
 
@@ -3455,6 +3546,7 @@ async function loadCeLeads() {
     // timestamp. No scanner filter: see /api/demoPlays in server.js for why.
     ceDemoData = demoResp.ok ? await demoResp.json() : [];
     ceOutreachStats = statsResp.ok ? await statsResp.json() : null;
+    rdRecords = [];  // refetched on next drill-down open so rows track the counters
     ceDemoMap  = new Map();
     for (const d of ceDemoData) {
       const key = ceCompanyKey(d.company);
@@ -4137,6 +4229,157 @@ function updateCampaignFilterChip() {
 }
 
 // ── CE DETAIL PANEL ──────────────────────────────────────────────────────────
+
+// ── REPLY DRILL-DOWN ────────────────────────────────────────────────────────
+// Read-only. Every row comes from /api/coldemail/replies, which returns the
+// same canonical records that produce the stat card counts, so the list and
+// the number on the card can never disagree. One row === one replying lead,
+// matching the analytics unit. Nothing here mutates: no writes, no sending,
+// no category changes.
+const RD_CATEGORIES = [
+  { id: 'all',          label: 'All' },
+  { id: 'positive',     label: 'Positive' },
+  { id: 'negative',     label: 'Negative' },
+  { id: 'needs_human',  label: 'Needs Human' },
+  { id: 'unclassified', label: 'Unclassified' },
+];
+const RD_CATEGORY_LABEL = Object.fromEntries(RD_CATEGORIES.map(c => [c.id, c.label]));
+
+let rdRecords  = [];   // every reply record, unfiltered
+let rdCategory = 'all';
+let rdExpanded = new Set();
+let rdLoading  = false;
+
+async function openReplyDrill(category = 'all') {
+  rdCategory = RD_CATEGORY_LABEL[category] ? category : 'all';
+  rdExpanded = new Set();
+  document.getElementById('rd-search').value = '';
+  document.getElementById('reply-drill-overlay').classList.add('open');
+  renderRdTabs();
+  if (!rdRecords.length) {
+    rdLoading = true;
+    renderReplyDrill();
+    try {
+      // Fetch the full canonical set once, then switch categories client-side.
+      // Only replying leads cross the wire, never the whole lead table.
+      const resp = await fetch('/api/coldemail/replies?category=all');
+      rdRecords = resp.ok ? ((await resp.json()).records || []) : [];
+    } catch (_) { rdRecords = []; }
+    rdLoading = false;
+  }
+  renderReplyDrill();
+  document.getElementById('rd-search').focus();
+}
+
+function closeReplyDrill(e) {
+  if (e && e.target !== document.getElementById('reply-drill-overlay')) return;
+  document.getElementById('reply-drill-overlay').classList.remove('open');
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  const overlay = document.getElementById('reply-drill-overlay');
+  if (overlay && overlay.classList.contains('open')) closeReplyDrill();
+});
+
+function setRdCategory(category) {
+  rdCategory = RD_CATEGORY_LABEL[category] ? category : 'all';
+  renderRdTabs();
+  renderReplyDrill();
+}
+
+function renderRdTabs() {
+  document.getElementById('rd-tabs').innerHTML = RD_CATEGORIES.map(c => `
+    <button type="button" role="tab" class="rd-tab" data-cat="${c.id}"
+            aria-selected="${c.id === rdCategory}"
+            onclick="setRdCategory('${c.id}')">${esc(c.label)}</button>`).join('');
+}
+
+function rdFilter(category) {
+  return category === 'all' ? rdRecords.slice() : rdRecords.filter(r => r.category === category);
+}
+
+// Display-only stage resolution. Prefers the cold-call board stage when the
+// lead was promoted, otherwise reports the Outreach status. Never writes.
+function rdStageLabel(record) {
+  const key = ceCompanyKey(record.company);
+  const boardLead = key && leads.find(l => ceCompanyKey(l.company) === key);
+  if (boardLead) {
+    const stage = displayStageFor(boardLead.stage);
+    return (STAGES.find(item => item.id === stage) || {}).label || stage;
+  }
+  return record.stage || record.emailStatus || 'not on board';
+}
+
+function rdFormatTime(value) {
+  if (!value) return 'Date unknown';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Date unknown';
+  return date.toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function toggleRdReply(leadId) {
+  if (rdExpanded.has(leadId)) rdExpanded.delete(leadId); else rdExpanded.add(leadId);
+  renderReplyDrill();
+}
+
+// Opens the existing Outreach lead drawer — no second lead-detail UI.
+function rdOpenLead(leadId) {
+  closeReplyDrill();
+  openCeDetail(leadId);
+}
+
+function renderReplyDrill() {
+  const list  = document.getElementById('rd-list');
+  const term  = (document.getElementById('rd-search').value || '').trim().toLowerCase();
+  const all   = rdFilter(rdCategory);
+  const rows  = term
+    ? all.filter(r => `${r.company} ${r.contactName} ${r.email}`.toLowerCase().includes(term))
+    : all;
+
+  document.getElementById('rd-title').textContent = `Replies — ${RD_CATEGORY_LABEL[rdCategory]} (${all.length})`;
+  document.getElementById('rd-sub').textContent = rdLoading
+    ? 'Loading…'
+    : `${rows.length} of ${all.length} shown · one row per replying lead · newest first`;
+
+  if (rdLoading) { list.innerHTML = '<div class="rd-empty">Loading replies…</div>'; return; }
+  if (!rows.length) {
+    list.innerHTML = `<div class="rd-empty">${term ? 'No replies match that search.' : 'No replies in this category.'}</div>`;
+    return;
+  }
+
+  // Records arrive newest-first from the server; that order is preserved here.
+  list.innerHTML = rows.map(r => {
+    const expanded = rdExpanded.has(r.leadId);
+    const long     = r.hasText && r.replyText.length > 220;
+    const body = r.hasText
+      ? `<div class="rd-reply" data-clamped="${long && !expanded}">${esc(r.replyText)}</div>` +
+        (long ? `<button type="button" class="rd-expand" onclick="toggleRdReply('${escAttr(r.leadId)}')">${expanded ? 'Show less' : 'Show full reply'}</button>` : '')
+      : '<div class="rd-missing">Reply text unavailable — this reply was recorded before reply bodies were stored.</div>';
+    const sub = [r.contactName, r.email].filter(Boolean).join(' · ');
+    return `
+      <div class="rd-row">
+        <div class="rd-row-top">
+          <div style="min-width:0">
+            <button type="button" class="rd-company" onclick="rdOpenLead('${escAttr(r.leadId)}')"
+                    title="Open lead details">${esc(r.company) || '—'}</button>
+            ${sub ? `<div class="rd-sub">${esc(sub)}</div>` : ''}
+          </div>
+          <div class="rd-badges">
+            <span class="rd-badge" data-cat="${escAttr(r.category)}">${esc(RD_CATEGORY_LABEL[r.category] || r.category)}</span>
+            ${r.late ? '<span class="rd-badge" data-kind="late" title="Reply arrived after the sequence ended">Late reply</span>' : ''}
+            <span class="rd-badge" data-kind="stage">${esc(rdStageLabel(r))}</span>
+          </div>
+        </div>
+        ${body}
+        <div class="rd-meta">
+          <span>${esc(rdFormatTime(r.occurredAt))}</span>
+          ${r.replyCount > 1 ? `<span>· ${r.replyCount} replies</span>` : ''}
+          ${r.campaign ? `<span>· ${esc(r.campaign)}</span>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+}
 
 function closeCeDetail(e) {
   if (e && e.target !== document.getElementById('ce-detail-overlay')) return;

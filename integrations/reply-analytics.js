@@ -56,7 +56,89 @@ function classificationFromLead(lead = {}, storedClassifications = []) {
   return ANALYTICS_CATEGORY.UNCLASSIFIED;
 }
 
-function buildReplyMetrics(leads = [], { classificationsByLeadId = new Map() } = {}) {
+// Canonical reply evidence. Reply bodies live in the activity sheet; many
+// replies (negatives, unsubscribes) never stored text, so `hasText` is an
+// explicit signal rather than an empty string the UI has to guess about.
+const REPLY_EVIDENCE_TYPES = new Set(['positive_reply', 'meeting_requested', 'late_reply']);
+
+function buildReplyEvidenceMap(activities = []) {
+  const byLead = new Map();
+  for (const row of activities || []) {
+    const eventType = String(row.eventType || '');
+    if (!REPLY_EVIDENCE_TYPES.has(eventType)) continue;
+    const id = String(row.sourceLeadId || row.leadId || '').replace(/^CE-/, '').trim();
+    if (!id) continue;
+    let metadata = {};
+    try { metadata = JSON.parse(row.metadata || '{}'); } catch (_) { metadata = {}; }
+    const rows = byLead.get(id) || [];
+    rows.push({
+      eventId: String(row.eventId || ''),
+      eventType,
+      occurredAt: String(row.occurredAt || ''),
+      subject: String(row.subject || ''),
+      text: String(row.content || '').trim(),
+      late: eventType === 'late_reply' || metadata.detectedAfterSequence === true,
+      classification: String(metadata.classification || ''),
+    });
+    byLead.set(id, rows);
+  }
+  for (const rows of byLead.values()) rows.sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
+  return byLead;
+}
+
+// One row per replying lead — the same unit `buildReplyMetrics` counts. The
+// latest reply represents the lead; `replyCount` reports how many were seen.
+// Read-only: this derives display records and mutates nothing.
+function buildReplyRecords(leads = [], { classificationsByLeadId = new Map(), evidenceByLeadId = new Map() } = {}) {
+  const records = [];
+  const seen = new Set();
+  for (const lead of leads || []) {
+    const id = String(lead.id || '').trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    if (!leadHasReply(lead)) continue;
+    const evidence = evidenceByLeadId.get(id) || [];
+    const latest = evidence[0] || null;
+    const notes = String(lead.notes || '');
+    records.push({
+      leadId: id,
+      category: classificationFromLead(lead, classificationsByLeadId.get(id) || []),
+      company: String(lead.company || ''),
+      contactName: String(lead.contactName || ''),
+      email: String(lead.email || ''),
+      stage: String(lead.stage || ''),
+      emailStatus: String(lead.emailStatus || ''),
+      replyText: latest ? latest.text : '',
+      hasText: Boolean(latest && latest.text),
+      replySubject: latest ? latest.subject : '',
+      // Falls back to the lead's own send timestamp so a reply without stored
+      // activity still sorts sensibly instead of sinking to the bottom.
+      occurredAt: (latest && latest.occurredAt) || String(lead.lastEmailedAt || ''),
+      replyCount: evidence.length,
+      late: evidence.some(row => row.late) || /\[LATE REPLY:/i.test(notes),
+      campaign: String(lead.campaign || ''),
+    });
+  }
+  records.sort((a, b) => String(b.occurredAt).localeCompare(String(a.occurredAt)) || a.company.localeCompare(b.company));
+  return records;
+}
+
+const CATEGORY_METRIC_KEY = Object.freeze({
+  [ANALYTICS_CATEGORY.POSITIVE]: 'positive',
+  [ANALYTICS_CATEGORY.NEGATIVE]: 'negative',
+  [ANALYTICS_CATEGORY.NEEDS_HUMAN]: 'needsHuman',
+  [ANALYTICS_CATEGORY.UNCLASSIFIED]: 'unclassified',
+});
+
+function filterReplyRecords(records = [], category = '') {
+  const key = String(category || '').trim().toLowerCase();
+  if (!key || key === 'all') return records.slice();
+  return records.filter(record => record.category === key);
+}
+
+// Counts are derived from the same records the drill-down lists, so a card and
+// its detail view cannot drift apart.
+function buildReplyMetrics(leads = [], { classificationsByLeadId = new Map(), evidenceByLeadId = new Map() } = {}) {
   const metrics = {
     totalReplies: 0, positive: 0, negative: 0, needsHuman: 0, unclassified: 0,
     contacted: 0, delivered: 0, positiveReplyRate: 0,
@@ -69,14 +151,10 @@ function buildReplyMetrics(leads = [], { classificationsByLeadId = new Map() } =
     const contacted = Boolean(String(lead.emailStatus || '').trim());
     if (contacted) metrics.contacted++;
     if (contacted && !/\[BOUNCED/i.test(String(lead.notes || ''))) metrics.delivered++;
-    if (!leadHasReply(lead)) continue;
-    metrics.totalReplies++;
-    const category = classificationFromLead(lead, classificationsByLeadId.get(id) || []);
-    if (category === ANALYTICS_CATEGORY.POSITIVE) metrics.positive++;
-    else if (category === ANALYTICS_CATEGORY.NEGATIVE) metrics.negative++;
-    else if (category === ANALYTICS_CATEGORY.NEEDS_HUMAN) metrics.needsHuman++;
-    else metrics.unclassified++;
   }
+  const records = buildReplyRecords(leads, { classificationsByLeadId, evidenceByLeadId });
+  metrics.totalReplies = records.length;
+  for (const record of records) metrics[CATEGORY_METRIC_KEY[record.category] || 'unclassified']++;
   metrics.positiveReplyRate = metrics.delivered ? metrics.positive / metrics.delivered * 100 : 0;
   metrics.reconciles = metrics.totalReplies === metrics.positive + metrics.negative + metrics.needsHuman + metrics.unclassified;
   return metrics;
@@ -141,5 +219,6 @@ async function applyBackfillPlan(plan, { existingKeys = new Set(), writeClassifi
 module.exports = {
   ANALYTICS_CATEGORY, analyticsCategoryFor, categoriesFromNotes, leadHasReply,
   classificationFromLead, buildReplyMetrics, buildStoredClassificationMap,
+  buildReplyEvidenceMap, buildReplyRecords, filterReplyRecords,
   planReplyBackfill, applyBackfillPlan,
 };
