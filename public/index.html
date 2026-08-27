@@ -1923,6 +1923,16 @@
     #ce-digest-card [style*="font-size:11px"] { font-size: 14px !important; }
 
   }
+  .funnel-analytics{margin:18px 28px;padding:20px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-lg)}
+  .funnel-head{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;flex-wrap:wrap}.funnel-head h3{margin:3px 0;font-size:18px}.funnel-head small{color:var(--text-muted)}
+  .funnel-filters{display:flex;gap:8px;flex-wrap:wrap}.funnel-filters select{width:auto;min-width:130px;padding:7px 9px}
+  .funnel-kpis{display:grid;grid-template-columns:repeat(7,minmax(92px,1fr));gap:8px;margin:16px 0}.funnel-kpi{padding:11px;background:var(--tint-faint);border:1px solid var(--border);border-radius:var(--radius-sm)}.funnel-kpi strong{display:block;font-size:20px}.funnel-kpi span{font-size:11px;color:var(--text-muted)}
+  .funnel-flow{display:grid;grid-template-columns:repeat(8,minmax(88px,1fr));gap:7px}.funnel-step{appearance:none;text-align:left;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:11px;min-height:82px;cursor:pointer}.funnel-step:hover{border-color:var(--border-hover);transform:translateY(-2px)}.funnel-step b{display:block;font-size:21px}.funnel-step small{display:block;color:var(--text-muted);margin-top:3px}
+  .funnel-secondary{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px}.funnel-mini-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.funnel-mini{padding:8px;border-radius:var(--radius-sm);background:var(--tint-faint);font-size:12px}.funnel-mini b{display:block;font-size:16px}
+  .funnel-analytics details{margin-top:16px}.funnel-analytics summary{cursor:pointer;color:var(--primary)}.funnel-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:12px}.funnel-table th,.funnel-table td{padding:7px;border-bottom:1px solid var(--border);text-align:left}
+  .funnel-drill{margin-top:14px;border-top:1px solid var(--border);padding-top:12px}.funnel-drill-row{width:100%;display:flex;justify-content:space-between;gap:10px;padding:10px;background:none;color:var(--text);border:0;border-bottom:1px solid var(--border);text-align:left;cursor:pointer}
+  @media(max-width:900px){.funnel-kpis{grid-template-columns:repeat(3,1fr)}.funnel-flow{grid-template-columns:repeat(4,1fr)}}
+  @media(max-width:600px){.funnel-analytics{margin:14px;padding:14px}.funnel-filters select{min-width:100%;width:100%}.funnel-kpis{grid-template-columns:repeat(2,1fr)}.funnel-flow{grid-template-columns:repeat(2,1fr)}.funnel-secondary{grid-template-columns:1fr}.funnel-mini-grid{grid-template-columns:repeat(2,1fr)}.funnel-step{min-height:76px}}
 </style>
 </head>
 <body>
@@ -2138,6 +2148,29 @@
       <button type="button" class="stat stat-secondary stat-clickable" onclick="openReplyDrill('unclassified')" aria-label="Unclassified — open reply list"><div><div class="stat-val" id="ce-stat-unclassified">0</div><div class="stat-label">Unclassified</div></div></button>
       <div class="stat"><div><div class="stat-val" id="ce-stat-positive-rate">0%</div><div class="stat-label">Positive Reply Rate</div></div></div>
     </div>
+    <section class="funnel-analytics" id="ce-funnel-analytics" aria-labelledby="ce-funnel-title">
+      <div class="funnel-head">
+        <div><div class="eyebrow">Campaign Performance</div><h3 id="ce-funnel-title">Full Funnel</h3><small id="ce-funnel-sample">Loading measured cohort…</small></div>
+        <div class="funnel-filters">
+          <select id="funnel-version" aria-label="Funnel campaign version" onchange="loadFunnelAnalytics()"><option value="current">Current campaign</option><option value="lifetime">Lifetime</option><option value="legacy_unknown">Legacy / Unknown</option><option value="all_measured">All measured</option></select>
+          <select id="funnel-window" aria-label="Funnel cohort date range" onchange="loadFunnelAnalytics()"><option value="all">All time</option><option value="30">Last 30 days</option><option value="7">Last 7 days</option></select>
+          <select id="funnel-family" aria-label="Campaign family" onchange="loadFunnelAnalytics()"><option value="">All campaign families</option></select>
+          <select id="funnel-level" aria-label="Personalization level" onchange="loadFunnelAnalytics()"><option value="">All personalization</option><option value="0">Level 0</option><option value="1">Level 1</option><option value="2">Level 2</option><option value="3">Level 3</option></select>
+          <select id="funnel-angle" aria-label="Personalization angle" onchange="loadFunnelAnalytics()"><option value="">All angles</option></select>
+          <select id="funnel-subject" aria-label="Subject strategy" onchange="loadFunnelAnalytics()"><option value="">All subject strategies</option></select>
+          <select id="funnel-copy" aria-label="Copy version" onchange="loadFunnelAnalytics()"><option value="">All copy versions</option></select>
+          <select id="funnel-sequence" aria-label="Sequence or touch" onchange="loadFunnelAnalytics()"><option value="">All sequences</option></select>
+        </div>
+      </div>
+      <div class="funnel-kpis" id="funnel-kpis"></div>
+      <div class="funnel-flow" id="funnel-flow" aria-label="Campaign funnel"></div>
+      <div class="funnel-secondary">
+        <div><div class="detail-section-title">Reply Outcomes</div><div id="funnel-replies" class="funnel-mini-grid"></div></div>
+        <div><div class="detail-section-title">Funnel Leaks</div><div id="funnel-leaks" class="funnel-mini-grid"></div></div>
+      </div>
+      <details><summary>Performance breakdowns</summary><div id="funnel-breakdowns"></div></details>
+      <div id="funnel-drill" class="funnel-drill" hidden></div>
+    </section>
     <div id="ce-chart-wrap" style="padding:0 28px;margin-bottom:18px">
       <div class="detail-section-title" style="margin-bottom:8px">Daily Sends — Last 14 Days</div>
       <div id="ce-send-chart" style="display:flex;align-items:flex-end;gap:3px;height:60px;padding:0 2px"></div>
@@ -3923,6 +3956,7 @@ let ceDemoMap      = new Map();   // companyKey → { count, demo, intro, last }
 let ceDemoData     = [];
 let ceOutreachStats = null;
 let ceDetailId = '';
+let funnelAnalytics = null;
 
 const CE_STAGES = ['Import','Queued','Contacted','Replied','Review','Done','Promoted','Unsubscribed'];
 
@@ -4821,6 +4855,7 @@ async function reloadCePage({ append = false, offset = 0 } = {}) {
   } finally {
     if (seq === ceRequestSeq) ceLoading = false;
     renderCeTable();
+    loadFunnelAnalytics(); // separate scoped analytics; operational cards stay global
   }
 }
 
@@ -4903,6 +4938,75 @@ async function loadCeLeads() {
   } finally {
     ceLoading = false;
   }
+}
+
+function funnelRate(value) { return value === null || value === undefined ? '—' : `${value.toFixed(1)}%`; }
+function funnelQuery(stage = '') {
+  const params = new URLSearchParams({ version: document.getElementById('funnel-version')?.value || 'current' });
+  const days = document.getElementById('funnel-window')?.value || 'all';
+  if (days !== 'all') params.set('from', new Date(Date.now() - Number(days) * 86400000).toISOString());
+  const level = document.getElementById('funnel-level')?.value || ''; if (level) params.set('personalizationLevel', level);
+  const family = document.getElementById('funnel-family')?.value || ''; if (family) params.set('family', family);
+  const angle = document.getElementById('funnel-angle')?.value || ''; if (angle) params.set('angle', angle);
+  const subject = document.getElementById('funnel-subject')?.value || ''; if (subject) params.set('subjectStrategy', subject);
+  const copy = document.getElementById('funnel-copy')?.value || ''; if (copy) params.set('copyVersion', copy);
+  const sequence = document.getElementById('funnel-sequence')?.value || ''; if (sequence) params.set('sequenceId', sequence);
+  if (stage) params.set('stage', stage);
+  return params.toString();
+}
+
+async function loadFunnelAnalytics() {
+  const host = document.getElementById('ce-funnel-analytics'); if (!host) return;
+  host.setAttribute('aria-busy', 'true');
+  try {
+    const response = await fetch('/api/coldemail/funnel?' + funnelQuery());
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    funnelAnalytics = await response.json(); renderFunnelAnalytics(funnelAnalytics);
+  } catch (error) {
+    document.getElementById('ce-funnel-sample').textContent = 'Campaign analytics unavailable; operational data is unaffected.';
+  } finally { host.removeAttribute('aria-busy'); }
+}
+
+function syncFunnelFacet(id, values, emptyLabel) {
+  const select = document.getElementById(id); if (!select) return; const current = select.value;
+  select.innerHTML = `<option value="">${emptyLabel}</option>` + (values || []).map(value => `<option value="${escAttr(value)}">${esc(value)}</option>`).join('');
+  if ([...select.options].some(option => option.value === current)) select.value = current;
+}
+
+function renderFunnelAnalytics(data) {
+  const c = data.counts || {}, r = data.conversions || {};
+  document.getElementById('ce-funnel-sample').textContent = `${c.sent || 0} unique sent leads · cohort by first qualifying send · ${Number(data.generatedMs || 0).toFixed(1)} ms`;
+  syncFunnelFacet('funnel-angle', data.facets?.angles, 'All angles');
+  syncFunnelFacet('funnel-subject', data.facets?.subjectStrategies, 'All subject strategies');
+  syncFunnelFacet('funnel-family', data.facets?.families, 'All campaign families');
+  syncFunnelFacet('funnel-copy', data.facets?.copyVersions, 'All copy versions');
+  syncFunnelFacet('funnel-sequence', data.facets?.sequences, 'All sequences');
+  const versionSelect = document.getElementById('funnel-version');
+  const selectedVersion = versionSelect.value;
+  const fixedVersions = [['current','Current campaign'],['lifetime','Lifetime'],['legacy_unknown','Legacy / Unknown'],['all_measured','All measured']];
+  versionSelect.innerHTML = fixedVersions.map(([value,label]) => `<option value="${value}">${label}</option>`).join('') + (data.facets?.versions || []).filter(value => value !== 'legacy_unknown').map(value => `<option value="${escAttr(value)}">${esc(value)}</option>`).join('');
+  if ([...versionSelect.options].some(option => option.value === selectedVersion)) versionSelect.value = selectedVersion;
+  const kpis = [['Sent',c.sent],['Reply Rate',funnelRate(r.sentToReply)],['Positive Rate',funnelRate(r.sentToPositive)],['Demo Rate',funnelRate(r.sentToDemo)],['Calls Booked',c.callBooked],['Show Rate',funnelRate(r.showRate)],['Closed Won',c.won]];
+  document.getElementById('funnel-kpis').innerHTML = kpis.map(([label,value]) => `<div class="funnel-kpi"><strong>${esc(value)}</strong><span>${esc(label)}</span></div>`).join('');
+  const labels = { sent:'Sent',replied:'Replies',positive:'Positive',demo:'Demo',hot:'Hot',callBooked:'Calls Booked',callHeld:'Calls Held',won:'Won' };
+  document.getElementById('funnel-flow').innerHTML = (data.funnel || []).map(step => `<button type="button" class="funnel-step" onclick="openFunnelStage('${escAttr(step.key)}')"><span>${esc(labels[step.key] || step.key)}</span><b>${step.count}</b><small>${step.key === 'sent' ? 'Cohort' : `${funnelRate(step.fromPrevious)} from prior`}</small><small>${step.key === 'sent' ? '' : `${funnelRate(step.fromSent)} from Sent`}</small></button>`).join('');
+  const replies = [['Positive',c.positive],['Negative',c.negative],['Needs Human',c.needsHuman],['Unclassified',c.unclassified]];
+  document.getElementById('funnel-replies').innerHTML = replies.map(([label,value]) => `<div class="funnel-mini"><b>${value || 0}</b>${label}</div>`).join('');
+  const leakLabels = {sentNoReply:'Sent · no reply',repliedNotPositive:'Reply · not positive',positiveNotHot:'Positive · not Hot',hotNoCall:'Hot · no call',callUnresolved:'Call · unresolved',heldNoOutcome:'Held · no outcome'};
+  document.getElementById('funnel-leaks').innerHTML = Object.entries(data.leaks || {}).map(([key,value]) => `<div class="funnel-mini"><b>${value}</b>${esc(leakLabels[key] || key)}</div>`).join('');
+  const tables = [['Personalization level',data.breakdowns?.personalizationLevel],['Angle',data.breakdowns?.angle],['Subject strategy',data.breakdowns?.subjectStrategy],['Copy version',data.breakdowns?.copyVersion]];
+  const breakdownHtml = tables.map(([title,rows]) => `<div class="detail-section-title" style="margin-top:14px">${esc(title)}</div><table class="funnel-table"><thead><tr><th>Value</th><th>Sent</th><th>Replies</th><th>Positive</th><th>Positive rate</th><th>Calls</th><th>Won</th></tr></thead><tbody>${(rows || []).map(row => `<tr><td>${esc(row.value)}</td><td>${row.sent}</td><td>${row.replied}</td><td>${row.positive}</td><td>${funnelRate(row.positiveRate)}</td><td>${row.callsBooked}</td><td>${row.won}</td></tr>`).join('') || '<tr><td colspan="7">No attributable data</td></tr>'}</tbody></table>`).join('');
+  const touchHtml = `<div class="detail-section-title" style="margin-top:14px">Reply touch</div><table class="funnel-table"><thead><tr><th>Sequence</th><th>Step</th><th>Replies</th><th>Positive</th></tr></thead><tbody>${(data.replyTouch || []).map(row => `<tr><td>${esc(row.sequenceId)}</td><td>${row.step || '—'}</td><td>${row.replies}</td><td>${row.positive}</td></tr>`).join('') || '<tr><td colspan="4">No attributable reply touches</td></tr>'}</tbody></table>`;
+  const sequenceHtml = `<div class="detail-section-title" style="margin-top:14px">Recovery sequences (separate from acquisition)</div><table class="funnel-table"><thead><tr><th>Sequence</th><th>Enrolled</th><th>Sends</th><th>Replies</th><th>Positive</th><th>Rebooked</th><th>Complete</th></tr></thead><tbody>${(data.sequencePerformance || []).map(row => `<tr><td>${esc(row.sequenceId)}</td><td>${row.enrolled}</td><td>${row.sends}</td><td>${row.replies}</td><td>${row.positive}</td><td>${row.rebookings}</td><td>${row.completed}</td></tr>`).join('') || '<tr><td colspan="7">No stage-sequence activity</td></tr>'}</tbody></table>`;
+  document.getElementById('funnel-breakdowns').innerHTML = breakdownHtml + touchHtml + sequenceHtml;
+}
+
+async function openFunnelStage(stage) {
+  const host = document.getElementById('funnel-drill'); host.hidden = false; host.innerHTML = 'Loading counted leads…';
+  const response = await fetch('/api/coldemail/funnel?' + funnelQuery(stage));
+  if (!response.ok) { host.textContent = 'Could not load this funnel stage.'; return; }
+  const data = await response.json(); const labels = {callBooked:'Calls Booked',callHeld:'Calls Held'};
+  host.innerHTML = `<div class="detail-section-title">${esc(labels[stage] || stage)} · ${data.pagination?.total || 0}</div>` + (data.records || []).map(row => `<button type="button" class="funnel-drill-row" onclick="openCeDetail('${escAttr(row.id)}')"><span><b>${esc(row.company || 'Unknown')}</b><br><small>${esc(row.contactName || row.email || '')}</small></span><span>${esc(row.pipelineStage || row.stage || '')}</span></button>`).join('');
 }
 
 // Verbatim port of cleanCompanyName() from outreach-agent.js. MUST stay in sync

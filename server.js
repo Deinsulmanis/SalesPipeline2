@@ -36,6 +36,7 @@ const {
   LEGACY_UNKNOWN, CAMPAIGN_VERSIONS, ACTIVE_CAMPAIGN_VERSION,
   buildCampaignVersionIndex, latestSendAttribution, acquisitionAttribution, promotionAttribution, coldSendAttribution,
 } = require('./integrations/campaign-versions');
+const { buildFunnelAnalytics } = require('./integrations/funnel-analytics');
 const {
   classifyCalendarEvent, matchBookingIdentity, bookingLifecycleAction,
   nextSyncState, providerEventKey, runGoogleCalendarSync: orchestrateGoogleCalendarSync,
@@ -1378,6 +1379,51 @@ app.get('/api/coldemail', requireAuth, async (req, res) => {
 
 app.get('/api/campaign-versions', requireAuth, (req, res) => {
   res.json({ active: ACTIVE_CAMPAIGN_VERSION, versions: CAMPAIGN_VERSIONS });
+});
+
+// Campaign performance is derived entirely from the shared Outreach snapshot.
+// The cohort is anchored to successful send activities, never the visible page
+// and never an inferred timestamp/version. `stage` returns a bounded exact-lead
+// drill-down without shipping activity bodies or the complete dataset.
+app.get('/api/coldemail/funnel', requireAuth, async (req, res) => {
+  try {
+    const startedAt = process.hrtime.bigint();
+    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const analytics = buildFunnelAnalytics({
+      leads: dataset.leads, boardLeads: dataset.boardLeads, activities: dataset.activities,
+      replyRecords: dataset.replyRecords,
+      currentVersion: ACTIVE_CAMPAIGN_VERSION.dental_ai_receptionist,
+    }, req.query);
+    const stage = String(req.query.stage || '').trim();
+    const requested = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 100));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+    let records;
+    let stageTotal;
+    if (stage && analytics.stageLeadIds[stage]) {
+      const ids = analytics.stageLeadIds[stage]; stageTotal = ids.length;
+      const rowById = new Map(dataset.rows.map(row => [row.id, row]));
+      // Project to exactly what the drill-down list renders. Whole ColdEmail
+      // rows carry notes/siteContext/campaign_notes blobs, which made a single
+      // 100-row page ~194 KB; the five displayed fields are ~10 KB. The lead
+      // detail drawer already loads the full record on demand.
+      records = ids.slice(offset, offset + requested).map(id => rowById.get(id)).filter(Boolean)
+        .map(row => ({
+          id: row.id, company: row.company, contactName: row.contactName,
+          email: row.email, stage: row.stage, pipelineStage: row.pipelineStage,
+        }));
+    }
+    delete analytics.stageLeadIds;
+    res.json({
+      ...analytics,
+      ...(records ? { stage, records, pagination: { total: stageTotal, offset, limit: requested, hasMore: offset + records.length < stageTotal } } : {}),
+      generatedMs: Number(process.hrtime.bigint() - startedAt) / 1e6,
+      fetchedAt: new Date(dataset.at).toISOString(),
+    });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Funnel Analytics GET]', error.message);
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // The DemoPlays header was written before audio_type existed, so it still reads
