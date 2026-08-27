@@ -334,6 +334,8 @@ const ACTION_TYPE = Object.freeze({
   MANUAL_FOLLOW_UP:      'manual_follow_up',
   BLOCKED_BY_HOLD:       'blocked_by_hold',
   AUTOMATION_RESUMES:    'automation_resumes',
+  HOT_FOLLOW_UP:         'hot_follow_up',
+  HOT_REVIEW:            'hot_review',
   NONE_WON:              'none_won',
   NONE_LOST:             'none_lost',
   NO_NEXT_ACTION:        'no_next_action',
@@ -377,7 +379,7 @@ const REPLY_EVENTS = Object.freeze([
   'positive_reply', 'meeting_requested', 'late_reply', 'question_reply',
   'negative_reply', 'unsubscribe_reply', 'wrong_person_reply', 'needs_human_reply',
 ]);
-const HUMAN_TOUCH_EVENTS = Object.freeze(['conversation_note', 'call_booked']);
+const HUMAN_TOUCH_EVENTS = Object.freeze(['human_response_sent', 'conversation_note', 'call_booked']);
 
 function latestEventAt(activities, types) {
   let latest = '';
@@ -409,6 +411,189 @@ function replyEvidence(twin, activities) {
   };
 }
 
+// ── HOT LEAD STALENESS ──────────────────────────────────────────────────────
+// A Hot lead is a live human sales conversation, and until now nothing aged it.
+// deriveNextAction() returned WAITING_PROSPECT with dueAt:null, which resolves
+// to status 'waiting' — a bucket the work queues rank BELOW upcoming and never
+// escalate. So a Hot lead whose prospect went quiet sat in "waiting" forever and
+// never surfaced anywhere. That is the rot this model fixes.
+//
+// Nothing here sends, schedules a send, moves a stage, or decides an outcome.
+// It answers one question: whose move is it, and by when.
+
+// Every threshold in one place. These are CRM action deadlines for a human,
+// deliberately NOT reusing FOLLOW_UP_DELAY_DAYS — that is cold-email cadence
+// mirroring FOLLOW_UP_SEQUENCE, and conflating the two would tie a sales
+// conversation timer to the sending schedule.
+const HOT_FOLLOW_UP = Object.freeze({
+  WAITING_ON_PROSPECT_BUSINESS_DAYS: 2, // they owe us a reply; chase after 2
+  STALE_DAYS_PAST_DUE: 7,               // substantially overdue
+  SEVERELY_STALE_DAYS_PAST_DUE: 21,     // clearly abandoned unless handled
+});
+
+const WAITING_ON = Object.freeze({
+  US: 'waiting_on_us',
+  PROSPECT: 'waiting_on_prospect',
+  MEETING: 'meeting_scheduled',
+  UNKNOWN: 'unknown',          // evidence is insufficient — never guessed
+});
+
+const HOT_STALENESS = Object.freeze({
+  ACTIVE: 'active',
+  FOLLOW_UP_DUE: 'follow_up_due',
+  OVERDUE: 'overdue',
+  STALE: 'stale',
+  SEVERELY_STALE: 'severely_stale',
+  UNKNOWN: 'unknown',
+});
+
+// What counts as a real sales interaction. An open, a warm signal, a demo view
+// or an automated cold send prove nothing about the conversation, so none of
+// them appear here and none of them reset the timer.
+const MEANINGFUL_INBOUND_EVENTS = Object.freeze(
+  REPLY_EVENTS.filter(type => type !== 'unsubscribe_reply'));
+const MEANINGFUL_HUMAN_EVENTS = Object.freeze([
+  'human_response_sent',   // we answered them — recorded, never sent from here
+  'conversation_note',     // a human wrote up the conversation
+  'call_booked',
+  'meeting_rescheduled',
+]);
+
+// A bare YYYY-MM-DD (what the follow-up field holds) is ALREADY a calendar day.
+// Running it through businessDay() would parse it as UTC midnight and then shift
+// it back a day in Vancouver, making a date that is due today read as overdue.
+// Only real timestamps need converting.
+function calendarDayOf(value) {
+  const raw = String(value || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  return businessDay(raw);
+}
+
+/** Vancouver-calendar business days, skipping Sat/Sun. Never invents a date. */
+function addBusinessDays(iso, days) {
+  const start = new Date(iso).getTime();
+  if (!Number.isFinite(start)) return null;
+  const cursor = new Date(start);
+  let remaining = Math.max(0, days);
+  while (remaining > 0) {
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    // Weekend is judged on the business calendar, not on UTC.
+    const weekday = new Date(cursor).toLocaleDateString('en-US', { timeZone: BUSINESS_TIMEZONE, weekday: 'short' });
+    if (weekday !== 'Sat' && weekday !== 'Sun') remaining--;
+  }
+  return cursor.toISOString();
+}
+
+/**
+ * The most recent MEANINGFUL interaction on this opportunity, in each
+ * direction. Reads the canonical activity records — it builds no second
+ * timeline and stores nothing.
+ */
+function lastMeaningfulInteraction(activities = []) {
+  const inboundAt = latestEventAt(activities, MEANINGFUL_INBOUND_EVENTS);
+  const humanAt = latestEventAt(activities, MEANINGFUL_HUMAN_EVENTS);
+  const candidates = [inboundAt, humanAt].filter(Boolean).sort();
+  return {
+    inboundAt,
+    humanAt,
+    at: candidates.length ? candidates[candidates.length - 1] : null,
+    direction: !candidates.length ? null
+      : (humanAt && (!inboundAt || humanAt >= inboundAt)) ? 'outbound' : 'inbound',
+  };
+}
+
+/**
+ * Whose move is it, when is the follow-up due, and how stale is it?
+ *
+ * @param boardLead  a Leads row (stage, followup, meetingAt, outcome)
+ * @param context    { activities, now }
+ * @returns { waitingOn, dueAt, staleness, daysPastDue, source, lastInteractionAt,
+ *            hasConversationEvidence, reason }
+ */
+function deriveHotState(boardLead, context = {}) {
+  const lead = boardLead || {};
+  const now = context.now || new Date();
+  const activities = context.activities || [];
+  const interaction = lastMeaningfulInteraction(activities);
+  const manualDate = String(lead.followup || '').trim();
+
+  // A booked meeting outranks any follow-up timer — the next move is the call.
+  const meetingAt = String(lead.meetingAt || '').trim();
+  const meetingMs = meetingAt ? new Date(meetingAt).getTime() : NaN;
+  if (Number.isFinite(meetingMs) && meetingMs >= new Date(now).getTime()) {
+    return {
+      waitingOn: WAITING_ON.MEETING, dueAt: meetingAt, staleness: HOT_STALENESS.ACTIVE,
+      daysPastDue: 0, source: 'meeting', lastInteractionAt: interaction.at,
+      hasConversationEvidence: Boolean(interaction.at),
+      reason: 'a meeting is booked; the call is the next move',
+    };
+  }
+
+  let waitingOn = WAITING_ON.UNKNOWN;
+  let dueAt = null;
+  let source = 'none';
+  let reason = '';
+
+  if (interaction.inboundAt && (!interaction.humanAt || interaction.inboundAt > interaction.humanAt)) {
+    // They spoke last. We owe them a reply, so it is due the day it arrived.
+    waitingOn = WAITING_ON.US;
+    dueAt = interaction.inboundAt;
+    source = 'activity';
+    reason = 'they replied ' + businessDay(interaction.inboundAt) + ' and we have not answered';
+  } else if (interaction.humanAt) {
+    // We spoke last. Give them a working window before chasing.
+    waitingOn = WAITING_ON.PROSPECT;
+    dueAt = addBusinessDays(interaction.humanAt, HOT_FOLLOW_UP.WAITING_ON_PROSPECT_BUSINESS_DAYS);
+    source = 'activity';
+    reason = 'we responded ' + businessDay(interaction.humanAt) + '; chase after '
+      + HOT_FOLLOW_UP.WAITING_ON_PROSPECT_BUSINESS_DAYS + ' business days';
+  }
+
+  // An explicit human date always wins over a derived one — the person who set
+  // it knows something the activity log does not. It can also supply a date
+  // when there is no conversation evidence at all, which is the only honest way
+  // to age a lead that predates the activity timeline.
+  if (manualDate) {
+    dueAt = manualDate;
+    source = 'followup-field';
+    reason = reason
+      ? reason + '; overridden by the follow-up date set by hand'
+      : 'follow-up date set by hand';
+    if (waitingOn === WAITING_ON.UNKNOWN) waitingOn = WAITING_ON.PROSPECT;
+  }
+
+  if (!dueAt) {
+    // No conversation evidence and no human date. Refuse to invent an age.
+    return {
+      waitingOn: WAITING_ON.UNKNOWN, dueAt: null, staleness: HOT_STALENESS.UNKNOWN,
+      daysPastDue: null, source: 'none', lastInteractionAt: interaction.at,
+      hasConversationEvidence: false,
+      reason: 'no dated conversation and no follow-up date — the age of this opportunity cannot be proven',
+    };
+  }
+
+  const dueDay = calendarDayOf(dueAt);
+  const today = businessDay(now);
+  let staleness = HOT_STALENESS.ACTIVE;
+  let daysPastDue = 0;
+  if (dueDay && today) {
+    const dayMs = 86400000;
+    daysPastDue = Math.round((Date.parse(today + 'T00:00:00Z') - Date.parse(dueDay + 'T00:00:00Z')) / dayMs);
+    if (daysPastDue < 0) staleness = HOT_STALENESS.ACTIVE;
+    else if (daysPastDue === 0) staleness = HOT_STALENESS.FOLLOW_UP_DUE;
+    else if (daysPastDue >= HOT_FOLLOW_UP.SEVERELY_STALE_DAYS_PAST_DUE) staleness = HOT_STALENESS.SEVERELY_STALE;
+    else if (daysPastDue >= HOT_FOLLOW_UP.STALE_DAYS_PAST_DUE) staleness = HOT_STALENESS.STALE;
+    else staleness = HOT_STALENESS.OVERDUE;
+  }
+
+  return {
+    waitingOn, dueAt, staleness, daysPastDue: Math.max(0, daysPastDue), source,
+    lastInteractionAt: interaction.at,
+    hasConversationEvidence: Boolean(interaction.at),
+    reason,
+  };
+}
+
 function buildAction(fields) {
   const dueAt = fields.dueAt || null;
   const status = fields.status || deriveActionStatus(dueAt, fields.now) || ACTION_STATUS.UPCOMING;
@@ -425,7 +610,60 @@ function buildAction(fields) {
     source: fields.source,
     needsAttention: Boolean(fields.needsAttention),
     recoverable: fields.recoverable || false,
+    // Present only for Hot leads; the drawer and card render it directly rather
+    // than recomputing any of it in the browser.
+    hotState: fields.hotState || null,
   };
+}
+
+// Maps the Hot state onto the EXISTING action vocabulary. Deliberately small:
+// two new types, everything else reuses what the engine already speaks.
+function hotNextAction(lead, { activities, now, twin }) {
+  const hot = deriveHotState(lead, { activities, now });
+  const base = { source: hot.source, reason: hot.reason, now, hotState: hot };
+
+  if (hot.waitingOn === WAITING_ON.MEETING) {
+    return buildAction({ ...base, type: ACTION_TYPE.SALES_CALL, label: 'Sales call',
+      dueAt: hot.dueAt, owner: ACTION_OWNER.MEETING });
+  }
+
+  // Nothing datable. Say so rather than inventing an age or a due date.
+  if (hot.staleness === HOT_STALENESS.UNKNOWN) {
+    return buildAction({ ...base, type: ACTION_TYPE.HOT_REVIEW, label: 'Review Hot lead',
+      dueAt: null, owner: ACTION_OWNER.HUMAN, status: ACTION_STATUS.BLOCKED, needsAttention: true });
+  }
+
+  if (hot.waitingOn === WAITING_ON.US) {
+    // Reuse the canonical reply category so a question still reads as review
+    // work rather than "respond" — the Hot clock changes WHEN, not WHAT.
+    const category = twin ? classificationFromLead(twin, []) : null;
+    const shape = category === ANALYTICS_CATEGORY.NEEDS_HUMAN
+      ? { type: ACTION_TYPE.REVIEW_REPLY, label: 'Review reply' }
+      : category === ANALYTICS_CATEGORY.UNCLASSIFIED
+        ? { type: ACTION_TYPE.REVIEW_UNCLASSIFIED, label: 'Review unclassified reply',
+            reason: hot.reason + '; reply could not be classified — do not guess' }
+        : category === ANALYTICS_CATEGORY.POSITIVE
+          ? { type: ACTION_TYPE.RESPOND_REPLY, label: 'Respond to positive reply' }
+          : { type: ACTION_TYPE.RESPOND_REPLY, label: 'Respond to prospect' };
+    return buildAction({ ...base, ...shape, dueAt: hot.dueAt, owner: ACTION_OWNER.HUMAN, needsAttention: true });
+  }
+
+  // Waiting on them, and the window has not closed yet: genuinely nobody's move.
+  if (hot.staleness === HOT_STALENESS.ACTIVE) {
+    return buildAction({ ...base, type: ACTION_TYPE.WAITING_PROSPECT, label: 'Waiting for prospect',
+      dueAt: hot.dueAt, owner: ACTION_OWNER.WAITING, status: ACTION_STATUS.WAITING });
+  }
+
+  // Due, overdue or stale — this is now a human task with a real deadline, and
+  // it escalates through the ordinary status ladder into the work queues.
+  const stale = hot.staleness === HOT_STALENESS.STALE || hot.staleness === HOT_STALENESS.SEVERELY_STALE;
+  return buildAction({
+    ...base, type: ACTION_TYPE.HOT_FOLLOW_UP, owner: ACTION_OWNER.HUMAN, dueAt: hot.dueAt,
+    label: stale ? 'Follow up — stale Hot lead' : 'Follow up with prospect',
+    needsAttention: stale,
+    reason: hot.reason + '; ' + hot.daysPastDue + ' day(s) past due'
+      + (stale ? ' — decide whether this is still live (nothing is closed automatically)' : ''),
+  });
 }
 
 /**
@@ -509,6 +747,13 @@ function deriveNextAction(boardLead, twin, context = {}) {
       });
   }
 
+  // ── Hot — a live human conversation on a clock ───────────────────────────
+  // Handled before the generic reply branch: a Hot lead's next move depends on
+  // WHO SPOKE LAST and how long ago, which the reply branch cannot see. The
+  // reply category is still used to label the action, so a question on a Hot
+  // lead still reads "Review reply" rather than "Respond".
+  if (stage === 'hot') return hotNextAction(lead, { activities, now, twin });
+
   // ── Reply-driven human work (applies to any non-terminal stage) ──────────
   const reply = replyEvidence(twin, activities);
   if (reply) {
@@ -551,17 +796,6 @@ function deriveNextAction(boardLead, twin, context = {}) {
     return withManual('Manual follow-up')
       || nothing(ACTION_TYPE.NONE_LOST, 'None — reply closed the conversation',
         'reply classified as negative; no outbound action');
-  }
-
-  // ── Hot — human territory, automation is held ────────────────────────────
-  if (stage === 'hot') {
-    return withManual('Human follow-up')
-      || buildAction({
-        type: ACTION_TYPE.NO_NEXT_ACTION, label: 'Human follow-up — no date set', dueAt: null,
-        owner: ACTION_OWNER.HUMAN, status: ACTION_STATUS.BLOCKED, source: 'none',
-        reason: 'Hot lead with no reply evidence and no follow-up date — this is the ghosting hole',
-        needsAttention: true, now,
-      });
   }
 
   // ── Follow Up — automation territory ─────────────────────────────────────
@@ -742,6 +976,8 @@ function reopenEligibility(boardLead, twin) {
 module.exports = {
   AUTOMATION_STATES, SUPPRESSION_NOTE_TAGS, MANUAL_HOLD_TAG, HUMAN_OWNED_STAGES,
   REACTIVATION_MODES, resumeAtFromNotes, manualHoldReleased,
+  HOT_FOLLOW_UP, WAITING_ON, HOT_STALENESS, MEANINGFUL_INBOUND_EVENTS, MEANINGFUL_HUMAN_EVENTS,
+  addBusinessDays, calendarDayOf, lastMeaningfulInteraction, deriveHotState,
   applyResumeToNotes, clearResumeFromNotes, reactivationEligibility,
   hasManualHold, applyHoldToNotes, stageRequiresHold,
   OUTCOMES, OUTCOME_IDS, LOSS_OUTCOME_IDS, RECOVERABLE_OUTCOME_IDS,

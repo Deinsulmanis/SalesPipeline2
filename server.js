@@ -2187,6 +2187,55 @@ app.post('/api/leads/:id/reactivate', requireAuth, async (req, res) => {
   }
 });
 
+// Record that a human answered this prospect. The CRM previously had no way to
+// tell "they replied" from "we replied": the only human-side event was
+// conversation_note, which means "someone edited the notes field". Without that
+// distinction a Hot lead's waiting-on state cannot be derived at all.
+//
+// This RECORDS an interaction that already happened elsewhere (an inbox, a
+// phone). It sends nothing, and it deliberately writes no lead state — the
+// staleness clock is derived from the activity row, not stored on the lead.
+app.post('/api/leads/:id/human-response', requireAuth, async (req, res) => {
+  try {
+    const rowNum = await withAuth(() => findRow(req.params.id));
+    if (!rowNum) return res.status(404).json({ error: 'not found' });
+    const response = await sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${rowNum}:W${rowNum}`,
+    });
+    const row = response.data.values?.[0] || [];
+    const note = String(req.body?.note || '').trim().slice(0, 2000);
+    const occurredAtRaw = String(req.body?.occurredAt || '').trim();
+    const occurredMs = occurredAtRaw ? new Date(occurredAtRaw).getTime() : Date.now();
+    if (!Number.isFinite(occurredMs)) {
+      return res.status(400).json({ error: 'Invalid response time.', field: 'occurredAt' });
+    }
+    if (occurredMs > Date.now() + 60000) {
+      return res.status(400).json({ error: 'A response cannot be recorded in the future.', field: 'occurredAt' });
+    }
+    const occurredAt = new Date(occurredMs).toISOString();
+
+    // Minute-resolution id: logging the same response twice cannot stack rows,
+    // but two genuinely separate replies on the same day still both record.
+    const eventId = stableActivityId('human-response', [req.params.id, occurredAt.slice(0, 16), note]);
+    const existing = await readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER);
+    if (existing.some(activity => activity.eventId === eventId)) {
+      return res.json({ ok: true, duplicate: true, eventId, occurredAt });
+    }
+    await appendColdCallActivities([{
+      eventId, leadId: req.params.id, sourceLeadId: '',
+      email: row[10] || '', company: row[6] || '',
+      eventType: 'human_response_sent', occurredAt,
+      subject: 'Response sent to prospect', content: note,
+      metadata: JSON.stringify({ direction: 'outbound', actor: 'human', trigger: 'crm_log_response' }),
+    }]);
+    res.json({ ok: true, duplicate: false, eventId, occurredAt });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Human response]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.patch('/api/leads/:id/call-details', requireAuth, async (req, res) => {
   try {
     const rowNum = await withAuth(() => findRow(req.params.id));

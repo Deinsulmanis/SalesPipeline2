@@ -165,10 +165,15 @@ test('scenario 9/10: no-show and timing are recoverable losses, not permanent on
 });
 
 // ── 11. Ghosted after a positive conversation ───────────────────────────────
-test('scenario 11: a ghosted Hot lead is flagged as having no next action', () => {
+test('scenario 11: a ghosted Hot lead is still flagged, now as needing review', () => {
+  // Step 8 replaced the generic "no date set" gap with a Hot-specific review
+  // action. The invariant this scenario protects is unchanged: a quiet Hot
+  // lead must never sit silently — it still demands attention.
   const next = deriveNextAction({ stage: 'hot' }, { emailStatus: 'replied' });
   assert.equal(next.needsAttention, true);
-  assert.match(next.action, /no date set/);
+  assert.match(next.action, /Review Hot lead/);
+  assert.equal(next.hotState.staleness, 'unknown');
+  assert.equal(next.hotState.hasConversationEvidence, false);
 });
 
 // ── 12. Closed Won vs Closed Lost ───────────────────────────────────────────

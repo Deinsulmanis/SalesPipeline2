@@ -183,9 +183,14 @@ test('14. an active lead with insufficient state reports No next action', () => 
   assert.equal(next.needsAttention, true);
   assert.equal(next.label, 'No next action defined');
 
+  // A Hot lead with nothing datable is now HOT_REVIEW rather than the old
+  // generic gap: same escalation, but it names why (no provable conversation)
+  // instead of implying someone forgot to set a date.
   const hot = deriveNextAction({ stage: 'hot' }, { emailStatus: 'replied' }, ctx());
-  assert.equal(hot.type, ACTION_TYPE.NO_NEXT_ACTION);
+  assert.equal(hot.type, ACTION_TYPE.HOT_REVIEW);
   assert.equal(hot.needsAttention, true);
+  assert.equal(hot.status, ACTION_STATUS.BLOCKED, 'still escalates, never silently hidden');
+  assert.equal(hot.dueAt, null, 'and no age is invented');
 });
 
 test('15. a manual hold over a live sequence produces Blocked', () => {
