@@ -1070,6 +1070,7 @@ async function loadOutreachDataset() {
 
   const counts = { queued: 0, emailed: 0, replied: metrics.totalReplies, done: 0 };
   const facets = { stages: {}, niches: {}, campaigns: {} };
+  const leadKeys = new Set();
   const rows = leads.map(lead => {
     if (lead.stage === 'Queued') counts.queued++;
     if (lead.emailStatus) counts.emailed++;
@@ -1080,18 +1081,72 @@ async function loadOutreachDataset() {
     if (niche) facets.niches[niche] = (facets.niches[niche] || 0) + 1;
     const campaign = campaignLabelFor(lead);
     facets.campaigns[campaign] = (facets.campaigns[campaign] || 0) + 1;
+    const companyKey = openKey(lead.company);
+    if (companyKey) leadKeys.add(companyKey);
     return toLightRow(lead, categoryByLeadId.get(lead.id));
   });
+  counts.total = rows.length;
+
+  // ── Open / warm signal, aggregated over the WHOLE dataset ────────────────
+  // These headline numbers used to be computed in the browser from the full
+  // lead array. Once the list was paginated that array became one page, so the
+  // cards silently started describing 100 rows instead of 1,849. They are
+  // aggregated here now, for the same reason the reply metrics always were:
+  // a summary must not depend on which page happens to be loaded.
+  //
+  // Semantics preserved exactly from the previous client code:
+  //   opens = DISTINCT companies with >= 1 real open, that match a lead
+  //   hits  = sum of those companies' real opens (a prospect reloading counts once
+  //           in `opens`, but every real hit shows in the label)
+  //   warm  = those companies with >= 2 real opens
+  // `real` excludes scanner detonations via the shared open-filter module.
+  const proposalOpens = openResponse.data.values || [];
+  const proposalEngaged = engagedResponse.data.values || [];
+  const demoPlays = demoResponse.data.values || [];
+  const demoRows = demoPlays.slice(1).map(row => ({
+    timestamp: row[0] || '', company: row[1] || '', niche: row[2] || '',
+    ip: row[3] || '', userAgent: row[4] || '', audioType: normalizeAudioType(row[5]),
+  }));
+  const openRows = proposalOpens.slice(1).map(row => ({
+    timestamp: row[0] || '', company: row[1] || '', niche: row[2] || '',
+    id: row[3] || '', ip: row[4] || '', userAgent: row[5] || '',
+  }));
+  const leadById = new Map(leads.map(lead => [lead.id, { lastEmailedAt: lead.lastEmailedAt }]));
+  const leadByKey = new Map();
+  for (const lead of leads) {
+    const k = openKey(lead.company);
+    if (k && !leadByKey.has(k)) leadByKey.set(k, { lastEmailedAt: lead.lastEmailedAt });
+  }
+  const annotatedOpens = annotateOpens({
+    opens: openRows,
+    keyOf: row => openKey(row.company),
+    leadFor: row => (row.id && leadById.get(row.id)) || leadByKey.get(openKey(row.company)) || null,
+    engagedRows: proposalEngaged.slice(1).map(row => ({ company: row[1] || '' })),
+    demoRows: demoRows.map(row => ({ company: row.company })),
+  });
+  const realOpensByCompany = new Map();
+  for (const open of annotatedOpens) {
+    if (open.real === false) continue;
+    const k = openKey(open.company);
+    if (!k) continue;
+    realOpensByCompany.set(k, (realOpensByCompany.get(k) || 0) + 1);
+  }
+  const signals = { opens: 0, hits: 0, warm: 0 };
+  for (const [k, n] of realOpensByCompany) {
+    if (!leadKeys.has(k)) continue;      // orphaned open rows are not lead opens
+    signals.opens++;
+    signals.hits += n;
+    if (n >= 2) signals.warm++;
+  }
 
   return {
     at: Date.now(),
     leads,                 // full rows, server-side only
     rows,                  // light rows, safe to serialise
     activities, classificationsByLeadId, replyRecords,
-    metrics, counts, facets,
-    demoPlays: demoResponse.data.values || [],
-    proposalOpens: openResponse.data.values || [],
-    proposalEngaged: engagedResponse.data.values || [],
+    metrics, counts, facets, signals,
+    demoPlays, demoRows, proposalOpens, proposalEngaged,
+    annotatedOpens,        // computed once; the Opens panel reuses it
   };
 }
 
@@ -1384,44 +1439,10 @@ app.get('/api/demoPlays', requireAuth, async (_req, res) => {
 // without data loss.
 app.get('/api/proposalOpens', requireAuth, async (_req, res) => {
   try {
-    const [openResp, leadRows, engResp, demoResp] = await Promise.all([
-      getOutreachDataset().then(dataset => ({ data: { values: dataset.proposalOpens } })),
-      // Was a second full ColdEmail read; the shared snapshot already holds it.
-      getOutreachDataset().then(dataset => dataset.leads.map(lead => ({ id: lead.id, company: lead.company, lastEmailedAt: lead.lastEmailedAt }))),
-      // Engagement signals rescue a real human who happened to trip a scanner
-      // rule. Both tabs are optional — a missing one just means no rescues.
-      getOutreachDataset().then(dataset => ({ data: { values: dataset.proposalEngaged } })),
-      // Was a second DemoPlays read; the shared snapshot already holds it.
-      getOutreachDataset().then(dataset => ({ data: { values: dataset.demoPlays } })),
-    ]);
-
-    const opens = (openResp.data.values || []).slice(1).map(row => ({
-      timestamp: row[0] || '',
-      company:   row[1] || '',
-      niche:     row[2] || '',
-      id:        row[3] || '',
-      ip:        row[4] || '',
-      userAgent: row[5] || '',
-    }));
-
-    // Lead lookup for the send-window rule: prefer the logged lead id, fall back
-    // to the company key (only ~60% of rows carry an id).
-    const leadById  = new Map(leadRows.map(row => [row.id, { lastEmailedAt: row.lastEmailedAt }]));
-    const leadByKey = new Map();
-    for (const row of leadRows) {
-      const k = openKey(row.company);
-      if (k && !leadByKey.has(k)) leadByKey.set(k, { lastEmailedAt: row.lastEmailedAt });
-    }
-
-    const annotated = annotateOpens({
-      opens,
-      keyOf:   row => openKey(row.company),
-      leadFor: row => (row.id && leadById.get(row.id)) || leadByKey.get(openKey(row.company)) || null,
-      engagedRows: (engResp.data.values || []).slice(1).map(r => ({ company: r[1] || '' })),
-      demoRows:    (demoResp.data.values || []).slice(1).map(r => ({ company: r[1] || '' })),
-    });
-
-    res.json(annotated);
+    // Annotated once inside the shared snapshot, so the Opens panel and the
+    // Opens/Warm cards can never disagree about what counts as a real open.
+    const dataset = await getOutreachDataset();
+    res.json(dataset.annotatedOpens);
   } catch (e) {
     console.error('[ProposalOpens GET]', e.message);
     res.json([]);
@@ -2100,6 +2121,7 @@ app.get('/api/coldemail/stats', requireAuth, async (req, res) => {
       ...dataset.counts,
       replied: dataset.metrics.totalReplies,
       replyMetrics: dataset.metrics,
+      signals: dataset.signals,
       totalLeads: dataset.rows.length,
       fetchedAt: new Date(dataset.at).toISOString(),
     });
@@ -2118,6 +2140,7 @@ app.get('/api/coldemail/summary', requireAuth, async (req, res) => {
       ...dataset.counts,
       totalLeads: dataset.rows.length,
       replyMetrics: dataset.metrics,
+      signals: dataset.signals,
       fetchedAt: new Date(dataset.at).toISOString(),
     });
   } catch (e) {

@@ -23,7 +23,13 @@ test('engagement lookup no longer costs a second ColdEmail read', () => {
   // It used to fetch A:B + J:J on its own; it now projects the columns it needs
   // out of the shared snapshot, so /api/proposalOpens reads ColdEmail zero times.
   assert.doesNotMatch(server, /readColdEmailSignalRows\(\)/);
-  assert.match(server, /getOutreachDataset\(\)\.then\(dataset => dataset\.leads\.map/);
+  // Stronger than before: the handler now does no lead work at all — the opens
+  // are annotated once inside the snapshot and simply served from it.
+  const handler = server.slice(server.indexOf("app.get('/api/proposalOpens'"));
+  const body = handler.slice(0, handler.indexOf('\n});'));
+  assert.match(body, /const dataset = await getOutreachDataset\(\);/);
+  assert.match(body, /res\.json\(dataset\.annotatedOpens\)/);
+  assert.ok(!/spreadsheets\.values\.get/.test(body), 'the opens route reads no sheet of its own');
 });
 
 test('dashboard counters reuse loaded data and otherwise use the compact stats endpoint', () => {
