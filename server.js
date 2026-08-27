@@ -31,6 +31,7 @@ const {
 } = require('./integrations/cold-call-pipeline');
 const {
   deriveAutomationState, automationConflict, deriveNextAction,
+  compareNextActions, summarizeNextActions,
   stageTransitionCheck, reopenEligibility, OUTCOME_IDS, LOSS_OUTCOME_IDS,
   MANUAL_HOLD_TAG, HUMAN_OWNED_STAGES,
   applyHoldToNotes, stageRequiresHold,
@@ -1450,7 +1451,7 @@ app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
       pipeline = {
         automation: deriveAutomationState(twin),
         conflict: automationConflict(lead, twin),
-        nextAction: deriveNextAction(lead, twin),
+        nextAction: deriveNextAction(lead, twin, { activities }),
         reopen: reopenEligibility(lead, twin),
         twin: twin ? { id: twin.id, emailStatus: twin.emailStatus, emailStep: twin.emailStep, lastEmailedAt: twin.lastEmailedAt } : null,
       };
@@ -1461,6 +1462,79 @@ app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
     res.json({ activities, leadScore: scoreColdCallLead(lead, activities), pipeline });
   } catch (e) {
     console.error('[Cold call activity GET]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── NEXT ACTION QUEUE ───────────────────────────────────────────────────────
+// One Next Action for every board lead, derived from the same shared engine the
+// drawer uses. Read-only: three sheet reads, no writes, no send path. This is
+// what turns the board into a work queue and what the leak audit runs against.
+app.get('/api/leads/next-actions', requireAuth, async (_req, res) => {
+  try {
+    const [boardResponse, ceResponse, activityResponse] = await Promise.all([
+      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: AGENT_READ_RANGE }),
+      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:L` }),
+      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${COLD_CALL_ACTIVITY_SHEET}!A:J` })
+        .catch(() => ({ data: {} })),
+    ]);
+
+    const leads = (boardResponse.data.values || []).slice(1).map(row => {
+      const lead = {};
+      COLUMNS.forEach((col, i) => { lead[col] = row[i] || ''; });
+      AGENT_COLS.forEach((col, i) => { lead[col] = row[17 + i] || ''; });
+      CALL_DETAIL_COLS.forEach((col, i) => { lead[col] = row[20 + i] || ''; });
+      return lead;
+    }).filter(lead => lead.id);
+
+    // Index the ColdEmail twins once by id and by email — the same two keys
+    // findColdEmailTwins matches on, without a read per lead.
+    const twinsById = new Map();
+    const twinsByEmail = new Map();
+    for (const row of (ceResponse.data.values || []).slice(1)) {
+      const twin = {
+        id: row[0] || '', company: row[1] || '', email: row[3] || '',
+        stage: row[7] || '', emailStatus: row[8] || '', lastEmailedAt: row[9] || '',
+        emailStep: row[10] || '', notes: row[11] || '',
+      };
+      if (twin.id && !twinsById.has(twin.id)) twinsById.set(twin.id, twin);
+      const key = normalizeEmail(twin.email);
+      if (key && !twinsByEmail.has(key)) twinsByEmail.set(key, twin);
+    }
+
+    const activitiesByKey = new Map();
+    for (const row of (activityResponse.data.values || []).slice(1)) {
+      const event = Object.fromEntries(COLD_CALL_ACTIVITY_HEADER.map((field, i) => [field, row[i] || '']));
+      for (const key of [event.leadId, normalizeEmail(event.email)]) {
+        if (!key) continue;
+        const rows = activitiesByKey.get(key) || [];
+        rows.push(event);
+        activitiesByKey.set(key, rows);
+      }
+    }
+
+    const now = new Date();
+    const entries = leads.map(lead => {
+      const email = normalizeEmail(lead.email);
+      const twin = twinsById.get(String(lead.id).replace(/^CE-/, '')) || twinsByEmail.get(email) || null;
+      const activities = [
+        ...(activitiesByKey.get(lead.id) || []),
+        ...(email ? activitiesByKey.get(email) || [] : []),
+      ];
+      return {
+        id: lead.id,
+        name: `${lead.first || ''} ${lead.last || ''}`.trim() || lead.company || lead.email || lead.id,
+        company: lead.company || '',
+        stage: displayStageFor(lead.stage),
+        nextAction: deriveNextAction(lead, twin, { activities, now }),
+      };
+    });
+
+    entries.sort((a, b) => compareNextActions(a.nextAction, b.nextAction));
+    res.json({ generatedAt: now.toISOString(), summary: summarizeNextActions(entries), entries });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Next Actions GET]', e.message);
     res.status(500).json({ error: e.message });
   }
 });

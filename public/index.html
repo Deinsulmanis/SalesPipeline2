@@ -1259,6 +1259,66 @@
   }
   .ce-late-reply::before { content:''; width:5px; height:5px; border-radius:50%; background:currentColor; }
 
+  /* ── Next Action ───────────────────────────────────────────────────────── */
+  /* Compact on the card: one line of what, one of when. Full reasoning lives
+     in the drawer so cards stay scannable. */
+  .na-card {
+    margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border);
+    font-size: 11px; line-height: 1.45;
+  }
+  .na-card-label { color: var(--text); font-weight: 600; display: flex; align-items: center; gap: 5px; }
+  .na-card-due { color: var(--text-muted); margin-top: 2px; }
+  .na-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--text-muted); }
+  .na-dot[data-s="overdue"]   { background: var(--danger); }
+  .na-dot[data-s="due_today"] { background: var(--warn); }
+  .na-dot[data-s="upcoming"]  { background: var(--accent); }
+  .na-dot[data-s="waiting"]   { background: var(--text-muted); }
+  .na-dot[data-s="blocked"]   { background: var(--danger); }
+  .na-dot[data-s="none"]      { background: var(--border); }
+  .na-card[data-attention="true"] .na-card-label { color: var(--warn); }
+
+  .na-badge {
+    font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: var(--radius-pill);
+    letter-spacing: .02em; white-space: nowrap;
+  }
+  .na-badge[data-s="overdue"]   { background: var(--danger-bg);  color: var(--danger); }
+  .na-badge[data-s="due_today"] { background: var(--warn-bg);    color: var(--warn); }
+  .na-badge[data-s="upcoming"]  { background: var(--accent-bg, var(--surface-2)); color: var(--accent); border: 1px solid var(--border); }
+  .na-badge[data-s="waiting"]   { background: var(--surface-2);  color: var(--text-muted); border: 1px solid var(--border); }
+  .na-badge[data-s="blocked"]   { background: var(--danger-bg);  color: var(--danger); }
+  .na-badge[data-s="none"]      { background: var(--surface-2);  color: var(--text-muted); border: 1px solid var(--border); }
+  .na-owner {
+    font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: var(--radius-pill);
+    background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); white-space: nowrap;
+  }
+
+  /* Action-focused queue: replaces the columns while an action filter is on,
+     so the Kanban's own ordering is never disturbed. */
+  .na-queue { display: flex; flex-direction: column; gap: 9px; padding: 4px 0 24px; }
+  .na-queue-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .na-queue-title { font-size: 15px; font-weight: 700; color: var(--text); }
+  .na-queue-sub { font-size: 11px; color: var(--text-muted); }
+  .na-item {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md);
+    padding: 11px 14px; cursor: pointer; text-align: left; width: 100%;
+    appearance: none; font: inherit; color: inherit;
+    transition: border-color var(--t-fast) ease, transform var(--t-fast) ease;
+  }
+  .na-item:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .na-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .na-item-name { font-size: 13px; font-weight: 700; color: var(--text); }
+  .na-item-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .na-item-action { font-size: 12px; color: var(--text); margin-top: 5px; }
+  .na-item-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex: none; }
+  .na-empty { padding: 30px 14px; text-align: center; font-size: 12px; color: var(--text-muted); }
+
+  @media (max-width: 700px) {
+    /* Stack the row so the lead and its action never need sideways scrolling. */
+    .na-item { flex-direction: column; align-items: stretch; }
+    .na-item-right { flex-direction: row; align-items: center; flex-wrap: wrap; }
+  }
+
   /* ── Reply drill-down ──────────────────────────────────────────────────── */
   /* Stat cards become real buttons so keyboard and screen-reader users get
      the same affordance as the pointer. Visual weight is unchanged. */
@@ -1795,6 +1855,19 @@
   <button class="filter-tab" data-f="trade" onclick="setFilter('trade')">
     <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
     Trades <span class="tab-count" id="tab-trade">0</span>
+  </button>
+  <span class="filter-label" style="margin-left:14px">Work queue:</span>
+  <button class="filter-tab" data-a="overdue" onclick="setActionFilter('overdue')">
+    Overdue <span class="tab-count" id="tab-overdue">0</span>
+  </button>
+  <button class="filter-tab" data-a="due_today" onclick="setActionFilter('due_today')">
+    Due Today <span class="tab-count" id="tab-due-today">0</span>
+  </button>
+  <button class="filter-tab" data-a="needs_attention" onclick="setActionFilter('needs_attention')">
+    Needs Attention <span class="tab-count" id="tab-needs-attention">0</span>
+  </button>
+  <button class="filter-tab" data-a="no_next_action" onclick="setActionFilter('no_next_action')">
+    No Next Action <span class="tab-count" id="tab-no-action">0</span>
   </button>
 </div>
 
@@ -2351,6 +2424,12 @@ let editingId   = null;
 let detailId    = null;
 let searchQuery = '';
 let activeFilter = 'all';
+// Next Action per lead, keyed by lead id. Derived entirely server-side by
+// integrations/pipeline-state.js — the browser holds no second copy of the
+// rules, so a card and the drawer cannot disagree.
+let nextActions = new Map();
+let nextActionSummary = null;
+let actionFilter = 'none';   // 'none' shows the Kanban; anything else shows the queue
 let formType    = 'realtor';
 let savingCount = 0;
 let savingTimer;
@@ -2365,6 +2444,9 @@ async function loadLeads() {
   leads = await resp.json();
   rowMap.clear();
   leads.forEach((lead, idx) => { if (lead.id) rowMap.set(lead.id, idx + 2); });
+  // Next Actions travel with the board so cards and the queue reflect the same
+  // derivation. Failure is non-fatal: the board renders without them.
+  await loadNextActions();
 }
 
 async function syncLead(lead) {
@@ -2520,6 +2602,134 @@ function setFormType(type) {
 // ============================================================
 // BOARD RENDERING
 // ============================================================
+// ── NEXT ACTION ─────────────────────────────────────────────────────────────
+// Presentation only. Every value shown here is derived server-side; nothing in
+// this section writes, moves a lead, or triggers a send.
+const NA_STATUS_LABEL = {
+  overdue: 'Overdue', due_today: 'Due Today', upcoming: 'Upcoming',
+  waiting: 'Waiting', blocked: 'Blocked', none: 'No action',
+};
+const NA_OWNER_LABEL = {
+  automation: 'Automation', human: 'You', meeting: 'Meeting',
+  waiting: 'Waiting', none: '—',
+};
+
+async function loadNextActions() {
+  try {
+    const resp = await fetch('/api/leads/next-actions');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    nextActions = new Map((data.entries || []).map(entry => [entry.id, entry]));
+    nextActionSummary = data.summary || null;
+  } catch (_) { /* additive: the board still works without it */ }
+}
+
+// Short, human due text for a card. Uses the business calendar so "Today"
+// means today in Vancouver, matching how the engine decided the status.
+function naDueText(action) {
+  if (!action) return '';
+  if (action.status === 'waiting') return 'Waiting on prospect';
+  if (action.status === 'none') return '';
+  if (!action.dueAt) return action.status === 'blocked' ? 'Needs a decision' : 'No date set';
+  const d = new Date(action.dueAt);
+  if (Number.isNaN(d.getTime())) return 'No date set';
+  const tz = { timeZone: 'America/Vancouver' };
+  const day = d.toLocaleDateString('en-CA', tz);
+  const today = new Date().toLocaleDateString('en-CA', tz);
+  if (day === today) {
+    return action.type === 'sales_call'
+      ? 'Today · ' + d.toLocaleTimeString('en-US', { ...tz, hour: 'numeric', minute: '2-digit' })
+      : 'Today';
+  }
+  const date = d.toLocaleDateString('en-US', { ...tz, month: 'short', day: 'numeric' });
+  if (action.type === 'sales_call') {
+    return date + ' · ' + d.toLocaleTimeString('en-US', { ...tz, hour: 'numeric', minute: '2-digit' });
+  }
+  return date;
+}
+
+function naCardHtml(leadId) {
+  const entry = nextActions.get(leadId);
+  const action = entry && entry.nextAction;
+  if (!action) return '';
+  if (action.status === 'none') return '';   // terminal: nothing to show
+  const noAction = action.type === 'no_next_action';
+  const due = naDueText(action);
+  const ownerText = action.owner === 'automation' ? ' · Automation'
+    : action.owner === 'meeting' ? '' : '';
+  return `
+    <div class="na-card" data-attention="${Boolean(action.needsAttention)}">
+      <div class="na-card-label">
+        <span class="na-dot" data-s="${esc(action.status)}"></span>
+        ${noAction ? '&#9888; No next action' : 'Next: ' + esc(action.label)}
+      </div>
+      ${due ? `<div class="na-card-due">${action.dueAt ? 'Due: ' : ''}${esc(due)}${ownerText}</div>` : ''}
+    </div>`;
+}
+
+function setActionFilter(f) {
+  // Clicking the active queue tab returns to the board.
+  actionFilter = actionFilter === f ? 'none' : f;
+  document.querySelectorAll('.filter-tab[data-a]').forEach(tab => {
+    tab.classList.toggle('active', tab.dataset.a === actionFilter);
+  });
+  renderBoard();
+}
+
+function naMatchesFilter(action, filter) {
+  if (!action) return false;
+  if (filter === 'overdue')        return action.status === 'overdue';
+  if (filter === 'due_today')      return action.status === 'due_today';
+  if (filter === 'no_next_action') return action.type === 'no_next_action';
+  // Needs Attention: anything the CRM cannot resolve on its own.
+  if (filter === 'needs_attention') {
+    return action.needsAttention === true || action.status === 'blocked' || action.status === 'overdue';
+  }
+  return false;
+}
+
+// Server order is already urgency-sorted (overdue → blocked → due today →
+// upcoming → waiting), so the queue preserves it rather than re-sorting.
+function renderActionQueue(board, filtered) {
+  const titles = {
+    overdue: 'Overdue', due_today: 'Due Today',
+    needs_attention: 'Needs Attention', no_next_action: 'No Next Action',
+  };
+  const allowed = new Set(filtered.map(l => l.id));
+  const rows = [...nextActions.values()]
+    .filter(entry => allowed.has(entry.id) && naMatchesFilter(entry.nextAction, actionFilter));
+
+  const wrap = document.createElement('div');
+  wrap.className = 'na-queue';
+  wrap.innerHTML = `
+    <div class="na-queue-head">
+      <div class="na-queue-title">${esc(titles[actionFilter] || 'Work queue')}</div>
+      <div class="na-queue-sub">${rows.length} lead${rows.length === 1 ? '' : 's'} · most urgent first · click a lead to open it</div>
+    </div>
+    ${rows.length ? '' : '<div class="na-empty">Nothing in this queue. Click the tab again to return to the board.</div>'}`;
+
+  for (const entry of rows) {
+    const action = entry.nextAction;
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'na-item';
+    item.innerHTML = `
+      <div style="min-width:0">
+        <div class="na-item-name">${esc(entry.name)}</div>
+        ${entry.company ? `<div class="na-item-sub">${esc(entry.company)}</div>` : ''}
+        <div class="na-item-action">${action.type === 'no_next_action' ? '&#9888; ' : ''}${esc(action.label)}</div>
+      </div>
+      <div class="na-item-right">
+        <span class="na-badge" data-s="${esc(action.status)}">${esc(NA_STATUS_LABEL[action.status] || action.status)}</span>
+        <span class="na-owner">${esc(NA_OWNER_LABEL[action.owner] || action.owner)}</span>
+        <span class="na-item-sub">${esc(naDueText(action))}</span>
+      </div>`;
+    item.addEventListener('click', () => openDetail(entry.id));
+    wrap.appendChild(item);
+  }
+  board.appendChild(wrap);
+}
+
 function renderBoard() {
   const board = document.getElementById('board');
   const q     = searchQuery.toLowerCase();
@@ -2542,6 +2752,20 @@ function renderBoard() {
   document.getElementById('stat-booked').textContent      = leads.filter(l => displayStageFor(l.stage) === 'call_booked').length;
   document.getElementById('stat-closed-lost').textContent = leads.filter(l => displayStageFor(l.stage) === 'closed_lost').length;
   document.getElementById('stat-closed-won').textContent  = leads.filter(l => displayStageFor(l.stage) === 'closed_won').length;
+
+  // Work-queue counters, derived from the shared engine's output.
+  const queueCount = f => [...nextActions.values()].filter(e => naMatchesFilter(e.nextAction, f)).length;
+  document.getElementById('tab-overdue').textContent         = queueCount('overdue');
+  document.getElementById('tab-due-today').textContent       = queueCount('due_today');
+  document.getElementById('tab-needs-attention').textContent = queueCount('needs_attention');
+  document.getElementById('tab-no-action').textContent       = queueCount('no_next_action');
+
+  // An action filter replaces the columns with a sorted queue. The Kanban's own
+  // within-column ordering is untouched by this view.
+  if (actionFilter !== 'none') {
+    renderActionQueue(board, filtered);
+    return;
+  }
 
   STAGES.forEach(stage => {
     // The Leads sheet has NO order column, so within-column position is not
@@ -2945,6 +3169,7 @@ function buildCard(lead) {
     </div>
     ${(metaHtml || legacyStageHtml) ? `<div class="card-meta">${metaHtml}${legacyStageHtml}</div>` : ''}
     ${noteHtml}
+    ${naCardHtml(lead.id)}
     <div class="card-footer">
       ${fuHtml}
       <div class="card-actions">
@@ -3463,9 +3688,29 @@ function renderPipelineState(pipeline) {
       </div>
       <div class="pipeline-row">
         <span class="pipeline-row-label">Next action</span>
-        <span class="pipeline-row-val${next.needsAttention ? ' needs-attention' : ''}">${esc(next.action)}
+        <span class="pipeline-row-val${next.needsAttention ? ' needs-attention' : ''}">
+          ${next.type === 'no_next_action' ? '&#9888; ' : ''}${esc(next.action)}
           <small>${esc(due)}</small>
         </span>
+      </div>
+      <div class="pipeline-row">
+        <span class="pipeline-row-label">Owner</span>
+        <span class="pipeline-row-val">
+          <span class="na-owner">${esc(NA_OWNER_LABEL[next.owner] || next.owner || '—')}</span>
+          <span class="na-badge" data-s="${esc(next.status || 'none')}">${esc(NA_STATUS_LABEL[next.status] || next.status || '—')}</span>
+        </span>
+      </div>
+      ${next.reason ? `<div class="pipeline-row">
+        <span class="pipeline-row-label">Why</span>
+        <span class="pipeline-row-val"><small>${esc(next.reason)}</small></span>
+      </div>` : ''}
+      ${next.recoverable ? `<div class="pipeline-row">
+        <span class="pipeline-row-label">Recovery</span>
+        <span class="pipeline-row-val"><small>Recovery eligible — no recovery sequence exists yet, so nothing is scheduled.</small></span>
+      </div>` : ''}
+      <div class="pipeline-row">
+        <span class="pipeline-row-label">Derived from</span>
+        <span class="pipeline-row-val"><small>${esc(next.source || 'none')}</small></span>
       </div>
     </div>`;
 }

@@ -137,9 +137,13 @@ test('a manual hold does not disqualify a lead from being reopened', () => {
 test('scenario 8: Call Booked requires a meeting time and yields a dated next action', () => {
   assert.equal(stageTransitionCheck('call_booked', {}).ok, false);
   assert.equal(stageTransitionCheck('call_booked', { meetingAt: '2026-09-01T17:00:00Z' }).ok, true);
-  const next = deriveNextAction({ stage: 'call_booked', meetingAt: '2026-09-01T17:00:00Z' }, null);
-  assert.equal(next.action, 'Attend booked call');
+  // Renamed to the canonical 'Sales call' when this became the shared Next
+  // Action engine; the meeting still supplies the date and now the ownership.
+  const next = deriveNextAction({ stage: 'call_booked', meetingAt: '2026-09-01T17:00:00Z' },
+    null, { now: new Date('2026-08-26T00:00:00Z') });
+  assert.equal(next.action, 'Sales call');
   assert.equal(next.dueAt, '2026-09-01T17:00:00Z');
+  assert.equal(next.owner, 'meeting');
 });
 
 test('scenario 8b: booked lead with the meeting time cleared surfaces as needing attention', () => {
