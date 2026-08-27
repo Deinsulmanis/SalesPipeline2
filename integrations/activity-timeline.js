@@ -131,9 +131,13 @@ function eventPresentation(row, metadata) {
     case 'reactivation_cancelled': return { title: 'Scheduled reactivation cancelled' };
     case 'conversation_note': return { title: row.subject || 'Conversation context updated' };
     case 'call_booked': return { title: 'Call booked', summary: metadata.meetingAt ? `Meeting: ${metadata.meetingAt}` : '' };
-    case 'meeting_rescheduled': return { title: 'Meeting rescheduled', summary: metadata.meetingAt ? `New time: ${metadata.meetingAt}` : '' };
+    case 'meeting_rescheduled': return { title: 'Call rescheduled',
+      summary: metadata.previousMeetingAt && metadata.meetingAt
+        ? `${metadata.previousMeetingAt} -> ${metadata.meetingAt}`
+        : metadata.meetingAt ? `New time: ${metadata.meetingAt}` : '' };
     case 'meeting_cancelled': return { title: 'Meeting cancelled' };
-    case 'meeting_completed': return { title: 'Meeting completed' };
+    case 'meeting_completed': return { title: 'Call completed', summary: metadata.meetingAt ? `Meeting: ${metadata.meetingAt}` : '' };
+    case 'meeting_no_show': return { title: 'No show', summary: metadata.meetingAt ? `Meeting: ${metadata.meetingAt}` : '' };
     case 'meeting_outcome': return { title: 'Meeting outcome updated', summary: metadata.outcome ? outcome : '' };
     case 'closed_won': return { title: 'Closed Won' };
     case 'closed_lost': return { title: metadata.outcome ? `Closed Lost — ${outcome}` : 'Closed Lost' };

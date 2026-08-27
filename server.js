@@ -38,6 +38,7 @@ const {
   stageTransitionCheck, reopenEligibility, OUTCOME_IDS, LOSS_OUTCOME_IDS,
   MANUAL_HOLD_TAG, HUMAN_OWNED_STAGES,
   REACTIVATION_MODES, reactivationEligibility, FOLLOW_UP_DELAY_DAYS,
+  CALL_STATUS, deriveCallLifecycle, callLifecycleActions,
   applyResumeToNotes, clearResumeFromNotes, resumeAtFromNotes,
   applyHoldToNotes, stageRequiresHold,
 } = require('./integrations/pipeline-state');
@@ -2255,6 +2256,156 @@ app.post('/api/leads/:id/human-response', requireAuth, async (req, res) => {
 // refuses closed_lost without a loss outcome, and PUT writes A:Q while the
 // outcome lives in V. Doing that from the browser would be two requests with a
 // race between them. Here it is one read, one validated batch write.
+// ── CALL LIFECYCLE ──────────────────────────────────────────────────────────
+// One route for the whole booked-call journey: book, reschedule, cancel,
+// complete, no-show. Every mutation re-derives the lifecycle from STORED state
+// and refuses anything the current state does not permit, so a drawer opened
+// before someone else rescheduled cannot resolve a meeting that no longer
+// exists.
+//
+// The separation this enforces: a meeting RESULT is an activity event, while
+// the SALES outcome stays in column V. Marking a no-show therefore never writes
+// the `outcome` column — which matters, because `no_show` is a LOSS value in
+// that taxonomy and writing it would make a missed meeting look like a dead
+// deal. Cancel, complete and no-show write no lead state at all: they append an
+// event, and the derivation does the rest.
+const CALL_ACTIONS = new Set(['book', 'reschedule', 'cancel', 'complete', 'no_show']);
+// Readable verbs for refusal messages; string-concatenating the action id gave
+// nonsense like "completeed".
+const CALL_ACTION_VERB = {
+  book: 'booked', reschedule: 'rescheduled', cancel: 'cancelled',
+  complete: 'marked completed', no_show: 'marked no-show',
+};
+const CALL_ACTION_EVENT = {
+  book: 'call_booked', reschedule: 'meeting_rescheduled',
+  cancel: 'meeting_cancelled', complete: 'meeting_completed', no_show: 'meeting_no_show',
+};
+
+app.post('/api/leads/:id/call-lifecycle', requireAuth, async (req, res) => {
+  const action = String(req.body?.action || '').trim();
+  try {
+    if (!CALL_ACTIONS.has(action)) {
+      return res.status(400).json({ error: `Unknown call action "${action}".`, field: 'action' });
+    }
+    const rowNum = await withAuth(() => findRow(req.params.id));
+    if (!rowNum) return res.status(404).json({ error: 'not found' });
+
+    const prior = await sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${rowNum}:W${rowNum}`,
+    });
+    const row = prior.data.values?.[0] || [];
+    const email = row[10] || '';
+    const company = row[6] || row[4] || '';
+    const lead = { stage: row[12] || '', followup: row[14] || '', meetingAt: row[20] || '', outcome: row[21] || '' };
+
+    // Current stored history decides what is legal — never the browser's view.
+    const allActivities = await readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER);
+    const activities = allActivities.filter(a => a.leadId === req.params.id
+      || (email && normalizeEmail(a.email) === normalizeEmail(email)));
+    const lifecycle = deriveCallLifecycle(lead, { activities });
+    const allowed = callLifecycleActions(lifecycle);
+
+    if (!allowed[action]) {
+      return res.status(409).json({
+        error: `A call in state "${lifecycle.status.replace(/_/g, ' ')}" cannot be ${CALL_ACTION_VERB[action]}. Reload and try again.`,
+        code: 'invalid_transition', status: lifecycle.status, meetingAt: lifecycle.meetingAt,
+        allowed: Object.entries(allowed).filter(([, ok]) => ok).map(([name]) => name),
+      });
+    }
+
+    // Optimistic concurrency: the drawer sends the meeting it was showing.
+    const expected = String(req.body?.expectedMeetingAt || '').trim();
+    if (expected && expected !== String(lifecycle.meetingAt || '')) {
+      return res.status(409).json({
+        error: 'This meeting was changed elsewhere. Reload before resolving it.',
+        code: 'meeting_changed', status: lifecycle.status, meetingAt: lifecycle.meetingAt,
+      });
+    }
+
+    const eventType = CALL_ACTION_EVENT[action];
+    const occurredAt = new Date().toISOString();
+    let meetingAt = String(lifecycle.meetingAt || '');
+    const previousMeetingAt = meetingAt;
+
+    if (action === 'book' || action === 'reschedule') {
+      const raw = String(req.body?.meetingAt || '').trim();
+      const ms = raw ? new Date(raw).getTime() : NaN;
+      if (!raw || !Number.isFinite(ms)) {
+        return res.status(422).json({ error: 'A valid meeting date and time is required.', field: 'meetingAt' });
+      }
+      if (ms < Date.now()) {
+        return res.status(422).json({ error: 'A meeting cannot be booked in the past.', field: 'meetingAt' });
+      }
+      meetingAt = new Date(ms).toISOString();
+      if (action === 'reschedule' && meetingAt === previousMeetingAt) {
+        return res.status(422).json({ error: 'Choose a different time to reschedule to.', field: 'meetingAt' });
+      }
+      // Booking the identical time again is a no-op, not a duplicate event.
+      if (action === 'book' && meetingAt === previousMeetingAt
+        && [CALL_STATUS.SCHEDULED, CALL_STATUS.RESCHEDULED].includes(lifecycle.status)) {
+        return res.json({ ok: true, unchanged: true, status: lifecycle.status, meetingAt });
+      }
+
+      // Call Booked is human-owned: hold before the stage write, the same
+      // fail-closed ordering every other terminal transition uses.
+      if (stageRequiresHold('call_booked')) {
+        await withAuth(() => applyManualHold(req.params.id, email));
+      }
+      const gate = stageTransitionCheck('call_booked', { meetingAt, outcome: lead.outcome });
+      if (!gate.ok) return res.status(422).json({ error: gate.message, field: gate.field });
+
+      // Targeted cells only: the meeting time (U) and the stage (M). Sequence
+      // state, notes, follow-up date and sales outcome are all left alone.
+      await withAuth(() => sheets().spreadsheets.values.batchUpdate({
+        spreadsheetId: SPREADSHEET_ID,
+        requestBody: {
+          valueInputOption: 'RAW',
+          data: [
+            { range: `${SHEET_NAME}!U${rowNum}`, values: [[meetingAt]] },
+            { range: `${SHEET_NAME}!M${rowNum}`, values: [['call_booked']] },
+          ],
+        },
+      }));
+    }
+
+    // Resolutions write NO lead state at all — the event is the record, and the
+    // sales outcome column is deliberately untouched.
+    const eventId = stableActivityId('call-lifecycle', [req.params.id, eventType, previousMeetingAt, meetingAt]);
+    let recorded = false;
+    if (!allActivities.some(a => a.eventId === eventId)) {
+      await appendColdCallActivities([{
+        eventId, leadId: req.params.id, sourceLeadId: '', email, company,
+        eventType, occurredAt,
+        subject: eventType === 'call_booked' ? 'Call booked'
+          : eventType === 'meeting_rescheduled' ? 'Call rescheduled'
+            : eventType === 'meeting_cancelled' ? 'Call cancelled'
+              : eventType === 'meeting_completed' ? 'Call completed' : 'No show',
+        content: '',
+        metadata: JSON.stringify({
+          meetingAt, previousMeetingAt: action === 'reschedule' ? previousMeetingAt : '',
+          trigger: 'crm_call_lifecycle', action,
+          // Meeting result only. The sales outcome is a separate decision.
+          salesOutcomeUnchanged: true,
+        }),
+      }]);
+      recorded = true;
+    }
+
+    const nextLifecycle = deriveCallLifecycle({ ...lead, meetingAt, stage: 'call_booked' }, {
+      activities: [...activities, { eventType, occurredAt, metadata: JSON.stringify({ meetingAt, previousMeetingAt }) }],
+    });
+    res.json({
+      ok: true, action, recorded, status: nextLifecycle.status,
+      meetingAt: nextLifecycle.meetingAt, previousMeetingAt: nextLifecycle.previousMeetingAt,
+      salesOutcome: lead.outcome || '', automationResumed: false,
+    });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Call lifecycle]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/leads/:id/mark-ghosted', requireAuth, async (req, res) => {
   try {
     const rowNum = await withAuth(() => findRow(req.params.id));

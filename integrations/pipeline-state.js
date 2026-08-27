@@ -336,6 +336,8 @@ const ACTION_TYPE = Object.freeze({
   AUTOMATION_RESUMES:    'automation_resumes',
   HOT_FOLLOW_UP:         'hot_follow_up',
   HOT_REVIEW:            'hot_review',
+  CALL_CANCELLED_REVIEW: 'call_cancelled_review',
+  NO_SHOW_FOLLOW_UP:     'no_show_follow_up',
   NONE_WON:              'none_won',
   NONE_LOST:             'none_lost',
   NO_NEXT_ACTION:        'no_next_action',
@@ -594,6 +596,165 @@ function deriveHotState(boardLead, context = {}) {
   };
 }
 
+// ── CALL LIFECYCLE ──────────────────────────────────────────────────────────
+// A booked call had exactly two derived states: in the future it was a Sales
+// call, in the past it was "Record call outcome". Nothing could say whether the
+// meeting HAPPENED. Worse, the only place to record that was the `outcome`
+// column — which is the SALES outcome, and whose taxonomy lists no_show as a
+// LOSS. Recording "they did not attend" therefore made the opportunity eligible
+// for Closed Lost, conflating a missed meeting with a dead deal.
+//
+// So meeting outcome and sales outcome are kept apart on purpose:
+//   meeting outcome  -> canonical ACTIVITY events (here)
+//   sales outcome    -> the `outcome` column, unchanged
+//
+// The lifecycle is DERIVED from activity history plus the current meetingAt.
+// No new sheet column: the events are the record, and meetingAt is the current
+// booking. Nothing here writes, sends, or decides a sales outcome.
+
+const CALL_STATUS = Object.freeze({
+  NONE: 'none',                       // no meeting has ever been booked
+  SCHEDULED: 'scheduled',             // a future booking stands
+  RESCHEDULED: 'rescheduled',         // moved at least once; still a live booking
+  CANCELLED: 'cancelled',             // retired; NOT a lost opportunity
+  COMPLETED: 'completed',             // the call happened; NOT a won deal
+  NO_SHOW: 'no_show',                 // explicitly recorded by a human
+  OUTCOME_PENDING: 'outcome_pending', // the time passed and nobody said what happened
+});
+
+// Ordered oldest-first when walked. call_booked / meeting_rescheduled already
+// existed and are reused; the two resolution events are new.
+const CALL_BOOKING_EVENTS = Object.freeze(['call_booked', 'meeting_rescheduled']);
+const CALL_RESOLUTION_EVENTS = Object.freeze(['meeting_cancelled', 'meeting_completed', 'meeting_no_show']);
+const CALL_EVENTS = Object.freeze([...CALL_BOOKING_EVENTS, ...CALL_RESOLUTION_EVENTS]);
+
+const CALL_RESOLUTION_STATUS = Object.freeze({
+  meeting_cancelled: CALL_STATUS.CANCELLED,
+  meeting_completed: CALL_STATUS.COMPLETED,
+  meeting_no_show: CALL_STATUS.NO_SHOW,
+});
+
+function callEventMetadata(row) {
+  try { return JSON.parse(row.metadata || '{}'); } catch (_) { return {}; }
+}
+
+/**
+ * The current state of the booked call.
+ *
+ * A meeting OCCURRENCE is identified by its meetingAt instant: a resolution
+ * event carries the occurrence it resolved, so cancelling meeting #1 can never
+ * leak onto meeting #2 booked afterwards.
+ *
+ * @param boardLead a Leads row ({ meetingAt, outcome, ... })
+ * @param context   { activities, now }
+ * @returns { status, meetingAt, previousMeetingAt, resolvedAt, resolvedOccurrenceAt,
+ *            rescheduleCount, salesOutcome, needsResolution, reason }
+ */
+function deriveCallLifecycle(boardLead, context = {}) {
+  const lead = boardLead || {};
+  const now = new Date(context.now || Date.now()).getTime();
+  const meetingAt = String(lead.meetingAt || '').trim();
+  const meetingMs = meetingAt ? new Date(meetingAt).getTime() : NaN;
+  const salesOutcome = String(lead.outcome || '').trim();
+
+  const events = (context.activities || [])
+    .filter(row => CALL_EVENTS.includes(String(row.eventType || '')))
+    .slice()
+    .sort((a, b) => String(a.occurredAt || '').localeCompare(String(b.occurredAt || '')));
+
+  // Walk the history forward, tracking which occurrence is live and how it was
+  // last resolved. A later booking always supersedes an earlier resolution.
+  let occurrenceAt = '';
+  let previousMeetingAt = '';
+  let rescheduleCount = 0;
+  let resolution = null;
+  for (const row of events) {
+    const type = String(row.eventType || '');
+    const metadata = callEventMetadata(row);
+    if (CALL_BOOKING_EVENTS.includes(type)) {
+      if (type === 'meeting_rescheduled') {
+        rescheduleCount++;
+        previousMeetingAt = String(metadata.previousMeetingAt || occurrenceAt || '');
+      }
+      occurrenceAt = String(metadata.meetingAt || occurrenceAt || '');
+      resolution = null;             // a new/moved booking reopens the call
+      continue;
+    }
+    resolution = {
+      status: CALL_RESOLUTION_STATUS[type],
+      at: String(row.occurredAt || ''),
+      occurrenceAt: String(metadata.meetingAt || metadata.previousMeetingAt || occurrenceAt || ''),
+    };
+  }
+
+  const base = {
+    meetingAt, previousMeetingAt, rescheduleCount, salesOutcome,
+    resolvedAt: resolution ? resolution.at : null,
+    resolvedOccurrenceAt: resolution ? resolution.occurrenceAt : null,
+  };
+
+  // A resolution only stands while it describes the CURRENT booking. Booking a
+  // new time after a cancellation or a no-show supersedes it.
+  const resolutionApplies = Boolean(resolution)
+    && (!meetingAt || !resolution.occurrenceAt || resolution.occurrenceAt === meetingAt);
+
+  if (resolutionApplies) {
+    return {
+      ...base, status: resolution.status,
+      needsResolution: false,
+      reason: resolution.status === CALL_STATUS.CANCELLED
+        ? 'the booked call was cancelled — the opportunity is not closed by this'
+        : resolution.status === CALL_STATUS.COMPLETED
+          ? 'the call happened — this says nothing about whether the deal is won'
+          : 'the prospect did not attend — recorded by hand, and recoverable',
+    };
+  }
+
+  if (!meetingAt || !Number.isFinite(meetingMs)) {
+    return { ...base, status: CALL_STATUS.NONE, needsResolution: false,
+      reason: meetingAt ? 'the stored meeting time cannot be read' : 'no meeting has been booked' };
+  }
+
+  if (meetingMs >= now) {
+    return {
+      ...base,
+      status: rescheduleCount > 0 ? CALL_STATUS.RESCHEDULED : CALL_STATUS.SCHEDULED,
+      needsResolution: false,
+      reason: rescheduleCount > 0
+        ? 'moved ' + rescheduleCount + ' time(s); the current booking stands'
+        : 'a future booking stands',
+    };
+  }
+
+  // The time passed and nobody said what happened. The system deliberately does
+  // NOT guess completed, cancelled or no-show from elapsed time alone.
+  return {
+    ...base, status: CALL_STATUS.OUTCOME_PENDING, needsResolution: true,
+    reason: 'the meeting time passed with no recorded result — a human has to say what happened',
+  };
+}
+
+/**
+ * Which lifecycle actions are legitimate right now. The drawer renders only
+ * these, and the server re-derives them before accepting a mutation, so an
+ * impossible transition cannot be offered or slipped through.
+ */
+function callLifecycleActions(lifecycle, now = Date.now()) {
+  const state = lifecycle || {};
+  const meetingMs = state.meetingAt ? new Date(state.meetingAt).getTime() : NaN;
+  const hasBooking = Number.isFinite(meetingMs);
+  const passed = hasBooking && meetingMs < new Date(now).getTime();
+  const live = [CALL_STATUS.SCHEDULED, CALL_STATUS.RESCHEDULED, CALL_STATUS.OUTCOME_PENDING].includes(state.status);
+  return {
+    book: !hasBooking || [CALL_STATUS.CANCELLED, CALL_STATUS.COMPLETED, CALL_STATUS.NO_SHOW, CALL_STATUS.NONE].includes(state.status),
+    reschedule: live,
+    cancel: live,
+    // Only a meeting that has actually come and gone can be resolved.
+    complete: live && passed,
+    no_show: live && passed,
+  };
+}
+
 function buildAction(fields) {
   const dueAt = fields.dueAt || null;
   const status = fields.status || deriveActionStatus(dueAt, fields.now) || ACTION_STATUS.UPCOMING;
@@ -613,7 +774,80 @@ function buildAction(fields) {
     // Present only for Hot leads; the drawer and card render it directly rather
     // than recomputing any of it in the browser.
     hotState: fields.hotState || null,
+    // Likewise for Call Booked leads — the browser derives no lifecycle state.
+    callState: fields.callState || null,
   };
+}
+
+// Maps the call lifecycle onto the existing action vocabulary. A meeting result
+// never implies a sales result: a completed call still asks for the sales
+// outcome, and a no-show or cancellation closes nothing.
+function callNextAction(lead, { activities, now }) {
+  const call = deriveCallLifecycle(lead, { activities, now });
+  const base = { source: 'meeting', reason: call.reason, now, callState: call };
+  const manualDate = String(lead.followup || '').trim();
+
+  if (call.status === CALL_STATUS.SCHEDULED || call.status === CALL_STATUS.RESCHEDULED) {
+    return buildAction({ ...base, type: ACTION_TYPE.SALES_CALL, label: 'Sales call',
+      dueAt: call.meetingAt, owner: ACTION_OWNER.MEETING });
+  }
+
+  if (call.status === CALL_STATUS.OUTCOME_PENDING) {
+    // The MEETING result is still unknown — callState says so, and the drawer
+    // keeps offering the resolution controls. But if the SALES outcome has
+    // already been recorded the human has clearly dealt with this, so the next
+    // action is to move the card rather than to nag for a second answer.
+    if (call.salesOutcome) {
+      return buildAction({ ...base, type: ACTION_TYPE.CLOSE_OUT_CALL, label: 'Close out booked call',
+        dueAt: call.meetingAt, owner: ACTION_OWNER.HUMAN,
+        reason: 'sales outcome "' + call.salesOutcome + '" recorded — move the card to its final stage' });
+    }
+    return buildAction({ ...base, type: ACTION_TYPE.RECORD_CALL_OUTCOME, label: 'Record call outcome',
+      dueAt: call.meetingAt, owner: ACTION_OWNER.HUMAN, status: ACTION_STATUS.OVERDUE, needsAttention: true });
+  }
+
+  if (call.status === CALL_STATUS.NO_SHOW) {
+    // Recoverable by design: Step 10's recovery sequence reads this state. It
+    // does not close the opportunity and it does not resume cold email.
+    return buildAction({ ...base, type: ACTION_TYPE.NO_SHOW_FOLLOW_UP, label: 'Follow up after no-show',
+      dueAt: call.resolvedAt, owner: ACTION_OWNER.HUMAN, needsAttention: true });
+  }
+
+  if (call.status === CALL_STATUS.CANCELLED) {
+    return buildAction({ ...base, type: ACTION_TYPE.CALL_CANCELLED_REVIEW,
+      label: 'Decide next step after cancelled call',
+      dueAt: manualDate || call.resolvedAt, owner: ACTION_OWNER.HUMAN, needsAttention: true });
+  }
+
+  if (call.status === CALL_STATUS.COMPLETED) {
+    // The call happened. That is a MEETING result; the sales result is still
+    // missing until someone records it.
+    if (!call.salesOutcome) {
+      return buildAction({ ...base, type: ACTION_TYPE.RECORD_CALL_OUTCOME, label: 'Record sales outcome',
+        dueAt: call.resolvedAt, owner: ACTION_OWNER.HUMAN, needsAttention: true,
+        reason: 'the call happened; the opportunity outcome has not been recorded' });
+    }
+    return buildAction({ ...base, type: ACTION_TYPE.CLOSE_OUT_CALL, label: 'Close out booked call',
+      dueAt: call.resolvedAt, owner: ACTION_OWNER.HUMAN,
+      reason: 'sales outcome "' + call.salesOutcome + '" recorded — move the card to its final stage' });
+  }
+
+  // Call Booked with nothing booked at all.
+  return withManualFollowUp(lead, now)
+    || buildAction({ ...base, type: ACTION_TYPE.CONFIRM_MEETING, label: 'Confirm meeting time',
+      dueAt: null, owner: ACTION_OWNER.HUMAN, status: ACTION_STATUS.BLOCKED, needsAttention: true,
+      reason: 'card is in Call Booked but carries no meeting time' });
+}
+
+// Small shared helper so callNextAction can honour an explicit human date the
+// same way the rest of the engine does.
+function withManualFollowUp(lead, now) {
+  const manualDate = String(lead.followup || '').trim();
+  if (!manualDate) return null;
+  return buildAction({
+    type: ACTION_TYPE.CONFIRM_MEETING, label: 'Confirm meeting time', dueAt: manualDate,
+    owner: ACTION_OWNER.HUMAN, source: 'followup-field', reason: 'follow-up date set by hand', now,
+  });
 }
 
 // Maps the Hot state onto the EXISTING action vocabulary. Deliberately small:
@@ -712,40 +946,8 @@ function deriveNextAction(boardLead, twin, context = {}) {
     return closed;
   }
 
-  // ── Call Booked — the meeting is the authority ───────────────────────────
-  if (stage === 'call_booked') {
-    const meetingAt = String(lead.meetingAt || '').trim();
-    if (meetingAt) {
-      const meetingPassed = new Date(meetingAt).getTime() < new Date(now).getTime();
-      if (!meetingPassed) {
-        return buildAction({
-          type: ACTION_TYPE.SALES_CALL, label: 'Sales call', dueAt: meetingAt,
-          owner: ACTION_OWNER.MEETING, source: 'meeting', reason: 'booked meeting time', now,
-        });
-      }
-      const outcome = String(lead.outcome || '').trim();
-      // The meeting has passed. Never infer no-show or completion — that needs
-      // explicit outcome information a human records.
-      if (!outcome) {
-        return buildAction({
-          type: ACTION_TYPE.RECORD_CALL_OUTCOME, label: 'Record call outcome', dueAt: meetingAt,
-          owner: ACTION_OWNER.HUMAN, status: ACTION_STATUS.OVERDUE, source: 'meeting',
-          reason: 'meeting time has passed with no recorded outcome', needsAttention: true, now,
-        });
-      }
-      return buildAction({
-        type: ACTION_TYPE.CLOSE_OUT_CALL, label: 'Close out booked call', dueAt: meetingAt,
-        owner: ACTION_OWNER.HUMAN, source: 'meeting',
-        reason: 'outcome "' + outcome + '" recorded — move the card to its final stage', now,
-      });
-    }
-    return withManual('Confirm meeting time', ACTION_TYPE.CONFIRM_MEETING)
-      || buildAction({
-        type: ACTION_TYPE.CONFIRM_MEETING, label: 'Confirm meeting time', dueAt: null,
-        owner: ACTION_OWNER.HUMAN, status: ACTION_STATUS.BLOCKED, source: 'derived',
-        reason: 'card is in Call Booked but carries no meeting time', needsAttention: true, now,
-      });
-  }
+  // ── Call Booked — the call lifecycle is the authority ────────────────────
+  if (stage === 'call_booked') return callNextAction(lead, { activities, now });
 
   // ── Hot — a live human conversation on a clock ───────────────────────────
   // Handled before the generic reply branch: a Hot lead's next move depends on
@@ -977,6 +1179,8 @@ module.exports = {
   AUTOMATION_STATES, SUPPRESSION_NOTE_TAGS, MANUAL_HOLD_TAG, HUMAN_OWNED_STAGES,
   REACTIVATION_MODES, resumeAtFromNotes, manualHoldReleased,
   HOT_FOLLOW_UP, WAITING_ON, HOT_STALENESS, MEANINGFUL_INBOUND_EVENTS, MEANINGFUL_HUMAN_EVENTS,
+  CALL_STATUS, CALL_EVENTS, CALL_BOOKING_EVENTS, CALL_RESOLUTION_EVENTS,
+  deriveCallLifecycle, callLifecycleActions,
   addBusinessDays, calendarDayOf, lastMeaningfulInteraction, deriveHotState,
   applyResumeToNotes, clearResumeFromNotes, reactivationEligibility,
   hasManualHold, applyHoldToNotes, stageRequiresHold,

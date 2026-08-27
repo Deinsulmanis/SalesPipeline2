@@ -1310,6 +1310,31 @@
     .ce-footer-row .btn-cancel { min-height: 44px; }
   }
 
+  /* ── Call lifecycle ────────────────────────────────────────────────────── */
+  .call-chip {
+    display:inline-flex; align-items:center; gap:5px; margin-top:6px;
+    font-size:10px; font-weight:700; letter-spacing:.02em; padding:2px 7px;
+    border-radius:var(--radius-pill); white-space:nowrap;
+  }
+  .call-chip[data-s="scheduled"]       { background:var(--info-bg);    color:var(--info); }
+  .call-chip[data-s="rescheduled"]     { background:var(--info-bg);    color:var(--info); }
+  .call-chip[data-s="outcome_pending"] { background:var(--warn-bg);    color:var(--warn); }
+  .call-chip[data-s="completed"]       { background:var(--success-bg); color:var(--success); }
+  .call-chip[data-s="no_show"]         { background:var(--danger-bg);  color:var(--danger); }
+  .call-chip[data-s="cancelled"]       { background:var(--surface-2);  color:var(--text-muted); border:1px solid var(--border); }
+  .call-chip[data-s="none"]            { background:var(--surface-2);  color:var(--warn); border:1px solid var(--warn); }
+  .call-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  .btn-call {
+    appearance:none; font:inherit; font-size:11px; font-weight:700; padding:5px 11px;
+    border-radius:var(--radius-sm); cursor:pointer; background:transparent;
+    color:var(--accent); border:1px solid var(--accent);
+  }
+  .btn-call:hover { background:var(--tint-soft); }
+  .btn-call:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .btn-call[data-tone="quiet"] { color:var(--text-muted); border-color:var(--border); }
+  .btn-call[data-tone="quiet"]:hover { color:var(--danger); border-color:var(--danger); background:var(--danger-bg); }
+  @media (max-width: 700px) { .btn-call { min-height:44px; flex:1 1 auto; } }
+
   /* Mark Ghosted — a real decision, so it is clear without shouting. */
   .btn-ghost-lead {
     appearance:none; font:inherit; font-size:11px; font-weight:700; padding:5px 11px;
@@ -2446,6 +2471,17 @@
   </div>
 </div>
 
+<!-- CALL LIFECYCLE MODAL — every resolution is confirmed, never one click -->
+<div class="modal-overlay" id="call-overlay" onclick="closeCallModal(event)">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="call-title" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title" id="call-title">Call</div>
+      <button class="modal-close" onclick="closeCallModal()" aria-label="Close">&#10005;</button>
+    </div>
+    <div style="padding:16px 18px" id="call-body"></div>
+  </div>
+</div>
+
 <!-- MARK GHOSTED MODAL — explicit human close; nothing here is automatic -->
 <div class="modal-overlay" id="ghost-overlay" onclick="closeGhostModal(event)">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ghost-title" onclick="event.stopPropagation()">
@@ -2837,6 +2873,35 @@ const HOT_WAITING_LABEL = {
   meeting_scheduled: 'Meeting booked', unknown: 'Needs review',
 };
 
+// Compact call state for the card. Server-derived; the browser decides nothing.
+const CALL_STATUS_LABEL = {
+  scheduled: 'Call', rescheduled: 'Rescheduled', outcome_pending: 'Outcome needed',
+  completed: 'Call completed', no_show: 'No show', cancelled: 'Cancelled', none: 'No meeting time',
+};
+
+function callWhen(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const tz = { timeZone: 'America/Vancouver' };
+  return d.toLocaleDateString('en-US', { ...tz, month: 'short', day: 'numeric' })
+    + ' · ' + d.toLocaleTimeString('en-US', { ...tz, hour: 'numeric', minute: '2-digit' });
+}
+
+function callChipHtml(action) {
+  const call = action && action.callState;
+  if (!call || call.status === 'none') {
+    return call ? `<span class="call-chip" data-s="none">&#9888; No meeting time</span>` : '';
+  }
+  const label = CALL_STATUS_LABEL[call.status] || call.status;
+  const when = callWhen(call.meetingAt);
+  const warn = ['outcome_pending', 'no_show', 'cancelled'].includes(call.status) ? '&#9888; ' : '';
+  const tail = call.status === 'no_show' ? 'Needs follow-up'
+    : call.status === 'cancelled' ? 'Needs decision'
+    : when;
+  return `<span class="call-chip" data-s="${esc(call.status)}">${warn}${esc(label)}${tail ? ' · ' + esc(tail) : ''}</span>`;
+}
+
 function hotChipHtml(action) {
   const hot = action && action.hotState;
   if (!hot) return '';
@@ -2874,6 +2939,7 @@ function naCardHtml(leadId) {
       </div>
       ${due ? `<div class="na-card-due">${action.dueAt ? 'Due: ' : ''}${esc(due)}${ownerText}</div>` : ''}
       ${hotChipHtml(action)}
+      ${callChipHtml(action)}
     </div>`;
 }
 
@@ -4009,6 +4075,7 @@ function renderPipelineState(pipeline) {
         <span class="pipeline-row-val"><small>${esc(next.source || 'none')}</small></span>
       </div>
       ${hotDrawerRows(next)}
+      ${callDrawerRows(next)}
     </div>
     <div id="d-reactivation"></div>`;
 
@@ -4071,6 +4138,137 @@ async function logHumanResponse() {
     renderBoard();
   } catch (error) {
     showToast('Could not record the response: ' + error.message, 'error');
+  } finally {
+    setSaving(false);
+  }
+}
+
+// ── CALL LIFECYCLE ──────────────────────────────────────────────────────────
+// Renders the current meeting state and ONLY the transitions the server says
+// are legal, so an impossible action is never offered. Every resolution is
+// confirmed; nothing here sends anything.
+
+// Mirrors callLifecycleActions() server-side. The server re-derives and is the
+// authority — this only decides which buttons to draw.
+function callAllowedActions(call) {
+  const meetingMs = call.meetingAt ? new Date(call.meetingAt).getTime() : NaN;
+  const hasBooking = Number.isFinite(meetingMs);
+  const passed = hasBooking && meetingMs < Date.now();
+  const live = ['scheduled', 'rescheduled', 'outcome_pending'].includes(call.status);
+  return {
+    book: !hasBooking || ['cancelled', 'completed', 'no_show', 'none'].includes(call.status),
+    reschedule: live, cancel: live, complete: live && passed, no_show: live && passed,
+  };
+}
+
+const CALL_ACTION_LABEL = {
+  book: 'Book call', reschedule: 'Reschedule', cancel: 'Cancel call',
+  complete: 'Mark completed', no_show: 'Mark no show',
+};
+
+function callDrawerRows(next) {
+  const call = next && next.callState;
+  if (!call) return '';
+  const allowed = callAllowedActions(call);
+  const when = call.meetingAt ? callWhen(call.meetingAt) : 'none booked';
+  const buttons = Object.entries(allowed).filter(([, ok]) => ok).map(([name]) =>
+    `<button type="button" class="btn-call"${['cancel', 'no_show'].includes(name) ? ' data-tone="quiet"' : ''}
+       onclick="openCallModal('${name}')">${esc(CALL_ACTION_LABEL[name])}</button>`).join('');
+  return `
+    <div class="pipeline-row">
+      <span class="pipeline-row-label">Call</span>
+      <span class="pipeline-row-val">${esc(CALL_STATUS_LABEL[call.status] || call.status)}</span>
+    </div>
+    <div class="pipeline-row">
+      <span class="pipeline-row-label">Meeting time</span>
+      <span class="pipeline-row-val"><small>${esc(when)}</small></span>
+    </div>
+    ${call.previousMeetingAt ? `<div class="pipeline-row">
+      <span class="pipeline-row-label">Moved from</span>
+      <span class="pipeline-row-val"><small>${esc(callWhen(call.previousMeetingAt))}${call.rescheduleCount > 1 ? ` (${call.rescheduleCount} reschedules)` : ''}</small></span>
+    </div>` : ''}
+    <div class="pipeline-row">
+      <span class="pipeline-row-label">Why</span>
+      <span class="pipeline-row-val"><small>${esc(call.reason || '')}</small></span>
+    </div>
+    <div class="call-actions">${buttons}</div>`;
+}
+
+function closeCallModal(e) {
+  if (e && e.target !== document.getElementById('call-overlay')) return;
+  document.getElementById('call-overlay').classList.remove('open');
+}
+
+// Opens the confirmation ONLY. Nothing is written until Confirm is pressed.
+function openCallModal(action) {
+  const entry = nextActions.get(detailId);
+  const call = entry && entry.nextAction && entry.nextAction.callState;
+  if (!call) return;
+  const needsTime = action === 'book' || action === 'reschedule';
+  const suggested = new Date(Date.now() + 2 * 86400000);
+  suggested.setMinutes(suggested.getMinutes() - suggested.getTimezoneOffset());
+  const defaultLocal = suggested.toISOString().slice(0, 16);
+  const explain = {
+    book: 'Records a new booked call and puts this opportunity in Call Booked.',
+    reschedule: 'Moves the call to a new time. The previous time is kept in the timeline.',
+    cancel: 'Records that the call will not happen. This does NOT close the opportunity — you decide the next step separately.',
+    complete: 'Records that the call happened. This does NOT mark the deal won — the sales outcome is a separate decision.',
+    no_show: 'Records that the prospect did not attend. This does NOT close the opportunity, and the lead stays recoverable.',
+  }[action];
+
+  document.getElementById('call-title').textContent = CALL_ACTION_LABEL[action] || 'Call';
+  document.getElementById('call-body').innerHTML = `
+    <div class="ghost-facts">
+      <div class="ghost-fact"><span class="ghost-fact-k">Current state</span><span class="ghost-fact-v">${esc(CALL_STATUS_LABEL[call.status] || call.status)}</span></div>
+      <div class="ghost-fact"><span class="ghost-fact-k">Meeting time</span><span class="ghost-fact-v">${esc(call.meetingAt ? callWhen(call.meetingAt) : 'none booked')}</span></div>
+      ${call.salesOutcome ? `<div class="ghost-fact"><span class="ghost-fact-k">Sales outcome</span><span class="ghost-fact-v">${esc(call.salesOutcome)}</span></div>` : ''}
+    </div>
+    ${needsTime ? `<div style="margin:10px 0">
+      <label for="call-when" style="font-size:11px;color:var(--text-muted)">New meeting time</label>
+      <input type="datetime-local" id="call-when" value="${defaultLocal}" style="width:100%;margin-top:4px">
+    </div>` : ''}
+    <div class="react-note">${esc(explain)}</div>
+    <div class="form-actions" style="margin-top:14px">
+      <button type="button" class="btn-cancel" onclick="closeCallModal()">Cancel</button>
+      <button type="button" class="btn-save" onclick="submitCallAction('${action}')">${esc(CALL_ACTION_LABEL[action])}</button>
+    </div>`;
+  document.getElementById('call-overlay').classList.add('open');
+}
+
+async function submitCallAction(action) {
+  const leadId = detailId;
+  if (!leadId) return;
+  const entry = nextActions.get(leadId);
+  const call = entry && entry.nextAction && entry.nextAction.callState;
+  const payload = { action, expectedMeetingAt: (call && call.meetingAt) || '' };
+  if (action === 'book' || action === 'reschedule') {
+    const when = (document.getElementById('call-when') || {}).value;
+    if (!when) { showToast('Choose a meeting date and time.', 'error'); return; }
+    payload.meetingAt = new Date(when).toISOString();
+  }
+  setSaving(true);
+  try {
+    const resp = await fetch(`/api/leads/${encodeURIComponent(leadId)}/call-lifecycle`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      showToast(data.error || `Could not update the call (${resp.status})`, 'error');
+      // Raced: the stored meeting moved on, so reload rather than leave a
+      // drawer offering actions that no longer apply.
+      if (data.code === 'invalid_transition' || data.code === 'meeting_changed') {
+        closeCallModal(); await loadLeads(); await loadNextActions(); renderBoard();
+      }
+      return;
+    }
+    showToast(data.unchanged ? 'That meeting time was already booked.' : `Call ${data.status.replace(/_/g, ' ')}.`, 'success');
+    closeCallModal();
+    await loadLeads();
+    await loadNextActions();
+    renderBoard();
+    if (detailId === leadId) { openDetail(leadId); await loadColdCallActivity(leadId); }
+  } catch (error) {
+    showToast('Could not update the call: ' + error.message, 'error');
   } finally {
     setSaving(false);
   }

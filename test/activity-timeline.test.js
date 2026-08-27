@@ -109,7 +109,9 @@ test('meeting booked, rescheduled and cancelled are reliable distinct events', (
     activity('meeting_rescheduled', '2026-08-21T10:00:00Z', { metadata: JSON.stringify({ meetingAt: '2026-08-28T18:00:00Z' }) }),
     activity('meeting_cancelled', '2026-08-22T10:00:00Z'),
   ] });
-  assert.deepEqual(timeline.map(event => event.title), ['Meeting cancelled', 'Meeting rescheduled', 'Call booked']);
+  // Step 9 renamed these to the "Call ..." family so the meeting journey reads
+  // as one story. Chronology (newest first) and distinctness are unchanged.
+  assert.deepEqual(timeline.map(event => event.title), ['Meeting cancelled', 'Call rescheduled', 'Call booked']);
   assert.match(server, /eventType = !oldMeetingAt && meetingAt \? 'call_booked'/);
 });
 
