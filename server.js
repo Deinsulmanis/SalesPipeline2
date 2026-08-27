@@ -31,6 +31,7 @@ const {
   scoreColdCallLead,
 } = require('./integrations/cold-call-pipeline');
 const { buildActivityTimeline, inspectActivityIntegrity } = require('./integrations/activity-timeline');
+const { PROMOTION_TRIGGER, resolvePromotionIdentity, promotionDecision } = require('./integrations/promotion-policy');
 const {
   deriveAutomationState, automationConflict, deriveNextAction,
   compareNextActions, summarizeNextActions,
@@ -427,7 +428,7 @@ function sheets() {
     const original = values[method].bind(values);
     values[method] = params => {
       const ranges = rangesTouched(params);
-      if (ranges.some(range => range.includes(CE_SHEET_NAME))) invalidateOutreachCache(`write:${method}`);
+      if (ranges.some(range => range.includes(CE_SHEET_NAME) || range.includes(`${SHEET_NAME}!`))) invalidateOutreachCache(`write:${method}`);
       if (ranges.some(range => /DemoPlays|ProposalOpens|ProposalEngaged/.test(range))) invalidateOutreachCache(`write:${method}`);
       return original(params);
     };
@@ -1075,8 +1076,6 @@ function toLightRow(lead, category) {
 // A CE- foreign key on the board is authoritative. Exact normalized email is
 // only a fallback, and duplicate candidates fail closed as a mapping conflict.
 function buildOutreachPipelineIndex(coldEmailLeads, boardLeads) {
-  const boardByCeId = new Map();
-  const boardByEmail = new Map();
   const coldEmailByEmail = new Map();
   const push = (map, key, value) => {
     if (!key) return;
@@ -1086,42 +1085,22 @@ function buildOutreachPipelineIndex(coldEmailLeads, boardLeads) {
   };
 
   for (const lead of coldEmailLeads || []) push(coldEmailByEmail, normalizeEmail(lead.email), lead);
-  for (const lead of boardLeads || []) {
-    const ceId = String(lead.id || '').startsWith('CE-') ? String(lead.id).slice(3) : '';
-    push(boardByCeId, ceId, lead);
-    push(boardByEmail, normalizeEmail(lead.email), lead);
-  }
 
   const byColdEmailId = new Map();
   let ambiguousMappings = 0;
   for (const lead of coldEmailLeads || []) {
-    const idMatches = boardByCeId.get(String(lead.id || '')) || [];
     const email = normalizeEmail(lead.email);
-    const emailMatches = email ? (boardByEmail.get(email) || []) : [];
     const coldEmailTwins = email ? (coldEmailByEmail.get(email) || []) : [];
-    let match = null;
-    let matchedBy = '';
-    let mappingConflict = false;
-
-    if (idMatches.length === 1) {
-      match = idMatches[0];
-      matchedBy = 'ce_id';
-    } else if (idMatches.length > 1) {
-      mappingConflict = true;
-    } else if (emailMatches.length === 1 && coldEmailTwins.length === 1) {
-      match = emailMatches[0];
-      matchedBy = 'email';
-    } else if (emailMatches.length || coldEmailTwins.length > 1) {
-      mappingConflict = true;
-    }
-
-    if (mappingConflict) ambiguousMappings++;
+    const identity = resolvePromotionIdentity(lead, boardLeads, { coldEmailTwinCount: coldEmailTwins.length });
+    const match = identity.boardLead;
+    if (identity.status === 'conflict') ambiguousMappings++;
     byColdEmailId.set(lead.id, {
       pipelinePresence: Boolean(match),
       pipelineStage: match ? displayStageFor(match.stage) : '',
       boardLeadId: match ? match.id : '',
-      mappingStatus: mappingConflict ? 'conflict' : (match ? 'matched' : 'not_in_pipeline'),
-      matchedBy,
+      mappingStatus: identity.status === 'conflict' ? 'conflict' : (match ? 'matched' : 'not_in_pipeline'),
+      mappingReason: identity.reason || '',
+      matchedBy: identity.matchedBy || '',
     });
   }
   return { byColdEmailId, ambiguousMappings };
@@ -1285,7 +1264,7 @@ async function loadOutreachDataset() {
     rows,                  // light rows, safe to serialise
     activities, classificationsByLeadId, replyRecords,
     metrics, counts, facets, signals,
-    pipelineAudit,
+    pipelineAudit, boardLeads,
     demoPlays, demoRows, proposalOpens, proposalEngaged,
     annotatedOpens,        // computed once; the Opens panel reuses it
   };
@@ -2609,53 +2588,73 @@ app.delete('/api/coldemail/:id', requireAuth, async (req, res) => {
 
 app.post('/api/coldemail/:id/promote', requireAuth, async (req, res) => {
   try {
-    await withAuth(async () => {
-      const ceResp = await sheets().spreadsheets.values.get({
-        spreadsheetId: SPREADSHEET_ID,
-        range:         CE_COL_RANGE,
-      });
-      const ceRows = ceResp.data.values || [];
-      let ceRowNum = null;
-      let ceLead   = null;
-      for (let i = 1; i < ceRows.length; i++) {
-        if (ceRows[i][0] === req.params.id) {
-          ceRowNum = i + 1;
-          ceLead   = {};
-          CE_COLUMNS.forEach((c, j) => { ceLead[c] = ceRows[i][j] || ''; });
-          break;
-        }
-      }
-      if (!ceLead) { res.status(404).json({ error: 'not found' }); return; }
-
-      const parts = (ceLead.contactName || '').trim().split(/\s+/);
-      const first = parts[0] || '';
-      const last  = parts.slice(1).join(' ') || '';
-      const newId = Date.now().toString(36) + Math.random().toString(36).slice(2);
-      const leadsLead = {
-        id: newId, type: 'trade', first, last, brokerage: '',
-        tradeType: ceLead.tradeType || '', company: ceLead.company || '',
-        city: ceLead.city || '', cityTrade: ceLead.city || '',
-        phone: '', email: ceLead.email || '', website: ceLead.website || '',
-        stage: 'follow_up', priority: 'cold', followup: '',
-        notes: ceLead.notes || '', created: String(Date.now()),
-      };
-      await sheets().spreadsheets.values.append({
-        spreadsheetId:   SPREADSHEET_ID,
-        range:           COL_RANGE,
-        valueInputOption:'RAW',
-        insertDataOption:'INSERT_ROWS',
-        requestBody:     { values: [COLUMNS.map(col => String(leadsLead[col] ?? ''))] },
-      });
-      // Mark ColdEmail row stage = Promoted (col H)
-      await sheets().spreadsheets.values.update({
-        spreadsheetId:   SPREADSHEET_ID,
-        range:           `${CE_SHEET_NAME}!H${ceRowNum}`,
-        valueInputOption:'RAW',
-        requestBody:     { values: [['Promoted']] },
-      });
-      ceRowMap.delete(req.params.id);
+    const targetStage = String(req.body?.stage || '').trim();
+    if (!targetStage) return res.status(422).json({ error: 'Choose a Sales Pipeline stage.' });
+    const dataset = await withAuth(() => getOutreachDataset());
+    const ceLead = dataset.leads.find(row => row.id === req.params.id);
+    if (!ceLead) return res.status(404).json({ error: 'not found' });
+    const email = normalizeEmail(ceLead.email);
+    const twinCount = dataset.leads.filter(row => email && normalizeEmail(row.email) === email).length;
+    const identity = resolvePromotionIdentity(ceLead, dataset.boardLeads, { coldEmailTwinCount: twinCount });
+    const meetingAt = String(req.body?.meetingAt || '').trim();
+    const outcome = String(req.body?.outcome || '').trim();
+    const decision = promotionDecision({
+      trigger: PROMOTION_TRIGGER.MANUAL, targetStage, coldEmailLead: ceLead,
+      identity, meetingAt, outcome,
     });
-    res.json({ ok: true });
+    if (!decision.shouldPromote) {
+      return res.status(decision.safety === 'conflict' ? 409 : 422).json({ error: decision.reason, decision });
+    }
+
+    const parts = String(ceLead.contactName || '').trim().split(/\s+/).filter(Boolean);
+    const boardId = identity.boardLead?.id || `CE-${ceLead.id}`;
+    const previousStage = identity.boardLead ? displayStageFor(identity.boardLead.stage) : '';
+    const boardLead = {
+      ...(identity.boardLead || {}), id: boardId, type: identity.boardLead?.type || 'trade',
+      first: identity.boardLead?.first || parts[0] || '', last: identity.boardLead?.last || parts.slice(1).join(' '),
+      brokerage: identity.boardLead?.brokerage || '', tradeType: identity.boardLead?.tradeType || ceLead.tradeType || '',
+      company: identity.boardLead?.company || ceLead.company || '', city: identity.boardLead?.city || ceLead.city || '',
+      cityTrade: identity.boardLead?.cityTrade || ceLead.city || '', phone: identity.boardLead?.phone || '',
+      email: identity.boardLead?.email || ceLead.email || '', website: identity.boardLead?.website || ceLead.website || '',
+      stage: decision.targetStage, priority: identity.boardLead?.priority || (decision.targetStage === 'hot' ? 'hot' : 'warm'),
+      followup: identity.boardLead?.followup || '', notes: identity.boardLead?.notes || ceLead.notes || '',
+      created: identity.boardLead?.created || new Date().toISOString(),
+    };
+
+    // Human-owned promotion is fail-closed: hold the ColdEmail twin(s) before
+    // the board write. If the later write fails, the safe failure is a held
+    // Outreach lead, never an opportunity that keeps receiving cold mail.
+    if (stageRequiresHold(decision.targetStage)) await withAuth(() => applyManualHold(boardId, ceLead.email));
+
+    if (identity.boardLead) {
+      const boardRow = await withAuth(() => findRow(boardId));
+      if (!boardRow) return res.status(409).json({ error: 'Matched board lead disappeared; promotion stopped.' });
+      await withAuth(() => sheets().spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${boardRow}:Q${boardRow}`,
+        valueInputOption: 'RAW', requestBody: { values: [COLUMNS.map(field => String(boardLead[field] ?? ''))] },
+      }));
+      if (meetingAt || outcome) await withAuth(() => sheets().spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!U${boardRow}:V${boardRow}`,
+        valueInputOption: 'RAW', requestBody: { values: [[meetingAt || identity.boardLead.meetingAt || '', outcome || identity.boardLead.outcome || '']] },
+      }));
+    } else {
+      await withAuth(() => sheets().spreadsheets.values.append({
+        spreadsheetId: SPREADSHEET_ID, range: AGENT_READ_RANGE,
+        valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+        requestBody: { values: [[...COLUMNS.map(field => String(boardLead[field] ?? '')), '', '', '', meetingAt, outcome, String(req.body?.conversationContext || '').trim().slice(0, 10000)]] },
+      }));
+    }
+
+    const eventId = stableActivityId('pipeline-promotion', [ceLead.id, boardId, decision.targetStage, PROMOTION_TRIGGER.MANUAL]);
+    if (!dataset.activities.some(row => row.eventId === eventId)) {
+      await appendIntegrationRow(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER, {
+        eventId, leadId: boardId, sourceLeadId: ceLead.id, email: ceLead.email || '', company: ceLead.company || '',
+        eventType: 'pipeline_promoted', occurredAt: new Date().toISOString(),
+        subject: `Added to Sales Pipeline — ${decision.targetStage}`, content: '',
+        metadata: JSON.stringify({ fromStage: previousStage, toStage: decision.targetStage, trigger: PROMOTION_TRIGGER.MANUAL, sourceEventId: '' }),
+      });
+    }
+    res.json({ ok: true, boardLeadId: boardId, created: !identity.boardLead, stage: decision.targetStage, automationResumed: false });
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
     console.error('[ColdEmail Promote]', e.message);

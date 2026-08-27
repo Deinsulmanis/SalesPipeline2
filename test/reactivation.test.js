@@ -140,8 +140,10 @@ test('28. the gate lives in suppressionReason, which every send loop calls', () 
   const guards = agentSrc.match(/const suppressed = suppressionReason\(lead\);/g) || [];
   assert.ok(guards.length >= 4, 'expected the shared guard on every send loop');
   assert.match(agentSrc, /if \(tag === MANUAL_HOLD_TAG && manualHoldReleased\(notes\)\) continue;/);
-  // The gate is imported, not re-implemented in the agent.
-  assert.match(agentSrc, /const \{ manualHoldReleased \} = require\('\.\/integrations\/pipeline-state'\)/);
+  // The gate is imported from the shared model, not re-implemented in the
+  // agent. Matched loosely: other names may be destructured alongside it.
+  assert.match(agentSrc, /const \{[^}]*\bmanualHoldReleased\b[^}]*\} = require\('\.\/integrations\/pipeline-state'\)/);
+  assert.ok(!/function manualHoldReleased/.test(agentSrc), 'no second copy of the gate');
 });
 
 test('10. no reactivation code path can send', () => {

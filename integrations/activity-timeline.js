@@ -5,6 +5,7 @@ const { analyticsCategoryFor, ANALYTICS_CATEGORY } = require('./reply-analytics'
 
 const REPLY_TYPES = new Set([
   'positive_reply', 'meeting_requested', 'late_reply', 'question_reply',
+  'pipeline_promoted',
   'negative_reply', 'unsubscribe_reply', 'wrong_person_reply',
   'needs_human_reply', 'out_of_office_reply',
 ]);
@@ -15,6 +16,7 @@ const SOURCE_BY_TYPE = Object.freeze({
   initial_email_sent: 'Automation', follow_up_sent: 'Automation', booking_link_sent: 'Automation',
   email_opened: 'Prospect', demo_played: 'Demo', demo_pair_played: 'Demo',
   positive_reply: 'Prospect', meeting_requested: 'Prospect', late_reply: 'Prospect',
+  pipeline_promoted: 'CRM',
   question_reply: 'Prospect', negative_reply: 'Prospect', unsubscribe_reply: 'Prospect',
   wrong_person_reply: 'Prospect', needs_human_reply: 'Prospect', out_of_office_reply: 'Prospect',
   conversation_note: 'Human', call_booked: 'Meeting', meeting_rescheduled: 'Meeting',
@@ -116,6 +118,7 @@ function eventPresentation(row, metadata) {
     case 'demo_played': return { title: metadata.count > 1 ? 'Demo played again' : 'Demo played' };
     case 'demo_pair_played': return { title: 'Both demo clips played' };
     case 'booking_link_sent': return { title: 'Booking-link follow-up sent' };
+    case 'pipeline_promoted': return { title: row.subject || 'Added to Sales Pipeline', summary: metadata.trigger ? `Reason: ${String(metadata.trigger).replace(/_/g, ' ')}` : '' };
     case 'stage_changed': {
       const from = prettyStage(metadata.fromStage);
       const to = prettyStage(metadata.toStage);

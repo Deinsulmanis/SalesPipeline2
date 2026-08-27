@@ -2410,6 +2410,20 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="promotion-overlay" onclick="closeManualPromotion(event)">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="promotion-title" onclick="event.stopPropagation()">
+    <div class="modal-header"><div class="modal-title" id="promotion-title">Add to Sales Pipeline</div><button class="modal-close" onclick="closeManualPromotion()" aria-label="Close">✕</button></div>
+    <div style="padding:16px 18px">
+      <div id="promotion-context" class="react-facts"></div>
+      <label for="promotion-stage" style="display:block;margin-top:14px">Sales Pipeline stage</label>
+      <select id="promotion-stage" onchange="renderManualPromotionFields()" style="width:100%;min-height:44px"><option value="">Choose a stage…</option><option value="follow_up">Follow Up</option><option value="hot">Hot</option><option value="call_booked">Call Booked</option><option value="closed_won">Closed / Won</option><option value="closed_lost">Closed / Lost</option></select>
+      <div id="promotion-extra"></div>
+      <div class="react-reassure" style="margin-top:14px">Adding this lead to the Sales Pipeline does not resume cold-email automation. Human-owned stages keep the existing manual-hold safeguard.</div>
+      <div class="form-actions" style="margin-top:14px"><button type="button" class="btn-cancel" onclick="closeManualPromotion()">Cancel</button><button type="button" class="btn-save" onclick="submitManualPromotion()">Save to Pipeline</button></div>
+    </div>
+  </div>
+</div>
+
 <!-- REPLY DRILL-DOWN PANEL — read-only view over the canonical reply records -->
 <div class="detail-overlay" id="reply-drill-overlay" onclick="closeReplyDrill(event)">
   <div class="detail-panel rd-panel" role="dialog" aria-modal="true" aria-labelledby="rd-title" onclick="event.stopPropagation()">
@@ -3762,6 +3776,7 @@ const ACTIVITY_LABELS = {
   demo_played: 'Demo played',
   demo_pair_played: 'Both demo clips played',
   booking_link_sent: 'Booking-link follow-up sent',
+  pipeline_promoted: 'Added to Sales Pipeline',
   positive_reply: 'Positive reply received',
   meeting_requested: 'Meeting requested',
   call_booked: 'Call booked',
@@ -4459,7 +4474,7 @@ function renderCeTable() {
       <td><span class="pipeline-marker" data-state="${pipelineState}" title="${escAttr(pipelineLabel)}">${esc(pipelineLabel)}</span></td>
       <td onclick="event.stopPropagation()"><div class="ce-stage-stack"><select class="ce-stage-select" onchange="setCeLeadStage('${l.id}',this.value)">${stageOpts}</select>${hasLateReply ? '<span class="ce-late-reply" title="Reply received after the sequence ended. Automation is still stopped.">Late reply</span>' : ''}</div></td>
       <td onclick="event.stopPropagation()" style="white-space:nowrap;display:flex;gap:6px;align-items:center">
-        <button class="btn-promote" onclick="promoteLead('${l.id}')">↗ Promote</button>
+        <button class="btn-promote" onclick="openManualPromotion('${l.id}')">${l.pipelinePresence ? 'Pipeline…' : 'Add to Pipeline…'}</button>
         <button class="btn-ce-del"  onclick="deleteCeLead('${l.id}')" title="Delete">
           <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
         </button>
@@ -5124,7 +5139,7 @@ function openCeDetail(id) {
   const pipelineState = lead.mappingStatus === 'conflict' ? 'conflict' : (lead.pipelinePresence ? 'in' : 'out');
   const mappingDetail = lead.mappingStatus === 'conflict' ? 'Duplicate identity candidates require manual review.'
     : lead.pipelinePresence ? `Matched by ${lead.matchedBy === 'ce_id' ? 'ColdEmail foreign key' : 'exact email'}.` : 'This is an Outreach-only prospect.';
-  document.getElementById('ce-d-pipeline').innerHTML = `<span class="pipeline-marker" data-state="${pipelineState}">${esc(pipelineLabel)}</span><p style="font-size:12px;color:var(--text-muted);margin-top:8px">${esc(mappingDetail)}</p>`;
+  document.getElementById('ce-d-pipeline').innerHTML = `<span class="pipeline-marker" data-state="${pipelineState}">${esc(pipelineLabel)}</span><p style="font-size:12px;color:var(--text-muted);margin-top:8px">${esc(mappingDetail)}</p>${lead.mappingStatus === 'conflict' ? '' : `<button type="button" class="btn-promote" onclick="openManualPromotion('${escAttr(lead.id)}')">${lead.pipelinePresence ? 'Change Pipeline stage…' : 'Add to Sales Pipeline…'}</button>`}`;
 
   // ── Sequence progress ────────────────────────────────────────
   const currentStep = parseInt(lead.emailStep || '0');
@@ -5420,16 +5435,51 @@ async function bulkQueueSelected() {
   openQueueRouteModal(eligible);
 }
 
-async function promoteLead(id) {
+let manualPromotionId = '';
+
+function openManualPromotion(id) {
   const lead = ceLeads.find(l => l.id === id);
-  const name = lead ? (lead.contactName || lead.company || id) : id;
-  if (!confirm(`Promote "${name}" to the Pipeline?`)) return;
+  if (!lead || lead.mappingStatus === 'conflict') return showToast('Promotion blocked: this lead has an identity mapping conflict.', 'error');
+  manualPromotionId = id;
+  document.getElementById('promotion-title').textContent = lead.pipelinePresence ? 'Change Sales Pipeline stage' : 'Add to Sales Pipeline';
+  document.getElementById('promotion-stage').value = '';
+  document.getElementById('promotion-context').innerHTML = `<div class="react-fact"><span class="react-fact-k">Prospect</span><span class="react-fact-v">${esc(lead.company || lead.email)}</span></div><div class="react-fact"><span class="react-fact-k">Outreach</span><span class="react-fact-v">${esc(lead.replyCategory ? (RD_CATEGORY_LABEL[lead.replyCategory] || lead.replyCategory) : lead.sequenceState || lead.stage || 'No reply')}</span></div><div class="react-fact"><span class="react-fact-k">Current Pipeline</span><span class="react-fact-v">${esc(lead.pipelinePresence ? ((STAGES.find(stage => stage.id === lead.pipelineStage) || {}).label || lead.pipelineStage) : 'Not in Sales Pipeline')}</span></div>`;
+  renderManualPromotionFields();
+  document.getElementById('promotion-overlay').classList.add('open');
+}
+
+function closeManualPromotion(e) {
+  if (e && e.target !== document.getElementById('promotion-overlay')) return;
+  document.getElementById('promotion-overlay').classList.remove('open');
+  manualPromotionId = '';
+}
+
+function renderManualPromotionFields() {
+  const stage = document.getElementById('promotion-stage').value;
+  const host = document.getElementById('promotion-extra');
+  if (stage === 'call_booked') host.innerHTML = '<label for="promotion-meeting" style="display:block;margin-top:12px">Meeting time</label><input id="promotion-meeting" type="datetime-local" style="width:100%;min-height:44px">';
+  else if (stage === 'closed_lost') host.innerHTML = '<label for="promotion-outcome" style="display:block;margin-top:12px">Loss outcome</label><select id="promotion-outcome" style="width:100%;min-height:44px"><option value="">Choose an outcome…</option><option value="no_show">No show</option><option value="ghosted">Ghosted</option><option value="not_interested">Not interested</option><option value="not_fit">Not a fit</option><option value="timing">Timing</option><option value="other">Other</option></select>';
+  else host.innerHTML = '';
+}
+
+async function submitManualPromotion() {
+  const id = manualPromotionId;
+  const lead = ceLeads.find(item => item.id === id);
+  const stage = document.getElementById('promotion-stage').value;
+  if (!stage) return showToast('Choose a Sales Pipeline stage.', 'error');
+  const payload = { stage };
+  const meeting = document.getElementById('promotion-meeting');
+  if (meeting?.value) payload.meetingAt = new Date(meeting.value).toISOString();
+  const outcome = document.getElementById('promotion-outcome');
+  if (outcome) payload.outcome = outcome.value;
   try {
-    const resp = await fetch(`/api/coldemail/${id}/promote`, { method: 'POST' });
-    if (!resp.ok) { showToast('Promote failed: ' + resp.status, 'error'); return; }
-    showToast(`"${name}" added to the Pipeline.`, 'success');
+    const resp = await fetch(`/api/coldemail/${encodeURIComponent(id)}/promote`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) return showToast(data.error || `Promotion refused (${resp.status})`, 'error');
+    closeManualPromotion();
+    showToast(`${lead?.company || 'Lead'} added to the Pipeline at ${((STAGES.find(item => item.id === stage) || {}).label || stage)}. Automation was not resumed.`, 'success');
     loadCeLeads();
-  } catch (e) { showToast('Promote failed: ' + e.message, 'error'); }
+  } catch (e) { showToast('Promotion failed: ' + e.message, 'error'); }
 }
 
 async function deleteCeLead(id) {

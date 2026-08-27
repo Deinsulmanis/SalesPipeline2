@@ -200,7 +200,11 @@ test('15. a write cannot be hidden by the cache', () => {
   // touching ColdEmail drops the snapshot regardless of which of the ~30 call
   // sites made it.
   assert.match(server, /const MUTATING_VALUE_METHODS = \['update', 'append', 'batchUpdate', 'clear'\]/);
-  assert.match(server, /if \(ranges\.some\(range => range\.includes\(CE_SHEET_NAME\)\)\) invalidateOutreachCache/);
+  // A ColdEmail write must bust the snapshot. Matched loosely so the guard can
+  // be widened to other tabs (it since was) without failing this test.
+  const wrapper = server.slice(server.indexOf('for (const method of MUTATING_VALUE_METHODS)'), server.indexOf('return client;'));
+  assert.match(wrapper, /ranges\.some\(range => range\.includes\(CE_SHEET_NAME\)/, 'a ColdEmail write busts the snapshot');
+  assert.match(wrapper, /invalidateOutreachCache\(/, 'the wrapper invalidates');
   assert.match(server, /function rangesTouched\(params\)/);
   // batchUpdate hides its ranges inside requestBody.data — those count too.
   assert.match(server, /requestBody && params\.requestBody\.data/);

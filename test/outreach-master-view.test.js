@@ -9,6 +9,7 @@ const root = path.join(__dirname, '..');
 const read = file => fs.readFileSync(file, 'utf8').split('\r\n').join('\n');
 const server = read(path.join(root, 'server.js'));
 const browser = read(path.join(root, 'public', 'index.html'));
+const { resolvePromotionIdentity } = require('../integrations/promotion-policy');
 
 function sourceFunction(name) {
   const start = server.indexOf(`function ${name}`);
@@ -33,6 +34,7 @@ const filterOutreachRows = new Function(`
 const buildOutreachPipelineIndex = new Function(`
   const normalizeEmail = value => String(value || '').trim().toLowerCase();
   const displayStageFor = value => String(value || '').trim().toLowerCase();
+  const resolvePromotionIdentity = ${resolvePromotionIdentity.toString()};
   ${sourceFunction('buildOutreachPipelineIndex')}
   return buildOutreachPipelineIndex;
 `)();

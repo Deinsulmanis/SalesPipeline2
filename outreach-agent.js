@@ -63,7 +63,8 @@ const { classifyReply: classifyProviderReply } = require('./integrations/reply-c
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
 const { routedLeadReady } = require('./integrations/campaign-routing');
 // The reactivation gate is defined once, in the shared pipeline-state model.
-const { manualHoldReleased } = require('./integrations/pipeline-state');
+const { manualHoldReleased, applyHoldToNotes, stageRequiresHold } = require('./integrations/pipeline-state');
+const { PROMOTION_TRIGGER, resolvePromotionIdentity, promotionDecision } = require('./integrations/promotion-policy');
 const { findOriginalSentThread } = require('./integrations/gmail-threading');
 const {
   assembleFinalEmail,
@@ -226,22 +227,33 @@ async function recordColdCallActivity(record) {
   }
 }
 
-async function upsertColdCallLeadFromEvent(lead, stage, note, { moveExisting = false } = {}) {
+async function upsertColdCallLeadFromEvent(lead, stage, note, options = {}) {
   if (!COLD_CALL_STAGE_IDS.has(stage)) return null;
   try {
     const response = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: LEADS_RANGE });
     const rows = response.data.values || [];
+    const boardLeads = rows.slice(1).map(row => Object.fromEntries(LEADS_COLUMNS.map((field, index) => [field, row[index] || ''])));
+    const identity = resolvePromotionIdentity(lead, boardLeads, { coldEmailTwinCount: options.coldEmailTwinCount || 1 });
+    const decision = promotionDecision({
+      trigger: options.trigger || PROMOTION_TRIGGER.MANUAL, targetStage: stage,
+      coldEmailLead: lead, identity, verifiedDemoPair: options.verifiedDemoPair,
+      bookingLinkSent: options.bookingLinkSent, meetingAt: options.meetingAt, outcome: options.outcome,
+      suppressedEmails: SUPPRESSED_EMAILS,
+    });
+    if (!decision.shouldPromote) {
+      console.warn(`[promotion] ${lead.email} not promoted (${decision.safety}: ${decision.reason})`);
+      return null;
+    }
     const targetId = `CE-${lead.id}`;
-    const email = normalizeEmail(lead.email);
-    const existingIndex = rows.findIndex((row, index) => index > 0 && (row[0] === targetId || normalizeEmail(row[10]) === email));
+    const existingId = identity.boardLead?.id || '';
+    const existingIndex = existingId ? rows.findIndex((row, index) => index > 0 && row[0] === existingId) : -1;
     if (existingIndex >= 1) {
-      const existingId = rows[existingIndex][0] || targetId;
-      if (moveExisting && rows[existingIndex][12] !== stage) {
+      if (decision.shouldMove) {
         await sheets().spreadsheets.values.update({
           spreadsheetId: SPREADSHEET_ID,
           range: `${LEADS_SHEET}!M${existingIndex + 1}`,
           valueInputOption: 'RAW',
-          requestBody: { values: [[stage]] },
+          requestBody: { values: [[decision.targetStage]] },
         });
       }
       return existingId;
@@ -252,7 +264,7 @@ async function upsertColdCallLeadFromEvent(lead, stage, note, { moveExisting = f
       id: targetId, type: 'trade', first: parts[0] || '', last: parts.slice(1).join(' '),
       brokerage: '', tradeType: lead.tradeType || 'Dental', company: lead.company || '',
       city: lead.city || '', cityTrade: lead.city || '', phone: '', email: lead.email || '',
-      website: lead.website || '', stage, priority: stage === 'hot' ? 'hot' : 'warm',
+      website: lead.website || '', stage: decision.targetStage, priority: decision.targetStage === 'hot' ? 'hot' : 'warm',
       followup: new Date().toISOString().split('T')[0], notes: note || '', created: new Date().toISOString(),
     };
     await sheets().spreadsheets.values.append({
@@ -1560,6 +1572,8 @@ async function handleInterested(lead, message = {}, replyText = '', eventType = 
     console.warn(`[handleInterested] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
     return;
   }
+  const interestedNotes = applyHoldToNotes(prependNote(lead.notes, TAG_INTERESTED));
+  lead.notes = interestedNotes;
   await sheets().spreadsheets.values.batchUpdate({
     spreadsheetId: SPREADSHEET_ID,
     requestBody: {
@@ -1567,14 +1581,14 @@ async function handleInterested(lead, message = {}, replyText = '', eventType = 
       data: [
         { range: `${SHEET_NAME}!H${rowNum}`, values: [['Replied']] },
         { range: `${SHEET_NAME}!I${rowNum}`, values: [['replied']] },
-        { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, TAG_INTERESTED)]] },
+        { range: `${SHEET_NAME}!L${rowNum}`, values: [[interestedNotes]] },
       ],
     },
   });
   const coldCallLeadId = await upsertColdCallLeadFromEvent(
     lead, 'hot',
     `Auto-promoted from cold email outreach. Reply classified: ${eventType === 'meeting_requested' ? 'Meeting requested' : 'Interested'}.`,
-    { moveExisting: true },
+    { trigger: PROMOTION_TRIGGER.POSITIVE_REPLY },
   );
   await recordColdCallActivity({
     eventId: message.messageId ? `gmail-reply:${message.messageId}` : `${lead.id}:reply:${message.occurredAt || Date.now()}`,
@@ -1588,6 +1602,14 @@ async function handleInterested(lead, message = {}, replyText = '', eventType = 
       gmailMessageId: message.messageId || '', gmailThreadId: message.threadId || '',
       rfcMessageId: message.rfcMessageId || '', detectedAfterSequence: false,
     }),
+  });
+  await recordColdCallActivity({
+    eventId: `promotion:${message.messageId || `${lead.id}:${message.occurredAt || 'reply'}`}:hot`,
+    leadId: coldCallLeadId || `CE-${lead.id}`, sourceLeadId: lead.id,
+    email: lead.email, company: cleanCompanyName(lead.company) || lead.company || '',
+    eventType: 'pipeline_promoted', occurredAt: message.occurredAt || new Date().toISOString(),
+    subject: 'Promoted to Hot — positive reply', content: '',
+    metadata: JSON.stringify({ fromStage: '', toStage: 'hot', trigger: 'positive_reply', sourceEventId: message.messageId ? `gmail-reply:${message.messageId}` : '' }),
   });
   console.log(`  🔥 Auto-promoted ${lead.company} to Cold Calls kanban`);
 }
@@ -2060,6 +2082,27 @@ async function runLateReplyCheckPass(leads) {
         recordActivity: activity => withAuth(() => recordColdCallActivityStrict(activity)),
       });
       if (result.status !== 'recorded') continue;
+      if (result.classification === 'INTERESTED' || result.classification === 'MEETING_REQUEST') {
+        const coldCallLeadId = await withAuth(() => upsertColdCallLeadFromEvent(
+          lead, 'hot', 'Auto-promoted from a canonical late positive reply.',
+          { trigger: PROMOTION_TRIGGER.LATE_POSITIVE_REPLY },
+        ));
+        if (coldCallLeadId) {
+          const heldNotes = applyHoldToNotes(lead.notes || '');
+          if (heldNotes !== lead.notes) {
+            await withAuth(() => writeLateReplyNotes(lead, heldNotes));
+            lead.notes = heldNotes;
+          }
+          await withAuth(() => recordColdCallActivityStrict({
+            eventId: `promotion:${result.activity.eventId}:hot`,
+            leadId: coldCallLeadId, sourceLeadId: lead.id, email: lead.email,
+            company: cleanCompanyName(lead.company) || lead.company || '',
+            eventType: 'pipeline_promoted', occurredAt: result.activity.occurredAt,
+            subject: 'Promoted to Hot — late positive reply', content: '',
+            metadata: JSON.stringify({ fromStage: '', toStage: 'hot', trigger: 'late_positive_reply', sourceEventId: result.activity.eventId }),
+          }));
+        }
+      }
       recorded++;
       classes[result.classification] = (classes[result.classification] || 0) + 1;
       console.log(`  ↩ Late reply from ${lead.email} — ${result.classification} (human review; automation remains stopped)`);
@@ -2371,6 +2414,7 @@ async function runIntentTriggerPass(allLeads) {
       const coldCallLeadId = await upsertColdCallLeadFromEvent(
         lead, 'follow_up',
         'Demo pair played. Booking-link follow-up sent automatically.',
+        { trigger: PROMOTION_TRIGGER.VERIFIED_DEMO_PAIR, verifiedDemoPair: true, bookingLinkSent: true },
       );
       const timelineLeadId = coldCallLeadId || `CE-${lead.id}`;
       const play = plays.get(normalizeName(cleanCompanyName(lead.company))) || {};
@@ -2394,6 +2438,14 @@ async function runIntentTriggerPass(allLeads) {
         eventType: 'booking_link_sent', occurredAt: intentSentAt,
         subject: thread.subject, content: body,
         metadata: JSON.stringify({ gmailThreadId: thread.threadId, trigger: 'both_audios' }),
+      });
+      await recordColdCallActivity({
+        eventId: `promotion:${lead.id}:both-audios:follow_up`,
+        leadId: timelineLeadId, sourceLeadId: lead.id, email: lead.email,
+        company: cleanCompanyName(lead.company) || lead.company || '',
+        eventType: 'pipeline_promoted', occurredAt: intentSentAt,
+        subject: 'Promoted to Follow Up — verified demo engagement', content: '',
+        metadata: JSON.stringify({ fromStage: '', toStage: 'follow_up', trigger: 'verified_demo_pair', sourceEventId: `${lead.id}|both-audios` }),
       });
       sent++; todaySent++;
       console.log(`  🎧 Intent email sent → ${lead.email} (${cleanCompanyName(lead.company)})`);
