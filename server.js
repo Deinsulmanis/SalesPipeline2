@@ -17,6 +17,7 @@ const { verifySignature, verifySharedSecret, normalizeEvent } = require('./integ
 const { leadEligibility } = require('./integrations/outreach-policy');
 const { buildEventKey, buildMappingKey, mappingMatchesEvent, normalizeEmail, canApplyProviderTransition, safeAuditPayload, executeEventAttempt, KeyedLock, fetchAllCampaignLeads, aggregateProviderStats, reconciliationHealth } = require('./integrations/smartlead-safety');
 const { classifyReply: classifyProviderReply, CLASSIFICATION_TO_STATUS } = require('./integrations/reply-classifier');
+const { buildReplyMetrics, buildStoredClassificationMap } = require('./integrations/reply-analytics');
 const { parseRegistry: parseGmailInboxRegistry, publicRegistry: publicGmailInboxRegistry, verifyInbox: verifyGmailInbox } = require('./integrations/gmail-inbox-registry');
 const { EMAIL_TEMPLATES, normalizeNiche, validateRoute } = require('./integrations/campaign-routing');
 const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE, qualifyLead: qualifyRoofingLead } = require('./integrations/roofing-survey-profile');
@@ -1545,25 +1546,40 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
 
 app.get('/api/coldemail/stats', requireAuth, async (_req, res) => {
   try {
-    const response = await sheets().spreadsheets.values.batchGet({
-      spreadsheetId: SPREADSHEET_ID,
-      ranges: [`${CE_SHEET_NAME}!A:A`, `${CE_SHEET_NAME}!H:I`, `${CE_SHEET_NAME}!L:L`],
-    });
+    const [response, draftResponse, activityResponse, providerResponse] = await Promise.all([
+      sheets().spreadsheets.values.batchGet({
+        spreadsheetId: SPREADSHEET_ID,
+        ranges: [`${CE_SHEET_NAME}!A:A`, `${CE_SHEET_NAME}!H:I`, `${CE_SHEET_NAME}!L:L`],
+      }),
+      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ReplyDrafts!A:L' }).catch(() => ({ data: {} })),
+      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${COLD_CALL_ACTIVITY_SHEET}!A:J` }).catch(() => ({ data: {} })),
+      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A:N` }).catch(() => ({ data: {} })),
+    ]);
     const ids = response.data.valueRanges?.[0]?.values || [];
     const states = response.data.valueRanges?.[1]?.values || [];
     const notes = response.data.valueRanges?.[2]?.values || [];
     const counts = { queued: 0, emailed: 0, replied: 0, done: 0 };
+    const leads = [];
     for (let index = 1; index < ids.length; index++) {
       if (!ids[index]?.[0]) continue;
       const stage = states[index]?.[0] || '';
       const emailStatus = states[index]?.[1] || '';
       const note = notes[index]?.[0] || '';
+      leads.push({ id: ids[index]?.[0] || '', stage, emailStatus, notes: note });
       if (stage === 'Queued') counts.queued++;
       if (emailStatus) counts.emailed++;
       if (emailStatus === 'replied' || /\[REPLY: (?!OOO)/.test(note)) counts.replied++;
       if (emailStatus === 'done') counts.done++;
     }
-    res.json(counts);
+    const rowObjects = (rows, header) => (rows || []).slice(1)
+      .map(row => Object.fromEntries(header.map((field, column) => [field, row[column] || ''])));
+    const classificationsByLeadId = buildStoredClassificationMap({
+      drafts: rowObjects(draftResponse.data.values, ['createdAt','leadId','company','email','topic','confidence','reason','draftBody','status','campaignProfile','classification','reasonCode']),
+      activities: rowObjects(activityResponse.data.values, COLD_CALL_ACTIVITY_HEADER),
+      providerMappings: rowObjects(providerResponse.data.values, PROVIDER_LEADS_HEADER),
+    });
+    const replyMetrics = buildReplyMetrics(leads, { classificationsByLeadId });
+    res.json({ ...counts, replied: replyMetrics.totalReplies, replyMetrics });
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
     console.error('[ColdEmail Stats GET]', e.message);

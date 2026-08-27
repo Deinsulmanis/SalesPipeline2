@@ -1329,6 +1329,21 @@
   #ce-stats-bar .stat-secondary .stat-val   { font-size: 15px; font-weight: 600; color: var(--text-muted); }
   #ce-stats-bar .stat-secondary .stat-label { color: var(--text-muted); opacity: 0.75; }
 
+  .reply-metrics-bar {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  .reply-metrics-bar .stat { min-width: 0; }
+  .reply-metrics-bar .stat-val[data-tone="positive"] { color: var(--success); }
+  .reply-metrics-bar .stat-val[data-tone="negative"] { color: var(--danger); }
+  .reply-metrics-bar .stat-val[data-tone="review"] { color: var(--warning); }
+  @media (max-width: 900px) {
+    .reply-metrics-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
   /* Empty table cells: keep the column, drop the visual weight. */
   .ce-cell-empty { color: var(--text-muted); font-size: 11px; opacity: 0.6; }
 
@@ -1756,9 +1771,16 @@
       <div class="stat stat-secondary"><div><div class="stat-val" id="ce-stat-total">0</div><div class="stat-label">Total</div></div></div>
       <div class="stat"><div><div class="stat-val" id="ce-stat-queued">0</div><div class="stat-label">Queued</div></div></div>
       <div class="stat stat-secondary"><div><div class="stat-val" id="ce-stat-emailed">0</div><div class="stat-label">Emailed</div></div></div>
-      <div class="stat"><div><div class="stat-val" id="ce-stat-replied">0</div><div class="stat-label">Replied</div></div></div>
       <div class="stat"><div><div class="stat-val" id="ce-stat-opens">0</div><div class="stat-label" id="ce-stat-opens-label">Opens</div></div></div>
       <div class="stat"><div><div class="stat-val" id="ce-stat-warm">0</div><div class="stat-label">🔥 Warm</div></div></div>
+    </div>
+    <div class="reply-metrics-bar" id="ce-reply-metrics" aria-label="Reply outcomes">
+      <div class="stat"><div><div class="stat-val" id="ce-stat-replied">0</div><div class="stat-label">Total Replies</div></div></div>
+      <div class="stat"><div><div class="stat-val" id="ce-stat-positive" data-tone="positive">0</div><div class="stat-label">Positive</div></div></div>
+      <div class="stat"><div><div class="stat-val" id="ce-stat-negative" data-tone="negative">0</div><div class="stat-label">Negative</div></div></div>
+      <div class="stat"><div><div class="stat-val" id="ce-stat-needs-human" data-tone="review">0</div><div class="stat-label">Needs Human</div></div></div>
+      <div class="stat stat-secondary"><div><div class="stat-val" id="ce-stat-unclassified">0</div><div class="stat-label">Unclassified</div></div></div>
+      <div class="stat"><div><div class="stat-val" id="ce-stat-positive-rate">0%</div><div class="stat-label">Positive Reply Rate</div></div></div>
     </div>
     <div id="ce-chart-wrap" style="padding:0 28px;margin-bottom:18px">
       <div class="detail-section-title" style="margin-bottom:8px">Daily Sends — Last 14 Days</div>
@@ -1859,7 +1881,7 @@
       <div class="agent-summary">
         <div class="agent-stat-card"><div class="agent-stat-val" id="as-queued">–</div><div class="agent-stat-label">Queued</div></div>
         <div class="agent-stat-card"><div class="agent-stat-val" id="as-emailed">–</div><div class="agent-stat-label">Emailed</div></div>
-        <div class="agent-stat-card"><div class="agent-stat-val" id="as-replied">–</div><div class="agent-stat-label">Replied</div></div>
+        <div class="agent-stat-card"><div class="agent-stat-val" id="as-replied">–</div><div class="agent-stat-label">Total Replies</div></div>
         <div class="agent-stat-card"><div class="agent-stat-val" id="as-done">–</div><div class="agent-stat-label">Done</div></div>
       </div>
       <p class="agent-hint">Set a lead's stage to "Queued" in the Outreach tab to add it to the outreach queue.</p>
@@ -3224,6 +3246,7 @@ let ceOpensData    = [];
 // these rank above opens everywhere the two appear together.
 let ceDemoMap      = new Map();   // companyKey → { count, demo, intro, last }
 let ceDemoData     = [];
+let ceOutreachStats = null;
 
 const CE_STAGES = ['Import','Queued','Contacted','Replied','Review','Done','Promoted','Unsubscribed'];
 
@@ -3398,10 +3421,11 @@ function setCeFilter(f) {
 
 async function loadCeLeads() {
   try {
-    const [ceResp, opensResp, demoResp] = await Promise.all([
+    const [ceResp, opensResp, demoResp, statsResp] = await Promise.all([
       fetch('/api/coldemail'),
       fetch('/api/proposalOpens'),
       fetch('/api/demoPlays'),
+      fetch('/api/coldemail/stats'),
     ]);
     if (!ceResp.ok) { showToast('Could not load cold email leads: ' + ceResp.status, 'error'); return; }
     ceLeads     = await ceResp.json();
@@ -3421,6 +3445,7 @@ async function loadCeLeads() {
     // ceCompanyKey), but carrying which clips were played and the most recent
     // timestamp. No scanner filter: see /api/demoPlays in server.js for why.
     ceDemoData = demoResp.ok ? await demoResp.json() : [];
+    ceOutreachStats = statsResp.ok ? await statsResp.json() : null;
     ceDemoMap  = new Map();
     for (const d of ceDemoData) {
       const key = ceCompanyKey(d.company);
@@ -3534,7 +3559,13 @@ function updateCeStats() {
   document.getElementById('ce-stat-total').textContent   = ceLeads.length;
   document.getElementById('ce-stat-queued').textContent  = ceLeads.filter(l => l.stage === 'Queued').length;
   document.getElementById('ce-stat-emailed').textContent = ceLeads.filter(l => l.emailStatus !== '').length;
-  document.getElementById('ce-stat-replied').textContent = ceLeads.filter(ceHasReplied).length;
+  const replyMetrics = ceOutreachStats?.replyMetrics;
+  document.getElementById('ce-stat-replied').textContent = replyMetrics?.totalReplies ?? ceLeads.filter(ceHasReplied).length;
+  document.getElementById('ce-stat-positive').textContent = replyMetrics?.positive ?? '–';
+  document.getElementById('ce-stat-negative').textContent = replyMetrics?.negative ?? '–';
+  document.getElementById('ce-stat-needs-human').textContent = replyMetrics?.needsHuman ?? '–';
+  document.getElementById('ce-stat-unclassified').textContent = replyMetrics?.unclassified ?? '–';
+  document.getElementById('ce-stat-positive-rate').textContent = replyMetrics ? `${replyMetrics.positiveReplyRate.toFixed(1)}%` : '–';
 
   // Opens: count only companies that match a lead (excludes orphaned open rows)
   // and only REAL opens — ceOpensMap already excludes scanner detonations, which
