@@ -227,6 +227,17 @@ async function recordColdCallActivity(record) {
   }
 }
 
+// How many ColdEmail rows share this address. resolvePromotionIdentity() fails
+// closed when an address is ambiguous across twins, but that guard only works
+// if it is told the count -- the server passes it, and until now the agent did
+// not, so the protection was inert on every automatic promotion path. Counting
+// from the lead array the caller already holds keeps it read-free.
+function coldEmailTwinCount(allLeads, email) {
+  const key = normEmail(email);
+  if (!key || !Array.isArray(allLeads)) return 1;
+  return allLeads.filter(row => normEmail(row.email) === key).length || 1;
+}
+
 async function upsertColdCallLeadFromEvent(lead, stage, note, options = {}) {
   if (!COLD_CALL_STAGE_IDS.has(stage)) return null;
   try {
@@ -1562,7 +1573,7 @@ async function isAlreadyPromoted(leadId) {
 // Idempotent: a lead whose notes already carry the Interested tag is skipped
 // entirely. Callers must not rely on lead.emailStatus — runReplyCheckPass sets
 // it to 'replied' in memory before dispatching here.
-async function handleInterested(lead, message = {}, replyText = '', eventType = 'positive_reply') {
+async function handleInterested(lead, message = {}, replyText = '', eventType = 'positive_reply', allLeads = null) {
   if ((lead.notes || '').includes(TAG_INTERESTED)) {
     console.log(`  ↺ ${lead.company} — already tagged Interested, skipping`);
     return;
@@ -1588,7 +1599,7 @@ async function handleInterested(lead, message = {}, replyText = '', eventType = 
   const coldCallLeadId = await upsertColdCallLeadFromEvent(
     lead, 'hot',
     `Auto-promoted from cold email outreach. Reply classified: ${eventType === 'meeting_requested' ? 'Meeting requested' : 'Interested'}.`,
-    { trigger: PROMOTION_TRIGGER.POSITIVE_REPLY },
+    { trigger: PROMOTION_TRIGGER.POSITIVE_REPLY, coldEmailTwinCount: coldEmailTwinCount(allLeads, lead.email) },
   );
   await recordColdCallActivity({
     eventId: message.messageId ? `gmail-reply:${message.messageId}` : `${lead.id}:reply:${message.occurredAt || Date.now()}`,
@@ -2004,8 +2015,8 @@ async function runReplyCheckPass(leads, todaySentOverride = null) {
           // confident, otherwise drafted for review. Both paths append the
           // warm booking snippet. todaySent enforces the touch cap.
           case 'QUESTION':       return handleQuestion(lead, replyText, replyPassTodaySent);
-          case 'INTERESTED':     return handleInterested(lead, message, replyText);
-          case 'MEETING_REQUEST': return handleInterested(lead, message, replyText, 'meeting_requested');
+          case 'INTERESTED':     return handleInterested(lead, message, replyText, 'positive_reply', leads);
+          case 'MEETING_REQUEST': return handleInterested(lead, message, replyText, 'meeting_requested', leads);
           case 'NOT_INTERESTED': return handleNotInterested(lead);
           case 'UNSUBSCRIBE':    return handleUnsubscribe(lead);
           case 'WRONG_PERSON':   return handleWrongPerson(lead);
@@ -2085,7 +2096,7 @@ async function runLateReplyCheckPass(leads) {
       if (result.classification === 'INTERESTED' || result.classification === 'MEETING_REQUEST') {
         const coldCallLeadId = await withAuth(() => upsertColdCallLeadFromEvent(
           lead, 'hot', 'Auto-promoted from a canonical late positive reply.',
-          { trigger: PROMOTION_TRIGGER.LATE_POSITIVE_REPLY },
+          { trigger: PROMOTION_TRIGGER.LATE_POSITIVE_REPLY, coldEmailTwinCount: coldEmailTwinCount(leads, lead.email) },
         ));
         if (coldCallLeadId) {
           const heldNotes = applyHoldToNotes(lead.notes || '');
@@ -2414,7 +2425,8 @@ async function runIntentTriggerPass(allLeads) {
       const coldCallLeadId = await upsertColdCallLeadFromEvent(
         lead, 'follow_up',
         'Demo pair played. Booking-link follow-up sent automatically.',
-        { trigger: PROMOTION_TRIGGER.VERIFIED_DEMO_PAIR, verifiedDemoPair: true, bookingLinkSent: true },
+        { trigger: PROMOTION_TRIGGER.VERIFIED_DEMO_PAIR, verifiedDemoPair: true, bookingLinkSent: true,
+          coldEmailTwinCount: coldEmailTwinCount(allLeads, lead.email) },
       );
       const timelineLeadId = coldCallLeadId || `CE-${lead.id}`;
       const play = plays.get(normalizeName(cleanCompanyName(lead.company))) || {};
