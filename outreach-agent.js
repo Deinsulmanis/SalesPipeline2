@@ -1928,7 +1928,7 @@ async function queueDraft(lead, answer) {
 
 // A genuine question. Answer it from the facts if we're confident; otherwise
 // draft it for Deins. Either way the lead is tagged so the dashboard shows it.
-async function handleQuestion(lead, replyText, todaySent, activities = []) {
+async function handleQuestion(lead, replyText, todaySent, activities = [], outboundObservationOk = true) {
   const rowNum = await resolveRow(lead.id);
   const answer = await answerQuestion(lead, replyText);
 
@@ -1938,8 +1938,17 @@ async function handleQuestion(lead, replyText, todaySent, activities = []) {
   let mode = answer.mode;
   let gateReason = '';
   if (mode === 'auto') {
+    const humanTouchAt = latestHumanOutboundAt(activities);
     const suppressed = suppressionReason(lead);
-    if (suppressed) {
+    if (!outboundObservationOk) {
+      mode = 'draft';
+      gateReason = 'manual outbound observation failed, so mailbox state may be stale';
+      answer.reason = `${answer.reason} — held: ${gateReason}`;
+    } else if (humanTouchAt) {
+      mode = 'draft';
+      gateReason = `a human response was already observed at ${humanTouchAt}`;
+      answer.reason = `${answer.reason} — held: ${gateReason}`;
+    } else if (suppressed) {
       mode = 'blocked';
       gateReason = `suppressed (${suppressed})`;
     } else if (todaySent >= DAILY_SEND_LIMIT) {
@@ -2063,7 +2072,7 @@ async function markRoofingReplyState(lead, stage, status, tag) {
   lead.notes = notes;
 }
 
-async function handleRoofingSurveyReply(lead, message, replyText, todaySent, activities = []) {
+async function handleRoofingSurveyReply(lead, message, replyText, todaySent, activities = [], outboundObservationOk = true) {
   if (!ROOFING_SURVEY_REPLY_FLOW_ENABLED) {
     await handleNeedsHuman(lead, message.fromAddr);
     return 'flow_disabled';
@@ -2109,7 +2118,10 @@ async function handleRoofingSurveyReply(lead, message, replyText, todaySent, act
       await markRoofingReplyState(lead, 'Review', 'replied', ROOFING_DRAFTED_TAG);
       return 'drafted';
     }
-    const blocked = suppressionReason(lead) || (!SENDING_ENABLED && 'sending disabled') || (todaySent >= DAILY_SEND_LIMIT && 'daily limit reached');
+    const humanTouchAt = latestHumanOutboundAt(activities);
+    const blocked = (!outboundObservationOk && 'manual outbound observation failed, so mailbox state may be stale')
+      || (humanTouchAt && `a human response was already observed at ${humanTouchAt}`)
+      || suppressionReason(lead) || (!SENDING_ENABLED && 'sending disabled') || (todaySent >= DAILY_SEND_LIMIT && 'daily limit reached');
     if (blocked) {
       await queueDraft(lead, { body, confidence: classification.confidence, reason: `roofing survey auto-reply blocked: ${blocked}`, campaignProfile: ROOFING_SURVEY_PROFILE, classification: classification.category, reasonCode: 'send_gate_blocked' });
       await markRoofingReplyState(lead, 'Review', 'replied', ROOFING_DRAFTED_TAG);
@@ -2145,7 +2157,7 @@ async function handleRoofingSurveyReply(lead, message, replyText, todaySent, act
 // are queued sends or follow-ups due. Fetches each emailed lead's reply body,
 // classifies it with Haiku, and routes to the appropriate handler. Mutates
 // lead.emailStatus in-place so selectFollowUps() excludes replied leads.
-async function runReplyCheckPass(leads, todaySentOverride = null) {
+async function runReplyCheckPass(leads, todaySentOverride = null, outboundObservationOk = true) {
   const candidates = leads.filter(l => l.emailStatus === 'emailed' && isValidEmail(l.email));
   if (!candidates.length) {
     console.log('[ReplyCheck] No emailed leads to check.\n');
@@ -2171,7 +2183,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null) {
       lead.emailStatus = 'replied';
       if (!DRY_RUN) {
         if (!attributionActivities) attributionActivities = await withAuth(() => readColdCallActivities());
-        await withAuth(() => handleRoofingSurveyReply(lead, message, replyText, replyPassTodaySent, attributionActivities));
+        await withAuth(() => handleRoofingSurveyReply(lead, message, replyText, replyPassTodaySent, attributionActivities, outboundObservationOk));
       }
       else console.log(`  ↩ Roofing survey reply from ${lead.email} (${company}) — no writes in dry run`);
       continue;
@@ -2192,7 +2204,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null) {
           // A genuine question is answered from product-facts.js when we're
           // confident, otherwise drafted for review. Both paths append the
           // warm booking snippet. todaySent enforces the touch cap.
-          case 'QUESTION':       return handleQuestion(lead, replyText, replyPassTodaySent, attributionActivities);
+          case 'QUESTION':       return handleQuestion(lead, replyText, replyPassTodaySent, attributionActivities, outboundObservationOk);
           case 'INTERESTED':     return handleInterested(lead, message, replyText, 'positive_reply', leads, attributionActivities);
           case 'MEETING_REQUEST': return handleInterested(lead, message, replyText, 'meeting_requested', leads, attributionActivities);
           case 'NOT_INTERESTED': return handleNotInterested(lead);
@@ -3260,9 +3272,18 @@ async function run() {
   console.log(`[cap] ${todaySent}/${DAILY_SEND_LIMIT} emails sent today (Vancouver time)`);
   const dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
 
+  // Observe manual Gmail replies before ANY pass that could auto-respond.
+  // The same activity snapshot is later used to derive ownership for recovery,
+  // intent and cold execution, so one provider observation protects them all.
+  const [ownershipBoard, ownershipActivities] = await Promise.all([
+    withAuth(readBoardLeads),
+    withAuth(readColdCallActivities).catch(() => []),
+  ]);
+  const outbound = await withAuth(() => runHumanOutboundPass(all, ownershipActivities));
+
   // Reply-check pass — unconditional; runs even when cap is reached.
   // Mutates emailStatus on replied leads so selectFollowUps excludes them below.
-  await runReplyCheckPass(all, todaySent);
+  await runReplyCheckPass(all, todaySent, outbound.ok);
 
   // Terminal replies are hosted by the same process only during the existing
   // scheduler's once-daily flag. Active polling above keeps its old cadence.
@@ -3278,12 +3299,6 @@ async function run() {
   // sends are evaluated. A message answered five minutes ago must be visible
   // to every automated execution path in this same cycle.
   //
-  // ONE read each for board and activity, then bounded Maps — no per-lead read.
-  const [ownershipBoard, ownershipActivities] = await Promise.all([
-    withAuth(readBoardLeads),
-    withAuth(readColdCallActivities).catch(() => []),
-  ]);
-  const outbound = await withAuth(() => runHumanOutboundPass(all, ownershipActivities));
   // FAIL-CLOSED FRESHNESS. A failed observation means the mailbox may have
   // moved without us. That is a reason to refuse automated SENDS, not a reason
   // to halt the whole agent: reply checks, bounce handling and the dashboard

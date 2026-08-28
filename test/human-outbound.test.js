@@ -205,6 +205,23 @@ test('outbound observation runs BEFORE send selection, and its writes are visibl
   assert.match(agent, /\(activitiesForCycle \|\| \[\]\)\.push\(/);
 });
 
+test('outbound observation precedes reply auto-response and recorded human touch blocks it', () => {
+  const agent = readSource(path.join(root, 'outreach-agent.js'));
+  const observe = agent.indexOf('const outbound = await withAuth(() => runHumanOutboundPass(all, ownershipActivities))');
+  const replies = agent.indexOf('await runReplyCheckPass(all, todaySent, outbound.ok)');
+  assert.ok(observe >= 0 && replies >= 0 && observe < replies);
+
+  const question = agent.slice(agent.indexOf('async function handleQuestion'), agent.indexOf('async function handleNeedsHuman'));
+  assert.match(question, /const humanTouchAt = latestHumanOutboundAt\(activities\)/);
+  assert.match(question, /if \(!outboundObservationOk\)/);
+  assert.ok(question.indexOf('humanTouchAt') < question.indexOf('await sendEmail('));
+
+  const roofing = agent.slice(agent.indexOf('async function handleRoofingSurveyReply'), agent.indexOf('// ── REPLY-CHECK PASS'));
+  assert.match(roofing, /const humanTouchAt = latestHumanOutboundAt\(activities\)/);
+  assert.match(roofing, /!outboundObservationOk/);
+  assert.ok(roofing.indexOf('humanTouchAt') < roofing.indexOf('await sendEmail('));
+});
+
 test('outbound observation runs before stage sequences and protects both send systems in the same cycle', () => {
   const agent = readSource(path.join(root, 'outreach-agent.js'));
   const observe = agent.indexOf('await withAuth(() => runHumanOutboundPass(all, ownershipActivities))');
@@ -236,10 +253,9 @@ test('a failed Gmail observation fails closed for sends only', () => {
   assert.match(agent, /return \{ ok: false, written: 0, error: error\.message \}/);
   assert.match(agent, /outboundObservationOk: outbound\.ok/);
   assert.match(agent, /manual outbound observation failed this pass — mailbox may be stale, failing closed/);
-  // Reply/bounce passes run BEFORE observation, so they are unaffected by it.
-  assert.ok(agent.indexOf('await runReplyCheckPass(all, todaySent)')
-    < agent.indexOf('runHumanOutboundPass(all, ownershipActivities)'),
-    'inbound handling must not depend on the outbound pass');
+  // Inbound detection still runs, but its auto-response branch receives the
+  // failed freshness verdict and degrades to a draft instead of sending.
+  assert.match(agent, /runReplyCheckPass\(all, todaySent, outbound\.ok\)/);
 });
 
 test('the observation is bounded: one list, no per-lead Gmail call', () => {

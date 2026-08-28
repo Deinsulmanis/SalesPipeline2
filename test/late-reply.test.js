@@ -61,7 +61,7 @@ function harness(classification = 'INTERESTED') {
 test('active emailed reply checking remains scoped to emailed leads', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
   assert.match(source, /leads\.filter\(l => l\.emailStatus === 'emailed' && isValidEmail\(l\.email\)\)/);
-  assert.match(source, /await runReplyCheckPass\(all, todaySent\)/);
+  assert.match(source, /await runReplyCheckPass\(all, todaySent, outbound\.ok\)/);
 });
 
 test('recent done lead with recorded Gmail identity is eligible', () => {
