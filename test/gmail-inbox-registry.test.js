@@ -66,3 +66,12 @@ test('dashboard inbox selector is status-only and never posts a sender choice', 
   assert.match(source, /inbox\.currentRoute \? '' : 'disabled'/);
   assert.doesNotMatch(source, /senderMailbox:\s*document\.getElementById\('gmail-inbox-select'/);
 });
+
+test('Settings restores visible sender status without inventing an inbox switch mutation', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  assert.match(source, /id="settings-inbox-routing"/);
+  assert.match(source, /fetch\('\/api\/integrations\/gmail-inboxes'\)/);
+  assert.match(source, /id="settings-inbox-select" disabled/);
+  assert.match(source, /Switching is unavailable because secondary inbox delivery is not implemented/);
+  assert.doesNotMatch(source, /fetch\(`?['"]\/api\/integrations\/gmail-inboxes\/switch/);
+});

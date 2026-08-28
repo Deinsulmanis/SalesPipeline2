@@ -6684,7 +6684,7 @@ function installWorkspaceShell() {
   inbox.insertAdjacentHTML('beforeend', '<div class="inbox-toolbar" id="inbox-toolbar"></div><p id="inbox-note" style="color:var(--text-muted);font-size:12px;margin:0 0 10px">An operational queue over the same canonical reply records Analytics measures — not a second count. Every inbound message appears here, including the automated and unattributable ones that Analytics deliberately keeps out of reply rates, so <b>All replies</b> equals <b>Inbound Messages</b> and is larger than <b>Genuine Replies</b>. Filters overlap: a message can be both Positive and Needs response.</p><div id="inbox-content" class="workspace-empty"><strong>Loading the reply queue…</strong>Canonical reply evidence is being prepared.</div>');
   sequences.insertAdjacentHTML('beforeend', '<div id="sequences-status" class="workspace-surface">Loading sequence status…</div>');
   bookings.insertAdjacentHTML('beforeend', '<div id="bookings-content" class="workspace-empty"><strong>Loading call lifecycle…</strong>Current meeting state is being prepared.</div>');
-  settings.insertAdjacentHTML('afterbegin', '<div id="settings-status" class="status-grid" style="margin-bottom:14px"></div>');
+  settings.insertAdjacentHTML('afterbegin', '<div id="settings-status" class="status-grid" style="margin-bottom:14px"></div><div id="settings-inbox-routing" class="workspace-surface" aria-live="polite"><div class="workspace-empty"><strong>Loading sender routing…</strong>Reading configured Gmail inbox status.</div></div>');
 
   document.body.appendChild(stage);
   // Relocate existing panels only after their workspace targets are connected.
@@ -6825,19 +6825,45 @@ async function loadBookingsWorkspace() {
 }
 
 async function loadSettingsWorkspace() {
-  const response = await fetch('/api/crm/ui-status');
+  const [response, inboxResponse] = await Promise.all([
+    fetch('/api/crm/ui-status'),
+    fetch('/api/integrations/gmail-inboxes'),
+  ]);
   const data = response.ok ? await response.json() : null;
+  const inboxData = inboxResponse.ok ? await inboxResponse.json() : null;
   const host = document.getElementById('settings-status');
-  if (!data) { host.innerHTML = '<div class="workspace-empty"><strong>Configuration unavailable</strong>The read-only status endpoint could not be loaded.</div>'; return; }
-  const cards = [
-    ['Cold outreach sending', data.sending.enabled, data.sending.enabled ? `Enabled · daily cap ${data.sending.dailyLimit || 'configured elsewhere'}` : 'Disabled'],
-    ['Stage sequences', data.stageSequences.enabled, data.stageSequences.enabled ? 'Enabled with canonical sender gates' : 'Disabled; no recovery sequence can send'],
-    ['Google Calendar sync', data.calendarSync.enabled, data.calendarSync.enabled ? 'Enabled' : 'Disabled; booking lifecycle remains available manually'],
-    ['Smartlead integration', data.smartlead.enabled, data.smartlead.liveMutations ? 'Enabled with live mutations' : 'Read-only or disabled'],
-    ['Roofing reply flow', data.roofingReplyFlow.enabled, data.roofingReplyFlow.enabled ? 'Enabled' : 'Disabled'],
-  ];
-  host.innerHTML = cards.map(([label,on,copy]) => `<div class="status-card"><div class="status-card-head"><b>${esc(label)}</b><span class="state-pill" data-on="${on}">${on ? 'Enabled' : 'Off'}</span></div><p>${esc(copy)}</p></div>`).join('');
+  if (!data) host.innerHTML = '<div class="workspace-empty"><strong>Configuration unavailable</strong>The read-only status endpoint could not be loaded.</div>';
+  else {
+    const cards = [
+      ['Cold outreach sending', data.sending.enabled, data.sending.enabled ? `Enabled · daily cap ${data.sending.dailyLimit || 'configured elsewhere'}` : 'Disabled'],
+      ['Stage sequences', data.stageSequences.enabled, data.stageSequences.enabled ? 'Enabled with canonical sender gates' : 'Disabled; no recovery sequence can send'],
+      ['Google Calendar sync', data.calendarSync.enabled, data.calendarSync.enabled ? 'Enabled' : 'Disabled; booking lifecycle remains available manually'],
+      ['Smartlead integration', data.smartlead.enabled, data.smartlead.liveMutations ? 'Enabled with live mutations' : 'Read-only or disabled'],
+      ['Roofing reply flow', data.roofingReplyFlow.enabled, data.roofingReplyFlow.enabled ? 'Enabled' : 'Disabled'],
+    ];
+    host.innerHTML = cards.map(([label,on,copy]) => `<div class="status-card"><div class="status-card-head"><b>${esc(label)}</b><span class="state-pill" data-on="${on}">${on ? 'Enabled' : 'Off'}</span></div><p>${esc(copy)}</p></div>`).join('');
+  }
+  renderSettingsInboxRouting(inboxData?.inboxes || null);
   document.getElementById('agent-panel').style.display = 'block';
+}
+
+function renderSettingsInboxRouting(inboxes) {
+  const host = document.getElementById('settings-inbox-routing');
+  if (!host) return;
+  if (!inboxes) {
+    host.innerHTML = '<div class="workspace-empty"><strong>Sender status unavailable</strong>No setting was changed. Refresh to try loading the configured inboxes again.</div>';
+    return;
+  }
+  const current = inboxes.find(inbox => inbox.currentRoute);
+  host.innerHTML = `<div class="status-card-head"><div><div class="workspace-eyebrow">Sender routing</div><h3 style="margin:4px 0">Active sending inbox</h3></div><span class="state-pill" data-on="${Boolean(current)}">${current ? 'Configured' : 'Unavailable'}</span></div>
+    <p style="color:var(--text-muted);font-size:12px;margin:6px 0 14px">The live sender uses the canonical primary Gmail configuration. Viewing this status does not send email or change any sending gate.</p>
+    <div class="form-group" style="margin-bottom:12px"><label for="settings-inbox-select">Configured sending accounts</label><select id="settings-inbox-select" disabled>${inboxes.length ? inboxes.map(inbox => `<option value="${escAttr(inbox.id)}" ${inbox.currentRoute ? 'selected' : ''}>${esc(inbox.email)}${inbox.currentRoute ? ' — Active sender' : ` — ${inbox.status}`}</option>`).join('') : '<option>No configured inboxes</option>'}</select><div style="font-size:11px;color:var(--text-muted);margin-top:6px">Switching is unavailable because secondary inbox delivery is not implemented. Configure the canonical sender outside the CRM before enabling another account.</div></div>
+    <div class="inbox-route-shell"><div class="inbox-route-head"><span class="inbox-route-kicker">Available accounts</span><span class="inbox-route-readonly">View only</span></div><div class="inbox-route-list">${inboxes.length ? inboxes.map(inbox => {
+      const unavailable = !inbox.currentRoute;
+      const label = inbox.currentRoute ? 'Selected' : `${inbox.status} · unavailable`;
+      const readiness = inbox.currentRoute ? `${inbox.dailyLimit}/day configured` : `${inbox.dailyLimit}/day · ${inbox.identityVerified ? 'Identity verified' : (inbox.credentialConfigured ? 'Credential ready' : 'Credential missing')}`;
+      return `<div class="inbox-route-row ${unavailable ? 'warming' : ''}"><span class="inbox-route-dot" aria-hidden="true"></span><div><div class="inbox-route-email">${esc(inbox.email)}</div><div class="inbox-route-meta">${esc(readiness)}</div></div><span class="inbox-route-badge">${esc(label)}</span></div>`;
+    }).join('') : '<div class="inbox-route-row"><div></div><div class="inbox-route-meta">No Gmail inboxes are configured.</div></div>'}</div></div>`;
 }
 
 window.addEventListener('hashchange', () => setWorkspace(location.hash.slice(1) || 'pipeline', { replace: true }));
