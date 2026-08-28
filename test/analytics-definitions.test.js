@@ -392,3 +392,27 @@ test('28. the table filter understands the genuine union too', () => {
   const genuine = rows.filter(row => GENUINE_REPLY_CATEGORIES.includes(row.replyCategory));
   assert.deepEqual(genuine.map(r => r.replyCategory), ['positive', 'needs_human']);
 });
+
+test('29. esc survives numbers, so a non-empty cohort can actually render', () => {
+  // Production shipped a funnel that worked only while every count was zero.
+  // esc(s) did (s || '').replace(...): esc(0) worked because 0 is falsy, and
+  // esc(950) threw TypeError. The default cohort is the current measured
+  // version, which is empty, so nothing ever exercised the failing branch —
+  // and selecting Lifetime reported "Campaign analytics unavailable" while the
+  // endpoint was returning 200 with correct data.
+  const body = sliceFn(browser, 'esc');
+  assert.ok(body.includes('String(s)'), 'esc must stringify before replacing');
+  assert.ok(!/\(s \|\| ''\)\.replace/.test(body));
+  const esc = new Function('s', body.slice(body.indexOf('{') + 1));
+  assert.equal(esc(950), '950');
+  assert.equal(esc(0), '0');
+  assert.equal(esc(null), '');
+  assert.equal(esc(undefined), '');
+  assert.equal(esc('<b>&</b>'), '&lt;b&gt;&amp;&lt;/b&gt;');
+});
+
+test('30. a funnel render failure is not reported as an unreachable endpoint', () => {
+  const body = sliceFn(browser, 'loadFunnelAnalytics');
+  assert.ok(body.includes('could not be rendered'), 'a render crash must say it is a render crash');
+  assert.ok(/try \{ renderFunnelAnalytics/.test(body), 'render must have its own guard, separate from the fetch');
+});

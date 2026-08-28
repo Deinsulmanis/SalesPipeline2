@@ -5116,7 +5116,15 @@ async function loadFunnelAnalytics() {
   try {
     const response = await fetch('/api/coldemail/funnel?' + funnelQuery());
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    funnelAnalytics = await response.json(); renderFunnelAnalytics(funnelAnalytics);
+    funnelAnalytics = await response.json();
+    // Rendered OUTSIDE the fetch guard. Folding both into one catch is what let
+    // a render crash masquerade as an unreachable endpoint for so long.
+    try { renderFunnelAnalytics(funnelAnalytics); }
+    catch (renderError) {
+      document.getElementById('ce-funnel-sample').textContent = `Campaign analytics loaded but could not be rendered: ${renderError.message}`;
+      console.error('[funnel render]', renderError);
+      return;
+    }
   } catch (error) {
     document.getElementById('ce-funnel-sample').textContent = 'Campaign analytics unavailable; operational data is unaffected.';
   } finally { host.removeAttribute('aria-busy'); }
@@ -6290,7 +6298,12 @@ function escAttr(s) {
 }
 
 function esc(s) {
-  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  // String() rather than (s || ''): a NUMBER has no .replace, so esc(950) threw
+  // while esc(0) silently worked because 0 is falsy. That is why the funnel
+  // rendered fine for the empty current-campaign cohort and died the moment a
+  // real cohort with 950 sent leads was selected — the render throw was caught
+  // by loadFunnelAnalytics and reported as "Campaign analytics unavailable".
+  return (s === null || s === undefined ? '' : String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 function toggleCeRow(cb) {
