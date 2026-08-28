@@ -319,3 +319,33 @@ test('non-proposed plans are ignored entirely', async () => {
   assert.equal(result.written, 1);
   assert.equal(sink.written[0].sourceLeadId, 'a');
 });
+
+test('a fully-applied plan reports completion, not drift', async () => {
+  // After a successful apply the planner reports leads as already_reconciled,
+  // so the regenerated manifest is legitimately empty. That must read as
+  // "finished", not as "someone changed the approved set" — the two need
+  // different answers, and only one of them is a reason to stop and re-review.
+  const plans = [plan('a', ['m1', 'm2'])];
+  const approved = approvedFor(plans);
+  const store = [];
+  const append = async record => { store.push(record); };
+
+  await applyReconciliation({ plans, approved, existingActivities: store, appendActivity: append, apply: true });
+  assert.equal(store.length, 2);
+
+  // Replay with the planner's post-apply view: nothing proposed any more.
+  const settled = [{ status: RECONCILE_STATUS.ALREADY_RECONCILED, leadId: 'a', email: 'a@clinic.test', proposedEvents: [] }];
+  const replay = await applyReconciliation({
+    plans: settled, approved, existingActivities: store, appendActivity: append, apply: true,
+  });
+  assert.equal(replay.alreadyComplete, true);
+  assert.equal(replay.written, 0);
+  assert.equal(replay.skippedExisting, 2);
+  assert.equal(store.length, 2, 'and still nothing duplicated');
+
+  // A genuinely DRIFTED plan still aborts — completion must not mask it.
+  const drifted = [plan('b', ['m9'])];
+  await assert.rejects(
+    () => applyReconciliation({ plans: drifted, approved, existingActivities: store, appendActivity: append, apply: true }),
+    err => err.reason === ABORT_REASON.PLAN_DRIFT);
+});

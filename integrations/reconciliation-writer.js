@@ -144,6 +144,41 @@ async function applyReconciliation({
     }
   }
 
+  // Provider messages already recorded anywhere in the activity log.
+  const recorded = new Set();
+  for (const row of existingActivities) {
+    const id = String(row.eventId || '');
+    if (id.startsWith('gmail-reply:')) recorded.add(id.slice('gmail-reply:'.length));
+    try {
+      const messageId = JSON.parse(row.metadata || '{}').gmailMessageId;
+      if (messageId) recorded.add(String(messageId));
+    } catch (_) { /* malformed metadata is reported by health, not repaired here */ }
+  }
+
+  // ALREADY DONE is not DRIFT.
+  //
+  // Once a plan has been applied, the planner reports its leads as
+  // "already_reconciled" rather than "proposed", so the regenerated manifest is
+  // legitimately empty. Comparing that against the approved manifest would read
+  // as drift and abort — which is safe but wrong, because it tells an operator
+  // "someone changed the set" when the truth is "this is finished". A replay
+  // has to be able to say so.
+  const approvedMessageIds = sortedUnique(approved.messageIds || []);
+  const fullyApplied = approvedMessageIds.length > 0
+    && approvedMessageIds.every(id => recorded.has(id));
+  if (fullyApplied && !planManifest(plans).messageIds.length) {
+    return {
+      applied: Boolean(apply),
+      alreadyComplete: true,
+      comparison: compareToApproved(plans, approved),
+      results: approvedMessageIds.map(messageId => ({ messageId, outcome: WRITE_OUTCOME.SKIPPED_EXISTING })),
+      written: 0,
+      skippedExisting: approvedMessageIds.length,
+      wouldWrite: 0,
+      leadsTouched: sortedUnique(approved.leadIds || []).length,
+    };
+  }
+
   // Then authorisation: is this still the set a human reviewed?
   const comparison = compareToApproved(plans, approved);
   if (!comparison.diff.matches) {
@@ -175,17 +210,6 @@ async function applyReconciliation({
   }
 
   // ── PHASE 2: WRITE ───────────────────────────────────────────────────────
-  // Provider messages already recorded anywhere in the activity log.
-  const recorded = new Set();
-  for (const row of existingActivities) {
-    const id = String(row.eventId || '');
-    if (id.startsWith('gmail-reply:')) recorded.add(id.slice('gmail-reply:'.length));
-    try {
-      const messageId = JSON.parse(row.metadata || '{}').gmailMessageId;
-      if (messageId) recorded.add(String(messageId));
-    } catch (_) { /* malformed metadata is reported by health, not repaired here */ }
-  }
-
   const results = [];
   for (const plan of proposed) {
     for (const event of plan.proposedEvents || []) {
