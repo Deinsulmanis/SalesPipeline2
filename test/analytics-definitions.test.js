@@ -356,3 +356,13 @@ test('25. the Settings agent summary uses the same names as the analytics surfac
   assert.ok(!/>Total Replies</.test(block) && !/>Emailed</.test(block));
   assert.ok(!/>Emailed</.test(browser), 'no surface may still say the ambiguous "Emailed"');
 });
+
+test('26. an empty measured cohort says why it is empty instead of showing dashes', () => {
+  const body = sliceFn(browser, 'renderFunnelAnalytics');
+  assert.ok(/No leads in this cohort/.test(body));
+  assert.ok(/predates the measured boundary/.test(body) || /predate the measured boundary/.test(body));
+  // Production reality this guards: the default view is the current measured
+  // version, all 950 historical sends are legacy_unknown, so the honest funnel
+  // is empty — and an unexplained empty funnel reads as a broken one.
+  assert.ok(body.includes('Legacy / Unknown') && body.includes('Lifetime'));
+});

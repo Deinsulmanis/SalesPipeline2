@@ -5130,7 +5130,15 @@ function syncFunnelFacet(id, values, emptyLabel) {
 
 function renderFunnelAnalytics(data) {
   const c = data.counts || {}, r = data.conversions || {};
-  document.getElementById('ce-funnel-sample').textContent = `${c.sent || 0} unique sent leads · cohort by first qualifying send · ${Number(data.generatedMs || 0).toFixed(1)} ms`;
+  // An empty cohort must explain itself. The default view is the CURRENT
+  // measured campaign version, and every historical send predates the measured
+  // boundary — so it renders as a grid of dashes that reads like a broken
+  // funnel rather than what it is: no lead has been sent under this version yet.
+  const sample = document.getElementById('ce-funnel-sample');
+  const timing = `${Number(data.generatedMs || 0).toFixed(1)} ms`;
+  sample.textContent = (c.sent || 0) === 0
+    ? `No leads in this cohort — nothing has been sent under this campaign version. Historical outreach predates the measured boundary and is counted under Legacy / Unknown or Lifetime. · ${timing}`
+    : `${c.sent} unique sent leads · cohort by first qualifying send · ${timing}`;
   syncFunnelFacet('funnel-angle', data.facets?.angles, 'All angles');
   syncFunnelFacet('funnel-subject', data.facets?.subjectStrategies, 'All subject strategies');
   syncFunnelFacet('funnel-family', data.facets?.families, 'All campaign families');
