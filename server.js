@@ -23,7 +23,7 @@ const {
   GENUINE_REPLY_CATEGORIES,
 } = require('./integrations/reply-analytics');
 const { parseRegistry: parseGmailInboxRegistry, publicRegistry: publicGmailInboxRegistry, verifyInbox: verifyGmailInbox } = require('./integrations/gmail-inbox-registry');
-const { EMAIL_TEMPLATES, normalizeNiche, validateRoute } = require('./integrations/campaign-routing');
+const { EMAIL_TEMPLATES, normalizeNiche, campaignVersionsForRoute, validateCampaignVersionRoute, validateRoute } = require('./integrations/campaign-routing');
 const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE, qualifyLead: qualifyRoofingLead } = require('./integrations/roofing-survey-profile');
 const {
   COLD_CALL_ACTIVITY_SHEET,
@@ -394,8 +394,9 @@ const CE_COLUMNS    = [
   'campaign','campaign_notes',                                        // Q R
   'enrichment_attempted',                                             // S
   'leadNiche','senderInboxId','emailTemplateId','routingRequired',     // T U V W
+  'intendedCampaignVersion',                                          // X
 ];
-const CE_COL_RANGE  = `${CE_SHEET_NAME}!A:W`;
+const CE_COL_RANGE  = `${CE_SHEET_NAME}!A:X`;
 
 // ── GLOBAL SUPPRESSION LIST ───────────────────────────────────────────────────
 // Durable, email-keyed opt-out record shared with outreach-agent.js. Checked at
@@ -982,7 +983,7 @@ async function ensureColdEmailSheet() {
     ceSheetChecked = true;
     const hResp = await s.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range:         `${CE_SHEET_NAME}!A1:W1`,
+      range:         `${CE_SHEET_NAME}!A1:X1`,
     });
     const existingHdr = hResp.data.values?.[0] || [];
     // Repair if header is missing, wrong, or shorter than CE_COLUMNS (new columns added)
@@ -1029,12 +1030,12 @@ async function findCERow(id) {
 
 // Dashboard list reads deliberately skip column P (siteContext). That scrape
 // cache is used only by the sending agent, which reads the sheet directly.
-// A blank placeholder preserves the existing A:W object shape without moving
+// A blank placeholder preserves the existing A:X object shape without moving
 // or modifying any Google Sheets data.
 async function readColdEmailDashboardRows() {
   const response = await sheets().spreadsheets.values.batchGet({
     spreadsheetId: SPREADSHEET_ID,
-    ranges: [`${CE_SHEET_NAME}!A:O`, `${CE_SHEET_NAME}!Q:W`],
+    ranges: [`${CE_SHEET_NAME}!A:O`, `${CE_SHEET_NAME}!Q:X`],
   });
   const left = response.data.valueRanges?.[0]?.values || [];
   const right = response.data.valueRanges?.[1]?.values || [];
@@ -1907,7 +1908,7 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
           tier: row.tier || '',         siteContext: row.siteContext || '',
           campaign: campaignName, campaign_notes: campaignNotes,
           enrichment_attempted: '',   // never attempted — enrich-names.js will pick these up
-          leadNiche, senderInboxId: '', emailTemplateId: '', routingRequired: 'true',
+          leadNiche, senderInboxId: '', emailTemplateId: '', routingRequired: 'true', intendedCampaignVersion: '',
         };
         toAdd.push(CE_COLUMNS.map(col => String(lead[col] ?? '')));
       }
@@ -2544,7 +2545,7 @@ app.post('/api/leads/:id/contact-change', requireAuth, async (req, res) => {
     const [leadResponse, activityRows, ceResponse, boardResponse, suppressedEmails] = await Promise.all([
       sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${rowNum}:W${rowNum}` }),
       readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER),
-      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:W` }),
+      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:X` }),
       sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: AGENT_READ_RANGE }),
       loadSuppressionEmails(),
     ]);
@@ -3479,6 +3480,7 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
   const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(value => String(value || '').trim()).filter(Boolean))];
   const senderInboxId = String(req.body?.senderInboxId || '').trim();
   const emailTemplateId = String(req.body?.emailTemplateId || '').trim();
+  const campaignVersionId = String(req.body?.campaignVersionId || '').trim();
   if (!ids.length || ids.length > 500) return res.status(422).json({ error: 'Select between 1 and 500 leads' });
   try {
     const result = await withAuth(async () => {
@@ -3497,6 +3499,10 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
         if (lead.emailStatus || ['Replied','Done','Promoted','Unsubscribed'].includes(lead.stage)) return { error: `${lead.company || lead.email} is not eligible to queue`, status: 409 };
         const route = validateRoute({ niche: lead.leadNiche || lead.tradeType, senderInboxId, emailTemplateId, inboxes });
         if (!route.ok) return { error: route.reason, status: 422 };
+        const versionRoute = validateCampaignVersionRoute({
+          niche: lead.leadNiche || lead.tradeType, emailTemplateId, campaignVersionId,
+        });
+        if (!versionRoute.ok) return { error: versionRoute.reason, status: 422 };
         if (emailTemplateId === ROOFING_SURVEY_TEMPLATE) {
           const qualification = qualifyRoofingLead(lead);
           if (!qualification.ok) return { error: `${lead.company || lead.email} does not have enough roofing-business evidence`, status: 422 };
@@ -3505,21 +3511,23 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
       const queuedAt = new Date().toISOString();
       const queueActivities = [];
       const data = selected.map(({ lead, rowNumber }) => {
-        const changed = lead.stage !== 'Queued' || lead.senderInboxId !== senderInboxId || lead.emailTemplateId !== emailTemplateId;
-        lead.stage = 'Queued'; lead.senderInboxId = senderInboxId; lead.emailTemplateId = emailTemplateId; lead.routingRequired = 'true';
+        const changed = lead.stage !== 'Queued' || lead.senderInboxId !== senderInboxId
+          || lead.emailTemplateId !== emailTemplateId || lead.intendedCampaignVersion !== campaignVersionId;
+        lead.stage = 'Queued'; lead.senderInboxId = senderInboxId; lead.emailTemplateId = emailTemplateId;
+        lead.routingRequired = 'true'; lead.intendedCampaignVersion = campaignVersionId;
         if (changed) queueActivities.push({
-          eventId: stableActivityId('lead-queued', [lead.id, senderInboxId, emailTemplateId, queuedAt]),
+          eventId: stableActivityId('lead-queued', [lead.id, senderInboxId, campaignVersionId, emailTemplateId, queuedAt]),
           leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email || '', company: lead.company || '',
           eventType: 'lead_queued', occurredAt: queuedAt, subject: 'Queued for outreach', content: '',
-          metadata: JSON.stringify({ senderInboxId, emailTemplateId, campaign: lead.campaign || '', trigger: 'outreach_queue' }),
+          metadata: JSON.stringify({ senderInboxId, intendedCampaignVersion: campaignVersionId, emailTemplateId, campaign: lead.campaign || '', trigger: 'outreach_queue' }),
         });
-        return { range: `${CE_SHEET_NAME}!A${rowNumber}:W${rowNumber}`, values: [CE_COLUMNS.map(field => String(lead[field] ?? ''))] };
+        return { range: `${CE_SHEET_NAME}!A${rowNumber}:X${rowNumber}`, values: [CE_COLUMNS.map(field => String(lead[field] ?? ''))] };
       });
       await sheets().spreadsheets.values.batchUpdate({ spreadsheetId: SPREADSHEET_ID, requestBody: { valueInputOption: 'RAW', data } });
       try { await appendColdCallActivities(queueActivities); }
       catch (activityError) { console.warn('[ColdEmail Queue] queued, activity append failed:', activityError.message); }
       ceRowMap.clear();
-      return { queued: selected.length, senderInboxId, emailTemplateId };
+      return { queued: selected.length, senderInboxId, campaignVersionId, emailTemplateId };
     });
     if (result.error) return res.status(result.status).json({ error: result.error });
     res.json(result);
@@ -4002,7 +4010,16 @@ app.get('/api/integrations/gmail-inboxes', requireAuth, (_req, res) => {
 });
 
 app.get('/api/outreach/routing-options', requireAuth, (_req, res) => {
-  try { res.json({ niches: ['dental','roofing'], inboxes: gmailInboxOptions(), templates: EMAIL_TEMPLATES }); }
+  try {
+    const versions = ['dental','roofing'].flatMap(niche => campaignVersionsForRoute({ niche }))
+      .map(version => ({
+        id: version.id, label: version.label, niche: version.niche, family: version.family,
+        emailTemplateId: version.emailTemplateId, copyVersion: version.copyVersion,
+        subjectStrategy: version.subjectStrategy, personalizationStrategy: version.personalizationStrategy,
+        offerVersion: version.offerVersion, status: version.status,
+      }));
+    res.json({ niches: ['dental','roofing'], inboxes: gmailInboxOptions(), versions, templates: EMAIL_TEMPLATES });
+  }
   catch (error) { res.status(500).json({ error: error.message }); }
 });
 

@@ -27,6 +27,13 @@ test('active measured campaign is defined and immutable', () => {
   assert.equal(Object.isFrozen(CAMPAIGN_VERSIONS), true);
 });
 test('undefined campaign version is rejected', () => assert.throws(() => campaignVersion('missing'), /Unknown campaign version/));
+
+test('an intended compatible version is honored but queued state alone is not acquisition evidence', () => {
+  const selected = coldSendAttribution({ leadNiche: 'dental', emailTemplateId: 'dental-guarantee-v1', intendedCampaignVersion: 'dental_v1_measured' }, 1);
+  assert.equal(selected.campaignVersion, 'dental_v1_measured');
+  assert.throws(() => coldSendAttribution({ leadNiche: 'dental', emailTemplateId: 'dental-guarantee-v1', intendedCampaignVersion: 'roofing_survey_v1_measured' }, 1), /incompatible/);
+  assert.equal(buildCampaignVersionIndex([{ id: 'queued-only', intendedCampaignVersion: 'dental_v1_measured' }], []).get('queued-only').campaignVersion, LEGACY_UNKNOWN);
+});
 test('cold initial attribution stamps mandatory fields and personalization', () => {
   const value = coldSendAttribution({ leadNiche: 'dental' }, 1, { personalizationMetadata: { profileVersion: 'hp-v1', personalizationLevel: 2, selectedAngle: 'implants' } });
   assert.equal(value.campaignVersion, 'dental_v1_measured');
@@ -62,6 +69,10 @@ test('acquisition reads the first canonical promotion attribution', () => {
 test('lightweight campaign index uses activities without external reads', () => {
   assert.equal(buildCampaignVersionIndex([{ id: 'l1' }, { id: 'l2' }], [activity()]).get('l1').campaignVersion, 'dental_v1_measured');
   assert.equal(buildCampaignVersionIndex([{ id: 'l2' }], []).get('l2').campaignVersion, LEGACY_UNKNOWN);
+});
+test('changing an intended route cannot rewrite historical send attribution', () => {
+  const lead = { id: 'l1', intendedCampaignVersion: 'roofing_survey_v1_measured' };
+  assert.equal(buildCampaignVersionIndex([lead], [activity()]).get('l1').campaignVersion, 'dental_v1_measured');
 });
 test('version filtering is server-side and composes with reply filtering', () => {
   assert.match(server, /query\.campaignVersion/); assert.match(server, /row\.campaignVersion !== campaignVersion/);

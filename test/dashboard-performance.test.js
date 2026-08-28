@@ -9,14 +9,14 @@ const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 const browser = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 
 test('dashboard lead list skips siteContext without changing the sheet or sending agent', () => {
-  assert.match(server, /ranges: \[`\$\{CE_SHEET_NAME\}!A:O`, `\$\{CE_SHEET_NAME\}!Q:W`\]/);
+  assert.match(server, /ranges: \[`\$\{CE_SHEET_NAME\}!A:O`, `\$\{CE_SHEET_NAME\}!Q:X`\]/);
   assert.match(server, /length: 15[^\n]+left\[index\]\?\.\[column\]/);
   assert.match(server, /length: 7[^\n]+right\[index\]\?\.\[column\]/);
   // Still the single reader for the lead list — now called once by the shared
   // outreach snapshot rather than per request.
   assert.match(server, /readColdEmailDashboardRows\(\),/);
   assert.doesNotMatch(browser, /siteContext[^\n]+renderCeTable/);
-  assert.match(fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8'), /const READ_RANGE\s*=\s*`\$\{SHEET_NAME\}!A:W`/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8'), /const READ_RANGE\s*=\s*`\$\{SHEET_NAME\}!A:X`/);
 });
 
 test('engagement lookup no longer costs a second ColdEmail read', () => {

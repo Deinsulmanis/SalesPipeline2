@@ -179,7 +179,7 @@ const PROPOSAL_BASE    = (/^https?:\/\//i.test(_rawProposalBase) ? _rawProposalB
 const MIN_DELAY = 45 * 1000;
 const MAX_DELAY = 120 * 1000;
 
-// ColdEmail columns A:W — must stay in sync with CE_COLUMNS in server.js
+// ColdEmail columns A:X — must stay in sync with CE_COLUMNS in server.js
 //   A=id  B=company  C=contactName  D=email  E=city  F=tradeType  G=website
 //   H=stage  I=emailStatus  J=lastEmailedAt  K=emailStep  L=notes
 //   M=reviewCount  N=rating  O=tier  P=siteContext
@@ -187,10 +187,10 @@ const COLUMNS = [
   'id','company','contactName','email','city','tradeType','website',
   'stage','emailStatus','lastEmailedAt','emailStep','notes',
   'reviewCount','rating','tier','siteContext','campaign','campaign_notes','enrichment_attempted',
-  'leadNiche','senderInboxId','emailTemplateId','routingRequired',
+  'leadNiche','senderInboxId','emailTemplateId','routingRequired','intendedCampaignVersion',
 ];
 const AGENT_COLS  = []; // integrated into COLUMNS for ColdEmail
-const READ_RANGE  = `${SHEET_NAME}!A:W`;
+const READ_RANGE  = `${SHEET_NAME}!A:X`;
 const CAMPAIGN_INTEGRATIONS_SHEET = 'CampaignIntegrations';
 const PROVIDER_LEADS_SHEET = 'ProviderLeadMappings';
 let CAMPAIGN_PROVIDERS = new Map();
@@ -723,7 +723,7 @@ async function recordColdCallActivityStrict(record) {
 async function readBoardLeads() {
   try {
     const response = await sheets().spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A:W`,
+      spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A:X`,
     });
     const rows = response.data.values || [];
     const header = ['id', 'type', 'first', 'last', 'brokerage', 'tradeType', 'company',

@@ -10,6 +10,9 @@ const LEGACY_UNKNOWN = 'legacy_unknown';
 const CAMPAIGN_VERSIONS = Object.freeze({
   dental_v1_measured: Object.freeze({
     id: 'dental_v1_measured',
+    label: 'Dental V1 — Measured',
+    niche: 'dental',
+    emailTemplateId: 'dental-guarantee-v1',
     family: 'dental_ai_receptionist',
     copyVersion: 'dental_risk_reversal_hp_v1',
     subjectStrategy: 'service_curiosity_v1',
@@ -20,7 +23,8 @@ const CAMPAIGN_VERSIONS = Object.freeze({
     meaning: 'Current evidence-backed hyper-personalized dental body, service-curiosity subjects, three-patient/30-day risk reversal, and final assembly validation.',
   }),
   roofing_survey_v1_measured: Object.freeze({
-    id: 'roofing_survey_v1_measured', family: 'roofing_survey',
+    id: 'roofing_survey_v1_measured', label: 'Roofing Survey V1 — Measured',
+    niche: 'roofing', emailTemplateId: 'roofing-survey-v1', family: 'roofing_survey',
     copyVersion: 'roofing_survey_reply_first_v1', subjectStrategy: 'roofing_question_v1',
     personalizationStrategy: 'locked_template_v1', offerVersion: 'none',
     activatedAt: '2026-08-27T20:31:18.220Z', status: 'active',
@@ -55,9 +59,14 @@ function campaignVersion(id) {
 
 function activeVersionForLead(lead = {}) {
   const family = familyForLead(lead);
-  const id = ACTIVE_CAMPAIGN_VERSION[family];
+  const id = String(lead.intendedCampaignVersion || '').trim() || ACTIVE_CAMPAIGN_VERSION[family];
   if (!id) throw new Error(`No active campaign version for ${family}`);
-  return campaignVersion(id);
+  const version = campaignVersion(id);
+  if (version.family !== family) throw new Error(`Campaign version ${id} is incompatible with ${family}`);
+  if (version.emailTemplateId && lead.emailTemplateId && version.emailTemplateId !== lead.emailTemplateId) {
+    throw new Error(`Campaign version ${id} is incompatible with template ${lead.emailTemplateId}`);
+  }
+  return version;
 }
 
 function coldSendAttribution(lead = {}, step = 1, sendMeta = {}) {

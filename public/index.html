@@ -2564,8 +2564,10 @@
     <div class="modal-header"><div><div class="modal-title" id="queue-route-title">Choose sending route</div><div id="queue-route-summary" style="font-size:11px;color:var(--text-muted);margin-top:3px"></div></div><button class="modal-close" onclick="closeQueueRouteModal()" aria-label="Close">✕</button></div>
     <div class="form-grid" style="padding:20px 24px 0">
       <div class="form-group full"><label for="queue-route-inbox">Sending inbox</label><select id="queue-route-inbox"></select></div>
+      <div class="form-group full"><label for="queue-route-version">Campaign / version</label><select id="queue-route-version"></select><div style="font-size:11px;color:var(--text-muted);margin-top:6px">This locks the intended route. Acquisition attribution is recorded only after a successful send.</div></div>
       <div class="form-group full"><label for="queue-route-template">Email copy</label><select id="queue-route-template"></select></div>
       <div class="form-group full"><div id="queue-route-line" class="inbox-route-shell" style="padding:12px;font-size:12px;color:var(--text-secondary)">Choose an inbox and email copy.</div></div>
+      <div id="queue-route-attribution" class="form-group full" style="font-size:11px;color:var(--text-muted)"></div>
       <div id="queue-route-error" class="form-group full" role="alert" style="min-height:18px;font-size:12px;color:var(--hot)"></div>
     </div>
     <div class="form-actions"><button type="button" class="btn-cancel" onclick="closeQueueRouteModal()">Cancel</button><button type="button" class="btn-save" onclick="confirmQueueRoute()">Queue leads</button></div>
@@ -6361,23 +6363,46 @@ async function openQueueRouteModal(ids) {
   try {
     const options = await loadOutreachRoutingOptions();
     const inboxSelect = document.getElementById('queue-route-inbox');
+    const versionSelect = document.getElementById('queue-route-version');
     const templateSelect = document.getElementById('queue-route-template');
     inboxSelect.innerHTML = '<option value="">Choose sending inbox…</option>' + options.inboxes.map(inbox => `<option value="${escAttr(inbox.id)}" ${inbox.sendEligible && inbox.deliveryImplemented ? '' : 'disabled'}>${esc(inbox.email)} — ${inbox.currentRoute ? 'Current' : inbox.status}${inbox.sendEligible && inbox.deliveryImplemented ? '' : ' (unavailable)'}</option>`).join('');
-    templateSelect.innerHTML = '<option value="">Choose email copy…</option>' + options.templates.filter(template => template.niche === niche).map(template => `<option value="${escAttr(template.id)}" ${template.ready ? '' : 'disabled'}>${esc(template.name)}${template.ready ? '' : ' — copy required'}</option>`).join('');
+    versionSelect.innerHTML = '<option value="">Choose campaign version…</option>' + options.versions.filter(version => version.niche === niche).map(version => `<option value="${escAttr(version.id)}">${esc(version.label)}</option>`).join('');
+    templateSelect.innerHTML = '<option value="">Choose a campaign version first…</option>';
     inboxSelect.onchange = updateQueueRouteLine;
+    versionSelect.onchange = updateQueueRouteCompatibility;
     templateSelect.onchange = updateQueueRouteLine;
     updateQueueRouteLine();
   } catch (e) { error.textContent = e.message; }
 }
 
+function updateQueueRouteCompatibility() {
+  const versionId = document.getElementById('queue-route-version').value;
+  const templateSelect = document.getElementById('queue-route-template');
+  const lead = ceLeads.find(item => item.id === queueRouteIds[0]);
+  const niche = lead ? normalizedRouteNiche(lead) : '';
+  const version = outreachRoutingOptions?.versions?.find(item => item.id === versionId);
+  const compatible = (outreachRoutingOptions?.templates || []).filter(template => template.niche === niche && (!version || template.id === version.emailTemplateId));
+  templateSelect.innerHTML = '<option value="">Choose email copy…</option>' + compatible.map(template => `<option value="${escAttr(template.id)}" ${template.ready ? '' : 'disabled'}>${esc(template.name)}${template.ready ? '' : ' — unavailable'}</option>`).join('');
+  const ready = compatible.filter(template => template.ready);
+  if (version && ready.length === 1) templateSelect.value = ready[0].id;
+  updateQueueRouteLine();
+}
+
 function updateQueueRouteLine() {
   const inbox = document.getElementById('queue-route-inbox');
+  const versionSelect = document.getElementById('queue-route-version');
   const template = document.getElementById('queue-route-template');
   const lead = ceLeads.find(item => item.id === queueRouteIds[0]);
   const niche = lead ? normalizedRouteNiche(lead) : 'Lead type';
   const inboxText = inbox.selectedOptions[0]?.textContent || 'Inbox';
+  const versionText = versionSelect.selectedOptions[0]?.textContent || 'Campaign version';
   const templateText = template.selectedOptions[0]?.textContent || 'Email copy';
-  document.getElementById('queue-route-line').textContent = `${niche} → ${templateText} → ${inboxText}`;
+  const source = lead?.campaign || 'Unlabeled';
+  document.getElementById('queue-route-line').textContent = `${queueRouteIds.length} lead${queueRouteIds.length === 1 ? '' : 's'} · ${source} · ${niche} → ${versionText} → ${templateText} → ${inboxText}`;
+  const version = outreachRoutingOptions?.versions?.find(item => item.id === versionSelect.value);
+  document.getElementById('queue-route-attribution').textContent = version
+    ? `Copy ${version.copyVersion} · Subject ${version.subjectStrategy} · Personalization ${version.personalizationStrategy} · Offer ${version.offerVersion}`
+    : 'Choose a campaign version to review its canonical attribution facets.';
 }
 
 function closeQueueRouteModal(e) {
@@ -6388,11 +6413,12 @@ function closeQueueRouteModal(e) {
 
 async function confirmQueueRoute() {
   const senderInboxId = document.getElementById('queue-route-inbox').value;
+  const campaignVersionId = document.getElementById('queue-route-version').value;
   const emailTemplateId = document.getElementById('queue-route-template').value;
   const error = document.getElementById('queue-route-error');
-  if (!senderInboxId || !emailTemplateId) { error.textContent = 'Choose both a sending inbox and email copy.'; return; }
+  if (!senderInboxId || !campaignVersionId || !emailTemplateId) { error.textContent = 'Choose a sending inbox, campaign version, and email copy.'; return; }
   const ids = [...queueRouteIds];
-  const response = await fetch('/api/coldemail/queue', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, senderInboxId, emailTemplateId }) });
+  const response = await fetch('/api/coldemail/queue', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, senderInboxId, campaignVersionId, emailTemplateId }) });
   const result = await response.json();
   if (!response.ok) { error.textContent = result.error || 'Could not queue these leads.'; return; }
   closeQueueRouteModal();

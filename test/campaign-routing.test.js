@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { EMAIL_TEMPLATES, normalizeNiche, validateRoute, routedLeadReady } = require('../integrations/campaign-routing');
+const { EMAIL_TEMPLATES, normalizeNiche, campaignVersionsForRoute, validateCampaignVersionRoute, validateRoute, routedLeadReady } = require('../integrations/campaign-routing');
 
 const primary = { id: 'primary', email: 'primary@example.com', sendEligible: true, deliveryImplemented: true };
 const warming = { id: 'warm', email: 'warm@example.com', sendEligible: false, deliveryImplemented: false };
@@ -43,10 +43,26 @@ test('campaign import and queue UI require durable routing choices', () => {
   assert.match(browser, /id="campaign-niche-input"/);
   assert.match(browser, /id="queue-route-inbox"/);
   assert.match(browser, /id="queue-route-template"/);
+  assert.match(browser, /id="queue-route-version"/);
   assert.match(browser, /id="ce-niche-filter"/);
   assert.match(browser, /\/api\/coldemail\/queue/);
   assert.match(server, /'leadNiche','senderInboxId','emailTemplateId','routingRequired'/);
+  assert.match(server, /'intendedCampaignVersion'/);
   assert.match(server, /app\.post\('\/api\/coldemail\/queue', requireAuth/);
+});
+
+test('campaign versions are derived from the canonical registry and reject incompatible copy', () => {
+  const dental = campaignVersionsForRoute({ niche: 'dental' });
+  assert.deepEqual(dental.map(version => version.id), ['dental_v1_measured']);
+  assert.equal(validateCampaignVersionRoute({ niche: 'dental', emailTemplateId: 'dental-guarantee-v1', campaignVersionId: 'dental_v1_measured' }).ok, true);
+  assert.match(validateCampaignVersionRoute({ niche: 'dental', emailTemplateId: 'roofing-survey-v1', campaignVersionId: 'dental_v1_measured' }).reason, /does not use/);
+  assert.match(validateCampaignVersionRoute({ niche: 'dental', emailTemplateId: 'dental-guarantee-v1', campaignVersionId: 'roofing_survey_v1_measured' }).reason, /cannot be used/);
+});
+
+test('queue preview and submitted payload use the same explicit campaign route', () => {
+  const browser = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  assert.match(browser, /versionText[\s\S]{0,220}templateText[\s\S]{0,80}inboxText/);
+  assert.match(browser, /JSON\.stringify\(\{ ids, senderInboxId, campaignVersionId, emailTemplateId \}\)/);
 });
 
 test('roofing copy is registered as a one-step niche-specific profile and disabled by default', () => {

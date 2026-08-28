@@ -1,5 +1,7 @@
 'use strict';
 
+const { CAMPAIGN_VERSIONS } = require('./campaign-versions');
+
 const EMAIL_TEMPLATES = Object.freeze([
   Object.freeze({ id: 'dental-guarantee-v1', name: 'Dental guarantee pitch', niche: 'dental', ready: true, sequenceSteps: 3 }),
   Object.freeze({
@@ -18,6 +20,22 @@ function normalizeNiche(value) {
 }
 
 function templateById(id) { return EMAIL_TEMPLATES.find(template => template.id === String(id || '').trim()) || null; }
+
+function campaignVersionsForRoute({ niche, emailTemplateId = '' } = {}) {
+  const normalizedNiche = normalizeNiche(niche);
+  return Object.values(CAMPAIGN_VERSIONS).filter(version => version.status === 'active'
+    && version.niche === normalizedNiche
+    && (!emailTemplateId || version.emailTemplateId === emailTemplateId));
+}
+
+function validateCampaignVersionRoute({ niche, emailTemplateId, campaignVersionId } = {}) {
+  const version = CAMPAIGN_VERSIONS[String(campaignVersionId || '').trim()];
+  if (!version || version.status !== 'active') return { ok: false, reason: 'An active registered campaign version is required' };
+  const normalizedNiche = normalizeNiche(niche);
+  if (version.niche !== normalizedNiche) return { ok: false, reason: `${version.label} cannot be used for ${normalizedNiche} leads` };
+  if (version.emailTemplateId !== String(emailTemplateId || '').trim()) return { ok: false, reason: `${version.label} does not use the selected email copy` };
+  return { ok: true, version };
+}
 
 function validateRoute({ niche, senderInboxId, emailTemplateId, inboxes = [], requireReady = true } = {}) {
   const normalizedNiche = normalizeNiche(niche);
@@ -42,4 +60,7 @@ function routedLeadReady(lead) {
   return { ok: true, legacy: false, template };
 }
 
-module.exports = { EMAIL_TEMPLATES, normalizeNiche, templateById, validateRoute, routedLeadReady };
+module.exports = {
+  EMAIL_TEMPLATES, normalizeNiche, templateById, campaignVersionsForRoute,
+  validateCampaignVersionRoute, validateRoute, routedLeadReady,
+};
