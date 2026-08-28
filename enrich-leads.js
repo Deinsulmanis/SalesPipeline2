@@ -22,6 +22,9 @@ const fs      = require('fs');
 const path    = require('path');
 const axios   = require('axios');
 const cheerio = require('cheerio');
+// THE canonical junk-email rule, shared with the import choke point and the
+// sender, so scrape-time and import-time can never disagree about what is junk.
+const { classify: classifyLeadEmail } = require('./check-leads');
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 
@@ -203,11 +206,22 @@ function extractEmails(html, ownDomain) {
   }
 
   const sanitized = [...seen].filter(e => {
-    if (!/^[a-zA-Z0-9]/.test(e)) return false;
+    // ONE definition of junk, shared by scraping, import and the sender.
+    //
+    // This filter used to carry its own weaker copy of those rules: it rejected
+    // a NON-alphanumeric first character, so a phone number scraped onto the
+    // front of an address — "780-278-0669info@..." — began with a digit and
+    // sailed straight through. Seven such rows reached production and were
+    // emailed. The local leading-character and TLD checks are gone rather than
+    // kept alongside, because a second copy is exactly how the two drifted
+    // apart in the first place.
+    if (classifyLeadEmail(e) !== 'CLEAN') return false;
+    // The one deliberately EXTRA rule, scoped to scraping: a single-character
+    // local part is almost always a parsing artefact off a page. It is not a
+    // claim about validity in general, so it stays here rather than widening
+    // the canonical rule the sender depends on.
     const [local] = e.split('@');
     if (!local || local.length < 2) return false;
-    const tld = e.split('.').pop();
-    if (!tld || !/^[a-zA-Z]{2,6}$/.test(tld)) return false;
     return true;
   });
 

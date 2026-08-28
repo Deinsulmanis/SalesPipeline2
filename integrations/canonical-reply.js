@@ -171,10 +171,14 @@ const OUT_OF_OFFICE_MARKERS = [
   ['currently_away', /\b(?:i am|i'?m|we are|we'?re) (?:currently )?away\b/i],
 ];
 
+// A closure claim requires the BUSINESS to be closed. A bare "back in the
+// office" is NOT enough: a real prospect wrote "we will forward this to our
+// office manager once she is back in the office next week", and treating that
+// phrase as a closure notice classified a genuine human reply as a machine —
+// which would have removed a live conversation from the genuine-reply count.
 const TEMPORARY_CLOSURE_MARKERS = [
   ['closure_phrase', /\b(?:closed|clinic is closed|office is closed|shut(?:ting)? down|closure)\b.*\b(?:until|from|for|reopen|re-?open|back|resum)/is],
   ['break_phrase', /\b(?:summer|winter|holiday|christmas|seasonal) break\b/i],
-  ['reopen_phrase', /\b(?:we (?:will )?re-?open|reopening|will resume|back in (?:the )?office)\b/i],
 ];
 
 // Deliberately narrow. An earlier, looser version matched "please use the
