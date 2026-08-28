@@ -345,3 +345,14 @@ test('24. the Inbox states that it counts every inbound message, not genuine rep
   assert.ok(body.includes('inboxMatches(record, inboxActionFor(record))'));
   assert.ok(/INBOX_FILTERS\.map[\s\S]{0,400}inboxMatches/.test(body), 'tab counts must use the render predicate');
 });
+
+test('25. the Settings agent summary uses the same names as the analytics surfaces', () => {
+  const block = browser.slice(browser.indexOf('id="as-queued"'), browser.indexOf('id="as-done"') + 200);
+  // /api/coldemail/stats returns replied = metrics.totalReplies, i.e. every
+  // inbound message. Calling that "Total Replies" here while Outreach called
+  // the same number "Inbound Messages" is exactly the two-names-one-metric
+  // problem this phase exists to remove.
+  assert.ok(block.includes('Inbound Messages') && block.includes('Unique Contacted'));
+  assert.ok(!/>Total Replies</.test(block) && !/>Emailed</.test(block));
+  assert.ok(!/>Emailed</.test(browser), 'no surface may still say the ambiguous "Emailed"');
+});
