@@ -80,7 +80,7 @@ const {
   attributionFromActivity, replyTouchAttribution, latestSendAttribution, promotionAttribution,
   LEGACY_UNKNOWN,
 } = require('./integrations/campaign-versions');
-const { findOriginalSentThread } = require('./integrations/gmail-threading');
+const { findOriginalSentThread, resolveColdFollowUpThread } = require('./integrations/gmail-threading');
 const {
   assembleFinalEmail,
   splitPersonalization,
@@ -387,7 +387,6 @@ const gmail  = () => google.gmail({ version: 'v1', auth: oauth2Client });
 const FOLLOW_UP_SEQUENCE = [
   {
     delayDays: 3,
-    subject: (lead) => `Re: a quick demo I built for ${cleanCompanyName(lead.company) || 'your business'}`,
     body: (lead) => {
       const link    = buildProposalLink(lead);
       const name    = salutationName(lead);
@@ -409,7 +408,6 @@ ${casl}`;
   },
   {
     delayDays: 5,
-    subject: (lead) => `Last note — ${cleanCompanyName(lead.company) || 'your business'}`,
     body: (lead) => {
       const link    = buildProposalLink(lead);
       const name    = salutationName(lead);
@@ -439,7 +437,6 @@ ${casl}`;
 // here too).
 const WARM_FOLLOW_UP_TEMPLATE = {
   step: 'warm',
-  subject: (lead) => `Re: a quick demo I built for ${cleanCompanyName(lead.company) || lead.company}`,
   body: (lead) => {
     const name    = salutationName(lead);
     const company = cleanCompanyName(lead.company) || lead.company;
@@ -3515,9 +3512,20 @@ async function run() {
 
     const currentStep = parseInt(lead.emailStep, 10);
     const nextStepNum = currentStep + 1;
-    const subject     = WARM_FOLLOW_UP_TEMPLATE.subject(lead);
     const body        = WARM_FOLLOW_UP_TEMPLATE.body(lead);
     const preview     = body.split('\n')[2] || '';
+    let thread;
+    try {
+      thread = await withAuth(() => resolveColdFollowUpThread({ gmail: gmail(), lead, activities: ownershipActivities }));
+    } catch (error) {
+      console.warn(`⏸️  warm follow-up deferred → ${lead.email} (Gmail thread verification failed: ${error.message})`);
+      continue;
+    }
+    if (!thread) {
+      console.warn(`⏸️  warm follow-up deferred → ${lead.email} (canonical Gmail thread could not be proven)`);
+      continue;
+    }
+    const subject = thread.subject;
 
     if (DRY_RUN) {
       const rawCo   = lead.company || '';
@@ -3537,7 +3545,10 @@ async function run() {
 
     try {
       const attribution = coldSendAttribution(lead, nextStepNum);
-      const sendResult = await sendEmail({ to: lead.email.trim(), subject, body });
+      const sendResult = await sendEmail({
+        to: lead.email.trim(), subject, body,
+        threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references,
+      });
       await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject, body, attribution }));
       await withAuth(() => appendOpenTriggeredNote(lead));
       sent++;
@@ -3570,9 +3581,20 @@ async function run() {
     const currentStep = parseInt(lead.emailStep, 10);
     const nextStepNum = currentStep + 1;
     const template    = FOLLOW_UP_SEQUENCE[currentStep - 1];
-    const subject     = template.subject(lead);
     const body        = template.body(lead);
     const preview     = body.split('\n')[2] || '';
+    let thread;
+    try {
+      thread = await withAuth(() => resolveColdFollowUpThread({ gmail: gmail(), lead, activities: ownershipActivities }));
+    } catch (error) {
+      console.warn(`⏸️  follow-up deferred → ${lead.email} (Gmail thread verification failed: ${error.message})`);
+      continue;
+    }
+    if (!thread) {
+      console.warn(`⏸️  follow-up deferred → ${lead.email} (canonical Gmail thread could not be proven)`);
+      continue;
+    }
+    const subject = thread.subject;
 
     if (DRY_RUN) {
       const fupPitchTier = lead.tier === 'busy' ? 'busy' : 'medium';
@@ -3595,7 +3617,10 @@ async function run() {
 
     try {
       const attribution = coldSendAttribution(lead, nextStepNum);
-      const sendResult = await sendEmail({ to: lead.email.trim(), subject, body });
+      const sendResult = await sendEmail({
+        to: lead.email.trim(), subject, body,
+        threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references,
+      });
       await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject, body, attribution }));
       sent++;
       console.log(`✅ Sent (step ${nextStepNum}) → ${lead.email}  (${sent}/${effectiveCap})`);

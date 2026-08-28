@@ -4,15 +4,74 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { appendReference, findOriginalSentThread } = require('../integrations/gmail-threading');
+const { appendReference, findOriginalSentThread, resolveColdFollowUpThread } = require('../integrations/gmail-threading');
 
 function message(id, subject, threadId, messageId, internalDate, references = '') {
   return { id, threadId, internalDate: String(internalDate), payload: { headers: [
     { name: 'Subject', value: subject },
+    { name: 'To', value: 'Deborah <owner@cooperdental.example>' },
     ...(messageId ? [{ name: 'Message-ID', value: messageId }] : []),
     ...(references ? [{ name: 'References', value: references }] : []),
   ] } };
 }
+
+const activity = (eventType, id, at, subject, threadId = 'thread-1', leadId = 'lead-1') => ({
+  eventType, eventId: `gmail:${id}`, sourceLeadId: leadId, leadId: `CE-${leadId}`,
+  email: leadId === 'lead-1' ? 'owner@cooperdental.example' : 'other@example.test',
+  occurredAt: at, subject,
+  metadata: JSON.stringify({ gmailMessageId: id, gmailThreadId: threadId }),
+});
+
+test('ordinary step 2 replies to the provider-backed initial Gmail message and preserves its personalized subject', async () => {
+  const activities = [activity('initial_email_sent', 'm1', '2026-08-01T10:00:00Z', 'quick question about Invisalign')];
+  const gmail = { users: { messages: { get: async () => ({ data: message('m1', 'quick question about Invisalign', 'thread-1', '<m1@gmail>', 1) }) } } };
+  const result = await resolveColdFollowUpThread({ gmail, lead: { id: 'lead-1', email: 'owner@cooperdental.example' }, activities });
+  assert.deepEqual(result, {
+    threadId: 'thread-1', inReplyTo: '<m1@gmail>', references: '<m1@gmail>',
+    subject: 'Re: quick question about Invisalign', originalSubject: 'quick question about Invisalign',
+  });
+});
+
+test('ordinary step 3 replies to the newest message in the same original thread', async () => {
+  const activities = [
+    activity('initial_email_sent', 'm1', '2026-08-01T10:00:00Z', 'quick question about implants'),
+    activity('follow_up_sent', 'm2', '2026-08-04T10:00:00Z', 'Re: quick question about implants'),
+  ];
+  const gmail = { users: { messages: { get: async ({ id }) => {
+    assert.equal(id, 'm2');
+    return { data: message('m2', 'Re: quick question about implants', 'thread-1', '<m2@gmail>', 2, '<m1@gmail>') };
+  } } } };
+  const result = await resolveColdFollowUpThread({ gmail, lead: { id: 'lead-1', email: 'owner@cooperdental.example' }, activities });
+  assert.equal(result.threadId, 'thread-1');
+  assert.equal(result.inReplyTo, '<m2@gmail>');
+  assert.equal(result.references, '<m1@gmail> <m2@gmail>');
+  assert.equal(result.subject, 'Re: quick question about implants');
+});
+
+test('cold follow-up resolution fails closed for missing, conflicting, or cross-lead thread evidence', async () => {
+  const gmail = { users: { messages: { get: async () => ({ data: message('m1', 'quick question about Invisalign', 'thread-1', '<m1@gmail>', 1) }) } } };
+  const lead = { id: 'lead-1', email: 'owner@cooperdental.example' };
+  assert.equal(await resolveColdFollowUpThread({ gmail, lead, activities: [] }), null);
+  const conflicting = [
+    activity('initial_email_sent', 'm1', '2026-08-01T10:00:00Z', 'quick question about Invisalign'),
+    activity('follow_up_sent', 'm2', '2026-08-04T10:00:00Z', 'Re: quick question about Invisalign', 'thread-2'),
+  ];
+  assert.equal(await resolveColdFollowUpThread({ gmail, lead, activities: conflicting }), null);
+  const crossLead = [
+    activity('initial_email_sent', 'm1', '2026-08-01T10:00:00Z', 'quick question about Invisalign'),
+    activity('initial_email_sent', 'other', '2026-08-01T11:00:00Z', 'quick question about implants', 'thread-1', 'lead-2'),
+  ];
+  assert.equal(await resolveColdFollowUpThread({ gmail, lead, activities: crossLead }), null);
+});
+
+test('ordinary follow-up send paths use real Gmail reply headers and no independent subjects', () => {
+  const agent = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
+  const ordinary = agent.slice(agent.indexOf('// ── Warm follow-ups'), agent.indexOf("console.log(`\\nDone."));
+  assert.match(ordinary, /resolveColdFollowUpThread/);
+  assert.match(ordinary, /threadId: thread\.threadId, inReplyTo: thread\.inReplyTo, references: thread\.references/g);
+  assert.doesNotMatch(ordinary, /Re: a quick demo I built|Last note —/);
+  assert.match(agent, /runReplyCheckPass\(all[\s\S]*runHumanOutboundPass|runHumanOutboundPass[\s\S]*selectFollowUps/);
+});
 
 test('thread resolver selects the newest exact-subject outbound message', async () => {
   const records = {

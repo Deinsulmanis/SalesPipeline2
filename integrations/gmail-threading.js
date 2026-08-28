@@ -29,6 +29,57 @@ function decodeBody(payload) {
   return '';
 }
 
+function parseMetadata(value) {
+  try { return value && typeof value === 'object' ? value : JSON.parse(String(value || '{}')); }
+  catch (_) { return {}; }
+}
+
+function normalizeMailbox(value) {
+  const match = String(value || '').match(/<([^<>\s]+@[^<>\s]+)>/);
+  return String(match ? match[1] : value || '').trim().toLowerCase();
+}
+
+async function resolveColdFollowUpThread({ gmail, lead = {}, activities = [] } = {}) {
+  const leadId = String(lead.id || '').trim();
+  const email = normalizeMailbox(lead.email);
+  if (!gmail || !leadId || !email) return null;
+  const outboundTypes = new Set(['initial_email_sent', 'follow_up_sent']);
+  const mine = activities.filter(row => outboundTypes.has(String(row.eventType || ''))
+    && (String(row.sourceLeadId || '') === leadId || String(row.leadId || '') === `CE-${leadId}`));
+  const initials = mine.filter(row => row.eventType === 'initial_email_sent');
+  const originalSubjects = [...new Set(initials.map(row => String(row.subject || '').trim()).filter(Boolean))];
+  if (!initials.length || originalSubjects.length !== 1) return null;
+
+  const evidence = mine.map(row => ({ row, metadata: parseMetadata(row.metadata) }))
+    .filter(item => item.metadata.gmailMessageId && item.metadata.gmailThreadId);
+  const threadIds = [...new Set(evidence.map(item => String(item.metadata.gmailThreadId).trim()).filter(Boolean))];
+  if (!evidence.length || threadIds.length !== 1) return null;
+  const threadId = threadIds[0];
+
+  const conflictingOwner = activities.some(row => {
+    if (!outboundTypes.has(String(row.eventType || ''))) return false;
+    if (String(parseMetadata(row.metadata).gmailThreadId || '').trim() !== threadId) return false;
+    return String(row.sourceLeadId || '') !== leadId && String(row.leadId || '') !== `CE-${leadId}`;
+  });
+  if (conflictingOwner) return null;
+
+  evidence.sort((a, b) => new Date(b.row.occurredAt || 0) - new Date(a.row.occurredAt || 0));
+  const latest = evidence[0];
+  const response = await gmail.users.messages.get({ userId: 'me', id: latest.metadata.gmailMessageId, format: 'full' });
+  const message = response.data || {};
+  const messageId = headerValue(message.payload, 'Message-ID').trim();
+  const recipient = normalizeMailbox(headerValue(message.payload, 'To'));
+  if (!messageId || String(message.threadId || '') !== threadId || recipient !== email) return null;
+  const originalSubject = originalSubjects[0].replace(/^Re:\s*/i, '');
+  return {
+    threadId,
+    inReplyTo: messageId,
+    references: appendReference(headerValue(message.payload, 'References'), messageId),
+    subject: `Re: ${originalSubject}`,
+    originalSubject,
+  };
+}
+
 async function findOriginalSentThread({ gmail, email, expectedSubject, expectedSubjects, maxResults = 20 } = {}) {
   const subjects = [...new Set((expectedSubjects || [expectedSubject]).map(value => String(value || '').trim()).filter(Boolean))];
   if (!gmail || !email || !subjects.length) return null;
@@ -62,4 +113,7 @@ async function findOriginalSentThread({ gmail, email, expectedSubject, expectedS
   return candidates[0] || null;
 }
 
-module.exports = { headerValue, appendReference, escapeGmailQuery, decodeBody, findOriginalSentThread };
+module.exports = {
+  headerValue, appendReference, escapeGmailQuery, decodeBody,
+  findOriginalSentThread, resolveColdFollowUpThread,
+};
