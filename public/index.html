@@ -5922,12 +5922,19 @@ function updateCampaignFilterChip() {
 // the number on the card can never disagree. One row === one replying lead,
 // matching the analytics unit. Nothing here mutates: no writes, no sending,
 // no category changes.
+// EVERY category a card can open. openReplyDrill falls back to 'all' for an
+// unknown id, so a card whose category is missing here opens the full inbound
+// list instead of its own — the card would say 16 and the list would show 22.
 const RD_CATEGORIES = [
-  { id: 'all',          label: 'All' },
-  { id: 'positive',     label: 'Positive' },
-  { id: 'negative',     label: 'Negative' },
-  { id: 'needs_human',  label: 'Needs Human' },
-  { id: 'unclassified', label: 'Unclassified' },
+  { id: 'all',                   label: 'All inbound' },
+  { id: 'genuine',               label: 'Genuine replies' },
+  { id: 'positive',              label: 'Positive' },
+  { id: 'negative',              label: 'Negative' },
+  { id: 'needs_human',           label: 'Needs Human' },
+  { id: 'unclassified',          label: 'Unclassified' },
+  { id: 'contact_change_review', label: 'Contact change' },
+  { id: 'automated_reply',       label: 'Automated' },
+  { id: 'unknown',               label: 'Unknown' },
 ];
 const RD_CATEGORY_LABEL = Object.fromEntries(RD_CATEGORIES.map(c => [c.id, c.label]));
 
@@ -5983,7 +5990,10 @@ function renderRdTabs() {
 }
 
 function rdFilter(category) {
-  return category === 'all' ? rdRecords.slice() : rdRecords.filter(r => r.category === category);
+  if (category === 'all') return rdRecords.slice();
+  // Same union the Genuine Replies card counts, from the same records.
+  if (category === 'genuine') return rdRecords.filter(r => GENUINE_REPLY_CATEGORIES.has(r.category));
+  return rdRecords.filter(r => r.category === category);
 }
 
 // Display-only stage resolution. Prefers the cold-call board stage when the

@@ -366,3 +366,29 @@ test('26. an empty measured cohort says why it is empty instead of showing dashe
   // is empty — and an unexplained empty funnel reads as a broken one.
   assert.ok(body.includes('Legacy / Unknown') && body.includes('Lifetime'));
 });
+
+test('27. every drillable card has a matching drill category', () => {
+  // openReplyDrill falls back to "all" for an id it does not recognise, and
+  // does it silently. A card wired to a missing id therefore opens the full
+  // 22-message inbound list while its own face reads 16 — the exact card/list
+  // disagreement this phase exists to prevent, reintroduced by a typo.
+  const declared = new Set([...browser.matchAll(/openReplyDrill\('([a-z_]+)'\)/g)].map(m => m[1]));
+  const registry = browser.slice(browser.indexOf('const RD_CATEGORIES = ['), browser.indexOf('const RD_CATEGORY_LABEL'));
+  for (const id of declared) {
+    assert.ok(new RegExp(`id: '${id}'`).test(registry), `card category "${id}" is missing from RD_CATEGORIES`);
+  }
+  assert.ok(declared.has('genuine') && declared.has('automated_reply') && declared.has('unknown'));
+  // And the browser union must be the union, not a re-listing that can drift.
+  const body = sliceFn(browser, 'rdFilter');
+  assert.ok(body.includes('GENUINE_REPLY_CATEGORIES.has(r.category)'));
+});
+
+test('28. the table filter understands the genuine union too', () => {
+  const server = readSource(path.join(root, 'server.js'));
+  assert.ok(server.includes("category === 'genuine'") && server.includes('GENUINE_REPLY_CATEGORIES.includes(row.replyCategory)'));
+  // Server and browser must agree on membership, so filtering the table from
+  // the drill returns the same leads the drill listed.
+  const rows = [{ replyCategory: 'positive' }, { replyCategory: 'automated_reply' }, { replyCategory: 'unknown' }, { replyCategory: 'needs_human' }];
+  const genuine = rows.filter(row => GENUINE_REPLY_CATEGORIES.includes(row.replyCategory));
+  assert.deepEqual(genuine.map(r => r.replyCategory), ['positive', 'needs_human']);
+});

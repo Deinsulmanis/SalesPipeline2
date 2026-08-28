@@ -20,6 +20,7 @@ const { classifyReply: classifyProviderReply, CLASSIFICATION_TO_STATUS } = requi
 const {
   buildReplyMetrics, buildStoredClassificationMap,
   buildReplyRecords, buildReplyEvidenceMap, filterReplyRecords,
+  GENUINE_REPLY_CATEGORIES,
 } = require('./integrations/reply-analytics');
 const { parseRegistry: parseGmailInboxRegistry, publicRegistry: publicGmailInboxRegistry, verifyInbox: verifyGmailInbox } = require('./integrations/gmail-inbox-registry');
 const { EMAIL_TEMPLATES, normalizeNiche, validateRoute } = require('./integrations/campaign-routing');
@@ -1381,6 +1382,10 @@ function filterOutreachRows(rows, query) {
     if (campaignVersion && campaignVersion !== 'all' && row.campaignVersion !== campaignVersion) return false;
     if (niche !== 'all' && normalizedRouteNicheFor(row) !== niche) return false;
     if (category === 'none') { if (row.replyCategory) return false; }
+    // 'genuine' is the union a person actually wrote, the same set the Genuine
+    // Replies card counts. Without it the table filter behind that card matched
+    // no row at all, because no row's category literally equals "genuine".
+    else if (category === 'genuine') { if (!GENUINE_REPLY_CATEGORIES.includes(row.replyCategory)) return false; }
     else if (category && category !== 'all' && row.replyCategory !== category) return false;
     if (pipelinePresence === 'in' && !row.pipelinePresence) return false;
     if (pipelinePresence === 'out' && (row.pipelinePresence || row.mappingStatus === 'conflict')) return false;
