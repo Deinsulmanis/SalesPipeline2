@@ -436,6 +436,23 @@ test('38/39. the gate is off and the dry run mutates nothing', () => {
   assert.match(body, /GOOGLE_BOOKING_CALENDAR_ID is not set/, 'missing config is reported, not guessed around');
 });
 
+test('every application-owned live automation launch observes Calendar first and fails closed', () => {
+  const guard = server.slice(server.indexOf('async function observeCalendarBeforeAutomation'),
+    server.indexOf('// Read-only preview: what WOULD happen if sync were enabled'));
+  assert.match(guard, /await calendarObservationInFlight/);
+  assert.match(guard, /result\.ok !== true/);
+  assert.match(guard, /return \{ ok: false, launched: false, reason \}/);
+
+  const manual = server.slice(server.indexOf("app.post('/api/agent/run'"), server.indexOf("app.post('/api/agent/stop'"));
+  assert.ok(manual.indexOf("launchAutomationAfterCalendar('manual live outreach run'") < manual.indexOf('spawnAgent(false)'));
+  const scheduled = server.slice(server.indexOf("cron.schedule('0,30 8-11"), server.indexOf("cron.schedule('15,45"));
+  assert.ok(scheduled.indexOf("launchAutomationAfterCalendar('scheduled outreach run'") < scheduled.indexOf('spawnAgent(false'));
+  const intent = server.slice(server.indexOf('function spawnAgentIntentOnly'), server.indexOf('function spawnAgentCheckOnly'));
+  assert.ok(intent.indexOf('launchAutomationAfterCalendar') < intent.indexOf('startAgentProcess'));
+  const queued = server.slice(server.indexOf("child.on('exit'"), server.indexOf('function spawnAgent(dryRun'));
+  assert.match(queued, /launchAutomationAfterCalendar[\s\S]*spawnAgent\(false/);
+});
+
 // ── ARCHITECTURE / REGRESSION ───────────────────────────────────────────────
 
 test('40. manual booking still works and is untouched', () => {

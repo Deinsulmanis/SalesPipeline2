@@ -600,7 +600,11 @@ function startAgentProcess(extraEnv, dryRun) {
     if (pendingScheduledSendRuns > 0) {
       pendingScheduledSendRuns--;
       console.log(`[cron] Running queued outreach send window (${pendingScheduledSendRuns} still queued)`);
-      spawnAgent(false, { DAILY_CAP: String(SCHEDULED_SEND_PER_RUN_CAP) });
+      launchAutomationAfterCalendar('queued outreach send window', () => {
+        if (agentState.running) return false;
+        spawnAgent(false, { DAILY_CAP: String(SCHEDULED_SEND_PER_RUN_CAP) });
+        return true;
+      }).catch(error => console.error('[Calendar safety] queued send window blocked:', error.message));
     }
   });
 }
@@ -653,8 +657,12 @@ function spawnAgentIntentOnly(why) {
     console.log(`[intent] agent busy — skipping intent spawn (${why}); the cron backstop will retry`);
     return;
   }
-  console.log(`[intent] spawning intent-only pass (${why})`);
-  startAgentProcess({ DRY_RUN: 'false', INTENT_ONLY: 'true' }, false);
+  launchAutomationAfterCalendar(`intent-only pass: ${why}`, () => {
+    if (agentState.running) return false;
+    console.log(`[intent] spawning intent-only pass (${why})`);
+    startAgentProcess({ DRY_RUN: 'false', INTENT_ONLY: 'true' }, false);
+    return true;
+  }).catch(error => console.error('[Calendar safety] intent pass blocked:', error.message));
 }
 
 function spawnAgentCheckOnly(extraEnv = {}) {
@@ -2966,6 +2974,40 @@ async function runGoogleCalendarSync() {
   });
 }
 
+// A booking can arrive between scheduler cycles. Every application-owned path
+// that may send must therefore observe Calendar immediately before launching
+// the sender, not merely rely on the independent five-minute reconciliation
+// cron. A failed read blocks the launch: stale booking state is never treated
+// as permission to email. Concurrent triggers share one observation so this
+// safety boundary does not create duplicate Calendar polling.
+let calendarObservationInFlight = null;
+async function observeCalendarBeforeAutomation(label = 'automation') {
+  if (!CALENDAR_SYNC_ENABLED) return { ok: true, skipped: true, reason: 'feature flag off' };
+  let result;
+  try {
+    if (!calendarObservationInFlight) {
+      calendarObservationInFlight = runGoogleCalendarSync()
+        .finally(() => { calendarObservationInFlight = null; });
+    }
+    result = await calendarObservationInFlight;
+  } catch (error) {
+    result = { ok: false, reason: error.message || 'Calendar observation failed' };
+  }
+  if (!result || result.ok !== true) {
+    const reason = result?.reason || 'Calendar observation failed';
+    console.error(`[Calendar safety] ${label} blocked — ${reason}`);
+    return { ok: false, launched: false, reason };
+  }
+  return result;
+}
+
+async function launchAutomationAfterCalendar(label, launch) {
+  const observation = await observeCalendarBeforeAutomation(label);
+  if (!observation.ok) return { launched: false, observation };
+  const launched = launch() !== false;
+  return { launched, observation };
+}
+
 // Read-only preview: what WOULD happen if sync were enabled. Writes nothing —
 // not even the sync checkpoint.
 app.get('/api/integrations/google-calendar/dry-run', requireAuth, async (_req, res) => {
@@ -4258,11 +4300,22 @@ app.post('/api/integrations/smartlead/events/:eventId/retry', requireAuth, async
 
 // ── AGENT ROUTES ─────────────────────────────────────────────────────────────
 
-app.post('/api/agent/run', requireAuth, (req, res) => {
+app.post('/api/agent/run', requireAuth, async (req, res) => {
   if (agentState.running) return res.status(409).json({ error: 'already running' });
   const dryRun = req.body.dryRun !== false; // default true
-  spawnAgent(dryRun);
-  res.json({ started: true, dryRun });
+  if (dryRun) {
+    spawnAgent(true);
+    return res.json({ started: true, dryRun: true });
+  }
+  const result = await launchAutomationAfterCalendar('manual live outreach run', () => {
+    if (agentState.running) return false;
+    spawnAgent(false);
+    return true;
+  });
+  if (!result.launched) return res.status(result.observation.ok ? 409 : 503).json({
+    error: result.observation.ok ? 'already running' : `Calendar safety check failed: ${result.observation.reason}`,
+  });
+  res.json({ started: true, dryRun: false });
 });
 
 app.post('/api/agent/stop', requireAuth, (_req, res) => {
@@ -4305,14 +4358,18 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   // sends are gone — a human doesn't email at 4am, and inboxes are freshest
   // mid-morning. The timezone pin below makes these fields Pacific-local and
   // handles PDT/PST automatically; do NOT hand-convert to UTC.
-  cron.schedule('0,30 8-11 * * 1-5', () => {
+  cron.schedule('0,30 8-11 * * 1-5', async () => {
     console.log('[cron] Triggering scheduled outreach agent run...');
     if (agentState.running) {
       pendingScheduledSendRuns = Math.min(MAX_PENDING_SCHEDULED_SEND_RUNS, pendingScheduledSendRuns + 1);
       console.log(`[cron] Agent already running — queued this send window (${pendingScheduledSendRuns} queued)`);
       return;
     }
-    spawnAgent(false, { DAILY_CAP: String(SCHEDULED_SEND_PER_RUN_CAP) });
+    await launchAutomationAfterCalendar('scheduled outreach run', () => {
+      if (agentState.running) return false;
+      spawnAgent(false, { DAILY_CAP: String(SCHEDULED_SEND_PER_RUN_CAP) });
+      return true;
+    });
   }, {
     timezone: 'America/Vancouver',
   });
@@ -4346,7 +4403,7 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   // first line of the orchestrator returns before reading Calendar, Sheets, or
   // checkpoint state. Registering the cadence now therefore cannot activate it.
   cron.schedule('1,6,11,16,21,26,31,36,41,46,51,56 * * * *', () => {
-    runGoogleCalendarSync()
+    observeCalendarBeforeAutomation('periodic reconciliation')
       .then(result => {
         if (!result.skipped) console.log(`[Calendar sync] complete — ${result.mutations || 0} mutation(s)`);
       })
