@@ -47,6 +47,7 @@ const {
 const { evaluateStageSequence, SEQUENCE_STATUS } = require('./stage-sequences');
 const { LEGACY_UNKNOWN, CAMPAIGN_VERSIONS, parseMetadata, attributionFromActivity } = require('./campaign-versions');
 const { inspectActivityIntegrity } = require('./activity-timeline');
+const { deriveAutomationOwnership, executableOwners, NON_COLD_STAGES, BLOCKED_BY } = require('./automation-ownership');
 const { deriveReplyOperation, REPLY_ACTION, ACTION_OWNER: REPLY_OWNER } = require('./reply-operations');
 const { OVERRIDE_KIND, OVERRIDE_STATUS } = require('./reply-overrides');
 
@@ -1014,6 +1015,126 @@ function activityChecks({ activities = [] }) {
   return out;
 }
 
+// ── OWNERSHIP CONFLICTS ─────────────────────────────────────────────────────
+
+/**
+ * Two systems must never both hold an executable move on one lead.
+ *
+ * These are the states that could cause a WRONG automated send, so they are
+ * critical rather than tidy-up: a promoted opportunity still queued for cold
+ * cadence is exactly the Sparkle failure, and it was invisible until ownership
+ * was derived in one place.
+ */
+function ownershipChecks({ leads, boardLeads, suppressionReason = null, sendingEnabled = false,
+  sequencesEnabled = false, now = new Date() }, index) {
+  const out = [];
+  const conflicts = { promotedColdEligible: [], suppressedSendEligible: [], humanSendEligible: [],
+    meetingSendEligible: [], terminalSendEligible: [], doubleOwner: [] };
+  const protectedByOwnership = [];
+
+  for (const lead of leads) {
+    const leadId = String(lead.id || '');
+    const boardLead = [...index.boardToLead.entries()].find(([, id]) => id === leadId);
+    const board = boardLead ? boardLeads.find(row => row.id === boardLead[0]) : null;
+    const activities = index.activityByLead.get(leadId) || [];
+    let ownership;
+    try {
+      ownership = deriveAutomationOwnership(lead, {
+        boardLead: board, activities, suppressionReason, sendingEnabled, sequencesEnabled, now,
+        // Ask the strongest question: IF cadence were due, could anything send?
+        coldCadenceDue: true,
+      });
+    } catch (_) { continue; }
+
+    const row = { id: leadId, company: lead.company, stage: lead.stage, owner: ownership.owner };
+    if (executableOwners(ownership).length > 1) conflicts.doubleOwner.push(row);
+    if (!ownership.sendAllowed) {
+      // Cadence conditions are met but ownership refuses. This is the guard
+      // working, not a fault — but it is worth SEEING, because before ownership
+      // existed these leads were being handed straight to the sender.
+      const cadenceReady = String(lead.emailStatus || '') === 'emailed'
+        && Number(lead.emailStep || 0) >= 1;
+      if (cadenceReady && [BLOCKED_BY.PROMOTED_TO_PIPELINE, BLOCKED_BY.HUMAN_OWNED,
+        BLOCKED_BY.MEETING_LIFECYCLE, BLOCKED_BY.CONTACT_CHANGE_REVIEW].includes(ownership.blockedBy)) {
+        protectedByOwnership.push({ ...row, blockedBy: ownership.blockedBy });
+      }
+      continue;
+    }
+    // Everything below means cold sending IS permitted — so anything that also
+    // implies another owner is a genuine conflict.
+    if (NON_COLD_STAGES.includes(String(lead.stage || '').trim().toLowerCase()) || board) {
+      conflicts.promotedColdEligible.push(row);
+    }
+    if (typeof suppressionReason === 'function' && suppressionReason(lead)) conflicts.suppressedSendEligible.push(row);
+  }
+
+  const report = (id, rows, summary, classification = 'automation_risk') => out.push(rows.length
+    ? finding({
+      id, category: 'ownership', severity: SEVERITY.CRITICAL, status: STATUS.FAIL,
+      summary: `${rows.length} ${summary}`, affected: rows.length, sample: rows,
+      classification, requiresHumanReview: true,
+    })
+    : pass(id, 'ownership', `No lead is ${summary.replace(/^lead\(s\) /, '')}`));
+
+  report('ownership.promoted_still_cold_eligible', conflicts.promotedColdEligible,
+    'lead(s) have left cold stages yet remain eligible for an automated cold send.');
+  report('ownership.suppressed_send_eligible', conflicts.suppressedSendEligible,
+    'suppressed lead(s) are still send-eligible.');
+  report('ownership.multiple_executable_owners', conflicts.doubleOwner,
+    'lead(s) have more than one system holding an executable next move.');
+
+  // Is manual-reply observation actually running? A prospect who was answered
+  // by hand looks identical to one nobody has touched, so if this pass stops,
+  // ownership reasons from a mailbox that has moved on. The runtime already
+  // fails closed when the observation errors; this makes a SILENT stall
+  // visible, which the fail-closed path cannot.
+  const humanOutbound = leads.filter(lead =>
+    (index.activityByLead.get(String(lead.id)) || [])
+      .some(row => String(row.eventType || '') === 'human_response_sent'));
+  const awaitingReply = leads.filter(lead => {
+    const activities = index.activityByLead.get(String(lead.id)) || [];
+    const lastInbound = activities.filter(row => /_reply$/.test(String(row.eventType || '')))
+      .map(row => Date.parse(row.occurredAt || '')).filter(Number.isFinite).sort().pop();
+    if (!lastInbound) return false;
+    const lastOutbound = activities.filter(row => String(row.eventType || '') === 'human_response_sent')
+      .map(row => Date.parse(row.occurredAt || '')).filter(Number.isFinite).sort().pop();
+    // Answered more than 14 days ago and still nothing recorded back.
+    return (!lastOutbound || lastOutbound < lastInbound)
+      && (new Date(now).getTime() - lastInbound) > 14 * 86400000;
+  });
+  out.push(humanOutbound.length
+    ? pass('ownership.human_outbound_observed', 'ownership',
+      `Manual replies are being observed: ${humanOutbound.length} lead(s) carry provider-backed human_response_sent evidence.`)
+    : finding({
+      id: 'ownership.human_outbound_observed', category: 'ownership',
+      severity: SEVERITY.WARNING, status: STATUS.FAIL,
+      summary: 'No lead carries any human_response_sent evidence. Either nobody has answered a prospect, or Gmail outbound observation has stalled — in which case automation is reasoning from a mailbox that may have moved on.',
+      affected: 0, classification: 'operational', requiresHumanReview: true,
+    }));
+  out.push(awaitingReply.length
+    ? finding({
+      id: 'ownership.unanswered_inbound_backlog', category: 'ownership',
+      severity: SEVERITY.INFO, status: STATUS.PASS,
+      summary: `${awaitingReply.length} lead(s) replied more than 14 days ago with no recorded response. Operational backlog, not an automation risk — ownership already holds them.`,
+      affected: awaitingReply.length,
+      sample: awaitingReply.slice(0, 10).map(lead => ({ id: lead.id, company: lead.company })),
+      classification: 'operational',
+    })
+    : pass('ownership.unanswered_inbound_backlog', 'ownership', 'No prospect reply is sitting unanswered beyond 14 days.'));
+
+  out.push(protectedByOwnership.length
+    ? finding({
+      id: 'ownership.cadence_blocked_by_ownership', category: 'ownership',
+      severity: SEVERITY.INFO, status: STATUS.PASS,
+      summary: `${protectedByOwnership.length} lead(s) meet cold cadence timing but are held by ownership rather than sent. This is the guard working — each would previously have gone to the sender.`,
+      affected: protectedByOwnership.length, sample: protectedByOwnership,
+      classification: 'operational',
+    })
+    : pass('ownership.cadence_blocked_by_ownership', 'ownership',
+      'No cadence-ready lead is currently being held back by ownership.'));
+  return out;
+}
+
 // ── AGGREGATION ─────────────────────────────────────────────────────────────
 
 /**
@@ -1076,6 +1197,7 @@ function buildCrmHealth(input = {}) {
     ['attribution', () => attributionChecks(context)],
     ['funnel', () => funnelChecks(context)],
     ['activity', () => activityChecks(context)],
+    ['ownership', () => ownershipChecks(context, index)],
   ];
 
   for (const [name, run] of groups) {

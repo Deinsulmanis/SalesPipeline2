@@ -61,6 +61,10 @@ const { SmartleadClient } = require('./integrations/smartlead-client');
 const { SmartleadOutreachProvider } = require('./integrations/outreach-providers');
 const { classifyReply: classifyProviderReply } = require('./integrations/reply-classifier');
 const { classifyReplyText, isUsableReplyIdentity, REPLY_STATE } = require('./integrations/canonical-reply');
+// ONE ownership model, shared with the CRM. The sender asks it rather than
+// keeping a second opinion about who may act on a lead.
+const { NON_COLD_STAGES, deriveAutomationOwnership, mayColdSend } = require('./integrations/automation-ownership');
+const { planHumanOutboundIngestion, matchOutbound, latestHumanOutboundAt } = require('./integrations/human-outbound');
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
 const { routedLeadReady } = require('./integrations/campaign-routing');
 // The reactivation gate is defined once, in the shared pipeline-state model.
@@ -706,6 +710,68 @@ async function recordColdCallActivityStrict(record) {
     insertDataOption: 'INSERT_ROWS',
     requestBody: { values: [COLD_CALL_ACTIVITY_HEADER.map(key => String(complete[key] ?? ''))] },
   });
+}
+
+/**
+ * The Sales Pipeline board, read once per pass.
+ *
+ * The send pass used to know only about ColdEmail rows, which is why ownership
+ * could say "this lead is promoted, do not touch it" while the sender had no
+ * way to see the pipeline at all. One read, then bounded lookup maps — never a
+ * per-candidate fetch.
+ */
+async function readBoardLeads() {
+  try {
+    const response = await sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A:W`,
+    });
+    const rows = response.data.values || [];
+    const header = ['id', 'type', 'first', 'last', 'brokerage', 'tradeType', 'company',
+      'city', 'cityTrade', 'phone', 'email', 'website', 'stage', 'priority', 'followup',
+      'notes', 'created', 'emailStatus', 'lastEmailedAt', 'emailStep',
+      'meetingAt', 'outcome', 'conversationContext'];
+    return rows.slice(1).map(row => {
+      const lead = {};
+      header.forEach((key, index) => { lead[key] = row[index] || ''; });
+      return lead;
+    }).filter(lead => lead.id);
+  } catch (error) {
+    // Fail CLOSED: if the board cannot be read we must not assume no lead is
+    // promoted. The caller treats a null board as "context unavailable".
+    console.warn(`[board] could not read the Sales Pipeline (${error.message}) — failing closed`);
+    return null;
+  }
+}
+
+/**
+ * One pass, one set of reads, bounded maps. Everything the ownership model
+ * needs about a candidate, without a single per-lead fetch.
+ */
+function buildOwnershipContext({ boardLeads, activities, outboundObservationOk = true }) {
+  const activitiesByLead = new Map();
+  for (const row of activities || []) {
+    const key = String(row.sourceLeadId || '').trim()
+      || String(row.leadId || '').replace(/^CE-/, '').trim();
+    if (!key) continue;
+    const bucket = activitiesByLead.get(key) || [];
+    bucket.push(row);
+    activitiesByLead.set(key, bucket);
+  }
+  const boardByLead = new Map();
+  const boardByEmail = new Map();
+  for (const board of boardLeads || []) {
+    const direct = String(board.id || '').replace(/^CE-/, '');
+    if (String(board.id || '').startsWith('CE-')) boardByLead.set(direct, board);
+    const email = String(board.email || '').trim().toLowerCase();
+    if (email && !boardByEmail.has(email)) boardByEmail.set(email, board);
+  }
+  return {
+    activitiesByLead, boardByLead, boardByEmail,
+    // Explicit: a failed board read must not read as "nothing is promoted".
+    boardAvailable: Array.isArray(boardLeads),
+    // Explicit: a failed mailbox read must not read as "nobody has replied".
+    outboundObservationOk: outboundObservationOk !== false,
+  };
 }
 
 async function readColdCallActivities() {
@@ -2683,6 +2749,171 @@ function suppressionReason(lead) {
   return sendSuppressionReason(lead, { suppressedEmails: SUPPRESSED_EMAILS });
 }
 
+/**
+ * THE send gate. Every provider call passes through here.
+ *
+ * The sender no longer keeps its own opinion about eligibility: it asks the
+ * shared ownership model and refuses anything that is not positively a
+ * permitted cold send. Fails CLOSED — an unrecognised state is a refusal, not
+ * a default-allow.
+ *
+ * Board and activity context is not loaded in the send pass, so the verdict
+ * here is the lead-level one: identity, terminal stage, suppression, MANUAL
+ * HOLD and pipeline promotion. Reply- and meeting-owned leads are already
+ * excluded upstream, because runReplyCheckPass moves them off `emailed`.
+ */
+// How far back the outbound observation looks each cycle. Idempotency is what
+// guarantees correctness — this only bounds the work. A few days of overlap
+// costs one extra list page and makes a missed cycle self-healing.
+const OUR_ADDRESS_PATTERN = /scalelabai|tryscalelab/i;
+const HUMAN_OUTBOUND_LOOKBACK_DAYS = parseInt(process.env.HUMAN_OUTBOUND_LOOKBACK_DAYS || '3', 10);
+
+/**
+ * Observe manual Gmail replies and turn them into canonical activity.
+ *
+ * WHY THIS RUNS BEFORE SEND SELECTION
+ *
+ * Someone answers a prospect from their inbox at 09:00; the agent wakes at
+ * 09:05. Without this pass the CRM has no idea the conversation moved, and
+ * ownership happily reports the lead as ordinary cold cadence. Six such
+ * messages existed in production while the CRM believed nobody had answered.
+ * So observation happens first, its activities are persisted, and only then is
+ * ownership derived — the send gate reasons about a mailbox that is current.
+ *
+ * COST: one messages.list, one metadata get per listed message, and one
+ * threads.get per message that matched a lead. Never per CRM lead.
+ *
+ * Returns { ok } — a false result makes automated sends fail closed for the
+ * rest of the cycle. Reply checks, bounce checks and the dashboard are
+ * unaffected: a stale mailbox is a reason not to SEND, not a reason to stop
+ * observing.
+ */
+async function runHumanOutboundPass(leads, activitiesForCycle) {
+  const leadsByEmail = new Map();
+  for (const lead of leads) {
+    const email = String(lead.email || '').trim().toLowerCase();
+    if (email && !leadsByEmail.has(email)) leadsByEmail.set(email, lead);
+  }
+  const byId = new Map(leads.map(lead => [lead.id, lead]));
+  const existingActivitiesByLead = new Map();
+  const leadIdByThread = new Map();
+  for (const row of activitiesForCycle || []) {
+    const key = String(row.sourceLeadId || '').trim() || String(row.leadId || '').replace(/^CE-/, '').trim();
+    if (!key) continue;
+    const bucket = existingActivitiesByLead.get(key) || [];
+    bucket.push(row);
+    existingActivitiesByLead.set(key, bucket);
+    try {
+      const threadId = JSON.parse(row.metadata || '{}').gmailThreadId;
+      if (threadId && byId.has(key) && !leadIdByThread.has(threadId)) leadIdByThread.set(threadId, byId.get(key));
+    } catch (_) { /* malformed metadata is health's problem, not this pass's */ }
+  }
+
+  const headerOf = (payload, name) =>
+    ((payload && payload.headers) || []).find(h => h.name.toLowerCase() === name)?.value || '';
+  const addressesOf = value => String(value || '').split(',')
+    .map(part => { const m = /<([^>]+)>/.exec(part); return (m ? m[1] : part).trim().toLowerCase(); })
+    .filter(Boolean);
+
+  try {
+    const listed = await gmail().users.messages.list({
+      userId: 'me', q: `in:sent newer_than:${HUMAN_OUTBOUND_LOOKBACK_DAYS}d`, maxResults: 200,
+    });
+    const messages = [];
+    for (const stub of (listed.data.messages || [])) {
+      const full = await gmail().users.messages.get({
+        userId: 'me', id: stub.id, format: 'metadata',
+        metadataHeaders: ['To', 'Cc', 'Subject', 'Date'],
+      });
+      messages.push({
+        id: full.data.id, threadId: full.data.threadId,
+        to: [...addressesOf(headerOf(full.data.payload, 'to')), ...addressesOf(headerOf(full.data.payload, 'cc'))],
+        subject: headerOf(full.data.payload, 'subject'),
+        sentAt: new Date(Number(full.data.internalDate)).toISOString(),
+      });
+    }
+
+    // Thread inbound evidence, resolved ONLY for messages that matched a lead.
+    // Asked of Gmail rather than inferred from stored replies, so a lead with
+    // no reconciled reply activity is still handled correctly.
+    const threadsWithInbound = new Set();
+    const candidateThreads = new Set();
+    for (const message of messages) {
+      const match = matchOutbound(message, { leadsByEmail, leadIdByThread });
+      if (match.leadId && message.threadId) candidateThreads.add(message.threadId);
+    }
+    for (const threadId of candidateThreads) {
+      try {
+        const thread = await gmail().users.threads.get({
+          userId: 'me', id: threadId, format: 'metadata', metadataHeaders: ['From'],
+        });
+        const hasInbound = (thread.data.messages || []).some(m => {
+          const from = addressesOf(headerOf(m.payload, 'from'))[0] || '';
+          return from && !OUR_ADDRESS_PATTERN.test(from);
+        });
+        if (hasInbound) threadsWithInbound.add(threadId);
+      } catch (_) { /* an unreadable thread simply yields no inbound evidence */ }
+    }
+
+    const report = planHumanOutboundIngestion(messages, {
+      leadsByEmail, leadIdByThread, existingActivitiesByLead, threadsWithInbound,
+    });
+    const toWrite = report.plans.filter(plan => plan.outcome === 'proposed');
+    for (const plan of toWrite) {
+      await recordColdCallActivity({
+        ...plan.activity, metadata: JSON.stringify(plan.activity.metadata),
+      });
+      // Visible to ownership in THIS cycle, without a re-read.
+      const bucket = existingActivitiesByLead.get(plan.leadId) || [];
+      bucket.push({ ...plan.activity, metadata: JSON.stringify(plan.activity.metadata) });
+      existingActivitiesByLead.set(plan.leadId, bucket);
+      (activitiesForCycle || []).push({ ...plan.activity, metadata: JSON.stringify(plan.activity.metadata) });
+    }
+    console.log(`[HumanOutbound] ${messages.length} sent message(s) in ${HUMAN_OUTBOUND_LOOKBACK_DAYS}d · `
+      + `${toWrite.length} new human response(s) recorded · ${JSON.stringify(report.byOutcome)}`);
+    return { ok: true, written: toWrite.length, inspected: messages.length };
+  } catch (error) {
+    console.error(`[HumanOutbound] observation FAILED (${error.message}) — automated sends fail closed this cycle`);
+    return { ok: false, written: 0, error: error.message };
+  }
+}
+
+function coldSendGate(lead, context = null) {
+  // Without context the gate still runs, but it can only see lead-level state.
+  // That was the original shape and it is not good enough: the audit could say
+  // "blocked, this lead is in the pipeline" while the sender had no board to
+  // look at. A pass that failed to read the board fails CLOSED rather than
+  // quietly reverting to the weaker check.
+  if (context && !context.boardAvailable) {
+    return { ownership: null, verdict: { allowed: false,
+      reason: 'pipeline context unavailable this pass — failing closed' } };
+  }
+  if (context && !context.outboundObservationOk) {
+    return { ownership: null, verdict: { allowed: false,
+      reason: 'manual outbound observation failed this pass — mailbox may be stale, failing closed' } };
+  }
+  const leadId = String(lead.id || '');
+  const boardLead = context
+    ? (context.boardByLead.get(leadId)
+      || context.boardByEmail.get(String(lead.email || '').trim().toLowerCase())
+      || null)
+    : null;
+  const activities = context ? (context.activitiesByLead.get(leadId) || []) : [];
+  const callState = boardLead
+    ? deriveCallLifecycle(boardLead, { activities, now: new Date() })
+    : null;
+  const ownership = deriveAutomationOwnership(lead, {
+    boardLead, activities, callState,
+    // The manual reply observed moments ago in this same cycle.
+    humanTouchAt: latestHumanOutboundAt(activities),
+    suppressionReason,
+    sendingEnabled: SENDING_ENABLED,
+    sequencesEnabled: STAGE_SEQUENCES_ENABLED,
+    coldCadenceDue: true,   // the selector already proved cadence timing
+  });
+  return { ownership, verdict: mayColdSend(ownership) };
+}
+
 function selectQueued(leads) {
   return leads.filter(l => {
     if (l.stage !== QUEUE_STAGE) return false;   // you queued it
@@ -2733,6 +2964,14 @@ function selectFollowUps(leads) {
   const now = Date.now();
   return leads.filter(l => {
     if (l.emailStatus !== 'emailed') return false;
+    // A lead that has left cold stages is no longer ordinary cold cadence,
+    // whatever emailStatus still says. This filter used to read emailStatus and
+    // never the stage, so Sparkle Dental Spa — ColdEmail stage "Promoted",
+    // emailStatus "emailed", step 1, no MANUAL HOLD — stayed queued for an
+    // automated cold follow-up while the CRM treated it as a live opportunity.
+    // The hold remains a second, independent safety tag; this no longer depends
+    // on anyone having remembered to add it.
+    if (NON_COLD_STAGES.includes(String(l.stage || '').trim().toLowerCase())) return false;
     if (l.emailTemplateId === ROOFING_SURVEY_TEMPLATE) return false;
     if (!isValidEmail(l.email)) return false;
     if (!routedLeadCanUseCurrentSender(l)) return false;
@@ -3019,6 +3258,28 @@ async function run() {
   // the event-driven spawn, so a missed webhook still gets picked up.
   await withAuth(() => runIntentTriggerPass(all));
 
+  // ── OBSERVE, PERSIST, THEN DECIDE ────────────────────────────────────────
+  // Everything above has finished writing inbound evidence. Now the mailbox is
+  // read for MANUAL replies a person sent from their inbox, those become
+  // canonical activity, and only then is ownership derived. The ordering is the
+  // point: a message answered five minutes ago must be visible before any
+  // automated send candidate is judged.
+  //
+  // ONE read each for board and activity, then bounded Maps — no per-lead read.
+  const [ownershipBoard, ownershipActivities] = await Promise.all([
+    withAuth(readBoardLeads),
+    withAuth(readColdCallActivities).catch(() => []),
+  ]);
+  const outbound = await withAuth(() => runHumanOutboundPass(all, ownershipActivities));
+  // FAIL-CLOSED FRESHNESS. A failed observation means the mailbox may have
+  // moved without us. That is a reason to refuse automated SENDS, not a reason
+  // to halt the whole agent: reply checks, bounce handling and the dashboard
+  // have already run and are unaffected.
+  const ownershipContext = buildOwnershipContext({
+    boardLeads: ownershipBoard, activities: ownershipActivities,
+    outboundObservationOk: outbound.ok,
+  });
+
   // Phase 1 — new sends (stage === QUEUE_STAGE, never emailed)
   const queued = selectQueued(all);
 
@@ -3066,6 +3327,11 @@ async function run() {
     const suppressed = suppressionReason(lead);
     if (suppressed) {
       console.error(`🚫 [SUPPRESSED] refusing step-1 send → ${lead.email} (${cleanCompanyName(lead.company) || lead.id}) — notes contain ${suppressed}`);
+      continue;
+    }
+    const gate = coldSendGate(lead, ownershipContext);
+    if (!gate.verdict.allowed) {
+      console.error(`🚫 [OWNERSHIP] refusing step-1 send → ${lead.email} — ${gate.verdict.reason}`);
       continue;
     }
 
@@ -3198,6 +3464,11 @@ async function run() {
       console.error(`🚫 [SUPPRESSED] refusing warm send → ${lead.email} (${cleanCompanyName(lead.company) || lead.id}) — notes contain ${suppressed}`);
       continue;
     }
+    const gate = coldSendGate(lead, ownershipContext);
+    if (!gate.verdict.allowed) {
+      console.error(`🚫 [OWNERSHIP] refusing warm send → ${lead.email} — ${gate.verdict.reason}`);
+      continue;
+    }
 
     const currentStep = parseInt(lead.emailStep, 10);
     const nextStepNum = currentStep + 1;
@@ -3244,6 +3515,11 @@ async function run() {
     const suppressed = suppressionReason(lead);
     if (suppressed) {
       console.error(`🚫 [SUPPRESSED] refusing follow-up send → ${lead.email} (${cleanCompanyName(lead.company) || lead.id}) — notes contain ${suppressed}`);
+      continue;
+    }
+    const gate = coldSendGate(lead, ownershipContext);
+    if (!gate.verdict.allowed) {
+      console.error(`🚫 [OWNERSHIP] refusing follow-up send → ${lead.email} — ${gate.verdict.reason}`);
       continue;
     }
 

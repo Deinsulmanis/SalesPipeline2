@@ -260,9 +260,22 @@ test('the legacy Promoted stage is read-only and gates nothing that sends', () =
     'automation must not start writing the legacy stage');
   // It is still honoured where it exists, as an extra intent-suppression read.
   assert.match(agent, /lead\.stage === 'Replied' \|\| lead\.stage === 'Promoted'/);
-  // Crucially it is NOT what stops the sequence — emailStatus is.
+  // emailStatus is still the primary cadence condition...
   assert.match(agent, /if \(l\.emailStatus !== 'emailed'\) return false;/);
-  assert.ok(!/selectFollowUps[\s\S]{0,600}Promoted/.test(agent), 'the follow-up selector does not consult it');
+  // ...but it is no longer the ONLY thing standing between a promoted lead and
+  // an automated cold follow-up. This assertion used to require the opposite:
+  // that the follow-up selector ignore the stage entirely. That guarantee IS
+  // the Sparkle Dental Spa failure — ColdEmail stage "Promoted", emailStatus
+  // "emailed", step 1, no MANUAL HOLD, and therefore queued for a cold send
+  // while the CRM treated it as a live opportunity. Phase 2.3 inverts it: the
+  // selector now refuses any lead that has left cold stages, so the hold is an
+  // additional safety tag rather than the only one.
+  const selector = agent.slice(agent.indexOf('function selectFollowUps'), agent.indexOf('function countTodaySends'));
+  assert.match(selector, /NON_COLD_STAGES\.includes\(String\(l\.stage \|\| ''\)\.trim\(\)\.toLowerCase\(\)\)/,
+    'the follow-up selector must exclude leads that have left cold cadence');
+  const { NON_COLD_STAGES } = require('../integrations/automation-ownership');
+  assert.ok(NON_COLD_STAGES.includes('promoted'), 'Promoted is one of the excluded stages');
+  assert.ok(!NON_COLD_STAGES.includes('contacted'), 'ordinary cold stages remain eligible');
   const suppression = agent.slice(agent.indexOf('function suppressionReason'), agent.indexOf('function selectQueued'));
   assert.ok(!/Promoted/.test(suppression), 'suppression does not consult it either');
 });
