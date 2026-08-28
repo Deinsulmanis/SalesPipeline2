@@ -2528,7 +2528,7 @@ function buildIntentEmail(lead) {
   };
 }
 
-async function runIntentTriggerPass(allLeads) {
+async function runIntentTriggerPass(allLeads, ownershipContext = null) {
   await ensureIntentSheet();
   const [plays, fired, activities] = await Promise.all([
     readRealDemoPlays(), loadFiredIntents(), readColdCallActivities(),
@@ -2564,6 +2564,11 @@ async function runIntentTriggerPass(allLeads) {
     const suppressed = suppressionReason(lead);
     if (suppressed) { console.warn(`  🚫 [SUPPRESSED] skipping intent email → ${lead.email} (${suppressed})`); continue; }
     if (!isValidEmail(lead.email)) { console.warn(`  ⏭️  invalid address ${lead.email}`); continue; }
+    const gate = coldSendGate(lead, ownershipContext);
+    if (!gate.verdict.allowed) {
+      console.warn(`  🚫 [OWNERSHIP] skipping intent email → ${lead.email} — ${gate.verdict.reason}`);
+      continue;
+    }
     if (todaySent >= DAILY_SEND_LIMIT) { console.warn(`  ⏸️  daily cap reached (${todaySent}/${DAILY_SEND_LIMIT}) — deferring to next pass`); break; }
 
     const { subject, body } = buildIntentEmail(lead);
@@ -3078,11 +3083,19 @@ const jitter = () => MIN_DELAY + Math.floor(Math.random() * (MAX_DELAY - MIN_DEL
 // It never touches the cold sequence: emailStep, lastEmailedAt and emailStatus
 // are neither read nor written here, and [MANUAL HOLD] is never removed — the
 // cold selectors stay blocked exactly as before. See stage-sequences.js.
-async function runStageSequencePass(allLeads) {
+async function runStageSequencePass(allLeads, { outboundObservationOk = true } = {}) {
   // The gate comes first, before any read. With the flag off this pass cannot
   // select a lead, let alone send to one.
   if (!STAGE_SEQUENCES_ENABLED) {
     console.log('[StageSeq] disabled (STAGE_SEQUENCES_ENABLED is not "true") — no stage follow-ups considered.');
+    return 0;
+  }
+  // A manual Gmail response can happen between scheduler cycles. If the
+  // observation pass failed, the mailbox may be newer than canonical state;
+  // sequence execution must therefore fail closed just like ordinary cold
+  // execution does. This check precedes every Sheets read and send candidate.
+  if (!outboundObservationOk) {
+    console.error('[StageSeq] manual outbound observation failed — mailbox may be stale, failing closed.');
     return 0;
   }
   if (DRY_RUN) { console.log('[StageSeq] dry run — skipped.'); return 0; }
@@ -3226,11 +3239,20 @@ async function run() {
     console.log(`[target] Controlled run restricted to lead ${TARGET_LEAD_ID}`);
   }
 
-  // INTENT_ONLY: run just the both-audios trigger and stop. No reply check, no
-  // bounce check, no outreach — this path exists to be cheap enough to spawn on
-  // demand when a demo play completes a pair.
+  // INTENT_ONLY still observes manual Gmail responses and derives canonical
+  // ownership before it may send. It skips the other detection passes, but it
+  // is not an escape hatch around mailbox freshness or the centralized gate.
   if (INTENT_ONLY) {
-    await withAuth(() => runIntentTriggerPass(all));
+    const [intentBoard, intentActivities] = await Promise.all([
+      withAuth(readBoardLeads),
+      withAuth(readColdCallActivities).catch(() => []),
+    ]);
+    const intentOutbound = await withAuth(() => runHumanOutboundPass(all, intentActivities));
+    const intentOwnershipContext = buildOwnershipContext({
+      boardLeads: intentBoard, activities: intentActivities,
+      outboundObservationOk: intentOutbound.ok,
+    });
+    await withAuth(() => runIntentTriggerPass(all, intentOwnershipContext));
     return;
   }
 
@@ -3249,21 +3271,12 @@ async function run() {
   // Bounce-check pass — marks bounced leads Done before follow-up selection.
   await runBounceCheckPass(all);
 
-  // Stage-specific recovery journeys. Gated OFF by default and entirely
-  // separate from the cold sequence: it selects on CRM state, never on
-  // emailStep, and it cannot resume a held cold sequence.
-  await runStageSequencePass(all);
-
-  // Intent trigger — both-audios. Runs in every normal pass as a backstop to
-  // the event-driven spawn, so a missed webhook still gets picked up.
-  await withAuth(() => runIntentTriggerPass(all));
-
   // ── OBSERVE, PERSIST, THEN DECIDE ────────────────────────────────────────
-  // Everything above has finished writing inbound evidence. Now the mailbox is
-  // read for MANUAL replies a person sent from their inbox, those become
-  // canonical activity, and only then is ownership derived. The ordering is the
-  // point: a message answered five minutes ago must be visible before any
-  // automated send candidate is judged.
+  // Inbound and bounce evidence above has finished writing. Now the mailbox is
+  // read for MANUAL replies a person sent from their inbox and those become
+  // canonical activity before EITHER recovery sequences or ordinary cold
+  // sends are evaluated. A message answered five minutes ago must be visible
+  // to every automated execution path in this same cycle.
   //
   // ONE read each for board and activity, then bounded Maps — no per-lead read.
   const [ownershipBoard, ownershipActivities] = await Promise.all([
@@ -3279,6 +3292,17 @@ async function run() {
     boardLeads: ownershipBoard, activities: ownershipActivities,
     outboundObservationOk: outbound.ok,
   });
+
+  // Stage-specific recovery journeys. Gated OFF by default and entirely
+  // separate from the cold sequence: it selects on CRM state, never on
+  // emailStep, and it cannot resume a held cold sequence. The pass re-reads
+  // canonical activities, including any human_response_sent event persisted
+  // moments ago, and refuses all execution if mailbox observation failed.
+  await runStageSequencePass(all, { outboundObservationOk: outbound.ok });
+
+  // Intent trigger — both-audios. Runs in every normal pass as a backstop to
+  // the event-driven spawn, so a missed webhook still gets picked up.
+  await withAuth(() => runIntentTriggerPass(all, ownershipContext));
 
   // Phase 1 — new sends (stage === QUEUE_STAGE, never emailed)
   const queued = selectQueued(all);

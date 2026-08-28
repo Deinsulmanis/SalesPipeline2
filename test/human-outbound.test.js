@@ -193,7 +193,7 @@ test('outbound observation runs BEFORE send selection, and its writes are visibl
   const observe = at('await withAuth(() => runHumanOutboundPass(all, ownershipActivities))');
   const derive = at('const ownershipContext = buildOwnershipContext({');
   const select = at('const queued = selectQueued(all)');
-  const gate = at('const gate = coldSendGate(lead, ownershipContext)');
+  const gate = agent.indexOf('const gate = coldSendGate(lead, ownershipContext)', select);
   for (const [name, index] of [['observe', observe], ['derive', derive], ['select', select], ['gate', gate]]) {
     assert.ok(index > 0, `${name} step is missing from the send pass`);
   }
@@ -203,6 +203,32 @@ test('outbound observation runs BEFORE send selection, and its writes are visibl
   // A response recorded this cycle is pushed into the same activity list the
   // context is built from, so it counts without a re-read.
   assert.match(agent, /\(activitiesForCycle \|\| \[\]\)\.push\(/);
+});
+
+test('outbound observation runs before stage sequences and protects both send systems in the same cycle', () => {
+  const agent = readSource(path.join(root, 'outreach-agent.js'));
+  const observe = agent.indexOf('await withAuth(() => runHumanOutboundPass(all, ownershipActivities))');
+  const sequences = agent.indexOf('await runStageSequencePass(all, { outboundObservationOk: outbound.ok })');
+  const coldSelection = agent.indexOf('const queued = selectQueued(all)');
+
+  assert.ok(observe >= 0 && sequences >= 0 && coldSelection >= 0);
+  assert.ok(observe < sequences, 'manual Gmail outbound is persisted before sequence evaluation');
+  assert.ok(sequences < coldSelection, 'sequence evaluation remains before ordinary cold selection');
+  assert.match(agent, /async function runStageSequencePass\(allLeads, \{ outboundObservationOk = true \} = \{\}\)/);
+  assert.match(agent, /if \(!outboundObservationOk\) \{[\s\S]{0,250}return 0;/,
+    'a stale mailbox context fails sequence execution closed');
+});
+
+test('the demo-intent booking-link path also requires fresh canonical ownership', () => {
+  const agent = readSource(path.join(root, 'outreach-agent.js'));
+  const pass = agent.slice(agent.indexOf('async function runIntentTriggerPass'), agent.indexOf('// ── SELECTION'));
+  assert.match(pass, /const gate = coldSendGate\(lead, ownershipContext\)/);
+  assert.ok(pass.indexOf('coldSendGate(lead, ownershipContext)') < pass.indexOf('await sendEmail('));
+
+  const intentOnly = agent.slice(agent.indexOf('if (INTENT_ONLY)'));
+  assert.ok(intentOnly.indexOf('runHumanOutboundPass(all, intentActivities)')
+    < intentOnly.indexOf('runIntentTriggerPass(all, intentOwnershipContext)'),
+  'intent-only observes Gmail before evaluating its send trigger');
 });
 
 test('a failed Gmail observation fails closed for sends only', () => {
