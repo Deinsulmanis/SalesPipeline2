@@ -184,7 +184,7 @@ test('specific demo copy without confirmed capability blocks final validation', 
 });
 
 test('valid personalized email reaches only the existing mocked send callback', async () => {
-  const email = finalEmail(personalized('We welcome new patients.'));
+  const email = finalEmail(personalized('We offer Invisalign consultations.'));
   let calls = 0;
   const result = await sendValidatedFinalEmail(email, {}, async exact => {
     calls++;

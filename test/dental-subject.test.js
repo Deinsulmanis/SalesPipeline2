@@ -65,36 +65,40 @@ test('an unsupported service cannot enter the subject', () => {
   assert.ok(validation.errors.some(error => error.code === 'subject_angle_mismatch'));
 });
 
-test('verified accepting-new-patients evidence uses an operational fallback', () => {
+test('verified accepting-new-patients evidence does not generate a subject without a service fact', () => {
   const { result } = subjectFor('We are accepting new patients.');
   assert.equal(result.angleId, 'accepting_new_patients');
-  assert.equal(result.level, 2);
-  assert.match(result.subject, /new patient/);
+  assert.equal(result.subject, '');
+  assert.equal(result.validation.valid, false);
+  assert.ok(result.validation.errors.some(error => error.code === 'verified_service_subject_required'));
 });
 
-test('verified office hours use an operational fallback', () => {
+test('verified office hours do not generate a subject without a service fact', () => {
   const { result } = subjectFor('Office hours Monday 9am - 5pm. Saturday Closed.');
   assert.equal(result.angleId, 'published_hours');
-  assert.equal(result.level, 2);
-  assert.match(result.subject, /hours|after-hours/);
+  assert.equal(result.subject, '');
+  assert.equal(result.validation.valid, false);
 });
 
-test('city-only enrichment uses a practice-specific fallback', () => {
+test('city-only enrichment cannot generate a cold-email subject', () => {
   const { result } = subjectFor('General dentistry.', { city: 'Calgary' });
   assert.equal(result.level, 1);
-  assert.equal(result.subject, 'quick question about Cooper Dental');
+  assert.equal(result.subject, '');
+  assert.equal(result.validation.valid, false);
 });
 
-test('no useful enrichment uses a safe first-name fallback', () => {
+test('no useful enrichment cannot generate a first-name fallback subject', () => {
   const { result } = subjectFor('', { city: '' });
   assert.equal(result.level, 0);
-  assert.equal(result.subject, 'quick question, Deborah');
+  assert.equal(result.subject, '');
+  assert.equal(result.validation.valid, false);
 });
 
-test('no useful enrichment and no name uses the generic safe fallback', () => {
+test('no useful enrichment and no name cannot generate a generic fallback subject', () => {
   const { result } = subjectFor('', { city: '', first: '', contactName: '' });
   assert.equal(result.level, 0);
-  assert.equal(result.subject, 'quick question');
+  assert.equal(result.subject, '');
+  assert.equal(result.validation.valid, false);
 });
 
 for (const [label, subject] of [
@@ -134,10 +138,10 @@ test('malformed punctuation, multiple sentences, caps, emoji, and fake reply pre
   }
 });
 
-test('generated subjects remain within seven words and sixty characters', () => {
+test('generated verified-service subjects remain within seven words and sixty characters', () => {
   for (const context of [
     'Invisalign', 'dental implants', 'emergency dentistry', 'cosmetic dentistry',
-    'sedation dentistry', 'pediatric dentistry', 'Monday 9am - 5pm', '',
+    'sedation dentistry', 'pediatric dentistry',
   ]) {
     const { result } = subjectFor(context, context ? {} : { city: '' });
     assert.ok(result.subject.split(/\s+/).length <= 7, result.subject);

@@ -788,8 +788,8 @@ async function readColdCallActivities() {
 
 // ── PRE-SEND VALIDATION FOR COLD EMAIL ────────────────────────────────────────
 // The guarantee is a commercial promise, so an unresolved merge
-// field is not a cosmetic bug — "…for  in the first 30 days" or a literal
-// {{company}} would be sent as a contractual claim. Every one of these routes
+// field is not a cosmetic bug — an altered pay-per-booking promise or a literal
+// merge artifact would be sent as a contractual claim. Every one of these routes
 // to a DRAFT rather than blocking the run, so the lead is preserved for review.
 //
 // Returns null when the email is safe to send, or a string reason when it is not.

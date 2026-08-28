@@ -34,8 +34,23 @@ const CAMPAIGN_VERSIONS = Object.freeze({
     personalizationStrategy: 'dental_hyper_personalization_v1',
     offerVersion: 'three_patients_30d_rr_v1',
     activatedAt: '2026-08-28T23:06:42.340Z',
-    status: 'active',
+    status: 'retired',
     meaning: 'Dental V2 preserves the measured offer, subjects, personalization, CTA and cadence while positioning the product as 24/7 answering and booking software.',
+  }),
+  dental_v3_pay_per_booking: Object.freeze({
+    id: 'dental_v3_pay_per_booking',
+    label: 'Dental V3 — Pay Per Booking',
+    niche: 'dental',
+    emailTemplateId: 'dental-guarantee-v1',
+    family: 'dental_ai_receptionist',
+    copyVersion: 'dental_pay_per_booking_hp_v3',
+    followUpCopyVersion: 'dental_answering_booking_follow_up_v2',
+    subjectStrategy: 'verified_service_curiosity_v2',
+    personalizationStrategy: 'dental_hyper_personalization_v1',
+    offerVersion: 'pay_per_booked_appointment_v1',
+    activatedAt: '2026-08-28T23:13:22.640Z',
+    status: 'active',
+    meaning: 'Dental V3 uses only verified service-curiosity subjects and charges only for appointments booked through the system, with no volume or timeframe promise.',
   }),
   roofing_survey_v1_measured: Object.freeze({
     id: 'roofing_survey_v1_measured', label: 'Roofing Survey V1 — Measured',
@@ -48,7 +63,7 @@ const CAMPAIGN_VERSIONS = Object.freeze({
 });
 
 const ACTIVE_CAMPAIGN_VERSION = Object.freeze({
-  dental_ai_receptionist: 'dental_v2_answering_booking',
+  dental_ai_receptionist: 'dental_v3_pay_per_booking',
   roofing_survey: 'roofing_survey_v1_measured',
 });
 

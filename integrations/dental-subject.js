@@ -74,10 +74,10 @@ function practiceFallback(company) {
 
 function allowedSubjectsFor({ lead = {}, company = '', personalization } = {}) {
   const angleId = personalization?.angle?.id || 'generic';
-  if (SUBJECT_VARIANTS[angleId]) return [...SUBJECT_VARIANTS[angleId]];
-  if (angleId === 'city') return [practiceFallback(company || personalization?.profile?.practiceName || lead.company)];
-  const first = firstNameFor(lead, personalization);
-  return first ? [`quick question, ${first}`] : ['quick question'];
+  const fact = personalization?.angle?.fact || null;
+  if (SERVICE_ANGLES.has(angleId) && fact?.verified === true && fact.type === angleId
+    && String(fact.id || '').startsWith('site:')) return [...SUBJECT_VARIANTS[angleId]];
+  return [];
 }
 
 function subjectLevel(angleId) {
@@ -97,6 +97,7 @@ function validateDentalSubject({ subject, lead = {}, company = '', personalizati
   const words = value ? value.split(/\s+/) : [];
 
   if (!value) add('empty_subject', 'subject is empty');
+  if (!SERVICE_ANGLES.has(angleId)) add('verified_service_subject_required', 'a verified dental service is required before generating a cold-email subject');
   if (value.length > 60 || words.length > 7) add('subject_length', 'subject exceeds the dental campaign length limit');
   if (PROMOTIONAL_PATTERN.test(value)) add('promotional_subject', 'subject contains promotional or offer language');
   if (ARTIFACT_PATTERN.test(value)) add('subject_artifact', 'subject contains an unresolved placeholder or runtime artifact');
@@ -121,7 +122,7 @@ function validateDentalSubject({ subject, lead = {}, company = '', personalizati
 function buildDentalSubject({ lead = {}, company = '', personalization } = {}) {
   const angleId = personalization?.angle?.id || 'generic';
   const variants = allowedSubjectsFor({ lead, company, personalization });
-  const subject = stableChoice(lead, angleId, variants);
+  const subject = variants.length ? stableChoice(lead, angleId, variants) : '';
   const validation = validateDentalSubject({ subject, lead, company, personalization });
   return {
     subject: validation.subject,
