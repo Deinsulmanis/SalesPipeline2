@@ -1,6 +1,7 @@
 'use strict';
 
 const { deterministicReplyCategory } = require('./reply-classifier');
+const { resolveReplyState, EVIDENCE_SOURCE } = require('./canonical-reply');
 
 const ANALYTICS_CATEGORY = Object.freeze({
   POSITIVE: 'positive', NEGATIVE: 'negative', NEEDS_HUMAN: 'needs_human',
@@ -10,6 +11,18 @@ const ANALYTICS_CATEGORY = Object.freeze({
   // happened at all. Collapsing the two is what allowed a CRM stage to be read
   // as sentiment.
   UNKNOWN: 'unknown',
+  // Canonical non-human states, so a reconciled autoresponder or mailbox
+  // migration keeps its meaning instead of collapsing into "excluded".
+  AUTOMATED_REPLY: 'automated_reply',
+  CONTACT_CHANGE_REVIEW: 'contact_change_review',
+});
+
+// Canonical reply state -> analytics category. One mapping, used wherever
+// provider-backed evidence exists.
+const CANONICAL_STATE_CATEGORY = Object.freeze({
+  positive: 'positive', negative: 'negative', needs_human: 'needs_human',
+  automated_reply: 'automated_reply', contact_change_review: 'contact_change_review',
+  unknown: 'unknown',
 });
 
 function normalizedCategoryKey(value) {
@@ -59,6 +72,24 @@ function leadHasReply(lead = {}) {
  * classification and no activity are labelled Negative today. That fallback is
  * gone; the honest answer when nothing is known is UNKNOWN.
  */
+/**
+ * The canonical hierarchy, applied for real.
+ *
+ * `classificationFromLead` below reads legacy tags and stored classifications.
+ * That was the whole story until historical reconciliation started writing
+ * provider-backed evidence — at which point reading the tag first would mean
+ * the recovered Gmail evidence changed nothing anyone could see. Verified
+ * inbound activity therefore outranks a legacy tag here, exactly as
+ * canonical-reply documents, and the tag remains the fallback beneath it.
+ */
+function categoryFromEvidence(lead = {}, activities = [], storedClassifications = []) {
+  const resolved = resolveReplyState(lead, { activities });
+  if (resolved.source === EVIDENCE_SOURCE.CANONICAL_ACTIVITY) {
+    return CANONICAL_STATE_CATEGORY[resolved.state] || ANALYTICS_CATEGORY.UNKNOWN;
+  }
+  return classificationFromLead(lead, storedClassifications);
+}
+
 function classificationFromLead(lead = {}, storedClassifications = []) {
   // NOTE: a malformed address is NOT filtered here. A stored tag is still a
   // record that a message was once processed, whatever the address looks like.
@@ -117,7 +148,7 @@ function buildReplyEvidenceMap(activities = []) {
 // One row per replying lead — the same unit `buildReplyMetrics` counts. The
 // latest reply represents the lead; `replyCount` reports how many were seen.
 // Read-only: this derives display records and mutates nothing.
-function buildReplyRecords(leads = [], { classificationsByLeadId = new Map(), evidenceByLeadId = new Map() } = {}) {
+function buildReplyRecords(leads = [], { classificationsByLeadId = new Map(), evidenceByLeadId = new Map(), activitiesByLeadId = new Map() } = {}) {
   const records = [];
   const seen = new Set();
   for (const lead of leads || []) {
@@ -130,7 +161,7 @@ function buildReplyRecords(leads = [], { classificationsByLeadId = new Map(), ev
     const notes = String(lead.notes || '');
     records.push({
       leadId: id,
-      category: classificationFromLead(lead, classificationsByLeadId.get(id) || []),
+      category: categoryFromEvidence(lead, activitiesByLeadId.get(id) || [], classificationsByLeadId.get(id) || []),
       company: String(lead.company || ''),
       contactName: String(lead.contactName || ''),
       email: String(lead.email || ''),
@@ -157,6 +188,8 @@ const CATEGORY_METRIC_KEY = Object.freeze({
   [ANALYTICS_CATEGORY.NEEDS_HUMAN]: 'needsHuman',
   [ANALYTICS_CATEGORY.UNCLASSIFIED]: 'unclassified',
   [ANALYTICS_CATEGORY.UNKNOWN]: 'unknown',
+  [ANALYTICS_CATEGORY.AUTOMATED_REPLY]: 'automatedReply',
+  [ANALYTICS_CATEGORY.CONTACT_CHANGE_REVIEW]: 'contactChangeReview',
 });
 
 function filterReplyRecords(records = [], category = '') {
@@ -170,6 +203,7 @@ function filterReplyRecords(records = [], category = '') {
 function buildReplyMetrics(leads = [], { classificationsByLeadId = new Map(), evidenceByLeadId = new Map() } = {}) {
   const metrics = {
     totalReplies: 0, positive: 0, negative: 0, needsHuman: 0, unclassified: 0, unknown: 0,
+    automatedReply: 0, contactChangeReview: 0,
     contacted: 0, delivered: 0, positiveReplyRate: 0,
   };
   const seen = new Set();
@@ -186,7 +220,8 @@ function buildReplyMetrics(leads = [], { classificationsByLeadId = new Map(), ev
   for (const record of records) metrics[CATEGORY_METRIC_KEY[record.category] || 'unclassified']++;
   metrics.positiveReplyRate = metrics.delivered ? metrics.positive / metrics.delivered * 100 : 0;
   metrics.reconciles = metrics.totalReplies
-    === metrics.positive + metrics.negative + metrics.needsHuman + metrics.unclassified + metrics.unknown;
+    === metrics.positive + metrics.negative + metrics.needsHuman + metrics.unclassified
+      + metrics.unknown + metrics.automatedReply + metrics.contactChangeReview;
   return metrics;
 }
 
@@ -249,6 +284,7 @@ async function applyBackfillPlan(plan, { existingKeys = new Set(), writeClassifi
 module.exports = {
   ANALYTICS_CATEGORY, analyticsCategoryFor, categoriesFromNotes, leadHasReply,
   classificationFromLead, buildReplyMetrics, buildStoredClassificationMap,
-  buildReplyEvidenceMap, buildReplyRecords, filterReplyRecords,
+  buildReplyEvidenceMap, buildReplyRecords, filterReplyRecords, categoryFromEvidence,
+  CANONICAL_STATE_CATEGORY,
   planReplyBackfill, applyBackfillPlan,
 };

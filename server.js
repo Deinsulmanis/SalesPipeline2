@@ -1178,9 +1178,20 @@ async function loadOutreachDataset() {
   // Counts and reply records come from the canonical analytics module, exactly
   // as before — this only changes how many times the sheet is read.
   const metrics = buildReplyMetrics(leads, { classificationsByLeadId });
+  // Activities are indexed by lead so the canonical evidence hierarchy can run:
+  // provider-backed reply activity outranks a legacy [REPLY: ...] tag.
+  const activitiesByLeadId = new Map();
+  for (const row of activities) {
+    const key = String(row.sourceLeadId || '').trim() || String(row.leadId || '').replace(/^CE-/, '').trim();
+    if (!key) continue;
+    const bucket = activitiesByLeadId.get(key) || [];
+    bucket.push(row);
+    activitiesByLeadId.set(key, bucket);
+  }
   const replyRecords = buildReplyRecords(leads, {
     classificationsByLeadId,
     evidenceByLeadId: buildReplyEvidenceMap(activities),
+    activitiesByLeadId,
   });
   const categoryByLeadId = new Map(replyRecords.map(record => [record.leadId, record.category]));
   const campaignVersionByLeadId = buildCampaignVersionIndex(leads, activities);
