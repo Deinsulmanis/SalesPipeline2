@@ -47,6 +47,8 @@ const {
 const { evaluateStageSequence, SEQUENCE_STATUS } = require('./stage-sequences');
 const { LEGACY_UNKNOWN, CAMPAIGN_VERSIONS, parseMetadata, attributionFromActivity } = require('./campaign-versions');
 const { inspectActivityIntegrity } = require('./activity-timeline');
+const { deriveReplyOperation, REPLY_ACTION, ACTION_OWNER: REPLY_OWNER } = require('./reply-operations');
+const { OVERRIDE_KIND, OVERRIDE_STATUS } = require('./reply-overrides');
 
 const SEVERITY = Object.freeze({
   HEALTHY: 'healthy', INFO: 'info', WARNING: 'warning', CRITICAL: 'critical',
@@ -240,7 +242,7 @@ function identityChecks({ leads, boardLeads }, index) {
  * limitation. After it, the same shape means ingestion silently failed — a very
  * different problem, and the distinction is the whole point of this check.
  */
-function replyChecks({ leads, replyRecords = [], canonicalReplyBoundary = null }, index) {
+function replyChecks({ leads, replyRecords = [], canonicalReplyBoundary = null, now = new Date() }, index) {
   const out = [];
   const resolvedBoundary = resolveCanonicalReplyBoundary(canonicalReplyBoundary);
   const boundary = resolvedBoundary.at;
@@ -269,6 +271,61 @@ function replyChecks({ leads, replyRecords = [], canonicalReplyBoundary = null }
       resolved: resolveReplyState(lead, { activities: index.activityByLead.get(lead.id) || [] }),
     });
   }
+
+  const missingAction = [...resolvedByLead.values()].flatMap(entry => {
+    if (!GENUINE_HUMAN_STATES.includes(entry.resolved.state)) return [];
+    const operation = deriveReplyOperation(entry.lead, {
+      activities: index.activityByLead.get(entry.lead.id) || [],
+    });
+    return operation.action === REPLY_ACTION.INVESTIGATE
+      ? [{ id: entry.lead.id, company: entry.lead.company, reason: operation.reason }] : [];
+  });
+  out.push(missingAction.length
+    ? finding({ id: 'reply.actionable_without_next_action', category: CATEGORY.REPLY,
+      severity: SEVERITY.WARNING, status: STATUS.FAIL,
+      summary: `${missingAction.length} genuine reply lead(s) cannot derive a usable operational action.`,
+      affected: missingAction.length, sample: missingAction,
+      classification: 'operational', requiresHumanReview: true })
+    : pass('reply.actionable_without_next_action', CATEGORY.REPLY,
+      'Every genuine reply can derive a usable operational action.'));
+
+  const overdueHuman = [...resolvedByLead.values()].flatMap(entry => {
+    const operation = deriveReplyOperation(entry.lead, { activities: index.activityByLead.get(entry.lead.id) || [] });
+    const due = Date.parse(operation.dueAt || '');
+    return operation.owner === REPLY_OWNER.HUMAN && Number.isFinite(due) && due < new Date(now).getTime()
+      ? [{ id: entry.lead.id, company: entry.lead.company, action: operation.action, dueAt: operation.dueAt }] : [];
+  });
+  out.push(overdueHuman.length
+    ? finding({ id: 'reply.overdue_human_action', category: CATEGORY.REPLY,
+      severity: SEVERITY.WARNING, status: STATUS.FAIL,
+      summary: `${overdueHuman.length} reply operation(s) owned by a human are overdue.`,
+      affected: overdueHuman.length, sample: overdueHuman,
+      classification: 'operational', requiresHumanReview: true })
+    : pass('reply.overdue_human_action', CATEGORY.REPLY, 'No dated human reply operation is overdue.'));
+
+  const invalidOverrides = [];
+  for (const [leadId, rows] of index.activityByLead) {
+    for (const row of rows) {
+      if (![OVERRIDE_KIND.CLASSIFICATION, OVERRIDE_KIND.ACTION, OVERRIDE_KIND.CONTACT_CHANGE].includes(row.eventType)) continue;
+      let meta;
+      try { meta = JSON.parse(row.metadata || '{}'); } catch (_) { meta = null; }
+      if (!meta || ![OVERRIDE_STATUS.ACTIVE, OVERRIDE_STATUS.REVERSED].includes(meta.status)
+        || String(meta.leadId || '') !== String(leadId)) {
+        invalidOverrides.push({ id: leadId, eventId: row.eventId, reason: 'invalid override metadata' });
+      }
+      if (meta && row.eventType === OVERRIDE_KIND.CONTACT_CHANGE && meta.decision === 'approved'
+        && (!meta.identityMutationAllowed || meta.automationResumeAllowed)) {
+        invalidOverrides.push({ id: leadId, eventId: row.eventId, reason: 'unsafe approved contact decision' });
+      }
+    }
+  }
+  out.push(invalidOverrides.length
+    ? finding({ id: 'reply.invalid_override_state', category: CATEGORY.REPLY,
+      severity: SEVERITY.CRITICAL, status: STATUS.FAIL,
+      summary: `${invalidOverrides.length} reply override/contact decision record(s) are internally unsafe or malformed.`,
+      affected: invalidOverrides.length, sample: invalidOverrides,
+      classification: 'automation_risk', requiresHumanReview: true })
+    : pass('reply.invalid_override_state', CATEGORY.REPLY, 'Every reply override record is structurally safe.'));
 
   // Evidence-free reply states.
   const unknown = [...resolvedByLead.values()]

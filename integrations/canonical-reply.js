@@ -48,8 +48,17 @@ const AUTOMATED_SUBTYPE = Object.freeze({
 // Why a human message still needs a person. Kept short on purpose.
 const NEEDS_HUMAN_REASON = Object.freeze({
   FORWARDED_TO_DECISION_MAKER: 'forwarded_to_decision_maker',
+  // A human handed us a specific decision-maker address. Distinct from a
+  // generic "we'll forward it" because it creates a concrete, reviewable next
+  // step — and because nothing may ever mail that address automatically.
+  DECISION_MAKER_CONTACT_SUPPLIED: 'decision_maker_contact_supplied',
   QUESTION_OR_OBJECTION: 'question_or_objection',
   ADMINISTRATIVE_RESPONSE: 'administrative_response',
+  // "Not now, we'll come back to you." The intent is CLEAR, just not actionable
+  // yet, so calling it unclear_intent was wrong. Added as a reason rather than
+  // a seventh reply state: the message is still a human reply needing a person,
+  // and what changes is only what we should DO about it.
+  DEFERRED_TIMING: 'deferred_timing',
   UNCLEAR_INTENT: 'unclear_intent',
 });
 
@@ -221,6 +230,15 @@ const FORWARDED_MARKERS = [
   ['forwarded', /\b(?:forward(?:ed|ing)? (?:this |it |your (?:email|message) )?(?:on |along )?to|pass(?:ed|ing)? (?:this|it) (?:on )?to|will (?:let|tell)|when (?:she|he|they) (?:returns?|is back|are back)|office manager|practice manager|the owner|decision maker)\b/i],
 ];
 
+// "Not right now, but keep us in mind." Deliberately narrow: a vague "later"
+// is NOT enough on its own, because the operational answer (revisit) implies a
+// commitment we should only make when the prospect actually made one.
+const DEFERRAL_MARKERS = [
+  ['will_reconnect', /\b(?:(?:will|we'?ll|I'?ll) (?:reach (?:back )?out|be in touch|get back to you|contact you|follow up)(?: (?:again|later|then|afterwards?))?|circle back (?:with you )?(?:later|then|once))\b/i],
+  ['not_right_now', /\b(?:not (?:right now|at (?:this|the) (?:time|moment))|now is not|timing (?:is|isn'?t) (?:not )?(?:right|good)|revisit (?:this )?(?:later|next)|check back)\b/i],
+  ['after_milestone', /\b(?:once (?:that|this|we(?:'| a)?re|things|it) (?:has been |is |are )?(?:completed?|done|finished|settled|sorted|live)|after (?:we|our) [a-z ]{0,30}(?:complete|finish|launch|migrat|revamp))\b/i],
+];
+
 const WRONG_PERSON_MARKERS = [
   ['wrong_person', /\b(?:wrong person|not the right person|i (?:don'?t|do not) handle|i'?m not the one who)\b/i],
 ];
@@ -368,8 +386,33 @@ function classifyReplyText(text, { subject = '', currentEmail = '', year = null 
   const forwarded = firstMatch(FORWARDED_MARKERS, body);
   if (forwarded || wrongPerson) {
     signals.push(forwarded || wrongPerson);
+    // A human who actually hands over an address has given us something
+    // concrete to act on, which is a different job from "we'll pass it along".
+    // The address is EVIDENCE ONLY — nothing may mail it automatically.
+    const suppliedContact = extractProposedEmail(body, { currentEmail });
+    if (suppliedContact) {
+      signals.push('contact_supplied');
+      return result(REPLY_STATE.NEEDS_HUMAN, {
+        reason: NEEDS_HUMAN_REASON.DECISION_MAKER_CONTACT_SUPPLIED,
+        suppliedContact, identityMutationAllowed: false, confidence: 'high',
+      });
+    }
     return result(REPLY_STATE.NEEDS_HUMAN, {
       reason: NEEDS_HUMAN_REASON.FORWARDED_TO_DECISION_MAKER, confidence: 'medium',
+    });
+  }
+
+  // "Not now — we'll come back to you." Checked BEFORE the question fallback so
+  // a deferral that happens to contain a question mark is still read as timing.
+  const deferral = firstMatch(DEFERRAL_MARKERS, body);
+  if (deferral) {
+    signals.push(deferral);
+    return result(REPLY_STATE.NEEDS_HUMAN, {
+      reason: NEEDS_HUMAN_REASON.DEFERRED_TIMING,
+      // A revisit date is only ever carried when the prospect actually stated
+      // one. "later" and "once things settle" stay undated on purpose.
+      revisitDate: extractReturnDate(body, { year }) || null,
+      confidence: 'high',
     });
   }
   if (/\?/.test(body)) {
@@ -454,6 +497,7 @@ function resolveReplyState(lead = {}, { activities = [], manualOverride = null }
       subtype: manualOverride.subtype || null, reason: manualOverride.reason || null,
       genuineHuman: GENUINE_HUMAN_STATES.includes(manualOverride.state),
       overriddenBy: manualOverride.by || null, overriddenAt: manualOverride.at || null,
+      overrideId: manualOverride.overrideId || null,
     };
   }
 
@@ -483,6 +527,16 @@ function resolveReplyState(lead = {}, { activities = [], manualOverride = null }
           providerMessageId: meta.gmailMessageId || null,
           providerThreadId: meta.gmailThreadId || null,
           occurredAt: chosen.occurredAt || null,
+          // Operational evidence, passed through rather than dropped. The
+          // writer already stores these; without surfacing them the operations
+          // layer cannot tell a dated closure from an undated one, or a
+          // meeting request from general interest.
+          returnDate: meta.returnDate || null,
+          revisitDate: meta.revisitDate || null,
+          proposedEmail: meta.proposedEmail || null,
+          suppliedContact: meta.suppliedContact || null,
+          evidenceSignals: Array.isArray(meta.evidenceSignals) ? meta.evidenceSignals : [],
+          confidence: meta.confidence || null,
         };
       }
     }
@@ -518,7 +572,7 @@ const isInboundMessage = resolved =>
   Boolean(resolved) && resolved.state !== REPLY_STATE.UNKNOWN;
 
 module.exports = {
-  REPLY_STATE, AUTOMATED_SUBTYPE, NEEDS_HUMAN_REASON, EVIDENCE_SOURCE,
+  REPLY_STATE, AUTOMATED_SUBTYPE, NEEDS_HUMAN_REASON, EVIDENCE_SOURCE, DEFERRAL_MARKERS,
   CLASSIFIER_VERSION, GENUINE_HUMAN_STATES, INBOUND_REPLY_EVENT, LEGACY_REPLY_EVENT_TYPES,
   CANONICAL_REPLY_BOUNDARY, resolveCanonicalReplyBoundary, isAfterBoundary,
   classifyReplyText, resolveReplyState, isGenuineHumanReply, isInboundMessage,

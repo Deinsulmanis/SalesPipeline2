@@ -39,6 +39,12 @@ const {
 const { buildFunnelAnalytics } = require('./integrations/funnel-analytics');
 const { buildCrmHealth } = require('./integrations/crm-health');
 const {
+  OVERRIDE_KIND, CONTACT_DECISION, buildClassificationOverride, buildActionOverride, reverseOverride,
+  evaluateContactChange, buildContactChangeDecision,
+} = require('./integrations/reply-overrides');
+const { REPLY_STATE, resolveReplyState } = require('./integrations/canonical-reply');
+const { REPLY_ACTION, WAITING_ON: REPLY_WAITING_ON } = require('./integrations/reply-operations');
+const {
   classifyCalendarEvent, matchBookingIdentity, bookingLifecycleAction,
   nextSyncState, providerEventKey, runGoogleCalendarSync: orchestrateGoogleCalendarSync,
   BOOKING_DECISION, PROVIDER: CALENDAR_PROVIDER,
@@ -2395,6 +2401,136 @@ app.post('/api/leads/:id/human-response', requireAuth, async (req, res) => {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
     console.error('[Human response]', e.message);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// Human reply decisions are append-only activity. Classification and action
+// overrides are intentionally different event types: changing what we DO must
+// never rewrite what the provider-backed message SAID.
+app.post('/api/leads/:id/reply-override', requireAuth, async (req, res) => {
+  try {
+    const rowNum = await withAuth(() => findRow(req.params.id));
+    if (!rowNum) return res.status(404).json({ error: 'not found' });
+    const response = await sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${rowNum}:W${rowNum}`,
+    });
+    const row = response.data.values?.[0] || [];
+    const kind = String(req.body?.kind || '');
+    const common = { leadId: req.params.id, by: String(req.body?.by || 'crm_user'), note: req.body?.note };
+    const built = kind === OVERRIDE_KIND.CLASSIFICATION
+      ? buildClassificationOverride({ ...common, providerMessageId: req.body?.providerMessageId,
+          previousState: req.body?.previousState, previousReason: req.body?.previousReason,
+          state: req.body?.state, reason: req.body?.reason })
+      : kind === OVERRIDE_KIND.ACTION
+        ? buildActionOverride({ ...common, action: req.body?.action, reason: req.body?.reason,
+            dueAt: req.body?.dueAt, waitingOn: req.body?.waitingOn, owner: req.body?.owner })
+        : { ok: false, error: 'unknown override kind' };
+    if (!built.ok) return res.status(422).json({ error: built.error });
+    const record = built.record;
+    const eventId = stableActivityId('reply-override', [req.params.id, record.kind, record.at, JSON.stringify(record)]);
+    await appendColdCallActivities([{ eventId, leadId: req.params.id, sourceLeadId: '',
+      email: row[10] || '', company: row[6] || '', eventType: record.kind,
+      occurredAt: record.at, subject: record.kind === OVERRIDE_KIND.CLASSIFICATION
+        ? 'Reply classification overridden' : 'Next action overridden',
+      content: record.reason, metadata: JSON.stringify(record) }]);
+    res.json({ ok: true, eventId, override: record });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Reply override]', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/reply-operations/options', requireAuth, (_req, res) => res.json({
+  classificationStates: Object.values(REPLY_STATE),
+  actions: Object.values(REPLY_ACTION),
+  waitingOn: Object.values(REPLY_WAITING_ON),
+  overrideKinds: OVERRIDE_KIND,
+}));
+
+app.post('/api/leads/:id/reply-override/reverse', requireAuth, async (req, res) => {
+  try {
+    const rows = await readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER);
+    const original = rows.find(row => row.eventId === String(req.body?.eventId || '')
+      && row.leadId === req.params.id
+      && [OVERRIDE_KIND.CLASSIFICATION, OVERRIDE_KIND.ACTION].includes(row.eventType));
+    if (!original) return res.status(404).json({ error: 'override not found' });
+    let parsed;
+    try { parsed = JSON.parse(original.metadata || '{}'); } catch (_) {
+      return res.status(409).json({ error: 'override metadata is invalid; reversal failed closed' });
+    }
+    const reversed = reverseOverride({ ...parsed, overrideId: original.eventId },
+      { by: String(req.body?.by || 'crm_user'), reason: req.body?.reason });
+    const at = reversed.record.reversedAt;
+    const eventId = stableActivityId('reply-override-reversed', [original.eventId, at]);
+    if (rows.some(row => row.eventId === eventId)) return res.json({ ok: true, duplicate: true, eventId });
+    await appendColdCallActivities([{ eventId, leadId: req.params.id, sourceLeadId: '',
+      email: original.email, company: original.company, eventType: original.eventType,
+      occurredAt: at, subject: 'Reply override reversed', content: reversed.record.reversalReason,
+      metadata: JSON.stringify(reversed.record) }]);
+    res.json({ ok: true, duplicate: false, eventId });
+  } catch (error) {
+    console.error('[Reply override reversal]', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/leads/:id/contact-change', requireAuth, async (req, res) => {
+  try {
+    const rowNum = await withAuth(() => findRow(req.params.id));
+    if (!rowNum) return res.status(404).json({ error: 'not found' });
+    const [leadResponse, activityRows, ceResponse, boardResponse, suppressedEmails] = await Promise.all([
+      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${rowNum}:W${rowNum}` }),
+      readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER),
+      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:W` }),
+      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: AGENT_READ_RANGE }),
+      loadSuppressionEmails(),
+    ]);
+    const row = leadResponse.data.values?.[0] || [];
+    const lead = Object.fromEntries(COLUMNS.map((field, index) => [field, row[index] || '']));
+    const twins = await findColdEmailTwins(req.params.id, lead.email);
+    if (twins.length !== 1) return res.status(409).json({ error: 'contact change requires one unambiguous ColdEmail twin' });
+    const twin = twins[0];
+    const activities = activityRows.filter(item => item.sourceLeadId === twin.id
+      || String(item.leadId).replace(/^CE-/, '') === twin.id);
+    const resolved = resolveReplyState(twin, { activities });
+    const proposedEmail = String(resolved.proposedEmail || '').trim().toLowerCase();
+    const ceLeads = (ceResponse.data.values || []).slice(1).map(values => Object.fromEntries(CE_COLUMNS.map((field, i) => [field, values[i] || ''])));
+    const boardLeads = (boardResponse.data.values || []).slice(1).map(values => Object.fromEntries(COLUMNS.map((field, i) => [field, values[i] || ''])));
+    const evaluation = evaluateContactChange({ leadId: twin.id, currentEmail: twin.email, proposedEmail,
+      leads: ceLeads, boardLeads, suppressedEmails,
+      providerEvidence: { gmailMessageId: resolved.providerMessageId } });
+    const decision = String(req.body?.decision || '');
+    const built = buildContactChangeDecision({ leadId: twin.id, decision,
+      currentEmail: twin.email, proposedEmail, evaluation,
+      by: String(req.body?.by || 'crm_user'), reason: req.body?.reason });
+    if (!built.ok) return res.status(422).json({ error: built.error, conflicts: evaluation.conflicts });
+    const record = built.record;
+    const eventId = stableActivityId('contact-change', [twin.id, resolved.providerMessageId, decision, proposedEmail]);
+    if (!activityRows.some(item => item.eventId === eventId)) {
+      await appendColdCallActivities([{ eventId, leadId: req.params.id, sourceLeadId: twin.id,
+        email: twin.email, company: lead.company || twin.company,
+        eventType: OVERRIDE_KIND.CONTACT_CHANGE, occurredAt: record.at,
+        subject: decision === CONTACT_DECISION.APPROVED ? 'Contact change approved' : 'Contact change rejected',
+        content: record.reason, metadata: JSON.stringify(record) }]);
+    }
+    if (decision === CONTACT_DECISION.APPROVED) {
+      // The audit event lands first. If the following batch fails, the old
+      // identity remains and the approval grants no send permission. The CE
+      // notes gain (never lose) MANUAL HOLD in the same batch as both identity
+      // cells, so no intermediate state can mail the new address.
+      await sheets().spreadsheets.values.batchUpdate({ spreadsheetId: SPREADSHEET_ID,
+        requestBody: { valueInputOption: 'RAW', data: [
+          { range: `${SHEET_NAME}!K${rowNum}`, values: [[proposedEmail]] },
+          { range: `${CE_SHEET_NAME}!D${twin._row}`, values: [[proposedEmail]] },
+          { range: `${CE_SHEET_NAME}!L${twin._row}`, values: [[applyHoldToNotes(twin.notes)]] },
+        ] } });
+    }
+    res.json({ ok: true, duplicate: activityRows.some(item => item.eventId === eventId),
+      decision, proposedEmail, automationResumeAllowed: false });
+  } catch (error) {
+    console.error('[Contact change]', error.message);
+    res.status(500).json({ error: error.message });
   }
 });
 

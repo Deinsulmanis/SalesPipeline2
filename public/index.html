@@ -4188,6 +4188,36 @@ function renderPipelineState(pipeline) {
         <span class="pipeline-row-label">Why</span>
         <span class="pipeline-row-val"><small>${esc(next.reason)}</small></span>
       </div>` : ''}
+      ${next.replyState ? `<div class="pipeline-row">
+        <span class="pipeline-row-label">Reply evidence</span>
+        <span class="pipeline-row-val">${esc((next.replyState.canonicalState || 'unknown').replace(/_/g, ' '))}
+          <small>${esc(next.replyState.canonicalReason || next.replyState.subtype || 'No reason recorded')} · ${esc(next.replyState.evidenceSource || 'unknown source')}</small>
+        </span>
+      </div>
+      <div class="pipeline-row">
+        <span class="pipeline-row-label">Waiting on</span>
+        <span class="pipeline-row-val">${esc((next.waitingOn || 'unknown').replace(/_/g, ' '))}
+          <small>${esc(next.dueAtSource || 'no due-date source')}</small>
+        </span>
+      </div>
+      ${(next.replyState.proposedEmail || next.replyState.suppliedContact) ? `<div class="pipeline-row">
+        <span class="pipeline-row-label">Proposed contact</span>
+        <span class="pipeline-row-val"><small>${esc(next.replyState.proposedEmail || next.replyState.suppliedContact)} · review required; not approved for sending</small>
+          ${next.type === 'contact_change_review' ? `<span class="reply-decision-actions">
+            <button type="button" class="btn-log-response" onclick="decideContactChange('approved')">Approve change</button>
+            <button type="button" class="btn-log-response" onclick="decideContactChange('rejected')">Reject</button>
+          </span>` : ''}
+        </span>
+      </div>` : ''}
+      <div class="pipeline-row">
+        <span class="pipeline-row-label">Human decision</span>
+        <span class="pipeline-row-val reply-decision-actions">
+          <button type="button" class="btn-log-response" onclick="setReplyOverride('reply_classification_override')">Correct classification</button>
+          <button type="button" class="btn-log-response" onclick="setReplyOverride('next_action_override')">Set next action</button>
+          ${next.replyState.overrideId ? `<button type="button" class="btn-log-response" onclick="reverseReplyOverride('${escAttr(next.replyState.overrideId)}')">Reverse active override</button>` : ''}
+          <small>Decisions are appended to the timeline; provider evidence is preserved.</small>
+        </span>
+      </div>` : ''}
       ${next.recoverable ? `<div class="pipeline-row">
         <span class="pipeline-row-label">Recovery</span>
         <span class="pipeline-row-val"><small>Recovery eligible — no recovery sequence exists yet, so nothing is scheduled.</small></span>
@@ -4211,6 +4241,71 @@ function renderPipelineState(pipeline) {
 
   // Options are decided server-side; the browser only renders what it is told.
   renderReactivationControls(detailId);
+}
+
+async function setReplyOverride(kind) {
+  if (!detailId) return;
+  try {
+    const optionResponse = await fetch('/api/reply-operations/options');
+    if (!optionResponse.ok) throw new Error(`HTTP ${optionResponse.status}`);
+    const options = await optionResponse.json();
+    const allowed = kind === 'reply_classification_override' ? options.classificationStates : options.actions;
+    const value = prompt(`Choose one of:\n${allowed.join('\n')}`);
+    if (value === null) return;
+    if (!allowed.includes(value.trim())) { showToast('That is not a canonical option.', 'error'); return; }
+    const reason = prompt('Why is this human override necessary?');
+    if (!reason || !reason.trim()) { showToast('An audit reason is required.', 'error'); return; }
+    const payload = kind === 'reply_classification_override'
+      ? { kind, state: value.trim(), reason: reason.trim() }
+      : { kind, action: value.trim(), reason: reason.trim() };
+    const response = await fetch(`/api/leads/${encodeURIComponent(detailId)}/reply-override`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    showToast('Override recorded. Original reply evidence was preserved.', 'success');
+    await loadColdCallActivity(detailId);
+    await loadNextActions();
+  } catch (error) { showToast('Override was not saved: ' + error.message, 'error'); }
+}
+
+async function reverseReplyOverride(eventId) {
+  if (!detailId || !eventId) return;
+  const reason = prompt('Why are you reversing this override?');
+  if (reason === null) return;
+  try {
+    const response = await fetch(`/api/leads/${encodeURIComponent(detailId)}/reply-override/reverse`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ eventId, reason: reason.trim() }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    showToast('Override reversed; its audit history was retained.', 'success');
+    await loadColdCallActivity(detailId);
+    await loadNextActions();
+  } catch (error) { showToast('Override was not reversed: ' + error.message, 'error'); }
+}
+
+async function decideContactChange(decision) {
+  if (!detailId) return;
+  const explanation = decision === 'approved'
+    ? 'Approve this canonical contact change? The address will change, MANUAL HOLD will remain/apply, and no email will be sent.'
+    : 'Reject this proposed contact change? The current address will remain unchanged.';
+  if (!confirm(explanation)) return;
+  const reason = prompt('Optional audit note:');
+  if (reason === null) return;
+  try {
+    const response = await fetch(`/api/leads/${encodeURIComponent(detailId)}/contact-change`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision, reason: reason.trim() }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || (data.conflicts || []).join('; ') || `HTTP ${response.status}`);
+    showToast(decision === 'approved'
+      ? 'Contact changed under MANUAL HOLD. No automation was resumed.'
+      : 'Contact change rejected; identity was not changed.', 'success');
+    await loadColdCallActivity(detailId);
+  } catch (error) { showToast('Contact decision failed closed: ' + error.message, 'error'); }
 }
 
 // Why this lead is Hot, and where the conversation stands. Every value is

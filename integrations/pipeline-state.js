@@ -26,6 +26,8 @@ const { displayStageFor } = require('./cold-call-pipeline');
 // The reply buckets come from the analytics module that already owns them —
 // Next Action must never classify a reply a second way.
 const { ANALYTICS_CATEGORY, categoriesFromNotes, classificationFromLead } = require('./reply-analytics');
+const { deriveOperationalAction, REPLY_ACTION, DUE_SOURCE } = require('./reply-operations');
+const { activeOverrides, OVERRIDE_KIND } = require('./reply-overrides');
 
 // ── AUTOMATION STATE ────────────────────────────────────────────────────────
 // Derived from the ColdEmail twin, because emailStatus — not stage — is what
@@ -372,6 +374,14 @@ const ACTION_TYPE = Object.freeze({
   HOT_REVIEW:            'hot_review',
   CALL_CANCELLED_REVIEW: 'call_cancelled_review',
   NO_SHOW_FOLLOW_UP:     'no_show_follow_up',
+  CONTINUE_EVALUATION:   'continue_evaluation',
+  BOOK_CALL:             'book_call',
+  REVISIT_LATER:         'revisit_later',
+  DECISION_MAKER_FOLLOW_UP: 'decision_maker_follow_up',
+  CONTACT_SUPPLIED:      'contact_supplied',
+  CONTACT_CHANGE_REVIEW: 'contact_change_review',
+  WAIT_UNTIL_RETURN:     'wait_until_return',
+  INVESTIGATE_REPLY:     'investigate',
   SEQUENCE_STEP:         'sequence_step',
   SEQUENCE_REVIEW:       'sequence_review',
   NONE_WON:              'none_won',
@@ -473,6 +483,10 @@ const WAITING_ON = Object.freeze({
   US: 'waiting_on_us',
   PROSPECT: 'waiting_on_prospect',
   MEETING: 'meeting_scheduled',
+  DATE: 'waiting_until_date',
+  DECISION_MAKER: 'waiting_on_decision_maker',
+  HUMAN_REVIEW: 'human_review_required',
+  NONE: 'none',
   UNKNOWN: 'unknown',          // evidence is insufficient — never guessed
 });
 
@@ -805,6 +819,9 @@ function buildAction(fields) {
     status,
     reason: fields.reason || '',
     source: fields.source,
+    waitingOn: fields.waitingOn || null,
+    dueAtSource: fields.dueAtSource || null,
+    replyState: fields.replyState || null,
     needsAttention: Boolean(fields.needsAttention),
     recoverable: fields.recoverable || false,
     // Present only for Hot leads; the drawer and card render it directly rather
@@ -1049,25 +1066,37 @@ function deriveNextAction(boardLead, twin, context = {}) {
   // lead still reads "Review reply" rather than "Respond".
   if (stage === 'hot') return hotNextAction(lead, { activities, now, twin });
 
-  // ── Reply-driven human work (applies to any non-terminal stage) ──────────
+  // ── Reply-driven work (applies to any non-terminal stage) ────────────────
+  // Canonical provider-backed activity outranks legacy tags here exactly as it
+  // does in analytics. reply-operations enriches WHAT to do; this function
+  // remains the one CRM-wide precedence engine.
+  const overrideRows = activities.flatMap(row => {
+    if (![OVERRIDE_KIND.CLASSIFICATION, OVERRIDE_KIND.ACTION].includes(String(row.eventType || ''))) return [];
+    try { return [{ ...JSON.parse(row.metadata || '{}'), kind: row.eventType,
+      at: row.occurredAt, overrideId: row.eventId }]; }
+    catch (_) { return []; }
+  });
+  const overrides = activeOverrides(overrideRows, String(lead.id || ''));
   const reply = replyEvidence(twin, activities);
-  if (reply) {
-    // Already answered after the reply landed — the ball is with the prospect.
-    if (reply.answeredAt && reply.occurredAt && reply.answeredAt > reply.occurredAt) {
-      return buildAction({
-        type: ACTION_TYPE.WAITING_PROSPECT, label: 'Waiting for prospect',
-        dueAt: manualDate || null, owner: ACTION_OWNER.WAITING,
-        status: manualDate ? undefined : ACTION_STATUS.WAITING,
-        source: manualDate ? 'followup-field' : 'activity',
-        reason: 'replied to on ' + businessDay(reply.answeredAt) + '; awaiting their response', now,
-      });
-    }
-    const dueAt = reply.occurredAt || null;
-    const base = {
-      dueAt, owner: ACTION_OWNER.HUMAN, source: 'reply-analytics', needsAttention: true, now,
-      status: dueAt ? undefined : ACTION_STATUS.DUE_TODAY,
-    };
-    if (reply.late) {
+  const permanentSuppression = sendSuppressionReason(twin || lead, {
+    suppressedEmails: context.suppressedEmails || new Set(),
+  });
+  if (permanentSuppression && permanentSuppression !== MANUAL_HOLD_TAG && reply) {
+    return nothing(ACTION_TYPE.NONE_LOST, 'None — suppressed',
+      `suppressed (${permanentSuppression}); no sales follow-up applies`);
+  }
+  const operational = deriveOperationalAction(twin || lead, {
+    activities, boardLead: lead,
+    manualOverride: overrides.classification,
+    manualActionOverride: overrides.action,
+    manualFollowUpDate: manualDate,
+    humanTouchAt: latestEventAt(activities, HUMAN_TOUCH_EVENTS),
+  });
+  if (operational.action !== REPLY_ACTION.INVESTIGATE || reply) {
+    if (reply && reply.late && operational.source !== 'already_answered') {
+      const base = { dueAt: operational.dueAt, owner: ACTION_OWNER.HUMAN,
+        source: 'reply-operations', needsAttention: true, now,
+        status: operational.dueAt ? undefined : ACTION_STATUS.DUE_TODAY };
       // A late reply must never resume the old sequence. This is review work.
       return reply.category === ANALYTICS_CATEGORY.POSITIVE
         ? buildAction({ ...base, type: ACTION_TYPE.RESPOND_LATE_REPLY, label: 'Respond to late positive reply',
@@ -1075,22 +1104,41 @@ function deriveNextAction(boardLead, twin, context = {}) {
         : buildAction({ ...base, type: ACTION_TYPE.REVIEW_LATE_REPLY, label: 'Review late reply',
             reason: 'reply arrived after the sequence ended — automation stays stopped' });
     }
-    if (reply.category === ANALYTICS_CATEGORY.POSITIVE) {
-      return buildAction({ ...base, type: ACTION_TYPE.RESPOND_REPLY, label: 'Respond to positive reply',
-        reason: 'positive reply awaiting a human response' });
-    }
-    if (reply.category === ANALYTICS_CATEGORY.NEEDS_HUMAN) {
-      return buildAction({ ...base, type: ACTION_TYPE.REVIEW_REPLY, label: 'Review reply',
-        reason: 'reply needs a human decision' });
-    }
-    if (reply.category === ANALYTICS_CATEGORY.UNCLASSIFIED) {
-      return buildAction({ ...base, type: ACTION_TYPE.REVIEW_UNCLASSIFIED, label: 'Review unclassified reply',
-        reason: 'reply could not be classified — do not guess' });
-    }
-    // Negative / excluded: the conversation is over, nothing to chase.
-    return withManual('Manual follow-up')
-      || nothing(ACTION_TYPE.NONE_LOST, 'None — reply closed the conversation',
-        'reply classified as negative; no outbound action');
+    const typeMap = {
+      [REPLY_ACTION.RESPOND]: ACTION_TYPE.RESPOND_REPLY,
+      [REPLY_ACTION.CONTINUE_EVALUATION]: ACTION_TYPE.CONTINUE_EVALUATION,
+      [REPLY_ACTION.BOOK_CALL]: ACTION_TYPE.BOOK_CALL,
+      [REPLY_ACTION.REVISIT_LATER]: ACTION_TYPE.REVISIT_LATER,
+      [REPLY_ACTION.DECISION_MAKER_FOLLOW_UP]: ACTION_TYPE.DECISION_MAKER_FOLLOW_UP,
+      [REPLY_ACTION.CONTACT_SUPPLIED]: ACTION_TYPE.CONTACT_SUPPLIED,
+      [REPLY_ACTION.CONTACT_CHANGE_REVIEW]: ACTION_TYPE.CONTACT_CHANGE_REVIEW,
+      [REPLY_ACTION.WAIT_UNTIL_RETURN]: ACTION_TYPE.WAIT_UNTIL_RETURN,
+      [REPLY_ACTION.WAIT]: ACTION_TYPE.WAITING_PROSPECT,
+      [REPLY_ACTION.INVESTIGATE]: ACTION_TYPE.INVESTIGATE_REPLY,
+      [REPLY_ACTION.NO_ACTION_SUPPRESSED]: ACTION_TYPE.NONE_LOST,
+    };
+    const labels = {
+      [REPLY_ACTION.CONTINUE_EVALUATION]: 'Continue evaluation', [REPLY_ACTION.BOOK_CALL]: 'Book call',
+      [REPLY_ACTION.REVISIT_LATER]: 'Revisit later', [REPLY_ACTION.DECISION_MAKER_FOLLOW_UP]: 'Follow up with decision maker',
+      [REPLY_ACTION.CONTACT_SUPPLIED]: 'Review supplied contact', [REPLY_ACTION.CONTACT_CHANGE_REVIEW]: 'Review contact change',
+      [REPLY_ACTION.WAIT_UNTIL_RETURN]: 'Wait until return', [REPLY_ACTION.WAIT]: 'Waiting — no human response required',
+      [REPLY_ACTION.RESPOND]: 'Respond to prospect', [REPLY_ACTION.INVESTIGATE]: 'Investigate reply evidence',
+      [REPLY_ACTION.NO_ACTION_SUPPRESSED]: 'None — reply closed the conversation',
+    };
+    const ownerMap = { human: ACTION_OWNER.HUMAN, prospect: ACTION_OWNER.WAITING,
+      meeting: ACTION_OWNER.MEETING, automation: ACTION_OWNER.AUTOMATION, none: ACTION_OWNER.NONE };
+    const waiting = [REPLY_ACTION.WAIT, REPLY_ACTION.WAIT_UNTIL_RETURN].includes(operational.action);
+    const none = operational.action === REPLY_ACTION.NO_ACTION_SUPPRESSED;
+    return buildAction({
+      type: typeMap[operational.action] || operational.action,
+      label: labels[operational.action] || operational.action,
+      dueAt: operational.dueAt, owner: ownerMap[operational.owner] || ACTION_OWNER.HUMAN,
+      status: none ? ACTION_STATUS.NONE : waiting ? ACTION_STATUS.WAITING : undefined,
+      source: operational.source || 'reply-operations', reason: operational.reason,
+      needsAttention: operational.requiresHumanReview || operational.owner === 'human', now,
+      waitingOn: operational.waitingOn, dueAtSource: operational.dueAtSource || DUE_SOURCE.NONE,
+      replyState: operational.evidence || null,
+    });
   }
 
   // ── Follow Up — automation territory ─────────────────────────────────────
