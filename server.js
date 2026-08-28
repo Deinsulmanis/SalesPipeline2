@@ -542,6 +542,9 @@ let ceSheetIdCache = null;
 const LOG_CAP    = 300;
 const agentState = { running: false, dryRun: true, startedAt: null, log: [], exitCode: null };
 let   agentChild = null;
+const SCHEDULED_SEND_PER_RUN_CAP = 5;
+const MAX_PENDING_SCHEDULED_SEND_RUNS = 8;
+let pendingScheduledSendRuns = 0;
 
 function agentPushLine(line) {
   agentState.log.push({ ts: new Date().toISOString(), line });
@@ -593,6 +596,11 @@ function startAgentProcess(extraEnv, dryRun) {
     agentState.running  = false;
     agentState.exitCode = code;
     agentChild = null;
+    if (pendingScheduledSendRuns > 0) {
+      pendingScheduledSendRuns--;
+      console.log(`[cron] Running queued outreach send window (${pendingScheduledSendRuns} still queued)`);
+      spawnAgent(false, { DAILY_CAP: String(SCHEDULED_SEND_PER_RUN_CAP) });
+    }
   });
 }
 
@@ -4274,8 +4282,6 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   // this commit only redistributes WHEN those 40 go out. Passed via env so the
   // agent's cap logic (effectiveCap = min(DAILY_CAP, dailyRemaining)) is reused
   // untouched. Keep in sync with the 8-slot schedule below if either changes.
-  const SEND_PER_RUN_CAP = 5;
-
   // Sends fire only in a weekday morning window, evenly at :00 and :30 of
   // 8am–11:30am Pacific (8 runs: 8:00, 8:30, 9:00, 9:30, 10:00, 10:30, 11:00,
   // 11:30). That lands 9:00am–12:30pm for Mountain (AB) leads too. Overnight
@@ -4285,14 +4291,15 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   cron.schedule('0,30 8-11 * * 1-5', () => {
     console.log('[cron] Triggering scheduled outreach agent run...');
     if (agentState.running) {
-      console.log('[cron] Agent already running — skipping this tick');
+      pendingScheduledSendRuns = Math.min(MAX_PENDING_SCHEDULED_SEND_RUNS, pendingScheduledSendRuns + 1);
+      console.log(`[cron] Agent already running — queued this send window (${pendingScheduledSendRuns} queued)`);
       return;
     }
-    spawnAgent(false, { DAILY_CAP: String(SEND_PER_RUN_CAP) });
+    spawnAgent(false, { DAILY_CAP: String(SCHEDULED_SEND_PER_RUN_CAP) });
   }, {
     timezone: 'America/Vancouver',
   });
-  console.log(`[cron] Outreach agent scheduled: :00 and :30, 8–11:30am Pacific, Mon–Fri (${SEND_PER_RUN_CAP}/run)`);
+  console.log(`[cron] Outreach agent scheduled: :00 and :30, 8–11:30am Pacific, Mon–Fri (${SCHEDULED_SEND_PER_RUN_CAP}/run)`);
 
   // :15/:45, never :00/:30 — the send cron above fires on :00 and :30, so the
   // check-only pass is offset by 15 min to avoid racing it for the

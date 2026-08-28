@@ -3345,16 +3345,18 @@ async function run() {
     return;
   }
 
-  // New sends fill the cap first; warm follow-ups second; standard follow-ups use remaining slots
-  const newBatch       = queued.slice(0, effectiveCap);
-  const slotsAfterNew  = Math.max(0, effectiveCap - newBatch.length);
-  const warmBatch      = warmLeads.slice(0, slotsAfterNew);
-  const warmIds        = new Set(warmBatch.map(l => l.id));
-  const slotsAfterWarm = Math.max(0, slotsAfterNew - warmBatch.length);
-  const followBatch    = followUps.filter(l => !warmIds.has(l.id)).slice(0, slotsAfterWarm);
-  const total          = newBatch.length + warmBatch.length + followBatch.length;
+  // Preserve the existing priority (new, warm, standard follow-up), but do not
+  // pre-spend a send slot on a candidate that a later safety/provider/copy gate
+  // refuses. Each list is finite, and every loop below stops at effectiveCap,
+  // so a run either records that many successful sends or genuinely exhausts
+  // the bounded eligible pool.
+  const newBatch    = queued;
+  const warmBatch   = warmLeads;
+  const warmIds     = new Set(warmBatch.map(l => l.id));
+  const followBatch = followUps.filter(l => !warmIds.has(l.id));
+  const totalCandidates = newBatch.length + warmBatch.length + followBatch.length;
 
-  if (total === 0) {
+  if (totalCandidates === 0) {
     console.log(`Nothing to send. Queue a lead (stage="${QUEUE_STAGE}") or wait for follow-up timers.`);
     return;
   }
@@ -3363,6 +3365,7 @@ async function run() {
 
   // ── New sends (step 1) ────────────────────────────────────────────────────
   for (const lead of newBatch) {
+    if (sent >= effectiveCap) break;
     const suppressed = suppressionReason(lead);
     if (suppressed) {
       console.error(`🚫 [SUPPRESSED] refusing step-1 send → ${lead.email} (${cleanCompanyName(lead.company) || lead.id}) — notes contain ${suppressed}`);
@@ -3484,12 +3487,12 @@ async function run() {
         attribution,
       }));
       sent++;
-      console.log(`✅ Sent (step 1) → ${lead.email}  (${sent}/${total})`);
+      console.log(`✅ Sent (step 1) → ${lead.email}  (${sent}/${effectiveCap})`);
     } catch (e) {
       console.error(`❌ Failed (step 1) → ${lead.email}: ${e.message}`);
     }
 
-    if (sent < total) {
+    if (sent < effectiveCap) {
       const d = jitter();
       console.log(`   …waiting ${Math.round(d / 1000)}s\n`);
       await sleep(d);
@@ -3498,6 +3501,7 @@ async function run() {
 
   // ── Warm follow-ups (open-triggered) ─────────────────────────────────────
   for (const lead of warmBatch) {
+    if (sent >= effectiveCap) break;
     const suppressed = suppressionReason(lead);
     if (suppressed) {
       console.error(`🚫 [SUPPRESSED] refusing warm send → ${lead.email} (${cleanCompanyName(lead.company) || lead.id}) — notes contain ${suppressed}`);
@@ -3537,12 +3541,12 @@ async function run() {
       await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject, body, attribution }));
       await withAuth(() => appendOpenTriggeredNote(lead));
       sent++;
-      console.log(`✅ Sent (warm) → ${lead.email}  (${sent}/${total})`);
+      console.log(`✅ Sent (warm) → ${lead.email}  (${sent}/${effectiveCap})`);
     } catch (e) {
       console.error(`❌ Failed (warm) → ${lead.email}: ${e.message}`);
     }
 
-    if (sent < total) {
+    if (sent < effectiveCap) {
       const d = jitter();
       console.log(`   …waiting ${Math.round(d / 1000)}s\n`);
       await sleep(d);
@@ -3551,6 +3555,7 @@ async function run() {
 
   // ── Follow-ups (steps 2 & 3) ──────────────────────────────────────────────
   for (const lead of followBatch) {
+    if (sent >= effectiveCap) break;
     const suppressed = suppressionReason(lead);
     if (suppressed) {
       console.error(`🚫 [SUPPRESSED] refusing follow-up send → ${lead.email} (${cleanCompanyName(lead.company) || lead.id}) — notes contain ${suppressed}`);
@@ -3593,19 +3598,19 @@ async function run() {
       const sendResult = await sendEmail({ to: lead.email.trim(), subject, body });
       await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject, body, attribution }));
       sent++;
-      console.log(`✅ Sent (step ${nextStepNum}) → ${lead.email}  (${sent}/${total})`);
+      console.log(`✅ Sent (step ${nextStepNum}) → ${lead.email}  (${sent}/${effectiveCap})`);
     } catch (e) {
       console.error(`❌ Failed (step ${nextStepNum}) → ${lead.email}: ${e.message}`);
     }
 
-    if (sent < total) {
+    if (sent < effectiveCap) {
       const d = jitter();
       console.log(`   …waiting ${Math.round(d / 1000)}s\n`);
       await sleep(d);
     }
   }
 
-  console.log(`\nDone. ${DRY_RUN ? `Would have sent ${total}.` : `Sent ${sent}/${total}.`}`);
+  console.log(`\nDone. ${DRY_RUN ? `Evaluated ${totalCandidates} bounded candidate(s).` : `Sent ${sent}/${effectiveCap}; ${totalCandidates} bounded candidate(s) available.`}`);
 }
 
 run().catch(e => {
