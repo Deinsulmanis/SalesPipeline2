@@ -53,9 +53,9 @@ test('campaign import and queue UI require durable routing choices', () => {
 
 test('campaign versions are derived from the canonical registry and reject incompatible copy', () => {
   const dental = campaignVersionsForRoute({ niche: 'dental' });
-  assert.deepEqual(dental.map(version => version.id), ['dental_v1_measured']);
-  assert.equal(validateCampaignVersionRoute({ niche: 'dental', emailTemplateId: 'dental-guarantee-v1', campaignVersionId: 'dental_v1_measured' }).ok, true);
-  assert.match(validateCampaignVersionRoute({ niche: 'dental', emailTemplateId: 'roofing-survey-v1', campaignVersionId: 'dental_v1_measured' }).reason, /does not use/);
+  assert.deepEqual(dental.map(version => version.id), ['dental_v2_answering_booking']);
+  assert.equal(validateCampaignVersionRoute({ niche: 'dental', emailTemplateId: 'dental-guarantee-v1', campaignVersionId: 'dental_v2_answering_booking' }).ok, true);
+  assert.match(validateCampaignVersionRoute({ niche: 'dental', emailTemplateId: 'roofing-survey-v1', campaignVersionId: 'dental_v2_answering_booking' }).reason, /does not use/);
   assert.match(validateCampaignVersionRoute({ niche: 'dental', emailTemplateId: 'dental-guarantee-v1', campaignVersionId: 'roofing_survey_v1_measured' }).reason, /cannot be used/);
 });
 

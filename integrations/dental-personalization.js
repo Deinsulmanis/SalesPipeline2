@@ -120,10 +120,10 @@ function angleCopy(angle, lead, company) {
     ],
     accepting_new_patients: [
       `${company} says it is accepting new patients. That makes reliable handling of new-patient calls directly relevant.`,
-      `I saw that ${company} welcomes new patients. A receptionist that can consistently handle those first calls fits that stated availability.`,
+      `I saw that ${company} welcomes new patients. Answering and booking software that can consistently handle those first calls fits that stated availability.`,
     ],
     published_hours: [
-      `${company} publishes specific office hours. A receptionist that can handle inquiries outside those hours could keep new-patient conversations moving.`,
+      `${company} publishes specific office hours. 24/7 answering and booking software could keep new-patient conversations moving outside those hours.`,
       `Your posted schedule leaves times when the front desk is closed. That makes after-hours call coverage a practical fit for ${company}.`,
     ],
     cosmetic: [
@@ -142,7 +142,7 @@ function angleCopy(angle, lead, company) {
       `I came across ${company} while looking at dental practices in ${city}.`,
     ],
     generic: [
-      `I wanted to reach out about a receptionist demo for ${company}.`,
+      `I wanted to reach out about a 24/7 answering and booking software demo for ${company}.`,
     ],
   };
   return stableVariant(lead, angle.id, variants[angle.id] || variants.generic);
@@ -166,7 +166,7 @@ function demoSelection(angle) {
     };
   }
   return {
-    text: 'Give the dental receptionist demo a quick listen.',
+    text: 'Give the dental answering and booking demo a quick listen.',
     capabilityId: 'generic_listen',
     capabilityConfirmed: true,
     capabilityEvidence: 'the linked page contains the deployed dental demo audio',

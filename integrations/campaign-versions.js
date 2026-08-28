@@ -19,8 +19,23 @@ const CAMPAIGN_VERSIONS = Object.freeze({
     personalizationStrategy: 'dental_hyper_personalization_v1',
     offerVersion: 'three_patients_30d_rr_v1',
     activatedAt: '2026-08-27T20:31:18.220Z',
+    status: 'retired',
+    meaning: 'Historical evidence-backed hyper-personalized dental body, service-curiosity subjects, three-patient/30-day risk reversal, and final assembly validation.',
+  }),
+  dental_v2_answering_booking: Object.freeze({
+    id: 'dental_v2_answering_booking',
+    label: 'Dental V2 — Answering & Booking',
+    niche: 'dental',
+    emailTemplateId: 'dental-guarantee-v1',
+    family: 'dental_ai_receptionist',
+    copyVersion: 'dental_risk_reversal_hp_v2',
+    followUpCopyVersion: 'dental_answering_booking_follow_up_v2',
+    subjectStrategy: 'service_curiosity_v1',
+    personalizationStrategy: 'dental_hyper_personalization_v1',
+    offerVersion: 'three_patients_30d_rr_v1',
+    activatedAt: '2026-08-28T23:06:42.340Z',
     status: 'active',
-    meaning: 'Current evidence-backed hyper-personalized dental body, service-curiosity subjects, three-patient/30-day risk reversal, and final assembly validation.',
+    meaning: 'Dental V2 preserves the measured offer, subjects, personalization, CTA and cadence while positioning the product as 24/7 answering and booking software.',
   }),
   roofing_survey_v1_measured: Object.freeze({
     id: 'roofing_survey_v1_measured', label: 'Roofing Survey V1 — Measured',
@@ -33,7 +48,7 @@ const CAMPAIGN_VERSIONS = Object.freeze({
 });
 
 const ACTIVE_CAMPAIGN_VERSION = Object.freeze({
-  dental_ai_receptionist: 'dental_v1_measured',
+  dental_ai_receptionist: 'dental_v2_answering_booking',
   roofing_survey: 'roofing_survey_v1_measured',
 });
 
@@ -62,6 +77,7 @@ function activeVersionForLead(lead = {}) {
   const id = String(lead.intendedCampaignVersion || '').trim() || ACTIVE_CAMPAIGN_VERSION[family];
   if (!id) throw new Error(`No active campaign version for ${family}`);
   const version = campaignVersion(id);
+  if (version.status !== 'active') throw new Error(`Campaign version ${id} is not active`);
   if (version.family !== family) throw new Error(`Campaign version ${id} is incompatible with ${family}`);
   if (version.emailTemplateId && lead.emailTemplateId && version.emailTemplateId !== lead.emailTemplateId) {
     throw new Error(`Campaign version ${id} is incompatible with template ${lead.emailTemplateId}`);
@@ -78,7 +94,7 @@ function coldSendAttribution(lead = {}, step = 1, sendMeta = {}) {
     campaignFamily: version.family,
     sequenceId: `${version.family}_cold`,
     sequenceStep: Number(step),
-    copyVersion: initial ? version.copyVersion : `${version.family}_follow_up_v1`,
+    copyVersion: initial ? version.copyVersion : (version.followUpCopyVersion || `${version.family}_follow_up_v1`),
     subjectStrategy: initial ? version.subjectStrategy : 'thread_follow_up_v1',
     personalizationStrategy: version.personalizationStrategy,
     personalizationLevel: personalization.personalizationLevel ?? null,

@@ -23,23 +23,29 @@ const activity = (overrides = {}) => ({
 });
 
 test('active measured campaign is defined and immutable', () => {
-  assert.equal(ACTIVE_CAMPAIGN_VERSION.dental_ai_receptionist, 'dental_v1_measured');
+  assert.equal(ACTIVE_CAMPAIGN_VERSION.dental_ai_receptionist, 'dental_v2_answering_booking');
   assert.equal(Object.isFrozen(CAMPAIGN_VERSIONS), true);
 });
 test('undefined campaign version is rejected', () => assert.throws(() => campaignVersion('missing'), /Unknown campaign version/));
 
 test('an intended compatible version is honored but queued state alone is not acquisition evidence', () => {
-  const selected = coldSendAttribution({ leadNiche: 'dental', emailTemplateId: 'dental-guarantee-v1', intendedCampaignVersion: 'dental_v1_measured' }, 1);
-  assert.equal(selected.campaignVersion, 'dental_v1_measured');
+  const selected = coldSendAttribution({ leadNiche: 'dental', emailTemplateId: 'dental-guarantee-v1', intendedCampaignVersion: 'dental_v2_answering_booking' }, 1);
+  assert.equal(selected.campaignVersion, 'dental_v2_answering_booking');
+  assert.throws(() => coldSendAttribution({ leadNiche: 'dental', emailTemplateId: 'dental-guarantee-v1', intendedCampaignVersion: 'dental_v1_measured' }, 1), /not active/);
   assert.throws(() => coldSendAttribution({ leadNiche: 'dental', emailTemplateId: 'dental-guarantee-v1', intendedCampaignVersion: 'roofing_survey_v1_measured' }, 1), /incompatible/);
   assert.equal(buildCampaignVersionIndex([{ id: 'queued-only', intendedCampaignVersion: 'dental_v1_measured' }], []).get('queued-only').campaignVersion, LEGACY_UNKNOWN);
 });
 test('cold initial attribution stamps mandatory fields and personalization', () => {
   const value = coldSendAttribution({ leadNiche: 'dental' }, 1, { personalizationMetadata: { profileVersion: 'hp-v1', personalizationLevel: 2, selectedAngle: 'implants' } });
-  assert.equal(value.campaignVersion, 'dental_v1_measured');
-  assert.equal(value.sequenceStep, 1); assert.equal(value.copyVersion, 'dental_risk_reversal_hp_v1');
+  assert.equal(value.campaignVersion, 'dental_v2_answering_booking');
+  assert.equal(value.sequenceStep, 1); assert.equal(value.copyVersion, 'dental_risk_reversal_hp_v2');
   assert.equal(value.subjectStrategy, 'service_curiosity_v1'); assert.equal(value.personalizationLevel, 2);
   assert.equal(value.personalizationAngle, 'implants'); assert.equal(value.offerVersion, 'three_patients_30d_rr_v1');
+});
+test('updated dental follow-ups carry a distinct copy version', () => {
+  const value = coldSendAttribution({ leadNiche: 'dental' }, 2);
+  assert.equal(value.campaignVersion, 'dental_v2_answering_booking');
+  assert.equal(value.copyVersion, 'dental_answering_booking_follow_up_v2');
 });
 test('historical activity without stamped version remains legacy unknown', () => {
   assert.deepEqual(attributionFromActivity(activity({ metadata: '{}' })), { campaignVersion: LEGACY_UNKNOWN });
@@ -94,4 +100,13 @@ test('send attribution is written only in post-provider activity paths', () => {
 test('registry documents an explicit clean activation boundary', () => {
   assert.equal(CAMPAIGN_VERSIONS.dental_v1_measured.activatedAt, '2026-08-27T20:31:18.220Z');
   assert.match(CAMPAIGN_VERSIONS.dental_v1_measured.meaning, /hyper-personalized/i);
+  assert.equal(CAMPAIGN_VERSIONS.dental_v1_measured.status, 'retired');
+  assert.equal(CAMPAIGN_VERSIONS.dental_v2_answering_booking.status, 'active');
+});
+test('active prospect-facing dental sources no longer lead with AI receptionist terminology', () => {
+  const files = ['guarantee.js', 'product-facts.js', 'outreach-agent.js',
+    path.join('integrations', 'dental-email.js'), path.join('integrations', 'dental-personalization.js')];
+  const copy = files.map(file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8')).join('\n');
+  assert.doesNotMatch(copy, /\bAI receptionist\b/i);
+  assert.match(copy, /24\/7 answering and booking software for dental practices that handles missed calls and helps turn them into booked patients\./);
 });

@@ -124,7 +124,7 @@ test('specific demo CTA is selected only for supported behavior', () => {
 test('unsupported service behavior falls back to a generic listening CTA', () => {
   const result = personalized('We offer Invisalign consultations.');
   assert.equal(result.demo.capabilityId, 'generic_listen');
-  assert.equal(result.demo.text, 'Give the dental receptionist demo a quick listen.');
+  assert.equal(result.demo.text, 'Give the dental answering and booking demo a quick listen.');
   assert.doesNotMatch(result.demo.text, /ask.*Invisalign/i);
 });
 
@@ -149,7 +149,7 @@ test('missing enrichment falls back safely without invented facts', () => {
   const result = personalized('', { city: '' });
   assert.equal(result.angle.id, 'generic');
   assert.equal(result.metadata.evidence, null);
-  assert.match(result.personalizationBlocks[0], /receptionist demo for Cooper Dental/);
+  assert.match(result.personalizationBlocks[0], /24\/7 answering and booking software demo for Cooper Dental/);
 });
 
 test('an old lead with only legacy siteContext still generates safely', () => {

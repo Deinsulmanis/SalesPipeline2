@@ -19,7 +19,7 @@
 
 // The one true wording. {{company}} is the only substitution permitted.
 const GUARANTEE_TEMPLATE =
-  "If our AI receptionist doesn't book at least 3 new patient appointments for {{company}} in the first 30 days, you don't pay for that month — as long as your call volume is in a normal range.";
+  "If our 24/7 answering and booking software doesn't book at least 3 new patient appointments for {{company}} in the first 30 days, you don't pay for that month — as long as your call volume is in a normal range.";
 
 /** Merge the company in. Throws rather than emitting a half-merged promise. */
 function guaranteeFor(company) {

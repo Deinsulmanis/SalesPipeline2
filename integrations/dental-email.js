@@ -24,7 +24,7 @@ function buildDentalColdEmail({
   mailingAddress, signature, reference,
 }) {
   const offer = guaranteeFor(company);
-  const productContext = `The linked sample demonstrates a complete dental call flow. It never touches your phone line, so there's nothing to switch over to try it.`;
+  const productContext = `24/7 answering and booking software for dental practices that handles missed calls and helps turn them into booked patients. The linked sample demonstrates a complete dental call flow. It never touches your phone line, so there's nothing to switch over to try it.`;
   const casl = `---\n${mailingAddress}\nYou're receiving this because your business is publicly listed. Reply with\n"unsubscribe" and I'll remove you immediately — no hard feelings.  ·  Ref: ${reference}`;
   const personalizationBlocks = personalization.personalizationBlocks.map((text, index) => ({
     text,

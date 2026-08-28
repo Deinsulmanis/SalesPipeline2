@@ -396,7 +396,7 @@ const FOLLOW_UP_SEQUENCE = [
 
       return `Hi ${name},
 
-Just following up on the AI receptionist demo I mentioned for ${company} — still happy to build it if you'd like to hear it.
+Just following up on the 24/7 answering and booking software demo I mentioned for ${company} — still happy to build it if you'd like to hear it.
 
 → Here's a sample so you know what it sounds like: ${link}
 
@@ -420,7 +420,7 @@ ${casl}`;
 
 Last note from me on this.
 
-If a free AI receptionist demo for ${company} isn't useful right now, no worries — I'll leave it here. If it is, here's the sample again: ${link}
+If a free 24/7 answering and booking software demo for ${company} isn't useful right now, no worries — I'll leave it here. If it is, here's the sample again: ${link}
 
 Just reply and I'll build yours.
 
@@ -665,7 +665,7 @@ function buildPitch(lead, opener, link, structuredPersonalization = null) {
   }
 
   const offer = guaranteeFor(company);
-  const productContext = `I build the receptionist with ${company}'s actual ${niche.booking} and services, so when a ${niche.person.replace(/s$/, '')} calls it already sounds like it works there. It never touches your real phone line, so there's nothing to switch over to try it.`;
+  const productContext = `24/7 answering and booking software for dental practices that handles missed calls and helps turn them into booked patients. I configure it with ${company}'s actual ${niche.booking} and services, so when a ${niche.person.replace(/s$/, '')} calls it already sounds like it works there. It never touches your real phone line, so there's nothing to switch over to try it.`;
   const casl = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply with\n"unsubscribe" and I'll remove you immediately — no hard feelings.  ·  Ref: SL-${refCode(lead)}`;
   const personalizationBlocks = dedupePersonalizationBlocks(
     splitPersonalization(opener).map(text => ({ text, sourceField: 'siteContext' })),
@@ -1368,7 +1368,7 @@ async function answerQuestion(lead, replyText) {
       model: 'claude-haiku-4-5',
       max_tokens: ANSWER_MAX_TOKENS,
       system: [
-        'You draft short replies on behalf of Deins, who sells an AI receptionist to dental clinics.',
+        'You draft short replies on behalf of Deins, who sells 24/7 answering and booking software to dental clinics.',
         '',
         'You may state ONLY what the FACTS below support. If the question needs anything not in',
         'the facts, do not invent it — lower your confidence instead.',

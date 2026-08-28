@@ -16,7 +16,7 @@
 
 const PRODUCT_FACTS = [
   '# What it is',
-  'An AI receptionist that answers the clinic\'s phone when nobody picks up — after hours, during lunch, or when the front desk is already on another call.',
+  '24/7 answering and booking software for dental practices that handles missed calls and helps turn them into booked patients.',
   'It answers in a natural voice, takes the caller\'s details, and books or requests an appointment.',
   'It is set up with the clinic\'s own services, hours and booking preferences, so it answers like it already works there.',
   '',
