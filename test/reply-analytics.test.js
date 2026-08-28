@@ -181,10 +181,20 @@ test('reply analytics and backfill contain no send or stage/status mutation path
   assert.doesNotMatch(analyticsSource, /sendEmail\(|spreadsheets\.values|lead\.stage\s*=|lead\.emailStatus\s*=/i);
 });
 
-test('desktop reply cards use the existing six-column visual system', () => {
+test('reply cards keep the existing visual system and show the WHOLE partition', () => {
   assert.match(browser, /\.reply-metrics-bar\s*\{[\s\S]*?grid-template-columns:\s*repeat\(6, minmax\(0, 1fr\)\)/);
-  for (const id of ['ce-stat-replied','ce-stat-positive','ce-stat-negative','ce-stat-needs-human','ce-stat-unclassified','ce-stat-positive-rate']) {
-    assert.match(browser, new RegExp(`id="${id}"`));
+  // Every bucket that the partition reconciles over must be visible, or the
+  // cards silently fail to add up to the inbound total.
+  for (const id of ['ce-stat-replied', 'ce-stat-genuine', 'ce-stat-positive', 'ce-stat-negative',
+    'ce-stat-needs-human', 'ce-stat-unclassified', 'ce-stat-contact-change',
+    'ce-stat-automated', 'ce-stat-unknown',
+    'ce-stat-genuine-rate', 'ce-stat-positive-of-replies', 'ce-stat-positive-rate']) {
+    assert.match(browser, new RegExp(`id="${id}"`), id);
+  }
+  // The three rates carry distinct labels — one label must never cover two
+  // different denominators.
+  for (const label of ['Genuine Reply Rate', 'Positive of Replies', 'Positive Reply Rate']) {
+    assert.ok(browser.includes(label), label);
   }
 });
 

@@ -218,8 +218,12 @@ test('drill-down reuses canonical records instead of reclassifying in the browse
     browser.indexOf('function openReplyDrill'), browser.indexOf('function renderReplyDrill'))));
 });
 
-test('all five cards are keyboard-activatable buttons, not click-only divs', () => {
-  for (const category of ['all', 'positive', 'negative', 'needs_human', 'unclassified']) {
+test('every reply-bucket card is a keyboard-activatable button, not a click-only div', () => {
+  // The set grew in Phase 2.4: automated replies, contact-change and unknown
+  // were being counted but never shown, so the visible cards did not sum to
+  // the inbound total. Each is now its own drillable bucket.
+  for (const category of ['all', 'genuine', 'positive', 'negative', 'needs_human',
+    'unclassified', 'contact_change_review', 'automated_reply', 'unknown']) {
     const pattern = new RegExp(`<button type="button" class="stat[^"]*stat-clickable"[^>]*openReplyDrill\\('${category}'\\)`);
     assert.match(browser, pattern, `${category} card is a button`);
   }

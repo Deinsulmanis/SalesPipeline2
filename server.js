@@ -1184,7 +1184,6 @@ async function loadOutreachDataset() {
   // Counts and reply records come from the canonical analytics module, exactly
   // as before — this only changes how many times the sheet is read.
   const replyEvidenceByLeadId = buildReplyEvidenceMap(activities);
-  const metrics = buildReplyMetrics(leads, { classificationsByLeadId, evidenceByLeadId: replyEvidenceByLeadId });
   // Activities are indexed by lead so the canonical evidence hierarchy can run:
   // provider-backed reply activity outranks a legacy [REPLY: ...] tag.
   const activitiesByLeadId = new Map();
@@ -1195,6 +1194,14 @@ async function loadOutreachDataset() {
     bucket.push(row);
     activitiesByLeadId.set(key, bucket);
   }
+  // ONE classification source. These two used to disagree in production —
+  // the Outreach cards read legacy [REPLY: ...] tags and reported 22 replies
+  // with 4 positive, while the funnel read canonical provider evidence and
+  // reported 16 genuine replies with 3 positive. Same question, two answers,
+  // because only one of them was handed the activity index.
+  const metrics = buildReplyMetrics(leads, {
+    classificationsByLeadId, evidenceByLeadId: replyEvidenceByLeadId, activitiesByLeadId,
+  });
   const replyRecords = buildReplyRecords(leads, {
     classificationsByLeadId,
     evidenceByLeadId: replyEvidenceByLeadId,

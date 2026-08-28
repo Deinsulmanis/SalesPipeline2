@@ -2186,19 +2186,25 @@
       <button class="ce-quick-view" onclick="applyCeQuickView('suppressed')">Suppressed</button>
     </div>
     <div class="stats-bar" id="ce-stats-bar">
-      <div class="stat stat-secondary"><div><div class="stat-val" id="ce-stat-total">0</div><div class="stat-label">Total</div></div></div>
+      <div class="stat stat-secondary" title="Every ColdEmail row with a valid id, contacted or not."><div><div class="stat-val" id="ce-stat-total">0</div><div class="stat-label">Total Leads</div></div></div>
       <div class="stat"><div><div class="stat-val" id="ce-stat-queued">0</div><div class="stat-label">Queued</div></div></div>
-      <div class="stat stat-secondary"><div><div class="stat-val" id="ce-stat-emailed">0</div><div class="stat-label">Emailed</div></div></div>
+      <div class="stat stat-secondary" title="Unique leads that have been contacted at least once. Lead-based — a lead mailed three times counts once. Not the same as All Outbound Sends, which counts messages."><div><div class="stat-val" id="ce-stat-emailed">0</div><div class="stat-label">Unique Contacted</div></div></div>
       <div class="stat"><div><div class="stat-val" id="ce-stat-opens">0</div><div class="stat-label" id="ce-stat-opens-label">Opens</div></div></div>
       <div class="stat"><div><div class="stat-val" id="ce-stat-warm">0</div><div class="stat-label">🔥 Warm</div></div></div>
     </div>
     <div class="reply-metrics-bar" id="ce-reply-metrics" aria-label="Reply outcomes">
-      <button type="button" class="stat stat-clickable" onclick="openReplyDrill('all')" aria-label="Total Replies — open reply list"><div><div class="stat-val" id="ce-stat-replied">0</div><div class="stat-label">Total Replies</div></div></button>
+      <button type="button" class="stat stat-clickable" onclick="openReplyDrill('all')" aria-label="Inbound Messages — open reply list" title="Unique leads that sent us anything at all: human replies, autoresponders, mailbox-change notices, and leads whose reply evidence we cannot trust."><div><div class="stat-val" id="ce-stat-replied">0</div><div class="stat-label">Inbound Messages</div></div></button>
+      <button type="button" class="stat stat-clickable" onclick="openReplyDrill('genuine')" aria-label="Genuine Replies — open reply list" title="Unique leads where a real person wrote back. Autoresponders, mailbox-change notices and evidence-free rows are excluded."><div><div class="stat-val" id="ce-stat-genuine">0</div><div class="stat-label">Genuine Replies</div></div></button>
       <button type="button" class="stat stat-clickable" onclick="openReplyDrill('positive')" aria-label="Positive — open reply list"><div><div class="stat-val" id="ce-stat-positive" data-tone="positive">0</div><div class="stat-label">Positive</div></div></button>
       <button type="button" class="stat stat-clickable" onclick="openReplyDrill('negative')" aria-label="Negative — open reply list"><div><div class="stat-val" id="ce-stat-negative" data-tone="negative">0</div><div class="stat-label">Negative</div></div></button>
       <button type="button" class="stat stat-clickable" onclick="openReplyDrill('needs_human')" aria-label="Needs Human — open reply list"><div><div class="stat-val" id="ce-stat-needs-human" data-tone="review">0</div><div class="stat-label">Needs Human</div></div></button>
-      <button type="button" class="stat stat-secondary stat-clickable" onclick="openReplyDrill('unclassified')" aria-label="Unclassified — open reply list"><div><div class="stat-val" id="ce-stat-unclassified">0</div><div class="stat-label">Unclassified</div></div></button>
-      <div class="stat"><div><div class="stat-val" id="ce-stat-positive-rate">0%</div><div class="stat-label">Positive Reply Rate</div></div></div>
+      <button type="button" class="stat stat-secondary stat-clickable" onclick="openReplyDrill('unclassified')" aria-label="Unclassified — open reply list" title="A real message arrived but could not be categorised. Part of genuine replies."><div><div class="stat-val" id="ce-stat-unclassified">0</div><div class="stat-label">Unclassified</div></div></button>
+      <button type="button" class="stat stat-secondary stat-clickable" onclick="openReplyDrill('contact_change_review')" aria-label="Contact Change — open reply list" title="A new mailbox was proposed and needs human approval. Neither positive nor negative."><div><div class="stat-val" id="ce-stat-contact-change">0</div><div class="stat-label">Contact Change</div></div></button>
+      <button type="button" class="stat stat-secondary stat-clickable" onclick="openReplyDrill('automated_reply')" aria-label="Automated Replies — open reply list" title="Autoresponders, out-of-office and temporary closures. A machine answered, so these are not genuine replies."><div><div class="stat-val" id="ce-stat-automated">0</div><div class="stat-label">Automated</div></div></button>
+      <button type="button" class="stat stat-secondary stat-clickable" onclick="openReplyDrill('unknown')" aria-label="Unknown — open reply list" title="Leads that look like they replied but carry no trustworthy evidence. Shown rather than hidden, so the partition adds up honestly."><div><div class="stat-val" id="ce-stat-unknown">0</div><div class="stat-label">Unknown</div></div></button>
+      <div class="stat" title="Genuine human replies divided by delivered leads (contacted minus bounced)."><div><div class="stat-val" id="ce-stat-genuine-rate">—</div><div class="stat-label">Genuine Reply Rate</div></div></div>
+      <div class="stat" title="Positive replies divided by GENUINE replies — how good the conversations are, not how many there were."><div><div class="stat-val" id="ce-stat-positive-of-replies">—</div><div class="stat-label">Positive of Replies</div></div></div>
+      <div class="stat" title="Positive replies divided by delivered leads. A different denominator from Positive of Replies — the two are not interchangeable."><div><div class="stat-val" id="ce-stat-positive-rate">—</div><div class="stat-label">Positive Reply Rate</div></div></div>
     </div>
     <section class="health-panel" id="crm-health-panel" aria-labelledby="crm-health-title">
       <div class="health-head" onclick="toggleCrmHealth()" role="button" tabindex="0"
@@ -2228,14 +2234,14 @@
       <div class="funnel-kpis" id="funnel-kpis"></div>
       <div class="funnel-flow" id="funnel-flow" aria-label="Campaign funnel"></div>
       <div class="funnel-secondary">
-        <div><div class="detail-section-title">Reply Outcomes</div><div id="funnel-replies" class="funnel-mini-grid"></div></div>
+        <div><div class="detail-section-title" title="The four genuine-reply buckets only. Automated replies, contact-change notices and unknown messages are counted as Inbound Messages in Outreach but are deliberately absent here.">Genuine Reply Outcomes</div><div id="funnel-replies" class="funnel-mini-grid"></div></div>
         <div><div class="detail-section-title">Funnel Leaks</div><div id="funnel-leaks" class="funnel-mini-grid"></div></div>
       </div>
       <details><summary>Performance breakdowns</summary><div id="funnel-breakdowns"></div></details>
       <div id="funnel-drill" class="funnel-drill" hidden></div>
     </section>
     <div id="ce-chart-wrap" style="padding:0 28px;margin-bottom:18px">
-      <div class="detail-section-title" style="margin-bottom:8px">Daily Sends — Last 14 Days</div>
+      <div class="detail-section-title" style="margin-bottom:8px" title="Every canonical outbound send event: initial emails, cold follow-ups, booking-link sends and stage-sequence sends. Message-based, not lead-based — one lead can appear several times. Aggregated server-side from the full activity snapshot, so paging or filtering the Outreach table does not change it.">All Outbound Sends — Last 14 Days</div>
       <div id="ce-send-chart" style="display:flex;align-items:flex-end;gap:3px;height:60px;padding:0 2px"></div>
       <div id="ce-chart-legend" style="font-size:11px;color:var(--text-muted);margin-top:4px;display:flex;justify-content:space-between"></div>
     </div>
@@ -5135,10 +5141,22 @@ function renderFunnelAnalytics(data) {
   const fixedVersions = [['current','Current campaign'],['lifetime','Lifetime'],['legacy_unknown','Legacy / Unknown'],['all_measured','All measured']];
   versionSelect.innerHTML = fixedVersions.map(([value,label]) => `<option value="${value}">${label}</option>`).join('') + (data.facets?.versions || []).filter(value => value !== 'legacy_unknown').map(value => `<option value="${escAttr(value)}">${esc(value)}</option>`).join('');
   if ([...versionSelect.options].some(option => option.value === selectedVersion)) versionSelect.value = selectedVersion;
-  const kpis = [['Sent',c.sent],['Reply Rate',funnelRate(r.sentToReply)],['Positive Rate',funnelRate(r.sentToPositive)],['Demo Rate',funnelRate(r.sentToDemo)],['Calls Booked',c.callBooked],['Show Rate',funnelRate(r.showRate)],['Closed Won',c.won]];
-  document.getElementById('funnel-kpis').innerHTML = kpis.map(([label,value]) => `<div class="funnel-kpi"><strong>${esc(value)}</strong><span>${esc(label)}</span></div>`).join('');
+  // Every rate carries its denominator. The funnel divides by the SENT COHORT
+  // (unique leads with a qualifying send in this version); the Outreach cards
+  // divide by DELIVERED (contacted minus bounced). Those are different numbers,
+  // so they are never allowed to share a label.
+  const kpis = [
+    ['Sent', c.sent, 'Unique leads with at least one qualifying send in this campaign version. Lead-based, not message-based.'],
+    ['Reply Rate / Sent', funnelRate(r.sentToReply), 'Genuine human replies ÷ sent cohort. Automated replies, contact-change notices and unknowns are excluded from the numerator.'],
+    ['Positive Rate / Sent', funnelRate(r.sentToPositive), 'Positive replies ÷ sent cohort.'],
+    ['Demo Rate / Sent', funnelRate(r.sentToDemo), 'Leads that reached Demo ÷ sent cohort.'],
+    ['Calls Booked', c.callBooked, 'Leads with a booked call in this cohort.'],
+    ['Show Rate', funnelRate(r.showRate), 'Calls held ÷ (held + no-show). Shows “—” until at least one call has resolved — it is never 0% by default.'],
+    ['Closed Won', c.won, 'Leads with a won outcome in this cohort.'],
+  ];
+  document.getElementById('funnel-kpis').innerHTML = kpis.map(([label,value,help]) => `<div class="funnel-kpi" title="${escAttr(help)}"><strong>${esc(value)}</strong><span>${esc(label)}</span></div>`).join('');
   const labels = { sent:'Sent',replied:'Replies',positive:'Positive',demo:'Demo',hot:'Hot',callBooked:'Calls Booked',callHeld:'Calls Held',won:'Won' };
-  document.getElementById('funnel-flow').innerHTML = (data.funnel || []).map(step => `<button type="button" class="funnel-step" onclick="openFunnelStage('${escAttr(step.key)}')"><span>${esc(labels[step.key] || step.key)}</span><b>${step.count}</b><small>${step.key === 'sent' ? 'Cohort' : `${funnelRate(step.fromPrevious)} from prior`}</small><small>${step.key === 'sent' ? '' : `${funnelRate(step.fromSent)} from Sent`}</small></button>`).join('');
+  document.getElementById('funnel-flow').innerHTML = (data.funnel || []).map(step => `<button type="button" class="funnel-step" onclick="openFunnelStage('${escAttr(step.key)}')"><span>${esc(labels[step.key] || step.key)}</span><b>${step.count}</b><small>${step.key === 'sent' ? 'Cohort' : `${funnelRate(step.fromPrevious)} from prior`}</small><small>${step.key === 'sent' ? 'unique leads' : `${funnelRate(step.fromSent)} of sent cohort`}</small></button>`).join('');
   const replies = [['Positive',c.positive],['Negative',c.negative],['Needs Human',c.needsHuman],['Unclassified',c.unclassified]];
   document.getElementById('funnel-replies').innerHTML = replies.map(([label,value]) => `<div class="funnel-mini"><b>${value || 0}</b>${label}</div>`).join('');
   const leakLabels = {sentNoReply:'Sent · no reply',repliedNotPositive:'Reply · not positive',positiveNotHot:'Positive · not Hot',hotNoCall:'Hot · no call',callUnresolved:'Call · unresolved',heldNoOutcome:'Held · no outcome'};
@@ -5269,8 +5287,17 @@ function updateCeStats() {
   document.getElementById('ce-stat-positive').textContent = replyMetrics?.positive ?? '–';
   document.getElementById('ce-stat-negative').textContent = replyMetrics?.negative ?? '–';
   document.getElementById('ce-stat-needs-human').textContent = replyMetrics?.needsHuman ?? '–';
+  document.getElementById('ce-stat-genuine').textContent = replyMetrics?.genuineReplies ?? '–';
   document.getElementById('ce-stat-unclassified').textContent = replyMetrics?.unclassified ?? '–';
-  document.getElementById('ce-stat-positive-rate').textContent = replyMetrics ? `${replyMetrics.positiveReplyRate.toFixed(1)}%` : '–';
+  document.getElementById('ce-stat-contact-change').textContent = replyMetrics?.contactChangeReview ?? '–';
+  document.getElementById('ce-stat-automated').textContent = replyMetrics?.automatedReply ?? '–';
+  document.getElementById('ce-stat-unknown').textContent = replyMetrics?.unknown ?? '–';
+  // A zero denominator is unknown, not zero percent. Rendering 0% there claims
+  // a measurement nobody made.
+  const pct = value => (value === null || value === undefined ? '—' : `${value.toFixed(1)}%`);
+  document.getElementById('ce-stat-genuine-rate').textContent = replyMetrics ? pct(replyMetrics.genuineReplyRate) : '–';
+  document.getElementById('ce-stat-positive-of-replies').textContent = replyMetrics ? pct(replyMetrics.positiveOfReplies) : '–';
+  document.getElementById('ce-stat-positive-rate').textContent = replyMetrics ? pct(replyMetrics.positiveReplyRate) : '–';
 
   // Opens/Warm keep their original meaning, now aggregated server-side over
   // every lead: headline is DISTINCT COMPANIES with >= 1 real open that match a
@@ -5319,7 +5346,9 @@ function buildSendChart() {
   }).join('');
 
   const oldestLabel = new Date(days[0] + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  legendEl.innerHTML = `<span>${oldestLabel}</span><span>${total} send${total !== 1 ? 's' : ''} in last ${CHART_DAYS} days</span><span>Today</span>`;
+  // "sends" is message-based on purpose — the four canonical outbound event
+  // types, not unique leads. Contacted is a different metric with its own card.
+  legendEl.innerHTML = `<span>${oldestLabel}</span><span>${total} outbound send${total !== 1 ? 's' : ''} in last ${CHART_DAYS} days</span><span>Today</span>`;
 }
 
 function renderCeTable() {
@@ -5635,6 +5664,12 @@ function campaignGroupKey(lead) {
   return (!c || c.toLowerCase() === 'unlabeled') ? 'Unlabeled' : c;
 }
 
+// Mirrors GENUINE_REPLY_CATEGORIES in integrations/reply-analytics.js. A
+// genuine reply is one a human prospect actually wrote; auto-responders,
+// contact-change notices and unattributable messages are inbound traffic but
+// not replies, and must never inflate a reply rate.
+const GENUINE_REPLY_CATEGORIES = new Set(['positive', 'negative', 'needs_human', 'unclassified']);
+
 function buildCampaignStats() {
   const groups = new Map();
   for (const l of (ceAllLeads || ceLeads)) {
@@ -5662,10 +5697,16 @@ function buildCampaignStats() {
       opens += ceOpensMap.get(k) || 0;
     }
 
-    const replied        = leads.filter(ceHasReplied).length;                        // all reply types (see ceHasReplied)
-    const replyRate      = delivered > 0 ? (replied / delivered) * 100 : 0;
-    const interested     = leads.filter(l => (l.notes || '').includes('[REPLY: Interested]')).length;
-    const interestedRate = replied > 0 ? (interested / replied) * 100 : 0;           // denominator now counts all replies
+    // CANONICAL classification, not legacy [REPLY: ...] tags. Every light row
+    // carries replyCategory from the same reply records the funnel and the
+    // Outreach cards read, so a campaign row can no longer claim a different
+    // number of replies than the funnel does for the same leads. Automated
+    // replies, contact-change notices and unknowns are excluded here exactly as
+    // they are excluded from the funnel's Replies step.
+    const replied        = leads.filter(l => GENUINE_REPLY_CATEGORIES.has(l.replyCategory)).length;
+    const replyRate      = delivered > 0 ? (replied / delivered) * 100 : 0;          // genuine ÷ delivered
+    const interested     = leads.filter(l => l.replyCategory === 'positive').length;
+    const interestedRate = replied > 0 ? (interested / replied) * 100 : 0;           // positive ÷ genuine replies
 
     const providerStats = smartleadIntegration?.stats?.find(s => s.internalCampaignId === name && s.provider === 'smartlead');
     if (providerStats) {
@@ -5674,9 +5715,12 @@ function buildCampaignStats() {
       const slBounced = Number(providerStats.bounced || 0);
       const slReplied = Number(providerStats.replied || 0);
       const slInterested = Number(providerStats.interested || interested);
-      rows.push({ name, total: slTotal, sent: slSent, delivered: Math.max(0, slSent - slBounced), bounced: slBounced, bounceRate: slSent ? slBounced / slSent * 100 : 0, opens, replied: slReplied, replyRate: Number(providerStats.replyRate || 0), interested: slInterested, interestedRate: Number(providerStats.interestedRate || (slReplied ? slInterested / slReplied * 100 : 0)) });
+      // Provider-reported numbers REPLACE the canonical ones for this row.
+      // Smartlead classifies replies its own way, so the row is marked and must
+      // not be read as agreeing with the CRM funnel.
+      rows.push({ name, statsSource: 'smartlead', total: slTotal, sent: slSent, delivered: Math.max(0, slSent - slBounced), bounced: slBounced, bounceRate: slSent ? slBounced / slSent * 100 : 0, opens, replied: slReplied, replyRate: Number(providerStats.replyRate || 0), interested: slInterested, interestedRate: Number(providerStats.interestedRate || (slReplied ? slInterested / slReplied * 100 : 0)) });
     } else {
-      rows.push({ name, total, sent, delivered, bounced, bounceRate, opens, replied, replyRate, interested, interestedRate });
+      rows.push({ name, statsSource: 'crm', total, sent, delivered, bounced, bounceRate, opens, replied, replyRate, interested, interestedRate });
     }
   }
 
@@ -5724,14 +5768,14 @@ async function renderCampaignsPanel() {
              onclick="filterByCampaign(this.dataset.campaign)"
              role="button" tabindex="0"
              onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();filterByCampaign(this.dataset.campaign);}">
-          <div class="campaign-card-name">${esc(r.name)}</div>
+          <div class="campaign-card-name">${esc(r.name)}${r.statsSource === 'smartlead' ? ' <span title="Counts reported by Smartlead using its own reply classification, not the CRM canonical one." style="font-weight:400;opacity:.7">· Smartlead counts</span>' : ''}</div>
           <dl class="campaign-card-metrics">
             <dt>Total</dt><dd>${r.total}</dd>
             <dt>Delivered</dt><dd>${r.delivered}</dd>
             <dt>Bounced</dt><dd class="${bounceClass(r.bounceRate)}">${r.bounced || '—'}${r.sent > 0 ? ` · ${fmtPct(r.bounceRate)}` : ''}</dd>
             <dt>Opens</dt><dd>${r.opens || '—'}</dd>
-            <dt>Replied</dt><dd class="${replyClass(r.replyRate)}">${r.replied || '—'}${r.delivered > 0 ? ` · ${fmtPct(r.replyRate)}` : ''}</dd>
-            <dt>Interested</dt><dd>${r.interested || '—'}${r.replied > 0 ? ` · ${fmtPct(r.interestedRate)}` : ''}</dd>
+            <dt>Genuine Replies</dt><dd class="${replyClass(r.replyRate)}">${r.replied || '—'}${r.delivered > 0 ? ` · ${fmtPct(r.replyRate)}` : ''}</dd>
+            <dt>Positive</dt><dd>${r.interested || '—'}${r.replied > 0 ? ` · ${fmtPct(r.interestedRate)}` : ''}</dd>
             <dt>Provider</dt><dd><button class="btn-cancel" style="padding:5px 8px" data-campaign="${escAttr(r.name)}" onclick="event.stopPropagation();openProviderModal(this.dataset.campaign)">${esc(campaignProvider(r.name).provider === 'smartlead' ? 'Smartlead' : 'Gmail')}</button></dd>
           </dl>
         </div>`).join('')}
@@ -5747,17 +5791,17 @@ async function renderCampaignsPanel() {
           <th>Bounced</th>
           <th>Bounce %</th>
           <th>Opens</th>
-          <th>Replied</th>
-          <th>Reply %</th>
-          <th>Interested</th>
-          <th>Int. %</th>
+          <th title="Genuine human replies, canonical classification. Excludes auto-responders, contact-change notices and unknowns.">Genuine Replies</th>
+          <th title="Genuine replies ÷ delivered (attempted minus bounced).">Reply % / Delivered</th>
+          <th title="Replies classified positive.">Positive</th>
+          <th title="Positive ÷ genuine replies.">Pos % / Replies</th>
           <th>Provider</th>
         </tr>
       </thead>
       <tbody>
         ${rows.map(r => `
           <tr data-campaign="${escAttr(r.name)}" onclick="filterByCampaign(this.dataset.campaign)" title="Click to filter leads by this campaign">
-            <td class="ce-campaign-name-cell">${esc(r.name)}</td>
+            <td class="ce-campaign-name-cell">${esc(r.name)}${r.statsSource === 'smartlead' ? ' <span title="Counts reported by Smartlead using its own reply classification, not the CRM canonical one." style="opacity:.7">· Smartlead counts</span>' : ''}</td>
             <td>${r.total}</td>
             <td>${r.delivered}</td>
             <td>${r.bounced || '—'}</td>
@@ -6606,7 +6650,7 @@ function installWorkspaceShell() {
   const ce = document.getElementById('ce-section');
   outreach.appendChild(ce);
 
-  inbox.insertAdjacentHTML('beforeend', '<div class="inbox-toolbar" id="inbox-toolbar"></div><div id="inbox-content" class="workspace-empty"><strong>Loading the reply queue…</strong>Canonical reply evidence is being prepared.</div>');
+  inbox.insertAdjacentHTML('beforeend', '<div class="inbox-toolbar" id="inbox-toolbar"></div><p id="inbox-note" style="color:var(--text-muted);font-size:12px;margin:0 0 10px">An operational queue over the same canonical reply records Analytics measures — not a second count. Every inbound message appears here, including the automated and unattributable ones that Analytics deliberately keeps out of reply rates, so <b>All replies</b> equals <b>Inbound Messages</b> and is larger than <b>Genuine Replies</b>. Filters overlap: a message can be both Positive and Needs response.</p><div id="inbox-content" class="workspace-empty"><strong>Loading the reply queue…</strong>Canonical reply evidence is being prepared.</div>');
   sequences.insertAdjacentHTML('beforeend', '<div id="sequences-status" class="workspace-surface">Loading sequence status…</div>');
   bookings.insertAdjacentHTML('beforeend', '<div id="bookings-content" class="workspace-empty"><strong>Loading call lifecycle…</strong>Current meeting state is being prepared.</div>');
   settings.insertAdjacentHTML('afterbegin', '<div id="settings-status" class="status-grid" style="margin-bottom:14px"></div>');
@@ -6708,7 +6752,12 @@ function inboxMatches(record, action) {
 }
 
 function renderInboxWorkspace() {
-  document.getElementById('inbox-toolbar').innerHTML = INBOX_FILTERS.map(([id,label]) => `<button class="inbox-filter${inboxFilter === id ? ' active' : ''}" type="button" onclick="setInboxFilter('${id}')">${esc(label)}</button>`).join('');
+  // Each filter shows the count it would actually render, computed with the
+  // same predicate the list uses, so a tab can never promise rows it cannot show.
+  document.getElementById('inbox-toolbar').innerHTML = INBOX_FILTERS.map(([id,label]) => {
+    const count = rdRecords.filter(record => { const previous = inboxFilter; inboxFilter = id; const match = inboxMatches(record, inboxActionFor(record)); inboxFilter = previous; return match; }).length;
+    return `<button class="inbox-filter${inboxFilter === id ? ' active' : ''}" type="button" onclick="setInboxFilter('${id}')">${esc(label)} <b>${count}</b></button>`;
+  }).join('');
   const rows = rdRecords.filter(record => inboxMatches(record, inboxActionFor(record)));
   const host = document.getElementById('inbox-content');
   if (!rows.length) { host.className = 'workspace-empty'; host.innerHTML = '<strong>Nothing in this view</strong>No replies currently match this operational filter.'; return; }

@@ -192,15 +192,23 @@ const CATEGORY_METRIC_KEY = Object.freeze({
   [ANALYTICS_CATEGORY.CONTACT_CHANGE_REVIEW]: 'contactChangeReview',
 });
 
+// The categories that mean a real person wrote back. Defined once, so the
+// "Genuine Replies" card and its drill-down cannot describe different sets.
+const GENUINE_REPLY_CATEGORIES = Object.freeze([
+  ANALYTICS_CATEGORY.POSITIVE, ANALYTICS_CATEGORY.NEGATIVE,
+  ANALYTICS_CATEGORY.NEEDS_HUMAN, ANALYTICS_CATEGORY.UNCLASSIFIED,
+]);
+
 function filterReplyRecords(records = [], category = '') {
   const key = String(category || '').trim().toLowerCase();
   if (!key || key === 'all') return records.slice();
+  if (key === 'genuine') return records.filter(record => GENUINE_REPLY_CATEGORIES.includes(record.category));
   return records.filter(record => record.category === key);
 }
 
 // Counts are derived from the same records the drill-down lists, so a card and
 // its detail view cannot drift apart.
-function buildReplyMetrics(leads = [], { classificationsByLeadId = new Map(), evidenceByLeadId = new Map() } = {}) {
+function buildReplyMetrics(leads = [], { classificationsByLeadId = new Map(), evidenceByLeadId = new Map(), activitiesByLeadId = new Map() } = {}) {
   const metrics = {
     totalReplies: 0, positive: 0, negative: 0, needsHuman: 0, unclassified: 0, unknown: 0,
     automatedReply: 0, contactChangeReview: 0,
@@ -215,11 +223,27 @@ function buildReplyMetrics(leads = [], { classificationsByLeadId = new Map(), ev
     if (contacted) metrics.contacted++;
     if (contacted && !/\[BOUNCED/i.test(String(lead.notes || ''))) metrics.delivered++;
   }
-  const records = buildReplyRecords(leads, { classificationsByLeadId, evidenceByLeadId });
+  // The SAME records the drill-down returns, so a card and its list can never
+  // disagree — and the same canonical evidence hierarchy the funnel uses.
+  const records = buildReplyRecords(leads, { classificationsByLeadId, evidenceByLeadId, activitiesByLeadId });
   metrics.totalReplies = records.length;
   for (const record of records) metrics[CATEGORY_METRIC_KEY[record.category] || 'unclassified']++;
-  metrics.positiveReplyRate = metrics.delivered ? metrics.positive / metrics.delivered * 100 : 0;
-  metrics.reconciles = metrics.totalReplies
+  // GENUINE replies: a person wrote back. An autoresponder, a mailbox-migration
+  // notice and an evidence-free row are all inbound, but none of them is a
+  // human conversation, and letting them inflate reply rate is how a campaign
+  // talks itself into believing it is working.
+  metrics.inboundMessages = metrics.totalReplies;
+  // Counted from the SAME records the drill-down filters, so the card and the
+  // list it opens are guaranteed to agree.
+  metrics.genuineReplies = filterReplyRecords(records, 'genuine').length;
+  // Explicit denominators. Both are useful; they are NOT the same number and
+  // must never share a label.
+  metrics.genuineReplyRate = metrics.delivered ? metrics.genuineReplies / metrics.delivered * 100 : null;
+  metrics.positiveReplyRate = metrics.delivered ? metrics.positive / metrics.delivered * 100 : null;
+  metrics.positiveOfReplies = metrics.genuineReplies ? metrics.positive / metrics.genuineReplies * 100 : null;
+  // The partition must close exactly, with unknown VISIBLE rather than folded
+  // into another bucket to make the percentages look tidy.
+  metrics.reconciles = metrics.inboundMessages
     === metrics.positive + metrics.negative + metrics.needsHuman + metrics.unclassified
       + metrics.unknown + metrics.automatedReply + metrics.contactChangeReview;
   return metrics;
@@ -285,6 +309,7 @@ module.exports = {
   ANALYTICS_CATEGORY, analyticsCategoryFor, categoriesFromNotes, leadHasReply,
   classificationFromLead, buildReplyMetrics, buildStoredClassificationMap,
   buildReplyEvidenceMap, buildReplyRecords, filterReplyRecords, categoryFromEvidence,
+  GENUINE_REPLY_CATEGORIES,
   CANONICAL_STATE_CATEGORY,
   planReplyBackfill, applyBackfillPlan,
 };
