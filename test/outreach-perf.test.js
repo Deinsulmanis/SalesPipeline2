@@ -154,9 +154,14 @@ test('11. drill-down records and card counts come from the same snapshot', () =>
   assert.match(replies, /dataset\.replyRecords/);
   const stats = handler('/api/coldemail/stats');
   assert.match(stats, /dataset\.metrics/);
-  // Both derive from one build, so they cannot disagree.
-  assert.match(server, /const metrics = buildReplyMetrics\(leads, \{ classificationsByLeadId \}\)/);
+  // Both derive from one build, so they cannot disagree. The reply evidence map
+  // is built ONCE and handed to both, which is what makes that true — asserting
+  // the shared variable rather than an exact call signature, so the property
+  // survives arguments being added to either call.
+  assert.match(server, /const replyEvidenceByLeadId = buildReplyEvidenceMap\(activities\)/);
+  assert.match(server, /buildReplyMetrics\(leads, \{[^}]*evidenceByLeadId: replyEvidenceByLeadId/);
   assert.match(server, /const replyRecords = buildReplyRecords\(leads, \{/);
+  assert.match(server, /evidenceByLeadId: replyEvidenceByLeadId,/);
 });
 
 // ── 12. No N+1 ──────────────────────────────────────────────────────────────

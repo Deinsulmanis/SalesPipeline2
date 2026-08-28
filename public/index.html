@@ -83,7 +83,6 @@
     --blue:  var(--info);    --blue-bg:  var(--info-bg);
     --lost:  #7C8CA3;        --lost-bg:  rgba(124,140,163,0.14);
     --trade-color:   #F97316; --trade-bg:   rgba(249,115,22,0.12);
-    --realtor-color: var(--info); --realtor-bg: var(--info-bg);
 
     /* ── shape (site: --sl-r-*) ── */
     --radius:    12px;   /* between sl-r-button 8 and sl-r-card 16 */
@@ -361,7 +360,6 @@
 
   .filter-tab:hover { border-color: var(--border-hover); color: var(--text); }
   .filter-tab.active { background: var(--card); border-color: var(--border-hover); color: var(--text); }
-  .filter-tab[data-f="realtor"].active { background: var(--realtor-bg); border-color: var(--realtor-color); color: var(--realtor-color); }
   .filter-tab[data-f="trade"].active   { background: var(--trade-bg);   border-color: var(--trade-color);   color: var(--trade-color); }
 
   .tab-count {
@@ -459,7 +457,6 @@
   .card-badges { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
 
   .type-badge { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: var(--radius-pill); text-transform: uppercase; letter-spacing: 0.5px; }
-  .type-realtor { background: var(--realtor-bg); color: var(--realtor-color); }
   .type-trade   { background: var(--trade-bg);   color: var(--trade-color); }
 
   /* ══ KANBAN DRAG & DROP ════════════════════════════════════════════════════
@@ -644,7 +641,6 @@
   }
 
   .type-toggle-btn:hover { color: var(--text); }
-  .type-toggle-btn.active-realtor { background: var(--realtor-bg); color: var(--realtor-color); border: 1px solid rgba(56,189,248,0.3); }
   .type-toggle-btn.active-trade   { background: var(--trade-bg);   color: var(--trade-color);   border: 1px solid rgba(249,115,22,0.3); }
 
   .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
@@ -1855,8 +1851,7 @@
      ══════════════════════════════════════════════════════════════════════════ */
   @media (max-width: 768px) {
     .ce-actions { margin-left: 0; width: 100%; order: -1; flex-wrap: wrap; }
-    /* .filter-tab is the cold-call type filter (All / Realtor / Trade). The
-       earlier rule targeted .filter-btn, which is not a class in this markup. */
+    /* Pipeline and Outreach filters retain full touch targets. */
     .filter-tab, .ce-tab, .motion-tab, .filter-btn {
       min-height: 44px;
       display: inline-flex;
@@ -1954,12 +1949,61 @@
   .funnel-drill{margin-top:14px;border-top:1px solid var(--border);padding-top:12px}.funnel-drill-row{width:100%;display:flex;justify-content:space-between;gap:10px;padding:10px;background:none;color:var(--text);border:0;border-bottom:1px solid var(--border);text-align:left;cursor:pointer}
   @media(max-width:900px){.funnel-kpis{grid-template-columns:repeat(3,1fr)}.funnel-flow{grid-template-columns:repeat(4,1fr)}}
   @media(max-width:600px){.funnel-analytics{margin:14px;padding:14px}.funnel-filters select{min-width:100%;width:100%}.funnel-kpis{grid-template-columns:repeat(2,1fr)}.funnel-flow{grid-template-columns:repeat(2,1fr)}.funnel-secondary{grid-template-columns:1fr}.funnel-mini-grid{grid-template-columns:repeat(2,1fr)}.funnel-step{min-height:76px}}
+
+  /* CRM workspace shell — compact, operational, and deliberately quieter
+     than the data it contains. The indigo rail is the single visual signature;
+     content surfaces stay neutral so urgency colors retain meaning. */
+  body.workspace-ready{display:grid;grid-template-columns:224px minmax(0,1fr);grid-template-rows:64px minmax(0,1fr);min-height:100vh;background:var(--bg)}
+  .crm-sidebar{grid-column:1;grid-row:1 / -1;position:sticky;top:0;height:100vh;background:#080c2b;color:#eef0ff;display:flex;flex-direction:column;padding:18px 12px;z-index:80;border-right:1px solid rgba(124,92,255,.22)}
+  .crm-brand{display:flex;align-items:center;gap:10px;padding:0 10px 20px;font-weight:750;letter-spacing:-.02em}.crm-brand-mark{width:27px;height:27px;border-radius:8px;background:#8b7cff;display:grid;place-items:center;color:#171a3a;font-weight:900;box-shadow:0 0 0 5px rgba(139,124,255,.12)}
+  .crm-brand small{display:block;color:#9fa5d2;font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin-top:2px}
+  .crm-nav{display:grid;gap:3px}.crm-nav-group{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:#7f86b8;padding:17px 11px 7px}
+  .crm-nav-btn{width:100%;min-height:42px;display:flex;align-items:center;gap:11px;padding:9px 11px;border:1px solid transparent;border-radius:8px;background:transparent;color:#bfc4e6;text-align:left;font:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:background 160ms,color 160ms,border-color 160ms}
+  .crm-nav-btn svg{width:17px;height:17px;flex:0 0 auto}.crm-nav-btn:hover{background:rgba(255,255,255,.06);color:#fff}.crm-nav-btn.active{background:rgba(139,124,255,.17);border-color:rgba(166,153,255,.3);color:#fff}.crm-nav-btn:focus-visible{outline:3px solid #b8afff;outline-offset:2px}
+  .crm-sidebar-foot{margin-top:auto;padding:14px 10px 2px;color:#8f95c2;font-size:11px;line-height:1.5;border-top:1px solid rgba(255,255,255,.08)}
+  body.workspace-ready>header{grid-column:2;grid-row:1;position:sticky;top:0;z-index:70;height:64px;padding:0 24px;background:rgba(2,13,24,.94);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);box-shadow:none}
+  body.workspace-ready>header .logo{display:none}.workspace-heading{min-width:0}.workspace-heading h1{font-size:18px;line-height:1.2;margin:0;color:var(--text);letter-spacing:-.02em}.workspace-heading p{font-size:11px;color:var(--text-muted);margin:3px 0 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sidebar-toggle{display:none;width:44px;height:44px;border:0;background:transparent;color:var(--text);border-radius:8px;cursor:pointer}
+  #workspace-stage{grid-column:2;grid-row:2;min-width:0;overflow:auto}.crm-workspace{display:none;min-height:calc(100vh - 64px);padding:22px 24px 40px}.crm-workspace.active{display:block}.workspace-intro{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:0 0 16px}.workspace-intro h2{font-size:20px;letter-spacing:-.025em;margin:0;color:var(--text)}.workspace-intro p{font-size:12px;color:var(--text-muted);margin:4px 0 0;max-width:720px}.workspace-eyebrow{font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--primary);font-weight:750}
+  body.workspace-ready .motion-nav{display:none!important}body.workspace-ready .stats-bar,body.workspace-ready .filter-bar,body.workspace-ready .main,body.workspace-ready #ce-section{margin-left:0;margin-right:0}
+  #ws-pipeline>.stats-bar,#ws-pipeline>.filter-bar,#ws-pipeline>.main{width:100%}#ws-pipeline>.stats-bar{border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden}#ws-pipeline>.filter-bar{padding-left:0;padding-right:0;background:transparent;border:0}#ws-pipeline>.main{padding:0}
+  #ws-outreach #ce-section{display:block!important}#ws-outreach .ce-filter-bar{border:1px solid var(--border);border-radius:9px;background:var(--surface);margin-bottom:12px}#ws-outreach .stats-bar{margin:14px 0}#ws-outreach .ce-master-filters,#ws-outreach .ce-quick-views,#ws-outreach #ce-current-campaign,#ws-outreach #ce-result-info{padding-left:0!important;padding-right:0!important}
+  .workspace-surface{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px}.workspace-empty{padding:42px 20px;text-align:center;color:var(--text-muted);border:1px dashed var(--border);border-radius:9px;background:var(--tint-faint)}.workspace-empty strong{display:block;color:var(--text);font-size:14px;margin-bottom:5px}
+  .inbox-toolbar{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:13px}.inbox-filter{min-height:36px;padding:7px 11px;border:1px solid var(--border);background:var(--surface);color:var(--text-secondary);border-radius:7px;font:inherit;font-size:12px;font-weight:650;cursor:pointer}.inbox-filter.active{border-color:var(--primary);color:var(--primary);background:var(--primary-bg)}
+  .inbox-list{display:grid;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface)}.inbox-row{display:grid;grid-template-columns:minmax(180px,.8fr) minmax(260px,1.35fr) minmax(210px,.85fr);gap:18px;padding:15px 17px;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--text);text-align:left;cursor:pointer}.inbox-row:last-child{border-bottom:0}.inbox-row:hover{background:var(--tint-faint)}.inbox-row:focus-visible{outline:3px solid var(--primary);outline-offset:-3px}.inbox-person b,.inbox-action b{display:block;font-size:13px}.inbox-person small,.inbox-message small,.inbox-action small{display:block;color:var(--text-muted);font-size:11px;margin-top:4px}.inbox-message p{margin:6px 0 0;font-size:12px;line-height:1.48;color:var(--text-secondary);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.inbox-state{display:inline-flex;padding:3px 7px;border-radius:5px;background:var(--wash-1);font-size:10px;font-weight:750;text-transform:uppercase;letter-spacing:.04em}
+  .status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}.status-card{padding:14px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}.status-card-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.status-card b{font-size:13px}.status-card p{font-size:11px;color:var(--text-muted);line-height:1.5;margin:7px 0 0}.state-pill{font-size:10px;font-weight:750;padding:3px 7px;border:1px solid var(--border);border-radius:999px}.state-pill[data-on="true"]{color:var(--success);background:var(--success-bg)}.state-pill[data-on="false"]{color:var(--text-muted);background:var(--tint-faint)}
+  #ws-analytics .funnel-analytics,#ws-health .health-panel{margin:0}#ws-analytics #ce-chart-wrap{padding:18px!important;margin:14px 0!important;background:var(--surface);border:1px solid var(--border);border-radius:10px}#ws-campaigns #ce-campaigns-panel,#ws-settings #agent-panel,#ws-analytics #ce-demos-panel,#ws-analytics #ce-opens-panel{display:block!important;margin:0}
+  .booking-list,.sequence-list{display:grid;gap:9px}.operational-row{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:13px 15px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}.operational-row b{font-size:13px}.operational-row small{display:block;color:var(--text-muted);font-size:11px;margin-top:3px}.operational-row-meta{text-align:right;font-size:12px;color:var(--text-secondary)}
+  @media(max-width:980px){body.workspace-ready{grid-template-columns:72px minmax(0,1fr)}.crm-sidebar{padding-inline:8px}.crm-brand{padding-inline:8px}.crm-brand-copy,.crm-nav-btn span,.crm-nav-group,.crm-sidebar-foot{display:none}.crm-nav-btn{justify-content:center;padding:9px}.crm-nav-btn svg{width:19px;height:19px}.crm-workspace{padding:18px}.inbox-row{grid-template-columns:minmax(160px,.7fr) minmax(230px,1.3fr)}}
+  @media(max-width:700px){body.workspace-ready{display:block;padding-top:64px}.crm-sidebar{position:fixed;left:0;top:0;width:224px;transform:translateX(-100%);transition:transform 180ms;z-index:100}.crm-sidebar.open{transform:translateX(0)}.crm-brand-copy,.crm-nav-btn span,.crm-nav-group,.crm-sidebar-foot{display:block}.crm-nav-btn{justify-content:flex-start}.sidebar-toggle{display:grid;place-items:center}body.workspace-ready>header{position:fixed;left:0;right:0;top:0;height:64px}.crm-workspace{padding:14px}.header-right .search-wrap{display:none}.inbox-row{grid-template-columns:1fr;gap:9px}.inbox-action{padding-top:8px;border-top:1px solid var(--border)}.workspace-intro{align-items:flex-start}.operational-row{align-items:flex-start}.operational-row-meta{max-width:45%}}
+  @media(prefers-reduced-motion:reduce){.crm-sidebar,.crm-nav-btn{transition-duration:.01ms!important}}
 </style>
 </head>
 <body>
 
+<aside class="crm-sidebar" id="crm-sidebar" aria-label="CRM workspaces">
+  <div class="crm-brand"><span class="crm-brand-mark">S</span><span class="crm-brand-copy">ScaleLab AI<small>Sales workspace</small></span></div>
+  <nav class="crm-nav">
+    <div class="crm-nav-group">Sales</div>
+    <button class="crm-nav-btn active" data-workspace="pipeline" onclick="setWorkspace('pipeline')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 5h16M4 12h10M4 19h7"/><circle cx="18" cy="12" r="2"/><circle cx="15" cy="19" r="2"/></svg><span>Pipeline</span></button>
+    <button class="crm-nav-btn" data-workspace="inbox" onclick="setWorkspace('inbox')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 4h16v14H4z"/><path d="M4 13h4l2 3h4l2-3h4"/></svg><span>Inbox</span></button>
+    <button class="crm-nav-btn" data-workspace="bookings" onclick="setWorkspace('bookings')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg><span>Bookings</span></button>
+    <div class="crm-nav-group">Growth</div>
+    <button class="crm-nav-btn" data-workspace="outreach" onclick="setWorkspace('outreach')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m3 11 18-8-7 18-3-7-8-3Z"/><path d="m11 14 4-4"/></svg><span>Outreach</span></button>
+    <button class="crm-nav-btn" data-workspace="campaigns" onclick="setWorkspace('campaigns')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 19V9m6 10V5m6 14v-7m4 7V3"/></svg><span>Campaigns</span></button>
+    <button class="crm-nav-btn" data-workspace="analytics" onclick="setWorkspace('analytics')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 19V5m0 14h16"/><path d="m7 15 4-4 3 2 5-7"/></svg><span>Analytics</span></button>
+    <button class="crm-nav-btn" data-workspace="sequences" onclick="setWorkspace('sequences')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M5 6h14M5 12h10M5 18h6"/><path d="m17 15 3 3-3 3"/></svg><span>Sequences</span></button>
+    <div class="crm-nav-group">System</div>
+    <button class="crm-nav-btn" data-workspace="health" onclick="setWorkspace('health')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-5"/></svg><span>CRM Health</span></button>
+    <button class="crm-nav-btn" data-workspace="settings" onclick="setWorkspace('settings')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.4 4a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.37.25.73.6 1 .6h.6v4h-.1a1.7 1.7 0 0 0-1.5 1.4Z"/></svg><span>Settings</span></button>
+  </nav>
+  <div class="crm-sidebar-foot">Operational CRM<br><span id="sidebar-health-copy">Health loading…</span></div>
+</aside>
+
 <!-- HEADER -->
 <header>
+  <button class="sidebar-toggle" type="button" onclick="toggleSidebar()" aria-label="Open workspace navigation"><svg width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+  <div class="workspace-heading"><h1 id="workspace-title">Pipeline</h1><p id="workspace-context">Active opportunities and what happens next</p></div>
   <div class="logo">
     <div class="logo-dot"></div>
     ScaleLab AI &nbsp;<span style="color:var(--text-muted);font-weight:400">/ Sales Pipeline</span>
@@ -2000,15 +2044,6 @@
     <div class="stat-info">
       <div class="stat-val" id="stat-total">0</div>
       <div class="stat-label">Total</div>
-    </div>
-  </div>
-  <div class="stat">
-    <div class="stat-icon" style="background:var(--realtor-bg);">
-      <svg width="16" height="16" fill="none" stroke="var(--realtor-color)" stroke-width="2" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-    </div>
-    <div class="stat-info">
-      <div class="stat-val" id="stat-realtors">0</div>
-      <div class="stat-label">Realtors</div>
     </div>
   </div>
   <div class="stat">
@@ -2063,10 +2098,6 @@
   <span class="filter-label">View:</span>
   <button class="filter-tab active" data-f="all" onclick="setFilter('all')">
     All Leads <span class="tab-count" id="tab-all">0</span>
-  </button>
-  <button class="filter-tab" data-f="realtor" onclick="setFilter('realtor')">
-    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-    Realtors <span class="tab-count" id="tab-realtor">0</span>
   </button>
   <button class="filter-tab" data-f="trade" onclick="setFilter('trade')">
     <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
@@ -2349,16 +2380,6 @@
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <form id="lead-form" onsubmit="saveLead(event)">
-      <div class="type-toggle">
-        <button type="button" class="type-toggle-btn active-realtor" id="toggle-realtor" onclick="setFormType('realtor')">
-          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-          Realtor
-        </button>
-        <button type="button" class="type-toggle-btn" id="toggle-trade" onclick="setFormType('trade')">
-          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-          Tradesman
-        </button>
-      </div>
       <div class="form-grid">
         <div class="form-group">
           <label>First Name *</label>
@@ -2368,12 +2389,8 @@
           <label>Last Name *</label>
           <input type="text" id="f-last" placeholder="Smith" required>
         </div>
-        <div class="form-group" id="field-brokerage">
-          <label>Brokerage</label>
-          <input type="text" id="f-brokerage" placeholder="RE/MAX, Sutton, etc.">
-        </div>
-        <div class="form-group" id="field-trade-type" style="display:none">
-          <label>Trade Type</label>
+        <div class="form-group" id="field-trade-type">
+          <label>Industry / lead type</label>
           <select id="f-trade-type">
             <option value="">Select trade…</option>
             <option>Electrician</option><option>Plumber</option><option>HVAC</option>
@@ -2382,15 +2399,11 @@
             <option>Carpenter</option><option>Pest Control</option><option>Other</option>
           </select>
         </div>
-        <div class="form-group" id="field-company" style="display:none">
+        <div class="form-group" id="field-company">
           <label>Company Name</label>
           <input type="text" id="f-company" placeholder="Smith Electric Ltd.">
         </div>
-        <div class="form-group" id="field-city-realtor">
-          <label>City / Area</label>
-          <input type="text" id="f-city" placeholder="Vancouver, BC">
-        </div>
-        <div class="form-group" id="field-city-trade" style="display:none">
+        <div class="form-group" id="field-city-trade">
           <label>City / Area</label>
           <input type="text" id="f-city-trade" placeholder="Vancouver, BC">
         </div>
@@ -2766,7 +2779,7 @@ let activeFilter = 'all';
 let nextActions = new Map();
 let nextActionSummary = null;
 let actionFilter = 'none';   // 'none' shows the Kanban; anything else shows the queue
-let formType    = 'realtor';
+let formType    = 'trade';
 let savingCount = 0;
 let savingTimer;
 
@@ -2839,21 +2852,13 @@ async function migrateFromLocalStorage() {
     const raw = localStorage.getItem(key);
     if (raw) { try { oldLeads = JSON.parse(raw); break; } catch(e) {} }
   }
-  // Fall back to old realtor-only keys
-  if (!oldLeads.length) {
-    for (const key of ['scalelab_realtor_leads', 'lp_realtor_leads']) {
-      const raw = localStorage.getItem(key);
-      if (raw) { try { oldLeads = JSON.parse(raw).map(l => ({...l, type: l.type || 'realtor'})); break; } catch(e) {} }
-    }
-  }
-
   const existingIds = new Set(leads.map(l => l.id));
   const toMigrate   = oldLeads.filter(l => l.id && !existingIds.has(l.id));
 
   if (toMigrate.length > 0) {
     showLoadingOverlay(`Migrating ${toMigrate.length} lead${toMigrate.length > 1 ? 's' : ''} to Google Sheets…`);
     for (const lead of toMigrate) {
-      lead.type = lead.type || 'realtor';
+      lead.type = lead.type || 'trade';
       await syncLead(lead);
       leads.unshift(lead);
     }
@@ -2921,19 +2926,11 @@ function setFilter(f) {
 }
 
 // ============================================================
-// FORM TYPE TOGGLE
+// Historical type variants remain readable, but new UI records use the generic
+// company/industry form. This helper stays as a compatibility boundary for old
+// edit calls; it no longer exposes an industry-specific UI branch.
 // ============================================================
-function setFormType(type) {
-  formType = type;
-  const r = type === 'realtor';
-  document.getElementById('toggle-realtor').className = 'type-toggle-btn' + (r  ? ' active-realtor' : '');
-  document.getElementById('toggle-trade').className   = 'type-toggle-btn' + (!r ? ' active-trade'   : '');
-  document.getElementById('field-brokerage').style.display    = r  ? '' : 'none';
-  document.getElementById('field-trade-type').style.display   = r  ? 'none' : '';
-  document.getElementById('field-company').style.display      = r  ? 'none' : '';
-  document.getElementById('field-city-realtor').style.display = r  ? '' : 'none';
-  document.getElementById('field-city-trade').style.display   = r  ? 'none' : '';
-}
+function setFormType() { formType = 'trade'; }
 
 // ============================================================
 // BOARD RENDERING
@@ -3137,10 +3134,8 @@ function renderBoard() {
   });
 
   document.getElementById('tab-all').textContent     = leads.length;
-  document.getElementById('tab-realtor').textContent = leads.filter(l => l.type === 'realtor').length;
   document.getElementById('tab-trade').textContent   = leads.filter(l => l.type === 'trade').length;
   document.getElementById('stat-total').textContent    = leads.length;
-  document.getElementById('stat-realtors').textContent = leads.filter(l => l.type === 'realtor').length;
   document.getElementById('stat-trades').textContent   = leads.filter(l => l.type === 'trade').length;
   document.getElementById('stat-hot').textContent         = leads.filter(l => displayStageFor(l.stage) === 'hot').length;
   document.getElementById('stat-booked').textContent      = leads.filter(l => displayStageFor(l.stage) === 'call_booked').length;
@@ -3527,12 +3522,9 @@ function buildCard(lead) {
   const fu = lead.followup ? formatDate(lead.followup) : null;
   const priorityMap   = { hot: 'Hot', warm: 'Warm', cold: '' };
   const priorityClass = { hot: 'priority-hot', warm: 'priority-warm', cold: '' };
-  const isRealtor = lead.type !== 'trade';
-  const subtitle  = isRealtor
-    ? lead.brokerage
-    : [lead.tradeType, lead.company].filter(Boolean).join(' · ');
-  const typeLabel = isRealtor ? 'Realtor' : (lead.tradeType || 'Trade');
-  const typeCls   = isRealtor ? 'type-realtor' : 'type-trade';
+  const subtitle  = [lead.tradeType, lead.company || lead.brokerage].filter(Boolean).join(' · ');
+  const typeLabel = lead.tradeType || (lead.type === 'trade' ? 'Trade' : 'Legacy lead');
+  const typeCls   = 'type-trade';
   const city      = lead.city || lead.cityTrade || '';
 
   let metaHtml = '';
@@ -3606,7 +3598,7 @@ function openAdd() {
   editingId = null;
   document.getElementById('modal-title').textContent = 'New Lead';
   document.getElementById('lead-form').reset();
-  setFormType('realtor');
+  setFormType('trade');
   document.getElementById('modal-overlay').classList.add('open');
 }
 
@@ -3615,14 +3607,12 @@ function openEdit(id) {
   if (!lead) return;
   editingId = id;
   document.getElementById('modal-title').textContent = 'Edit Lead';
-  setFormType(lead.type || 'realtor');
+  setFormType();
   document.getElementById('f-first').value      = lead.first     || '';
   document.getElementById('f-last').value       = lead.last      || '';
-  document.getElementById('f-brokerage').value  = lead.brokerage || '';
   document.getElementById('f-trade-type').value = lead.tradeType || '';
-  document.getElementById('f-company').value    = lead.company   || '';
-  document.getElementById('f-city').value       = lead.city      || '';
-  document.getElementById('f-city-trade').value = lead.cityTrade || '';
+  document.getElementById('f-company').value    = lead.company || lead.brokerage || '';
+  document.getElementById('f-city-trade').value = lead.cityTrade || lead.city || '';
   document.getElementById('f-phone').value      = lead.phone     || '';
   document.getElementById('f-email').value      = lead.email     || '';
   document.getElementById('f-website').value    = lead.website   || '';
@@ -3635,19 +3625,18 @@ function openEdit(id) {
 
 function saveLead(e) {
   e.preventDefault();
-  const r = formType === 'realtor';
   const existingLead = editingId ? (leads.find(l => l.id === editingId) || {}) : {};
   const lead = {
     ...existingLead,
     id:        editingId || uid(),
-    type:      formType,
+    type:      existingLead.type || 'trade',
     first:     document.getElementById('f-first').value.trim(),
     last:      document.getElementById('f-last').value.trim(),
-    brokerage: r  ? document.getElementById('f-brokerage').value.trim()  : '',
-    tradeType: !r ? document.getElementById('f-trade-type').value        : '',
-    company:   !r ? document.getElementById('f-company').value.trim()    : '',
-    city:      r  ? document.getElementById('f-city').value.trim()       : '',
-    cityTrade: !r ? document.getElementById('f-city-trade').value.trim() : '',
+    brokerage: existingLead.brokerage || '',
+    tradeType: document.getElementById('f-trade-type').value,
+    company:   document.getElementById('f-company').value.trim(),
+    city:      existingLead.city || '',
+    cityTrade: document.getElementById('f-city-trade').value.trim(),
     phone:    document.getElementById('f-phone').value.trim(),
     email:    document.getElementById('f-email').value.trim(),
     website:  document.getElementById('f-website').value.trim(),
@@ -3689,16 +3678,13 @@ function openDetail(id) {
   if (!lead) return;
   detailId = id;
 
-  const r = lead.type !== 'trade';
   const city = lead.city || lead.cityTrade || '';
-  const sub  = r
-    ? [lead.brokerage, city].filter(Boolean).join(' · ')
-    : [lead.tradeType, lead.company, city].filter(Boolean).join(' · ');
+  const sub  = [lead.tradeType, lead.company || lead.brokerage, city].filter(Boolean).join(' · ');
 
   document.getElementById('d-name').textContent = `${lead.first} ${lead.last}`;
   document.getElementById('d-sub').textContent  = sub;
   document.getElementById('d-type-badge').innerHTML =
-    `<span class="type-badge ${r ? 'type-realtor' : 'type-trade'}">${r ? 'Realtor' : (lead.tradeType || 'Trade')}</span>`;
+    `<span class="type-badge type-trade">${esc(lead.tradeType || (lead.type === 'trade' ? 'Trade' : 'Legacy lead'))}</span>`;
 
   document.getElementById('d-stages').innerHTML = STAGES.map(s =>
     `<button class="stage-chip ${displayStageFor(lead.stage) === s.id ? 'active' : ''}" data-s="${s.id}" onclick="setStage('${id}','${s.id}')">${s.label}</button>`
@@ -3708,7 +3694,7 @@ function openDetail(id) {
     lead.phone    && { label: 'Phone',     val: `<a href="tel:${lead.phone}">${lead.phone}</a>` },
     lead.email    && { label: 'Email',     val: `<a href="mailto:${lead.email}">${lead.email}</a>` },
     lead.website  && { label: 'Website',   val: `<a href="http://${lead.website.replace(/^https?:\/\//,'')}" target="_blank">${lead.website}</a>` },
-    !r && lead.company && { label: 'Company', val: lead.company },
+    (lead.company || lead.brokerage) && { label: 'Company', val: lead.company || lead.brokerage },
     lead.followup && { label: 'Follow-up', val: new Date(lead.followup+'T00:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}) },
     lead.priority && { label: 'Priority',  val: lead.priority.charAt(0).toUpperCase() + lead.priority.slice(1) },
     { label: 'Added', val: new Date(lead.created).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) },
@@ -4889,19 +4875,7 @@ async function submitReactivation(forcedMode) {
 
 function setMotion(m) {
   currentMotion = m;
-  const isEmail = m === 'cold-email';
-  document.querySelector('.stats-bar').style.display   = isEmail ? 'none' : '';
-  document.querySelector('.filter-bar').style.display  = isEmail ? 'none' : '';
-  document.querySelector('.main').style.display        = isEmail ? 'none' : '';
-  document.getElementById('ce-section').style.display  = isEmail ? 'block' : 'none';
-  document.querySelectorAll('.motion-tab').forEach(t =>
-    t.classList.toggle('active', t.dataset.m === m)
-  );
-  if (isEmail) {
-    ceSelected.clear();
-    updateBulkQueueBtn();
-    loadCeLeads();
-  }
+  setWorkspace(m === 'cold-email' ? 'outreach' : 'pipeline');
 }
 
 // ── CE FILTER & TABLE ────────────────────────────────────────────────────────
@@ -5104,6 +5078,8 @@ function renderCrmHealth(data) {
   const label = { healthy: 'All systems healthy', warning: 'Needs attention', critical: 'Critical issues' };
   document.getElementById('crm-health-dot').dataset.state = data.overall;
   document.getElementById('crm-health-overall').textContent = label[data.overall] || data.overall;
+  const sidebarCopy = document.getElementById('sidebar-health-copy');
+  if (sidebarCopy) sidebarCopy.textContent = label[data.overall] || data.overall;
   const counts = data.bySeverity || {};
   document.getElementById('crm-health-counts').innerHTML = [
     counts.critical ? `<span class="health-pill" data-tone="critical">${counts.critical} critical</span>` : '',
@@ -5322,11 +5298,12 @@ function buildSendChart() {
     days.push(toVancouverDate(d));
   }
 
+  // Server aggregation uses the full cached activity snapshot. Never rebuild
+  // this from the visible 100-row page: doing so made pagination look like a
+  // sudden drop in sending and lost earlier steps for the same lead.
   const countMap = new Map(days.map(d => [d, 0]));
-  for (const lead of ceLeads) {
-    if (!lead.lastEmailedAt) continue;
-    const day = toVancouverDate(lead.lastEmailedAt);
-    if (countMap.has(day)) countMap.set(day, countMap.get(day) + 1);
+  for (const entry of (ceOutreachStats?.sendActivity || [])) {
+    if (countMap.has(entry.date)) countMap.set(entry.date, Number(entry.count) || 0);
   }
 
   const counts   = days.map(d => countMap.get(d));
@@ -6068,7 +6045,22 @@ async function loadCeActivity(id) {
 function openCeDetail(id) {
   const options = arguments[1] || {};
   const lead = ceLeads.find(l => l.id === id);
-  if (!lead) return;
+  // The Inbox lists leads from the whole reply set, so the one being opened is
+  // often not on the loaded Outreach page. Without this the click did nothing
+  // at all. Fetches exactly one row from the shared snapshot, then reopens.
+  if (!lead) {
+    if (options.retried) return;
+    fetch('/api/coldemail?limit=1&leadId=' + encodeURIComponent(id))
+      .then(response => (response.ok ? response.json() : null))
+      .then(page => {
+        const fetched = page && (page.leads || [])[0];
+        if (!fetched) { showToast('That lead could not be loaded.', 'error'); return; }
+        ceLeads = ceLeads.concat([fetched]);
+        openCeDetail(id, { ...options, retried: true });
+      })
+      .catch(() => showToast('That lead could not be loaded.', 'error'));
+    return;
+  }
   ceDetailId = id;
   if (!options.skipActivity) document.getElementById('ce-d-activity').innerHTML = '<div class="activity-empty">Loading full activity…</div>';
 
@@ -6560,12 +6552,223 @@ function splitCSVLine(line) {
 // ============================================================
 // INIT
 // ============================================================
+const WORKSPACES = Object.freeze({
+  pipeline:  ['Pipeline', 'Active opportunities and what happens next'],
+  outreach:  ['Outreach', 'The complete prospect directory and outreach state'],
+  inbox:     ['Inbox', 'Replies and conversations that need a human decision'],
+  campaigns: ['Campaigns', 'Measured campaign versions and outbound context'],
+  analytics: ['Analytics', 'Funnel performance, engagement, and sending activity'],
+  sequences: ['Sequences', 'Stage follow-up enrollment and delivery state'],
+  bookings:  ['Bookings', 'Scheduled calls and explicit meeting outcomes'],
+  health:    ['CRM Health', 'Automation risk, data quality, and operational backlog'],
+  settings:  ['Settings', 'Read-only production configuration and provider status'],
+});
+
+let activeWorkspace = 'pipeline';
+let workspaceLoaded = Object.create(null);
+let inboxFilter = 'attention';
+
+function workspaceIntro(eyebrow, title, copy) {
+  return `<div class="workspace-intro"><div><div class="workspace-eyebrow">${esc(eyebrow)}</div><h2>${esc(title)}</h2><p>${esc(copy)}</p></div></div>`;
+}
+
+function installWorkspaceShell() {
+  if (document.getElementById('workspace-stage')) return;
+  const stage = document.createElement('main');
+  stage.id = 'workspace-stage';
+  const make = (id, intro) => {
+    const section = document.createElement('section');
+    section.id = `ws-${id}`;
+    section.className = `crm-workspace${id === 'pipeline' ? ' active' : ''}`;
+    section.setAttribute('aria-labelledby', `workspace-${id}-title`);
+    section.innerHTML = intro;
+    stage.appendChild(section);
+    return section;
+  };
+
+  const pipeline = make('pipeline', workspaceIntro('Sales workspace', 'Pipeline', 'Scan stage, urgency, waiting state, and the next action without opening every opportunity.'));
+  const outreach = make('outreach', workspaceIntro('Prospect directory', 'Outreach', 'Search and filter the complete dataset while keeping the first render bounded.'));
+  const inbox = make('inbox', workspaceIntro('Human attention', 'Inbox', 'What prospects said, what should happen next, and who owns the move.'));
+  const campaigns = make('campaigns', workspaceIntro('Attribution', 'Campaigns', 'Measured campaign versions remain separate from legacy activity with unknown attribution.'));
+  const analytics = make('analytics', workspaceIntro('Performance', 'Analytics', 'Campaign funnel, replies, engagement signals, and daily sending activity.'));
+  const sequences = make('sequences', workspaceIntro('Automation', 'Sequences', 'Explicit stage-sequence enrollment, current step, and next scheduled action.'));
+  const bookings = make('bookings', workspaceIntro('Call lifecycle', 'Bookings', 'Upcoming calls, outcome-needed meetings, cancellations, and no-shows.'));
+  const health = make('health', workspaceIntro('System status', 'CRM Health', 'Active automation risk is separated from operational backlog and historical debt.'));
+  const settings = make('settings', workspaceIntro('Configuration', 'Settings', 'Safe, read-only status. Credentials and secrets are never displayed here.'));
+
+  const pipelineStats = document.querySelector('body > .stats-bar');
+  const pipelineFilters = document.querySelector('body > .filter-bar');
+  const boardMain = document.querySelector('body > .main');
+  if (pipelineStats) pipeline.appendChild(pipelineStats);
+  if (pipelineFilters) pipeline.appendChild(pipelineFilters);
+  if (boardMain) pipeline.appendChild(boardMain);
+
+  const ce = document.getElementById('ce-section');
+  outreach.appendChild(ce);
+
+  inbox.insertAdjacentHTML('beforeend', '<div class="inbox-toolbar" id="inbox-toolbar"></div><div id="inbox-content" class="workspace-empty"><strong>Loading the reply queue…</strong>Canonical reply evidence is being prepared.</div>');
+  sequences.insertAdjacentHTML('beforeend', '<div id="sequences-status" class="workspace-surface">Loading sequence status…</div>');
+  bookings.insertAdjacentHTML('beforeend', '<div id="bookings-content" class="workspace-empty"><strong>Loading call lifecycle…</strong>Current meeting state is being prepared.</div>');
+  settings.insertAdjacentHTML('afterbegin', '<div id="settings-status" class="status-grid" style="margin-bottom:14px"></div>');
+
+  document.body.appendChild(stage);
+  // Relocate existing panels only after their workspace targets are connected.
+  // This keeps every original id/handler while giving each concept one home.
+  const move = (id, targetId) => { const node = document.getElementById(id); const target = document.getElementById(targetId); if (node && target) target.appendChild(node); };
+  move('crm-health-panel', 'ws-health');
+  move('ce-funnel-analytics', 'ws-analytics');
+  move('ce-chart-wrap', 'ws-analytics');
+  move('ce-demos-panel', 'ws-analytics');
+  move('ce-opens-panel', 'ws-analytics');
+  move('ce-campaigns-panel', 'ws-campaigns');
+  move('agent-panel', 'ws-settings');
+  document.body.classList.add('workspace-ready');
+  document.querySelectorAll('.ce-tab[data-ce="campaigns"],.ce-tab[data-ce="demos"],.ce-tab[data-ce="opens"],.ce-tab[data-ce="agent"]').forEach(button => button.remove());
+  // Verified obsolete presentation only. Generic lead type data remains in the
+  // backend and historical rows remain readable in the drawer.
+}
+
+function toggleSidebar() { document.getElementById('crm-sidebar')?.classList.toggle('open'); }
+
+async function setWorkspace(name, { replace = false } = {}) {
+  if (!WORKSPACES[name]) name = 'pipeline';
+  activeWorkspace = name;
+  document.querySelectorAll('.crm-workspace').forEach(node => node.classList.toggle('active', node.id === `ws-${name}`));
+  document.querySelectorAll('.crm-nav-btn').forEach(node => node.classList.toggle('active', node.dataset.workspace === name));
+  const [title, context] = WORKSPACES[name];
+  document.getElementById('workspace-title').textContent = title;
+  document.getElementById('workspace-context').textContent = context;
+  document.getElementById('crm-sidebar')?.classList.remove('open');
+  const search = document.querySelector('header .search-wrap');
+  const add = document.querySelector('header .btn-add');
+  if (search) search.style.display = name === 'pipeline' ? '' : 'none';
+  if (add) add.style.display = name === 'pipeline' ? '' : 'none';
+  const nextHash = `#${name}`;
+  if (location.hash !== nextHash) history[replace ? 'replaceState' : 'pushState'](null, '', nextHash);
+  await loadWorkspace(name);
+}
+
+async function ensureOutreachReadModel() {
+  if (!workspaceLoaded.outreach) {
+    workspaceLoaded.outreach = true;
+    ceSelected.clear(); updateBulkQueueBtn();
+    await loadCeLeads();
+  }
+}
+
+async function loadWorkspace(name) {
+  if (name === 'pipeline') return;
+  if (['outreach','campaigns','analytics','inbox'].includes(name)) await ensureOutreachReadModel();
+  if (name === 'inbox') return loadInboxWorkspace();
+  if (name === 'campaigns') { document.getElementById('ce-campaigns-panel').style.display = 'block'; return renderCampaignsPanel(); }
+  if (name === 'analytics') {
+    document.getElementById('ce-demos-panel').style.display = 'block';
+    document.getElementById('ce-opens-panel').style.display = 'block';
+    renderDemosPanel(); renderOpensPanel(); buildSendChart(); return loadFunnelAnalytics();
+  }
+  if (name === 'health') { await loadCrmHealth(); document.getElementById('crm-health-body').hidden = false; document.getElementById('crm-health-toggle').setAttribute('aria-expanded','true'); return; }
+  if (name === 'sequences') return loadSequencesWorkspace();
+  if (name === 'bookings') return loadBookingsWorkspace();
+  if (name === 'settings') return loadSettingsWorkspace();
+}
+
+const INBOX_FILTERS = Object.freeze([
+  ['attention','Needs response'],['positive','Positive / evaluation'],['needs_human','Needs Human'],
+  ['revisit','Revisit later'],['decision_maker','Decision maker'],['contact_change_review','Contact review'],
+  ['automated_reply','Automated / OOO'],['unknown','Unknown / investigate'],['all','All replies'],
+]);
+
+function setInboxFilter(value) { inboxFilter = value; renderInboxWorkspace(); }
+
+async function loadInboxWorkspace() {
+  const host = document.getElementById('inbox-content');
+  host.className = 'workspace-empty'; host.innerHTML = '<strong>Loading the reply queue…</strong>Reading canonical replies and Next Actions.';
+  if (!rdRecords.length) {
+    const response = await fetch('/api/coldemail/replies?category=all');
+    rdRecords = response.ok ? ((await response.json()).records || []) : [];
+  }
+  if (!nextActions.size) await loadNextActions();
+  renderInboxWorkspace();
+}
+
+function inboxActionFor(record) {
+  return record.boardLeadId ? nextActions.get(record.boardLeadId)?.nextAction || null : null;
+}
+
+function inboxMatches(record, action) {
+  if (inboxFilter === 'all') return true;
+  if (inboxFilter === 'positive') return record.category === 'positive';
+  if (inboxFilter === 'needs_human') return record.category === 'needs_human';
+  if (inboxFilter === 'contact_change_review') return record.category === 'contact_change_review';
+  if (inboxFilter === 'automated_reply') return record.category === 'automated_reply';
+  if (inboxFilter === 'unknown') return record.category === 'unknown' || action?.type === 'investigate_reply';
+  if (inboxFilter === 'revisit') return action?.type === 'revisit_later' || action?.type === 'wait_until_return';
+  if (inboxFilter === 'decision_maker') return action?.type === 'decision_maker_follow_up';
+  return Boolean(action?.needsAttention && action.owner === 'human');
+}
+
+function renderInboxWorkspace() {
+  document.getElementById('inbox-toolbar').innerHTML = INBOX_FILTERS.map(([id,label]) => `<button class="inbox-filter${inboxFilter === id ? ' active' : ''}" type="button" onclick="setInboxFilter('${id}')">${esc(label)}</button>`).join('');
+  const rows = rdRecords.filter(record => inboxMatches(record, inboxActionFor(record)));
+  const host = document.getElementById('inbox-content');
+  if (!rows.length) { host.className = 'workspace-empty'; host.innerHTML = '<strong>Nothing in this view</strong>No replies currently match this operational filter.'; return; }
+  host.className = 'inbox-list';
+  host.innerHTML = rows.map(record => {
+    const action = inboxActionFor(record);
+    const body = record.hasText ? record.replyText : 'Reply text unavailable — historical body was not stored.';
+    const category = RD_CATEGORY_LABEL[record.category] || record.category;
+    const actionLabel = action?.label || (record.category === 'automated_reply' ? 'No human response required' : record.pipelinePresence ? 'Review reply' : 'Review before promotion');
+    const owner = action?.owner ? (NA_OWNER_LABEL[action.owner] || action.owner) : (record.category === 'automated_reply' ? 'Waiting' : 'Human');
+    return `<button type="button" class="inbox-row" onclick="openCeDetail('${escAttr(record.leadId)}')">
+      <span class="inbox-person"><b>${esc(record.company || 'Unknown company')}</b><small>${esc([record.contactName,record.email].filter(Boolean).join(' · '))}</small><small>${esc(rdFormatTime(record.occurredAt))}</small></span>
+      <span class="inbox-message"><span class="inbox-state">${esc(category)}</span><p>${esc(body)}</p><small>What they said · ${esc(record.reason || record.subtype || 'No additional reason stored')}</small></span>
+      <span class="inbox-action"><b>${esc(actionLabel)}</b><small>${esc(owner)}${action?.waitingOn ? ` · ${HOT_WAITING_LABEL[action.waitingOn] || action.waitingOn}` : ''}</small><small>${action?.dueAt ? `Due ${esc(rdFormatTime(action.dueAt))}` : 'No invented due date'}</small></span>
+    </button>`;
+  }).join('');
+}
+
+async function loadSequencesWorkspace() {
+  const [statusResponse] = await Promise.all([fetch('/api/crm/ui-status'), nextActions.size ? Promise.resolve() : loadNextActions()]);
+  const status = statusResponse.ok ? await statusResponse.json() : {};
+  const enabled = Boolean(status.stageSequences?.enabled);
+  const sequenceRows = [...nextActions.values()].filter(entry => entry.nextAction?.sequenceState);
+  document.getElementById('sequences-status').innerHTML = `<div class="status-card-head"><div><div class="workspace-eyebrow">Production gate</div><h3 style="margin:4px 0">Stage sequences are ${enabled ? 'enabled' : 'disabled'}</h3></div><span class="state-pill" data-on="${enabled}">${enabled ? 'Enabled' : 'Off'}</span></div><p style="color:var(--text-muted);font-size:12px">${enabled ? 'Explicitly enrolled sequences may run through the existing sender and safety gates.' : 'No stage-specific sequence can send. Existing cold outreach is controlled separately.'}</p><div class="sequence-list">${sequenceRows.length ? sequenceRows.map(entry => `<div class="operational-row"><span><b>${esc(entry.company || entry.name)}</b><small>${esc(entry.nextAction.sequenceState.sequenceId || 'Stage sequence')} · ${esc(entry.nextAction.sequenceState.status || '')}</small></span><span class="operational-row-meta">${esc(entry.nextAction.label)}<small>${esc(naDueText(entry.nextAction))}</small></span></div>`).join('') : '<div class="workspace-empty"><strong>No sequence state to show</strong>No pipeline lead currently has a visible stage-sequence action.</div>'}</div>`;
+}
+
+async function loadBookingsWorkspace() {
+  if (!nextActions.size) await loadNextActions();
+  const rows = [...nextActions.values()].filter(entry => entry.nextAction?.callState || entry.stage === 'call_booked');
+  const host = document.getElementById('bookings-content');
+  if (!rows.length) { host.className = 'workspace-empty'; host.innerHTML = '<strong>No current calls</strong>There are no Call Booked opportunities or unresolved meeting outcomes.'; return; }
+  host.className = 'booking-list';
+  host.innerHTML = rows.map(entry => { const call = entry.nextAction.callState || {}; return `<button type="button" class="operational-row" onclick="openDetail('${escAttr(entry.id)}')"><span><b>${esc(entry.company || entry.name)}</b><small>${esc(call.status || 'Outcome needed')}</small></span><span class="operational-row-meta">${esc(entry.nextAction.label)}<small>${esc(call.meetingAt ? rdFormatTime(call.meetingAt) : naDueText(entry.nextAction))}</small></span></button>`; }).join('');
+}
+
+async function loadSettingsWorkspace() {
+  const response = await fetch('/api/crm/ui-status');
+  const data = response.ok ? await response.json() : null;
+  const host = document.getElementById('settings-status');
+  if (!data) { host.innerHTML = '<div class="workspace-empty"><strong>Configuration unavailable</strong>The read-only status endpoint could not be loaded.</div>'; return; }
+  const cards = [
+    ['Cold outreach sending', data.sending.enabled, data.sending.enabled ? `Enabled · daily cap ${data.sending.dailyLimit || 'configured elsewhere'}` : 'Disabled'],
+    ['Stage sequences', data.stageSequences.enabled, data.stageSequences.enabled ? 'Enabled with canonical sender gates' : 'Disabled; no recovery sequence can send'],
+    ['Google Calendar sync', data.calendarSync.enabled, data.calendarSync.enabled ? 'Enabled' : 'Disabled; booking lifecycle remains available manually'],
+    ['Smartlead integration', data.smartlead.enabled, data.smartlead.liveMutations ? 'Enabled with live mutations' : 'Read-only or disabled'],
+    ['Roofing reply flow', data.roofingReplyFlow.enabled, data.roofingReplyFlow.enabled ? 'Enabled' : 'Disabled'],
+  ];
+  host.innerHTML = cards.map(([label,on,copy]) => `<div class="status-card"><div class="status-card-head"><b>${esc(label)}</b><span class="state-pill" data-on="${on}">${on ? 'Enabled' : 'Off'}</span></div><p>${esc(copy)}</p></div>`).join('');
+  document.getElementById('agent-panel').style.display = 'block';
+}
+
+window.addEventListener('hashchange', () => setWorkspace(location.hash.slice(1) || 'pipeline', { replace: true }));
+
 document.getElementById('search').addEventListener('input', function() {
   searchQuery = this.value;
   renderBoard();
 });
 
 async function init() {
+  installWorkspaceShell();
   showLoadingOverlay('Loading your leads…');
   try {
     await loadLeads();
@@ -6574,6 +6777,7 @@ async function init() {
   }
   hideLoadingOverlay();
   renderBoard();
+  await setWorkspace(location.hash.slice(1) || 'pipeline', { replace: true });
 }
 init();
 </script>

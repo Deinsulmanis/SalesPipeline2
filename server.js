@@ -1183,7 +1183,8 @@ async function loadOutreachDataset() {
 
   // Counts and reply records come from the canonical analytics module, exactly
   // as before — this only changes how many times the sheet is read.
-  const metrics = buildReplyMetrics(leads, { classificationsByLeadId });
+  const replyEvidenceByLeadId = buildReplyEvidenceMap(activities);
+  const metrics = buildReplyMetrics(leads, { classificationsByLeadId, evidenceByLeadId: replyEvidenceByLeadId });
   // Activities are indexed by lead so the canonical evidence hierarchy can run:
   // provider-backed reply activity outranks a legacy [REPLY: ...] tag.
   const activitiesByLeadId = new Map();
@@ -1196,7 +1197,7 @@ async function loadOutreachDataset() {
   }
   const replyRecords = buildReplyRecords(leads, {
     classificationsByLeadId,
-    evidenceByLeadId: buildReplyEvidenceMap(activities),
+    evidenceByLeadId: replyEvidenceByLeadId,
     activitiesByLeadId,
   });
   const categoryByLeadId = new Map(replyRecords.map(record => [record.leadId, record.category]));
@@ -1297,12 +1298,31 @@ async function loadOutreachDataset() {
     ambiguousMappings: pipelineIndex.ambiguousMappings,
   };
 
+  // Daily send activity belongs to the full shared snapshot, never the
+  // paginated browser page. Activity is also the truthful unit here: a lead
+  // can have several sends while lastEmailedAt only remembers the latest one.
+  const sendTypes = new Set(['initial_email_sent', 'follow_up_sent', 'booking_link_sent', 'sequence_step_sent']);
+  const dailySends = new Map();
+  const seenSendEvents = new Set();
+  for (const row of activities) {
+    if (!sendTypes.has(String(row.eventType || ''))) continue;
+    const eventKey = String(row.eventId || `${row.leadId || row.sourceLeadId}:${row.eventType}:${row.occurredAt}`);
+    if (seenSendEvents.has(eventKey)) continue;
+    const sentAt = new Date(row.occurredAt);
+    if (!Number.isFinite(sentAt.getTime())) continue;
+    seenSendEvents.add(eventKey);
+    const date = sentAt.toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+    dailySends.set(date, (dailySends.get(date) || 0) + 1);
+  }
+  const sendActivity = [...dailySends.entries()].sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, count]) => ({ date, count }));
+
   return {
     at: Date.now(),
     leads,                 // full rows, server-side only
     rows,                  // light rows, safe to serialise
     activities, classificationsByLeadId, replyRecords,
-    metrics, counts, facets, signals,
+    metrics, counts, facets, signals, sendActivity,
     pipelineAudit, boardLeads,
     demoPlays, demoRows, proposalOpens, proposalEngaged,
     annotatedOpens,        // computed once; the Opens panel reuses it
@@ -1335,8 +1355,15 @@ function filterOutreachRows(rows, query) {
   const sequenceState = String(query.sequenceState || '').trim().toLowerCase();
   const automationState = String(query.automationState || '').trim().toLowerCase();
   const search = String(query.search || '').trim().toLowerCase();
+  // Exact single-lead lookup. The Inbox lists leads from the FULL reply set,
+  // so a row there is frequently not on the currently loaded 100-row page and
+  // the drawer had nothing to open. Deliberately separate from `search`, which
+  // matches human-visible fields — overloading it would make typing an id into
+  // the search box behave differently from typing a company name.
+  const leadId = String(query.leadId || '').trim();
 
   return rows.filter(row => {
+    if (leadId && String(row.id) !== leadId) return false;
     // 'Unsub' is what the agent writes and 'Unsubscribed' what the dashboard
     // shows; both must match the same tab or a lead becomes unreachable.
     if (stage !== 'all') {
@@ -1386,6 +1413,7 @@ app.get('/api/coldemail', requireAuth, async (req, res) => {
       counts: dataset.counts,
       facets: dataset.facets,
       pipelineAudit: dataset.pipelineAudit,
+      sendActivity: dataset.sendActivity,
       fetchedAt: new Date(dataset.at).toISOString(),
     });
   } catch (e) {
@@ -1397,6 +1425,20 @@ app.get('/api/coldemail', requireAuth, async (req, res) => {
 
 app.get('/api/campaign-versions', requireAuth, (req, res) => {
   res.json({ active: ACTIVE_CAMPAIGN_VERSION, versions: CAMPAIGN_VERSIONS });
+});
+
+// Non-secret operational configuration for the CRM Settings workspace. This
+// is deliberately read-only and reports capability/status, never credentials,
+// tokens, account identifiers, or raw environment values.
+app.get('/api/crm/ui-status', requireAuth, (_req, res) => {
+  const enabled = value => String(value || '').trim().toLowerCase() === 'true';
+  res.json({
+    sending: { enabled: enabled(process.env.SENDING_ENABLED), dailyLimit: Number(process.env.DAILY_SEND_LIMIT) || null },
+    stageSequences: { enabled: enabled(process.env.STAGE_SEQUENCES_ENABLED) },
+    calendarSync: { enabled: enabled(process.env.GOOGLE_CALENDAR_BOOKING_SYNC_ENABLED), configured: Boolean(process.env.GOOGLE_BOOKING_CALENDAR_ID) },
+    smartlead: { enabled: enabled(process.env.SMARTLEAD_INTEGRATION_ENABLED), liveMutations: enabled(process.env.SMARTLEAD_LIVE_MUTATIONS_ENABLED) },
+    roofingReplyFlow: { enabled: enabled(process.env.ROOFING_SURVEY_REPLY_FLOW_ENABLED) },
+  });
 });
 
 // Campaign performance is derived entirely from the shared Outreach snapshot.
@@ -3480,6 +3522,7 @@ app.get('/api/coldemail/stats', requireAuth, async (req, res) => {
       replied: dataset.metrics.totalReplies,
       replyMetrics: dataset.metrics,
       signals: dataset.signals,
+      sendActivity: dataset.sendActivity,
       pipelineAudit: dataset.pipelineAudit,
       totalLeads: dataset.rows.length,
       fetchedAt: new Date(dataset.at).toISOString(),
@@ -3500,6 +3543,7 @@ app.get('/api/coldemail/summary', requireAuth, async (req, res) => {
       totalLeads: dataset.rows.length,
       replyMetrics: dataset.metrics,
       signals: dataset.signals,
+      sendActivity: dataset.sendActivity,
       fetchedAt: new Date(dataset.at).toISOString(),
     });
   } catch (e) {
@@ -3520,7 +3564,7 @@ app.get('/api/coldemail/replies', requireAuth, async (req, res) => {
     const campaignVersion = String(req.query.campaignVersion || '').trim();
     const records = filterReplyRecords(dataset.replyRecords, category).map(record => {
       const row = rowById.get(record.leadId) || {};
-      return { ...record, campaignVersion: row.campaignVersion || LEGACY_UNKNOWN, pipelinePresence: Boolean(row.pipelinePresence), pipelineStage: row.pipelineStage || '', mappingStatus: row.mappingStatus || 'not_in_pipeline' };
+      return { ...record, campaignVersion: row.campaignVersion || LEGACY_UNKNOWN, pipelinePresence: Boolean(row.pipelinePresence), pipelineStage: row.pipelineStage || '', boardLeadId: row.boardLeadId || '', mappingStatus: row.mappingStatus || 'not_in_pipeline' };
     }).filter(record => !campaignVersion || campaignVersion === 'all' || record.campaignVersion === campaignVersion);
     res.json({
       category,
