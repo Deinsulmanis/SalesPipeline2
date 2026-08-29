@@ -66,7 +66,7 @@ test('cold follow-up resolution fails closed for missing, conflicting, or cross-
 
 test('ordinary follow-up send paths use real Gmail reply headers and no independent subjects', () => {
   const agent = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
-  const ordinary = agent.slice(agent.indexOf('// ── Warm follow-ups'), agent.indexOf("console.log(`\\nDone."));
+  const ordinary = agent.slice(agent.indexOf('// ── Follow-ups (steps 2 & 3)'), agent.indexOf("console.log(`\\nDone."));
   assert.match(ordinary, /resolveColdFollowUpThread/);
   assert.match(ordinary, /threadId: thread\.threadId, inReplyTo: thread\.inReplyTo, references: thread\.references/g);
   assert.doesNotMatch(ordinary, /Re: a quick demo I built|Last note —/);

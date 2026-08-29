@@ -53,9 +53,8 @@ function runUpdateCeStats({ ceLeads, stats }) {
     total: els['ce-stat-total'].textContent,
     queued: els['ce-stat-queued'].textContent,
     emailed: els['ce-stat-emailed'].textContent,
-    opens: els['ce-stat-opens'].textContent,
+    demoPlays: els['ce-stat-demo-plays'].textContent,
     warm: els['ce-stat-warm'].textContent,
-    hits: (els['ce-stat-opens-label'] || {}).textContent,
     replies: els['ce-stat-replied'].textContent,
     positive: els['ce-stat-positive'].textContent,
   };
@@ -64,7 +63,7 @@ function runUpdateCeStats({ ceLeads, stats }) {
 // The canonical live shape, matching the real production dataset.
 const SUMMARY = {
   total: 1849, totalLeads: 1849, queued: 88, emailed: 938, done: 371, replied: 22,
-  signals: { opens: 44, hits: 89, warm: 16 },
+  signals: { opens: 44, hits: 89, warm: 7, demoPlays: 12 },
   replyMetrics: { totalReplies: 22, positive: 4, negative: 13, needsHuman: 3, unclassified: 2, positiveReplyRate: 0.4 },
 };
 const page = n => Array.from({ length: n }, (_, i) => ({
@@ -85,11 +84,10 @@ test('2/3. Emailed and Queued aggregate the full dataset, not the page', () => {
   assert.equal(out.queued, 88, 'the page holds no Queued rows, but 88 exist');
 });
 
-test('4/5/6. Opens, hits and Warm aggregate the full dataset', () => {
+test('4/5/6. Demo plays and demo-engaged Warm leads aggregate the full dataset', () => {
   const out = runUpdateCeStats({ ceLeads: page(100), stats: SUMMARY });
-  assert.equal(out.opens, 44);
-  assert.equal(out.hits, 'Opens · 89 hits');
-  assert.equal(out.warm, 16);
+  assert.equal(out.demoPlays, 12);
+  assert.equal(out.warm, 7);
 });
 
 test('7. reply metrics are unchanged — they were always server-aggregated', () => {
@@ -154,7 +152,7 @@ test('the footer total is the filtered match count, distinct from the card total
 test('the summary aggregates the snapshot, and never a page', () => {
   const loader = server.slice(server.indexOf('async function loadOutreachDataset'), server.indexOf('async function getOutreachDataset'));
   assert.match(loader, /counts\.total = rows\.length;/);
-  assert.match(loader, /const signals = \{ opens: 0, hits: 0, warm: 0 \};/);
+  assert.match(loader, /const signals = \{ opens: 0, hits: 0, warm: 0, demoPlays: 0 \};/);
   // Aggregation happens before any slicing, over every lead.
   assert.ok(!/slice\(offset/.test(loader), 'the snapshot never paginates');
   for (const route of ['/api/coldemail/stats', '/api/coldemail/summary']) {
@@ -162,12 +160,14 @@ test('the summary aggregates the snapshot, and never a page', () => {
   }
 });
 
-test('open semantics are preserved exactly: distinct companies, matched to leads', () => {
+test('opens remain passive telemetry and Warm is derived only from demo engagement', () => {
   const loader = server.slice(server.indexOf('async function loadOutreachDataset'), server.indexOf('async function getOutreachDataset'));
   assert.match(loader, /if \(open\.real === false\) continue;/, 'scanner detonations excluded');
   assert.match(loader, /if \(!leadKeys\.has\(k\)\) continue;/, 'orphaned open rows excluded');
-  assert.match(loader, /if \(n >= 2\) signals\.warm\+\+;/, 'warm is >= 2 real opens');
   assert.match(loader, /signals\.hits \+= n;/, 'hits is the raw real-open count');
+  assert.match(loader, /row\.warm = row\.demoEngaged;/);
+  assert.match(loader, /signals\.warm = rows\.filter\(row => row\.warm\)\.length;/);
+  assert.doesNotMatch(loader, /opens?[\s\S]{0,80}warm\+\+|n >= 2[\s\S]{0,80}warm/i);
 });
 
 test('13. the master view adds one fixed board read, never a per-lead read', () => {

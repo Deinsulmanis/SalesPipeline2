@@ -2189,8 +2189,8 @@
       <div class="stat stat-secondary" title="Every ColdEmail row with a valid id, contacted or not."><div><div class="stat-val" id="ce-stat-total">0</div><div class="stat-label">Total Leads</div></div></div>
       <div class="stat"><div><div class="stat-val" id="ce-stat-queued">0</div><div class="stat-label">Queued</div></div></div>
       <div class="stat stat-secondary" title="Unique leads that have been contacted at least once. Lead-based — a lead mailed three times counts once. Not the same as All Outbound Sends, which counts messages."><div><div class="stat-val" id="ce-stat-emailed">0</div><div class="stat-label">Unique Contacted</div></div></div>
-      <div class="stat"><div><div class="stat-val" id="ce-stat-opens">0</div><div class="stat-label" id="ce-stat-opens-label">Opens</div></div></div>
-      <div class="stat"><div><div class="stat-val" id="ce-stat-warm">0</div><div class="stat-label">🔥 Warm</div></div></div>
+      <div class="stat"><div><div class="stat-val" id="ce-stat-demo-plays">0</div><div class="stat-label">Demo Plays</div></div></div>
+      <div class="stat"><div><div class="stat-val" id="ce-stat-warm">0</div><div class="stat-label">Demo-engaged Leads</div></div></div>
     </div>
     <div class="reply-metrics-bar" id="ce-reply-metrics" aria-label="Reply outcomes">
       <button type="button" class="stat stat-clickable" onclick="openReplyDrill('all')" aria-label="Inbound Messages — open reply list" title="Unique leads that sent us anything at all: human replies, autoresponders, mailbox-change notices, and leads whose reply evidence we cannot trust."><div><div class="stat-val" id="ce-stat-replied">0</div><div class="stat-label">Inbound Messages</div></div></button>
@@ -5317,14 +5317,7 @@ function updateCeStats() {
   document.getElementById('ce-stat-positive-of-replies').textContent = replyMetrics ? pct(replyMetrics.positiveOfReplies) : '–';
   document.getElementById('ce-stat-positive-rate').textContent = replyMetrics ? pct(replyMetrics.positiveReplyRate) : '–';
 
-  // Opens/Warm keep their original meaning, now aggregated server-side over
-  // every lead: headline is DISTINCT COMPANIES with >= 1 real open that match a
-  // lead (a prospect reloading, or a multi-IP fanout, counts once), the raw real
-  // hit count sits in the label, and Warm is those companies with >= 2 opens.
-  // Scanner detonations are already excluded by the shared open filter.
-  document.getElementById('ce-stat-opens').textContent = num(signals.opens, '–');
-  const openLabel = document.getElementById('ce-stat-opens-label');
-  if (openLabel) openLabel.textContent = `Opens · ${num(signals.hits, 0)} hits`;
+  document.getElementById('ce-stat-demo-plays').textContent = num(signals.demoPlays, '–');
   document.getElementById('ce-stat-warm').textContent  = num(signals.warm, '–');
 }
 
@@ -5420,14 +5413,11 @@ function renderCeTable() {
       : l.pipelinePresence ? ((STAGES.find(stage => stage.id === l.pipelineStage) || {}).label || l.pipelineStage)
       : 'Not in Pipeline';
     const pipelineState = l.mappingStatus === 'conflict' ? 'conflict' : (l.pipelinePresence ? 'in' : 'out');
-    // A demo play outranks any number of opens — see CE_SIGNAL. Show the play
-    // when there is one, falling back to the open count otherwise.
+    // Opens are passive telemetry. Demo plays remain the engagement signal.
     const opensTd   = demoEntry
       ? `<td style="color:var(--success);font-weight:600" title="${demoEntry.demo > 0 ? 'Played the receptionist demo' : 'Played the intro'}">▶ ${demoEntry.count}${opens ? ` · ${opens} open${opens > 1 ? 's' : ''}` : ''}</td>`
-      : opens >= 2
-        ? `<td style="color:var(--warn);font-weight:600">🔥 ${opens}</td>`
-        : opens === 1
-          ? `<td style="color:var(--text-secondary)">1</td>`
+      : opens > 0
+        ? `<td style="color:var(--text-muted)" title="Informational open telemetry only">${opens} open${opens > 1 ? 's' : ''}</td>`
           : `<td style="color:var(--text-muted)">—</td>`;
     return `<tr data-id="${l.id}" onclick="openCeDetail('${l.id}')" style="cursor:pointer">
       <td onclick="event.stopPropagation()"><label class="check-hit"><input type="checkbox" class="ce-row-check" data-id="${l.id}" ${checked} onchange="toggleCeRow(this)"></label></td>
@@ -5791,7 +5781,7 @@ async function renderCampaignsPanel() {
             <dt>Total</dt><dd>${r.total}</dd>
             <dt>Delivered</dt><dd>${r.delivered}</dd>
             <dt>Bounced</dt><dd class="${bounceClass(r.bounceRate)}">${r.bounced || '—'}${r.sent > 0 ? ` · ${fmtPct(r.bounceRate)}` : ''}</dd>
-            <dt>Opens</dt><dd>${r.opens || '—'}</dd>
+            <dt>Opens (informational)</dt><dd>${r.opens || '—'}</dd>
             <dt>Genuine Replies</dt><dd class="${replyClass(r.replyRate)}">${r.replied || '—'}${r.delivered > 0 ? ` · ${fmtPct(r.replyRate)}` : ''}</dd>
             <dt>Positive</dt><dd>${r.interested || '—'}${r.replied > 0 ? ` · ${fmtPct(r.interestedRate)}` : ''}</dd>
             <dt>Provider</dt><dd><button class="btn-cancel" style="padding:5px 8px" data-campaign="${escAttr(r.name)}" onclick="event.stopPropagation();openProviderModal(this.dataset.campaign)">${esc(campaignProvider(r.name).provider === 'smartlead' ? 'Smartlead' : 'Gmail')}</button></dd>
@@ -5808,7 +5798,7 @@ async function renderCampaignsPanel() {
           <th>Delivered</th>
           <th>Bounced</th>
           <th>Bounce %</th>
-          <th>Opens</th>
+          <th>Opens (info)</th>
           <th title="Genuine human replies, canonical classification. Excludes auto-responders, contact-change notices and unknowns.">Genuine Replies</th>
           <th title="Genuine replies ÷ delivered (attempted minus bounced).">Reply % / Delivered</th>
           <th title="Replies classified positive.">Positive</th>
@@ -6238,7 +6228,7 @@ function openCeDetail(id) {
       .sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
     const capped = matches.slice(0, 5);
     const extra  = matches.length - capped.length;
-    opensHtml  = `<p style="font-size:13px;font-weight:600;color:var(--warn);margin-bottom:8px">🔥 ${opens} open${opens > 1 ? 's' : ''} recorded</p>`;
+    opensHtml  = `<p style="font-size:13px;color:var(--text-muted);margin-bottom:8px">${opens} informational open${opens > 1 ? 's' : ''} recorded</p>`;
     opensHtml += '<div style="display:flex;flex-direction:column;gap:4px">';
     for (const o of capped) {
       const ts = o.timestamp ? new Date(o.timestamp).toLocaleString() : '—';

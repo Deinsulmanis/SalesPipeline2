@@ -17,8 +17,9 @@ test('a busy safe pass queues rather than discards a scheduled send window', () 
 test('late-refused candidates do not consume the successful-send batch target', () => {
   const batching = agent.slice(agent.indexOf('const newBatch'), agent.indexOf('console.log(`\\nDone.'));
   assert.match(batching, /const newBatch\s+= queued;/);
-  assert.match(batching, /const warmBatch\s+= warmLeads;/);
+  assert.match(batching, /const followBatch\s+= followUps;/);
+  assert.doesNotMatch(batching, /warmBatch|warmLeads|getOpenTriggeredLeads/);
   assert.doesNotMatch(batching, /queued\.slice\(0, effectiveCap\)/);
-  assert.ok((batching.match(/if \(sent >= effectiveCap\) break;/g) || []).length >= 3);
-  assert.ok((batching.match(/sent\+\+/g) || []).length >= 3, 'only successful provider paths advance the run target');
+  assert.ok((batching.match(/if \(sent >= effectiveCap\) break;/g) || []).length >= 2);
+  assert.ok((batching.match(/sent\+\+/g) || []).length >= 2, 'only successful provider paths advance the run target');
 });

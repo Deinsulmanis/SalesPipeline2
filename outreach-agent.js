@@ -46,7 +46,7 @@ const crypto = require('crypto');
 const { classify: classifyLeadEmail } = require('./check-leads');
 // Scanner-detonation filtering for ProposalOpens, shared verbatim with
 // server.js's dashboard stats — one definition, no drift.
-const { annotateOpens, isDatacenterIp } = require('./open-filter');
+const { isDatacenterIp } = require('./open-filter');
 // WARM-ONLY booking asset — see booking.js. Imported here for the two intent
 // triggers (question replies, both-audios-played) and NOT by any cold template.
 const { bookingSnippet, pricingDeflection, BOOKING_URL, containsBookingLink } = require('./booking');
@@ -123,8 +123,8 @@ const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const SHEET_NAME     = 'ColdEmail';
 
 const DRY_RUN          = process.env.DRY_RUN !== 'false';          // default TRUE
-// CHECK_ONLY runs reply/bounce detection + open-triggered flagging with REAL
-// sheet writes, but skips every email send. Distinct from DRY_RUN, which also
+// CHECK_ONLY runs reply/bounce detection with REAL sheet writes, but skips
+// every email send. Distinct from DRY_RUN, which also
 // skips the writes. Used by the 30-minute cron for near-real-time detection.
 const CHECK_ONLY       = process.env.CHECK_ONLY === 'true';
 // INTENT_ONLY runs ONLY the both-audios intent pass and exits. Kept separate
@@ -428,32 +428,6 @@ ${casl}`;
     },
   },
 ];
-
-// Parallel warm-lead template — used only for open-triggered follow-ups.
-// Not part of FOLLOW_UP_SEQUENCE (triggered by ProposalOpens count, not elapsed days).
-// NOTE: this template was previously missing the CASL unsubscribe line and
-// Ref: SL- code entirely — a pre-existing gap, added here while touching this
-// body anyway (the casl-building pattern itself is unchanged, just now applied
-// here too).
-const WARM_FOLLOW_UP_TEMPLATE = {
-  step: 'warm',
-  body: (lead) => {
-    const name    = salutationName(lead);
-    const company = cleanCompanyName(lead.company) || lead.company;
-    const casl    = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.  ·  Ref: SL-${refCode(lead)}`;
-    return `Hi ${name},
-
-Wanted to follow up — looks like you had a chance to check out the demo I sent over for ${company}, which I appreciate.
-
-Happy to answer any questions, or go ahead and build the full version if you're ready.
-
-Just reply and let me know.
-
-${EMAIL_SIGNATURE}
-
-${casl}`;
-  },
-};
 
 // ── EMAIL TEMPLATE ────────────────────────────────────────────────────────────
 
@@ -1485,29 +1459,6 @@ async function resolveRow(leadId) {
   return null;
 }
 
-async function readProposalOpens() {
-  try {
-    return await withAuth(async () => {
-      const resp = await sheets().spreadsheets.values.get({
-        spreadsheetId: SPREADSHEET_ID,
-        range: 'ProposalOpens!A:F',
-      });
-      const rows = resp.data.values || [];
-      return rows.slice(1).map(row => ({
-        timestamp: row[0] || '',
-        company:   row[1] || '',
-        niche:     row[2] || '',
-        id:        row[3] || '',
-        ip:        row[4] || '',
-        userAgent: row[5] || '',
-      }));
-    });
-  } catch (e) {
-    console.error('[ProposalOpens] Failed to read:', e.message);
-    return [];
-  }
-}
-
 // Append-only record of a real outbound send. Step 1 is the cold email itself;
 // later steps are sequence follow-ups and are typed distinctly so that
 // initial_email_sent keeps meaning exactly one thing (lead scoring and the
@@ -1555,7 +1506,7 @@ async function recordSendActivity(lead, step, sendMeta, sentAt) {
 // handleNotInterested and runBounceCheckPass already do for their own terminal
 // paths. Non-final steps keep writing SENT_STAGE, unchanged. This only affects
 // the display label: emailStatus is what every selector actually gates on
-// (selectQueued/selectFollowUps/getOpenTriggeredLeads — none of them key off
+// (selectQueued/selectFollowUps — neither keys off
 // stage='Contacted'), so this cannot change what gets sent.
 //
 // The email is ALREADY SENT when this runs — a failed write here is the
@@ -1618,21 +1569,6 @@ async function markReplied(rowNum) {
         { range: `${SHEET_NAME}!I${rowNum}`, values: [['replied']] },
       ],
     },
-  });
-}
-
-async function appendOpenTriggeredNote(lead) {
-  const rowNum = await resolveRow(lead.id);
-  if (!rowNum) {
-    console.warn(`[openNote] lead ${lead.id} (${lead.email}) no longer in sheet — skipping note write.`);
-    return;
-  }
-  const updated = lead.notes ? `${lead.notes} | open-triggered` : 'open-triggered';
-  await sheets().spreadsheets.values.update({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!L${rowNum}`,
-    valueInputOption: 'RAW',
-    requestBody: { values: [[updated]] },
   });
 }
 
@@ -3012,72 +2948,6 @@ function normalizeName(str) {
   return (str || '').toLowerCase().trim().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
 }
 
-// Scanner detonation is real (confirmed 2026-07): corporate mail filters fetch
-// the tracking link within seconds of delivery, with browser-like user agents
-// that pass the /p bot check — two such fetches used to read as a hot lead and
-// trigger a warm follow-up nobody asked for. Two defenses, both must pass:
-//   1. scanner-looking opens are discounted — the shared isScannerOpen() in
-//      open-filter.js owns that definition (send-window proximity + datacenter
-//      IP ranges) and server.js's dashboard stats call the exact same code, so
-//      the two can never drift.
-//   2. the surviving opens must span >= 2 distinct calendar days (Vancouver):
-//      a scanner burst lands on one day; a human who returns does not.
-//
-// NOTE: this pass deliberately does NOT feed ProposalEngaged/DemoPlays rows to
-// annotateOpens, so the rescue can only fire on a genuine multi-day return
-// visit. Sending is the irreversible direction: the agent stays at least as
-// strict as the dashboard, never looser.
-function getOpenTriggeredLeads(allLeads, proposalOpens) {
-  const leadByKey = new Map();
-  for (const l of allLeads) {
-    const k = normalizeName(cleanCompanyName(l.company));
-    if (k && !leadByKey.has(k)) leadByKey.set(k, l);
-  }
-
-  const annotated = annotateOpens({
-    opens:   proposalOpens,
-    keyOf:   row => normalizeName(cleanCompanyName(row.company)),
-    leadFor: row => leadByKey.get(normalizeName(cleanCompanyName(row.company))) || null,
-  });
-
-  const opensByKey = new Map();   // normalized company → [real open timestamp ms]
-  for (const open of annotated) {
-    if (!open.real) continue;     // scanner detonation — never counts toward warm
-    const key = open.key;
-    if (!key) continue;
-    const ts = new Date(open.timestamp).getTime();
-    if (isNaN(ts)) continue;
-    if (!opensByKey.has(key)) opensByKey.set(key, []);
-    opensByKey.get(key).push(ts);
-  }
-
-  const now          = Date.now();
-  const TWELVE_HOURS = 12 * 60 * 60 * 1000;
-  const dayOf        = ts => new Date(ts).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
-  const genuineCount = new Map();   // lead.id → surviving open count (for sort)
-
-  return allLeads
-    .filter(lead => {
-      if (lead.emailStatus !== 'emailed') return false;
-      if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE) return false;
-      if (!routedLeadCanUseCurrentSender(lead)) return false;
-      const step = parseInt(lead.emailStep || '0', 10);
-      if (step < 1 || step > FOLLOW_UP_SEQUENCE.length) return false;
-      if (lead.stage === 'Replied') return false;
-      const lastSent = new Date(lead.lastEmailedAt).getTime();
-      if (isNaN(lastSent) || (now - lastSent) < TWELVE_HOURS) return false;
-
-      const key     = normalizeName(cleanCompanyName(lead.company));
-      // opensByKey already holds only non-scanner opens (annotateOpens above),
-      // so no second timing filter is needed here.
-      const genuine = opensByKey.get(key) || [];
-      const days    = new Set(genuine.map(dayOf));
-      genuineCount.set(lead.id, genuine.length);
-      return genuine.length >= 2 && days.size >= 2;
-    })
-    .sort((a, b) => (genuineCount.get(b.id) || 0) - (genuineCount.get(a.id) || 0));
-}
-
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const jitter = () => MIN_DELAY + Math.floor(Math.random() * (MAX_DELAY - MIN_DELAY));
 
@@ -3322,12 +3192,7 @@ async function run() {
   // Phase 3 — follow-ups (replied leads already excluded by runReplyCheckPass)
   const followUps = selectFollowUps(all);
 
-  // Open-triggered warm follow-ups
-  const proposalOpens = await readProposalOpens();
-  const warmLeads     = getOpenTriggeredLeads(all, proposalOpens);
-  console.log(`[opens] ${warmLeads.length} open-triggered lead${warmLeads.length === 1 ? '' : 's'} found`);
-
-  // CHECK-ONLY stops here: reply-check, bounce-check and open detection have all
+  // CHECK-ONLY stops here: reply-check and bounce-check have both
   // run (with real writes), but no email is sent.
   if (CHECK_ONLY) {
     console.log('\n[check-only] Detection complete — skipping all sends.');
@@ -3335,23 +3200,21 @@ async function run() {
   }
 
   const effectiveCap = Math.min(DAILY_CAP, dailyRemaining);
-  console.log(`${all.length} leads · ${queued.length} queued · ${warmLeads.length} warm · ${followUps.length} follow-ups due · cap ${effectiveCap} (${dailyRemaining} remaining today)\n`);
+  console.log(`${all.length} leads · ${queued.length} queued · ${followUps.length} follow-ups due · cap ${effectiveCap} (${dailyRemaining} remaining today)\n`);
 
   if (dailyRemaining === 0) {
     console.log('[cap] Daily send limit reached — skipping sends this run');
     return;
   }
 
-  // Preserve the existing priority (new, warm, standard follow-up), but do not
+  // Preserve the existing priority (new, then scheduled follow-up), but do not
   // pre-spend a send slot on a candidate that a later safety/provider/copy gate
   // refuses. Each list is finite, and every loop below stops at effectiveCap,
   // so a run either records that many successful sends or genuinely exhausts
   // the bounded eligible pool.
   const newBatch    = queued;
-  const warmBatch   = warmLeads;
-  const warmIds     = new Set(warmBatch.map(l => l.id));
-  const followBatch = followUps.filter(l => !warmIds.has(l.id));
-  const totalCandidates = newBatch.length + warmBatch.length + followBatch.length;
+  const followBatch = followUps;
+  const totalCandidates = newBatch.length + followBatch.length;
 
   if (totalCandidates === 0) {
     console.log(`Nothing to send. Queue a lead (stage="${QUEUE_STAGE}") or wait for follow-up timers.`);
@@ -3487,74 +3350,6 @@ async function run() {
       console.log(`✅ Sent (step 1) → ${lead.email}  (${sent}/${effectiveCap})`);
     } catch (e) {
       console.error(`❌ Failed (step 1) → ${lead.email}: ${e.message}`);
-    }
-
-    if (sent < effectiveCap) {
-      const d = jitter();
-      console.log(`   …waiting ${Math.round(d / 1000)}s\n`);
-      await sleep(d);
-    }
-  }
-
-  // ── Warm follow-ups (open-triggered) ─────────────────────────────────────
-  for (const lead of warmBatch) {
-    if (sent >= effectiveCap) break;
-    const suppressed = suppressionReason(lead);
-    if (suppressed) {
-      console.error(`🚫 [SUPPRESSED] refusing warm send → ${lead.email} (${cleanCompanyName(lead.company) || lead.id}) — notes contain ${suppressed}`);
-      continue;
-    }
-    const gate = coldSendGate(lead, ownershipContext);
-    if (!gate.verdict.allowed) {
-      console.error(`🚫 [OWNERSHIP] refusing warm send → ${lead.email} — ${gate.verdict.reason}`);
-      continue;
-    }
-
-    const currentStep = parseInt(lead.emailStep, 10);
-    const nextStepNum = currentStep + 1;
-    const body        = WARM_FOLLOW_UP_TEMPLATE.body(lead);
-    const preview     = body.split('\n')[2] || '';
-    let thread;
-    try {
-      thread = await withAuth(() => resolveColdFollowUpThread({ gmail: gmail(), lead, activities: ownershipActivities }));
-    } catch (error) {
-      console.warn(`⏸️  warm follow-up deferred → ${lead.email} (Gmail thread verification failed: ${error.message})`);
-      continue;
-    }
-    if (!thread) {
-      console.warn(`⏸️  warm follow-up deferred → ${lead.email} (canonical Gmail thread could not be proven)`);
-      continue;
-    }
-    const subject = thread.subject;
-
-    if (DRY_RUN) {
-      const rawCo   = lead.company || '';
-      const cleanCo = cleanCompanyName(rawCo);
-      console.log(`— WOULD SEND (warm) →  ${lead.email}  (${rawCo || lead.first || lead.id})`);
-      if (rawCo && rawCo !== cleanCo) console.log(`   Company: "${rawCo}" → "${cleanCo}"`);
-      console.log(`   Subject: ${subject}`);
-      console.log(`   Preview: ${preview}\n`);
-      continue;
-    }
-
-    if (!SENDING_ENABLED) {
-      console.log(`⛔ [kill-switch] would send (warm) → ${lead.email}  (${cleanCompanyName(lead.company) || lead.id})`);
-      console.log(`   Subject: ${subject}`);
-      continue;
-    }
-
-    try {
-      const attribution = coldSendAttribution(lead, nextStepNum);
-      const sendResult = await sendEmail({
-        to: lead.email.trim(), subject, body,
-        threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references,
-      });
-      await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject, body, attribution }));
-      await withAuth(() => appendOpenTriggeredNote(lead));
-      sent++;
-      console.log(`✅ Sent (warm) → ${lead.email}  (${sent}/${effectiveCap})`);
-    } catch (e) {
-      console.error(`❌ Failed (warm) → ${lead.email}: ${e.message}`);
     }
 
     if (sent < effectiveCap) {

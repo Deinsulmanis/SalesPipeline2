@@ -173,8 +173,9 @@ test('existing Outreach counts remain in the compact stats response', () => {
   assert.match(browser, /ce-stat-total/);
   assert.match(browser, /ce-stat-queued/);
   assert.match(browser, /ce-stat-emailed/);
-  assert.match(browser, /ce-stat-opens/);
+  assert.match(browser, /ce-stat-demo-plays/);
   assert.match(browser, /ce-stat-warm/);
+  assert.doesNotMatch(browser, /id="ce-stat-opens"/);
 });
 
 test('reply analytics and backfill contain no send or stage/status mutation path', () => {

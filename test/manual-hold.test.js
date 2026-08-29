@@ -373,9 +373,9 @@ test('a future send without a registered attribution is rejected', async () => {
 });
 
 test('activity is recorded only after a real send and a successful write', () => {
-  // markSent is reached only after an awaited sendEmail in all three loops...
+  // markSent is reached only after an awaited sendEmail in both cold loops.
   const sends = agentSrc.match(/const sendResult = await sendEmail\(\{[^}]*\}\);\s*\n\s*await withAuth\(\(\) => markSent\(/g) || [];
-  assert.equal(sends.length, 3, 'expected 3 send->markSent pairs, found ' + sends.length);
+  assert.equal(sends.length, 2, 'expected 2 send->markSent pairs, found ' + sends.length);
   // ...and the record happens after the batchUpdate, inside the try, before return
   const markSentBody = grabFn(agentSrc, 'markSent');
   const writeAt = markSentBody.indexOf('batchUpdate');
@@ -415,10 +415,10 @@ test('sending cadence, caps and delays are untouched', () => {
 test('every send path is accounted for and gated', () => {
   // Step 10 added exactly one new call site: the stage-sequence pass. Counting
   // alone would be a weak guard, so this also proves the new one is behind BOTH
-  // the stage feature flag and the existing kill switch, and that the six
-  // original cold paths are untouched.
+  // the stage feature flag and the existing kill switch. The former
+  // open-triggered cold path was deliberately removed because opens are passive.
   const calls = agentSrc.match(/await sendEmail\(/g) || [];
-  assert.equal(calls.length, 7, 'sendEmail call count changed: ' + calls.length);
+  assert.equal(calls.length, 6, 'sendEmail call count changed: ' + calls.length);
 
   const pass = agentSrc.slice(agentSrc.indexOf('async function runStageSequencePass'), agentSrc.indexOf('async function run()'));
   assert.equal((pass.match(/await sendEmail\(/g) || []).length, 1, 'the stage pass sends from one place');

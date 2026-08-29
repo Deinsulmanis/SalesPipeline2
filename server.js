@@ -243,10 +243,9 @@ app.get('/p/:token', async (req, res) => {
 // ── DEMO PLAY TRACKING (public — no auth) ──────────────────────────────────────
 // Fired as a tracking pixel from the proposal page when the demo audio actually
 // plays — a stronger intent signal than an open. Deliberately writes to its OWN
-// tab (DemoPlays), NOT ProposalOpens: that sheet feeds getOpenTriggeredLeads()
-// and the warm-follow-up trigger, and mixing a second event type into it would
-// risk a demo play being counted as an open and firing a warm send on a false
-// signal. Same guard shape as /p (IP block, bot UA, empty/Unknown company) —
+// tab (DemoPlays), NOT ProposalOpens. Opens are retained as passive telemetry;
+// demo plays are the verified engagement signal. Same guard shape as /p (IP
+// block, bot UA, empty/Unknown company) —
 // bot/self-traffic matters even more here since this is meant to be high-intent.
 app.get('/demo-played', (req, res) => {
   const companyParam = String(req.query.company ?? '').trim();
@@ -314,8 +313,7 @@ app.get('/demo-played', (req, res) => {
 // scroll OR 120s of active time — whichever comes first, and only once (the
 // page enforces the once-per-view rule; this route just records what it's told).
 // Writes to its OWN tab (ProposalEngaged), NOT ProposalOpens or DemoPlays: those
-// feed getOpenTriggeredLeads() and the warm-follow-up trigger, and mixing a
-// third event type into either would risk a false warm-send trigger. Same guard
+// have separate meanings and must remain independently auditable. Same guard
 // shape as /p and /demo-played (IP block, bot UA, empty/Unknown company).
 app.get('/engaged', (req, res) => {
   const companyParam = String(req.query.company ?? '').trim();
@@ -1258,18 +1256,18 @@ async function loadOutreachDataset() {
   });
   counts.total = rows.length;
 
-  // ── Open / warm signal, aggregated over the WHOLE dataset ────────────────
+  // Opens remain passive telemetry. Warm is canonical demo engagement only.
   // These headline numbers used to be computed in the browser from the full
   // lead array. Once the list was paginated that array became one page, so the
   // cards silently started describing 100 rows instead of 1,849. They are
   // aggregated here now, for the same reason the reply metrics always were:
   // a summary must not depend on which page happens to be loaded.
   //
-  // Semantics preserved exactly from the previous client code:
+  // Open telemetry semantics are preserved from the previous client code:
   //   opens = DISTINCT companies with >= 1 real open, that match a lead
   //   hits  = sum of those companies' real opens (a prospect reloading counts once
   //           in `opens`, but every real hit shows in the label)
-  //   warm  = those companies with >= 2 real opens
+  //   warm  = leads with verified demo engagement; opens never contribute
   // `real` excludes scanner detonations via the shared open-filter module.
   const proposalOpens = openResponse.data.values || [];
   const proposalEngaged = engagedResponse.data.values || [];
@@ -1302,14 +1300,15 @@ async function loadOutreachDataset() {
     if (!k) continue;
     realOpensByCompany.set(k, (realOpensByCompany.get(k) || 0) + 1);
   }
-  const signals = { opens: 0, hits: 0, warm: 0 };
+  const signals = { opens: 0, hits: 0, warm: 0, demoPlays: 0 };
   for (const [k, n] of realOpensByCompany) {
     if (!leadKeys.has(k)) continue;      // orphaned open rows are not lead opens
     signals.opens++;
     signals.hits += n;
-    if (n >= 2) signals.warm++;
   }
-  for (const row of rows) row.warm = (realOpensByCompany.get(openKey(row.company)) || 0) >= 2;
+  signals.demoPlays = demoRows.filter(row => leadKeys.has(openKey(row.company))).length;
+  for (const row of rows) row.warm = row.demoEngaged;
+  signals.warm = rows.filter(row => row.warm).length;
   const outside = rows.filter(row => !row.pipelinePresence && row.mappingStatus !== 'conflict');
   const pipelineAudit = {
     total: rows.length,

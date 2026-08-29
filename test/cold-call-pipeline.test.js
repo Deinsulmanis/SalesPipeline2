@@ -32,7 +32,7 @@ test('lead score reflects verified engagement without exceeding 100', () => {
 });
 
 test('future trigger automations are additive and the standard sending loop stays isolated', () => {
-  const standardSend = agent.slice(agent.indexOf('// ── New sends (step 1)'), agent.indexOf('// ── Warm follow-ups'));
+  const standardSend = agent.slice(agent.indexOf('// ── New sends (step 1)'), agent.indexOf('// ── Follow-ups (steps 2 & 3)'));
   // markSent now takes optional send metadata so the activity row can carry the
   // real Gmail message id. The ORDER is what this guards: send, then record,
   // then count.
