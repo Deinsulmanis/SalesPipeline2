@@ -32,6 +32,9 @@ const { configuredSenders, senderCountsToday, successfulSendCountToday } = requi
 const {
   resolveSenderOwnership, activitySender, senderFilterOptions, matchesSenderFilter,
 } = require('./integrations/sender-visibility');
+// Stage 1 Supabase mirror. Optional, server-only, and incapable of blocking or
+// failing an authoritative Google Sheets write — see integrations/supabase-mirror.js.
+const { mirrorEventsInBackground, mirrorEnabled, mirrorHealth } = require('./integrations/supabase-mirror');
 const { simulateRouting } = require('./integrations/gmail-routing-simulation');
 const { EMAIL_TEMPLATES, normalizeNiche, campaignVersionsForRoute, validateCampaignVersionRoute, validateRoute } = require('./integrations/campaign-routing');
 const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE, qualifyLead: qualifyRoofingLead } = require('./integrations/roofing-survey-profile');
@@ -527,6 +530,10 @@ async function readIntegrationRows(title, header) {
 async function appendIntegrationRow(title, header, record) {
   await ensureIntegrationSheet(title, header);
   await sheets().spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID, range: `${title}!A:${sheetColumn(header.length)}`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS', requestBody: { values: [header.map(key => String(record[key] ?? ''))] } });
+  // Stage 1 shadow mirror. Strictly AFTER the authoritative Sheets append has
+  // resolved, and fire-and-forget: it cannot fail this function, delay it, or
+  // change what was written. Only canonical activity is mirrored.
+  if (title === COLD_CALL_ACTIVITY_SHEET) mirrorEventsInBackground([record]);
 }
 
 function stableActivityId(prefix, parts) {
@@ -542,6 +549,8 @@ async function appendColdCallActivities(records) {
     valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
     requestBody: { values: records.map(record => COLD_CALL_ACTIVITY_HEADER.map(key => String(record[key] ?? ''))) },
   });
+  // Mirrored only once the batch is durably in Sheets.
+  mirrorEventsInBackground(records);
 }
 
 async function upsertIntegrationRow(title, header, key, record) {
@@ -1603,6 +1612,40 @@ app.get('/api/crm/ui-status', requireAuth, (_req, res) => {
     smartlead: { enabled: enabled(process.env.SMARTLEAD_INTEGRATION_ENABLED), liveMutations: enabled(process.env.SMARTLEAD_LIVE_MUTATIONS_ENABLED) },
     roofingReplyFlow: { enabled: enabled(process.env.ROOFING_SURVEY_REPLY_FLOW_ENABLED) },
   });
+});
+
+// ── SUPABASE MIRROR HEALTH (Stage 1, observational) ─────────────────────────
+//
+// Deliberately its OWN endpoint rather than a section of /api/crm/health. CRM
+// Health drives operator decisions, and Stage 1 is a shadow copy that nothing
+// is allowed to depend on — folding it in would be the first step toward some
+// future check quietly treating Supabase as authoritative.
+//
+// Read-only in both directions: it writes nothing and reports no secret. The
+// key and the project URL never appear in the response.
+app.get('/api/supabase/mirror-health', requireAuth, async (_req, res) => {
+  try {
+    // The canonical count comes from the Google Sheets snapshot the app already
+    // holds, because Sheets is the authority the mirror is compared against.
+    let sheetCount = null;
+    try {
+      const dataset = await withAuth(() => getOutreachDataset());
+      sheetCount = Array.isArray(dataset.activities) ? dataset.activities.length : null;
+    } catch (_) { /* an unreadable sheet is reported as an unknown count */ }
+
+    const health = await mirrorHealth({ sheetCount });
+    res.json({
+      stage: 1,
+      authoritativeStore: 'google_sheets',
+      note: 'Observational only. No production read path, CRM Health check, or automation decision uses Supabase.',
+      ...health,
+    });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    // Never surface a driver message: it can carry a URL or a header fragment.
+    console.error('[supabase-mirror-health]', e.message);
+    res.status(500).json({ error: 'mirror health could not be determined' });
+  }
 });
 
 // Campaign performance is derived entirely from the shared Outreach snapshot.
@@ -5187,4 +5230,11 @@ if (process.env.RAILWAY_ENVIRONMENT) {
 }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`ScaleLab Pipeline → http://localhost:${PORT}`));
+app.listen(PORT, () => {
+  console.log(`ScaleLab Pipeline → http://localhost:${PORT}`);
+  // States the mirror's status once at boot, without ever naming a value. With
+  // Supabase unconfigured this is the only trace it leaves anywhere.
+  console.log(mirrorEnabled()
+    ? '[supabase-mirror] enabled — canonical activity is shadow-mirrored after each Google Sheets write'
+    : '[supabase-mirror] disabled — Google Sheets only (set SUPABASE_URL and SUPABASE_SECRET_KEY to enable)');
+});

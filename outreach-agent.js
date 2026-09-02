@@ -65,6 +65,9 @@ const { classifyReplyText, isUsableReplyIdentity, REPLY_STATE } = require('./int
 // keeping a second opinion about who may act on a lead.
 const { NON_COLD_STAGES, deriveAutomationOwnership, mayColdSend } = require('./integrations/automation-ownership');
 const { planHumanOutboundIngestion, matchOutbound, latestHumanOutboundAt } = require('./integrations/human-outbound');
+// Stage 1 Supabase mirror. Optional and non-blocking: the agent's authoritative
+// write is the Google Sheets append above it, and this cannot affect it.
+const { mirrorEventsInBackground } = require('./integrations/supabase-mirror');
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
 const { routedLeadReady } = require('./integrations/campaign-routing');
 // The reactivation gate is defined once, in the shared pipeline-state model.
@@ -254,6 +257,8 @@ async function recordColdCallActivity(record) {
       insertDataOption: 'INSERT_ROWS',
       requestBody: { values: [COLD_CALL_ACTIVITY_HEADER.map(key => String(complete[key] ?? ''))] },
     });
+    // Shadow mirror, only once the authoritative append succeeded.
+    mirrorEventsInBackground([complete]);
   } catch (error) {
     console.warn(`[ColdCallActivity] non-blocking log failure for ${record.email || record.leadId}: ${error.message}`);
   }
@@ -713,6 +718,10 @@ async function recordColdCallActivityStrict(record) {
     insertDataOption: 'INSERT_ROWS',
     requestBody: { values: [COLD_CALL_ACTIVITY_HEADER.map(key => String(complete[key] ?? ''))] },
   });
+  // Shadow mirror. This function is deliberately strict — its callers depend on
+  // a send being recorded — so the mirror stays fire-and-forget and cannot turn
+  // a durable Sheets append into a thrown error.
+  mirrorEventsInBackground([complete]);
 }
 
 /**
