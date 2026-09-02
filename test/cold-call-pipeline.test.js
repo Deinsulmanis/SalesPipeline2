@@ -36,7 +36,7 @@ test('future trigger automations are additive and the standard sending loop stay
   // markSent now takes optional send metadata so the activity row can carry the
   // real Gmail message id. The ORDER is what this guards: send, then record,
   // then count.
-  assert.match(standardSend, /sendEmail\([\s\S]*?markSent\(lead, 1,[\s\S]*?sent\+\+/);
+  assert.match(standardSend, /sendEmail\([\s\S]*?sent\+\+[\s\S]*?markSent\(lead, 1,/);
   // The loop itself must still contain no trigger automation. Activity logging
   // lives inside markSent, which only runs after a send has already succeeded.
   assert.doesNotMatch(standardSend, /recordColdCallActivity|upsertColdCallLeadFromEvent/);

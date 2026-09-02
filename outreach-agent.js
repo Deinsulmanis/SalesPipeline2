@@ -81,6 +81,7 @@ const {
   LEGACY_UNKNOWN,
 } = require('./integrations/campaign-versions');
 const { findOriginalSentThread, resolveColdFollowUpThread } = require('./integrations/gmail-threading');
+const { oldestDueFirst, followUpSuccessTarget } = require('./integrations/scheduler-fairness');
 const {
   assembleFinalEmail,
   splitPersonalization,
@@ -2919,7 +2920,7 @@ function routedLeadCanUseCurrentSender(lead) {
 // currentStep 2 → send step 3 (FOLLOW_UP_SEQUENCE[1], 5 days)
 function selectFollowUps(leads) {
   const now = Date.now();
-  return leads.filter(l => {
+  const due = leads.filter(l => {
     if (l.emailStatus !== 'emailed') return false;
     // A lead that has left cold stages is no longer ordinary cold cadence,
     // whatever emailStatus still says. This filter used to read emailStatus and
@@ -2940,6 +2941,7 @@ function selectFollowUps(leads) {
     if (isNaN(lastSent)) return false;
     return (now - lastSent) / (1000 * 60 * 60 * 24) >= template.delayDays;
   });
+  return oldestDueFirst(due, FOLLOW_UP_SEQUENCE);
 }
 
 function countTodaySends(allLeads) {
@@ -3214,11 +3216,10 @@ async function run() {
     return;
   }
 
-  // Preserve the existing priority (new, then scheduled follow-up), but do not
-  // pre-spend a send slot on a candidate that a later safety/provider/copy gate
-  // refuses. Each list is finite, and every loop below stops at effectiveCap,
-  // so a run either records that many successful sends or genuinely exhausts
-  // the bounded eligible pool.
+  // Fairness is measured in successful provider sends, never candidates. A
+  // five-send batch scans oldest-due follow-ups until four actually succeed,
+  // then gives initials their reserved position. Refused candidates consume no
+  // allocation, and either pool may refill unused capacity.
   const newBatch    = queued;
   const followBatch = followUps;
   const totalCandidates = newBatch.length + followBatch.length;
@@ -3229,6 +3230,78 @@ async function run() {
   }
 
   let sent = 0;
+  let followUpSent = 0;
+  let followUpIndex = 0;
+
+  // ── Fair follow-up allocation ─────────────────────────────────────────────
+  async function attemptFollowUp(lead) {
+    const suppressed = suppressionReason(lead);
+    if (suppressed) {
+      console.error(`🚫 [SUPPRESSED] refusing follow-up send → ${lead.email} (${cleanCompanyName(lead.company) || lead.id}) — notes contain ${suppressed}`);
+      return false;
+    }
+    const gate = coldSendGate(lead, ownershipContext);
+    if (!gate.verdict.allowed) {
+      console.error(`🚫 [OWNERSHIP] refusing follow-up send → ${lead.email} — ${gate.verdict.reason}`);
+      return false;
+    }
+    const currentStep = parseInt(lead.emailStep, 10);
+    const nextStepNum = currentStep + 1;
+    const template = FOLLOW_UP_SEQUENCE[currentStep - 1];
+    const body = template.body(lead);
+    const preview = body.split('\n')[2] || '';
+    let thread;
+    try {
+      thread = await withAuth(() => resolveColdFollowUpThread({ gmail: gmail(), lead, activities: ownershipActivities }));
+    } catch (error) {
+      console.warn(`⏸️  follow-up deferred → ${lead.email} (Gmail thread verification failed: ${error.message})`);
+      return false;
+    }
+    if (!thread) {
+      console.warn(`⏸️  follow-up deferred → ${lead.email} (canonical Gmail thread could not be proven)`);
+      return false;
+    }
+    const subject = thread.subject;
+    if (DRY_RUN) {
+      const rawCo = lead.company || '';
+      const cleanCo = cleanCompanyName(rawCo);
+      console.log(`— WOULD SEND (step ${nextStepNum}) →  ${lead.email}  (${rawCo || lead.first || lead.id})`);
+      if (rawCo && rawCo !== cleanCo) console.log(`   Company: "${rawCo}" → "${cleanCo}"`);
+      console.log(`   Pitch:   ${lead.tier === 'busy' ? 'busy' : 'medium'}`);
+      console.log(`   Subject: ${subject}`);
+      console.log(`   Preview: ${preview}`);
+      console.log(`   Link:    ${buildProposalLink(lead)}\n`);
+      return false;
+    }
+    if (!SENDING_ENABLED) {
+      console.log(`⛔ [kill-switch] would send (step ${nextStepNum}) → ${lead.email}  (${cleanCompanyName(lead.company) || lead.id})`);
+      return false;
+    }
+    try {
+      const attribution = coldSendAttribution(lead, nextStepNum);
+      const sendResult = await sendEmail({
+        to: lead.email.trim(), subject, body,
+        threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references,
+      });
+      sent++; followUpSent++;
+      await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject, body, attribution }));
+      console.log(`✅ Sent (step ${nextStepNum}) → ${lead.email}  (${sent}/${effectiveCap})`);
+      return true;
+    } catch (e) {
+      console.error(`❌ Failed (step ${nextStepNum}) → ${lead.email}: ${e.message}`);
+      return false;
+    } finally {
+      if (sent < effectiveCap) { const d = jitter(); console.log(`   …waiting ${Math.round(d / 1000)}s\n`); await sleep(d); }
+    }
+  }
+
+  async function fillFollowUps(successTarget) {
+    while (followUpIndex < followBatch.length && sent < effectiveCap && followUpSent < successTarget) {
+      await attemptFollowUp(followBatch[followUpIndex++]);
+    }
+  }
+
+  await fillFollowUps(followUpSuccessTarget(effectiveCap));
 
   // ── New sends (step 1) ────────────────────────────────────────────────────
   for (const lead of newBatch) {
@@ -3348,12 +3421,12 @@ async function run() {
     try {
       const attribution = coldSendAttribution(lead, 1, { personalizationMetadata: validatedPersonalizationMetadata });
       const sendResult = await sendEmail({ to: lead.email.trim(), subject, body });
+      sent++;
       await withAuth(() => markSent(lead, 1, {
         result: sendResult, subject, body,
         personalizationMetadata: validatedPersonalizationMetadata,
         attribution,
       }));
-      sent++;
       console.log(`✅ Sent (step 1) → ${lead.email}  (${sent}/${effectiveCap})`);
     } catch (e) {
       console.error(`❌ Failed (step 1) → ${lead.email}: ${e.message}`);
@@ -3367,7 +3440,8 @@ async function run() {
   }
 
   // ── Follow-ups (steps 2 & 3) ──────────────────────────────────────────────
-  for (const lead of followBatch) {
+  for (; followUpIndex < followBatch.length; followUpIndex++) {
+    const lead = followBatch[followUpIndex];
     if (sent >= effectiveCap) break;
     const suppressed = suppressionReason(lead);
     if (suppressed) {
@@ -3423,8 +3497,8 @@ async function run() {
         to: lead.email.trim(), subject, body,
         threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references,
       });
-      await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject, body, attribution }));
       sent++;
+      await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject, body, attribution }));
       console.log(`✅ Sent (step ${nextStepNum}) → ${lead.email}  (${sent}/${effectiveCap})`);
     } catch (e) {
       console.error(`❌ Failed (step ${nextStepNum}) → ${lead.email}: ${e.message}`);
