@@ -1632,17 +1632,47 @@
   .pipeline-marker[data-state="conflict"]::before { background:var(--warn); }
   .ce-row-badges { display:flex;gap:4px;flex-wrap:wrap;margin-top:4px; }
   .ce-row-badge { padding:2px 6px;border-radius:999px;background:var(--surface-2);color:var(--text-muted);font-size:10px;font-weight:700; }
+  /* Sending inbox. Readable at a glance but deliberately subordinate to the
+     company and stage columns — it is context, not the row's headline. All four
+     states use tokens already proven for contrast on the dark card. */
+  .sender-chip { display:inline-block;max-width:100%;padding:2px 7px;border-radius:999px;
+    background:var(--surface-2);color:var(--text-secondary);border:1px solid var(--border);
+    font-size:10.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+  .sender-chip[data-state="confirmed"] { color:var(--text);border-color:rgba(0,212,255,0.28); }
+  .sender-chip[data-state="assigned"]  { color:var(--text-secondary); }
+  .sender-chip[data-state="unknown"]   { color:var(--text-muted);font-weight:500; }
+  /* Conflict is the one state that should stop the eye. */
+  .sender-chip[data-state="conflict"]  { color:var(--danger);background:var(--danger-bg);border-color:var(--danger); }
+  .sender-chip[data-state="not_outreach"] { color:var(--text-muted);font-weight:500; }
+  .ce-td-sender { max-width:170px; }
+  .sender-field { display:flex;flex-direction:column;gap:3px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border); }
+  .sender-field-k { font-size:10.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--text-muted); }
+  .sender-field-v { margin:2px 0; }
+  .sender-field-d { font-size:11.5px;color:var(--text-muted); }
+  .sender-field-d:empty { display:none; }
+  /* "Sent from deins@tryscalelabai.ca" under an outbound timeline event. */
+  .activity-sender { font-size:11.5px;color:var(--text-secondary);margin-top:3px; }
+  .activity-sender[data-legacy="true"] { color:var(--text-muted);font-style:italic; }
   @media (max-width: 700px) {
     .ce-master-filters { padding:10px 12px;display:grid;grid-template-columns:1fr 1fr; }
     .ce-master-filters select { max-width:none;width:100%;min-height:44px; }
     .ce-master-filters .btn-cancel { min-height:44px; }
     .ce-quick-views { padding:10px 12px 0;overflow-x:auto;flex-wrap:nowrap; }
     .ce-quick-view { min-height:44px;flex:0 0 auto; }
+    /* Columns: 1 select · 2 Company · 3 Contact · 4 Email · 5 City · 6 Trade
+       · 7 Sending Inbox · 8 Opens · 9 Pipeline · 10 Stage · 11 Actions.
+       City, Trade, Sending Inbox, Opens and Actions collapse; the sending
+       inbox stays fully readable in the lead drawer, which is the better place
+       for it on a narrow screen than a squeezed eleventh column. */
     .ce-table th:nth-child(5),.ce-table td:nth-child(5),
     .ce-table th:nth-child(6),.ce-table td:nth-child(6),
     .ce-table th:nth-child(7),.ce-table td:nth-child(7),
-    .ce-table th:nth-child(10),.ce-table td:nth-child(10) { display:none; }
+    .ce-table th:nth-child(8),.ce-table td:nth-child(8),
+    .ce-table th:nth-child(11),.ce-table td:nth-child(11) { display:none; }
   }
+  /* Between phone and desktop the inbox is the first thing to give up its
+     width, since the drawer always carries the full address. */
+  @media (max-width: 1100px) and (min-width: 701px) { .ce-td-sender { max-width:104px; } }
 
   /* Secondary CE stats (Total, Emailed) — present but visually subordinate to
      the actionable ones (Replied, Opens, Warm). Scoped so the Cold Calls
@@ -2174,6 +2204,7 @@
       <select id="ce-engagement-filter" aria-label="Engagement" onchange="setCeMasterFilter('engagement',this.value)"><option value="">All engagement</option><option value="demo">Demo played</option><option value="warm">Warm</option><option value="none">No demo activity</option></select>
       <select id="ce-sequence-filter" aria-label="Sequence state" onchange="setCeMasterFilter('sequence',this.value)"><option value="">All sequence states</option><option value="active">Active sequence</option><option value="complete">Sequence complete</option><option value="queued">Queued</option><option value="not_started">Not started</option></select>
       <select id="ce-version-filter" aria-label="Campaign version" onchange="setCeMasterFilter('campaignVersion',this.value)"><option value="">All campaign versions</option></select>
+      <select id="ce-sender-filter" aria-label="Sending inbox" onchange="setCeMasterFilter('senderInbox',this.value)"><option value="">All inboxes</option></select>
       <button type="button" class="btn-cancel" onclick="clearCeMasterFilters()">Clear filters</button>
     </div>
     <div id="ce-current-campaign" style="padding:6px 28px 0;font-size:12px;color:var(--text-muted)">Current campaign: loading…</div>
@@ -2263,6 +2294,7 @@
             <th>Email</th>
             <th>City</th>
             <th>Trade</th>
+            <th class="ce-th-sender" title="Which Gmail inbox owns this conversation. Historical ownership, not the inbox that would be chosen today.">Sending Inbox</th>
             <th>Opens</th>
             <th>Pipeline</th>
             <th>Stage</th>
@@ -3994,6 +4026,8 @@ let ceEngagementFilter = '';
 let ceSequenceFilter = '';
 let ceAutomationFilter = '';
 let ceCampaignVersionFilter = '';
+// Which sending inbox owns the conversation. '' = all inboxes.
+let ceSenderFilter = '';
 let _pendingCsvRows  = null;
 let queueRouteIds = [];
 let outreachRoutingOptions = null;
@@ -4021,6 +4055,7 @@ function setCeMasterFilter(kind, value) {
   if (kind === 'engagement') ceEngagementFilter = value;
   if (kind === 'sequence') ceSequenceFilter = value;
   if (kind === 'campaignVersion') ceCampaignVersionFilter = value;
+  if (kind === 'senderInbox') ceSenderFilter = value;
   ceSelected.clear(); updateBulkQueueBtn(); reloadCePage();
 }
 
@@ -4029,6 +4064,7 @@ function syncCeMasterFilters() {
     'ce-reply-filter': ceReplyCategoryFilter, 'ce-pipeline-filter': cePipelinePresenceFilter,
     'ce-pipeline-stage-filter': cePipelineStageFilter, 'ce-engagement-filter': ceEngagementFilter,
     'ce-sequence-filter': ceSequenceFilter, 'ce-version-filter': ceCampaignVersionFilter,
+    'ce-sender-filter': ceSenderFilter,
   };
   for (const [id, value] of Object.entries(values)) { const el = document.getElementById(id); if (el) el.value = value; }
 }
@@ -4036,7 +4072,7 @@ function syncCeMasterFilters() {
 function clearCeMasterFilters(shouldReload = true) {
   ceReplyCategoryFilter = cePipelinePresenceFilter = cePipelineStageFilter = '';
   ceEngagementFilter = ceSequenceFilter = ceAutomationFilter = '';
-  ceCampaignVersionFilter = '';
+  ceCampaignVersionFilter = ceSenderFilter = '';
   syncCeMasterFilters(); if (shouldReload) reloadCePage();
 }
 
@@ -4107,6 +4143,7 @@ function renderActivityTimeline(activities, hostId = 'd-activity') {
       <div class="activity-event-head"><span class="activity-event-title">${esc(event.title || ACTIVITY_LABELS[type] || type)}</span><time class="activity-event-time">${esc(when)}</time></div>
       ${event.summary ? `<div class="activity-summary">${esc(event.summary)}</div>` : ''}
       ${event.subject && !event.summary ? `<div class="activity-event-subject">${esc(event.subject)}</div>` : ''}
+      ${event.senderNote ? `<div class="activity-sender"${event.sender ? '' : ' data-legacy="true"'}>${esc(event.senderNote)}</div>` : ''}
       <div class="activity-event-meta"><span class="activity-source">${esc(event.source || 'CRM')}</span>${category}${event.late ? '<span class="activity-category" data-cat="needs_human">Late reply</span>' : ''}${event.needsHuman ? '<span class="activity-category" data-cat="needs_human">Needs attention</span>' : ''}</div>
       ${copy}
     </article>`;
@@ -4324,8 +4361,23 @@ function renderPipelineState(pipeline) {
        </div>`
     : '';
 
+  // Which inbox this Pipeline lead was acquired from. Resolved server-side
+  // through the linked ColdEmail identity and its canonical activity — never
+  // inferred from the Pipeline stage, and shown as "not from Outreach" rather
+  // than a fabricated address when there is no mapping.
+  const sender = pipeline.sender;
+  const senderRow = !sender ? '' : `
+      <div class="pipeline-row">
+        <span class="pipeline-row-label">Sending inbox</span>
+        <span class="pipeline-row-val">
+          <span class="sender-chip" data-state="${escAttr(sender.state)}" title="${escAttr([sender.email, sender.detail].filter(Boolean).join(' · '))}">${esc(sender.state === 'unknown' ? 'Unknown' : sender.state === 'conflict' ? 'Conflict' : (sender.shortLabel || sender.label))}</span>
+          <small>${esc(sender.state === 'not_outreach' ? 'Not an Outreach-acquired lead' : (sender.stateLabel || ''))}</small>
+        </span>
+      </div>`;
+
   host.innerHTML = `${conflict}
     <div class="pipeline-state">
+      ${senderRow}
       <div class="pipeline-row">
         <span class="pipeline-row-label">Automation</span>
         <span class="pipeline-row-val">
@@ -5159,6 +5211,7 @@ function ceQuery(extra = {}) {
   if (ceSequenceFilter) params.set('sequenceState', ceSequenceFilter);
   if (ceAutomationFilter) params.set('automationState', ceAutomationFilter);
   if (ceCampaignVersionFilter) params.set('campaignVersion', ceCampaignVersionFilter);
+  if (ceSenderFilter) params.set('senderInbox', ceSenderFilter);
   params.set('limit', String(CE_PAGE_SIZE));
   params.set('offset', String(extra.offset || 0));
   if (extra.refresh) params.set('refresh', '1');
@@ -5227,6 +5280,17 @@ async function loadCeLeads() {
       select.innerHTML = '<option value="">All campaign versions</option>' + Object.keys(registry.versions || {}).concat(['legacy_unknown'])
         .map(id => `<option value="${escAttr(id)}">${esc(id)}</option>`).join('');
       select.value = ceCampaignVersionFilter;
+    }
+    // Inbox filter options come down with the page, so there is no extra
+    // request and the list can never disagree with the rows it filters.
+    const senderSelect = document.getElementById('ce-sender-filter');
+    if (senderSelect && Array.isArray(cePage.senderOptions)) {
+      const counts = (ceFacets && ceFacets.senders) || {};
+      senderSelect.innerHTML = cePage.senderOptions.map(option => {
+        const n = option.value === 'all' ? 0 : (counts[option.value] || 0);
+        return `<option value="${escAttr(option.value === 'all' ? '' : option.value)}">${esc(option.label)}${option.value === 'all' ? '' : ` (${n})`}</option>`;
+      }).join('');
+      senderSelect.value = ceSenderFilter;
     }
     ceFetchedAt = cePage.fetchedAt || null;
     ceAllLeads  = null;
@@ -5584,6 +5648,28 @@ function buildSendChart() {
   legendEl.innerHTML = `<span>${oldestLabel}</span><span>${total} outbound send${total !== 1 ? 's' : ''} in last ${CHART_DAYS} days</span><span>Today</span>`;
 }
 
+// ── SENDING INBOX ───────────────────────────────────────────────────────────
+//
+// Which Gmail inbox owns a conversation. The server resolves it from the same
+// canonical evidence the send path uses and hands down a small projection; the
+// browser only paints it, so the screen cannot reach a different answer.
+//
+// This is HISTORICAL ownership, never "the inbox that would be picked today" —
+// a lead pinned to the primary inbox keeps showing the primary inbox even when
+// the secondary has more quota left. Nothing here reads a quota or an
+// eligibility flag, and there is no fallback to the primary inbox: a lead with
+// no evidence shows Unknown, because defaulting would make an absent fact
+// indistinguishable from a proven one.
+function senderChip(lead) {
+  const state = String(lead.senderState || '');
+  if (!state) return '<span style="color:var(--text-muted)">—</span>';
+  const text = state === 'unknown' ? 'Unknown'
+    : state === 'conflict' ? 'Conflict'
+      : (lead.senderShortLabel || lead.senderLabel || 'Unknown');
+  const tip = [lead.senderEmail, lead.senderStateLabel, lead.senderDetail].filter(Boolean).join(' · ');
+  return `<span class="sender-chip" data-state="${escAttr(state)}" title="${escAttr(tip || text)}">${esc(text)}</span>`;
+}
+
 function renderCeTable() {
   const tbody    = document.getElementById('ce-tbody');
   const empty    = document.getElementById('ce-empty');
@@ -5609,7 +5695,7 @@ function renderCeTable() {
     // A loading page must not read as "no leads" — that was indistinguishable
     // from an empty sheet while the request was in flight.
     tbody.innerHTML = ceLoading
-      ? '<tr><td colspan="10" class="ce-loading-row">Loading leads…</td></tr>'
+      ? '<tr><td colspan="11" class="ce-loading-row">Loading leads…</td></tr>'
       : '';
     empty.style.display = ceLoading ? 'none' : 'block';
     empty.textContent = q
@@ -5648,6 +5734,7 @@ function renderCeTable() {
       <td class="ce-td-email">${l.email ? `<a href="mailto:${emailSafe}">${esc(l.email)}</a>` : '—'}</td>
       <td>${cell(l.city)}</td>
       <td>${esc(l.tradeType) || '—'}</td>
+      <td class="ce-td-sender">${senderChip(l)}</td>
       ${opensTd}
       <td><span class="pipeline-marker" data-state="${pipelineState}" title="${escAttr(pipelineLabel)}">${esc(pipelineLabel)}</span></td>
       <td onclick="event.stopPropagation()"><div class="ce-stage-stack"><select class="ce-stage-select" onchange="setCeLeadStage('${l.id}',this.value)">${stageOpts}</select>${hasLateReply ? '<span class="ce-late-reply" title="Reply received after the sequence ended. Automation is still stopped.">Late reply</span>' : ''}</div></td>
@@ -6388,7 +6475,17 @@ function openCeDetail(id) {
   else if (lead.stage === 'Queued') badge = `<span style="font-size:11px;padding:2px 8px;border-radius:20px;background:var(--blue-bg);color:var(--blue);font-weight:600">Queued</span>`;
   else   badge = `<span style="font-size:11px;padding:2px 8px;border-radius:20px;background:var(--border);color:var(--text-muted);font-weight:600">${esc(lead.emailStatus || '—')}</span>`;
 
-  document.getElementById('ce-d-sequence').innerHTML = seqHtml + badge;
+  // Which inbox owns this conversation, stated next to the sequence it belongs
+  // to. Historical ownership: it does not change when quota does.
+  const senderHtml = lead.senderState
+    ? `<div class="sender-field">
+         <span class="sender-field-k">Sending inbox</span>
+         <span class="sender-field-v">${senderChip(lead)}</span>
+         <span class="sender-field-d">${esc(lead.senderEmail || (lead.senderState === 'unknown' ? 'No sender recorded' : ''))}</span>
+         <span class="sender-field-d">${esc(lead.senderStateLabel || '')}</span>
+       </div>`
+    : '';
+  document.getElementById('ce-d-sequence').innerHTML = seqHtml + badge + senderHtml;
 
   // ── Next action ──────────────────────────────────────────────
   const stepNum = parseInt(lead.emailStep || '0');

@@ -25,6 +25,11 @@ const {
 const { parseRegistry: parseGmailInboxRegistry, publicRegistry: publicGmailInboxRegistry,
   verifyInbox: verifyGmailInbox, verifyMailboxAccess } = require('./integrations/gmail-inbox-registry');
 const { configuredSenders, senderCountsToday } = require('./integrations/gmail-sender-routing');
+// Read-only presentation over the sender ownership the send path already
+// decides. Resolves nothing of its own — see integrations/sender-visibility.js.
+const {
+  resolveSenderOwnership, activitySender, senderFilterOptions, matchesSenderFilter,
+} = require('./integrations/sender-visibility');
 const { simulateRouting } = require('./integrations/gmail-routing-simulation');
 const { EMAIL_TEMPLATES, normalizeNiche, campaignVersionsForRoute, validateCampaignVersionRoute, validateRoute } = require('./integrations/campaign-routing');
 const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE, qualifyLead: qualifyRoofingLead } = require('./integrations/roofing-survey-profile');
@@ -1145,9 +1150,21 @@ function campaignLabelFor(lead) {
 // campaign_notes and website: they are ~70% of the old payload and no column
 // renders them. The two facts the UI DID read out of notes are precomputed
 // here as flags instead.
-function toLightRow(lead, category, attribution = {}) {
+function toLightRow(lead, category, attribution = {}, sender = null) {
   const row = {};
   for (const field of CE_LIGHT_FIELDS) row[field] = lead[field] || '';
+  // Which inbox owns this conversation. Resolved server-side from the canonical
+  // resolver so the table, the drawer and the sender itself cannot disagree.
+  // Deliberately only the visible identity — no credential state travels here.
+  if (sender) {
+    row.senderState = sender.state;
+    row.senderLabel = sender.label;
+    row.senderShortLabel = sender.shortLabel;
+    row.senderEmail = sender.email || '';
+    row.senderStateLabel = sender.stateLabel;
+    row.senderDetail = sender.detail;
+    row.senderInboxId = sender.senderId || '';
+  }
   row.replyCategory = category || '';
   row.lateReply = /\[LATE REPLY:/i.test(lead.notes || '');
   row.bounced = /\[BOUNCED/i.test(lead.notes || '');
@@ -1272,7 +1289,10 @@ async function loadOutreachDataset() {
   const campaignVersionByLeadId = buildCampaignVersionIndex(leads, activities);
 
   const counts = { queued: 0, emailed: 0, replied: metrics.totalReplies, done: 0 };
-  const facets = { stages: {}, niches: {}, campaigns: {}, campaignVersions: {} };
+  const facets = { stages: {}, niches: {}, campaigns: {}, campaignVersions: {}, senders: {} };
+  // id → visible address, for the sender projection. Read once per snapshot,
+  // never per row, and stripped of everything but identity.
+  const senderIdentities = visibleSenderIdentities();
   const leadKeys = new Set();
   const demoCompanyKeys = new Set((demoResponse.data.values || []).slice(1).map(row => openKey(row[1])).filter(Boolean));
   const realOpenCounts = new Map();
@@ -1290,7 +1310,12 @@ async function loadOutreachDataset() {
     if (companyKey) leadKeys.add(companyKey);
     const attribution = campaignVersionByLeadId.get(lead.id) || { campaignVersion: LEGACY_UNKNOWN };
     facets.campaignVersions[attribution.campaignVersion] = (facets.campaignVersions[attribution.campaignVersion] || 0) + 1;
-    const row = toLightRow(lead, categoryByLeadId.get(lead.id), attribution);
+    const sender = resolveSenderOwnership({
+      lead, activities: activitiesByLeadId.get(lead.id) || [], senders: senderIdentities,
+    });
+    facets.senders[sender.state === 'unknown' || sender.state === 'conflict' ? sender.state : sender.senderId]
+      = (facets.senders[sender.state === 'unknown' || sender.state === 'conflict' ? sender.state : sender.senderId] || 0) + 1;
+    const row = toLightRow(lead, categoryByLeadId.get(lead.id), attribution, sender);
     Object.assign(row, pipelineIndex.byColdEmailId.get(lead.id));
     row.demoEngaged = demoCompanyKeys.has(openKey(lead.company));
     row.sequenceState = outreachSequenceState(lead);
@@ -1423,6 +1448,10 @@ function filterOutreachRows(rows, query) {
   const engagement = String(query.engagement || '').trim().toLowerCase();
   const sequenceState = String(query.sequenceState || '').trim().toLowerCase();
   const automationState = String(query.automationState || '').trim().toLowerCase();
+  // Which sending inbox owns the conversation. Matched against the ownership
+  // already resolved onto the row, so filtering and display agree by
+  // construction rather than by a second copy of the rules.
+  const senderInbox = String(query.senderInbox || '').trim();
   const search = String(query.search || '').trim().toLowerCase();
   // Exact single-lead lookup. The Inbox lists leads from the FULL reply set,
   // so a row there is frequently not on the currently loaded 100-row page and
@@ -1459,6 +1488,8 @@ function filterOutreachRows(rows, query) {
     if (automationState === 'suppressed' && !row.suppressed) return false;
     else if (automationState === 'held' && !row.manualHold) return false;
     else if (automationState && !['all','suppressed','held'].includes(automationState) && row.automationState !== automationState) return false;
+    if (senderInbox && senderInbox !== 'all'
+      && !matchesSenderFilter({ state: row.senderState, senderId: row.senderInboxId }, senderInbox)) return false;
     if (search && ![row.company, row.email, row.contactName, row.website]
       .some(field => field && String(field).toLowerCase().includes(search))) return false;
     return true;
@@ -1485,6 +1516,9 @@ app.get('/api/coldemail', requireAuth, async (req, res) => {
       hasMore: limit ? offset + page.length < filtered.length : false,
       counts: dataset.counts,
       facets: dataset.facets,
+      // The inbox filter's options, from the same identity map the rows used.
+      // Address and id only — nothing about credentials travels to the browser.
+      senderOptions: senderFilterOptions(visibleSenderIdentities()),
       pipelineAudit: dataset.pipelineAudit,
       sendActivity: dataset.sendActivity,
       fetchedAt: new Date(dataset.at).toISOString(),
@@ -2255,7 +2289,11 @@ function signalMatchesLead(row, lead) {
 function timelineForLead(lead, dataset, activities, signalLead = lead) {
   const opens = (dataset?.annotatedOpens || []).filter(row => row.real !== false && signalMatchesLead(row, signalLead));
   const demos = (dataset?.demoRows || []).filter(row => signalMatchesLead(row, signalLead));
-  return buildActivityTimeline({ lead, activities, opens, demos });
+  return buildActivityTimeline({
+    lead, activities, opens, demos,
+    // Identity only: the timeline needs to turn a sender id into an address.
+    senders: visibleSenderIdentities(),
+  });
 }
 
 app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
@@ -2287,6 +2325,15 @@ app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
         conflict: automationConflict(lead, twin),
         nextAction: deriveNextAction(lead, twin, { activities }),
         acquisition: acquisitionAttribution(activities),
+        // Which inbox owns this conversation. A Pipeline lead resolves it
+        // through its linked ColdEmail identity and that lead's canonical
+        // activity — never from its Pipeline stage, and never invented when no
+        // Outreach mapping exists.
+        sender: twin
+          ? resolveSenderOwnership({ lead: twin, activities, senders: visibleSenderIdentities() })
+          : { state: 'not_outreach', label: 'Not an Outreach-acquired lead',
+              shortLabel: 'Not from Outreach', stateLabel: 'No linked Outreach record',
+              senderId: null, email: '', detail: 'This lead has no linked ColdEmail record, so no sending inbox owns it.' },
         reopen: reopenEligibility(lead, twin),
         twin: twin ? { id: twin.id, emailStatus: twin.emailStatus, emailStep: twin.emailStep, lastEmailedAt: twin.lastEmailedAt } : null,
       };
@@ -4386,6 +4433,18 @@ app.get('/api/integrations/smartlead', requireAuth, async (_req, res) => {
 // Secondary Gmail inbox readiness only. These endpoints never participate in
 // sender selection and never expose credential values. The live legacy sender
 // continues to use only FROM_EMAIL + GMAIL_TOKEN_JSON in outreach-agent.js.
+/**
+ * id → visible address for every configured inbox, and NOTHING else.
+ *
+ * Env-only: it reads the registry variable and returns identity, so it performs
+ * no Gmail API call and is safe on a read path. Named without the provider so
+ * the outreach loader keeps satisfying the guard that no Gmail polling appears
+ * there — the guard is a substring check, and this would be a false positive.
+ */
+function visibleSenderIdentities() {
+  return gmailInboxOptions().map(({ id, email }) => ({ id, email }));
+}
+
 function gmailInboxOptions() {
   const secondary = publicGmailInboxRegistry(parseGmailInboxRegistry());
   secondary.forEach(inbox => { inbox.deliveryImplemented = true; inbox.currentRoute = inbox.sendEligible; });

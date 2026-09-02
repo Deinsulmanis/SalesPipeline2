@@ -29,12 +29,44 @@ function allowedForLead(sender, lead = {}) {
   return sender.id === 'primary' && sender.sendEligible;
 }
 
+// The canonical activity events that carry immutable sender attribution. Named
+// so the read-only visibility layer reads the SAME list this resolver does and
+// the two cannot drift; the membership itself is unchanged.
+const SENDER_ATTRIBUTED_EVENTS = Object.freeze([
+  'initial_email_sent', 'follow_up_sent', 'sequence_step_sent',
+  'booking_link_sent', 'human_response_sent',
+]);
+
+function activityBelongsToLead(row, lead) {
+  return String(row.sourceLeadId || '') === String(lead.id || '')
+    || String(row.leadId || '') === `CE-${lead.id}`;
+}
+
 function senderEvidence(lead = {}, activities = []) {
   const ids = new Set();
   if (lead.senderInboxId && (Number(lead.emailStep || 0) > 0 || String(lead.emailStatus || '').trim())) ids.add(String(lead.senderInboxId).trim());
   for (const row of activities) {
-    if (!['initial_email_sent','follow_up_sent','sequence_step_sent','booking_link_sent','human_response_sent'].includes(String(row.eventType || ''))) continue;
-    if (String(row.sourceLeadId || '') !== String(lead.id || '') && String(row.leadId || '') !== `CE-${lead.id}`) continue;
+    if (!SENDER_ATTRIBUTED_EVENTS.includes(String(row.eventType || ''))) continue;
+    if (!activityBelongsToLead(row, lead)) continue;
+    const id = String(parseMetadata(row.metadata).senderInboxId || '').trim();
+    if (id) ids.add(id);
+  }
+  return [...ids];
+}
+
+/**
+ * The sender ids proven by an actual delivered message, as opposed to the
+ * assignment persisted on the lead row before anything was sent.
+ *
+ * Read-only, and deliberately separate from senderEvidence(): the send path's
+ * behaviour depends on the union, while the UI needs to tell an operator
+ * whether a sender is a recorded fact or still only an intention.
+ */
+function sentSenderEvidence(lead = {}, activities = []) {
+  const ids = new Set();
+  for (const row of activities) {
+    if (!SENDER_ATTRIBUTED_EVENTS.includes(String(row.eventType || ''))) continue;
+    if (!activityBelongsToLead(row, lead)) continue;
     const id = String(parseMetadata(row.metadata).senderInboxId || '').trim();
     if (id) ids.add(id);
   }
@@ -75,4 +107,7 @@ function senderCountsToday(activities = [], dayKey) {
   return counts;
 }
 
-module.exports = { configuredSenders, allowedForLead, senderEvidence, pinnedSenderId, chooseSender, senderCountsToday };
+module.exports = {
+  configuredSenders, allowedForLead, senderEvidence, sentSenderEvidence,
+  SENDER_ATTRIBUTED_EVENTS, pinnedSenderId, chooseSender, senderCountsToday,
+};

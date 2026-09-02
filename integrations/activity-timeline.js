@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const { analyticsCategoryFor, ANALYTICS_CATEGORY } = require('./reply-analytics');
 const { displayStageFor } = require('./cold-call-pipeline');
+const { activitySender } = require('./sender-visibility');
 
 const REPLY_TYPES = new Set([
   'positive_reply', 'meeting_requested', 'late_reply', 'question_reply',
@@ -176,14 +177,32 @@ function eventPresentation(row, metadata, context = {}) {
   }
 }
 
+// Outbound events whose sender is worth naming. A reply or a stage change has
+// no sending inbox, so no subline is offered for one.
+const SENDER_VISIBLE_EVENTS = new Set([
+  'initial_email_sent', 'follow_up_sent', 'sequence_step_sent',
+  'booking_link_sent', 'human_response_sent',
+]);
+
 function normalizeStoredActivity(row, index = 0, context = {}) {
   const metadata = parseMetadata(row.metadata);
   const type = String(row.eventType || 'activity');
   const occurredAt = validTime(row.occurredAt);
   const id = String(row.eventId || '').trim() || stableId('activity', [row.leadId, row.sourceLeadId, type, row.occurredAt, row.subject, row.content, index]);
   const presentation = eventPresentation(row, metadata, context);
+  // "Sent from deins@tryscalelabai.ca". Present only when the event itself
+  // stored the attribution — historical sender is never reconstructed, because
+  // for a message sent before the field existed the only honest answer is that
+  // we do not know which mailbox it left from.
+  const sender = SENDER_VISIBLE_EVENTS.has(type)
+    ? activitySender(row, context.senders || [])
+    : null;
   return {
     id, leadId: String(row.leadId || row.sourceLeadId || ''), type,
+    sender: sender ? { senderId: sender.senderId, email: sender.email, label: sender.label, role: sender.role } : null,
+    senderNote: SENDER_VISIBLE_EVENTS.has(type)
+      ? (sender ? `Sent from ${sender.label}` : 'Sender unavailable for legacy event')
+      : '',
     occurredAt, source: SOURCE_BY_TYPE[type] || 'CRM',
     title: presentation.title, summary: presentation.summary || '',
     subject: String(row.subject || ''), content: String(row.content || ''), metadata,
@@ -218,7 +237,7 @@ function sortTimeline(events) {
   });
 }
 
-function buildActivityTimeline({ lead = {}, activities = [], opens = [], demos = [] } = {}) {
+function buildActivityTimeline({ lead = {}, activities = [], opens = [], demos = [], senders = [] } = {}) {
   const seen = new Set();
   const events = [];
   for (const [index, row] of activities.entries()) {
@@ -226,8 +245,10 @@ function buildActivityTimeline({ lead = {}, activities = [], opens = [], demos =
     // event ever corresponded to a real one. Passed only when the lead actually
     // HAS a stage: displayStageFor('') defaults to follow_up, and an absent
     // stage is missing evidence, not evidence that the lead is open.
-    const event = normalizeStoredActivity(row, index,
-      lead.stage ? { stage: displayStageFor(lead.stage) } : {});
+    const event = normalizeStoredActivity(row, index, {
+      ...(lead.stage ? { stage: displayStageFor(lead.stage) } : {}),
+      senders,
+    });
     if (seen.has(event.id)) continue;
     seen.add(event.id);
     events.push(event);
