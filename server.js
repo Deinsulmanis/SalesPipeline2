@@ -360,6 +360,7 @@ app.get('/engaged', (req, res) => {
 // Set DASHBOARD_USER and DASHBOARD_PASSWORD in .env / Railway env vars.
 function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
+  if (req.path === '/api/internal/gmail-readiness' && readinessTokenAuthorized(header)) return next();
   const b64    = header.startsWith('Basic ') ? header.slice(6) : '';
   const [user, pass] = Buffer.from(b64, 'base64').toString().split(':');
   if (user === process.env.DASHBOARD_USER && pass === process.env.DASHBOARD_PASSWORD) {
@@ -367,6 +368,13 @@ function requireAuth(req, res, next) {
   }
   res.setHeader('WWW-Authenticate', 'Basic realm="ScaleLab Pipeline"');
   res.status(401).send('Unauthorized');
+}
+
+function readinessTokenAuthorized(header) {
+  const expected = String(process.env.GMAIL_READINESS_TOKEN || '');
+  const supplied = String(header || '').replace(/^Bearer\s+/i, '');
+  return Boolean(expected && supplied && expected.length === supplied.length
+    && crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(supplied)));
 }
 app.use(requireAuth);
 app.use(express.static(path.join(__dirname, 'public')));
@@ -4076,12 +4084,7 @@ app.post('/api/integrations/gmail-inboxes/:id/verify', requireAuth, async (req, 
 // Token-protected, read-only production diagnostic. It cannot send or mutate
 // Gmail data and never returns OAuth credentials or message metadata.
 app.get('/api/internal/gmail-readiness', async (req, res) => {
-  const expectedToken = String(process.env.GMAIL_READINESS_TOKEN || '');
-  const suppliedToken = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-  const authorized = expectedToken && suppliedToken
-    && expectedToken.length === suppliedToken.length
-    && crypto.timingSafeEqual(Buffer.from(expectedToken), Buffer.from(suppliedToken));
-  if (!authorized) return res.status(401).json({ error: 'Unauthorized' });
+  if (!readinessTokenAuthorized(req.headers.authorization)) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const primaryAuth = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET, process.env.GOOGLE_REDIRECT_URI,
