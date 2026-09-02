@@ -180,8 +180,9 @@ test('a queued lead already mailed by hand is refused by the provider-backed pro
   assert.match(agent, /if \(probe !== 'clear'\) \{/);
   assert.match(agent, /cannot verify prior sends to \$\{lead\.email\} — failing closed/);
   // And the ownership gate runs BEFORE the probe, so both apply.
-  assert.ok(agent.indexOf('const gate = coldSendGate(lead, ownershipContext);')
-    < agent.indexOf('const probe = await withAuth(() => stepOneAlreadySent(lead));'));
+  const newSend = agent.indexOf('// ── New sends (step 1)');
+  assert.ok(agent.indexOf('const gate = coldSendGate(lead, ownershipContext);', newSend)
+    < agent.indexOf('const probe = await stepOneAlreadySent(lead, selectedSender);', newSend));
 });
 
 // ── Agent-loop wiring ───────────────────────────────────────────────────────

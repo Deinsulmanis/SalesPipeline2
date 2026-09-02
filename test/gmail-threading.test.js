@@ -68,6 +68,7 @@ test('ordinary follow-up send paths use real Gmail reply headers and no independ
   const agent = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
   const ordinary = agent.slice(agent.indexOf('async function attemptFollowUp'), agent.indexOf("console.log(`\\nDone."));
   assert.match(ordinary, /resolveColdFollowUpThread/);
+  assert.match(ordinary, /expectedSenderId: selectedSender\.id/);
   assert.match(ordinary, /threadId: thread\.threadId, inReplyTo: thread\.inReplyTo, references: thread\.references/g);
   assert.doesNotMatch(ordinary, /Re: a quick demo I built|Last note —/);
   assert.match(agent, /runReplyCheckPass\(all[\s\S]*runHumanOutboundPass|runHumanOutboundPass[\s\S]*selectFollowUps/);

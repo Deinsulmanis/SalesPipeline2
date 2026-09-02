@@ -24,6 +24,8 @@ const {
 } = require('./integrations/reply-analytics');
 const { parseRegistry: parseGmailInboxRegistry, publicRegistry: publicGmailInboxRegistry,
   verifyInbox: verifyGmailInbox, verifyMailboxAccess } = require('./integrations/gmail-inbox-registry');
+const { configuredSenders, senderCountsToday } = require('./integrations/gmail-sender-routing');
+const { simulateRouting } = require('./integrations/gmail-routing-simulation');
 const { EMAIL_TEMPLATES, normalizeNiche, campaignVersionsForRoute, validateCampaignVersionRoute, validateRoute } = require('./integrations/campaign-routing');
 const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE, qualifyLead: qualifyRoofingLead } = require('./integrations/roofing-survey-profile');
 const {
@@ -360,7 +362,7 @@ app.get('/engaged', (req, res) => {
 // Set DASHBOARD_USER and DASHBOARD_PASSWORD in .env / Railway env vars.
 function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
-  if (req.path === '/api/internal/gmail-readiness' && readinessTokenAuthorized(header)) return next();
+  if (req.path.startsWith('/api/internal/gmail-') && readinessTokenAuthorized(header)) return next();
   const b64    = header.startsWith('Basic ') ? header.slice(6) : '';
   const [user, pass] = Buffer.from(b64, 'base64').toString().split(':');
   if (user === process.env.DASHBOARD_USER && pass === process.env.DASHBOARD_PASSWORD) {
@@ -4044,10 +4046,10 @@ app.get('/api/integrations/smartlead', requireAuth, async (_req, res) => {
 // continues to use only FROM_EMAIL + GMAIL_TOKEN_JSON in outreach-agent.js.
 function gmailInboxOptions() {
   const secondary = publicGmailInboxRegistry(parseGmailInboxRegistry());
-  secondary.forEach(inbox => { inbox.deliveryImplemented = false; });
+  secondary.forEach(inbox => { inbox.deliveryImplemented = true; inbox.currentRoute = inbox.sendEligible; });
   const primary = {
       id: 'primary', email: process.env.FROM_EMAIL || 'Current Gmail inbox', status: 'active',
-      dailyLimit: Number(process.env.DAILY_SEND_LIMIT || 40), credentialConfigured: Boolean(process.env.GMAIL_TOKEN_JSON),
+      dailyLimit: Number(process.env.GMAIL_PRIMARY_DAILY_LIMIT || process.env.DAILY_SEND_LIMIT || 40), credentialConfigured: Boolean(process.env.GMAIL_TOKEN_JSON),
       identityVerified: true, sendEligible: Boolean(process.env.GMAIL_TOKEN_JSON), currentRoute: true,
       deliveryImplemented: true,
   };
@@ -4100,6 +4102,37 @@ app.get('/api/internal/gmail-readiness', async (req, res) => {
   } catch (error) {
     res.status(422).json({ ok: false, error: error.message });
   }
+});
+
+app.get('/api/internal/gmail-routing-simulation', async (req, res) => {
+  if (!readinessTokenAuthorized(req.headers.authorization)) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const [rows, activities, suppression] = await Promise.all([
+      readColdEmailDashboardRows(), readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER),
+      readIntegrationRows(SUPPRESSION_SHEET, SUPPRESSION_HEADER).catch(() => []),
+    ]);
+    const leads = rows.slice(1).map(row => Object.fromEntries(CE_COLUMNS.map((field,index)=>[field,row[index]||''])));
+    const proposedSenders = configuredSenders().map(sender => sender.id === 'primary'
+      ? { ...sender, dailyLimit: 20, sendEligible: sender.credentialConfigured }
+      : { ...sender, status: 'active', dailyLimit: 20, sendEligible: sender.credentialConfigured });
+    const dayKey = new Date().toLocaleDateString('en-CA',{timeZone:'America/Vancouver'});
+    const simulation = simulateRouting({ leads, activities,
+      suppressedEmails:new Set(suppression.map(row=>String(row.email||'').toLowerCase())),
+      senders:proposedSenders, sendsToday:senderCountsToday(activities,dayKey) });
+    const dataset = await getOutreachDataset({ force:true });
+    const suppressedEmails = await loadSuppressedEmails();
+    const funnel = buildFunnelAnalytics({ leads:dataset.leads, boardLeads:dataset.boardLeads,
+      activities:dataset.activities, replyRecords:dataset.replyRecords,
+      currentVersion:ACTIVE_CAMPAIGN_VERSION.dental_ai_receptionist },{version:'lifetime'});
+    const health = buildCrmHealth({ leads:dataset.leads, boardLeads:dataset.boardLeads,
+      activities:dataset.activities, replyRecords:dataset.replyRecords,
+      suppressionReason:lead=>sendSuppressionReason(lead,{suppressedEmails}),
+      sequencesEnabled:process.env.STAGE_SEQUENCES_ENABLED==='true', calendarSyncEnabled:CALENDAR_SYNC_ENABLED,
+      bookingCalendarId:BOOKING_CALENDAR_ID, appointmentScheduleId:BOOKING_APPOINTMENT_SCHEDULE_ID,
+      calendarSyncState:null, canonicalReplyBoundary:process.env.CANONICAL_REPLY_BOUNDARY||null, funnel });
+    const critical=health.findings.filter(item=>String(item.severity).toLowerCase()==='critical');
+    res.json({ ok:true, simulation, crmHealth:{criticalCount:critical.length,criticalIds:critical.map(item=>item.id)} });
+  } catch(error){res.status(422).json({ok:false,error:error.message});}
 });
 
 app.put('/api/integrations/smartlead/campaigns/:internalCampaignId', requireAuth, async (req, res) => {

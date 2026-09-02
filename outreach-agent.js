@@ -82,6 +82,8 @@ const {
 } = require('./integrations/campaign-versions');
 const { findOriginalSentThread, resolveColdFollowUpThread } = require('./integrations/gmail-threading');
 const { oldestDueFirst, followUpSuccessTarget } = require('./integrations/scheduler-fairness');
+const { credentialsFor: gmailCredentialsFor, parseRegistry: parseGmailRegistry } = require('./integrations/gmail-inbox-registry');
+const { configuredSenders, chooseSender, senderCountsToday } = require('./integrations/gmail-sender-routing');
 const {
   assembleFinalEmail,
   splitPersonalization,
@@ -377,6 +379,27 @@ async function withAuth(fn) {
 
 const sheets = () => google.sheets({ version: 'v4', auth: oauth2Client });
 const gmail  = () => google.gmail({ version: 'v1', auth: oauth2Client });
+const GMAIL_SENDERS = configuredSenders();
+const PRIMARY_GMAIL_SENDER = GMAIL_SENDERS.find(sender => sender.id === 'primary');
+const secondaryAuthById = new Map();
+function authForSender(sender = PRIMARY_GMAIL_SENDER) {
+  if (sender.id === 'primary') { loadToken(); return oauth2Client; }
+  if (secondaryAuthById.has(sender.id)) return secondaryAuthById.get(sender.id);
+  const entry = parseGmailRegistry().find(item => item.id === sender.id);
+  if (!entry) throw new Error(`Gmail sender ${sender.id} is not registered`);
+  const auth = new google.auth.OAuth2(process.env.GMAIL_SECONDARY_GOOGLE_CLIENT_ID,
+    process.env.GMAIL_SECONDARY_GOOGLE_CLIENT_SECRET, process.env.GMAIL_SECONDARY_GOOGLE_REDIRECT_URI);
+  auth.setCredentials(gmailCredentialsFor(entry));
+  secondaryAuthById.set(sender.id, auth);
+  return auth;
+}
+const gmailForSender = sender => google.gmail({ version: 'v1', auth: authForSender(sender) });
+function senderForPersistedLead(lead) {
+  const id = String(lead?.senderInboxId || 'primary').trim() || 'primary';
+  const sender = GMAIL_SENDERS.find(item => item.id === id);
+  if (!sender?.sendEligible) throw new Error(`persisted sender ${id} is not delivery eligible`);
+  return sender;
+}
 
 // ── FOLLOW-UP SEQUENCE (Phase 3) ──────────────────────────────────────────────
 // Index 0 = step-2 template (3 days after initial send)
@@ -1005,9 +1028,9 @@ function encodeHeaderValue(value) {
 }
 
 // RFC-822 message → base64url for the Gmail API
-function toRawMessage({ to, subject, body, inReplyTo, references }) {
+function toRawMessage({ to, subject, body, inReplyTo, references, fromEmail = FROM_EMAIL }) {
   const headers = [
-    `From: ${FROM_NAME} <${FROM_EMAIL}>`,
+    `From: ${FROM_NAME} <${fromEmail}>`,
     `To: ${to}`,
     `Subject: ${encodeHeaderValue(subject)}`,
     'MIME-Version: 1.0',
@@ -1021,10 +1044,11 @@ function toRawMessage({ to, subject, body, inReplyTo, references }) {
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-async function sendEmail({ to, subject, body, threadId, inReplyTo, references }) {
-  const provider = new GmailOutreachProvider({ send: message => gmail().users.messages.send({
+async function sendEmail({ to, subject, body, threadId, inReplyTo, references, sender = PRIMARY_GMAIL_SENDER }) {
+  if (!sender?.sendEligible) throw new Error(`Gmail sender ${sender?.id || 'unknown'} is not delivery eligible`);
+  const provider = new GmailOutreachProvider({ send: message => gmailForSender(sender).users.messages.send({
     userId: 'me',
-    requestBody: { raw: toRawMessage(message), ...(message.threadId ? { threadId: message.threadId } : {}) },
+    requestBody: { raw: toRawMessage({ ...message, fromEmail: sender.email }), ...(message.threadId ? { threadId: message.threadId } : {}) },
   }) });
   return provider.sendEmail({ to, subject, body, threadId, inReplyTo, references });
 }
@@ -1104,11 +1128,11 @@ async function enqueueSmartleadLead(lead, mapping) {
 // Fails CLOSED in the send direction: 'unverifiable' (query error) means we
 // cannot rule out a duplicate — the caller must refuse to send. A skipped
 // send costs nothing; a duplicate is permanent.
-async function stepOneAlreadySent(lead) {
+async function stepOneAlreadySent(lead, sender = PRIMARY_GMAIL_SENDER) {
   try {
     const safeEmail = lead.email.trim().replace(/^[^a-zA-Z0-9]+/, '');
     if (!safeEmail || !safeEmail.includes('@')) return 'unverifiable';
-    const resp = await gmail().users.messages.list({
+    const resp = await gmailForSender(sender).users.messages.list({
       userId: 'me',
       q: `in:sent to:"${safeEmail}" newer_than:7d`,
       maxResults: 1,
@@ -1203,26 +1227,28 @@ async function getReplyMessage(lead) {
     const safeEmail = lead.email.trim().replace(/^[^a-zA-Z0-9]+/, '');
     if (!safeEmail || !safeEmail.includes('@')) return null;
 
+    const sender = senderForPersistedLead(lead);
+    const mailbox = gmailForSender(sender);
     const candidates = new Map();   // message id → full message resource
 
     // ── Net 1: thread of our most recent sent message to this address ──
-    const sentResp = await gmail().users.messages.list({
+    const sentResp = await mailbox.users.messages.list({
       userId: 'me',
       q: `in:sent to:"${safeEmail}"`,
       maxResults: 1,
     });
     const sent = sentResp.data.messages || [];
     if (sent.length) {
-      const sentMsg  = await gmail().users.messages.get({ userId: 'me', id: sent[0].id, format: 'minimal' });
+      const sentMsg  = await mailbox.users.messages.get({ userId: 'me', id: sent[0].id, format: 'minimal' });
       const threadId = sentMsg.data.threadId;
       if (threadId) {
-        const thread = await gmail().users.threads.get({ userId: 'me', id: threadId, format: 'full' });
+        const thread = await mailbox.users.threads.get({ userId: 'me', id: threadId, format: 'full' });
         for (const m of thread.data.messages || []) candidates.set(m.id, m);
       }
     }
 
     // ── Net 2: anything the contacted address sent us after our last send ──
-    const directResp = await gmail().users.messages.list({
+    const directResp = await mailbox.users.messages.list({
       userId: 'me',
       q: `from:"${safeEmail}" after:${afterSec}`,
       maxResults: 5,
@@ -1230,14 +1256,14 @@ async function getReplyMessage(lead) {
     });
     for (const stub of directResp.data.messages || []) {
       if (candidates.has(stub.id)) continue;
-      const full = await gmail().users.messages.get({ userId: 'me', id: stub.id, format: 'full' });
+      const full = await mailbox.users.messages.get({ userId: 'me', id: stub.id, format: 'full' });
       candidates.set(stub.id, full.data);
     }
 
     if (!candidates.size) return null;
 
     // ── Shared inbound filter over the union; newest wins ──
-    const ourAddr = (FROM_EMAIL || '').trim().toLowerCase();
+    const ourAddr = sender.email;
     let best = null;
     for (const m of candidates.values()) {
       const internalMs = parseInt(m.internalDate || '0', 10);
@@ -1258,6 +1284,7 @@ async function getReplyMessage(lead) {
       messageId: best.msg.id, rfcMessageId, threadId: best.msg.threadId || '', snippet, body,
       subject: headerValue(best.msg.payload, 'Subject'),
       fromAddr: best.fromAddr, occurredAt: new Date(best.ms).toISOString(),
+      senderInboxId: sender.id,
     };
   } catch (e) {
     console.warn(`[ReplyCheck] API error for ${lead.email}: ${e.message}`);
@@ -1476,7 +1503,9 @@ async function recordSendActivity(lead, step, sendMeta, sentAt) {
   // Callers build this before provider delivery. Unknown/missing active
   // versions therefore fail before send rather than silently becoming legacy.
   const attribution = sendMeta && sendMeta.attribution;
+  const senderInboxId = String(sendMeta?.sender?.id || lead.senderInboxId || 'primary').trim();
   if (!attribution || !attribution.campaignVersion) throw new Error('successful send is missing campaign attribution');
+  if (!senderInboxId) throw new Error('successful send is missing sender attribution');
   await recordColdCallActivity({
     eventId: messageId ? `gmail:${messageId}` : `${lead.id}:step${step}:${sentAt}`,
     leadId: `CE-${lead.id}`,
@@ -1490,6 +1519,7 @@ async function recordSendActivity(lead, step, sendMeta, sentAt) {
     metadata: JSON.stringify({
       step: Number(step), trigger: isInitial ? 'cold_sequence_step_1' : 'cold_sequence_follow_up',
       gmailMessageId: messageId, gmailThreadId: threadId,
+      provider: 'gmail', providerMessageId: messageId, senderInboxId,
       templateId: lead.emailTemplateId || '', campaign: lead.campaign || '',
       personalization: (sendMeta && sendMeta.personalizationMetadata) || null,
       ...attribution,
@@ -1536,6 +1566,7 @@ async function markSent(lead, step, sendMeta = null) {
           data: [
             { range: `${SHEET_NAME}!H${rowNum}`,            values: [[stageValue]] },
             { range: `${SHEET_NAME}!I${rowNum}:K${rowNum}`, values: [[status, now, String(step)]] },
+            ...(sendMeta?.sender?.id ? [{ range: `${SHEET_NAME}!U${rowNum}`, values: [[sendMeta.sender.id]] }] : []),
           ],
         },
       });
@@ -1862,7 +1893,7 @@ async function queueDraft(lead, answer) {
 
 // A genuine question. Answer it from the facts if we're confident; otherwise
 // draft it for Deins. Either way the lead is tagged so the dashboard shows it.
-async function handleQuestion(lead, replyText, todaySent, activities = [], outboundObservationOk = true) {
+async function handleQuestion(lead, replyText, todaySent, activities = [], outboundObservationOk = true, sender = senderForPersistedLead(lead)) {
   const rowNum = await resolveRow(lead.id);
   const answer = await answerQuestion(lead, replyText);
 
@@ -1937,7 +1968,7 @@ async function handleQuestion(lead, replyText, todaySent, activities = [], outbo
   const attribution = stageSequenceAttribution({
     acquisition: latestSendAttribution(activities), sequenceId: 'question_auto_answer_v1', step: 1,
   });
-  const result = await sendEmail({ to: lead.email.trim(), subject, body });
+  const result = await sendEmail({ to: lead.email.trim(), subject, body, sender });
   const sentAt = new Date().toISOString();
   await recordColdCallActivity({
     eventId: result?.data?.id ? `gmail:${result.data.id}` : `${lead.id}:question-auto-answer:${sentAt}`,
@@ -1946,6 +1977,7 @@ async function handleQuestion(lead, replyText, todaySent, activities = [], outbo
     occurredAt: sentAt, subject, content: body,
     metadata: JSON.stringify({
       gmailMessageId: result?.data?.id || '', gmailThreadId: result?.data?.threadId || '',
+      provider: 'gmail', providerMessageId: result?.data?.id || '', senderInboxId: sender.id,
       trigger: 'question_auto_answer', ...attribution,
     }),
   });
@@ -2007,6 +2039,7 @@ async function markRoofingReplyState(lead, stage, status, tag) {
 }
 
 async function handleRoofingSurveyReply(lead, message, replyText, todaySent, activities = [], outboundObservationOk = true) {
+  const sender = GMAIL_SENDERS.find(item => item.id === String(message.senderInboxId || lead.senderInboxId || 'primary')) || PRIMARY_GMAIL_SENDER;
   if (!ROOFING_SURVEY_REPLY_FLOW_ENABLED) {
     await handleNeedsHuman(lead, message.fromAddr);
     return 'flow_disabled';
@@ -2029,6 +2062,7 @@ async function handleRoofingSurveyReply(lead, message, replyText, todaySent, act
       classification: classification.category, reasonCode: classification.reason_code,
       campaignProfile: ROOFING_SURVEY_PROFILE, gmailMessageId: message.messageId || '',
       gmailThreadId: message.threadId || '', rfcMessageId: message.rfcMessageId || '', detectedAfterSequence: false,
+      provider: 'gmail', senderInboxId: sender.id,
       requiresHumanAttention: classification.requires_human_review === true,
     }),
   });
@@ -2064,7 +2098,7 @@ async function handleRoofingSurveyReply(lead, message, replyText, todaySent, act
     const attribution = stageSequenceAttribution({
       acquisition: latestSendAttribution(activities), sequenceId: 'roofing_survey_reply_v1', step: 1,
     });
-    const result = await sendEmail({ to: lead.email.trim(), subject: 'Re: quick roofing question', body, threadId: message.threadId, inReplyTo: message.rfcMessageId, references: message.rfcMessageId });
+    const result = await sendEmail({ to: lead.email.trim(), subject: 'Re: quick roofing question', body, threadId: message.threadId, inReplyTo: message.rfcMessageId, references: message.rfcMessageId, sender });
     const sentAt = new Date().toISOString();
     await recordColdCallActivity({
       eventId: result?.data?.id ? `gmail:${result.data.id}` : `${lead.id}:roofing-survey-reply:${sentAt}`,
@@ -2073,6 +2107,7 @@ async function handleRoofingSurveyReply(lead, message, replyText, todaySent, act
       occurredAt: sentAt, subject: 'Re: quick roofing question', content: body,
       metadata: JSON.stringify({
         gmailMessageId: result?.data?.id || '', gmailThreadId: result?.data?.threadId || message.threadId || '',
+        provider: 'gmail', providerMessageId: result?.data?.id || '', senderInboxId: sender.id,
         trigger: 'roofing_survey_reply', campaignProfile: ROOFING_SURVEY_PROFILE, ...attribution,
       }),
     });
@@ -2138,7 +2173,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
           // A genuine question is answered from product-facts.js when we're
           // confident, otherwise drafted for review. Both paths append the
           // warm booking snippet. todaySent enforces the touch cap.
-          case 'QUESTION':       return handleQuestion(lead, replyText, replyPassTodaySent, attributionActivities, outboundObservationOk);
+          case 'QUESTION':       return handleQuestion(lead, replyText, replyPassTodaySent, attributionActivities, outboundObservationOk, senderForPersistedLead(lead));
           case 'INTERESTED':     return handleInterested(lead, message, replyText, 'positive_reply', leads, attributionActivities);
           case 'MEETING_REQUEST': return handleInterested(lead, message, replyText, 'meeting_requested', leads, attributionActivities);
           case 'NOT_INTERESTED': return handleNotInterested(lead);
@@ -2290,6 +2325,8 @@ async function checkForBounce(lead) {
     const safeEmail = lead.email.trim().replace(/^[^a-zA-Z0-9]+/, '');
     if (!safeEmail || !safeEmail.includes('@')) return false;
     const lowerEmail = safeEmail.toLowerCase();
+    const sender = senderForPersistedLead(lead);
+    const mailbox = gmailForSender(sender);
 
     // Two nets, unioned by message id:
     //   subject net — known NDR subjects from any sender;
@@ -2301,13 +2338,13 @@ async function checkForBounce(lead) {
     // and messages.list excludes Spam/Trash by default (verified 2026-07-16).
     const subjectQuery = BOUNCE_SUBJECTS.map(s => `"${s}"`).join(' OR ');
     const [bySubject, bySender] = await Promise.all([
-      gmail().users.messages.list({
+      mailbox.users.messages.list({
         userId:     'me',
         q:          `after:${afterSec} "${safeEmail}" subject:(${subjectQuery})`,
         maxResults: 5,
         includeSpamTrash: true,
       }),
-      gmail().users.messages.list({
+      mailbox.users.messages.list({
         userId:     'me',
         q:          `from:(mailer-daemon OR postmaster) "${safeEmail}" after:${afterSec}`,
         maxResults: 5,
@@ -2321,7 +2358,7 @@ async function checkForBounce(lead) {
     if (!ids.size) return false;
 
     for (const id of ids) {
-      const full = await gmail().users.messages.get({ userId: 'me', id, format: 'full' });
+      const full = await mailbox.users.messages.get({ userId: 'me', id, format: 'full' });
       // All text parts, including message/delivery-status — some NDRs carry the
       // failed address only in the machine-readable part.
       const body = extractAllText(full.data.payload).toLowerCase();
@@ -2523,11 +2560,12 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null) {
 
     try {
       const company = cleanCompanyName(lead.company) || 'your business';
+      const sender = senderForPersistedLead(lead);
       const personalization = buildDentalPersonalization({ ...lead, company }, { siteText: lead.siteContext || '' });
       const currentSubject = buildDentalSubject({ lead, company, personalization }).subject;
       const legacySubject = coldSubjectFor(lead, company);
       const thread = await findOriginalSentThread({
-        gmail: gmail(), email: lead.email.trim(), expectedSubjects: [currentSubject, legacySubject],
+        gmail: gmailForSender(sender), email: lead.email.trim(), expectedSubjects: [currentSubject, legacySubject],
       });
       if (!thread) {
         console.warn(`  ⏸️  intent email deferred → ${lead.email} (original Gmail thread could not be verified)`);
@@ -2535,6 +2573,7 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null) {
       }
       await sendEmail({
         to: lead.email.trim(), subject: thread.subject, body,
+        sender,
         threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references,
       });
       const intentSentAt = new Date().toISOString();
@@ -2579,7 +2618,7 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null) {
         eventType: 'initial_email_sent',
         occurredAt: thread.internalDate ? new Date(thread.internalDate).toISOString() : '',
         subject: thread.subject, content: thread.content || '',
-        metadata: JSON.stringify({ gmailThreadId: thread.threadId, campaignVersion: LEGACY_UNKNOWN }),
+        metadata: JSON.stringify({ gmailThreadId: thread.threadId, senderInboxId: sender.id, provider: 'gmail', campaignVersion: LEGACY_UNKNOWN }),
       });
       await recordColdCallActivity({
         leadId: timelineLeadId, sourceLeadId: lead.id, email: lead.email,
@@ -2593,7 +2632,7 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null) {
         eventType: 'booking_link_sent', occurredAt: intentSentAt,
         subject: thread.subject, content: body,
         metadata: JSON.stringify({
-          gmailThreadId: thread.threadId, trigger: 'both_audios',
+          gmailThreadId: thread.threadId, senderInboxId: sender.id, provider: 'gmail', trigger: 'both_audios',
           ...stageSequenceAttribution({ acquisition: influence, sequenceId: 'demo_booking_link_v1', step: 1 }),
         }),
       });
@@ -2746,7 +2785,15 @@ const HUMAN_OUTBOUND_LOOKBACK_DAYS = parseInt(process.env.HUMAN_OUTBOUND_LOOKBAC
  * unaffected: a stale mailbox is a reason not to SEND, not a reason to stop
  * observing.
  */
-async function runHumanOutboundPass(leads, activitiesForCycle) {
+async function runHumanOutboundPass(leads, activitiesForCycle, sender = null) {
+  if (!sender) {
+    const results = [];
+    for (const mailbox of GMAIL_SENDERS.filter(item => item.sendEligible)) {
+      results.push({ senderInboxId: mailbox.id, ...(await runHumanOutboundPass(leads, activitiesForCycle, mailbox)) });
+    }
+    return { ok: results.every(item => item.ok), written: results.reduce((n, item) => n + (item.written || 0), 0), senders: results };
+  }
+  const mailbox = gmailForSender(sender);
   const leadsByEmail = new Map();
   for (const lead of leads) {
     const email = String(lead.email || '').trim().toLowerCase();
@@ -2762,7 +2809,10 @@ async function runHumanOutboundPass(leads, activitiesForCycle) {
     bucket.push(row);
     existingActivitiesByLead.set(key, bucket);
     try {
-      const threadId = JSON.parse(row.metadata || '{}').gmailThreadId;
+      const metadata = JSON.parse(row.metadata || '{}');
+      const rowSender = String(metadata.senderInboxId || 'primary');
+      if (rowSender !== sender.id) continue;
+      const threadId = metadata.gmailThreadId;
       if (threadId && byId.has(key) && !leadIdByThread.has(threadId)) leadIdByThread.set(threadId, byId.get(key));
     } catch (_) { /* malformed metadata is health's problem, not this pass's */ }
   }
@@ -2774,12 +2824,12 @@ async function runHumanOutboundPass(leads, activitiesForCycle) {
     .filter(Boolean);
 
   try {
-    const listed = await gmail().users.messages.list({
+    const listed = await mailbox.users.messages.list({
       userId: 'me', q: `in:sent newer_than:${HUMAN_OUTBOUND_LOOKBACK_DAYS}d`, maxResults: 200,
     });
     const messages = [];
     for (const stub of (listed.data.messages || [])) {
-      const full = await gmail().users.messages.get({
+      const full = await mailbox.users.messages.get({
         userId: 'me', id: stub.id, format: 'metadata',
         metadataHeaders: ['To', 'Cc', 'Subject', 'Date'],
       });
@@ -2802,7 +2852,7 @@ async function runHumanOutboundPass(leads, activitiesForCycle) {
     }
     for (const threadId of candidateThreads) {
       try {
-        const thread = await gmail().users.threads.get({
+        const thread = await mailbox.users.threads.get({
           userId: 'me', id: threadId, format: 'metadata', metadataHeaders: ['From'],
         });
         const hasInbound = (thread.data.messages || []).some(m => {
@@ -2818,6 +2868,7 @@ async function runHumanOutboundPass(leads, activitiesForCycle) {
     });
     const toWrite = report.plans.filter(plan => plan.outcome === 'proposed');
     for (const plan of toWrite) {
+      plan.activity.metadata = { ...plan.activity.metadata, provider: 'gmail', senderInboxId: sender.id };
       await recordColdCallActivity({
         ...plan.activity, metadata: JSON.stringify(plan.activity.metadata),
       });
@@ -2827,7 +2878,7 @@ async function runHumanOutboundPass(leads, activitiesForCycle) {
       existingActivitiesByLead.set(plan.leadId, bucket);
       (activitiesForCycle || []).push({ ...plan.activity, metadata: JSON.stringify(plan.activity.metadata) });
     }
-    console.log(`[HumanOutbound] ${messages.length} sent message(s) in ${HUMAN_OUTBOUND_LOOKBACK_DAYS}d · `
+    console.log(`[HumanOutbound:${sender.id}] ${messages.length} sent message(s) in ${HUMAN_OUTBOUND_LOOKBACK_DAYS}d · `
       + `${toWrite.length} new human response(s) recorded · ${JSON.stringify(report.byOutcome)}`);
     return { ok: true, written: toWrite.length, inspected: messages.length };
   } catch (error) {
@@ -2887,10 +2938,6 @@ function selectQueued(leads) {
       console.warn(`🧭 [routing] skipping queued lead ${l.email} (${l.company || l.id}) — ${routing.reason}`);
       return false;
     }
-    if (!routing.legacy && l.senderInboxId !== 'primary') {
-      console.warn(`🧭 [routing] skipping queued lead ${l.email} (${l.company || l.id}) — assigned inbox routing is not active`);
-      return false;
-    }
     // Global suppression list (durable, survives row deletion / re-import) —
     // first-line exclusion; suppressionReason() is the last-line guard at send.
     if (SUPPRESSED_EMAILS.has(normEmail(l.email))) {
@@ -2912,7 +2959,7 @@ function selectQueued(leads) {
 
 function routedLeadCanUseCurrentSender(lead) {
   const routing = routedLeadReady(lead);
-  return routing.ok && (routing.legacy || lead.senderInboxId === 'primary');
+  return routing.ok;
 }
 
 // Phase 3: find leads that are due for a follow-up step.
@@ -3052,8 +3099,10 @@ async function runStageSequencePass(allLeads, { outboundObservationOk = true } =
     });
 
     try {
+      const sender = twin ? senderForPersistedLead(twin) : PRIMARY_GMAIL_SENDER;
       const result = await sendEmail({
         to: boardLead.email.trim(), subject: built.subject, body: built.body,
+        sender,
         ...(built.replyToThread ? {
           threadId: built.threadId,
           inReplyTo: built.inReplyTo || undefined,
@@ -3074,6 +3123,7 @@ async function runStageSequencePass(allLeads, { outboundObservationOk = true } =
           // Structured so Step 12 can attach copy/subject version attribution.
           sequenceVersion: verdict.sequenceId.split('_').pop(),
           providerMessageId: (result && result.messageId) || '',
+          provider: 'gmail', senderInboxId: sender.id,
           // Recorded so the next step can chain onto this message too.
           gmailThreadId: (result && result.threadId) || built.threadId || '',
           rfcMessageId: (result && result.rfcMessageId) || '',
@@ -3156,6 +3206,8 @@ async function run() {
     withAuth(readColdCallActivities).catch(() => []),
   ]);
   const outbound = await withAuth(() => runHumanOutboundPass(all, ownershipActivities));
+  const senderDayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+  const sendsBySender = senderCountsToday(ownershipActivities, senderDayKey);
 
   // Reply-check pass — unconditional; runs even when cap is reached.
   // Mutates emailStatus on replied leads so selectFollowUps excludes them below.
@@ -3217,9 +3269,9 @@ async function run() {
   }
 
   // Fairness is measured in successful provider sends, never candidates. A
-  // five-send batch scans oldest-due follow-ups until four actually succeed,
-  // then gives initials their reserved position. Refused candidates consume no
-  // allocation, and either pool may refill unused capacity.
+  // normal five-send batch first scans oldest-due follow-ups until four have
+  // actually succeeded, then gives initials their reserved position. Refused
+  // candidates consume no allocation, and either pool may refill unused space.
   const newBatch    = queued;
   const followBatch = followUps;
   const totalCandidates = newBatch.length + followBatch.length;
@@ -3233,7 +3285,7 @@ async function run() {
   let followUpSent = 0;
   let followUpIndex = 0;
 
-  // ── Fair follow-up allocation ─────────────────────────────────────────────
+  // ── Follow-ups (steps 2 & 3) ──────────────────────────────────────────────
   async function attemptFollowUp(lead) {
     const suppressed = suppressionReason(lead);
     if (suppressed) {
@@ -3245,14 +3297,20 @@ async function run() {
       console.error(`🚫 [OWNERSHIP] refusing follow-up send → ${lead.email} — ${gate.verdict.reason}`);
       return false;
     }
+
     const currentStep = parseInt(lead.emailStep, 10);
     const nextStepNum = currentStep + 1;
     const template = FOLLOW_UP_SEQUENCE[currentStep - 1];
     const body = template.body(lead);
     const preview = body.split('\n')[2] || '';
+    let senderChoice;
+    try { senderChoice = chooseSender({ lead, activities: ownershipActivities, senders: GMAIL_SENDERS, sendsToday: sendsBySender, step: nextStepNum }); }
+    catch (error) { console.warn(`⏸️  follow-up deferred → ${lead.email} (${error.message})`); return false; }
+    if (!senderChoice.sender) { console.warn(`⏸️  follow-up deferred → ${lead.email} (${senderChoice.reason})`); return false; }
+    const selectedSender = senderChoice.sender;
     let thread;
     try {
-      thread = await withAuth(() => resolveColdFollowUpThread({ gmail: gmail(), lead, activities: ownershipActivities }));
+      thread = await resolveColdFollowUpThread({ gmail: gmailForSender(selectedSender), lead, activities: ownershipActivities, expectedSenderId: selectedSender.id });
     } catch (error) {
       console.warn(`⏸️  follow-up deferred → ${lead.email} (Gmail thread verification failed: ${error.message})`);
       return false;
@@ -3262,36 +3320,48 @@ async function run() {
       return false;
     }
     const subject = thread.subject;
+
     if (DRY_RUN) {
+      const fupPitchTier = lead.tier === 'busy' ? 'busy' : 'medium';
       const rawCo = lead.company || '';
       const cleanCo = cleanCompanyName(rawCo);
       console.log(`— WOULD SEND (step ${nextStepNum}) →  ${lead.email}  (${rawCo || lead.first || lead.id})`);
       if (rawCo && rawCo !== cleanCo) console.log(`   Company: "${rawCo}" → "${cleanCo}"`);
-      console.log(`   Pitch:   ${lead.tier === 'busy' ? 'busy' : 'medium'}`);
+      console.log(`   Pitch:   ${fupPitchTier}`);
       console.log(`   Subject: ${subject}`);
       console.log(`   Preview: ${preview}`);
       console.log(`   Link:    ${buildProposalLink(lead)}\n`);
       return false;
     }
+
     if (!SENDING_ENABLED) {
       console.log(`⛔ [kill-switch] would send (step ${nextStepNum}) → ${lead.email}  (${cleanCompanyName(lead.company) || lead.id})`);
+      console.log(`   Subject: ${subject}`);
       return false;
     }
+
     try {
       const attribution = coldSendAttribution(lead, nextStepNum);
       const sendResult = await sendEmail({
         to: lead.email.trim(), subject, body,
+        sender: selectedSender,
         threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references,
       });
-      sent++; followUpSent++;
-      await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject, body, attribution }));
+      sent++;
+      followUpSent++;
+      sendsBySender.set(selectedSender.id, (sendsBySender.get(selectedSender.id) || 0) + 1);
+      await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject, body, attribution, sender: selectedSender }));
       console.log(`✅ Sent (step ${nextStepNum}) → ${lead.email}  (${sent}/${effectiveCap})`);
       return true;
     } catch (e) {
       console.error(`❌ Failed (step ${nextStepNum}) → ${lead.email}: ${e.message}`);
       return false;
     } finally {
-      if (sent < effectiveCap) { const d = jitter(); console.log(`   …waiting ${Math.round(d / 1000)}s\n`); await sleep(d); }
+      if (sent < effectiveCap) {
+        const d = jitter();
+        console.log(`   …waiting ${Math.round(d / 1000)}s\n`);
+        await sleep(d);
+      }
     }
   }
 
@@ -3301,7 +3371,8 @@ async function run() {
     }
   }
 
-  await fillFollowUps(followUpSuccessTarget(effectiveCap));
+  const guaranteedFollowUpTarget = followUpSuccessTarget(effectiveCap);
+  await fillFollowUps(guaranteedFollowUpTarget);
 
   // ── New sends (step 1) ────────────────────────────────────────────────────
   for (const lead of newBatch) {
@@ -3319,7 +3390,12 @@ async function run() {
 
     // Step-1 idempotency probe (see stepOneAlreadySent). Runs in every mode so
     // dry-run and gated reports show exactly what a live run would skip.
-    const probe = await withAuth(() => stepOneAlreadySent(lead));
+    let senderChoice;
+    try { senderChoice = chooseSender({ lead, activities: ownershipActivities, senders: GMAIL_SENDERS, sendsToday: sendsBySender, step: 1 }); }
+    catch (error) { console.warn(`⏸️  sender routing refused → ${lead.email} (${error.message})`); continue; }
+    if (!senderChoice.sender) { console.warn(`⏸️  sender routing deferred → ${lead.email} (${senderChoice.reason})`); continue; }
+    const selectedSender = senderChoice.sender;
+    const probe = await stepOneAlreadySent(lead, selectedSender);
     if (probe !== 'clear') {
       if (probe === 'found') {
         console.warn(`⏭️  [probe] step-1 already sent to ${lead.email} within 7d — skipping (sent-but-unrecorded, or duplicate row for this address)`);
@@ -3420,10 +3496,12 @@ async function run() {
 
     try {
       const attribution = coldSendAttribution(lead, 1, { personalizationMetadata: validatedPersonalizationMetadata });
-      const sendResult = await sendEmail({ to: lead.email.trim(), subject, body });
+      const sendResult = await sendEmail({ to: lead.email.trim(), subject, body, sender: selectedSender });
       sent++;
+      sendsBySender.set(selectedSender.id, (sendsBySender.get(selectedSender.id) || 0) + 1);
       await withAuth(() => markSent(lead, 1, {
         result: sendResult, subject, body,
+        sender: selectedSender,
         personalizationMetadata: validatedPersonalizationMetadata,
         attribution,
       }));
@@ -3439,7 +3517,7 @@ async function run() {
     }
   }
 
-  // ── Follow-ups (steps 2 & 3) ──────────────────────────────────────────────
+  // ── Follow-up refill (when initials leave successful-send space) ──────────
   for (; followUpIndex < followBatch.length; followUpIndex++) {
     const lead = followBatch[followUpIndex];
     if (sent >= effectiveCap) break;
@@ -3459,9 +3537,14 @@ async function run() {
     const template    = FOLLOW_UP_SEQUENCE[currentStep - 1];
     const body        = template.body(lead);
     const preview     = body.split('\n')[2] || '';
+    let senderChoice;
+    try { senderChoice = chooseSender({ lead, activities: ownershipActivities, senders: GMAIL_SENDERS, sendsToday: sendsBySender, step: nextStepNum }); }
+    catch (error) { console.warn(`⏸️  follow-up deferred → ${lead.email} (${error.message})`); continue; }
+    if (!senderChoice.sender) { console.warn(`⏸️  follow-up deferred → ${lead.email} (${senderChoice.reason})`); continue; }
+    const selectedSender = senderChoice.sender;
     let thread;
     try {
-      thread = await withAuth(() => resolveColdFollowUpThread({ gmail: gmail(), lead, activities: ownershipActivities }));
+      thread = await resolveColdFollowUpThread({ gmail: gmailForSender(selectedSender), lead, activities: ownershipActivities, expectedSenderId: selectedSender.id });
     } catch (error) {
       console.warn(`⏸️  follow-up deferred → ${lead.email} (Gmail thread verification failed: ${error.message})`);
       continue;
@@ -3495,10 +3578,12 @@ async function run() {
       const attribution = coldSendAttribution(lead, nextStepNum);
       const sendResult = await sendEmail({
         to: lead.email.trim(), subject, body,
+        sender: selectedSender,
         threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references,
       });
       sent++;
-      await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject, body, attribution }));
+      sendsBySender.set(selectedSender.id, (sendsBySender.get(selectedSender.id) || 0) + 1);
+      await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject, body, attribution, sender: selectedSender }));
       console.log(`✅ Sent (step ${nextStepNum}) → ${lead.email}  (${sent}/${effectiveCap})`);
     } catch (e) {
       console.error(`❌ Failed (step ${nextStepNum}) → ${lead.email}: ${e.message}`);

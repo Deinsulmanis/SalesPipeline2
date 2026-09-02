@@ -374,9 +374,9 @@ test('a future send without a registered attribution is rejected', async () => {
 
 test('activity is recorded only after a real send and a successful write', () => {
   // A provider success consumes capacity before bookkeeping, preventing a
-  // write failure from refilling the slot and causing a sixth real send.
-  const sends = agentSrc.match(/const sendResult = await sendEmail\(\{[^}]*\}\);\s*\n\s*sent\+\+(?:; followUpSent\+\+)?;\s*\n\s*await withAuth\(\(\) => markSent\(/g) || [];
-  assert.equal(sends.length, 3, 'expected 3 provider-send->count->markSent paths, found ' + sends.length);
+  // write failure from refilling the slot and causing an extra real send.
+  const sends = agentSrc.match(/const sendResult = await sendEmail\(\{[^}]*\}\);[\s\S]{0,180}?sent\+\+;[\s\S]{0,220}?await withAuth\(\(\) => markSent\(/g) || [];
+  assert.equal(sends.length, 3, 'expected 3 sender-attributed provider-send->count->markSent paths, found ' + sends.length);
   // ...and the record happens after the batchUpdate, inside the try, before return
   const markSentBody = grabFn(agentSrc, 'markSent');
   const writeAt = markSentBody.indexOf('batchUpdate');

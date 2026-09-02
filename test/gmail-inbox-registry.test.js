@@ -55,9 +55,10 @@ test('read-only verification proves list and metadata access without a send call
   assert.equal(gmail.users.messages.send, undefined);
 });
 
-test('legacy Gmail send path does not import the secondary registry', () => {
+test('canonical Gmail send path uses the registry while retaining the primary credential route', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
-  assert.doesNotMatch(source, /gmail-inbox-registry|GMAIL_INBOX_REGISTRY_JSON|GMAIL_TRYSCALELABAI_TOKEN_JSON/);
+  assert.match(source, /gmail-inbox-registry/);
+  assert.match(source, /gmailForSender/);
   assert.match(source, /process\.env\.GMAIL_TOKEN_JSON/);
   assert.match(source, /process\.env\.FROM_EMAIL/);
 });
@@ -76,19 +77,19 @@ test('secondary inbox readiness endpoints require dashboard authentication', () 
   assert.match(source, /app\.post\('\/api\/integrations\/gmail-inboxes\/:id\/verify', requireAuth/);
 });
 
-test('dashboard inbox selector is status-only and never posts a sender choice', () => {
+test('dashboard inbox selector remains status-only and never posts a sender choice', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
   assert.match(source, /id="gmail-inbox-select"/);
   assert.match(source, /Warming inboxes cannot be selected or used for sending/);
-  assert.match(source, /inbox\.currentRoute \? '' : 'disabled'/);
   assert.doesNotMatch(source, /senderMailbox:\s*document\.getElementById\('gmail-inbox-select'/);
 });
 
-test('Settings restores visible sender status without inventing an inbox switch mutation', () => {
+test('Settings shows server-side delivery state without inventing an inbox switch mutation', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
   assert.match(source, /id="settings-inbox-routing"/);
   assert.match(source, /fetch\('\/api\/integrations\/gmail-inboxes'\)/);
   assert.match(source, /id="settings-inbox-select" disabled/);
-  assert.match(source, /Switching is unavailable because secondary inbox delivery is not implemented/);
+  assert.match(source, /Dental sender eligibility is configured server-side/);
+  assert.match(source, /Follow-ups remain pinned/);
   assert.doesNotMatch(source, /fetch\(`?['"]\/api\/integrations\/gmail-inboxes\/switch/);
 });

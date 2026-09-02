@@ -146,7 +146,7 @@ test('duplicate canonical CTA blocks final validation', () => {
 
 test('the production step-one path validates before its provider send', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
-  const stepOne = source.slice(source.indexOf('// ── New sends (step 1)'), source.indexOf('// ── Follow-ups (steps 2 & 3)'));
+  const stepOne = source.slice(source.indexOf('// ── New sends (step 1)'), source.indexOf('// ── Follow-up refill'));
   assert.ok(stepOne.indexOf('validateColdEmail') < stepOne.indexOf('await sendEmail'));
   assert.match(stepOne, /if \(invalid\)[\s\S]*?continue;/);
 });

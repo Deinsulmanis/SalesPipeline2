@@ -39,7 +39,7 @@ function normalizeMailbox(value) {
   return String(match ? match[1] : value || '').trim().toLowerCase();
 }
 
-async function resolveColdFollowUpThread({ gmail, lead = {}, activities = [] } = {}) {
+async function resolveColdFollowUpThread({ gmail, lead = {}, activities = [], expectedSenderId = '' } = {}) {
   const leadId = String(lead.id || '').trim();
   const email = normalizeMailbox(lead.email);
   if (!gmail || !leadId || !email) return null;
@@ -52,6 +52,8 @@ async function resolveColdFollowUpThread({ gmail, lead = {}, activities = [] } =
 
   const evidence = mine.map(row => ({ row, metadata: parseMetadata(row.metadata) }))
     .filter(item => item.metadata.gmailMessageId && item.metadata.gmailThreadId);
+  const senderIds = [...new Set(evidence.map(item => String(item.metadata.senderInboxId || 'primary').trim()).filter(Boolean))];
+  if (senderIds.length !== 1 || (expectedSenderId && senderIds[0] !== expectedSenderId)) return null;
   const threadIds = [...new Set(evidence.map(item => String(item.metadata.gmailThreadId).trim()).filter(Boolean))];
   if (!evidence.length || threadIds.length !== 1) return null;
   const threadId = threadIds[0];
@@ -77,6 +79,7 @@ async function resolveColdFollowUpThread({ gmail, lead = {}, activities = [] } =
     references: appendReference(headerValue(message.payload, 'References'), messageId),
     subject: `Re: ${originalSubject}`,
     originalSubject,
+    ...(expectedSenderId ? { senderInboxId: senderIds[0] } : {}),
   };
 }
 

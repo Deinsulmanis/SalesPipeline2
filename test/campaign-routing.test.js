@@ -29,11 +29,12 @@ test('legacy leads retain behavior while newly routed leads fail closed', () => 
   assert.equal(routedLeadReady({ routingRequired: 'true', leadNiche: 'dental', senderInboxId: 'primary', emailTemplateId: 'dental-guarantee-v1' }).ok, true);
 });
 
-test('agent guards initial and follow-up selection without changing legacy sender credentials', () => {
+test('agent guards initial and follow-up selection through canonical sender routing', () => {
   const agent = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
   assert.match(agent, /routedLeadReady\(l\)/);
   assert.match(agent, /routedLeadCanUseCurrentSender\(l\)/);
-  assert.match(agent, /lead\.senderInboxId === 'primary'/);
+  assert.match(agent, /chooseSender\(/);
+  assert.match(agent, /expectedSenderId: selectedSender\.id/);
   assert.match(agent, /process\.env\.GMAIL_TOKEN_JSON/);
 });
 

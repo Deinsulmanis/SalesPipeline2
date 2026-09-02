@@ -9,8 +9,9 @@ function followUpDueAt(lead, sequence) {
 }
 
 function oldestDueFirst(leads, sequence) {
-  return [...leads].sort((a, b) => followUpDueAt(a, sequence) - followUpDueAt(b, sequence)
-    || String(a.id || '').localeCompare(String(b.id || '')));
+  return [...leads].sort((a, b) =>
+    followUpDueAt(a, sequence) - followUpDueAt(b, sequence)
+      || String(a.id || '').localeCompare(String(b.id || '')));
 }
 
 function followUpSuccessTarget(cap) {
@@ -18,19 +19,28 @@ function followUpSuccessTarget(cap) {
 }
 
 async function simulateFairBatch({ initials, followUps, cap = 5, attemptInitial, attemptFollowUp }) {
-  let sent = 0, followUpSent = 0, followUpIndex = 0;
+  let sent = 0;
+  let followUpSent = 0;
+  let followUpIndex = 0;
   const events = [];
-  while (followUpIndex < followUps.length && sent < cap && followUpSent < followUpSuccessTarget(cap)) {
+  const target = followUpSuccessTarget(cap);
+  while (followUpIndex < followUps.length && sent < cap && followUpSent < target) {
     const candidate = followUps[followUpIndex++];
-    if (await attemptFollowUp(candidate)) { sent++; followUpSent++; events.push(['follow-up', candidate.id]); }
+    if (await attemptFollowUp(candidate)) {
+      sent++; followUpSent++; events.push(['follow-up', candidate.id]);
+    }
   }
   for (const candidate of initials) {
     if (sent >= cap) break;
-    if (await attemptInitial(candidate)) { sent++; events.push(['initial', candidate.id]); }
+    if (await attemptInitial(candidate)) {
+      sent++; events.push(['initial', candidate.id]);
+    }
   }
   while (followUpIndex < followUps.length && sent < cap) {
     const candidate = followUps[followUpIndex++];
-    if (await attemptFollowUp(candidate)) { sent++; followUpSent++; events.push(['follow-up', candidate.id]); }
+    if (await attemptFollowUp(candidate)) {
+      sent++; followUpSent++; events.push(['follow-up', candidate.id]);
+    }
   }
   return { sent, followUpSent, initialSent: sent - followUpSent, events };
 }

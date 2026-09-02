@@ -186,8 +186,8 @@ test('the four Outreach endpoints share one snapshot instead of re-reading', () 
     assert.match(handler(route), /getOutreachDataset\(/, `${route} uses the shared snapshot`);
   }
   // ColdEmail is fetched in exactly one place now.
-  assert.equal((server.match(/readColdEmailDashboardRows\(\)/g) || []).length, 2,
-    'defined once, called once');
+  assert.equal((server.match(/readColdEmailDashboardRows\(\)/g) || []).length, 3,
+    'defined once, called by the shared snapshot and protected routing simulation');
 });
 
 // ── 13–15. Cache behaviour ──────────────────────────────────────────────────
