@@ -694,7 +694,7 @@ async function recordColdCallActivityStrict(record) {
 async function readBoardLeads() {
   try {
     const response = await sheets().spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A:X`,
+      spreadsheetId: SPREADSHEET_ID, range: LEADS_RANGE,
     });
     const rows = response.data.values || [];
     const header = ['id', 'type', 'first', 'last', 'brokerage', 'tradeType', 'company',
@@ -2563,6 +2563,13 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null) {
         { trigger: PROMOTION_TRIGGER.VERIFIED_DEMO_PAIR, verifiedDemoPair: true, bookingLinkSent: true,
           coldEmailTwinCount: coldEmailTwinCount(allLeads, lead.email) },
       );
+      // The selectors below operate on this in-memory snapshot. Keep it in
+      // sync so a booking-link send cannot be followed by an ordinary cold
+      // follow-up later in the same agent pass. The durable ownership record
+      // is the canonical Pipeline card above; later passes read that board
+      // rather than writing the legacy ColdEmail Promoted stage.
+      lead.stage = 'Promoted';
+      lead.lastEmailedAt = intentSentAt;
       const timelineLeadId = coldCallLeadId || `CE-${lead.id}`;
       const play = plays.get(normalizeName(cleanCompanyName(lead.company))) || {};
       await recordColdCallActivity({
