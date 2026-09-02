@@ -4094,7 +4094,7 @@ app.get('/api/internal/gmail-readiness', async (req, res) => {
     primaryAuth.setCredentials(JSON.parse(process.env.GMAIL_TOKEN_JSON || '{}'));
     const primary = await verifyMailboxAccess({
       gmail: google.gmail({ version: 'v1', auth: primaryAuth }), expectedEmail: process.env.FROM_EMAIL,
-      result: { id: 'primary', status: 'active', dailyLimit: Number(process.env.DAILY_SEND_LIMIT || 40), credentialConfigured: true },
+      result: { id: 'primary', status: 'active', dailyLimit: Number(process.env.GMAIL_PRIMARY_DAILY_LIMIT || process.env.DAILY_SEND_LIMIT || 40), credentialConfigured: true },
     });
     const secondary = [];
     for (const entry of parseGmailInboxRegistry()) secondary.push(await verifyGmailInbox(entry));
