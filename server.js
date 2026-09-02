@@ -22,7 +22,8 @@ const {
   buildReplyRecords, buildReplyEvidenceMap, filterReplyRecords,
   GENUINE_REPLY_CATEGORIES,
 } = require('./integrations/reply-analytics');
-const { parseRegistry: parseGmailInboxRegistry, publicRegistry: publicGmailInboxRegistry, verifyInbox: verifyGmailInbox } = require('./integrations/gmail-inbox-registry');
+const { parseRegistry: parseGmailInboxRegistry, publicRegistry: publicGmailInboxRegistry,
+  verifyInbox: verifyGmailInbox, verifyMailboxAccess } = require('./integrations/gmail-inbox-registry');
 const { EMAIL_TEMPLATES, normalizeNiche, campaignVersionsForRoute, validateCampaignVersionRoute, validateRoute } = require('./integrations/campaign-routing');
 const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE, qualifyLead: qualifyRoofingLead } = require('./integrations/roofing-survey-profile');
 const {
@@ -4070,6 +4071,32 @@ app.post('/api/integrations/gmail-inboxes/:id/verify', requireAuth, async (req, 
     if (!entry) return res.status(404).json({ error: 'Gmail inbox is not registered' });
     res.json(await verifyGmailInbox(entry));
   } catch (error) { res.status(422).json({ error: error.message }); }
+});
+
+// Token-protected, read-only production diagnostic. It cannot send or mutate
+// Gmail data and never returns OAuth credentials or message metadata.
+app.get('/api/internal/gmail-readiness', async (req, res) => {
+  const expectedToken = String(process.env.GMAIL_READINESS_TOKEN || '');
+  const suppliedToken = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const authorized = expectedToken && suppliedToken
+    && expectedToken.length === suppliedToken.length
+    && crypto.timingSafeEqual(Buffer.from(expectedToken), Buffer.from(suppliedToken));
+  if (!authorized) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const primaryAuth = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET, process.env.GOOGLE_REDIRECT_URI,
+    );
+    primaryAuth.setCredentials(JSON.parse(process.env.GMAIL_TOKEN_JSON || '{}'));
+    const primary = await verifyMailboxAccess({
+      gmail: google.gmail({ version: 'v1', auth: primaryAuth }), expectedEmail: process.env.FROM_EMAIL,
+      result: { id: 'primary', status: 'active', dailyLimit: Number(process.env.DAILY_SEND_LIMIT || 40), credentialConfigured: true },
+    });
+    const secondary = [];
+    for (const entry of parseGmailInboxRegistry()) secondary.push(await verifyGmailInbox(entry));
+    res.json({ ok: true, inboxes: [primary, ...secondary] });
+  } catch (error) {
+    res.status(422).json({ ok: false, error: error.message });
+  }
 });
 
 app.put('/api/integrations/smartlead/campaigns/:internalCampaignId', requireAuth, async (req, res) => {

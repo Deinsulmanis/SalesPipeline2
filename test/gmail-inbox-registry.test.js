@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { parseRegistry, publicRegistry, assertDormant, credentialsFor, verifyInbox } = require('../integrations/gmail-inbox-registry');
+const { parseRegistry, publicRegistry, assertDormant, credentialsFor, verifyInbox, verifyMailboxAccess } = require('../integrations/gmail-inbox-registry');
 
 const raw = JSON.stringify([{ id: 'tryscalelabai', email: 'DEINS@tryscalelabai.ca', status: 'warming', tokenEnv: 'GMAIL_TRYSCALELABAI_TOKEN_JSON', dailyLimit: 0 }]);
 
@@ -36,6 +36,23 @@ test('read-only identity verification rejects the wrong Google account', async (
   const auth = { setCredentials() {} };
   const gmail = { users: { getProfile: async () => ({ data: { emailAddress: 'wrong@example.com' } }) } };
   await assert.rejects(() => verifyInbox(entry, { env, auth, gmail }), /not deins@tryscalelabai.ca/);
+});
+
+test('read-only verification proves list and metadata access without a send call', async () => {
+  let listed = 0; let fetched = 0;
+  const gmail = { users: {
+    getProfile: async () => ({ data: { emailAddress: 'owner@example.com' } }),
+    messages: {
+      list: async () => { listed++; return { data: { messages: [{ id: 'm1' }] } }; },
+      get: async ({ format }) => { fetched++; assert.equal(format, 'metadata'); return { data: {} }; },
+    },
+  } };
+  const result = await verifyMailboxAccess({ gmail, expectedEmail: 'owner@example.com' });
+  assert.equal(result.identityVerified, true);
+  assert.equal(result.messageListAccess, true);
+  assert.equal(result.messageGetAccess, true);
+  assert.equal(listed, 1); assert.equal(fetched, 1);
+  assert.equal(gmail.users.messages.send, undefined);
 });
 
 test('legacy Gmail send path does not import the secondary registry', () => {

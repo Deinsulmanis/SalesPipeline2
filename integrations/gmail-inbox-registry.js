@@ -55,10 +55,29 @@ async function verifyInbox(entry, options = {}) {
   const auth = options.auth || new google.auth.OAuth2(env.GMAIL_SECONDARY_GOOGLE_CLIENT_ID, env.GMAIL_SECONDARY_GOOGLE_CLIENT_SECRET, env.GMAIL_SECONDARY_GOOGLE_REDIRECT_URI);
   auth.setCredentials(credentialsFor(entry, env));
   const gmail = options.gmail || google.gmail({ version: 'v1', auth });
-  const profile = await gmail.users.getProfile({ userId: 'me' });
-  const authenticatedEmail = String(profile.data.emailAddress || '').toLowerCase();
-  if (authenticatedEmail !== entry.email) throw new Error(`Credential belongs to ${authenticatedEmail || 'an unknown account'}, not ${entry.email}`);
-  return { email: entry.email, status: entry.status, dailyLimit: entry.dailyLimit, credentialConfigured: true, identityVerified: true, sendEligible: entry.status === 'active' && entry.dailyLimit > 0 };
+  return verifyMailboxAccess({
+    gmail, expectedEmail: entry.email,
+    result: { status: entry.status, dailyLimit: entry.dailyLimit, credentialConfigured: true,
+      sendEligible: entry.status === 'active' && entry.dailyLimit > 0 },
+  });
 }
 
-module.exports = { parseRegistry, publicRegistry, assertDormant, credentialsFor, verifyInbox };
+async function verifyMailboxAccess({ gmail, expectedEmail, result = {} } = {}) {
+  if (!gmail || !expectedEmail) throw new Error('Gmail client and expected mailbox identity are required');
+  const profile = await gmail.users.getProfile({ userId: 'me' });
+  const authenticatedEmail = String(profile.data.emailAddress || '').trim().toLowerCase();
+  const expected = String(expectedEmail).trim().toLowerCase();
+  if (authenticatedEmail !== expected) throw new Error(`Credential belongs to ${authenticatedEmail || 'an unknown account'}, not ${expected}`);
+  const listed = await gmail.users.messages.list({ userId: 'me', maxResults: 1 });
+  const first = listed.data.messages?.[0];
+  if (first?.id) {
+    await gmail.users.messages.get({ userId: 'me', id: first.id, format: 'metadata', metadataHeaders: ['From', 'To'] });
+  }
+  return {
+    email: expected, authenticated: true, identityVerified: true,
+    messageListAccess: true, messageGetAccess: first?.id ? true : null,
+    ...result,
+  };
+}
+
+module.exports = { parseRegistry, publicRegistry, assertDormant, credentialsFor, verifyInbox, verifyMailboxAccess };
