@@ -172,8 +172,8 @@ test('opens remain passive telemetry and Warm is derived only from demo engageme
 
 test('13. the master view adds one fixed board read, never a per-lead read', () => {
   const loader = server.slice(server.indexOf('async function loadOutreachDataset'), server.indexOf('async function getOutreachDataset'));
-  assert.equal((loader.match(/spreadsheets\.values\.get/g) || []).length, 7, 'seven fixed reads including the board join');
-  assert.match(loader, /readColdEmailDashboardRows\(\)/);
+  assert.equal((loader.match(/spreadsheets\.values\.get/g) || []).length, 0, 'no independent values.get calls');
+  assert.equal((loader.match(/spreadsheets\.values\.batchGet/g) || []).length, 1, 'one fixed batch including the board join');
   // The opens are annotated once and reused rather than recomputed per request.
   assert.match(loader, /const annotatedOpens = annotateOpens\(\{/);
   assert.match(handler('/api/proposalOpens'), /res\.json\(dataset\.annotatedOpens\)/);

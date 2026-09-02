@@ -317,13 +317,14 @@ test('32. canonical ownership reaches the actual provider send gate', () => {
   // The gate must see BOARD and ACTIVITY context, not just the ColdEmail row —
   // otherwise the audit can say "blocked, this lead is promoted" while the
   // runtime sender has no pipeline to look at.
-  assert.match(agent, /const \[ownershipBoard, ownershipActivities\] = await Promise\.all\(/);
+  assert.match(agent, /const ownershipBoard = snapshot\.boardLeads;/);
+  assert.match(agent, /const ownershipActivities = snapshot\.activities;/);
   assert.match(agent, /buildOwnershipContext\(\{/);
   assert.match(agent, /coldSendGate\(lead, ownershipContext\)/);
   // A failed board read fails CLOSED rather than silently weakening the check.
   assert.match(agent, /pipeline context unavailable this pass — failing closed/);
   // Context is built from ONE read each, never per candidate.
-  const sendPass = agent.slice(agent.indexOf('const all = await withAuth(readLeads)'), agent.indexOf('// ── New sends (step 1)'));
+  const sendPass = agent.slice(agent.indexOf('const all = await readLeads(snapshot.coldEmail)'), agent.indexOf('// ── New sends (step 1)'));
   assert.ok(!/for\s*\([^)]*\)\s*\{[^}]*await[^}]*spreadsheets/.test(sendPass), 'no per-candidate sheet read');
   assert.match(agent, /return \{ ownership, verdict: mayColdSend\(ownership\) \};/);
   // Every send loop consults it and refuses on a negative verdict.

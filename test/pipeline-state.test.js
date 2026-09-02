@@ -210,7 +210,7 @@ test('scenario 14b: active reply polling stays isolated from the bounded termina
   // Active polling keeps its original selector. Terminal polling is a separate,
   // once-daily path and therefore cannot re-enter the active automation flow.
   assert.match(agent, /const candidates = leads\.filter\(l => l\.emailStatus === 'emailed' && isValidEmail\(l\.email\)\);/);
-  assert.match(agent, /await runLateReplyCheckPass\(all\);/);
+  assert.match(agent, /await runLateReplyCheckPass\(all, ownershipActivities\);/);
 });
 
 // ── Cross-cutting invariants ────────────────────────────────────────────────

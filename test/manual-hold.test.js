@@ -293,7 +293,7 @@ test('validation and hold run only on a real transition, not on every save', () 
 function sendActivity() {
   const logged = [];
   const { recordSendActivity } = load(agentSrc, ['recordSendActivity'], {
-    recordColdCallActivity: async (r) => { logged.push(r); },
+    recordColdCallActivityStrict: async (r) => { logged.push(r); },
     cleanCompanyName: c => String(c || '').trim(),
   });
   return { recordSendActivity, logged };
@@ -353,11 +353,12 @@ test('later steps are typed as follow_up_sent so initial_email_sent keeps one me
 test('the event id is derived from the Gmail message id, so retries are detectable', async () => {
   const { recordSendActivity, logged } = sendActivity();
   const lead = { id: 'l1', email: 'a@e.test', company: 'C' };
-  const meta = { result: { data: { id: 'msg-abc' } }, subject: 's', attribution: ATTRIBUTION };
+  const activitiesForCycle = [];
+  const meta = { result: { data: { id: 'msg-abc' } }, subject: 's', attribution: ATTRIBUTION, activitiesForCycle };
   await recordSendActivity(lead, 1, meta, '2026-08-25T10:00:00Z');
   await recordSendActivity(lead, 1, meta, '2026-08-25T10:05:00Z'); // simulated double-callback
   assert.equal(logged[0].eventId, 'gmail:msg-abc');
-  assert.equal(logged[0].eventId, logged[1].eventId, 'same send must yield the same stable event id');
+  assert.equal(logged.length, 1, 'same provider send is appended once per cycle');
 });
 
 test('a send with no provider id still records, using a deterministic fallback id', async () => {
@@ -372,20 +373,13 @@ test('a future send without a registered attribution is rejected', async () => {
   await assert.rejects(() => recordSendActivity({ id: 'l1' }, 1, null, '2026-08-25T10:00:00Z'), /missing campaign attribution/);
 });
 
-test('activity is recorded only after a real send and a successful write', () => {
-  // A provider success consumes capacity before bookkeeping, preventing a
-  // write failure from refilling the slot and causing an extra real send.
-  const sends = agentSrc.match(/const sendResult = await sendEmail\(\{[^}]*\}\);[\s\S]{0,180}?sent\+\+;[\s\S]{0,220}?await withAuth\(\(\) => markSent\(/g) || [];
-  assert.equal(sends.length, 3, 'expected 3 sender-attributed provider-send->count->markSent paths, found ' + sends.length);
-  // ...and the record happens after the batchUpdate, inside the try, before return
+test('provider evidence is recorded before mutable lead state', () => {
+  assert.match(agentSrc, /async function deliverOrdinaryColdStep[\s\S]*ordinary_send_reserved[\s\S]*await sendEmail/);
   const markSentBody = grabFn(agentSrc, 'markSent');
   const writeAt = markSentBody.indexOf('batchUpdate');
   const recordAt = markSentBody.indexOf('recordSendActivity');
-  const returnAt = markSentBody.indexOf('return;', writeAt);
-  assert.ok(writeAt !== -1 && recordAt > writeAt, 'record must follow the bookkeeping write');
-  assert.ok(recordAt < returnAt, 'record must run before markSent returns');
-  // a failed send throws before markSent, so nothing is logged
-  assert.match(agentSrc, /catch \(e\) \{\s*\n\s*console\.error\(`❌ Failed/);
+  assert.ok(recordAt !== -1 && writeAt !== -1 && recordAt < writeAt,
+    'durable provider evidence must precede the mutable state write');
 });
 
 test('a failed provider send records no activity', async () => {
@@ -419,7 +413,9 @@ test('every send path is accounted for and gated', () => {
   // the stage feature flag and the existing kill switch. The former
   // open-triggered cold path was deliberately removed because opens are passive.
   const calls = agentSrc.match(/await sendEmail\(/g) || [];
-  assert.equal(calls.length, 7, 'sendEmail call count changed: ' + calls.length);
+  assert.equal(calls.length, 5, 'sendEmail call count changed: ' + calls.length);
+  const ordinary = agentSrc.slice(agentSrc.indexOf('async function deliverOrdinaryColdStep'), agentSrc.indexOf('// Phase 4: mark a lead'));
+  assert.equal((ordinary.match(/await sendEmail\(/g) || []).length, 1, 'ordinary steps send from one recovery-safe path');
 
   const pass = agentSrc.slice(agentSrc.indexOf('async function runStageSequencePass'), agentSrc.indexOf('async function run()'));
   assert.equal((pass.match(/await sendEmail\(/g) || []).length, 1, 'the stage pass sends from one place');

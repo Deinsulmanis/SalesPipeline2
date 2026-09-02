@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express    = require('express');
 const { google } = require('googleapis');
+const { wrapSheetsReadClient } = require('./integrations/google-sheets-resilience');
 const { spawn }  = require('child_process');
 const path       = require('path');
 const cron       = require('node-cron');
@@ -23,6 +24,7 @@ const {
   GENUINE_REPLY_CATEGORIES,
 } = require('./integrations/reply-analytics');
 const { parseRegistry: parseGmailInboxRegistry, publicRegistry: publicGmailInboxRegistry,
+  credentialsFor: gmailInboxCredentialsFor,
   verifyInbox: verifyGmailInbox, verifyMailboxAccess } = require('./integrations/gmail-inbox-registry');
 const { configuredSenders, senderCountsToday, successfulSendCountToday } = require('./integrations/gmail-sender-routing');
 // Read-only presentation over the sender ownership the send path already
@@ -470,7 +472,7 @@ function rangesTouched(params) {
 }
 
 function sheets() {
-  const client = google.sheets({ version: 'v4', auth });
+  const client = wrapSheetsReadClient(google.sheets({ version: 'v4', auth }));
   const values = client.spreadsheets.values;
   for (const method of MUTATING_VALUE_METHODS) {
     const original = values[method].bind(values);
@@ -488,7 +490,10 @@ function sheets() {
 // Compatibility shim — call sites are unchanged; token management is now internal.
 const withAuth = fn => fn();
 
+const integrationSheetsReady = new Set();
+
 async function ensureIntegrationSheet(title, header) {
+  if (integrationSheetsReady.has(title)) return;
   const s = sheets();
   const ss = await s.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
   if (!ss.data.sheets.find(sh => sh.properties.title === title)) {
@@ -501,6 +506,7 @@ async function ensureIntegrationSheet(title, header) {
     for (const field of header) if (!extended.includes(field)) extended.push(field);
     if (extended.length !== existing.length) await s.spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${title}!A1`, valueInputOption: 'RAW', requestBody: { values: [extended] } });
   }
+  integrationSheetsReady.add(title);
 }
 
 function sheetColumn(number) {
@@ -567,9 +573,8 @@ let ceSheetIdCache = null;
 const LOG_CAP    = 300;
 const agentState = { running: false, dryRun: true, startedAt: null, log: [], exitCode: null };
 let   agentChild = null;
+let automationLaunchReserved = false;
 const SCHEDULED_SEND_PER_RUN_CAP = 5;
-const MAX_PENDING_SCHEDULED_SEND_RUNS = 8;
-let pendingScheduledSendRuns = 0;
 
 function agentPushLine(line) {
   agentState.log.push({ ts: new Date().toISOString(), line });
@@ -621,15 +626,6 @@ function startAgentProcess(extraEnv, dryRun) {
     agentState.running  = false;
     agentState.exitCode = code;
     agentChild = null;
-    if (pendingScheduledSendRuns > 0) {
-      pendingScheduledSendRuns--;
-      console.log(`[cron] Running queued outreach send window (${pendingScheduledSendRuns} still queued)`);
-      launchAutomationAfterCalendar('queued outreach send window', () => {
-        if (agentState.running) return false;
-        spawnAgent(false, { DAILY_CAP: String(SCHEDULED_SEND_PER_RUN_CAP) });
-        return true;
-      }).catch(error => console.error('[Calendar safety] queued send window blocked:', error.message));
-    }
   });
 }
 
@@ -677,7 +673,7 @@ async function maybeFireIntent(company) {
 }
 
 function spawnAgentIntentOnly(why) {
-  if (agentState.running) {
+  if (agentState.running || automationLaunchReserved) {
     console.log(`[intent] agent busy — skipping intent spawn (${why}); the cron backstop will retry`);
     return;
   }
@@ -690,7 +686,7 @@ function spawnAgentIntentOnly(why) {
 }
 
 function spawnAgentCheckOnly(extraEnv = {}) {
-  if (agentState.running) {
+  if (agentState.running || automationLaunchReserved) {
     console.log('[cron] Agent already running — skipping check-only pass this tick');
     return;
   }
@@ -1265,19 +1261,35 @@ async function loadOutreachDataset() {
   const rowObjects = (rows, header) => (rows || []).slice(1)
     .map(row => Object.fromEntries(header.map((field, column) => [field, row[column] || ''])));
 
-  // One batch per tab, all in flight together — this is the whole external cost
-  // of an Outreach load.
-  const [ceRows, draftResponse, activityResponse, providerResponse, demoResponse,
-         openResponse, engagedResponse, boardResponse] = await Promise.all([
-    readColdEmailDashboardRows(),
-    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ReplyDrafts!A:L' }).catch(() => ({ data: {} })),
-    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${COLD_CALL_ACTIVITY_SHEET}!A:J` }).catch(() => ({ data: {} })),
-    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A:N` }).catch(() => ({ data: {} })),
-    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A:F' }).catch(() => ({ data: {} })),
-    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ProposalOpens!A:F' }).catch(() => ({ data: {} })),
-    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ProposalEngaged!A:F' }).catch(() => ({ data: {} })),
-    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: AGENT_READ_RANGE }).catch(() => ({ data: {} })),
+  // One values.batchGet request is the whole external read cost of a snapshot.
+  // Parallel values.get calls still count individually against Google's
+  // per-user/minute quota even when they finish together; the old load spent
+  // eight quota units and regularly collided with Calendar + sender runs.
+  const snapshotRanges = [
+    `${CE_SHEET_NAME}!A:O`, `${CE_SHEET_NAME}!Q:X`, 'ReplyDrafts!A:L',
+    `${COLD_CALL_ACTIVITY_SHEET}!A:J`, `${PROVIDER_LEADS_SHEET}!A:N`,
+    'DemoPlays!A:F', 'ProposalOpens!A:F', 'ProposalEngaged!A:F', AGENT_READ_RANGE,
+  ];
+  const snapshot = await sheets().spreadsheets.values.batchGet({
+    spreadsheetId: SPREADSHEET_ID, ranges: snapshotRanges,
+  });
+  const valuesAt = index => snapshot.data.valueRanges?.[index]?.values || [];
+  const left = valuesAt(0);
+  const right = valuesAt(1);
+  const ceLength = Math.max(left.length, right.length);
+  const ceRows = Array.from({ length: ceLength }, (_, index) => [
+    ...Array.from({ length: 15 }, (_value, column) => left[index]?.[column] || ''),
+    '',
+    ...Array.from({ length: 8 }, (_value, column) => right[index]?.[column] || ''),
   ]);
+  const responseAt = index => ({ data: { values: valuesAt(index) } });
+  const draftResponse = responseAt(2);
+  const activityResponse = responseAt(3);
+  const providerResponse = responseAt(4);
+  const demoResponse = responseAt(5);
+  const openResponse = responseAt(6);
+  const engagedResponse = responseAt(7);
+  const boardResponse = responseAt(8);
 
   ceRowMap.clear();
   const leads = ceRows.slice(1).map((row, index) => {
@@ -3059,18 +3071,10 @@ async function planCalendarBookings(events, { dataset, boardLeads, activities })
 
 async function loadBookingContext() {
   const dataset = await getOutreachDataset();
-  const boardResponse = await sheets().spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID, range: AGENT_READ_RANGE,
-  });
-  const boardLeads = (boardResponse.data.values || []).slice(1).map(row => {
-    const lead = {};
-    COLUMNS.forEach((col, i) => { lead[col] = row[i] || ''; });
-    lead.meetingAt = row[20] || '';
-    lead.outcome = row[21] || '';
-    return lead;
-  }).filter(lead => lead.id);
-  const activities = await readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER);
-  return { dataset, boardLeads, activities };
+  // The shared dataset already contains the same authoritative Leads and
+  // ColdCallActivity ranges. Re-reading both here spent two more quota units
+  // per Calendar cycle without improving freshness.
+  return { dataset, boardLeads: dataset.boardLeads, activities: dataset.activities };
 }
 
 /**
@@ -3271,10 +3275,22 @@ async function observeCalendarBeforeAutomation(label = 'automation') {
 }
 
 async function launchAutomationAfterCalendar(label, launch) {
-  const observation = await observeCalendarBeforeAutomation(label);
-  if (!observation.ok) return { launched: false, observation };
-  const launched = launch() !== false;
-  return { launched, observation };
+  // Reserve the single agent slot synchronously, before awaiting Calendar.
+  // Cron callbacks that fire on the same second can otherwise both observe
+  // agentState.running=false, await the same Calendar promise, then spawn two
+  // sender processes. Production logs showed exactly that race at :30.
+  if (agentState.running || automationLaunchReserved) {
+    return { launched: false, busy: true, reason: 'another automation launch is active' };
+  }
+  automationLaunchReserved = true;
+  try {
+    const observation = await observeCalendarBeforeAutomation(label);
+    if (!observation.ok) return { launched: false, observation };
+    const launched = launch() !== false;
+    return { launched, observation };
+  } finally {
+    automationLaunchReserved = false;
+  }
 }
 
 // Read-only preview: what WOULD happen if sync were enabled. Writes nothing —
@@ -4612,6 +4628,125 @@ app.get('/api/integrations/gmail-inboxes', requireAuth, (_req, res) => {
   catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+// On-demand, authenticated reconciliation. It runs in a short-lived process so
+// both Gmail inboxes use the exact same credential registry as the sender. The
+// script is read-only and returns IDs/timestamps/hashes, never message bodies or
+// credentials. It is intentionally not scheduled, so observability adds zero
+// background quota pressure.
+app.get('/api/ops/send-audit', requireAuth, (req, res) => {
+  const date = String(req.query.date || '').trim()
+    || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(422).json({ error: 'date must be YYYY-MM-DD' });
+  const child = spawn('node', ['scripts/audit-gmail-crm-sends.js', `--date=${date}`], {
+    cwd: __dirname, env: process.env,
+  });
+  let stdout = '', stderr = '';
+  const limit = 2 * 1024 * 1024;
+  child.stdout.on('data', chunk => { if (stdout.length < limit) stdout += chunk; });
+  child.stderr.on('data', chunk => { if (stderr.length < limit) stderr += chunk; });
+  const timeout = setTimeout(() => child.kill('SIGTERM'), 60000);
+  child.on('exit', code => {
+    clearTimeout(timeout);
+    if (code !== 0) return res.status(502).json({ error: 'send audit failed', detail: stderr.trim().slice(-1000) });
+    try { return res.json(JSON.parse(stdout)); }
+    catch (_) { return res.status(502).json({ error: 'send audit returned invalid output' }); }
+  });
+});
+
+function operationalMailbox(senderInboxId) {
+  const id = String(senderInboxId || '').trim();
+  if (id === 'primary') {
+    const auth = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET, process.env.GOOGLE_REDIRECT_URI,
+    );
+    auth.setCredentials(JSON.parse(process.env.GMAIL_TOKEN_JSON || '{}'));
+    return { id, email: String(process.env.FROM_EMAIL || '').toLowerCase(), gmail: google.gmail({ version: 'v1', auth }) };
+  }
+  const entry = parseGmailInboxRegistry().find(item => item.id === id);
+  if (!entry) throw new Error(`sender inbox ${id || '(blank)'} is not configured`);
+  const auth = new google.auth.OAuth2(
+    process.env.GMAIL_SECONDARY_GOOGLE_CLIENT_ID,
+    process.env.GMAIL_SECONDARY_GOOGLE_CLIENT_SECRET,
+    process.env.GMAIL_SECONDARY_GOOGLE_REDIRECT_URI,
+  );
+  auth.setCredentials(gmailInboxCredentialsFor(entry));
+  return { id, email: entry.email, gmail: google.gmail({ version: 'v1', auth }) };
+}
+
+// Exact provider-evidence recovery for ordinary steps. This route has no send
+// capability: it can only checkpoint a message already present in SENT, from
+// the selected mailbox, to the exact current lead address.
+app.post('/api/ops/send-recovery', requireAuth, async (req, res) => {
+  try {
+    const leadId = String(req.body?.leadId || '').trim();
+    const providerMessageId = String(req.body?.providerMessageId || '').trim();
+    const senderInboxId = String(req.body?.senderInboxId || '').trim();
+    const step = Number(req.body?.step);
+    if (!leadId || !providerMessageId || !senderInboxId || ![1, 2, 3].includes(step)) {
+      return res.status(422).json({ error: 'leadId, providerMessageId, senderInboxId, and step 1-3 are required' });
+    }
+    const dataset = await getOutreachDataset({ force: true });
+    const matches = dataset.leads.filter(row => row.id === leadId);
+    if (matches.length !== 1) return res.status(409).json({ error: `expected one lead ${leadId}, found ${matches.length}` });
+    const lead = matches[0];
+    const mailbox = operationalMailbox(senderInboxId);
+    const response = await mailbox.gmail.users.messages.get({
+      userId: 'me', id: providerMessageId, format: 'metadata',
+      metadataHeaders: ['From', 'To', 'Cc', 'Subject', 'Message-ID'],
+    });
+    const message = response.data;
+    const header = name => (message.payload?.headers || [])
+      .find(item => String(item.name || '').toLowerCase() === name.toLowerCase())?.value || '';
+    const addresses = value => String(value || '').split(',').map(part => {
+      const match = /<([^>]+)>/.exec(part);
+      return String(match ? match[1] : part).trim().toLowerCase();
+    }).filter(Boolean);
+    const recipients = [...addresses(header('To')), ...addresses(header('Cc'))];
+    const from = addresses(header('From'));
+    if (!(message.labelIds || []).includes('SENT') || !from.includes(mailbox.email)
+      || !recipients.includes(normalizeEmail(lead.email))) {
+      return res.status(409).json({ error: 'Gmail evidence does not prove a SENT message from this mailbox to this lead' });
+    }
+    const occurredAt = Number(message.internalDate)
+      ? new Date(Number(message.internalDate)).toISOString() : '';
+    if (!occurredAt) return res.status(409).json({ error: 'Gmail message has no trustworthy provider timestamp' });
+    const eventId = `gmail:${providerMessageId}`;
+    const existing = dataset.activities.find(row => row.eventId === eventId);
+    if (!existing) {
+      const attribution = coldSendAttribution(lead, step);
+      await appendColdCallActivities([{
+        eventId, leadId: `CE-${lead.id}`, sourceLeadId: lead.id,
+        email: lead.email, company: lead.company || '',
+        eventType: step === 1 ? 'initial_email_sent' : 'follow_up_sent',
+        occurredAt, subject: header('Subject'), content: '',
+        metadata: JSON.stringify({
+          step, trigger: step === 1 ? 'cold_sequence_step_1' : 'cold_sequence_follow_up',
+          gmailMessageId: providerMessageId, gmailThreadId: message.threadId || '',
+          provider: 'gmail', providerMessageId, senderInboxId,
+          rfcMessageId: header('Message-ID'), recoveredAfterCheckpointFailure: true,
+          templateId: lead.emailTemplateId || '', campaign: lead.campaign || '', ...attribution,
+        }),
+      }]);
+    }
+    const rowNum = await findCERow(lead.id);
+    if (!rowNum) return res.status(409).json({ error: 'lead disappeared before checkpoint write' });
+    const done = step === 3;
+    await sheets().spreadsheets.values.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: { valueInputOption: 'RAW', data: [
+        { range: `${CE_SHEET_NAME}!H${rowNum}`, values: [[done ? 'Done' : 'Contacted']] },
+        { range: `${CE_SHEET_NAME}!I${rowNum}:K${rowNum}`, values: [[done ? 'done' : 'emailed', occurredAt, String(step)]] },
+        { range: `${CE_SHEET_NAME}!U${rowNum}`, values: [[senderInboxId]] },
+      ] },
+    });
+    res.json({ ok: true, recovered: !existing, alreadyHadActivity: Boolean(existing),
+      leadId, providerMessageId, senderInboxId, step, occurredAt });
+  } catch (error) {
+    console.error('[send recovery]', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/outreach/routing-options', requireAuth, (_req, res) => {
   try {
     const versions = ['dental','roofing'].flatMap(niche => campaignVersionsForRoute({ niche }))
@@ -4974,9 +5109,10 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   // handles PDT/PST automatically; do NOT hand-convert to UTC.
   cron.schedule('0,30 8-11 * * 1-5', async () => {
     console.log('[cron] Triggering scheduled outreach agent run...');
-    if (agentState.running) {
-      pendingScheduledSendRuns = Math.min(MAX_PENDING_SCHEDULED_SEND_RUNS, pendingScheduledSendRuns + 1);
-      console.log(`[cron] Agent already running — queued this send window (${pendingScheduledSendRuns} queued)`);
+    if (agentState.running || automationLaunchReserved) {
+      // Never replay missed windows back-to-back. A slow run must reduce the
+      // day's volume, not create a burst outside its scheduled slot.
+      console.log('[cron] Agent already running — skipping this send window; no catch-up burst will be queued');
       return;
     }
     await launchAutomationAfterCalendar('scheduled outreach run', () => {
@@ -5017,6 +5153,10 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   // first line of the orchestrator returns before reading Calendar, Sheets, or
   // checkpoint state. Registering the cadence now therefore cannot activate it.
   cron.schedule('1,6,11,16,21,26,31,36,41,46,51,56 * * * *', () => {
+    if (agentState.running || automationLaunchReserved) {
+      console.log('[Calendar sync] agent running — deferring periodic reconciliation to the next 5-minute tick');
+      return;
+    }
     observeCalendarBeforeAutomation('periodic reconciliation')
       .then(result => {
         if (!result.skipped) console.log(`[Calendar sync] complete — ${result.mutations || 0} mutation(s)`);

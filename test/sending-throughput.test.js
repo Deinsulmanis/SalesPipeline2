@@ -8,9 +8,9 @@ const path = require('node:path');
 const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 const agent = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
 
-test('a busy safe pass queues rather than discards a scheduled send window', () => {
-  assert.match(server, /pendingScheduledSendRuns = Math\.min\(MAX_PENDING_SCHEDULED_SEND_RUNS, pendingScheduledSendRuns \+ 1\)/);
-  assert.match(server, /if \(pendingScheduledSendRuns > 0\)[\s\S]{0,350}spawnAgent\(false, \{ DAILY_CAP: String\(SCHEDULED_SEND_PER_RUN_CAP\) \}\)/);
+test('a busy safe pass skips the scheduled window without creating a catch-up burst', () => {
+  assert.doesNotMatch(server, /pendingScheduledSendRuns|MAX_PENDING_SCHEDULED_SEND_RUNS/);
+  assert.match(server, /skipping this send window; no catch-up burst will be queued/);
   assert.doesNotMatch(server, /Agent already running — skipping this tick/);
 });
 

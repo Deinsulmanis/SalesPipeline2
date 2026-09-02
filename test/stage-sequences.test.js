@@ -167,8 +167,8 @@ test('15. with the feature flag OFF nothing is ever eligible', () => {
   }
   // The agent checks the flag before doing anything at all.
   assert.match(pass, /if \(!STAGE_SEQUENCES_ENABLED\) \{/);
-  assert.ok(pass.indexOf('STAGE_SEQUENCES_ENABLED') < pass.indexOf('spreadsheets.values.get'),
-    'the gate precedes even the first read');
+  assert.ok(pass.indexOf('STAGE_SEQUENCES_ENABLED') < pass.indexOf('readBoardLeads'),
+    'the gate precedes even the fallback snapshot read');
   assert.match(agent, /const STAGE_SEQUENCES_ENABLED = process\.env\.STAGE_SEQUENCES_ENABLED === 'true';/);
 });
 
@@ -430,9 +430,9 @@ test('the greeting never addresses a prospect by their company name', () => {
 
 test('the engine adds no per-lead sheet read', () => {
   const reads = (pass.match(/spreadsheets\.values\.get/g) || []).length;
-  assert.equal(reads, 1, 'one board read for the whole pass');
+  assert.equal(reads, 0, 'the pass reuses the cycle snapshot');
   assert.ok(!/for\s*\([^)]*\)\s*\{[^}]*await[^}]*spreadsheets/.test(pass), 'no per-lead read');
-  assert.match(pass, /readColdCallActivities/);
+  assert.match(pass, /activitiesForCycle \|\| await withAuth\(readColdCallActivities\)/);
 });
 
 test('no SMS and no Calendly were introduced', () => {

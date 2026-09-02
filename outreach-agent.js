@@ -76,8 +76,9 @@ const {
   automaticEnrollmentEventId,
 } = require('./integrations/stage-sequences');
 const {
-  sequenceRfcMessageId, verifyThreadOwnership, findSuccessfulSequenceSend,
+  sequenceRfcMessageId, coldStepRfcMessageId, verifyThreadOwnership, findSuccessfulSequenceSend,
 } = require('./integrations/gmail-stage-sequence');
+const { wrapSheetsReadClient } = require('./integrations/google-sheets-resilience');
 const { stageSendGate } = require('./integrations/pipeline-sequence-safety');
 const { PROMOTION_TRIGGER, resolvePromotionIdentity, promotionDecision } = require('./integrations/promotion-policy');
 const {
@@ -211,7 +212,7 @@ const SCRAPE_SKIP = '__scraped__'; // stored in siteContext when site returned n
 
 // Cold Calls (Leads) sheet — used when auto-promoting interested replies
 const LEADS_SHEET   = 'Leads';
-const LEADS_RANGE   = `${LEADS_SHEET}!A:Q`;
+const LEADS_RANGE   = `${LEADS_SHEET}!A:W`;
 const LEADS_COLUMNS = [
   'id','type','first','last','brokerage','tradeType','company',
   'city','cityTrade','phone','email','website',
@@ -384,7 +385,7 @@ async function withAuth(fn) {
   }
 }
 
-const sheets = () => google.sheets({ version: 'v4', auth: oauth2Client });
+const sheets = () => wrapSheetsReadClient(google.sheets({ version: 'v4', auth: oauth2Client }));
 const gmail  = () => google.gmail({ version: 'v1', auth: oauth2Client });
 const GMAIL_SENDERS = configuredSenders();
 const PRIMARY_GMAIL_SENDER = GMAIL_SENDERS.find(sender => sender.id === 'primary');
@@ -722,12 +723,11 @@ async function recordColdCallActivityStrict(record) {
  * way to see the pipeline at all. One read, then bounded lookup maps — never a
  * per-candidate fetch.
  */
-async function readBoardLeads() {
+async function readBoardLeads(rowsOverride = null) {
   try {
-    const response = await sheets().spreadsheets.values.get({
+    const rows = rowsOverride || (await sheets().spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID, range: LEADS_RANGE,
-    });
-    const rows = response.data.values || [];
+    })).data.values || [];
     const header = ['id', 'type', 'first', 'last', 'brokerage', 'tradeType', 'company',
       'city', 'cityTrade', 'phone', 'email', 'website', 'stage', 'priority', 'followup',
       'notes', 'created', 'emailStatus', 'lastEmailedAt', 'emailStep',
@@ -776,12 +776,12 @@ function buildOwnershipContext({ boardLeads, activities, outboundObservationOk =
   };
 }
 
-async function readColdCallActivities() {
-  const response = await sheets().spreadsheets.values.get({
+async function readColdCallActivities(rowsOverride = null) {
+  const rows = rowsOverride || (await sheets().spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
     range: `${COLD_CALL_ACTIVITY_SHEET}!A:J`,
-  });
-  return (response.data.values || []).slice(1).map(row => {
+  })).data.values || [];
+  return rows.slice(1).map(row => {
     const record = {};
     COLD_CALL_ACTIVITY_HEADER.forEach((field, index) => { record[field] = row[index] || ''; });
     return record;
@@ -1061,20 +1061,20 @@ async function sendEmail({ to, subject, body, threadId, inReplyTo, references, m
   return provider.sendEmail({ to, subject, body, threadId, inReplyTo, references, messageId });
 }
 
-async function loadOutreachProviderState() {
+async function loadOutreachProviderState(campaignRowsOverride = null, mappingRowsOverride = null) {
   CAMPAIGN_PROVIDERS = new Map();
   ACTIVE_PROVIDER_LEADS = new Set();
   ACTIVE_PROVIDER_EMAILS = new Set();
   EXISTING_PROVIDER_CAMPAIGN_EMAILS = new Set();
   try {
-    const campaigns = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CAMPAIGN_INTEGRATIONS_SHEET}!A:I` });
-    for (const row of (campaigns.data.values || []).slice(1)) CAMPAIGN_PROVIDERS.set(row[0], { provider: row[1] || 'gmail', externalCampaignId: row[2] || '' });
+    const campaignRows = campaignRowsOverride || (await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CAMPAIGN_INTEGRATIONS_SHEET}!A:I` })).data.values || [];
+    for (const row of campaignRows.slice(1)) CAMPAIGN_PROVIDERS.set(row[0], { provider: row[1] || 'gmail', externalCampaignId: row[2] || '' });
   } catch (e) {
     console.warn(`[Providers] no campaign mappings (${e.message}) — existing Gmail behavior retained`);
   }
   try {
-    const mappings = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A:N` });
-    for (const row of (mappings.data.values || []).slice(1)) {
+    const mappingRows = mappingRowsOverride || (await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A:N` })).data.values || [];
+    for (const row of mappingRows.slice(1)) {
       const email = normalizeEmail(row[13]);
       if (row[3] && email) EXISTING_PROVIDER_CAMPAIGN_EMAILS.add(`${row[3]}:${email}`);
       if (ACTIVE_STATUSES.has(String(row[5] || '').trim().toLowerCase().replace(/_/g, ' '))) { if (row[0]) ACTIVE_PROVIDER_LEADS.add(row[0]); if (email) ACTIVE_PROVIDER_EMAILS.add(email); }
@@ -1465,18 +1465,39 @@ async function ensureAgentHeaders() {
   });
 }
 
-async function readLeads() {
-  const resp = await sheets().spreadsheets.values.get({
+async function readLeads(rowsOverride = null) {
+  const rows = rowsOverride || (await sheets().spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
     range: READ_RANGE,
-  });
-  const rows = resp.data.values || [];
+  })).data.values || [];
   return rows.slice(1).map((row, idx) => {
     const lead = { _row: idx + 2 };              // 1-based sheet row (after header)
     COLUMNS.forEach((c, i) => { lead[c] = row[i] || ''; });
     lead.first = (lead.contactName || '').split(' ')[0] || ''; // convenience alias used by templates
     return lead;
   }).filter(l => l.id);
+}
+
+// A scheduled process used to issue one values.get per tab (and then re-read
+// several of them in later passes). Google charges those parallel requests
+// separately. This immutable cycle snapshot costs one read request and is
+// shared by observation, ownership, intent, Pipeline recovery and cold cadence.
+async function loadAgentSnapshot() {
+  const ranges = [
+    READ_RANGE, LEADS_RANGE, `${COLD_CALL_ACTIVITY_SHEET}!A:J`,
+    `${SUPPRESSION_SHEET}!A:E`, `${CAMPAIGN_INTEGRATIONS_SHEET}!A:I`,
+    `${PROVIDER_LEADS_SHEET}!A:N`, 'DemoPlays!A:F', `${INTENT_SHEET}!A:E`,
+  ];
+  const response = await sheets().spreadsheets.values.batchGet({
+    spreadsheetId: SPREADSHEET_ID, ranges,
+  });
+  const rows = index => response.data.valueRanges?.[index]?.values || [];
+  console.log(`[Sheets snapshot] ${ranges.length} datasets loaded in 1 batch read`);
+  return {
+    coldEmail: rows(0), board: rows(1), activityRows: rows(2),
+    suppression: rows(3), campaigns: rows(4), providerMappings: rows(5),
+    demoPlays: rows(6), intentFired: rows(7),
+  };
 }
 
 // Re-resolve a lead's CURRENT sheet row by id, immediately before writing.
@@ -1509,8 +1530,9 @@ async function resolveRow(leadId) {
 // internals are stored — only ids the dashboard already displays.
 async function recordSendActivity(lead, step, sendMeta, sentAt) {
   const result    = (sendMeta && sendMeta.result) || null;
-  const messageId = result && result.data ? result.data.id || '' : '';
-  const threadId  = result && result.data ? result.data.threadId || '' : '';
+  const data      = result?.data || result || {};
+  const messageId = data.id || data.providerMessageId || '';
+  const threadId  = data.threadId || '';
   const isInitial = Number(step) === 1;
   // Callers build this before provider delivery. Unknown/missing active
   // versions therefore fail before send rather than silently becoming legacy.
@@ -1518,7 +1540,7 @@ async function recordSendActivity(lead, step, sendMeta, sentAt) {
   const senderInboxId = String(sendMeta?.sender?.id || lead.senderInboxId || 'primary').trim();
   if (!attribution || !attribution.campaignVersion) throw new Error('successful send is missing campaign attribution');
   if (!senderInboxId) throw new Error('successful send is missing sender attribution');
-  await recordColdCallActivity({
+  const activity = {
     eventId: messageId ? `gmail:${messageId}` : `${lead.id}:step${step}:${sentAt}`,
     leadId: `CE-${lead.id}`,
     sourceLeadId: lead.id,
@@ -1536,7 +1558,12 @@ async function recordSendActivity(lead, step, sendMeta, sentAt) {
       personalization: (sendMeta && sendMeta.personalizationMetadata) || null,
       ...attribution,
     }),
-  });
+  };
+  const activities = sendMeta?.activitiesForCycle;
+  if (activities?.some(row => row.eventId === activity.eventId)) return activity;
+  await recordColdCallActivityStrict(activity);
+  if (activities) activities.push(activity);
+  return activity;
 }
 
 // sendMeta is the Gmail API response from sendEmail() — passed in by the send
@@ -1558,48 +1585,150 @@ async function recordSendActivity(lead, step, sendMeta, sentAt) {
 // final failure alarms loudly instead of throwing: the caller's catch would
 // log "Failed", which is false — the send succeeded.
 async function markSent(lead, step, sendMeta = null) {
-  const now          = new Date().toISOString();
-  const isLastStep   = step > FOLLOW_UP_SEQUENCE.length; // step 3 > 2 → done
-  const status       = isLastStep ? 'done' : 'emailed';
-  const stageValue   = isLastStep ? 'Done' : SENT_STAGE;
-  const MAX_ATTEMPTS = 4;                                 // backoff: 1s, 2s, 4s
+  const now = sendMeta?.occurredAt || new Date().toISOString();
+  const isLastStep = step > FOLLOW_UP_SEQUENCE.length;
+  const status = isLastStep ? 'done' : 'emailed';
+  const stageValue = isLastStep ? 'Done' : SENT_STAGE;
+  const retryDelays = [5000, 15000, 40000];
+  const maxAttempts = retryDelays.length + 1;
+  let activityRecorded = false;
 
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
+      // Provider evidence is durable before mutable lead state advances. If
+      // the state write fails, the next run recovers by deterministic Gmail id.
+      if (!activityRecorded) {
+        await recordSendActivity(lead, step, sendMeta, now);
+        activityRecorded = true;
+      }
       const rowNum = await resolveRow(lead.id);
       if (!rowNum) {
         console.warn(`[markSent] lead ${lead.id} (${lead.email}) no longer in sheet — row deleted mid-run? Skipping write.`);
-        return;
+        return { recorded: activityRecorded, rowMissing: true };
       }
       await sheets().spreadsheets.values.batchUpdate({
         spreadsheetId: SPREADSHEET_ID,
         requestBody: {
           valueInputOption: 'RAW',
           data: [
-            { range: `${SHEET_NAME}!H${rowNum}`,            values: [[stageValue]] },
+            { range: `${SHEET_NAME}!H${rowNum}`, values: [[stageValue]] },
             { range: `${SHEET_NAME}!I${rowNum}:K${rowNum}`, values: [[status, now, String(step)]] },
             ...(sendMeta?.sender?.id ? [{ range: `${SHEET_NAME}!U${rowNum}`, values: [[sendMeta.sender.id]] }] : []),
           ],
         },
       });
-      // History for future automation. Reached only after a send has actually
-      // succeeded (every markSent call site sits after an awaited sendEmail) and
-      // only after the bookkeeping write returns, so the retry loop above cannot
-      // append it twice. recordColdCallActivity swallows its own errors, so a
-      // logging failure can never turn a completed send into a retry.
-      await recordSendActivity(lead, step, sendMeta, now);
-      return;
-    } catch (e) {
-      if (attempt < MAX_ATTEMPTS) {
-        const delay = 1000 * 2 ** (attempt - 1);
-        console.warn(`[markSent] attempt ${attempt}/${MAX_ATTEMPTS} failed for ${lead.email}: ${e.message} — retrying in ${delay / 1000}s`);
+      lead.stage = stageValue;
+      lead.emailStatus = status;
+      lead.lastEmailedAt = now;
+      lead.emailStep = String(step);
+      if (sendMeta?.sender?.id) lead.senderInboxId = sendMeta.sender.id;
+      return { recorded: true };
+    } catch (error) {
+      if (attempt < maxAttempts) {
+        const delay = retryDelays[attempt - 1];
+        console.warn(`[markSent] attempt ${attempt}/${maxAttempts} failed for ${lead.email}: ${error.message} — retrying in ${delay / 1000}s`);
         await sleep(delay);
       } else {
-        console.error(`‼️ [UNRECORDED SEND] step ${step} to ${lead.email} (${lead.id}) WAS SENT but could not be recorded after ${MAX_ATTEMPTS} attempts: ${e.message}`);
-        console.error(`‼️ [UNRECORDED SEND] step 1 is protected by the idempotency probe; a follow-up step MAY BE RE-SENT next run — fix the sheet row by hand (I=emailed/done, J=${now}, K=${step}).`);
+        console.error(`‼️ [UNRECORDED SEND] step ${step} to ${lead.email} (${lead.id}) WAS SENT but could not be recorded after ${maxAttempts} attempts: ${error.message}`);
+        console.error('‼️ [UNRECORDED SEND] deterministic Gmail evidence will be recovered next run; this step will not be re-sent.');
+        return { recorded: false, error };
       }
     }
   }
+}
+
+async function deliverOrdinaryColdStep({
+  lead, step, sender, subject, body, attribution, activitiesForCycle,
+  personalizationMetadata = null, thread = null,
+}) {
+  const mailbox = gmailForSender(sender);
+  const rfcMessageId = coldStepRfcMessageId(lead.id, step, sender.email);
+  const metadataOf = row => { try { return JSON.parse(row.metadata || '{}'); } catch (_) { return {}; } };
+
+  // Provider-first recovery: this runs before the legacy recipient probe, so a
+  // successful deterministic send with a failed Sheets checkpoint is repaired
+  // instead of merely skipped.
+  let recovered;
+  try {
+    recovered = await findSuccessfulSequenceSend({ gmail: mailbox, rfcMessageId });
+  } catch (error) {
+    return { delivered: false, reason: `idempotency probe failed: ${error.message}` };
+  }
+  if (recovered) {
+    const checkpoint = await markSent(lead, step, {
+      result: recovered, subject, body, attribution, sender, personalizationMetadata,
+      occurredAt: recovered.occurredAt || new Date().toISOString(), activitiesForCycle,
+    });
+    console.warn(`[Cold recovery] restored step ${step} for ${lead.email} from Gmail; no duplicate sent`);
+    return { delivered: true, recovered: true, checkpoint };
+  }
+
+  // Backward-compatible protection for step 1 messages sent before deterministic
+  // Message-IDs existed. Exact historical repair is handled by reconciliation;
+  // runtime safety still refuses to send a possible duplicate.
+  if (Number(step) === 1) {
+    const legacyProbe = await stepOneAlreadySent(lead, sender);
+    if (legacyProbe !== 'clear') {
+      return { delivered: false, reason: legacyProbe === 'found'
+        ? 'a prior step-1 send exists in Gmail and needs reconciliation'
+        : 'prior step-1 delivery could not be verified' };
+    }
+  }
+
+  const reservations = (activitiesForCycle || []).filter(row =>
+    row.eventType === 'ordinary_send_reserved'
+    && metadataOf(row).leadId === lead.id && Number(metadataOf(row).step) === Number(step));
+  const failed = new Set((activitiesForCycle || []).filter(row => row.eventType === 'ordinary_send_failed')
+    .map(row => metadataOf(row).reservationEventId).filter(Boolean));
+  if (reservations.some(row => !failed.has(row.eventId))) {
+    return { delivered: false, reason: 'an unresolved delivery reservation exists and Gmail has not confirmed it' };
+  }
+
+  const reservationEventId = `cold-reserve:${lead.id}:step${step}:attempt${reservations.length + 1}`;
+  const reservation = {
+    eventId: reservationEventId, leadId: `CE-${lead.id}`, sourceLeadId: lead.id,
+    email: lead.email, company: cleanCompanyName(lead.company) || lead.company || '',
+    eventType: 'ordinary_send_reserved', occurredAt: new Date().toISOString(),
+    subject, content: '', metadata: JSON.stringify({
+      leadId: lead.id, step: Number(step), senderInboxId: sender.id,
+      rfcMessageId, gmailThreadId: thread?.threadId || '',
+    }),
+  };
+  try {
+    await recordColdCallActivityStrict(reservation);
+    activitiesForCycle?.push(reservation);
+  } catch (error) {
+    return { delivered: false, reason: `delivery reservation could not be persisted: ${error.message}` };
+  }
+
+  let result;
+  try {
+    result = await sendEmail({
+      to: lead.email.trim(), subject, body, sender, messageId: rfcMessageId,
+      ...(thread ? { threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references } : {}),
+    });
+  } catch (error) {
+    const status = Number(error?.response?.status || error?.code);
+    const rejectedBeforeDelivery = status >= 400 && status < 500 && ![408, 409, 429].includes(status);
+    if (rejectedBeforeDelivery) {
+      const failure = {
+        eventId: `${reservationEventId}:failed`, leadId: `CE-${lead.id}`, sourceLeadId: lead.id,
+        email: lead.email, company: cleanCompanyName(lead.company) || lead.company || '',
+        eventType: 'ordinary_send_failed', occurredAt: new Date().toISOString(), subject, content: '',
+        metadata: JSON.stringify({ leadId: lead.id, step: Number(step), reservationEventId,
+          senderInboxId: sender.id, error: String(error.message || '').slice(0, 300) }),
+      };
+      try { await recordColdCallActivityStrict(failure); activitiesForCycle?.push(failure); } catch (_) { /* reservation remains fail-closed */ }
+    }
+    return { delivered: false, reason: rejectedBeforeDelivery
+      ? `provider rejected before delivery: ${error.message}`
+      : `delivery outcome is ambiguous; reservation retained: ${error.message}` };
+  }
+
+  const checkpoint = await markSent(lead, step, {
+    result, subject, body, attribution, sender, personalizationMetadata, activitiesForCycle,
+  });
+  return { delivered: true, recovered: false, result, checkpoint };
 }
 
 // Phase 4: mark a lead as replied — sets stage to 'Replied' and emailStatus to 'replied'.
@@ -2138,7 +2267,7 @@ async function handleRoofingSurveyReply(lead, message, replyText, todaySent, act
 // are queued sends or follow-ups due. Fetches each emailed lead's reply body,
 // classifies it with Haiku, and routes to the appropriate handler. Mutates
 // lead.emailStatus in-place so selectFollowUps() excludes replied leads.
-async function runReplyCheckPass(leads, todaySentOverride = null, outboundObservationOk = true) {
+async function runReplyCheckPass(leads, todaySentOverride = null, outboundObservationOk = true, activitiesForCycle = null) {
   const candidates = leads.filter(l => l.emailStatus === 'emailed' && isValidEmail(l.email));
   if (!candidates.length) {
     console.log('[ReplyCheck] No emailed leads to check.\n');
@@ -2168,7 +2297,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE) {
       lead.emailStatus = 'replied';
       if (!DRY_RUN) {
-        if (!attributionActivities) attributionActivities = await withAuth(() => readColdCallActivities());
+        if (!attributionActivities) attributionActivities = activitiesForCycle || await withAuth(() => readColdCallActivities());
         await withAuth(() => handleRoofingSurveyReply(lead, message, replyText, replyPassTodaySent, attributionActivities, outboundObservationOk));
       }
       else console.log(`  ↩ Roofing survey reply from ${lead.email} (${company}) — no writes in dry run`);
@@ -2184,7 +2313,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
 
     if (!DRY_RUN) {
       await withAuth(async () => {
-        if (!attributionActivities) attributionActivities = await readColdCallActivities();
+        if (!attributionActivities) attributionActivities = activitiesForCycle || await readColdCallActivities();
         await recordActiveReplyActivity(lead, message, replyText, classification, attributionActivities);
         switch (classification) {
           // A genuine question is answered from product-facts.js when we're
@@ -2238,14 +2367,14 @@ async function writeLateReplyNotes(lead, notes) {
 
 // Once-daily, bounded watcher for completed sequences. It performs no mailbox
 // search, no stage/status/timestamp writes, and has no path to sendEmail.
-async function runLateReplyCheckPass(leads) {
+async function runLateReplyCheckPass(leads, activitiesForCycle = null) {
   if (!LATE_REPLY_CHECK) return;
   if (DRY_RUN) {
     console.log('[LateReply] Dry run — terminal watcher skipped (no classification or writes).');
     return;
   }
 
-  const activities = await withAuth(readColdCallActivities);
+  const activities = activitiesForCycle || await withAuth(readColdCallActivities);
   const plan = selectLateReplyCandidates(leads, activities, {
     lookbackDays: LATE_REPLY_LOOKBACK_DAYS,
     batchLimit: LATE_REPLY_BATCH_LIMIT,
@@ -2455,11 +2584,16 @@ async function runBounceCheckPass(leads) {
 const INTENT_SHEET  = 'IntentFired';
 const INTENT_HEADER = ['firedAt','leadId','company','email','trigger'];
 const INTENT_BLOCKED_IPS = ['75.155.151.158'];   // keep in sync with server.js pixels
+let intentSheetReady = false;
 
 async function ensureIntentSheet() {
+  if (intentSheetReady) return;
   const s  = sheets();
   const ss = await s.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
-  if (ss.data.sheets.find(sh => sh.properties.title === INTENT_SHEET)) return;
+  if (ss.data.sheets.find(sh => sh.properties.title === INTENT_SHEET)) {
+    intentSheetReady = true;
+    return;
+  }
   await s.spreadsheets.batchUpdate({
     spreadsheetId: SPREADSHEET_ID,
     requestBody: { requests: [{ addSheet: { properties: { title: INTENT_SHEET } } }] },
@@ -2468,16 +2602,17 @@ async function ensureIntentSheet() {
     spreadsheetId: SPREADSHEET_ID, range: `${INTENT_SHEET}!A1`,
     valueInputOption: 'RAW', requestBody: { values: [INTENT_HEADER] },
   });
+  intentSheetReady = true;
   console.log(`[Intent] ${INTENT_SHEET} tab created`);
 }
 
-async function loadFiredIntents() {
+async function loadFiredIntents(rowsOverride = null) {
   try {
-    const r = await sheets().spreadsheets.values.get({
+    const rows = rowsOverride || (await sheets().spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID, range: `${INTENT_SHEET}!A:E`,
-    });
+    })).data.values || [];
     // key on leadId + trigger so a future second trigger type is independent
-    return new Set((r.data.values || []).slice(1)
+    return new Set(rows.slice(1)
       .filter(row => row[1]).map(row => `${row[1]}|${row[4] || 'both-audios'}`));
   } catch (_e) {
     return new Set();   // missing tab = nothing fired yet
@@ -2485,12 +2620,12 @@ async function loadFiredIntents() {
 }
 
 // Reads DemoPlays and returns Map<companyKey, {intro, demo}> of REAL plays.
-async function readRealDemoPlays() {
-  const r = await sheets().spreadsheets.values.get({
+async function readRealDemoPlays(rowsOverride = null) {
+  const rows = rowsOverride || (await sheets().spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A:F',
-  });
+  })).data.values || [];
   const byKey = new Map();
-  for (const row of (r.data.values || []).slice(1)) {
+  for (const row of rows.slice(1)) {
     const [ts, company, , ip, ua, audioTypeRaw] = row;
     if (!company) continue;
     if (INTENT_BLOCKED_IPS.includes((ip || '').trim())) continue;      // own IP
@@ -2529,11 +2664,11 @@ function buildIntentEmail(lead) {
   };
 }
 
-async function runIntentTriggerPass(allLeads, ownershipContext = null) {
+async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot = null) {
   await ensureIntentSheet();
-  const [plays, fired, activities] = await Promise.all([
-    readRealDemoPlays(), loadFiredIntents(), readColdCallActivities(),
-  ]);
+  const plays = await readRealDemoPlays(snapshot?.demoPlays);
+  const fired = await loadFiredIntents(snapshot?.intentFired);
+  const activities = snapshot?.activities || await readColdCallActivities();
 
   const due = [];
   for (const lead of allLeads) {
@@ -2707,13 +2842,18 @@ const MANUAL_HOLD_TAG = '[MANUAL HOLD]';
 const SUPPRESSION_SHEET = 'Suppression';
 const SUPPRESSION_HEADER = ['email', 'reason', 'company', 'suppressedAt', 'source'];
 let SUPPRESSED_EMAILS = new Set();   // populated by loadSuppressionList() at run() start
+let suppressionSheetReady = false;
 
 const normEmail = e => (e || '').toLowerCase().trim();
 
 async function ensureSuppressionSheet() {
+  if (suppressionSheetReady) return;
   const s  = sheets();
   const ss = await s.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
-  if (ss.data.sheets.find(sh => sh.properties.title === SUPPRESSION_SHEET)) return;
+  if (ss.data.sheets.find(sh => sh.properties.title === SUPPRESSION_SHEET)) {
+    suppressionSheetReady = true;
+    return;
+  }
   await s.spreadsheets.batchUpdate({
     spreadsheetId: SPREADSHEET_ID,
     requestBody: { requests: [{ addSheet: { properties: { title: SUPPRESSION_SHEET } } }] },
@@ -2722,21 +2862,23 @@ async function ensureSuppressionSheet() {
     spreadsheetId: SPREADSHEET_ID, range: `${SUPPRESSION_SHEET}!A1`,
     valueInputOption: 'RAW', requestBody: { values: [SUPPRESSION_HEADER] },
   });
+  suppressionSheetReady = true;
   console.log('[Suppression] tab created with headers');
 }
 
 // Reads the tab into SUPPRESSED_EMAILS. Tolerant: a missing tab just yields an
 // empty set (nothing is ever un-suppressed by a read failure).
-async function loadSuppressionList() {
+async function loadSuppressionList(rowsOverride = null) {
   try {
-    const r = await sheets().spreadsheets.values.get({
+    const rows = rowsOverride || (await sheets().spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID, range: `${SUPPRESSION_SHEET}!A:A`,
-    });
-    SUPPRESSED_EMAILS = new Set((r.data.values || []).slice(1).map(row => normEmail(row[0])).filter(Boolean));
+    })).data.values || [];
+    SUPPRESSED_EMAILS = new Set(rows.slice(1).map(row => normEmail(row[0])).filter(Boolean));
     console.log(`[Suppression] loaded ${SUPPRESSED_EMAILS.size} suppressed email(s)`);
   } catch (e) {
-    console.warn(`[Suppression] load failed (${e.message}) — treating as empty`);
-    SUPPRESSED_EMAILS = new Set();
+    // Suppression uncertainty can only remove permission to send. Treating a
+    // quota failure as an empty list silently re-enables opted-out addresses.
+    throw new Error(`suppression list unavailable; refusing send-capable run: ${e.message}`);
   }
 }
 
@@ -3037,7 +3179,7 @@ const jitter = () => MIN_DELAY + Math.floor(Math.random() * (MAX_DELAY - MIN_DEL
 // are neither read nor written here, and [MANUAL HOLD] is never removed — the
 // cold selectors stay blocked exactly as before. See stage-sequences.js.
 async function runStageSequencePass(allLeads, {
-  observationBySender = new Map(), activitiesForCycle = null, sendsBySender = null,
+  observationBySender = new Map(), activitiesForCycle = null, boardLeadsForCycle = null, sendsBySender = null,
   quotaState = { globalCount: 0 },
 } = {}) {
   // The gate comes first, before any read. With the flag off this pass cannot
@@ -3051,16 +3193,14 @@ async function runStageSequencePass(allLeads, {
   if (CHECK_ONLY) { console.log('[StageSeq] check-only — send-capable pass skipped.'); return 0; }
   if (DRY_RUN) { console.log('[StageSeq] dry run — skipped.'); return 0; }
 
-  const boardResponse = await withAuth(() => sheets().spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID, range: LEADS_RANGE,
-  }));
-  const boardLeads = (boardResponse.data.values || []).slice(1)
-    .map(row => Object.fromEntries(LEADS_COLUMNS.map((field, index) => [field, row[index] || ''])))
-    .filter(lead => lead.id);
-  // Re-read after reply/bounce observation so a reply persisted moments ago is
-  // visible to this selector in the same cycle. The caller snapshot is used for
-  // shared quota maps only; it is never trusted as the final stop-condition view.
-  const activities = await withAuth(readColdCallActivities);
+  const boardLeads = boardLeadsForCycle || await withAuth(readBoardLeads);
+  if (!Array.isArray(boardLeads)) {
+    console.error('[StageSeq] Pipeline snapshot unavailable — failing closed.');
+    return 0;
+  }
+  // Observation handlers update these arrays in memory as they persist facts,
+  // so the shared cycle snapshot remains current without another Sheets read.
+  const activities = activitiesForCycle || await withAuth(readColdCallActivities);
   const byKey = new Map();
   for (const row of activities) {
     for (const key of [row.leadId, normEmail(row.email)]) {
@@ -3347,14 +3487,18 @@ async function run() {
 
   if (!DRY_RUN) await withAuth(ensureAgentHeaders);
 
-  // Load the durable suppression list before any pass — the reply/bounce
-  // handlers add to it, and both selection and the send guard read it. Ensure
-  // the tab exists first (no-op if already there) so writes never fail.
-  if (!DRY_RUN) await withAuth(ensureSuppressionSheet);
-  await withAuth(loadSuppressionList);
-  await withAuth(loadOutreachProviderState);
+  // Load every authoritative tab in one quota-counted request. A missing
+  // safety tab fails the run closed; production migrations create these tabs.
+  const snapshot = await withAuth(loadAgentSnapshot);
+  suppressionSheetReady = true;
+  intentSheetReady = true;
+  coldCallActivityReady = true;
+  snapshot.activities = await readColdCallActivities(snapshot.activityRows);
+  snapshot.boardLeads = await readBoardLeads(snapshot.board);
+  await loadSuppressionList(snapshot.suppression);
+  await loadOutreachProviderState(snapshot.campaigns, snapshot.providerMappings);
 
-  const all = await withAuth(readLeads);
+  const all = await readLeads(snapshot.coldEmail);
   const allLeadsForDailyCap = [...all];
   if (TARGET_LEAD_ID) {
     const target = all.find(lead => lead.id === TARGET_LEAD_ID);
@@ -3367,16 +3511,14 @@ async function run() {
   // ownership before it may send. It skips the other detection passes, but it
   // is not an escape hatch around mailbox freshness or the centralized gate.
   if (INTENT_ONLY && !CHECK_ONLY) {
-    const [intentBoard, intentActivities] = await Promise.all([
-      withAuth(readBoardLeads),
-      withAuth(readColdCallActivities).catch(() => []),
-    ]);
+    const intentBoard = snapshot.boardLeads;
+    const intentActivities = snapshot.activities;
     const intentOutbound = await withAuth(() => runHumanOutboundPass(all, intentActivities));
     const intentOwnershipContext = buildOwnershipContext({
       boardLeads: intentBoard, activities: intentActivities,
       outboundObservationOk: intentOutbound.ok,
     });
-    await withAuth(() => runIntentTriggerPass(all, intentOwnershipContext));
+    await withAuth(() => runIntentTriggerPass(all, intentOwnershipContext, snapshot));
     return;
   }
 
@@ -3387,10 +3529,8 @@ async function run() {
   // Observe manual Gmail replies before ANY pass that could auto-respond.
   // The same activity snapshot is later used to derive ownership for recovery,
   // intent and cold execution, so one provider observation protects them all.
-  const [ownershipBoard, ownershipActivities] = await Promise.all([
-    withAuth(readBoardLeads),
-    withAuth(readColdCallActivities).catch(() => []),
-  ]);
+  const ownershipBoard = snapshot.boardLeads;
+  const ownershipActivities = snapshot.activities;
   const outbound = await withAuth(() => runHumanOutboundPass(all, ownershipActivities));
   const senderDayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
   const sendsBySender = senderCountsToday(ownershipActivities, senderDayKey);
@@ -3399,11 +3539,11 @@ async function run() {
 
   // Reply-check pass — unconditional; runs even when cap is reached.
   // Mutates emailStatus on replied leads so selectFollowUps excludes them below.
-  const replyObservation = await runReplyCheckPass(all, todaySent, outbound.ok);
+  const replyObservation = await runReplyCheckPass(all, todaySent, outbound.ok, ownershipActivities);
 
   // Terminal replies are hosted by the same process only during the existing
   // scheduler's once-daily flag. Active polling above keeps its old cadence.
-  await runLateReplyCheckPass(all);
+  await runLateReplyCheckPass(all, ownershipActivities);
 
   // Bounce-check pass — marks bounced leads Done before follow-up selection.
   await runBounceCheckPass(all);
@@ -3445,14 +3585,15 @@ async function run() {
   // moments ago, and refuses all execution if mailbox observation failed.
   const quotaState = { globalCount: todaySent };
   await runStageSequencePass(all, {
-    observationBySender, activitiesForCycle: ownershipActivities, sendsBySender, quotaState,
+    observationBySender, activitiesForCycle: ownershipActivities,
+    boardLeadsForCycle: ownershipBoard, sendsBySender, quotaState,
   });
   todaySent = quotaState.globalCount;
   dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
 
   // Intent trigger — both-audios. Runs in every normal pass as a backstop to
   // the event-driven spawn, so a missed webhook still gets picked up.
-  await withAuth(() => runIntentTriggerPass(all, ownershipContext));
+  await withAuth(() => runIntentTriggerPass(all, ownershipContext, snapshot));
 
   // Phase 1 — new sends (stage === QUEUE_STAGE, never emailed)
   const queued = selectQueued(all);
@@ -3542,16 +3683,18 @@ async function run() {
 
     try {
       const attribution = coldSendAttribution(lead, nextStepNum);
-      const sendResult = await sendEmail({
-        to: lead.email.trim(), subject, body,
-        sender: selectedSender,
-        threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references,
+      const delivery = await deliverOrdinaryColdStep({
+        lead, step: nextStepNum, sender: selectedSender, subject, body, attribution,
+        activitiesForCycle: ownershipActivities, thread,
       });
+      if (!delivery.delivered) {
+        console.warn(`⏸️  follow-up deferred → ${lead.email} (${delivery.reason})`);
+        return false;
+      }
       sent++;
       followUpSent++;
       sendsBySender.set(selectedSender.id, (sendsBySender.get(selectedSender.id) || 0) + 1);
-      await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject, body, attribution, sender: selectedSender }));
-      console.log(`✅ Sent (step ${nextStepNum}) → ${lead.email}  (${sent}/${effectiveCap})`);
+      console.log(`${delivery.recovered ? '♻️ Recovered' : '✅ Sent'} (step ${nextStepNum}) → ${lead.email}  (${sent}/${effectiveCap})`);
       return true;
     } catch (e) {
       console.error(`❌ Failed (step ${nextStepNum}) → ${lead.email}: ${e.message}`);
@@ -3588,23 +3731,11 @@ async function run() {
       continue;
     }
 
-    // Step-1 idempotency probe (see stepOneAlreadySent). Runs in every mode so
-    // dry-run and gated reports show exactly what a live run would skip.
     let senderChoice;
     try { senderChoice = chooseSender({ lead, activities: ownershipActivities, senders: GMAIL_SENDERS, sendsToday: sendsBySender, step: 1 }); }
     catch (error) { console.warn(`⏸️  sender routing refused → ${lead.email} (${error.message})`); continue; }
     if (!senderChoice.sender) { console.warn(`⏸️  sender routing deferred → ${lead.email} (${senderChoice.reason})`); continue; }
     const selectedSender = senderChoice.sender;
-    const probe = await stepOneAlreadySent(lead, selectedSender);
-    if (probe !== 'clear') {
-      if (probe === 'found') {
-        console.warn(`⏭️  [probe] step-1 already sent to ${lead.email} within 7d — skipping (sent-but-unrecorded, or duplicate row for this address)`);
-      } else {
-        console.warn(`⏭️  [probe] cannot verify prior sends to ${lead.email} — failing closed, skipping this run`);
-      }
-      continue;
-    }
-
     const campaignProvider = providerForLead(lead);
     if (campaignProvider.provider === 'smartlead') {
       if (DRY_RUN) { console.log(`— WOULD ADD TO SMARTLEAD → ${lead.email} (campaign ${campaignProvider.externalCampaignId || 'missing mapping'})`); continue; }
@@ -3696,16 +3827,18 @@ async function run() {
 
     try {
       const attribution = coldSendAttribution(lead, 1, { personalizationMetadata: validatedPersonalizationMetadata });
-      const sendResult = await sendEmail({ to: lead.email.trim(), subject, body, sender: selectedSender });
+      const delivery = await deliverOrdinaryColdStep({
+        lead, step: 1, sender: selectedSender, subject, body, attribution,
+        personalizationMetadata: validatedPersonalizationMetadata,
+        activitiesForCycle: ownershipActivities,
+      });
+      if (!delivery.delivered) {
+        console.warn(`⏸️  step-1 deferred → ${lead.email} (${delivery.reason})`);
+        continue;
+      }
       sent++;
       sendsBySender.set(selectedSender.id, (sendsBySender.get(selectedSender.id) || 0) + 1);
-      await withAuth(() => markSent(lead, 1, {
-        result: sendResult, subject, body,
-        sender: selectedSender,
-        personalizationMetadata: validatedPersonalizationMetadata,
-        attribution,
-      }));
-      console.log(`✅ Sent (step 1) → ${lead.email}  (${sent}/${effectiveCap})`);
+      console.log(`${delivery.recovered ? '♻️ Recovered' : '✅ Sent'} (step 1) → ${lead.email}  (${sent}/${effectiveCap})`);
     } catch (e) {
       console.error(`❌ Failed (step 1) → ${lead.email}: ${e.message}`);
     }
@@ -3776,15 +3909,17 @@ async function run() {
 
     try {
       const attribution = coldSendAttribution(lead, nextStepNum);
-      const sendResult = await sendEmail({
-        to: lead.email.trim(), subject, body,
-        sender: selectedSender,
-        threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references,
+      const delivery = await deliverOrdinaryColdStep({
+        lead, step: nextStepNum, sender: selectedSender, subject, body, attribution,
+        activitiesForCycle: ownershipActivities, thread,
       });
+      if (!delivery.delivered) {
+        console.warn(`⏸️  follow-up deferred → ${lead.email} (${delivery.reason})`);
+        continue;
+      }
       sent++;
       sendsBySender.set(selectedSender.id, (sendsBySender.get(selectedSender.id) || 0) + 1);
-      await withAuth(() => markSent(lead, nextStepNum, { result: sendResult, subject, body, attribution, sender: selectedSender }));
-      console.log(`✅ Sent (step ${nextStepNum}) → ${lead.email}  (${sent}/${effectiveCap})`);
+      console.log(`${delivery.recovered ? '♻️ Recovered' : '✅ Sent'} (step ${nextStepNum}) → ${lead.email}  (${sent}/${effectiveCap})`);
     } catch (e) {
       console.error(`❌ Failed (step ${nextStepNum}) → ${lead.email}: ${e.message}`);
     }

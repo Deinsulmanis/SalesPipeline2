@@ -161,9 +161,10 @@ test('ingestion writes nothing and touches no campaign attribution', () => {
 
 test('the runtime sender loads ownership context once, not per candidate', () => {
   const agent = readSource(path.join(root, 'outreach-agent.js'));
-  assert.match(agent, /async function readBoardLeads\(\)/);
+  assert.match(agent, /async function readBoardLeads\(rowsOverride = null\)/);
   assert.match(agent, /function buildOwnershipContext\(\{/);
-  assert.match(agent, /const \[ownershipBoard, ownershipActivities\] = await Promise\.all\(/);
+  assert.match(agent, /const ownershipBoard = snapshot\.boardLeads;/);
+  assert.match(agent, /const ownershipActivities = snapshot\.activities;/);
   assert.match(agent, /context\.boardByLead\.get\(leadId\)/);
   assert.match(agent, /context\.activitiesByLead\.get\(leadId\)/);
   // A failed board read fails CLOSED rather than silently weakening the gate.
@@ -177,12 +178,12 @@ test('a queued lead already mailed by hand is refused by the provider-backed pro
   // fails closed when it cannot tell.
   const agent = readSource(path.join(root, 'outreach-agent.js'));
   assert.match(agent, /q: `in:sent to:"\$\{safeEmail\}" newer_than:7d`/);
-  assert.match(agent, /if \(probe !== 'clear'\) \{/);
-  assert.match(agent, /cannot verify prior sends to \$\{lead\.email\} — failing closed/);
-  // And the ownership gate runs BEFORE the probe, so both apply.
+  assert.match(agent, /if \(legacyProbe !== 'clear'\) \{/);
+  assert.match(agent, /prior step-1 delivery could not be verified/);
+  // And the ownership gate runs before entering the delivery helper, so both apply.
   const newSend = agent.indexOf('// ── New sends (step 1)');
   assert.ok(agent.indexOf('const gate = coldSendGate(lead, ownershipContext);', newSend)
-    < agent.indexOf('const probe = await stepOneAlreadySent(lead, selectedSender);', newSend));
+    < agent.indexOf('await deliverOrdinaryColdStep({', newSend));
 });
 
 // ── Agent-loop wiring ───────────────────────────────────────────────────────
@@ -209,7 +210,7 @@ test('outbound observation runs BEFORE send selection, and its writes are visibl
 test('outbound observation precedes reply auto-response and recorded human touch blocks it', () => {
   const agent = readSource(path.join(root, 'outreach-agent.js'));
   const observe = agent.indexOf('const outbound = await withAuth(() => runHumanOutboundPass(all, ownershipActivities))');
-  const replies = agent.indexOf('await runReplyCheckPass(all, todaySent, outbound.ok)');
+  const replies = agent.indexOf('await runReplyCheckPass(all, todaySent, outbound.ok, ownershipActivities)');
   assert.ok(observe >= 0 && replies >= 0 && observe < replies);
 
   const question = agent.slice(agent.indexOf('async function handleQuestion'), agent.indexOf('async function handleNeedsHuman'));
@@ -245,7 +246,7 @@ test('the demo-intent booking-link path also requires fresh canonical ownership'
 
   const intentOnly = agent.slice(agent.indexOf('if (INTENT_ONLY && !CHECK_ONLY)'));
   assert.ok(intentOnly.indexOf('runHumanOutboundPass(all, intentActivities)')
-    < intentOnly.indexOf('runIntentTriggerPass(all, intentOwnershipContext)'),
+    < intentOnly.indexOf('runIntentTriggerPass(all, intentOwnershipContext, snapshot)'),
   'intent-only observes Gmail before evaluating its send trigger');
 });
 
@@ -256,7 +257,7 @@ test('a failed Gmail observation fails closed for sends only', () => {
   assert.match(agent, /manual outbound observation failed this pass — mailbox may be stale, failing closed/);
   // Inbound detection still runs, but its auto-response branch receives the
   // failed freshness verdict and degrades to a draft instead of sending.
-  assert.match(agent, /runReplyCheckPass\(all, todaySent, outbound\.ok\)/);
+  assert.match(agent, /runReplyCheckPass\(all, todaySent, outbound\.ok, ownershipActivities\)/);
 });
 
 test('the observation is bounded: one list, no per-lead Gmail call', () => {

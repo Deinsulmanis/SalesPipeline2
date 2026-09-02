@@ -69,7 +69,9 @@ test('ordinary follow-up send paths use real Gmail reply headers and no independ
   const ordinary = agent.slice(agent.indexOf('async function attemptFollowUp'), agent.indexOf("console.log(`\\nDone."));
   assert.match(ordinary, /resolveColdFollowUpThread/);
   assert.match(ordinary, /expectedSenderId: selectedSender\.id/);
-  assert.match(ordinary, /threadId: thread\.threadId, inReplyTo: thread\.inReplyTo, references: thread\.references/g);
+  assert.match(ordinary, /activitiesForCycle: ownershipActivities, thread/g);
+  const delivery = agent.slice(agent.indexOf('async function deliverOrdinaryColdStep'), agent.indexOf('// Phase 4: mark a lead'));
+  assert.match(delivery, /threadId: thread\.threadId, inReplyTo: thread\.inReplyTo, references: thread\.references/);
   assert.doesNotMatch(ordinary, /Re: a quick demo I built|Last note —/);
   assert.match(agent, /runReplyCheckPass\(all[\s\S]*runHumanOutboundPass|runHumanOutboundPass[\s\S]*selectFollowUps/);
 });

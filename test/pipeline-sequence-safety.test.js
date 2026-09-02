@@ -8,7 +8,7 @@ const {
   stageSendGate,
 } = require('../integrations/pipeline-sequence-safety');
 const {
-  sequenceRfcMessageId, verifyThreadOwnership, findSuccessfulSequenceSend,
+  sequenceRfcMessageId, coldStepRfcMessageId, verifyThreadOwnership, findSuccessfulSequenceSend,
 } = require('../integrations/gmail-stage-sequence');
 const {
   automaticEnrollmentDecision, provenSequenceSenderId, resolveSequenceThread,
@@ -75,6 +75,12 @@ test('provider-success recovery finds the deterministic Message-ID without sendi
   const recovered = await findSuccessfulSequenceSend({ gmail, rfcMessageId: id });
   assert.equal(recovered.providerMessageId, 'M');
   assert.equal(recovered.rfcMessageId, id);
+});
+test('ordinary cold-step Message-ID is deterministic per lead and step', () => {
+  const first = coldStepRfcMessageId('lead-1', 2, 'sender@example.com');
+  assert.equal(first, coldStepRfcMessageId('lead-1', 2, 'sender@example.com'));
+  assert.notEqual(first, coldStepRfcMessageId('lead-1', 3, 'sender@example.com'));
+  assert.match(first, /^<cold-step-[a-f0-9]{32}@example\.com>$/);
 });
 
 const ev = (eventType, occurredAt, metadata = {}) => ({ eventType, occurredAt, metadata: JSON.stringify(metadata) });

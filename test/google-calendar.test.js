@@ -449,8 +449,9 @@ test('every application-owned live automation launch observes Calendar first and
   assert.ok(scheduled.indexOf("launchAutomationAfterCalendar('scheduled outreach run'") < scheduled.indexOf('spawnAgent(false'));
   const intent = server.slice(server.indexOf('function spawnAgentIntentOnly'), server.indexOf('function spawnAgentCheckOnly'));
   assert.ok(intent.indexOf('launchAutomationAfterCalendar') < intent.indexOf('startAgentProcess'));
-  const queued = server.slice(server.indexOf("child.on('exit'"), server.indexOf('function spawnAgent(dryRun'));
-  assert.match(queued, /launchAutomationAfterCalendar[\s\S]*spawnAgent\(false/);
+  const completed = server.slice(server.indexOf("child.on('exit'"), server.indexOf('function spawnAgent(dryRun'));
+  assert.doesNotMatch(completed, /spawnAgent\(false|pendingScheduledSendRuns/,
+    'completed runs never launch catch-up sends outside a scheduled window');
 });
 
 // ── ARCHITECTURE / REGRESSION ───────────────────────────────────────────────

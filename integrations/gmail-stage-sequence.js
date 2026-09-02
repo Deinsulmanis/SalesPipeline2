@@ -8,6 +8,13 @@ function sequenceRfcMessageId(eventId, senderEmail) {
   return `<stage-sequence-${digest}@${domain}>`;
 }
 
+function coldStepRfcMessageId(leadId, step, senderEmail) {
+  const key = `cold-step|${String(leadId)}|${Number(step)}`;
+  const digest = crypto.createHash('sha256').update(key).digest('hex').slice(0, 32);
+  const domain = String(senderEmail || '').split('@')[1] || 'scalelabai.ca';
+  return `<cold-step-${digest}@${domain}>`;
+}
+
 function header(payload, name) {
   return ((payload && payload.headers) || [])
     .find(item => String(item.name || '').toLowerCase() === String(name).toLowerCase())?.value || '';
@@ -67,4 +74,4 @@ async function findSuccessfulSequenceSend({ gmail, rfcMessageId }) {
   };
 }
 
-module.exports = { sequenceRfcMessageId, verifyThreadOwnership, findSuccessfulSequenceSend };
+module.exports = { sequenceRfcMessageId, coldStepRfcMessageId, verifyThreadOwnership, findSuccessfulSequenceSend };

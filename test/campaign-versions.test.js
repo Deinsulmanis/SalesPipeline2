@@ -95,7 +95,7 @@ test('summary metrics remain independent of the version filter', () => {
 });
 test('send attribution is written only in post-provider activity paths', () => {
   const agent = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
-  assert.match(agent, /const sendResult = await sendEmail[\s\S]*markSent/);
+  assert.match(agent, /async function deliverOrdinaryColdStep[\s\S]*await sendEmail[\s\S]*markSent/);
   assert.match(agent, /successful send is missing campaign attribution/);
 });
 test('registry documents an explicit clean activation boundary', () => {

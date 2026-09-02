@@ -176,8 +176,9 @@ test('12. no endpoint on the Outreach load path performs a per-lead read', () =>
   // the lead count is.
   const loader = server.slice(server.indexOf('async function loadOutreachDataset'), server.indexOf('async function getOutreachDataset'));
   const reads = (loader.match(/spreadsheets\.values\.get/g) || []).length;
-  assert.equal(reads, 7, 'seven fixed reads (including the board join) plus the ColdEmail batch, whatever the lead count');
-  assert.match(loader, /readColdEmailDashboardRows\(\)/);
+  const batches = (loader.match(/spreadsheets\.values\.batchGet/g) || []).length;
+  assert.equal(reads, 0, 'the snapshot has no independent values.get calls');
+  assert.equal(batches, 1, 'all fixed ranges share one quota-counted batch request');
   assert.ok(!/for\s*\(/.test(loader.slice(0, loader.indexOf('const leads ='))), 'no loop before the fetch');
 });
 
@@ -186,8 +187,8 @@ test('the four Outreach endpoints share one snapshot instead of re-reading', () 
     assert.match(handler(route), /getOutreachDataset\(/, `${route} uses the shared snapshot`);
   }
   // ColdEmail is fetched in exactly one place now.
-  assert.equal((server.match(/readColdEmailDashboardRows\(\)/g) || []).length, 3,
-    'defined once, called by the shared snapshot and protected routing simulation');
+  assert.equal((server.match(/readColdEmailDashboardRows\(\)/g) || []).length, 2,
+    'legacy helper remains only for its definition and protected routing simulation');
 });
 
 // ── 13–15. Cache behaviour ──────────────────────────────────────────────────
