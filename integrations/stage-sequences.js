@@ -55,6 +55,8 @@ const SEQUENCE_OWNER = Object.freeze({ AUTOMATION: 'automation', HUMAN: 'human' 
 // Canonical activity vocabulary for sequences.
 const SEQUENCE_EVENTS = Object.freeze({
   ENROLLED: 'sequence_enrolled',
+  SEND_RESERVED: 'sequence_send_reserved',
+  SEND_FAILED: 'sequence_send_failed',
   STEP_SENT: 'sequence_step_sent',
   PAUSED: 'sequence_paused',
   RESUMED: 'sequence_resumed',
@@ -72,7 +74,7 @@ const SEQUENCES = Object.freeze({
     id: 'demo_follow_up_v1',
     label: 'Demo follow-up',
     stage: 'follow_up',
-    requiresEnrollment: false,   // a natural continuation of the demo trigger
+    requiresEnrollment: true,    // auto-enrolled from verified booking-link evidence
     maxSteps: 2,
     delays: [SEQUENCE_TIMING.DEMO_STEP_1_BUSINESS_DAYS, SEQUENCE_TIMING.DEMO_STEP_2_BUSINESS_DAYS],
   },
@@ -146,26 +148,28 @@ function latestAt(activities, types) {
 /**
  * Suppression SCOPED to stage sequences.
  *
- * This is the heart of the manual-hold design. [MANUAL HOLD] means "the COLD
- * automation may not run" — it is written when a human takes a lead over, and
- * suppressionReason() in the agent still returns it, so every cold selector
- * stays blocked exactly as before.
- *
- * A stage sequence is different: a human explicitly enrolled this lead in this
- * specific journey. That enrollment IS the authorisation the hold was protecting.
- * So the hold does not block it — and crucially, nothing anywhere removes the
- * tag, so the cold sequence remains stopped forever.
+ * [MANUAL HOLD] always blocks cold cadence and also blocks generic demo/Hot
+ * automation. Only an explicit lifecycle action — no-show, cancellation, or a
+ * human-selected timing date — authorises its matching recovery journey through
+ * the hold. The tag itself is never removed, so ordinary Email 2/3 stay stopped.
  *
  * Everything permanent still wins: opt-out, bounce and the durable list block
  * every path, always.
  */
-function stageSequenceSuppressionReason(twin = {}, suppressedEmails = new Set()) {
+function hasManualHold(twin = {}) {
+  return String(twin.notes || '').includes('[MANUAL HOLD]');
+}
+
+function stageSequenceSuppressionReason(twin = {}, suppressedEmails = new Set(), options = {}) {
   const notes = String(twin.notes || '');
   for (const tag of HARD_SUPPRESSION_TAGS) {
     if (notes.includes(tag)) return `suppressed (${tag})`;
   }
   if (suppressedEmails.has(String(twin.email || '').trim().toLowerCase())) {
     return 'on the durable suppression list';
+  }
+  if (hasManualHold(twin) && !options.explicitLifecycleAuthorization) {
+    return 'manual hold — human owns this lead';
   }
   return null;
 }
@@ -178,17 +182,21 @@ function sequenceStopReason(input = {}) {
   const { boardLead = {}, twin = {}, activities = [], enrolledAt = null,
     suppressedEmails = new Set(), identityConflict = false, callStatus = null } = input;
 
-  const suppression = stageSequenceSuppressionReason(twin, suppressedEmails);
+  const explicitLifecycleAuthorization = ['no_show_recovery_v1', 'cancelled_rebook_v1', 'timing_recontact_v1']
+    .includes(String(input.sequenceId || ''));
+  const suppression = stageSequenceSuppressionReason(twin, suppressedEmails, { explicitLifecycleAuthorization });
   if (suppression) return suppression;
   if (identityConflict) return 'identity mapping conflict';
 
   const stage = displayStageFor(boardLead.stage);
   if (stage === 'closed_won') return 'opportunity closed won';
-  if (stage === 'closed_lost') return 'opportunity closed lost';
+  if (stage === 'closed_lost'
+    && !(String(input.sequenceId || '') === 'timing_recontact_v1'
+      && String(boardLead.outcome || '') === 'timing')) return 'opportunity closed lost';
 
   // Anything that happened AFTER enrollment ends the journey. Before enrollment
   // it is just history the human already saw when they chose to enrol.
-  const since = at => Boolean(at) && (!enrolledAt || at > enrolledAt);
+  const since = at => Boolean(at) && Boolean(enrolledAt) && at > enrolledAt;
 
   const replyAt = latestAt(activities, INBOUND_REPLY_EVENTS);
   if (since(replyAt)) return 'the prospect replied';
@@ -333,18 +341,12 @@ function evaluateStageSequence(input = {}) {
 
   // ── an inactive lead may still be offered a journey, but sends nothing ────
   if (state.status !== SEQUENCE_STATUS.ACTIVE) {
-    // The demo journey needs no enrollment, so it self-activates when offered.
-    if (base.offer === 'demo_follow_up_v1' && state.status === SEQUENCE_STATUS.NONE) {
-      const stop = sequenceStopReason({ boardLead, twin, activities, suppressedEmails, identityConflict, callStatus });
+    if (state.status === SEQUENCE_STATUS.NONE && base.offer) {
+      const stop = sequenceStopReason({
+        boardLead, twin, activities, suppressedEmails, identityConflict,
+        callStatus, sequenceId: base.offer,
+      });
       if (stop) return { ...base, stopReason: stop, reason: stop };
-      const anchorAt = latestAt(activities, ['booking_link_sent']);
-      const auto = { ...state, sequenceId: 'demo_follow_up_v1', status: SEQUENCE_STATUS.ACTIVE, enrolledAt: null };
-      const due = nextStepDueAt(SEQUENCES.demo_follow_up_v1, auto, { anchorAt });
-      const dueNow = Boolean(due) && new Date(due).getTime() <= new Date(now).getTime();
-      return { ...base, sequenceId: 'demo_follow_up_v1', label: SEQUENCES.demo_follow_up_v1.label,
-        status: SEQUENCE_STATUS.ACTIVE, maxSteps: 2, owner: SEQUENCE_OWNER.AUTOMATION,
-        eligible: featureEnabled && dueNow, dueNow, nextDueAt: due,
-        reason: dueNow ? 'demo follow-up is due' : 'demo follow-up scheduled' };
     }
     return { ...base, reason: state.status === SEQUENCE_STATUS.NONE
       ? (base.offer ? 'a journey is available but nobody has enrolled this lead' : 'no stage sequence applies')
@@ -353,7 +355,7 @@ function evaluateStageSequence(input = {}) {
 
   // ── active: does anything stop it? ───────────────────────────────────────
   const stop = sequenceStopReason({
-    boardLead, twin, activities, enrolledAt: state.enrolledAt,
+    boardLead, twin, activities, enrolledAt: state.enrolledAt, sequenceId: state.sequenceId,
     suppressedEmails, identityConflict, callStatus,
   });
   if (stop) return { ...base, status: SEQUENCE_STATUS.ACTIVE, stopReason: stop, reason: stop };
@@ -427,13 +429,15 @@ const SIGN_OFF = 'Deins';
  * recipient's mail client: it breaks threading, and it pretends to continue a
  * conversation the message is not part of.
  */
-function resolveSequenceThread(activities = []) {
+function resolveSequenceThread(activities = [], options = {}) {
   let best = null;
   for (const row of activities) {
     let metadata = {};
     try { metadata = JSON.parse(row.metadata || '{}'); } catch (_) { continue; }
     const threadId = String(metadata.gmailThreadId || '').trim();
     if (!threadId) continue;
+    if (options.senderInboxId
+      && String(metadata.senderInboxId || '').trim() !== String(options.senderInboxId)) continue;
     const at = String(row.occurredAt || '');
     if (!best || at > best.at) {
       best = {
@@ -447,6 +451,79 @@ function resolveSequenceThread(activities = []) {
   }
   if (!best) return null;
   return { threadId: best.threadId, rfcMessageId: best.rfcMessageId || '' };
+}
+
+const SENDER_EVIDENCE_EVENTS = Object.freeze([
+  'initial_email_sent', 'follow_up_sent', 'sequence_step_sent', 'booking_link_sent',
+  'human_response_sent', 'positive_reply', 'meeting_requested', 'late_reply',
+  'question_reply', 'negative_reply', 'unsubscribe_reply', 'wrong_person_reply',
+]);
+
+function provenSequenceSenderId(twin = {}, activities = []) {
+  const ids = new Set();
+  const persisted = String(twin.senderInboxId || '').trim();
+  if (persisted && (Number(twin.emailStep || 0) > 0 || String(twin.emailStatus || '').trim())) ids.add(persisted);
+  for (const row of activities) {
+    if (!SENDER_EVIDENCE_EVENTS.includes(String(row.eventType || ''))) continue;
+    const id = String(sequenceMetadata(row).senderInboxId || '').trim();
+    if (id) ids.add(id);
+  }
+  if (ids.size > 1) return { ok: false, reason: 'sender ownership conflict' };
+  if (!ids.size) return { ok: false, reason: 'sender ownership is not proven' };
+  return { ok: true, senderInboxId: [...ids][0] };
+}
+
+function automaticEnrollmentDecision(input = {}) {
+  const { twin = {}, activities = [], verdict = {}, senderProof = null,
+    thread = null, callState = null, hotState = null, now = Date.now() } = input;
+  const state = deriveSequenceState(activities);
+  if (state.status !== SEQUENCE_STATUS.NONE) return { enroll: false, reason: 'sequence state already exists' };
+  const sequenceId = String(verdict.offer || '');
+  if (!sequenceId) return { enroll: false, reason: 'no unambiguous journey applies' };
+  if (verdict.stopReason) return { enroll: false, reason: verdict.stopReason };
+  if (!senderProof?.ok) return { enroll: false, reason: senderProof?.reason || 'sender ownership is not proven' };
+  if (!thread?.threadId) return { enroll: false, reason: 'conversation thread is not proven for the owning sender' };
+
+  const explicitLifecycle = ['no_show_recovery_v1', 'cancelled_rebook_v1', 'timing_recontact_v1'].includes(sequenceId);
+  if (hasManualHold(twin) && !explicitLifecycle) {
+    return { enroll: false, reason: 'manual hold — demo and Hot automation require human review' };
+  }
+  if (sequenceId === 'demo_follow_up_v1'
+    && !activities.some(row => String(row.eventType || '') === 'booking_link_sent')) {
+    return { enroll: false, reason: 'verified booking-link evidence is missing' };
+  }
+  if (sequenceId === 'hot_stale_v1'
+    && !(hotState && hotState.waitingOn === 'waiting_on_prospect'
+      && ['follow_up_due', 'overdue', 'stale', 'severely_stale'].includes(hotState.staleness))) {
+    return { enroll: false, reason: 'Hot lead is not due while waiting on the prospect' };
+  }
+  if (sequenceId === 'no_show_recovery_v1' && String(callState?.status || '') !== 'no_show') {
+    return { enroll: false, reason: 'explicit no-show event is missing' };
+  }
+  if (sequenceId === 'cancelled_rebook_v1' && String(callState?.status || '') !== 'cancelled') {
+    return { enroll: false, reason: 'trusted cancellation event is missing' };
+  }
+  const anchorTypes = sequenceId === 'demo_follow_up_v1' ? ['booking_link_sent']
+    : sequenceId === 'no_show_recovery_v1' ? ['meeting_no_show']
+      : sequenceId === 'cancelled_rebook_v1' ? ['meeting_cancelled'] : [];
+  const anchorAt = latestAt(activities, anchorTypes) || null;
+  if (!anchorAt && sequenceId !== 'hot_stale_v1') return { enroll: false, reason: 'canonical lifecycle anchor is missing' };
+  const decisionAnchor = anchorAt || String(hotState?.lastInteractionAt || '');
+  const laterInbound = latestAt(activities, INBOUND_REPLY_EVENTS);
+  const laterHuman = latestAt(activities, HUMAN_INTERVENTION_EVENTS);
+  const laterBooking = latestAt(activities, BOOKING_EVENTS);
+  if (decisionAnchor && [laterInbound, laterHuman, laterBooking].some(at => at && at > decisionAnchor)) {
+    return { enroll: false, reason: 'newer reply, human response, or booking supersedes the automation trigger' };
+  }
+  return {
+    enroll: true, sequenceId, enrolledAt: anchorAt || new Date(now).toISOString(),
+    authorization: explicitLifecycle ? 'explicit_lifecycle' : 'automatic_canonical_state',
+    senderInboxId: senderProof.senderInboxId, gmailThreadId: thread.threadId,
+  };
+}
+
+function automaticEnrollmentEventId(leadId, sequenceId, anchorAt) {
+  return `seq-enroll:${leadId}:${sequenceId}:${String(anchorAt || '').replace(/[^0-9TZ]/g, '')}`;
 }
 
 // One builder per journey and step. Returns { subject, body, replyToThread }.
@@ -590,7 +667,8 @@ module.exports = {
   SEQUENCES, SEQUENCE_IDS, SEQUENCE_PRECEDENCE, SEQUENCE_TIMING,
   SEQUENCE_STATUS, SEQUENCE_OWNER, SEQUENCE_EVENTS, SEQUENCE_EVENT_TYPES,
   INBOUND_REPLY_EVENTS, HUMAN_INTERVENTION_EVENTS, BOOKING_EVENTS,
-  stageSequenceSuppressionReason, sequenceStopReason,
+  hasManualHold, stageSequenceSuppressionReason, sequenceStopReason,
   deriveSequenceState, nextStepDueAt, evaluateStageSequence, sequenceStepEventId,
-  SEQUENCE_COPY, buildSequenceEmail, resolveSequenceThread,
+  SEQUENCE_COPY, buildSequenceEmail, resolveSequenceThread, provenSequenceSenderId,
+  automaticEnrollmentDecision, automaticEnrollmentEventId,
 };

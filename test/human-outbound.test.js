@@ -226,15 +226,15 @@ test('outbound observation precedes reply auto-response and recorded human touch
 test('outbound observation runs before stage sequences and protects both send systems in the same cycle', () => {
   const agent = readSource(path.join(root, 'outreach-agent.js'));
   const observe = agent.indexOf('await withAuth(() => runHumanOutboundPass(all, ownershipActivities))');
-  const sequences = agent.indexOf('await runStageSequencePass(all, { outboundObservationOk: outbound.ok })');
+  const sequences = agent.indexOf('await runStageSequencePass(all, {');
   const coldSelection = agent.indexOf('const queued = selectQueued(all)');
 
   assert.ok(observe >= 0 && sequences >= 0 && coldSelection >= 0);
   assert.ok(observe < sequences, 'manual Gmail outbound is persisted before sequence evaluation');
   assert.ok(sequences < coldSelection, 'sequence evaluation remains before ordinary cold selection');
-  assert.match(agent, /async function runStageSequencePass\(allLeads, \{ outboundObservationOk = true \} = \{\}\)/);
-  assert.match(agent, /if \(!outboundObservationOk\) \{[\s\S]{0,250}return 0;/,
-    'a stale mailbox context fails sequence execution closed');
+  assert.match(agent, /observationBySender\.get\(sender\.id\) === true/);
+  assert.match(agent, /const sendGate = stageSendGate\(/,
+    'sender-scoped mailbox freshness is part of the final send gate');
 });
 
 test('the demo-intent booking-link path also requires fresh canonical ownership', () => {
@@ -243,7 +243,7 @@ test('the demo-intent booking-link path also requires fresh canonical ownership'
   assert.match(pass, /const gate = coldSendGate\(lead, ownershipContext\)/);
   assert.ok(pass.indexOf('coldSendGate(lead, ownershipContext)') < pass.indexOf('await sendEmail('));
 
-  const intentOnly = agent.slice(agent.indexOf('if (INTENT_ONLY)'));
+  const intentOnly = agent.slice(agent.indexOf('if (INTENT_ONLY && !CHECK_ONLY)'));
   assert.ok(intentOnly.indexOf('runHumanOutboundPass(all, intentActivities)')
     < intentOnly.indexOf('runIntentTriggerPass(all, intentOwnershipContext)'),
   'intent-only observes Gmail before evaluating its send trigger');

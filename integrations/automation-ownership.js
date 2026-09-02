@@ -169,11 +169,13 @@ function deriveAutomationOwnership(lead = {}, {
         ? 'a MANUAL HOLD blocks cold automation on this lead'
         : `suppressed (${suppressed}); no automated send may occur`,
       blockedBy: isHold ? BLOCKED_BY.MANUAL_HOLD : BLOCKED_BY.SUPPRESSION,
-      // A hold blocks COLD automation but has never blocked an explicitly
-      // enrolled stage sequence — Step 10 made that carve-out deliberately, so
-      // a human can run a recovery journey on a lead they are holding out of
-      // the cold campaign. Preserved exactly, and gated on real enrolment.
-      sequenceAllowed: isHold && sequencesEnabled && Boolean(sequenceState && sequenceState.status === 'active'),
+      // A hold blocks generic demo/Hot automation too. Only an explicit
+      // lifecycle authorization (no-show, cancellation, selected timing date)
+      // may run a recovery journey while the cold hold remains in place.
+      sequenceAllowed: isHold && sequencesEnabled && Boolean(sequenceState
+        && sequenceState.status === 'active'
+        && ['no_show_recovery_v1', 'cancelled_rebook_v1', 'timing_recontact_v1']
+          .includes(String(sequenceState.sequenceId || ''))),
       evidence: { suppressionReason: suppressed },
     });
   }

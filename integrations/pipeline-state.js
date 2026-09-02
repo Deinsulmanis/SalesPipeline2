@@ -1298,6 +1298,20 @@ function deriveNextAction(boardLead, twin, context = {}) {
     }
   }
 
+  // A board card in Follow Up is Pipeline-owned. Ordinary cold Email 2/3 is
+  // structurally blocked by the sender even when the stale ColdEmail twin still
+  // says "emailed". Do not advertise an automated cold send the engine cannot
+  // execute; an active stage sequence was already handled above.
+  if (stage === 'follow_up') {
+    return withManual('Review Pipeline follow-up')
+      || buildAction({
+        type: ACTION_TYPE.MANUAL_FOLLOW_UP, label: 'Review Pipeline follow-up', dueAt: null,
+        owner: ACTION_OWNER.HUMAN, status: ACTION_STATUS.BLOCKED, source: 'pipeline-ownership',
+        reason: 'Pipeline ownership blocks the ordinary cold cadence; no stage sequence is active',
+        needsAttention: true, now,
+      });
+  }
+
   if (derived.state === AUTOMATION_STATES.ACTIVE && twin) {
     const step = parseInt(twin.emailStep || '0', 10);
     const delay = FOLLOW_UP_DELAY_DAYS[step - 1];

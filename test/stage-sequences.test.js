@@ -13,6 +13,7 @@ const {
   SEQUENCES, SEQUENCE_PRECEDENCE, SEQUENCE_STATUS, SEQUENCE_EVENTS, SEQUENCE_TIMING,
   stageSequenceSuppressionReason, sequenceStopReason, deriveSequenceState,
   evaluateStageSequence, sequenceStepEventId, buildSequenceEmail,
+  automaticEnrollmentDecision,
 } = require('../integrations/stage-sequences');
 const {
   deriveNextAction, ACTION_TYPE, ACTION_OWNER, ACTION_STATUS, MANUAL_HOLD_TAG,
@@ -138,25 +139,24 @@ test('13/14. MANUAL HOLD still blocks COLD sending and is never removed', () => 
   // The stage pass never removes it, and never touches cold state.
   assert.ok(!/applyHoldToNotes|removeHold|clearHold/.test(pass), 'the stage pass never rewrites the hold');
   assert.ok(!/emailStep|lastEmailedAt|markSent/.test(pass), 'and never touches cold sequence state');
-  // Scoped: a held-but-enrolled lead IS eligible for its stage journey...
+  // Safer rule: demo/Hot automation cannot silently override human ownership.
   const held = evalSeq({
     boardLead: { stage: 'hot' }, twin: { notes: MANUAL_HOLD_TAG + ' promoted' },
     activities: [enrolled('hot_stale_v1')],
   });
-  assert.equal(held.eligible, true, 'the explicit enrolment authorises this journey');
-  // ...while the hold itself is untouched and still a hard cold blocker.
-  assert.equal(stageSequenceSuppressionReason({ notes: MANUAL_HOLD_TAG }), null,
-    'the hold is not a stage blocker');
-  assert.ok(!/MANUAL_HOLD/.test(readSource(path.join(root, 'integrations', 'stage-sequences.js'))
-    .slice(0, readSource(path.join(root, 'integrations', 'stage-sequences.js')).indexOf('function sequenceStopReason'))
-    .replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, '')), 'the module writes no hold logic of its own');
+  assert.equal(held.eligible, false);
+  assert.match(held.stopReason, /manual hold/);
+  assert.match(stageSequenceSuppressionReason({ notes: MANUAL_HOLD_TAG }), /manual hold/);
+  // Explicit lifecycle actions are the narrow authorization exception.
+  assert.equal(stageSequenceSuppressionReason({ notes: MANUAL_HOLD_TAG }, new Set(),
+    { explicitLifecycleAuthorization: true }), null);
 });
 
 test('15. with the feature flag OFF nothing is ever eligible', () => {
   const cases = [
     { boardLead: { stage: 'hot' }, activities: [enrolled('hot_stale_v1')] },
     { boardLead: { stage: 'call_booked' }, callState: { status: 'no_show' }, activities: [enrolled('no_show_recovery_v1')] },
-    { boardLead: { stage: 'follow_up' }, activities: [ev('booking_link_sent', '2026-08-10T10:00:00.000Z')] },
+    { boardLead: { stage: 'follow_up' }, activities: [ev('booking_link_sent', '2026-08-10T10:00:00.000Z'), enrolled('demo_follow_up_v1', '2026-08-10T10:00:00.000Z')] },
   ];
   for (const input of cases) {
     const off = evaluateStageSequence({ now: NOW, featureEnabled: false, ...input });
@@ -174,19 +174,28 @@ test('15. with the feature flag OFF nothing is ever eligible', () => {
 
 // ── DEMO (16–20) ────────────────────────────────────────────────────────────
 
-test('16/17. a demo lead self-activates only after the booking-link email', () => {
+test('16/17. verified demo evidence qualifies for automatic persisted enrollment', () => {
   const none = evalSeq({ boardLead: { stage: 'follow_up' }, activities: [] });
   assert.equal(none.offer, null, 'no demo trigger, no journey');
   const after = evalSeq({
     boardLead: { stage: 'follow_up' },
     activities: [ev('booking_link_sent', '2026-08-18T10:00:00.000Z')],
   });
-  assert.equal(after.sequenceId, 'demo_follow_up_v1');
-  assert.equal(after.step, 0, 'the booking-link email is NOT counted as a step');
-  assert.equal(SEQUENCES.demo_follow_up_v1.requiresEnrollment, false);
+  assert.equal(after.offer, 'demo_follow_up_v1');
+  assert.equal(after.eligible, false, 'the activity ledger must first persist enrollment');
+  assert.equal(SEQUENCES.demo_follow_up_v1.requiresEnrollment, true);
+  const decision = automaticEnrollmentDecision({
+    verdict: after, activities: [ev('booking_link_sent', '2026-08-18T10:00:00.000Z')],
+    senderProof: { ok: true, senderInboxId: 'primary' }, thread: { threadId: 'T' }, now: NOW,
+  });
+  assert.equal(decision.sequenceId, 'demo_follow_up_v1');
+  const active = evalSeq({
+    boardLead: { stage: 'follow_up' },
+    activities: [ev('booking_link_sent', '2026-08-18T10:00:00.000Z'), enrolled('demo_follow_up_v1', '2026-08-18T10:00:00.000Z')],
+  });
   // Step 1 is three business days after that existing email, not a duplicate.
   assert.equal(SEQUENCE_TIMING.DEMO_STEP_1_BUSINESS_DAYS, 3);
-  assert.equal(after.nextDueAt.slice(0, 10), '2026-08-21');
+  assert.equal(active.nextDueAt.slice(0, 10), '2026-08-21');
 });
 
 test('18/19/20. replies and bookings stop the demo journey, and it is bounded', () => {
@@ -224,7 +233,7 @@ test('24. starting the Hot journey does not restart the cold sequence', () => {
   const held = { notes: MANUAL_HOLD_TAG + ' [REPLY: Interested]', emailStatus: 'replied', emailStep: '2' };
   const before = JSON.stringify(held);
   const verdict = evalSeq({ boardLead: { stage: 'hot' }, twin: held, activities: [enrolled('hot_stale_v1')] });
-  assert.equal(verdict.eligible, true);
+  assert.equal(verdict.eligible, false, 'MANUAL HOLD keeps Hot automation fail-closed');
   assert.equal(JSON.stringify(held), before, 'the cold twin is untouched');
   assert.ok(held.notes.includes(MANUAL_HOLD_TAG), 'and still held');
   // The module cannot write anything at all.
@@ -304,16 +313,17 @@ test('38/39/40/41. timing re-contact needs an explicit date and waits for it', (
 
 // ── IDEMPOTENCY (42–45) ─────────────────────────────────────────────────────
 
-test('42/43/44/45. a step cannot send twice, and a failed send does not advance', () => {
+test('42/43/44/45. a step is deterministic and provider failures do not consume quota', () => {
   assert.equal(sequenceStepEventId('L1', 'hot_stale_v1', 1), 'seq:L1:hot_stale_v1:1');
   assert.equal(sequenceStepEventId('L1', 'hot_stale_v1', 1), sequenceStepEventId('L1', 'hot_stale_v1', 1));
   assert.notEqual(sequenceStepEventId('L1', 'hot_stale_v1', 1), sequenceStepEventId('L1', 'hot_stale_v1', 2));
   // The pass skips a step whose event already exists.
   assert.match(pass, /if \(activities\.some\(row => row\.eventId === eventId\)\) continue;/);
-  // The step event is written only AFTER the send resolves...
-  assert.ok(pass.indexOf('await sendEmail(') < pass.indexOf('eventType: SEQUENCE_EVENTS.STEP_SENT'));
-  // ...and a throw skips the record entirely, so the step may be retried.
-  assert.match(pass, /A failed send records no step event, so the next run may safely retry\./);
+  assert.match(pass, /sequenceRfcMessageId\(eventId, sender\.email\)/);
+  assert.match(pass, /findSuccessfulSequenceSend/);
+  assert.match(pass, /A provider failure consumes no quota\./);
+  const providerBlock = pass.slice(pass.indexOf('let result;'));
+  assert.ok(providerBlock.indexOf('result = await sendEmail(') < providerBlock.indexOf('todaySent++;'));
   // Duplicated step events do not double-advance the counter.
   const state = deriveSequenceState([enrolled('hot_stale_v1'),
     ev(SEQUENCE_EVENTS.STEP_SENT, '2026-08-26T10:00:00.000Z', { step: 1 }),
@@ -479,21 +489,21 @@ test('"Re:" is used ONLY when the message really goes into that thread', () => {
 });
 
 test('the agent sends into the thread and records it for the next step', () => {
-  assert.match(pass, /const thread = resolveSequenceThread\(mine\);/);
-  assert.match(pass, /buildSequenceEmail\(verdict\.sequenceId, step, boardLead, \{ thread \}\)/);
+  assert.match(pass, /resolveSequenceThread\(mine, \{ senderInboxId: sender\.id \}\)/);
+  assert.match(pass, /buildSequenceEmail\(verdict\.sequenceId, step, boardLead, \{ thread: verifiedThread \}\)/);
   // Threading headers are passed ONLY when the message really is a reply.
   assert.match(pass, /\.\.\.\(built\.replyToThread \? \{/);
   assert.match(pass, /threadId: built\.threadId,/);
   assert.match(pass, /inReplyTo: built\.inReplyTo \|\| undefined,/);
   // The resulting thread is stored so step 2 chains onto step 1.
-  assert.match(pass, /gmailThreadId: \(result && result\.threadId\) \|\| built\.threadId \|\| '',/);
+  assert.match(pass, /gmailThreadId: data\.threadId \|\| built\.threadId \|\| '',/);
   assert.match(pass, /repliedInThread: built\.replyToThread,/);
 });
 
 test('the preview resolves the same thread the sender would', () => {
   const route = server.slice(server.indexOf("app.get('/api/leads/:id/sequence'"));
   const body = route.slice(0, route.indexOf('\n});'));
-  assert.match(body, /const thread = resolveSequenceThread\(ctx\.activities\);/);
+  assert.match(body, /resolveSequenceThread\(ctx\.activities, \{ senderInboxId: senderProof\.senderInboxId \}\)/);
   assert.match(body, /buildSequenceEmail\(previewId, step, ctx\.lead, \{ thread \}\)/);
   assert.match(body, /replyToThread: preview\.replyToThread/);
   assert.match(body, /wouldSend: false/);
@@ -503,7 +513,8 @@ test('the preview resolves the same thread the sender would', () => {
 
 test('the drawer offers enrol, pause, resume and cancel by state', () => {
   const ui = browser.slice(browser.indexOf('async function renderSequenceControls'), browser.indexOf('function closeSeqModal'));
-  assert.match(ui, /if \(!running && data\.offer\)/, 'enrol only when offered and not running');
+  assert.match(ui, /if \(!running && data\.offer && !automaticOffer\)/,
+    'automatic journeys do not require a redundant enroll button');
   assert.match(ui, /Start \$\{esc\(label\)\}/);
   assert.match(ui, /if \(data\.status === 'active'\)/);
   assert.match(ui, /openSeqModal\('pause'\)/);
@@ -514,7 +525,7 @@ test('the drawer offers enrol, pause, resume and cancel by state', () => {
   assert.match(ui, /if \(!running && !data\.offer\) return;/);
   // Eligibility comes from the server, not recomputed here.
   assert.match(ui, /fetch\(`\/api\/leads\/\$\{encodeURIComponent\(leadId\)\}\/sequence`\)/);
-  assert.ok(!/staleness|no_show|SEQUENCE_PRECEDENCE/.test(ui), 'the browser derives no eligibility');
+  assert.ok(!/hotState|waitingOn|SEQUENCE_PRECEDENCE/.test(ui), 'the browser derives no eligibility');
 });
 
 test('enrolment, pause and cancel all require explicit confirmation', () => {

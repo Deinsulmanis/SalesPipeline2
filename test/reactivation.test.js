@@ -267,10 +267,10 @@ test('21. a scheduled reactivation is an automation-owned, upcoming next action'
   assert.equal(deriveNextAction({ stage: 'follow_up' }, held(), { now: NOW }).type, ACTION_TYPE.BLOCKED_BY_HOLD);
 });
 
-test('a released reactivation hands back to the ordinary automation action', () => {
+test('a released reactivation remains subject to Pipeline ownership', () => {
   const action = deriveNextAction({ stage: 'follow_up' }, scheduled(PAST), { now: NOW });
-  assert.equal(action.type, ACTION_TYPE.AUTOMATED_FOLLOW_UP);
-  assert.equal(action.owner, ACTION_OWNER.AUTOMATION);
+  assert.equal(action.type, ACTION_TYPE.MANUAL_FOLLOW_UP);
+  assert.equal(action.owner, ACTION_OWNER.HUMAN);
   assert.equal(deriveAutomationState(scheduled(PAST), NOW).state, AUTOMATION_STATES.ACTIVE);
   assert.equal(deriveAutomationState(scheduled(FUTURE), NOW).state, AUTOMATION_STATES.SCHEDULED);
 });

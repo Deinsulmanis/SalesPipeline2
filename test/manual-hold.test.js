@@ -424,7 +424,7 @@ test('every send path is accounted for and gated', () => {
   const pass = agentSrc.slice(agentSrc.indexOf('async function runStageSequencePass'), agentSrc.indexOf('async function run()'));
   assert.equal((pass.match(/await sendEmail\(/g) || []).length, 1, 'the stage pass sends from one place');
   assert.match(pass, /if \(!STAGE_SEQUENCES_ENABLED\) \{/, 'gated by the stage flag');
-  assert.match(pass, /if \(!SENDING_ENABLED\) \{/, 'and by the global kill switch');
+  assert.match(pass, /sendingEnabled: SENDING_ENABLED/, 'and by the shared global kill-switch gate');
   assert.ok(pass.indexOf('STAGE_SEQUENCES_ENABLED') < pass.indexOf('sendEmail'), 'the flag is checked first');
   // The stage pass must never touch cold-sequence state.
   assert.ok(!/emailStep|lastEmailedAt|markSent/.test(pass), 'cold sequence state is untouched');

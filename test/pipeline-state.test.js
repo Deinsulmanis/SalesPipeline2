@@ -21,21 +21,21 @@ const agent = fs.readFileSync(path.join(root, 'outreach-agent.js'), 'utf8');
 const browser = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
 
 // ── 1. Cold email sent, no engagement ───────────────────────────────────────
-test('scenario 1: emailed lead with no engagement stays automated and has a dated next action', () => {
+test('scenario 1: Pipeline ownership suppresses the stale cold cadence display', () => {
   const twin = { emailStatus: 'emailed', emailStep: '1', lastEmailedAt: '2026-08-01T00:00:00Z' };
   assert.equal(deriveAutomationState(twin).state, AUTOMATION_STATES.ACTIVE);
   const next = deriveNextAction({ stage: 'follow_up' }, twin);
-  assert.equal(next.action, 'Automated follow-up #2');
-  assert.equal(next.dueAt, '2026-08-04T00:00:00.000Z'); // +3d, mirrors FOLLOW_UP_SEQUENCE
-  assert.equal(next.needsAttention, false);
+  assert.equal(next.action, 'Review Pipeline follow-up');
+  assert.equal(next.dueAt, null);
+  assert.equal(next.needsAttention, true);
 });
 
-test('scenario 1b: a lead past the last step is a DEAD END — automation stopped, no next action', () => {
+test('scenario 1b: a lead past the last step remains an explicit Pipeline review', () => {
   // This is the documented leak: step 3 of 3 sent, nothing schedules anything else.
   const twin = { emailStatus: 'done', emailStep: '3', lastEmailedAt: '2026-08-01T00:00:00Z' };
   assert.equal(deriveAutomationState(twin).state, AUTOMATION_STATES.STOPPED);
   const next = deriveNextAction({ stage: 'follow_up' }, twin);
-  assert.equal(next.action, 'No next action defined');
+  assert.equal(next.action, 'Review Pipeline follow-up');
   assert.equal(next.needsAttention, true);
 });
 

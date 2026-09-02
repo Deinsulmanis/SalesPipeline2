@@ -30,29 +30,28 @@ function event(eventType, occurredAt) {
 
 // ── Follow Up / automation ──────────────────────────────────────────────────
 
-test('1. active automated Follow Up derives an automation-owned action', () => {
+test('1. Pipeline-owned Follow Up never advertises blocked cold automation', () => {
   const twin = { emailStatus: 'emailed', emailStep: '1', lastEmailedAt: '2026-08-25T00:00:00.000Z' };
   const next = deriveNextAction({ stage: 'follow_up' }, twin, ctx());
-  assert.equal(next.type, ACTION_TYPE.AUTOMATED_FOLLOW_UP);
-  assert.equal(next.owner, ACTION_OWNER.AUTOMATION);
-  assert.equal(next.label, 'Automated follow-up #2');
-  assert.equal(next.needsAttention, false);
+  assert.equal(next.type, ACTION_TYPE.MANUAL_FOLLOW_UP);
+  assert.equal(next.owner, ACTION_OWNER.HUMAN);
+  assert.equal(next.label, 'Review Pipeline follow-up');
+  assert.equal(next.needsAttention, true);
 });
 
-test('2. the sequence due date comes from the real cadence, not a new constant', () => {
+test('2. blocked cold cadence contributes no misleading due date', () => {
   const twin = { emailStatus: 'emailed', emailStep: '1', lastEmailedAt: '2026-08-25T00:00:00.000Z' };
-  // +3 days, mirroring FOLLOW_UP_SEQUENCE step 1 in the agent.
-  assert.equal(deriveNextAction({ stage: 'follow_up' }, twin, ctx()).dueAt, '2026-08-28T00:00:00.000Z');
+  assert.equal(deriveNextAction({ stage: 'follow_up' }, twin, ctx()).dueAt, null);
   const step2 = { emailStatus: 'emailed', emailStep: '2', lastEmailedAt: '2026-08-25T00:00:00.000Z' };
-  assert.equal(deriveNextAction({ stage: 'follow_up' }, step2, ctx()).dueAt, '2026-08-30T00:00:00.000Z');
+  assert.equal(deriveNextAction({ stage: 'follow_up' }, step2, ctx()).dueAt, null);
   assert.match(agent, /delayDays: 3/);
   assert.match(agent, /delayDays: 5/);
 });
 
-test('a queued lead derives an automation-owned first send', () => {
+test('a queued ColdEmail twin cannot override Pipeline ownership', () => {
   const next = deriveNextAction({ stage: 'follow_up' }, { stage: 'Queued', emailStatus: '' }, ctx());
-  assert.equal(next.type, ACTION_TYPE.AUTOMATED_FIRST_SEND);
-  assert.equal(next.owner, ACTION_OWNER.AUTOMATION);
+  assert.equal(next.type, ACTION_TYPE.MANUAL_FOLLOW_UP);
+  assert.equal(next.owner, ACTION_OWNER.HUMAN);
 });
 
 // ── Hot / replies ───────────────────────────────────────────────────────────
@@ -177,11 +176,11 @@ test('13. a recoverable loss is flagged but schedules nothing that could send', 
 
 // ── Gaps and blocks ─────────────────────────────────────────────────────────
 
-test('14. an active lead with insufficient state reports No next action', () => {
+test('14. an active Pipeline lead with insufficient state reports the operator review', () => {
   const next = deriveNextAction({ stage: 'follow_up' }, { emailStatus: 'done' }, ctx());
-  assert.equal(next.type, ACTION_TYPE.NO_NEXT_ACTION);
+  assert.equal(next.type, ACTION_TYPE.MANUAL_FOLLOW_UP);
   assert.equal(next.needsAttention, true);
-  assert.equal(next.label, 'No next action defined');
+  assert.equal(next.label, 'Review Pipeline follow-up');
 
   // A Hot lead with nothing datable is now HOT_REVIEW rather than the old
   // generic gap: same escalation, but it names why (no provable conversation)

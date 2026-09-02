@@ -24,7 +24,7 @@ const {
 } = require('./integrations/reply-analytics');
 const { parseRegistry: parseGmailInboxRegistry, publicRegistry: publicGmailInboxRegistry,
   verifyInbox: verifyGmailInbox, verifyMailboxAccess } = require('./integrations/gmail-inbox-registry');
-const { configuredSenders, senderCountsToday } = require('./integrations/gmail-sender-routing');
+const { configuredSenders, senderCountsToday, successfulSendCountToday } = require('./integrations/gmail-sender-routing');
 // Read-only presentation over the sender ownership the send path already
 // decides. Resolves nothing of its own — see integrations/sender-visibility.js.
 const {
@@ -62,6 +62,7 @@ const { BOOKING_URL } = require('./booking');
 const {
   SEQUENCES, SEQUENCE_EVENTS, SEQUENCE_STATUS, evaluateStageSequence,
   buildSequenceEmail, deriveSequenceState, resolveSequenceThread,
+  provenSequenceSenderId, automaticEnrollmentDecision, automaticEnrollmentEventId,
 } = require('./integrations/stage-sequences');
 const {
   deriveAutomationState, automationConflict, deriveNextAction,
@@ -475,7 +476,8 @@ function sheets() {
     const original = values[method].bind(values);
     values[method] = params => {
       const ranges = rangesTouched(params);
-      if (ranges.some(range => range.includes(CE_SHEET_NAME) || range.includes(`${SHEET_NAME}!`))) invalidateOutreachCache(`write:${method}`);
+      if (ranges.some(range => range.includes(CE_SHEET_NAME) || range.includes(`${SHEET_NAME}!`)
+        || range.includes(COLD_CALL_ACTIVITY_SHEET))) invalidateOutreachCache(`write:${method}`);
       if (ranges.some(range => /DemoPlays|ProposalOpens|ProposalEngaged/.test(range))) invalidateOutreachCache(`write:${method}`);
       return original(params);
     };
@@ -969,7 +971,46 @@ app.put('/api/leads/:id', requireAuth, async (req, res) => {
         console.warn('[Leads PUT] saved, but note activity failed:', activityError.message);
       }
     }
-    res.json({ ok: true });
+    let timingEnrollment = null;
+    const selectedFollowup = String(lead.followup || '').trim();
+    const timingDateChanged = selectedFollowup && selectedFollowup !== String(priorRow[14] || '').trim();
+    if (timingDateChanged && String(priorRow[21] || '').trim() === 'timing'
+      && displayStageFor(lead.stage) === 'closed_lost') {
+      // 17:00Z is 09:00/10:00 in Vancouver across PST/PDT and never crosses
+      // the human-selected calendar date.
+      const recontactMs = new Date(`${selectedFollowup}T17:00:00.000Z`).getTime();
+      if (Number.isFinite(recontactMs) && recontactMs > Date.now()) {
+        const activities = (await readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER))
+          .filter(row => row.leadId === req.params.id
+            || normalizeEmail(row.email) === normalizeEmail(lead.email || priorRow[10] || ''));
+        const twin = await findColdEmailTwin(req.params.id, lead.email || priorRow[10] || '').catch(() => null);
+        const senderProof = provenSequenceSenderId(twin || {}, activities);
+        const thread = senderProof.ok
+          ? resolveSequenceThread(activities, { senderInboxId: senderProof.senderInboxId }) : null;
+        if (senderProof.ok && thread) {
+          const recontactAt = new Date(recontactMs).toISOString();
+          const eventId = automaticEnrollmentEventId(req.params.id, 'timing_recontact_v1', recontactAt);
+          if (!activities.some(row => row.eventId === eventId)) {
+            await appendColdCallActivities([{
+              eventId, leadId: req.params.id, sourceLeadId: twin ? twin.id : '',
+              email: lead.email || priorRow[10] || '', company: lead.company || priorRow[6] || '',
+              eventType: SEQUENCE_EVENTS.ENROLLED, occurredAt: new Date().toISOString(),
+              subject: 'Timing re-contact scheduled', content: '',
+              metadata: JSON.stringify({
+                sequenceId: 'timing_recontact_v1', recontactAt,
+                enrollmentMode: 'human-authorized', authorization: 'human_selected_recontact_date',
+                trigger: 'followup_date_selected', senderInboxId: senderProof.senderInboxId,
+                gmailThreadId: thread.threadId, sequenceVersion: 'v1',
+              }),
+            }]);
+          }
+          timingEnrollment = { enroll: true, sequenceId: 'timing_recontact_v1', recontactAt };
+        } else {
+          timingEnrollment = { enroll: false, reason: senderProof.reason || 'sender-pinned thread is not proven' };
+        }
+      }
+    }
+    res.json({ ok: true, timingEnrollment });
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
     console.error('[Leads PUT]', e.message);
@@ -1250,6 +1291,10 @@ async function loadOutreachDataset() {
   const boardLeads = (boardResponse.data.values || []).slice(1).map(row => {
     const lead = {};
     COLUMNS.forEach((field, index) => { lead[field] = row[index] || ''; });
+    // U:W are authoritative call lifecycle fields and sit beyond COLUMNS.
+    lead.meetingAt = row[20] || '';
+    lead.outcome = row[21] || '';
+    lead.conversationContext = row[22] || '';
     return lead;
   }).filter(lead => lead.id);
   const pipelineIndex = buildOutreachPipelineIndex(leads, boardLeads);
@@ -2021,8 +2066,8 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
 // A board lead and its ColdEmail row are separate records; the ColdEmail one is
 // what the sending agent gates on. Match by the CE- id first (exact, set at
 // promotion time) and fall back to email, which is how a hand-added board lead
-// lines up with an imported one. Reads only A:L — the columns that decide
-// sending — so this stays one cheap call.
+// lines up with an imported one. Reads through U so canonical sender ownership
+// is available to sequence previews and lifecycle auto-enrollment.
 // Returns EVERY ColdEmail row that belongs to this board lead, each carrying its
 // 1-based sheet row so a caller can write to it.
 //
@@ -2037,7 +2082,7 @@ async function findColdEmailTwins(boardLeadId, boardEmail) {
   const wanted = String(boardLeadId || '').replace(/^CE-/, '');
   const email = normalizeEmail(boardEmail || '');
   const response = await sheets().spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:L`,
+    spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:U`,
   });
   const rows = (response.data.values || []).slice(1);
   const matches = [];
@@ -2045,7 +2090,7 @@ async function findColdEmailTwins(boardLeadId, boardEmail) {
     const twin = {
       id: row[0] || '', company: row[1] || '', email: row[3] || '',
       stage: row[7] || '', emailStatus: row[8] || '', lastEmailedAt: row[9] || '',
-      emailStep: row[10] || '', notes: row[11] || '',
+      emailStep: row[10] || '', notes: row[11] || '', senderInboxId: row[20] || '',
       _row: index + 2, // +1 for the header, +1 for 1-based rows
     };
     const idHit = Boolean(wanted) && twin.id === wanted;
@@ -3161,7 +3206,25 @@ async function applyCalendarPlanItem(item, context) {
   };
   await appendColdCallActivities([event]);
   context.activities.push(event);
-  return { ok: true, changed: true, leadId };
+  let automationEnrollment = null;
+  if (action === 'cancel') {
+    const twin = ceLead || await findColdEmailTwin(leadId, email).catch(() => null);
+    const planned = planLifecycleAutoEnrollment({
+      leadId,
+      lead: {
+        id: leadId, stage: current.stage || 'call_booked', meetingAt: current.meetingAt,
+        outcome: current.outcome, notes: row[15] || '', email, company,
+      },
+      twin, activities: context.activities.filter(a => a.leadId === leadId
+        || (email && normalizeEmail(a.email) === normalizeEmail(email))),
+    });
+    automationEnrollment = planned.decision;
+    if (planned.event && !context.activities.some(a => a.eventId === planned.event.eventId)) {
+      await appendColdCallActivities([planned.event]);
+      context.activities.push(planned.event);
+    }
+  }
+  return { ok: true, changed: true, leadId, automationEnrollment };
 }
 
 async function runGoogleCalendarSync() {
@@ -3312,13 +3375,42 @@ app.get('/api/leads/:id/sequence', requireAuth, async (req, res) => {
     const maxSteps = verdict.maxSteps || (previewId && SEQUENCES[previewId] ? SEQUENCES[previewId].maxSteps : 0);
     // The preview resolves the same thread the sender would, so what is shown
     // here is byte-identical to what would go out.
-    const thread = resolveSequenceThread(ctx.activities);
+    const senderProof = provenSequenceSenderId(ctx.twin || {}, ctx.activities);
+    const thread = senderProof.ok
+      ? resolveSequenceThread(ctx.activities, { senderInboxId: senderProof.senderInboxId }) : null;
+    const senders = configuredSenders();
+    const sender = senderProof.ok ? senders.find(item => item.id === senderProof.senderInboxId) : null;
+    const dayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+    const senderCount = sender ? (senderCountsToday(ctx.allActivities, dayKey).get(sender.id) || 0) : null;
+    const globalCount = successfulSendCountToday(ctx.allActivities, dayKey);
+    const globalLimit = Number(process.env.DAILY_SEND_LIMIT || 80);
+    const latestEnrollment = ctx.activities.filter(row => row.eventType === SEQUENCE_EVENTS.ENROLLED)
+      .sort((a, b) => String(b.occurredAt || '').localeCompare(String(a.occurredAt || '')))[0];
+    let enrollmentMetadata = {};
+    try { enrollmentMetadata = JSON.parse(latestEnrollment?.metadata || '{}'); } catch (_) { enrollmentMetadata = {}; }
+    let gateReason = '';
+    if (!verdict.featureEnabled) gateReason = 'stage sequences are disabled';
+    else if (verdict.stopReason) gateReason = verdict.stopReason;
+    else if (!senderProof.ok) gateReason = senderProof.reason;
+    else if (!thread) gateReason = 'sender-pinned conversation thread is not proven';
+    else if (!sender?.sendEligible) gateReason = 'owning sender is not delivery eligible';
+    else if (senderCount >= sender.dailyLimit) gateReason = `owning sender daily quota reached (${senderCount}/${sender.dailyLimit})`;
+    else if (globalCount >= globalLimit) gateReason = `global daily quota reached (${globalCount}/${globalLimit})`;
+    else if (!verdict.dueNow) gateReason = verdict.reason || 'waiting for the next due time';
+    else gateReason = 'ready after live Gmail observation and thread verification';
     const preview = previewId && step <= maxSteps
       ? buildSequenceEmail(previewId, step, ctx.lead, { thread })
       : null;
     res.json({
       leadId: req.params.id,
       ...verdict,
+      enrollmentMode: enrollmentMetadata.enrollmentMode || (latestEnrollment ? 'human-authorized' : null),
+      authorization: enrollmentMetadata.authorization || null,
+      owningSender: sender ? { id: sender.id, email: sender.email, sentToday: senderCount, dailyLimit: sender.dailyLimit } : null,
+      senderStatus: senderProof.ok ? 'proven' : 'unproven',
+      threadStatus: thread ? 'pinned evidence found; live mailbox verification occurs before send' : 'unproven',
+      threadId: thread?.threadId || '',
+      sendGate: { allowed: gateReason.startsWith('ready after'), reason: gateReason },
       catalogue: Object.values(SEQUENCES).map(def => ({
         id: def.id, label: def.label, maxSteps: def.maxSteps, requiresEnrollment: def.requiresEnrollment,
       })),
@@ -3395,6 +3487,9 @@ app.post('/api/leads/:id/sequence', requireAuth, async (req, res) => {
       resume: SEQUENCE_EVENTS.RESUMED, cancel: SEQUENCE_EVENTS.CANCELLED,
     }[action];
     const occurredAt = new Date().toISOString();
+    const senderProof = provenSequenceSenderId(ctx.twin || {}, ctx.activities);
+    const pinnedThread = senderProof.ok
+      ? resolveSequenceThread(ctx.activities, { senderInboxId: senderProof.senderInboxId }) : null;
     const eventId = stableActivityId('sequence', [req.params.id, eventType, sequenceId, recontactAt || occurredAt.slice(0, 16)]);
     if (!ctx.allActivities.some(a => a.eventId === eventId)) {
       await appendColdCallActivities([{
@@ -3405,6 +3500,11 @@ app.post('/api/leads/:id/sequence', requireAuth, async (req, res) => {
         content: String(req.body?.reason || '').trim().slice(0, 500),
         metadata: JSON.stringify({
           sequenceId, recontactAt, action, trigger: 'crm_sequence',
+          enrollmentMode: action === 'enroll' ? 'human-authorized' : undefined,
+          authorization: action === 'enroll' && sequenceId === 'timing_recontact_v1'
+            ? 'human_selected_recontact_date' : (action === 'enroll' ? 'human_sequence_action' : undefined),
+          senderInboxId: senderProof.ok ? senderProof.senderInboxId : '',
+          gmailThreadId: pinnedThread?.threadId || '',
           reason: String(req.body?.reason || '').trim().slice(0, 200),
           // Structured for Step 12's version attribution.
           sequenceVersion: sequenceId ? sequenceId.split('_').pop() : '',
@@ -3444,6 +3544,37 @@ const CALL_ACTION_EVENT = {
   cancel: 'meeting_cancelled', complete: 'meeting_completed', no_show: 'meeting_no_show',
 };
 
+function planLifecycleAutoEnrollment({ leadId, lead, twin, activities }) {
+  const callState = deriveCallLifecycle(lead, { activities });
+  const hotState = deriveHotState(lead, { activities });
+  const verdict = evaluateStageSequence({
+    boardLead: lead, twin: twin || {}, activities, callState, hotState,
+    featureEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true',
+  });
+  const senderProof = provenSequenceSenderId(twin || {}, activities);
+  const thread = senderProof.ok
+    ? resolveSequenceThread(activities, { senderInboxId: senderProof.senderInboxId }) : null;
+  const decision = automaticEnrollmentDecision({
+    boardLead: lead, twin: twin || {}, activities, verdict, senderProof, thread, callState, hotState,
+  });
+  if (!decision.enroll) return { decision, event: null };
+  return {
+    decision,
+    event: {
+      eventId: automaticEnrollmentEventId(leadId, decision.sequenceId, decision.enrolledAt),
+      leadId, sourceLeadId: twin ? twin.id : '', email: lead.email || '', company: lead.company || '',
+      eventType: SEQUENCE_EVENTS.ENROLLED, occurredAt: decision.enrolledAt,
+      subject: `${SEQUENCES[decision.sequenceId].label} automatically enrolled`, content: '',
+      metadata: JSON.stringify({
+        sequenceId: decision.sequenceId, enrollmentMode: 'automatic',
+        authorization: decision.authorization, trigger: 'explicit_call_lifecycle',
+        senderInboxId: decision.senderInboxId, gmailThreadId: decision.gmailThreadId,
+        sequenceVersion: decision.sequenceId.split('_').pop(),
+      }),
+    },
+  };
+}
+
 app.post('/api/leads/:id/call-lifecycle', requireAuth, async (req, res) => {
   const action = String(req.body?.action || '').trim();
   try {
@@ -3459,7 +3590,10 @@ app.post('/api/leads/:id/call-lifecycle', requireAuth, async (req, res) => {
     const row = prior.data.values?.[0] || [];
     const email = row[10] || '';
     const company = row[6] || row[4] || '';
-    const lead = { stage: row[12] || '', followup: row[14] || '', meetingAt: row[20] || '', outcome: row[21] || '' };
+    const lead = {
+      id: req.params.id, stage: row[12] || '', followup: row[14] || '', meetingAt: row[20] || '',
+      outcome: row[21] || '', notes: row[15] || '', email, company,
+    };
 
     // Current stored history decides what is legal — never the browser's view.
     const allActivities = await readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER);
@@ -3535,8 +3669,7 @@ app.post('/api/leads/:id/call-lifecycle', requireAuth, async (req, res) => {
     // sales outcome column is deliberately untouched.
     const eventId = stableActivityId('call-lifecycle', [req.params.id, eventType, previousMeetingAt, meetingAt]);
     let recorded = false;
-    if (!allActivities.some(a => a.eventId === eventId)) {
-      await appendColdCallActivities([{
+    const lifecycleEvent = {
         eventId, leadId: req.params.id, sourceLeadId: '', email, company,
         eventType, occurredAt,
         subject: eventType === 'call_booked' ? 'Call booked'
@@ -3550,9 +3683,25 @@ app.post('/api/leads/:id/call-lifecycle', requireAuth, async (req, res) => {
           // Meeting result only. The sales outcome is a separate decision.
           salesOutcomeUnchanged: true,
         }),
-      }]);
+      };
+    const pending = [];
+    if (!allActivities.some(a => a.eventId === eventId)) {
+      pending.push(lifecycleEvent);
       recorded = true;
     }
+
+    let automationEnrollment = null;
+    if (action === 'no_show' || action === 'cancel') {
+      const twin = await findColdEmailTwin(req.params.id, email).catch(() => null);
+      const futureActivities = [...activities, ...(recorded ? [lifecycleEvent] : [])];
+      const planned = planLifecycleAutoEnrollment({
+        leadId: req.params.id, lead: { ...lead, meetingAt, stage: 'call_booked' },
+        twin, activities: futureActivities,
+      });
+      automationEnrollment = planned.decision;
+      if (planned.event && !allActivities.some(a => a.eventId === planned.event.eventId)) pending.push(planned.event);
+    }
+    if (pending.length) await appendColdCallActivities(pending);
 
     const nextLifecycle = deriveCallLifecycle({ ...lead, meetingAt, stage: 'call_booked' }, {
       activities: [...activities, { eventType, occurredAt, metadata: JSON.stringify({ meetingAt, previousMeetingAt }) }],
@@ -3574,6 +3723,7 @@ app.post('/api/leads/:id/call-lifecycle', requireAuth, async (req, res) => {
       // Everything the drawer needs to repaint without a second round trip.
       allowed: callLifecycleActions(nextLifecycle),
       stage: action === 'book' || action === 'reschedule' ? 'call_booked' : displayStageFor(lead.stage),
+      automationEnrollment,
     });
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
@@ -4810,11 +4960,12 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   // Per-run send cap for the scheduled batches. The morning cron fires 8 times
   // a day (:00/:30, 8–11:30am Pacific); 8 × 5 = 40 spreads the day's volume
   // evenly across the window instead of dumping it in the first few runs. This
-  // is a per-RUN knob only — the agent's own DAILY_SEND_LIMIT (40) is the hard
-  // daily ceiling and is NOT changed, so the daily total is provably unchanged;
+  // is a per-RUN knob only. The agent separately enforces the configured
+  // per-inbox ceilings plus the shared global daily safety ceiling;
   // this commit only redistributes WHEN those 40 go out. Passed via env so the
-  // agent's cap logic (effectiveCap = min(DAILY_CAP, dailyRemaining)) is reused
-  // untouched. Keep in sync with the 8-slot schedule below if either changes.
+  // agent's cap logic (effectiveCap = min(DAILY_CAP, dailyRemaining)) is reused.
+  // Each mailbox also has its own 40/day ceiling and the shared global ceiling
+  // is 80/day; Pipeline recovery sends consume those same ledgers.
   // Sends fire only in a weekday morning window, evenly at :00 and :30 of
   // 8am–11:30am Pacific (8 runs: 8:00, 8:30, 9:00, 9:30, 10:00, 10:30, 11:00,
   // 11:30). That lands 9:00am–12:30pm for Mountain (AB) leads too. Overnight

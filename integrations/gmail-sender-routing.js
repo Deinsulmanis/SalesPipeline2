@@ -95,19 +95,47 @@ function chooseSender({ lead, activities = [], senders = [], sendsToday = new Ma
   return candidates.length ? { sender: candidates[0], pinned: false } : { sender: null, reason: 'no eligible sender capacity', pinned: false };
 }
 
+const SUCCESSFUL_SEND_EVENTS = Object.freeze([
+  'initial_email_sent', 'follow_up_sent', 'sequence_step_sent', 'booking_link_sent',
+]);
+
 function senderCountsToday(activities = [], dayKey) {
   const counts = new Map();
+  const seen = new Set();
   for (const row of activities) {
-    if (!['initial_email_sent','follow_up_sent','sequence_step_sent','booking_link_sent'].includes(String(row.eventType || ''))) continue;
+    if (!SUCCESSFUL_SEND_EVENTS.includes(String(row.eventType || ''))) continue;
     const occurredDay = row.occurredAt ? new Date(row.occurredAt).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' }) : '';
     if (dayKey && occurredDay !== dayKey) continue;
-    const id = String(parseMetadata(row.metadata).senderInboxId || '').trim();
-    if (id) counts.set(id, (counts.get(id) || 0) + 1);
+    const eventKey = String(row.eventId || `${row.leadId}:${row.eventType}:${row.occurredAt}:${row.metadata || ''}`);
+    if (seen.has(eventKey)) continue;
+    seen.add(eventKey);
+    // Historical activity predates multi-inbox attribution. Those sends came
+    // from the only mailbox that existed at the time, so count them against the
+    // primary sender instead of turning legacy successful sends into free quota.
+    const id = String(parseMetadata(row.metadata).senderInboxId || 'primary').trim() || 'primary';
+    counts.set(id, (counts.get(id) || 0) + 1);
   }
   return counts;
 }
 
+function successfulSendCountToday(activities = [], dayKey) {
+  let count = 0;
+  const seen = new Set();
+  for (const row of activities) {
+    if (!SUCCESSFUL_SEND_EVENTS.includes(String(row.eventType || ''))) continue;
+    const occurredDay = row.occurredAt
+      ? new Date(row.occurredAt).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' }) : '';
+    if (dayKey && occurredDay !== dayKey) continue;
+    const eventKey = String(row.eventId || `${row.leadId}:${row.eventType}:${row.occurredAt}:${row.metadata || ''}`);
+    if (seen.has(eventKey)) continue;
+    seen.add(eventKey);
+    count++;
+  }
+  return count;
+}
+
 module.exports = {
-  configuredSenders, allowedForLead, senderEvidence, sentSenderEvidence,
-  SENDER_ATTRIBUTED_EVENTS, pinnedSenderId, chooseSender, senderCountsToday,
+  SUCCESSFUL_SEND_EVENTS, configuredSenders, allowedForLead, senderEvidence,
+  sentSenderEvidence, SENDER_ATTRIBUTED_EVENTS, pinnedSenderId, chooseSender,
+  senderCountsToday, successfulSendCountToday,
 };

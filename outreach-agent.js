@@ -72,8 +72,13 @@ const { manualHoldReleased, applyHoldToNotes, stageRequiresHold,
   deriveCallLifecycle, deriveHotState, sendSuppressionReason } = require('./integrations/pipeline-state');
 const {
   evaluateStageSequence, buildSequenceEmail, sequenceStepEventId, SEQUENCE_EVENTS,
-  resolveSequenceThread,
+  resolveSequenceThread, provenSequenceSenderId, automaticEnrollmentDecision,
+  automaticEnrollmentEventId,
 } = require('./integrations/stage-sequences');
+const {
+  sequenceRfcMessageId, verifyThreadOwnership, findSuccessfulSequenceSend,
+} = require('./integrations/gmail-stage-sequence');
+const { stageSendGate } = require('./integrations/pipeline-sequence-safety');
 const { PROMOTION_TRIGGER, resolvePromotionIdentity, promotionDecision } = require('./integrations/promotion-policy');
 const {
   coldSendAttribution, stageSequenceAttribution, acquisitionAttribution,
@@ -83,7 +88,9 @@ const {
 const { findOriginalSentThread, resolveColdFollowUpThread } = require('./integrations/gmail-threading');
 const { oldestDueFirst, followUpSuccessTarget } = require('./integrations/scheduler-fairness');
 const { credentialsFor: gmailCredentialsFor, parseRegistry: parseGmailRegistry } = require('./integrations/gmail-inbox-registry');
-const { configuredSenders, chooseSender, senderCountsToday } = require('./integrations/gmail-sender-routing');
+const {
+  configuredSenders, chooseSender, senderCountsToday, successfulSendCountToday,
+} = require('./integrations/gmail-sender-routing');
 const {
   assembleFinalEmail,
   splitPersonalization,
@@ -1028,7 +1035,7 @@ function encodeHeaderValue(value) {
 }
 
 // RFC-822 message → base64url for the Gmail API
-function toRawMessage({ to, subject, body, inReplyTo, references, fromEmail = FROM_EMAIL }) {
+function toRawMessage({ to, subject, body, inReplyTo, references, messageId, fromEmail = FROM_EMAIL }) {
   const headers = [
     `From: ${FROM_NAME} <${fromEmail}>`,
     `To: ${to}`,
@@ -1038,19 +1045,20 @@ function toRawMessage({ to, subject, body, inReplyTo, references, fromEmail = FR
   ];
   if (inReplyTo) headers.push(`In-Reply-To: ${inReplyTo}`);
   if (references) headers.push(`References: ${references}`);
+  if (messageId) headers.push(`Message-ID: ${messageId}`);
   const msg = headers.join('\r\n') + '\r\n\r\n' + body;
   return Buffer.from(msg)
     .toString('base64')
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-async function sendEmail({ to, subject, body, threadId, inReplyTo, references, sender = PRIMARY_GMAIL_SENDER }) {
+async function sendEmail({ to, subject, body, threadId, inReplyTo, references, messageId, sender = PRIMARY_GMAIL_SENDER }) {
   if (!sender?.sendEligible) throw new Error(`Gmail sender ${sender?.id || 'unknown'} is not delivery eligible`);
   const provider = new GmailOutreachProvider({ send: message => gmailForSender(sender).users.messages.send({
     userId: 'me',
     requestBody: { raw: toRawMessage({ ...message, fromEmail: sender.email }), ...(message.threadId ? { threadId: message.threadId } : {}) },
   }) });
-  return provider.sendEmail({ to, subject, body, threadId, inReplyTo, references });
+  return provider.sendEmail({ to, subject, body, threadId, inReplyTo, references, messageId });
 }
 
 async function loadOutreachProviderState() {
@@ -1218,7 +1226,7 @@ function extractAllText(payload) {
 // Candidates from both nets are deduped by message id, then the newest inbound
 // message wins (not ours, not SENT-labeled, not a bounce daemon, newer than
 // lastEmailedAt). Returns { messageId, snippet, body, fromAddr } or null.
-// Fails CLOSED — any error returns null.
+// Fails CLOSED — an API error is a distinct result, never "no reply".
 async function getReplyMessage(lead) {
   if (!lead.lastEmailedAt || !isValidEmail(lead.email)) return null;
   try {
@@ -1288,7 +1296,11 @@ async function getReplyMessage(lead) {
     };
   } catch (e) {
     console.warn(`[ReplyCheck] API error for ${lead.email}: ${e.message}`);
-    return null;
+    return {
+      observationFailed: true,
+      senderInboxId: String(lead.senderInboxId || 'primary').trim() || 'primary',
+      error: e.message,
+    };
   }
 }
 
@@ -2130,7 +2142,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
   const candidates = leads.filter(l => l.emailStatus === 'emailed' && isValidEmail(l.email));
   if (!candidates.length) {
     console.log('[ReplyCheck] No emailed leads to check.\n');
-    return;
+    return { ok: true, failedSenderIds: new Set() };
   }
   console.log(`[ReplyCheck] Checking ${candidates.length} emailed lead${candidates.length === 1 ? '' : 's'} for replies...`);
 
@@ -2140,10 +2152,15 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
   // the pass starts from today's actual count rather than assuming zero.
   let replyPassTodaySent = todaySentOverride ?? countTodaySends(leads);
   let attributionActivities = null;
+  const failedSenderIds = new Set();
 
   for (const lead of candidates) {
     const message = await withAuth(() => getReplyMessage(lead));
     if (!message) continue;
+    if (message.observationFailed) {
+      failedSenderIds.add(message.senderInboxId);
+      continue;
+    }
 
     found++;
     const company        = cleanCompanyName(lead.company) || lead.email;
@@ -2205,6 +2222,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
   console.log(`[ReplyCheck] ${found} repl${found === 1 ? 'y' : 'ies'} found / ${candidates.length} checked`);
   if (breakdown) console.log(`  → ${breakdown}`);
   console.log();
+  return { ok: failedSenderIds.size === 0, failedSenderIds };
 }
 
 async function writeLateReplyNotes(lead, notes) {
@@ -3018,21 +3036,19 @@ const jitter = () => MIN_DELAY + Math.floor(Math.random() * (MAX_DELAY - MIN_DEL
 // It never touches the cold sequence: emailStep, lastEmailedAt and emailStatus
 // are neither read nor written here, and [MANUAL HOLD] is never removed — the
 // cold selectors stay blocked exactly as before. See stage-sequences.js.
-async function runStageSequencePass(allLeads, { outboundObservationOk = true } = {}) {
+async function runStageSequencePass(allLeads, {
+  observationBySender = new Map(), activitiesForCycle = null, sendsBySender = null,
+  quotaState = { globalCount: 0 },
+} = {}) {
   // The gate comes first, before any read. With the flag off this pass cannot
   // select a lead, let alone send to one.
   if (!STAGE_SEQUENCES_ENABLED) {
     console.log('[StageSeq] disabled (STAGE_SEQUENCES_ENABLED is not "true") — no stage follow-ups considered.');
     return 0;
   }
-  // A manual Gmail response can happen between scheduler cycles. If the
-  // observation pass failed, the mailbox may be newer than canonical state;
-  // sequence execution must therefore fail closed just like ordinary cold
-  // execution does. This check precedes every Sheets read and send candidate.
-  if (!outboundObservationOk) {
-    console.error('[StageSeq] manual outbound observation failed — mailbox may be stale, failing closed.');
-    return 0;
-  }
+  // CHECK_ONLY is a process-level invariant, not merely a caller convention.
+  // Even an accidental direct invocation of this pass cannot reach Gmail send.
+  if (CHECK_ONLY) { console.log('[StageSeq] check-only — send-capable pass skipped.'); return 0; }
   if (DRY_RUN) { console.log('[StageSeq] dry run — skipped.'); return 0; }
 
   const boardResponse = await withAuth(() => sheets().spreadsheets.values.get({
@@ -3041,6 +3057,9 @@ async function runStageSequencePass(allLeads, { outboundObservationOk = true } =
   const boardLeads = (boardResponse.data.values || []).slice(1)
     .map(row => Object.fromEntries(LEADS_COLUMNS.map((field, index) => [field, row[index] || ''])))
     .filter(lead => lead.id);
+  // Re-read after reply/bounce observation so a reply persisted moments ago is
+  // visible to this selector in the same cycle. The caller snapshot is used for
+  // shared quota maps only; it is never trusted as the final stop-condition view.
   const activities = await withAuth(readColdCallActivities);
   const byKey = new Map();
   for (const row of activities) {
@@ -3056,18 +3075,110 @@ async function runStageSequencePass(allLeads, { outboundObservationOk = true } =
   }
 
   let sent = 0;
-  let todaySent = countTodaySends(allLeads);
+  const senderDayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+  const senderCounts = sendsBySender || senderCountsToday(activities, senderDayKey);
+  const freshSenderCounts = senderCountsToday(activities, senderDayKey);
+  for (const [senderId, count] of freshSenderCounts) {
+    senderCounts.set(senderId, Math.max(senderCounts.get(senderId) || 0, count));
+  }
+  // ColdEmail's one-row timestamps remain a conservative compatibility floor;
+  // activity events count every successful initial, ordinary follow-up, booking
+  // link and Pipeline step. The larger total prevents either ledger lagging.
+  let todaySent = Math.max(Number(quotaState.globalCount || 0),
+    countTodaySends(allLeads), successfulSendCountToday(activities, senderDayKey));
+  quotaState.globalCount = todaySent;
+
+  const persistSequenceStep = async ({ eventId, boardLead, twin, verdict, step, built,
+    sender, result, recovered = false, occurredAt = new Date().toISOString() }) => {
+    const data = result?.data || result || {};
+    const sequenceAttribution = stageSequenceAttribution({
+      acquisition: acquisitionAttribution(mineFor(boardLead, activities)),
+      sequenceId: verdict.sequenceId, step,
+    });
+    await recordColdCallActivityStrict({
+      eventId, leadId: boardLead.id, sourceLeadId: twin ? twin.id : '',
+      email: boardLead.email, company: boardLead.company || '',
+      eventType: SEQUENCE_EVENTS.STEP_SENT, occurredAt,
+      subject: built.subject, content: built.body,
+      metadata: JSON.stringify({
+        sequenceId: verdict.sequenceId, step, maxSteps: verdict.maxSteps,
+        sequenceVersion: verdict.sequenceId.split('_').pop(),
+        providerMessageId: data.id || data.providerMessageId || '', provider: 'gmail',
+        senderInboxId: sender.id, gmailThreadId: data.threadId || built.threadId || '',
+        rfcMessageId: data.rfcMessageId || built.messageId || '',
+        repliedInThread: built.replyToThread, recoveredAfterCheckpointFailure: recovered,
+        ...sequenceAttribution,
+      }),
+    });
+  };
+
+  function mineFor(boardLead, sourceActivities) {
+    const email = normEmail(boardLead.email);
+    return sourceActivities.filter(row => String(row.leadId || '') === String(boardLead.id)
+      || (email && normEmail(row.email) === email));
+  }
+
   for (const boardLead of boardLeads) {
     const email = normEmail(boardLead.email);
     const mine = [...(byKey.get(boardLead.id) || []), ...(email ? byKey.get(email) || [] : [])];
     const twin = twinByEmail.get(email) || null;
-    const verdict = evaluateStageSequence({
+    const callState = deriveCallLifecycle(boardLead, { activities: mine });
+    const hotState = deriveHotState(boardLead, { activities: mine });
+    let verdict = evaluateStageSequence({
       boardLead, twin: twin || {}, activities: mine,
-      callState: deriveCallLifecycle(boardLead, { activities: mine }),
-      hotState: deriveHotState(boardLead, { activities: mine }),
+      callState, hotState,
       suppressedEmails: SUPPRESSED_EMAILS,
       featureEnabled: true,     // reaching here already proved the flag is on
     });
+
+    const senderProof = provenSequenceSenderId(twin || {}, mine);
+    const proofThread = senderProof.ok
+      ? resolveSequenceThread(mine, { senderInboxId: senderProof.senderInboxId }) : null;
+    const enrollment = automaticEnrollmentDecision({
+      boardLead, twin: twin || {}, activities: mine, verdict, senderProof,
+      thread: proofThread, callState, hotState,
+    });
+    if (enrollment.enroll) {
+      const enrollmentId = automaticEnrollmentEventId(boardLead.id, enrollment.sequenceId, enrollment.enrolledAt);
+      if (!activities.some(row => row.eventId === enrollmentId)) {
+        const row = {
+          eventId: enrollmentId, leadId: boardLead.id, sourceLeadId: twin ? twin.id : '',
+          email: boardLead.email, company: boardLead.company || '', eventType: SEQUENCE_EVENTS.ENROLLED,
+          occurredAt: enrollment.enrolledAt, subject: '', content: '',
+          metadata: JSON.stringify({
+            sequenceId: enrollment.sequenceId, enrollmentMode: 'automatic',
+            authorization: enrollment.authorization, senderInboxId: enrollment.senderInboxId,
+            gmailThreadId: enrollment.gmailThreadId,
+          }),
+        };
+        try {
+          await recordColdCallActivityStrict(row);
+          activities.push(row); mine.push(row);
+        } catch (error) {
+          console.error(`[StageSeq] auto-enrollment checkpoint failed for ${boardLead.email}: ${error.message}`);
+          continue;
+        }
+      }
+      verdict = evaluateStageSequence({
+        boardLead, twin: twin || {}, activities: mine, callState, hotState,
+        suppressedEmails: SUPPRESSED_EMAILS, featureEnabled: true,
+      });
+    }
+
+    if (verdict.status === 'active' && verdict.stopReason) {
+      const stopId = `seq-stop:${boardLead.id}:${verdict.sequenceId}:${String(verdict.stopReason).replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`;
+      if (!activities.some(row => row.eventId === stopId)) {
+        try {
+          await recordColdCallActivityStrict({
+            eventId: stopId, leadId: boardLead.id, sourceLeadId: twin ? twin.id : '', email: boardLead.email,
+            company: boardLead.company || '', eventType: SEQUENCE_EVENTS.STOPPED,
+            occurredAt: new Date().toISOString(), subject: '', content: '',
+            metadata: JSON.stringify({ sequenceId: verdict.sequenceId, reason: verdict.stopReason }),
+          });
+        } catch (error) { console.error(`[StageSeq] stop checkpoint failed for ${boardLead.email}: ${error.message}`); }
+      }
+      continue;
+    }
     if (!verdict.eligible) continue;
 
     const step = (verdict.step || 0) + 1;
@@ -3077,64 +3188,139 @@ async function runStageSequencePass(allLeads, { outboundObservationOk = true } =
     if (activities.some(row => row.eventId === eventId)) continue;
     if (!isValidEmail(boardLead.email)) continue;
 
-    // Every existing global gate still applies. A recovery email is not exempt
-    // from the daily cap or the kill switch because the lead is high intent.
-    if (todaySent >= DAILY_SEND_LIMIT) {
-      console.warn(`  [StageSeq] daily cap reached (${todaySent}/${DAILY_SEND_LIMIT}) - deferring to next pass`);
-      break;
-    }
-    if (!SENDING_ENABLED) {
-      console.log(`[kill-switch] would send ${verdict.sequenceId} step ${step} -> ${boardLead.email}`);
-      continue;
-    }
+    const sender = senderProof.ok
+      ? GMAIL_SENDERS.find(item => item.id === senderProof.senderInboxId) : null;
 
     // Reply into the real conversation when the timeline proves one exists.
     // Without a verifiable thread the copy falls back to a standalone subject
     // rather than faking "Re:" on a message that is not part of that thread.
-    const thread = resolveSequenceThread(mine);
-    const built = buildSequenceEmail(verdict.sequenceId, step, boardLead, { thread });
-    if (built.error) { console.warn(`[StageSeq] ${built.error}`); continue; }
-    const sequenceAttribution = stageSequenceAttribution({
-      acquisition: acquisitionAttribution(mine), sequenceId: verdict.sequenceId, step,
+    const thread = sender
+      ? resolveSequenceThread(mine, { senderInboxId: sender.id }) : null;
+    const verifiedThread = sender && thread ? await verifyThreadOwnership({
+      gmail: gmailForSender(sender), threadId: thread.threadId,
+      senderEmail: sender.email, recipientEmail: boardLead.email,
+    }) : { ok: false, reason: 'sender-pinned thread is not proven' };
+    const sendGate = stageSendGate({
+      checkOnly: CHECK_ONLY, sendingEnabled: SENDING_ENABLED, senderProof, sender, thread,
+      threadVerified: verifiedThread.ok, observationOk: sender ? observationBySender.get(sender.id) === true : false,
+      senderCount: sender ? (senderCounts.get(sender.id) || 0) : 0,
+      globalCount: todaySent, globalLimit: DAILY_SEND_LIMIT,
     });
+    if (!sendGate.allowed) {
+      console.warn(`[StageSeq] ${boardLead.email} blocked: ${sendGate.reason}`);
+      continue;
+    }
+    if (!verifiedThread.ok) { console.warn(`[StageSeq] ${boardLead.email} blocked: ${verifiedThread.reason}`); continue; }
+    const built = buildSequenceEmail(verdict.sequenceId, step, boardLead, { thread: verifiedThread });
+    if (built.error) { console.warn(`[StageSeq] ${built.error}`); continue; }
+    built.messageId = sequenceRfcMessageId(eventId, sender.email);
 
+    // Gmail is the durable delivery ledger. A deterministic RFC Message-ID lets
+    // a restart recover a provider success whose Sheets checkpoint failed.
     try {
-      const sender = twin ? senderForPersistedLead(twin) : PRIMARY_GMAIL_SENDER;
-      const result = await sendEmail({
+      const recovered = await findSuccessfulSequenceSend({
+        gmail: gmailForSender(sender), rfcMessageId: built.messageId,
+      });
+      if (recovered) {
+        await persistSequenceStep({ eventId, boardLead, twin, verdict, step, built,
+          sender, result: recovered, recovered: true, occurredAt: recovered.occurredAt || new Date().toISOString() });
+        const recoveredDay = new Date(recovered.occurredAt || Date.now())
+          .toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+        if (recoveredDay === senderDayKey) {
+          todaySent++;
+          quotaState.globalCount = todaySent;
+          senderCounts.set(sender.id, (senderCounts.get(sender.id) || 0) + 1);
+        }
+        console.warn(`[StageSeq] recovered prior successful send for ${boardLead.email}; no duplicate sent`);
+        continue;
+      }
+    } catch (error) {
+      console.warn(`[StageSeq] ${boardLead.email} blocked: idempotency probe failed (${error.message})`);
+      continue;
+    }
+
+    const metadataOf = row => { try { return JSON.parse(row.metadata || '{}'); } catch (_) { return {}; } };
+    const reservations = mine.filter(row => row.eventType === SEQUENCE_EVENTS.SEND_RESERVED
+      && metadataOf(row).stepEventId === eventId);
+    const failedReservations = new Set(mine.filter(row => row.eventType === SEQUENCE_EVENTS.SEND_FAILED)
+      .map(row => metadataOf(row).reservationEventId).filter(Boolean));
+    const unresolved = reservations.find(row => !failedReservations.has(row.eventId));
+    if (unresolved) {
+      console.warn(`[StageSeq] ${boardLead.email} blocked: a durable delivery reservation exists and Gmail has not confirmed it yet`);
+      continue;
+    }
+    const reservationEventId = `${eventId}:attempt:${reservations.length + 1}`;
+    const reservation = {
+      eventId: reservationEventId, leadId: boardLead.id, sourceLeadId: twin ? twin.id : '',
+      email: boardLead.email, company: boardLead.company || '',
+      eventType: SEQUENCE_EVENTS.SEND_RESERVED, occurredAt: new Date().toISOString(),
+      subject: built.subject, content: '',
+      metadata: JSON.stringify({
+        sequenceId: verdict.sequenceId, step, stepEventId: eventId,
+        senderInboxId: sender.id, gmailThreadId: built.threadId,
+        rfcMessageId: built.messageId,
+      }),
+    };
+    try {
+      await recordColdCallActivityStrict(reservation);
+      activities.push(reservation); mine.push(reservation);
+    } catch (error) {
+      console.warn(`[StageSeq] ${boardLead.email} blocked: delivery reservation could not be persisted (${error.message})`);
+      continue;
+    }
+
+    let result;
+    try {
+      result = await sendEmail({
         to: boardLead.email.trim(), subject: built.subject, body: built.body,
-        sender,
+        sender, messageId: built.messageId,
         ...(built.replyToThread ? {
           threadId: built.threadId,
           inReplyTo: built.inReplyTo || undefined,
           references: built.references || undefined,
         } : {}),
       });
-      todaySent++;
-      sent++;
-      // Recorded only after the send resolved, under the derived id, so a retry
-      // cannot duplicate the step.
-      await recordColdCallActivity({
-        eventId, leadId: boardLead.id, sourceLeadId: twin ? twin.id : '',
-        email: boardLead.email, company: boardLead.company || '',
-        eventType: SEQUENCE_EVENTS.STEP_SENT, occurredAt: new Date().toISOString(),
-        subject: built.subject, content: built.body,
+    } catch (error) {
+      // A provider failure consumes no quota. Only a definite pre-delivery 4xx
+      // is automatically retryable; ambiguous transport/5xx failures keep the
+      // reservation blocked until Gmail proves whether delivery occurred.
+      console.error(`[StageSeq] send failed for ${boardLead.email}: ${error.message}`);
+      const providerStatus = Number(error?.response?.status || error?.code);
+      const providerRejectedBeforeDelivery = providerStatus >= 400 && providerStatus < 500
+        && ![408, 409, 429].includes(providerStatus);
+      if (!providerRejectedBeforeDelivery) {
+        console.error('[StageSeq] delivery outcome is ambiguous; durable reservation remains blocked until Gmail confirms the Message-ID');
+        continue;
+      }
+      const failure = {
+        eventId: `${reservationEventId}:failed`, leadId: boardLead.id,
+        sourceLeadId: twin ? twin.id : '', email: boardLead.email,
+        company: boardLead.company || '', eventType: SEQUENCE_EVENTS.SEND_FAILED,
+        occurredAt: new Date().toISOString(), subject: built.subject, content: '',
         metadata: JSON.stringify({
-          sequenceId: verdict.sequenceId, step, maxSteps: verdict.maxSteps,
-          // Structured so Step 12 can attach copy/subject version attribution.
-          sequenceVersion: verdict.sequenceId.split('_').pop(),
-          providerMessageId: (result && result.messageId) || '',
-          provider: 'gmail', senderInboxId: sender.id,
-          // Recorded so the next step can chain onto this message too.
-          gmailThreadId: (result && result.threadId) || built.threadId || '',
-          rfcMessageId: (result && result.rfcMessageId) || '',
-          repliedInThread: built.replyToThread,
-          ...sequenceAttribution,
+          sequenceId: verdict.sequenceId, step, stepEventId: eventId,
+          reservationEventId, senderInboxId: sender.id, error: String(error.message || '').slice(0, 300),
         }),
-      });
+      };
+      try { await recordColdCallActivityStrict(failure); activities.push(failure); mine.push(failure); }
+      catch (checkpointError) {
+        console.error(`[StageSeq] provider failure checkpoint also failed; reservation remains fail-closed: ${checkpointError.message}`);
+      }
+      continue;
+    }
+
+    // Successful provider delivery consumes both ceilings immediately, before
+    // any fallible checkpoint write.
+    todaySent++;
+    quotaState.globalCount = todaySent;
+    senderCounts.set(sender.id, (senderCounts.get(sender.id) || 0) + 1);
+    sent++;
+    try {
+      await persistSequenceStep({ eventId, boardLead, twin, verdict, step, built, sender, result });
       console.log(`  [StageSeq] ${verdict.sequenceId} step ${step} -> ${boardLead.email}`);
     } catch (error) {
-      // A failed send records no step event, so the next run may safely retry.
-      console.error(`[StageSeq] send failed for ${boardLead.email}: ${error.message}`);
+      console.error(`‼️ [StageSeq] Gmail delivered ${eventId}, but checkpoint failed: ${error.message}`);
+      console.error('‼️ [StageSeq] the deterministic Message-ID will recover this delivery on the next run; it will not resend.');
     }
   }
   console.log(`[StageSeq] ${sent} stage follow-up(s) sent.`);
@@ -3180,7 +3366,7 @@ async function run() {
   // INTENT_ONLY still observes manual Gmail responses and derives canonical
   // ownership before it may send. It skips the other detection passes, but it
   // is not an escape hatch around mailbox freshness or the centralized gate.
-  if (INTENT_ONLY) {
+  if (INTENT_ONLY && !CHECK_ONLY) {
     const [intentBoard, intentActivities] = await Promise.all([
       withAuth(readBoardLeads),
       withAuth(readColdCallActivities).catch(() => []),
@@ -3194,9 +3380,9 @@ async function run() {
     return;
   }
 
-  const todaySent      = countTodaySends(allLeadsForDailyCap);
+  let todaySent      = countTodaySends(allLeadsForDailyCap);
   console.log(`[cap] ${todaySent}/${DAILY_SEND_LIMIT} emails sent today (Vancouver time)`);
-  const dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
+  let dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
 
   // Observe manual Gmail replies before ANY pass that could auto-respond.
   // The same activity snapshot is later used to derive ownership for recovery,
@@ -3208,10 +3394,12 @@ async function run() {
   const outbound = await withAuth(() => runHumanOutboundPass(all, ownershipActivities));
   const senderDayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
   const sendsBySender = senderCountsToday(ownershipActivities, senderDayKey);
+  todaySent = Math.max(todaySent, successfulSendCountToday(ownershipActivities, senderDayKey));
+  dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
 
   // Reply-check pass — unconditional; runs even when cap is reached.
   // Mutates emailStatus on replied leads so selectFollowUps excludes them below.
-  await runReplyCheckPass(all, todaySent, outbound.ok);
+  const replyObservation = await runReplyCheckPass(all, todaySent, outbound.ok);
 
   // Terminal replies are hosted by the same process only during the existing
   // scheduler's once-daily flag. Active polling above keeps its old cadence.
@@ -3219,6 +3407,20 @@ async function run() {
 
   // Bounce-check pass — marks bounced leads Done before follow-up selection.
   await runBounceCheckPass(all);
+
+  // CHECK_ONLY is observation-only. Return before constructing any execution
+  // context or invoking any send-capable stage/intent/cold path.
+  if (CHECK_ONLY) {
+    console.log('\n[check-only] Detection complete — skipping all sends.');
+    return;
+  }
+
+  const observationBySender = new Map();
+  for (const sender of GMAIL_SENDERS) {
+    const outboundSender = (outbound.senders || []).find(item => item.senderInboxId === sender.id);
+    observationBySender.set(sender.id,
+      Boolean(outboundSender?.ok) && !replyObservation.failedSenderIds.has(sender.id));
+  }
 
   // ── OBSERVE, PERSIST, THEN DECIDE ────────────────────────────────────────
   // Inbound and bounce evidence above has finished writing. Now the mailbox is
@@ -3241,7 +3443,12 @@ async function run() {
   // emailStep, and it cannot resume a held cold sequence. The pass re-reads
   // canonical activities, including any human_response_sent event persisted
   // moments ago, and refuses all execution if mailbox observation failed.
-  await runStageSequencePass(all, { outboundObservationOk: outbound.ok });
+  const quotaState = { globalCount: todaySent };
+  await runStageSequencePass(all, {
+    observationBySender, activitiesForCycle: ownershipActivities, sendsBySender, quotaState,
+  });
+  todaySent = quotaState.globalCount;
+  dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
 
   // Intent trigger — both-audios. Runs in every normal pass as a backstop to
   // the event-driven spawn, so a missed webhook still gets picked up.
@@ -3252,13 +3459,6 @@ async function run() {
 
   // Phase 3 — follow-ups (replied leads already excluded by runReplyCheckPass)
   const followUps = selectFollowUps(all);
-
-  // CHECK-ONLY stops here: reply-check and bounce-check have both
-  // run (with real writes), but no email is sent.
-  if (CHECK_ONLY) {
-    console.log('\n[check-only] Detection complete — skipping all sends.');
-    return;
-  }
 
   const effectiveCap = Math.min(DAILY_CAP, dailyRemaining);
   console.log(`${all.length} leads · ${queued.length} queued · ${followUps.length} follow-ups due · cap ${effectiveCap} (${dailyRemaining} remaining today)\n`);

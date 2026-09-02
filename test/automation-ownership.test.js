@@ -169,7 +169,7 @@ test('17. suppression beats an enrolled sequence', () => {
 
 // ── 18–19. MANUAL HOLD ──────────────────────────────────────────────────────
 
-test('18/19. MANUAL HOLD blocks cold automation but not an explicitly enrolled sequence', () => {
+test('18/19. MANUAL HOLD permits only explicitly authorized lifecycle recovery', () => {
   const held = { ...COLD, notes: MANUAL_HOLD_TAG };
   const real = row => sendSuppressionReason(row, { suppressedEmails: new Set() });
 
@@ -178,12 +178,14 @@ test('18/19. MANUAL HOLD blocks cold automation but not an explicitly enrolled s
   assert.equal(coldOnly.sendAllowed, false, 'the hold stops cold cadence');
   assert.equal(coldOnly.sequenceAllowed, false, 'and stops sequences that were never enrolled');
 
-  // Step 10's deliberate carve-out, preserved exactly: an EXPLICITLY enrolled
-  // stage journey may still run on a held lead. The hold is about the cold
-  // campaign, not about a recovery journey a human started on purpose.
+  // Demo/Hot cannot silently override the human hold.
   const withSequence = own(held, { suppressionReason: real, sequenceState: enrolled, sequencesEnabled: true });
-  assert.equal(withSequence.sequenceAllowed, true);
+  assert.equal(withSequence.sequenceAllowed, false);
   assert.equal(withSequence.sendAllowed, false, 'but never a cold send');
+
+  const noShow = own(held, { suppressionReason: real,
+    sequenceState: { ...enrolled, sequenceId: 'no_show_recovery_v1' }, sequencesEnabled: true });
+  assert.equal(noShow.sequenceAllowed, true, 'explicit no-show lifecycle authorizes recovery');
 
   // And the hold is never removed by any of this.
   assert.equal(held.notes, MANUAL_HOLD_TAG);

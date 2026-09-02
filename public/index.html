@@ -4613,7 +4613,8 @@ async function renderSequenceControls(leadId) {
     const label = data.label || (data.offer && data.catalogue.find(c => c.id === data.offer)?.label) || 'Follow-up';
     const chipState = data.status === 'none' ? 'available' : data.status;
     const buttons = [];
-    if (!running && data.offer) {
+    const automaticOffer = ['demo_follow_up_v1','hot_stale_v1','no_show_recovery_v1','cancelled_rebook_v1'].includes(data.offer);
+    if (!running && data.offer && !automaticOffer) {
       buttons.push(`<button type="button" class="btn-seq" onclick="openSeqModal('enroll')">Start ${esc(label)}</button>`);
     }
     if (data.status === 'active') {
@@ -4648,6 +4649,26 @@ async function renderSequenceControls(leadId) {
         <div class="pipeline-row">
           <span class="pipeline-row-label">Why</span>
           <span class="pipeline-row-val"><small>${esc(data.stopReason || data.reason || '')}</small></span>
+        </div>
+        <div class="pipeline-row">
+          <span class="pipeline-row-label">Enrollment</span>
+          <span class="pipeline-row-val"><small>${esc(data.enrollmentMode || (automaticOffer ? 'automatic when every safety gate is proven' : 'not enrolled'))}${data.authorization ? ' · ' + esc(data.authorization.replaceAll('_',' ')) : ''}</small></span>
+        </div>
+        <div class="pipeline-row">
+          <span class="pipeline-row-label">Current step</span>
+          <span class="pipeline-row-val"><small>${esc(String(data.step || 0))} sent${data.nextDueAt ? ' · next ' + esc(callWhen(data.nextDueAt)) : ''}</small></span>
+        </div>
+        <div class="pipeline-row">
+          <span class="pipeline-row-label">Owning sender</span>
+          <span class="pipeline-row-val"><small>${data.owningSender ? esc(data.owningSender.email) + ' · ' + esc(String(data.owningSender.sentToday)) + '/' + esc(String(data.owningSender.dailyLimit)) + ' today' : esc(data.senderStatus || 'unproven')}</small></span>
+        </div>
+        <div class="pipeline-row">
+          <span class="pipeline-row-label">Thread</span>
+          <span class="pipeline-row-val"><small>${esc(data.threadStatus || 'unproven')}</small></span>
+        </div>
+        <div class="pipeline-row">
+          <span class="pipeline-row-label">Send gate</span>
+          <span class="pipeline-row-val"><small>${data.sendGate?.allowed ? 'Ready' : 'Blocked/waiting'} · ${esc(data.sendGate?.reason || 'unknown')}</small></span>
         </div>
         ${data.featureEnabled ? '' : `<div class="pipeline-row">
           <span class="pipeline-row-label">Sending</span>
