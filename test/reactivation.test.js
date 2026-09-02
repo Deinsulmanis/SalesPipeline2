@@ -11,7 +11,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const {
   MANUAL_HOLD_TAG, REACTIVATION_MODES,
-  reactivationEligibility, resumeAtFromNotes, manualHoldReleased,
+  reactivationEligibility, coldReactivationVerdict, resumeAtFromNotes, manualHoldReleased,
   applyResumeToNotes, clearResumeFromNotes,
   deriveAutomationState, deriveNextAction, hasManualHold,
   ACTION_TYPE, ACTION_OWNER, ACTION_STATUS, AUTOMATION_STATES,
@@ -192,15 +192,23 @@ test('15. a sequence-complete lead cannot resume a step that does not exist', ()
 
 // ── 16–17. Duplicate twins ──────────────────────────────────────────────────
 
+// resolveReactivationTarget now composes the mechanical row check with the
+// sender's ownership verdict, so both are injected. COLD_OWNED stands in for
+// "cold automation still owns this lead" — the only case in which duplicate
+// resolution has anything to resolve.
+const COLD_OWNED = { owner: 'cold_automation', blockedBy: null, reason: 'cold sequence live' };
+const ownedByCold = () => COLD_OWNED;
+
 function resolveTarget() {
   const src = serverSrc.slice(serverSrc.indexOf('function resolveReactivationTarget'));
   const body = src.slice(0, src.indexOf('\n}\n') + 2);
-  return new Function('reactivationEligibility', `${body}; return resolveReactivationTarget;`)(reactivationEligibility);
+  return new Function('reactivationEligibility', 'coldReactivationVerdict',
+    `${body}; return resolveReactivationTarget;`)(reactivationEligibility, coldReactivationVerdict);
 }
 
 test('16. two mid-sequence duplicates block automated reactivation', () => {
   const resolve = resolveTarget();
-  const out = resolve([held({ id: 'CE1' }), held({ id: 'CE2' })], { now: NOW });
+  const out = resolve([held({ id: 'CE1' }), held({ id: 'CE2' })], { now: NOW, ownershipFor: ownedByCold });
   assert.equal(out.ok, false);
   assert.equal(out.code, 'ambiguous_twins');
   assert.equal(out.candidates.length, 2);
@@ -208,14 +216,14 @@ test('16. two mid-sequence duplicates block automated reactivation', () => {
 
 test('17. one resumable row beside an exhausted duplicate resolves safely', () => {
   const resolve = resolveTarget();
-  const out = resolve([held({ id: 'CE-old', emailStatus: 'done', emailStep: '3' }), held({ id: 'CE-live' })], { now: NOW });
+  const out = resolve([held({ id: 'CE-old', emailStatus: 'done', emailStep: '3' }), held({ id: 'CE-live' })], { now: NOW, ownershipFor: ownedByCold });
   assert.equal(out.ok, true);
   assert.equal(out.twin.id, 'CE-live', 'the mid-sequence row is the one that resumes');
 });
 
 test('one suppressed duplicate poisons the whole address', () => {
   const resolve = resolveTarget();
-  const out = resolve([held({ id: 'CE1' }), held({ id: 'CE2', notes: MANUAL_HOLD_TAG + ' [REPLY: Unsubscribed]' })], { now: NOW });
+  const out = resolve([held({ id: 'CE1' }), held({ id: 'CE2', notes: MANUAL_HOLD_TAG + ' [REPLY: Unsubscribed]' })], { now: NOW, ownershipFor: ownedByCold });
   assert.equal(out.ok, false);
   assert.equal(out.code, 'suppressed');
 });

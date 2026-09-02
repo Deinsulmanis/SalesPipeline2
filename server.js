@@ -61,13 +61,21 @@ const {
 const {
   deriveAutomationState, automationConflict, deriveNextAction,
   compareNextActions, summarizeNextActions,
-  stageTransitionCheck, reopenEligibility, OUTCOME_IDS, LOSS_OUTCOME_IDS,
+  stageTransitionCheck, reopenEligibility, OUTCOMES, OUTCOME_IDS, LOSS_OUTCOME_IDS,
   MANUAL_HOLD_TAG, HUMAN_OWNED_STAGES,
   REACTIVATION_MODES, reactivationEligibility, FOLLOW_UP_DELAY_DAYS,
+  coldReactivationVerdict, coldReactivationSuppressionReader,
   CALL_STATUS, deriveCallLifecycle, callLifecycleActions, deriveHotState,
   applyResumeToNotes, clearResumeFromNotes, resumeAtFromNotes,
   applyHoldToNotes, stageRequiresHold, sendSuppressionReason,
 } = require('./integrations/pipeline-state');
+// Reactivation asks the sender's own ownership question rather than keeping a
+// second opinion about who may contact a lead.
+const { deriveAutomationOwnership } = require('./integrations/automation-ownership');
+const { latestHumanOutboundAt } = require('./integrations/human-outbound');
+// Mirrors the agent's flag. Read at request time so a Railway variable change
+// takes effect without a code deploy.
+const SENDING_ENABLED = () => process.env.SENDING_ENABLED === 'true';
 
 const app = express();
 // Smartlead signs the exact request bytes. This public route must be registered
@@ -861,6 +869,29 @@ app.put('/api/leads/:id', requireAuth, async (req, res) => {
       }
     }
 
+    // ── SAFETY BEFORE STATE ─────────────────────────────────────────────────
+    // The hold is applied and CONFIRMED before the stage is committed, not
+    // after. The old order wrote the stage first and treated a failed hold as a
+    // log line, so a lead could land in Hot or Call Booked with the cold
+    // sequence still live underneath it — a human-owned lead being mailed by
+    // the campaign, which is the worst outcome this system can produce.
+    //
+    // Failing here writes nothing at all. That leaves the lead in its previous
+    // stage, which is recoverable; the alternative is not.
+    let holdResult = null;
+    if (isTransition && stageRequiresHold(nextStage)) {
+      holdResult = await withAuth(() => ensureManualHoldDurable(req.params.id, lead.email || priorRow[10] || ''));
+      if (!holdResult.ok) {
+        console.error('[hold] REFUSED stage change for', req.params.id, '-', holdResult.reason);
+        return res.status(409).json({
+          error: 'Manual hold could not be confirmed, so the stage change was not applied.',
+          code: 'hold_unconfirmed', detail: holdResult.reason,
+          stage: displayStageFor(previousStage),
+          attemptedStage: displayStageFor(nextStage),
+        });
+      }
+    }
+
     await withAuth(async () => {
       await sheets().spreadsheets.values.update({
         spreadsheetId:   SPREADSHEET_ID,
@@ -877,12 +908,15 @@ app.put('/api/leads/:id', requireAuth, async (req, res) => {
       // THE P0 FIX. Moving a card into a human-owned stage now stops the sending
       // agent, because [MANUAL HOLD] lands in the ColdEmail notes that
       // suppressionReason() reads before every send.
-      if (stageRequiresHold(nextStage)) {
-        try {
-          const held = await applyManualHold(req.params.id, lead.email || priorRow[10] || '');
-          for (const row of held) {
+      // The hold is already applied and confirmed above — this only records it.
+      // A failure to WRITE THE AUDIT ROW cannot un-hold the lead, so unlike the
+      // hold itself it is genuinely best-effort.
+      if (holdResult && holdResult.ok) {
+        for (const row of holdResult.held) {
+          try {
             await appendIntegrationRow(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER, {
-              eventId: crypto.randomUUID(), leadId: req.params.id, sourceLeadId: row.id,
+              eventId: stableActivityId('automation-held', [req.params.id, row.id, displayStageFor(nextStage)]),
+              leadId: req.params.id, sourceLeadId: row.id,
               email: lead.email || '', company: lead.company || '',
               eventType: 'automation_held', occurredAt: new Date().toISOString(),
               subject: 'Automated follow-up suppressed', content: '',
@@ -890,14 +924,14 @@ app.put('/api/leads/:id', requireAuth, async (req, res) => {
                 stage: displayStageFor(nextStage), trigger: 'stage_transition',
                 coldEmailId: row.id, matchedBy: row.matchedBy,
                 emailStatusAtHold: row.emailStatus, tag: MANUAL_HOLD_TAG,
+                holdConfirmed: true,
               }),
             });
+          } catch (activityError) {
+            console.warn('[hold] applied and confirmed, audit row failed:', activityError.message);
           }
-          if (held.length) console.log(`[hold] ${MANUAL_HOLD_TAG} applied to ${held.length} ColdEmail row(s) for ${req.params.id}`);
-        } catch (holdError) {
-          // Loud: a failed hold means automation may still be live.
-          console.error('[hold] FAILED to apply manual hold for', req.params.id, '-', holdError.message);
         }
+        if (holdResult.held.length) console.log(`[hold] ${MANUAL_HOLD_TAG} applied to ${holdResult.held.length} ColdEmail row(s) for ${req.params.id}`);
       }
       try {
         await appendIntegrationRow(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER, {
@@ -2076,7 +2110,16 @@ function resolveReactivationTarget(twins, opts = {}) {
   const rows = twins || [];
   if (!rows.length) return { ok: false, code: 'no_twin', message: 'No ColdEmail record is linked to this lead.' };
 
-  const scored = rows.map(twin => ({ twin, eligibility: reactivationEligibility(twin, opts) }));
+  // The canonical verdict — the same ownership question mayColdSend() asks —
+  // not the bare mechanical row check. opts.ownershipFor is supplied by the
+  // routes; without it coldReactivationVerdict fails closed on its own.
+  const scored = rows.map(twin => ({
+    twin,
+    eligibility: coldReactivationVerdict(twin, {
+      ...opts,
+      ownership: typeof opts.ownershipFor === 'function' ? opts.ownershipFor(twin) : null,
+    }),
+  }));
   const suppressed = scored.find(entry => entry.eligibility.blocked === 'suppressed');
   if (suppressed) {
     // One opted-out duplicate poisons the address for all of them: the
@@ -2104,6 +2147,37 @@ function resolveReactivationTarget(twins, opts = {}) {
   return { ok: true, twin: chosen.twin, eligibility: chosen.eligibility, heldCount: held.length };
 }
 
+// Everything coldReactivationVerdict() needs to answer "if this hold were
+// lifted, would ordinary cold automation own this lead?" — assembled from the
+// SAME inputs the sending agent uses in coldSendGate(), so the drawer's preview,
+// this server's mutation and the agent cannot reach different conclusions.
+//
+// The suppression reader deliberately ignores the manual hold: the hold is what
+// reactivation proposes to lift, so it cannot also serve as proof that lifting
+// it is safe. See REACTIVATABLE_BLOCKERS in pipeline-state.js.
+async function buildReactivationOwnership(leadId, boardLead, suppressedEmails) {
+  const email = normalizeEmail(boardLead.email || '');
+  const all = await readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER).catch(() => null);
+  // Fail closed: without the timeline we cannot see meetings, replies or manual
+  // outbound, and an unreadable history must never read as "nothing is here".
+  if (!all) return { ok: false, reason: 'the activity timeline could not be read, so Pipeline ownership is unknown' };
+  const activities = all.filter(row => row.leadId === leadId
+    || (email && normalizeEmail(row.email) === email));
+  const callState = deriveCallLifecycle(boardLead, { activities });
+  const suppressionReader = coldReactivationSuppressionReader({ suppressedEmails });
+  return {
+    ok: true, activities, callState,
+    ownershipFor: twin => deriveAutomationOwnership(twin, {
+      boardLead, activities, callState,
+      humanTouchAt: latestHumanOutboundAt(activities),
+      suppressionReason: suppressionReader,
+      sendingEnabled: SENDING_ENABLED(),
+      sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true',
+      coldCadenceDue: true,
+    }),
+  };
+}
+
 // Writes [MANUAL HOLD] into the notes of every ColdEmail row for this lead.
 // ensureNote is idempotent, so re-saving a card already on hold rewrites nothing
 // and logs nothing. Returns the rows actually changed.
@@ -2122,6 +2196,47 @@ async function applyManualHold(boardLeadId, boardEmail) {
     changed.push({ id: twin.id, row: twin._row, matchedBy: twin._matchedBy, emailStatus: twin.emailStatus });
   }
   return changed;
+}
+
+/**
+ * Apply [MANUAL HOLD] and PROVE it landed, before any caller commits a stage.
+ *
+ * applyManualHold() writes and reports what it changed, which is not the same
+ * as knowing the sheet now says so — a partial batch, a quota rejection or a
+ * lost response all look like success to a fire-and-forget writer. Moving a
+ * lead into a human-owned stage while cold automation stays live is the exact
+ * failure this guards, so the tag is read back and confirmed on every twin.
+ *
+ * A lead with no ColdEmail twin has no cold automation to stop; that is a
+ * genuine pass, reported distinctly rather than silently.
+ *
+ * @returns { ok, held, twinCount, confirmed, reason }
+ */
+async function ensureManualHoldDurable(boardLeadId, boardEmail, { attempts = 2 } = {}) {
+  let held = [];
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      if (attempt > 1) ceRowMap.clear();          // stale row numbers survive a failed write
+      held = await applyManualHold(boardLeadId, boardEmail);
+      // Read back. This is the whole point: the write is not the proof.
+      const twins = await findColdEmailTwins(boardLeadId, boardEmail);
+      if (!twins.length) {
+        return { ok: true, held, twinCount: 0, confirmed: true,
+          reason: 'no ColdEmail record is linked to this lead, so no cold automation exists to stop' };
+      }
+      const unheld = twins.filter(twin => !hasManualHold(twin.notes || ''));
+      if (!unheld.length) {
+        return { ok: true, held, twinCount: twins.length, confirmed: true,
+          reason: `manual hold confirmed on ${twins.length} ColdEmail row(s)` };
+      }
+      lastError = new Error(`${unheld.length} of ${twins.length} ColdEmail row(s) still have no ${MANUAL_HOLD_TAG}`);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  return { ok: false, held, twinCount: null, confirmed: false,
+    reason: lastError ? lastError.message : 'the manual hold could not be confirmed' };
 }
 
 function activityMatchesLead(row, lead) {
@@ -2279,13 +2394,22 @@ app.get('/api/leads/:id/reactivation', requireAuth, async (req, res) => {
     });
     const row = leadResponse.data.values?.[0] || [];
     const email = row[10] || '';
+    const boardLead = {};
+    COLUMNS.forEach((col, i) => { boardLead[col] = row[i] || ''; });
+    boardLead.meetingAt = row[20] || '';
+    boardLead.outcome = row[21] || '';
     const twins = await findColdEmailTwins(req.params.id, email);
     const suppressedEmails = await loadSuppressionEmails().catch(() => null);
     if (!suppressedEmails) {
       return res.json({ leadId: req.params.id, ok: false, code: 'suppression_unavailable',
         message: 'Suppression list unavailable — reactivation options are hidden.', twinCount: twins.length });
     }
-    const target = resolveReactivationTarget(twins, { suppressedEmails });
+    const context = await buildReactivationOwnership(req.params.id, boardLead, suppressedEmails);
+    if (!context.ok) {
+      return res.json({ leadId: req.params.id, ok: false, code: 'ownership_unavailable',
+        message: context.reason, twinCount: twins.length });
+    }
+    const target = resolveReactivationTarget(twins, { suppressedEmails, ownershipFor: context.ownershipFor });
     res.json({
       leadId: req.params.id,
       ok: target.ok,
@@ -2294,6 +2418,10 @@ app.get('/api/leads/:id/reactivation', requireAuth, async (req, res) => {
       candidates: target.candidates || null,
       twinCount: twins.length,
       eligibility: target.eligibility || null,
+      // Why ordinary cold resume is refused, so the drawer can say it plainly
+      // instead of quietly hiding a Schedule button the server would reject.
+      ownerBlocked: target.eligibility ? target.eligibility.ownerBlocked || null : null,
+      callStatus: context.callState ? context.callState.status : null,
       twin: target.twin
         ? {
             id: target.twin.id, emailStatus: target.twin.emailStatus,
@@ -2327,6 +2455,10 @@ app.post('/api/leads/:id/reactivate', requireAuth, async (req, res) => {
     const row = leadResponse.data.values?.[0] || [];
     const email = row[10] || '';
     const company = row[6] || '';
+    const boardLead = {};
+    COLUMNS.forEach((col, i) => { boardLead[col] = row[i] || ''; });
+    boardLead.meetingAt = row[20] || '';
+    boardLead.outcome = row[21] || '';
 
     const twins = await findColdEmailTwins(req.params.id, email);
     let suppressedEmails;
@@ -2339,7 +2471,13 @@ app.post('/api/leads/:id/reactivate', requireAuth, async (req, res) => {
         code: 'suppression_unavailable',
       });
     }
-    const target = resolveReactivationTarget(twins, { suppressedEmails });
+    // Re-derived here, never trusted from the browser: the preview may be
+    // minutes old and a call could have been booked in between.
+    const context = await buildReactivationOwnership(req.params.id, boardLead, suppressedEmails);
+    if (!context.ok) {
+      return res.status(503).json({ error: context.reason, code: 'ownership_unavailable' });
+    }
+    const target = resolveReactivationTarget(twins, { suppressedEmails, ownershipFor: context.ownershipFor });
     if (!target.ok) {
       // 409 for "the data says no", 400 for a malformed ask.
       const status = target.code === 'no_twin' ? 404 : 409;
@@ -2380,7 +2518,18 @@ app.post('/api/leads/:id/reactivate', requireAuth, async (req, res) => {
     }
 
     // ── Option B: schedule automation to resume ─────────────────────────────
+    // Two different refusals, reported as two different things. Pipeline
+    // ownership is not "no step left to send", and collapsing them into one
+    // message is how an operator concludes the button is broken rather than
+    // that the lead is legitimately owned by a person.
     if (!eligibility.canSchedule) {
+      if (eligibility.ownerBlocked) {
+        return res.status(409).json({
+          error: eligibility.reason, code: 'not_cold_owned', ownerBlocked: eligibility.ownerBlocked,
+          detail: 'Ordinary cold outreach may only resume while cold automation still owns the lead. '
+            + 'Reopening for human follow-up stays available.',
+        });
+      }
       return res.status(409).json({
         error: eligibility.reason, code: 'no_resumable_step',
         detail: 'Automated resume needs a sent step with a following step in the sequence.',
@@ -3365,10 +3514,188 @@ app.post('/api/leads/:id/call-lifecycle', requireAuth, async (req, res) => {
       ok: true, action, recorded, status: nextLifecycle.status,
       meetingAt: nextLifecycle.meetingAt, previousMeetingAt: nextLifecycle.previousMeetingAt,
       salesOutcome: lead.outcome || '', automationResumed: false,
+      // What the operator should do next. A meeting result is not a sales
+      // result: completing a call says the call happened and nothing more, so
+      // the UI asks for the sales outcome instead of inferring one.
+      prompt: action === 'complete'
+        ? { kind: 'choose_sales_result', message: 'Call recorded as completed. Choose the sales result when you know it — this did not close the opportunity.' }
+        : action === 'no_show'
+          ? { kind: 'recoverable', message: 'Recorded as a no-show. The opportunity stays open and can be recovered.' }
+          : action === 'cancel'
+            ? { kind: 'recoverable', message: 'Call cancelled. The opportunity stays open — closing it is a separate, explicit action.' }
+            : null,
+      // Everything the drawer needs to repaint without a second round trip.
+      allowed: callLifecycleActions(nextLifecycle),
+      stage: action === 'book' || action === 'reschedule' ? 'call_booked' : displayStageFor(lead.stage),
     });
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
     console.error('[Call lifecycle]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── EXPLICIT CLOSE ──────────────────────────────────────────────────────────
+//
+// The one place a Pipeline opportunity is closed. Outcome and stage move
+// TOGETHER in a single batch write, so the half-finished state the audit found
+// — a loss outcome recorded against a lead still sitting at Call Booked, with a
+// timeline claiming it was closed — cannot be produced here.
+//
+// Selecting a loss reason never triggers this. Closing is an explicit operator
+// action with its own confirmation, because "they ghosted us" and "this deal is
+// over" are different statements and only a person can make the second one.
+const CLOSE_RESULTS = Object.freeze({ won: 'closed_won', lost: 'closed_lost' });
+
+app.post('/api/leads/:id/close', requireAuth, async (req, res) => {
+  const result = String(req.body?.result || '').trim().toLowerCase();
+  try {
+    if (!Object.hasOwn(CLOSE_RESULTS, result)) {
+      return res.status(400).json({ error: 'Close result must be "won" or "lost".', field: 'result' });
+    }
+    const stage = CLOSE_RESULTS[result];
+    const rowNum = await withAuth(() => findRow(req.params.id));
+    if (!rowNum) return res.status(404).json({ error: 'not found' });
+    const prior = await sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${rowNum}:W${rowNum}`,
+    });
+    const row = prior.data.values?.[0] || [];
+    const email = row[10] || '';
+    const company = row[6] || row[4] || '';
+    const previousStage = row[12] || '';
+    const previousOutcome = row[21] || '';
+
+    // A loss needs a reason. Closing Won needs none — winning has no "why not".
+    const outcome = result === 'lost'
+      ? String(req.body?.outcome || previousOutcome || '').trim()
+      : '';
+    if (result === 'lost' && !LOSS_OUTCOME_IDS.includes(outcome)) {
+      return res.status(422).json({
+        error: 'Choose a loss reason before closing this opportunity.',
+        field: 'outcome', options: OUTCOMES.filter(item => item.kind === 'loss').map(({ id, label }) => ({ id, label })),
+      });
+    }
+    if (displayStageFor(previousStage) === stage) {
+      return res.json({ ok: true, unchanged: true, stage, outcome: previousOutcome,
+        message: `This opportunity is already ${stage === 'closed_won' ? 'Closed Won' : 'Closed Lost'}.` });
+    }
+
+    // Optimistic concurrency, same contract the lifecycle route uses.
+    const expectedStage = String(req.body?.expectedStage || '').trim();
+    if (expectedStage && expectedStage !== displayStageFor(previousStage)) {
+      return res.status(409).json({
+        error: 'This lead changed stage since the drawer was opened. Refresh and retry.',
+        code: 'stage_changed', stage: displayStageFor(previousStage),
+      });
+    }
+
+    // Safety before state, exactly as the stage-chip route now does it. A
+    // terminal stage means automation must be stopped, and an unconfirmed stop
+    // means the close does not happen.
+    const holdResult = await withAuth(() => ensureManualHoldDurable(req.params.id, email));
+    if (!holdResult.ok) {
+      return res.status(409).json({
+        error: 'Manual hold could not be confirmed, so this opportunity was not closed.',
+        code: 'hold_unconfirmed', detail: holdResult.reason, stage: displayStageFor(previousStage),
+      });
+    }
+
+    // ONE write: outcome (V) and stage (M) together. There is no interleaving
+    // in which one lands without the other.
+    await withAuth(() => sheets().spreadsheets.values.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: {
+        valueInputOption: 'RAW',
+        data: [
+          { range: `${SHEET_NAME}!M${rowNum}`, values: [[stage]] },
+          ...(result === 'lost' ? [{ range: `${SHEET_NAME}!V${rowNum}`, values: [[outcome]] }] : []),
+        ],
+      },
+    }));
+
+    // ONE truthful event. Deterministic id, so a retry after a timeline failure
+    // reconciles instead of duplicating.
+    const closeEvent = buildCloseEvent(req.params.id, { stage, outcome, previousStage, previousOutcome, email, company });
+    let timelineRecorded = true;
+    try {
+      await appendColdCallActivities([closeEvent]);
+    } catch (activityError) {
+      // The business state is committed and correct; only the audit row is
+      // missing. Say so rather than reporting a clean success, and hand back
+      // the means to reconcile it.
+      timelineRecorded = false;
+      console.error('[Close] stage committed, timeline append failed:', activityError.message);
+    }
+
+    res.json({
+      ok: true, result, stage, outcome: result === 'lost' ? outcome : previousOutcome,
+      previousStage: displayStageFor(previousStage),
+      holdConfirmed: holdResult.confirmed, holdDetail: holdResult.reason,
+      timelineRecorded,
+      timelineEventId: closeEvent.eventId,
+      message: timelineRecorded
+        ? `Closed ${result === 'won' ? 'Won' : 'Lost'}. Automation is stopped and the change is recorded.`
+        : `Closed ${result === 'won' ? 'Won' : 'Lost'}, but the timeline entry did not save. Use Retry timeline to reconcile it.`,
+    });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Close]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Derived purely from authoritative state, so the reconciliation endpoint below
+// can rebuild the identical row — same id, same content — without the browser
+// handing back an event payload we would have to trust.
+function buildCloseEvent(leadId, { stage, outcome, previousStage, previousOutcome, email, company }) {
+  return {
+    eventId: stableActivityId('close', [leadId, stage, outcome || '']),
+    leadId, sourceLeadId: '', email, company,
+    eventType: stage, occurredAt: new Date().toISOString(),
+    subject: stage === 'closed_won' ? 'Closed Won' : `Closed Lost — ${outcome}`,
+    content: '',
+    metadata: JSON.stringify({
+      stage, outcome: outcome || '', previousStage: displayStageFor(previousStage),
+      previousOutcome, trigger: 'close_action', stageCommitted: true,
+    }),
+  };
+}
+
+// Idempotently re-append the canonical close event for a lead whose stage is
+// already terminal but whose timeline is missing it — the recovery path for a
+// close whose audit write failed. Re-derives the event from the sheet rather
+// than accepting one, and writes nothing if the row is already there.
+app.post('/api/leads/:id/reconcile-timeline', requireAuth, async (req, res) => {
+  try {
+    const rowNum = await withAuth(() => findRow(req.params.id));
+    if (!rowNum) return res.status(404).json({ error: 'not found' });
+    const prior = await sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${rowNum}:W${rowNum}`,
+    });
+    const row = prior.data.values?.[0] || [];
+    const stage = displayStageFor(row[12] || '');
+    if (!['closed_won', 'closed_lost'].includes(stage)) {
+      return res.status(409).json({
+        error: 'Only a closed opportunity has a close event to reconcile.',
+        code: 'not_closed', stage,
+      });
+    }
+    const email = row[10] || '';
+    const expected = buildCloseEvent(req.params.id, {
+      stage, outcome: row[21] || '', previousStage: '', previousOutcome: '',
+      email, company: row[6] || row[4] || '',
+    });
+    const all = await readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER);
+    if (all.some(activity => activity.eventId === expected.eventId)) {
+      return res.json({ ok: true, alreadyRecorded: true, eventId: expected.eventId,
+        message: 'The close is already in the timeline. Nothing was written.' });
+    }
+    await appendColdCallActivities([expected]);
+    res.json({ ok: true, alreadyRecorded: false, eventId: expected.eventId,
+      message: 'The missing close event was added to the timeline.' });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Reconcile timeline]', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -3498,12 +3825,27 @@ app.patch('/api/leads/:id/call-details', requireAuth, async (req, res) => {
       });
     }
     if (outcome && outcome !== oldOutcome) {
-      const eventType = LOSS_OUTCOME_IDS.includes(outcome) ? 'closed_lost' : 'meeting_outcome';
+      // This endpoint writes U:W only — the stage in column M is never touched
+      // here. So it must not claim the lead was closed.
+      //
+      // It used to: a loss outcome appended a `closed_lost` event while the
+      // lead sat at Call Booked, leaving a permanent history saying the deal
+      // was lost when the Pipeline never moved. The timeline is the audit
+      // record; it has to say what actually happened, which is that somebody
+      // recorded an outcome. A real closed_lost event is written by the
+      // explicit Close Lost action, which does move the stage.
+      const outcomeLabel = (OUTCOMES.find(item => item.id === outcome) || {}).label || outcome;
       activityEvents.push({
         eventId: stableActivityId('meeting-outcome', [req.params.id, oldOutcome, outcome]),
         leadId: req.params.id, sourceLeadId: '', email: current[10] || '', company: current[6] || current[4] || '',
-        eventType, occurredAt, subject: '', content: conversationContext,
-        metadata: JSON.stringify({ meetingAt, outcome, previousOutcome: oldOutcome }),
+        eventType: 'sales_outcome_recorded', occurredAt,
+        subject: `Sales outcome recorded — ${outcomeLabel}`, content: conversationContext,
+        metadata: JSON.stringify({
+          meetingAt, outcome, previousOutcome: oldOutcome,
+          stageUnchanged: true, stageAtRecord: current[12] || '',
+          isLoss: LOSS_OUTCOME_IDS.includes(outcome),
+          trigger: 'call_details',
+        }),
       });
     }
     if (conversationContext && conversationContext !== oldContext) {

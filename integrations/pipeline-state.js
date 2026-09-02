@@ -28,6 +28,9 @@ const { displayStageFor } = require('./cold-call-pipeline');
 const { ANALYTICS_CATEGORY, categoriesFromNotes, classificationFromLead } = require('./reply-analytics');
 const { deriveOperationalAction, REPLY_ACTION, DUE_SOURCE } = require('./reply-operations');
 const { activeOverrides, OVERRIDE_KIND } = require('./reply-overrides');
+// The sender's OWN ownership verdict. Reactivation asks the same question the
+// agent asks before it mails anyone, rather than keeping a second opinion.
+const { OWNER, BLOCKED_BY } = require('./automation-ownership');
 
 // ── AUTOMATION STATE ────────────────────────────────────────────────────────
 // Derived from the ColdEmail twin, because emailStatus — not stage — is what
@@ -245,6 +248,128 @@ function reactivationEligibility(twin, opts = {}) {
       ? 'automation is scheduled to resume at ' + new Date(resumeAt).toISOString()
       : 'on manual hold; step ' + nextStep + ' can be scheduled to resume',
   };
+}
+
+// ── CANONICAL COLD REACTIVATION ─────────────────────────────────────────────
+//
+// reactivationEligibility() above answers a MECHANICAL question: does this
+// ColdEmail row have a held, unfinished cadence with a step left to send? That
+// is necessary and nowhere near sufficient, and treating it as the whole answer
+// is what let a Call Booked lead restart ordinary Email 2 — the row still had
+// step 2 pending, so the row said yes, and nobody asked the Pipeline.
+//
+// The authority on whether cold automation may touch a lead is
+// deriveAutomationOwnership(), because that is what the sending agent itself
+// consults through mayColdSend(). Reactivation now asks the same question, so
+// the preview, the mutation and the sender cannot disagree.
+
+// Blockers that ordinary reactivation EXISTS to lift: a [RESUME:] time gate, an
+// idle cadence, or the global send switch. None of them says anything about who
+// owns this particular lead.
+//
+// MANUAL_HOLD is deliberately NOT here, and that is the whole trick. Ownership
+// is evaluated in precedence order and the hold is checked at rule 3, ahead of
+// the meeting (rule 6) and Pipeline (rule 9) rules — so a Call Booked lead on
+// hold reports MANUAL_HOLD and every later guard goes unasked. Reading that as
+// "reactivatable" is exactly the bug: it is the hold we are proposing to lift,
+// so it cannot also be the proof that lifting it is safe.
+//
+// Callers must therefore derive ownership with a suppression reader that
+// ignores the hold tag (see coldReactivationSuppressionReader), which asks the
+// real question: with the hold gone, would cold automation own this lead? A
+// verdict that still reports MANUAL_HOLD means the caller passed a hold-aware
+// reader, and it is refused rather than trusted.
+const REACTIVATABLE_BLOCKERS = Object.freeze([
+  BLOCKED_BY.WAITING_UNTIL_DATE, BLOCKED_BY.NOTHING_DUE, BLOCKED_BY.SENDING_DISABLED,
+]);
+
+/**
+ * A suppression reader for reactivation: durable opt-outs still suppress, the
+ * reversible manual hold does not. Used to derive the ownership verdict that
+ * coldReactivationVerdict() consumes.
+ */
+function coldReactivationSuppressionReader({ suppressedEmails = new Set() } = {}) {
+  return lead => {
+    const withoutHold = { ...lead, notes: String(lead && lead.notes || '').split(MANUAL_HOLD_TAG).join('') };
+    return sendSuppressionReason(withoutHold, { suppressedEmails });
+  };
+}
+
+// One operator-facing sentence per disqualifying blocker. Keyed by the sender's
+// own vocabulary, and consulted exhaustively: an unrecognised blocker refuses
+// rather than falling through to a permissive default, so a guard added to
+// automation-ownership later cannot silently re-open this door.
+const REACTIVATION_REFUSAL = Object.freeze({
+  [BLOCKED_BY.TERMINAL_STAGE]: 'this opportunity is closed — ordinary cold outreach cannot be restarted on a closed lead',
+  [BLOCKED_BY.SUPPRESSION]: 'this address is suppressed, and an opt-out is never reversed by reactivation',
+  [BLOCKED_BY.INVALID_IDENTITY]: 'the email address cannot be trusted, so nothing may be scheduled to it',
+  [BLOCKED_BY.CONTACT_CHANGE_REVIEW]: 'a proposed address is awaiting review — resolve the contact change first',
+  [BLOCKED_BY.MEETING_LIFECYCLE]: 'a meeting owns this lead — resolve the call before any cold automation resumes',
+  [BLOCKED_BY.HUMAN_OWNED]: 'a person owns the next move on this lead',
+  [BLOCKED_BY.PROMOTED_TO_PIPELINE]: 'this lead is in the Sales Pipeline, so ordinary cold cadence no longer owns it',
+  [BLOCKED_BY.UNRECORDED_HUMAN_TOUCH]: 'a manual reply exists that the CRM has not recorded yet',
+  [BLOCKED_BY.SEQUENCES_DISABLED]: 'stage sequences are disabled',
+  // See REACTIVATABLE_BLOCKERS: reaching this means ownership was derived with
+  // the hold still applied, so the later guards never ran. Fail closed.
+  [BLOCKED_BY.MANUAL_HOLD]: 'Pipeline ownership could not be evaluated independently of the manual hold, so automated resume is refused',
+});
+
+/**
+ * May ordinary cold automation be scheduled to resume on this lead?
+ *
+ * Composes the mechanical row check with the sender's canonical ownership
+ * verdict. Only `canSchedule` — the option that actually mails a prospect — is
+ * gated. Reopening for human work writes nothing and stays available, and
+ * cancelling a scheduled resume only ever reduces eligibility, so neither is
+ * ever withdrawn by this gate.
+ *
+ * @param twin           the ColdEmail row
+ * @param opts.ownership a verdict from deriveAutomationOwnership(), derived
+ *                       with coldReactivationSuppressionReader(). REQUIRED to
+ *                       schedule: its absence fails closed rather than open.
+ * @param opts.sequenceState the lead's stage-sequence enrolment, if any
+ */
+function coldReactivationVerdict(twin, opts = {}) {
+  const mechanical = reactivationEligibility(twin, opts);
+  const ownership = opts.ownership || null;
+  const sequenceState = opts.sequenceState || null;
+
+  // Suppression and a missing row already deny everything; do not soften them.
+  if (!mechanical.eligible) return { ...mechanical, ownership: ownership || null, ownerBlocked: null };
+
+  const refuse = (ownerBlocked, why) => ({
+    ...mechanical,
+    canSchedule: false,
+    ownerBlocked,
+    ownership: ownership || null,
+    // canKeepManual / canCancel deliberately survive: neither can send.
+    reason: why,
+  });
+
+  // Fail closed. Without a canonical verdict we cannot PROVE cold automation
+  // still owns this lead, and "we could not check" must never read as "yes".
+  if (!ownership) {
+    return refuse('ownership_unknown',
+      'the Pipeline ownership of this lead could not be determined, so automated resume is refused');
+  }
+
+  // An enrolled journey owns the next automated move. Ordinary cold cadence
+  // running underneath it would mail the prospect twice from two systems.
+  if (ownership.owner === OWNER.RECOVERY_SEQUENCE
+    || (sequenceState && String(sequenceState.status || '') === 'active')) {
+    return refuse('active_sequence',
+      'an enrolled stage sequence owns this lead — ordinary cold outreach must not run underneath it');
+  }
+
+  if (ownership.owner !== OWNER.COLD_AUTOMATION) {
+    const blocker = ownership.blockedBy || null;
+    if (!blocker || !REACTIVATABLE_BLOCKERS.includes(blocker)) {
+      return refuse(blocker || 'not_cold_owned',
+        REACTIVATION_REFUSAL[blocker] || `cold automation does not own this lead (${ownership.owner})`);
+    }
+  }
+
+  return { ...mechanical, ownership, ownerBlocked: null };
 }
 
 /**
@@ -1325,6 +1450,8 @@ module.exports = {
   deriveCallLifecycle, callLifecycleActions,
   addBusinessDays, calendarDayOf, lastMeaningfulInteraction, deriveHotState,
   applyResumeToNotes, clearResumeFromNotes, reactivationEligibility,
+  coldReactivationVerdict, coldReactivationSuppressionReader,
+  REACTIVATABLE_BLOCKERS, REACTIVATION_REFUSAL,
   hasManualHold, applyHoldToNotes, stageRequiresHold,
   OUTCOMES, OUTCOME_IDS, LOSS_OUTCOME_IDS, RECOVERABLE_OUTCOME_IDS,
   FOLLOW_UP_DELAY_DAYS,

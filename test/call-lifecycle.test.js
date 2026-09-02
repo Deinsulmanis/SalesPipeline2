@@ -309,7 +309,8 @@ test('36. the timeline tells the meeting journey in order, newest first', () => 
 
 test('37. the drawer offers only the transitions the state permits', () => {
   assert.match(browser, /function callDrawerRows\(next\)/);
-  assert.match(browser, /function callAllowedActions\(call\)/);
+  // Takes the stage too: a closed opportunity has no meeting decisions left.
+  assert.match(browser, /function callAllowedActions\(call, stage\)/);
   assert.match(browser, /Object\.entries\(allowed\)\.filter\(\(\[, ok\]\) => ok\)/, 'draws only allowed actions');
   for (const label of ['Book call', 'Reschedule', 'Cancel call', 'Mark completed', 'Mark no show']) {
     assert.ok(browser.includes(label), `${label} exists`);

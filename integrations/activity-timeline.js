@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const { analyticsCategoryFor, ANALYTICS_CATEGORY } = require('./reply-analytics');
+const { displayStageFor } = require('./cold-call-pipeline');
 
 const REPLY_TYPES = new Set([
   'positive_reply', 'meeting_requested', 'late_reply', 'question_reply',
@@ -21,6 +22,7 @@ const SOURCE_BY_TYPE = Object.freeze({
   wrong_person_reply: 'Prospect', needs_human_reply: 'Prospect', out_of_office_reply: 'Prospect',
   conversation_note: 'Human', call_booked: 'Meeting', meeting_rescheduled: 'Meeting',
   meeting_cancelled: 'Meeting', meeting_completed: 'Meeting', meeting_outcome: 'Meeting', closed_won: 'CRM', closed_lost: 'CRM',
+  sales_outcome_recorded: 'CRM',
 });
 
 const OUTCOME_LABELS = Object.freeze({
@@ -99,7 +101,7 @@ function replyTitle(classification, late, type) {
   return `${late ? 'Late ' : ''}${label} reply received`;
 }
 
-function eventPresentation(row, metadata) {
+function eventPresentation(row, metadata, context = {}) {
   const type = String(row.eventType || 'activity');
   const step = Number(metadata.step || 0);
   const outcome = OUTCOME_LABELS[metadata.outcome] || prettyStage(metadata.outcome || '');
@@ -139,18 +141,47 @@ function eventPresentation(row, metadata) {
     case 'meeting_completed': return { title: 'Call completed', summary: metadata.meetingAt ? `Meeting: ${metadata.meetingAt}` : '' };
     case 'meeting_no_show': return { title: 'No show', summary: metadata.meetingAt ? `Meeting: ${metadata.meetingAt}` : '' };
     case 'meeting_outcome': return { title: 'Meeting outcome updated', summary: metadata.outcome ? outcome : '' };
-    case 'closed_won': return { title: 'Closed Won' };
-    case 'closed_lost': return { title: metadata.outcome ? `Closed Lost — ${outcome}` : 'Closed Lost' };
+    // Somebody recorded a sales result. Deliberately NOT phrased as a closure:
+    // this event never moves the Pipeline stage, and the historical record has
+    // to be able to tell "we wrote down that they ghosted us" apart from "the
+    // opportunity was closed". The stage it was recorded against is shown so a
+    // reader can see the lead was still open at the time.
+    case 'sales_outcome_recorded': return {
+      title: row.subject || `Sales outcome recorded${metadata.outcome ? ` — ${outcome}` : ''}`,
+      summary: metadata.stageAtRecord ? `Stage unchanged: ${prettyStage(metadata.stageAtRecord)}` : '',
+    };
+    case 'closed_won': return { title: 'Closed Won', summary: metadata.trigger === 'close_action' ? 'Stage moved to Closed Won' : '' };
+    case 'closed_lost': {
+      // A closed_lost row that was never a closure. Before the explicit Close
+      // action existed, saving a loss outcome appended one of these while the
+      // stage stayed where it was — so production carries rows claiming a deal
+      // was lost on leads that are still open.
+      //
+      // The row is HISTORY and is never rewritten or deleted. It is simply
+      // described accurately: no close_action trigger, and a lead that is not
+      // in fact Closed Lost, together prove this recorded an outcome rather
+      // than a closure.
+      const fromCloseAction = metadata.trigger === 'close_action';
+      const leadIsClosed = String(context.stage || '') === 'closed_lost';
+      if (!fromCloseAction && context.stage && !leadIsClosed) {
+        return {
+          title: metadata.outcome ? `Sales outcome recorded — ${outcome}` : 'Sales outcome recorded',
+          summary: `Recorded against ${prettyStage(context.stage)}; the opportunity was not closed`,
+        };
+      }
+      return { title: metadata.outcome ? `Closed Lost — ${outcome}` : 'Closed Lost',
+        summary: fromCloseAction ? 'Stage moved to Closed Lost' : '' };
+    }
     default: return { title: row.subject || prettyStage(type) };
   }
 }
 
-function normalizeStoredActivity(row, index = 0) {
+function normalizeStoredActivity(row, index = 0, context = {}) {
   const metadata = parseMetadata(row.metadata);
   const type = String(row.eventType || 'activity');
   const occurredAt = validTime(row.occurredAt);
   const id = String(row.eventId || '').trim() || stableId('activity', [row.leadId, row.sourceLeadId, type, row.occurredAt, row.subject, row.content, index]);
-  const presentation = eventPresentation(row, metadata);
+  const presentation = eventPresentation(row, metadata, context);
   return {
     id, leadId: String(row.leadId || row.sourceLeadId || ''), type,
     occurredAt, source: SOURCE_BY_TYPE[type] || 'CRM',
@@ -191,7 +222,12 @@ function buildActivityTimeline({ lead = {}, activities = [], opens = [], demos =
   const seen = new Set();
   const events = [];
   for (const [index, row] of activities.entries()) {
-    const event = normalizeStoredActivity(row, index);
+    // The lead's CURRENT stage is what proves whether a historical closure
+    // event ever corresponded to a real one. Passed only when the lead actually
+    // HAS a stage: displayStageFor('') defaults to follow_up, and an absent
+    // stage is missing evidence, not evidence that the lead is open.
+    const event = normalizeStoredActivity(row, index,
+      lead.stage ? { stage: displayStageFor(lead.stage) } : {});
     if (seen.has(event.id)) continue;
     seen.add(event.id);
     events.push(event);

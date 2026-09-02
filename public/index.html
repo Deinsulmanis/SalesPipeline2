@@ -2491,7 +2491,7 @@
             <input type="datetime-local" id="d-meeting-at">
           </div>
           <div class="form-group full">
-            <label for="d-outcome">Outcome</label>
+            <label for="d-outcome">Sales outcome <span style="font-weight:400;color:var(--text-muted)">— recorded only; does not close the opportunity</span></label>
             <select id="d-outcome">
               <option value="">No outcome yet</option>
               <option value="active">Active conversation</option>
@@ -2510,6 +2510,9 @@
           </div>
         </div>
         <button class="btn-save-notes" onclick="saveCallDetails()">Save call details</button>
+        <!-- Closing is its own decision, with its own confirmation. Selecting a
+             loss reason above records what happened; it never closes the deal. -->
+        <div id="d-close-actions"></div>
       </div>
       <div>
         <div class="detail-section-title">Activity timeline</div>
@@ -2629,6 +2632,19 @@
       <button class="modal-close" onclick="closeGhostModal()" aria-label="Close">&#10005;</button>
     </div>
     <div style="padding:16px 18px" id="ghost-body"></div>
+  </div>
+</div>
+
+<!-- CLOSE MODAL — the only path that moves a lead to a terminal stage. Writes
+     the sales outcome and the stage together, after the automation hold has
+     been confirmed. -->
+<div class="modal-overlay" id="close-overlay" onclick="closeCloseModal(event)">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="close-title" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title" id="close-title">Close opportunity</div>
+      <button class="modal-close" onclick="closeCloseModal()" aria-label="Close">&#10005;</button>
+    </div>
+    <div style="padding:16px 18px" id="close-body"></div>
   </div>
 </div>
 
@@ -2818,14 +2834,20 @@ async function syncLead(lead) {
       // The server enforces the same stage gates the UI does. A 422 means the
       // transition was refused, so the board is now showing a stage the sheet
       // does not have — reload rather than leave the card lying about its state.
-      let detail = `HTTP ${resp.status}`;
-      try { detail = (await resp.json()).error || detail; } catch (_) { /* keep the status */ }
-      if (resp.status === 422) {
-        showToast(detail, 'warning');
+      const { message } = await apiError(resp, `The change was not saved (${resp.status}).`);
+      // 422 = the transition is invalid. 409 = the transition was legal but the
+      // automation hold could not be confirmed, so the server deliberately
+      // wrote nothing. Both leave the board showing a stage the sheet does not
+      // have, and both are the operator's business — surface the real sentence
+      // and reload rather than let the card keep lying about its state.
+      if (resp.status === 422 || resp.status === 409) {
+        showToast(message, 'warning');
         await loadLeads();
+        renderBoard();
+        if (detailId === lead.id) openDetail(lead.id);
         return;
       }
-      throw new Error(detail);
+      throw new Error(message);
     }
   } catch(e) {
     console.error('[syncLead]', e.message);
@@ -3719,6 +3741,7 @@ function openDetail(id) {
   document.getElementById('d-lead-score').textContent = 'Score —';
   document.getElementById('d-activity').innerHTML = '<div class="activity-empty">Loading activity…</div>';
   document.getElementById('d-pipeline-state').innerHTML = '';
+  renderCloseActions(lead);
   document.getElementById('detail-overlay').classList.add('open');
   loadColdCallActivity(id);
 }
@@ -4090,6 +4113,46 @@ function renderActivityTimeline(activities, hostId = 'd-activity') {
   }).join('');
 }
 
+// ── MUTATION PLUMBING ───────────────────────────────────────────────────────
+//
+// Two things every Pipeline button needs and each used to do differently.
+
+/**
+ * The message the SERVER actually gave, not the status code.
+ *
+ * "HTTP 422" tells an operator nothing and reads as a bug; "Choose a loss
+ * reason before closing this opportunity." tells them what to do. Every
+ * validation refusal in server.js carries `error`, most carry `detail`, and
+ * throwing them away was making correct, deliberate refusals look like faults.
+ */
+async function apiError(response, fallback) {
+  let data = {};
+  try { data = await response.json(); } catch (_) { /* not JSON — fall through */ }
+  const parts = [data.error || fallback || `Request failed (${response.status})`];
+  if (data.detail) parts.push(data.detail);
+  return { message: parts.join(' '), code: data.code || null, data };
+}
+
+/**
+ * Repaint everything one mutation can change.
+ *
+ * A call outcome moves the board card, the Next Action, the automation banner,
+ * the meeting controls, the Reactivate options and the timeline. Refreshing
+ * only the timeline — which is what Save call details did — left five of those
+ * six stale, and the operator had to close and reopen the drawer to see what
+ * had actually happened.
+ */
+async function refreshLeadEverywhere(leadId) {
+  // Authoritative state first, so everything below renders from fresh data.
+  await loadLeads();
+  await loadNextActions();
+  renderBoard();
+  if (detailId !== leadId) return;
+  openDetail(leadId);                       // drawer fields, stage chips, controls
+  await loadColdCallActivity(leadId);       // pipeline state + timeline
+  await renderReactivationControls(leadId); // its own eligibility, re-asked
+}
+
 async function loadColdCallActivity(id) {
   try {
     const response = await fetch(`/api/leads/${encodeURIComponent(id)}/activity`);
@@ -4118,12 +4181,118 @@ async function saveCallDetails() {
     const response = await fetch(`/api/leads/${encodeURIComponent(lead.id)}/call-details`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) {
+      const { message } = await apiError(response, 'Call details were not saved.');
+      showToast(message, 'error');
+      return;
+    }
     Object.assign(lead, payload);
-    showToast('Call details saved.', 'success');
-    await loadColdCallActivity(lead.id);
+    // Saving an outcome records it; it does NOT close the opportunity, and the
+    // toast says so rather than letting the operator assume the deal is done.
+    const isLoss = LOSS_OUTCOMES.includes(payload.outcome);
+    showToast(isLoss
+      ? 'Sales outcome recorded. The opportunity is still open — use Close Lost to close it.'
+      : 'Call details saved.', 'success');
+    await refreshLeadEverywhere(lead.id);
   } catch (error) {
     showToast('Call details were not saved: ' + error.message, 'error');
+  } finally {
+    setSaving(false);
+  }
+}
+
+// Labels for the Close Lost picker. The ids themselves come from the existing
+// LOSS_OUTCOMES const, so there is one list, not two.
+const LOSS_OUTCOME_LABELS = [
+  ['no_show', 'No-show'], ['ghosted', 'Ghosted'], ['not_interested', 'Not interested'],
+  ['not_fit', 'Bad fit'], ['timing', 'Wrong timing'], ['other', 'Other'],
+];
+
+// ── EXPLICIT CLOSE ──────────────────────────────────────────────────────────
+//
+// Two buttons, each an explicit operator decision with a confirmation. Neither
+// fires from selecting an outcome, and both write the outcome and the stage in
+// one server-side action so the pair cannot end up disagreeing.
+
+function renderCloseActions(lead) {
+  const host = document.getElementById('d-close-actions');
+  if (!host) return;
+  const stage = String(lead && lead.stage || '');
+  if (stage === 'closed_won' || stage === 'closed_lost') {
+    // Already terminal. Offer no closing controls — and no meeting controls
+    // either; those are hidden by callControlsFor().
+    host.innerHTML = `<div class="react-note" style="margin-top:10px">
+      This opportunity is ${stage === 'closed_won' ? 'Closed Won' : 'Closed Lost'}. Automation is stopped.</div>`;
+    return;
+  }
+  host.innerHTML = `<div class="react-row" style="margin-top:10px">
+    <span class="react-note">Closing stops all automation and records the stage change.</span>
+    <button type="button" class="btn-reactivate" onclick="openCloseModal('won')">Close Won</button>
+    <button type="button" class="btn-reactivate" data-variant="cancel" onclick="openCloseModal('lost')">Close Lost…</button>
+  </div>`;
+}
+
+function closeCloseModal(e) {
+  if (e && e.target !== document.getElementById('close-overlay')) return;
+  document.getElementById('close-overlay').classList.remove('open');
+}
+
+function openCloseModal(result) {
+  const lead = leads.find(item => item.id === detailId);
+  if (!lead) return;
+  const current = String(lead.outcome || '');
+  const reasons = LOSS_OUTCOME_LABELS
+    .map(([id, label]) => `<option value="${id}"${id === current ? ' selected' : ''}>${esc(label)}</option>`).join('');
+  document.getElementById('close-title').textContent = result === 'won' ? 'Close Won' : 'Close Lost';
+  document.getElementById('close-body').innerHTML = `
+    <div class="ghost-facts">
+      <div class="ghost-fact"><span class="ghost-fact-k">Current stage</span><span class="ghost-fact-v">${esc(stageLabel(lead.stage))}</span></div>
+      ${lead.meetingAt ? `<div class="ghost-fact"><span class="ghost-fact-k">Meeting</span><span class="ghost-fact-v">${esc(callWhen(lead.meetingAt))}</span></div>` : ''}
+    </div>
+    ${result === 'lost' ? `
+    <div style="margin:10px 0">
+      <label for="close-reason" style="font-size:11px;color:var(--text-muted)">Loss reason (saved with the close)</label>
+      <select id="close-reason" style="width:100%;margin-top:4px">${reasons}</select>
+    </div>` : ''}
+    <div class="react-note">${result === 'won'
+      ? 'The stage becomes Closed Won and cold automation is stopped and confirmed before the change is committed.'
+      : 'The loss reason and the stage are written together, and cold automation is stopped and confirmed first. If the hold cannot be confirmed, nothing is written.'}</div>
+    <div class="form-actions" style="margin-top:14px">
+      <button type="button" class="btn-cancel" onclick="closeCloseModal()">Cancel</button>
+      <button type="button" class="btn-save" onclick="submitClose('${result}')">${result === 'won' ? 'Close Won' : 'Close Lost'}</button>
+    </div>`;
+  document.getElementById('close-overlay').classList.add('open');
+}
+
+async function submitClose(result) {
+  const leadId = detailId;
+  const lead = leads.find(item => item.id === leadId);
+  if (!lead) return;
+  const payload = { result, expectedStage: String(lead.stage || '') };
+  if (result === 'lost') payload.outcome = (document.getElementById('close-reason') || {}).value || '';
+  setSaving(true);
+  try {
+    const resp = await fetch(`/api/leads/${encodeURIComponent(leadId)}/close`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    if (!resp.ok) {
+      const { message, code } = await apiError(resp, 'The opportunity was not closed.');
+      showToast(message, 'error');
+      if (code === 'stage_changed') { closeCloseModal(); await refreshLeadEverywhere(leadId); }
+      return;
+    }
+    const data = await resp.json().catch(() => ({}));
+    showToast(data.message || 'Closed.', data.timelineRecorded === false ? 'error' : 'success');
+    // The business state committed but the audit row did not. Offer the
+    // idempotent reconcile rather than pretending the history is complete.
+    if (data.timelineRecorded === false) {
+      setTimeout(() => showToast('Timeline entry missing — retrying…', 'info'), 600);
+      await fetch(`/api/leads/${encodeURIComponent(leadId)}/reconcile-timeline`, { method: 'POST' }).catch(() => {});
+    }
+    closeCloseModal();
+    await refreshLeadEverywhere(leadId);
+  } catch (error) {
+    showToast('The opportunity was not closed: ' + error.message, 'error');
   } finally {
     setSaving(false);
   }
@@ -4533,7 +4702,14 @@ async function submitSeqAction(action) {
 
 // Mirrors callLifecycleActions() server-side. The server re-derives and is the
 // authority — this only decides which buttons to draw.
-function callAllowedActions(call) {
+function callAllowedActions(call, stage) {
+  // A closed opportunity has no meeting decisions left. Offering Book or
+  // Reschedule on a Closed Won lead invites an operator to reopen a deal by
+  // accident, and every one of these actions would be refused server-side
+  // anyway once the stage is terminal.
+  if (['closed_won', 'closed_lost'].includes(String(stage || ''))) {
+    return { book: false, reschedule: false, cancel: false, complete: false, no_show: false };
+  }
   const meetingMs = call.meetingAt ? new Date(call.meetingAt).getTime() : NaN;
   const hasBooking = Number.isFinite(meetingMs);
   const passed = hasBooking && meetingMs < Date.now();
@@ -4552,7 +4728,8 @@ const CALL_ACTION_LABEL = {
 function callDrawerRows(next) {
   const call = next && next.callState;
   if (!call) return '';
-  const allowed = callAllowedActions(call);
+  const stage = String((leads.find(item => item.id === detailId) || {}).stage || '');
+  const allowed = callAllowedActions(call, stage);
   const when = call.meetingAt ? callWhen(call.meetingAt) : 'none booked';
   const buttons = Object.entries(allowed).filter(([, ok]) => ok).map(([name]) =>
     `<button type="button" class="btn-call"${['cancel', 'no_show'].includes(name) ? ' data-tone="quiet"' : ''}
@@ -4634,22 +4811,25 @@ async function submitCallAction(action) {
     const resp = await fetch(`/api/leads/${encodeURIComponent(leadId)}/call-lifecycle`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     });
-    const data = await resp.json().catch(() => ({}));
     if (!resp.ok) {
-      showToast(data.error || `Could not update the call (${resp.status})`, 'error');
+      const { message, code } = await apiError(resp, 'Could not update the call.');
+      showToast(message, 'error');
       // Raced: the stored meeting moved on, so reload rather than leave a
       // drawer offering actions that no longer apply.
-      if (data.code === 'invalid_transition' || data.code === 'meeting_changed') {
-        closeCallModal(); await loadLeads(); await loadNextActions(); renderBoard();
+      if (code === 'invalid_transition' || code === 'meeting_changed') {
+        closeCallModal(); await refreshLeadEverywhere(leadId);
       }
       return;
     }
-    showToast(data.unchanged ? 'That meeting time was already booked.' : `Call ${data.status.replace(/_/g, ' ')}.`, 'success');
+    const data = await resp.json().catch(() => ({}));
+    // The meeting result, then what it does NOT mean. Completing a call says
+    // the call happened; it does not win or lose the deal, and the prompt makes
+    // the next decision explicit instead of leaving the outcome field to be
+    // mistaken for one.
+    showToast(data.unchanged ? 'That meeting time was already booked.' : `Call ${String(data.status || '').replace(/_/g, ' ')}.`, 'success');
+    if (data.prompt && data.prompt.message) setTimeout(() => showToast(data.prompt.message, 'info'), 900);
     closeCallModal();
-    await loadLeads();
-    await loadNextActions();
-    renderBoard();
-    if (detailId === leadId) { openDetail(leadId); await loadColdCallActivity(leadId); }
+    await refreshLeadEverywhere(leadId);
   } catch (error) {
     showToast('Could not update the call: ' + error.message, 'error');
   } finally {
@@ -4748,9 +4928,23 @@ async function renderReactivationControls(leadId) {
   const host = document.getElementById('d-reactivation');
   if (!host || !leadId) return;
   host.innerHTML = '<div class="react-note">Checking reactivation options…</div>';
+  const unavailable = why => {
+    // An eligibility lookup that FAILED is not the same as a lead with no
+    // options, and blanking the control made the two indistinguishable — the
+    // operator saw an empty space and assumed the feature did not apply.
+    reactState = null;
+    host.innerHTML = `<div class="react-row"><span class="react-note" data-tone="blocked">
+      Reactivation options unavailable — ${esc(why)}</span>
+      <button type="button" class="btn-reactivate" data-variant="cancel"
+        onclick="renderReactivationControls(detailId)">Retry</button></div>`;
+  };
   try {
     const resp = await fetch(`/api/leads/${encodeURIComponent(leadId)}/reactivation`);
-    if (!resp.ok) { host.innerHTML = ''; return; }
+    if (!resp.ok) {
+      const { message } = await apiError(resp, `the server returned ${resp.status}`);
+      if (leadId === detailId) unavailable(message);
+      return;
+    }
     const data = await resp.json();
     reactState = data;
     if (leadId !== detailId) return;    // drawer moved on while we were loading
@@ -4766,7 +4960,17 @@ async function renderReactivationControls(leadId) {
         ${esc(data.message)}</span></div>`;
       return;
     }
-    if (!data.ok || !data.eligibility) { host.innerHTML = ''; return; }
+    // The lookup itself could not complete — suppression list or timeline
+    // unreadable. Say so; do not present a lead as having no options.
+    if (data.code === 'suppression_unavailable' || data.code === 'ownership_unavailable') {
+      unavailable(data.message || 'the check could not be completed');
+      return;
+    }
+    if (!data.ok || !data.eligibility) {
+      host.innerHTML = `<div class="react-row"><span class="react-note" data-tone="blocked">
+        ${esc(data.message || 'This lead has no reactivation options.')}</span></div>`;
+      return;
+    }
 
     const e = data.eligibility;
     const buttons = [];
@@ -4780,9 +4984,15 @@ async function renderReactivationControls(leadId) {
     const scheduled = e.resumeAt
       ? `<span class="react-note">Automation resumes ${esc(new Date(e.resumeAt).toLocaleString())}.</span>`
       : '<span class="react-note">Cold-email automation is paused for this lead.</span>';
-    host.innerHTML = `<div class="react-row">${scheduled}${buttons.join('')}</div>`;
-  } catch (_) {
-    host.innerHTML = '';
+    // Why ordinary cold resume is off the table, stated in the row rather than
+    // discovered by opening a modal that turns out to offer only one option.
+    const owned = e.ownerBlocked
+      ? `<div class="react-note" data-tone="blocked">Automated resume unavailable — ${esc(e.reason)}
+         Reopening for human follow-up is still available.</div>`
+      : '';
+    host.innerHTML = `<div class="react-row">${scheduled}${buttons.join('')}</div>${owned}`;
+  } catch (error) {
+    if (leadId === detailId) unavailable(error.message);
   }
 }
 
@@ -4869,11 +5079,23 @@ async function submitReactivation(forcedMode) {
     const resp = await fetch(`/api/leads/${encodeURIComponent(leadId)}/reactivate`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     });
+    if (!resp.ok) {
+      const { message, code } = await apiError(resp, 'Reactivation refused.');
+      showToast(message, 'error');
+      // The lead's ownership moved under us — a call booked, a reply arrived.
+      // Re-ask rather than leave a modal offering an option the server refuses.
+      if (['not_cold_owned', 'ownership_unavailable', 'suppressed'].includes(code)) {
+        closeReactivateModal();
+        await refreshLeadEverywhere(leadId);
+      }
+      return;
+    }
     const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) { showToast(data.error || `Reactivation refused (${resp.status})`, 'error'); return; }
     showToast(data.message || 'Reactivation saved.', 'success');
     closeReactivateModal();
-    await loadColdCallActivity(leadId);
+    // Reactivate changes its OWN controls too: schedule then cancel must be
+    // reachable without reopening the drawer.
+    await refreshLeadEverywhere(leadId);
   } catch (error) {
     showToast('Reactivation failed: ' + error.message, 'error');
   } finally {
