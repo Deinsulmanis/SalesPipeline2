@@ -82,7 +82,7 @@ const {
 } = require('./integrations/pipeline-state');
 // Reactivation asks the sender's own ownership question rather than keeping a
 // second opinion about who may contact a lead.
-const { deriveAutomationOwnership } = require('./integrations/automation-ownership');
+const { deriveAutomationOwnership, ownershipSummary } = require('./integrations/automation-ownership');
 const { latestHumanOutboundAt } = require('./integrations/human-outbound');
 // Mirrors the agent's flag. Read at request time so a Railway variable change
 // takes effect without a code deploy.
@@ -2434,6 +2434,35 @@ app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
           : { state: 'not_outreach', label: 'Not an Outreach-acquired lead',
               shortLabel: 'Not from Outreach', stateLabel: 'No linked Outreach record',
               senderId: null, email: '', detail: 'This lead has no linked ColdEmail record, so no sending inbox owns it.' },
+        // WHICH automation owns the next move, decided by Pipeline stage. The
+        // drawer renders the shared operator copy rather than an enum, and
+        // never reports Pipeline membership itself as the blocker.
+        ownership: (() => {
+          try {
+            const callState = deriveCallLifecycle(lead, { activities });
+            const hotState = deriveHotState(lead, { activities });
+            const sequenceState = evaluateStageSequence({
+              boardLead: lead, twin: twin || {}, activities, callState, hotState,
+              featureEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true',
+            });
+            const verdict = deriveAutomationOwnership(twin || {}, {
+              boardLead: lead, activities, callState, sequenceState,
+              humanTouchAt: latestHumanOutboundAt(activities),
+              sendingEnabled: SENDING_ENABLED(),
+              sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true',
+            });
+            const summary = ownershipSummary(verdict, displayStageFor(lead.stage));
+            return {
+              owner: verdict.owner, blockedBy: verdict.blockedBy || null,
+              headline: summary.headline, detail: summary.detail, tone: summary.tone,
+              journey: (verdict.evidence && (verdict.evidence.sequenceId || verdict.evidence.offer)) || null,
+              resumeCondition: verdict.resumeCondition || null,
+            };
+          } catch (ownershipError) {
+            console.warn('[ownership] derivation failed:', ownershipError.message);
+            return null;
+          }
+        })(),
         reopen: reopenEligibility(lead, twin),
         twin: twin ? { id: twin.id, emailStatus: twin.emailStatus, emailStep: twin.emailStep, lastEmailedAt: twin.lastEmailedAt } : null,
       };

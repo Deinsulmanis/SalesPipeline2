@@ -292,7 +292,15 @@ test('9. no secret reaches the frontend, an API payload, a log, or the repo', as
   assert.ok(!/sb_secret_[A-Za-z0-9_-]{12,}/.test(mirrorSrc), 'no key literal in source');
   assert.ok(!/eyJ[A-Za-z0-9_-]{20,}/.test(mirrorSrc), 'no service_role JWT literal in source');
   assert.ok(!/supabase\.co/.test(mirrorSrc), 'no project URL literal in source');
-  assert.equal(fs.existsSync(path.join(root, '.env')), false, '.env must not be committed');
+  // Not "no .env on disk" -- a working checkout legitimately has one, and this
+  // assertion only passed before because it ran in a worktree that had none.
+  // The property that matters is that git never tracks it.
+  const tracked = require('node:child_process')
+    .spawnSync('git', ['ls-files', '--error-unmatch', '.env'], { cwd: root }).status === 0;
+  assert.equal(tracked, false, '.env must never be committed');
+  const ignored = require('node:child_process')
+    .spawnSync('git', ['check-ignore', '-q', '.env'], { cwd: root }).status === 0;
+  assert.equal(ignored, true, '.env must be gitignored so it cannot be added by accident');
 });
 
 // ── 10–11. Backfill ─────────────────────────────────────────────────────────

@@ -49,9 +49,22 @@ test('2/3. a promoted lead is never cold-eligible, with or without MANUAL HOLD',
   assert.equal(mayColdSend(o).allowed, false);
   assert.equal(o.evidence.manualHoldPresent, false, 'and it is blocked WITHOUT relying on a hold');
 
-  // Being in the Sales Pipeline blocks it too, whatever the ColdEmail stage says.
+  // Being in the Sales Pipeline still makes a lead cold-INELIGIBLE — that is the
+  // safety property, and it is unchanged. What changed is the reason given: the
+  // stage now decides which automation owns the lead, so the verdict names that
+  // instead of reporting Pipeline membership as a blanket blocker.
   const inPipeline = own(COLD, { boardLead: { stage: 'follow_up' } });
-  assert.equal(inPipeline.blockedBy, BLOCKED_BY.PROMOTED_TO_PIPELINE);
+  assert.equal(mayColdSend(inPipeline).allowed, false, 'a Pipeline lead is never cold-eligible');
+  assert.equal(inPipeline.sendAllowed, false);
+  assert.notEqual(inPipeline.owner, OWNER.COLD_AUTOMATION);
+  assert.notEqual(inPipeline.blockedBy, BLOCKED_BY.PROMOTED_TO_PIPELINE,
+    'Pipeline membership alone is no longer the stated blocker');
+  assert.equal(inPipeline.source, 'pipeline_stage', 'the stage decides ownership');
+  // Every Pipeline stage refuses ordinary cold cadence, not just this one.
+  for (const stage of ['follow_up', 'hot', 'call_booked', 'closed_won', 'closed_lost']) {
+    const verdict = own(COLD, { boardLead: { stage } });
+    assert.equal(mayColdSend(verdict).allowed, false, `${stage} must never allow ordinary cold send`);
+  }
 
   // And the sender itself refuses, not just the model.
   const selector = agent.slice(agent.indexOf('function selectFollowUps'), agent.indexOf('function countTodaySends'));

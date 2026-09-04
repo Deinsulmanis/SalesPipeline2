@@ -265,7 +265,12 @@ test('14. the lead drawer and the Pipeline drawer both show the owning inbox', (
   // A Pipeline lead with no Outreach mapping gets an honest absence.
   assert.match(activity, /state: 'not_outreach'/);
   assert.match(activity, /Not an Outreach-acquired lead/);
-  assert.ok(!/lead\.stage/.test(activity.slice(activity.indexOf('sender: twin'), activity.indexOf('reopen:'))),
+  // Scoped to the SENDER block. The ownership block that now follows it is
+  // stage-aware by design, so slicing as far as `reopen:` would sweep in a
+  // legitimate `lead.stage` read and stop testing the sender at all.
+  const senderBlock = activity.slice(activity.indexOf('sender: twin'), activity.indexOf('ownership:'));
+  assert.ok(senderBlock.length > 0 && senderBlock.length < activity.length);
+  assert.ok(!/lead\.stage/.test(senderBlock),
     'the Pipeline sender must not be inferred from the Pipeline stage');
 });
 

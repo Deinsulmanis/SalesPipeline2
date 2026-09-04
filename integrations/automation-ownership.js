@@ -59,6 +59,15 @@ const BLOCKED_BY = Object.freeze({
   HUMAN_OWNED: 'human_owned',
   WAITING_UNTIL_DATE: 'waiting_until_date',
   PROMOTED_TO_PIPELINE: 'promoted_to_pipeline',
+  // A Pipeline stage that has no automated journey to offer right now. This is
+  // NOT "the lead is in the Pipeline" — it is "this stage, in this canonical
+  // state, has nothing eligible to run", which is a different and truthful
+  // statement an operator can act on.
+  NO_ELIGIBLE_JOURNEY: 'no_eligible_journey',
+  // A journey exists for this stage but a human has not consented to it. Hot
+  // and demo journeys are opt-in by design: automation does not enrol itself
+  // onto a lead a person is actively working.
+  AWAITING_ENROLLMENT: 'awaiting_enrollment',
   UNRECORDED_HUMAN_TOUCH: 'unrecorded_human_touch',
   SENDING_DISABLED: 'sending_disabled',
   SEQUENCES_DISABLED: 'sequences_disabled',
@@ -102,6 +111,95 @@ function verdict({
     resumeCondition, resumeAt,
     evidence, source,
   };
+}
+
+// The journey that belongs to each Pipeline stage. A stage with no entry has no
+// automated owner — which is a fact about the stage, not about the Pipeline.
+const STAGE_JOURNEY = Object.freeze({
+  follow_up: 'demo_follow_up_v1',
+  hot: 'hot_stale_v1',
+});
+
+/**
+ * Which automation owns a Pipeline lead, decided by its STAGE.
+ *
+ * Reached only for a lead that is in the Pipeline, has no active enrolment
+ * (rule 9 already claimed those), and has passed every safety rule above —
+ * identity, terminal stage, suppression, manual hold, unrecorded human touch,
+ * contact-change review, meeting lifecycle, human-owned reply and waiting.
+ *
+ * Every branch returns an owner. None falls through to ordinary cold cadence,
+ * so lifting the old blanket blocker cannot resurrect Email 2/3 on a Pipeline
+ * lead. `sendAllowed` is never set here; only an enrolled journey executes, and
+ * that is rule 9's business. The one-owner invariant therefore holds by
+ * construction rather than by inspection.
+ */
+function pipelineStageOwnership({ stage, sequenceState, callState, sequencesEnabled, operation }) {
+  const offer = sequenceState && (sequenceState.offer || null);
+  const offers = (sequenceState && sequenceState.offers) || [];
+  const journey = STAGE_JOURNEY[stage] || null;
+  const shared = { inPipeline: true, stage, offer, offers, stageJourney: journey };
+
+  // Call Booked is a meeting stage, never a generic follow-up stage. A live
+  // booking is already caught by rule 6; reaching here means the meeting has
+  // resolved (no-show / cancelled / completed) but nobody has enrolled the
+  // recovery journey that resolution offers. Elapsed time still implies
+  // nothing — only a recorded event does.
+  if (stage === 'call_booked') {
+    return verdict({
+      owner: offer ? OWNER.HUMAN : OWNER.MEETING,
+      source: 'pipeline_stage',
+      reason: offer
+        ? `the meeting workflow owns this lead; ${offer} is available once a human enrols it`
+        : 'the meeting workflow owns this lead',
+      blockedBy: offer ? BLOCKED_BY.AWAITING_ENROLLMENT : BLOCKED_BY.MEETING_LIFECYCLE,
+      resumeCondition: offer
+        ? 'enrol the offered recovery journey'
+        : 'the meeting completes, cancels, or no-shows',
+      evidence: { ...shared, callStatus: callState ? callState.status : null },
+    });
+  }
+
+  // Follow Up and Hot both have a journey; whether it may run depends on
+  // canonical state, which evaluateStageSequence has already judged.
+  if (journey) {
+    if (offers.includes(journey) || offer === journey) {
+      return verdict({
+        owner: OWNER.RECOVERY_SEQUENCE, source: 'pipeline_stage',
+        reason: `${journey} is eligible for this ${stage === 'hot' ? 'Hot' : 'Follow Up'} lead and owns the next automated action once enrolled`,
+        automationAllowed: true,
+        // Offered is not enrolled. Hot and demo journeys are opt-in because a
+        // person is working the lead, so automation asks rather than assumes.
+        sequenceAllowed: false,
+        blockedBy: sequencesEnabled ? BLOCKED_BY.AWAITING_ENROLLMENT : BLOCKED_BY.SEQUENCES_DISABLED,
+        resumeCondition: 'enrol the offered journey',
+        evidence: { ...shared, featureEnabled: Boolean(sequencesEnabled) },
+      });
+    }
+    // The stage has a journey but this lead does not currently qualify for it —
+    // not stale enough, waiting on us, or missing the evidence it needs.
+    return verdict({
+      owner: OWNER.WAITING, source: 'pipeline_stage',
+      reason: stage === 'hot'
+        ? 'no Hot follow-up is due for this lead yet'
+        : 'no automatic Follow Up journey is currently eligible for this lead',
+      blockedBy: BLOCKED_BY.NO_ELIGIBLE_JOURNEY,
+      resumeCondition: stage === 'hot'
+        ? 'the lead becomes due while waiting on the prospect'
+        : 'the lead gains the evidence a Follow Up journey requires',
+      evidence: { ...shared, action: operation ? operation.action : null,
+        waitingOn: operation ? operation.waitingOn : null },
+    });
+  }
+
+  // A Pipeline stage with no journey defined for it at all.
+  return verdict({
+    owner: OWNER.HUMAN, source: 'pipeline_stage',
+    reason: `no automated journey is defined for the ${stage || 'current'} stage`,
+    blockedBy: BLOCKED_BY.NO_ELIGIBLE_JOURNEY,
+    resumeCondition: 'a human moves the lead to a stage with an automated journey',
+    evidence: shared,
+  });
 }
 
 /**
@@ -287,25 +385,14 @@ function deriveAutomationOwnership(lead = {}, {
     });
   }
 
-  // ── 9. Already promoted out of cold cadence ──────────────────────────────
-  // THE SPARKLE FIX. Structural, not a patch: a lead that has left cold stages
-  // is no longer cold-eligible regardless of whether anyone remembered to add
-  // a MANUAL HOLD. The hold stays as an additional, independent safety tag.
-  const promoted = NON_COLD_STAGES.includes(stage) || Boolean(boardLead);
-  if (promoted) {
-    return verdict({
-      owner: OWNER.HUMAN, source: 'promoted',
-      reason: boardLead
-        ? 'the lead is in the Sales Pipeline; ordinary cold cadence no longer owns it'
-        : `ColdEmail stage "${lead.stage}" is outside cold cadence`,
-      blockedBy: BLOCKED_BY.PROMOTED_TO_PIPELINE,
-      resumeCondition: 'a human returns the lead to a cold stage, or enrols a sequence',
-      evidence: { coldStage: lead.stage || null, inPipeline: Boolean(boardLead),
-        manualHoldPresent: String(lead.notes || '').includes('[MANUAL HOLD]') },
-    });
-  }
-
-  // ── 10. An explicitly enrolled recovery sequence ─────────────────────────
+  // ── 9. An explicitly enrolled stage/recovery sequence ────────────────────
+  //
+  // MOVED AHEAD of the Pipeline rule below, and that ordering is the fix.
+  // Previously a blanket "this lead is in the Pipeline" rule sat here and
+  // returned HUMAN, so this branch was unreachable for exactly the leads it
+  // exists to serve: in production, a lead with a LIVE demo_follow_up_v1
+  // enrolment reported `human / promoted_to_pipeline` and its journey could
+  // never execute. An enrolled journey owns the lead regardless of stage.
   if (sequenceState && sequenceState.status === 'active') {
     return verdict({
       owner: OWNER.RECOVERY_SEQUENCE, source: 'stage_sequence',
@@ -319,7 +406,44 @@ function deriveAutomationOwnership(lead = {}, {
     });
   }
 
-  // ── 11. Ordinary cold cadence ────────────────────────────────────────────
+  // ── 10. Pipeline STAGE decides which automation owns the next move ───────
+  //
+  // What this replaces: `NON_COLD_STAGES.includes(stage) || Boolean(boardLead)`
+  // returning HUMAN/PROMOTED_TO_PIPELINE. Membership of the Pipeline is not
+  // itself a reason to stop automating — it is a reason to hand ownership to
+  // the automation that belongs to the lead's STAGE.
+  //
+  // What has NOT changed: ordinary cold cadence still never owns a Pipeline
+  // lead. Every branch below returns an owner, so a board lead can never fall
+  // through to rule 12. Removing the blanket blocker must not become "resume
+  // Email 2/3 for everyone in the Pipeline", which would be a worse bug than
+  // the one being fixed.
+  //
+  // Terminal stages never reach here — rule 2 stops closed_won/closed_lost
+  // before any of this, which is what makes their behaviour deterministic.
+  if (boardLead) {
+    return pipelineStageOwnership({
+      stage: boardStage, sequenceState, callState, sequencesEnabled, operation,
+    });
+  }
+
+  // ── 11. A ColdEmail row parked outside cold cadence, with no Pipeline row ─
+  // THE SPARKLE FIX, preserved exactly: a ColdEmail lead whose own stage has
+  // left cold cadence is not cold-eligible even if nobody added a MANUAL HOLD.
+  // This is about the ColdEmail stage alone; Pipeline membership is handled
+  // above and no longer collapses into this rule.
+  if (NON_COLD_STAGES.includes(stage)) {
+    return verdict({
+      owner: OWNER.HUMAN, source: 'promoted',
+      reason: `ColdEmail stage "${lead.stage}" is outside cold cadence`,
+      blockedBy: BLOCKED_BY.PROMOTED_TO_PIPELINE,
+      resumeCondition: 'a human returns the lead to a cold stage, or enrols a sequence',
+      evidence: { coldStage: lead.stage || null, inPipeline: false,
+        manualHoldPresent: String(lead.notes || '').includes('[MANUAL HOLD]') },
+    });
+  }
+
+  // ── 12. Ordinary cold cadence ────────────────────────────────────────────
   return verdict({
     owner: OWNER.COLD_AUTOMATION, source: 'cold_cadence',
     reason: 'no human, meeting, sequence or waiting state owns this lead',
@@ -363,6 +487,74 @@ function maySequenceSend(ownership) {
   return { allowed: true, reason: ownership.reason };
 }
 
+/**
+ * Operator-facing summary of who owns the next automated move.
+ *
+ * One source of copy for the drawer, Next Action and health, so the screens
+ * cannot describe the same verdict three ways. Returns a headline and a
+ * detail; never a raw enum, and never the phrase that started this — a lead is
+ * no longer described as blocked merely for being in the Pipeline.
+ */
+function ownershipSummary(ownership, stage = '') {
+  if (!ownership) return { headline: 'Automation state unknown', detail: '', tone: 'blocked' };
+  const stageKey = norm(stage);
+  const blocked = ownership.blockedBy;
+  const journey = (ownership.evidence && ownership.evidence.offer) || null;
+  const label = id => (id === 'hot_stale_v1' ? 'Hot follow-up'
+    : id === 'demo_follow_up_v1' ? 'Demo follow-up'
+      : id === 'no_show_recovery_v1' ? 'No-show recovery'
+        : id === 'cancelled_rebook_v1' ? 'Rebooking follow-up'
+          : id === 'timing_recontact_v1' ? 'Timing re-contact' : 'Stage follow-up');
+
+  if (blocked === BLOCKED_BY.TERMINAL_STAGE) {
+    return { headline: `Automation stopped — ${stageKey === 'closed_won' ? 'Closed Won' : 'Closed Lost'}`,
+      detail: 'No automated follow-up applies to a closed opportunity.', tone: 'stopped' };
+  }
+  if (blocked === BLOCKED_BY.MEETING_LIFECYCLE || ownership.owner === OWNER.MEETING) {
+    return { headline: 'Meeting workflow owns this lead',
+      detail: ownership.reason, tone: 'owned' };
+  }
+  if (ownership.owner === OWNER.RECOVERY_SEQUENCE) {
+    const name = label(ownership.evidence && ownership.evidence.sequenceId || journey);
+    if (ownership.sequenceAllowed) return { headline: `${name} automation active`, detail: ownership.reason, tone: 'active' };
+    if (blocked === BLOCKED_BY.AWAITING_ENROLLMENT) {
+      return { headline: `${name} available — not enrolled`,
+        detail: 'A person enrols this journey; automation does not start it on its own.', tone: 'available' };
+    }
+    if (blocked === BLOCKED_BY.SEQUENCES_DISABLED) {
+      return { headline: `${name} ready — sequences disabled`, detail: ownership.reason, tone: 'blocked' };
+    }
+    return { headline: `${name} will run when due`, detail: ownership.reason, tone: 'waiting' };
+  }
+  if (blocked === BLOCKED_BY.NO_ELIGIBLE_JOURNEY) {
+    return {
+      headline: stageKey === 'hot' ? 'Hot follow-up will run when due' : 'No automatic Follow Up journey is currently eligible',
+      detail: ownership.reason, tone: 'waiting',
+    };
+  }
+  if (blocked === BLOCKED_BY.MANUAL_HOLD) {
+    return { headline: 'Automation blocked — manual hold', detail: ownership.reason, tone: 'blocked' };
+  }
+  if (blocked === BLOCKED_BY.SUPPRESSION || blocked === BLOCKED_BY.INVALID_IDENTITY) {
+    return { headline: blocked === BLOCKED_BY.SUPPRESSION ? 'Automation stopped — suppressed' : 'Automation blocked — identity not trusted',
+      detail: ownership.reason, tone: 'stopped' };
+  }
+  if (blocked === BLOCKED_BY.UNRECORDED_HUMAN_TOUCH) {
+    return { headline: 'Automation blocked — manual reply not yet recorded', detail: ownership.reason, tone: 'blocked' };
+  }
+  if (ownership.owner === OWNER.HUMAN) {
+    return { headline: 'Waiting on us — a person owns the next move', detail: ownership.reason, tone: 'human' };
+  }
+  if (ownership.owner === OWNER.WAITING) {
+    return { headline: 'Waiting on the prospect', detail: ownership.reason, tone: 'waiting' };
+  }
+  if (ownership.owner === OWNER.COLD_AUTOMATION) {
+    return { headline: ownership.sendAllowed ? 'Cold outreach automation active' : 'Cold outreach waiting until due',
+      detail: ownership.reason, tone: ownership.sendAllowed ? 'active' : 'waiting' };
+  }
+  return { headline: 'No automation owns this lead', detail: ownership.reason, tone: 'stopped' };
+}
+
 /** Exactly one actor may hold an executable move. Used by health and tests. */
 function executableOwners(ownership) {
   if (!ownership) return [];
@@ -374,5 +566,6 @@ function executableOwners(ownership) {
 
 module.exports = {
   OWNER, BLOCKED_BY, NON_COLD_STAGES, HUMAN_OWNED_ACTIONS,
+  STAGE_JOURNEY, pipelineStageOwnership, ownershipSummary,
   deriveAutomationOwnership, mayColdSend, maySequenceSend, executableOwners,
 };

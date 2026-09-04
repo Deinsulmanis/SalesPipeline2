@@ -1653,6 +1653,17 @@
   /* "Sent from deins@tryscalelabai.ca" under an outbound timeline event. */
   .activity-sender { font-size:11.5px;color:var(--text-secondary);margin-top:3px; }
   .activity-sender[data-legacy="true"] { color:var(--text-muted);font-style:italic; }
+  /* Automation owner. Stage-aware, so the tone tracks what the stage permits
+     rather than whether the lead happens to sit in the Pipeline. */
+  .own-chip { display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;
+    background:var(--surface-2);color:var(--text-secondary);border:1px solid var(--border); }
+  .own-chip[data-tone="active"]    { color:var(--success);background:var(--success-bg);border-color:var(--success); }
+  .own-chip[data-tone="available"] { color:var(--accent);border-color:var(--accent); }
+  .own-chip[data-tone="waiting"]   { color:var(--text-secondary); }
+  .own-chip[data-tone="owned"],
+  .own-chip[data-tone="human"]     { color:var(--warn);background:var(--warn-bg);border-color:var(--warn); }
+  .own-chip[data-tone="blocked"]   { color:var(--warn);background:var(--warn-bg);border-color:var(--warn); }
+  .own-chip[data-tone="stopped"]   { color:var(--text-muted); }
   @media (max-width: 700px) {
     .ce-master-filters { padding:10px 12px;display:grid;grid-template-columns:1fr 1fr; }
     .ce-master-filters select { max-width:none;width:100%;min-height:44px; }
@@ -4375,8 +4386,23 @@ function renderPipelineState(pipeline) {
         </span>
       </div>`;
 
+  // Which automation owns the next move, decided by the Pipeline STAGE. The
+  // server sends operator copy, never an enum — and it no longer says a lead is
+  // blocked merely for being in the Pipeline.
+  const own = pipeline.ownership;
+  const ownershipRow = !own ? '' : `
+      <div class="pipeline-row">
+        <span class="pipeline-row-label">Automation owner</span>
+        <span class="pipeline-row-val">
+          <span class="own-chip" data-tone="${escAttr(own.tone || 'waiting')}">${esc(own.headline)}</span>
+          ${own.detail ? `<small>${esc(own.detail)}</small>` : ''}
+          ${own.resumeCondition ? `<small>Resumes when: ${esc(own.resumeCondition)}</small>` : ''}
+        </span>
+      </div>`;
+
   host.innerHTML = `${conflict}
     <div class="pipeline-state">
+      ${ownershipRow}
       ${senderRow}
       <div class="pipeline-row">
         <span class="pipeline-row-label">Automation</span>

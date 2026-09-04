@@ -96,12 +96,17 @@ test('3. a Closed Lost lead cannot ordinary-reactivate; recovery is a separate w
   assert.equal(v.canKeepManual, true);
 });
 
-test('4. a human-owned lead blocks ordinary reactivation', () => {
-  // In the Pipeline at all is enough: cold cadence no longer owns the lead.
+test('4. a Pipeline-owned lead blocks ordinary reactivation', () => {
+  // The property under test is that ordinary cold resume is refused, and that
+  // is unchanged. The OWNER now depends on the stage rather than being HUMAN
+  // for everything in the Pipeline, so the assertion checks the refusal and
+  // that cold automation is not the owner -- not one particular enum.
   const v = verdictFor({ id: 'L1', stage: 'hot', email: 'a@clinic.test' });
   assert.equal(v.canSchedule, false);
-  assert.equal(v.ownership.owner, OWNER.HUMAN);
-  assert.ok([BLOCKED_BY.HUMAN_OWNED, BLOCKED_BY.PROMOTED_TO_PIPELINE].includes(v.ownerBlocked));
+  assert.notEqual(v.ownership.owner, OWNER.COLD_AUTOMATION);
+  assert.ok(v.ownerBlocked, 'the refusal names a specific blocker');
+  assert.notEqual(v.ownerBlocked, BLOCKED_BY.PROMOTED_TO_PIPELINE,
+    'Pipeline membership alone is no longer the reason');
 });
 
 test('5. an active stage sequence blocks ordinary reactivation', () => {

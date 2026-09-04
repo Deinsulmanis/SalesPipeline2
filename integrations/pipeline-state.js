@@ -306,7 +306,12 @@ const REACTIVATION_REFUSAL = Object.freeze({
   [BLOCKED_BY.CONTACT_CHANGE_REVIEW]: 'a proposed address is awaiting review — resolve the contact change first',
   [BLOCKED_BY.MEETING_LIFECYCLE]: 'a meeting owns this lead — resolve the call before any cold automation resumes',
   [BLOCKED_BY.HUMAN_OWNED]: 'a person owns the next move on this lead',
-  [BLOCKED_BY.PROMOTED_TO_PIPELINE]: 'this lead is in the Sales Pipeline, so ordinary cold cadence no longer owns it',
+  // Pipeline membership is no longer a blocker in its own right — the stage
+  // decides which automation owns the lead. What these say is which automation
+  // that is, not that the Pipeline stopped everything.
+  [BLOCKED_BY.PROMOTED_TO_PIPELINE]: 'this ColdEmail record sits outside cold cadence',
+  [BLOCKED_BY.NO_ELIGIBLE_JOURNEY]: 'no automated journey is currently eligible for this stage',
+  [BLOCKED_BY.AWAITING_ENROLLMENT]: 'a stage journey is available but has not been enrolled yet',
   [BLOCKED_BY.UNRECORDED_HUMAN_TOUCH]: 'a manual reply exists that the CRM has not recorded yet',
   [BLOCKED_BY.SEQUENCES_DISABLED]: 'stage sequences are disabled',
   // See REACTIVATABLE_BLOCKERS: reaching this means ownership was derived with
