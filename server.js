@@ -583,7 +583,8 @@ const LOG_CAP    = 300;
 const agentState = { running: false, dryRun: true, startedAt: null, log: [], exitCode: null };
 let   agentChild = null;
 let automationLaunchReserved = false;
-const SCHEDULED_SEND_PER_RUN_CAP = 5;
+const SCHEDULED_SEND_PER_INBOX_CAP = 5;
+const SCHEDULED_SEND_TOTAL_CAP = 10;
 
 function agentPushLine(line) {
   agentState.log.push({ ts: new Date().toISOString(), line });
@@ -5164,13 +5165,11 @@ app.post('/api/enrich/names', requireAuth, (_req, res) => {
 });
 
 if (process.env.RAILWAY_ENVIRONMENT) {
-  // Per-run send cap for the scheduled batches. The morning cron fires 8 times
-  // a day (:00/:30, 8–11:30am Pacific); 8 × 5 = 40 spreads the day's volume
-  // evenly across the window instead of dumping it in the first few runs. This
-  // is a per-RUN knob only. The agent separately enforces the configured
-  // per-inbox ceilings plus the shared global daily safety ceiling;
-  // this commit only redistributes WHEN those 40 go out. Passed via env so the
-  // agent's cap logic (effectiveCap = min(DAILY_CAP, dailyRemaining)) is reused.
+  // Per-window sender buckets for the scheduled batches. The morning cron fires
+  // 8 times a day (:00/:30, 8–11:30am Pacific); each active inbox may deliver
+  // at most 5 successes per window and both inboxes share a 10-success ceiling.
+  // That naturally reaches 40 primary + 40 secondary = 80 without letting one
+  // inbox borrow unused capacity from the other. These are per-RUN knobs only.
   // Each mailbox also has its own 40/day ceiling and the shared global ceiling
   // is 80/day; Pipeline recovery sends consume those same ledgers.
   // Sends fire only in a weekday morning window, evenly at :00 and :30 of
@@ -5189,13 +5188,16 @@ if (process.env.RAILWAY_ENVIRONMENT) {
     }
     await launchAutomationAfterCalendar('scheduled outreach run', () => {
       if (agentState.running) return false;
-      spawnAgent(false, { DAILY_CAP: String(SCHEDULED_SEND_PER_RUN_CAP) });
+      spawnAgent(false, {
+        DAILY_CAP: String(SCHEDULED_SEND_TOTAL_CAP),
+        PER_INBOX_RUN_CAP: String(SCHEDULED_SEND_PER_INBOX_CAP),
+      });
       return true;
     });
   }, {
     timezone: 'America/Vancouver',
   });
-  console.log(`[cron] Outreach agent scheduled: :00 and :30, 8–11:30am Pacific, Mon–Fri (${SCHEDULED_SEND_PER_RUN_CAP}/run)`);
+  console.log(`[cron] Outreach agent scheduled: :00 and :30, 8–11:30am Pacific, Mon–Fri (${SCHEDULED_SEND_PER_INBOX_CAP}/inbox, ${SCHEDULED_SEND_TOTAL_CAP}/run)`);
 
   // :15/:45, never :00/:30 — the send cron above fires on :00 and :30, so the
   // check-only pass is offset by 15 min to avoid racing it for the

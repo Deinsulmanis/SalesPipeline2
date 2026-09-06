@@ -58,12 +58,23 @@ test('unused initial capacity can be used by follow-ups', async () => {
   assert.deepEqual([result.followUpSent, result.initialSent], [5, 0]);
 });
 
+test('follow-up fairness is applied independently to each inbox bucket', async () => {
+  const results = await Promise.all(['primary', 'secondary'].map(senderId => simulateFairBatch({
+    initials: leads(`${senderId}-i`, 20), followUps: leads(`${senderId}-f`, 20),
+    attemptInitial: ok, attemptFollowUp: ok,
+  })));
+  for (const result of results) assert.deepEqual([result.followUpSent, result.initialSent], [4, 1]);
+  assert.equal(results.reduce((total, result) => total + result.sent, 0), 10);
+});
+
 test('production policy retains daily cap, refill, thread gate and demo stop', () => {
   const agent = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   assert.match(agent, /DAILY_SEND_LIMIT\s*=\s*parseInt\(process\.env\.DAILY_SEND_LIMIT \|\| '40'/);
   assert.equal(followUpSuccessTarget(5), 4);
-  assert.match(agent, /while \(followUpIndex < followBatch\.length && sent < effectiveCap && followUpSent < successTarget\)/);
+  assert.match(agent, /followBatchesBySender/);
+  assert.match(agent, /fillSenderFollowUps\(sender\.id, followUpSuccessTarget\(senderRemaining\)\)/);
+  assert.match(agent, /fillSenderFollowUps\(sender\.id\);/);
   assert.match(agent, /resolveColdFollowUpThread/);
   assert.match(agent, /canonical Gmail thread could not be proven/);
   assert.match(agent, /NON_COLD_STAGES\.includes/);

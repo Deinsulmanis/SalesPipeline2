@@ -93,8 +93,12 @@ const { findOriginalSentThread, resolveColdFollowUpThread } = require('./integra
 const { oldestDueFirst, followUpSuccessTarget } = require('./integrations/scheduler-fairness');
 const { credentialsFor: gmailCredentialsFor, parseRegistry: parseGmailRegistry } = require('./integrations/gmail-inbox-registry');
 const {
-  configuredSenders, chooseSender, senderCountsToday, successfulSendCountToday,
+  configuredSenders, chooseSender, pinnedSenderId, senderCountsToday, successfulSendCountToday,
 } = require('./integrations/gmail-sender-routing');
+const {
+  createSendingWindowQuota, sendingWindowVerdict, consumeSendingWindowSuccess,
+  sendingWindowRemainingBySender, sendingWindowSnapshot,
+} = require('./integrations/sending-window-quota');
 const {
   assembleFinalEmail,
   splitPersonalization,
@@ -163,6 +167,7 @@ const SENDING_ENABLED  = process.env.SENDING_ENABLED === 'true';
 // leaving. Both must be true for a stage step to send.
 const STAGE_SEQUENCES_ENABLED = process.env.STAGE_SEQUENCES_ENABLED === 'true';
 const DAILY_CAP        = parseInt(process.env.DAILY_CAP || '12', 10);
+const PER_INBOX_RUN_CAP = parseInt(process.env.PER_INBOX_RUN_CAP || String(DAILY_CAP), 10);
 const DAILY_SEND_LIMIT = parseInt(process.env.DAILY_SEND_LIMIT || '40', 10);
 // Below this, a drafted answer goes to the review queue instead of the prospect.
 // Deliberately high: a wrong auto-answer costs more than a slower human one.
@@ -1648,7 +1653,7 @@ async function markSent(lead, step, sendMeta = null) {
 
 async function deliverOrdinaryColdStep({
   lead, step, sender, subject, body, attribution, activitiesForCycle,
-  personalizationMetadata = null, thread = null,
+  personalizationMetadata = null, thread = null, onProviderSuccess = null,
 }) {
   const mailbox = gmailForSender(sender);
   const rfcMessageId = coldStepRfcMessageId(lead.id, step, sender.email);
@@ -1664,6 +1669,11 @@ async function deliverOrdinaryColdStep({
     return { delivered: false, reason: `idempotency probe failed: ${error.message}` };
   }
   if (recovered) {
+    // Quota ledgers advance before the fallible Sheets repair. The callback is
+    // idempotent per attempt and deliberately runs for provider recovery too,
+    // preserving the existing conservative behavior where a recovered send
+    // occupies capacity in the run that repairs it.
+    if (onProviderSuccess) onProviderSuccess({ recovered: true, occurredAt: recovered.occurredAt || '' });
     const checkpoint = await markSent(lead, step, {
       result: recovered, subject, body, attribution, sender, personalizationMetadata,
       occurredAt: recovered.occurredAt || new Date().toISOString(), activitiesForCycle,
@@ -1734,6 +1744,9 @@ async function deliverOrdinaryColdStep({
       : `delivery outcome is ambiguous; reservation retained: ${error.message}` };
   }
 
+  // Gmail accepted the message. Consume sender, window and global quota before
+  // any checkpoint can fail so a bookkeeping outage cannot create free sends.
+  if (onProviderSuccess) onProviderSuccess({ recovered: false, occurredAt: new Date().toISOString() });
   const checkpoint = await markSent(lead, step, {
     result, subject, body, attribution, sender, personalizationMetadata, activitiesForCycle,
   });
@@ -2673,7 +2686,7 @@ function buildIntentEmail(lead) {
   };
 }
 
-async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot = null) {
+async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot = null, sendQuota = null) {
   await ensureIntentSheet();
   const plays = await readRealDemoPlays(snapshot?.demoPlays);
   const fired = await loadFiredIntents(snapshot?.intentFired);
@@ -2703,7 +2716,13 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot 
   console.log(`[Intent] ${due.length} lead(s) played BOTH audios and have not been contacted.`);
 
   let sent = 0;
-  let todaySent = countTodaySends(allLeads);
+  const senderDayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+  const intentSenderCounts = sendQuota?.sendsBySender || senderCountsToday(activities, senderDayKey);
+  const intentQuotaState = sendQuota?.quotaState || { globalCount: Math.max(
+    countTodaySends(allLeads), successfulSendCountToday(activities, senderDayKey),
+  ) };
+  const intentWindowQuota = sendQuota?.windowQuota || null;
+  let todaySent = Number(intentQuotaState.globalCount || 0);
   for (const lead of due) {
     // ── same gates as every other send path ──
     const suppressed = suppressionReason(lead);
@@ -2723,6 +2742,16 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot 
     try {
       const company = cleanCompanyName(lead.company) || 'your business';
       const sender = senderForPersistedLead(lead);
+      if ((intentSenderCounts.get(sender.id) || 0) >= sender.dailyLimit) {
+        console.warn(`  ⏸️  intent email deferred → ${lead.email} (sender daily limit reached)`);
+        continue;
+      }
+      const intentWindowGate = intentWindowQuota
+        ? sendingWindowVerdict(intentWindowQuota, sender.id) : { allowed: true };
+      if (!intentWindowGate.allowed) {
+        console.warn(`  ⏸️  intent email deferred → ${lead.email} (${intentWindowGate.reason})`);
+        continue;
+      }
       const personalization = buildDentalPersonalization({ ...lead, company }, { siteText: lead.siteContext || '' });
       const currentSubject = buildDentalSubject({ lead, company, personalization }).subject;
       const legacySubject = coldSubjectFor(lead, company);
@@ -2739,6 +2768,12 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot 
         threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references,
       });
       const intentSentAt = new Date().toISOString();
+      // Provider success consumes every applicable ledger before a fallible
+      // intent/checkpoint write can run.
+      if (intentWindowQuota) consumeSendingWindowSuccess(intentWindowQuota, sender.id);
+      todaySent++;
+      intentQuotaState.globalCount = todaySent;
+      intentSenderCounts.set(sender.id, (intentSenderCounts.get(sender.id) || 0) + 1);
       const relatedActivities = activities.filter(row => row.sourceLeadId === lead.id || row.leadId === `CE-${lead.id}`);
       const influence = replyTouchAttribution({ occurredAt: intentSentAt, threadId: thread.threadId }, relatedActivities);
       // Record the fire BEFORE anything else can fail, so a crash after send
@@ -2809,7 +2844,7 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot 
           ...promotionAttribution(influence),
         }),
       });
-      sent++; todaySent++;
+      sent++;
       console.log(`  🎧 Intent email sent → ${lead.email} (${cleanCompanyName(lead.company)})`);
     } catch (e) {
       console.error(`  ❌ intent send failed → ${lead.email}: ${e.message}`);
@@ -3189,7 +3224,7 @@ const jitter = () => MIN_DELAY + Math.floor(Math.random() * (MAX_DELAY - MIN_DEL
 // cold selectors stay blocked exactly as before. See stage-sequences.js.
 async function runStageSequencePass(allLeads, {
   observationBySender = new Map(), activitiesForCycle = null, boardLeadsForCycle = null, sendsBySender = null,
-  quotaState = { globalCount: 0 },
+  quotaState = { globalCount: 0 }, windowQuota = null,
 } = {}) {
   // The gate comes first, before any read. With the flag off this pass cannot
   // select a lead, let alone send to one.
@@ -3359,6 +3394,11 @@ async function runStageSequencePass(allLeads, {
       console.warn(`[StageSeq] ${boardLead.email} blocked: ${sendGate.reason}`);
       continue;
     }
+    const windowGate = windowQuota ? sendingWindowVerdict(windowQuota, sender.id) : { allowed: true };
+    if (!windowGate.allowed) {
+      console.warn(`[StageSeq] ${boardLead.email} blocked: ${windowGate.reason}`);
+      continue;
+    }
     if (!verifiedThread.ok) { console.warn(`[StageSeq] ${boardLead.email} blocked: ${verifiedThread.reason}`); continue; }
     const built = buildSequenceEmail(verdict.sequenceId, step, boardLead, { thread: verifiedThread });
     if (built.error) { console.warn(`[StageSeq] ${built.error}`); continue; }
@@ -3371,15 +3411,16 @@ async function runStageSequencePass(allLeads, {
         gmail: gmailForSender(sender), rfcMessageId: built.messageId,
       });
       if (recovered) {
-        await persistSequenceStep({ eventId, boardLead, twin, verdict, step, built,
-          sender, result: recovered, recovered: true, occurredAt: recovered.occurredAt || new Date().toISOString() });
         const recoveredDay = new Date(recovered.occurredAt || Date.now())
           .toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
         if (recoveredDay === senderDayKey) {
+          if (windowQuota) consumeSendingWindowSuccess(windowQuota, sender.id);
           todaySent++;
           quotaState.globalCount = todaySent;
           senderCounts.set(sender.id, (senderCounts.get(sender.id) || 0) + 1);
         }
+        await persistSequenceStep({ eventId, boardLead, twin, verdict, step, built,
+          sender, result: recovered, recovered: true, occurredAt: recovered.occurredAt || new Date().toISOString() });
         console.warn(`[StageSeq] recovered prior successful send for ${boardLead.email}; no duplicate sent`);
         continue;
       }
@@ -3460,6 +3501,7 @@ async function runStageSequencePass(allLeads, {
 
     // Successful provider delivery consumes both ceilings immediately, before
     // any fallible checkpoint write.
+    if (windowQuota) consumeSendingWindowSuccess(windowQuota, sender.id);
     todaySent++;
     quotaState.globalCount = todaySent;
     senderCounts.set(sender.id, (senderCounts.get(sender.id) || 0) + 1);
@@ -3593,16 +3635,25 @@ async function run() {
   // canonical activities, including any human_response_sent event persisted
   // moments ago, and refuses all execution if mailbox observation failed.
   const quotaState = { globalCount: todaySent };
+  const windowQuota = createSendingWindowQuota({
+    senderIds: GMAIL_SENDERS.filter(sender => sender.sendEligible).map(sender => sender.id),
+    perSenderLimit: PER_INBOX_RUN_CAP,
+    globalLimit: DAILY_CAP,
+  });
   await runStageSequencePass(all, {
     observationBySender, activitiesForCycle: ownershipActivities,
-    boardLeadsForCycle: ownershipBoard, sendsBySender, quotaState,
+    boardLeadsForCycle: ownershipBoard, sendsBySender, quotaState, windowQuota,
   });
   todaySent = quotaState.globalCount;
   dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
 
   // Intent trigger — both-audios. Runs in every normal pass as a backstop to
   // the event-driven spawn, so a missed webhook still gets picked up.
-  await withAuth(() => runIntentTriggerPass(all, ownershipContext, snapshot));
+  await withAuth(() => runIntentTriggerPass(all, ownershipContext, snapshot, {
+    sendsBySender, quotaState, windowQuota,
+  }));
+  todaySent = quotaState.globalCount;
+  dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
 
   // Phase 1 — new sends (stage === QUEUE_STAGE, never emailed)
   const queued = selectQueued(all);
@@ -3610,8 +3661,10 @@ async function run() {
   // Phase 3 — follow-ups (replied leads already excluded by runReplyCheckPass)
   const followUps = selectFollowUps(all);
 
-  const effectiveCap = Math.min(DAILY_CAP, dailyRemaining);
-  console.log(`${all.length} leads · ${queued.length} queued · ${followUps.length} follow-ups due · cap ${effectiveCap} (${dailyRemaining} remaining today)\n`);
+  const effectiveCap = Math.min(sendingWindowSnapshot(windowQuota).globalRemaining, dailyRemaining);
+  const windowSummary = [...sendingWindowRemainingBySender(windowQuota)]
+    .map(([senderId, remaining]) => `${senderId}:${remaining}`).join(', ');
+  console.log(`${all.length} leads · ${queued.length} queued · ${followUps.length} follow-ups due · ${effectiveCap} window successes remaining (${windowSummary}; ${dailyRemaining} remaining today)\n`);
 
   if (dailyRemaining === 0) {
     console.log('[cap] Daily send limit reached — skipping sends this run');
@@ -3633,7 +3686,30 @@ async function run() {
 
   let sent = 0;
   let followUpSent = 0;
-  let followUpIndex = 0;
+  const followBatchesBySender = new Map(GMAIL_SENDERS.map(sender => [sender.id, []]));
+  const unownedFollowUps = [];
+  for (const lead of followBatch) {
+    try {
+      const senderId = pinnedSenderId(lead, ownershipActivities);
+      if (senderId && followBatchesBySender.has(senderId)) followBatchesBySender.get(senderId).push(lead);
+      else unownedFollowUps.push(lead);
+    } catch (_) {
+      unownedFollowUps.push(lead);
+    }
+  }
+  const followUpIndexBySender = new Map(GMAIL_SENDERS.map(sender => [sender.id, 0]));
+  const followUpSentBySender = new Map(GMAIL_SENDERS.map(sender => [sender.id, 0]));
+
+  function providerSuccessCounter(sender) {
+    let counted = false;
+    return () => {
+      if (counted) return;
+      consumeSendingWindowSuccess(windowQuota, sender.id);
+      sendsBySender.set(sender.id, (sendsBySender.get(sender.id) || 0) + 1);
+      quotaState.globalCount = Number(quotaState.globalCount || 0) + 1;
+      counted = true;
+    };
+  }
 
   // ── Follow-ups (steps 2 & 3) ──────────────────────────────────────────────
   async function attemptFollowUp(lead) {
@@ -3654,7 +3730,10 @@ async function run() {
     const body = template.body(lead);
     const preview = body.split('\n')[2] || '';
     let senderChoice;
-    try { senderChoice = chooseSender({ lead, activities: ownershipActivities, senders: GMAIL_SENDERS, sendsToday: sendsBySender, step: nextStepNum }); }
+    try { senderChoice = chooseSender({
+      lead, activities: ownershipActivities, senders: GMAIL_SENDERS, sendsToday: sendsBySender,
+      windowRemainingBySender: sendingWindowRemainingBySender(windowQuota), step: nextStepNum,
+    }); }
     catch (error) { console.warn(`⏸️  follow-up deferred → ${lead.email} (${error.message})`); return false; }
     if (!senderChoice.sender) { console.warn(`⏸️  follow-up deferred → ${lead.email} (${senderChoice.reason})`); return false; }
     const selectedSender = senderChoice.sender;
@@ -3695,6 +3774,7 @@ async function run() {
       const delivery = await deliverOrdinaryColdStep({
         lead, step: nextStepNum, sender: selectedSender, subject, body, attribution,
         activitiesForCycle: ownershipActivities, thread,
+        onProviderSuccess: providerSuccessCounter(selectedSender),
       });
       if (!delivery.delivered) {
         console.warn(`⏸️  follow-up deferred → ${lead.email} (${delivery.reason})`);
@@ -3702,7 +3782,7 @@ async function run() {
       }
       sent++;
       followUpSent++;
-      sendsBySender.set(selectedSender.id, (sendsBySender.get(selectedSender.id) || 0) + 1);
+      followUpSentBySender.set(selectedSender.id, (followUpSentBySender.get(selectedSender.id) || 0) + 1);
       console.log(`${delivery.recovered ? '♻️ Recovered' : '✅ Sent'} (step ${nextStepNum}) → ${lead.email}  (${sent}/${effectiveCap})`);
       return true;
     } catch (e) {
@@ -3717,18 +3797,28 @@ async function run() {
     }
   }
 
-  async function fillFollowUps(successTarget) {
-    while (followUpIndex < followBatch.length && sent < effectiveCap && followUpSent < successTarget) {
-      await attemptFollowUp(followBatch[followUpIndex++]);
+  async function fillSenderFollowUps(senderId, successTarget = Infinity) {
+    const batch = followBatchesBySender.get(senderId) || [];
+    let index = followUpIndexBySender.get(senderId) || 0;
+    while (index < batch.length && sent < effectiveCap
+      && (sendingWindowRemainingBySender(windowQuota).get(senderId) || 0) > 0
+      && (followUpSentBySender.get(senderId) || 0) < successTarget) {
+      await attemptFollowUp(batch[index++]);
     }
+    followUpIndexBySender.set(senderId, index);
   }
 
-  const guaranteedFollowUpTarget = followUpSuccessTarget(effectiveCap);
-  await fillFollowUps(guaranteedFollowUpTarget);
+  // Apply the established 4-follow-up/1-initial policy independently to each
+  // sender's remaining five-success bucket. Stage and intent sends may already
+  // have consumed part of a bucket, so fairness uses what remains right now.
+  for (const sender of GMAIL_SENDERS.filter(item => item.sendEligible)) {
+    const senderRemaining = sendingWindowRemainingBySender(windowQuota).get(sender.id) || 0;
+    await fillSenderFollowUps(sender.id, followUpSuccessTarget(senderRemaining));
+  }
 
   // ── New sends (step 1) ────────────────────────────────────────────────────
   for (const lead of newBatch) {
-    if (sent >= effectiveCap) break;
+    if (sent >= effectiveCap || sendingWindowSnapshot(windowQuota).globalRemaining <= 0) break;
     const suppressed = suppressionReason(lead);
     if (suppressed) {
       console.error(`🚫 [SUPPRESSED] refusing step-1 send → ${lead.email} (${cleanCompanyName(lead.company) || lead.id}) — notes contain ${suppressed}`);
@@ -3741,7 +3831,10 @@ async function run() {
     }
 
     let senderChoice;
-    try { senderChoice = chooseSender({ lead, activities: ownershipActivities, senders: GMAIL_SENDERS, sendsToday: sendsBySender, step: 1 }); }
+    try { senderChoice = chooseSender({
+      lead, activities: ownershipActivities, senders: GMAIL_SENDERS, sendsToday: sendsBySender,
+      windowRemainingBySender: sendingWindowRemainingBySender(windowQuota), step: 1,
+    }); }
     catch (error) { console.warn(`⏸️  sender routing refused → ${lead.email} (${error.message})`); continue; }
     if (!senderChoice.sender) { console.warn(`⏸️  sender routing deferred → ${lead.email} (${senderChoice.reason})`); continue; }
     const selectedSender = senderChoice.sender;
@@ -3840,13 +3933,13 @@ async function run() {
         lead, step: 1, sender: selectedSender, subject, body, attribution,
         personalizationMetadata: validatedPersonalizationMetadata,
         activitiesForCycle: ownershipActivities,
+        onProviderSuccess: providerSuccessCounter(selectedSender),
       });
       if (!delivery.delivered) {
         console.warn(`⏸️  step-1 deferred → ${lead.email} (${delivery.reason})`);
         continue;
       }
       sent++;
-      sendsBySender.set(selectedSender.id, (sendsBySender.get(selectedSender.id) || 0) + 1);
       console.log(`${delivery.recovered ? '♻️ Recovered' : '✅ Sent'} (step 1) → ${lead.email}  (${sent}/${effectiveCap})`);
     } catch (e) {
       console.error(`❌ Failed (step 1) → ${lead.email}: ${e.message}`);
@@ -3860,9 +3953,13 @@ async function run() {
   }
 
   // ── Follow-up refill (when initials leave successful-send space) ──────────
-  for (; followUpIndex < followBatch.length; followUpIndex++) {
-    const lead = followBatch[followUpIndex];
-    if (sent >= effectiveCap) break;
+  for (const sender of GMAIL_SENDERS.filter(item => item.sendEligible)) {
+    await fillSenderFollowUps(sender.id);
+  }
+  // Ownership-conflicted or legacy-unowned follow-ups still fail closed and
+  // are inspected only after every valid sender bucket has had its fair refill.
+  for (const lead of unownedFollowUps) {
+    if (sent >= effectiveCap || sendingWindowSnapshot(windowQuota).globalRemaining <= 0) break;
     const suppressed = suppressionReason(lead);
     if (suppressed) {
       console.error(`🚫 [SUPPRESSED] refusing follow-up send → ${lead.email} (${cleanCompanyName(lead.company) || lead.id}) — notes contain ${suppressed}`);
@@ -3880,7 +3977,10 @@ async function run() {
     const body        = template.body(lead);
     const preview     = body.split('\n')[2] || '';
     let senderChoice;
-    try { senderChoice = chooseSender({ lead, activities: ownershipActivities, senders: GMAIL_SENDERS, sendsToday: sendsBySender, step: nextStepNum }); }
+    try { senderChoice = chooseSender({
+      lead, activities: ownershipActivities, senders: GMAIL_SENDERS, sendsToday: sendsBySender,
+      windowRemainingBySender: sendingWindowRemainingBySender(windowQuota), step: nextStepNum,
+    }); }
     catch (error) { console.warn(`⏸️  follow-up deferred → ${lead.email} (${error.message})`); continue; }
     if (!senderChoice.sender) { console.warn(`⏸️  follow-up deferred → ${lead.email} (${senderChoice.reason})`); continue; }
     const selectedSender = senderChoice.sender;
@@ -3921,13 +4021,13 @@ async function run() {
       const delivery = await deliverOrdinaryColdStep({
         lead, step: nextStepNum, sender: selectedSender, subject, body, attribution,
         activitiesForCycle: ownershipActivities, thread,
+        onProviderSuccess: providerSuccessCounter(selectedSender),
       });
       if (!delivery.delivered) {
         console.warn(`⏸️  follow-up deferred → ${lead.email} (${delivery.reason})`);
         continue;
       }
       sent++;
-      sendsBySender.set(selectedSender.id, (sendsBySender.get(selectedSender.id) || 0) + 1);
       console.log(`${delivery.recovered ? '♻️ Recovered' : '✅ Sent'} (step ${nextStepNum}) → ${lead.email}  (${sent}/${effectiveCap})`);
     } catch (e) {
       console.error(`❌ Failed (step ${nextStepNum}) → ${lead.email}: ${e.message}`);

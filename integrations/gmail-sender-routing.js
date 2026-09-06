@@ -79,18 +79,25 @@ function pinnedSenderId(lead, activities) {
   return ids[0] || '';
 }
 
-function chooseSender({ lead, activities = [], senders = [], sendsToday = new Map(), step = 1 } = {}) {
+function chooseSender({
+  lead, activities = [], senders = [], sendsToday = new Map(),
+  windowRemainingBySender = null, step = 1,
+} = {}) {
   const pinned = pinnedSenderId(lead, activities);
   if (pinned) {
     const sender = senders.find(item => item.id === pinned);
     if (!sender) throw new Error(`pinned sender ${pinned} is not configured`);
     if (!allowedForLead(sender, lead)) throw new Error(`pinned sender ${pinned} is not delivery eligible`);
     if ((sendsToday.get(sender.id) || 0) >= sender.dailyLimit) return { sender: null, reason: 'pinned sender daily limit reached', pinned: true };
+    if (windowRemainingBySender && (windowRemainingBySender.get(sender.id) || 0) <= 0) {
+      return { sender: null, reason: 'pinned sender scheduled-window limit reached', pinned: true };
+    }
     return { sender, pinned: true };
   }
   if (Number(step) > 1) throw new Error(`follow-up has no proven sender ownership for lead ${lead.id}`);
   const candidates = senders.filter(sender => allowedForLead(sender, lead)
-    && (sendsToday.get(sender.id) || 0) < sender.dailyLimit);
+    && (sendsToday.get(sender.id) || 0) < sender.dailyLimit
+    && (!windowRemainingBySender || (windowRemainingBySender.get(sender.id) || 0) > 0));
   candidates.sort((a, b) => (sendsToday.get(a.id) || 0) - (sendsToday.get(b.id) || 0) || a.id.localeCompare(b.id));
   return candidates.length ? { sender: candidates[0], pinned: false } : { sender: null, reason: 'no eligible sender capacity', pinned: false };
 }

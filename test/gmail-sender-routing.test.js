@@ -15,6 +15,19 @@ test('both independently credentialed active senders are eligible for dental', (
 test('least-used policy deterministically distributes new dental leads', () => assert.equal(chooseSender({ lead:dental,senders:configuredSenders(env),sendsToday:new Map([['primary',2],['b',1]]) }).sender.id, 'b'));
 test('first successful sender evidence pins all follow-ups', () => assert.equal(chooseSender({ lead:dental,activities:[activity('b')],senders:configuredSenders(env),step:2 }).sender.id, 'b'));
 test('follow-up cannot migrate when its sender is exhausted', () => assert.equal(chooseSender({ lead:dental,activities:[activity('b')],senders:configuredSenders(env),sendsToday:new Map([['b',20]]),step:2 }).sender, null));
+test('follow-up cannot migrate when its sender window bucket is exhausted', () => {
+  const result = chooseSender({
+    lead:dental, activities:[activity('b')], senders:configuredSenders(env), step:2,
+    windowRemainingBySender:new Map([['primary',5],['b',0]]),
+  });
+  assert.equal(result.sender, null);
+  assert.equal(result.pinned, true);
+  assert.match(result.reason, /scheduled-window/);
+});
+test('new unassigned lead can use the inbox whose window bucket remains open', () => assert.equal(chooseSender({
+  lead:dental, senders:configuredSenders(env), sendsToday:new Map([['primary',0],['b',10]]),
+  windowRemainingBySender:new Map([['primary',0],['b',1]]),
+}).sender.id, 'b'));
 test('missing follow-up sender fails closed', () => assert.throws(() => chooseSender({ lead:dental,senders:configuredSenders(env),step:2 }), /no proven sender/));
 test('cross-sender ownership evidence is a hard conflict', () => assert.throws(() => pinnedSenderId(dental,[activity('primary'),activity('b','follow_up_sent')]), /conflict/));
 test('successful-send accounting is independent per inbox', () => assert.deepEqual([...senderCountsToday([activity('primary'),activity('b')],'2026-09-01')], [['primary',1],['b',1]]));
