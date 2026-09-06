@@ -26,7 +26,14 @@ const serverSrc = readSource(path.join(root, 'server.js'));
 const browser = readSource(path.join(root, 'public', 'index.html'));
 
 const NOW = new Date('2026-08-26T12:00:00.000Z');
-const FUTURE = '2026-09-05T17:00:00.000Z';
+// FUTURE must be after NOW *and* after the real clock. Most assertions inject
+// NOW, but a few go through the agent's real suppression gate, which reads
+// Date.now() — so a hardcoded literal here is a time bomb: it was
+// '2026-09-05T17:00:00.000Z', and the suite began failing the moment that
+// instant passed, claiming a scheduled hold had been released. Derived from the
+// real clock so it cannot expire again.
+const FUTURE = new Date(Math.max(Date.now(), NOW.getTime()) + 365 * 86400000).toISOString();
+// PAST needs no such care: a fixed instant in the past stays in the past.
 const PAST = '2026-08-20T17:00:00.000Z';
 
 function twin(over = {}) {
