@@ -78,7 +78,7 @@ const {
   coldReactivationVerdict, coldReactivationSuppressionReader,
   CALL_STATUS, deriveCallLifecycle, callLifecycleActions, deriveHotState,
   applyResumeToNotes, clearResumeFromNotes, resumeAtFromNotes,
-  applyHoldToNotes, stageRequiresHold, sendSuppressionReason,
+  applyHoldToNotes, releaseHoldFromNotes, stageRequiresHold, sendSuppressionReason,
 } = require('./integrations/pipeline-state');
 // Reactivation asks the sender's own ownership question rather than keeping a
 // second opinion about who may contact a lead.
@@ -2770,6 +2770,155 @@ app.post('/api/leads/:id/reactivate', requireAuth, async (req, res) => {
 // This RECORDS an interaction that already happened elsewhere (an inbox, a
 // phone). It sends nothing, and it deliberately writes no lead state — the
 // staleness clock is derived from the activity row, not stored on the lead.
+// ── RESUME AUTOMATION ───────────────────────────────────────────────────────
+//
+// Release an operator's own manual hold and hand the lead back to the
+// stage-aware ownership engine. Deliberately NOT Reactivate: Reactivate is for
+// explicitly reopening a lead and scheduling ordinary cold cadence, and it
+// never removes a hold. This removes the hold and then asks the normal question
+// — who owns this lead now? — without answering it in advance.
+//
+// It cannot send. It writes one notes cell and one audit row, re-derives
+// ownership read-only, and returns the verdict. Every gate that applied before
+// still applies after: suppression, reply and manual-response evidence, meeting
+// ownership, sender and thread proof, identity, quotas, terminal stage.
+//
+// PIPELINE LEADS ONLY, and that restriction is the safety argument. Removing a
+// hold from a COLD lead would hand it to selectFollowUps(), which asks only
+// whether the step delay has elapsed — a long-held lead is overdue the moment
+// the tag goes and would send on the next pass. A board lead cannot reach that
+// path at all: stage-aware ownership returns a non-cold owner for every
+// Pipeline stage, so mayColdSend() can never be true for one.
+app.post('/api/leads/:id/resume-automation', requireAuth, async (req, res) => {
+  try {
+    const rowNum = await withAuth(() => findRow(req.params.id));
+    if (!rowNum) return res.status(404).json({ error: 'not found' });
+    const prior = await sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${rowNum}:W${rowNum}`,
+    });
+    const row = prior.data.values?.[0] || [];
+    const boardLead = {};
+    COLUMNS.forEach((col, i) => { boardLead[col] = row[i] || ''; });
+    boardLead.meetingAt = row[20] || '';
+    boardLead.outcome = row[21] || '';
+    const stage = displayStageFor(boardLead.stage);
+    const email = boardLead.email || '';
+
+    // A closed opportunity has no automation to resume. Refusing here keeps
+    // terminal behaviour deterministic rather than relying on the UI to hide
+    // a button.
+    if (['closed_won', 'closed_lost'].includes(stage)) {
+      return res.status(409).json({
+        error: `This opportunity is ${stage === 'closed_won' ? 'Closed Won' : 'Closed Lost'}, so there is no automation to resume.`,
+        code: 'terminal_stage', stage,
+      });
+    }
+
+    const twins = await findColdEmailTwins(req.params.id, email);
+    const held = twins.filter(twin => hasManualHold(twin.notes || ''));
+    if (!twins.length) {
+      return res.status(409).json({
+        error: 'No ColdEmail record is linked to this lead, so there is no hold to release.',
+        code: 'no_twin',
+      });
+    }
+    if (!held.length) {
+      return res.status(409).json({
+        error: 'This lead is not on manual hold.', code: 'not_held', stage,
+      });
+    }
+
+    // Release on every twin, then READ BACK. A write is not proof: a partial
+    // batch or a lost response would otherwise report a hold as lifted while
+    // the sheet still carries it.
+    for (const twin of held) {
+      await withAuth(() => writeColdEmailNotes(twin, releaseHoldFromNotes(twin.notes || '')));
+    }
+    ceRowMap.clear();
+    const after = await findColdEmailTwins(req.params.id, email);
+    const stillHeld = after.filter(twin => hasManualHold(twin.notes || ''));
+    if (stillHeld.length) {
+      return res.status(409).json({
+        error: 'The manual hold could not be confirmed as removed, so nothing was changed downstream.',
+        code: 'release_unconfirmed', remaining: stillHeld.length,
+      });
+    }
+
+    // Canonical audit row, deterministic id so a retry reconciles rather than
+    // stacking. Counterpart to the existing automation_held event.
+    const releasedAt = new Date().toISOString();
+    const activities = await readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER).catch(() => []);
+    const scoped = activities.filter(activity => activity.leadId === req.params.id
+      || (email && normalizeEmail(activity.email) === normalizeEmail(email)));
+
+    // Re-derive ownership from the released state — the whole point of the
+    // action. Read-only: it decides nothing and sends nothing.
+    let ownership = null;
+    let summary = null;
+    try {
+      const twin = after[0] || {};
+      const callState = deriveCallLifecycle(boardLead, { activities: scoped });
+      const hotState = deriveHotState(boardLead, { activities: scoped });
+      const sequenceState = evaluateStageSequence({
+        boardLead, twin, activities: scoped, callState, hotState,
+        featureEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true',
+      });
+      const suppressedEmails = await loadSuppressionEmails().catch(() => new Set());
+      ownership = deriveAutomationOwnership(twin, {
+        boardLead, activities: scoped, callState, sequenceState,
+        humanTouchAt: latestHumanOutboundAt(scoped),
+        suppressionReason: lead => sendSuppressionReason(lead, { suppressedEmails }),
+        sendingEnabled: SENDING_ENABLED(),
+        sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true',
+      });
+      summary = ownershipSummary(ownership, stage);
+    } catch (ownershipError) {
+      console.warn('[resume-automation] ownership re-derivation failed:', ownershipError.message);
+    }
+
+    try {
+      await appendColdCallActivities([{
+        eventId: stableActivityId('hold-released', [req.params.id, held.map(t => t.id).join(','), releasedAt]),
+        leadId: req.params.id, sourceLeadId: (after[0] && after[0].id) || '',
+        email, company: boardLead.company || '',
+        eventType: 'automation_hold_released', occurredAt: releasedAt,
+        subject: 'Manual hold released', content: '',
+        metadata: JSON.stringify({
+          trigger: 'crm_resume_automation', actor: 'human',
+          previousHold: true, stage,
+          coldEmailIds: held.map(twin => twin.id),
+          // What the lead was handed back TO, recorded so the timeline shows
+          // the consequence and not just the click.
+          resultingOwner: ownership ? ownership.owner : null,
+          resultingBlocker: ownership ? ownership.blockedBy || null : null,
+          automationResumed: false, sendTriggered: false,
+        }),
+      }]);
+    } catch (activityError) {
+      console.warn('[resume-automation] hold released, audit append failed:', activityError.message);
+    }
+
+    res.json({
+      ok: true, stage, released: held.length,
+      owner: ownership ? ownership.owner : null,
+      blockedBy: ownership ? ownership.blockedBy || null : null,
+      headline: summary ? summary.headline : null,
+      detail: summary ? summary.detail : null,
+      journey: ownership && ownership.evidence
+        ? (ownership.evidence.sequenceId || ownership.evidence.offer || null) : null,
+      // Stated plainly so no caller can read this as "a send happened".
+      automationResumed: false, sendTriggered: false,
+      message: summary
+        ? `Manual hold removed. ${summary.headline}.`
+        : 'Manual hold removed. Ownership will be re-derived on the next read.',
+    });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Resume automation]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/leads/:id/human-response', requireAuth, async (req, res) => {
   try {
     const rowNum = await withAuth(() => findRow(req.params.id));

@@ -99,8 +99,18 @@ test('5. Keep Manual writes nothing to ColdEmail, so the hold survives', () => {
 });
 
 test('6. stage movement alone still never removes the hold', () => {
-  // The only hold writer applies it; nothing in the stage path clears it.
   assert.match(serverSrc, /async function applyManualHold/);
+  // A hold IS now removable, but only through one deliberate operator action:
+  // POST /resume-automation. This assertion used to say the server had no hold
+  // remover at all, which would now pass only because that function happens to
+  // be named differently — false assurance. It instead pins the real property:
+  // exactly one route releases a hold, and it is the explicit one.
+  const releaseSites = (serverSrc.match(/releaseHoldFromNotes\(/g) || []).length;
+  assert.equal(releaseSites, 1, 'exactly one place may release a hold');
+  const resumeRoute = serverSrc.slice(serverSrc.indexOf("app.post('/api/leads/:id/resume-automation'"),
+    serverSrc.indexOf("app.post('/api/leads/:id/human-response'"));
+  assert.match(resumeRoute, /releaseHoldFromNotes\(/, 'and it is the resume-automation route');
+  // Nothing else clears a hold under any other name.
   assert.ok(!/clearHoldFromNotes|removeManualHold/.test(serverSrc));
   const stagePath = serverSrc.slice(serverSrc.indexOf('if (stageRequiresHold(nextStage))'), serverSrc.indexOf('eventType: \'stage_changed\''));
   assert.ok(!/clearResumeFromNotes|applyResumeToNotes/.test(stagePath), 'stage changes do not touch resume state');

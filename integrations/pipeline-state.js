@@ -165,6 +165,30 @@ function clearResumeFromNotes(notes) {
   return String(notes || '').replace(RESUME_TAG_RE, '').replace(/\s{2,}/g, ' ').trim();
 }
 
+/**
+ * Release an operator's manual hold. PURE — the caller persists it.
+ *
+ * The comment above explains why reactivation never does this: removing the tag
+ * from a COLD lead hands it straight back to selectFollowUps(), which asks only
+ * whether delayDays have elapsed since lastEmailedAt. A lead held for two weeks
+ * is already overdue the instant the tag goes, so it would send on the next
+ * pass. That hazard is real and unchanged.
+ *
+ * What makes an operator-initiated release safe is WHO may call it: only a lead
+ * that is in the Sales Pipeline. Since ownership became stage-aware, every
+ * branch for a board lead returns a non-cold owner, so mayColdSend() — which
+ * requires owner === COLD_AUTOMATION — can never be true for one. Removing the
+ * hold therefore hands the lead to its STAGE's automation, never to Email 2/3.
+ * The route enforces that restriction; this function only edits text.
+ *
+ * The [RESUME:] gate goes with it: a scheduled release of a hold that no longer
+ * exists is meaningless residue that would confuse the next reader.
+ */
+function releaseHoldFromNotes(notes) {
+  return clearResumeFromNotes(String(notes || '').split(MANUAL_HOLD_TAG).join(''))
+    .replace(/\s{2,}/g, ' ').trim();
+}
+
 const REACTIVATION_MODES = Object.freeze({
   KEEP_MANUAL: 'keep_manual',   // reopen for human work; automation stays held
   SCHEDULE: 'schedule',         // automation may resume at a chosen time
@@ -1471,7 +1495,7 @@ module.exports = {
   applyResumeToNotes, clearResumeFromNotes, reactivationEligibility,
   coldReactivationVerdict, coldReactivationSuppressionReader,
   REACTIVATABLE_BLOCKERS, REACTIVATION_REFUSAL,
-  hasManualHold, applyHoldToNotes, stageRequiresHold,
+  hasManualHold, applyHoldToNotes, releaseHoldFromNotes, stageRequiresHold,
   OUTCOMES, OUTCOME_IDS, LOSS_OUTCOME_IDS, RECOVERABLE_OUTCOME_IDS,
   FOLLOW_UP_DELAY_DAYS,
   deriveAutomationState, automationConflict, deriveNextAction,

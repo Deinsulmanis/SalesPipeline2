@@ -2691,6 +2691,19 @@
   </div>
 </div>
 
+<!-- RESUME AUTOMATION MODAL — removes the operator's own manual hold and hands
+     the lead back to stage-aware ownership. Distinct from Reactivate, which
+     schedules ordinary cold cadence and never touches a hold. Sends nothing. -->
+<div class="modal-overlay" id="resume-overlay" onclick="closeResumeAutomationModal(event)">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="resume-title" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title" id="resume-title">Resume automation</div>
+      <button class="modal-close" onclick="closeResumeAutomationModal()" aria-label="Close">&#10005;</button>
+    </div>
+    <div style="padding:16px 18px" id="resume-body"></div>
+  </div>
+</div>
+
 <!-- REACTIVATION MODAL — schedules eligibility; never sends anything -->
 <div class="modal-overlay" id="react-overlay" onclick="closeReactivateModal(event)">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="react-title" onclick="event.stopPropagation()">
@@ -4124,6 +4137,7 @@ const ACTIVITY_LABELS = {
   follow_up_sent: 'Sequence follow-up sent',
   stage_changed: 'Stage changed',
   automation_held: 'Automation held (manual takeover)',
+  automation_hold_released: 'Manual hold released',
   reactivation_scheduled: 'Reactivation scheduled',
   reactivation_cancelled: 'Reactivation cancelled',
   meeting_rescheduled: 'Meeting rescheduled',
@@ -4255,6 +4269,62 @@ const LOSS_OUTCOME_LABELS = [
   ['no_show', 'No-show'], ['ghosted', 'Ghosted'], ['not_interested', 'Not interested'],
   ['not_fit', 'Bad fit'], ['timing', 'Wrong timing'], ['other', 'Other'],
 ];
+
+// ── RESUME AUTOMATION ───────────────────────────────────────────────────────
+//
+// Lifts the operator's own manual hold, then asks the ownership engine what
+// happens next. It is not a send button and not an enrol button: the server
+// removes the tag, re-derives ownership, and reports whatever it finds —
+// including a blocker that is still in the way.
+
+function closeResumeAutomationModal(e) {
+  if (e && e.target !== document.getElementById('resume-overlay')) return;
+  document.getElementById('resume-overlay').classList.remove('open');
+}
+
+function openResumeAutomationModal() {
+  const lead = leads.find(item => item.id === detailId);
+  if (!lead) return;
+  document.getElementById('resume-body').innerHTML = `
+    <div class="ghost-facts">
+      <div class="ghost-fact"><span class="ghost-fact-k">Lead</span><span class="ghost-fact-v">${esc(lead.company || lead.email || detailId)}</span></div>
+      <div class="ghost-fact"><span class="ghost-fact-k">Stage</span><span class="ghost-fact-v">${esc(stageLabel(lead.stage))}</span></div>
+    </div>
+    <div class="react-note">Remove manual hold and let the system re-evaluate this lead for stage-based automation?</div>
+    <div class="react-reassure">This sends no email and enrols nothing. Every other gate still applies — suppression, replies, a manual Gmail response, a booked meeting, sender and thread proof, identity and quotas. If one of them still blocks the lead, it will be shown.</div>
+    <div class="form-actions" style="margin-top:14px">
+      <button type="button" class="btn-cancel" onclick="closeResumeAutomationModal()">Keep hold</button>
+      <button type="button" class="btn-save" onclick="submitResumeAutomation()">Remove hold and re-evaluate</button>
+    </div>`;
+  document.getElementById('resume-overlay').classList.add('open');
+}
+
+async function submitResumeAutomation() {
+  const leadId = detailId;
+  if (!leadId) return;
+  setSaving(true);
+  try {
+    const resp = await fetch(`/api/leads/${encodeURIComponent(leadId)}/resume-automation`, { method: 'POST' });
+    if (!resp.ok) {
+      const { message } = await apiError(resp, 'The manual hold was not removed.');
+      showToast(message, 'error');
+      return;
+    }
+    const data = await resp.json().catch(() => ({}));
+    showToast(data.message || 'Manual hold removed.', 'success');
+    // What the lead was handed back TO — stated separately so a remaining
+    // blocker is not mistaken for the action having failed.
+    if (data.blockedBy) {
+      setTimeout(() => showToast(`Automation still blocked — ${String(data.headline || data.blockedBy).replace(/_/g, ' ')}`, 'info'), 900);
+    }
+    closeResumeAutomationModal();
+    await refreshLeadEverywhere(leadId);
+  } catch (error) {
+    showToast('The manual hold was not removed: ' + error.message, 'error');
+  } finally {
+    setSaving(false);
+  }
+}
 
 // ── EXPLICIT CLOSE ──────────────────────────────────────────────────────────
 //
@@ -4390,6 +4460,23 @@ function renderPipelineState(pipeline) {
   // server sends operator copy, never an enum — and it no longer says a lead is
   // blocked merely for being in the Pipeline.
   const own = pipeline.ownership;
+  // A manual hold is the operator's own pause, so the operator gets the control
+  // that lifts it — in this card, beside the ownership it affects, rather than
+  // somewhere else in the drawer. Offered only while a hold is actually active
+  // and the opportunity is still open; the server re-checks both.
+  const currentStage = String((leads.find(item => item.id === detailId) || {}).stage || '');
+  const heldNow = String((automation && automation.state) || '') === 'stopped'
+    && /manual hold/i.test(String((automation && automation.reason) || ''));
+  const terminalNow = ['closed_won', 'closed_lost'].includes(currentStage);
+  const resumeRow = !(heldNow && !terminalNow) ? '' : `
+      <div class="pipeline-row">
+        <span class="pipeline-row-label">Manual hold</span>
+        <span class="pipeline-row-val">
+          <button type="button" class="btn-reactivate" onclick="openResumeAutomationModal()">Resume automation</button>
+          <small>Removes your hold and re-evaluates this lead for stage-based automation. It does not send anything.</small>
+        </span>
+      </div>`;
+
   const ownershipRow = !own ? '' : `
       <div class="pipeline-row">
         <span class="pipeline-row-label">Automation owner</span>
@@ -4403,6 +4490,7 @@ function renderPipelineState(pipeline) {
   host.innerHTML = `${conflict}
     <div class="pipeline-state">
       ${ownershipRow}
+      ${resumeRow}
       ${senderRow}
       <div class="pipeline-row">
         <span class="pipeline-row-label">Automation</span>

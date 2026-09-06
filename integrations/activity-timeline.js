@@ -14,7 +14,8 @@ const REPLY_TYPES = new Set([
 
 const SOURCE_BY_TYPE = Object.freeze({
   lead_created: 'CRM', lead_queued: 'CRM', stage_changed: 'CRM',
-  automation_held: 'CRM', reactivation_scheduled: 'CRM', reactivation_cancelled: 'CRM',
+  automation_held: 'CRM', automation_hold_released: 'CRM',
+  reactivation_scheduled: 'CRM', reactivation_cancelled: 'CRM',
   initial_email_sent: 'Automation', follow_up_sent: 'Automation', booking_link_sent: 'Automation',
   email_opened: 'Prospect', demo_played: 'Demo', demo_pair_played: 'Demo',
   positive_reply: 'Prospect', meeting_requested: 'Prospect', late_reply: 'Prospect',
@@ -130,6 +131,16 @@ function eventPresentation(row, metadata, context = {}) {
       return { title: 'Stage changed', summary: `${from} → ${to}` };
     }
     case 'automation_held': return { title: 'Manual hold applied', summary: 'Automated follow-up stopped' };
+    // Its counterpart. The summary records what the lead was handed back TO,
+    // so the timeline shows the consequence rather than only the click.
+    case 'automation_hold_released': return {
+      title: 'Manual hold released',
+      summary: metadata.resultingBlocker
+        ? `Handed back to stage automation — still blocked: ${prettyStage(metadata.resultingBlocker)}`
+        : metadata.resultingOwner
+          ? `Handed back to stage automation — owner: ${prettyStage(metadata.resultingOwner)}`
+          : 'Handed back to stage-aware automation',
+    };
     case 'reactivation_scheduled': return { title: metadata.automationResumed === false ? 'Reopened for human follow-up' : 'Automation resume scheduled' };
     case 'reactivation_cancelled': return { title: 'Scheduled reactivation cancelled' };
     case 'conversation_note': return { title: row.subject || 'Conversation context updated' };
