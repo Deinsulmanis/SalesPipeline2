@@ -219,7 +219,7 @@ test('18. reprocessing the same Gmail message creates no second reply activity',
   assert.match(block, /activities\.some\(row => String\(row\.eventId \|\| ''\) === eventId\)/,
     'the replay guard must compare against activities already recorded');
   // The guard must return BEFORE the append.
-  assert.ok(block.indexOf('=== eventId') < block.indexOf('recordColdCallActivity('),
+  assert.ok(block.indexOf('=== eventId') < block.indexOf('recordColdCallActivityStrict('),
     'the duplicate check has to run before the write');
 
   // And the writer really is append-only, which is why the guard is required.

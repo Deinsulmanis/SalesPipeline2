@@ -44,6 +44,7 @@ const OWNER = Object.freeze({
   RECOVERY_SEQUENCE: 'recovery_sequence', // an explicitly enrolled stage journey
   MEETING: 'meeting',                   // a scheduled/unresolved call governs it
   WAITING: 'waiting',                   // nothing should act yet
+  REPLY_AUTOMATION: 'reply_automation', // deterministic, approved pre-booking response
   NONE: 'none',                         // terminal, suppressed, or unsafe
 });
 
@@ -231,7 +232,7 @@ function deriveAutomationOwnership(lead = {}, {
   suppressionReason = null, manualActionOverride = null, manualOverride = null,
   humanTouchAt = null, unrecordedHumanTouch = false,
   sendingEnabled = false, sequencesEnabled = false,
-  now = new Date(), coldCadenceDue = false,
+  now = new Date(), coldCadenceDue = false, replyResponseDecision = null,
 } = {}) {
   const stage = norm(lead.stage);
   const boardStage = norm(boardLead && boardLead.stage);
@@ -332,7 +333,21 @@ function deriveAutomationOwnership(lead = {}, {
     });
   }
 
-  // ── 7. A person owns the conversation ────────────────────────────────────
+  // ── 7. Canonical deterministic reply automation ──────────────────────────
+  // The response policy may authorize only a bounded action. All stronger
+  // gates above (identity, terminal, suppression, manual touch, contact change,
+  // and meeting) have already had the opportunity to stop it.
+  if (replyResponseDecision?.send === true && replyResponseDecision.action) {
+    return verdict({
+      owner: OWNER.REPLY_AUTOMATION, source: 'reply_response_policy',
+      reason: `approved deterministic reply action ${replyResponseDecision.action}`,
+      automationAllowed: Boolean(sendingEnabled), sendAllowed: Boolean(sendingEnabled),
+      blockedBy: sendingEnabled ? null : BLOCKED_BY.SENDING_DISABLED,
+      evidence: { action: replyResponseDecision.action },
+    });
+  }
+
+  // ── 8. A person owns the conversation ────────────────────────────────────
   //
   // `investigate` needs care. Phase 2.2 returns it whenever there is no
   // trustworthy reply evidence — which is the NORMAL state of a cold lead who

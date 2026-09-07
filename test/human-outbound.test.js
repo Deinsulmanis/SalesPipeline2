@@ -216,12 +216,12 @@ test('outbound observation precedes reply auto-response and recorded human touch
   const question = agent.slice(agent.indexOf('async function handleQuestion'), agent.indexOf('async function handleNeedsHuman'));
   assert.match(question, /const humanTouchAt = latestHumanOutboundAt\(activities\)/);
   assert.match(question, /if \(!outboundObservationOk\)/);
-  assert.ok(question.indexOf('humanTouchAt') < question.indexOf('await sendEmail('));
+  assert.ok(question.indexOf('humanTouchAt') < question.indexOf('deliverHardenedWarmReply'));
 
   const roofing = agent.slice(agent.indexOf('async function handleRoofingSurveyReply'), agent.indexOf('// ── REPLY-CHECK PASS'));
   assert.match(roofing, /const humanTouchAt = latestHumanOutboundAt\(activities\)/);
   assert.match(roofing, /!outboundObservationOk/);
-  assert.ok(roofing.indexOf('humanTouchAt') < roofing.indexOf('await sendEmail('));
+  assert.ok(roofing.indexOf('humanTouchAt') < roofing.indexOf('deliverHardenedWarmReply'));
 });
 
 test('outbound observation runs before stage sequences and protects both send systems in the same cycle', () => {
@@ -242,11 +242,12 @@ test('the demo-intent booking-link path also requires fresh canonical ownership'
   const agent = readSource(path.join(root, 'outreach-agent.js'));
   const pass = agent.slice(agent.indexOf('async function runIntentTriggerPass'), agent.indexOf('// ── SELECTION'));
   assert.match(pass, /const gate = coldSendGate\(lead, ownershipContext\)/);
-  assert.ok(pass.indexOf('coldSendGate(lead, ownershipContext)') < pass.indexOf('await sendEmail('));
+  assert.ok(pass.indexOf('coldSendGate(lead, ownershipContext)') < pass.indexOf('deliverHardenedWarmReply('));
+  assert.doesNotMatch(pass, /await sendEmail\(/);
 
   const intentOnly = agent.slice(agent.indexOf('if (INTENT_ONLY && !CHECK_ONLY)'));
   assert.ok(intentOnly.indexOf('runHumanOutboundPass(all, intentActivities)')
-    < intentOnly.indexOf('runIntentTriggerPass(all, intentOwnershipContext, snapshot)'),
+    < intentOnly.indexOf('runIntentTriggerPass(all, intentOwnershipContext, snapshot,'),
   'intent-only observes Gmail before evaluating its send trigger');
 });
 

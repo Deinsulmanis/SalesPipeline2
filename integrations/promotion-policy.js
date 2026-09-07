@@ -8,6 +8,7 @@ const PROMOTION_TRIGGER = Object.freeze({
   LATE_POSITIVE_REPLY: 'late_positive_reply',
   VERIFIED_DEMO_PAIR: 'verified_demo_pair',
   MEETING_BOOKED: 'meeting_booked',
+  TIMING_REPLY: 'timing_reply',
   MANUAL: 'manual_promotion',
   NEEDS_HUMAN: 'needs_human',
   NEGATIVE_REPLY: 'negative_reply',
@@ -66,6 +67,8 @@ function promotionDecision(input = {}) {
     targetStage = 'follow_up'; reason = 'verified demo pair crossed the existing booking-link intent threshold';
   } else if (trigger === PROMOTION_TRIGGER.MEETING_BOOKED) {
     targetStage = 'call_booked'; reason = 'a valid meeting was booked';
+  } else if (trigger === PROMOTION_TRIGGER.TIMING_REPLY && input.recontactAt) {
+    targetStage = 'follow_up'; reason = 'prospect supplied an explicit future recontact date';
   } else if (trigger === PROMOTION_TRIGGER.MANUAL) {
     targetStage = String(input.targetStage || ''); reason = 'explicit manual promotion';
     if (!targetStage) return { shouldPromote: false, safety: 'blocked', trigger, reason: 'target stage is required' };

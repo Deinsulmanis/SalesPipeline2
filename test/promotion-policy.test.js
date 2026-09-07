@@ -130,10 +130,9 @@ test('11/12/13. the policy is pure: no send, no sequence write, no timestamp wri
   assert.ok(!/CE_SHEET|ColdEmail/.test(fn), 'promotion never writes ColdEmail');
 });
 
-test('10. every auto-promotion to a human-owned stage also stops automation', () => {
-  // Positive reply: status + stage + MANUAL HOLD, all in one batch write.
+test('10. normal positive promotion hands off to reply automation without a generic MANUAL HOLD', () => {
   const interested = agent.slice(agent.indexOf('async function handleInterested'), agent.indexOf('async function handleNotInterested'));
-  assert.match(interested, /applyHoldToNotes\(/, 'positive reply applies the hold');
+  assert.doesNotMatch(interested, /applyHoldToNotes\(/, 'normal positive reply is automation-owned');
   assert.match(interested, /values: \[\['replied'\]\]/, 'and marks the sequence replied');
   // Late positive reply holds too, and only once the promotion succeeded.
   const late = agent.slice(agent.indexOf('LATE_POSITIVE_REPLY'));

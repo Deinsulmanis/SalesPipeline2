@@ -206,12 +206,12 @@ const BUYING_INTENT_MARKERS = [
   ['how_it_works', /\b(?:how does (?:it|this) work|how would (?:it|this) work|what does it do|tell me more about how)\b/i],
   ['send_info', /\b(?:send (?:me )?(?:more )?(?:info|information|details)|more (?:info|information|details)|email me the details)\b/i],
   ['next_steps', /\b(?:next steps?|what(?:'?s| is) the next step|how do we (?:start|proceed)|where do we go from here)\b/i],
-  ['meeting', /\b(?:book a (?:call|demo|meeting)|schedule a (?:call|demo|meeting)|set up a (?:call|demo|meeting)|happy to (?:chat|talk|meet)|video call|zoom)\b/i],
+  ['meeting', /\b(?:book a (?:call|demo|meeting)|schedule (?:a )?(?:call|demo|meeting|something)|set up a (?:call|demo|meeting)|happy to (?:chat|talk|meet)|(?:can|could) we (?:chat|talk|meet)|(?:are you|when are you) (?:free|available)|what times? (?:are )?available|send (?:me )?(?:your )?calendar|let['’]?s (?:chat|talk|meet)|video call|zoom)\b/i],
   ['willing_to_evaluate', /\b(?:willing to (?:try|test|look|evaluate)|open to (?:trying|testing|seeing)|would consider|interested in seeing)\b/i],
   // Plain expressed interest. The subject pattern is required so this can never
   // fire on "we are NOT interested" — the negation sits exactly where the
   // optional intensifier would be, so the match simply fails.
-  ['expressed_interest', /\b(?:i am|i'?m|we are|we'?re)\s+(?:very\s+|quite\s+|really\s+)?interested\b|\btell me more\b|\b(?:sounds|looks) (?:good|great|interesting)\b|\byes,?\s*please\b/i],
+  ['expressed_interest', /\b(?:(?:i am|i'?m|we are|we'?re)\s+(?:very\s+|quite\s+|really\s+)?interested|yes,?\s+interested|tell me more|(?:sounds|looks) (?:good|great|interesting)|yes,?\s*please)\b/i],
 ];
 
 // Explicit rejection. Note what is NOT here: criticism of AI, doubts about
@@ -282,6 +282,56 @@ function extractReturnDate(text, { year } = {}) {
 }
 
 /**
+ * Resolve a prospect-requested recontact date from explicit timing language.
+ * Relative phrases are anchored to the immutable inbound-message timestamp,
+ * never to the time a worker happens to process or replay the message.
+ */
+function extractRecontactDate(text, { now = null, year = null } = {}) {
+  const value = String(text || '');
+  const baseMs = Date.parse(now || '');
+  const base = Number.isFinite(baseMs) ? new Date(baseMs) : null;
+  const explicit = new RegExp(
+    `(?:follow up|reach out|try me|contact me|circle back|check back|revisit)(?:\\s+(?:with me|again))?\\s+` +
+    `(?:after|on|in)\\s+(?:the\\s+)?(?:(${MONTH_RE})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?|(\\d{1,2})(?:st|nd|rd|th)?\\s+(${MONTH_RE})(?:,?\\s+(\\d{4}))?)`,
+    'i');
+  const match = explicit.exec(value);
+  if (match) {
+    const monthName = lower(match[1] || match[5]);
+    const day = Number(match[2] || match[4]);
+    const statedYear = Number(match[3] || match[6] || year || 0);
+    const monthIndex = MONTHS.indexOf(monthName);
+    let resolvedYear = statedYear;
+    if (!resolvedYear && base && monthIndex >= 0) {
+      resolvedYear = base.getUTCFullYear();
+      const candidate = Date.UTC(resolvedYear, monthIndex, day);
+      if (candidate <= base.getTime()) resolvedYear += 1;
+    }
+    if (monthIndex >= 0 && resolvedYear && day >= 1 && day <= 31) {
+      const date = new Date(Date.UTC(resolvedYear, monthIndex, day));
+      if (date.getUTCMonth() === monthIndex && date.getUTCDate() === day) return date.toISOString().slice(0, 10);
+    }
+  }
+  if (!base) return '';
+  if (/\b(?:follow up|reach out|try me|contact me|circle back|check back|revisit)(?:\s+(?:with me|again))?\s+(?:in\s+)?next month\b/i.test(value)) {
+    return new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 1, 1)).toISOString().slice(0, 10);
+  }
+  if (/\b(?:follow up|reach out|try me|contact me|circle back|check back|revisit)(?:\s+(?:with me|again))?\s+(?:in\s+)?next quarter\b/i.test(value)) {
+    const nextQuarterMonth = (Math.floor(base.getUTCMonth() / 3) + 1) * 3;
+    return new Date(Date.UTC(base.getUTCFullYear(), nextQuarterMonth, 1)).toISOString().slice(0, 10);
+  }
+  const monthOnly = new RegExp(
+    `(?:follow up|reach out|try me|contact me|circle back|check back|revisit)(?:\\s+(?:with me|again))?\\s+(?:in|after)\\s+(${MONTH_RE})\\b`,
+    'i').exec(value);
+  if (monthOnly) {
+    const monthIndex = MONTHS.indexOf(lower(monthOnly[1]));
+    let resolvedYear = base.getUTCFullYear();
+    if (monthIndex <= base.getUTCMonth()) resolvedYear += 1;
+    return new Date(Date.UTC(resolvedYear, monthIndex, 1)).toISOString().slice(0, 10);
+  }
+  return '';
+}
+
+/**
  * An email address the sender is redirecting us to. Returned as EVIDENCE only —
  * this module never swaps a lead's identity, and nothing downstream may either
  * without a human approving it.
@@ -308,7 +358,7 @@ function extractProposedEmail(text, { currentEmail = '' } = {}) {
  * Order matters and encodes the policy:
  *   machine before human, opt-out before intent, intent before sentiment.
  */
-function classifyReplyText(text, { subject = '', currentEmail = '', year = null } = {}) {
+function classifyReplyText(text, { subject = '', currentEmail = '', year = null, now = null } = {}) {
   const body = `${subject}\n${String(text || '')}`.trim();
   const signals = [];
   const result = (state, extra = {}) => ({
@@ -404,14 +454,15 @@ function classifyReplyText(text, { subject = '', currentEmail = '', year = null 
 
   // "Not now — we'll come back to you." Checked BEFORE the question fallback so
   // a deferral that happens to contain a question mark is still read as timing.
+  const revisitDate = extractRecontactDate(body, { now, year });
   const deferral = firstMatch(DEFERRAL_MARKERS, body);
-  if (deferral) {
-    signals.push(deferral);
+  if (deferral || revisitDate) {
+    signals.push(deferral || 'explicit_recontact_date');
     return result(REPLY_STATE.NEEDS_HUMAN, {
       reason: NEEDS_HUMAN_REASON.DEFERRED_TIMING,
       // A revisit date is only ever carried when the prospect actually stated
       // one. "later" and "once things settle" stay undated on purpose.
-      revisitDate: extractReturnDate(body, { year }) || null,
+      revisitDate: revisitDate || null,
       confidence: 'high',
     });
   }
@@ -576,6 +627,6 @@ module.exports = {
   CLASSIFIER_VERSION, GENUINE_HUMAN_STATES, INBOUND_REPLY_EVENT, LEGACY_REPLY_EVENT_TYPES,
   CANONICAL_REPLY_BOUNDARY, resolveCanonicalReplyBoundary, isAfterBoundary,
   classifyReplyText, resolveReplyState, isGenuineHumanReply, isInboundMessage,
-  extractReturnDate, extractProposedEmail, malformedEmailReason, isUsableReplyIdentity,
+  extractReturnDate, extractRecontactDate, extractProposedEmail, malformedEmailReason, isUsableReplyIdentity,
   legacyTagsFrom, stateFromLegacyTag,
 };

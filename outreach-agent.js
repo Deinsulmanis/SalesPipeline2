@@ -87,9 +87,14 @@ const { PROMOTION_TRIGGER, resolvePromotionIdentity, promotionDecision } = requi
 const {
   coldSendAttribution, stageSequenceAttribution, acquisitionAttribution,
   attributionFromActivity, replyTouchAttribution, latestSendAttribution, promotionAttribution,
-  LEGACY_UNKNOWN,
+  LEGACY_UNKNOWN, familyForLead,
 } = require('./integrations/campaign-versions');
 const { findOriginalSentThread, resolveColdFollowUpThread } = require('./integrations/gmail-threading');
+const gmailMailboxObserver = require('./integrations/gmail-mailbox-observer');
+const { offerForLead, warmResponse } = require('./integrations/offer-config');
+const { ACTION: REPLY_RESPONSE_ACTION, decideReplyResponse } = require('./integrations/reply-response-policy');
+const { deliverProspectReply } = require('./integrations/prospect-reply-delivery');
+const { findLiveBooking } = require('./integrations/live-booking-gate');
 const { oldestDueFirst, followUpSuccessTarget } = require('./integrations/scheduler-fairness');
 const { credentialsFor: gmailCredentialsFor, parseRegistry: parseGmailRegistry } = require('./integrations/gmail-inbox-registry');
 const {
@@ -212,6 +217,8 @@ const AGENT_COLS  = []; // integrated into COLUMNS for ColdEmail
 const READ_RANGE  = `${SHEET_NAME}!A:X`;
 const CAMPAIGN_INTEGRATIONS_SHEET = 'CampaignIntegrations';
 const PROVIDER_LEADS_SHEET = 'ProviderLeadMappings';
+const GMAIL_OBSERVATION_STATE_SHEET = 'GmailObservationState';
+const GMAIL_OBSERVATION_STATE_HEADER = ['senderInboxId','historyId','lastSuccessfulAt','lastAttemptAt','lastError','health','mode','bootstrapState','messagesObserved'];
 let CAMPAIGN_PROVIDERS = new Map();
 let ACTIVE_PROVIDER_LEADS = new Set();
 let ACTIVE_PROVIDER_EMAILS = new Set();
@@ -399,6 +406,25 @@ const sheets = () => wrapSheetsReadClient(google.sheets({ version: 'v4', auth: o
 const gmail  = () => google.gmail({ version: 'v1', auth: oauth2Client });
 const GMAIL_SENDERS = configuredSenders();
 const PRIMARY_GMAIL_SENDER = GMAIL_SENDERS.find(sender => sender.id === 'primary');
+const gmailObservationHistoryBySender = new Map();
+let activeWindowQuota = null;
+let activeQuotaState = null;
+let activeSenderCounts = null;
+const observerAutomationReadyBySender = new Map();
+const CALENDAR_SYNC_ENABLED = process.env.GOOGLE_CALENDAR_BOOKING_SYNC_ENABLED === 'true';
+const BOOKING_CALENDAR_ID = String(process.env.GOOGLE_BOOKING_CALENDAR_ID || '').trim();
+const BOOKING_APPOINTMENT_SCHEDULE_ID = String(process.env.GOOGLE_BOOKING_APPOINTMENT_SCHEDULE_ID || '').trim();
+let bookingCalendarClient = null;
+function calendarForBookingGate() {
+  if (!bookingCalendarClient) {
+    const auth = new google.auth.GoogleAuth({
+      credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '{}'),
+      scopes: ['https://www.googleapis.com/auth/calendar.readonly'],
+    });
+    bookingCalendarClient = google.calendar({ version: 'v3', auth });
+  }
+  return bookingCalendarClient;
+}
 const secondaryAuthById = new Map();
 function authForSender(sender = PRIMARY_GMAIL_SENDER) {
   if (sender.id === 'primary') { loadToken(); return oauth2Client; }
@@ -1384,6 +1410,19 @@ async function answerQuestion(lead, replyText) {
   const company = cleanCompanyName(lead.company) || 'your clinic';
   const draft = (body, reason, confidence = 0) => ({ mode: 'draft', body, reason, confidence });
 
+  const pricingAsked = /\b(pric|cost|fee|charge|how much|\$|rate|budget|quote|monthly|per month)\b/i.test(replyText);
+  if (pricingAsked) {
+    let offer;
+    try { offer = offerForLead(lead); } catch (error) { return draft('', error.message, 0); }
+    if (!offer.pricing?.approvedWording) {
+      return draft(pricingDeflection(company),
+        `pricing is not configured; set OFFER_PRICING_JSON.${familyForLead(lead)}.approvedWording`, 0);
+    }
+    return { mode: 'auto', body: warmResponse({ action: REPLY_RESPONSE_ACTION.AUTO_PRICING_RESPONSE, lead, offer }),
+      reason: 'approved campaign pricing configuration', confidence: 100,
+      action: REPLY_RESPONSE_ACTION.AUTO_PRICING_RESPONSE };
+  }
+
   if (!ANTHROPIC_API_KEY) {
     return draft(bookingSnippet(company), 'no ANTHROPIC_API_KEY — cannot answer', 0);
   }
@@ -1437,11 +1476,6 @@ async function answerQuestion(lead, replyText) {
     // Belt-and-braces pricing catch: the model is told never to answer pricing,
     // but a regex on the INBOUND text means a price question can't slip through
     // on a model mistake either.
-    const pricingAsked = /\b(pric|cost|fee|charge|how much|\$|rate|budget|quote|monthly|per month)/i.test(replyText);
-    if (pricingAsked) {
-      return draft(pricingDeflection(company), 'pricing question — never auto-sent, price is delivered on the call', confidence);
-    }
-
     // Same belt-and-braces treatment for objections. classifyReply() is the
     // primary gate and routes pushback to NEEDS_HUMAN (verified), so this only
     // fires if an objection is ever mis-routed here as a QUESTION — at which
@@ -1477,6 +1511,15 @@ async function ensureAgentHeaders() {
     valueInputOption: 'RAW',
     requestBody: { values: [['siteContext']] },
   });
+  const s = sheets();
+  const workbook = await s.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  if (!workbook.data.sheets.some(sheet => sheet.properties.title === GMAIL_OBSERVATION_STATE_SHEET)) {
+    await s.spreadsheets.batchUpdate({ spreadsheetId: SPREADSHEET_ID,
+      requestBody: { requests: [{ addSheet: { properties: { title: GMAIL_OBSERVATION_STATE_SHEET } } }] } });
+  }
+  await s.spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID,
+    range: `${GMAIL_OBSERVATION_STATE_SHEET}!A1:I1`, valueInputOption: 'RAW',
+    requestBody: { values: [GMAIL_OBSERVATION_STATE_HEADER] } });
 }
 
 async function readLeads(rowsOverride = null) {
@@ -1501,6 +1544,7 @@ async function loadAgentSnapshot() {
     READ_RANGE, LEADS_RANGE, `${COLD_CALL_ACTIVITY_SHEET}!A:J`,
     `${SUPPRESSION_SHEET}!A:E`, `${CAMPAIGN_INTEGRATIONS_SHEET}!A:I`,
     `${PROVIDER_LEADS_SHEET}!A:N`, 'DemoPlays!A:F', `${INTENT_SHEET}!A:E`,
+    `${GMAIL_OBSERVATION_STATE_SHEET}!A:I`,
   ];
   const response = await sheets().spreadsheets.values.batchGet({
     spreadsheetId: SPREADSHEET_ID, ranges,
@@ -1510,8 +1554,40 @@ async function loadAgentSnapshot() {
   return {
     coldEmail: rows(0), board: rows(1), activityRows: rows(2),
     suppression: rows(3), campaigns: rows(4), providerMappings: rows(5),
-    demoPlays: rows(6), intentFired: rows(7),
+    demoPlays: rows(6), intentFired: rows(7), gmailObservationState: rows(8),
   };
+}
+
+function loadGmailObservationState(rows = []) {
+  gmailObservationHistoryBySender.clear();
+  for (const row of rows.slice(1)) {
+    const senderInboxId = String(row[0] || '').trim();
+    const historyId = String(row[1] || '').trim();
+    if (senderInboxId && historyId) gmailObservationHistoryBySender.set(senderInboxId, historyId);
+  }
+}
+
+async function persistGmailObservationState(senderId, historyId, details = {}) {
+  const response = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID,
+    range: `${GMAIL_OBSERVATION_STATE_SHEET}!A:I` });
+  const rows = response.data.values || [];
+  const index = rows.findIndex((row, i) => i > 0 && String(row[0] || '') === String(senderId));
+  const now = new Date().toISOString();
+  const error = String(details.error || '');
+  const previous = index > 0 ? rows[index] : [];
+  const values = [[senderId, historyId || previous[1] || '', error ? (previous[2] || '') : now,
+    now, error.slice(0, 500), error ? 'unavailable' : 'healthy', details.mode || previous[6] || '',
+    details.mode?.startsWith('bootstrap') ? 'complete' : (previous[7] || 'complete'),
+    String(details.messagesObserved ?? previous[8] ?? '0')]];
+  if (index > 0) {
+    await sheets().spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID,
+      range: `${GMAIL_OBSERVATION_STATE_SHEET}!A${index + 1}:I${index + 1}`,
+      valueInputOption: 'RAW', requestBody: { values } });
+  } else {
+    await sheets().spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID,
+      range: `${GMAIL_OBSERVATION_STATE_SHEET}!A:I`, valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS', requestBody: { values } });
+  }
 }
 
 // Re-resolve a lead's CURRENT sheet row by id, immediately before writing.
@@ -1802,7 +1878,9 @@ async function handleInterested(lead, message = {}, replyText = '', eventType = 
     console.warn(`[handleInterested] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
     return;
   }
-  const interestedNotes = applyHoldToNotes(prependNote(lead.notes, TAG_INTERESTED));
+  // A normal positive reply belongs to deterministic reply automation, not a
+  // person. MANUAL HOLD is reserved for intentional human ownership.
+  const interestedNotes = prependNote(lead.notes, TAG_INTERESTED);
   lead.notes = interestedNotes;
   await sheets().spreadsheets.values.batchUpdate({
     spreadsheetId: SPREADSHEET_ID,
@@ -1821,7 +1899,7 @@ async function handleInterested(lead, message = {}, replyText = '', eventType = 
     { trigger: PROMOTION_TRIGGER.POSITIVE_REPLY, coldEmailTwinCount: coldEmailTwinCount(allLeads, lead.email) },
   );
   const touch = replyTouchAttribution({ occurredAt: message.occurredAt, threadId: message.threadId }, activities);
-  await recordColdCallActivity({
+  await recordColdCallActivityStrict({
     eventId: message.messageId ? `gmail-reply:${message.messageId}` : `${lead.id}:reply:${message.occurredAt || Date.now()}`,
     leadId: coldCallLeadId || `CE-${lead.id}`, sourceLeadId: lead.id,
     email: lead.email, company: cleanCompanyName(lead.company) || lead.company || '',
@@ -1835,7 +1913,7 @@ async function handleInterested(lead, message = {}, replyText = '', eventType = 
       replyTouch: touch,
     }),
   });
-  await recordColdCallActivity({
+  await recordColdCallActivityStrict({
     eventId: `promotion:${message.messageId || `${lead.id}:${message.occurredAt || 'reply'}`}:hot`,
     leadId: coldCallLeadId || `CE-${lead.id}`, sourceLeadId: lead.id,
     email: lead.email, company: cleanCompanyName(lead.company) || lead.company || '',
@@ -1844,6 +1922,7 @@ async function handleInterested(lead, message = {}, replyText = '', eventType = 
     metadata: JSON.stringify({ fromStage: '', toStage: 'hot', trigger: 'positive_reply', sourceEventId: message.messageId ? `gmail-reply:${message.messageId}` : '', ...promotionAttribution(touch) }),
   });
   console.log(`  🔥 Auto-promoted ${lead.company} to Cold Calls kanban`);
+  return coldCallLeadId || `CE-${lead.id}`;
 }
 
 const ACTIVE_REPLY_EVENT_TYPES = Object.freeze({
@@ -1885,9 +1964,9 @@ async function recordActiveReplyActivity(lead, message, replyText, classificatio
   // Re-derive the canonical meaning from the message text, so the stored event
   // carries evidence rather than only a category label.
   const canonical = classifyReplyText(String(replyText || message.snippet || ''), {
-    subject: message.subject || '', currentEmail: lead.email,
+    subject: message.subject || '', currentEmail: lead.email, now: message.occurredAt || null,
   });
-  await recordColdCallActivity({
+  await recordColdCallActivityStrict({
     eventId,
     leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email,
     company: cleanCompanyName(lead.company) || lead.company || '', eventType,
@@ -1914,6 +1993,7 @@ async function recordActiveReplyActivity(lead, message, replyText, classificatio
       evidenceSignals: canonical.signals || [],
       genuineHuman: canonical.genuineHuman === undefined ? null : canonical.genuineHuman,
       returnDate: canonical.returnDate || null,
+      revisitDate: canonical.revisitDate || null,
       // Evidence only. Nothing may act on this without a human approving it.
       proposedEmail: canonical.proposedEmail || null,
       identityMutationAllowed: false,
@@ -2056,7 +2136,7 @@ async function queueDraft(lead, answer) {
 
 // A genuine question. Answer it from the facts if we're confident; otherwise
 // draft it for Deins. Either way the lead is tagged so the dashboard shows it.
-async function handleQuestion(lead, replyText, todaySent, activities = [], outboundObservationOk = true, sender = senderForPersistedLead(lead)) {
+async function handleQuestion(lead, message, replyText, todaySent, activities = [], outboundObservationOk = true, sender = senderForPersistedLead(lead)) {
   const rowNum = await resolveRow(lead.id);
   const answer = await answerQuestion(lead, replyText);
 
@@ -2068,7 +2148,11 @@ async function handleQuestion(lead, replyText, todaySent, activities = [], outbo
   if (mode === 'auto') {
     const humanTouchAt = latestHumanOutboundAt(activities);
     const suppressed = suppressionReason(lead);
-    if (!outboundObservationOk) {
+    if (CHECK_ONLY) {
+      mode = 'draft';
+      gateReason = 'CHECK_ONLY is observation-only and cannot send';
+      answer.reason = `${answer.reason} — held: ${gateReason}`;
+    } else if (!outboundObservationOk) {
       mode = 'draft';
       gateReason = 'manual outbound observation failed, so mailbox state may be stale';
       answer.reason = `${answer.reason} — held: ${gateReason}`;
@@ -2131,19 +2215,14 @@ async function handleQuestion(lead, replyText, todaySent, activities = [], outbo
   const attribution = stageSequenceAttribution({
     acquisition: latestSendAttribution(activities), sequenceId: 'question_auto_answer_v1', step: 1,
   });
-  const result = await sendEmail({ to: lead.email.trim(), subject, body, sender });
+  const delivered = await deliverHardenedWarmReply({ lead, message,
+    action: answer.action || REPLY_RESPONSE_ACTION.AUTO_QUESTION_RESPONSE, body, subject,
+    activities, classification: 'QUESTION' });
+  if (!delivered.delivered) {
+    await queueDraft(lead, { ...answer, reason: `${answer.reason} — hardened delivery blocked: ${delivered.code}` });
+    return;
+  }
   const sentAt = new Date().toISOString();
-  await recordColdCallActivity({
-    eventId: result?.data?.id ? `gmail:${result.data.id}` : `${lead.id}:question-auto-answer:${sentAt}`,
-    leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email,
-    company: cleanCompanyName(lead.company) || lead.company || '', eventType: 'follow_up_sent',
-    occurredAt: sentAt, subject, content: body,
-    metadata: JSON.stringify({
-      gmailMessageId: result?.data?.id || '', gmailThreadId: result?.data?.threadId || '',
-      provider: 'gmail', providerMessageId: result?.data?.id || '', senderInboxId: sender.id,
-      trigger: 'question_auto_answer', ...attribution,
-    }),
-  });
   console.log(`  ✅ Auto-answered ${lead.email} (confidence ${answer.confidence})`);
 
   if (rowNum) {
@@ -2215,7 +2294,7 @@ async function handleRoofingSurveyReply(lead, message, replyText, todaySent, act
         : classification.category === 'wrong_person' ? 'wrong_person_reply'
           : ['out_of_office', 'automated'].includes(classification.category) ? 'out_of_office_reply'
             : 'needs_human_reply';
-  await recordColdCallActivity({
+  await recordColdCallActivityStrict({
     eventId: message.messageId ? `gmail-reply:${message.messageId}` : `${lead.id}:reply:${message.occurredAt || Date.now()}`,
     leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email,
     company: cleanCompanyName(lead.company) || lead.company || '', eventType: roofingEventType,
@@ -2250,7 +2329,8 @@ async function handleRoofingSurveyReply(lead, message, replyText, todaySent, act
       return 'drafted';
     }
     const humanTouchAt = latestHumanOutboundAt(activities);
-    const blocked = (!outboundObservationOk && 'manual outbound observation failed, so mailbox state may be stale')
+    const blocked = (CHECK_ONLY && 'CHECK_ONLY is observation-only and cannot send')
+      || (!outboundObservationOk && 'manual outbound observation failed, so mailbox state may be stale')
       || (humanTouchAt && `a human response was already observed at ${humanTouchAt}`)
       || suppressionReason(lead) || (!SENDING_ENABLED && 'sending disabled') || (todaySent >= DAILY_SEND_LIMIT && 'daily limit reached');
     if (blocked) {
@@ -2258,22 +2338,17 @@ async function handleRoofingSurveyReply(lead, message, replyText, todaySent, act
       await markRoofingReplyState(lead, 'Review', 'replied', ROOFING_DRAFTED_TAG);
       return 'blocked';
     }
-    const attribution = stageSequenceAttribution({
-      acquisition: latestSendAttribution(activities), sequenceId: 'roofing_survey_reply_v1', step: 1,
-    });
-    const result = await sendEmail({ to: lead.email.trim(), subject: 'Re: quick roofing question', body, threadId: message.threadId, inReplyTo: message.rfcMessageId, references: message.rfcMessageId, sender });
-    const sentAt = new Date().toISOString();
-    await recordColdCallActivity({
-      eventId: result?.data?.id ? `gmail:${result.data.id}` : `${lead.id}:roofing-survey-reply:${sentAt}`,
-      leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email,
-      company: cleanCompanyName(lead.company) || lead.company || '', eventType: 'follow_up_sent',
-      occurredAt: sentAt, subject: 'Re: quick roofing question', content: body,
-      metadata: JSON.stringify({
-        gmailMessageId: result?.data?.id || '', gmailThreadId: result?.data?.threadId || message.threadId || '',
-        provider: 'gmail', providerMessageId: result?.data?.id || '', senderInboxId: sender.id,
-        trigger: 'roofing_survey_reply', campaignProfile: ROOFING_SURVEY_PROFILE, ...attribution,
-      }),
-    });
+    const delivered = await deliverHardenedWarmReply({ lead, message,
+      action: REPLY_RESPONSE_ACTION.AUTO_QUESTION_RESPONSE, body,
+      subject: 'Re: quick roofing question', activities, classification: 'ROOFING_POSITIVE' });
+    if (!delivered.delivered) {
+      await queueDraft(lead, { body, confidence: classification.confidence,
+        reason: `roofing survey hardened delivery blocked: ${delivered.code}`,
+        campaignProfile: ROOFING_SURVEY_PROFILE, classification: classification.category,
+        reasonCode: 'hardened_delivery_blocked' });
+      await markRoofingReplyState(lead, 'Review', 'replied', ROOFING_DRAFTED_TAG);
+      return 'blocked';
+    }
     await markRoofingReplyState(lead, 'Replied', 'replied', ROOFING_LINK_SENT_TAG);
     return 'sent';
   }
@@ -2304,14 +2379,50 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
   let replyPassTodaySent = todaySentOverride ?? countTodaySends(leads);
   let attributionActivities = null;
   const failedSenderIds = new Set();
+  const repliesByLead = new Map();
+  const bouncesByLead = new Map();
+  const pendingHistory = new Map();
+  const observedStateBySender = new Map();
+
+  // One incremental mailbox observation per inbox. Gmail query volume now
+  // grows with new mailbox messages, not with the number of CRM leads.
+  for (const sender of GMAIL_SENDERS.filter(item => item.sendEligible)) {
+    const senderLeads = candidates.filter(lead => String(lead.senderInboxId || 'primary') === sender.id);
+    if (!senderLeads.length) continue;
+    try {
+      const observed = await withAuth(() => gmailMailboxObserver.observeMailbox({
+        gmail: gmailForSender(sender), leads: senderLeads,
+        activities: activitiesForCycle || [], senderInboxId: sender.id,
+        senderEmail: sender.email, historyId: gmailObservationHistoryBySender.get(sender.id) || null,
+      }));
+      for (const [leadId, message] of observed.replies) repliesByLead.set(leadId, message);
+      for (const [leadId, message] of observed.bounces) bouncesByLead.set(leadId, message);
+      observerAutomationReadyBySender.set(sender.id, observed.mode === 'history');
+      if (observed.nextHistoryId) pendingHistory.set(sender.id, observed.nextHistoryId);
+      observedStateBySender.set(sender.id, observed);
+      console.log(`[ReplyCheck:${sender.id}] ${observed.mode} observation inspected ${observed.messagesInspected} new/recent message(s) in ${observed.pages} page(s)`);
+    } catch (error) {
+      failedSenderIds.add(sender.id);
+      observerAutomationReadyBySender.set(sender.id, false);
+      try { await withAuth(() => persistGmailObservationState(sender.id,
+        gmailObservationHistoryBySender.get(sender.id) || '', { error: error.message })); } catch (_) { /* already unavailable */ }
+      console.warn(`[ReplyCheck:${sender.id}] mailbox observation failed: ${error.message}`);
+    }
+  }
 
   for (const lead of candidates) {
-    const message = await withAuth(() => getReplyMessage(lead));
-    if (!message) continue;
-    if (message.observationFailed) {
-      failedSenderIds.add(message.senderInboxId);
-      continue;
-    }
+    const rawMessage = repliesByLead.get(lead.id) || null;
+    if (!rawMessage) continue;
+
+    const sender = senderForPersistedLead(lead);
+    const message = {
+      messageId: rawMessage.id, rfcMessageId: gmailMailboxObserver.headerValue(rawMessage.payload, 'Message-ID'),
+      threadId: rawMessage.threadId || '', snippet: rawMessage.snippet || '',
+      body: gmailMailboxObserver.firstPlainText(rawMessage.payload).trim().slice(0, 1500),
+      subject: gmailMailboxObserver.headerValue(rawMessage.payload, 'Subject'),
+      fromAddr: gmailMailboxObserver.parseAddr(gmailMailboxObserver.headerValue(rawMessage.payload, 'From')),
+      occurredAt: new Date(Number(rawMessage.internalDate)).toISOString(), senderInboxId: sender.id,
+    };
 
     found++;
     const company        = cleanCompanyName(lead.company) || lead.email;
@@ -2326,6 +2437,10 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       continue;
     }
     const classification = await classifyReply(lead.company, replyText);
+    const canonicalReply = classifyReplyText(replyText, {
+      subject: message.subject || '', currentEmail: lead.email, now: message.occurredAt || null,
+    });
+    const timingAt = canonicalReply.revisitDate || canonicalReply.returnDate || null;
     classCounts[classification] = (classCounts[classification] || 0) + 1;
 
     const fromNote = (message.fromAddr && message.fromAddr !== lead.email.trim().toLowerCase())
@@ -2337,13 +2452,20 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       await withAuth(async () => {
         if (!attributionActivities) attributionActivities = activitiesForCycle || await readColdCallActivities();
         await recordActiveReplyActivity(lead, message, replyText, classification, attributionActivities);
+        if (timingAt) return handleTimingReply(lead, message, replyText, timingAt, leads, attributionActivities);
         switch (classification) {
           // A genuine question is answered from product-facts.js when we're
           // confident, otherwise drafted for review. Both paths append the
           // warm booking snippet. todaySent enforces the touch cap.
-          case 'QUESTION':       return handleQuestion(lead, replyText, replyPassTodaySent, attributionActivities, outboundObservationOk, senderForPersistedLead(lead));
-          case 'INTERESTED':     return handleInterested(lead, message, replyText, 'positive_reply', leads, attributionActivities);
-          case 'MEETING_REQUEST': return handleInterested(lead, message, replyText, 'meeting_requested', leads, attributionActivities);
+          case 'QUESTION':       return handleQuestion(lead, message, replyText, replyPassTodaySent, attributionActivities, outboundObservationOk, senderForPersistedLead(lead));
+          case 'INTERESTED': {
+            await handleInterested(lead, message, replyText, 'positive_reply', leads, attributionActivities);
+            return handlePositiveAutomation(lead, message, 'INTERESTED', attributionActivities);
+          }
+          case 'MEETING_REQUEST': {
+            await handleInterested(lead, message, replyText, 'meeting_requested', leads, attributionActivities);
+            return handlePositiveAutomation(lead, message, 'MEETING_REQUEST', attributionActivities);
+          }
           case 'NOT_INTERESTED': return handleNotInterested(lead);
           case 'UNSUBSCRIBE':    return handleUnsubscribe(lead);
           case 'WRONG_PERSON':   return handleWrongPerson(lead);
@@ -2373,7 +2495,178 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
   console.log(`[ReplyCheck] ${found} repl${found === 1 ? 'y' : 'ies'} found / ${candidates.length} checked`);
   if (breakdown) console.log(`  → ${breakdown}`);
   console.log();
-  return { ok: failedSenderIds.size === 0, failedSenderIds };
+  // The caller advances checkpoints only AFTER bounce writes and durable
+  // suppression have also succeeded. Returning the pending cursors here keeps
+  // a crash between reply and bounce processing replayable and idempotent.
+  return { ok: failedSenderIds.size === 0, failedSenderIds, bouncesByLead,
+    pendingHistory, observedStateBySender };
+}
+
+async function commitMailboxObservationCheckpoints(observation = {}) {
+  for (const [senderId, historyId] of observation.pendingHistory || []) {
+    const state = observation.observedStateBySender?.get(senderId) || {};
+    await withAuth(() => persistGmailObservationState(senderId, historyId,
+      { mode: state.mode, messagesObserved: state.messagesInspected }));
+    gmailObservationHistoryBySender.set(senderId, historyId);
+  }
+}
+
+async function deliverHardenedWarmReply({ lead, message, action, body, subject, activities, classification,
+  ownerMode = 'reply', sequenceId = 'prospect_reply_v1', validateFresh = null }) {
+  const sender = senderForPersistedLead(lead);
+  const metadataOf = row => { try { return JSON.parse(row.metadata || '{}'); } catch (_) { return {}; } };
+  const result = await deliverProspectReply({
+    lead, sender, thread: { threadId: message.threadId }, inboundMessage: message,
+    action, subject, body, checkOnly: CHECK_ONLY,
+    classification,
+  }, {
+    findDelivered: rfcMessageId => findSuccessfulSequenceSend({ gmail: gmailForSender(sender), rfcMessageId }),
+    existingDelivery: async actionId => activities.some(row => row.eventId === actionId),
+    existingReservation: async actionId => {
+      const reservations = activities.filter(row => row.eventType === 'prospect_reply_reserved' && metadataOf(row).actionId === actionId);
+      const failed = new Set(activities.filter(row => row.eventType === 'prospect_reply_failed').map(row => metadataOf(row).reservationEventId));
+      return { unresolved: reservations.some(row => !failed.has(row.eventId)), attempts: reservations.length };
+    },
+    finalRevalidate: async () => {
+      if (!SENDING_ENABLED) return { allowed: false, code: 'sending_disabled' };
+      if (observerAutomationReadyBySender.get(sender.id) !== true) return { allowed: false, code: 'observer_not_incremental' };
+      // Warm responses are rare, so pay for one fresh batched snapshot at the
+      // last possible moment. This catches a booking, hold, suppression, sender
+      // conflict, or operator change that happened while the reply was classified.
+      const fresh = await withAuth(loadAgentSnapshot);
+      const currentRows = await readLeads(fresh.coldEmail);
+      const current = currentRows.find(row => row.id === lead.id);
+      if (!current || normEmail(current.email) !== normEmail(lead.email)) return { allowed: false, code: 'identity_changed' };
+      const suppressed = new Set((fresh.suppression || []).slice(1).map(row => normEmail(row[0])).filter(Boolean));
+      if (sendSuppressionReason(current, { suppressedEmails: suppressed })) return { allowed: false, code: 'suppressed' };
+      if (String(current.notes || '').includes('[MANUAL HOLD]')) return { allowed: false, code: 'manual_hold' };
+      const freshActivities = await readColdCallActivities(fresh.activityRows);
+      const mine = freshActivities.filter(row => row.sourceLeadId === lead.id || row.leadId === `CE-${lead.id}` || normEmail(row.email) === normEmail(lead.email));
+      let freshSender;
+      try { freshSender = pinnedSenderId(current, mine); } catch (_) { return { allowed: false, code: 'sender_conflict' }; }
+      if (freshSender !== sender.id) return { allowed: false, code: 'sender_changed' };
+      const board = (await readBoardLeads(fresh.board)).find(row => row.id === `CE-${lead.id}` || normEmail(row.email) === normEmail(lead.email)) || {};
+      const callState = deriveCallLifecycle(board, { activities: mine });
+      if (['scheduled','rescheduled'].includes(callState.status)) return { allowed: false, code: 'meeting_booked' };
+      if (CALENDAR_SYNC_ENABLED) {
+        try {
+          const booked = await findLiveBooking({ calendar: calendarForBookingGate(), leadEmail: current.email,
+            calendarId: BOOKING_CALENDAR_ID, appointmentScheduleId: BOOKING_APPOINTMENT_SCHEDULE_ID,
+            ownerEmails: GMAIL_SENDERS.map(item => item.email) });
+          if (booked) return { allowed: false, code: 'meeting_booked_live' };
+        } catch (error) {
+          return { allowed: false, code: 'calendar_unavailable', reason: error.message };
+        }
+      }
+      if (validateFresh) {
+        const extra = await validateFresh({ fresh, current, mine, board, callState });
+        if (!extra?.allowed) return { allowed: false, code: extra?.code || 'warm_trigger_stale', reason: extra?.reason };
+      }
+      const ownership = deriveAutomationOwnership(current, { boardLead: board, activities: mine, callState,
+        suppressionReason: row => sendSuppressionReason(row, { suppressedEmails: suppressed }),
+        sendingEnabled: SENDING_ENABLED, sequencesEnabled: STAGE_SEQUENCES_ENABLED,
+        coldCadenceDue: ownerMode === 'cold',
+        replyResponseDecision: ownerMode === 'reply' ? { send: true, action } : null });
+      const expectedOwner = ownerMode === 'cold' ? 'cold_automation' : 'reply_automation';
+      if (ownership.owner !== expectedOwner || !ownership.sendAllowed) {
+        return { allowed: false, code: ownership.blockedBy || 'ownership', reason: ownership.reason };
+      }
+      const senderCount = activeSenderCounts?.get(sender.id) || 0;
+      if (senderCount >= sender.dailyLimit) return { allowed: false, code: 'sender_quota' };
+      if ((activeQuotaState?.globalCount || 0) >= DAILY_SEND_LIMIT) return { allowed: false, code: 'global_quota' };
+      if (activeWindowQuota) {
+        const window = sendingWindowVerdict(activeWindowQuota, sender.id);
+        if (!window.allowed) return { allowed: false, code: 'window_quota', reason: window.reason };
+      }
+      return { allowed: true };
+    },
+    verifyThread: async ({ threadId, senderEmail, recipientEmail, inboundMessageId }) => {
+      const base = await verifyThreadOwnership({ gmail: gmailForSender(sender), threadId, senderEmail, recipientEmail });
+      if (!base.ok) return base;
+      const current = await gmailForSender(sender).users.threads.get({ userId: 'me', id: threadId, format: 'metadata', metadataHeaders: ['From'] });
+      const ordered = (current.data.messages || []).sort((a, b) => Number(a.internalDate || 0) - Number(b.internalDate || 0));
+      const latest = ordered[ordered.length - 1];
+      return latest?.id === inboundMessageId ? { ok: true } : { ok: false, reason: 'newer thread activity appeared before send' };
+    },
+    persistReservation: async ({ actionId, rfcMessageId, attempt }) => {
+      const eventId = `${actionId}:attempt:${attempt}`;
+      const row = { eventId, leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email,
+        company: cleanCompanyName(lead.company) || lead.company || '', eventType: 'prospect_reply_reserved',
+        occurredAt: new Date().toISOString(), subject, content: '', metadata: JSON.stringify({
+          actionId, action, senderInboxId: sender.id, gmailThreadId: message.threadId,
+          inboundMessageId: message.messageId, rfcMessageId, classification,
+        }) };
+      await recordColdCallActivityStrict(row); activities.push(row); return row;
+    },
+    sendProvider: payload => sendEmail(payload),
+    consumeQuota: () => {
+      if (activeWindowQuota) consumeSendingWindowSuccess(activeWindowQuota, sender.id);
+      if (activeSenderCounts) activeSenderCounts.set(sender.id, (activeSenderCounts.get(sender.id) || 0) + 1);
+      if (activeQuotaState) activeQuotaState.globalCount = Number(activeQuotaState.globalCount || 0) + 1;
+    },
+    persistDelivered: async ({ actionId, rfcMessageId, result, recovered, recovery }) => {
+      const data = result?.data || result || {};
+      const eventId = actionId;
+      if (activities.some(row => row.eventId === eventId)) return;
+      const attribution = stageSequenceAttribution({ acquisition: latestSendAttribution(activities), sequenceId, step: 1 });
+      const row = { eventId, leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email,
+        company: cleanCompanyName(lead.company) || lead.company || '', eventType: 'booking_link_sent',
+        occurredAt: recovered?.occurredAt || new Date().toISOString(), subject, content: body,
+        metadata: JSON.stringify({ actionId, action, classification, senderInboxId: sender.id,
+          gmailMessageId: data.id || data.providerMessageId || '', gmailThreadId: data.threadId || message.threadId,
+          rfcMessageId: data.rfcMessageId || rfcMessageId, inboundMessageId: message.messageId,
+          recoveredAfterCheckpointFailure: Boolean(recovery), ...attribution }) };
+      await recordColdCallActivityStrict(row); activities.push(row);
+    },
+    persistFailure: async ({ actionId, reservation, error }) => {
+      const row = { eventId: `${actionId}:failed`, leadId: `CE-${lead.id}`, sourceLeadId: lead.id,
+        email: lead.email, company: cleanCompanyName(lead.company) || lead.company || '', eventType: 'prospect_reply_failed',
+        occurredAt: new Date().toISOString(), subject, content: '', metadata: JSON.stringify({
+          actionId, reservationEventId: reservation.eventId, senderInboxId: sender.id,
+          error: String(error.message || '').slice(0, 300),
+        }) };
+      await recordColdCallActivityStrict(row); activities.push(row);
+    },
+  });
+  return result;
+}
+
+async function handlePositiveAutomation(lead, message, classification, activities) {
+  const offer = offerForLead(lead);
+  const policy = decideReplyResponse({ classification, confidence: 100, offer, text: message.body || message.snippet || '' });
+  if (!policy.send) return handleNeedsHuman(lead, message.fromAddr);
+  const body = warmResponse({ action: policy.action, lead, offer });
+  const subject = /^re:/i.test(message.subject || '') ? message.subject : `Re: ${message.subject || 'your reply'}`;
+  const delivered = await deliverHardenedWarmReply({ lead, message, action: policy.action, body, subject, activities, classification });
+  if (!delivered.delivered) await handleNeedsHuman(lead, message.fromAddr);
+  return delivered;
+}
+
+async function handleTimingReply(lead, message, replyText, recontactAt, allLeads, activities) {
+  const at = new Date(recontactAt);
+  if (!Number.isFinite(at.getTime()) || at.getTime() <= Date.now()) return handleNeedsHuman(lead, message.fromAddr);
+  const boardId = await upsertColdCallLeadFromEvent(lead, 'follow_up',
+    `Prospect requested recontact at ${at.toISOString()}.`, {
+      trigger: PROMOTION_TRIGGER.TIMING_REPLY, recontactAt: at.toISOString(),
+      coldEmailTwinCount: coldEmailTwinCount(allLeads, lead.email),
+    });
+  if (!boardId) return handleNeedsHuman(lead, message.fromAddr);
+  const eventId = automaticEnrollmentEventId(boardId, 'timing_recontact_v1', at.toISOString());
+  if (!activities.some(row => row.eventId === eventId)) {
+    const row = { eventId, leadId: boardId, sourceLeadId: lead.id, email: lead.email,
+      company: cleanCompanyName(lead.company) || lead.company || '', eventType: SEQUENCE_EVENTS.ENROLLED,
+      occurredAt: message.occurredAt || new Date().toISOString(), subject: '', content: '',
+      metadata: JSON.stringify({ sequenceId: 'timing_recontact_v1', recontactAt: at.toISOString(),
+        enrollmentMode: 'automatic', authorization: 'prospect_stated_date',
+        senderInboxId: message.senderInboxId, gmailThreadId: message.threadId,
+        sourceReplyMessageId: message.messageId }) };
+    await recordColdCallActivityStrict(row); activities.push(row);
+  }
+  const rowNum = await resolveRow(lead.id);
+  if (rowNum) await sheets().spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_NAME}!L${rowNum}`, valueInputOption: 'RAW',
+    requestBody: { values: [[prependNote(lead.notes, `[REPLY: Timing — recontact ${at.toISOString()}]`)]] } });
+  return { scheduled: true, recontactAt: at.toISOString() };
 }
 
 async function writeLateReplyNotes(lead, notes) {
@@ -2548,7 +2841,7 @@ async function checkForBounce(lead) {
   }
 }
 
-async function runBounceCheckPass(leads) {
+async function runBounceCheckPass(leads, observedBounces = null) {
   const candidates = leads.filter(l => l.emailStatus === 'emailed' && isValidEmail(l.email));
   if (!candidates.length) {
     console.log('[BounceCheck] No emailed leads to check.\n');
@@ -2558,7 +2851,11 @@ async function runBounceCheckPass(leads) {
 
   let bounced = 0;
   for (const lead of candidates) {
-    const isBounced = await withAuth(() => checkForBounce(lead));
+    // Normal runtime reuses the mailbox-level observation from ReplyCheck.
+    // The legacy targeted probe remains available only for isolated callers.
+    const isBounced = observedBounces instanceof Map
+      ? observedBounces.has(lead.id)
+      : await withAuth(() => checkForBounce(lead));
     if (isBounced !== true) continue;
 
     const company = cleanCompanyName(lead.company) || lead.email;
@@ -2762,18 +3059,32 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot 
         console.warn(`  ⏸️  intent email deferred → ${lead.email} (original Gmail thread could not be verified)`);
         continue;
       }
-      await sendEmail({
-        to: lead.email.trim(), subject: thread.subject, body,
-        sender,
-        threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references,
+      const delivered = await deliverHardenedWarmReply({
+        lead,
+        message: { messageId: thread.messageId, rfcMessageId: thread.inReplyTo,
+          threadId: thread.threadId, subject: thread.subject, senderInboxId: sender.id },
+        action: 'AUTO_DEMO_ENGAGEMENT_RESPONSE', body, subject: thread.subject,
+        activities, classification: 'DEMO_ENGAGEMENT', ownerMode: 'cold',
+        sequenceId: 'demo_booking_link_v1',
+        validateFresh: async ({ fresh, current }) => {
+          const currentPlays = await readRealDemoPlays(fresh.demoPlays);
+          const played = currentPlays.get(normalizeName(cleanCompanyName(current.company)));
+          if (!played || played.intro < 1 || played.demo < 1) {
+            return { allowed: false, code: 'demo_evidence_missing' };
+          }
+          const currentFired = await loadFiredIntents(fresh.intentFired);
+          if (currentFired.has(`${current.id}|both-audios`)) return { allowed: false, code: 'intent_already_fired' };
+          return { allowed: true };
+        },
       });
+      if (!delivered.delivered) {
+        console.warn(`  ⏸️  intent email deferred → ${lead.email} (hardened delivery: ${delivered.code})`);
+        continue;
+      }
       const intentSentAt = new Date().toISOString();
-      // Provider success consumes every applicable ledger before a fallible
-      // intent/checkpoint write can run.
-      if (intentWindowQuota) consumeSendingWindowSuccess(intentWindowQuota, sender.id);
-      todaySent++;
-      intentQuotaState.globalCount = todaySent;
-      intentSenderCounts.set(sender.id, (intentSenderCounts.get(sender.id) || 0) + 1);
+      // The canonical warm-delivery primitive has already consumed every
+      // applicable success ledger before this secondary trigger checkpoint.
+      todaySent = Number(intentQuotaState.globalCount || todaySent);
       const relatedActivities = activities.filter(row => row.sourceLeadId === lead.id || row.leadId === `CE-${lead.id}`);
       const influence = replyTouchAttribution({ occurredAt: intentSentAt, threadId: thread.threadId }, relatedActivities);
       // Record the fire BEFORE anything else can fail, so a crash after send
@@ -2822,16 +3133,6 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot 
         company: cleanCompanyName(lead.company) || lead.company || '',
         eventType: 'demo_pair_played', occurredAt: play.last || intentSentAt,
         subject: '', content: 'Both demo audio clips were played.', metadata: '',
-      });
-      await recordColdCallActivity({
-        leadId: timelineLeadId, sourceLeadId: lead.id, email: lead.email,
-        company: cleanCompanyName(lead.company) || lead.company || '',
-        eventType: 'booking_link_sent', occurredAt: intentSentAt,
-        subject: thread.subject, content: body,
-        metadata: JSON.stringify({
-          gmailThreadId: thread.threadId, senderInboxId: sender.id, provider: 'gmail', trigger: 'both_audios',
-          ...stageSequenceAttribution({ acquisition: influence, sequenceId: 'demo_booking_link_v1', step: 1 }),
-        }),
       });
       await recordColdCallActivity({
         eventId: `promotion:${lead.id}:both-audios:follow_up`,
@@ -3073,7 +3374,7 @@ async function runHumanOutboundPass(leads, activitiesForCycle, sender = null) {
     const toWrite = report.plans.filter(plan => plan.outcome === 'proposed');
     for (const plan of toWrite) {
       plan.activity.metadata = { ...plan.activity.metadata, provider: 'gmail', senderInboxId: sender.id };
-      await recordColdCallActivity({
+      await recordColdCallActivityStrict({
         ...plan.activity, metadata: JSON.stringify(plan.activity.metadata),
       });
       // Visible to ownership in THIS cycle, without a re-read.
@@ -3541,6 +3842,7 @@ async function run() {
   // Load every authoritative tab in one quota-counted request. A missing
   // safety tab fails the run closed; production migrations create these tabs.
   const snapshot = await withAuth(loadAgentSnapshot);
+  loadGmailObservationState(snapshot.gmailObservationState);
   suppressionSheetReady = true;
   intentSheetReady = true;
   coldCallActivityReady = true;
@@ -3558,18 +3860,39 @@ async function run() {
     console.log(`[target] Controlled run restricted to lead ${TARGET_LEAD_ID}`);
   }
 
-  // INTENT_ONLY still observes manual Gmail responses and derives canonical
-  // ownership before it may send. It skips the other detection passes, but it
-  // is not an escape hatch around mailbox freshness or the centralized gate.
+  // INTENT_ONLY still observes inbound replies, bounces and manual Gmail
+  // responses before deriving canonical ownership. It skips cold/stage send
+  // selection, but is not an escape hatch around mailbox freshness or gates.
   if (INTENT_ONLY && !CHECK_ONLY) {
     const intentBoard = snapshot.boardLeads;
     const intentActivities = snapshot.activities;
     const intentOutbound = await withAuth(() => runHumanOutboundPass(all, intentActivities));
+    const intentDayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+    const intentSenderCounts = senderCountsToday(intentActivities, intentDayKey);
+    const intentQuotaState = { globalCount: Math.max(
+      countTodaySends(allLeadsForDailyCap), successfulSendCountToday(intentActivities, intentDayKey),
+    ) };
+    const intentWindowQuota = createSendingWindowQuota({
+      senderIds: GMAIL_SENDERS.filter(sender => sender.sendEligible).map(sender => sender.id),
+      perSenderLimit: PER_INBOX_RUN_CAP, globalLimit: DAILY_CAP,
+    });
+    activeQuotaState = intentQuotaState;
+    activeWindowQuota = intentWindowQuota;
+    activeSenderCounts = intentSenderCounts;
+    // The three-minute intent worker must observe inbound mail too. Otherwise a
+    // demo-triggered nudge could race a prospect reply, and the canonical warm
+    // primitive would correctly remain blocked forever for lack of freshness.
+    const intentReplies = await runReplyCheckPass(all, intentQuotaState.globalCount,
+      intentOutbound.ok, intentActivities);
+    await runBounceCheckPass(all, intentReplies.bouncesByLead);
+    await commitMailboxObservationCheckpoints(intentReplies);
     const intentOwnershipContext = buildOwnershipContext({
       boardLeads: intentBoard, activities: intentActivities,
       outboundObservationOk: intentOutbound.ok,
     });
-    await withAuth(() => runIntentTriggerPass(all, intentOwnershipContext, snapshot));
+    await withAuth(() => runIntentTriggerPass(all, intentOwnershipContext, snapshot, {
+      sendsBySender: intentSenderCounts, quotaState: intentQuotaState, windowQuota: intentWindowQuota,
+    }));
     return;
   }
 
@@ -3587,6 +3910,15 @@ async function run() {
   const sendsBySender = senderCountsToday(ownershipActivities, senderDayKey);
   todaySent = Math.max(todaySent, successfulSendCountToday(ownershipActivities, senderDayKey));
   dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
+  const quotaState = { globalCount: todaySent };
+  const windowQuota = createSendingWindowQuota({
+    senderIds: GMAIL_SENDERS.filter(sender => sender.sendEligible).map(sender => sender.id),
+    perSenderLimit: PER_INBOX_RUN_CAP,
+    globalLimit: DAILY_CAP,
+  });
+  activeQuotaState = quotaState;
+  activeWindowQuota = windowQuota;
+  activeSenderCounts = sendsBySender;
 
   // Reply-check pass — unconditional; runs even when cap is reached.
   // Mutates emailStatus on replied leads so selectFollowUps excludes them below.
@@ -3597,7 +3929,11 @@ async function run() {
   await runLateReplyCheckPass(all, ownershipActivities);
 
   // Bounce-check pass — marks bounced leads Done before follow-up selection.
-  await runBounceCheckPass(all);
+  await runBounceCheckPass(all, replyObservation.bouncesByLead);
+
+  // A mailbox cursor represents all message effects, including durable bounce
+  // suppression. It is the last observation write, never an early receipt.
+  await commitMailboxObservationCheckpoints(replyObservation);
 
   // CHECK_ONLY is observation-only. Return before constructing any execution
   // context or invoking any send-capable stage/intent/cold path.
@@ -3634,12 +3970,6 @@ async function run() {
   // emailStep, and it cannot resume a held cold sequence. The pass re-reads
   // canonical activities, including any human_response_sent event persisted
   // moments ago, and refuses all execution if mailbox observation failed.
-  const quotaState = { globalCount: todaySent };
-  const windowQuota = createSendingWindowQuota({
-    senderIds: GMAIL_SENDERS.filter(sender => sender.sendEligible).map(sender => sender.id),
-    perSenderLimit: PER_INBOX_RUN_CAP,
-    globalLimit: DAILY_CAP,
-  });
   await runStageSequencePass(all, {
     observationBySender, activitiesForCycle: ownershipActivities,
     boardLeadsForCycle: ownershipBoard, sendsBySender, quotaState, windowQuota,

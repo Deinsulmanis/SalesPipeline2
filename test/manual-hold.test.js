@@ -408,12 +408,12 @@ test('sending cadence, caps and delays are untouched', () => {
 });
 
 test('every send path is accounted for and gated', () => {
-  // Step 10 added exactly one new call site: the stage-sequence pass. Counting
-  // alone would be a weak guard, so this also proves the new one is behind BOTH
-  // the stage feature flag and the existing kill switch. The former
-  // open-triggered cold path was deliberately removed because opens are passive.
+  // Cold and stage are the only remaining raw provider call sites. Every warm
+  // prospect send, including the demo-engagement nudge, shares one adapter.
   const calls = agentSrc.match(/await sendEmail\(/g) || [];
-  assert.equal(calls.length, 5, 'sendEmail call count changed: ' + calls.length);
+  assert.equal(calls.length, 2, 'sendEmail call count changed: ' + calls.length);
+  const warm = agentSrc.slice(agentSrc.indexOf('async function deliverHardenedWarmReply'), agentSrc.indexOf('async function writeLateReplyNotes'));
+  assert.equal((warm.match(/sendEmail\(/g) || []).length, 1, 'warm replies have one canonical provider adapter');
   const ordinary = agentSrc.slice(agentSrc.indexOf('async function deliverOrdinaryColdStep'), agentSrc.indexOf('// Phase 4: mark a lead'));
   assert.equal((ordinary.match(/await sendEmail\(/g) || []).length, 1, 'ordinary steps send from one recovery-safe path');
 

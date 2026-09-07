@@ -131,6 +131,13 @@ test('CHECK_ONLY returns before every stage, intent, or cold send path', () => {
   }
 });
 
+test('CHECK_ONLY blocks both reply auto-response provider paths', () => {
+  const question = agentSource.slice(agentSource.indexOf('async function handleQuestion'), agentSource.indexOf('async function handleNeedsHuman'));
+  assert.match(question, /if \(CHECK_ONLY\)[\s\S]*mode = 'draft'/);
+  const roofing = agentSource.slice(agentSource.indexOf('async function handleRoofingSurveyReply'), agentSource.indexOf('async function runReplyCheckPass'));
+  assert.match(roofing, /CHECK_ONLY && 'CHECK_ONLY is observation-only and cannot send'/);
+});
+
 test('restart recovery probes Gmail before provider delivery and checkpoints strictly', () => {
   const pass = agentSource.slice(agentSource.indexOf('async function runStageSequencePass'), agentSource.indexOf('async function run()'));
   assert.ok(pass.indexOf('findSuccessfulSequenceSend') < pass.indexOf('result = await sendEmail('));

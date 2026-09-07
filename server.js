@@ -56,7 +56,7 @@ const {
   OVERRIDE_KIND, CONTACT_DECISION, buildClassificationOverride, buildActionOverride, reverseOverride,
   evaluateContactChange, buildContactChangeDecision,
 } = require('./integrations/reply-overrides');
-const { REPLY_STATE, resolveReplyState } = require('./integrations/canonical-reply');
+const { REPLY_STATE, LEGACY_REPLY_EVENT_TYPES, resolveReplyState } = require('./integrations/canonical-reply');
 const { REPLY_ACTION, WAITING_ON: REPLY_WAITING_ON } = require('./integrations/reply-operations');
 const {
   classifyCalendarEvent, matchBookingIdentity, bookingLifecycleAction,
@@ -446,6 +446,10 @@ const INTEGRATION_HEALTH_SHEET = 'IntegrationHealth';
 const INTEGRATION_HEALTH_HEADER = ['provider','lastSuccessfulApiCall','lastReceivedWebhook','lastSuccessfulReconciliation','failedEventCount','lastError','updatedAt','lastReconciliationAttempt','lastPartialReconciliation','campaignsAttempted','campaignsSuccessful','campaignsFailed','campaignErrorSummary'];
 const PROVIDER_STATS_SHEET = 'ProviderCampaignStats';
 const PROVIDER_STATS_HEADER = ['internalCampaignId','provider','externalCampaignId','totalLeads','scheduled','sent','replied','interested','unsubscribed','bounced','meetings','problems','replyRate','interestedRate','lastSynchronizedAt'];
+const GMAIL_OBSERVATION_STATE_SHEET = 'GmailObservationState';
+const GMAIL_OBSERVATION_STATE_HEADER = ['senderInboxId','historyId','lastSuccessfulAt','lastAttemptAt','lastError','health','mode','bootstrapState','messagesObserved'];
+const mailboxCheckpointRange = () => `${GMAIL_OBSERVATION_STATE_SHEET}!A:I`;
+const mailboxCheckpointSchema = () => [GMAIL_OBSERVATION_STATE_SHEET, GMAIL_OBSERVATION_STATE_HEADER];
 
 const smartleadClient = new SmartleadClient();
 const smartleadProvider = new SmartleadOutreachProvider({ client: smartleadClient });
@@ -1268,6 +1272,7 @@ function outreachSequenceState(lead) {
 
 async function loadOutreachDataset() {
   await ensureColdEmailSheet();
+  await ensureIntegrationSheet(...mailboxCheckpointSchema());
   const rowObjects = (rows, header) => (rows || []).slice(1)
     .map(row => Object.fromEntries(header.map((field, column) => [field, row[column] || ''])));
 
@@ -1279,6 +1284,7 @@ async function loadOutreachDataset() {
     `${CE_SHEET_NAME}!A:O`, `${CE_SHEET_NAME}!Q:X`, 'ReplyDrafts!A:L',
     `${COLD_CALL_ACTIVITY_SHEET}!A:J`, `${PROVIDER_LEADS_SHEET}!A:N`,
     'DemoPlays!A:F', 'ProposalOpens!A:F', 'ProposalEngaged!A:F', AGENT_READ_RANGE,
+    mailboxCheckpointRange(),
   ];
   const snapshot = await sheets().spreadsheets.values.batchGet({
     spreadsheetId: SPREADSHEET_ID, ranges: snapshotRanges,
@@ -1300,6 +1306,7 @@ async function loadOutreachDataset() {
   const openResponse = responseAt(6);
   const engagedResponse = responseAt(7);
   const boardResponse = responseAt(8);
+  const mailboxObservationResponse = responseAt(9);
 
   ceRowMap.clear();
   const leads = ceRows.slice(1).map((row, index) => {
@@ -1487,6 +1494,7 @@ async function loadOutreachDataset() {
     pipelineAudit, boardLeads,
     demoPlays, demoRows, proposalOpens, proposalEngaged,
     annotatedOpens,        // computed once; the Opens panel reuses it
+    mailboxObservationState: mailboxObservationResponse.data.values || [],
   };
 }
 
@@ -1612,6 +1620,7 @@ app.get('/api/crm/ui-status', requireAuth, (_req, res) => {
     calendarSync: { enabled: enabled(process.env.GOOGLE_CALENDAR_BOOKING_SYNC_ENABLED), configured: Boolean(process.env.GOOGLE_BOOKING_CALENDAR_ID) },
     smartlead: { enabled: enabled(process.env.SMARTLEAD_INTEGRATION_ENABLED), liveMutations: enabled(process.env.SMARTLEAD_LIVE_MUTATIONS_ENABLED) },
     roofingReplyFlow: { enabled: enabled(process.env.ROOFING_SURVEY_REPLY_FLOW_ENABLED) },
+    deployment: { sha: String(process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT_SHA || '').trim() || null },
   });
 });
 
@@ -1731,6 +1740,79 @@ app.get('/api/crm/health', requireAuth, async (req, res) => {
       canonicalReplyBoundary: process.env.CANONICAL_REPLY_BOUNDARY || null,
       funnel,
     });
+    let gmailObserver;
+    try {
+      const rows = dataset.mailboxObservationState || [];
+      gmailObserver = rows.slice(1).map(row => ({
+        senderInboxId: row[0] || '', historyId: row[1] || '', lastSuccessfulAt: row[2] || '',
+        lastAttemptAt: row[3] || '', lastError: row[4] || '', health: row[5] || 'unavailable',
+        mode: row[6] || '', bootstrapState: row[7] || '', messagesObserved: Number(row[8] || 0),
+        checkpointAgeMinutes: row[2] ? Math.max(0, Math.round((Date.now() - Date.parse(row[2])) / 60000)) : null,
+        quotaBackoff: /(?:429|quota|rate limit|backoff)/i.test(String(row[4] || '')),
+      }));
+    } catch (error) {
+      gmailObserver = [{ health: 'unavailable', lastError: `checkpoint state unavailable: ${error.message}` }];
+    }
+    const dayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+    const metadataOf = row => { try { return JSON.parse(row.metadata || '{}'); } catch (_) { return {}; } };
+    const activityToday = (dataset.activities || []).filter(row => row.occurredAt
+      && new Date(row.occurredAt).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' }) === dayKey);
+    const repliesToday = activityToday.filter(row => LEGACY_REPLY_EVENT_TYPES.includes(String(row.eventType || '')));
+    const positiveToday = repliesToday.filter(row => metadataOf(row).canonicalState === REPLY_STATE.POSITIVE
+      || ['positive_reply','meeting_requested'].includes(String(row.eventType || '')));
+    const responseTypes = new Set(['booking_link_sent','human_response_sent','call_booked','meeting_rescheduled']);
+    const newlyStrandedPositive = positiveToday.filter(reply => !(dataset.activities || []).some(row => {
+      const sameLead = String(row.sourceLeadId || '') === String(reply.sourceLeadId || '')
+        || String(row.leadId || '') === String(reply.leadId || '')
+        || (row.email && normalizeEmail(row.email) === normalizeEmail(reply.email));
+      return sameLead && responseTypes.has(String(row.eventType || ''))
+        && Date.parse(row.occurredAt || '') >= Date.parse(reply.occurredAt || '');
+    }));
+    const oldestOverdue = health.findings.find(item => item.id === 'reply.overdue_human_action');
+    const replyAutomation = {
+      day: dayKey,
+      repliesObserved: repliesToday.length,
+      repliesClassified: repliesToday.filter(row => Boolean(metadataOf(row).canonicalState || metadataOf(row).classification)).length,
+      autoResponsesSent: activityToday.filter(row => row.eventType === 'booking_link_sent' && /^AUTO_/.test(String(metadataOf(row).action || ''))).length,
+      humanReviewsCreated: repliesToday.filter(row => metadataOf(row).requiresHumanAttention === true).length,
+      responseFailures: activityToday.filter(row => row.eventType === 'prospect_reply_failed').length,
+      newlyStrandedPositiveReplies: newlyStrandedPositive.length,
+      oldestUnansweredReplyAt: oldestOverdue?.sample?.map(item => item.dueAt).filter(Boolean).sort()[0] || null,
+    };
+    const findingCount = id => Number(health.findings.find(item => item.id === id)?.affected || 0);
+    let eligibleJourneyNotEnrolled = 0;
+    let senderOrThreadUnknown = 0;
+    for (const board of dataset.boardLeads || []) {
+      const email = normalizeEmail(board.email);
+      const exactId = String(board.id || '').replace(/^CE-/, '');
+      const twins = (dataset.leads || []).filter(lead => lead.id === exactId || (email && normalizeEmail(lead.email) === email));
+      const uniqueTwins = [...new Map(twins.map(lead => [lead.id, lead])).values()];
+      if (uniqueTwins.length !== 1) continue;
+      const twin = uniqueTwins[0];
+      const mine = (dataset.activities || []).filter(row => row.sourceLeadId === twin.id
+        || row.leadId === board.id || row.leadId === `CE-${twin.id}`
+        || (email && normalizeEmail(row.email) === email));
+      const callState = deriveCallLifecycle(board, { activities: mine });
+      const hotState = deriveHotState(board, { activities: mine });
+      const verdict = evaluateStageSequence({ boardLead: board, twin, activities: mine, callState, hotState,
+        suppressedEmails, featureEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true' });
+      const senderProof = provenSequenceSenderId(twin, mine);
+      const thread = senderProof.ok ? resolveSequenceThread(mine, { senderInboxId: senderProof.senderInboxId }) : null;
+      if (['follow_up','hot'].includes(displayStageFor(board.stage)) && (!senderProof.ok || !thread?.threadId)) {
+        senderOrThreadUnknown += 1;
+      }
+      const enrollment = automaticEnrollmentDecision({ twin, activities: mine, verdict, senderProof, thread, callState, hotState });
+      if (enrollment.enroll) eligibleJourneyNotEnrolled += 1;
+    }
+    const stuckLeads = {
+      positiveReplyWithoutResponse: newlyStrandedPositive.length,
+      journeyEligibleNotEnrolled: eligibleJourneyNotEnrolled,
+      ownershipNoneWithActionNeeded: findingCount('reply.actionable_without_next_action'),
+      senderOrThreadUnknown,
+      observerUnavailable: gmailObserver.filter(item => item.health !== 'healthy').length,
+      staleHot: findingCount('hot.stale_followup'),
+      overdueFollowUp: findingCount('reply.overdue_human_action'),
+    };
 
     // Drill-down: one check's full affected set, bounded and paginated exactly
     // like every other list endpoint in this CRM.
@@ -1754,6 +1836,10 @@ app.get('/api/crm/health', requireAuth, async (req, res) => {
 
     res.json({
       ...health,
+      gmailObserver,
+      replyAutomation,
+      stuckLeads,
+      deployment: { sha: String(process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT_SHA || '').trim() || null },
       ...(drill ? { drill } : {}),
       generatedMs: Number(process.hrtime.bigint() - startedAt) / 1e6,
       fetchedAt: new Date(dataset.at).toISOString(),

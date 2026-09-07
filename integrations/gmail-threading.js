@@ -104,6 +104,7 @@ async function findOriginalSentThread({ gmail, email, expectedSubject, expectedS
     const messageId = headerValue(message.payload, 'Message-ID').trim();
     if (!message.threadId || !messageId) continue;
     candidates.push({
+      messageId: message.id,
       threadId: message.threadId,
       inReplyTo: messageId,
       references: appendReference(headerValue(message.payload, 'References'), messageId),

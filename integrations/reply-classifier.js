@@ -54,8 +54,7 @@ function deterministicReplyCategory(text, options = {}) {
   const INFORMATIONAL = ['pricing', 'how_it_works', 'send_info'];
   const signals = resolved.signals || [];
   if (resolved.state === REPLY_STATE.POSITIVE
-    && signals.length && signals.every(signal => INFORMATIONAL.includes(signal))
-    && /\?/.test(value)) return 'QUESTION';
+    && signals.length && signals.every(signal => INFORMATIONAL.includes(signal))) return 'QUESTION';
   return CANONICAL_TO_LEGACY[resolved.state] || 'NEEDS_HUMAN';
 }
 
