@@ -7,8 +7,34 @@ const { planOutboundActivity } = require('./human-outbound');
 const norm = v => String(v || '').trim().toLowerCase();
 const addresses = v => String(v || '').split(',').map(parseAddr);
 
-async function proveLegacyEvidence({ lead, board, activities, mailboxes, now = new Date() }) {
+/**
+ * Sender ownership is derived from which mailboxes CLAIM an outbound message,
+ * so the answer is only as trustworthy as the set of mailboxes actually asked.
+ *
+ * The failure this prevents: true evidence is primary AND secondary, but only
+ * primary is authenticated, so claimants = ['primary'] and a genuine CONFLICT
+ * is written to canonical state as PROVEN PRIMARY. Partial provider visibility
+ * does not degrade this gracefully — it manufactures a false proof.
+ *
+ * So coverage is a precondition, not a caller's good intention: every active
+ * sending inbox the registry expects must be present and authenticated, and no
+ * unexpected mailbox may be smuggled in.
+ */
+function assertMailboxCoverage(mailboxes, expectedMailboxIds) {
+  const expected = [...new Set((expectedMailboxIds || []).map(id => String(id).trim()).filter(Boolean))];
+  if (!expected.length) throw new Error('Evidence reconciliation requires the expected sending-mailbox set; refusing to prove from an unknown roster');
+  const supplied = new Set((mailboxes || []).map(mailbox => String(mailbox && mailbox.id || '').trim()).filter(Boolean));
+  const missing = expected.filter(id => !supplied.has(id));
+  if (missing.length) {
+    throw new Error(`Evidence reconciliation requires every active sending mailbox; missing ${missing.join(', ')}. Proving sender ownership from partial provider visibility can turn a CONFLICT into a false PROVEN result`);
+  }
+  const unexpected = [...supplied].filter(id => !expected.includes(id));
+  if (unexpected.length) throw new Error(`Unexpected mailbox supplied to evidence reconciliation: ${unexpected.join(', ')}`);
+}
+
+async function proveLegacyEvidence({ lead, board, activities, mailboxes, expectedMailboxIds, now = new Date() }) {
   if (!lead?.id || !/^\S+@\S+\.\S+$/.test(lead.email || '')) throw new Error('Exact canonical lead identity required');
+  assertMailboxCoverage(mailboxes, expectedMailboxIds);
   const proof = [];
   for (const mailbox of mailboxes) {
     const profile = await providerRead('users.getProfile', {userId:'me'}, p => mailbox.gmail.users.getProfile(p));
@@ -84,4 +110,4 @@ async function applyProvenEvidence({plan,approvedHash,appendEvent,writeSender,re
   if(saved.senderInboxId!==plan.senderInboxId || plan.events.some(event=>!saved.activities.some(row=>row.eventId===event.eventId && row.metadata===event.metadata)))throw new Error('Evidence reconciliation readback mismatch; fail closed');
   return {ok:true,senderInboxId:saved.senderInboxId,threadId:plan.threadId,eventsWritten:plan.events.map(e=>e.eventId)};
 }
-module.exports={proveLegacyEvidence,applyProvenEvidence};
+module.exports={proveLegacyEvidence,applyProvenEvidence,assertMailboxCoverage};
