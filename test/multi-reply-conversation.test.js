@@ -226,3 +226,61 @@ test('dedupe is per Gmail message, never per lead', () => {
   // The agent's own reply loop dedupes on the message id too.
   assert.match(agentSrc, /activities\.some\(row => row\.eventId === `gmail-reply:\$\{message\.messageId\}`\)/);
 });
+
+// ── Gmail rate limiting ─────────────────────────────────────────────────────
+
+test('a rate-limited Gmail read is retried, not treated as mailbox failure', async () => {
+  const { providerRead } = require('../integrations/gmail-mailbox-observer');
+  // Production evidence: with a 45-hour-stale checkpoint the primary observer's
+  // catch-up tripped Gmail's per-minute ceiling and threw, so the checkpoint
+  // never advanced and the next pass re-ran the same oversized scan into the
+  // same wall. The backlog could not drain.
+  const quota = Object.assign(new Error(
+    "Quota exceeded for quota metric 'Total Query Cost' and limit 'Units per minute per user'"),
+  { response: { status: 403 } });
+
+  let calls = 0;
+  const slept = [];
+  const ok = await providerRead('users.messages.get', { id: 'x' }, async () => {
+    calls++;
+    if (calls < 3) throw quota;
+    return { data: { id: 'x' } };
+  }, { sleep: async ms => { slept.push(ms); } });
+  assert.equal(ok.data.id, 'x');
+  assert.equal(calls, 3, 'it retried through the ceiling');
+  assert.deepEqual(slept, [1000, 4000], 'with backoff between attempts');
+
+  // Bounded: it gives up rather than holding a pass open forever, and says why.
+  let attempts = 0;
+  await assert.rejects(
+    () => providerRead('users.messages.get', { id: 'y' }, async () => { attempts++; throw quota; },
+      { sleep: async () => {} }),
+    error => {
+      assert.equal(error.observerDetails.rateLimited, true);
+      assert.equal(error.observerDetails.attempts, 4);
+      return true;
+    });
+  assert.equal(attempts, 4, 'four attempts, then stop');
+
+  // A 403 that is NOT a quota problem is a permissions failure; retrying it
+  // would be pointless traffic against a mailbox that will never answer.
+  let denied = 0;
+  await assert.rejects(
+    () => providerRead('users.messages.get', { id: 'z' }, async () => {
+      denied++;
+      throw Object.assign(new Error('Insufficient Permission'), { response: { status: 403 } });
+    }, { sleep: async () => {} }),
+    error => { assert.equal(error.observerDetails.rateLimited, false); return true; });
+  assert.equal(denied, 1, 'a permissions 403 is not retried');
+
+  // A missing resource keeps its existing meaning — retrying a 404 would
+  // reintroduce the loop this remediation removed.
+  let missing = 0;
+  await assert.rejects(
+    () => providerRead('users.messages.get', { id: 'g' }, async () => {
+      missing++;
+      throw Object.assign(new Error('Requested entity was not found.'), { response: { status: 404 } });
+    }, { sleep: async () => {} }),
+    error => { assert.equal(error.observerDetails.status, 404); return true; });
+  assert.equal(missing, 1, 'a 404 is not retried');
+});

@@ -10,12 +10,42 @@ const OVERLAP_MS = 5 * 60 * 1000;
 const STALE_MS = 90 * 60 * 1000;
 const statusOf = error => Number(error?.response?.status || error?.code);
 
-async function providerRead(action, params, read) {
-  try { return await read(params); }
-  catch (error) {
-    // Deliberately omit the request object: googleapis attaches OAuth headers.
-    error.observerDetails = { action, params, status: statusOf(error), message: error.message };
-    throw error;
+// Gmail rate-limits per user per minute and answers 429, or 403 with a quota
+// reason. Neither says anything is wrong with the mailbox — they say "slow
+// down" — so treating them as failures is what stranded the primary observer:
+// a stale checkpoint means a large catch-up, a large catch-up trips the
+// per-minute ceiling, the whole observation throws, the checkpoint stays put,
+// and the next pass re-runs the same oversized scan into the same wall. The
+// backlog could never drain.
+//
+// Bounded on purpose. Four attempts with exponential backoff is enough to ride
+// out a per-minute ceiling; anything longer would hold a pass open indefinitely
+// and turn one degraded mailbox into a stuck process.
+const QUOTA_RETRY_DELAYS_MS = Object.freeze([1000, 4000, 12000]);
+const isRateLimited = error => {
+  const status = statusOf(error);
+  if (status === 429) return true;
+  // 403 is overloaded: quota exhaustion is retryable, a permissions problem is
+  // not, and retrying the latter would be pointless traffic against a mailbox
+  // that will never answer.
+  return status === 403 && /quota|rate limit|user rate/i.test(String(error?.message || ''));
+};
+
+async function providerRead(action, params, read, { sleep = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await read(params); }
+    catch (error) {
+      if (isRateLimited(error) && attempt < QUOTA_RETRY_DELAYS_MS.length) {
+        await sleep(QUOTA_RETRY_DELAYS_MS[attempt]);
+        continue;
+      }
+      // Deliberately omit the request object: googleapis attaches OAuth headers.
+      error.observerDetails = {
+        action, params, status: statusOf(error), message: error.message,
+        rateLimited: isRateLimited(error), attempts: attempt + 1,
+      };
+      throw error;
+    }
   }
 }
 
