@@ -454,6 +454,7 @@ function resolveSequenceThread(activities = [], options = {}) {
 }
 
 const SENDER_EVIDENCE_EVENTS = Object.freeze([
+  'sender_evidence_reconciled',
   'initial_email_sent', 'follow_up_sent', 'sequence_step_sent', 'booking_link_sent',
   'human_response_sent', 'positive_reply', 'meeting_requested', 'late_reply',
   'question_reply', 'negative_reply', 'unsubscribe_reply', 'wrong_person_reply',

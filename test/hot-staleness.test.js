@@ -269,8 +269,9 @@ test('30. Hot state adds no per-card sheet read', () => {
   const queue = server.slice(server.indexOf("app.get('/api/leads/next-actions'"));
   const body = queue.slice(0, queue.indexOf('\n});'));
   assert.ok(!/for\s*\([^)]*\)\s*\{[^}]*await[^}]*spreadsheets/.test(body), 'no per-lead await');
-  assert.equal((body.match(/spreadsheets\.values\.get/g) || []).length, 3, 'still three fixed reads');
-  assert.match(body, /deriveNextAction\(lead, twin, \{ activities, now \}\)/);
+  assert.equal((body.match(/spreadsheets\.values\.get/g) || []).length, 0, 'no individual reads');
+  assert.equal((body.match(/spreadsheets\.values\.batchGet/g) || []).length, 1, 'one fixed snapshot for all cards and observer health');
+  assert.match(body, /deriveNextAction\(lead, twin, \{ activities, now, observers, suppressedEmails/);
   // The model itself performs no I/O, so it cannot introduce one.
   const block = stateSrc.slice(stateSrc.indexOf('// ── HOT LEAD STALENESS'), stateSrc.indexOf('function buildAction'));
   assert.ok(!/await/.test(block));

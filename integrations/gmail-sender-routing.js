@@ -33,6 +33,7 @@ function allowedForLead(sender, lead = {}) {
 // so the read-only visibility layer reads the SAME list this resolver does and
 // the two cannot drift; the membership itself is unchanged.
 const SENDER_ATTRIBUTED_EVENTS = Object.freeze([
+  'sender_evidence_reconciled',
   'initial_email_sent', 'follow_up_sent', 'sequence_step_sent',
   'booking_link_sent', 'human_response_sent',
 ]);

@@ -91,6 +91,7 @@ const {
 } = require('./integrations/campaign-versions');
 const { findOriginalSentThread, resolveColdFollowUpThread } = require('./integrations/gmail-threading');
 const gmailMailboxObserver = require('./integrations/gmail-mailbox-observer');
+const { planMailboxEvents, commitObservation } = require('./integrations/mailbox-observation-events');
 const { offerForLead, warmResponse } = require('./integrations/offer-config');
 const { ACTION: REPLY_RESPONSE_ACTION, decideReplyResponse } = require('./integrations/reply-response-policy');
 const { deliverProspectReply } = require('./integrations/prospect-reply-delivery');
@@ -407,6 +408,7 @@ const gmail  = () => google.gmail({ version: 'v1', auth: oauth2Client });
 const GMAIL_SENDERS = configuredSenders();
 const PRIMARY_GMAIL_SENDER = GMAIL_SENDERS.find(sender => sender.id === 'primary');
 const gmailObservationHistoryBySender = new Map();
+const gmailObservationDetailsBySender = new Map();
 let activeWindowQuota = null;
 let activeQuotaState = null;
 let activeSenderCounts = null;
@@ -1560,10 +1562,13 @@ async function loadAgentSnapshot() {
 
 function loadGmailObservationState(rows = []) {
   gmailObservationHistoryBySender.clear();
+  gmailObservationDetailsBySender.clear();
   for (const row of rows.slice(1)) {
     const senderInboxId = String(row[0] || '').trim();
     const historyId = String(row[1] || '').trim();
     if (senderInboxId && historyId) gmailObservationHistoryBySender.set(senderInboxId, historyId);
+    if (senderInboxId) gmailObservationDetailsBySender.set(senderInboxId,
+      { lastSuccessfulObservationAt: row[2] || null, previousHealth: row[5] || null });
   }
 }
 
@@ -1587,6 +1592,25 @@ async function persistGmailObservationState(senderId, historyId, details = {}) {
     await sheets().spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID,
       range: `${GMAIL_OBSERVATION_STATE_SHEET}!A:I`, valueInputOption: 'RAW',
       insertDataOption: 'INSERT_ROWS', requestBody: { values } });
+  }
+  const readback = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID,
+    range: `${GMAIL_OBSERVATION_STATE_SHEET}!A:I` });
+  const saved = (readback.data.values || []).find(row => row[0] === senderId);
+  if (!saved || values[0].some((value, i) => String(saved[i] || '') !== String(value))) {
+    throw new Error(`Observer checkpoint readback mismatch for ${senderId}`);
+  }
+}
+
+async function recordMailboxActivity(event) {
+  // Read before retry as well as after append: a timed-out successful Sheets
+  // request must not create a second deterministic event on retry.
+  const current = await readColdCallActivities();
+  const previous = current.find(row => row.eventId === event.eventId);
+  if (previous) return;
+  await recordColdCallActivityStrict(event);
+  const saved = (await readColdCallActivities()).find(row => row.eventId === event.eventId);
+  if (!saved || saved.eventType !== event.eventType || saved.metadata !== event.metadata) {
+    throw new Error(`Mailbox event readback failed: ${event.eventId}`);
   }
 }
 
@@ -1899,7 +1923,7 @@ async function handleInterested(lead, message = {}, replyText = '', eventType = 
     { trigger: PROMOTION_TRIGGER.POSITIVE_REPLY, coldEmailTwinCount: coldEmailTwinCount(allLeads, lead.email) },
   );
   const touch = replyTouchAttribution({ occurredAt: message.occurredAt, threadId: message.threadId }, activities);
-  await recordColdCallActivityStrict({
+  if (!activities.some(row => row.eventId === `gmail-reply:${message.messageId}`)) await recordColdCallActivityStrict({
     eventId: message.messageId ? `gmail-reply:${message.messageId}` : `${lead.id}:reply:${message.occurredAt || Date.now()}`,
     leadId: coldCallLeadId || `CE-${lead.id}`, sourceLeadId: lead.id,
     email: lead.email, company: cleanCompanyName(lead.company) || lead.company || '',
@@ -2365,11 +2389,8 @@ async function handleRoofingSurveyReply(lead, message, replyText, todaySent, act
 // classifies it with Haiku, and routes to the appropriate handler. Mutates
 // lead.emailStatus in-place so selectFollowUps() excludes replied leads.
 async function runReplyCheckPass(leads, todaySentOverride = null, outboundObservationOk = true, activitiesForCycle = null) {
-  const candidates = leads.filter(l => l.emailStatus === 'emailed' && isValidEmail(l.email));
-  if (!candidates.length) {
-    console.log('[ReplyCheck] No emailed leads to check.\n');
-    return { ok: true, failedSenderIds: new Set() };
-  }
+  const candidates = leads.filter(l => isValidEmail(l.email) && (l.lastEmailedAt || Number(l.emailStep) > 0));
+  activitiesForCycle = activitiesForCycle || await withAuth(() => readColdCallActivities());
   console.log(`[ReplyCheck] Checking ${candidates.length} emailed lead${candidates.length === 1 ? '' : 's'} for replies...`);
 
   let found = 0;
@@ -2387,34 +2408,75 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
   // One incremental mailbox observation per inbox. Gmail query volume now
   // grows with new mailbox messages, not with the number of CRM leads.
   for (const sender of GMAIL_SENDERS.filter(item => item.sendEligible)) {
-    const senderLeads = candidates.filter(lead => String(lead.senderInboxId || 'primary') === sender.id);
-    if (!senderLeads.length) continue;
+    // Include every CRM identity: an already-replied lead can write again, and
+    // an unknown legacy sender is evidence to observe, never a default inbox.
+    const senderLeads = candidates;
+    const log = (state, details) => console.log(`[GmailObserver:${sender.id}] ${state} ${JSON.stringify(details)}`);
     try {
       const observed = await withAuth(() => gmailMailboxObserver.observeMailbox({
         gmail: gmailForSender(sender), leads: senderLeads,
         activities: activitiesForCycle || [], senderInboxId: sender.id,
         senderEmail: sender.email, historyId: gmailObservationHistoryBySender.get(sender.id) || null,
+        ...gmailObservationDetailsBySender.get(sender.id), log,
       }));
-      for (const [leadId, message] of observed.replies) repliesByLead.set(leadId, message);
-      for (const [leadId, message] of observed.bounces) bouncesByLead.set(leadId, message);
-      observerAutomationReadyBySender.set(sender.id, observed.mode === 'history');
-      if (observed.nextHistoryId) pendingHistory.set(sender.id, observed.nextHistoryId);
+      const plan = await planMailboxEvents({ observation: observed, gmail: gmailForSender(sender),
+        leads: senderLeads, activities: activitiesForCycle, senderInboxId: sender.id, senderEmail: sender.email });
+      if (!DRY_RUN) {
+        await commitObservation({ observation: observed, plan, activities: activitiesForCycle,
+          appendEvent: event => withAuth(() => recordMailboxActivity(event)),
+          suppress: item => withAuth(() => addSuppression(item.email, item.reason, item.company, 'gmail-observer')),
+          checkpoint: state => withAuth(() => persistGmailObservationState(sender.id, state.nextHistoryId,
+            { mode: 'history', messagesObserved: state.messagesInspected })),
+        });
+        gmailObservationHistoryBySender.set(sender.id, observed.nextHistoryId);
+      }
+      // Recovery is evidence-only. Historical replies never enter handlers
+      // that promote, enroll, draft or send, even in a send-capable process.
+      for (const item of plan.replies) {
+        if (!item.historical && !CHECK_ONLY) repliesByLead.set(item.leadId, { ...item.message, observedSenderId: sender.id });
+      }
+      observerAutomationReadyBySender.set(sender.id, !DRY_RUN && observed.mode !== 'bootstrap');
       observedStateBySender.set(sender.id, observed);
+      log(observed.recovered ? 'mailbox_catchup_completed' : 'history_incremental_ok', {
+        historyId: observed.nextHistoryId, from: observed.from || null, messages: observed.messagesInspected,
+        unavailable: observed.unavailable.length, eventsPersisted: plan.events.length, ignored: plan.ignored.length,
+        replies: plan.replies.length, historicalReview: plan.replies.filter(item => item.historical).length,
+      });
       console.log(`[ReplyCheck:${sender.id}] ${observed.mode} observation inspected ${observed.messagesInspected} new/recent message(s) in ${observed.pages} page(s)`);
     } catch (error) {
       failedSenderIds.add(sender.id);
       observerAutomationReadyBySender.set(sender.id, false);
       try { await withAuth(() => persistGmailObservationState(sender.id,
-        gmailObservationHistoryBySender.get(sender.id) || '', { error: error.message })); } catch (_) { /* already unavailable */ }
-      console.warn(`[ReplyCheck:${sender.id}] mailbox observation failed: ${error.message}`);
+        gmailObservationHistoryBySender.get(sender.id) || '',
+        { error: JSON.stringify({ message: error.message, ...error.observerDetails }) })); } catch (_) { /* already unavailable */ }
+      log('observer_unhealthy', { message: error.message, ...error.observerDetails });
     }
+  }
+
+  // CHECK_ONLY persisted fresh inbound evidence without running response
+  // handlers. The normal worker may evaluate a still-fresh pending item later;
+  // recovered history is permanently excluded from this retry queue.
+  if (!CHECK_ONLY) for (const row of activitiesForCycle) {
+    let metadata; try { metadata = JSON.parse(row.metadata || '{}'); } catch (_) { continue; }
+    if (!metadata.responsePending || metadata.recoveredDuringOutage || failedSenderIds.has(metadata.senderInboxId)) continue;
+    if (Date.now() - Date.parse(row.occurredAt) > 90 * 60000) continue;
+    const mine = activitiesForCycle.filter(item => item.sourceLeadId === row.sourceLeadId);
+    if (mine.some(item => item.eventType === 'gmail_reply_evaluated' && JSON.parse(item.metadata || '{}').sourceEventId === row.eventId)) continue;
+    if (mine.some(item => ['human_response_sent','booking_link_sent'].includes(item.eventType) && item.occurredAt >= row.occurredAt)) continue;
+    const old = repliesByLead.get(row.sourceLeadId);
+    if (old && Number(old.internalDate) >= Date.parse(row.occurredAt)) continue;
+    repliesByLead.set(row.sourceLeadId, { id: metadata.gmailMessageId, threadId: metadata.gmailThreadId,
+      internalDate: String(Date.parse(row.occurredAt)), snippet: row.content,
+      observedSenderId: metadata.senderInboxId, payload: { mimeType: 'text/plain', body: { data: Buffer.from(row.content || '').toString('base64url') },
+        headers: [{ name:'From',value:metadata.from }, { name:'Subject',value:row.subject }, { name:'Message-ID',value:metadata.rfcMessageId }] } });
   }
 
   for (const lead of candidates) {
     const rawMessage = repliesByLead.get(lead.id) || null;
     if (!rawMessage) continue;
 
-    const sender = senderForPersistedLead(lead);
+    const sender = GMAIL_SENDERS.find(item => item.id === rawMessage.observedSenderId);
+    if (!sender || (lead.senderInboxId && lead.senderInboxId !== sender.id)) continue;
     const message = {
       messageId: rawMessage.id, rfcMessageId: gmailMailboxObserver.headerValue(rawMessage.payload, 'Message-ID'),
       threadId: rawMessage.threadId || '', snippet: rawMessage.snippet || '',
@@ -2476,6 +2538,10 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
           default:               return handleNeedsHuman(lead, message.fromAddr);
         }
       });
+      await recordMailboxActivity({ eventId: `gmail-evaluated:${sender.id}:${message.messageId}`,
+        leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email, company: lead.company,
+        eventType: 'gmail_reply_evaluated', occurredAt: new Date().toISOString(), subject: '', content: '',
+        metadata: JSON.stringify({ sourceEventId: `gmail-reply:${message.messageId}`, senderInboxId: sender.id }) });
     }
   }
 

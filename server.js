@@ -52,6 +52,10 @@ const {
 } = require('./integrations/campaign-versions');
 const { buildFunnelAnalytics } = require('./integrations/funnel-analytics');
 const { buildCrmHealth } = require('./integrations/crm-health');
+const { observerHealth } = require('./integrations/gmail-observer-health');
+const { observeMailbox } = require('./integrations/gmail-mailbox-observer');
+const { planMailboxEvents } = require('./integrations/mailbox-observation-events');
+const { proveLegacyEvidence, applyProvenEvidence } = require('./integrations/gmail-evidence-reconciliation');
 const {
   OVERRIDE_KIND, CONTACT_DECISION, buildClassificationOverride, buildActionOverride, reverseOverride,
   evaluateContactChange, buildContactChangeDecision,
@@ -1738,18 +1742,14 @@ app.get('/api/crm/health', requireAuth, async (req, res) => {
       appointmentScheduleId: BOOKING_APPOINTMENT_SCHEDULE_ID,
       calendarSyncState,
       canonicalReplyBoundary: process.env.CANONICAL_REPLY_BOUNDARY || null,
+      mailboxObservationState: dataset.mailboxObservationState,
+      observerSenderIds: configuredSenders().filter(item => item.sendEligible).map(item => item.id),
       funnel,
     });
     let gmailObserver;
     try {
       const rows = dataset.mailboxObservationState || [];
-      gmailObserver = rows.slice(1).map(row => ({
-        senderInboxId: row[0] || '', historyId: row[1] || '', lastSuccessfulAt: row[2] || '',
-        lastAttemptAt: row[3] || '', lastError: row[4] || '', health: row[5] || 'unavailable',
-        mode: row[6] || '', bootstrapState: row[7] || '', messagesObserved: Number(row[8] || 0),
-        checkpointAgeMinutes: row[2] ? Math.max(0, Math.round((Date.now() - Date.parse(row[2])) / 60000)) : null,
-        quotaBackoff: /(?:429|quota|rate limit|backoff)/i.test(String(row[4] || '')),
-      }));
+      gmailObserver = observerHealth(rows, { senderIds: configuredSenders().filter(item => item.sendEligible).map(item => item.id) });
     } catch (error) {
       gmailObserver = [{ health: 'unavailable', lastError: `checkpoint state unavailable: ${error.message}` }];
     }
@@ -2507,10 +2507,14 @@ app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
     let twin = null;
     try {
       twin = await findColdEmailTwin(req.params.id, lead.email);
+      const dataset = await getOutreachDataset();
+      const observers = observerHealth(dataset.mailboxObservationState || [], {
+        senderIds: configuredSenders().filter(item => item.sendEligible).map(item => item.id) });
       pipeline = {
         automation: deriveAutomationState(twin),
         conflict: automationConflict(lead, twin),
-        nextAction: deriveNextAction(lead, twin, { activities }),
+        nextAction: deriveNextAction(lead, twin, { activities, observers,
+          sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true' }),
         acquisition: acquisitionAttribution(activities),
         // Which inbox owns this conversation. A Pipeline lead resolves it
         // through its linked ColdEmail identity and that lead's canonical
@@ -2579,12 +2583,11 @@ app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
 // what turns the board into a work queue and what the leak audit runs against.
 app.get('/api/leads/next-actions', requireAuth, async (_req, res) => {
   try {
-    const [boardResponse, ceResponse, activityResponse] = await Promise.all([
-      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: AGENT_READ_RANGE }),
-      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:L` }),
-      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${COLD_CALL_ACTIVITY_SHEET}!A:J` })
-        .catch(() => ({ data: {} })),
-    ]);
+    const snapshot = await sheets().spreadsheets.values.batchGet({ spreadsheetId: SPREADSHEET_ID,
+      ranges: [AGENT_READ_RANGE, `${CE_SHEET_NAME}!A:X`, `${COLD_CALL_ACTIVITY_SHEET}!A:J`,
+        `${GMAIL_OBSERVATION_STATE_SHEET}!A:I`, 'Suppression!A:A'] });
+    const [boardResponse, ceResponse, activityResponse, observerResponse, suppressionResponse] =
+      snapshot.data.valueRanges.map(data => ({ data }));
 
     const leads = (boardResponse.data.values || []).slice(1).map(row => {
       const lead = {};
@@ -2602,7 +2605,7 @@ app.get('/api/leads/next-actions', requireAuth, async (_req, res) => {
       const twin = {
         id: row[0] || '', company: row[1] || '', email: row[3] || '',
         stage: row[7] || '', emailStatus: row[8] || '', lastEmailedAt: row[9] || '',
-        emailStep: row[10] || '', notes: row[11] || '',
+        emailStep: row[10] || '', notes: row[11] || '', senderInboxId: row[20] || '',
       };
       if (twin.id && !twinsById.has(twin.id)) twinsById.set(twin.id, twin);
       const key = normalizeEmail(twin.email);
@@ -2621,6 +2624,9 @@ app.get('/api/leads/next-actions', requireAuth, async (_req, res) => {
     }
 
     const now = new Date();
+    const observers = observerHealth(observerResponse.data.values || [], { now,
+      senderIds: configuredSenders().filter(item => item.sendEligible).map(item => item.id) });
+    const suppressedEmails = new Set((suppressionResponse.data.values || []).slice(1).map(row => normalizeEmail(row[0])));
     const entries = leads.map(lead => {
       const email = normalizeEmail(lead.email);
       const twin = twinsById.get(String(lead.id).replace(/^CE-/, '')) || twinsByEmail.get(email) || null;
@@ -2633,7 +2639,8 @@ app.get('/api/leads/next-actions', requireAuth, async (_req, res) => {
         name: `${lead.first || ''} ${lead.last || ''}`.trim() || lead.company || lead.email || lead.id,
         company: lead.company || '',
         stage: displayStageFor(lead.stage),
-        nextAction: deriveNextAction(lead, twin, { activities, now }),
+        nextAction: deriveNextAction(lead, twin, { activities, now, observers, suppressedEmails,
+          sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true' }),
       };
     });
 
@@ -3708,6 +3715,10 @@ app.get('/api/leads/:id/sequence', requireAuth, async (req, res) => {
     const senderCount = sender ? (senderCountsToday(ctx.allActivities, dayKey).get(sender.id) || 0) : null;
     const globalCount = successfulSendCountToday(ctx.allActivities, dayKey);
     const globalLimit = Number(process.env.DAILY_SEND_LIMIT || 80);
+    const observerDataset = await getOutreachDataset();
+    const observer = observerHealth(observerDataset.mailboxObservationState || [], {
+      senderIds: configuredSenders().filter(item => item.sendEligible).map(item => item.id),
+    }).find(item => item.senderInboxId === senderProof.senderInboxId);
     const latestEnrollment = ctx.activities.filter(row => row.eventType === SEQUENCE_EVENTS.ENROLLED)
       .sort((a, b) => String(b.occurredAt || '').localeCompare(String(a.occurredAt || '')))[0];
     let enrollmentMetadata = {};
@@ -3718,6 +3729,7 @@ app.get('/api/leads/:id/sequence', requireAuth, async (req, res) => {
     else if (!senderProof.ok) gateReason = senderProof.reason;
     else if (!thread) gateReason = 'sender-pinned conversation thread is not proven';
     else if (!sender?.sendEligible) gateReason = 'owning sender is not delivery eligible';
+    else if (observer?.health !== 'healthy') gateReason = 'automated journey active; blocked — Gmail observer unavailable';
     else if (senderCount >= sender.dailyLimit) gateReason = `owning sender daily quota reached (${senderCount}/${sender.dailyLimit})`;
     else if (globalCount >= globalLimit) gateReason = `global daily quota reached (${globalCount}/${globalLimit})`;
     else if (!verdict.dueNow) gateReason = verdict.reason || 'waiting for the next due time';
@@ -3735,6 +3747,7 @@ app.get('/api/leads/:id/sequence', requireAuth, async (req, res) => {
       threadStatus: thread ? 'pinned evidence found; live mailbox verification occurs before send' : 'unproven',
       threadId: thread?.threadId || '',
       sendGate: { allowed: gateReason.startsWith('ready after'), reason: gateReason },
+      observer,
       catalogue: Object.values(SEQUENCES).map(def => ({
         id: def.id, label: def.label, maxSteps: def.maxSteps, requiresEnrollment: def.requiresEnrollment,
       })),
@@ -4980,6 +4993,78 @@ function operationalMailbox(senderInboxId) {
   auth.setCredentials(gmailInboxCredentialsFor(entry));
   return { id, email: entry.email, gmail: google.gmail({ version: 'v1', auth }) };
 }
+
+// Read-only provider trace. No worker launch, provider send or checkpoint write.
+app.get('/api/ops/mailbox-diagnostic', requireAuth, async (req, res) => {
+  try {
+    const dataset = await getOutreachDataset({ force: true });
+    const results = [];
+    for (const sender of configuredSenders().filter(item => item.sendEligible)) {
+      const mailbox = operationalMailbox(sender.id);
+      const row = (dataset.mailboxObservationState || []).find(row => row[0] === sender.id) || [];
+      const trace = [];
+      try {
+        const observation = await observeMailbox({ ...mailbox, senderInboxId: sender.id, senderEmail: mailbox.email,
+          leads: dataset.leads, activities: dataset.activities, historyId: row[1] || null,
+          lastSuccessfulObservationAt: row[2] || null, previousHealth: row[5] || null,
+          log: (state, details) => trace.push({ state, ...details }) });
+        const plan = await planMailboxEvents({ observation, gmail: mailbox.gmail, leads: dataset.leads,
+          activities: dataset.activities, senderInboxId: sender.id, senderEmail: mailbox.email });
+        results.push({ senderInboxId: sender.id, before: row, mode: observation.mode, trace,
+          from: observation.from, nextHistoryId: observation.nextHistoryId,
+          discovered: observation.discoveredCount, examined: observation.messagesInspected,
+          unavailable: observation.unavailable, ignored: plan.ignored.length,
+          proposedEvents: plan.events.map(({ content, ...event }) => event), applied: false, sends: 0 });
+      } catch (error) { results.push({ senderInboxId: sender.id, before: row, trace, error: error.message, ...error.observerDetails, applied: false }); }
+    }
+    res.json({ results, applied: false });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+async function legacyEvidencePlan(leadId) {
+  const dataset = await getOutreachDataset({ force: true });
+  const leads = dataset.leads.filter(row => row.id === leadId);
+  if (leads.length !== 1) throw new Error('One exact ColdEmail identity is required');
+  const lead = leads[0];
+  if (dataset.leads.filter(row => normalizeEmail(row.email) === normalizeEmail(lead.email)).length !== 1) throw new Error('Duplicate CRM identity; reconciliation blocked');
+  const board = dataset.boardLeads.find(row => row.id === `CE-${leadId}` || normalizeEmail(row.email) === normalizeEmail(lead.email));
+  if (!board) throw new Error('Only current Pipeline leads may be reconciled');
+  const activities = dataset.activities.filter(row => row.sourceLeadId === lead.id || row.leadId === board.id
+    || row.leadId === `CE-${lead.id}` || normalizeEmail(row.email) === normalizeEmail(lead.email));
+  return proveLegacyEvidence({ lead, board, activities,
+    mailboxes: configuredSenders().filter(item => item.credentialConfigured).map(item => operationalMailbox(item.id)) });
+}
+
+app.get('/api/ops/legacy-evidence/:leadId', requireAuth, async (req, res) => {
+  try { res.json(await legacyEvidencePlan(req.params.leadId)); }
+  catch (error) { res.status(409).json({ error: error.message }); }
+});
+
+app.post('/api/ops/legacy-evidence/:leadId', requireAuth, async (req, res) => {
+  if (agentState.running || automationLaunchReserved) return res.status(409).json({ error: 'Observer/agent active; retry after it finishes' });
+  automationLaunchReserved = true;
+  try {
+    const plan = await legacyEvidencePlan(req.params.leadId);
+    const result = await applyProvenEvidence({ plan, approvedHash: req.body?.proofHash,
+      appendEvent: async event => {
+        const rows = await readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER);
+        if (!rows.some(row => row.eventId === event.eventId)) await appendColdCallActivities([event]);
+      },
+      writeSender: async senderInboxId => {
+        const row = await findCERow(req.params.leadId);
+        if (!row) throw new Error('Lead disappeared before evidence write');
+        await sheets().spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!U${row}`,
+          valueInputOption: 'RAW', requestBody: { values: [[senderInboxId]] } });
+      },
+      readback: async () => {
+        const dataset = await getOutreachDataset({ force: true });
+        return { senderInboxId: dataset.leads.find(row => row.id === req.params.leadId)?.senderInboxId, activities: dataset.activities };
+      },
+    });
+    res.json({ ...result, before: plan.before, sends: 0, holdsReleased: 0, journeysEnrolled: 0 });
+  } catch (error) { res.status(409).json({ error: error.message }); }
+  finally { automationLaunchReserved = false; }
+});
 
 // Exact provider-evidence recovery for ordinary steps. This route has no send
 // capability: it can only checkpoint a message already present in SENT, from

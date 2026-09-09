@@ -355,7 +355,7 @@ test('51/52/53. Next Action reflects active, paused and finished journeys', () =
   }));
   assert.equal(active.type, ACTION_TYPE.SEQUENCE_STEP);
   assert.equal(active.owner, ACTION_OWNER.AUTOMATION);
-  assert.equal(active.label, 'Hot follow-up #1');
+  assert.equal(active.label, 'Hot follow-up #1 — automated follow-up scheduled');
   assert.equal(active.dueAt, '2026-08-30T10:00:00.000Z');
 
   const paused = deriveNextAction({ stage: 'hot' }, null, ctx({

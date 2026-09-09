@@ -67,7 +67,7 @@ test('scenario 4b: Hot with no follow-up date has no defined next step', () => {
   assert.equal(next.needsAttention, true);
   assert.equal(next.dueAt, null);
   // a human-set date resolves it
-  const dated = deriveNextAction({ stage: 'hot', followup: '2026-09-01' }, { emailStatus: 'replied' });
+  const dated = deriveNextAction({ stage: 'hot', followup: '2026-09-01' }, { emailStatus: 'replied' }, { now: new Date('2026-08-31T12:00:00Z') });
   assert.equal(dated.needsAttention, false);
   assert.equal(dated.source, 'followup-field');
 });

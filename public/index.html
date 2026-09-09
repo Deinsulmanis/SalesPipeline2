@@ -5525,6 +5525,14 @@ function renderCrmHealth(data) {
         <div class="health-meta">${esc(item.category)}${item.affected ? ' · ' + item.affected + ' affected' : ''}${item.classification ? ' · ' + esc(item.classification) : ''}${item.requiresHumanReview ? ' · needs review' : ''}</div>
       </div>`).join('')
     : '<div class="health-finding" data-sev="info"><b>No findings</b><small>Every check passed.</small></div>';
+  document.getElementById('crm-health-body').innerHTML += (data.gmailObserver || []).map(item => `
+    <div class="health-finding" data-sev="${esc(item.severity || 'warning')}">
+      <b>${esc(item.senderInboxId)} Gmail — ${esc(item.health)}</b>
+      <small>Mode: ${esc(item.mode || 'unknown')} · Cursor: ${esc(item.cursorState || 'unknown')} · Checkpoint age: ${esc(item.checkpointAgeMinutes == null ? 'unknown' : item.checkpointAgeMinutes + ' minutes')}</small>
+      <small>Last success: ${esc(item.lastSuccessfulAt || 'never')} · Last attempt: ${esc(item.lastAttemptAt || 'never')}</small>
+      <small>Last error: ${esc(item.lastError || 'none')} · Backoff: ${item.quotaBackoff ? 'yes' : 'none'}</small>
+      <div class="health-meta">Warning after ${esc(item.warningAfterMinutes)} minutes · Critical after ${esc(item.criticalAfterMinutes)} minutes</div>
+    </div>`).join('');
 }
 
 function toggleCrmHealth() {

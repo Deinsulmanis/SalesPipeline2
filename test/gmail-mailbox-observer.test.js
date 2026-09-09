@@ -33,7 +33,7 @@ test('bootstrap checkpoints now and replays no historical messages for 1,000 lea
   assert.deepEqual({ lists, gets, profiles }, { lists: 0, gets: 0, profiles: 1 });
 });
 
-test('expired History performs a controlled bootstrap without replaying recent mail', async () => {
+test('expired History refuses to discard an outage without a persisted last-success timestamp', async () => {
   let lists = 0; let profiles = 0;
   const error = new Error('history expired'); error.response = { status: 404 };
   const gmail = { users: {
@@ -41,10 +41,8 @@ test('expired History performs a controlled bootstrap without replaying recent m
     messages: { list: async () => { lists++; return { data: { messages: [{ id: 'old' }] } }; }, get: async () => { throw new Error('must not fetch old mail'); } },
     getProfile: async () => { profiles++; return { data: { historyId: '200' } }; },
   } };
-  const result = await observeMailbox({ gmail, historyId: '100', leads: [], activities: [], senderInboxId: 'primary', senderEmail: 'sender@example.com' });
-  assert.equal(result.mode, 'bootstrap_after_stale_history');
-  assert.equal(result.messagesInspected, 0);
-  assert.deepEqual({ lists, profiles }, { lists: 0, profiles: 1 });
+  await assert.rejects(() => observeMailbox({ gmail, historyId: '100', leads: [], activities: [], senderInboxId: 'primary', senderEmail: 'sender@example.com' }), /persisted lastSuccessfulObservationAt/);
+  assert.deepEqual({ lists, profiles }, { lists: 0, profiles: 0 });
 });
 
 test('a truncated History listing fails closed instead of skipping events', async () => {

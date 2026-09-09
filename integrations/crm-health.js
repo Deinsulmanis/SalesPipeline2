@@ -54,6 +54,44 @@ const { OVERRIDE_KIND, OVERRIDE_STATUS } = require('./reply-overrides');
 const SEVERITY = Object.freeze({
   HEALTHY: 'healthy', INFO: 'info', WARNING: 'warning', CRITICAL: 'critical',
 });
+const { observerHealth } = require('./gmail-observer-health');
+const { provenSequenceSenderId } = require('./stage-sequences');
+
+function observerChecks(context, index) {
+  if (!context.mailboxObservationState) return [];
+  const observers = observerHealth(context.mailboxObservationState, { senderIds: context.observerSenderIds || [], now: context.now });
+  const out = [];
+  for (const observer of observers) {
+    const blocked = [];
+    for (const board of context.boardLeads) {
+      const id = index.boardToLead.get(board.id);
+      const lead = index.byId.get(id) || {};
+      const activities = index.activityByLead.get(id) || [];
+      const state = evaluateStageSequence({ boardLead: board, twin: lead, activities,
+        callState: deriveCallLifecycle(board, { activities, now: context.now }),
+        featureEnabled: context.sequencesEnabled, now: context.now });
+      if (state.status === 'active' && !state.stopReason && provenSequenceSenderId(lead, activities).senderInboxId === observer.senderInboxId) {
+        blocked.push({ leadId: id, boardId: board.id, company: board.company, journey: state.sequenceId });
+      }
+    }
+    const unavailable = observer.health !== 'healthy';
+    out.push(finding({ id: `observer.${observer.senderInboxId}.freshness`, category: CATEGORY.SYNC,
+      severity: observer.severity, status: unavailable ? STATUS.FAIL : STATUS.PASS,
+      summary: `${observer.senderInboxId === 'primary' ? 'Primary' : observer.senderInboxId} Gmail observer ${unavailable ? 'unhealthy' : 'healthy'} — ${unavailable ? blocked.length : 0} automated journeys blocked`,
+      affected: unavailable ? blocked.length : 0, sample: unavailable ? blocked : [], evidence: observer,
+      classification: 'operational', requiresHumanReview: unavailable }));
+    if (observer.cursorState === 'invalid') out.push(finding({ id: `observer.${observer.senderInboxId}.history_cursor`,
+      category: CATEGORY.SYNC, severity: SEVERITY.CRITICAL, status: STATUS.FAIL,
+      summary: 'Gmail History cursor rejected; controlled mailbox catch-up required', evidence: observer, classification: 'operational' }));
+  }
+  const gaps = context.activities.filter(row => row.eventType === 'gmail_observation_gap');
+  if (gaps.length) out.push(finding({ id: 'observer.provider_evidence_unavailable', category: CATEGORY.SYNC,
+    severity: SEVERITY.WARNING, status: STATUS.FAIL, affected: gaps.length,
+    summary: `${gaps.length} Gmail resources returned 404; their IDs are retained, but deleted content cannot be reconstructed.`,
+    sample: gaps.map(row => ({ eventId: row.eventId, ...JSON.parse(row.metadata || '{}') })),
+    classification: 'historical', requiresHumanReview: true }));
+  return out;
+}
 
 // Ordered worst-first. Used for aggregation and sorting; never averaged, so a
 // single critical finding can never be diluted by a hundred healthy ones.
@@ -1186,6 +1224,7 @@ function buildCrmHealth(input = {}) {
   }
 
   const groups = [
+    ['observer', () => observerChecks(context, index)],
     ['identity', () => identityChecks(context, index)],
     ['reply', () => replyChecks(context, index)],
     ['outreach', () => outreachChecks(context, index)],

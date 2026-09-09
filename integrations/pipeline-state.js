@@ -998,11 +998,15 @@ function sequenceNextAction(lead, context, withManual) {
 
   if (seq.status === 'active' && !seq.stopReason) {
     const step = (seq.step || 0) + 1;
+    const observerBlocked = context.observer && context.observer.health !== 'healthy';
     return buildAction({
-      type: ACTION_TYPE.SEQUENCE_STEP, label: `${label} #${step}`,
+      type: ACTION_TYPE.SEQUENCE_STEP, label: observerBlocked
+        ? `${label} #${step} — automated journey active; blocked — Gmail observer unavailable`
+        : `${label} #${step} — automated follow-up ${seq.dueNow ? 'due' : 'scheduled'}`,
       dueAt: seq.nextDueAt || null, owner: ACTION_OWNER.AUTOMATION,
+      status: observerBlocked ? ACTION_STATUS.BLOCKED : undefined,
       source: 'stage-sequence', sequenceState: seq, now,
-      reason: seq.featureEnabled
+      reason: observerBlocked ? 'Automated journey active; blocked — Gmail observer unavailable' : seq.featureEnabled
         ? (seq.reason || 'scheduled recovery step')
         : (seq.reason || 'scheduled') + ' — stage sending is currently disabled',
     });
@@ -1208,7 +1212,29 @@ function deriveNextAction(boardLead, twin, context = {}) {
   // happens next, so this outranks the Hot and Call Booked branches below.
   // Terminal stages still come first: a closed opportunity has no next action,
   // and the engine stops any sequence on one anyway.
-  if (context.sequenceState) return sequenceNextAction(lead, context, withManual);
+  // Resolve the canonical sequence even when an aggregate caller did not load
+  // it. Lazy imports avoid the shared timing-module dependency cycle.
+  const { evaluateStageSequence, provenSequenceSenderId } = require('./stage-sequences');
+  const { deriveAutomationOwnership } = require('./automation-ownership');
+  const callState = deriveCallLifecycle(lead, { activities, now });
+  const sequenceState = context.sequenceState || evaluateStageSequence({ boardLead: lead, twin: twin || {},
+    activities, now, callState, hotState: deriveHotState(lead, { activities, now }),
+    suppressedEmails: context.suppressedEmails || new Set(), featureEnabled: context.sequencesEnabled === true });
+  const ownership = twin?.email ? deriveAutomationOwnership(twin, { boardLead: lead, activities, callState, sequenceState,
+    now, sequencesEnabled: context.sequencesEnabled === true || sequenceState.featureEnabled,
+    suppressionReason: item => sendSuppressionReason(item, { suppressedEmails: context.suppressedEmails || new Set() }),
+    humanTouchAt: latestEventAt(activities, HUMAN_TOUCH_EVENTS) }) : null;
+  if (hasManualHold(twin?.notes || '') && !manualHoldReleased(twin.notes, now) && sequenceState.status !== 'none') {
+    return buildAction({ type: ACTION_TYPE.BLOCKED_BY_HOLD, label: 'Blocked by manual hold', dueAt: null,
+      owner: ACTION_OWNER.HUMAN, status: ACTION_STATUS.BLOCKED, source: 'canonical-ownership',
+      reason: 'MANUAL HOLD — a person must decide whether to resume', needsAttention: true, now });
+  }
+  if (sequenceState.status !== 'none' && !['scheduled','rescheduled','outcome_pending'].includes(callState.status)
+    && (!ownership || !['human','meeting','waiting','none'].includes(ownership.owner))) {
+    const senderProof = provenSequenceSenderId(twin || {}, activities);
+    const observer = context.observer || context.observers?.find(item => item.senderInboxId === senderProof.senderInboxId);
+    return sequenceNextAction(lead, { ...context, sequenceState, observer }, withManual);
+  }
 
   // ── Call Booked — the call lifecycle is the authority ────────────────────
   if (stage === 'call_booked') return callNextAction(lead, { activities, now });

@@ -207,9 +207,10 @@ test('10. sender visibility does not alter quotas or read availability', () => {
 });
 
 test('11. sender visibility does not alter thread ownership or the pinning rule', () => {
-  // senderEvidence is the pinning input. Its membership is unchanged: the event
-  // list was named, not edited.
+  // Sender evidence includes an explicitly reconciled provider proof. It still
+  // cannot default an unknown owner or override competing mailbox evidence.
   assert.deepEqual([...SENDER_ATTRIBUTED_EVENTS], [
+    'sender_evidence_reconciled',
     'initial_email_sent', 'follow_up_sent', 'sequence_step_sent',
     'booking_link_sent', 'human_response_sent',
   ]);
