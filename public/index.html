@@ -591,6 +591,9 @@
   /* ── MODAL ── */
   .overlay { display: none; position: fixed; inset: 0; background: var(--scrim); backdrop-filter: blur(4px); z-index: var(--z-sticky); align-items: center; justify-content: center; padding: 20px; }
   .overlay.open { display: flex; }
+  #resume-overlay { display: none; position: fixed; inset: 0; background: var(--scrim); backdrop-filter: blur(4px); z-index: calc(var(--z-sticky) + 10); align-items: center; justify-content: center; padding: 20px; }
+  #resume-overlay.open { display: flex; }
+  #resume-overlay .modal { max-height: calc(100dvh - 40px); overflow-y: auto; }
 
   .modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 28px; width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; }
 
@@ -4272,10 +4275,10 @@ const LOSS_OUTCOME_LABELS = [
 
 // ── RESUME AUTOMATION ───────────────────────────────────────────────────────
 //
-// Lifts the operator's own manual hold, then asks the ownership engine what
-// happens next. It is not a send button and not an enrol button: the server
-// removes the tag, re-derives ownership, and reports whatever it finds —
-// including a blocker that is still in the way.
+// Explicitly authorizes one safe stage journey. The server validates, releases
+// and reads back the hold, then enrolls. Actual delivery remains scheduled.
+let resumeSubmitting = false;
+let resumeModalLeadId = null;
 
 function closeResumeAutomationModal(e) {
   if (e && e.target !== document.getElementById('resume-overlay')) return;
@@ -4285,33 +4288,36 @@ function closeResumeAutomationModal(e) {
 function openResumeAutomationModal() {
   const lead = leads.find(item => item.id === detailId);
   if (!lead) return;
+  resumeModalLeadId = lead.id;
   document.getElementById('resume-body').innerHTML = `
     <div class="ghost-facts">
       <div class="ghost-fact"><span class="ghost-fact-k">Lead</span><span class="ghost-fact-v">${esc(lead.company || lead.email || detailId)}</span></div>
       <div class="ghost-fact"><span class="ghost-fact-k">Stage</span><span class="ghost-fact-v">${esc(stageLabel(lead.stage))}</span></div>
     </div>
-    <div class="react-note">Remove manual hold and let the system re-evaluate this lead for stage-based automation?</div>
-    <div class="react-reassure">This sends no email and enrols nothing. Every other gate still applies — suppression, replies, a manual Gmail response, a booked meeting, sender and thread proof, identity and quotas. If one of them still blocks the lead, it will be shown.</div>
+    <div class="react-note">Return this lead to automation by enrolling its one safe stage or recovery journey?</div>
+    <div class="react-reassure">Resume validates the current state, removes your hold and enrolls the journey. Nothing sends immediately. If safety checks fail, the hold stays or is restored, and the reason is shown.</div>
     <div class="form-actions" style="margin-top:14px">
       <button type="button" class="btn-cancel" onclick="closeResumeAutomationModal()">Keep hold</button>
-      <button type="button" class="btn-save" onclick="submitResumeAutomation()">Remove hold and re-evaluate</button>
+      <button type="button" class="btn-save" onclick="submitResumeAutomation()">Resume automation</button>
     </div>`;
   document.getElementById('resume-overlay').classList.add('open');
 }
 
 async function submitResumeAutomation() {
-  const leadId = detailId;
-  if (!leadId) return;
+  const leadId = resumeModalLeadId;
+  if (!leadId || resumeSubmitting) return;
+  resumeSubmitting = true;
   setSaving(true);
   try {
     const resp = await fetch(`/api/leads/${encodeURIComponent(leadId)}/resume-automation`, { method: 'POST' });
     if (!resp.ok) {
-      const { message } = await apiError(resp, 'The manual hold was not removed.');
+      const { message } = await apiError(resp, 'Cannot resume automation. Refresh to confirm the current hold state.');
       showToast(message, 'error');
+      await refreshLeadEverywhere(leadId);
       return;
     }
     const data = await resp.json().catch(() => ({}));
-    showToast(data.message || 'Manual hold removed.', 'success');
+    showToast(data.message || 'Automation journey enrolled. Nothing was sent.', 'success');
     // What the lead was handed back TO — stated separately so a remaining
     // blocker is not mistaken for the action having failed.
     if (data.blockedBy) {
@@ -4320,8 +4326,10 @@ async function submitResumeAutomation() {
     closeResumeAutomationModal();
     await refreshLeadEverywhere(leadId);
   } catch (error) {
-    showToast('The manual hold was not removed: ' + error.message, 'error');
+    showToast('Resume result could not be confirmed. Refresh or retry safely: ' + error.message, 'error');
+    await refreshLeadEverywhere(leadId);
   } finally {
+    resumeSubmitting = false;
     setSaving(false);
   }
 }
@@ -4473,7 +4481,7 @@ function renderPipelineState(pipeline) {
         <span class="pipeline-row-label">Manual hold</span>
         <span class="pipeline-row-val">
           <button type="button" class="btn-reactivate" onclick="openResumeAutomationModal()">Resume automation</button>
-          <small>Removes your hold and re-evaluates this lead for stage-based automation. It does not send anything.</small>
+          <small>Returns this lead to its one safe stage or recovery journey. Nothing sends immediately.</small>
         </span>
       </div>`;
 
@@ -5114,6 +5122,12 @@ let reactState = null;
 async function renderReactivationControls(leadId) {
   const host = document.getElementById('d-reactivation');
   if (!host || !leadId) return;
+  const pipelineLead = leads.find(item => item.id === leadId);
+  if (pipelineLead && !['closed_won', 'closed_lost'].includes(pipelineLead.stage)) {
+    reactState = null;
+    host.innerHTML = '';
+    return;
+  }
   host.innerHTML = '<div class="react-note">Checking reactivation options…</div>';
   const unavailable = why => {
     // An eligibility lookup that FAILED is not the same as a lead with no

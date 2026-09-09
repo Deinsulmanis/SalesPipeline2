@@ -113,12 +113,12 @@ test('explicit no-show and cancellation authorize recovery, elapsed time alone d
   assert.equal(noShow.authorization, 'explicit_lifecycle'); assert.equal(cancel.enroll, true);
   assert.equal(automaticEnrollmentDecision({ ...enrollmentBase, verdict: { offer: null }, callState: { status: 'outcome_pending' }, activities: [] }).enroll, false);
 });
-test('MANUAL HOLD blocks demo and Hot auto-enrollment but explicit lifecycle remains authorized', () => {
+test('MANUAL HOLD blocks auto-enrollment including explicit lifecycle recovery', () => {
   const twin = { notes: '[MANUAL HOLD]' };
   assert.equal(automaticEnrollmentDecision({ ...enrollmentBase, twin, verdict: { offer: 'hot_stale_v1' }, activities: [],
     hotState: { staleness: 'stale', waitingOn: 'waiting_on_prospect' } }).enroll, false);
   assert.equal(automaticEnrollmentDecision({ ...enrollmentBase, twin, verdict: { offer: 'no_show_recovery_v1' },
-    callState: { status: 'no_show' }, activities: [ev('meeting_no_show', '2026-09-01T18:00:00Z')] }).enroll, true);
+    callState: { status: 'no_show' }, activities: [ev('meeting_no_show', '2026-09-01T18:00:00Z')] }).enroll, false);
 });
 
 test('CHECK_ONLY returns before every stage, intent, or cold send path', () => {

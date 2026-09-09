@@ -29,7 +29,7 @@ const {
   coldReactivationVerdict, coldReactivationSuppressionReader,
   REACTIVATABLE_BLOCKERS, MANUAL_HOLD_TAG,
   deriveCallLifecycle, callLifecycleActions, CALL_STATUS,
-  LOSS_OUTCOME_IDS,
+  LOSS_OUTCOME_IDS, releaseHoldFromNotes,
 } = require('../integrations/pipeline-state');
 const { deriveAutomationOwnership, OWNER, BLOCKED_BY } = require('../integrations/automation-ownership');
 const { buildActivityTimeline } = require('../integrations/activity-timeline');
@@ -56,7 +56,7 @@ const twin = (over = {}) => ({
 function verdictFor(boardLead, { activities = [], sequenceState = null, row = {}, suppressed = [] } = {}) {
   const lead = twin(row);
   const callState = boardLead ? deriveCallLifecycle(boardLead, { activities, now: NOW }) : null;
-  const ownership = deriveAutomationOwnership(lead, {
+  const ownership = deriveAutomationOwnership({ ...lead, notes: releaseHoldFromNotes(lead.notes) }, {
     boardLead, activities, callState,
     suppressionReason: coldReactivationSuppressionReader({ suppressedEmails: new Set(suppressed) }),
     sendingEnabled: true, coldCadenceDue: true, now: NOW,

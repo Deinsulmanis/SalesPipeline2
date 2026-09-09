@@ -105,11 +105,11 @@ test('6. stage movement alone still never removes the hold', () => {
   // remover at all, which would now pass only because that function happens to
   // be named differently — false assurance. It instead pins the real property:
   // exactly one route releases a hold, and it is the explicit one.
-  const releaseSites = (serverSrc.match(/releaseHoldFromNotes\(/g) || []).length;
-  assert.equal(releaseSites, 1, 'exactly one place may release a hold');
+  const handoffSites = (serverSrc.match(/pending = resumePipeline\(/g) || []).length;
+  assert.equal(handoffSites, 1, 'exactly one route may invoke the hold-release transaction');
   const resumeRoute = serverSrc.slice(serverSrc.indexOf("app.post('/api/leads/:id/resume-automation'"),
     serverSrc.indexOf("app.post('/api/leads/:id/human-response'"));
-  assert.match(resumeRoute, /releaseHoldFromNotes\(/, 'and it is the resume-automation route');
+  assert.match(resumeRoute, /pending = resumePipeline\(/, 'and it is the resume-automation route');
   // Nothing else clears a hold under any other name.
   assert.ok(!/clearHoldFromNotes|removeManualHold/.test(serverSrc));
   const stagePath = serverSrc.slice(serverSrc.indexOf('if (stageRequiresHold(nextStage))'), serverSrc.indexOf('eventType: \'stage_changed\''));

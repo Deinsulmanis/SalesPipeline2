@@ -43,6 +43,7 @@ const root = path.join(__dirname, '..');
 const readSource = file => fs.readFileSync(file, 'utf8').split('\r\n').join('\n');
 const serverSrc = readSource(path.join(root, 'server.js'));
 const browser = readSource(path.join(root, 'public', 'index.html'));
+const CORE = readSource(path.join(root, 'integrations', 'pipeline-resume.js'));
 
 const ROUTE = serverSrc.slice(
   serverSrc.indexOf("app.post('/api/leads/:id/resume-automation'"),
@@ -82,9 +83,10 @@ test('3/4. it is hidden for Closed Won and Closed Lost, and refused server-side'
   assert.match(render, /const terminalNow = \['closed_won', 'closed_lost'\]\.includes\(currentStage\)/);
   // Hiding a button is presentation. The route refuses independently, so a
   // stale drawer or a direct call cannot resume a closed opportunity.
-  assert.match(ROUTE, /\['closed_won', 'closed_lost'\]\.includes\(stage\)/);
-  assert.match(ROUTE, /code: 'terminal_stage'/);
-  assert.match(ROUTE, /there is no automation to resume/);
+  assert.match(ROUTE, /pending = resumePipeline\(/);
+  assert.match(CORE, /\['closed_won', 'closed_lost'\]\.includes\(displayStageFor/);
+  assert.match(CORE, /fail\('terminal_stage'/);
+  assert.match(CORE, /there is no automation to resume/);
 });
 
 // ── 5–6. What the action does ───────────────────────────────────────────────
@@ -117,14 +119,14 @@ test('5b. permanent suppression tags survive a hold release', () => {
 });
 
 test('6. ownership is re-derived after the release and reported back', () => {
-  assert.match(ROUTE, /deriveAutomationOwnership\(twin, \{/);
-  assert.match(ROUTE, /ownershipSummary\(ownership, stage\)/);
-  for (const field of ['owner:', 'blockedBy:', 'headline:', 'journey:']) {
-    assert.ok(ROUTE.includes(field), `the response reports ${field}`);
+  assert.match(CORE, /deriveAutomationOwnership\(twin, \{/);
+  assert.match(CORE, /ownershipSummary\(ownership, displayStageFor/);
+  for (const field of ['owner:', 'blockedBy:', 'journey:', 'nextAction,']) {
+    assert.ok(CORE.includes(field), `the response reports ${field}`);
   }
   // Read back before anything downstream trusts the release.
-  assert.match(ROUTE, /const stillHeld = after\.filter\(twin => hasManualHold/);
-  assert.match(ROUTE, /code: 'release_unconfirmed'/);
+  assert.match(CORE, /hasManualHold\(after.twins\[0\].notes\)/);
+  assert.match(CORE, /fail\('release_unconfirmed'/);
 });
 
 // ── 7–9. Stage-aware behaviour after release ────────────────────────────────
@@ -136,7 +138,7 @@ test('7. a released Follow Up lead can be owned by demo_follow_up_v1', () => {
   const after = inStage(RELEASED, 'follow_up', { sequenceState: offering('demo_follow_up_v1') });
   assert.equal(after.owner, OWNER.RECOVERY_SEQUENCE);
   assert.equal(after.evidence.offer, 'demo_follow_up_v1');
-  // Offered, not enrolled: releasing a hold does not enrol anything.
+  // A projected tag removal alone is not enrollment; Resume records the event.
   assert.equal(after.sequenceAllowed, false);
   assert.equal(after.blockedBy, BLOCKED_BY.AWAITING_ENROLLMENT);
   // And with no qualifying journey it says so rather than resuming cold.
@@ -228,14 +230,15 @@ test('15. identity, meeting and quota gates are untouched by the release', () =>
 
 // ── 16–18. It cannot send, enrol, or create a second owner ──────────────────
 
-test('16. the action itself sends nothing and enrols nothing', () => {
+test('16. the action may enroll but sends nothing and never changes stage', () => {
   for (const forbidden of ['sendEmail', 'sendGmail', 'messages.send', 'runOutreach',
     'attemptInitial', 'attemptFollowUp', 'enrollSequence', 'applyResumeToNotes']) {
     assert.ok(!ROUTE.includes(forbidden), `resume-automation must not call ${forbidden}`);
   }
   // It writes exactly one kind of lead state — the notes cell — plus an audit
-  // row. No stage, no outcome, no sequence enrolment.
-  assert.match(ROUTE, /writeColdEmailNotes\(twin, releaseHoldFromNotes/);
+  // row and canonical enrollment. No stage or outcome writes.
+  assert.match(CORE, /await writeNotes\(confirmed.twins\[0\], releaseHoldFromNotes/);
+  assert.match(CORE, /eventType: continuing \? SEQUENCE_EVENTS.RESUMED : SEQUENCE_EVENTS.ENROLLED/);
   assert.ok(!/!M\$\{rowNum\}|!V\$\{rowNum\}|!U\$\{rowNum\}/.test(ROUTE),
     'the route must not write stage, outcome or meeting cells');
   // And it says so in the response, so no caller can read it as a send.
@@ -257,8 +260,8 @@ test('17. a remaining blocker is surfaced, not silently swallowed', () => {
   // The confirmation states what will and will not happen.
   const modal = browser.slice(browser.indexOf('function openResumeAutomationModal'),
     browser.indexOf('async function submitResumeAutomation'));
-  assert.match(modal, /Remove manual hold and let the system re-evaluate this lead for stage-based automation\?/);
-  assert.match(modal, /sends no email and enrols nothing/);
+  assert.match(modal, /enrolling its one safe stage or recovery journey/);
+  assert.match(modal, /Nothing sends immediately/);
   assert.ok(!/fetch\(/.test(modal), 'opening the confirmation writes nothing');
 });
 
@@ -281,11 +284,11 @@ test('18. the one-owner invariant survives a release in every stage', () => {
 // ── 19–20. Audit trail, and Resume is not Reactivate ────────────────────────
 
 test('19. releasing a hold records a canonical audit event', () => {
-  assert.match(ROUTE, /eventType: 'automation_hold_released'/);
+  assert.match(CORE, /eventType: 'automation_hold_released'/);
   // Deterministic id, so a retry reconciles instead of stacking rows.
-  assert.match(ROUTE, /stableActivityId\('hold-released'/);
-  for (const field of ['trigger:', 'actor:', 'previousHold: true', 'stage,', 'resultingOwner', 'resultingBlocker']) {
-    assert.ok(ROUTE.includes(field), `the audit row records ${field}`);
+  assert.match(CORE, /digest\(\{ version: stateVersion\(s\), journey \}\)/);
+  for (const field of ['trigger:', 'actor:', 'previousHold: true', 'stage:', 'resultingOwner', 'resultingBlocker']) {
+    assert.ok(CORE.includes(field), `the audit row records ${field}`);
   }
   // It renders as its own event, and reports the consequence.
   const [entry] = buildActivityTimeline({

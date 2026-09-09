@@ -259,7 +259,12 @@ function deriveAutomationOwnership(lead = {}, {
   }
 
   // ── 3. Suppression — the sender's OWN rule, never a copy of it ───────────
-  const suppressed = typeof suppressionReason === 'function' ? suppressionReason(lead) : null;
+  // A caller omitting the suppression reader cannot authorize a held journey.
+  // Scheduled ordinary-cold reactivation retains its hold until its separate
+  // lifecycle is resolved; Pipeline Resume must explicitly remove it.
+  const suppressed = String(lead.notes || '').includes('[MANUAL HOLD]')
+    ? '[MANUAL HOLD]'
+    : typeof suppressionReason === 'function' ? suppressionReason(lead) : null;
   if (suppressed) {
     const isHold = String(suppressed).includes('[MANUAL HOLD]');
     return verdict({
@@ -268,14 +273,9 @@ function deriveAutomationOwnership(lead = {}, {
         ? 'a MANUAL HOLD blocks cold automation on this lead'
         : `suppressed (${suppressed}); no automated send may occur`,
       blockedBy: isHold ? BLOCKED_BY.MANUAL_HOLD : BLOCKED_BY.SUPPRESSION,
-      // A hold blocks generic demo/Hot automation too. Only an explicit
-      // lifecycle authorization (no-show, cancellation, selected timing date)
-      // may run a recovery journey while the cold hold remains in place.
-      sequenceAllowed: isHold && sequencesEnabled && Boolean(sequenceState
-        && sequenceState.status === 'active'
-        && ['no_show_recovery_v1', 'cancelled_rebook_v1', 'timing_recontact_v1']
-          .includes(String(sequenceState.sequenceId || ''))),
-      evidence: { suppressionReason: suppressed },
+      sequenceAllowed: false,
+      evidence: { suppressionReason: suppressed, offer: sequenceState?.offer || null,
+        offers: sequenceState?.offers || [], sequenceId: sequenceState?.sequenceId || null },
     });
   }
 
@@ -387,7 +387,8 @@ function deriveAutomationOwnership(lead = {}, {
     }
   }
   if ([WAITING_ON.PROSPECT, WAITING_ON.DECISION_MAKER].includes(operation.waitingOn)
-    && operation.action === REPLY_ACTION.WAIT) {
+    && operation.action === REPLY_ACTION.WAIT
+    && !(sequenceState?.status === 'active' && !sequenceState.stopReason)) {
     // An autoresponder with no date, or a genuine "ball in their court". No
     // human work, but nothing for cold cadence to do either — and crucially, an
     // automated reply must never look like a live conversation.
@@ -548,6 +549,8 @@ function ownershipSummary(ownership, stage = '') {
     };
   }
   if (blocked === BLOCKED_BY.MANUAL_HOLD) {
+    if (journey) return { headline: `${label(journey)} available — blocked by manual hold`,
+      detail: `Resume automation to return this lead to the ${label(journey)} journey. Nothing sends immediately.`, tone: 'blocked' };
     return { headline: 'Automation blocked — manual hold', detail: ownership.reason, tone: 'blocked' };
   }
   if (blocked === BLOCKED_BY.SUPPRESSION || blocked === BLOCKED_BY.INVALID_IDENTITY) {

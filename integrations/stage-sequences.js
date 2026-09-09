@@ -174,10 +174,8 @@ function latestAt(activities, types) {
 /**
  * Suppression SCOPED to stage sequences.
  *
- * [MANUAL HOLD] always blocks cold cadence and also blocks generic demo/Hot
- * automation. Only an explicit lifecycle action — no-show, cancellation, or a
- * human-selected timing date — authorises its matching recovery journey through
- * the hold. The tag itself is never removed, so ordinary Email 2/3 stay stopped.
+ * [MANUAL HOLD] blocks every journey, including explicitly authorized lifecycle
+ * recovery. Journeys remain discoverable; execution requires a verified release.
  *
  * Everything permanent still wins: opt-out, bounce and the durable list block
  * every path, always.
@@ -194,7 +192,7 @@ function stageSequenceSuppressionReason(twin = {}, suppressedEmails = new Set(),
   if (suppressedEmails.has(String(twin.email || '').trim().toLowerCase())) {
     return 'on the durable suppression list';
   }
-  if (hasManualHold(twin) && !options.explicitLifecycleAuthorization) {
+  if (hasManualHold(twin)) {
     return 'manual hold — human owns this lead';
   }
   return null;
@@ -208,9 +206,7 @@ function sequenceStopReason(input = {}) {
   const { boardLead = {}, twin = {}, activities = [], enrolledAt = null,
     suppressedEmails = new Set(), identityConflict = false, callStatus = null } = input;
 
-  const explicitLifecycleAuthorization = ['no_show_recovery_v1', 'cancelled_rebook_v1', 'timing_recontact_v1']
-    .includes(String(input.sequenceId || ''));
-  const suppression = stageSequenceSuppressionReason(twin, suppressedEmails, { explicitLifecycleAuthorization });
+  const suppression = stageSequenceSuppressionReason(twin, suppressedEmails);
   if (suppression) return suppression;
   if (identityConflict) return 'identity mapping conflict';
 
@@ -512,8 +508,8 @@ function automaticEnrollmentDecision(input = {}) {
   if (!thread?.threadId) return { enroll: false, reason: 'conversation thread is not proven for the owning sender' };
 
   const explicitLifecycle = ['no_show_recovery_v1', 'cancelled_rebook_v1', 'timing_recontact_v1'].includes(sequenceId);
-  if (hasManualHold(twin) && !explicitLifecycle) {
-    return { enroll: false, reason: 'manual hold — demo and Hot automation require human review' };
+  if (hasManualHold(twin)) {
+    return { enroll: false, reason: 'manual hold — Resume automation must release the hold first' };
   }
   if (sequenceId === 'demo_follow_up_v1'
     && !activities.some(row => String(row.eventType || '') === 'booking_link_sent')) {

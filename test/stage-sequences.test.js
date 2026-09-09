@@ -150,9 +150,9 @@ test('13/14. MANUAL HOLD still blocks COLD sending and is never removed', () => 
   assert.equal(held.eligible, false);
   assert.match(held.stopReason, /manual hold/);
   assert.match(stageSequenceSuppressionReason({ notes: MANUAL_HOLD_TAG }), /manual hold/);
-  // Explicit lifecycle actions are the narrow authorization exception.
-  assert.equal(stageSequenceSuppressionReason({ notes: MANUAL_HOLD_TAG }, new Set(),
-    { explicitLifecycleAuthorization: true }), null);
+  // Even explicit lifecycle authorization requires a verified hold release.
+  assert.match(stageSequenceSuppressionReason({ notes: MANUAL_HOLD_TAG }, new Set(),
+    { explicitLifecycleAuthorization: true }), /manual hold/);
 });
 
 test('15. with the feature flag OFF nothing is ever eligible', () => {

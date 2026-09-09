@@ -2397,7 +2397,7 @@ async function buildReactivationOwnership(leadId, boardLead, suppressedEmails) {
   const suppressionReader = coldReactivationSuppressionReader({ suppressedEmails });
   return {
     ok: true, activities, callState,
-    ownershipFor: twin => deriveAutomationOwnership(twin, {
+    ownershipFor: twin => deriveAutomationOwnership({ ...twin, notes: releaseHoldFromNotes(twin.notes || '') }, {
       boardLead, activities, callState,
       humanTouchAt: latestHumanOutboundAt(activities),
       suppressionReason: suppressionReader,
@@ -2873,151 +2873,134 @@ app.post('/api/leads/:id/reactivate', requireAuth, async (req, res) => {
 // phone). It sends nothing, and it deliberately writes no lead state — the
 // staleness clock is derived from the activity row, not stored on the lead.
 // ── RESUME AUTOMATION ───────────────────────────────────────────────────────
-//
-// Release an operator's own manual hold and hand the lead back to the
-// stage-aware ownership engine. Deliberately NOT Reactivate: Reactivate is for
-// explicitly reopening a lead and scheduling ordinary cold cadence, and it
-// never removes a hold. This removes the hold and then asks the normal question
-// — who owns this lead now? — without answering it in advance.
-//
-// It cannot send. It writes one notes cell and one audit row, re-derives
-// ownership read-only, and returns the verdict. Every gate that applied before
-// still applies after: suppression, reply and manual-response evidence, meeting
-// ownership, sender and thread proof, identity, quotas, terminal stage.
-//
-// PIPELINE LEADS ONLY, and that restriction is the safety argument. Removing a
-// hold from a COLD lead would hand it to selectFollowUps(), which asks only
-// whether the step delay has elapsed — a long-held lead is overdue the moment
-// the tag goes and would send on the next pass. A board lead cannot reach that
-// path at all: stage-aware ownership returns a non-cold owner for every
-// Pipeline stage, so mayColdSend() can never be true for one.
+// A human-authorized handoff; these capabilities cannot invoke a sender.
+const { resumePipeline, fail: resumeFailure } = require('./integrations/pipeline-resume');
+const { verifyThreadOwnership } = require('./integrations/gmail-stage-sequence');
+const resumeRequests = new Map();
+
+async function readResumeState(leadId) {
+  // Direct, uncached reads: no sheet creation, schema changes or swallowed errors.
+  const response = await sheets().spreadsheets.values.batchGet({ spreadsheetId: SPREADSHEET_ID,
+    ranges: [SHEET_NAME + '!A:W', CE_SHEET_NAME + '!A:U', COLD_CALL_ACTIVITY_SHEET + '!A:J',
+      SUPPRESSION_SHEET + '!A:A', GMAIL_OBSERVATION_STATE_SHEET + '!A:O'] });
+  const values = response.data.valueRanges;
+  if (!values || values.length !== 5 || values.some(item => !item.values?.length)) {
+    throw resumeFailure('state_unavailable', 'canonical lead, activity, suppression or observer data is unavailable');
+  }
+  const board = values[0].values.slice(1).map(row => ({
+    ...Object.fromEntries(COLUMNS.map((col, i) => [col, row[i] || ''])),
+    meetingAt: row[20] || '', outcome: row[21] || '',
+  }));
+  const boardMatches = board.filter(row => row.id === leadId);
+  const boardLead = boardMatches[0];
+  const email = normalizeEmail(boardLead?.email || '');
+  const wanted = String(leadId).replace(/^CE-/, '');
+  const twins = values[1].values.slice(1).map((row, index) => ({
+    id: row[0] || '', company: row[1] || '', email: row[3] || '', stage: row[7] || '',
+    emailStatus: row[8] || '', lastEmailedAt: row[9] || '', emailStep: row[10] || '',
+    notes: row[11] || '', senderInboxId: row[20] || '', _row: index + 2,
+  })).filter(row => row.id === wanted || (email && normalizeEmail(row.email) === email));
+  const activities = values[2].values.slice(1).map(row =>
+    Object.fromEntries(COLD_CALL_ACTIVITY_HEADER.map((key, i) => [key, row[i] || ''])))
+    .filter(row => row.leadId === leadId || twins.some(twin => row.sourceLeadId === twin.id || row.leadId === twin.id)
+      || (email && normalizeEmail(row.email) === email));
+  const senders = configuredSenders();
+  return { boardLead, twins, activities, senders,
+    identityConflict: boardMatches.length !== 1 || board.filter(row => email && normalizeEmail(row.email) === email).length !== 1,
+    suppressedEmails: new Set(values[3].values.slice(1).map(row => normalizeEmail(row[0])).filter(Boolean)),
+    observers: observerHealth(values[4].values, { senderIds: senders.map(sender => sender.id) }),
+    sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true' };
+}
+
+async function verifyResumeProof(state, plan) {
+  const mailbox = operationalMailbox(plan.senderProof.senderInboxId);
+  const email = state.twins[0].email;
+  const observer = state.observers.find(item => item.senderInboxId === mailbox.id);
+  const known = new Set();
+  for (const row of state.activities) {
+    let metadata = {};
+    try { metadata = JSON.parse(row.metadata || '{}'); } catch (_) { continue; }
+    for (const key of ['gmailMessageId', 'providerMessageId', 'messageId']) {
+      if (metadata[key]) known.add(String(metadata[key]));
+    }
+  }
+  // Detect a new message in ANY conversation with this address since the last
+  // trusted observer checkpoint, including manual outbound in a different thread.
+  const recent = await mailbox.gmail.users.messages.list({ userId: 'me', maxResults: 100,
+    q: '(from:' + email + ' OR to:' + email + ') after:' + Math.floor(Date.parse(observer.lastSuccessfulAt) / 1000) });
+  if (recent.data.nextPageToken || (recent.data.messages || []).some(message => !known.has(message.id))) {
+    return { ok: false, reason: 'new inbound or human outbound requires observer reconciliation and review' };
+  }
+  if (!plan.thread?.threadId) return { ok: true, version: 'fresh-thread' };
+  const proof = await verifyThreadOwnership({ gmail: mailbox.gmail, threadId: plan.thread.threadId,
+    senderEmail: mailbox.email, recipientEmail: email });
+  if (!proof.ok) return proof;
+  const thread = await mailbox.gmail.users.threads.get({ userId: 'me', id: plan.thread.threadId,
+    format: 'metadata', metadataHeaders: ['From', 'To', 'Message-ID'] });
+  const messages = thread.data.messages || [];
+  const latest = messages.slice().sort((a, b) => Number(b.internalDate) - Number(a.internalDate))[0];
+  if (!latest || !known.has(latest.id)) {
+    return { ok: false, reason: 'the latest conversation message lacks canonical proof; reconcile the inbox first' };
+  }
+  return { ok: true, version: JSON.stringify(messages.map(message => [message.id, message.internalDate]).sort()) };
+}
+
+async function writeResumeNotes(twin, notes) {
+  const current = (await findColdEmailTwins(twin.id, twin.email)).filter(row => row.id === twin.id);
+  if (current.length !== 1 || current[0].notes !== twin.notes || normalizeEmail(current[0].email) !== normalizeEmail(twin.email)) {
+    throw resumeFailure('state_changed', 'the notes or identity changed before hold removal');
+  }
+  await writeColdEmailNotes(current[0], notes);
+}
+
+async function restoreResumeHold(twin) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const current = (await findColdEmailTwins(twin.id, twin.email)).filter(row => row.id === twin.id);
+    if (current.length !== 1) throw resumeFailure('identity_conflict', 'hold restoration requires the original unique record');
+    if (hasManualHold(current[0].notes)) return;
+    try { await writeColdEmailNotes(current[0], applyHoldToNotes(current[0].notes)); }
+    catch (_) { /* Read back an uncertain write before retrying. */ }
+  }
+  const after = (await findColdEmailTwins(twin.id, twin.email)).filter(row => row.id === twin.id);
+  if (after.length !== 1 || !hasManualHold(after[0].notes)) throw resumeFailure('rollback_unconfirmed', 'hold restoration could not be confirmed');
+}
+
 app.post('/api/leads/:id/resume-automation', requireAuth, async (req, res) => {
+  const leadId = req.params.id;
+  const checkOnly = process.env.CHECK_ONLY === 'true' || req.body?.checkOnly === true;
   try {
-    const rowNum = await withAuth(() => findRow(req.params.id));
-    if (!rowNum) return res.status(404).json({ error: 'not found' });
-    const prior = await sheets().spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${rowNum}:W${rowNum}`,
-    });
-    const row = prior.data.values?.[0] || [];
-    const boardLead = {};
-    COLUMNS.forEach((col, i) => { boardLead[col] = row[i] || ''; });
-    boardLead.meetingAt = row[20] || '';
-    boardLead.outcome = row[21] || '';
-    const stage = displayStageFor(boardLead.stage);
-    const email = boardLead.email || '';
-
-    // A closed opportunity has no automation to resume. Refusing here keeps
-    // terminal behaviour deterministic rather than relying on the UI to hide
-    // a button.
-    if (['closed_won', 'closed_lost'].includes(stage)) {
-      return res.status(409).json({
-        error: `This opportunity is ${stage === 'closed_won' ? 'Closed Won' : 'Closed Lost'}, so there is no automation to resume.`,
-        code: 'terminal_stage', stage,
-      });
+    let pending = resumeRequests.get(leadId);
+    if (pending && pending.checkOnly !== checkOnly) {
+      return res.status(409).json({ error: 'Cannot preview or resume while another handoff mode is active', code: 'automation_busy' });
     }
-
-    const twins = await findColdEmailTwins(req.params.id, email);
-    const held = twins.filter(twin => hasManualHold(twin.notes || ''));
-    if (!twins.length) {
-      return res.status(409).json({
-        error: 'No ColdEmail record is linked to this lead, so there is no hold to release.',
-        code: 'no_twin',
-      });
+    if (!pending) {
+      if (agentState.running || automationLaunchReserved) {
+        return res.status(409).json({ error: 'Cannot resume automation — automation maintenance is active; retry after it finishes', code: 'automation_busy' });
+      }
+      automationLaunchReserved = true;
+      let releaseLock = true;
+      pending = resumePipeline({ read: () => readResumeState(leadId), writeNotes: writeResumeNotes,
+        restoreHold: restoreResumeHold, appendEvents: appendColdCallActivities, verifyProof: verifyResumeProof,
+        checkOnly })
+        .catch(error => { if (error.rollbackUnconfirmed) releaseLock = false; throw error; })
+        .finally(() => {
+          outreachCache = null;
+          ceRowMap.clear();
+          resumeRequests.delete(leadId);
+          if (releaseLock) automationLaunchReserved = false;
+        });
+      pending.checkOnly = checkOnly;
+      resumeRequests.set(leadId, pending);
     }
-    if (!held.length) {
-      return res.status(409).json({
-        error: 'This lead is not on manual hold.', code: 'not_held', stage,
-      });
-    }
-
-    // Release on every twin, then READ BACK. A write is not proof: a partial
-    // batch or a lost response would otherwise report a hold as lifted while
-    // the sheet still carries it.
-    for (const twin of held) {
-      await withAuth(() => writeColdEmailNotes(twin, releaseHoldFromNotes(twin.notes || '')));
-    }
-    ceRowMap.clear();
-    const after = await findColdEmailTwins(req.params.id, email);
-    const stillHeld = after.filter(twin => hasManualHold(twin.notes || ''));
-    if (stillHeld.length) {
-      return res.status(409).json({
-        error: 'The manual hold could not be confirmed as removed, so nothing was changed downstream.',
-        code: 'release_unconfirmed', remaining: stillHeld.length,
-      });
-    }
-
-    // Canonical audit row, deterministic id so a retry reconciles rather than
-    // stacking. Counterpart to the existing automation_held event.
-    const releasedAt = new Date().toISOString();
-    const activities = await readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER).catch(() => []);
-    const scoped = activities.filter(activity => activity.leadId === req.params.id
-      || (email && normalizeEmail(activity.email) === normalizeEmail(email)));
-
-    // Re-derive ownership from the released state — the whole point of the
-    // action. Read-only: it decides nothing and sends nothing.
-    let ownership = null;
-    let summary = null;
-    try {
-      const twin = after[0] || {};
-      const callState = deriveCallLifecycle(boardLead, { activities: scoped });
-      const hotState = deriveHotState(boardLead, { activities: scoped });
-      const sequenceState = evaluateStageSequence({
-        boardLead, twin, activities: scoped, callState, hotState,
-        featureEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true',
-      });
-      const suppressedEmails = await loadSuppressionEmails().catch(() => new Set());
-      ownership = deriveAutomationOwnership(twin, {
-        boardLead, activities: scoped, callState, sequenceState,
-        humanTouchAt: latestHumanOutboundAt(scoped),
-        suppressionReason: lead => sendSuppressionReason(lead, { suppressedEmails }),
-        sendingEnabled: SENDING_ENABLED(),
-        sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true',
-      });
-      summary = ownershipSummary(ownership, stage);
-    } catch (ownershipError) {
-      console.warn('[resume-automation] ownership re-derivation failed:', ownershipError.message);
-    }
-
-    try {
-      await appendColdCallActivities([{
-        eventId: stableActivityId('hold-released', [req.params.id, held.map(t => t.id).join(','), releasedAt]),
-        leadId: req.params.id, sourceLeadId: (after[0] && after[0].id) || '',
-        email, company: boardLead.company || '',
-        eventType: 'automation_hold_released', occurredAt: releasedAt,
-        subject: 'Manual hold released', content: '',
-        metadata: JSON.stringify({
-          trigger: 'crm_resume_automation', actor: 'human',
-          previousHold: true, stage,
-          coldEmailIds: held.map(twin => twin.id),
-          // What the lead was handed back TO, recorded so the timeline shows
-          // the consequence and not just the click.
-          resultingOwner: ownership ? ownership.owner : null,
-          resultingBlocker: ownership ? ownership.blockedBy || null : null,
-          automationResumed: false, sendTriggered: false,
-        }),
-      }]);
-    } catch (activityError) {
-      console.warn('[resume-automation] hold released, audit append failed:', activityError.message);
-    }
-
-    res.json({
-      ok: true, stage, released: held.length,
-      owner: ownership ? ownership.owner : null,
-      blockedBy: ownership ? ownership.blockedBy || null : null,
-      headline: summary ? summary.headline : null,
-      detail: summary ? summary.detail : null,
-      journey: ownership && ownership.evidence
-        ? (ownership.evidence.sequenceId || ownership.evidence.offer || null) : null,
-      // Stated plainly so no caller can read this as "a send happened".
+    res.json(await pending);
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    const code = error.code || 'state_unavailable';
+    res.status(code === 'not_found' ? 404 : error.rollbackUnconfirmed ? 503 : 409).json({
+      error: error.code ? error.message : 'Cannot resume automation — canonical state or mailbox proof is unavailable',
+      code, holdRestored: error.holdRestored === true, rollbackUnconfirmed: error.rollbackUnconfirmed === true,
       automationResumed: false, sendTriggered: false,
-      message: summary
-        ? `Manual hold removed. ${summary.headline}.`
-        : 'Manual hold removed. Ownership will be re-derived on the next read.',
     });
-  } catch (e) {
-    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
-    console.error('[Resume automation]', e.message);
-    res.status(500).json({ error: e.message });
   }
 });
 
@@ -5451,7 +5434,7 @@ app.post('/api/integrations/smartlead/events/:eventId/retry', requireAuth, async
 // ── AGENT ROUTES ─────────────────────────────────────────────────────────────
 
 app.post('/api/agent/run', requireAuth, async (req, res) => {
-  if (agentState.running) return res.status(409).json({ error: 'already running' });
+  if (agentState.running || automationLaunchReserved) return res.status(409).json({ error: 'already running or maintenance active' });
   const dryRun = req.body.dryRun !== false; // default true
   if (dryRun) {
     spawnAgent(true);

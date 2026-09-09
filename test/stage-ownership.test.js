@@ -248,11 +248,9 @@ test('13. MANUAL HOLD semantics are unchanged', () => {
   assert.equal(verdict.blockedBy, BLOCKED_BY.MANUAL_HOLD);
   assert.equal(mayColdSend(verdict).allowed, false);
   assert.equal(verdict.sequenceAllowed, false, 'a hold blocks an unenrolled journey');
-  assert.equal(ownershipSummary(verdict, 'hot').headline, 'Automation blocked — manual hold');
+  assert.equal(ownershipSummary(verdict, 'hot').headline, 'Hot follow-up available — blocked by manual hold');
 
-  // The carve-out is NARROW, and stays narrow. An enrolled Hot or Demo journey
-  // may NOT override a human's hold -- only explicit lifecycle recovery may,
-  // because a no-show or cancellation is a recorded event a person created.
+  // No enrolled journey may override the operator's hold, including recovery.
   const hotUnderHold = deriveAutomationOwnership(held, {
     boardLead: { stage: 'hot', email: COLD.email }, activities: [],
     suppressionReason: reader, sendingEnabled: true, sequencesEnabled: true,
@@ -266,7 +264,7 @@ test('13. MANUAL HOLD semantics are unchanged', () => {
     suppressionReason: reader, sendingEnabled: true, sequencesEnabled: true,
     sequenceState: enrolled('no_show_recovery_v1'),
   });
-  assert.equal(recoveryUnderHold.sequenceAllowed, true, 'explicit lifecycle recovery still may');
+  assert.equal(recoveryUnderHold.sequenceAllowed, false, 'explicit lifecycle recovery requires hold release');
   assert.equal(recoveryUnderHold.sendAllowed, false, 'but never a cold send');
   // The hold itself is never removed by any of this.
   assert.equal(held.notes, MANUAL_HOLD_TAG);

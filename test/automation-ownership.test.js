@@ -182,7 +182,7 @@ test('17. suppression beats an enrolled sequence', () => {
 
 // ── 18–19. MANUAL HOLD ──────────────────────────────────────────────────────
 
-test('18/19. MANUAL HOLD permits only explicitly authorized lifecycle recovery', () => {
+test('18/19. MANUAL HOLD blocks even explicitly authorized lifecycle recovery', () => {
   const held = { ...COLD, notes: MANUAL_HOLD_TAG };
   const real = row => sendSuppressionReason(row, { suppressedEmails: new Set() });
 
@@ -198,7 +198,7 @@ test('18/19. MANUAL HOLD permits only explicitly authorized lifecycle recovery',
 
   const noShow = own(held, { suppressionReason: real,
     sequenceState: { ...enrolled, sequenceId: 'no_show_recovery_v1' }, sequencesEnabled: true });
-  assert.equal(noShow.sequenceAllowed, true, 'explicit no-show lifecycle authorizes recovery');
+  assert.equal(noShow.sequenceAllowed, false, 'explicit no-show lifecycle cannot bypass a manual hold');
 
   // And the hold is never removed by any of this.
   assert.equal(held.notes, MANUAL_HOLD_TAG);
