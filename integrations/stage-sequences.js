@@ -24,6 +24,13 @@ const { addBusinessDays, businessDay } = require('./pipeline-state');
 // Legacy rows store values like 'lost', 'warm' or 'Hot', and a raw compare
 // would silently skip both the Hot journey AND the closed-lost stop condition.
 const { displayStageFor } = require('./cold-call-pipeline');
+// The generic re-engagement journey owns its own eligibility and copy; this
+// module only needs its identity, timing and templates. generic-reengagement
+// requires THIS module lazily, so the dependency stays one-way at load time.
+const {
+  GENERIC_SEQUENCE_ID, GENERIC_LABEL, genericConfig, renderGenericCopy,
+} = require('./generic-reengagement');
+const GENERIC_CONFIG = genericConfig();
 
 // ── TIMING ──────────────────────────────────────────────────────────────────
 // Every delay in one place. Business days, matching the Hot conversation clock —
@@ -110,6 +117,22 @@ const SEQUENCES = Object.freeze({
     maxSteps: 1,
     delays: [0],                 // fires on the human's chosen date
   },
+  // Re-engagement after SILENCE, not after intent. Unlike every journey above
+  // it belongs to no Pipeline stage and is never "offered" by stage logic —
+  // enrolment comes from generic-reengagement.js, which owns its eligibility.
+  // Step 1's delay is 0 because enrolment already proves the 30-day quiet
+  // threshold passed; Step 2 waits the configured business days after Step 1.
+  [GENERIC_SEQUENCE_ID]: {
+    id: GENERIC_SEQUENCE_ID,
+    label: GENERIC_LABEL,
+    stage: null,
+    requiresEnrollment: true,
+    maxSteps: GENERIC_CONFIG.maxSteps,
+    delays: [0, GENERIC_CONFIG.step2BusinessDays],
+    // Step 1 deliberately opens a NEW conversation. See generic-reengagement.js
+    // for why an old thread is neither required nor permitted here.
+    freshThreadStep1: true,
+  },
 });
 const SEQUENCE_IDS = Object.freeze(Object.keys(SEQUENCES));
 
@@ -121,6 +144,9 @@ const SEQUENCE_PRECEDENCE = Object.freeze([
   'hot_stale_v1',
   'demo_follow_up_v1',
   'timing_recontact_v1',
+  // Lowest-priority discretionary automation. Listed last so that if a lead
+  // ever qualified for both, real intent always wins over generic silence.
+  GENERIC_SEQUENCE_ID,
 ]);
 
 // ── STOP CONDITIONS ─────────────────────────────────────────────────────────
@@ -617,6 +643,11 @@ const SEQUENCE_COPY = Object.freeze({
         '', SIGN_OFF].join('\n'),
     }),
   ],
+  // Mechanics only: the business copy lives in configuration, not here.
+  [GENERIC_SEQUENCE_ID]: [
+    (lead, options) => renderGenericCopy(1, lead, options || {}),
+    (lead, options) => renderGenericCopy(2, lead, options || {}),
+  ],
   timing_recontact_v1: [
     (lead) => ({
       subjectThread: `Re: circling back — ${companyOf(lead) || ''}`.trim(),
@@ -640,13 +671,25 @@ function buildSequenceEmail(sequenceId, step, lead = {}, options = {}) {
   if (!steps) return { error: `unknown sequence "${sequenceId}"` };
   const builder = steps[step - 1];
   if (!builder) return { error: `sequence "${sequenceId}" has no step ${step}` };
-  const built = builder(lead);
+  const built = builder(lead, options);
+  if (built.error) return { error: built.error };
+  // Configurable copy that is still the shipped placeholder must never reach a
+  // prospect. Refusing here means deploying the journey without its business
+  // copy cannot mail scaffolding text — it simply declines to build.
+  if (built.isPlaceholder) {
+    return { error: `${sequenceId} step ${step} copy is still the placeholder; configure GENERIC_REENGAGEMENT_TEMPLATES before sending` };
+  }
 
   // "Re:" is used ONLY when the message really is going into that Gmail thread.
   // Without a verifiable thread it would break the recipient's threading and
   // imply a conversation this message is not part of, so a standalone subject
   // is used instead.
-  const thread = options.thread && String(options.thread.threadId || '').trim()
+  //
+  // Step 1 of the generic journey additionally REFUSES any supplied thread. Its
+  // premise is a new conversation, and the historical threads it would
+  // otherwise inherit are ambiguous — see generic-reengagement.js.
+  const freshOnly = SEQUENCES[sequenceId]?.freshThreadStep1 && Number(step) === 1;
+  const thread = !freshOnly && options.thread && String(options.thread.threadId || '').trim()
     ? options.thread : null;
   const subject = thread ? built.subjectThread : built.subjectFresh;
   return {

@@ -49,6 +49,9 @@ test('1. only one journey is ever active, chosen by explicit precedence', () => 
   assert.ok(verdict.offers.length > 1, 'several were possible');
   assert.deepEqual(SEQUENCE_PRECEDENCE, [
     'no_show_recovery_v1', 'cancelled_rebook_v1', 'hot_stale_v1', 'demo_follow_up_v1', 'timing_recontact_v1',
+    // Generic re-engagement is discretionary and always ranks last, so real
+    // intent can never lose to generic silence.
+    'generic_follow_up_v1',
   ]);
   // deriveSequenceState never reports two at once: a new enrolment supersedes.
   const state = deriveSequenceState([enrolled('hot_stale_v1', '2026-08-20T10:00:00.000Z'), enrolled('no_show_recovery_v1', '2026-08-22T10:00:00.000Z')]);
@@ -392,11 +395,37 @@ test('the API can enrol and pause but can never send', () => {
   assert.match(block, /automationResumed: false/);
 });
 
+// generic_follow_up_v1 takes its copy from configuration by design, so these
+// tests must supply some. This is a TEST FIXTURE, not the business copy — the
+// shipped default is a placeholder that buildSequenceEmail refuses to send.
+const GENERIC_FIXTURE = [
+  { subjectFresh: 'Still worth a look, {{company}}?',
+    subjectThread: 'Re: still worth a look, {{company}}?',
+    body: ['{{salutation}}', '', 'We spoke a while back and I never heard either way.', '',
+      'Worth a quick look now, or should I close the file?', '', 'Deins'].join('\n') },
+  { subjectFresh: 'Closing the file on {{company}}',
+    subjectThread: 'Re: closing the file on {{company}}',
+    body: ['{{salutation}}', '', 'Last note from me on this one.', '',
+      'If it is a no, that is genuinely fine.', '', 'Deins'].join('\n') },
+];
+const copyOpts = id => (id === 'generic_follow_up_v1' ? { campaignTemplates: GENERIC_FIXTURE } : {});
+
+test('configuration-supplied copy is refused while it is still the placeholder', () => {
+  const lead = { contactName: 'Dr Sarah Chen', company: 'City Centre Dentistry' };
+  // Shipping the journey without its business copy must not mail scaffolding.
+  for (const step of [1, 2]) {
+    const built = buildSequenceEmail('generic_follow_up_v1', step, lead);
+    assert.match(built.error, /still the placeholder/, `step ${step} refuses placeholder copy`);
+  }
+  // With copy configured it builds normally.
+  assert.ok(!buildSequenceEmail('generic_follow_up_v1', 1, lead, copyOpts('generic_follow_up_v1')).error);
+});
+
 test('the copy is short, and states no offer, price or guarantee', () => {
   const lead = { contactName: 'Dr Sarah Chen', company: 'City Centre Dentistry' };
   for (const [id, def] of Object.entries(SEQUENCES)) {
     for (let step = 1; step <= def.maxSteps; step++) {
-      const mail = buildSequenceEmail(id, step, lead);
+      const mail = buildSequenceEmail(id, step, lead, copyOpts(id));
       assert.ok(!mail.error, `${id} step ${step} builds`);
       assert.ok(mail.body.length < 500, `${id} step ${step} stays short (${mail.body.length})`);
       assert.ok(!/guarantee|\$|price|pricing|refund|30 days/i.test(mail.body), `${id} step ${step} restates no commercial terms`);
@@ -466,14 +495,24 @@ test('"Re:" is used ONLY when the message really goes into that thread', () => {
   const thread = { threadId: 'T1', rfcMessageId: '<b@m>' };
   for (const [id, def] of Object.entries(SEQUENCES)) {
     for (let step = 1; step <= def.maxSteps; step++) {
-      const threaded = buildSequenceEmail(id, step, lead, { thread });
-      assert.match(threaded.subject, /^Re: /, `${id} step ${step} threads with Re:`);
-      assert.equal(threaded.replyToThread, true);
-      assert.equal(threaded.threadId, 'T1');
-      assert.equal(threaded.inReplyTo, '<b@m>');
-      assert.equal(threaded.references, '<b@m>');
+      const threaded = buildSequenceEmail(id, step, lead, { thread, ...copyOpts(id) });
+      if (def.freshThreadStep1 && step === 1) {
+        // The one deliberate exception: this journey's Step 1 opens a NEW
+        // conversation, so it must ignore a thread even when handed one.
+        assert.doesNotMatch(threaded.subject, /^Re:/, `${id} step 1 refuses a supplied thread`);
+        assert.equal(threaded.replyToThread, false);
+        assert.equal(threaded.threadId, '');
+        assert.equal(threaded.inReplyTo, '');
+        assert.equal(threaded.references, '');
+      } else {
+        assert.match(threaded.subject, /^Re: /, `${id} step ${step} threads with Re:`);
+        assert.equal(threaded.replyToThread, true);
+        assert.equal(threaded.threadId, 'T1');
+        assert.equal(threaded.inReplyTo, '<b@m>');
+        assert.equal(threaded.references, '<b@m>');
+      }
 
-      const fresh = buildSequenceEmail(id, step, lead, { thread: null });
+      const fresh = buildSequenceEmail(id, step, lead, { thread: null, ...copyOpts(id) });
       assert.doesNotMatch(fresh.subject, /^Re:/, `${id} step ${step} must NOT fake Re: without a thread`);
       assert.equal(fresh.replyToThread, false);
       assert.equal(fresh.threadId, '');

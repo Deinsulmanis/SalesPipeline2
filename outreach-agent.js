@@ -76,8 +76,12 @@ const { manualHoldReleased, applyHoldToNotes, stageRequiresHold,
 const {
   evaluateStageSequence, buildSequenceEmail, sequenceStepEventId, SEQUENCE_EVENTS,
   resolveSequenceThread, provenSequenceSenderId, automaticEnrollmentDecision,
-  automaticEnrollmentEventId,
+  automaticEnrollmentEventId, deriveSequenceState,
 } = require('./integrations/stage-sequences');
+const {
+  GENERIC_SEQUENCE_ID, genericConfig, genericEligibility, genericJourneyThread,
+  genericEnrollmentEventId,
+} = require('./integrations/generic-reengagement');
 const {
   sequenceRfcMessageId, coldStepRfcMessageId, verifyThreadOwnership, findSuccessfulSequenceSend,
 } = require('./integrations/gmail-stage-sequence');
@@ -3714,10 +3718,62 @@ async function runStageSequencePass(allLeads, {
       || (email && normEmail(row.email) === email));
   }
 
-  for (const boardLead of boardLeads) {
+  // ── WHAT THIS PASS CONSIDERS ─────────────────────────────────────────────
+  // Board leads exactly as before, then — strictly afterwards — the generic
+  // re-engagement candidates. The ordering IS the priority rule from the spec:
+  // discretionary re-engagement may only spend quota that real intent left over,
+  // so a constrained day starves generic sends rather than recovery journeys.
+  //
+  // A generic candidate is a ColdEmail row with NO Pipeline row: it stands in
+  // for its own board lead under the canonical CE-<id> identity the timeline
+  // already uses for these prospects. Leads that DO have a Pipeline row keep
+  // their stage journeys and are never generically re-engaged.
+  const genericCfg = genericConfig();
+  const boardEmails = new Set(boardLeads.map(item => normEmail(item.email)).filter(Boolean));
+  const targets = boardLeads.map(lead => ({
+    lead, twin: twinByEmail.get(normEmail(lead.email)) || null, generic: false, enroll: null,
+  }));
+
+  if (genericCfg.enabled) {
+    let considered = 0; let eligibleNow = 0;
+    for (const candidate of allLeads) {
+      const candidateEmail = normEmail(candidate.email);
+      if (!candidateEmail || boardEmails.has(candidateEmail)) continue;
+      const mine = byKey.get(candidateEmail) || [];
+      const state = deriveSequenceState(mine);
+      const alreadyEnrolled = String(state.sequenceId || '') === GENERIC_SEQUENCE_ID
+        && state.status === 'active';
+      if (alreadyEnrolled) {
+        targets.push({
+          lead: { id: `CE-${candidate.id}`, email: candidate.email, company: candidate.company || '', stage: '' },
+          twin: candidate, generic: true, enroll: null,
+        });
+        continue;
+      }
+      if (state.status && state.status !== 'none') continue;   // another journey owns it
+      considered++;
+      // The rollout cutoff lives inside this call, so the historical backlog can
+      // never auto-enrol here however long it has been quiet.
+      const decision = genericEligibility({
+        twin: candidate, boardLead: null, activities: mine, sequenceState: state,
+        suppressedEmails: SUPPRESSED_EMAILS, config: genericCfg,
+        senderProof: provenSequenceSenderId(candidate, mine),
+      });
+      if (!decision.eligible) continue;
+      eligibleNow++;
+      targets.push({
+        lead: { id: `CE-${candidate.id}`, email: candidate.email, company: candidate.company || '', stage: '' },
+        twin: candidate, generic: true, enroll: decision,
+      });
+    }
+    console.log(`[StageSeq] generic re-engagement: ${considered} unenrolled candidate(s) examined, ${eligibleNow} auto-enrollable this pass.`);
+  }
+
+  for (const target of targets) {
+    const boardLead = target.lead;
     const email = normEmail(boardLead.email);
     const mine = [...(byKey.get(boardLead.id) || []), ...(email ? byKey.get(email) || [] : [])];
-    const twin = twinByEmail.get(email) || null;
+    const twin = target.generic ? target.twin : (twinByEmail.get(email) || null);
     const callState = deriveCallLifecycle(boardLead, { activities: mine });
     const hotState = deriveHotState(boardLead, { activities: mine });
     let verdict = evaluateStageSequence({
@@ -3730,12 +3786,28 @@ async function runStageSequencePass(allLeads, {
     const senderProof = provenSequenceSenderId(twin || {}, mine);
     const proofThread = senderProof.ok
       ? resolveSequenceThread(mine, { senderInboxId: senderProof.senderInboxId }) : null;
-    const enrollment = automaticEnrollmentDecision({
-      boardLead, twin: twin || {}, activities: mine, verdict, senderProof,
-      thread: proofThread, callState, hotState,
-    });
+    // The stage-journey enrolment path requires a proven conversation thread and
+    // must keep doing so. The generic journey has none by design, so it brings
+    // its own decision — already computed above — rather than weakening that
+    // requirement for every other journey.
+    const enrollment = target.generic
+      ? (target.enroll
+        ? { enroll: true, sequenceId: GENERIC_SEQUENCE_ID,
+            // occurredAt is the truthful "now"; the event ID is anchored to the
+            // final cold email so re-running can never enrol the same lead twice.
+            enrolledAt: new Date().toISOString(),
+            anchorAt: target.enroll.finalColdEmailAt,
+            authorization: 'generic_reengagement_quiet_period',
+            senderInboxId: target.enroll.senderInboxId, gmailThreadId: '' }
+        : { enroll: false })
+      : automaticEnrollmentDecision({
+        boardLead, twin: twin || {}, activities: mine, verdict, senderProof,
+        thread: proofThread, callState, hotState,
+      });
     if (enrollment.enroll) {
-      const enrollmentId = automaticEnrollmentEventId(boardLead.id, enrollment.sequenceId, enrollment.enrolledAt);
+      const enrollmentId = target.generic
+        ? genericEnrollmentEventId(boardLead.id, enrollment.anchorAt)
+        : automaticEnrollmentEventId(boardLead.id, enrollment.sequenceId, enrollment.enrolledAt);
       if (!activities.some(row => row.eventId === enrollmentId)) {
         const row = {
           eventId: enrollmentId, leadId: boardLead.id, sourceLeadId: twin ? twin.id : '',
@@ -3790,17 +3862,29 @@ async function runStageSequencePass(allLeads, {
     // Reply into the real conversation when the timeline proves one exists.
     // Without a verifiable thread the copy falls back to a standalone subject
     // rather than faking "Re:" on a message that is not part of that thread.
-    const thread = sender
-      ? resolveSequenceThread(mine, { senderInboxId: sender.id }) : null;
+    // Generic re-engagement resolves its thread from its OWN journey only:
+    // Step 1 opens a new conversation, Step 2 pins to the thread Step 1 created.
+    // The ambiguous historical thread is never consulted at either step.
+    const genericThread = target.generic
+      ? genericJourneyThread(mine, { step, senderInboxId: sender ? sender.id : '' }) : null;
+    if (target.generic && !genericThread.ok) {
+      console.warn(`[StageSeq] ${boardLead.email} blocked: ${genericThread.reason}`);
+      continue;
+    }
+    const freshThreadAllowed = Boolean(target.generic && genericThread.mode === 'fresh');
+    const thread = target.generic
+      ? genericThread.thread
+      : (sender ? resolveSequenceThread(mine, { senderInboxId: sender.id }) : null);
     const verifiedThread = sender && thread ? await verifyThreadOwnership({
       gmail: gmailForSender(sender), threadId: thread.threadId,
       senderEmail: sender.email, recipientEmail: boardLead.email,
-    }) : { ok: false, reason: 'sender-pinned thread is not proven' };
+    }) : { ok: false, reason: freshThreadAllowed ? 'opening a new conversation' : 'sender-pinned thread is not proven' };
     const sendGate = stageSendGate({
       checkOnly: CHECK_ONLY, sendingEnabled: SENDING_ENABLED, senderProof, sender, thread,
       threadVerified: verifiedThread.ok, observationOk: sender ? observationBySender.get(sender.id) === true : false,
       senderCount: sender ? (senderCounts.get(sender.id) || 0) : 0,
       globalCount: todaySent, globalLimit: DAILY_SEND_LIMIT,
+      freshThreadAllowed,
     });
     if (!sendGate.allowed) {
       console.warn(`[StageSeq] ${boardLead.email} blocked: ${sendGate.reason}`);
@@ -3811,7 +3895,7 @@ async function runStageSequencePass(allLeads, {
       console.warn(`[StageSeq] ${boardLead.email} blocked: ${windowGate.reason}`);
       continue;
     }
-    if (!verifiedThread.ok) { console.warn(`[StageSeq] ${boardLead.email} blocked: ${verifiedThread.reason}`); continue; }
+    if (!verifiedThread.ok && !freshThreadAllowed) { console.warn(`[StageSeq] ${boardLead.email} blocked: ${verifiedThread.reason}`); continue; }
     const built = buildSequenceEmail(verdict.sequenceId, step, boardLead, { thread: verifiedThread });
     if (built.error) { console.warn(`[StageSeq] ${built.error}`); continue; }
     built.messageId = sequenceRfcMessageId(eventId, sender.email);

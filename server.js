@@ -51,6 +51,7 @@ const {
   buildCampaignVersionIndex, latestSendAttribution, acquisitionAttribution, promotionAttribution, coldSendAttribution,
 } = require('./integrations/campaign-versions');
 const { buildFunnelAnalytics } = require('./integrations/funnel-analytics');
+const { genericReengagementAnalytics } = require('./integrations/generic-reengagement-analytics');
 const { buildCrmHealth } = require('./integrations/crm-health');
 const { observerHealth } = require('./integrations/gmail-observer-health');
 const { observeMailbox } = require('./integrations/gmail-mailbox-observer');
@@ -1675,6 +1676,12 @@ app.get('/api/coldemail/funnel', requireAuth, async (req, res) => {
       replyRecords: dataset.replyRecords,
       currentVersion: ACTIVE_CAMPAIGN_VERSION.dental_ai_receptionist,
     }, req.query);
+    // The re-engagement journey is judged on its own terms — replies, positive
+    // replies, booked calls, closed clients — not folded into cold-campaign
+    // numbers it would otherwise distort.
+    analytics.genericReengagement = genericReengagementAnalytics({
+      activities: dataset.activities, leads: dataset.leads,
+    });
     const stage = String(req.query.stage || '').trim();
     const requested = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 100));
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
