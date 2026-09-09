@@ -219,7 +219,11 @@ const READ_RANGE  = `${SHEET_NAME}!A:X`;
 const CAMPAIGN_INTEGRATIONS_SHEET = 'CampaignIntegrations';
 const PROVIDER_LEADS_SHEET = 'ProviderLeadMappings';
 const GMAIL_OBSERVATION_STATE_SHEET = 'GmailObservationState';
-const GMAIL_OBSERVATION_STATE_HEADER = ['senderInboxId','historyId','lastSuccessfulAt','lastAttemptAt','lastError','health','mode','bootstrapState','messagesObserved'];
+// J..O carry recovery so a bounded catch-up survives a restart, a crash, a
+// deploy or a Gmail quota stop and resumes from the exact proven high-water
+// instead of the original stale point.
+const GMAIL_OBSERVATION_STATE_HEADER = ['senderInboxId','historyId','lastSuccessfulAt','lastAttemptAt','lastError','health','mode','bootstrapState','messagesObserved',
+  'recoveryActive','recoverySince','recoveryAnchor','recoveryThroughId','recoveryProcessed','backoffUntil'];
 let CAMPAIGN_PROVIDERS = new Map();
 let ACTIVE_PROVIDER_LEADS = new Set();
 let ACTIVE_PROVIDER_EMAILS = new Set();
@@ -1520,7 +1524,7 @@ async function ensureAgentHeaders() {
       requestBody: { requests: [{ addSheet: { properties: { title: GMAIL_OBSERVATION_STATE_SHEET } } }] } });
   }
   await s.spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID,
-    range: `${GMAIL_OBSERVATION_STATE_SHEET}!A1:I1`, valueInputOption: 'RAW',
+    range: `${GMAIL_OBSERVATION_STATE_SHEET}!A1:O1`, valueInputOption: 'RAW',
     requestBody: { values: [GMAIL_OBSERVATION_STATE_HEADER] } });
 }
 
@@ -1546,7 +1550,7 @@ async function loadAgentSnapshot() {
     READ_RANGE, LEADS_RANGE, `${COLD_CALL_ACTIVITY_SHEET}!A:J`,
     `${SUPPRESSION_SHEET}!A:E`, `${CAMPAIGN_INTEGRATIONS_SHEET}!A:I`,
     `${PROVIDER_LEADS_SHEET}!A:N`, 'DemoPlays!A:F', `${INTENT_SHEET}!A:E`,
-    `${GMAIL_OBSERVATION_STATE_SHEET}!A:I`,
+    `${GMAIL_OBSERVATION_STATE_SHEET}!A:O`,
   ];
   const response = await sheets().spreadsheets.values.batchGet({
     spreadsheetId: SPREADSHEET_ID, ranges,
@@ -1568,33 +1572,53 @@ function loadGmailObservationState(rows = []) {
     const historyId = String(row[1] || '').trim();
     if (senderInboxId && historyId) gmailObservationHistoryBySender.set(senderInboxId, historyId);
     if (senderInboxId) gmailObservationDetailsBySender.set(senderInboxId,
-      { lastSuccessfulObservationAt: row[2] || null, previousHealth: row[5] || null });
+      { lastSuccessfulObservationAt: row[2] || null, previousHealth: row[5] || null,
+        recovery: String(row[9] || '') === 'true'
+          ? { active: true, since: row[10] || null, anchor: row[11] || null,
+              processedThroughId: row[12] || null, processed: Number(row[13] || 0) }
+          : null,
+        backoffUntil: row[14] || null });
   }
 }
 
 async function persistGmailObservationState(senderId, historyId, details = {}) {
   const response = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID,
-    range: `${GMAIL_OBSERVATION_STATE_SHEET}!A:I` });
+    range: `${GMAIL_OBSERVATION_STATE_SHEET}!A:O` });
   const rows = response.data.values || [];
   const index = rows.findIndex((row, i) => i > 0 && String(row[0] || '') === String(senderId));
   const now = new Date().toISOString();
   const error = String(details.error || '');
   const previous = index > 0 ? rows[index] : [];
-  const values = [[senderId, historyId || previous[1] || '', error ? (previous[2] || '') : now,
-    now, error.slice(0, 500), error ? 'unavailable' : 'healthy', details.mode || previous[6] || '',
+  // A recovery in flight is NOT healthy, however well the slice went: the
+  // mailbox has not reached a trustworthy observation point, and reporting it
+  // healthy would let send gates treat a partial view as proof.
+  const recovery = details.recovery || null;
+  const recovering = Boolean(recovery && recovery.active && !recovery.complete);
+  const health = error ? 'unavailable' : (recovering ? (recovery.backoff ? 'backoff' : 'recovering') : 'healthy');
+  // lastSuccessfulAt marks a TRUSTWORTHY point. A recovery slice advances the
+  // high-water instead, so an interrupted catch-up can never look current.
+  const successAt = (error || recovering) ? (previous[2] || '') : now;
+  const values = [[senderId, historyId || previous[1] || '', successAt,
+    now, error.slice(0, 500), health, details.mode || previous[6] || '',
     details.mode?.startsWith('bootstrap') ? 'complete' : (previous[7] || 'complete'),
-    String(details.messagesObserved ?? previous[8] ?? '0')]];
+    String(details.messagesObserved ?? previous[8] ?? '0'),
+    recovering ? 'true' : '',
+    recovering ? String(recovery.since || '') : '',
+    recovering ? String(recovery.anchor || '') : '',
+    recovering ? String(recovery.processedThroughId || '') : '',
+    recovering ? String(recovery.processed || 0) : '',
+    recovering && recovery.backoff ? String(recovery.backoff.at || '') : '']];
   if (index > 0) {
     await sheets().spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID,
-      range: `${GMAIL_OBSERVATION_STATE_SHEET}!A${index + 1}:I${index + 1}`,
+      range: `${GMAIL_OBSERVATION_STATE_SHEET}!A${index + 1}:O${index + 1}`,
       valueInputOption: 'RAW', requestBody: { values } });
   } else {
     await sheets().spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID,
-      range: `${GMAIL_OBSERVATION_STATE_SHEET}!A:I`, valueInputOption: 'RAW',
+      range: `${GMAIL_OBSERVATION_STATE_SHEET}!A:O`, valueInputOption: 'RAW',
       insertDataOption: 'INSERT_ROWS', requestBody: { values } });
   }
   const readback = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID,
-    range: `${GMAIL_OBSERVATION_STATE_SHEET}!A:I` });
+    range: `${GMAIL_OBSERVATION_STATE_SHEET}!A:O` });
   const saved = (readback.data.values || []).find(row => row[0] === senderId);
   if (!saved || values[0].some((value, i) => String(saved[i] || '') !== String(value))) {
     throw new Error(`Observer checkpoint readback mismatch for ${senderId}`);
@@ -2418,6 +2442,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
         activities: activitiesForCycle || [], senderInboxId: sender.id,
         senderEmail: sender.email, historyId: gmailObservationHistoryBySender.get(sender.id) || null,
         ...gmailObservationDetailsBySender.get(sender.id), log,
+        recovery: (gmailObservationDetailsBySender.get(sender.id) || {}).recovery || null,
       }));
       const plan = await planMailboxEvents({ observation: observed, gmail: gmailForSender(sender),
         leads: senderLeads, activities: activitiesForCycle, senderInboxId: sender.id, senderEmail: sender.email });
@@ -2425,17 +2450,37 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
         await commitObservation({ observation: observed, plan, activities: activitiesForCycle,
           appendEvent: event => withAuth(() => recordMailboxActivity(event)),
           suppress: item => withAuth(() => addSuppression(item.email, item.reason, item.company, 'gmail-observer')),
-          checkpoint: state => withAuth(() => persistGmailObservationState(sender.id, state.nextHistoryId,
-            { mode: 'history', messagesObserved: state.messagesInspected })),
+          checkpoint: state => withAuth(() => persistGmailObservationState(
+            sender.id,
+            // A recovery still in flight keeps the OLD cursor. Advancing it now
+            // would jump the mailbox past a backlog it has not yet read.
+            state.recovery && !state.recovery.complete
+              ? (gmailObservationHistoryBySender.get(sender.id) || '')
+              : state.nextHistoryId,
+            { mode: state.recovery && !state.recovery.complete ? 'recovering' : 'history',
+              messagesObserved: state.messagesInspected, recovery: state.recovery })),
         });
-        gmailObservationHistoryBySender.set(sender.id, observed.nextHistoryId);
+        if (!observed.recovery || observed.recovery.complete) {
+          gmailObservationHistoryBySender.set(sender.id, observed.nextHistoryId);
+          if (observed.recovery) log('mailbox_recovery_caught_up',
+            { processed: observed.recovery.processed, nextHistoryId: observed.nextHistoryId });
+        } else {
+          log('mailbox_recovery_progress_saved', { processedThroughId: observed.recovery.processedThroughId,
+            processed: observed.recovery.processed, remaining: observed.recovery.remaining });
+        }
       }
       // Recovery is evidence-only. Historical replies never enter handlers
       // that promote, enroll, draft or send, even in a send-capable process.
       for (const item of plan.replies) {
         if (!item.historical && !CHECK_ONLY) repliesByLead.set(item.leadId, { ...item.message, observedSenderId: sender.id });
       }
-      observerAutomationReadyBySender.set(sender.id, !DRY_RUN && observed.mode !== 'bootstrap');
+      // A mailbox mid-recovery has NOT proven that no newer prospect or manual
+      // activity exists, so it stays observation-unavailable for every send
+      // gate: no cold follow-up, no stage-sequence send, no autoresponse.
+      // `trustworthy` is false for the whole of a bounded catch-up, including a
+      // slice that succeeded, and including a quota backoff.
+      observerAutomationReadyBySender.set(sender.id,
+        !DRY_RUN && observed.mode !== 'bootstrap' && observed.trustworthy !== false);
       observedStateBySender.set(sender.id, observed);
       log(observed.recovered ? 'mailbox_catchup_completed' : 'history_incremental_ok', {
         historyId: observed.nextHistoryId, from: observed.from || null, messages: observed.messagesInspected,

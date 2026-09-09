@@ -1809,7 +1809,9 @@ app.get('/api/crm/health', requireAuth, async (req, res) => {
       journeyEligibleNotEnrolled: eligibleJourneyNotEnrolled,
       ownershipNoneWithActionNeeded: findingCount('reply.actionable_without_next_action'),
       senderOrThreadUnknown,
+      // Recovering and backoff are both still "not trustworthy" for send gating.
       observerUnavailable: gmailObserver.filter(item => item.health !== 'healthy').length,
+      observerRecovering: gmailObserver.filter(item => ['recovering', 'backoff'].includes(item.health)).length,
       staleHot: findingCount('hot.stale_followup'),
       overdueFollowUp: findingCount('reply.overdue_human_action'),
     };
