@@ -2,8 +2,13 @@
 
 // Review-only campaign configuration. No sender, schedule or enrollment is assigned.
 const STAFFING_CAMPAIGN = Object.freeze({
+  // The id is canonical and is referenced by CAMPAIGN_VERSIONS and
+  // ACTIVE_CAMPAIGN_VERSION, so it does NOT change when the display name does.
   id: 'industrial_staffing_employer_acquisition_v1',
-  name: 'Industrial Staffing — Employer Acquisition',
+  name: 'Industrial Staffing Agency',
+  // Names this campaign has been stored under before. Rows written under an
+  // earlier name keep matching, so renaming can never orphan imported leads.
+  legacyNames: Object.freeze(['Industrial Staffing — Employer Acquisition']),
   niche: 'industrial_staffing',
   emailTemplateId: 'industrial-staffing-employer-v1',
   personalizationStrategy: 'staffing_market_evidence_v1',
@@ -12,12 +17,18 @@ const STAFFING_CAMPAIGN = Object.freeze({
   ready: false,
 });
 
+// Every campaign label that identifies this campaign: the current name, the id,
+// and any name it was stored under previously.
+const STAFFING_CAMPAIGN_LABELS = Object.freeze([
+  STAFFING_CAMPAIGN.name, STAFFING_CAMPAIGN.id, ...STAFFING_CAMPAIGN.legacyNames,
+]);
+
 function isStaffingCampaign(lead = {}) {
   const ids = [lead.campaignId, lead.intendedCampaignVersion].filter(Boolean);
-  const matches = [STAFFING_CAMPAIGN.name, STAFFING_CAMPAIGN.id].includes(lead.campaign) || ids.includes(STAFFING_CAMPAIGN.id);
+  const matches = STAFFING_CAMPAIGN_LABELS.includes(lead.campaign) || ids.includes(STAFFING_CAMPAIGN.id);
   if (!matches) return false;
   if (ids.some(id => id !== STAFFING_CAMPAIGN.id)) return false;
-  if (lead.campaign && lead.campaign !== STAFFING_CAMPAIGN.name && lead.campaign !== STAFFING_CAMPAIGN.id) return false;
+  if (lead.campaign && !STAFFING_CAMPAIGN_LABELS.includes(lead.campaign)) return false;
   if (lead.emailTemplateId && lead.emailTemplateId !== STAFFING_CAMPAIGN.emailTemplateId) return false;
   if (lead.leadNiche && !['industrial_staffing', 'staffing'].includes(lead.leadNiche)) return false;
   return true;
@@ -103,5 +114,5 @@ function validateStaffingEmail({ subject, body } = {}, step = 1) {
   return null;
 }
 
-module.exports = { STAFFING_CAMPAIGN, isStaffingCampaign, LOCKED_EMAILS, BOLD_PHRASE, BOLD_PHRASES,
+module.exports = { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_LABELS, isStaffingCampaign, LOCKED_EMAILS, BOLD_PHRASE, BOLD_PHRASES,
   STAFFING_FOLLOW_UP_DELAY_DAYS, renderStaffingPreview, staffingOpeningFor, renderStaffingEmail, validateStaffingEmail };

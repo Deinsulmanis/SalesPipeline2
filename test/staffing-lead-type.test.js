@@ -84,6 +84,24 @@ test('D. a staffing lead can never default to dental', () => {
     assert.match(source, /if \(value\.includes\('staffing'\)\) return 'industrial_staffing';[\s\S]{0,120}if \(value\.includes\('dent'\)\)/);
 });
 
+// ── campaign naming ────────────────────────────────────────────────────────
+test('the campaign is named Industrial Staffing Agency without orphaning stored rows', () => {
+  const { STAFFING_CAMPAIGN_LABELS, isStaffingCampaign } = require('../integrations/staffing-campaign');
+  assert.equal(STAFFING_CAMPAIGN.name, 'Industrial Staffing Agency');
+  // The id is canonical and must NOT track the display name: ACTIVE_CAMPAIGN_VERSION
+  // and CAMPAIGN_VERSIONS key off it, so renaming the label cannot move it.
+  assert.equal(STAFFING_CAMPAIGN.id, 'industrial_staffing_employer_acquisition_v1');
+  assert.equal(CAMPAIGN_VERSIONS[STAFFING_CAMPAIGN.id].label, 'Industrial Staffing Agency');
+  assert.equal(templateById(STAFFING_CAMPAIGN.emailTemplateId).name, 'Industrial Staffing Agency');
+  // Rows stored under a previous name still resolve, so a rename can never
+  // orphan already-imported leads.
+  assert.ok(STAFFING_CAMPAIGN.legacyNames.includes('Industrial Staffing — Employer Acquisition'));
+  for (const label of STAFFING_CAMPAIGN_LABELS)
+    assert.equal(isStaffingCampaign({ campaign: label }), true, label);
+  assert.equal(isStaffingCampaign({ campaign: 'Some other campaign' }), false);
+  assert.equal(ACTIVE_CAMPAIGN_VERSION.industrial_staffing, STAFFING_CAMPAIGN.id, 'attribution still resolves');
+});
+
 // ── E/F/G/H/I. family, offer, campaign and version resolution ──────────────
 test('E/F. staffing resolves to the staffing family and staffing offer', () => {
   assert.equal(familyForLead(staffingLead()), 'industrial_staffing');
