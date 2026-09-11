@@ -7,7 +7,16 @@
  * without an explicit stored version remain legacy_unknown regardless of date.
  */
 const LEGACY_UNKNOWN = 'legacy_unknown';
+const { STAFFING_CAMPAIGN } = require('./staffing-campaign');
 const CAMPAIGN_VERSIONS = Object.freeze({
+  [STAFFING_CAMPAIGN.id]: Object.freeze({
+    id: STAFFING_CAMPAIGN.id, label: STAFFING_CAMPAIGN.name, niche: STAFFING_CAMPAIGN.niche,
+    emailTemplateId: STAFFING_CAMPAIGN.emailTemplateId, family: 'industrial_staffing',
+    copyVersion: 'staffing_locked_v1', personalizationStrategy: STAFFING_CAMPAIGN.personalizationStrategy,
+    subjectStrategy: 'employer_accounts_locked_v1', offerVersion: 'employer_meetings_performance_v1',
+    status: 'draft', activatedAt: null,
+    meaning: 'Research and locked-copy previews only; no production activation or sender assignment.',
+  }),
   dental_v1_measured: Object.freeze({
     id: 'dental_v1_measured',
     label: 'Dental V1 — Measured',
@@ -62,9 +71,13 @@ const CAMPAIGN_VERSIONS = Object.freeze({
   }),
 });
 
+// Which version each family sends today. Naming a version here does NOT activate
+// it: activeVersionForLead still refuses any version whose status is not
+// 'active', so the staffing entry stays inert until the campaign is activated.
 const ACTIVE_CAMPAIGN_VERSION = Object.freeze({
   dental_ai_receptionist: 'dental_v3_pay_per_booking',
   roofing_survey: 'roofing_survey_v1_measured',
+  industrial_staffing: STAFFING_CAMPAIGN.id,
 });
 
 function parseMetadata(value) {
@@ -76,6 +89,10 @@ function familyForLead(lead = {}) {
   const niche = String(lead.leadNiche || lead.tradeType || '').toLowerCase();
   const template = String(lead.emailTemplateId || '').toLowerCase();
   if (template.includes('roofing') || niche.includes('roof')) return 'roofing_survey';
+  // Staffing is matched BEFORE the dental default below. Without this a staffing
+  // lead resolved to dental_ai_receptionist, which handed the dental offer facts
+  // to staffing reply automation and attributed staffing sends to dental.
+  if (template.includes('staffing') || niche.includes('staffing')) return 'industrial_staffing';
   if (template.includes('dental') || niche.includes('dent')) return 'dental_ai_receptionist';
   // Existing unrouted production rows are dental unless explicitly roofing.
   return 'dental_ai_receptionist';

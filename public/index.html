@@ -2185,7 +2185,7 @@
     <button class="ce-tab"        data-ce="Promoted"     onclick="setCeFilter('Promoted')">Promoted</button>
     <button class="ce-tab"        data-ce="Unsubscribed" onclick="setCeFilter('Unsubscribed')">Unsub</button>
     <div class="ce-actions">
-      <select id="ce-niche-filter" aria-label="Filter by lead type" onchange="setCeNicheFilter(this.value)" style="width:auto;min-width:118px;padding:7px 10px"><option value="all">All lead types</option><option value="dental">Dental</option><option value="roofing">Roofing</option></select>
+      <select id="ce-niche-filter" aria-label="Filter by lead type" onchange="setCeNicheFilter(this.value)" style="width:auto;min-width:118px;padding:7px 10px"><option value="all">All lead types</option><option value="dental">Dental</option><option value="roofing">Roofing</option><option value="industrial_staffing">Staffing Agency</option></select>
       <div class="ce-search-wrap">
         <svg class="ce-search-icon" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
         <input type="text" id="ce-search" placeholder="Search leads…" oninput="onCeSearch(this.value)">
@@ -2448,7 +2448,8 @@
             <option>Electrician</option><option>Plumber</option><option>HVAC</option>
             <option>Roofer</option><option>Landscaper</option><option>General Contractor</option>
             <option>Painter</option><option>Concrete</option><option>Flooring</option>
-            <option>Carpenter</option><option>Pest Control</option><option>Other</option>
+            <option>Carpenter</option><option>Pest Control</option>
+            <option>Staffing Agency</option><option>Other</option>
           </select>
         </div>
         <div class="form-group" id="field-company">
@@ -2592,7 +2593,7 @@
       </div>
       <div class="form-group full">
         <label for="campaign-niche-input">Lead type <span style="color:var(--hot)">*</span></label>
-        <select id="campaign-niche-input"><option value="">Choose lead type…</option><option value="dental">Dental</option><option value="roofing">Roofing</option></select>
+        <select id="campaign-niche-input"><option value="">Choose lead type…</option><option value="dental">Dental</option><option value="roofing">Roofing</option><option value="industrial_staffing">Staffing Agency</option></select>
         <div style="font-size:11px;color:var(--text-muted)">This keeps imports separated and limits which email copy can be selected later.</div>
       </div>
       <div class="form-group full">
@@ -6072,7 +6073,7 @@ function renderOpensPanel() {
     return `<tr>
       <td style="white-space:nowrap;color:var(--text-secondary)">${esc(timeStr)}</td>
       <td class="ce-td-company">${esc(o.company) || '—'}</td>
-      <td>${esc(o.niche) || '—'}</td>
+      <td>${esc(leadTypeLabel(o.niche)) || '—'}</td>
       <td style="color:var(--text-muted);font-size:12px">${esc(o.ip) || '—'}</td>
     </tr>`;
   }).join('');
@@ -6797,9 +6798,17 @@ function updateBulkQueueBtn() {
 
 // ── CE ACTIONS ───────────────────────────────────────────────────────────────
 
+const LEAD_TYPE_LABELS = { dental: 'Dental', roofing: 'Roofing', industrial_staffing: 'Staffing Agency' };
+/** Display name for a stored lead type; unknown values render as themselves. */
+function leadTypeLabel(value) {
+  const key = String(value || '').trim();
+  return LEAD_TYPE_LABELS[key] || LEAD_TYPE_LABELS[normalizedRouteNiche({ leadNiche: key })] || key;
+}
 function normalizedRouteNiche(lead) {
   const value = String(lead.leadNiche || lead.tradeType || '').trim().toLowerCase();
   if (value.includes('roof')) return 'roofing';
+  // Before the dental check, so staffing never routes as dental.
+  if (value.includes('staffing')) return 'industrial_staffing';
   if (value.includes('dent')) return 'dental';
   return value;
 }
@@ -6823,7 +6832,7 @@ async function openQueueRouteModal(ids) {
   const niche = niches[0];
   const summary = document.getElementById('queue-route-summary');
   const error = document.getElementById('queue-route-error');
-  summary.textContent = `${leads.length} lead${leads.length === 1 ? '' : 's'} · ${niche} · ${leads[0].campaign || 'Unlabeled'}`;
+  summary.textContent = `${leads.length} lead${leads.length === 1 ? '' : 's'} · ${leadTypeLabel(niche)} · ${leads[0].campaign || 'Unlabeled'}`;
   error.textContent = '';
   document.getElementById('queue-route-modal-overlay').classList.add('open');
   try {
@@ -6859,7 +6868,7 @@ function updateQueueRouteLine() {
   const versionSelect = document.getElementById('queue-route-version');
   const template = document.getElementById('queue-route-template');
   const lead = ceLeads.find(item => item.id === queueRouteIds[0]);
-  const niche = lead ? normalizedRouteNiche(lead) : 'Lead type';
+  const niche = lead ? leadTypeLabel(normalizedRouteNiche(lead)) : 'Lead type';
   const inboxText = inbox.selectedOptions[0]?.textContent || 'Inbox';
   const versionText = versionSelect.selectedOptions[0]?.textContent || 'Campaign version';
   const templateText = template.selectedOptions[0]?.textContent || 'Email copy';

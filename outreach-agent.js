@@ -70,6 +70,10 @@ const { planHumanOutboundIngestion, matchOutbound, latestHumanOutboundAt } = req
 const { mirrorEventsInBackground } = require('./integrations/supabase-mirror');
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
 const { routedLeadReady } = require('./integrations/campaign-routing');
+// Staffing supplies its own locked copy only. Sender selection, thread pinning,
+// quota, observer, suppression and ownership all stay on the shared path.
+const { STAFFING_CAMPAIGN, renderStaffingEmail, validateStaffingEmail } = require('./integrations/staffing-campaign');
+const STAFFING_TEMPLATE = STAFFING_CAMPAIGN.emailTemplateId;
 // The reactivation gate is defined once, in the shared pipeline-state model.
 const { manualHoldReleased, applyHoldToNotes, stageRequiresHold,
   deriveCallLifecycle, deriveHotState, sendSuppressionReason } = require('./integrations/pipeline-state');
@@ -3543,6 +3547,15 @@ function coldSendGate(lead, context = null) {
   return { ownership, verdict: mayColdSend(ownership) };
 }
 
+// Renders a staffing follow-up, or throws so the caller defers rather than
+// falling back to ordinary cold copy.
+function staffingFollowUpBody(lead, step) {
+  const email = renderStaffingEmail(lead, step);
+  const bad = validateStaffingEmail(email, step);
+  if (bad) throw new Error(bad);
+  return email.body;
+}
+
 function selectQueued(leads) {
   return leads.filter(l => {
     if (l.stage !== QUEUE_STAGE) return false;   // you queued it
@@ -4252,7 +4265,20 @@ async function run() {
     const currentStep = parseInt(lead.emailStep, 10);
     const nextStepNum = currentStep + 1;
     const template = FOLLOW_UP_SEQUENCE[currentStep - 1];
-    const body = template.body(lead);
+    // Staffing follow-ups use their own locked copy; the cadence, sender,
+    // thread and every safety gate below remain the shared ones.
+    // Only the staffing branch is guarded: dental and roofing keep their exact
+    // previous behaviour, including how a copy failure propagates.
+    let body;
+    if (lead.emailTemplateId === STAFFING_TEMPLATE) {
+      try { body = staffingFollowUpBody(lead, nextStepNum); }
+      catch (error) {
+        console.warn(`⏸️  follow-up deferred → ${lead.email} (${error.message})`);
+        return false;
+      }
+    } else {
+      body = template.body(lead);
+    }
     const preview = body.split('\n')[2] || '';
     let senderChoice;
     try { senderChoice = chooseSender({
@@ -4384,6 +4410,13 @@ async function run() {
         const invalid = validateRoofingSurveyInitial(email);
         if (invalid) throw new Error(invalid);
         built = { ...email, link: '', opener: 'locked roofing survey copy', openerTier: 'LOCKED', pitchTier: ROOFING_SURVEY_PROFILE };
+      } else if (lead.emailTemplateId === STAFFING_TEMPLATE) {
+        // The opening was researched, audited and approved offline; the agent
+        // only merges it. renderStaffingEmail throws when it is missing.
+        const email = renderStaffingEmail(lead, 1);
+        const bad = validateStaffingEmail(email, 1);
+        if (bad) throw new Error(bad);
+        built = { ...email, link: '', opener: 'approved staffing opening', openerTier: 'LOCKED', pitchTier: 'industrial_staffing' };
       } else {
         built = await buildEmail(lead);
       }
@@ -4406,6 +4439,8 @@ async function run() {
     // same normalized value; live runs fail closed and preserve the lead.
     const invalid = lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE
       ? validateRoofingSurveyInitial({ subject, body })
+      : lead.emailTemplateId === STAFFING_TEMPLATE
+      ? validateStaffingEmail({ subject, body }, 1)
       : validateColdEmail(lead, subject, body, link, {
         cta, personalizationBlocks, demoIncluded, requiredBlocks,
         personalizationClaims, verifiedFactIds, demoCta, approvedGuarantee,
@@ -4498,8 +4533,21 @@ async function run() {
 
     const currentStep = parseInt(lead.emailStep, 10);
     const nextStepNum = currentStep + 1;
-    const template    = FOLLOW_UP_SEQUENCE[currentStep - 1];
-    const body        = template.body(lead);
+    const template = FOLLOW_UP_SEQUENCE[currentStep - 1];
+    // Staffing follow-ups use their own locked copy; the cadence, sender,
+    // thread and every safety gate below remain the shared ones.
+    // Only the staffing branch is guarded: dental and roofing keep their exact
+    // previous behaviour, including how a copy failure propagates.
+    let body;
+    if (lead.emailTemplateId === STAFFING_TEMPLATE) {
+      try { body = staffingFollowUpBody(lead, nextStepNum); }
+      catch (error) {
+        console.warn(`⏸️  follow-up deferred → ${lead.email} (${error.message})`);
+        continue;
+      }
+    } else {
+      body = template.body(lead);
+    }
     const preview     = body.split('\n')[2] || '';
     let senderChoice;
     try { senderChoice = chooseSender({

@@ -36,7 +36,7 @@ const {
 // failing an authoritative Google Sheets write — see integrations/supabase-mirror.js.
 const { mirrorEventsInBackground, mirrorEnabled, mirrorHealth } = require('./integrations/supabase-mirror');
 const { simulateRouting } = require('./integrations/gmail-routing-simulation');
-const { EMAIL_TEMPLATES, normalizeNiche, campaignVersionsForRoute, validateCampaignVersionRoute, validateRoute } = require('./integrations/campaign-routing');
+const { EMAIL_TEMPLATES, LEAD_TYPES, LEAD_TYPE_IDS, normalizeNiche, leadTypeLabel, isKnownLeadType, campaignVersionsForRoute, validateCampaignVersionRoute, validateRoute } = require('./integrations/campaign-routing');
 const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE, qualifyLead: qualifyRoofingLead } = require('./integrations/roofing-survey-profile');
 const {
   COLD_CALL_ACTIVITY_SHEET,
@@ -403,6 +403,8 @@ function readinessTokenAuthorized(header) {
     && crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(supplied)));
 }
 app.use(requireAuth);
+// Isolated research previews only: no Sheets writes, enrollment or outbound provider.
+require('./integrations/staffing-preview-route').registerStaffingPreviewRoutes(app, requireAuth);
 app.use(express.static(path.join(__dirname, 'public')));
 
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
@@ -1193,6 +1195,9 @@ const CE_LIGHT_FIELDS = [
 function normalizedRouteNicheFor(lead) {
   const value = String(lead.leadNiche || lead.tradeType || '').trim().toLowerCase();
   if (value.includes('roof')) return 'roofing';
+  // Checked before the dental substring so a staffing row never lands in the
+  // dental facet, which is where staffing reporting used to be counted.
+  if (value.includes('staffing')) return 'industrial_staffing';
   if (value.includes('dent')) return 'dental';
   return value;
 }
@@ -1596,6 +1601,9 @@ app.get('/api/coldemail', requireAuth, async (req, res) => {
       hasMore: limit ? offset + page.length < filtered.length : false,
       counts: dataset.counts,
       facets: dataset.facets,
+      // Human labels for the canonical lead types, so filters and tables render
+      // "Staffing Agency" rather than the stored id.
+      leadTypeLabels: Object.fromEntries(LEAD_TYPE_IDS.map(id => [id, leadTypeLabel(id)])),
       // The inbox filter's options, from the same identity map the rows used.
       // Address and id only — nothing about credentials travels to the browser.
       senderOptions: senderFilterOptions(visibleSenderIdentities()),
@@ -2137,6 +2145,11 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
   if (!campaign || !String(campaign).trim()) return res.status(422).json({ error: 'Campaign name is required' });
   const leadNiche = normalizeNiche(lead_niche);
   if (!leadNiche) return res.status(422).json({ error: 'Lead niche is required' });
+  // Fail closed: an unrecognised lead type must not be stored and later resolved
+  // by a downstream default.
+  if (!isKnownLeadType(leadNiche)) {
+    return res.status(422).json({ error: `Unknown lead type "${lead_niche}"`, allowed: LEAD_TYPE_IDS });
+  }
   const campaignName  = String(campaign).trim();
   const campaignNotes = (campaign_notes || '').trim();
   try {
@@ -5134,14 +5147,15 @@ app.post('/api/ops/send-recovery', requireAuth, async (req, res) => {
 
 app.get('/api/outreach/routing-options', requireAuth, (_req, res) => {
   try {
-    const versions = ['dental','roofing'].flatMap(niche => campaignVersionsForRoute({ niche }))
+    const versions = LEAD_TYPE_IDS.flatMap(niche => campaignVersionsForRoute({ niche }))
       .map(version => ({
         id: version.id, label: version.label, niche: version.niche, family: version.family,
         emailTemplateId: version.emailTemplateId, copyVersion: version.copyVersion,
         subjectStrategy: version.subjectStrategy, personalizationStrategy: version.personalizationStrategy,
         offerVersion: version.offerVersion, status: version.status,
       }));
-    res.json({ niches: ['dental','roofing'], inboxes: gmailInboxOptions(), versions, templates: EMAIL_TEMPLATES });
+    res.json({ niches: LEAD_TYPE_IDS, leadTypes: LEAD_TYPES.map(type => ({ id: type.id, label: type.label })),
+      inboxes: gmailInboxOptions(), versions, templates: EMAIL_TEMPLATES });
   }
   catch (error) { res.status(500).json({ error: error.message }); }
 });
