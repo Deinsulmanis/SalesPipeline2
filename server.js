@@ -39,6 +39,8 @@ const { mirrorEventsInBackground, mirrorEnabled, mirrorHealth } = require('./int
 // timeline; Supabase is read alongside so parity can be measured on real data.
 const { timelineMode, readCanonicalTimeline, compareTimelines,
   supabaseMayServeTimeline } = require('./integrations/supabase-timeline');
+const { readTimelineHybrid, hybridMayServeTimeline, compareHybridActivities,
+  FALLBACK: HYBRID_FALLBACK } = require('./integrations/supabase-timeline-hybrid');
 
 // Bounded, in-memory parity diagnostics. Records identities and categories, not
 // payloads: an activity row can contain an email body and this must never log one.
@@ -47,7 +49,14 @@ const stage2Parity = {
   leadsChecked: 0, eventsChecked: 0, exact: 0, missing: 0, extra: 0,
   mismatched: 0, orderMismatches: 0, readFailures: 0, fallbacks: 0,
   contentBearingSkipped: 0, recent: [],
+  // Stage 2F
+  hybridAttempts: 0, hybridServed: 0, hybridFallbacks: 0, hybridSheetsSkipped: 0,
+  hybridContentHydrated: 0, fallbackReasons: {},
 };
+function noteFallback(reason) {
+  stage2Parity.hybridFallbacks++;
+  stage2Parity.fallbackReasons[reason] = (stage2Parity.fallbackReasons[reason] || 0) + 1;
+}
 function recordStage2Parity(entry) {
   stage2Parity.lastCheckAt = new Date().toISOString();
   stage2Parity.leadsChecked++;
@@ -59,30 +68,36 @@ function recordStage2Parity(entry) {
  * Dual-read parity probe. Never throws, never awaits into the response path's
  * critical work, and never changes what the caller returns.
  */
-async function stage2TimelineProbe({ leadId, sourceLeadId, email, authoritative }) {
+async function stage2TimelineProbe({ leadId, sourceLeadId, email, authoritative, loadAuthoritativeActivities }) {
   if (timelineMode() === 'off') return;
   try {
-    const result = await readCanonicalTimeline({ leadId, sourceLeadId, email });
-    if (!result.ok) {
-      stage2Parity.readFailures++;
-      recordStage2Parity({ leadId: sourceLeadId || leadId, outcome: 'read_failed', reason: result.reason });
+    stage2Parity.hybridAttempts++;
+    const hybrid = await readTimelineHybrid({ leadId, sourceLeadId, email, loadAuthoritativeActivities });
+    if (!hybrid.ok) {
+      noteFallback(hybrid.fallbackReason);
+      recordStage2Parity({ leadId: sourceLeadId || leadId, outcome: 'hybrid_incomplete',
+        reason: hybrid.fallbackReason, detail: hybrid.detail });
       return;
     }
-    const parity = compareTimelines(authoritative, result.events);
-    const gate = supabaseMayServeTimeline(result, { authoritativeCount: authoritative.length });
-    if (!gate.allowed) stage2Parity.contentBearingSkipped++;
+    if (!hybrid.sheetsConsulted) stage2Parity.hybridSheetsSkipped++;
+    stage2Parity.hybridContentHydrated += hybrid.hydrated;
+    // The comparison Stage 2 could not make: the FINAL array, content included.
+    const parity = compareHybridActivities(authoritative, hybrid.activities);
     stage2Parity.eventsChecked += parity.authoritativeCount;
     stage2Parity.exact += parity.exact;
     stage2Parity.missing += parity.missing.length;
     stage2Parity.extra += parity.extra.length;
     stage2Parity.mismatched += parity.mismatched.length;
     if (!parity.orderMatches) stage2Parity.orderMismatches++;
+    if (parity.parityClean) stage2Parity.hybridServed++;
+    else noteFallback(HYBRID_FALLBACK.HYBRID_PARITY_FAILED);
     recordStage2Parity({
-      leadId: sourceLeadId || leadId, outcome: parity.parityClean ? 'parity_clean' : 'parity_diff',
-      authoritative: parity.authoritativeCount, mirrored: parity.mirroredCount,
-      exact: parity.exact, missing: parity.missing.length, extra: parity.extra.length,
-      mismatched: parity.mismatched.map(item => item.eventId), orderMatches: parity.orderMatches,
-      mayServe: gate.allowed, mayServeReason: gate.reason,
+      leadId: sourceLeadId || leadId, outcome: parity.parityClean ? 'hybrid_parity_clean' : 'hybrid_parity_diff',
+      authoritative: parity.authoritativeCount, hybrid: parity.hybridCount, exact: parity.exact,
+      missing: parity.missing.length, extra: parity.extra.length,
+      mismatched: parity.mismatched.map(item => item.eventId),
+      contentMismatched: parity.contentMismatched.length,
+      orderMatches: parity.orderMatches, sheetsConsulted: hybrid.sheetsConsulted, hydrated: hybrid.hydrated,
     });
   } catch (error) {
     stage2Parity.readFailures++;
@@ -2572,16 +2587,50 @@ app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
     AGENT_COLS.forEach((col, i) => { lead[col] = leadRow[17 + i] || ''; });
     CALL_DETAIL_COLS.forEach((col, i) => { lead[col] = leadRow[20 + i] || ''; });
     const email = normalizeEmail(lead.email);
-    const rows = await readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER);
-    const activities = rows
+    const sourceLeadId = String(req.params.id).replace(/^CE-/, '');
+    // The authoritative read, made LAZY and memoised. In primary mode a lead
+    // with no content-bearing event never opens the sheet at all; every other
+    // path still pays exactly the one read it paid before, never two.
+    let sheetRows = null;
+    const loadSheetRows = async () => {
+      if (!sheetRows) sheetRows = await readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER);
+      return sheetRows;
+    };
+    const loadAuthoritative = async () => (await loadSheetRows())
       .filter(row => row.leadId === req.params.id || (email && normalizeEmail(row.email) === email))
       .sort((a, b) => new Date(b.occurredAt || 0) - new Date(a.occurredAt || 0))
       .map(({ _row, ...row }) => row);
-    // Stage 2 dual read. Fire-and-forget: the authoritative `activities` above
-    // is what the caller receives, in every mode, until a cutover is approved.
-    stage2TimelineProbe({ leadId: req.params.id, sourceLeadId: String(req.params.id).replace(/^CE-/, ''),
-      email: lead.email, authoritative: activities })
-      .catch(() => { /* a parity probe may never affect the response */ });
+
+    let activities = null;
+    let timelineSource = 'sheets';
+    if (timelineMode() === 'primary') {
+      stage2Parity.hybridAttempts++;
+      const hybrid = await readTimelineHybrid({
+        leadId: req.params.id, sourceLeadId, email: lead.email,
+        loadAuthoritativeActivities: loadSheetRows,
+      }).catch(error => ({ ok: false, fallbackReason: HYBRID_FALLBACK.HYDRATION_QUERY_FAILED,
+        detail: String(error && error.message || 'hybrid read threw') }));
+      const gate = hybridMayServeTimeline(hybrid);
+      if (gate.allowed) {
+        activities = hybrid.activities;
+        timelineSource = 'supabase-hybrid';
+        stage2Parity.hybridServed++;
+        stage2Parity.hybridContentHydrated += hybrid.hydrated;
+        if (!hybrid.sheetsConsulted) stage2Parity.hybridSheetsSkipped++;
+      } else {
+        // Never a blank or partial timeline: the existing reader answers instead.
+        noteFallback(gate.reason);
+      }
+    }
+    if (!activities) activities = await loadAuthoritative();
+
+    // Dual mode validates without ever serving: the authoritative array above is
+    // what the caller receives. Fire-and-forget so it cannot affect the response.
+    if (timelineMode() === 'dual') {
+      stage2TimelineProbe({ leadId: req.params.id, sourceLeadId, email: lead.email,
+        authoritative: activities, loadAuthoritativeActivities: loadSheetRows })
+        .catch(() => { /* a parity probe may never affect the response */ });
+    }
     // Derived, never stored: the board row and the ColdEmail row can disagree,
     // and the UI needs to show which one actually governs what happens next.
     let pipeline = null;
@@ -2649,6 +2698,8 @@ app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
     } : lead;
     const timeline = timelineForLead(timelineLead, dataset, activities, twin || lead);
     res.json({
+      // Additive only: existing fields and their meanings are unchanged.
+      timelineSource,
       activities: timeline, leadScore: scoreColdCallLead(lead, activities), pipeline,
       integrity: inspectActivityIntegrity(activities, new Set([lead.id, twin?.id].filter(Boolean))),
     });

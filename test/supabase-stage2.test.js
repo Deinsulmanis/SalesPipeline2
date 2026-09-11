@@ -215,12 +215,16 @@ test('V/W/X. campaign attribution survives for staffing, dental and roofing alik
 });
 
 // ── Y/Z. contract and blast radius ─────────────────────────────────────────
-test('Y. the timeline API contract is unchanged: Sheets still serves every response', () => {
+test('Y. the timeline API contract holds: off and dual always serve the authoritative read', () => {
   const server = read('server.js');
-  // The probe is fire-and-forget and the authoritative array is what is returned.
-  assert.match(server, /stage2TimelineProbe\(\{[\s\S]{0,220}authoritative: activities \}\)/);
+  // Stage 2F: the probe still cannot influence the response, and runs only in dual.
+  assert.match(server, /if \(timelineMode\(\) === 'dual'\) \{\s*stage2TimelineProbe\(/);
+  assert.match(server, /authoritative: activities, loadAuthoritativeActivities: loadSheetRows \}\)/);
   assert.match(server, /\.catch\(\(\) => \{ \/\* a parity probe may never affect the response \*\/ \}\)/);
-  assert.match(server, /const timeline = timelineForLead\(/, 'the timeline is still built from the authoritative rows');
+  // Whatever activities were obtained go through the SAME projection.
+  assert.match(server, /const timeline = timelineForLead\(/, 'the timeline is still built by the same builder');
+  // Any refused hybrid result falls through to the authoritative loader.
+  assert.match(server, /if \(!activities\) activities = await loadAuthoritative\(\);/);
   // Default mode is off, so deploying this changes nothing on its own.
   assert.equal(timelineMode({}), 'off');
   assert.equal(timelineMode({ SUPABASE_TIMELINE_MODE: 'dual' }), 'dual');
