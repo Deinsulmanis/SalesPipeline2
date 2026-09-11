@@ -35,6 +35,60 @@ const {
 // Stage 1 Supabase mirror. Optional, server-only, and incapable of blocking or
 // failing an authoritative Google Sheets write — see integrations/supabase-mirror.js.
 const { mirrorEventsInBackground, mirrorEnabled, mirrorHealth } = require('./integrations/supabase-mirror');
+// Stage 2: read-side validation only. Sheets still serves every user-facing
+// timeline; Supabase is read alongside so parity can be measured on real data.
+const { timelineMode, readCanonicalTimeline, compareTimelines,
+  supabaseMayServeTimeline } = require('./integrations/supabase-timeline');
+
+// Bounded, in-memory parity diagnostics. Records identities and categories, not
+// payloads: an activity row can contain an email body and this must never log one.
+const stage2Parity = {
+  mode: timelineMode(), startedAt: new Date().toISOString(), lastCheckAt: null,
+  leadsChecked: 0, eventsChecked: 0, exact: 0, missing: 0, extra: 0,
+  mismatched: 0, orderMismatches: 0, readFailures: 0, fallbacks: 0,
+  contentBearingSkipped: 0, recent: [],
+};
+function recordStage2Parity(entry) {
+  stage2Parity.lastCheckAt = new Date().toISOString();
+  stage2Parity.leadsChecked++;
+  stage2Parity.recent.unshift(entry);
+  if (stage2Parity.recent.length > 25) stage2Parity.recent.length = 25;
+}
+
+/**
+ * Dual-read parity probe. Never throws, never awaits into the response path's
+ * critical work, and never changes what the caller returns.
+ */
+async function stage2TimelineProbe({ leadId, sourceLeadId, email, authoritative }) {
+  if (timelineMode() === 'off') return;
+  try {
+    const result = await readCanonicalTimeline({ leadId, sourceLeadId, email });
+    if (!result.ok) {
+      stage2Parity.readFailures++;
+      recordStage2Parity({ leadId: sourceLeadId || leadId, outcome: 'read_failed', reason: result.reason });
+      return;
+    }
+    const parity = compareTimelines(authoritative, result.events);
+    const gate = supabaseMayServeTimeline(result, { authoritativeCount: authoritative.length });
+    if (!gate.allowed) stage2Parity.contentBearingSkipped++;
+    stage2Parity.eventsChecked += parity.authoritativeCount;
+    stage2Parity.exact += parity.exact;
+    stage2Parity.missing += parity.missing.length;
+    stage2Parity.extra += parity.extra.length;
+    stage2Parity.mismatched += parity.mismatched.length;
+    if (!parity.orderMatches) stage2Parity.orderMismatches++;
+    recordStage2Parity({
+      leadId: sourceLeadId || leadId, outcome: parity.parityClean ? 'parity_clean' : 'parity_diff',
+      authoritative: parity.authoritativeCount, mirrored: parity.mirroredCount,
+      exact: parity.exact, missing: parity.missing.length, extra: parity.extra.length,
+      mismatched: parity.mismatched.map(item => item.eventId), orderMatches: parity.orderMatches,
+      mayServe: gate.allowed, mayServeReason: gate.reason,
+    });
+  } catch (error) {
+    stage2Parity.readFailures++;
+    recordStage2Parity({ leadId: sourceLeadId || leadId, outcome: 'probe_error', reason: String(error && error.message || 'unknown') });
+  }
+}
 const { simulateRouting } = require('./integrations/gmail-routing-simulation');
 const { EMAIL_TEMPLATES, LEAD_TYPES, LEAD_TYPE_IDS, normalizeNiche, leadTypeLabel, isKnownLeadType, campaignVersionsForRoute, validateCampaignVersionRoute, validateRoute } = require('./integrations/campaign-routing');
 const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE, qualifyLead: qualifyRoofingLead } = require('./integrations/roofing-survey-profile');
@@ -2523,6 +2577,11 @@ app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
       .filter(row => row.leadId === req.params.id || (email && normalizeEmail(row.email) === email))
       .sort((a, b) => new Date(b.occurredAt || 0) - new Date(a.occurredAt || 0))
       .map(({ _row, ...row }) => row);
+    // Stage 2 dual read. Fire-and-forget: the authoritative `activities` above
+    // is what the caller receives, in every mode, until a cutover is approved.
+    stage2TimelineProbe({ leadId: req.params.id, sourceLeadId: String(req.params.id).replace(/^CE-/, ''),
+      email: lead.email, authoritative: activities })
+      .catch(() => { /* a parity probe may never affect the response */ });
     // Derived, never stored: the board row and the ColdEmail row can disagree,
     // and the UI needs to show which one actually governs what happens next.
     let pipeline = null;
@@ -4948,6 +5007,11 @@ function gmailInboxOptions() {
   };
   return [primary, ...secondary];
 }
+
+app.get('/api/integrations/supabase/stage2-parity', requireAuth, (_req, res) => {
+  res.json({ ...stage2Parity, mode: timelineMode(),
+    note: 'Observational. Sheets serves every timeline; Supabase is read alongside for parity.' });
+});
 
 app.get('/api/integrations/gmail-inboxes', requireAuth, (_req, res) => {
   try { res.json({ inboxes: gmailInboxOptions() }); }
