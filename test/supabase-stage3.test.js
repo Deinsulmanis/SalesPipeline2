@@ -809,18 +809,25 @@ test('N1 — with mode off, no hook writes anything at all', () => {
   assert.equal(gated.length, total.length, 'every mirror call site must be gated — no ungated hook may exist');
 });
 
-test('N2 — reads are gated more strongly than writes: nothing calls them', () => {
-  // Writes are gated by a runtime predicate. Reads are gated by ABSENCE OF A
-  // CALLER anywhere in the application, which no environment variable can undo.
-  // That asymmetry is deliberate and is what makes "off" unable to promote
-  // Supabase to authority by accident.
+test('N2 — no DECISION path reads the mirror; only measurement may', () => {
+  // Writes are gated by a runtime predicate. Reads are gated by absence of a
+  // caller, which no environment variable can undo — that asymmetry is what
+  // makes "off" unable to promote Supabase to authority by accident.
+  //
+  // Stage 3D adds exactly one legitimate reader: outreach-dual-read.js, whose
+  // whole job is to read the mirror and compare it. It is exempt here because
+  // it is measurement, not a decision — an exemption that is only safe because
+  // it is enforced elsewhere rather than assumed: Stage 3D's D2 proves no caller
+  // captures, awaits or branches on its result, and D6 proves the module holds
+  // no write, send or Google path at all.
   const fs2 = require('node:fs');
+  const MEASUREMENT_ONLY = new Set(['outreach-state.js', 'outreach-dual-read.js']);
   const readers = ['getOutreachLeadById', 'getOutreachLeadByEmail', 'batchGetOutreachLeads',
     'listOutreachLeads', 'countOutreachLeads'];
   const appFiles = [
     path.join(root, 'server.js'), path.join(root, 'outreach-agent.js'),
     ...fs2.readdirSync(path.join(root, 'integrations'))
-      .filter(f => f.endsWith('.js') && f !== 'outreach-state.js')
+      .filter(f => f.endsWith('.js') && !MEASUREMENT_ONLY.has(f))
       .map(f => path.join(root, 'integrations', f)),
   ];
   for (const file of appFiles) {
@@ -830,6 +837,12 @@ test('N2 — reads are gated more strongly than writes: nothing calls them', () 
         `${path.basename(file)} must not call ${reader} — Sheets is authoritative in Stage 3`);
     }
   }
+
+  // The exemption must stay narrow: the measurement module may read, and must
+  // not be able to do anything else.
+  const dual = readSource(path.join(root, 'integrations', 'outreach-dual-read.js'));
+  assert.ok(dual.includes('listOutreachLeads'), 'the measurement module does read the mirror');
+  assert.ok(!/mirrorOutreachLead/.test(dual), 'and must hold no write path');
 });
 
 test('N3 — no send-eligibility, routing or sequence path can consult the mirror', () => {

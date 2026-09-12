@@ -40,6 +40,10 @@ const { mirrorEventsInBackground, mirrorEnabled, mirrorHealth } = require('./int
 const {
   mirrorOutreachLeadsInBackground, mirrorOutreachLeadFieldsInBackground, outreachStateMode,
 } = require('./integrations/outreach-state');
+// Stage 3D: dual-read measurement only. Nothing branches on its output.
+const {
+  probeOutreachParityInBackground, stage3ParitySnapshot, DASHBOARD_OMITTED_FIELDS,
+} = require('./integrations/outreach-dual-read');
 // Stage 2: read-side validation only. Sheets still serves every user-facing
 // timeline; Supabase is read alongside so parity can be measured on real data.
 const { timelineMode, readCanonicalTimeline, compareTimelines,
@@ -1401,6 +1405,20 @@ async function loadOutreachDataset() {
     if (lead.id) ceRowMap.set(lead.id, index + 2);
     return lead;
   }).filter(lead => lead.id);
+
+  // Stage 3D dual-read measurement. Google Sheets has already produced the
+  // authoritative `leads` above and nothing below consults the comparison —
+  // this only records whether Supabase would have said the same thing.
+  //
+  // siteContext is excluded because this snapshot never loads column P (it reads
+  // A:O and Q:X, leaving P blank). Comparing that blank against the real value
+  // would report a divergence the projection invented, not one in the data.
+  if (outreachStateMode() === 'dual') {
+    probeOutreachParityInBackground(leads, {
+      label: 'ui-directory',
+      comparable: CE_COLUMNS.filter(field => !DASHBOARD_OMITTED_FIELDS.includes(field)),
+    });
+  }
 
   const activities = rowObjects(activityResponse.data.values, COLD_CALL_ACTIVITY_HEADER);
   const boardLeads = (boardResponse.data.values || []).slice(1).map(row => {
@@ -5145,6 +5163,20 @@ function gmailInboxOptions() {
 app.get('/api/integrations/supabase/stage2-parity', requireAuth, (_req, res) => {
   res.json({ ...stage2Parity, mode: timelineMode(),
     note: 'Observational. Sheets serves every timeline; Supabase is read alongside for parity.' });
+});
+
+// Stage 3 operational-state parity. Reports lead ids and field NAMES only —
+// never a field value, because those are prospect data.
+app.get('/api/integrations/supabase/stage3-parity', requireAuth, (_req, res) => {
+  const mode = outreachStateMode();
+  res.json({
+    ...stage3ParitySnapshot(mode),
+    note: mode === 'off'
+      ? 'Stage 3 is off. Google Sheets is authoritative and Supabase is neither read nor written.'
+      : mode === 'dual'
+        ? 'Observational. Google Sheets serves every operational result; Supabase is read alongside for parity.'
+        : 'Supabase serves operational reads.',
+  });
 });
 
 app.get('/api/integrations/gmail-inboxes', requireAuth, (_req, res) => {

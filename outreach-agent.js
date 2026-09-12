@@ -69,6 +69,8 @@ const { planHumanOutboundIngestion, matchOutbound, latestHumanOutboundAt } = req
 // write is the Google Sheets append above it, and this cannot affect it.
 const { mirrorEventsInBackground } = require('./integrations/supabase-mirror');
 const { mirrorOutreachLeadsInBackground, outreachStateMode } = require('./integrations/outreach-state');
+// Stage 3D: dual-read measurement only. No decision below reads its result.
+const { probeOutreachParityInBackground } = require('./integrations/outreach-dual-read');
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
 const { routedLeadReady } = require('./integrations/campaign-routing');
 // Staffing supplies its own locked copy only. Sender selection, thread pinning,
@@ -4138,6 +4140,18 @@ async function run() {
   // Fire-and-forget: Sheets has already answered and nothing here may delay or
   // fail a send.
   if (outreachStateMode() !== 'off') mirrorOutreachLeadsInBackground(all);
+
+  // Stage 3D dual-read measurement on the AUTOMATION corpus — the one that
+  // decides sends, sequencing, routing and ownership. `all` came from A:X, so
+  // every field is comparable here, unlike the dashboard's A:O + Q:X snapshot.
+  //
+  // Measurement only: `all` is what every decision below uses, and the probe's
+  // result is never read. It runs after the mirror so it compares against a
+  // mirror this cycle has already refreshed, which is what a read cutover would
+  // actually be relying on.
+  if (outreachStateMode() === 'dual') {
+    probeOutreachParityInBackground(all, { label: 'agent-automation' });
+  }
   if (TARGET_LEAD_ID) {
     const target = all.find(lead => lead.id === TARGET_LEAD_ID);
     if (!target) throw new Error(`TARGET_LEAD_ID ${TARGET_LEAD_ID} was not found`);
