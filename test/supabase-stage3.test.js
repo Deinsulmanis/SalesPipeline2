@@ -567,22 +567,52 @@ function coldEmailWriteSites(source, sheetNameMeans) {
 
 test('I6 — no live operational ColdEmail writer bypasses the abstraction', () => {
   // Stage 3 Phase A converted every live operational writer to applyLeadChange /
-  // applyLeadChanges. What may still touch the sheet directly is a short,
-  // explicitly classified list - and it is a list, not a vibe: each entry names
-  // why it is exempt, so a NEW direct writer fails this test instead of quietly
-  // leaving the mirror stale.
-  const EXEMPT = {
-    'ensureColdEmailSheet': 'schema/header initialisation, writes row 1 only - not lead state',
-    "app.put('/api/coldemail/:id'": 'legacy, UI-unreachable, and fail-closed: builds 24 values for an A:S range',
-  };
+  // applyLeadChanges. What may still touch the sheet directly is a SHORT,
+  // EXPLICITLY CLASSIFIED list, and it is a list rather than a threshold: each
+  // entry names why it is exempt, so a new direct writer fails here instead of
+  // quietly leaving the mirror stale after a read cutover.
+  const EXEMPT = [
+    { fn: 'ensureColdEmailSheet', file: 'server.js', why: 'schema init - writes the header row, never lead state' },
+    { fn: 'ensureAgentHeaders', file: 'outreach-agent.js', why: 'schema init - writes the P1 header only' },
+    { fn: "app.put('/api/coldemail/:id'", file: 'server.js',
+      why: 'legacy and UI-unreachable; builds 24 values for an A:S range so Sheets rejects it (fail-closed)' },
+  ];
+
   const server = coldEmailWriteSites(serverSrc, 'Leads');
-  assert.ok(server.length <= 3,
-    `server.js still has ${server.length} direct ColdEmail write sites; every live `
-    + 'operational writer must go through applyLeadChange/applyLeadChanges.');
-  assert.ok(Object.keys(EXEMPT).length >= 2, 'the exemption list must stay explicit');
-  // The import appends new rows and mirrors complete lead objects; it is a
-  // creation path, not a mutation of existing state.
+  const agent = coldEmailWriteSites(agentSrc, 'ColdEmail');
+  assert.equal(server.length, 3,
+    `server.js has ${server.length} direct ColdEmail write sites, expected 3 exempt ones. `
+    + 'Every live operational writer must go through applyLeadChange/applyLeadChanges.');
+  assert.equal(agent.length, 1,
+    `outreach-agent.js has ${agent.length} direct ColdEmail write sites, expected 1 exempt one.`);
+  assert.equal(EXEMPT.length, 3, 'the exemption list must account for every remaining direct write');
+  for (const entry of EXEMPT) assert.ok(entry.why, `${entry.fn} must state why it is exempt`);
+
+  // Two header-init sites in server.js plus the legacy PUT; one header-init in
+  // the agent. Nothing else may write ColdEmail cells directly.
+  assert.ok(serverSrc.includes('async function ensureColdEmailSheet'));
+  assert.ok(agentSrc.includes('async function ensureAgentHeaders'));
+
+  // The import appends NEW rows and mirrors complete lead objects. It is a
+  // creation path, not a mutation of existing state, so it keeps its own hook.
   assert.match(serverSrc, /mirrorOutreachLeadsInBackground\(toMirror\)/);
+});
+
+test('I6b — every converted writer names its fields, so none can write a stray column', () => {
+  // applyLeadChange resolves field -> column. A call that passed a raw range
+  // would sidestep that mapping, so no converted site may mention one.
+  for (const [name, src] of [['server.js', serverSrc], ['outreach-agent.js', agentSrc]]) {
+    const calls = src.match(/applyLeadChanges?\([\s\S]{0,400}?\}\);/g) || [];
+    assert.ok(calls.length >= 5, `${name} should carry several converted writers, found ${calls.length}`);
+    for (const call of calls) {
+      assert.ok(!/range:\s*`\$\{(CE_SHEET_NAME|SHEET_NAME)\}/.test(call.replace(/extraData:[\s\S]*/, '')),
+        `${name}: a converted writer must not carry a raw ColdEmail range`);
+    }
+  }
+  // extraData is the one place a raw range is legitimate, and only for ANOTHER
+  // sheet - it exists so cross-sheet atomicity survives the conversion.
+  const extra = serverSrc.match(/extraData: \[\{ range: `\$\{SHEET_NAME\}!K\$\{rowNum\}`/);
+  assert.ok(extra, 'the contact-change board write must stay in the same batch');
 });
 
 test('I7 — the abstraction is the single place authority can flip', () => {

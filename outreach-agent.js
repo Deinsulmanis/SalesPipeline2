@@ -68,7 +68,7 @@ const { planHumanOutboundIngestion, matchOutbound, latestHumanOutboundAt } = req
 // Stage 1 Supabase mirror. Optional and non-blocking: the agent's authoritative
 // write is the Google Sheets append above it, and this cannot affect it.
 const { mirrorEventsInBackground } = require('./integrations/supabase-mirror');
-const { mirrorOutreachLeadsInBackground, outreachStateMode } = require('./integrations/outreach-state');
+const { mirrorOutreachLeadsInBackground, outreachStateMode, applyLeadChange } = require('./integrations/outreach-state');
 // Stage 3D: dual-read measurement only. No decision below reads its result.
 const { probeOutreachParity, formatProbeLine } = require('./integrations/outreach-dual-read');
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
@@ -944,13 +944,9 @@ async function scrapeSite(url) {
 }
 
 // Writes scraped siteContext (or SCRAPE_SKIP marker) to column N for one lead row.
-async function writeSiteContext(rowNum, text) {
-  await sheets().spreadsheets.values.update({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!P${rowNum}`,
-    valueInputOption: 'RAW',
-    requestBody: { values: [[text]] },
-  });
+async function writeSiteContext(lead, text) {
+  await applyLeadChange(lead.id, { siteContext: text },
+    { row: lead._row, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
 }
 
 // Phase 2: calls Haiku to generate one specific opening sentence.
@@ -1041,7 +1037,7 @@ async function buildEmail(lead) {
     console.log(`[Scrape] Fetching ${lead.website} for ${lead.email}...`);
     siteText = await scrapeSite(lead.website);
     if (!DRY_RUN) {
-      await withAuth(() => writeSiteContext(lead._row, siteText || SCRAPE_SKIP));
+      await withAuth(() => writeSiteContext(lead, siteText || SCRAPE_SKIP));
     }
     if (!siteText) console.log(`[Scrape] No usable text from ${lead.website} — using Tier-1`);
   }
@@ -1177,7 +1173,7 @@ async function enqueueSmartleadLead(lead, mapping) {
   await sheets().spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A:N`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS', requestBody: { values: [[lead.id, 'smartlead', externalLeadId, mapping.externalCampaignId, '', result.testMode ? 'Test mode' : (result.added_count ? 'Queued' : 'Skipped'), result.message || '', '', now, '', '', JSON.stringify({ addedCount: result.added_count || 0, skippedCount: result.skipped_count || 0 }), mappingKey, normalizedEmail]] } });
   if (!result.testMode && result.added_count) {
     const rowNum = await resolveRow(lead.id);
-    await sheets().spreadsheets.values.batchUpdate({ spreadsheetId: SPREADSHEET_ID, requestBody: { valueInputOption: 'RAW', data: [{ range: `${SHEET_NAME}!H${rowNum}`, values: [['Contacted']] }, { range: `${SHEET_NAME}!I${rowNum}`, values: [['queued']] }] } });
+    await applyLeadChange(lead.id, { stage: 'Contacted', emailStatus: 'queued' }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
   }
   ACTIVE_PROVIDER_LEADS.add(lead.id);
   ACTIVE_PROVIDER_EMAILS.add(normalizedEmail);
@@ -1760,17 +1756,13 @@ async function markSent(lead, step, sendMeta = null) {
         console.warn(`[markSent] lead ${lead.id} (${lead.email}) no longer in sheet — row deleted mid-run? Skipping write.`);
         return { recorded: activityRecorded, rowMissing: true };
       }
-      await sheets().spreadsheets.values.batchUpdate({
-        spreadsheetId: SPREADSHEET_ID,
-        requestBody: {
-          valueInputOption: 'RAW',
-          data: [
-            { range: `${SHEET_NAME}!H${rowNum}`, values: [[stageValue]] },
-            { range: `${SHEET_NAME}!I${rowNum}:K${rowNum}`, values: [[status, now, String(step)]] },
-            ...(sendMeta?.sender?.id ? [{ range: `${SHEET_NAME}!U${rowNum}`, values: [[sendMeta.sender.id]] }] : []),
-          ],
-        },
-      });
+      // I:K named field by field. Same three cells, same batch, same values —
+      // naming them is what keeps the mirror narrow instead of guessing what a
+      // contiguous range covered. The sender cell stays conditional.
+      await applyLeadChange(lead.id, {
+        stage: stageValue, emailStatus: status, lastEmailedAt: now, emailStep: String(step),
+        ...(sendMeta?.sender?.id ? { senderInboxId: sendMeta.sender.id } : {}),
+      }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
       lead.stage = stageValue;
       lead.emailStatus = status;
       lead.lastEmailedAt = now;
@@ -1894,17 +1886,8 @@ async function deliverOrdinaryColdStep({
 }
 
 // Phase 4: mark a lead as replied — sets stage to 'Replied' and emailStatus to 'replied'.
-async function markReplied(rowNum) {
-  await sheets().spreadsheets.values.batchUpdate({
-    spreadsheetId: SPREADSHEET_ID,
-    requestBody: {
-      valueInputOption: 'RAW',
-      data: [
-        { range: `${SHEET_NAME}!H${rowNum}`, values: [['Replied']] },
-        { range: `${SHEET_NAME}!I${rowNum}`, values: [['replied']] },
-      ],
-    },
-  });
+async function markReplied(leadId, rowNum) {
+  await applyLeadChange(leadId, { stage: 'Replied', emailStatus: 'replied' }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
 }
 
 // ── REPLY ROUTING ─────────────────────────────────────────────────────────────
@@ -1946,17 +1929,8 @@ async function handleInterested(lead, message = {}, replyText = '', eventType = 
   // person. MANUAL HOLD is reserved for intentional human ownership.
   const interestedNotes = prependNote(lead.notes, TAG_INTERESTED);
   lead.notes = interestedNotes;
-  await sheets().spreadsheets.values.batchUpdate({
-    spreadsheetId: SPREADSHEET_ID,
-    requestBody: {
-      valueInputOption: 'RAW',
-      data: [
-        { range: `${SHEET_NAME}!H${rowNum}`, values: [['Replied']] },
-        { range: `${SHEET_NAME}!I${rowNum}`, values: [['replied']] },
-        { range: `${SHEET_NAME}!L${rowNum}`, values: [[interestedNotes]] },
-      ],
-    },
-  });
+  await applyLeadChange(lead.id,
+    { stage: 'Replied', emailStatus: 'replied', notes: interestedNotes }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
   const coldCallLeadId = await upsertColdCallLeadFromEvent(
     lead, 'hot',
     `Auto-promoted from cold email outreach. Reply classified: ${eventType === 'meeting_requested' ? 'Meeting requested' : 'Interested'}.`,
@@ -2071,17 +2045,10 @@ async function handleNotInterested(lead) {
     console.warn(`[handleNotInterested] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
     return;
   }
-  await sheets().spreadsheets.values.batchUpdate({
-    spreadsheetId: SPREADSHEET_ID,
-    requestBody: {
-      valueInputOption: 'RAW',
-      data: [
-        { range: `${SHEET_NAME}!H${rowNum}`, values: [['Done']] },
-        { range: `${SHEET_NAME}!I${rowNum}`, values: [['done']] },
-        { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, '[REPLY: Not Interested]')]] },
-      ],
-    },
-  });
+  await applyLeadChange(lead.id, {
+    stage: 'Done', emailStatus: 'done',
+    notes: prependNote(lead.notes, '[REPLY: Not Interested]'),
+  }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
   console.log(`  ✗ ${lead.company} — marked Done (not interested)`);
 }
 
@@ -2091,17 +2058,10 @@ async function handleUnsubscribe(lead) {
     console.warn(`[handleUnsubscribe] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
     return;
   }
-  await sheets().spreadsheets.values.batchUpdate({
-    spreadsheetId: SPREADSHEET_ID,
-    requestBody: {
-      valueInputOption: 'RAW',
-      data: [
-        { range: `${SHEET_NAME}!H${rowNum}`, values: [['Unsub']] },
-        { range: `${SHEET_NAME}!I${rowNum}`, values: [['done']] },
-        { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, '[REPLY: Unsubscribed]')]] },
-      ],
-    },
-  });
+  await applyLeadChange(lead.id, {
+    stage: 'Unsub', emailStatus: 'done',
+    notes: prependNote(lead.notes, '[REPLY: Unsubscribed]'),
+  }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
   await addSuppression(lead.email, 'unsubscribe', lead.company, 'reply-auto');
   console.log(`  ⊘ ${lead.company} — marked Unsub (unsubscribe request)`);
 }
@@ -2114,16 +2074,10 @@ async function handleOutOfOffice(lead) {
   }
   const newDate = new Date(lead.lastEmailedAt);
   newDate.setDate(newDate.getDate() + 7);
-  await sheets().spreadsheets.values.batchUpdate({
-    spreadsheetId: SPREADSHEET_ID,
-    requestBody: {
-      valueInputOption: 'RAW',
-      data: [
-        { range: `${SHEET_NAME}!J${rowNum}`, values: [[newDate.toISOString()]] },
-        { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, '[REPLY: OOO — retry in 7d]')]] },
-      ],
-    },
-  });
+  await applyLeadChange(lead.id, {
+    lastEmailedAt: newDate.toISOString(),
+    notes: prependNote(lead.notes, '[REPLY: OOO — retry in 7d]'),
+  }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
   console.log(`  ⏸ ${lead.company} — OOO detected, follow-up delayed 7 days`);
 }
 
@@ -2133,17 +2087,10 @@ async function handleWrongPerson(lead) {
     console.warn(`[handleWrongPerson] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
     return;
   }
-  await sheets().spreadsheets.values.batchUpdate({
-    spreadsheetId: SPREADSHEET_ID,
-    requestBody: {
-      valueInputOption: 'RAW',
-      data: [
-        { range: `${SHEET_NAME}!H${rowNum}`, values: [['Replied']] },
-        { range: `${SHEET_NAME}!I${rowNum}`, values: [['replied']] },
-        { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, '[REPLY: Wrong Person — needs re-enrichment]')]] },
-      ],
-    },
-  });
+  await applyLeadChange(lead.id, {
+    stage: 'Replied', emailStatus: 'replied',
+    notes: prependNote(lead.notes, '[REPLY: Wrong Person — needs re-enrichment]'),
+  }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
   console.log(`  ↪ ${lead.company} — wrong person, flagged for re-enrichment`);
 }
 
@@ -2239,14 +2186,10 @@ async function handleQuestion(lead, message, replyText, todaySent, activities = 
   if (mode === 'blocked') {
     console.warn(`  🚫 [SUPPRESSED] not answering ${lead.email} — ${gateReason}`);
     if (rowNum) {
-      await sheets().spreadsheets.values.batchUpdate({
-        spreadsheetId: SPREADSHEET_ID,
-        requestBody: { valueInputOption: 'RAW', data: [
-          { range: `${SHEET_NAME}!H${rowNum}`, values: [['Replied']] },
-          { range: `${SHEET_NAME}!I${rowNum}`, values: [['replied']] },
-          { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, `[REPLY: Question — not answered, ${gateReason}]`)]] },
-        ] },
-      });
+      await applyLeadChange(lead.id, {
+        stage: 'Replied', emailStatus: 'replied',
+        notes: prependNote(lead.notes, `[REPLY: Question — not answered, ${gateReason}]`),
+      }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
     }
     return;
   }
@@ -2254,14 +2197,10 @@ async function handleQuestion(lead, message, replyText, todaySent, activities = 
   if (mode === 'draft') {
     await queueDraft(lead, answer);
     if (rowNum) {
-      await sheets().spreadsheets.values.batchUpdate({
-        spreadsheetId: SPREADSHEET_ID,
-        requestBody: { valueInputOption: 'RAW', data: [
-          { range: `${SHEET_NAME}!H${rowNum}`, values: [['Review']] },
-          { range: `${SHEET_NAME}!I${rowNum}`, values: [['replied']] },
-          { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, '[REPLY: Question — draft awaiting review]')]] },
-        ] },
-      });
+      await applyLeadChange(lead.id, {
+        stage: 'Review', emailStatus: 'replied',
+        notes: prependNote(lead.notes, '[REPLY: Question — draft awaiting review]'),
+      }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
     }
     return;
   }
@@ -2290,15 +2229,10 @@ async function handleQuestion(lead, message, replyText, todaySent, activities = 
   console.log(`  ✅ Auto-answered ${lead.email} (confidence ${answer.confidence})`);
 
   if (rowNum) {
-    await sheets().spreadsheets.values.batchUpdate({
-      spreadsheetId: SPREADSHEET_ID,
-      requestBody: { valueInputOption: 'RAW', data: [
-        { range: `${SHEET_NAME}!H${rowNum}`, values: [['Replied']] },
-        { range: `${SHEET_NAME}!I${rowNum}`, values: [['replied']] },
-        { range: `${SHEET_NAME}!J${rowNum}`, values: [[new Date().toISOString()]] },
-        { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, `[REPLY: Question — auto-answered, booking link sent]`)]] },
-      ] },
-    });
+    await applyLeadChange(lead.id, {
+      stage: 'Replied', emailStatus: 'replied', lastEmailedAt: new Date().toISOString(),
+      notes: prependNote(lead.notes, `[REPLY: Question — auto-answered, booking link sent]`),
+    }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
   }
 }
 
@@ -2312,17 +2246,9 @@ async function handleNeedsHuman(lead, fromAddr) {
   const from        = (fromAddr || '').trim().toLowerCase();
   const differs     = from && from !== emailedAddr;
   const note        = differs ? `[REPLY: Needs human] (replied from ${from})` : '[REPLY: Needs human]';
-  await sheets().spreadsheets.values.batchUpdate({
-    spreadsheetId: SPREADSHEET_ID,
-    requestBody: {
-      valueInputOption: 'RAW',
-      data: [
-        { range: `${SHEET_NAME}!H${rowNum}`, values: [['Review']] },
-        { range: `${SHEET_NAME}!I${rowNum}`, values: [['replied']] },
-        { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, note)]] },
-      ],
-    },
-  });
+  await applyLeadChange(lead.id, {
+    stage: 'Review', emailStatus: 'replied', notes: prependNote(lead.notes, note),
+  }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
   console.log(`  ⚑ ${lead.company} — needs human review${differs ? ` (replied from ${from})` : ''}`);
 }
 
@@ -2333,14 +2259,7 @@ async function markRoofingReplyState(lead, stage, status, tag) {
   const rowNum = await resolveRow(lead.id);
   if (!rowNum) return;
   const notes = prependNote(lead.notes, tag);
-  await sheets().spreadsheets.values.batchUpdate({
-    spreadsheetId: SPREADSHEET_ID,
-    requestBody: { valueInputOption: 'RAW', data: [
-      { range: `${SHEET_NAME}!H${rowNum}`, values: [[stage]] },
-      { range: `${SHEET_NAME}!I${rowNum}`, values: [[status]] },
-      { range: `${SHEET_NAME}!L${rowNum}`, values: [[notes]] },
-    ] },
-  });
+  await applyLeadChange(lead.id, { stage, emailStatus: status, notes }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
   lead.notes = notes;
 }
 
@@ -2798,21 +2717,15 @@ async function handleTimingReply(lead, message, replyText, recontactAt, allLeads
     await recordColdCallActivityStrict(row); activities.push(row);
   }
   const rowNum = await resolveRow(lead.id);
-  if (rowNum) await sheets().spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!L${rowNum}`, valueInputOption: 'RAW',
-    requestBody: { values: [[prependNote(lead.notes, `[REPLY: Timing — recontact ${at.toISOString()}]`)]] } });
+  if (rowNum) await applyLeadChange(lead.id,
+    { notes: prependNote(lead.notes, `[REPLY: Timing — recontact ${at.toISOString()}]`) }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
   return { scheduled: true, recontactAt: at.toISOString() };
 }
 
 async function writeLateReplyNotes(lead, notes) {
   const rowNum = await resolveRow(lead.id);
   if (!rowNum) throw new Error(`lead ${lead.id} disappeared before late-reply note write`);
-  await sheets().spreadsheets.values.update({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!L${rowNum}`,
-    valueInputOption: 'RAW',
-    requestBody: { values: [[notes]] },
-  });
+  await applyLeadChange(lead.id, { notes }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
 }
 
 // Once-daily, bounded watcher for completed sequences. It performs no mailbox
@@ -3004,17 +2917,9 @@ async function runBounceCheckPass(leads, observedBounces = null) {
           console.warn(`[BounceCheck] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
           return;
         }
-        await sheets().spreadsheets.values.batchUpdate({
-          spreadsheetId: SPREADSHEET_ID,
-          requestBody: {
-            valueInputOption: 'RAW',
-            data: [
-              { range: `${SHEET_NAME}!H${rowNum}`, values: [['Done']] },
-              { range: `${SHEET_NAME}!I${rowNum}`, values: [['done']] },
-              { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, '[BOUNCED]')]] },
-            ],
-          },
-        });
+        await applyLeadChange(lead.id, {
+          stage: 'Done', emailStatus: 'done', notes: prependNote(lead.notes, '[BOUNCED]'),
+        }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
       });
       await withAuth(() => addSuppression(lead.email, 'bounce', lead.company, 'bounce-auto'));
     }
@@ -3271,13 +3176,10 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot 
       });
       const rowNum = await resolveRow(lead.id);
       if (rowNum) {
-        await sheets().spreadsheets.values.batchUpdate({
-          spreadsheetId: SPREADSHEET_ID,
-          requestBody: { valueInputOption: 'RAW', data: [
-            { range: `${SHEET_NAME}!J${rowNum}`, values: [[intentSentAt]] },
-            { range: `${SHEET_NAME}!L${rowNum}`, values: [[prependNote(lead.notes, '[INTENT: both audios played — booking link sent]')]] },
-          ] },
-        });
+        await applyLeadChange(lead.id, {
+          lastEmailedAt: intentSentAt,
+          notes: prependNote(lead.notes, '[INTENT: both audios played — booking link sent]'),
+        }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
       }
       const coldCallLeadId = await upsertColdCallLeadFromEvent(
         lead, 'follow_up',

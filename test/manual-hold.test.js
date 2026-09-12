@@ -388,7 +388,10 @@ test('a future send without a registered attribution is rejected', async () => {
 test('provider evidence is recorded before mutable lead state', () => {
   assert.match(agentSrc, /async function deliverOrdinaryColdStep[\s\S]*ordinary_send_reserved[\s\S]*await sendEmail/);
   const markSentBody = grabFn(agentSrc, 'markSent');
-  const writeAt = markSentBody.indexOf('batchUpdate');
+  // markSent now writes through the canonical mutation abstraction, so the
+  // mutable-state write is the applyLeadChange call. The ordering invariant is
+  // unchanged: durable provider evidence must land before mutable lead state.
+  const writeAt = markSentBody.indexOf('applyLeadChange');
   const recordAt = markSentBody.indexOf('recordSendActivity');
   assert.ok(recordAt !== -1 && writeAt !== -1 && recordAt < writeAt,
     'durable provider evidence must precede the mutable state write');

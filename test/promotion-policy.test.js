@@ -133,7 +133,10 @@ test('11/12/13. the policy is pure: no send, no sequence write, no timestamp wri
 test('10. normal positive promotion hands off to reply automation without a generic MANUAL HOLD', () => {
   const interested = agent.slice(agent.indexOf('async function handleInterested'), agent.indexOf('async function handleNotInterested'));
   assert.doesNotMatch(interested, /applyHoldToNotes\(/, 'normal positive reply is automation-owned');
-  assert.match(interested, /values: \[\['replied'\]\]/, 'and marks the sequence replied');
+  // The write goes through the canonical mutation abstraction now, so the
+  // status is a named field rather than a positional cell value.
+  assert.match(interested, /emailStatus: 'replied'/, 'and marks the sequence replied');
+  assert.match(interested, /stage: 'Replied'/);
   // Late positive reply holds too, and only once the promotion succeeded.
   const late = agent.slice(agent.indexOf('LATE_POSITIVE_REPLY'));
   assert.match(late.slice(0, 700), /if \(coldCallLeadId\)[\s\S]{0,200}applyHoldToNotes/);
