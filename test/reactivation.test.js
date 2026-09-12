@@ -178,7 +178,17 @@ test('11/12/13. the step and send history are never rewritten', () => {
   const block = serverSrc.slice(start, serverSrc.indexOf("app.post('/api/leads/:id/human-response'"));
   // The only cell reactivation writes is the notes column — step and timestamp
   // are read for display and audit, and no write targets them.
-  assert.match(serverSrc, /range: `\$\{CE_SHEET_NAME\}!L\$\{twin\._row\}`/);
+  // writeColdEmailNotes now writes through the canonical mutation abstraction.
+  // The one-cell guarantee is unchanged: the patch names `notes` and nothing
+  // else, so the abstraction writes exactly column L.
+  assert.match(serverSrc, /applyLeadChange\(twin\.id, \{ notes \}, \{/);
+  const notesWriter = serverSrc.slice(
+    serverSrc.indexOf('async function writeColdEmailNotes'),
+    serverSrc.indexOf('async function recordReactivationEvent'));
+  for (const forbidden of ['emailStep', 'lastEmailedAt', 'stage', 'emailStatus', 'senderInboxId']) {
+    assert.ok(!notesWriter.includes(forbidden),
+      `the notes writer must never touch ${forbidden}`);
+  }
   assert.match(block, /writeColdEmailNotes\(twin,/);
   // The route delegates its only state write to the narrow notes helper; no
   // direct sheet mutation can expand that write to send-history columns.

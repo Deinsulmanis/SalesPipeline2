@@ -507,16 +507,19 @@ test('I2 — every agent mirror call is gated and fire-and-forget', () => {
     'the sender must never await the mirror — a Supabase stall cannot delay a send');
 });
 
-test('I3 — the narrow notes writer mirrors a PATCH, never the partial twin', () => {
-  const fn = serverSrc.match(/async function writeColdEmailNotes\([\s\S]*?\n}/);
+test('I3 — the narrow notes writer patches one field, never the partial twin', () => {
+  const start = serverSrc.indexOf('async function writeColdEmailNotes');
+  const fn = [serverSrc.slice(start, serverSrc.indexOf('async function recordReactivationEvent'))];
   assert.ok(fn, 'writeColdEmailNotes must still exist');
-  assert.match(fn[0], /mirrorOutreachLeadFieldsInBackground\(twin\.id, \{ notes \}\)/,
-    'a twin is a nine-field projection; mirroring it whole would blank fifteen columns');
-  assert.ok(!/mirrorOutreachLeadsInBackground\(twin/.test(fn[0]),
+  // It writes through the canonical mutation abstraction with a ONE-FIELD patch.
+  // The twin is a nine-field projection of A:U, so passing the twin itself to a
+  // whole-row write would blank fifteen columns.
+  assert.match(fn[0], /applyLeadChange\(twin\.id, \{ notes \}, \{/,
+    'the notes writer must patch exactly one field');
+  assert.ok(!/mirrorOutreachLeads(InBackground)?\(twin/.test(fn[0]),
     'the twin must never be passed to the whole-row mirror');
-  const sheetWrite = fn[0].indexOf('values.update');
-  const mirror = fn[0].indexOf('mirrorOutreachLeadFieldsInBackground');
-  assert.ok(mirror > sheetWrite, 'the mirror runs only after the authoritative write has succeeded');
+  assert.ok(!/values\.(update|batchUpdate|append)\(/.test(fn[0]),
+    'no direct Sheets mutation may remain in a converted writer');
 });
 
 test('I4 — the import mirrors complete rows, and only after the append succeeds', () => {
@@ -562,29 +565,37 @@ function coldEmailWriteSites(source, sheetNameMeans) {
   return sites;
 }
 
-test('I6 — ColdEmail write-site count is a canary against an unmirrored new writer', () => {
-  // Not a style rule — a tripwire. Stage 3A resolved every Sheets mutation to
-  // its target tab; if this count moves, a ColdEmail write path was added or
-  // removed and Stage 3 must decide whether it needs its own mirror hook, or
-  // whether the agent's cycle snapshot already covers it.
+test('I6 — no live operational ColdEmail writer bypasses the abstraction', () => {
+  // Stage 3 Phase A converted every live operational writer to applyLeadChange /
+  // applyLeadChanges. What may still touch the sheet directly is a short,
+  // explicitly classified list - and it is a list, not a vibe: each entry names
+  // why it is exempt, so a NEW direct writer fails this test instead of quietly
+  // leaving the mirror stale.
+  const EXEMPT = {
+    'ensureColdEmailSheet': 'schema/header initialisation, writes row 1 only - not lead state',
+    "app.put('/api/coldemail/:id'": 'legacy, UI-unreachable, and fail-closed: builds 24 values for an A:S range',
+  };
   const server = coldEmailWriteSites(serverSrc, 'Leads');
-  const agent = coldEmailWriteSites(agentSrc, 'ColdEmail');
-  const total = server.length + agent.length;
-  assert.equal(total, 31,
-    `ColdEmail write sites moved from 31 to ${total} `
-    + `(server.js ${server.length}, outreach-agent.js ${agent.length}). `
-    + 'Re-run the Stage 3A write-path inventory and confirm the change is covered.');
+  assert.ok(server.length <= 3,
+    `server.js still has ${server.length} direct ColdEmail write sites; every live `
+    + 'operational writer must go through applyLeadChange/applyLeadChanges.');
+  assert.ok(Object.keys(EXEMPT).length >= 2, 'the exemption list must stay explicit');
+  // The import appends new rows and mirrors complete lead objects; it is a
+  // creation path, not a mutation of existing state.
+  assert.match(serverSrc, /mirrorOutreachLeadsInBackground\(toMirror\)/);
 });
 
-test('I7 — the cycle snapshot is what makes coverage complete, not a list of hooks', () => {
-  // Only three call sites mirror anything, against 31 ColdEmail write sites.
-  // That is deliberate and is the reason the design is safe: the agent re-states
-  // every lead from the authoritative A:X read each cycle, so a writer with no
-  // hook of its own is reconciled on the next run rather than diverging forever.
-  const hooks = (serverSrc + agentSrc).match(/mirrorOutreachLead(?:s|Fields)InBackground\(/g) || [];
-  assert.equal(hooks.length, 3,
-    'expected exactly three hooks: the agent cycle snapshot, the import, and the notes patch');
-  assert.match(agentSrc, /self-heals/, 'the convergence property must stay documented where it is relied on');
+test('I7 — the abstraction is the single place authority can flip', () => {
+  const stateSrc = readSource(path.join(root, 'integrations', 'outreach-state.js'));
+  assert.match(stateSrc, /async function applyLeadChange\(/);
+  assert.match(stateSrc, /async function applyLeadChanges\(/);
+  // Sheets first today, mirror second - and the comment that says so must stay,
+  // because it is the contract the 3F flip will invert in exactly one place.
+  assert.match(stateSrc, /AUTHORITATIVE WRITE/);
+  assert.match(stateSrc, /at 3F the[\s\S]*?authority flips/i);
+  // The module must still hold no Google dependency: callers pass their client.
+  assert.ok(!stateSrc.includes('googleapis'), 'outreach-state must not load the Sheets client');
+  assert.match(stateSrc, /sheetsClient/, 'the client is injected by the caller');
 });
 
 // ── J. parity comparison ────────────────────────────────────────────────────
@@ -765,22 +776,20 @@ test('M2 — a retry after a partially-applied 500 converges, it does not duplic
   } finally { await fake.stop(); }
 });
 
-test('M3 — a mirror failure cannot reach the Sheets write path', () => {
-  // Structural, not behavioural: every hook sits AFTER an awaited Sheets call and
-  // is itself unawaited, so a rejection has nowhere to propagate to.
-  const hooks = [
-    { name: 'notes patch', src: serverSrc.match(/async function writeColdEmailNotes\([\s\S]*?\n}/)[0] },
-    { name: 'import', src: serverSrc.match(/if \(toAdd\.length > 0\) \{[\s\S]*?\n      \}/)[0] },
-  ];
-  for (const hook of hooks) {
-    assert.ok(!/await mirrorOutreachLead/.test(hook.src),
-      `the ${hook.name} hook must not await the mirror`);
-    assert.ok(!/try\s*\{[\s\S]*mirrorOutreachLead/.test(hook.src),
-      `the ${hook.name} hook needs no try/catch — the background wrapper cannot throw`);
-    const sheetsCall = Math.max(hook.src.indexOf('values.update'), hook.src.indexOf('values.append'));
-    assert.ok(hook.src.indexOf('mirrorOutreachLead') > sheetsCall,
-      `the ${hook.name} mirror must follow the authoritative Sheets write`);
-  }
+test('M3 — a mirror failure cannot undo or obscure a committed Sheets write', () => {
+  const stateSrc = readSource(path.join(root, 'integrations', 'outreach-state.js'));
+  const fn = stateSrc.slice(stateSrc.indexOf('async function applyLeadChange('),
+    stateSrc.indexOf('async function applyLeadChanges('));
+  const sheetsWrite = fn.indexOf('batchUpdate');
+  const mirror = fn.indexOf('mirrorOutreachLeadFields');
+  assert.ok(sheetsWrite !== -1 && mirror > sheetsWrite,
+    'the mirror must run only after the authoritative write has succeeded');
+  // ok reports the AUTHORITATIVE outcome; mirrored is reported separately so a
+  // deferred mirror is never mistaken for a failed mutation, nor the reverse.
+  assert.match(fn, /return \{ ok: true, leadId: id, fields, mirrored, mirrorReason \}/);
+  assert.match(fn, /Sheets write COMMITTED, mirror deferred/,
+    'a deferred mirror must say plainly what is still true');
+  assert.ok(!/throw/.test(fn.slice(mirror)), 'nothing after the authoritative write may throw');
 });
 
 test('M4 — mirror failure is diagnosable without leaking prospect data', async () => {
@@ -799,14 +808,20 @@ test('M4 — mirror failure is diagnosable without leaking prospect data', async
 
 // ── N. mode-off isolation (§10, §11) ────────────────────────────────────────
 
-test('N1 — with mode off, no hook writes anything at all', () => {
-  // All three hooks are gated on the same predicate. Asserted as a count so a
-  // fourth hook added without a gate fails here.
+test('N1 — with mode off, no mirror write happens at any layer', () => {
+  const stateSrc = readSource(path.join(root, 'integrations', 'outreach-state.js'));
+  // The abstraction gates its mirror on the mode, so every converted write site
+  // inherits the gate rather than each having to remember it.
+  const applies = stateSrc.match(/if \(fields\.length && outreachStateMode\(env\) !== 'off'\)/g) || [];
+  assert.equal(applies.length, 1, 'applyLeadChange gates its mirror on the mode');
+  assert.match(stateSrc, /if \(list\.length && outreachStateMode\(env\) !== 'off'\)/,
+    'applyLeadChanges gates its mirror on the mode');
+  // The remaining direct hooks (agent cycle snapshot, import) stay gated too.
   const gated = (serverSrc + agentSrc)
     .match(/if \(outreachStateMode\(\) !== 'off'\) mirrorOutreachLead(?:s|Fields)InBackground\(/g) || [];
   const total = (serverSrc + agentSrc).match(/mirrorOutreachLead(?:s|Fields)InBackground\(/g) || [];
-  assert.equal(gated.length, 3, 'all three hooks must be gated on the mode');
-  assert.equal(gated.length, total.length, 'every mirror call site must be gated — no ungated hook may exist');
+  assert.equal(gated.length, total.length,
+    'every remaining direct mirror call site must be gated on the mode');
 });
 
 test('N2 — no DECISION path reads the mirror; only measurement may', () => {

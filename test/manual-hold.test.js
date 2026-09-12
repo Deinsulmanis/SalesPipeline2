@@ -140,6 +140,12 @@ function serverHold(rows) {
       values: {
         get: async () => ({ data: { values: [['id', 'company', 'contactName', 'email', 'city', 'tradeType', 'website', 'stage', 'emailStatus', 'lastEmailedAt', 'emailStep', 'notes'], ...rows] } }),
         update: async (args) => { writes.push({ range: args.range, value: args.requestBody.values[0][0] }); return {}; },
+        // applyLeadChange batches. Flattened into the same {range, value} shape
+        // the assertions below already use, so what they check is unchanged.
+        batchUpdate: async (args) => {
+          for (const entry of args.requestBody.data) writes.push({ range: entry.range, value: entry.values[0][0] });
+          return {};
+        },
       },
     },
   });
@@ -149,6 +155,10 @@ function serverHold(rows) {
     CE_SHEET_NAME: 'ColdEmail',
     normalizeEmail: e => String(e || '').toLowerCase().trim(),
     applyHoldToNotes,
+    // The hold now writes through the canonical mutation abstraction. Inject the
+    // REAL one rather than a stub, so these assertions exercise the production
+    // write path end to end instead of a stand-in that could drift from it.
+    applyLeadChange: require('../integrations/outreach-state').applyLeadChange,
   });
   // applyManualHold calls findColdEmailTwins by name inside the sandbox
   return { ...api, writes };
@@ -233,10 +243,12 @@ test('no ColdEmail row is ever created — the hold only updates the notes colum
     sheets: () => ({ spreadsheets: { values: {
       get: async () => ({ data: { values: [[], ROW('abc', 'a@example.test')] } }),
       update: async () => ({}),
+      batchUpdate: async () => ({}),
       append: async (a) => { appends.push(a); return {}; },
     } } }),
     SPREADSHEET_ID: 'test-sheet', CE_SHEET_NAME: 'ColdEmail',
     normalizeEmail: e => String(e || '').toLowerCase().trim(), applyHoldToNotes,
+    applyLeadChange: require('../integrations/outreach-state').applyLeadChange,
   });
   await api.applyManualHold('CE-abc', 'a@example.test');
   assert.equal(appends.length, 0, 'applyManualHold must never append a row');

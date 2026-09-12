@@ -39,6 +39,7 @@ const { mirrorEventsInBackground, mirrorEnabled, mirrorHealth } = require('./int
 // and no read path below consults it. See integrations/outreach-state.js.
 const {
   mirrorOutreachLeadsInBackground, mirrorOutreachLeadFieldsInBackground, outreachStateMode,
+  applyLeadChange, applyLeadChanges, outreachWriteDiagnostics,
 } = require('./integrations/outreach-state');
 // Stage 3D: dual-read measurement only. Nothing branches on its output.
 const {
@@ -2408,17 +2409,13 @@ async function loadSuppressionEmails() {
 // Writes the notes cell for exactly one ColdEmail row. Column L only — the
 // same single cell applyManualHold touches, so no other lead state can move.
 async function writeColdEmailNotes(twin, notes) {
-  await sheets().spreadsheets.values.update({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${CE_SHEET_NAME}!L${twin._row}`,
-    valueInputOption: 'RAW',
-    requestBody: { values: [[notes]] },
+  // Column L only, exactly as before — the abstraction writes precisely the
+  // cells the patch names, so the narrow semantics applyManualHold relies on
+  // are unchanged. The twin is a nine-field projection, which is why a field
+  // patch is passed rather than the twin itself.
+  await applyLeadChange(twin.id, { notes }, {
+    row: twin._row, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID,
   });
-  // Stage 3 shadow mirror, AFTER the authoritative write. A NARROW patch: the
-  // twin is a nine-field projection of A:U, so mirroring it as a whole row would
-  // blank fifteen columns. Column L is the only cell this function touched, and
-  // the only one the mirror is told about.
-  if (outreachStateMode() !== 'off') mirrorOutreachLeadFieldsInBackground(twin.id, { notes });
 }
 
 // Append-only audit row. The event id is derived from the lead, the mode and the
@@ -2542,11 +2539,8 @@ async function applyManualHold(boardLeadId, boardEmail) {
   for (const twin of twins) {
     const updated = applyHoldToNotes(twin.notes || '');
     if (updated === (twin.notes || '')) continue;   // already held — no write, no event
-    await sheets().spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${CE_SHEET_NAME}!L${twin._row}`,
-      valueInputOption: 'RAW',
-      requestBody: { values: [[updated]] },
+    await applyLeadChange(twin.id, { notes: updated }, {
+      row: twin._row, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID,
     });
     changed.push({ id: twin.id, row: twin._row, matchedBy: twin._matchedBy, emailStatus: twin.emailStatus });
   }
@@ -3372,12 +3366,13 @@ app.post('/api/leads/:id/contact-change', requireAuth, async (req, res) => {
       // identity remains and the approval grants no send permission. The CE
       // notes gain (never lose) MANUAL HOLD in the same batch as both identity
       // cells, so no intermediate state can mail the new address.
-      await sheets().spreadsheets.values.batchUpdate({ spreadsheetId: SPREADSHEET_ID,
-        requestBody: { valueInputOption: 'RAW', data: [
-          { range: `${SHEET_NAME}!K${rowNum}`, values: [[proposedEmail]] },
-          { range: `${CE_SHEET_NAME}!D${twin._row}`, values: [[proposedEmail]] },
-          { range: `${CE_SHEET_NAME}!L${twin._row}`, values: [[applyHoldToNotes(twin.notes)]] },
-        ] } });
+      // extraData keeps the board row in the SAME batch as the two ColdEmail
+      // cells. That atomicity is the safety property described above: the new
+      // address and its MANUAL HOLD must never be separately observable.
+      await applyLeadChange(twin.id,
+        { email: proposedEmail, notes: applyHoldToNotes(twin.notes) },
+        { row: twin._row, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID,
+          extraData: [{ range: `${SHEET_NAME}!K${rowNum}`, values: [[proposedEmail]] }] });
     }
     res.json({ ok: true, duplicate: activityRows.some(item => item.eventId === eventId),
       decision, proposedEmail, automationResumeAllowed: false });
@@ -4653,9 +4648,14 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
           eventType: 'lead_queued', occurredAt: queuedAt, subject: 'Queued for outreach', content: '',
           metadata: JSON.stringify({ senderInboxId, intendedCampaignVersion: campaignVersionId, emailTemplateId, campaign: lead.campaign || '', trigger: 'outreach_queue' }),
         });
-        return { range: `${CE_SHEET_NAME}!A${rowNumber}:X${rowNumber}`, values: [CE_COLUMNS.map(field => String(lead[field] ?? ''))] };
+        // The full A:X row, named field by field. `lead` is a COMPLETE 24-field
+        // row from the shared dataset, so this writes exactly the cells it wrote
+        // before — naming them is what lets the mirror stay narrow and lets the
+        // coverage canary see this as a converted writer.
+        return { leadId: lead.id, row: rowNumber,
+          patch: Object.fromEntries(CE_COLUMNS.map(field => [field, String(lead[field] ?? '')])) };
       });
-      await sheets().spreadsheets.values.batchUpdate({ spreadsheetId: SPREADSHEET_ID, requestBody: { valueInputOption: 'RAW', data } });
+      await applyLeadChanges(data, { sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
       try { await appendColdCallActivities(queueActivities); }
       catch (activityError) { console.warn('[ColdEmail Queue] queued, activity append failed:', activityError.message); }
       ceRowMap.clear();
@@ -4850,11 +4850,8 @@ app.patch('/api/coldemail/:id/stage', requireAuth, async (req, res) => {
     const existingNotes = current.data.valueRanges?.[3]?.values?.[0]?.[0] || '';
     if (previousStage === stage) return res.json({ ok: true, unchanged: true });
     if (stage !== 'Unsubscribed') {
-      await withAuth(() => sheets().spreadsheets.values.update({
-        spreadsheetId: SPREADSHEET_ID,
-        range: `${CE_SHEET_NAME}!H${rowNum}`,
-        valueInputOption: 'RAW',
-        requestBody: { values: [[stage]] },
+      await withAuth(() => applyLeadChange(req.params.id, { stage }, {
+        row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID,
       }));
       try {
         await appendColdCallActivities([{
@@ -4870,14 +4867,10 @@ app.patch('/api/coldemail/:id/stage', requireAuth, async (req, res) => {
     }
 
     const notes = ensureNote(existingNotes, '[REPLY: Unsubscribed]');
-    await withAuth(() => sheets().spreadsheets.values.batchUpdate({
-      spreadsheetId: SPREADSHEET_ID,
-      requestBody: { valueInputOption: 'RAW', data: [
-        { range: `${CE_SHEET_NAME}!H${rowNum}`, values: [['Unsubscribed']] },
-        { range: `${CE_SHEET_NAME}!I${rowNum}`, values: [['done']] },
-        { range: `${CE_SHEET_NAME}!L${rowNum}`, values: [[notes]] },
-      ] },
-    }));
+    await withAuth(() => applyLeadChange(req.params.id,
+      { stage: 'Unsubscribed', emailStatus: 'done', notes }, {
+        row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID,
+      }));
     await withAuth(() => addSuppression(email, 'unsubscribe', company, 'manual-dashboard'));
     try {
       await appendColdCallActivities([{
@@ -5292,8 +5285,9 @@ app.post('/api/ops/legacy-evidence/:leadId', requireAuth, async (req, res) => {
       writeSender: async senderInboxId => {
         const row = await findCERow(req.params.leadId);
         if (!row) throw new Error('Lead disappeared before evidence write');
-        await sheets().spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!U${row}`,
-          valueInputOption: 'RAW', requestBody: { values: [[senderInboxId]] } });
+        await applyLeadChange(req.params.leadId, { senderInboxId }, {
+          row, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID,
+        });
       },
       readback: async () => {
         const dataset = await getOutreachDataset({ force: true });
@@ -5363,14 +5357,16 @@ app.post('/api/ops/send-recovery', requireAuth, async (req, res) => {
     const rowNum = await findCERow(lead.id);
     if (!rowNum) return res.status(409).json({ error: 'lead disappeared before checkpoint write' });
     const done = step === 3;
-    await sheets().spreadsheets.values.batchUpdate({
-      spreadsheetId: SPREADSHEET_ID,
-      requestBody: { valueInputOption: 'RAW', data: [
-        { range: `${CE_SHEET_NAME}!H${rowNum}`, values: [[done ? 'Done' : 'Contacted']] },
-        { range: `${CE_SHEET_NAME}!I${rowNum}:K${rowNum}`, values: [[done ? 'done' : 'emailed', occurredAt, String(step)]] },
-        { range: `${CE_SHEET_NAME}!U${rowNum}`, values: [[senderInboxId]] },
-      ] },
-    });
+    // I:K expanded to its three named fields. Identical cells in one batch, so
+    // the checkpoint stays atomic; naming them is what lets the mirror stay
+    // narrow instead of guessing what a contiguous range covered.
+    await applyLeadChange(lead.id, {
+      stage: done ? 'Done' : 'Contacted',
+      emailStatus: done ? 'done' : 'emailed',
+      lastEmailedAt: occurredAt,
+      emailStep: String(step),
+      senderInboxId,
+    }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
     res.json({ ok: true, recovered: !existing, alreadyHadActivity: Boolean(existing),
       leadId, providerMessageId, senderInboxId, step, occurredAt });
   } catch (error) {
@@ -5548,7 +5544,8 @@ async function processStoredSmartleadEvent(eventRow) {
     if (incomingStatus === 'Unsubscribed') stage = 'Unsub';
     if (['Bounced','Not interested'].includes(incomingStatus)) stage = 'Done';
     const emailStatus = incomingStatus === 'Sent' ? 'emailed' : ['Replied','Interested','Meeting requested','Question','Not interested','Out of office'].includes(incomingStatus) ? 'replied' : ['Unsubscribed','Bounced'].includes(incomingStatus) ? 'done' : found.lead.emailStatus;
-    await sheets().spreadsheets.values.batchUpdate({ spreadsheetId: SPREADSHEET_ID, requestBody: { valueInputOption: 'RAW', data: [{ range: `${CE_SHEET_NAME}!H${found.row}`, values: [[stage]] }, { range: `${CE_SHEET_NAME}!I${found.row}`, values: [[emailStatus]] }, { range: `${CE_SHEET_NAME}!L${found.row}`, values: [[nextNotes]] }] } });
+    await applyLeadChange(found.lead.id, { stage, emailStatus, notes: nextNotes },
+      { row: found.row, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
     if (incomingStatus === 'Unsubscribed') await addSuppression(audit.email, 'unsubscribe', found.lead.company, 'smartlead-webhook', await loadSuppressedEmails());
     if (incomingStatus === 'Sent') {
       let providerMetadata = {};

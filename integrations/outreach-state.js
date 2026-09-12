@@ -48,13 +48,20 @@
  * from the payload keys, so columns absent from the body are left untouched on
  * an existing row.
  *
- * ── WHY THERE IS NO WRITE PATH HERE YET ─────────────────────────────────────
+ * ── THE MUTATION PATH, AND WHERE AUTHORITY LIVES ────────────────────────────
  *
- * ColdEmail has no concurrency control today — writes are last-writer-wins on a
- * cell range, made safe only by the accident that a single cron process writes
- * narrow ranges. Row-level upserts remove that accidental protection, so moving
- * write authority needs compare-and-set on `revision`. The column exists;
- * nothing uses it yet, and this module deliberately does not pretend otherwise.
+ * applyLeadChange() below is the single canonical way to mutate operational
+ * lead state. Today it writes Google Sheets first and then brings the mirror
+ * current in the same call, because Sheets is still authoritative. At 3F the
+ * authority flips inside that one function — Supabase compare-and-set on
+ * `revision`, Sheets demoted to a secondary mirror — and no call site changes.
+ *
+ * `revision` exists in the schema and is deliberately UNUSED while Sheets is
+ * authoritative: compare-and-set against a column nothing increments would be
+ * ceremony, not safety. ColdEmail has no concurrency control today either —
+ * writes are last-writer-wins on a cell range, made safe only by the accident
+ * that a single cron process writes narrow ranges — so the protection has to
+ * arrive together with the authority, not before it.
  */
 
 const { mirrorConfig } = require('./supabase-mirror');
@@ -415,6 +422,222 @@ function compareOutreachLead(sheetLead = {}, mirroredLead = null) {
   return { present: true, critical, noncritical, clean: !critical.length && !noncritical.length };
 }
 
+// ── the canonical mutation abstraction (Stage 3 Phase A) ────────────────────
+//
+// Every live operational ColdEmail mutation goes through applyLeadChange().
+// Today it writes Google Sheets first, because Sheets is still authoritative,
+// and then brings the Supabase mirror current in the same call. At 3F the
+// authority flips INSIDE this function — Supabase compare-and-set on `revision`
+// first, Sheets demoted to a secondary mirror — and no call site changes.
+//
+// That single-conversion property is the whole point. There are 31 ColdEmail
+// write sites; converting them twice, in the system that emails real prospects,
+// would be the riskiest way to reach the same end state.
+//
+// WHY A PATCH AND NOT A REFETCHED FULL ROW
+//
+// The obvious alternative is to re-read the whole row after writing and mirror
+// that. It costs an extra Sheets read per mutation against a quota that is
+// already this system's binding constraint, and it reintroduces exactly the
+// partial-row hazard the Stage 3B guard exists to prevent: whatever the re-read
+// projects becomes the mirrored truth, and a narrow projection would blank
+// fields it never loaded.
+//
+// A patch cannot do that. PostgREST builds its ON CONFLICT column list from the
+// payload keys, so mirroring {stage} touches `stage` and nothing else. Fields
+// the mutation did not change are already correct in the mirror and are left
+// alone. Narrow in, narrow out.
+
+/** ColdEmail column letter for a field: A..X, in CE_COLUMNS order. */
+function columnLetterFor(field) {
+  const index = SHEET_FIELDS.indexOf(field);
+  if (index === -1) throw new Error(`unknown ColdEmail field: ${field}`);
+  return String.fromCharCode(65 + index);
+}
+
+const writeDiagnostics = {
+  startedAt: new Date().toISOString(),
+  mutations: 0, mirrored: 0, mirrorFailures: 0,
+  lastMutationAt: null, lastMirrorFailureAt: null, lastMirrorFailureReason: null,
+  maxMirrorLatencyMs: 0, recent: [],
+};
+const MAX_WRITE_RECENT = 20;
+
+function noteWrite(entry) {
+  writeDiagnostics.recent.unshift(entry);
+  if (writeDiagnostics.recent.length > MAX_WRITE_RECENT) writeDiagnostics.recent.length = MAX_WRITE_RECENT;
+}
+
+function outreachWriteDiagnostics() {
+  return { ...writeDiagnostics, recent: writeDiagnostics.recent.slice(0, MAX_WRITE_RECENT) };
+}
+
+function resetOutreachWriteDiagnostics() {
+  Object.assign(writeDiagnostics, {
+    startedAt: new Date().toISOString(),
+    mutations: 0, mirrored: 0, mirrorFailures: 0,
+    lastMutationAt: null, lastMirrorFailureAt: null, lastMirrorFailureReason: null,
+    maxMirrorLatencyMs: 0, recent: [],
+  });
+}
+
+/**
+ * Apply one operational change to a lead.
+ *
+ * @param leadId   canonical ColdEmail id — the mirror's primary key
+ * @param patch    {field: value} in ColdEmail field names; exactly the cells to write
+ * @param row      1-based ColdEmail sheet row (resolved by the caller, as today)
+ * @param sheetsClient  the caller's authenticated Google client. Passed in rather
+ *                 than imported so this module keeps no Google dependency — the
+ *                 same constraint the Stage 3 tests assert.
+ * @param extraData additional {range, values} written in the SAME batch, for
+ *                 mutations whose atomicity spans sheets (a contact change must
+ *                 land the new address and its MANUAL HOLD together, or an
+ *                 intermediate state could mail the new address).
+ *
+ * Sheets is authoritative: a Sheets failure THROWS, exactly as before, so
+ * callers keep their current error behaviour. The mirror never throws — the
+ * operational action is already committed and Sheets still holds the truth.
+ */
+async function applyLeadChange(leadId, patch, {
+  row, sheetsClient, spreadsheetId, extraData = [],
+  sheetName = 'ColdEmail', valueInputOption = 'RAW',
+  env = process.env, logger = console,
+} = {}) {
+  const id = String(leadId || '').trim();
+  if (!id) throw new Error('applyLeadChange requires a lead id');
+  if (!sheetsClient || !spreadsheetId) throw new Error('applyLeadChange requires a Sheets client and spreadsheetId');
+  const fields = Object.keys(patch || {});
+  if (!fields.length && !extraData.length) throw new Error('applyLeadChange requires at least one field');
+
+  const parsedRow = Number(row);
+  if (fields.length && !Number.isInteger(parsedRow)) {
+    throw new Error(`applyLeadChange requires a resolved sheet row for lead ${id}`);
+  }
+  // Unknown names are refused before anything is written, so a typo cannot put
+  // a value in the wrong column or mirror nothing while looking healthy.
+  const unknown = fields.filter(field => !Object.prototype.hasOwnProperty.call(FIELD_MAP, field));
+  if (unknown.length) throw new Error(`unknown ColdEmail field(s): ${unknown.join(', ')}`);
+
+  const data = [
+    ...fields.map(field => ({
+      range: `${sheetName}!${columnLetterFor(field)}${parsedRow}`,
+      values: [[patch[field] === null || patch[field] === undefined ? '' : String(patch[field])]],
+    })),
+    ...extraData,
+  ];
+
+  // 1. AUTHORITATIVE WRITE. Throws on failure, as every call site expects today.
+  await sheetsClient.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: { valueInputOption, data },
+  });
+
+  writeDiagnostics.mutations++;
+  writeDiagnostics.lastMutationAt = new Date().toISOString();
+
+  // 2. BRING THE MIRROR CURRENT. Awaited, so a read cutover can rely on
+  //    read-your-writes; bounded and non-throwing, so a Supabase problem can
+  //    never undo or obscure an action Sheets has already committed.
+  let mirrored = false;
+  let mirrorReason = 'skipped';
+  if (fields.length && outreachStateMode(env) !== 'off') {
+    const started = Date.now();
+    const result = await mirrorOutreachLeadFields(id, patch, { env, logger });
+    const latency = Date.now() - started;
+    if (latency > writeDiagnostics.maxMirrorLatencyMs) writeDiagnostics.maxMirrorLatencyMs = latency;
+    mirrored = result.mirrored === 1;
+    mirrorReason = result.reason;
+    if (mirrored) {
+      writeDiagnostics.mirrored++;
+    } else {
+      writeDiagnostics.mirrorFailures++;
+      writeDiagnostics.lastMirrorFailureAt = new Date().toISOString();
+      writeDiagnostics.lastMirrorFailureReason = mirrorReason;
+      // Say plainly what is still true, so this never reads as a lost mutation.
+      logger.warn(`[outreach-state] lead ${id}: Sheets write COMMITTED, mirror deferred (${mirrorReason}). `
+        + 'Google Sheets remains authoritative; re-run the Stage 3 backfill to reconcile.');
+    }
+    noteWrite({ at: writeDiagnostics.lastMutationAt, leadId: id, fields, mirrored, reason: mirrorReason, latencyMs: latency });
+  } else {
+    noteWrite({ at: writeDiagnostics.lastMutationAt, leadId: id, fields, mirrored: false, reason: mirrorReason, latencyMs: 0 });
+  }
+
+  // `ok` reports the AUTHORITATIVE outcome, which has already succeeded by the
+  // time we are here. `mirrored` is reported separately and is never conflated
+  // with it: a deferred mirror is not a failed mutation, and a committed
+  // mutation must never be reported as current in Supabase when it is not.
+  return { ok: true, leadId: id, fields, mirrored, mirrorReason };
+}
+
+/**
+ * Apply changes to SEVERAL leads in ONE Sheets batch.
+ *
+ * Queueing selected leads is a single user action and must stay a single write:
+ * looping applyLeadChange() would turn it into N round trips and N chances to
+ * half-apply. The mirror is likewise sent as one batch.
+ *
+ * @param changes [{ leadId, patch, row }]
+ */
+async function applyLeadChanges(changes, {
+  sheetsClient, spreadsheetId, extraData = [],
+  sheetName = 'ColdEmail', valueInputOption = 'RAW',
+  env = process.env, logger = console,
+} = {}) {
+  const list = Array.isArray(changes) ? changes : [];
+  if (!list.length && !extraData.length) throw new Error('applyLeadChanges requires at least one change');
+  if (!sheetsClient || !spreadsheetId) throw new Error('applyLeadChanges requires a Sheets client and spreadsheetId');
+
+  const data = [...extraData];
+  for (const change of list) {
+    const id = String(change.leadId || '').trim();
+    if (!id) throw new Error('applyLeadChanges requires a lead id for every change');
+    const parsedRow = Number(change.row);
+    if (!Number.isInteger(parsedRow)) throw new Error(`applyLeadChanges requires a resolved sheet row for lead ${id}`);
+    const fields = Object.keys(change.patch || {});
+    const unknown = fields.filter(field => !Object.prototype.hasOwnProperty.call(FIELD_MAP, field));
+    if (unknown.length) throw new Error(`unknown ColdEmail field(s): ${unknown.join(', ')}`);
+    for (const field of fields) {
+      const value = change.patch[field];
+      data.push({
+        range: `${sheetName}!${columnLetterFor(field)}${parsedRow}`,
+        values: [[value === null || value === undefined ? '' : String(value)]],
+      });
+    }
+  }
+
+  // AUTHORITATIVE WRITE. One batch, one failure mode, throws as before.
+  await sheetsClient.spreadsheets.values.batchUpdate({
+    spreadsheetId, requestBody: { valueInputOption, data },
+  });
+  writeDiagnostics.mutations += list.length;
+  writeDiagnostics.lastMutationAt = new Date().toISOString();
+
+  let mirrored = 0;
+  let reason = 'skipped';
+  if (list.length && outreachStateMode(env) !== 'off') {
+    const started = Date.now();
+    const results = await Promise.all(list.map(change =>
+      mirrorOutreachLeadFields(change.leadId, change.patch, { env, logger })));
+    const latency = Date.now() - started;
+    if (latency > writeDiagnostics.maxMirrorLatencyMs) writeDiagnostics.maxMirrorLatencyMs = latency;
+    mirrored = results.filter(r => r.mirrored === 1).length;
+    const failed = results.length - mirrored;
+    writeDiagnostics.mirrored += mirrored;
+    reason = failed ? (results.find(r => r.mirrored !== 1) || {}).reason || 'mirror failed' : 'ok';
+    if (failed) {
+      writeDiagnostics.mirrorFailures += failed;
+      writeDiagnostics.lastMirrorFailureAt = new Date().toISOString();
+      writeDiagnostics.lastMirrorFailureReason = reason;
+      logger.warn(`[outreach-state] ${failed} of ${list.length} lead(s): Sheets write COMMITTED, mirror deferred (${reason}). `
+        + 'Google Sheets remains authoritative; re-run the Stage 3 backfill to reconcile.');
+    }
+    noteWrite({ at: writeDiagnostics.lastMutationAt, leadId: `${list.length} leads`,
+      fields: Object.keys(list[0].patch || {}), mirrored: mirrored === list.length, reason, latencyMs: latency });
+  }
+  return { ok: true, count: list.length, mirrored, mirrorReason: reason };
+}
+
 module.exports = {
   TABLE, FIELD_MAP, SHEET_FIELDS, CRITICAL_FIELDS, NONCRITICAL_FIELDS,
   outreachStateMode, isCompleteLead, missingFields, describeUnmirrorable,
@@ -423,4 +646,6 @@ module.exports = {
   mirrorOutreachLeadsInBackground, mirrorOutreachLeadFieldsInBackground,
   getOutreachLeadById, getOutreachLeadByEmail, batchGetOutreachLeads,
   listOutreachLeads, countOutreachLeads, compareOutreachLead,
+  applyLeadChange, applyLeadChanges, columnLetterFor,
+  outreachWriteDiagnostics, resetOutreachWriteDiagnostics,
 };

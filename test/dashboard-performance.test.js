@@ -42,5 +42,18 @@ test('stage changes use a narrow endpoint and never write the hidden site contex
   assert.match(browser, /fetch\(`\/api\/coldemail\/\$\{id\}\/stage`/);
   assert.match(browser, /method: 'PATCH'/);
   assert.match(server, /app\.patch\('\/api\/coldemail\/:id\/stage', requireAuth/);
-  assert.match(server, /range: `\$\{CE_SHEET_NAME\}!H\$\{rowNum\}`/);
+  // The write goes through the canonical mutation abstraction now, so the
+  // narrowness lives in the PATCH rather than in a literal range. Same
+  // guarantee, asserted on the new expression of it - and asserted harder:
+  // the patch names exactly one field, so no extra column can ride along.
+  assert.match(server, /applyLeadChange\(req\.params\.id, \{ stage \}, \{/);
+  // Bounded to the PATCH route itself. The legacy PUT /api/coldemail/:id sits
+  // between it and DELETE, so a wider span would be asserting about a different
+  // endpoint (see the Stage 3 write-site classification).
+  const route = server.slice(
+    server.indexOf("app.patch('/api/coldemail/:id/stage'"),
+    server.indexOf("app.put('/api/coldemail/:id'"));
+  assert.ok(!/siteContext/.test(route), 'the hidden site context column is never written by a stage change');
+  assert.ok(!/values\.(update|append)\(/.test(route),
+    'no direct sheet mutation may bypass the abstraction in this route');
 });
