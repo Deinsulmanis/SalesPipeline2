@@ -165,8 +165,9 @@ test('three-minute worker exits before Gmail with zero candidates and scopes Sen
     agent.indexOf('let todaySent', agent.indexOf('if (INTENT_ONLY && !CHECK_ONLY)')));
   assert.ok(branch.indexOf('if (!preparedIntent.due.length)') < branch.indexOf('runHumanOutboundPass('));
   assert.match(branch, /planIntentObservation\(preparedIntent\.due, GMAIL_SENDERS\)/);
-  assert.match(branch, /runReplyCheckPass\(allLeadsForDailyCap,[\s\S]*intentSenderIds/);
-  assert.match(branch, /Incremental history cursors are mailbox-wide/);
+  assert.match(branch, /runReplyCheckPass\(preparedIntent\.due,[\s\S]*intentSenderIds,[\s\S]*advanceCheckpoint: false/);
+  assert.match(branch, /must never advance the mailbox-wide cursor/);
+  assert.match(agent, /candidate_observation_no_cursor_advance/);
   assert.match(agent, /candidateOnly[\s\S]*recipientScope/);
 });
 

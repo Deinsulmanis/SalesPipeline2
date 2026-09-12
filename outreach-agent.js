@@ -2425,7 +2425,8 @@ async function handleRoofingSurveyReply(lead, message, replyText, todaySent, act
 // are queued sends or follow-ups due. Fetches each emailed lead's reply body,
 // classifies it with Haiku, and routes to the appropriate handler. Mutates
 // lead.emailStatus in-place so selectFollowUps() excludes replied leads.
-async function runReplyCheckPass(leads, todaySentOverride = null, outboundObservationOk = true, activitiesForCycle = null, senderIds = null) {
+async function runReplyCheckPass(leads, todaySentOverride = null, outboundObservationOk = true,
+  activitiesForCycle = null, senderIds = null, { advanceCheckpoint = true } = {}) {
   const candidates = leads.filter(l => isValidEmail(l.email) && (l.lastEmailedAt || Number(l.emailStep) > 0));
   activitiesForCycle = activitiesForCycle || await withAuth(() => readColdCallActivities());
   console.log(`[ReplyCheck] Checking ${candidates.length} emailed lead${candidates.length === 1 ? '' : 's'} for replies...`);
@@ -2464,23 +2465,29 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
         await commitObservation({ observation: observed, plan, activities: activitiesForCycle,
           appendEvent: event => withAuth(() => recordMailboxActivity(event)),
           suppress: item => withAuth(() => addSuppression(item.email, item.reason, item.company, 'gmail-observer')),
-          checkpoint: state => withAuth(() => persistGmailObservationState(
-            sender.id,
-            // A recovery still in flight keeps the OLD cursor. Advancing it now
-            // would jump the mailbox past a backlog it has not yet read.
-            state.recovery && !state.recovery.complete
-              ? (gmailObservationHistoryBySender.get(sender.id) || '')
-              : state.nextHistoryId,
-            { mode: state.recovery && !state.recovery.complete ? 'recovering' : 'history',
-              messagesObserved: state.messagesInspected, recovery: state.recovery })),
+          checkpoint: state => advanceCheckpoint
+            ? withAuth(() => persistGmailObservationState(
+              sender.id,
+              // A recovery still in flight keeps the OLD cursor. Advancing it now
+              // would jump the mailbox past a backlog it has not yet read.
+              state.recovery && !state.recovery.complete
+                ? (gmailObservationHistoryBySender.get(sender.id) || '')
+                : state.nextHistoryId,
+              { mode: state.recovery && !state.recovery.complete ? 'recovering' : 'history',
+                messagesObserved: state.messagesInspected, recovery: state.recovery }))
+            : Promise.resolve(),
         });
-        if (!observed.recovery || observed.recovery.complete) {
+        if (advanceCheckpoint && (!observed.recovery || observed.recovery.complete)) {
           gmailObservationHistoryBySender.set(sender.id, observed.nextHistoryId);
           if (observed.recovery) log('mailbox_recovery_caught_up',
             { processed: observed.recovery.processed, nextHistoryId: observed.nextHistoryId });
-        } else {
+        } else if (advanceCheckpoint) {
           log('mailbox_recovery_progress_saved', { processedThroughId: observed.recovery.processedThroughId,
             processed: observed.recovery.processed, remaining: observed.recovery.remaining });
+        } else {
+          log('candidate_observation_no_cursor_advance', {
+            candidates: senderLeads.length, messages: observed.messagesInspected,
+          });
         }
       }
       // Recovery is evidence-only. Historical replies never enter handlers
@@ -4169,15 +4176,16 @@ async function run() {
     activeWindowQuota = intentWindowQuota;
     activeSenderCounts = intentSenderCounts;
     const intentSenderIds = new Set(intentCandidatesBySender.keys());
-    // Incremental history cursors are mailbox-wide. Pass the full CRM identity
-    // set for only these selected senders so advancing a cursor cannot discard
-    // an unrelated reply that arrived in the same mailbox.
-    const intentReplies = await runReplyCheckPass(allLeadsForDailyCap, intentQuotaState.globalCount,
-      intentOutboundResults.every(item => item.ok), intentActivities, intentSenderIds);
+    // This narrow observation must never advance the mailbox-wide cursor: it
+    // deliberately knows only the pending candidates. The normal observer owns
+    // cursor advancement and will reconcile every other identity later.
+    const intentReplies = await runReplyCheckPass(preparedIntent.due, intentQuotaState.globalCount,
+      intentOutboundResults.every(item => item.ok), intentActivities, intentSenderIds,
+      { advanceCheckpoint: false });
     for (const senderId of intentSenderIds) {
       if (intentReplies.failedSenderIds.has(senderId)) intentObservationBySender.set(senderId, false);
     }
-    await runBounceCheckPass(allLeadsForDailyCap, intentReplies.bouncesByLead);
+    await runBounceCheckPass(preparedIntent.due, intentReplies.bouncesByLead);
     await commitMailboxObservationCheckpoints(intentReplies);
     const intentOwnershipContext = buildOwnershipContext({
       boardLeads: intentBoard, activities: intentActivities,
