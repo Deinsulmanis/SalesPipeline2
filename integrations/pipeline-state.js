@@ -31,6 +31,7 @@ const { activeOverrides, OVERRIDE_KIND } = require('./reply-overrides');
 // The sender's OWN ownership verdict. Reactivation asks the same question the
 // agent asks before it mails anyone, rather than keeping a second opinion.
 const { OWNER, BLOCKED_BY } = require('./automation-ownership');
+const { demoPairEventFor, hasUndeliveredDemoPair } = require('./demo-intent-state');
 
 // ── AUTOMATION STATE ────────────────────────────────────────────────────────
 // Derived from the ColdEmail twin, because emailStatus — not stage — is what
@@ -536,6 +537,7 @@ const ACTION_TYPE = Object.freeze({
   CONTACT_CHANGE_REVIEW: 'contact_change_review',
   WAIT_UNTIL_RETURN:     'wait_until_return',
   INVESTIGATE_REPLY:     'investigate',
+  BOOKING_LINK_PENDING:  'booking_link_pending',
   SEQUENCE_STEP:         'sequence_step',
   SEQUENCE_REVIEW:       'sequence_review',
   NONE_WON:              'none_won',
@@ -985,6 +987,10 @@ function buildAction(fields) {
     callState: fields.callState || null,
     // And for a lead enrolled in a stage recovery journey.
     sequenceState: fields.sequenceState || null,
+    // Present for durable demo intent. These are descriptive only; delivery
+    // eligibility remains owned by the hardened sender.
+    intentOccurredAt: fields.intentOccurredAt || null,
+    blockedBy: fields.blockedBy || null,
   };
 }
 
@@ -1174,7 +1180,10 @@ function deriveNextAction(boardLead, twin, context = {}) {
   const lead = boardLead || {};
   const now = context.now || new Date();
   const activities = context.activities || [];
-  const stage = displayStageFor(lead.stage);
+  // An Outreach-only row is not silently treated as a Pipeline Follow Up card.
+  // It still receives the same canonical action engine; it simply has no board
+  // stage until business policy creates one after a successful warm delivery.
+  const stage = context.outreachOnly ? '' : displayStageFor(lead.stage);
   const derived = deriveAutomationState(twin || null, now);
   const manualDate = String(lead.followup || '').trim();
 
@@ -1238,6 +1247,10 @@ function deriveNextAction(boardLead, twin, context = {}) {
 
   // ── Call Booked — the call lifecycle is the authority ────────────────────
   if (stage === 'call_booked') return callNextAction(lead, { activities, now });
+  if (hasUndeliveredDemoPair(twin || lead, activities)
+    && ['scheduled', 'rescheduled', 'outcome_pending'].includes(callState.status)) {
+    return callNextAction(lead, { activities, now });
+  }
 
   // ── Hot — a live human conversation on a clock ───────────────────────────
   // Handled before the generic reply branch: a Hot lead's next move depends on
@@ -1351,6 +1364,39 @@ function deriveNextAction(boardLead, twin, context = {}) {
           needsAttention: true, now,
         });
     }
+  }
+
+  // A qualifying demo is a durable prospect action, distinct from delivery.
+  // Once recorded it owns the automation slot until the canonical
+  // booking_link_sent event exists. Reply/meeting/hold/suppression/terminal
+  // branches above still win; ordinary cold cadence below never does.
+  if (hasUndeliveredDemoPair(twin || lead, activities)) {
+    if (permanentSuppression && permanentSuppression !== MANUAL_HOLD_TAG) {
+      return nothing(ACTION_TYPE.NONE_LOST, 'None — suppressed',
+        `suppressed (${permanentSuppression}); booking-link delivery is blocked`);
+    }
+    if (hasManualHold((twin && twin.notes) || '') && !manualHoldReleased((twin && twin.notes) || '', now)) {
+      return buildAction({
+        type: ACTION_TYPE.BLOCKED_BY_HOLD,
+        label: 'Booking link pending — blocked by manual hold',
+        dueAt: null, owner: ACTION_OWNER.HUMAN, status: ACTION_STATUS.BLOCKED,
+        source: 'canonical-demo-pair', reason: 'MANUAL HOLD supersedes pending demo intent',
+        needsAttention: true, now,
+      });
+    }
+    const blocker = context.bookingLinkBlocker || null;
+    const pair = demoPairEventFor(twin || lead, activities);
+    return buildAction({
+      type: ACTION_TYPE.BOOKING_LINK_PENDING,
+      label: blocker?.label || 'Booking-link follow-up pending',
+      dueAt: null, owner: ACTION_OWNER.AUTOMATION,
+      status: blocker ? ACTION_STATUS.BLOCKED : ACTION_STATUS.DUE_TODAY,
+      source: 'canonical-demo-pair',
+      reason: blocker?.reason || 'verified demo pair recorded; hardened booking-link delivery is pending',
+      needsAttention: Boolean(blocker), now,
+      intentOccurredAt: pair?.occurredAt || null,
+      blockedBy: blocker?.code || null,
+    });
   }
 
   // A board card in Follow Up is Pipeline-owned. Ordinary cold Email 2/3 is

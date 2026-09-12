@@ -104,6 +104,10 @@ const { offerForLead, warmResponse } = require('./integrations/offer-config');
 const { ACTION: REPLY_RESPONSE_ACTION, decideReplyResponse } = require('./integrations/reply-response-policy');
 const { deliverProspectReply } = require('./integrations/prospect-reply-delivery');
 const { findLiveBooking } = require('./integrations/live-booking-gate');
+const {
+  DEMO_PAIR_EVENT, BOOKING_LINK_EVENT, buildDemoPairActivity,
+  demoPairEventFor, hasUndeliveredDemoPair, planIntentObservation,
+} = require('./integrations/demo-intent-state');
 const { oldestDueFirst, followUpSuccessTarget } = require('./integrations/scheduler-fairness');
 const { credentialsFor: gmailCredentialsFor, parseRegistry: parseGmailRegistry } = require('./integrations/gmail-inbox-registry');
 const {
@@ -803,7 +807,7 @@ async function readBoardLeads(rowsOverride = null) {
  * One pass, one set of reads, bounded maps. Everything the ownership model
  * needs about a candidate, without a single per-lead fetch.
  */
-function buildOwnershipContext({ boardLeads, activities, outboundObservationOk = true }) {
+function buildOwnershipContext({ boardLeads, activities, outboundObservationOk = true, observationBySender = null }) {
   const activitiesByLead = new Map();
   for (const row of activities || []) {
     const key = String(row.sourceLeadId || '').trim()
@@ -827,6 +831,7 @@ function buildOwnershipContext({ boardLeads, activities, outboundObservationOk =
     boardAvailable: Array.isArray(boardLeads),
     // Explicit: a failed mailbox read must not read as "nobody has replied".
     outboundObservationOk: outboundObservationOk !== false,
+    observationBySender,
   };
 }
 
@@ -2420,7 +2425,7 @@ async function handleRoofingSurveyReply(lead, message, replyText, todaySent, act
 // are queued sends or follow-ups due. Fetches each emailed lead's reply body,
 // classifies it with Haiku, and routes to the appropriate handler. Mutates
 // lead.emailStatus in-place so selectFollowUps() excludes replied leads.
-async function runReplyCheckPass(leads, todaySentOverride = null, outboundObservationOk = true, activitiesForCycle = null) {
+async function runReplyCheckPass(leads, todaySentOverride = null, outboundObservationOk = true, activitiesForCycle = null, senderIds = null) {
   const candidates = leads.filter(l => isValidEmail(l.email) && (l.lastEmailedAt || Number(l.emailStep) > 0));
   activitiesForCycle = activitiesForCycle || await withAuth(() => readColdCallActivities());
   console.log(`[ReplyCheck] Checking ${candidates.length} emailed lead${candidates.length === 1 ? '' : 's'} for replies...`);
@@ -2439,7 +2444,8 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
 
   // One incremental mailbox observation per inbox. Gmail query volume now
   // grows with new mailbox messages, not with the number of CRM leads.
-  for (const sender of GMAIL_SENDERS.filter(item => item.sendEligible)) {
+  for (const sender of GMAIL_SENDERS.filter(item => item.sendEligible
+    && (!senderIds || senderIds.has(item.id)))) {
     // Include every CRM identity: an already-replied lead can write again, and
     // an unknown legacy sender is evidence to observe, never a default inbox.
     const senderLeads = candidates;
@@ -3073,10 +3079,13 @@ async function readRealDemoPlays(rowsOverride = null) {
     if (!key) continue;
     // blank column F predates the intro and was always a receptionist demo
     const type = String(audioTypeRaw || '').trim().toLowerCase() === 'intro' ? 'intro' : 'demo';
-    if (!byKey.has(key)) byKey.set(key, { intro: 0, demo: 0, last: '' });
+    if (!byKey.has(key)) byKey.set(key, {
+      intro: 0, demo: 0, last: '', introPlayedAt: '', demoPlayedAt: '',
+    });
     const e = byKey.get(key);
     e[type]++;                                    // repeat plays collapse via the pair test below
     if ((ts || '') > e.last) e.last = ts || '';
+    if (!e[`${type}PlayedAt`] || (ts || '') < e[`${type}PlayedAt`]) e[`${type}PlayedAt`] = ts || '';
   }
   return byKey;
 }
@@ -3102,18 +3111,33 @@ function buildIntentEmail(lead) {
   };
 }
 
-async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot = null, sendQuota = null) {
+async function prepareDemoIntentCandidates(allLeads, snapshot = null) {
   await ensureIntentSheet();
   const plays = await readRealDemoPlays(snapshot?.demoPlays);
   const fired = await loadFiredIntents(snapshot?.intentFired);
   const activities = snapshot?.activities || await readColdCallActivities();
 
+  // Persist the prospect fact before evaluating any delivery gate. This write
+  // has no body, reservation or quota effect. Its stable event id plus the
+  // canonical read check make repeated three-minute and normal passes replay-safe.
+  for (const lead of allLeads) {
+    const play = plays.get(normalizeName(cleanCompanyName(lead.company)));
+    if (!play || play.intro < 1 || play.demo < 1 || demoPairEventFor(lead, activities)) continue;
+    const event = buildDemoPairActivity(lead, play, {
+      campaign: lead.campaign,
+      campaignVersion: lead.campaignVersion,
+    });
+    if (!DRY_RUN) await recordColdCallActivityStrict(event);
+    activities.push(event);
+    console.log(`  🎧 [Intent] canonical demo pair ${DRY_RUN ? 'would be persisted' : 'persisted'} → ${lead.email}`);
+  }
+
   const due = [];
   for (const lead of allLeads) {
-    const key = normalizeName(cleanCompanyName(lead.company));
-    if (!key) continue;
-    const p = plays.get(key);
-    if (!p || p.intro < 1 || p.demo < 1) continue;        // needs BOTH
+    // Candidate discovery is canonical and no longer depends on re-deriving
+    // delivery state from raw telemetry. Raw plays above are used only to add
+    // missing canonical evidence; the final hardened revalidation checks both.
+    if (!hasUndeliveredDemoPair(lead, activities)) continue;
     if (fired.has(`${lead.id}|both-audios`)) continue;     // already fired, ever
     // A lead who has already replied is in a HUMAN conversation — Deins may
     // have answered, booked them, or been told no. An automated "someone
@@ -3127,6 +3151,13 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot 
     }
     due.push(lead);
   }
+
+  return { due, plays, fired, activities };
+}
+
+async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot = null, sendQuota = null, prepared = null) {
+  const state = prepared || await prepareDemoIntentCandidates(allLeads, snapshot);
+  const { due, activities } = state;
 
   if (!due.length) { console.log('[Intent] no leads with both audios pending.'); return 0; }
   console.log(`[Intent] ${due.length} lead(s) played BOTH audios and have not been contacted.`);
@@ -3144,6 +3175,10 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot 
     const suppressed = suppressionReason(lead);
     if (suppressed) { console.warn(`  🚫 [SUPPRESSED] skipping intent email → ${lead.email} (${suppressed})`); continue; }
     if (!isValidEmail(lead.email)) { console.warn(`  ⏭️  invalid address ${lead.email}`); continue; }
+    if (!String(lead.senderInboxId || '').trim()) {
+      console.warn(`  intent email deferred -> ${lead.email} (established sender proof is missing)`);
+      continue;
+    }
     const gate = coldSendGate(lead, ownershipContext);
     if (!gate.verdict.allowed) {
       console.warn(`  🚫 [OWNERSHIP] skipping intent email → ${lead.email} — ${gate.verdict.reason}`);
@@ -3185,11 +3220,17 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot 
         action: 'AUTO_DEMO_ENGAGEMENT_RESPONSE', body, subject: thread.subject,
         activities, classification: 'DEMO_ENGAGEMENT', ownerMode: 'cold',
         sequenceId: 'demo_booking_link_v1',
-        validateFresh: async ({ fresh, current }) => {
+        validateFresh: async ({ fresh, current, mine }) => {
           const currentPlays = await readRealDemoPlays(fresh.demoPlays);
           const played = currentPlays.get(normalizeName(cleanCompanyName(current.company)));
           if (!played || played.intro < 1 || played.demo < 1) {
             return { allowed: false, code: 'demo_evidence_missing' };
+          }
+          if (!mine.some(row => row.eventType === DEMO_PAIR_EVENT)) {
+            return { allowed: false, code: 'canonical_demo_pair_missing' };
+          }
+          if (mine.some(row => row.eventType === BOOKING_LINK_EVENT)) {
+            return { allowed: false, code: 'booking_link_already_sent' };
           }
           const currentFired = await loadFiredIntents(fresh.intentFired);
           if (currentFired.has(`${current.id}|both-audios`)) return { allowed: false, code: 'intent_already_fired' };
@@ -3238,7 +3279,6 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot 
       lead.stage = 'Promoted';
       lead.lastEmailedAt = intentSentAt;
       const timelineLeadId = coldCallLeadId || `CE-${lead.id}`;
-      const play = plays.get(normalizeName(cleanCompanyName(lead.company))) || {};
       await recordColdCallActivity({
         leadId: timelineLeadId, sourceLeadId: lead.id, email: lead.email,
         company: cleanCompanyName(lead.company) || lead.company || '',
@@ -3246,12 +3286,6 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot 
         occurredAt: thread.internalDate ? new Date(thread.internalDate).toISOString() : '',
         subject: thread.subject, content: thread.content || '',
         metadata: JSON.stringify({ gmailThreadId: thread.threadId, senderInboxId: sender.id, provider: 'gmail', campaignVersion: LEGACY_UNKNOWN }),
-      });
-      await recordColdCallActivity({
-        leadId: timelineLeadId, sourceLeadId: lead.id, email: lead.email,
-        company: cleanCompanyName(lead.company) || lead.company || '',
-        eventType: 'demo_pair_played', occurredAt: play.last || intentSentAt,
-        subject: '', content: 'Both demo audio clips were played.', metadata: '',
       });
       await recordColdCallActivity({
         eventId: `promotion:${lead.id}:both-audios:follow_up`,
@@ -3409,11 +3443,11 @@ const HUMAN_OUTBOUND_LOOKBACK_DAYS = parseInt(process.env.HUMAN_OUTBOUND_LOOKBAC
  * unaffected: a stale mailbox is a reason not to SEND, not a reason to stop
  * observing.
  */
-async function runHumanOutboundPass(leads, activitiesForCycle, sender = null) {
+async function runHumanOutboundPass(leads, activitiesForCycle, sender = null, { candidateOnly = false } = {}) {
   if (!sender) {
     const results = [];
     for (const mailbox of GMAIL_SENDERS.filter(item => item.sendEligible)) {
-      results.push({ senderInboxId: mailbox.id, ...(await runHumanOutboundPass(leads, activitiesForCycle, mailbox)) });
+      results.push({ senderInboxId: mailbox.id, ...(await runHumanOutboundPass(leads, activitiesForCycle, mailbox, { candidateOnly })) });
     }
     return { ok: results.every(item => item.ok), written: results.reduce((n, item) => n + (item.written || 0), 0), senders: results };
   }
@@ -3448,8 +3482,13 @@ async function runHumanOutboundPass(leads, activitiesForCycle, sender = null) {
     .filter(Boolean);
 
   try {
+    const recipientScope = [...leadsByEmail.keys()].map(email => `to:${email}`).join(' ');
     const listed = await mailbox.users.messages.list({
-      userId: 'me', q: `in:sent newer_than:${HUMAN_OUTBOUND_LOOKBACK_DAYS}d`, maxResults: 200,
+      userId: 'me',
+      q: candidateOnly
+        ? `in:sent newer_than:${HUMAN_OUTBOUND_LOOKBACK_DAYS}d {${recipientScope}}`
+        : `in:sent newer_than:${HUMAN_OUTBOUND_LOOKBACK_DAYS}d`,
+      maxResults: 200,
     });
     const messages = [];
     for (const stub of (listed.data.messages || [])) {
@@ -3525,6 +3564,15 @@ function coldSendGate(lead, context = null) {
     return { ownership: null, verdict: { allowed: false,
       reason: 'manual outbound observation failed this pass — mailbox may be stale, failing closed' } };
   }
+  if (context?.observationBySender) {
+    const senderId = String(lead.senderInboxId || '').trim();
+    if (!senderId || context.observationBySender.get(senderId) !== true) {
+      return { ownership: null, verdict: { allowed: false,
+        reason: senderId
+          ? `mailbox observation unavailable for owning sender ${senderId} — failing closed`
+          : 'sender proof missing — failing closed' } };
+    }
+  }
   const leadId = String(lead.id || '');
   const boardLead = context
     ? (context.boardByLead.get(leadId)
@@ -3598,10 +3646,13 @@ function routedLeadCanUseCurrentSender(lead) {
 // Phase 3: find leads that are due for a follow-up step.
 // currentStep 1 → send step 2 (FOLLOW_UP_SEQUENCE[0], 3 days)
 // currentStep 2 → send step 3 (FOLLOW_UP_SEQUENCE[1], 5 days)
-function selectFollowUps(leads) {
+function selectFollowUps(leads, activities = []) {
   const now = Date.now();
   const due = leads.filter(l => {
     if (l.emailStatus !== 'emailed') return false;
+    // Verified demo intent owns the next automated touch until its distinct
+    // delivery event exists. Never let Email #2/#3 race or replace it.
+    if (hasUndeliveredDemoPair(l, activities)) return false;
     // A lead that has left cold stages is no longer ordinary cold cadence,
     // whatever emailStatus still says. This filter used to read emailStatus and
     // never the stage, so Sparkle Dental Spa — ColdEmail stage "Promoted",
@@ -4074,33 +4125,67 @@ async function run() {
   if (INTENT_ONLY && !CHECK_ONLY) {
     const intentBoard = snapshot.boardLeads;
     const intentActivities = snapshot.activities;
-    const intentOutbound = await withAuth(() => runHumanOutboundPass(all, intentActivities));
+    // First persist/derive candidates using the already-loaded CRM snapshot.
+    // No Gmail call is made when there is no pending intent.
+    const preparedIntent = await withAuth(() => prepareDemoIntentCandidates(all, snapshot));
+    if (!preparedIntent.due.length) {
+      console.log('[Intent] no pending candidates; zero Gmail provider work required.');
+      return;
+    }
+
+    const intentObservationPlan = planIntentObservation(preparedIntent.due, GMAIL_SENDERS);
+    for (const item of intentObservationPlan.blocked) {
+      console.warn(`[Intent] ${item.lead.email} remains pending - established sender proof is missing or unavailable`);
+    }
+    const intentCandidatesBySender = intentObservationPlan.groups;
+    if (!intentObservationPlan.providerWorkRequired) {
+      console.log('[Intent] pending state persisted; no sender-scoped provider work is safe.');
+      return;
+    }
+
+    // Observe only the established mailboxes and recipient addresses belonging
+    // to pending candidates. This retains manual-outbound proof without reading
+    // every Sent message in every account first.
+    const intentOutboundResults = [];
+    for (const [senderId, candidates] of intentCandidatesBySender) {
+      const sender = GMAIL_SENDERS.find(item => item.id === senderId);
+      const result = await withAuth(() => runHumanOutboundPass(
+        candidates, intentActivities, sender, { candidateOnly: true },
+      ));
+      intentOutboundResults.push({ senderInboxId: senderId, ...result });
+    }
+    const intentObservationBySender = new Map(intentOutboundResults
+      .map(item => [item.senderInboxId, item.ok === true]));
     const intentDayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
     const intentSenderCounts = senderCountsToday(intentActivities, intentDayKey);
     const intentQuotaState = { globalCount: Math.max(
       countTodaySends(allLeadsForDailyCap), successfulSendCountToday(intentActivities, intentDayKey),
     ) };
     const intentWindowQuota = createSendingWindowQuota({
-      senderIds: GMAIL_SENDERS.filter(sender => sender.sendEligible).map(sender => sender.id),
+      senderIds: [...intentCandidatesBySender.keys()],
       perSenderLimit: PER_INBOX_RUN_CAP, globalLimit: DAILY_CAP,
     });
     activeQuotaState = intentQuotaState;
     activeWindowQuota = intentWindowQuota;
     activeSenderCounts = intentSenderCounts;
-    // The three-minute intent worker must observe inbound mail too. Otherwise a
-    // demo-triggered nudge could race a prospect reply, and the canonical warm
-    // primitive would correctly remain blocked forever for lack of freshness.
-    const intentReplies = await runReplyCheckPass(all, intentQuotaState.globalCount,
-      intentOutbound.ok, intentActivities);
-    await runBounceCheckPass(all, intentReplies.bouncesByLead);
+    const intentSenderIds = new Set(intentCandidatesBySender.keys());
+    // Incremental history cursors are mailbox-wide. Pass the full CRM identity
+    // set for only these selected senders so advancing a cursor cannot discard
+    // an unrelated reply that arrived in the same mailbox.
+    const intentReplies = await runReplyCheckPass(allLeadsForDailyCap, intentQuotaState.globalCount,
+      intentOutboundResults.every(item => item.ok), intentActivities, intentSenderIds);
+    for (const senderId of intentSenderIds) {
+      if (intentReplies.failedSenderIds.has(senderId)) intentObservationBySender.set(senderId, false);
+    }
+    await runBounceCheckPass(allLeadsForDailyCap, intentReplies.bouncesByLead);
     await commitMailboxObservationCheckpoints(intentReplies);
     const intentOwnershipContext = buildOwnershipContext({
       boardLeads: intentBoard, activities: intentActivities,
-      outboundObservationOk: intentOutbound.ok,
+      outboundObservationOk: true, observationBySender: intentObservationBySender,
     });
     await withAuth(() => runIntentTriggerPass(all, intentOwnershipContext, snapshot, {
       sendsBySender: intentSenderCounts, quotaState: intentQuotaState, windowQuota: intentWindowQuota,
-    }));
+    }, preparedIntent));
     return;
   }
 
@@ -4197,7 +4282,7 @@ async function run() {
   const queued = selectQueued(all);
 
   // Phase 3 — follow-ups (replied leads already excluded by runReplyCheckPass)
-  const followUps = selectFollowUps(all);
+  const followUps = selectFollowUps(all, ownershipActivities);
 
   const effectiveCap = Math.min(sendingWindowSnapshot(windowQuota).globalRemaining, dailyRemaining);
   const windowSummary = [...sendingWindowRemainingBySender(windowQuota)]

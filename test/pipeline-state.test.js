@@ -50,7 +50,8 @@ test('scenario 2/3: the demo trigger is deduped durably by leadId|trigger, not b
 });
 
 test('scenario 3: repeated demo plays collapse to a pair test rather than a counter', () => {
-  assert.match(agent, /if \(!p \|\| p\.intro < 1 \|\| p\.demo < 1\) continue;/);
+  assert.match(agent, /if \(!play \|\| play\.intro < 1 \|\| play\.demo < 1 \|\| demoPairEventFor\(lead, activities\)\) continue;/);
+  assert.match(agent, /if \(!hasUndeliveredDemoPair\(lead, activities\)\) continue;/);
 });
 
 // ── 4. Positive reply ───────────────────────────────────────────────────────

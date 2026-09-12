@@ -6563,7 +6563,11 @@ async function loadCeActivity(id) {
     const data = await response.json();
     if (ceDetailId !== id) return;
     const lead = ceLeads.find(row => row.id === id);
-    if (lead && data.lead) Object.assign(lead, data.lead);
+    if (lead && data.lead) {
+      Object.assign(lead, data.lead);
+      lead.canonicalNextAction = data.pipeline && data.pipeline.nextAction
+        ? data.pipeline.nextAction : null;
+    }
     openCeDetail(id, { skipActivity: true });
     renderActivityTimeline(data.activities, 'ce-d-activity');
   } catch (error) {
@@ -6646,25 +6650,16 @@ function openCeDetail(id) {
   document.getElementById('ce-d-sequence').innerHTML = seqHtml + badge + senderHtml;
 
   // ── Next action ──────────────────────────────────────────────
-  const stepNum = parseInt(lead.emailStep || '0');
-  let nextHtml;
-  if (es === 'replied' || es === 'done') {
-    nextHtml = `<p style="font-size:13px;color:var(--text-muted)">No further automated sends.</p>`;
-  } else if (es === 'emailed' && stepNum >= 3) {
-    nextHtml = `<p style="font-size:13px;color:var(--text-muted)">Final follow-up sent — sequence ends here.</p>`;
-  } else if (es === 'emailed' && (stepNum === 1 || stepNum === 2)) {
-    const delayDays = stepNum === 1 ? 3 : 5;
-    const nextDate  = new Date(lead.lastEmailedAt);
-    nextDate.setDate(nextDate.getDate() + delayDays);
-    const daysUntil = Math.ceil((nextDate - new Date()) / (1000 * 60 * 60 * 24));
-    if (daysUntil <= 0)      nextHtml = `<p style="font-size:13px;color:var(--warn);font-weight:600">Follow-up due now</p>`;
-    else if (daysUntil === 1) nextHtml = `<p style="font-size:13px;color:var(--text)">Follow-up sends tomorrow</p>`;
-    else                      nextHtml = `<p style="font-size:13px;color:var(--text)">Follow-up sends in ${daysUntil} days (${nextDate.toLocaleDateString()})</p>`;
-  } else if (lead.stage === 'Queued') {
-    nextHtml = `<p style="font-size:13px;color:var(--blue)">Pending — will send on next agent run</p>`;
-  } else {
-    nextHtml = `<p style="font-size:13px;color:var(--text-muted)">—</p>`;
-  }
+  // Decision logic lives on the server in deriveNextAction(). The browser only
+  // formats that canonical result, including demo-intent safety blockers.
+  const next = lead.canonicalNextAction;
+  const nextTone = next && next.status === 'blocked' ? 'var(--warn)'
+    : next && next.owner === 'automation' ? 'var(--blue)' : 'var(--text)';
+  const nextHtml = next
+    ? `<p style="font-size:13px;color:${nextTone};font-weight:600">${esc(next.label || next.action || 'Next action')}</p>
+       ${next.dueAt ? `<p style="font-size:12px;color:var(--text-muted);margin-top:5px">${esc(naDueText(next))}</p>` : ''}
+       ${next.reason ? `<p style="font-size:12px;color:var(--text-muted);margin-top:5px">${esc(next.reason)}</p>` : ''}`
+    : `<p style="font-size:13px;color:var(--text-muted)">${options.skipActivity ? 'Canonical Next Action unavailable.' : 'Loading canonical Next Action…'}</p>`;
   document.getElementById('ce-d-next').innerHTML = nextHtml;
 
   // ── Demo plays ───────────────────────────────────────────────

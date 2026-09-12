@@ -352,7 +352,7 @@ test('demo booking-link promotion stops ordinary cadence in the same and later r
   const intent = agent.slice(agent.indexOf('async function runIntentTriggerPass'), agent.indexOf('// ── SELECTION'));
   assert.match(intent, /lead\.stage = 'Promoted';/);
   assert.match(intent, /lead\.lastEmailedAt = intentSentAt;/);
-  assert.ok(intent.indexOf("lead.stage = 'Promoted'") < agent.indexOf('const followUps = selectFollowUps(all)'), 'same-pass selector sees promoted state');
+  assert.ok(intent.indexOf("lead.stage = 'Promoted'") < agent.indexOf('const followUps = selectFollowUps(all, ownershipActivities)'), 'same-pass selector sees promoted state');
 });
 
 test('33. ownership changes no reply classification or analytics', () => {

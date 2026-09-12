@@ -123,6 +123,7 @@ const { buildFunnelAnalytics } = require('./integrations/funnel-analytics');
 const { genericReengagementAnalytics } = require('./integrations/generic-reengagement-analytics');
 const { buildCrmHealth } = require('./integrations/crm-health');
 const { observerHealth } = require('./integrations/gmail-observer-health');
+const { hasUndeliveredDemoPair } = require('./integrations/demo-intent-state');
 const { observeMailbox } = require('./integrations/gmail-mailbox-observer');
 const { planMailboxEvents } = require('./integrations/mailbox-observation-events');
 const { proveLegacyEvidence, applyProvenEvidence } = require('./integrations/gmail-evidence-reconciliation');
@@ -1363,7 +1364,7 @@ async function loadOutreachDataset() {
     `${CE_SHEET_NAME}!A:O`, `${CE_SHEET_NAME}!Q:X`, 'ReplyDrafts!A:L',
     `${COLD_CALL_ACTIVITY_SHEET}!A:J`, `${PROVIDER_LEADS_SHEET}!A:N`,
     'DemoPlays!A:F', 'ProposalOpens!A:F', 'ProposalEngaged!A:F', AGENT_READ_RANGE,
-    mailboxCheckpointRange(),
+    mailboxCheckpointRange(), 'Suppression!A:A',
   ];
   const snapshot = await sheets().spreadsheets.values.batchGet({
     spreadsheetId: SPREADSHEET_ID, ranges: snapshotRanges,
@@ -1386,6 +1387,7 @@ async function loadOutreachDataset() {
   const engagedResponse = responseAt(7);
   const boardResponse = responseAt(8);
   const mailboxObservationResponse = responseAt(9);
+  const suppressionResponse = responseAt(10);
 
   ceRowMap.clear();
   const leads = ceRows.slice(1).map((row, index) => {
@@ -1574,6 +1576,8 @@ async function loadOutreachDataset() {
     demoPlays, demoRows, proposalOpens, proposalEngaged,
     annotatedOpens,        // computed once; the Opens panel reuses it
     mailboxObservationState: mailboxObservationResponse.data.values || [],
+    suppressedEmails: new Set((suppressionResponse.data.values || []).slice(1)
+      .map(row => normalizeEmail(row[0])).filter(Boolean)),
   };
 }
 
@@ -2556,6 +2560,52 @@ function activityMatchesLead(row, lead) {
   const rowIds = [row.leadId, row.sourceLeadId].map(value => String(value || '').replace(/^CE-/, ''));
   const email = normalizeEmail(lead.email || '');
   return rowIds.includes(id) || (email && normalizeEmail(row.email) === email);
+}
+
+function bookingLinkBlockerFor(lead, activities, dataset, now = new Date()) {
+  if (!hasUndeliveredDemoPair(lead, activities)) return null;
+  if (!SENDING_ENABLED()) return {
+    code: 'sending_disabled',
+    label: 'Booking link pending — automation is paused',
+    reason: 'the global sending switch is disabled; pending intent remains durable',
+  };
+
+  const senders = configuredSenders();
+  const ownership = resolveSenderOwnership({ lead, activities, senders: visibleSenderIdentities() });
+  const sender = ownership.senderId && senders.find(item => item.id === ownership.senderId);
+  if (!sender || !sender.sendEligible || ['unknown', 'conflict'].includes(ownership.state)) return {
+    code: 'sender_proof',
+    label: 'Booking link pending — sender proof unavailable',
+    reason: ownership.detail || 'the established sending inbox cannot be proven',
+  };
+
+  const observers = observerHealth(dataset.mailboxObservationState || [], {
+    now, senderIds: senders.filter(item => item.sendEligible).map(item => item.id),
+  });
+  const observer = observers.find(item => item.senderInboxId === sender.id);
+  if (!observer || observer.health !== 'healthy') return {
+    code: 'mailbox_observation',
+    label: 'Booking link pending — waiting for mailbox health',
+    reason: observer?.quotaBackoff
+      ? 'the owning Gmail observer is quota-limited; delivery fails closed until it recovers'
+      : 'the owning Gmail observer is unavailable; delivery fails closed until it is healthy',
+  };
+
+  const dayKey = now.toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+  const senderCount = senderCountsToday(dataset.activities || [], dayKey).get(sender.id) || 0;
+  const globalCount = successfulSendCountToday(dataset.activities || [], dayKey);
+  const globalLimit = Number(process.env.DAILY_SEND_LIMIT || 80);
+  if (globalCount >= globalLimit) return {
+    code: 'global_quota',
+    label: 'Booking link pending — daily send capacity reached',
+    reason: `global daily quota reached (${globalCount}/${globalLimit}); delivery will retry on a later pass`,
+  };
+  if (senderCount >= sender.dailyLimit) return {
+    code: 'sender_quota',
+    label: 'Booking link pending — sender capacity reached',
+    reason: `owning sender daily quota reached (${senderCount}/${sender.dailyLimit}); delivery will retry later`,
+  };
+  return null;
 }
 
 function signalMatchesLead(row, lead) {
@@ -4714,12 +4764,28 @@ app.get('/api/coldemail/:id/activity', requireAuth, async (req, res) => {
     const activities = dataset.activities.filter(row => activityMatchesLead(row, lead));
     const timeline = timelineForLead(lead, dataset, activities);
     const row = dataset.rows.find(item => item.id === lead.id) || {};
+    const boardLead = dataset.boardLeads.find(item => item.id === row.boardLeadId)
+      || dataset.boardLeads.find(item => normalizeEmail(item.email) === normalizeEmail(lead.email))
+      || null;
+    const now = new Date();
+    const bookingLinkBlocker = bookingLinkBlockerFor(lead, activities, dataset, now);
+    const nextAction = deriveNextAction(boardLead || {
+      id: `CE-${lead.id}`, email: lead.email, company: lead.company, stage: '',
+    }, lead, {
+      activities, now,
+      observers: observerHealth(dataset.mailboxObservationState || [], { now,
+        senderIds: configuredSenders().filter(item => item.sendEligible).map(item => item.id) }),
+      suppressedEmails: dataset.suppressedEmails || new Set(),
+      sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true',
+      outreachOnly: !boardLead,
+      bookingLinkBlocker,
+    });
     res.json({
       lead: { ...lead, ...row }, activities: timeline,
       pipeline: {
         presence: Boolean(row.pipelinePresence), stage: row.pipelineStage || '',
         boardLeadId: row.boardLeadId || '', mappingStatus: row.mappingStatus || 'not_in_pipeline',
-        matchedBy: row.matchedBy || '', automation: deriveAutomationState(lead),
+        matchedBy: row.matchedBy || '', automation: deriveAutomationState(lead), nextAction,
       },
       integrity: inspectActivityIntegrity(activities, new Set([lead.id])),
     });

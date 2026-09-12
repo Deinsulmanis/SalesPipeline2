@@ -264,7 +264,9 @@ test('a failed Gmail observation fails closed for sends only', () => {
 test('the observation is bounded: one list, no per-lead Gmail call', () => {
   const agent = readSource(path.join(root, 'outreach-agent.js'));
   const pass = agent.slice(agent.indexOf('async function runHumanOutboundPass'), agent.indexOf('function coldSendGate'));
-  assert.match(pass, /q: `in:sent newer_than:\$\{HUMAN_OUTBOUND_LOOKBACK_DAYS\}d`/);
+  assert.match(pass, /candidateOnly[\s\S]*\? `in:sent newer_than:\$\{HUMAN_OUTBOUND_LOOKBACK_DAYS\}d \{\$\{recipientScope\}\}`/);
+  assert.match(pass, /: `in:sent newer_than:\$\{HUMAN_OUTBOUND_LOOKBACK_DAYS\}d`/,
+    'normal worker retains the bounded global observation query');
   assert.equal((pass.match(/users\.messages\.list/g) || []).length, 1, 'exactly one list call per cycle');
   // Threads are resolved only for messages that matched a lead, never per lead.
   assert.match(pass, /for \(const threadId of candidateThreads\)/);
