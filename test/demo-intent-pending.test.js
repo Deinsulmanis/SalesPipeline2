@@ -186,6 +186,7 @@ test('Outreach detail returns canonical Next Action and drawer contains no cold-
 test('historical repair is targeted, confirmed, evidence-based and has no send path', () => {
   assert.match(repair, /--repair-lead=/);
   assert.match(repair, /--confirm-no-send/);
+  assert.match(repair, /--backfill-fired-deliveries/);
   assert.match(repair, /buildDemoPairActivity/);
   assert.match(repair, /booking link was delivered after audit; refusing/);
   assert.doesNotMatch(repair, /sendEmail|gmail\.users|messages\.send|deliverProspectReply/);

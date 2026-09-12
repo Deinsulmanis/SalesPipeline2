@@ -3130,6 +3130,10 @@ async function prepareDemoIntentCandidates(allLeads, snapshot = null) {
   for (const lead of allLeads) {
     const play = plays.get(normalizeName(cleanCompanyName(lead.company)));
     if (!play || play.intro < 1 || play.demo < 1 || demoPairEventFor(lead, activities)) continue;
+    // Legacy IntentFired rows were written only after provider delivery. They
+    // need an explicit historical delivery bridge, not a new undelivered pair
+    // that would make an already-contacted lead look pending.
+    if (fired.has(`${lead.id}|both-audios`)) continue;
     const event = buildDemoPairActivity(lead, play, {
       campaign: lead.campaign,
       campaignVersion: lead.campaignVersion,
