@@ -35,6 +35,11 @@ const {
 // Stage 1 Supabase mirror. Optional, server-only, and incapable of blocking or
 // failing an authoritative Google Sheets write — see integrations/supabase-mirror.js.
 const { mirrorEventsInBackground, mirrorEnabled, mirrorHealth } = require('./integrations/supabase-mirror');
+// Stage 3: operational ColdEmail state. Shadow-only — Sheets stays authoritative
+// and no read path below consults it. See integrations/outreach-state.js.
+const {
+  mirrorOutreachLeadsInBackground, mirrorOutreachLeadFieldsInBackground, outreachStateMode,
+} = require('./integrations/outreach-state');
 // Stage 2: read-side validation only. Sheets still serves every user-facing
 // timeline; Supabase is read alongside so parity can be measured on real data.
 const { timelineMode, readCanonicalTimeline, compareTimelines,
@@ -2241,6 +2246,7 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
       const suppressedEmails = await loadSuppressedEmails();
       const now   = Date.now();
       const toAdd = [];
+      const toMirror = [];   // the same leads as objects, for the Stage 3 mirror
       let duplicates = 0;
       let invalid    = 0;
       let junk       = 0;
@@ -2279,6 +2285,7 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
           leadNiche, senderInboxId: '', emailTemplateId: '', routingRequired: 'true', intendedCampaignVersion: '',
         };
         toAdd.push(CE_COLUMNS.map(col => String(lead[col] ?? '')));
+        toMirror.push(lead);
       }
       if (toAdd.length > 0) {
         await sheets().spreadsheets.values.append({
@@ -2289,6 +2296,11 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
           requestBody:     { values: toAdd },
         });
         ceRowMap.clear();
+        // Stage 3 shadow mirror, AFTER the authoritative append has succeeded.
+        // These lead objects carry all 24 ColdEmail fields, so they pass the
+        // completeness guard; _row is unknown here and stays null until the
+        // agent's next full-tab snapshot supplies it.
+        if (outreachStateMode() !== 'off') mirrorOutreachLeadsInBackground(toMirror);
       }
       return { imported: toAdd.length, duplicates, invalid, junk, suppressed };
     });
@@ -2380,6 +2392,11 @@ async function writeColdEmailNotes(twin, notes) {
     valueInputOption: 'RAW',
     requestBody: { values: [[notes]] },
   });
+  // Stage 3 shadow mirror, AFTER the authoritative write. A NARROW patch: the
+  // twin is a nine-field projection of A:U, so mirroring it as a whole row would
+  // blank fifteen columns. Column L is the only cell this function touched, and
+  // the only one the mirror is told about.
+  if (outreachStateMode() !== 'off') mirrorOutreachLeadFieldsInBackground(twin.id, { notes });
 }
 
 // Append-only audit row. The event id is derived from the lead, the mode and the

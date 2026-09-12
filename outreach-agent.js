@@ -68,6 +68,7 @@ const { planHumanOutboundIngestion, matchOutbound, latestHumanOutboundAt } = req
 // Stage 1 Supabase mirror. Optional and non-blocking: the agent's authoritative
 // write is the Google Sheets append above it, and this cannot affect it.
 const { mirrorEventsInBackground } = require('./integrations/supabase-mirror');
+const { mirrorOutreachLeadsInBackground, outreachStateMode } = require('./integrations/outreach-state');
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
 const { routedLeadReady } = require('./integrations/campaign-routing');
 // Staffing supplies its own locked copy only. Sender selection, thread pinning,
@@ -4123,6 +4124,20 @@ async function run() {
 
   const all = await readLeads(snapshot.coldEmail);
   const allLeadsForDailyCap = [...all];
+
+  // Stage 3 shadow mirror. Fed from the authoritative A:X read the cycle just
+  // made, so every row is COMPLETE and the mirror is a truthful snapshot of one
+  // known instant — the start of this cycle — rather than a blend of fresh and
+  // stale columns. It costs no extra Sheets quota, and because it re-states
+  // every lead each cycle it self-heals: a write site that forgets to mirror is
+  // corrected on the next run instead of diverging forever.
+  //
+  // Deliberately before the TARGET_LEAD_ID splice below, so a targeted run still
+  // mirrors the whole tab rather than shrinking the mirror to one lead.
+  //
+  // Fire-and-forget: Sheets has already answered and nothing here may delay or
+  // fail a send.
+  if (outreachStateMode() !== 'off') mirrorOutreachLeadsInBackground(all);
   if (TARGET_LEAD_ID) {
     const target = all.find(lead => lead.id === TARGET_LEAD_ID);
     if (!target) throw new Error(`TARGET_LEAD_ID ${TARGET_LEAD_ID} was not found`);
