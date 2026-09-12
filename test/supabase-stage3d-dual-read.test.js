@@ -19,9 +19,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const {
-  PROBE_INTERVAL_MS, STALE_AFTER_MS, DASHBOARD_OMITTED_FIELDS,
-  readMirrorCorpus, compareCorpus, measureLag,
+  PROBE_INTERVAL_MS, PROBE_DEADLINE_MS, STALE_AFTER_MS,
+  DASHBOARD_OMITTED_FIELDS, PROBE_LINE_PREFIX,
+  readMirrorCorpus, compareCorpus, measureLag, withDeadline,
   probeOutreachParity, probeOutreachParityInBackground,
+  formatProbeLine, ingestProbeLine,
   recordFallback, stage3ParitySnapshot, resetStage3Diagnostics,
 } = require('../integrations/outreach-dual-read');
 const { SHEET_FIELDS, CRITICAL_FIELDS } = require('../integrations/outreach-state');
@@ -299,18 +301,33 @@ test('D1 — both chokepoints probe only in dual mode', () => {
     /if \(outreachStateMode\(\) === 'dual'\) \{\s*probeOutreachParityInBackground\(leads, \{/,
     'the UI chokepoint must probe only in dual');
   assert.match(agentSrc,
-    /if \(outreachStateMode\(\) === 'dual'\) \{\s*probeOutreachParityInBackground\(all, \{/,
+    /if \(outreachStateMode\(\) === 'dual'\) \{\s*try \{\s*const parity = await probeOutreachParity\(all, \{/,
     'the automation chokepoint must probe only in dual');
 });
 
-test('D2 — the probe result is never captured or branched on', () => {
+test('D2 — a probe result may be reported, never acted on', () => {
+  // The server never captures it at all.
+  assert.ok(!/=\s*(await\s+)?probeOutreachParity/.test(serverSrc),
+    'server.js must not assign the probe result');
+  assert.ok(!/await probeOutreachParity/.test(serverSrc),
+    'server.js must not await the probe — a Supabase stall cannot delay a page');
+
+  // The agent DOES capture it, because a fire-and-forget measurement dies with
+  // the subprocess (see E5). That is only acceptable while the captured value is
+  // used for nothing but reporting, so pin exactly where it may appear.
+  // Count CODE uses, not prose: comments mention the parity endpoint too.
+  const agentCode = agentSrc.replace(/^\s*(\/\/|\*).*$/gm, '');
+  const uses = agentCode.split('parity').length - 1;
+  assert.equal(uses, 3,
+    'the captured probe result may appear exactly three times in code: the assignment, '
+    + 'the truthiness check, and the formatProbeLine argument. Any further use would be '
+    + 'measurement leaking into behaviour.');
+  assert.match(agentSrc, /if \(parity\) console\.log\(formatProbeLine\('agent-automation', parity\)\)/);
+
   for (const [name, src] of [['server.js', serverSrc], ['outreach-agent.js', agentSrc]]) {
-    assert.ok(!/=\s*(await\s+)?probeOutreachParity/.test(src),
-      `${name} must not assign the probe result — measurement may not become a decision`);
-    assert.ok(!/await probeOutreachParity/.test(src),
-      `${name} must not await the probe — a Supabase stall cannot delay a send or a page`);
-    assert.ok(!/if\s*\(\s*probeOutreachParity/.test(src),
-      `${name} must not branch on the probe`);
+    assert.ok(!/if\s*\(\s*probeOutreachParity/.test(src), `${name} must not branch on the probe call`);
+    assert.ok(!/parity\.(criticalMismatches|exact|missing|extra)\s*[><=!]/.test(src),
+      `${name} must not compare a parity count — no decision may depend on it`);
   }
 });
 
@@ -324,9 +341,10 @@ test('D3 — the UI probe excludes exactly the field its snapshot does not load'
 
 test('D4 — the agent probe compares EVERY field, because it reads A:X', () => {
   assert.match(agentSrc, /const READ_RANGE\s*=\s*`\$\{SHEET_NAME\}!A:X`/);
-  const hook = agentSrc.match(/probeOutreachParityInBackground\(all, \{[^}]*\}/)[0];
+  const hook = agentSrc.match(/const parity = await probeOutreachParity\(all, \{[^)]*\)/)[0];
   assert.ok(!hook.includes('comparable'),
     'the automation corpus is complete, so no field may be excluded from its comparison');
+  assert.match(hook, /label: 'agent-automation'/);
 });
 
 test('D5 — the parity endpoint is authenticated and states what is authoritative', () => {
@@ -342,4 +360,95 @@ test('D6 — the dual-read module cannot write, send, or reach Google', () => {
     'a read-parity module must not contain a write path');
   assert.ok(!/googleapis|sheets\(\)/.test(dualSrc), 'it must not reach Google directly');
   assert.ok(!/sendEmail|gmail|nodemailer/i.test(dualSrc), 'it must not be able to send');
+});
+
+// ── E. cross-process reporting (the agent is a spawned subprocess) ──────────
+
+test('E1 — a probe result survives process exit as a bounded stdout line', () => {
+  resetStage3Diagnostics();
+  const comparison = {
+    leadsCompared: 1951, exact: 1950, missing: 0, extra: 0,
+    criticalMismatches: 1, noncriticalMismatches: 0, duplicateIds: 0, duplicateEmails: 0,
+    mirrorLagMs: 42000, staleRows: 0,
+    criticalIds: [{ id: 'ce-7', fields: ['stage'] }], missingIds: [],
+  };
+  const line = formatProbeLine('agent-automation', comparison);
+  assert.ok(line.startsWith(PROBE_LINE_PREFIX));
+  assert.equal(ingestProbeLine(`2026-01-01 some log prefix ${line}`), true,
+    'the line must be recognisable even when the log pipeline prefixes it');
+
+  const snap = stage3ParitySnapshot('dual');
+  assert.equal(snap.byLabel['agent-automation'].exact, 1950);
+  assert.equal(snap.byLabel['agent-automation'].criticalMismatches, 1);
+  assert.equal(snap.byLabel['agent-automation'].mirrorLagMs, 42000);
+  assert.equal(snap.totals.exact, 1950);
+  assert.equal(snap.recent[0].via, 'subprocess');
+  assert.equal(snap.recent[0].outcome, 'critical_mismatch');
+});
+
+test('E2 — the emitted line carries counts and ids, never a field value', () => {
+  const line = formatProbeLine('agent-automation', {
+    leadsCompared: 1, exact: 0, missing: 0, extra: 0,
+    criticalMismatches: 1, noncriticalMismatches: 0, duplicateIds: 0, duplicateEmails: 0,
+    mirrorLagMs: 0, staleRows: 0,
+    criticalIds: [{ id: 'ce-1', fields: ['senderInboxId'] }], missingIds: [],
+  });
+  assert.match(line, /senderInboxId/, 'the field NAME is reported');
+  assert.match(line, /ce-1/, 'the lead id is reported');
+  assert.ok(!line.includes('tryscalelabai'), 'no field value');
+  assert.ok(!line.includes('@'), 'no address');
+});
+
+test('E3 — malformed or unrelated lines are ignored, never thrown', () => {
+  resetStage3Diagnostics();
+  for (const junk of ['[stage3-dual] {not json', 'an ordinary log line', '', null, undefined, 42, {}]) {
+    assert.doesNotThrow(() => ingestProbeLine(junk));
+    assert.equal(ingestProbeLine(junk), false);
+  }
+  assert.equal(stage3ParitySnapshot('dual').totals.probes, 0, 'junk must not create a probe');
+});
+
+test('E4 — the server folds agent lines in before treating them as log text', () => {
+  assert.match(serverSrc, /lines\.forEach\(l => \{ ingestProbeLine\(l\); agentPushLine\(l\); \}\)/,
+    'the agent stdout pipeline must ingest parity lines');
+});
+
+test('E5 — the agent AWAITS its probe, because fire-and-forget dies with the process', () => {
+  assert.match(agentSrc, /const parity = await probeOutreachParity\(all, \{ label: 'agent-automation' \}\)/,
+    'a spawned subprocess must not fire-and-forget a measurement it needs to report');
+  assert.match(agentSrc, /console\.log\(formatProbeLine\('agent-automation', parity\)\)/);
+  assert.ok(!/probeOutreachParityInBackground/.test(agentSrc),
+    'the background form would be killed by process exit before it reported');
+  // Awaiting is only safe because the probe is bounded and dual-only.
+  const hook = agentSrc.match(/if \(outreachStateMode\(\) === 'dual'\) \{[\s\S]*?\n  \}/)[0];
+  assert.match(hook, /try \{/, 'and it must not be able to throw into the cycle');
+});
+
+test('E6 — the probe has a hard deadline that cannot stall a send', async () => {
+  assert.ok(PROBE_DEADLINE_MS <= 10000, 'the ceiling must be far below anything a cycle would notice');
+  const keepalive = setInterval(() => {}, 20);
+  try {
+    const started = Date.now();
+    const result = await withDeadline(new Promise(() => {}), 300);
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /deadline/);
+    assert.ok(Date.now() - started < 2000, 'the deadline must actually fire');
+
+    const fast = await withDeadline(Promise.resolve({ ok: true, byId: new Map(), rows: [], reason: 'ok' }), 5000);
+    assert.equal(fast.ok, true, 'a healthy read still wins the race');
+  } finally { clearInterval(keepalive); }
+});
+
+test('E7 — an overrun probe is a read failure, not a false "all missing"', async () => {
+  resetStage3Diagnostics();
+  const stalled = fakeMirror([lead('a')]);
+  const env = await stalled.start();
+  try {
+    const result = await probeOutreachParity([lead('a')],
+      { label: 'test', env, logger: quiet, deadlineMs: 1 });
+    assert.equal(result, null);
+    const snap = stage3ParitySnapshot('dual');
+    assert.equal(snap.totals.readFailures, 1);
+    assert.equal(snap.totals.missing, 0, 'an abandoned probe must never report leads as missing');
+  } finally { await stalled.stop(); }
 });

@@ -43,6 +43,7 @@ const {
 // Stage 3D: dual-read measurement only. Nothing branches on its output.
 const {
   probeOutreachParityInBackground, stage3ParitySnapshot, DASHBOARD_OMITTED_FIELDS,
+  ingestProbeLine,
 } = require('./integrations/outreach-dual-read');
 // Stage 2: read-side validation only. Sheets still serves every user-facing
 // timeline; Supabase is read alongside so parity can be measured on real data.
@@ -709,7 +710,10 @@ function startAgentProcess(extraEnv, dryRun) {
     outBuf += chunk;
     const lines = outBuf.split('\n');
     outBuf = lines.pop();
-    lines.forEach(l => agentPushLine(l));
+    // The agent measures the automation corpus in its own process. Fold its
+    // reported parity into the shared diagnostics before the line is just log
+    // text, so the safety-critical comparison reaches the parity endpoint.
+    lines.forEach(l => { ingestProbeLine(l); agentPushLine(l); });
   });
 
   child.stderr.setEncoding('utf8');

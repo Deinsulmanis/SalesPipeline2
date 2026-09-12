@@ -39,6 +39,9 @@ const {
 
 // One probe per chokepoint per window. Dual mode is a measurement, not a load test.
 const PROBE_INTERVAL_MS = 5 * 60 * 1000;
+// The most time a probe may take before it is abandoned. Comfortably above a
+// healthy two-page corpus read, far below anything a send cycle would notice.
+const PROBE_DEADLINE_MS = 8000;
 // A row whose mirror is older than this is stale enough to be worth counting.
 const STALE_AFTER_MS = 60 * 60 * 1000;
 const MAX_RECENT = 20;
@@ -76,6 +79,20 @@ function bucket(label) {
 function note(entry) {
   diagnostics.recent.unshift(entry);
   if (diagnostics.recent.length > MAX_RECENT) diagnostics.recent.length = MAX_RECENT;
+}
+
+/**
+ * Resolve to `promise`, or to a read-failure result if it overruns.
+ * The timer is unref'd so an abandoned probe cannot hold a batch process open.
+ */
+function withDeadline(promise, ms) {
+  let timer;
+  const expired = new Promise(resolve => {
+    timer = setTimeout(
+      () => resolve({ ok: false, byId: new Map(), rows: [], reason: `deadline ${ms}ms exceeded` }), ms);
+    if (typeof timer.unref === 'function') timer.unref();
+  });
+  return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
 }
 
 /** Read the whole mirror as a Map, paging so a large tab is not one request. */
@@ -174,6 +191,7 @@ function measureLag(rows, now = Date.now()) {
 async function probeOutreachParity(sheetLeads, {
   label = 'unknown', comparable = SHEET_FIELDS, force = false,
   now = Date.now(), env = process.env, logger = console,
+  deadlineMs = PROBE_DEADLINE_MS,
 } = {}) {
   try {
     if (!Array.isArray(sheetLeads) || !sheetLeads.length) return null;
@@ -181,7 +199,11 @@ async function probeOutreachParity(sheetLeads, {
     if (!force && now - last < PROBE_INTERVAL_MS) return null;
     lastProbeAtByLabel.set(label, now);
 
-    const mirror = await readMirrorCorpus({ env });
+    // A hard ceiling on measurement. The agent AWAITS this probe so its result
+    // survives process exit, which means a slow Supabase would otherwise sit in
+    // front of a send cycle. Nothing about validation may delay real work, so a
+    // probe that overruns is abandoned and recorded as a read failure.
+    const mirror = await withDeadline(readMirrorCorpus({ env }), deadlineMs);
     const slot = bucket(label);
     slot.probes++;
     diagnostics.totals.probes++;
@@ -206,6 +228,8 @@ async function probeOutreachParity(sheetLeads, {
     slot.staleRows = lag.staleRows;
     slot.mirrorLagMs = lag.mirrorLagMs;
     diagnostics.totals.staleRows = lag.staleRows;
+    comparison.mirrorLagMs = lag.mirrorLagMs;
+    comparison.staleRows = lag.staleRows;
 
     note({
       at, label, outcome: comparison.criticalMismatches ? 'critical_mismatch' : 'clean',
@@ -247,6 +271,82 @@ function recordFallback(label, reason) {
   note({ at: new Date().toISOString(), label, outcome: 'fallback', reason });
 }
 
+// ── cross-process reporting ─────────────────────────────────────────────────
+//
+// The agent runs as a SPAWNED SUBPROCESS, so its diagnostics live in different
+// memory from the server that serves /api/integrations/supabase/stage3-parity.
+// Without this, the safety-critical comparison — the automation corpus, the one
+// that decides sends — would be measured and then silently discarded when the
+// process exits, and the endpoint would only ever show the UI chokepoint.
+//
+// The agent therefore prints one bounded line to stdout, which the server
+// already splits and captures, and the server folds it into the shared
+// diagnostics. Counts and lead ids only; no field values ever cross.
+
+const PROBE_LINE_PREFIX = '[stage3-dual]';
+
+function formatProbeLine(label, comparison) {
+  return `${PROBE_LINE_PREFIX} ${JSON.stringify({
+    label,
+    leadsCompared: comparison.leadsCompared,
+    exact: comparison.exact,
+    missing: comparison.missing,
+    extra: comparison.extra,
+    criticalMismatches: comparison.criticalMismatches,
+    noncriticalMismatches: comparison.noncriticalMismatches,
+    duplicateIds: comparison.duplicateIds,
+    duplicateEmails: comparison.duplicateEmails,
+    mirrorLagMs: comparison.mirrorLagMs ?? null,
+    staleRows: comparison.staleRows ?? 0,
+    criticalSample: (comparison.criticalIds || []).slice(0, 5),
+    missingSample: (comparison.missingIds || []).slice(0, 5),
+  })}`;
+}
+
+/**
+ * Fold a probe line emitted by a subprocess into this process's diagnostics.
+ * Returns true when a line was recognised and recorded.
+ *
+ * Never throws: this parses the output of another process, and a malformed line
+ * must be ignored rather than disturb the log pipeline that carries it.
+ */
+function ingestProbeLine(line) {
+  try {
+    const text = String(line || '');
+    const at = text.indexOf(PROBE_LINE_PREFIX);
+    if (at === -1) return false;
+    const payload = JSON.parse(text.slice(at + PROBE_LINE_PREFIX.length).trim());
+    const label = String(payload.label || 'subprocess');
+    const slot = bucket(label);
+    slot.probes++;
+    diagnostics.totals.probes++;
+    const stamp = new Date().toISOString();
+    slot.lastProbeAt = stamp;
+    diagnostics.lastProbeAt = stamp;
+    for (const key of ['leadsCompared', 'exact', 'missing', 'extra',
+      'criticalMismatches', 'noncriticalMismatches', 'duplicateIds', 'duplicateEmails']) {
+      const value = Number(payload[key]) || 0;
+      slot[key] = value;
+      diagnostics.totals[key] += value;
+    }
+    slot.staleRows = Number(payload.staleRows) || 0;
+    slot.mirrorLagMs = payload.mirrorLagMs === null ? null : Number(payload.mirrorLagMs);
+    diagnostics.totals.staleRows = slot.staleRows;
+    note({
+      at: stamp, label, via: 'subprocess',
+      outcome: payload.criticalMismatches ? 'critical_mismatch' : 'clean',
+      leadsCompared: payload.leadsCompared, exact: payload.exact,
+      missing: payload.missing, extra: payload.extra,
+      critical: payload.criticalMismatches, noncritical: payload.noncriticalMismatches,
+      mirrorLagMs: payload.mirrorLagMs, staleRows: payload.staleRows,
+      criticalSample: payload.criticalSample || [], missingSample: payload.missingSample || [],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Everything the Stage 3 parity endpoint reports. No secrets, no field values. */
 function stage3ParitySnapshot(mode) {
   const byLabel = {};
@@ -274,8 +374,10 @@ function resetStage3Diagnostics() {
 }
 
 module.exports = {
-  PROBE_INTERVAL_MS, STALE_AFTER_MS, DASHBOARD_OMITTED_FIELDS, NONCRITICAL_FIELDS,
-  readMirrorCorpus, compareCorpus, measureLag,
+  PROBE_INTERVAL_MS, PROBE_DEADLINE_MS, STALE_AFTER_MS,
+  DASHBOARD_OMITTED_FIELDS, NONCRITICAL_FIELDS, PROBE_LINE_PREFIX,
+  readMirrorCorpus, compareCorpus, measureLag, withDeadline,
   probeOutreachParity, probeOutreachParityInBackground,
+  formatProbeLine, ingestProbeLine,
   recordFallback, stage3ParitySnapshot, resetStage3Diagnostics,
 };

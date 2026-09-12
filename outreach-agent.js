@@ -70,7 +70,7 @@ const { planHumanOutboundIngestion, matchOutbound, latestHumanOutboundAt } = req
 const { mirrorEventsInBackground } = require('./integrations/supabase-mirror');
 const { mirrorOutreachLeadsInBackground, outreachStateMode } = require('./integrations/outreach-state');
 // Stage 3D: dual-read measurement only. No decision below reads its result.
-const { probeOutreachParityInBackground } = require('./integrations/outreach-dual-read');
+const { probeOutreachParity, formatProbeLine } = require('./integrations/outreach-dual-read');
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
 const { routedLeadReady } = require('./integrations/campaign-routing');
 // Staffing supplies its own locked copy only. Sender selection, thread pinning,
@@ -4146,11 +4146,25 @@ async function run() {
   // every field is comparable here, unlike the dashboard's A:O + Q:X snapshot.
   //
   // Measurement only: `all` is what every decision below uses, and the probe's
-  // result is never read. It runs after the mirror so it compares against a
-  // mirror this cycle has already refreshed, which is what a read cutover would
-  // actually be relying on.
+  // result never reaches a decision — it is printed and then discarded. It runs
+  // after the mirror so it compares against a mirror this cycle has already
+  // refreshed, which is what a read cutover would actually be relying on.
+  //
+  // AWAITED, unlike the mirror above, for one reason: this is a short-lived
+  // subprocess. A fire-and-forget probe would routinely be killed by process
+  // exit before its request returned, and the safety-critical comparison would
+  // simply never be measured. The probe carries a hard 8s deadline so awaiting
+  // it cannot stall a send, and the whole thing is skipped outside dual mode.
+  //
+  // Printed rather than stored because the server that serves the parity
+  // endpoint is a DIFFERENT PROCESS; it parses this line back out of our stdout.
   if (outreachStateMode() === 'dual') {
-    probeOutreachParityInBackground(all, { label: 'agent-automation' });
+    try {
+      const parity = await probeOutreachParity(all, { label: 'agent-automation' });
+      if (parity) console.log(formatProbeLine('agent-automation', parity));
+    } catch (error) {
+      console.warn(`[stage3-dual] agent probe skipped: ${(error && error.message) || 'unknown'}`);
+    }
   }
   if (TARGET_LEAD_ID) {
     const target = all.find(lead => lead.id === TARGET_LEAD_ID);
