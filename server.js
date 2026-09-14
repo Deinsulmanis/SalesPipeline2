@@ -40,11 +40,12 @@ const { mirrorEventsInBackground, mirrorEnabled, mirrorHealth } = require('./int
 const {
   mirrorOutreachLeadsInBackground, mirrorOutreachLeadFieldsInBackground, outreachStateMode,
   applyLeadChange, applyLeadChanges, outreachWriteDiagnostics,
+  readOutreachCorpus, sheetsFallbackAllowed, outreachWriteAuthority,
 } = require('./integrations/outreach-state');
 // Stage 3D: dual-read measurement only. Nothing branches on its output.
 const {
   probeOutreachParityInBackground, stage3ParitySnapshot, DASHBOARD_OMITTED_FIELDS,
-  ingestProbeLine,
+  ingestProbeLine, recordFallback,
 } = require('./integrations/outreach-dual-read');
 // Stage 2: read-side validation only. Sheets still serves every user-facing
 // timeline; Supabase is read alongside so parity can be measured on real data.
@@ -1374,8 +1375,14 @@ async function loadOutreachDataset() {
   // Parallel values.get calls still count individually against Google's
   // per-user/minute quota even when they finish together; the old load spent
   // eight quota units and regularly collided with Calendar + sender runs.
+  // In primary mode the ColdEmail corpus comes from Supabase, so the two ranges
+  // that carry it are dropped from the batch rather than fetched and discarded.
+  // Names below stay positional against `snapshotRanges`, so the offset is
+  // computed once here instead of being duplicated at every call site.
+  const ceFromSupabase = outreachStateMode() === 'primary';
   const snapshotRanges = [
-    `${CE_SHEET_NAME}!A:O`, `${CE_SHEET_NAME}!Q:X`, 'ReplyDrafts!A:L',
+    ...(ceFromSupabase ? [] : [`${CE_SHEET_NAME}!A:O`, `${CE_SHEET_NAME}!Q:X`]),
+    'ReplyDrafts!A:L',
     `${COLD_CALL_ACTIVITY_SHEET}!A:J`, `${PROVIDER_LEADS_SHEET}!A:N`,
     'DemoPlays!A:F', 'ProposalOpens!A:F', 'ProposalEngaged!A:F', AGENT_READ_RANGE,
     mailboxCheckpointRange(), 'Suppression!A:A',
@@ -1383,9 +1390,10 @@ async function loadOutreachDataset() {
   const snapshot = await sheets().spreadsheets.values.batchGet({
     spreadsheetId: SPREADSHEET_ID, ranges: snapshotRanges,
   });
-  const valuesAt = index => snapshot.data.valueRanges?.[index]?.values || [];
-  const left = valuesAt(0);
-  const right = valuesAt(1);
+  const offset = ceFromSupabase ? -2 : 0;
+  const valuesAt = index => snapshot.data.valueRanges?.[index + offset]?.values || [];
+  const left = ceFromSupabase ? [] : (snapshot.data.valueRanges?.[0]?.values || []);
+  const right = ceFromSupabase ? [] : (snapshot.data.valueRanges?.[1]?.values || []);
   const ceLength = Math.max(left.length, right.length);
   const ceRows = Array.from({ length: ceLength }, (_, index) => [
     ...Array.from({ length: 15 }, (_value, column) => left[index]?.[column] || ''),
@@ -1404,12 +1412,46 @@ async function loadOutreachDataset() {
   const suppressionResponse = responseAt(10);
 
   ceRowMap.clear();
-  const leads = ceRows.slice(1).map((row, index) => {
+  let leads = ceRows.slice(1).map((row, index) => {
     const lead = {};
     CE_COLUMNS.forEach((col, i) => { lead[col] = row[i] || ''; });
     if (lead.id) ceRowMap.set(lead.id, index + 2);
     return lead;
   }).filter(lead => lead.id);
+
+  // Stage 3E: the UI corpus from Supabase. This is a reporting/display read, so a
+  // Sheets fallback is permitted — and while Sheets still owns writes a fallback
+  // lands on canonical truth rather than on a lagging copy. The fallback is
+  // recorded either way, so a cutover cannot look healthy while quietly serving
+  // every page from the old store.
+  let leadSource = 'sheets';
+  if (ceFromSupabase) {
+    const corpus = await readOutreachCorpus();
+    if (corpus.ok) {
+      // The Sheets dashboard read deliberately omits column P, so the browser has
+      // never received siteContext here. The mirror HAS it, so it is blanked to
+      // keep the payload byte-identical across the cutover — a read cutover must
+      // not quietly start shipping a field the UI never had.
+      leads = corpus.leads.map(lead => ({ ...lead, siteContext: '' }));
+      leadSource = 'supabase';
+      // ceRowMap is deliberately NOT populated from the mirror: sheet_row is
+      // advisory and a stale row number lands a write on the wrong lead.
+      // findCERow() rebuilds it from column A on demand, which is authoritative.
+    } else {
+      const fallback = sheetsFallbackAllowed('ui');
+      recordFallback('ui-directory', `${corpus.reason}:${fallback.reason}`);
+      console.warn(`[outreach-read] Supabase corpus unavailable (${corpus.reason}) — `
+        + `serving the directory from Google Sheets (${fallback.reason}).`);
+      const ceOnly = await readColdEmailDashboardRows();
+      leads = ceOnly.slice(1).map((row, index) => {
+        const lead = {};
+        CE_COLUMNS.forEach((col, i) => { lead[col] = row[i] || ''; });
+        if (lead.id) ceRowMap.set(lead.id, index + 2);
+        return lead;
+      }).filter(lead => lead.id);
+      leadSource = 'sheets-fallback';
+    }
+  }
 
   // Stage 3D dual-read measurement. Google Sheets has already produced the
   // authoritative `leads` above and nothing below consults the comparison —
@@ -1597,6 +1639,7 @@ async function loadOutreachDataset() {
   return {
     at: Date.now(),
     leads,                 // full rows, server-side only
+    leadSource,            // 'sheets' | 'supabase' | 'sheets-fallback' — observability only
     rows,                  // light rows, safe to serialise
     activities, classificationsByLeadId, replyRecords,
     metrics, counts, facets, signals, sendActivity,
@@ -5168,6 +5211,9 @@ app.get('/api/integrations/supabase/stage3-parity', requireAuth, (_req, res) => 
   const mode = outreachStateMode();
   res.json({
     ...stage3ParitySnapshot(mode),
+    writeAuthority: outreachWriteAuthority(),
+    lastLeadSource: outreachCache ? outreachCache.leadSource : null,
+    writes: outreachWriteDiagnostics(),
     note: mode === 'off'
       ? 'Stage 3 is off. Google Sheets is authoritative and Supabase is neither read nor written.'
       : mode === 'dual'

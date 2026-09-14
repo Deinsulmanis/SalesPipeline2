@@ -68,7 +68,8 @@ const { planHumanOutboundIngestion, matchOutbound, latestHumanOutboundAt } = req
 // Stage 1 Supabase mirror. Optional and non-blocking: the agent's authoritative
 // write is the Google Sheets append above it, and this cannot affect it.
 const { mirrorEventsInBackground } = require('./integrations/supabase-mirror');
-const { mirrorOutreachLeadsInBackground, outreachStateMode, applyLeadChange } = require('./integrations/outreach-state');
+const { mirrorOutreachLeadsInBackground, outreachStateMode, applyLeadChange,
+  readOutreachCorpus, sheetsFallbackAllowed, outreachWriteAuthority } = require('./integrations/outreach-state');
 // Stage 3D: dual-read measurement only. No decision below reads its result.
 const { probeOutreachParity, formatProbeLine } = require('./integrations/outreach-dual-read');
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
@@ -945,8 +946,17 @@ async function scrapeSite(url) {
 
 // Writes scraped siteContext (or SCRAPE_SKIP marker) to column N for one lead row.
 async function writeSiteContext(lead, text) {
+  // Resolve the row immediately before writing, like every other agent writer.
+  // A corpus-derived row goes stale the moment a delete shifts rows, and a stale
+  // number lands the write on the WRONG lead. That matters more once the corpus
+  // can come from Supabase, whose sheet_row is explicitly advisory.
+  const rowNum = await resolveRow(lead.id);
+  if (!rowNum) {
+    console.warn(`[writeSiteContext] lead ${lead.id} no longer in sheet — skipping write.`);
+    return;
+  }
   await applyLeadChange(lead.id, { siteContext: text },
-    { row: lead._row, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
+    { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
 }
 
 // Phase 2: calls Haiku to generate one specific opening sentence.
@@ -1540,11 +1550,7 @@ async function ensureAgentHeaders() {
     requestBody: { values: [GMAIL_OBSERVATION_STATE_HEADER] } });
 }
 
-async function readLeads(rowsOverride = null) {
-  const rows = rowsOverride || (await sheets().spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: READ_RANGE,
-  })).data.values || [];
+function projectLeadRows(rows) {
   return rows.slice(1).map((row, idx) => {
     const lead = { _row: idx + 2 };              // 1-based sheet row (after header)
     COLUMNS.forEach((c, i) => { lead[c] = row[i] || ''; });
@@ -1553,27 +1559,71 @@ async function readLeads(rowsOverride = null) {
   }).filter(l => l.id);
 }
 
+/**
+ * The AUTOMATION corpus — the rows every send, sequence, routing and ownership
+ * decision is made from.
+ *
+ * In `primary` mode this is served from Supabase. Falling back to Sheets is
+ * allowed ONLY while Sheets still owns writes: then Sheets is canonical and a
+ * fallback lands on truth. Once write authority moves to Supabase the same
+ * fallback would mean deciding a send from a mirror that may lag, so it becomes
+ * a refusal instead — the run fails closed rather than sending on stale state.
+ */
+async function readLeads(rowsOverride = null) {
+  if (!rowsOverride && outreachStateMode() === 'primary') {
+    const corpus = await readOutreachCorpus();
+    if (corpus.ok) {
+      console.log(`[outreach-read] automation corpus from Supabase: ${corpus.leads.length} lead(s)`);
+      return corpus.leads
+        .map(lead => ({ ...lead, first: (lead.contactName || '').split(' ')[0] || '' }))
+        .filter(l => l.id);
+    }
+    const fallback = sheetsFallbackAllowed('automation');
+    if (!fallback.allowed) {
+      throw new Error(`[outreach-read] Supabase is canonical and unreadable (${corpus.reason}); `
+        + `refusing to run automation from a lagging Sheets mirror (${fallback.reason})`);
+    }
+    console.warn(`[outreach-read] Supabase corpus unavailable (${corpus.reason}) — `
+      + `falling back to Google Sheets, which still owns writes (${fallback.reason}).`);
+  }
+  const rows = rowsOverride || (await sheets().spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: READ_RANGE,
+  })).data.values || [];
+  return projectLeadRows(rows);
+}
+
 // A scheduled process used to issue one values.get per tab (and then re-read
 // several of them in later passes). Google charges those parallel requests
 // separately. This immutable cycle snapshot costs one read request and is
 // shared by observation, ownership, intent, Pipeline recovery and cold cadence.
-async function loadAgentSnapshot() {
-  const ranges = [
-    READ_RANGE, LEADS_RANGE, `${COLD_CALL_ACTIVITY_SHEET}!A:J`,
-    `${SUPPRESSION_SHEET}!A:E`, `${CAMPAIGN_INTEGRATIONS_SHEET}!A:I`,
-    `${PROVIDER_LEADS_SHEET}!A:N`, 'DemoPlays!A:F', `${INTENT_SHEET}!A:E`,
-    `${GMAIL_OBSERVATION_STATE_SHEET}!A:O`,
+async function loadAgentSnapshot({ forceColdEmail = false } = {}) {
+  // Named rather than positional, because the ColdEmail range is now CONDITIONAL:
+  // in primary mode the operational corpus comes from Supabase and asking Sheets
+  // for 1951 rows x 24 columns as well would leave the read cutover costing more
+  // than it saves. With names, dropping a range cannot silently shift the others.
+  const coldEmailFromSupabase = outreachStateMode() === 'primary' && !forceColdEmail;
+  const wanted = [
+    ...(coldEmailFromSupabase ? [] : [['coldEmail', READ_RANGE]]),
+    ['board', LEADS_RANGE],
+    ['activityRows', `${COLD_CALL_ACTIVITY_SHEET}!A:J`],
+    ['suppression', `${SUPPRESSION_SHEET}!A:E`],
+    ['campaigns', `${CAMPAIGN_INTEGRATIONS_SHEET}!A:I`],
+    ['providerMappings', `${PROVIDER_LEADS_SHEET}!A:N`],
+    ['demoPlays', 'DemoPlays!A:F'],
+    ['intentFired', `${INTENT_SHEET}!A:E`],
+    ['gmailObservationState', `${GMAIL_OBSERVATION_STATE_SHEET}!A:O`],
   ];
   const response = await sheets().spreadsheets.values.batchGet({
-    spreadsheetId: SPREADSHEET_ID, ranges,
+    spreadsheetId: SPREADSHEET_ID, ranges: wanted.map(([, range]) => range),
   });
-  const rows = index => response.data.valueRanges?.[index]?.values || [];
-  console.log(`[Sheets snapshot] ${ranges.length} datasets loaded in 1 batch read`);
-  return {
-    coldEmail: rows(0), board: rows(1), activityRows: rows(2),
-    suppression: rows(3), campaigns: rows(4), providerMappings: rows(5),
-    demoPlays: rows(6), intentFired: rows(7), gmailObservationState: rows(8),
-  };
+  const snapshot = { coldEmail: null };
+  wanted.forEach(([name], index) => {
+    snapshot[name] = response.data.valueRanges?.[index]?.values || [];
+  });
+  console.log(`[Sheets snapshot] ${wanted.length} datasets loaded in 1 batch read`
+    + (coldEmailFromSupabase ? ' (ColdEmail served from Supabase)' : ''));
+  return snapshot;
 }
 
 function loadGmailObservationState(rows = []) {
@@ -2587,7 +2637,14 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
       // Warm responses are rare, so pay for one fresh batched snapshot at the
       // last possible moment. This catches a booking, hold, suppression, sender
       // conflict, or operator change that happened while the reply was classified.
-      const fresh = await withAuth(loadAgentSnapshot);
+      // forceColdEmail: this is the last gate before a warm send, and it exists to
+      // catch a booking, hold, suppression or sender conflict that landed since
+      // classification. It therefore reads from the store that owns WRITES —
+      // Sheets while Sheets is canonical — rather than from a mirror that could
+      // be carrying a deferred write for exactly the lead being checked.
+      const fresh = await withAuth(() => loadAgentSnapshot({
+        forceColdEmail: outreachWriteAuthority() === 'sheets',
+      }));
       const currentRows = await readLeads(fresh.coldEmail);
       const current = currentRows.find(row => row.id === lead.id);
       if (!current || normEmail(current.email) !== normEmail(lead.email)) return { allowed: false, code: 'identity_changed' };
@@ -4026,7 +4083,7 @@ async function run() {
   await loadSuppressionList(snapshot.suppression);
   await loadOutreachProviderState(snapshot.campaigns, snapshot.providerMappings);
 
-  const all = await readLeads(snapshot.coldEmail);
+  const all = await readLeads(snapshot.coldEmail);   // null in primary -> Supabase
   const allLeadsForDailyCap = [...all];
 
   // Stage 3 shadow mirror. Fed from the authoritative A:X read the cycle just

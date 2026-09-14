@@ -179,7 +179,12 @@ test('12. no endpoint on the Outreach load path performs a per-lead read', () =>
   const batches = (loader.match(/spreadsheets\.values\.batchGet/g) || []).length;
   assert.equal(reads, 0, 'the snapshot has no independent values.get calls');
   assert.equal(batches, 1, 'all fixed ranges share one quota-counted batch request');
-  assert.ok(!/for\s*\(/.test(loader.slice(0, loader.indexOf('const leads ='))), 'no loop before the fetch');
+  // `leads` is now `let`, because in primary mode it is reassigned from the
+  // Supabase corpus. The invariant is unchanged: no loop may run before the
+  // bulk fetch, so nothing can degrade into per-lead work.
+  const leadsAt = loader.indexOf('let leads =');
+  assert.ok(leadsAt > 0, 'the corpus projection must still be findable');
+  assert.ok(!/for\s*\(/.test(loader.slice(0, leadsAt)), 'no loop before the fetch');
 });
 
 test('the four Outreach endpoints share one snapshot instead of re-reading', () => {
@@ -187,8 +192,15 @@ test('the four Outreach endpoints share one snapshot instead of re-reading', () 
     assert.match(handler(route), /getOutreachDataset\(/, `${route} uses the shared snapshot`);
   }
   // ColdEmail is fetched in exactly one place now.
-  assert.equal((server.match(/readColdEmailDashboardRows\(\)/g) || []).length, 2,
-    'legacy helper remains only for its definition and protected routing simulation');
+  // Three now: the definition, the protected routing simulation, and the Stage 3E
+  // Sheets fallback used only when the Supabase corpus is unreadable. The
+  // fallback is still ONE batched corpus read, never a per-lead one.
+  assert.equal((server.match(/readColdEmailDashboardRows\(\)/g) || []).length, 3,
+    'definition, routing simulation, and the 3E fallback');
+  const loader = server.slice(server.indexOf('async function loadOutreachDataset'),
+    server.indexOf('async function getOutreachDataset'));
+  const fallbackUses = (loader.match(/readColdEmailDashboardRows\(\)/g) || []).length;
+  assert.equal(fallbackUses, 1, 'the loader may fall back exactly once, not per lead');
 });
 
 // ── 13–15. Cache behaviour ──────────────────────────────────────────────────

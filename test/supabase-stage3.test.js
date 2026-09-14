@@ -480,9 +480,18 @@ test('H4 — NO production read path consults Supabase for an operational decisi
   }
 });
 
-test('H5 — the mode gate has no reader honouring "primary" yet', () => {
-  assert.ok(!/outreachStateMode\(\)\s*===\s*'primary'/.test(serverSrc + agentSrc),
-    'nothing may branch on primary until a read cutover is separately approved');
+test('H5 — primary mode is honoured by the two corpus reads, and only those', () => {
+  // Stage 3E: 'primary' now means the operational corpus is served from Supabase.
+  // Exactly two chokepoints may branch on it - the UI corpus and the automation
+  // corpus - because every downstream consumer already derives from one of them.
+  // A third would be a per-feature read, which is how N+1 gets in.
+  const serverBranches = (serverSrc.match(/outreachStateMode\(\) === 'primary'/g) || []).length;
+  const agentBranches = (agentSrc.match(/outreachStateMode\(\) === 'primary'/g) || []).length;
+  assert.equal(serverBranches, 1, 'server.js branches on primary once: the UI corpus');
+  assert.equal(agentBranches, 2,
+    'outreach-agent.js branches on primary twice: the corpus read and the snapshot range it makes unnecessary');
+  assert.match(serverSrc, /const ceFromSupabase = outreachStateMode\(\) === 'primary'/);
+  assert.match(agentSrc, /const corpus = await readOutreachCorpus\(\)/);
 });
 
 // ── I. write-path integration (3B) ──────────────────────────────────────────

@@ -111,6 +111,43 @@ function outreachStateMode(env = process.env) {
   return ['dual', 'primary'].includes(raw) ? raw : 'off';
 }
 
+/**
+ * WHERE CANONICAL WRITES GO. Separate from the read mode on purpose: the read
+ * cutover (3E) and the write-authority cutover (3F) are different risks and must
+ * be deployable, observable and reversible independently.
+ *
+ *   sheets   — Google Sheets is canonical; Supabase is a mirror kept current by
+ *              applyLeadChange. A read that falls back to Sheets falls back to
+ *              TRUTH, so a fallback is safe for every caller.
+ *   supabase — Supabase is canonical; Sheets is a secondary mirror that may lag.
+ *              A read that falls back to Sheets now falls back to a STALE copy,
+ *              so automation must fail closed instead.
+ *
+ * That inversion is the whole reason this is its own function rather than a
+ * fourth value of the read mode: the safety of a fallback depends on who owns
+ * writes, not on where reads are served from.
+ */
+function outreachWriteAuthority(env = process.env) {
+  return String(env.SUPABASE_OUTREACH_WRITES || '').trim().toLowerCase() === 'supabase'
+    ? 'supabase' : 'sheets';
+}
+
+/**
+ * May a read that failed against Supabase fall back to Google Sheets?
+ *
+ * @param surface 'ui' for reporting/display, 'automation' for anything that can
+ *                decide a send, a sequence step, routing or ownership.
+ */
+function sheetsFallbackAllowed(surface, env = process.env) {
+  if (outreachWriteAuthority(env) === 'sheets') {
+    // Sheets still receives every canonical write, so it cannot be behind.
+    return { allowed: true, reason: 'sheets-is-canonical' };
+  }
+  // Supabase is canonical. Sheets is a mirror and may lag by an unknown amount.
+  if (surface === 'ui') return { allowed: true, reason: 'ui-read-may-show-lagged-mirror' };
+  return { allowed: false, reason: 'automation-must-not-decide-from-a-lagging-mirror' };
+}
+
 const text = value => (value === null || value === undefined ? '' : String(value));
 
 /** A timestamp Postgres accepts, or null. Never a substituted "now". */
@@ -402,6 +439,29 @@ async function countOutreachLeads({ env = process.env } = {}) {
 }
 
 /**
+ * The WHOLE operational corpus as complete ColdEmail rows, ordered by lead id.
+ *
+ * One paged scan, never a query per lead: both read chokepoints hold the entire
+ * corpus already, and turning that into N requests would make a read cutover
+ * slower than the thing it replaces.
+ *
+ * `_row` is deliberately NOT set from the mirror. sheet_row is advisory and goes
+ * stale the moment a delete shifts rows, and a stale row number lands a write on
+ * the WRONG lead. Callers that write resolve the row themselves, as resolveRow()
+ * and findCERow() already do.
+ */
+async function readOutreachCorpus({ env = process.env, pageSize = 1000 } = {}) {
+  const leads = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await listOutreachLeads({ limit: pageSize, offset, env });
+    if (!page.ok) return { ok: false, leads: [], reason: page.reason };
+    for (const lead of page.leads) leads.push(lead);
+    if (page.leads.length < pageSize) break;
+  }
+  return { ok: true, leads, reason: 'ok' };
+}
+
+/**
  * Field-by-field parity between the authoritative sheet row and the mirror.
  *
  * Normalises only what is genuinely non-semantic: null and absent are the same
@@ -640,7 +700,8 @@ async function applyLeadChanges(changes, {
 
 module.exports = {
   TABLE, FIELD_MAP, SHEET_FIELDS, CRITICAL_FIELDS, NONCRITICAL_FIELDS,
-  outreachStateMode, isCompleteLead, missingFields, describeUnmirrorable,
+  outreachStateMode, outreachWriteAuthority, sheetsFallbackAllowed,
+  readOutreachCorpus, isCompleteLead, missingFields, describeUnmirrorable,
   toOutreachLeadRow, toOutreachLeadPatch, fromOutreachLeadRow,
   mirrorOutreachLeads, mirrorOutreachLeadFields,
   mirrorOutreachLeadsInBackground, mirrorOutreachLeadFieldsInBackground,
