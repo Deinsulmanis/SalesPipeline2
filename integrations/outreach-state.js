@@ -518,6 +518,7 @@ function columnLetterFor(field) {
 const writeDiagnostics = {
   startedAt: new Date().toISOString(),
   mutations: 0, mirrored: 0, mirrorFailures: 0,
+  casConflicts: 0, conflictRetries: 0, conflictRefusals: 0,
   lastMutationAt: null, lastMirrorFailureAt: null, lastMirrorFailureReason: null,
   maxMirrorLatencyMs: 0, recent: [],
 };
@@ -536,9 +537,170 @@ function resetOutreachWriteDiagnostics() {
   Object.assign(writeDiagnostics, {
     startedAt: new Date().toISOString(),
     mutations: 0, mirrored: 0, mirrorFailures: 0,
+    casConflicts: 0, conflictRetries: 0, conflictRefusals: 0,
     lastMutationAt: null, lastMirrorFailureAt: null, lastMirrorFailureReason: null,
     maxMirrorLatencyMs: 0, recent: [],
   });
+}
+
+// ── Stage 3F: compare-and-set, and who wins a conflict ──────────────────────
+//
+// Once Supabase is canonical, two workers can touch one lead at the same instant.
+// ColdEmail never had protection against that — writes were last-writer-wins on a
+// cell range, made safe only by the accident that a single cron process wrote
+// narrow ranges. Row-level upserts remove that accident, so the protection has to
+// arrive with the authority.
+//
+// The mechanism is optimistic concurrency on `revision`:
+//
+//   read revision N
+//   PATCH ... WHERE lead_id = X AND revision = N   SET <patch>, revision = N+1
+//   zero rows affected  ->  somebody else wrote first
+//
+// Zero rows is NOT a failure to retry blindly. It means the row moved under us,
+// and whether our intent is still valid depends on what it moved to. A retry that
+// simply re-applied the patch would be last-write-wins with extra steps — and
+// would, for example, let a queued follow-up overwrite a MANUAL HOLD that a human
+// applied one second earlier.
+//
+// So a conflict reloads the canonical row and asks a precedence question. The
+// rules below are not new policy; they are the existing business rules about who
+// owns a lead, applied at the moment two writers disagree:
+//
+//   human and terminal state outrank automation
+//   a reply outranks send progression
+//   suppression and unsubscribe outrank everything
+
+const TERMINAL_STAGES = Object.freeze(['unsubscribed', 'unsub']);
+const SENDING_STATUSES = Object.freeze(['queued', 'emailed', 'sent']);
+const MANUAL_HOLD_MARKER = '[MANUAL HOLD]';
+const MAX_CAS_ATTEMPTS = 3;
+
+/**
+ * Would applying `patch` to the reloaded `current` row overwrite state that
+ * outranks it? Returns a refusal reason, or null when the retry is safe.
+ *
+ * Deliberately conservative: it answers "is this still safe", not "is this still
+ * useful". A refused mutation is reported to the caller, never silently dropped.
+ */
+function conflictRefusal(current, patch) {
+  const stage = String(current.stage || '').toLowerCase();
+  const status = String(current.emailStatus || '').toLowerCase();
+  const notes = String(current.notes || '');
+
+  const wantsStage = Object.prototype.hasOwnProperty.call(patch, 'stage');
+  const wantsStatus = Object.prototype.hasOwnProperty.call(patch, 'emailStatus');
+  const nextStage = String(patch.stage || '').toLowerCase();
+  const nextStatus = String(patch.emailStatus || '').toLowerCase();
+
+  // A human took the lead while we were working. Automation may still annotate
+  // notes, but it may not move the lead's stage or sending status underneath them.
+  if (notes.includes(MANUAL_HOLD_MARKER) && (wantsStage || wantsStatus)
+    && !String(patch.notes || '').includes(MANUAL_HOLD_MARKER)) {
+    return 'lead is under MANUAL HOLD; human ownership outranks automation';
+  }
+
+  // Terminal means terminal. Nothing may walk a lead back out of unsubscribed.
+  if (TERMINAL_STAGES.includes(stage) && wantsStage && !TERMINAL_STAGES.includes(nextStage)) {
+    return `lead is terminal (${current.stage}); automation may not reopen it`;
+  }
+
+  // A reply landed while a send was being prepared. The reply owns the lead now,
+  // so a send-progression status must not overwrite it.
+  if (status === 'replied' && wantsStatus && SENDING_STATUSES.includes(nextStatus)) {
+    return 'a reply arrived first; send progression may not overwrite replied state';
+  }
+
+  return null;
+}
+
+const headersForWrite = (config, extra = {}) => ({
+  apikey: config.key, Authorization: `Bearer ${config.key}`,
+  'Content-Type': 'application/json', ...extra,
+});
+
+/** Read the canonical row plus its revision. */
+async function readCanonicalLead(id, { env = process.env } = {}) {
+  const config = mirrorConfig(env);
+  if (!config.enabled) return { ok: false, reason: config.reason };
+  try {
+    const response = await request(
+      `${config.url}/rest/v1/${TABLE}?select=*&lead_id=eq.${quote(id)}&limit=1`,
+      { headers: headersForWrite(config) });
+    if (!response.ok) return { ok: false, reason: `HTTP ${response.status}` };
+    const rows = await response.json();
+    if (!rows.length) return { ok: false, reason: 'lead not found in Supabase' };
+    return { ok: true, lead: fromOutreachLeadRow(rows[0]), revision: Number(rows[0].revision) };
+  } catch (error) {
+    return { ok: false, reason: (error && error.message) || 'unreachable' };
+  }
+}
+
+/**
+ * One compare-and-set attempt. Returns {applied, rows} or a reason.
+ * Atomic by construction: every field in the patch and the revision bump land in
+ * a single UPDATE, so no other worker can observe a half-applied transition.
+ */
+async function casAttempt(id, patch, revision, { env = process.env }) {
+  const config = mirrorConfig(env);
+  const body = { ...patch, revision: revision + 1, updated_at: new Date().toISOString() };
+  try {
+    const response = await request(
+      `${config.url}/rest/v1/${TABLE}?lead_id=eq.${quote(id)}&revision=eq.${revision}`,
+      {
+        method: 'PATCH',
+        headers: headersForWrite(config, { Prefer: 'return=representation' }),
+        body: JSON.stringify(body),
+      });
+    if (!response.ok) return { applied: false, reason: `HTTP ${response.status}` };
+    const rows = await response.json();
+    // Zero rows means the WHERE clause did not match: the revision moved.
+    return { applied: rows.length > 0, rows };
+  } catch (error) {
+    return { applied: false, reason: (error && error.message) || 'unreachable' };
+  }
+}
+
+/**
+ * Apply a patch to the canonical Supabase row under optimistic concurrency.
+ *
+ * NEVER last-write-wins. On conflict it reloads, re-evaluates against the
+ * precedence rules above, and only retries when the intent is still safe.
+ */
+async function applyCanonicalChange(id, patch, { env = process.env, logger = console } = {}) {
+  const column = {};
+  for (const [field, value] of Object.entries(patch)) {
+    column[FIELD_MAP[field]] = value === null || value === undefined ? '' : String(value);
+    if (field === 'lastEmailedAt') column.last_emailed_at_ts = isoOrNull(value);
+    if (field === 'emailStep') column.email_step_int = intOrNull(value);
+  }
+
+  let conflicts = 0;
+  for (let attempt = 1; attempt <= MAX_CAS_ATTEMPTS; attempt++) {
+    const current = await readCanonicalLead(id, { env });
+    if (!current.ok) return { ok: false, conflicts, reason: current.reason };
+
+    if (attempt > 1) {
+      // Re-evaluate against what actually landed, not against what we assumed.
+      const refusal = conflictRefusal(current.lead, patch);
+      if (refusal) {
+        writeDiagnostics.conflictRefusals++;
+        logger.warn(`[outreach-state] lead ${id}: mutation REFUSED after conflict — ${refusal}. `
+          + 'No write was made; the newer state stands.');
+        return { ok: false, refused: true, conflicts, reason: refusal };
+      }
+    }
+
+    const result = await casAttempt(id, column, current.revision, { env });
+    if (result.applied) {
+      if (conflicts) writeDiagnostics.conflictRetries += conflicts;
+      return { ok: true, conflicts, revision: current.revision + 1 };
+    }
+    if (result.reason) return { ok: false, conflicts, reason: result.reason };
+    conflicts++;
+    writeDiagnostics.casConflicts++;
+  }
+  return { ok: false, conflicts, reason: `lost ${MAX_CAS_ATTEMPTS} compare-and-set races` };
 }
 
 /**
@@ -587,6 +749,52 @@ async function applyLeadChange(leadId, patch, {
     ...extraData,
   ];
 
+  // ── Stage 3F: Supabase canonical ──────────────────────────────────────────
+  // The authority flip lives here and nowhere else. No call site changes.
+  if (outreachWriteAuthority(env) === 'supabase') {
+    const canonical = await applyCanonicalChange(id, patch, { env, logger });
+    if (!canonical.ok) {
+      // A refusal is a CORRECT outcome, not a transport failure: the lead moved
+      // to state that outranks this mutation. Either way the caller asked for a
+      // change that did not happen, so it must not continue as if it had —
+      // failing closed is the documented preference on these paths.
+      const error = new Error(canonical.refused
+        ? `outreach mutation refused for ${id}: ${canonical.reason}`
+        : `canonical outreach write failed for ${id}: ${canonical.reason}`);
+      error.refused = Boolean(canonical.refused);
+      error.conflicts = canonical.conflicts;
+      throw error;
+    }
+    writeDiagnostics.mutations++;
+    writeDiagnostics.lastMutationAt = new Date().toISOString();
+
+    // Sheets is now the SECONDARY mirror. Its failure must not roll back a
+    // committed canonical write, must not restore Sheets authority, and must not
+    // affect send eligibility — it is recorded, and repaired by reconciliation.
+    let sheetsMirrored = false;
+    let sheetsReason = 'ok';
+    try {
+      await sheetsClient.spreadsheets.values.batchUpdate({
+        spreadsheetId, requestBody: { valueInputOption, data },
+      });
+      sheetsMirrored = true;
+      writeDiagnostics.mirrored++;
+    } catch (error) {
+      sheetsReason = (error && error.message) || 'sheets mirror failed';
+      writeDiagnostics.mirrorFailures++;
+      writeDiagnostics.lastMirrorFailureAt = new Date().toISOString();
+      writeDiagnostics.lastMirrorFailureReason = sheetsReason;
+      logger.warn(`[outreach-state] lead ${id}: Supabase write COMMITTED, Sheets mirror deferred `
+        + `(${sheetsReason}). Supabase remains authoritative; run the Stage 3 reconciliation to repair Sheets.`);
+    }
+    noteWrite({ at: writeDiagnostics.lastMutationAt, leadId: id, fields,
+      mirrored: sheetsMirrored, reason: sheetsReason, latencyMs: 0,
+      authority: 'supabase', conflicts: canonical.conflicts, revision: canonical.revision });
+    return { ok: true, leadId: id, fields, mirrored: sheetsMirrored, mirrorReason: sheetsReason,
+      authority: 'supabase', conflicts: canonical.conflicts, revision: canonical.revision };
+  }
+
+  // ── Sheets canonical (Stage 3B–3E) ────────────────────────────────────────
   // 1. AUTHORITATIVE WRITE. Throws on failure, as every call site expects today.
   await sheetsClient.spreadsheets.values.batchUpdate({
     spreadsheetId,
@@ -708,5 +916,6 @@ module.exports = {
   getOutreachLeadById, getOutreachLeadByEmail, batchGetOutreachLeads,
   listOutreachLeads, countOutreachLeads, compareOutreachLead,
   applyLeadChange, applyLeadChanges, columnLetterFor,
+  applyCanonicalChange, conflictRefusal, readCanonicalLead, MAX_CAS_ATTEMPTS,
   outreachWriteDiagnostics, resetOutreachWriteDiagnostics,
 };
