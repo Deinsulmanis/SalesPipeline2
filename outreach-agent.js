@@ -2656,7 +2656,16 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
       let freshSender;
       try { freshSender = pinnedSenderId(current, mine); } catch (_) { return { allowed: false, code: 'sender_conflict' }; }
       if (freshSender !== sender.id) return { allowed: false, code: 'sender_changed' };
-      const board = (await readBoardLeads(fresh.board)).find(row => row.id === `CE-${lead.id}` || normEmail(row.email) === normEmail(lead.email)) || {};
+      // null, NOT {}. An Outreach-only lead has no Pipeline card, and an empty
+      // object is truthy: deriveAutomationOwnership would read it as a board lead
+      // whose stage happens to be blank, take the pipeline_stage branch, find no
+      // journey defined for "" and answer human / no_eligible_journey. That is
+      // how a verified demo pair on a lead with no Pipeline card — Silver 7 —
+      // sat deferred: every real safety gate passed and the lead was refused for
+      // having no Pipeline stage it was never supposed to have.
+      // deriveCallLifecycle already does `boardLead || {}` internally, so null is
+      // safe there and is the honest answer here.
+      const board = (await readBoardLeads(fresh.board)).find(row => row.id === `CE-${lead.id}` || normEmail(row.email) === normEmail(lead.email)) || null;
       const callState = deriveCallLifecycle(board, { activities: mine });
       if (['scheduled','rescheduled'].includes(callState.status)) return { allowed: false, code: 'meeting_booked' };
       if (CALENDAR_SYNC_ENABLED) {
