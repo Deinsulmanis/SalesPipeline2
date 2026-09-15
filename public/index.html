@@ -594,6 +594,14 @@
   #resume-overlay { display: none; position: fixed; inset: 0; background: var(--scrim); backdrop-filter: blur(4px); z-index: calc(var(--z-sticky) + 10); align-items: center; justify-content: center; padding: 20px; }
   #resume-overlay.open { display: flex; }
   #resume-overlay .modal { max-height: calc(100dvh - 40px); overflow-y: auto; }
+  /* The drawer's confirmation modals (call lifecycle, close, ghost, reactivate,
+     promotion, sequence) use .modal-overlay, which never had a base rule: they
+     sat in page flow below the board, visible even when closed, and opened
+     underneath the fixed detail drawer where no one could reach them. They open
+     FROM the drawer, so they stack above it, exactly like #resume-overlay. */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: var(--scrim); backdrop-filter: blur(4px); z-index: calc(var(--z-sticky) + 10); align-items: center; justify-content: center; padding: 20px; }
+  .modal-overlay.open { display: flex; }
+  .modal-overlay .modal { max-height: calc(100dvh - 40px); overflow-y: auto; }
 
   .modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 28px; width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; }
 
