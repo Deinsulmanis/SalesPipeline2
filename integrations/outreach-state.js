@@ -371,6 +371,38 @@ function mirrorOutreachLeadFieldsInBackground(id, fields, options = {}) {
   inBackground(() => mirrorOutreachLeadFields(id, fields, options), options.logger);
 }
 
+/**
+ * May the agent re-state the WHOLE corpus to Supabase from its cycle snapshot?
+ *
+ * Only in dual mode with Sheets authoritative. There the snapshot was read from
+ * Sheets, which is the truth, so re-stating it each cycle is the self-healing
+ * mirror Stages 3B–3D relied on.
+ *
+ * Anywhere else it is a lost update. In primary mode the snapshot is read from
+ * Supabase at the START of the cycle and upserted afterwards, over whatever sends,
+ * replies and human actions committed in between — a MANUAL HOLD applied mid-cycle
+ * is written straight back out. It also leaves `revision` untouched, so
+ * compare-and-set cannot see that it happened. With Supabase authoritative, a
+ * Sheets snapshot is a lagging copy and must never overwrite the canonical row.
+ */
+function snapshotMirrorAllowed(env = process.env) {
+  return outreachStateMode(env) === 'dual' && outreachWriteAuthority(env) === 'sheets';
+}
+
+/**
+ * The agent's once-per-cycle whole-corpus mirror, behind snapshotMirrorAllowed().
+ * Fire-and-forget, like the wrapper it calls. Reports whether it started, so the
+ * gate is observable rather than assumed.
+ */
+function mirrorCycleSnapshotInBackground(leads, options = {}) {
+  const env = options.env || process.env;
+  if (!snapshotMirrorAllowed(env)) {
+    return { started: false, reason: `mode=${outreachStateMode(env)} writes=${outreachWriteAuthority(env)}` };
+  }
+  mirrorOutreachLeadsInBackground(leads, options);
+  return { started: true, reason: 'dual mode with Sheets authoritative' };
+}
+
 // ── reads (parity only until a cutover is approved) ─────────────────────────
 
 async function selectLeads(query, { env = process.env, timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
@@ -924,6 +956,7 @@ module.exports = {
   toOutreachLeadRow, toOutreachLeadPatch, fromOutreachLeadRow,
   mirrorOutreachLeads, mirrorOutreachLeadFields,
   mirrorOutreachLeadsInBackground, mirrorOutreachLeadFieldsInBackground,
+  snapshotMirrorAllowed, mirrorCycleSnapshotInBackground,
   getOutreachLeadById, getOutreachLeadByEmail, batchGetOutreachLeads,
   listOutreachLeads, countOutreachLeads, compareOutreachLead,
   applyLeadChange, applyLeadChanges, columnLetterFor,

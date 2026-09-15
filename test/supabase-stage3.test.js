@@ -512,11 +512,11 @@ test('H5 — primary mode is honoured by the two corpus reads, and only those', 
 test('I1 — the agent mirrors the COMPLETE authoritative read, once per cycle', () => {
   assert.match(agentSrc, /const all = await readLeads\(snapshot\.coldEmail\);/,
     'the cycle must still read the full A:X tab');
-  const hook = agentSrc.match(/mirrorOutreachLeadsInBackground\(all\)/);
+  const hook = agentSrc.match(/mirrorCycleSnapshotInBackground\(all\)/);
   assert.ok(hook, 'the agent must mirror the leads it just read');
 
   const readIndex = agentSrc.indexOf('const all = await readLeads(snapshot.coldEmail);');
-  const hookIndex = agentSrc.indexOf('mirrorOutreachLeadsInBackground(all)');
+  const hookIndex = agentSrc.indexOf('mirrorCycleSnapshotInBackground(all)');
   const spliceIndex = agentSrc.indexOf('all.splice(0, all.length, target)');
   assert.ok(hookIndex > readIndex, 'the mirror must follow the authoritative read');
   assert.ok(hookIndex < spliceIndex,
@@ -524,8 +524,15 @@ test('I1 — the agent mirrors the COMPLETE authoritative read, once per cycle',
 });
 
 test('I2 — every agent mirror call is gated and fire-and-forget', () => {
-  assert.match(agentSrc, /if \(outreachStateMode\(\) !== 'off'\) mirrorOutreachLeadsInBackground\(all\)/);
-  assert.ok(!/await mirrorOutreachLeads\(/.test(agentSrc),
+  // Restated during the Stage 3 incident repair. The gate was `mode !== 'off'`,
+  // which let primary mode write a cycle-start Supabase snapshot back over newer
+  // canonical state. It now lives in the wrapper — dual mode with Sheets
+  // authoritative only — where test/supabase-snapshot-mirror-gate.test.js
+  // exercises it against a PostgREST double.
+  assert.match(agentSrc, /\n {2}mirrorCycleSnapshotInBackground\(all\);\n/);
+  assert.match(stateSrc, /function mirrorCycleSnapshotInBackground\([\s\S]*?if \(!snapshotMirrorAllowed\(env\)\)/,
+    'the wrapper refuses before it mirrors anything');
+  assert.ok(!/await mirrorOutreachLeads\(|await mirrorCycleSnapshotInBackground\(/.test(agentSrc),
     'the sender must never await the mirror — a Supabase stall cannot delay a send');
 });
 
@@ -935,7 +942,7 @@ test('N4 — the mirror introduces no additional Google Sheets read', () => {
   // The agent hook consumes `all`, which readLeads() already produced from the
   // batched cycle snapshot. Sheets quota is the binding constraint on this system,
   // so a mirror that cost a read would be a regression, not a feature.
-  const hookLine = agentSrc.match(/.*mirrorOutreachLeadsInBackground\(all\).*/)[0];
+  const hookLine = agentSrc.match(/.*mirrorCycleSnapshotInBackground\(all\).*/)[0];
   assert.ok(!/sheets\(\)|values\.get|batchGet/.test(hookLine));
   assert.match(agentSrc, /costs no extra Sheets quota/, 'the property must stay documented');
 

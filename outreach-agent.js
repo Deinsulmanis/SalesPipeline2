@@ -68,7 +68,7 @@ const { planHumanOutboundIngestion, matchOutbound, latestHumanOutboundAt } = req
 // Stage 1 Supabase mirror. Optional and non-blocking: the agent's authoritative
 // write is the Google Sheets append above it, and this cannot affect it.
 const { mirrorEventsInBackground } = require('./integrations/supabase-mirror');
-const { mirrorOutreachLeadsInBackground, outreachStateMode, applyLeadChange,
+const { mirrorCycleSnapshotInBackground, outreachStateMode, applyLeadChange,
   readOutreachCorpus, sheetsFallbackAllowed, outreachWriteAuthority } = require('./integrations/outreach-state');
 // Stage 3D: dual-read measurement only. No decision below reads its result.
 const { probeOutreachParity, formatProbeLine } = require('./integrations/outreach-dual-read');
@@ -4095,19 +4095,22 @@ async function run() {
   const all = await readLeads(snapshot.coldEmail);   // null in primary -> Supabase
   const allLeadsForDailyCap = [...all];
 
-  // Stage 3 shadow mirror. Fed from the authoritative A:X read the cycle just
-  // made, so every row is COMPLETE and the mirror is a truthful snapshot of one
-  // known instant — the start of this cycle — rather than a blend of fresh and
-  // stale columns. It costs no extra Sheets quota, and because it re-states
-  // every lead each cycle it self-heals: a write site that forgets to mirror is
-  // corrected on the next run instead of diverging forever.
+  // Stage 3 shadow mirror. In dual mode, with Sheets authoritative, `all` is the
+  // A:X read this cycle just made: every row is COMPLETE, it is a truthful
+  // snapshot of one known instant rather than a blend of fresh and stale
+  // columns, it costs no extra Sheets quota, and because it re-states every lead
+  // each cycle it self-heals a write site that forgot to mirror.
+  //
+  // In primary mode `all` came from Supabase at the start of the cycle. Writing
+  // it back would revert everything committed since — a MANUAL HOLD included —
+  // without moving `revision`, so compare-and-set could not see it. The wrapper
+  // refuses outside dual mode with Sheets authoritative (snapshotMirrorAllowed).
   //
   // Deliberately before the TARGET_LEAD_ID splice below, so a targeted run still
   // mirrors the whole tab rather than shrinking the mirror to one lead.
   //
-  // Fire-and-forget: Sheets has already answered and nothing here may delay or
-  // fail a send.
-  if (outreachStateMode() !== 'off') mirrorOutreachLeadsInBackground(all);
+  // Fire-and-forget: nothing here may delay or fail a send.
+  mirrorCycleSnapshotInBackground(all);
 
   // Stage 3D dual-read measurement on the AUTOMATION corpus — the one that
   // decides sends, sequencing, routing and ownership. `all` came from A:X, so
