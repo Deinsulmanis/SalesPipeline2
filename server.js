@@ -167,7 +167,7 @@ const {
   CALL_STATUS, deriveCallLifecycle, callLifecycleActions, deriveHotState,
   CALL_EVENTS, CALL_BOOKING_EVENTS, parseCreatedMs,
   applyResumeToNotes, clearResumeFromNotes, resumeAtFromNotes,
-  applyHoldToNotes, releaseHoldFromNotes, stageRequiresHold, sendSuppressionReason,
+  applyHoldToNotes, releaseHoldFromNotes, stageRequiresHold, sendSuppressionReason, hasManualHold,
 } = require('./integrations/pipeline-state');
 const { commitCallBooked } = require('./integrations/call-booking');
 // Reactivation asks the sender's own ownership question rather than keeping a
