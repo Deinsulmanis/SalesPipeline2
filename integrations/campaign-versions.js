@@ -7,6 +7,7 @@
  * without an explicit stored version remain legacy_unknown regardless of date.
  */
 const LEGACY_UNKNOWN = 'legacy_unknown';
+const { staffingLaunchState } = require('./staffing-launch-gate');
 const { STAFFING_CAMPAIGN } = require('./staffing-campaign');
 const CAMPAIGN_VERSIONS = Object.freeze({
   [STAFFING_CAMPAIGN.id]: Object.freeze({
@@ -14,8 +15,9 @@ const CAMPAIGN_VERSIONS = Object.freeze({
     emailTemplateId: STAFFING_CAMPAIGN.emailTemplateId, family: 'industrial_staffing',
     copyVersion: 'staffing_locked_v1', personalizationStrategy: STAFFING_CAMPAIGN.personalizationStrategy,
     subjectStrategy: 'employer_accounts_locked_v1', offerVersion: 'employer_meetings_performance_v1',
-    status: 'draft', activatedAt: null,
-    meaning: 'Research and locked-copy previews only; no production activation or sender assignment.',
+    get status() { return staffingLaunchState().status; },
+    get activatedAt() { return staffingLaunchState().activatedAt; },
+    meaning: 'Approved employer-meeting copy and personalization. Queueing is permitted; delivery requires separate explicit staffing activation.',
   }),
   dental_v1_measured: Object.freeze({
     id: 'dental_v1_measured',

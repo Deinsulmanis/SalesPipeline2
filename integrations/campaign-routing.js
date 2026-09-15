@@ -1,12 +1,13 @@
 'use strict';
 
 const { CAMPAIGN_VERSIONS } = require('./campaign-versions');
+const { staffingSendBlockReason, isStaffingLead } = require('./staffing-launch-gate');
 const { STAFFING_CAMPAIGN } = require('./staffing-campaign');
 
 const EMAIL_TEMPLATES = Object.freeze([
   Object.freeze({ id: STAFFING_CAMPAIGN.emailTemplateId, name: STAFFING_CAMPAIGN.name,
-    niche: STAFFING_CAMPAIGN.niche, ready: false, sequenceSteps: 3,
-    reason: 'Staffing personalization is review-only; campaign is not approved for sending' }),
+    niche: STAFFING_CAMPAIGN.niche, ready: STAFFING_CAMPAIGN.ready, sequenceSteps: 3,
+    reason: '' }),
   Object.freeze({ id: 'dental-guarantee-v1', name: 'Dental guarantee pitch', niche: 'dental', ready: true, sequenceSteps: 3 }),
   Object.freeze({
     id: 'roofing-survey-v1', name: 'Roofing survey — reply first', niche: 'roofing',
@@ -56,14 +57,14 @@ function templateById(id) { return EMAIL_TEMPLATES.find(template => template.id 
 
 function campaignVersionsForRoute({ niche, emailTemplateId = '' } = {}) {
   const normalizedNiche = normalizeNiche(niche);
-  return Object.values(CAMPAIGN_VERSIONS).filter(version => version.status === 'active'
+  return Object.values(CAMPAIGN_VERSIONS).filter(version => (version.status === 'active' || (version.id === STAFFING_CAMPAIGN.id && version.status === 'approved'))
     && version.niche === normalizedNiche
     && (!emailTemplateId || version.emailTemplateId === emailTemplateId));
 }
 
 function validateCampaignVersionRoute({ niche, emailTemplateId, campaignVersionId } = {}) {
   const version = CAMPAIGN_VERSIONS[String(campaignVersionId || '').trim()];
-  if (!version || version.status !== 'active') return { ok: false, reason: 'An active registered campaign version is required' };
+  if (!version || !(version.status === 'active' || (version.id === STAFFING_CAMPAIGN.id && version.status === 'approved'))) return { ok: false, reason: 'An approved registered campaign version is required' };
   const normalizedNiche = normalizeNiche(niche);
   if (version.niche !== normalizedNiche) return { ok: false, reason: `${version.label} cannot be used for ${normalizedNiche} leads` };
   if (version.emailTemplateId !== String(emailTemplateId || '').trim()) return { ok: false, reason: `${version.label} does not use the selected email copy` };
@@ -88,10 +89,11 @@ function routedLeadReady(lead) {
   // Staffing is a post-routing campaign: it has never had unrouted production
   // rows, so it may not use the legacy bypass that exists for old dental and
   // roofing records. A staffing row without explicit routing is refused.
-  const staffing = normalizeNiche(lead.leadNiche) === 'industrial_staffing'
-    || String(lead.emailTemplateId || '').includes('staffing');
+  const staffing = isStaffingLead(lead);
   if (!staffing && String(lead.routingRequired || '').toLowerCase() !== 'true') return { ok: true, legacy: true };
   if (!lead.leadNiche || !lead.senderInboxId || !lead.emailTemplateId) return { ok: false, reason: 'routing assignment is incomplete' };
+  const blocked = staffingSendBlockReason(lead);
+  if (blocked) return { ok: false, reason: blocked };
   const template = templateById(lead.emailTemplateId);
   if (!template?.ready) return { ok: false, reason: template?.reason || 'email template is unavailable' };
   if (template.niche !== normalizeNiche(lead.leadNiche)) return { ok: false, reason: 'email template does not match lead niche' };

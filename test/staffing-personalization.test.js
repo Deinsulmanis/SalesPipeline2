@@ -42,10 +42,10 @@ test('exact staffing dispatch rejects dental and conflicting assignments before 
     await assert.rejects(()=>personalizeStaffingLead(x,{researchCompany:()=>{throw new Error('must not research');}}),/exact staffing campaign/);
   }
 });
-test('staffing remains a non-sendable draft and dental ready routing is preserved',()=>{
-  assert.equal(CAMPAIGN_VERSIONS[STAFFING_CAMPAIGN.id].status,'draft');assert.equal(templateById(STAFFING_CAMPAIGN.emailTemplateId).ready,false);
+test('staffing remains a non-sendable approved campaign and dental ready routing is preserved',()=>{
+  assert.equal(CAMPAIGN_VERSIONS[STAFFING_CAMPAIGN.id].status,'approved');assert.equal(templateById(STAFFING_CAMPAIGN.emailTemplateId).ready,true);
   assert.equal(templateById('dental-guarantee-v1').ready,true);
-  assert.equal(validateCampaignVersionRoute({niche:STAFFING_CAMPAIGN.niche,emailTemplateId:STAFFING_CAMPAIGN.emailTemplateId,campaignVersionId:STAFFING_CAMPAIGN.id}).ok,false);
+  assert.equal(validateCampaignVersionRoute({niche:STAFFING_CAMPAIGN.niche,emailTemplateId:STAFFING_CAMPAIGN.emailTemplateId,campaignVersionId:STAFFING_CAMPAIGN.id}).ok,true);
 });
 test('strong industrial roles and market remain HIGH with locked copy and exactly one bold phrase',async()=>{
   const o=opts(),r=await previewStaffingPersonalization(lead,o);

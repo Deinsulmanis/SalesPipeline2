@@ -207,19 +207,19 @@ test('O/P/Q. suppression, observer health and quota gate staffing identically', 
 });
 
 // ── R/S/T. draft campaign cannot send; import alone changes nothing ─────────
-test('R. a draft, not-ready staffing campaign cannot pass the routing gate', () => {
-  assert.equal(templateById(STAFFING_CAMPAIGN.emailTemplateId).ready, false);
-  assert.equal(CAMPAIGN_VERSIONS[STAFFING_CAMPAIGN.id].status, 'draft');
+test('R. a ready but paused staffing campaign cannot pass the routing gate', () => {
+  assert.equal(templateById(STAFFING_CAMPAIGN.emailTemplateId).ready, true);
+  assert.equal(CAMPAIGN_VERSIONS[STAFFING_CAMPAIGN.id].status, 'approved');
   assert.equal(CAMPAIGN_VERSIONS[STAFFING_CAMPAIGN.id].activatedAt, null);
   const gate = routedLeadReady(routed());
   assert.equal(gate.ok, false);
-  assert.match(gate.reason, /not approved for sending/);
+  assert.match(gate.reason, /sending is paused/);
   assert.equal(validateRoute({ niche: 'industrial_staffing', senderInboxId: 'primary',
     emailTemplateId: STAFFING_CAMPAIGN.emailTemplateId,
-    inboxes: [{ id: 'primary', email: 'd@x.ca', sendEligible: true, deliveryImplemented: true }] }).ok, false);
+    inboxes: [{ id: 'primary', email: 'd@x.ca', sendEligible: true, deliveryImplemented: true }] }).ok, true);
   assert.equal(validateCampaignVersionRoute({ niche: 'industrial_staffing',
-    emailTemplateId: STAFFING_CAMPAIGN.emailTemplateId, campaignVersionId: STAFFING_CAMPAIGN.id }).ok, false);
-  assert.equal(campaignVersionsForRoute({ niche: 'industrial_staffing' }).length, 0, 'no active staffing version');
+    emailTemplateId: STAFFING_CAMPAIGN.emailTemplateId, campaignVersionId: STAFFING_CAMPAIGN.id }).ok, true);
+  assert.equal(campaignVersionsForRoute({ niche: 'industrial_staffing' }).length, 1, 'one approved staffing version can be selected');
 });
 
 test('S. importing alone leaves a lead unqueued and unroutable', () => {

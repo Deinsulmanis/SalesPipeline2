@@ -1,6 +1,6 @@
 'use strict';
 
-// Review-only campaign configuration. No sender, schedule or enrollment is assigned.
+// Approved locked copy. Readiness permits queueing; staffing-launch-gate separately controls delivery.
 const STAFFING_CAMPAIGN = Object.freeze({
   // The id is canonical and is referenced by CAMPAIGN_VERSIONS and
   // ACTIVE_CAMPAIGN_VERSION, so it does NOT change when the display name does.
@@ -13,8 +13,8 @@ const STAFFING_CAMPAIGN = Object.freeze({
   emailTemplateId: 'industrial-staffing-employer-v1',
   personalizationStrategy: 'staffing_market_evidence_v1',
   model: 'claude-haiku-4-5',
-  status: 'draft',
-  ready: false,
+  status: 'approved',
+  ready: true,
 });
 
 // Every campaign label that identifies this campaign: the current name, the id,

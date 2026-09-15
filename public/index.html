@@ -2217,6 +2217,7 @@
     </div>
   </div>
 
+  <section id="staffing-launch-panel" hidden style="margin:16px 0;padding:16px 24px;border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:8px;background:var(--surface)"></section>
   <!-- CE Lead table -->
   <div id="ce-leads-panel">
     <div class="ce-master-filters" aria-label="Master prospect filters">
@@ -5537,6 +5538,7 @@ async function reloadCePage({ append = false, offset = 0 } = {}) {
     ceHasMore = Boolean(data.hasMore);
     ceFacets = data.facets || ceFacets;
     ceFetchedAt = data.fetchedAt || null;
+    loadStaffingLaunchPanel();
   } catch (e) {
     showToast('Could not load leads: ' + e.message, 'error');
   } finally {
@@ -6969,6 +6971,22 @@ async function loadOutreachRoutingOptions() {
   return outreachRoutingOptions;
 }
 
+async function loadStaffingLaunchPanel() {
+  const host = document.getElementById('staffing-launch-panel');
+  host.hidden = document.getElementById('ce-niche-filter').value !== 'industrial_staffing';
+  if (host.hidden) return;
+  host.textContent = 'Checking staffing readiness…';
+  try {
+    const response = await fetch('/api/staffing/launch-readiness');
+    if (!response.ok) throw new Error('Readiness unavailable. Refresh before queueing.');
+    const data = await response.json();
+    host.innerHTML = '<div class="status-card-head"><b>Industrial Staffing Agency</b><span class="state-pill" data-on="' + data.sendable + '">' + (data.sendable ? 'Active / sending' : 'Ready / sending paused') + '</span></div>'
+      + '<p style="color:var(--text-secondary)">Import: ' + data.counts.Import + ' · Queued: ' + data.counts.Queued + '. ' + (data.sendable ? 'The normal schedule and all lead safety checks apply.' : 'You can queue approved leads. They cannot send until the separate launch approval is applied.') + '</p>'
+      + '<details><summary style="cursor:pointer;padding:8px 0">View approved three-email sequence</summary>'
+      + data.sequence.map(step => '<article style="max-width:72ch;margin:16px 0;padding-top:16px;border-top:1px solid var(--border)"><b>Email ' + step.step + ' · ' + (step.delayDays ? step.delayDays + ' days after the previous email' : step.subject) + '</b><div style="line-height:1.65;margin-top:12px;white-space:pre-wrap">' + esc(step.body).split(esc(step.bold)).join('<strong>' + esc(step.bold) + '</strong>') + '</div></article>').join('') + '</details>';
+  } catch (error) { host.textContent = error.message; }
+}
+
 async function openQueueRouteModal(ids) {
   const leads = ids.map(id => ceLeads.find(lead => lead.id === id)).filter(Boolean);
   if (!leads.length) return;
@@ -7023,7 +7041,9 @@ function updateQueueRouteLine() {
   const source = lead?.campaign || 'Unlabeled';
   document.getElementById('queue-route-line').textContent = `${queueRouteIds.length} lead${queueRouteIds.length === 1 ? '' : 's'} · ${source} · ${niche} → ${versionText} → ${templateText} → ${inboxText}`;
   const version = outreachRoutingOptions?.versions?.find(item => item.id === versionSelect.value);
-  document.getElementById('queue-route-attribution').textContent = version
+  document.getElementById('queue-route-attribution').textContent = version?.niche === 'industrial_staffing'
+    ? (outreachRoutingOptions.staffingLaunch?.sendable ? 'Active: queued leads may send in the next normal window.' : 'Ready: queueing only. Staffing sending is paused until separate launch approval.')
+    : version
     ? `Copy ${version.copyVersion} · Subject ${version.subjectStrategy} · Personalization ${version.personalizationStrategy} · Offer ${version.offerVersion}`
     : 'Choose a campaign version to review its canonical attribution facets.';
 }

@@ -4760,6 +4760,16 @@ app.patch('/api/leads/:id/call-details', requireAuth, async (req, res) => {
 });
 
 const { queueSelectedLeads } = require('./integrations/outreach-queue');
+const { staffingLaunchState } = require('./integrations/staffing-launch-gate');
+app.get('/api/staffing/launch-readiness', requireAuth, async (_req, res) => {
+  const { STAFFING_CAMPAIGN, LOCKED_EMAILS, BOLD_PHRASES } = require('./integrations/staffing-campaign');
+  const corpus = await readOutreachCorpus();
+  if (!corpus.ok) return res.status(503).json({ error: 'Canonical staffing state unavailable' });
+  const leads = corpus.leads.filter(lead => lead.leadNiche === STAFFING_CAMPAIGN.niche);
+  const counts = { total: leads.length, Import: leads.filter(l => l.stage === 'Import').length, Queued: leads.filter(l => l.stage === 'Queued').length };
+  res.json({ campaign: STAFFING_CAMPAIGN, counts, ...staffingLaunchState(),
+    sequence: LOCKED_EMAILS.map((body, i) => ({ step: i + 1, subject: i ? 'Same thread' : 'employer accounts', delayDays: [0, 3, 5][i], body, bold: BOLD_PHRASES[i] })) });
+});
 app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
   const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(value => String(value || '').trim()).filter(Boolean))];
   const senderInboxId = String(req.body?.senderInboxId || '').trim();
@@ -4812,12 +4822,12 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
         })), { sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
         return [...unresolved, ...batch.results];
       },
-      appendActivity: ({ lead, occurredAt, patch }) => appendColdCallActivities([{
+      appendActivities: events => appendColdCallActivities(events.map(({ lead, occurredAt, patch }) => ({
         eventId: stableActivityId('lead-queued', [lead.id, senderInboxId, campaignVersionId, emailTemplateId, occurredAt]),
         leadId: 'CE-' + lead.id, sourceLeadId: lead.id, email: lead.email || '', company: lead.company || '',
         eventType: 'lead_queued', occurredAt, subject: 'Queued for outreach', content: '',
         metadata: JSON.stringify({ senderInboxId, intendedCampaignVersion: campaignVersionId, emailTemplateId, campaign: lead.campaign || '', trigger: 'outreach_queue' }),
-      }]),
+      }))),
     }));
     invalidateOutreachCache('outreach_queue');
     ceRowMap.clear();
@@ -5546,7 +5556,7 @@ app.get('/api/outreach/routing-options', requireAuth, (_req, res) => {
         offerVersion: version.offerVersion, status: version.status,
       }));
     res.json({ niches: LEAD_TYPE_IDS, leadTypes: LEAD_TYPES.map(type => ({ id: type.id, label: type.label })),
-      inboxes: gmailInboxOptions(), versions, templates: EMAIL_TEMPLATES });
+      inboxes: gmailInboxOptions(), versions, templates: EMAIL_TEMPLATES, staffingLaunch: staffingLaunchState() });
   }
   catch (error) { res.status(500).json({ error: error.message }); }
 });

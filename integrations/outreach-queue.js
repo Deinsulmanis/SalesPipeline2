@@ -50,7 +50,7 @@ function queueEligibility(lead, { leads = [], activities = [], boardLeads = [], 
 const QUEUE_STATUSES = Object.freeze(['succeeded', 'unchanged', 'refused', 'conflict', 'failed']);
 
 async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaignVersionId }, {
-  loadState, validateSelection, applyChanges, appendActivity, now = () => new Date().toISOString(),
+  loadState, validateSelection, applyChanges, appendActivity, appendActivities, now = () => new Date().toISOString(),
 }) {
   const state = await loadState();
   const selected = state.leads.filter(lead => ids.includes(lead.id));
@@ -71,6 +71,7 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
   // never rewrites another, and retrying is safe — a lead already queued with
   // this route comes back unchanged.
   const results = [];
+  const auditBatch = [];
   const pending = [];
   for (const lead of selected) {
     if (Object.entries(patch).every(([key, value]) => lead[key] === value)) {
@@ -91,11 +92,22 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
       const result = { ...(byId.get(lead.id) || { leadId: lead.id, status: 'failed', reason: 'no verdict was returned for this lead' }) };
       if (!QUEUE_STATUSES.includes(result.status)) Object.assign(result, { status: 'failed', reason: `unrecognised verdict ${result.status}` });
       if (result.status === 'succeeded') {
-        try { await appendActivity({ lead, occurredAt: now(), patch }); }
-        catch (error) { Object.assign(result, { activityRecorded: false, activityError: error.message }); }
+        const event = { lead, occurredAt: now(), patch };
+        if (appendActivities) auditBatch.push({ result, event });
+        else {
+          try { await appendActivity(event); }
+          catch (error) { Object.assign(result, { activityRecorded: false, activityError: error.message }); }
+        }
       }
       results.push(result);
     }
+  }
+
+  // One audit append for the successful canonical commits. A 102-lead launch
+  // must not spend 102 Sheets writes and exhaust the per-minute write quota.
+  if (auditBatch.length) {
+    try { await appendActivities(auditBatch.map(item => item.event)); }
+    catch (error) { for (const { result } of auditBatch) Object.assign(result, { activityRecorded: false, activityError: error.message }); }
   }
 
   const count = status => results.filter(result => result.status === status).length;
@@ -110,10 +122,12 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
     results, senderInboxId, campaignVersionId, emailTemplateId,
   };
   const notQueued = summary.refused + summary.conflict + summary.failed;
-  if (!notQueued) return response;
+  if (!notQueued && !summary.activityFailures) return response;
   return { ...response, status: 409,
     error: `${summary.succeeded} queued, ${summary.unchanged} already queued, ${notQueued} not queued `
-      + `(${summary.refused} refused, ${summary.conflict} conflict, ${summary.failed} failed). Review each lead; retrying is safe.` };
+      + `(${summary.refused} refused, ${summary.conflict} conflict, ${summary.failed} failed). `
+      + (summary.activityFailures ? `${summary.activityFailures} queue audit events could not be confirmed; keep sending paused and review the committed leads. ` : '')
+      + 'Review each lead; retrying does not re-enroll committed leads.' };
 }
 
 module.exports = { queueEligibility, queueSelectedLeads };

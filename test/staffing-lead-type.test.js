@@ -150,17 +150,17 @@ test('M. staffing can never take the legacy pre-routing bypass', () => {
 });
 
 // ── N/O/P. routing and scheduler gating, inactive vs active ────────────────
-test('N/O. routing and the scheduler refuse staffing while the campaign is a draft', () => {
-  assert.equal(templateById(STAFFING_CAMPAIGN.emailTemplateId).ready, false);
-  assert.equal(CAMPAIGN_VERSIONS[STAFFING_CAMPAIGN.id].status, 'draft');
+test('N/O. routing and the scheduler refuse staffing until explicit activation', () => {
+  assert.equal(templateById(STAFFING_CAMPAIGN.emailTemplateId).ready, true);
+  assert.equal(CAMPAIGN_VERSIONS[STAFFING_CAMPAIGN.id].status, 'approved');
   assert.equal(CAMPAIGN_VERSIONS[STAFFING_CAMPAIGN.id].activatedAt, null);
   const routed = routedLeadReady(staffingLead({ senderInboxId: 'primary' }));
   assert.equal(routed.ok, false);
-  assert.match(routed.reason, /not approved for sending/);
+  assert.match(routed.reason, /sending is paused/);
   const inboxes = [{ id: 'primary', email: 'd@x.ca', sendEligible: true, deliveryImplemented: true }];
   assert.equal(validateRoute({ niche: 'industrial_staffing', senderInboxId: 'primary',
-    emailTemplateId: STAFFING_CAMPAIGN.emailTemplateId, inboxes }).ok, false);
-  assert.equal(campaignVersionsForRoute({ niche: 'industrial_staffing' }).length, 0);
+    emailTemplateId: STAFFING_CAMPAIGN.emailTemplateId, inboxes }).ok, true);
+  assert.equal(campaignVersionsForRoute({ niche: 'industrial_staffing' }).length, 1);
 });
 
 test('P. with a ready template the same route passes only through the normal gates', () => {

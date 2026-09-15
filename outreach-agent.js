@@ -73,6 +73,7 @@ const { mirrorCycleSnapshotInBackground, outreachStateMode, applyLeadChange,
 // Stage 3D: dual-read measurement only. No decision below reads its result.
 const { probeOutreachParity, formatProbeLine } = require('./integrations/outreach-dual-read');
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
+const { staffingSendBlockReason, assertStaffingSendAllowed } = require('./integrations/staffing-launch-gate');
 const { routedLeadReady } = require('./integrations/campaign-routing');
 // Staffing supplies its own locked copy only. Sender selection, thread pinning,
 // quota, observer, suppression and ownership all stay on the shared path.
@@ -1122,7 +1123,8 @@ function toRawMessage({ to, subject, body, html, inReplyTo, references, messageI
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-async function sendEmail({ to, subject, body, html, threadId, inReplyTo, references, messageId, sender = PRIMARY_GMAIL_SENDER }) {
+async function sendEmail({ lead, to, subject, body, html, threadId, inReplyTo, references, messageId, sender = PRIMARY_GMAIL_SENDER }) {
+  assertStaffingSendAllowed(lead);
   if (!sender?.sendEligible) throw new Error(`Gmail sender ${sender?.id || 'unknown'} is not delivery eligible`);
   const provider = new GmailOutreachProvider({ send: message => gmailForSender(sender).users.messages.send({
     userId: 'me',
@@ -1159,6 +1161,7 @@ function providerForLead(lead) {
 }
 
 async function enqueueSmartleadLead(lead, mapping) {
+  assertStaffingSendAllowed(lead);
   if (!mapping.externalCampaignId) throw new Error('Smartlead campaign mapping has no external campaign ID');
   if (ACTIVE_PROVIDER_LEADS.has(lead.id) || ACTIVE_PROVIDER_EMAILS.has(normalizeEmail(lead.email))) throw new Error('lead email already has an active provider assignment');
   if (EXISTING_PROVIDER_CAMPAIGN_EMAILS.has(`${mapping.externalCampaignId}:${normalizeEmail(lead.email)}`)) throw new Error('lead email already has a mapping in this Smartlead campaign');
@@ -1911,7 +1914,7 @@ async function deliverOrdinaryColdStep({
   let result;
   try {
     result = await sendEmail({
-      to: lead.email.trim(), subject, body, html: staffingEmail?.html, sender, messageId: rfcMessageId,
+      lead, to: lead.email.trim(), subject, body, html: staffingEmail?.html, sender, messageId: rfcMessageId,
       ...(thread ? { threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references } : {}),
     });
   } catch (error) {
@@ -2638,6 +2641,7 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
       return { unresolved: reservations.some(row => !failed.has(row.eventId)), attempts: reservations.length };
     },
     finalRevalidate: async () => {
+      if (staffingSendBlockReason(lead)) return { allowed: false, code: 'staffing_launch_paused' };
       if (!SENDING_ENABLED) return { allowed: false, code: 'sending_disabled' };
       if (observerAutomationReadyBySender.get(sender.id) !== true) return { allowed: false, code: 'observer_not_incremental' };
       // Warm responses are rare, so pay for one fresh batched snapshot at the
@@ -2724,7 +2728,7 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
         }) };
       await recordColdCallActivityStrict(row); activities.push(row); return row;
     },
-    sendProvider: payload => sendEmail(payload),
+    sendProvider: payload => sendEmail({ ...payload, lead }),
     consumeQuota: () => {
       if (activeWindowQuota) consumeSendingWindowSuccess(activeWindowQuota, sender.id);
       if (activeSenderCounts) activeSenderCounts.set(sender.id, (activeSenderCounts.get(sender.id) || 0) + 1);
@@ -3394,6 +3398,8 @@ async function addSuppression(email, reason, company, source) {
 // unchanged — moving it out means the health checker can ask the SAME function
 // the sender asks, instead of reimplementing it and quietly disagreeing.
 function suppressionReason(lead) {
+  const staffingBlocked = staffingSendBlockReason(lead);
+  if (staffingBlocked) return staffingBlocked;
   return sendSuppressionReason(lead, { suppressedEmails: SUPPRESSED_EMAILS });
 }
 
@@ -3831,6 +3837,7 @@ async function runStageSequencePass(allLeads, {
     const email = normEmail(boardLead.email);
     const mine = [...(byKey.get(boardLead.id) || []), ...(email ? byKey.get(email) || [] : [])];
     const twin = target.generic ? target.twin : (twinByEmail.get(email) || null);
+    if (staffingSendBlockReason(twin || boardLead)) continue;
     const callState = deriveCallLifecycle(boardLead, { activities: mine });
     const hotState = deriveHotState(boardLead, { activities: mine });
     let verdict = evaluateStageSequence({
@@ -4015,7 +4022,7 @@ async function runStageSequencePass(allLeads, {
     let result;
     try {
       result = await sendEmail({
-        to: boardLead.email.trim(), subject: built.subject, body: built.body,
+        lead: twin || boardLead, to: boardLead.email.trim(), subject: built.subject, body: built.body,
         sender, messageId: built.messageId,
         ...(built.replyToThread ? {
           threadId: built.threadId,
