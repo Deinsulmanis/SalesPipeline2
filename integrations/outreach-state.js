@@ -388,20 +388,31 @@ async function selectLeads(query, { env = process.env, timeoutMs = REQUEST_TIMEO
   }
 }
 
-// PostgREST quotes a filter value with double quotes; stripping them keeps a
-// value containing one from terminating the literal and altering the query.
+// A top-level PostgREST filter takes EVERYTHING after `eq.` as the literal value;
+// it does not unquote. Wrapping the value in double quotes asked for a lead_id
+// that literally begins and ends with a quote character, matched no row, and made
+// every canonical read report "lead not found in Supabase" — so no canonical
+// write could land. Quoting was not an escape either: `&` still split the value
+// into a second query parameter.
+//
+// Percent-encoding is the whole escape. `&`, `#` and `%` cannot end the value,
+// `+` is not decoded as a space, and PostgREST receives the exact literal.
+const eqFilter = value => `eq.${encodeURIComponent(String(value))}`;
+
+// Inside an in.(...) list, and only there, PostgREST DOES parse double quotes:
+// they delimit an element that contains a comma or a parenthesis.
 const quote = value => `"${String(value).split('"').join('')}"`;
 
 async function getOutreachLeadById(id, options = {}) {
   if (!String(id || '').trim()) return { ok: false, lead: null, reason: 'no lead id supplied' };
-  const result = await selectLeads(`select=*&lead_id=eq.${quote(id)}&limit=1`, options);
+  const result = await selectLeads(`select=*&lead_id=${eqFilter(id)}&limit=1`, options);
   return { ...result, lead: result.ok ? (result.leads[0] || null) : null };
 }
 
 async function getOutreachLeadByEmail(email, options = {}) {
   const normalized = String(email || '').trim().toLowerCase();
   if (!normalized) return { ok: false, lead: null, reason: 'no email supplied' };
-  const result = await selectLeads(`select=*&email_normalized=eq.${quote(normalized)}&limit=1`, options);
+  const result = await selectLeads(`select=*&email_normalized=${eqFilter(normalized)}&limit=1`, options);
   return { ...result, lead: result.ok ? (result.leads[0] || null) : null };
 }
 
@@ -625,7 +636,7 @@ async function readCanonicalLead(id, { env = process.env } = {}) {
   if (!config.enabled) return { ok: false, reason: config.reason };
   try {
     const response = await request(
-      `${config.url}/rest/v1/${TABLE}?select=*&lead_id=eq.${quote(id)}&limit=1`,
+      `${config.url}/rest/v1/${TABLE}?select=*&lead_id=${eqFilter(id)}&limit=1`,
       { headers: headersForWrite(config) });
     if (!response.ok) return { ok: false, reason: `HTTP ${response.status}` };
     const rows = await response.json();
@@ -646,7 +657,7 @@ async function casAttempt(id, patch, revision, { env = process.env }) {
   const body = { ...patch, revision: revision + 1, updated_at: new Date().toISOString() };
   try {
     const response = await request(
-      `${config.url}/rest/v1/${TABLE}?lead_id=eq.${quote(id)}&revision=eq.${revision}`,
+      `${config.url}/rest/v1/${TABLE}?lead_id=${eqFilter(id)}&revision=eq.${revision}`,
       {
         method: 'PATCH',
         headers: headersForWrite(config, { Prefer: 'return=representation' }),

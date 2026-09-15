@@ -19,6 +19,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { createPostgrestDouble } = require('../test-support/postgrest-double');
 const state = require('../integrations/outreach-state');
 const {
   TABLE, FIELD_MAP, SHEET_FIELDS, CRITICAL_FIELDS, NONCRITICAL_FIELDS,
@@ -456,15 +457,27 @@ test('H2 — a batch read is one request, not N', async () => {
   } finally { await fake.stop(); }
 });
 
-test('H3 — a filter value cannot break out of its quoted literal', async () => {
-  const fake = fakeSupabase();
-  const env = await fake.start();
+test('H3 — a filter value is one exact literal and cannot add a filter term', async () => {
+  // Restated during the Stage 3 incident repair. The earlier form asserted the
+  // value sat inside double quotes, and that quoting WAS the production defect:
+  // PostgREST does not unquote a top-level eq filter, so every lookup matched
+  // nothing. It was also not safe — quote() never escaped `&`, so a value holding
+  // one split into a second query parameter. The property defended is the same,
+  // now proven against a double that parses queries the way PostgREST does.
+  const db = createPostgrestDouble({ secret: SECRET, rows: [{ lead_id: 'ce-1' }, { lead_id: 'ce-2' }] });
+  const env = await db.start();
   try {
-    await getOutreachLeadById('ce-1","ce-2', { env });
-    const url = decodeURIComponent(fake.received[0].url);
-    assert.ok(!/"ce-2"/.test(url.split('lead_id=eq.')[1] || ''),
-      'an embedded quote must not become a second filter term');
-  } finally { await fake.stop(); }
+    for (const hostile of ['ce-1","ce-2', 'ce-1&lead_id=eq.ce-2', 'ce-1&or=(lead_id.eq.ce-2)']) {
+      const result = await getOutreachLeadById(hostile, { env });
+      assert.equal(result.ok, true, result.reason);
+      assert.equal(result.lead, null, `${JSON.stringify(hostile)} must not resolve to another lead`);
+    }
+    for (const request of db.requests) {
+      const terms = request.params.map(([name]) => name).filter(name => !['select', 'limit'].includes(name));
+      assert.deepEqual(terms, ['lead_id'], 'an embedded quote or ampersand must not become a second filter term');
+    }
+    assert.equal((await getOutreachLeadById('ce-2', { env })).lead.id, 'ce-2', 'an honest id still resolves');
+  } finally { await db.stop(); }
 });
 
 test('H4 — NO production read path consults Supabase for an operational decision', () => {

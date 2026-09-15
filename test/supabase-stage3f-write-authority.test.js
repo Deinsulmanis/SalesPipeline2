@@ -19,10 +19,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { createPostgrestDouble } = require('../test-support/postgrest-double');
 const {
   applyLeadChange, applyCanonicalChange, conflictRefusal, readCanonicalLead,
   outreachWriteAuthority, MAX_CAS_ATTEMPTS,
@@ -37,48 +37,37 @@ const SECRET = 'sb_secret_TESTONLY_not_a_real_key';
 const quiet = { log() {}, warn() {}, error() {} };
 
 /**
- * A PostgREST stand-in that implements real compare-and-set: a PATCH filtered on
- * revision=eq.N affects the row only while its revision is still N.
+ * The canonical row, served by a PostgREST double that evaluates filters the way
+ * PostgREST does: a PATCH filtered on revision=eq.N affects the row only while
+ * its revision is still N, and a GET returns only the rows its filter matches.
+ *
+ * The earlier stand-in answered every GET with the row whatever the filter said.
+ * That is how `lead_id=eq."<id>"` — a filter that matches nothing in production —
+ * passed this whole suite while every canonical write in production failed.
  */
 function fakeCanonical(initial = {}) {
-  const row = {
-    lead_id: 'ce-1', revision: 1, stage: 'Contacted', email_status: 'emailed',
-    notes: '', sender_inbox_id: 'primary', campaign: 'Ontario List', ...initial,
-  };
-  const patches = [];
-  let onBeforePatch = null;
-  const server = http.createServer((req, res) => {
-    let body = '';
-    req.on('data', c => { body += c; });
-    req.on('end', async () => {
-      const url = new URL(req.url, 'http://x');
-      if (req.method === 'GET') {
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify([{ ...row }]));
-        return;
-      }
-      if (req.method === 'PATCH') {
-        if (onBeforePatch) { await onBeforePatch(row); }
-        const wanted = Number((url.searchParams.get('revision') || '').replace('eq.', ''));
-        patches.push({ revision: wanted, body: JSON.parse(body || '{}') });
-        res.writeHead(200, { 'content-type': 'application/json' });
-        if (wanted !== row.revision) { res.end('[]'); return; }   // CAS miss
-        Object.assign(row, JSON.parse(body || '{}'));
-        res.end(JSON.stringify([{ ...row }]));
-        return;
-      }
-      res.writeHead(200); res.end('[]');
-    });
+  const db = createPostgrestDouble({
+    secret: SECRET,
+    rows: [{
+      lead_id: 'ce-1', revision: 1, stage: 'Contacted', email_status: 'emailed',
+      notes: '', sender_inbox_id: 'primary', campaign: 'Ontario List', ...initial,
+    }],
   });
+  let onBeforePatch = null;
+  db.hooks.beforeWrite = async ({ method, row }) => {
+    if (method === 'PATCH' && onBeforePatch) await onBeforePatch(row('ce-1'));
+  };
   return {
-    patches, row,
-    set onBeforePatch(fn) { onBeforePatch = fn; },
-    async start() {
-      await new Promise(r => server.listen(0, '127.0.0.1', r));
-      return { SUPABASE_URL: `http://127.0.0.1:${server.address().port}`,
-        SUPABASE_SECRET_KEY: SECRET, SUPABASE_OUTREACH_WRITES: 'supabase' };
+    row: db.row('ce-1'),
+    get patches() {
+      return db.requests.filter(r => r.method === 'PATCH').map(r => ({
+        revision: Number(String(new Map(r.params).get('revision') || '').replace(/^eq\./, '')),
+        body: r.json || {},
+      }));
     },
-    async stop() { await new Promise(r => server.close(r)); },
+    set onBeforePatch(fn) { onBeforePatch = fn; },
+    start: () => db.start({ SUPABASE_OUTREACH_WRITES: 'supabase' }),
+    stop: () => db.stop(),
   };
 }
 
