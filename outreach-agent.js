@@ -1104,30 +1104,31 @@ function encodeHeaderValue(value) {
 }
 
 // RFC-822 message → base64url for the Gmail API
-function toRawMessage({ to, subject, body, inReplyTo, references, messageId, fromEmail = FROM_EMAIL }) {
+function toRawMessage({ to, subject, body, html, inReplyTo, references, messageId, fromEmail = FROM_EMAIL }) {
+  const alternative = html ? require('./integrations/email-alternative').buildMultipartAlternative(body, html) : null;
   const headers = [
     `From: ${FROM_NAME} <${fromEmail}>`,
     `To: ${to}`,
     `Subject: ${encodeHeaderValue(subject)}`,
     'MIME-Version: 1.0',
-    'Content-Type: text/plain; charset="UTF-8"',
+    alternative ? `Content-Type: ${alternative.contentType}` : 'Content-Type: text/plain; charset="UTF-8"',
   ];
   if (inReplyTo) headers.push(`In-Reply-To: ${inReplyTo}`);
   if (references) headers.push(`References: ${references}`);
   if (messageId) headers.push(`Message-ID: ${messageId}`);
-  const msg = headers.join('\r\n') + '\r\n\r\n' + body;
+  const msg = headers.join('\r\n') + '\r\n\r\n' + (alternative ? alternative.body : body);
   return Buffer.from(msg)
     .toString('base64')
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-async function sendEmail({ to, subject, body, threadId, inReplyTo, references, messageId, sender = PRIMARY_GMAIL_SENDER }) {
+async function sendEmail({ to, subject, body, html, threadId, inReplyTo, references, messageId, sender = PRIMARY_GMAIL_SENDER }) {
   if (!sender?.sendEligible) throw new Error(`Gmail sender ${sender?.id || 'unknown'} is not delivery eligible`);
   const provider = new GmailOutreachProvider({ send: message => gmailForSender(sender).users.messages.send({
     userId: 'me',
     requestBody: { raw: toRawMessage({ ...message, fromEmail: sender.email }), ...(message.threadId ? { threadId: message.threadId } : {}) },
   }) });
-  return provider.sendEmail({ to, subject, body, threadId, inReplyTo, references, messageId });
+  return provider.sendEmail({ to, subject, body, html, threadId, inReplyTo, references, messageId });
 }
 
 async function loadOutreachProviderState(campaignRowsOverride = null, mappingRowsOverride = null) {
@@ -1838,6 +1839,10 @@ async function deliverOrdinaryColdStep({
   lead, step, sender, subject, body, attribution, activitiesForCycle,
   personalizationMetadata = null, thread = null, onProviderSuccess = null,
 }) {
+  // Preview HTML previously disappeared before Gmail's plain-text-only MIME
+  // assembly. Preserve the approved bold phrase without changing the text.
+  const staffingEmail = lead.emailTemplateId === STAFFING_TEMPLATE ? renderStaffingEmail(lead, step) : null;
+  if (staffingEmail && staffingEmail.body !== body) return { delivered: false, reason: 'staffing delivery body differs from locked copy' };
   const mailbox = gmailForSender(sender);
   const rfcMessageId = coldStepRfcMessageId(lead.id, step, sender.email);
   const metadataOf = row => { try { return JSON.parse(row.metadata || '{}'); } catch (_) { return {}; } };
@@ -1906,7 +1911,7 @@ async function deliverOrdinaryColdStep({
   let result;
   try {
     result = await sendEmail({
-      to: lead.email.trim(), subject, body, sender, messageId: rfcMessageId,
+      to: lead.email.trim(), subject, body, html: staffingEmail?.html, sender, messageId: rfcMessageId,
       ...(thread ? { threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references } : {}),
     });
   } catch (error) {

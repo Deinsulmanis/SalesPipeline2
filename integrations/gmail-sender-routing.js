@@ -25,6 +25,9 @@ function configuredSenders(env = process.env) {
 
 function allowedForLead(sender, lead = {}) {
   const niche = String(lead.leadNiche || lead.tradeType || '').toLowerCase();
+  // An explicit operator choice is available to staffing as well as dental.
+  // Unassigned legacy non-dental traffic retains its existing primary route.
+  if (niche.includes('staffing')) return sender.sendEligible;
   if (niche.includes('dent')) return sender.sendEligible;
   return sender.id === 'primary' && sender.sendEligible;
 }
@@ -39,8 +42,9 @@ const SENDER_ATTRIBUTED_EVENTS = Object.freeze([
 ]);
 
 function activityBelongsToLead(row, lead) {
-  return String(row.sourceLeadId || '') === String(lead.id || '')
-    || String(row.leadId || '') === `CE-${lead.id}`;
+  if (!String(lead.id || '').trim()) return false;
+  if (row.sourceLeadId) return String(row.sourceLeadId) === String(lead.id);
+  return String(row.leadId || '') === `CE-${lead.id}`;
 }
 
 function senderEvidence(lead = {}, activities = []) {
@@ -96,6 +100,23 @@ function chooseSender({
     return { sender, pinned: true };
   }
   if (Number(step) > 1) throw new Error(`follow-up has no proven sender ownership for lead ${lead.id}`);
+  // Queue selection is an instruction, not delivered-message evidence. Honour
+  // it for step 1; only a successful send may establish ownership for step 2.
+  const assigned = String(lead.senderInboxId || '').trim();
+  if (assigned) {
+    const sender = senders.find(item => item.id === assigned);
+    if (!sender) throw new Error(`assigned sender ${assigned} is not configured`);
+    if (!allowedForLead(sender, lead)) throw new Error(`assigned sender ${assigned} is not delivery eligible`);
+    if ((sendsToday.get(sender.id) || 0) >= sender.dailyLimit) return { sender: null, reason: 'assigned sender daily limit reached', pinned: false };
+    if (windowRemainingBySender && (windowRemainingBySender.get(sender.id) || 0) <= 0) {
+      return { sender: null, reason: 'assigned sender scheduled-window limit reached', pinned: false };
+    }
+    return { sender, pinned: false, assigned: true };
+  }
+  if (String(lead.routingRequired).toLowerCase() === 'true'
+    || String(lead.leadNiche || lead.tradeType || '').toLowerCase().includes('staffing')) {
+    throw new Error('required sender assignment is missing');
+  }
   const candidates = senders.filter(sender => allowedForLead(sender, lead)
     && (sendsToday.get(sender.id) || 0) < sender.dailyLimit
     && (!windowRemainingBySender || (windowRemainingBySender.get(sender.id) || 0) > 0));

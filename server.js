@@ -4666,6 +4666,7 @@ app.patch('/api/leads/:id/call-details', requireAuth, async (req, res) => {
   }
 });
 
+const { queueSelectedLeads } = require('./integrations/outreach-queue');
 app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
   const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(value => String(value || '').trim()).filter(Boolean))];
   const senderInboxId = String(req.body?.senderInboxId || '').trim();
@@ -4673,58 +4674,47 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
   const campaignVersionId = String(req.body?.campaignVersionId || '').trim();
   if (!ids.length || ids.length > 500) return res.status(422).json({ error: 'Select between 1 and 500 leads' });
   try {
-    const result = await withAuth(async () => {
-      await ensureColdEmailSheet();
-      const response = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE });
-      const rows = response.data.values || [];
-      const selected = [];
-      for (let index = 1; index < rows.length; index++) {
-        const lead = {}; CE_COLUMNS.forEach((field, column) => { lead[field] = rows[index][column] || ''; });
-        if (ids.includes(lead.id)) selected.push({ lead, rowNumber: index + 1 });
-      }
-      if (selected.length !== ids.length) return { error: 'One or more selected leads no longer exist', status: 409 };
-      if (new Set(selected.map(({ lead }) => String(lead.campaign || '').trim())).size !== 1) return { error: 'Queue leads from one campaign at a time', status: 422 };
-      const inboxes = gmailInboxOptions();
-      for (const { lead } of selected) {
-        if (lead.emailStatus || ['Replied','Done','Promoted','Unsubscribed'].includes(lead.stage)) return { error: `${lead.company || lead.email} is not eligible to queue`, status: 409 };
-        const route = validateRoute({ niche: lead.leadNiche || lead.tradeType, senderInboxId, emailTemplateId, inboxes });
-        if (!route.ok) return { error: route.reason, status: 422 };
-        const versionRoute = validateCampaignVersionRoute({
-          niche: lead.leadNiche || lead.tradeType, emailTemplateId, campaignVersionId,
-        });
-        if (!versionRoute.ok) return { error: versionRoute.reason, status: 422 };
-        if (emailTemplateId === ROOFING_SURVEY_TEMPLATE) {
-          const qualification = qualifyRoofingLead(lead);
-          if (!qualification.ok) return { error: `${lead.company || lead.email} does not have enough roofing-business evidence`, status: 422 };
+    const result = await withAuth(() => queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaignVersionId }, {
+      loadState: async () => {
+        const dataset = await getOutreachDataset({ force: true });
+        // Full canonical rows include approved personalization. The dashboard's
+        // light rows deliberately omit it and must never be used for writes.
+        if (outreachWriteAuthority() === 'supabase') {
+          const corpus = await readOutreachCorpus();
+          if (!corpus.ok) throw new Error('Canonical Outreach state unavailable: ' + corpus.reason);
+          return { ...dataset, leads: corpus.leads };
         }
-      }
-      const queuedAt = new Date().toISOString();
-      const queueActivities = [];
-      const data = selected.map(({ lead, rowNumber }) => {
-        const changed = lead.stage !== 'Queued' || lead.senderInboxId !== senderInboxId
-          || lead.emailTemplateId !== emailTemplateId || lead.intendedCampaignVersion !== campaignVersionId;
-        lead.stage = 'Queued'; lead.senderInboxId = senderInboxId; lead.emailTemplateId = emailTemplateId;
-        lead.routingRequired = 'true'; lead.intendedCampaignVersion = campaignVersionId;
-        if (changed) queueActivities.push({
-          eventId: stableActivityId('lead-queued', [lead.id, senderInboxId, campaignVersionId, emailTemplateId, queuedAt]),
-          leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email || '', company: lead.company || '',
-          eventType: 'lead_queued', occurredAt: queuedAt, subject: 'Queued for outreach', content: '',
-          metadata: JSON.stringify({ senderInboxId, intendedCampaignVersion: campaignVersionId, emailTemplateId, campaign: lead.campaign || '', trigger: 'outreach_queue' }),
-        });
-        // The full A:X row, named field by field. `lead` is a COMPLETE 24-field
-        // row from the shared dataset, so this writes exactly the cells it wrote
-        // before — naming them is what lets the mirror stay narrow and lets the
-        // coverage canary see this as a converted writer.
-        return { leadId: lead.id, row: rowNumber,
-          patch: Object.fromEntries(CE_COLUMNS.map(field => [field, String(lead[field] ?? '')])) };
-      });
-      await applyLeadChanges(data, { sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
-      try { await appendColdCallActivities(queueActivities); }
-      catch (activityError) { console.warn('[ColdEmail Queue] queued, activity append failed:', activityError.message); }
-      ceRowMap.clear();
-      return { queued: selected.length, senderInboxId, campaignVersionId, emailTemplateId };
-    });
-    if (result.error) return res.status(result.status).json({ error: result.error });
+        const response = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE });
+        const leads = (response.data.values || []).slice(1).map(row => Object.fromEntries(CE_COLUMNS.map((field, i) => [field, row[i] || ''])));
+        return { ...dataset, leads };
+      },
+      validateSelection: lead => {
+        if (normalizeNiche(lead.leadNiche || lead.tradeType) === 'industrial_staffing'
+          && (outreachStateMode() !== 'primary' || outreachWriteAuthority() !== 'supabase')) {
+          return { ok: false, reason: 'Staffing queue requires Supabase primary reads and canonical writes; current production authority must be reconciled first' };
+        }
+        const route = validateRoute({ niche: lead.leadNiche || lead.tradeType, senderInboxId, emailTemplateId, inboxes: gmailInboxOptions() });
+        if (!route.ok) return route;
+        const versionRoute = validateCampaignVersionRoute({ niche: lead.leadNiche || lead.tradeType, emailTemplateId, campaignVersionId });
+        if (!versionRoute.ok) return versionRoute;
+        if (emailTemplateId === ROOFING_SURVEY_TEMPLATE && !qualifyRoofingLead(lead).ok) return { ok: false, reason: 'Insufficient roofing-business evidence' };
+        return { ok: true };
+      },
+      mutate: async (lead, patch) => {
+        const row = await findCERow(lead.id);
+        if (!row) throw new Error('Lead identity missing from the secondary mirror');
+        await applyLeadChange(lead.id, patch, { row, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID, expectedState: lead });
+      },
+      appendActivity: ({ lead, occurredAt, patch }) => appendColdCallActivities([{
+        eventId: stableActivityId('lead-queued', [lead.id, senderInboxId, campaignVersionId, emailTemplateId, occurredAt]),
+        leadId: 'CE-' + lead.id, sourceLeadId: lead.id, email: lead.email || '', company: lead.company || '',
+        eventType: 'lead_queued', occurredAt, subject: 'Queued for outreach', content: '',
+        metadata: JSON.stringify({ senderInboxId, intendedCampaignVersion: campaignVersionId, emailTemplateId, campaign: lead.campaign || '', trigger: 'outreach_queue' }),
+      }]),
+    }));
+    invalidateOutreachCache('outreach_queue');
+    ceRowMap.clear();
+    if (result.error) return res.status(result.status).json(result);
     res.json(result);
   } catch (error) {
     if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });

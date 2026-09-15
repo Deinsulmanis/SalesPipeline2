@@ -31,6 +31,7 @@ const OFFERS = Object.freeze({
   industrial_staffing: Object.freeze({
     id: 'industrial_staffing_employer_acquisition_v1',
     name: 'employer acquisition for industrial staffing agencies',
+    landingPageUrl: 'https://scalelabai.ca/staffing/',
     targetCustomer: 'industrial staffing agencies',
     companyFallback: 'your agency',
     description: 'A 30-day employer acquisition pilot built around the roles the agency already places.',

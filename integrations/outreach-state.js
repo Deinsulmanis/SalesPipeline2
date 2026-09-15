@@ -763,7 +763,7 @@ async function casAttempt(id, patch, revision, { env = process.env }) {
  * NEVER last-write-wins. On conflict it reloads, re-evaluates against the
  * precedence rules above, and only retries when the intent is still safe.
  */
-async function applyCanonicalChange(id, patch, { env = process.env, logger = console, releaseMarkers = [] } = {}) {
+async function applyCanonicalChange(id, patch, { env = process.env, logger = console, expectedState = null, releaseMarkers = [] } = {}) {
   const column = {};
   for (const [field, value] of Object.entries(patch)) {
     column[FIELD_MAP[field]] = value === null || value === undefined ? '' : String(value);
@@ -775,6 +775,13 @@ async function applyCanonicalChange(id, patch, { env = process.env, logger = con
   for (let attempt = 1; attempt <= MAX_CAS_ATTEMPTS; attempt++) {
     const current = await readCanonicalLead(id, { env });
     if (!current.ok) return { ok: false, conflicts, reason: current.reason };
+
+    // Queue/enrollment validates a snapshot before requesting a transition.
+    // Refuse if ANY validated field moved, including before the first CAS read.
+    if (expectedState && SHEET_FIELDS.some(field => Object.hasOwn(expectedState, field)
+      && String(current.lead[field] ?? '') !== String(expectedState[field] ?? ''))) {
+      return { ok: false, refused: true, conflicts, reason: 'validated lead state changed; refresh and review before queueing' };
+    }
 
     if (attempt > 1) {
       // Re-evaluate against what actually landed, not against what we assumed.
@@ -835,6 +842,7 @@ async function applyLeadChange(leadId, patch, {
   row, sheetsClient, spreadsheetId, extraData = [],
   sheetName = 'ColdEmail', valueInputOption = 'RAW',
   env = process.env, logger = console,
+  expectedState = null,
   releaseMarkers = [],
 } = {}) {
   const id = String(leadId || '').trim();
@@ -863,7 +871,7 @@ async function applyLeadChange(leadId, patch, {
   // ── Stage 3F: Supabase canonical ──────────────────────────────────────────
   // The authority flip lives here and nowhere else. No call site changes.
   if (outreachWriteAuthority(env) === 'supabase') {
-    const canonical = await applyCanonicalChange(id, patch, { env, logger, releaseMarkers });
+    const canonical = await applyCanonicalChange(id, patch, { env, logger, expectedState, releaseMarkers });
     if (!canonical.ok) {
       // A refusal is a CORRECT outcome, not a transport failure: the lead moved
       // to state that outranks this mutation. Either way the caller asked for a
