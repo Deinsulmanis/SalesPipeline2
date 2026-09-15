@@ -110,14 +110,14 @@ for (const step of [1, 2, 3]) test(`step ${step} MIME preserves exact text and i
   assert.ok(!email.body.includes('https://scalelabai.ca/staffing/'));
 });
 test('server queue uses canonical full rows and expected-state mutations', () => {
-  const source = fs.readFileSync(require.resolve('../server.js'), 'utf8');
+  const source = fs.readFileSync(require.resolve('../server.js'), 'utf8').split('\r\n').join('\n');
   const route = source.slice(source.indexOf("app.post('/api/coldemail/queue'"), source.indexOf('// The Outreach summary.'));
   assert.match(route, /readOutreachCorpus\(\)/); assert.match(route, /expectedState: lead/);
   assert.doesNotMatch(route, /patch: Object\.fromEntries\(CE_COLUMNS/);
 });
 
 test('server staffing queue refuses Sheets authority before route validation', () => {
-  const source = fs.readFileSync(require.resolve('../server.js'), 'utf8');
+  const source = fs.readFileSync(require.resolve('../server.js'), 'utf8').split('\r\n').join('\n');
   const start = source.indexOf('validateSelection: lead => {', source.indexOf("app.post('/api/coldemail/queue'"));
   const arrow = source.slice(start + 'validateSelection: '.length, source.indexOf(',\n      applyChanges:', start));
   let routeCalls = 0;
