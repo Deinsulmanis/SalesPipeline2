@@ -68,7 +68,7 @@ test('queue only changes five routing/stage fields and repeated enrollment is a 
   const mutations = [], events = [];
   const deps = {
     loadState: async () => ({ leads: [lead] }), validateSelection: () => ({ ok: true }),
-    mutate: async (before, patch) => { mutations.push(patch); lead = { ...before, ...patch }; },
+    applyChanges: async changes => changes.map(({ lead: before, patch }) => { mutations.push(patch); lead = { ...before, ...patch }; return { leadId: before.id, status: 'succeeded' }; }),
     appendActivity: async event => events.push(event),
   };
   const request = { ids: ['L1'], senderInboxId: 'primary', emailTemplateId: staffing.emailTemplateId, campaignVersionId: STAFFING_CAMPAIGN.id };
@@ -83,7 +83,7 @@ test('queue refusal preserves the whole batch before any mutation', async () => 
   let writes = 0;
   const result = await queueSelectedLeads({ ids: ['L1', 'L2'] }, {
     loadState: async () => ({ leads: [staffing, { ...staffing, id: 'L2', email: 'other@example.com', notes: '[MANUAL HOLD]' }] }),
-    validateSelection: () => ({ ok: true }), mutate: async () => writes++, appendActivity: async () => writes++,
+    validateSelection: () => ({ ok: true }), applyChanges: async () => { writes++; return []; }, appendActivity: async () => writes++,
   });
   assert.equal(result.status, 409); assert.equal(writes, 0);
 });
@@ -119,7 +119,7 @@ test('server queue uses canonical full rows and expected-state mutations', () =>
 test('server staffing queue refuses Sheets authority before route validation', () => {
   const source = fs.readFileSync(require.resolve('../server.js'), 'utf8');
   const start = source.indexOf('validateSelection: lead => {', source.indexOf("app.post('/api/coldemail/queue'"));
-  const arrow = source.slice(start + 'validateSelection: '.length, source.indexOf(',\n      mutate:', start));
+  const arrow = source.slice(start + 'validateSelection: '.length, source.indexOf(',\n      applyChanges:', start));
   let routeCalls = 0;
   const make = new Function('outreachStateMode', 'outreachWriteAuthority', 'normalizeNiche', 'validateRoute', 'validateCampaignVersionRoute', 'gmailInboxOptions', 'ROOFING_SURVEY_TEMPLATE', 'qualifyRoofingLead', 'senderInboxId', 'emailTemplateId', 'campaignVersionId', `return (${arrow});`);
   for (const [mode, authority, allowed] of [['dual', 'sheets', false], ['primary', 'sheets', false], ['dual', 'supabase', false], ['primary', 'supabase', true]]) {

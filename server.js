@@ -2466,16 +2466,17 @@ async function loadSuppressionEmails() {
 
 // Writes the notes cell for exactly one ColdEmail row. Column L only — the
 // same single cell applyManualHold touches, so no other lead state can move.
-// releaseMarkers is how Resume removes [MANUAL HOLD] on purpose. Without it the
-// canonical store keeps any hold, opt-out or bounce marker that a notes value
-// built from an older read would otherwise erase.
-async function writeColdEmailNotes(twin, notes, { releaseMarkers = [] } = {}) {
+// releaseMarkers is how Resume removes [MANUAL HOLD] on purpose, and resumeIntent
+// is how reactivation and Resume set or clear [RESUME:]. Without them the
+// canonical store keeps any hold, opt-out, bounce or scheduled-resume tag that
+// a notes value built from an older read would otherwise erase or resurrect.
+async function writeColdEmailNotes(twin, notes, { releaseMarkers = [], resumeIntent = false } = {}) {
   // Column L only, exactly as before — the abstraction writes precisely the
   // cells the patch names, so the narrow semantics applyManualHold relies on
   // are unchanged. The twin is a nine-field projection, which is why a field
   // patch is passed rather than the twin itself.
   await applyLeadChange(twin.id, { notes }, {
-    row: twin._row, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID, releaseMarkers,
+    row: twin._row, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID, releaseMarkers, resumeIntent,
   });
 }
 
@@ -3052,7 +3053,7 @@ app.post('/api/leads/:id/reactivate', requireAuth, async (req, res) => {
         return res.status(409).json({ error: 'This lead has no scheduled reactivation to cancel.', code: 'not_scheduled' });
       }
       const cleared = clearResumeFromNotes(twin.notes || '');
-      await writeColdEmailNotes(twin, cleared);
+      await writeColdEmailNotes(twin, cleared, { resumeIntent: true });
       await recordReactivationEvent(req.params.id, twin, {
         eventType: 'reactivation_cancelled', email, company,
         subject: 'Scheduled reactivation cancelled',
@@ -3105,7 +3106,7 @@ app.post('/api/leads/:id/reactivate', requireAuth, async (req, res) => {
     // place, so there is no instant at which this lead is sendable earlier than
     // the chosen time — including if this request is retried or lands twice.
     const scheduled = applyResumeToNotes(twin.notes || '', new Date(resumeMs).toISOString());
-    await writeColdEmailNotes(twin, scheduled);
+    await writeColdEmailNotes(twin, scheduled, { resumeIntent: true });
 
     await recordReactivationEvent(req.params.id, twin, {
       eventType: 'reactivation_scheduled', email, company,
@@ -3217,9 +3218,9 @@ async function writeResumeNotes(twin, notes) {
   if (current.length !== 1 || current[0].notes !== twin.notes || normalizeEmail(current[0].email) !== normalizeEmail(twin.email)) {
     throw resumeFailure('state_changed', 'the notes or identity changed before hold removal');
   }
-  // Removing the hold is this write's whole purpose, so it is declared. No other
-  // writer may lift a hold through notes.
-  await writeColdEmailNotes(current[0], notes, { releaseMarkers: [MANUAL_HOLD_TAG] });
+  // Removing the hold, and the schedule that went with it, is this write's whole
+  // purpose, so both are declared. No other writer may lift a hold through notes.
+  await writeColdEmailNotes(current[0], notes, { releaseMarkers: [MANUAL_HOLD_TAG], resumeIntent: true });
 }
 
 async function restoreResumeHold(twin) {
@@ -4700,10 +4701,24 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
         if (emailTemplateId === ROOFING_SURVEY_TEMPLATE && !qualifyRoofingLead(lead).ok) return { ok: false, reason: 'Insufficient roofing-business evidence' };
         return { ok: true };
       },
-      mutate: async (lead, patch) => {
-        const row = await findCERow(lead.id);
-        if (!row) throw new Error('Lead identity missing from the secondary mirror');
-        await applyLeadChange(lead.id, patch, { row, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID, expectedState: lead });
+      applyChanges: async changes => {
+        // One batch through the canonical mutation path. Under Supabase authority
+        // every lead is its own compare-and-set against the state it was validated
+        // in, and its verdict is returned as it is. One column read resolves every
+        // row; a lead that is not exactly one row fails on its own, never guessed.
+        const column = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:A` });
+        const rowsById = new Map();
+        (column.data.values || []).forEach((cells, index) => {
+          if (index > 0 && cells[0]) rowsById.set(cells[0], [...(rowsById.get(cells[0]) || []), index + 1]);
+        });
+        const resolvable = changes.filter(({ lead }) => (rowsById.get(lead.id) || []).length === 1);
+        const unresolved = changes.filter(change => !resolvable.includes(change)).map(({ lead }) => ({
+          leadId: lead.id, status: 'failed', reason: 'lead identity is not exactly one ColdEmail row' }));
+        if (!resolvable.length) return unresolved;
+        const batch = await applyLeadChanges(resolvable.map(({ lead, patch }) => ({
+          leadId: lead.id, patch, row: rowsById.get(lead.id)[0], expectedState: lead,
+        })), { sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
+        return [...unresolved, ...batch.results];
       },
       appendActivity: ({ lead, occurredAt, patch }) => appendColdCallActivities([{
         eventId: stableActivityId('lead-queued', [lead.id, senderInboxId, campaignVersionId, emailTemplateId, occurredAt]),

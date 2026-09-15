@@ -47,8 +47,10 @@ function queueEligibility(lead, { leads = [], activities = [], boardLeads = [], 
   return { ok: true, ownership };
 }
 
+const QUEUE_STATUSES = Object.freeze(['succeeded', 'unchanged', 'refused', 'conflict', 'failed']);
+
 async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaignVersionId }, {
-  loadState, validateSelection, mutate, appendActivity, now = () => new Date().toISOString(),
+  loadState, validateSelection, applyChanges, appendActivity, now = () => new Date().toISOString(),
 }) {
   const state = await loadState();
   const selected = state.leads.filter(lead => ids.includes(lead.id));
@@ -63,19 +65,55 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
     if (!route.ok) return { status: 422, error: route.reason };
   }
   const patch = { stage: 'Queued', senderInboxId, emailTemplateId, routingRequired: 'true', intendedCampaignVersion: campaignVersionId };
-  const queuedIds = [];
-  let alreadyQueued = 0;
+
+  // Leads are independent: nothing is all-or-nothing across them, so each gets
+  // its own verdict from the canonical mutation path. A refused or failed lead
+  // never rewrites another, and retrying is safe — a lead already queued with
+  // this route comes back unchanged.
+  const results = [];
+  const pending = [];
   for (const lead of selected) {
-    if (Object.entries(patch).every(([key, value]) => lead[key] === value)) { alreadyQueued++; continue; }
-    try {
-      await mutate(lead, patch);
-      queuedIds.push(lead.id);
-      await appendActivity({ lead, occurredAt: now(), patch });
-    } catch (error) {
-      return { status: 409, error: `Queue stopped: ${error.message}. Refresh before retrying.`, queued: queuedIds.length, queuedIds, alreadyQueued };
+    if (Object.entries(patch).every(([key, value]) => lead[key] === value)) {
+      results.push({ leadId: lead.id, status: 'unchanged', reason: 'already queued with this route' });
+    } else {
+      pending.push(lead);
     }
   }
-  return { queued: queuedIds.length, queuedIds, alreadyQueued, senderInboxId, campaignVersionId, emailTemplateId };
+  if (pending.length) {
+    let applied;
+    try {
+      applied = await applyChanges(pending.map(lead => ({ lead, patch })));
+    } catch (error) {
+      applied = pending.map(lead => ({ leadId: lead.id, status: 'failed', reason: error.message }));
+    }
+    const byId = new Map((applied || []).map(result => [result.leadId, result]));
+    for (const lead of pending) {
+      const result = { ...(byId.get(lead.id) || { leadId: lead.id, status: 'failed', reason: 'no verdict was returned for this lead' }) };
+      if (!QUEUE_STATUSES.includes(result.status)) Object.assign(result, { status: 'failed', reason: `unrecognised verdict ${result.status}` });
+      if (result.status === 'succeeded') {
+        try { await appendActivity({ lead, occurredAt: now(), patch }); }
+        catch (error) { Object.assign(result, { activityRecorded: false, activityError: error.message }); }
+      }
+      results.push(result);
+    }
+  }
+
+  const count = status => results.filter(result => result.status === status).length;
+  const summary = {
+    requested: ids.length, succeeded: count('succeeded'), unchanged: count('unchanged'),
+    refused: count('refused'), conflict: count('conflict'), failed: count('failed'),
+    activityFailures: results.filter(result => result.activityRecorded === false).length,
+  };
+  const response = {
+    ...summary, queued: summary.succeeded, alreadyQueued: summary.unchanged,
+    queuedIds: results.filter(result => result.status === 'succeeded').map(result => result.leadId),
+    results, senderInboxId, campaignVersionId, emailTemplateId,
+  };
+  const notQueued = summary.refused + summary.conflict + summary.failed;
+  if (!notQueued) return response;
+  return { ...response, status: 409,
+    error: `${summary.succeeded} queued, ${summary.unchanged} already queued, ${notQueued} not queued `
+      + `(${summary.refused} refused, ${summary.conflict} conflict, ${summary.failed} failed). Review each lead; retrying is safe.` };
 }
 
 module.exports = { queueEligibility, queueSelectedLeads };

@@ -70,7 +70,7 @@ function sheetsStub() {
  *   conflict=true   the change lands between that read and the compare-and-set
  */
 async function staleNotesWrite({
-  initialNotes = 'enriched', landedNotes, write, patch = {}, conflict, releaseMarkers, logger = quiet,
+  initialNotes = 'enriched', landedNotes, write, patch = {}, conflict, releaseMarkers, resumeIntent, logger = quiet,
 }) {
   const db = createPostgrestDouble({ rows: [leadRow(initialNotes)] });
   const env = await db.start(SUPABASE);
@@ -96,7 +96,7 @@ async function staleNotesWrite({
     let error = null;
     try {
       result = await applyLeadChange('lead-1', { ...patch, notes: write(stale.lead) }, {
-        row: 12, sheetsClient: sheets.client, spreadsheetId: 'sheet', env, logger, releaseMarkers,
+        row: 12, sheetsClient: sheets.client, spreadsheetId: 'sheet', env, logger, releaseMarkers, resumeIntent,
       });
     } catch (caught) { error = caught; }
 
@@ -163,6 +163,8 @@ for (const conflict of [false, true]) {
       write: stale => releaseHoldFromNotes(stale.notes),
       // Asking to release everything: only the hold is releasable at all.
       releaseMarkers: [MANUAL_HOLD_TAG, '[BOUNCED', '[REPLY: Unsubscribed]'],
+      // Resume clears the schedule with the hold, and declares that too.
+      resumeIntent: true,
     });
     assert.equal(result.ok, true);
     assert.equal(result.conflicts, conflicts);
@@ -244,7 +246,7 @@ test('preserveSafetyMarkers is pure and releases only a hold', () => {
 test('Resume is the one caller that declares a release', () => {
   const serverSrc = readSource(path.join(root, 'server.js'));
   assert.match(serverSrc,
-    /async function writeResumeNotes[\s\S]*?await writeColdEmailNotes\(current\[0\], notes, \{ releaseMarkers: \[MANUAL_HOLD_TAG\] \}\);/);
+    /async function writeResumeNotes[\s\S]*?await writeColdEmailNotes\(current\[0\], notes, \{ releaseMarkers: \[MANUAL_HOLD_TAG\], resumeIntent: true \}\);/);
   const callers = [
     ['server.js', serverSrc],
     ['outreach-agent.js', readSource(path.join(root, 'outreach-agent.js'))],

@@ -340,7 +340,7 @@ test('26. an invalid request is refused with a 4xx and changes nothing', () => {
   assert.match(body, /res\.status\(409\)/);
   assert.match(body, /is not the next step for this lead/);
   // Every refusal returns before the write.
-  const writeAt = body.indexOf('await writeColdEmailNotes(twin, scheduled)');
+  const writeAt = body.indexOf('await writeColdEmailNotes(twin, scheduled, { resumeIntent: true })');
   assert.ok(writeAt > body.lastIndexOf('res.status(400)'), 'validation precedes the write');
 });
 

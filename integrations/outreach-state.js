@@ -561,7 +561,7 @@ function columnLetterFor(field) {
 const writeDiagnostics = {
   startedAt: new Date().toISOString(),
   mutations: 0, mirrored: 0, mirrorFailures: 0,
-  casConflicts: 0, conflictRetries: 0, conflictRefusals: 0, safetyMarkersKept: 0,
+  casConflicts: 0, conflictRetries: 0, conflictRefusals: 0, safetyMarkersKept: 0, resumeTagsKept: 0,
   lastMutationAt: null, lastMirrorFailureAt: null, lastMirrorFailureReason: null,
   maxMirrorLatencyMs: 0, recent: [],
 };
@@ -580,7 +580,7 @@ function resetOutreachWriteDiagnostics() {
   Object.assign(writeDiagnostics, {
     startedAt: new Date().toISOString(),
     mutations: 0, mirrored: 0, mirrorFailures: 0,
-    casConflicts: 0, conflictRetries: 0, conflictRefusals: 0, safetyMarkersKept: 0,
+    casConflicts: 0, conflictRetries: 0, conflictRefusals: 0, safetyMarkersKept: 0, resumeTagsKept: 0,
     lastMutationAt: null, lastMirrorFailureAt: null, lastMirrorFailureReason: null,
     maxMirrorLatencyMs: 0, recent: [],
   });
@@ -710,6 +710,29 @@ function preserveSafetyMarkers(canonicalNotes, nextNotes, { releaseMarkers = [] 
   return { notes: kept.length ? [...kept, next].filter(Boolean).join(' ') : next, kept };
 }
 
+// ── the scheduled-resume tag ────────────────────────────────────────────────
+//
+// [RESUME: <ISO>] schedules a held lead's cold automation to resume. Only the
+// reactivation actions and Resume set, move or clear it, and they say so with
+// resumeIntent. Any other notes write carries whatever resume tag its older read
+// saw: it would resurrect a schedule a human cancelled — re-arming automation on
+// a lead meant to stay held — or erase one a human set after that read.
+//
+// So a notes write without resumeIntent leaves the canonical tag exactly as it
+// is: restored if the write dropped it, removed if the write carries one that is
+// gone, replaced if the write carries a different instant.
+const RESUME_TAG_PATTERN = /\[RESUME:[^\]]*\]/gi;
+
+/** Keep the canonical [RESUME:] tag in a notes value. PURE. */
+function preserveResumeTag(canonicalNotes, nextNotes) {
+  const next = nextNotes === null || nextNotes === undefined ? '' : String(nextNotes);
+  const canonicalTags = String(canonicalNotes || '').match(RESUME_TAG_PATTERN) || [];
+  const nextTags = next.match(RESUME_TAG_PATTERN) || [];
+  if (canonicalTags.join(' ') === nextTags.join(' ')) return { notes: next, changed: false };
+  const stripped = next.replace(RESUME_TAG_PATTERN, '').replace(/\s{2,}/g, ' ').trim();
+  return { notes: [...canonicalTags, stripped].filter(Boolean).join(' '), changed: true };
+}
+
 const headersForWrite = (config, extra = {}) => ({
   apikey: config.key, Authorization: `Bearer ${config.key}`,
   'Content-Type': 'application/json', ...extra,
@@ -762,19 +785,44 @@ async function casAttempt(id, patch, revision, { env = process.env }) {
  *
  * NEVER last-write-wins. On conflict it reloads, re-evaluates against the
  * precedence rules above, and only retries when the intent is still safe.
+ *
+ * skipIfUnchanged makes a retried batch idempotent: a lead whose canonical row
+ * already holds every value of the patch is reported unchanged, with no write
+ * and no new revision.
  */
-async function applyCanonicalChange(id, patch, { env = process.env, logger = console, expectedState = null, releaseMarkers = [] } = {}) {
+async function applyCanonicalChange(id, patch, {
+  env = process.env, logger = console, expectedState = null,
+  releaseMarkers = [], resumeIntent = false, skipIfUnchanged = false,
+} = {}) {
   const column = {};
   for (const [field, value] of Object.entries(patch)) {
     column[FIELD_MAP[field]] = value === null || value === undefined ? '' : String(value);
     if (field === 'lastEmailedAt') column.last_emailed_at_ts = isoOrNull(value);
     if (field === 'emailStep') column.email_step_int = intOrNull(value);
   }
+  const writesNotes = Object.prototype.hasOwnProperty.call(patch, 'notes');
 
   let conflicts = 0;
   for (let attempt = 1; attempt <= MAX_CAS_ATTEMPTS; attempt++) {
     const current = await readCanonicalLead(id, { env });
     if (!current.ok) return { ok: false, conflicts, reason: current.reason };
+
+    // Every attempt, not only retries: a notes value built from an older read
+    // must not lift a suppression, or move a scheduled resume, that is in
+    // canonical state now.
+    const resume = writesNotes && !resumeIntent
+      ? preserveResumeTag(current.lead.notes, patch.notes)
+      : { notes: writesNotes ? patch.notes : null, changed: false };
+    const safe = writesNotes
+      ? preserveSafetyMarkers(current.lead.notes, resume.notes, { releaseMarkers })
+      : { notes: null, kept: [] };
+    const notesAdjusted = writesNotes && (resume.changed || safe.kept.length > 0);
+    const attemptColumns = notesAdjusted ? { ...column, notes: safe.notes } : column;
+
+    if (skipIfUnchanged && Object.keys(patch).every(field => String(current.lead[field] ?? '')
+      === (field === 'notes' ? String(safe.notes ?? '') : column[FIELD_MAP[field]]))) {
+      return { ok: true, unchanged: true, conflicts, revision: current.revision, keptMarkers: [], resumeTagKept: false };
+    }
 
     // Queue/enrollment validates a snapshot before requesting a transition.
     // Refuse if ANY validated field moved, including before the first CAS read.
@@ -794,13 +842,6 @@ async function applyCanonicalChange(id, patch, { env = process.env, logger = con
       }
     }
 
-    // Every attempt, not only retries: a notes value built from an older read
-    // must not lift a suppression that is in canonical state now.
-    const safe = Object.prototype.hasOwnProperty.call(patch, 'notes')
-      ? preserveSafetyMarkers(current.lead.notes, patch.notes, { releaseMarkers })
-      : { notes: null, kept: [] };
-    const attemptColumns = safe.kept.length ? { ...column, notes: safe.notes } : column;
-
     const result = await casAttempt(id, attemptColumns, current.revision, { env });
     if (result.applied) {
       if (conflicts) writeDiagnostics.conflictRetries += conflicts;
@@ -810,8 +851,13 @@ async function applyCanonicalChange(id, patch, { env = process.env, logger = con
         logger.warn(`[outreach-state] lead ${id}: a notes write would have removed ${safe.kept.join(', ')}; `
           + 'kept it. Safety state in canonical notes outranks a value built from an older read.');
       }
+      if (resume.changed) {
+        writeDiagnostics.resumeTagsKept++;
+        logger.warn(`[outreach-state] lead ${id}: a notes write without resume intent would have changed the `
+          + 'scheduled-resume tag; kept the canonical one. Only reactivation and Resume set or clear it.');
+      }
       return { ok: true, conflicts, revision: current.revision + 1,
-        keptMarkers: safe.kept, notes: safe.kept.length ? safe.notes : undefined };
+        keptMarkers: safe.kept, resumeTagKept: resume.changed, notes: notesAdjusted ? safe.notes : undefined };
     }
     if (result.reason) return { ok: false, conflicts, reason: result.reason };
     conflicts++;
@@ -844,6 +890,7 @@ async function applyLeadChange(leadId, patch, {
   env = process.env, logger = console,
   expectedState = null,
   releaseMarkers = [],
+  resumeIntent = false,
 } = {}) {
   const id = String(leadId || '').trim();
   if (!id) throw new Error('applyLeadChange requires a lead id');
@@ -871,7 +918,7 @@ async function applyLeadChange(leadId, patch, {
   // ── Stage 3F: Supabase canonical ──────────────────────────────────────────
   // The authority flip lives here and nowhere else. No call site changes.
   if (outreachWriteAuthority(env) === 'supabase') {
-    const canonical = await applyCanonicalChange(id, patch, { env, logger, expectedState, releaseMarkers });
+    const canonical = await applyCanonicalChange(id, patch, { env, logger, expectedState, releaseMarkers, resumeIntent });
     if (!canonical.ok) {
       // A refusal is a CORRECT outcome, not a transport failure: the lead moved
       // to state that outranks this mutation. Either way the caller asked for a
@@ -890,10 +937,11 @@ async function applyLeadChange(leadId, patch, {
     // Sheets is now the SECONDARY mirror. Its failure must not roll back a
     // committed canonical write, must not restore Sheets authority, and must not
     // affect send eligibility — it is recorded, and repaired by reconciliation.
-    // Sheets mirrors what COMMITTED. A safety marker kept above must reach the
-    // secondary copy too, or Sheets would show a held lead as unheld.
+    // Sheets mirrors what COMMITTED. Notes adjusted above — a kept safety marker
+    // or the canonical resume tag — must reach the secondary copy too, or Sheets
+    // would show a held lead as unheld.
     const notesRange = `${sheetName}!${columnLetterFor('notes')}${parsedRow}`;
-    const mirrorData = canonical.keptMarkers && canonical.keptMarkers.length
+    const mirrorData = canonical.notes !== undefined
       ? data.map(entry => (entry.range === notesRange ? { ...entry, values: [[canonical.notes]] } : entry))
       : data;
     let sheetsMirrored = false;
@@ -917,7 +965,7 @@ async function applyLeadChange(leadId, patch, {
       authority: 'supabase', conflicts: canonical.conflicts, revision: canonical.revision });
     return { ok: true, leadId: id, fields, mirrored: sheetsMirrored, mirrorReason: sheetsReason,
       authority: 'supabase', conflicts: canonical.conflicts, revision: canonical.revision,
-      keptMarkers: canonical.keptMarkers || [] };
+      keptMarkers: canonical.keptMarkers || [], resumeTagKept: Boolean(canonical.resumeTagKept) };
   }
 
   // ── Sheets canonical (Stage 3B–3E) ────────────────────────────────────────
@@ -964,14 +1012,40 @@ async function applyLeadChange(leadId, patch, {
   return { ok: true, leadId: id, fields, mirrored, mirrorReason };
 }
 
+const BATCH_STATUSES = Object.freeze(['succeeded', 'unchanged', 'refused', 'conflict', 'failed']);
+
+/** One lead's verdict in a batch, from its canonical compare-and-set result. */
+function batchStatus(canonical) {
+  if (canonical.ok) return canonical.unchanged ? 'unchanged' : 'succeeded';
+  if (canonical.refused) return 'refused';
+  if (/compare-and-set races/.test(String(canonical.reason || ''))) return 'conflict';
+  return 'failed';
+}
+
+function batchSummary(outcomes, requested) {
+  const summary = { requested };
+  for (const status of BATCH_STATUSES) summary[status] = outcomes.filter(outcome => outcome.status === status).length;
+  return summary;
+}
+
 /**
- * Apply changes to SEVERAL leads in ONE Sheets batch.
+ * Apply changes to SEVERAL leads.
  *
- * Queueing selected leads is a single user action and must stay a single write:
- * looping applyLeadChange() would turn it into N round trips and N chances to
- * half-apply. The mirror is likewise sent as one batch.
+ * While Sheets is authoritative, queueing selected leads stays a single write:
+ * looping applyLeadChange() would turn one user action into N round trips and N
+ * chances to half-apply, and the mirror is sent as one batch too.
  *
- * @param changes [{ leadId, patch, row }]
+ * Under Supabase authority there is no transaction across leads, and none is
+ * pretended. Each lead takes exactly the canonical path a single-lead write
+ * takes — canonical read, expected-state check, compare-and-set on revision,
+ * reload and re-evaluation on conflict, safety markers and the resume tag kept —
+ * and gets its own verdict: succeeded, unchanged, refused, conflict or failed.
+ * Only leads whose canonical write committed are mirrored, in one Sheets batch,
+ * AFTER Supabase. A refused or failed lead never causes another to be rewritten,
+ * and retrying the same batch is idempotent: a lead that already holds the patch
+ * comes back unchanged, with no write and no new revision.
+ *
+ * @param changes [{ leadId, patch, row, expectedState?, releaseMarkers?, resumeIntent? }]
  */
 async function applyLeadChanges(changes, {
   sheetsClient, spreadsheetId, extraData = [],
@@ -982,31 +1056,99 @@ async function applyLeadChanges(changes, {
   if (!list.length && !extraData.length) throw new Error('applyLeadChanges requires at least one change');
   if (!sheetsClient || !spreadsheetId) throw new Error('applyLeadChanges requires a Sheets client and spreadsheetId');
 
-  const data = [...extraData];
-  for (const change of list) {
+  // Every change is validated before any lead is written, under either authority.
+  const cellsFor = (row, patch) => Object.keys(patch).map(field => ({
+    range: `${sheetName}!${columnLetterFor(field)}${row}`,
+    values: [[patch[field] === null || patch[field] === undefined ? '' : String(patch[field])]],
+  }));
+  const prepared = list.map(change => {
     const id = String(change.leadId || '').trim();
     if (!id) throw new Error('applyLeadChanges requires a lead id for every change');
     const parsedRow = Number(change.row);
     if (!Number.isInteger(parsedRow)) throw new Error(`applyLeadChanges requires a resolved sheet row for lead ${id}`);
-    const fields = Object.keys(change.patch || {});
-    const unknown = fields.filter(field => !Object.prototype.hasOwnProperty.call(FIELD_MAP, field));
+    const patch = change.patch || {};
+    const unknown = Object.keys(patch).filter(field => !Object.prototype.hasOwnProperty.call(FIELD_MAP, field));
     if (unknown.length) throw new Error(`unknown ColdEmail field(s): ${unknown.join(', ')}`);
-    for (const field of fields) {
-      const value = change.patch[field];
-      data.push({
-        range: `${sheetName}!${columnLetterFor(field)}${parsedRow}`,
-        values: [[value === null || value === undefined ? '' : String(value)]],
+    return { ...change, id, row: parsedRow, patch };
+  });
+
+  // ── Stage 3F: Supabase canonical, one compare-and-set per lead ────────────
+  if (outreachWriteAuthority(env) === 'supabase') {
+    const outcomes = [];
+    for (const change of prepared) {
+      const canonical = await applyCanonicalChange(change.id, change.patch, {
+        env, logger, expectedState: change.expectedState || null,
+        releaseMarkers: change.releaseMarkers || [], resumeIntent: Boolean(change.resumeIntent),
+        skipIfUnchanged: true,
+      });
+      const status = batchStatus(canonical);
+      outcomes.push({
+        leadId: change.id, status,
+        reason: canonical.ok ? (canonical.unchanged ? 'already in this state' : 'ok') : canonical.reason,
+        revision: Number.isFinite(canonical.revision) ? canonical.revision : null,
+        conflicts: canonical.conflicts || 0,
+        keptMarkers: canonical.keptMarkers || [], resumeTagKept: Boolean(canonical.resumeTagKept),
+        mirrored: false, row: change.row,
+        committed: status === 'succeeded'
+          ? { ...change.patch, ...(canonical.notes !== undefined ? { notes: canonical.notes } : {}) } : null,
       });
     }
+    const committed = outcomes.filter(outcome => outcome.status === 'succeeded');
+    if (committed.length) {
+      writeDiagnostics.mutations += committed.length;
+      writeDiagnostics.lastMutationAt = new Date().toISOString();
+    }
+
+    // Sheets is the secondary mirror: committed leads only, after Supabase, with
+    // exactly the values that committed. extraData rides along only when no lead
+    // was left behind, so a companion write never describes a partial batch.
+    const allLanded = outcomes.every(outcome => outcome.status === 'succeeded' || outcome.status === 'unchanged');
+    const data = [
+      ...(allLanded ? extraData : []),
+      ...committed.flatMap(outcome => cellsFor(outcome.row, outcome.committed)),
+    ];
+    let sheetsWritten = false;
+    let mirrorReason = data.length ? 'ok' : 'nothing committed to mirror';
+    if (data.length) {
+      try {
+        await sheetsClient.spreadsheets.values.batchUpdate({
+          spreadsheetId, requestBody: { valueInputOption, data },
+        });
+        sheetsWritten = true;
+        for (const outcome of committed) outcome.mirrored = true;
+        writeDiagnostics.mirrored += committed.length;
+      } catch (error) {
+        mirrorReason = (error && error.message) || 'sheets mirror failed';
+        writeDiagnostics.mirrorFailures += committed.length;
+        writeDiagnostics.lastMirrorFailureAt = new Date().toISOString();
+        writeDiagnostics.lastMirrorFailureReason = mirrorReason;
+        logger.warn(`[outreach-state] ${committed.length} lead(s): Supabase writes COMMITTED, Sheets mirror deferred `
+          + `(${mirrorReason}). Supabase remains authoritative; run the Stage 3 reconciliation to repair Sheets.`);
+      }
+    }
+    const summary = batchSummary(outcomes, prepared.length);
+    noteWrite({ at: new Date().toISOString(), leadId: `${prepared.length} leads`,
+      fields: Object.keys((prepared[0] && prepared[0].patch) || {}), mirrored: sheetsWritten, reason: mirrorReason,
+      latencyMs: 0, authority: 'supabase', summary });
+    return {
+      ok: allLanded, authority: 'supabase', count: prepared.length, summary,
+      results: outcomes.map(({ row: _row, committed: _committed, ...outcome }) => outcome),
+      mirrored: committed.filter(outcome => outcome.mirrored).length, mirrorReason,
+      extraDataWritten: Boolean(extraData.length && allLanded && sheetsWritten),
+    };
   }
 
+  // ── Sheets canonical (Stage 3B–3E) ────────────────────────────────────────
   // AUTHORITATIVE WRITE. One batch, one failure mode, throws as before.
+  const data = [...extraData, ...prepared.flatMap(change => cellsFor(change.row, change.patch))];
   await sheetsClient.spreadsheets.values.batchUpdate({
     spreadsheetId, requestBody: { valueInputOption, data },
   });
   writeDiagnostics.mutations += list.length;
   writeDiagnostics.lastMutationAt = new Date().toISOString();
 
+  const outcomes = prepared.map(change => ({ leadId: change.id, status: 'succeeded', reason: 'ok',
+    revision: null, conflicts: 0, keptMarkers: [], resumeTagKept: false, mirrored: false }));
   let mirrored = 0;
   let reason = 'skipped';
   if (list.length && outreachStateMode(env) !== 'off') {
@@ -1015,6 +1157,7 @@ async function applyLeadChanges(changes, {
       mirrorOutreachLeadFields(change.leadId, change.patch, { env, logger })));
     const latency = Date.now() - started;
     if (latency > writeDiagnostics.maxMirrorLatencyMs) writeDiagnostics.maxMirrorLatencyMs = latency;
+    results.forEach((result, index) => { outcomes[index].mirrored = result.mirrored === 1; });
     mirrored = results.filter(r => r.mirrored === 1).length;
     const failed = results.length - mirrored;
     writeDiagnostics.mirrored += mirrored;
@@ -1029,7 +1172,8 @@ async function applyLeadChanges(changes, {
     noteWrite({ at: writeDiagnostics.lastMutationAt, leadId: `${list.length} leads`,
       fields: Object.keys(list[0].patch || {}), mirrored: mirrored === list.length, reason, latencyMs: latency });
   }
-  return { ok: true, count: list.length, mirrored, mirrorReason: reason };
+  return { ok: true, authority: 'sheets', count: list.length, summary: batchSummary(outcomes, list.length),
+    results: outcomes, mirrored, mirrorReason: reason };
 }
 
 module.exports = {
@@ -1044,6 +1188,6 @@ module.exports = {
   listOutreachLeads, countOutreachLeads, compareOutreachLead,
   applyLeadChange, applyLeadChanges, columnLetterFor,
   applyCanonicalChange, conflictRefusal, readCanonicalLead, MAX_CAS_ATTEMPTS,
-  preserveSafetyMarkers, SAFETY_NOTE_MARKERS,
+  preserveSafetyMarkers, SAFETY_NOTE_MARKERS, preserveResumeTag, BATCH_STATUSES,
   outreachWriteDiagnostics, resetOutreachWriteDiagnostics,
 };

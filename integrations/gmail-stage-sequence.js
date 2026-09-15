@@ -55,6 +55,13 @@ async function verifyThreadOwnership({ gmail, threadId, senderEmail, recipientEm
   }
 }
 
+// INERT FOR REAL SENDS. Gmail's users.messages.send replaces the Message-ID we set
+// with its own <…@mail.gmail.com>, so a deterministic id (coldStepRfcMessageId,
+// sequenceRfcMessageId, responseRfcMessageId) is never found in the mailbox and
+// this returns null — verified against 50 production sends from both inboxes.
+// A null result must never be read as "not sent". Duplicate protection is the
+// durable send reservation every caller writes before delivery; proving a
+// delivered send needs the Gmail message id the provider returned.
 async function findSuccessfulSequenceSend({ gmail, rfcMessageId }) {
   if (!gmail || !rfcMessageId) return null;
   const response = await gmail.users.messages.list({

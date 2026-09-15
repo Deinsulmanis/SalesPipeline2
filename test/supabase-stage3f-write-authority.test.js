@@ -297,9 +297,17 @@ test('a refusal is distinguishable from a transport failure', async () => {
 
 // ── the flip is internal ────────────────────────────────────────────────────
 
-test('the authority flip lives in exactly one function', () => {
-  const branches = (stateSrc.match(/outreachWriteAuthority\(env\) === 'supabase'/g) || []).length;
-  assert.equal(branches, 1, 'no second place may decide who is canonical');
+test('the authority flip lives only in the two mutation entry points', () => {
+  // Restated during the Stage 3 incident repair. applyLeadChanges gained its own
+  // canonical path: a batch that wrote Sheets first and then upserted Supabase
+  // was a last-write-wins route around compare-and-set. The decision still
+  // lives inside the abstraction, in its two entry points, and nowhere else.
+  const branches = [...stateSrc.matchAll(/outreachWriteAuthority\(env\) === 'supabase'/g)].map(match => match.index);
+  assert.equal(branches.length, 2, 'no third place may decide who is canonical');
+  const single = stateSrc.indexOf('async function applyLeadChange(');
+  const batch = stateSrc.indexOf('async function applyLeadChanges(');
+  assert.ok(branches[0] > single && branches[0] < batch, 'one branch is inside applyLeadChange');
+  assert.ok(branches[1] > batch, 'the other is inside applyLeadChanges');
   const serverSrc = readSource(path.join(root, 'server.js'));
   const agentSrc = readSource(path.join(root, 'outreach-agent.js'));
   for (const [name, src] of [['server.js', serverSrc], ['outreach-agent.js', agentSrc]]) {
