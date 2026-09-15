@@ -2451,13 +2451,16 @@ async function loadSuppressionEmails() {
 
 // Writes the notes cell for exactly one ColdEmail row. Column L only — the
 // same single cell applyManualHold touches, so no other lead state can move.
-async function writeColdEmailNotes(twin, notes) {
+// releaseMarkers is how Resume removes [MANUAL HOLD] on purpose. Without it the
+// canonical store keeps any hold, opt-out or bounce marker that a notes value
+// built from an older read would otherwise erase.
+async function writeColdEmailNotes(twin, notes, { releaseMarkers = [] } = {}) {
   // Column L only, exactly as before — the abstraction writes precisely the
   // cells the patch names, so the narrow semantics applyManualHold relies on
   // are unchanged. The twin is a nine-field projection, which is why a field
   // patch is passed rather than the twin itself.
   await applyLeadChange(twin.id, { notes }, {
-    row: twin._row, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID,
+    row: twin._row, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID, releaseMarkers,
   });
 }
 
@@ -3199,7 +3202,9 @@ async function writeResumeNotes(twin, notes) {
   if (current.length !== 1 || current[0].notes !== twin.notes || normalizeEmail(current[0].email) !== normalizeEmail(twin.email)) {
     throw resumeFailure('state_changed', 'the notes or identity changed before hold removal');
   }
-  await writeColdEmailNotes(current[0], notes);
+  // Removing the hold is this write's whole purpose, so it is declared. No other
+  // writer may lift a hold through notes.
+  await writeColdEmailNotes(current[0], notes, { releaseMarkers: [MANUAL_HOLD_TAG] });
 }
 
 async function restoreResumeHold(twin) {

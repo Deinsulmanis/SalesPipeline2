@@ -561,7 +561,7 @@ function columnLetterFor(field) {
 const writeDiagnostics = {
   startedAt: new Date().toISOString(),
   mutations: 0, mirrored: 0, mirrorFailures: 0,
-  casConflicts: 0, conflictRetries: 0, conflictRefusals: 0,
+  casConflicts: 0, conflictRetries: 0, conflictRefusals: 0, safetyMarkersKept: 0,
   lastMutationAt: null, lastMirrorFailureAt: null, lastMirrorFailureReason: null,
   maxMirrorLatencyMs: 0, recent: [],
 };
@@ -580,7 +580,7 @@ function resetOutreachWriteDiagnostics() {
   Object.assign(writeDiagnostics, {
     startedAt: new Date().toISOString(),
     mutations: 0, mirrored: 0, mirrorFailures: 0,
-    casConflicts: 0, conflictRetries: 0, conflictRefusals: 0,
+    casConflicts: 0, conflictRetries: 0, conflictRefusals: 0, safetyMarkersKept: 0,
     lastMutationAt: null, lastMirrorFailureAt: null, lastMirrorFailureReason: null,
     maxMirrorLatencyMs: 0, recent: [],
   });
@@ -657,6 +657,59 @@ function conflictRefusal(current, patch) {
   return null;
 }
 
+// ── safety markers in notes ─────────────────────────────────────────────────
+//
+// Notes are written whole. A writer that read a lead and built its notes from
+// that copy erases any marker that landed after its read: a MANUAL HOLD a human
+// applied, an unsubscribe, a bounce. Compare-and-set does not catch it when the
+// writer's own canonical read already sees the marker — the revision is current,
+// only the VALUE is stale — and the conflict rules above refuse stage and status
+// changes under a hold, not a notes-only write.
+//
+// So on EVERY attempt a notes patch is checked against the canonical notes it
+// replaces, and a safety marker present there is kept. The mutation still lands:
+// refusing it would drop a reply or a bounce record on the floor. It just cannot
+// lift the suppression.
+//
+// The markers are pipeline-state's SEND_SUPPRESSION_TAGS, asserted equal by the
+// tests; this module takes no dependency on it. '[BOUNCED' is a prefix there, so
+// '[BOUNCED]' and '[BOUNCED: Smartlead]' are both kept verbatim.
+//
+// Only a hold is a pause a human chose. Resume removes it by passing
+// releaseMarkers: ['[MANUAL HOLD]']; opt-out and bounce cannot be released here.
+const SAFETY_NOTE_MARKERS = Object.freeze(['[REPLY: Unsubscribed]', '[BOUNCED', MANUAL_HOLD_MARKER]);
+const RELEASABLE_NOTE_MARKERS = Object.freeze([MANUAL_HOLD_MARKER]);
+
+/** The marker exactly as it appears in `notes`, or null. Detection ignores case. */
+function markerIn(notes, marker) {
+  const haystack = String(notes || '');
+  const at = haystack.toLowerCase().indexOf(marker.toLowerCase());
+  if (at === -1) return null;
+  if (marker.endsWith(']')) return haystack.slice(at, at + marker.length);
+  const close = haystack.indexOf(']', at);
+  return close === -1 ? haystack.slice(at) : haystack.slice(at, close + 1);
+}
+
+/**
+ * The notes to write so that no safety marker in the canonical notes is lost.
+ * PURE. `kept` lists the markers put back into the value.
+ *
+ * A marker counts as carried when the next value holds it verbatim or in the
+ * exact form the send-time check looks for — never a case variant that check
+ * would not recognise.
+ */
+function preserveSafetyMarkers(canonicalNotes, nextNotes, { releaseMarkers = [] } = {}) {
+  const next = nextNotes === null || nextNotes === undefined ? '' : String(nextNotes);
+  const kept = [];
+  for (const marker of SAFETY_NOTE_MARKERS) {
+    const present = markerIn(canonicalNotes, marker);
+    if (!present || next.includes(marker) || next.includes(present)) continue;
+    if (RELEASABLE_NOTE_MARKERS.includes(marker) && releaseMarkers.includes(marker)) continue;
+    kept.push(present);
+  }
+  return { notes: kept.length ? [...kept, next].filter(Boolean).join(' ') : next, kept };
+}
+
 const headersForWrite = (config, extra = {}) => ({
   apikey: config.key, Authorization: `Bearer ${config.key}`,
   'Content-Type': 'application/json', ...extra,
@@ -710,7 +763,7 @@ async function casAttempt(id, patch, revision, { env = process.env }) {
  * NEVER last-write-wins. On conflict it reloads, re-evaluates against the
  * precedence rules above, and only retries when the intent is still safe.
  */
-async function applyCanonicalChange(id, patch, { env = process.env, logger = console } = {}) {
+async function applyCanonicalChange(id, patch, { env = process.env, logger = console, releaseMarkers = [] } = {}) {
   const column = {};
   for (const [field, value] of Object.entries(patch)) {
     column[FIELD_MAP[field]] = value === null || value === undefined ? '' : String(value);
@@ -734,10 +787,24 @@ async function applyCanonicalChange(id, patch, { env = process.env, logger = con
       }
     }
 
-    const result = await casAttempt(id, column, current.revision, { env });
+    // Every attempt, not only retries: a notes value built from an older read
+    // must not lift a suppression that is in canonical state now.
+    const safe = Object.prototype.hasOwnProperty.call(patch, 'notes')
+      ? preserveSafetyMarkers(current.lead.notes, patch.notes, { releaseMarkers })
+      : { notes: null, kept: [] };
+    const attemptColumns = safe.kept.length ? { ...column, notes: safe.notes } : column;
+
+    const result = await casAttempt(id, attemptColumns, current.revision, { env });
     if (result.applied) {
       if (conflicts) writeDiagnostics.conflictRetries += conflicts;
-      return { ok: true, conflicts, revision: current.revision + 1 };
+      if (safe.kept.length) {
+        writeDiagnostics.safetyMarkersKept += safe.kept.length;
+        // Marker names only: notes carry prospect detail and are never logged.
+        logger.warn(`[outreach-state] lead ${id}: a notes write would have removed ${safe.kept.join(', ')}; `
+          + 'kept it. Safety state in canonical notes outranks a value built from an older read.');
+      }
+      return { ok: true, conflicts, revision: current.revision + 1,
+        keptMarkers: safe.kept, notes: safe.kept.length ? safe.notes : undefined };
     }
     if (result.reason) return { ok: false, conflicts, reason: result.reason };
     conflicts++;
@@ -768,6 +835,7 @@ async function applyLeadChange(leadId, patch, {
   row, sheetsClient, spreadsheetId, extraData = [],
   sheetName = 'ColdEmail', valueInputOption = 'RAW',
   env = process.env, logger = console,
+  releaseMarkers = [],
 } = {}) {
   const id = String(leadId || '').trim();
   if (!id) throw new Error('applyLeadChange requires a lead id');
@@ -795,7 +863,7 @@ async function applyLeadChange(leadId, patch, {
   // ── Stage 3F: Supabase canonical ──────────────────────────────────────────
   // The authority flip lives here and nowhere else. No call site changes.
   if (outreachWriteAuthority(env) === 'supabase') {
-    const canonical = await applyCanonicalChange(id, patch, { env, logger });
+    const canonical = await applyCanonicalChange(id, patch, { env, logger, releaseMarkers });
     if (!canonical.ok) {
       // A refusal is a CORRECT outcome, not a transport failure: the lead moved
       // to state that outranks this mutation. Either way the caller asked for a
@@ -814,11 +882,17 @@ async function applyLeadChange(leadId, patch, {
     // Sheets is now the SECONDARY mirror. Its failure must not roll back a
     // committed canonical write, must not restore Sheets authority, and must not
     // affect send eligibility — it is recorded, and repaired by reconciliation.
+    // Sheets mirrors what COMMITTED. A safety marker kept above must reach the
+    // secondary copy too, or Sheets would show a held lead as unheld.
+    const notesRange = `${sheetName}!${columnLetterFor('notes')}${parsedRow}`;
+    const mirrorData = canonical.keptMarkers && canonical.keptMarkers.length
+      ? data.map(entry => (entry.range === notesRange ? { ...entry, values: [[canonical.notes]] } : entry))
+      : data;
     let sheetsMirrored = false;
     let sheetsReason = 'ok';
     try {
       await sheetsClient.spreadsheets.values.batchUpdate({
-        spreadsheetId, requestBody: { valueInputOption, data },
+        spreadsheetId, requestBody: { valueInputOption, data: mirrorData },
       });
       sheetsMirrored = true;
       writeDiagnostics.mirrored++;
@@ -834,7 +908,8 @@ async function applyLeadChange(leadId, patch, {
       mirrored: sheetsMirrored, reason: sheetsReason, latencyMs: 0,
       authority: 'supabase', conflicts: canonical.conflicts, revision: canonical.revision });
     return { ok: true, leadId: id, fields, mirrored: sheetsMirrored, mirrorReason: sheetsReason,
-      authority: 'supabase', conflicts: canonical.conflicts, revision: canonical.revision };
+      authority: 'supabase', conflicts: canonical.conflicts, revision: canonical.revision,
+      keptMarkers: canonical.keptMarkers || [] };
   }
 
   // ── Sheets canonical (Stage 3B–3E) ────────────────────────────────────────
@@ -961,5 +1036,6 @@ module.exports = {
   listOutreachLeads, countOutreachLeads, compareOutreachLead,
   applyLeadChange, applyLeadChanges, columnLetterFor,
   applyCanonicalChange, conflictRefusal, readCanonicalLead, MAX_CAS_ATTEMPTS,
+  preserveSafetyMarkers, SAFETY_NOTE_MARKERS,
   outreachWriteDiagnostics, resetOutreachWriteDiagnostics,
 };
