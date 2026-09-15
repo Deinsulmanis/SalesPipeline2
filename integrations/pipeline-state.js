@@ -1528,6 +1528,28 @@ function stageTransitionCheck(toStage, lead) {
   return { ok: true };
 }
 
+// ── LEAD DATES ──────────────────────────────────────────────────────────────
+// `created` has been written two ways: epoch milliseconds by the board, and ISO
+// strings by promotion and the agent. The reader used parseInt(), which turns
+// "2026-09-14T06:12:10.184Z" into 2026 — two seconds after the epoch, rendered
+// as Dec 31, 1969 in Vancouver — and the next board save wrote that 2026 back
+// into the sheet. A value that is not a real instant is unknown, never a date
+// near 1970.
+const MIN_VALID_CREATED_MS = Date.UTC(2000, 0, 1);
+
+function parseCreatedMs(value) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value >= MIN_VALID_CREATED_MS ? Math.trunc(value) : null;
+  }
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  // All digits is epoch milliseconds; a bare year like "2026" falls below the
+  // floor. Anything else must at least start as a calendar date.
+  const ms = /^\d+$/.test(text) ? Number(text)
+    : /^\d{4}-\d{2}-\d{2}/.test(text) ? Date.parse(text) : NaN;
+  return Number.isFinite(ms) && ms >= MIN_VALID_CREATED_MS ? ms : null;
+}
+
 // ── REOPENING ───────────────────────────────────────────────────────────────
 // A lead that replies or books after being marked lost. Reopening is a HUMAN
 // decision here — this only reports whether it is safe and what it would cost.
@@ -1574,4 +1596,5 @@ module.exports = {
   ACTION_OWNER, ACTION_STATUS, ACTION_TYPE, BUSINESS_TIMEZONE,
   businessDay, deriveActionStatus, compareNextActions, summarizeNextActions,
   stageTransitionCheck, reopenEligibility,
+  MIN_VALID_CREATED_MS, parseCreatedMs,
 };

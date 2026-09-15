@@ -70,10 +70,14 @@ test('2. booking requires a valid, future meeting time', () => {
 test('3. booking sets Call Booked and holds automation first', () => {
   assert.ok(HUMAN_OWNED_STAGES.includes('call_booked'));
   assert.match(route, /if \(stageRequiresHold\('call_booked'\)\) \{/);
-  assert.match(route, /applyManualHold\(req\.params\.id, email\)/);
-  assert.ok(route.indexOf('applyManualHold') < route.indexOf('values.batchUpdate'),
+  // The hold is applied AND read back, and an unconfirmed hold refuses the
+  // booking before anything is written.
+  assert.match(route, /ensureManualHoldDurable\(req\.params\.id, email\)/);
+  assert.match(route, /if \(!holdResult\.ok\) \{[\s\S]{0,300}return res\.status\(409\)/);
+  assert.ok(route.indexOf('ensureManualHoldDurable') < route.indexOf('commitCallBooked('),
     'the hold precedes the write, so a failure leaves a held lead');
-  const cells = [...route.matchAll(/range: `\$\{SHEET_NAME\}!([A-Z])\$\{rowNum\}`/g)].map(m => m[1]);
+  const helper = readSource(path.join(root, 'integrations', 'call-booking.js'));
+  const cells = [...helper.matchAll(/`\$\{sheetName\}!([A-Z])\$\{rowNum\}`/g)].map(m => m[1]);
   assert.deepEqual(cells.sort(), ['M', 'U'], 'writes only the stage and the meeting time');
 });
 
@@ -259,12 +263,14 @@ test('30. a stale or impossible transition is refused server-side', () => {
   // The route re-derives from STORED history, not from the browser.
   assert.match(route, /const lifecycle = deriveCallLifecycle\(lead, \{ activities \}\);/);
   assert.match(route, /const allowed = callLifecycleActions\(lifecycle\);/);
-  assert.match(route, /if \(!allowed\[action\]\) \{/);
+  // The one exception is entering Call Booked from an open stage, which is a
+  // booking by definition (see call-booked-meeting-time.test.js).
+  assert.match(route, /if \(!allowed\[action\] && !entersCallBooked\) \{/);
   assert.match(route, /code: 'invalid_transition'/);
   // And an optimistic check catches a meeting that moved under the drawer.
   assert.match(route, /if \(expected && expected !== String\(lifecycle\.meetingAt \|\| ''\)\)/);
   assert.match(route, /code: 'meeting_changed'/);
-  assert.ok(route.indexOf('invalid_transition') < route.indexOf('values.batchUpdate'),
+  assert.ok(route.indexOf('invalid_transition') < route.indexOf('commitCallBooked('),
     'refusal precedes any write');
   // A completed call really is refused a second completion.
   const completed = life({ meetingAt: PAST }, [booked(PAST), ev('meeting_completed', '2026-08-21T10:00:00.000Z', { meetingAt: PAST })]);
@@ -280,8 +286,8 @@ test('31/32/33/34/35. no lifecycle action sends, resumes or rewrites sequence st
   assert.ok(!/emailStep|lastEmailedAt|emailStatus/.test(route), 'sequence state untouched');
   assert.ok(!/applyResumeToNotes|clearResumeFromNotes|RESUME/.test(route), 'never resumes a sequence');
   assert.ok(!/addSuppression/.test(route), 'suppression untouched');
-  // Only the hold WRITER appears, never a remover.
-  assert.match(route, /applyManualHold/);
+  // Only the hold WRITER appears (applied and confirmed), never a remover.
+  assert.match(route, /ensureManualHoldDurable/);
   assert.ok(!/removeHold|clearHold/.test(route));
   // Write range proves it: stage and meeting time only, never agent columns R:T.
   assert.ok(!/![RST]\$\{rowNum\}/.test(route));

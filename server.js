@@ -165,9 +165,11 @@ const {
   REACTIVATION_MODES, reactivationEligibility, FOLLOW_UP_DELAY_DAYS,
   coldReactivationVerdict, coldReactivationSuppressionReader,
   CALL_STATUS, deriveCallLifecycle, callLifecycleActions, deriveHotState,
+  CALL_EVENTS, CALL_BOOKING_EVENTS, parseCreatedMs,
   applyResumeToNotes, clearResumeFromNotes, resumeAtFromNotes,
   applyHoldToNotes, releaseHoldFromNotes, stageRequiresHold, sendSuppressionReason,
 } = require('./integrations/pipeline-state');
+const { commitCallBooked } = require('./integrations/call-booking');
 // Reactivation asks the sender's own ownership question rather than keeping a
 // second opinion about who may contact a lead.
 const { deriveAutomationOwnership, ownershipSummary } = require('./integrations/automation-ownership');
@@ -905,7 +907,10 @@ app.get('/api/leads', requireAuth, async (_req, res) => {
         COLUMNS.forEach((col, i) => { lead[col] = row[i] || ''; });
         AGENT_COLS.forEach((col, i) => { lead[col] = row[17 + i] || ''; });
         CALL_DETAIL_COLS.forEach((col, i) => { lead[col] = row[20 + i] || ''; });
-        lead.created = parseInt(lead.created) || Date.now();
+        // Epoch ms, or '' when the stored value is missing or unreadable. Never
+        // parseInt (it read ISO strings as their year) and never a stand-in
+        // "now" (the next board save would persist the invented date).
+        lead.created = parseCreatedMs(lead.created) ?? '';
         if (lead.id) rowMap.set(lead.id, idx + 2);
         return lead;
       }).filter(l => l.id);
@@ -1013,6 +1018,14 @@ app.put('/api/leads/:id', requireAuth, async (req, res) => {
           attemptedStage: displayStageFor(nextStage),
         });
       }
+    }
+
+    // `created` is not the browser's to rewrite. Boards that received a mangled
+    // value wrote it straight back, so a value that is not a real instant keeps
+    // the stored cell instead of replacing it.
+    const createdIndex = COLUMNS.indexOf('created');
+    if (createdIndex !== -1 && priorRow.length && parseCreatedMs(lead.created) === null) {
+      vals[0][createdIndex] = String(priorRow[createdIndex] || '');
     }
 
     await withAuth(async () => {
@@ -4133,6 +4146,8 @@ app.post('/api/leads/:id/sequence', requireAuth, async (req, res) => {
 // deal. Cancel, complete and no-show write no lead state at all: they append an
 // event, and the derivation does the rest.
 const CALL_ACTIONS = new Set(['book', 'reschedule', 'cancel', 'complete', 'no_show']);
+// How far back an operator may record a meeting that already happened.
+const PAST_MEETING_RECORD_WINDOW_MS = 30 * 86400000;
 // Readable verbs for refusal messages; string-concatenating the action id gave
 // nonsense like "completeed".
 const CALL_ACTION_VERB = {
@@ -4201,8 +4216,15 @@ app.post('/api/leads/:id/call-lifecycle', requireAuth, async (req, res) => {
       || (email && normalizeEmail(a.email) === normalizeEmail(email)));
     const lifecycle = deriveCallLifecycle(lead, { activities });
     const allowed = callLifecycleActions(lifecycle);
+    // Entering Call Booked from an open stage is always a booking decision, even
+    // when Save call details already stored a time: that stored future time
+    // reads as a "scheduled" call, which would otherwise forbid `book` and leave
+    // the lead unable to reach the stage its own meeting belongs to.
+    const currentStage = displayStageFor(lead.stage);
+    const entersCallBooked = action === 'book'
+      && !['call_booked', 'closed_won', 'closed_lost'].includes(currentStage);
 
-    if (!allowed[action]) {
+    if (!allowed[action] && !entersCallBooked) {
       return res.status(409).json({
         error: `A call in state "${lifecycle.status.replace(/_/g, ' ')}" cannot be ${CALL_ACTION_VERB[action]}. Reload and try again.`,
         code: 'invalid_transition', status: lifecycle.status, meetingAt: lifecycle.meetingAt,
@@ -4223,6 +4245,8 @@ app.post('/api/leads/:id/call-lifecycle', requireAuth, async (req, res) => {
     const occurredAt = new Date().toISOString();
     let meetingAt = String(lifecycle.meetingAt || '');
     const previousMeetingAt = meetingAt;
+    let holdResult = null;
+    let timelineRecorded = true;
 
     if (action === 'book' || action === 'reschedule') {
       const raw = String(req.body?.meetingAt || '').trim();
@@ -4231,38 +4255,59 @@ app.post('/api/leads/:id/call-lifecycle', requireAuth, async (req, res) => {
         return res.status(422).json({ error: 'A valid meeting date and time is required.', field: 'meetingAt' });
       }
       if (ms < Date.now()) {
-        return res.status(422).json({ error: 'A meeting cannot be booked in the past.', field: 'meetingAt' });
+        // A booking is normally in the future. The one exception is RECORDING a
+        // meeting that was really booked and has already happened (so it can be
+        // marked completed or no show): only when entering Call Booked, only
+        // when the operator explicitly confirmed the time has passed, and only
+        // recently. Rescheduling into the past is never allowed.
+        const recordsPastMeeting = entersCallBooked && req.body?.pastMeetingConfirmed === true
+          && Date.now() - ms <= PAST_MEETING_RECORD_WINDOW_MS;
+        if (!recordsPastMeeting) {
+          return res.status(422).json({ error: 'A meeting cannot be booked in the past.', field: 'meetingAt', code: 'meeting_in_past' });
+        }
       }
       meetingAt = new Date(ms).toISOString();
       if (action === 'reschedule' && meetingAt === previousMeetingAt) {
         return res.status(422).json({ error: 'Choose a different time to reschedule to.', field: 'meetingAt' });
       }
-      // Booking the identical time again is a no-op, not a duplicate event.
-      if (action === 'book' && meetingAt === previousMeetingAt
+      // Booking the identical time again is a no-op, not a duplicate event —
+      // once the lead is actually in Call Booked. Before that, the same time
+      // still has a stage to carry.
+      if (action === 'book' && meetingAt === previousMeetingAt && !entersCallBooked
         && [CALL_STATUS.SCHEDULED, CALL_STATUS.RESCHEDULED].includes(lifecycle.status)) {
         return res.json({ ok: true, unchanged: true, status: lifecycle.status, meetingAt });
       }
 
-      // Call Booked is human-owned: hold before the stage write, the same
-      // fail-closed ordering every other terminal transition uses.
-      if (stageRequiresHold('call_booked')) {
-        await withAuth(() => applyManualHold(req.params.id, email));
-      }
       const gate = stageTransitionCheck('call_booked', { meetingAt, outcome: lead.outcome });
       if (!gate.ok) return res.status(422).json({ error: gate.message, field: gate.field });
 
-      // Targeted cells only: the meeting time (U) and the stage (M). Sequence
-      // state, notes, follow-up date and sales outcome are all left alone.
-      await withAuth(() => sheets().spreadsheets.values.batchUpdate({
-        spreadsheetId: SPREADSHEET_ID,
-        requestBody: {
-          valueInputOption: 'RAW',
-          data: [
-            { range: `${SHEET_NAME}!U${rowNum}`, values: [[meetingAt]] },
-            { range: `${SHEET_NAME}!M${rowNum}`, values: [['call_booked']] },
-          ],
-        },
+      // Call Booked is human-owned: the hold is applied AND read back before
+      // anything is written, the same fail-closed order as the stage chip.
+      if (stageRequiresHold('call_booked')) {
+        holdResult = await withAuth(() => ensureManualHoldDurable(req.params.id, email));
+        if (!holdResult.ok) {
+          return res.status(409).json({
+            error: 'Manual hold could not be confirmed, so the call was not booked.',
+            code: 'hold_unconfirmed', detail: holdResult.reason, stage: currentStage,
+          });
+        }
+      }
+
+      // Targeted cells only: the meeting time (U), confirmed by read-back, then
+      // the stage (M). Sequence state, notes, follow-up date and sales outcome
+      // are all left alone. A refusal here has not moved the stage.
+      const committed = await withAuth(() => commitCallBooked({
+        values: sheets().spreadsheets.values, spreadsheetId: SPREADSHEET_ID,
+        sheetName: SHEET_NAME, rowNum, meetingAt,
       }));
+      if (!committed.ok) {
+        console.error('[Call lifecycle] booking not committed for', req.params.id, '-', committed.code);
+        return res.status(committed.code === 'invalid_meeting_time' ? 422 : 409).json({
+          error: committed.error, code: committed.code, field: 'meetingAt',
+          stage: currentStage, meetingSaved: committed.meetingSaved,
+        });
+      }
+      meetingAt = committed.meetingAt;
     }
 
     // Resolutions write NO lead state at all — the event is the record, and the
@@ -4284,10 +4329,46 @@ app.post('/api/leads/:id/call-lifecycle', requireAuth, async (req, res) => {
           salesOutcomeUnchanged: true,
         }),
       };
+    // Save call details records a booking event when it stores a time. Moving
+    // that same meeting into Call Booked is not a second booking.
+    const latestCallEvent = activities
+      .filter(a => CALL_EVENTS.includes(String(a.eventType || '')))
+      .sort((a, b) => String(a.occurredAt || '').localeCompare(String(b.occurredAt || '')))
+      .pop();
+    const bookingAlreadyRecorded = action === 'book' && Boolean(latestCallEvent)
+      && CALL_BOOKING_EVENTS.includes(String(latestCallEvent.eventType))
+      && (() => { try { return JSON.parse(latestCallEvent.metadata || '{}').meetingAt === meetingAt; } catch (_) { return false; } })();
     const pending = [];
     if (!allActivities.some(a => a.eventId === eventId)) {
-      pending.push(lifecycleEvent);
-      recorded = true;
+      if (!bookingAlreadyRecorded) {
+        pending.push(lifecycleEvent);
+        recorded = true;
+      }
+    }
+    if (entersCallBooked) {
+      const stageEvent = {
+        eventId: stableActivityId('stage-changed', [req.params.id, lead.stage, 'call_booked', meetingAt]),
+        leadId: req.params.id, sourceLeadId: '', email, company,
+        eventType: 'stage_changed', occurredAt,
+        subject: `${currentStage} -> call_booked`, content: '',
+        metadata: JSON.stringify({
+          fromStage: currentStage, toStage: 'call_booked', fromStageRaw: lead.stage, toStageRaw: 'call_booked',
+          trigger: 'call_booked_with_meeting', meetingAt,
+        }),
+      };
+      const holdEvents = ((holdResult && holdResult.held) || []).map(row => ({
+        eventId: stableActivityId('automation-held', [req.params.id, row.id, 'call_booked']),
+        leadId: req.params.id, sourceLeadId: row.id, email, company,
+        eventType: 'automation_held', occurredAt,
+        subject: 'Automated follow-up suppressed', content: '',
+        metadata: JSON.stringify({
+          stage: 'call_booked', trigger: 'stage_transition', coldEmailId: row.id, matchedBy: row.matchedBy,
+          tag: MANUAL_HOLD_TAG, holdConfirmed: true,
+        }),
+      }));
+      for (const event of [stageEvent, ...holdEvents]) {
+        if (!allActivities.some(a => a.eventId === event.eventId)) pending.push(event);
+      }
     }
 
     let automationEnrollment = null;
@@ -4301,13 +4382,24 @@ app.post('/api/leads/:id/call-lifecycle', requireAuth, async (req, res) => {
       automationEnrollment = planned.decision;
       if (planned.event && !allActivities.some(a => a.eventId === planned.event.eventId)) pending.push(planned.event);
     }
-    if (pending.length) await appendColdCallActivities(pending);
+    if (pending.length) {
+      try {
+        await appendColdCallActivities(pending);
+      } catch (appendError) {
+        // A resolution's event IS its record, so that must fail loudly. A
+        // booking is already committed and confirmed in the sheet; report the
+        // lagging timeline rather than a booking that happened as a failure.
+        if (action !== 'book' && action !== 'reschedule') throw appendError;
+        console.warn('[Call lifecycle] booking saved, but timeline append failed:', appendError.message);
+        timelineRecorded = false;
+      }
+    }
 
     const nextLifecycle = deriveCallLifecycle({ ...lead, meetingAt, stage: 'call_booked' }, {
       activities: [...activities, { eventType, occurredAt, metadata: JSON.stringify({ meetingAt, previousMeetingAt }) }],
     });
     res.json({
-      ok: true, action, recorded, status: nextLifecycle.status,
+      ok: true, action, recorded, timelineRecorded, status: nextLifecycle.status,
       meetingAt: nextLifecycle.meetingAt, previousMeetingAt: nextLifecycle.previousMeetingAt,
       salesOutcome: lead.outcome || '', automationResumed: false,
       // What the operator should do next. A meeting result is not a sales

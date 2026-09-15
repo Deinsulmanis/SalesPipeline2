@@ -2991,14 +2991,30 @@ function hideLoadingOverlay() {
 }
 
 let toastSeq = 0;
+// One message, one toast. Repeating a refused action used to stack identical
+// warnings on top of each other; now the visible one just stays up longer.
 function showToast(msg, type = 'info') {
+  const active = showToast.active || (showToast.active = new Map());
+  const key = `${type}|${msg}`;
+  const existing = active.get(key);
+  if (existing && existing.el.isConnected) {
+    clearTimeout(existing.timer);
+    existing.timer = scheduleToastRemoval(existing.el, key);
+    return existing.el;
+  }
   const container = document.getElementById('toast-container');
   const el = document.createElement('div');
   el.className = `toast toast-${type}`;
   el.textContent = msg;
   container.appendChild(el);
   requestAnimationFrame(() => { requestAnimationFrame(() => el.classList.add('show')); });
-  setTimeout(() => {
+  active.set(key, { el, timer: scheduleToastRemoval(el, key) });
+  return el;
+}
+
+function scheduleToastRemoval(el, key) {
+  return setTimeout(() => {
+    if (showToast.active) showToast.active.delete(key);
     el.classList.remove('show');
     setTimeout(() => el.remove(), 300);
   }, 3500);
@@ -3369,10 +3385,12 @@ async function moveLeadToStage(leadId, toStage) {
   // ── pre-write assertions ──
   if (!lead) { showToast('Lead not found', 'error'); return false; }
   if (!STAGE_IDS.includes(toStage)) { showToast(`Unknown stage "${toStage}"`, 'error'); return false; }
-  if (toStage === 'call_booked' && !lead.meetingAt) {
-    showToast('Add the booked meeting time before moving this lead to Call Booked.', 'warning');
-    openDetail(leadId);
-    return false;
+  if (toStage === 'call_booked' && displayStageFor(lead.stage) !== 'call_booked') {
+    // Never optimistic: the card moves only after the server has saved and
+    // confirmed the meeting time, and then the stage. Re-render first so a
+    // mobile stage picker does not keep showing a stage the lead is not in.
+    renderBoard();
+    return transitionToCallBooked(leadId, { openOnRefusal: true });
   }
   if (toStage === 'closed_lost' && !LOSS_OUTCOMES.includes(lead.outcome)) {
     showToast('Choose a loss reason before moving this lead to Closed / Lost.', 'warning');
@@ -3713,7 +3731,7 @@ function openEdit(id) {
   document.getElementById('modal-overlay').classList.add('open');
 }
 
-function saveLead(e) {
+async function saveLead(e) {
   e.preventDefault();
   const existingLead = editingId ? (leads.find(l => l.id === editingId) || {}) : {};
   const lead = {
@@ -3734,8 +3752,17 @@ function saveLead(e) {
     priority: document.getElementById('f-priority').value,
     followup: document.getElementById('f-followup').value,
     notes:    document.getElementById('f-notes').value.trim(),
-    created:  editingId ? (leads.find(l => l.id === editingId)?.created || Date.now()) : Date.now(),
+    // An existing lead keeps whatever it has, including "unknown". Substituting
+    // Date.now() here invented a creation date and saved it.
+    created:  editingId ? (existingLead.created ?? '') : Date.now(),
   };
+
+  // Call Booked needs a confirmed meeting time, which this form does not
+  // collect. Save the other edits under the current stage, then enter Call
+  // Booked through the one path that commits the meeting time first.
+  const entersCallBooked = Boolean(editingId) && lead.stage === 'call_booked'
+    && displayStageFor(existingLead.stage) !== 'call_booked';
+  if (entersCallBooked) lead.stage = existingLead.stage;
 
   if (editingId) {
     leads[leads.findIndex(l => l.id === editingId)] = lead;
@@ -3744,7 +3771,8 @@ function saveLead(e) {
   }
   closeModal();
   renderBoard();
-  syncLead(lead);
+  await syncLead(lead);
+  if (entersCallBooked) await transitionToCallBooked(lead.id, { openOnRefusal: true });
 }
 
 function deleteLead(id) {
@@ -3787,7 +3815,7 @@ function openDetail(id) {
     (lead.company || lead.brokerage) && { label: 'Company', val: lead.company || lead.brokerage },
     lead.followup && { label: 'Follow-up', val: new Date(lead.followup+'T00:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}) },
     lead.priority && { label: 'Priority',  val: lead.priority.charAt(0).toUpperCase() + lead.priority.slice(1) },
-    { label: 'Added', val: new Date(lead.created).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) },
+    { label: 'Added', val: formatAddedDate(lead.created) },
   ].filter(Boolean);
 
   document.getElementById('d-fields').innerHTML = rows.map(row =>
@@ -3809,6 +3837,12 @@ function openDetail(id) {
 function setStage(id, stage) {
   const lead = leads.find(l => l.id === id);
   if (!lead) return;
+  if (stage === 'call_booked' && displayStageFor(lead.stage) !== 'call_booked') {
+    // Reads the Meeting time the operator entered (or the saved one), commits
+    // it, and only then moves the stage. See transitionToCallBooked.
+    transitionToCallBooked(id);
+    return;
+  }
   if (stage === 'call_booked' && !lead.meetingAt) {
     showToast('Add the booked meeting time before moving this lead to Call Booked.', 'warning');
     document.getElementById('d-meeting-at')?.focus();
@@ -4121,6 +4155,117 @@ function toLocalDateTimeInput(value) {
   if (Number.isNaN(date.getTime())) return '';
   const offset = date.getTimezoneOffset() * 60000;
   return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+// A datetime-local value ("2026-09-18T14:30", no zone) is the operator's local
+// wall-clock time. It becomes one canonical UTC instant here and is converted
+// back only for display. Anything else is not a meeting time.
+function meetingIsoFromLocal(localValue) {
+  const text = String(localValue || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(text)) return null;
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return null;
+  // Reject rollovers such as Feb 30 → Mar 2: the value must survive the trip.
+  return toLocalDateTimeInput(date.toISOString()) === text.slice(0, 16) ? date.toISOString() : null;
+}
+
+// `created` arrives as epoch ms, or '' when the stored value is missing or
+// unreadable. Unknown is shown as unknown — never as a date near 1970.
+function formatAddedDate(created) {
+  const text = String(created ?? '').trim();
+  const ms = typeof created === 'number' ? created
+    : /^\d+$/.test(text) ? Number(text)
+      : /^\d{4}-\d{2}-\d{2}/.test(text) ? Date.parse(text) : NaN;
+  if (!Number.isFinite(ms) || ms < Date.UTC(2000, 0, 1)) return '—';
+  return new Date(ms).toLocaleDateString('en-US',
+    { timeZone: 'America/Vancouver', month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// The meeting time a Call Booked move should commit: the value visibly in the
+// open drawer's Meeting time input, otherwise the saved canonical time.
+function callBookedMeetingCandidate(lead) {
+  const overlay = document.getElementById('detail-overlay');
+  const drawerOpen = detailId === lead.id && (!overlay || overlay.classList.contains('open'));
+  const input = drawerOpen ? document.getElementById('d-meeting-at') : null;
+  const typed = input ? String(input.value || '').trim() : '';
+  if (typed) {
+    const iso = meetingIsoFromLocal(typed);
+    return iso ? { iso, source: 'entered' }
+      : { error: 'Enter a valid meeting date and time before moving this lead to Call Booked.' };
+  }
+  const saved = String(lead.meetingAt || '').trim();
+  const savedMs = saved ? new Date(saved).getTime() : NaN;
+  if (Number.isFinite(savedMs)) return { iso: new Date(savedMs).toISOString(), source: 'saved' };
+  return { error: 'Add the booked meeting time before moving this lead to Call Booked.' };
+}
+
+/**
+ * The only way into Call Booked from the board, the drawer and Edit Lead.
+ *
+ * 1. validate the entered (or saved) meeting time
+ * 2. the server holds automation, writes the meeting time and reads it back
+ * 3. only a confirmed meeting time moves the stage
+ * 4. the board is reloaded from stored state — nothing here is optimistic
+ *
+ * A refusal or failure at any step leaves the lead in its current stage.
+ */
+async function transitionToCallBooked(leadId, { openOnRefusal = false } = {}) {
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead) { showToast('Lead not found', 'error'); return false; }
+  const refuse = message => {
+    showToast(message, 'warning');
+    if (openOnRefusal && detailId !== leadId) openDetail(leadId);
+    document.getElementById('d-meeting-at')?.focus();
+    return false;
+  };
+  const candidate = callBookedMeetingCandidate(lead);
+  if (candidate.error) return refuse(candidate.error);
+  // A meeting that already happened may be RECORDED (so it can then be marked
+  // completed or no show) — recently, and only after the operator says so.
+  const meetingMs = new Date(candidate.iso).getTime();
+  const pastMeetingConfirmed = meetingMs < Date.now();
+  if (pastMeetingConfirmed) {
+    if (Date.now() - meetingMs > 30 * 86400000) return refuse('A meeting cannot be booked in the past.');
+    const recordIt = confirm(`${callWhen(candidate.iso)} has already passed.\n\n`
+      + 'Record it as a meeting that was booked and already happened? You can then mark it completed or no show.');
+    if (!recordIt) return refuse('A meeting cannot be booked in the past.');
+  }
+
+  const inFlight = transitionToCallBooked.inFlight || (transitionToCallBooked.inFlight = new Set());
+  if (inFlight.has(leadId)) return false;          // one booking per lead at a time
+  inFlight.add(leadId);
+  // A debounced board move for this lead would rewrite the stage behind us.
+  const queued = pendingStageWrites.get(leadId);
+  if (queued) { clearTimeout(queued.timer); pendingStageWrites.delete(leadId); }
+  setSaving(true);
+  try {
+    const resp = await fetch(`/api/leads/${encodeURIComponent(leadId)}/call-lifecycle`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'book', meetingAt: candidate.iso, expectedMeetingAt: lead.meetingAt || '',
+        ...(pastMeetingConfirmed ? { pastMeetingConfirmed: true } : {}) }),
+    });
+    if (!resp.ok) {
+      const { message, code } = await apiError(resp, 'The call was not booked, and the stage was not changed.');
+      showToast(message, 'error');
+      if (code === 'invalid_transition' || code === 'meeting_changed') await refreshLeadEverywhere(leadId);
+      return false;
+    }
+    const data = await resp.json().catch(() => ({}));
+    if (!Number.isFinite(new Date(String(data.meetingAt || '')).getTime())) {
+      showToast('The server did not confirm the meeting time. Reloading the lead.', 'error');
+      await refreshLeadEverywhere(leadId);
+      return false;
+    }
+    showToast(`Call booked for ${callWhen(data.meetingAt)}.`, 'success');
+    await refreshLeadEverywhere(leadId);
+    return true;
+  } catch (error) {
+    showToast(`The call was not booked (${error.message}). The stage was not changed.`, 'error');
+    return false;
+  } finally {
+    inFlight.delete(leadId);
+    setSaving(false);
+  }
 }
 
 const ACTIVITY_LABELS = {
