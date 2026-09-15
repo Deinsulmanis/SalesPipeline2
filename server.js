@@ -139,7 +139,7 @@ const { hasUndeliveredDemoPair } = require('./integrations/demo-intent-state');
 const { normalizeLeadToken } = require('./integrations/demo-attribution');
 const { observeMailbox } = require('./integrations/gmail-mailbox-observer');
 const { planMailboxEvents } = require('./integrations/mailbox-observation-events');
-const { proveLegacyEvidence, applyProvenEvidence } = require('./integrations/gmail-evidence-reconciliation');
+const { proveLegacyEvidence, applyProvenEvidence, legacyEvidenceInputs } = require('./integrations/gmail-evidence-reconciliation');
 const {
   OVERRIDE_KIND, CONTACT_DECISION, buildClassificationOverride, buildActionOverride, reverseOverride,
   evaluateContactChange, buildContactChangeDecision,
@@ -5321,16 +5321,14 @@ app.get('/api/ops/mailbox-diagnostic', requireAuth, async (req, res) => {
 
 async function legacyEvidencePlan(leadId) {
   const dataset = await getOutreachDataset({ force: true });
-  const leads = dataset.leads.filter(row => row.id === leadId);
-  if (leads.length !== 1) throw new Error('One exact ColdEmail identity is required');
-  const lead = leads[0];
-  if (dataset.leads.filter(row => normalizeEmail(row.email) === normalizeEmail(lead.email)).length !== 1) throw new Error('Duplicate CRM identity; reconciliation blocked');
-  const board = dataset.boardLeads.find(row => row.id === `CE-${leadId}` || normalizeEmail(row.email) === normalizeEmail(lead.email));
-  if (!board) throw new Error('Only current Pipeline leads may be reconciled');
-  const activities = dataset.activities.filter(row => row.sourceLeadId === lead.id || row.leadId === board.id
-    || row.leadId === `CE-${lead.id}` || normalizeEmail(row.email) === normalizeEmail(lead.email));
-  return proveLegacyEvidence({ lead, board, activities,
-    mailboxes: configuredSenders().filter(item => item.credentialConfigured).map(item => operationalMailbox(item.id)) });
+  // Identity, the OPTIONAL Pipeline card and the full sending roster come from
+  // legacyEvidenceInputs, so an Outreach-only lead can be proven and no
+  // configured mailbox can be left out of the proof.
+  const inputs = legacyEvidenceInputs({
+    leadId, leads: dataset.leads, boardLeads: dataset.boardLeads,
+    activities: dataset.activities, senders: configuredSenders(),
+  });
+  return proveLegacyEvidence({ ...inputs, mailboxes: inputs.expectedMailboxIds.map(id => operationalMailbox(id)) });
 }
 
 app.get('/api/ops/legacy-evidence/:leadId', requireAuth, async (req, res) => {

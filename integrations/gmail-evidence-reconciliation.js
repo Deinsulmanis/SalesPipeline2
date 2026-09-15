@@ -110,4 +110,47 @@ async function applyProvenEvidence({plan,approvedHash,appendEvent,writeSender,re
   if(saved.senderInboxId!==plan.senderInboxId || plan.events.some(event=>!saved.activities.some(row=>row.eventId===event.eventId && row.metadata===event.metadata)))throw new Error('Evidence reconciliation readback mismatch; fail closed');
   return {ok:true,senderInboxId:saved.senderInboxId,threadId:plan.threadId,eventsWritten:plan.events.map(e=>e.eventId)};
 }
-module.exports={proveLegacyEvidence,applyProvenEvidence,assertMailboxCoverage};
+/**
+ * The mailboxes a sender proof must cover. Every configured sending mailbox that
+ * is not warming — active or paused — may have sent to this lead, so every one
+ * is asked; leaving one out is how a genuine CONFLICT becomes a false PROVEN
+ * result (see assertMailboxCoverage). A mailbox in the roster without
+ * credentials makes the proof unavailable. It fails closed; it is never skipped.
+ */
+function legacyEvidenceRoster(senders) {
+  const roster = (senders || []).filter(sender => sender && norm(sender.status) !== 'warming');
+  const expected = [...new Set(roster.map(sender => String(sender.id || '').trim()).filter(Boolean))];
+  if (!expected.length) throw new Error('No configured sending mailbox; sender proof is unavailable');
+  const uncredentialed = roster.filter(sender => !sender.credentialConfigured).map(sender => sender.id);
+  if (uncredentialed.length) {
+    throw new Error(`Sending mailbox without credentials: ${uncredentialed.join(', ')}; sender proof requires every configured mailbox`);
+  }
+  return expected;
+}
+
+/**
+ * Everything proveLegacyEvidence needs, resolved from CRM rows. PURE: no provider.
+ *
+ * Identity is the exact ColdEmail id, and its normalized email must be unique.
+ * The Pipeline card is OPTIONAL: an Outreach-only lead has none, and sender proof
+ * comes from Gmail, not from the card. A card matches by its exact CE- id first,
+ * and by normalized email only when exactly one card carries it.
+ */
+function legacyEvidenceInputs({ leadId, leads, boardLeads, activities, senders }) {
+  const id = String(leadId || '').trim();
+  const exact = (leads || []).filter(row => String(row.id || '') === id);
+  if (!id || exact.length !== 1) throw new Error('One exact ColdEmail identity is required');
+  const lead = exact[0];
+  const email = norm(lead.email);
+  if (!email) throw new Error('Exact canonical lead identity required');
+  if ((leads || []).filter(row => norm(row.email) === email).length !== 1) throw new Error('Duplicate CRM identity; reconciliation blocked');
+  const byId = (boardLeads || []).filter(row => row.id === `CE-${id}`);
+  const byEmail = (boardLeads || []).filter(row => norm(row.email) === email);
+  if (byId.length > 1 || (!byId.length && byEmail.length > 1)) throw new Error('Duplicate Pipeline identity; reconciliation blocked');
+  const board = byId[0] || byEmail[0] || null;
+  const mine = (activities || []).filter(row => row.sourceLeadId === id || row.leadId === `CE-${id}`
+    || (board && row.leadId === board.id) || norm(row.email) === email);
+  return { lead, board, activities: mine, expectedMailboxIds: legacyEvidenceRoster(senders) };
+}
+
+module.exports={proveLegacyEvidence,applyProvenEvidence,assertMailboxCoverage,legacyEvidenceRoster,legacyEvidenceInputs};
