@@ -355,6 +355,46 @@ test('6b. a real meeting that already happened can be recorded, then marked no s
   assert.equal(callLifecycleActions(state, NOW).reschedule, true);
 });
 
+test('6c. a held Call Booked lead with a live meeting still gets its call controls', () => {
+  // Silver 7's real shape: the Call Booked hold on its Outreach row, an earlier
+  // demo follow-up enrollment, and a meeting that has passed with no result.
+  const { deriveNextAction, ACTION_TYPE, MANUAL_HOLD_TAG } = require('../integrations/pipeline-state');
+  const meetingAt = '2026-09-14T22:30:00.000Z';
+  const twin = { id: 'mt9ka4dnwfgdo8rlbz', email: 'info@silver7dental.ca', emailStatus: 'emailed', emailStep: '1',
+    lastEmailedAt: '2026-09-11T16:45:17.226Z', senderInboxId: 'tryscalelabai',
+    notes: `${MANUAL_HOLD_TAG} [INTENT: both audios played — booking link sent]` };
+  const activities = [
+    { eventId: 'gmail:1', eventType: 'initial_email_sent', occurredAt: '2026-09-11T16:45:17.226Z', sourceLeadId: twin.id,
+      metadata: JSON.stringify({ senderInboxId: 'tryscalelabai', gmailThreadId: 't1' }) },
+    { eventId: 'reply-action:1', eventType: 'booking_link_sent', occurredAt: '2026-09-14T06:12:10.003Z', leadId: 'CE-mt9ka4dnwfgdo8rlbz',
+      metadata: JSON.stringify({ senderInboxId: 'tryscalelabai', gmailThreadId: 't1' }) },
+    { eventId: 'seq-enroll:1', eventType: 'sequence_enrolled', occurredAt: '2026-09-14T06:12:10.003Z', leadId: 'CE-mt9ka4dnwfgdo8rlbz',
+      metadata: JSON.stringify({ sequenceId: 'demo_follow_up_v1', enrollmentMode: 'automatic', senderInboxId: 'tryscalelabai', gmailThreadId: 't1' }) },
+    { eventId: 'call-lifecycle:1', eventType: 'call_booked', occurredAt: '2026-09-15T08:32:41.708Z', leadId: 'CE-mt9ka4dnwfgdo8rlbz',
+      metadata: JSON.stringify({ meetingAt }) },
+  ];
+  const ctx = { activities, now: new Date(NOW) };
+
+  // Control: the same hold and history on an open Follow Up lead is still Blocked,
+  // which proves the sequence history here is real, not an empty state.
+  const followUp = deriveNextAction({ id: 'CE-mt9ka4dnwfgdo8rlbz', stage: 'follow_up' }, twin, ctx);
+  assert.equal(followUp.type, ACTION_TYPE.BLOCKED_BY_HOLD);
+
+  const booked = deriveNextAction({ id: 'CE-mt9ka4dnwfgdo8rlbz', stage: 'call_booked', meetingAt }, twin, ctx);
+  assert.notEqual(booked.type, ACTION_TYPE.BLOCKED_BY_HOLD);
+  assert.ok(booked.callState, 'the drawer receives the call lifecycle');
+  assert.equal(booked.callState.status, CALL_STATUS.OUTCOME_PENDING);
+  assert.equal(booked.callState.meetingAt, meetingAt);
+  assert.equal(callLifecycleActions(booked.callState, NOW).no_show, true);
+
+  // Once the call is resolved there is no live meeting, and the hold outranks it again.
+  const resolved = deriveNextAction({ id: 'CE-mt9ka4dnwfgdo8rlbz', stage: 'call_booked', meetingAt }, twin, {
+    ...ctx, activities: [...activities, { eventId: 'call-lifecycle:2', eventType: 'meeting_no_show',
+      occurredAt: '2026-09-15T09:00:00.000Z', leadId: 'CE-mt9ka4dnwfgdo8rlbz', metadata: JSON.stringify({ meetingAt }) }],
+  });
+  assert.equal(resolved.type, ACTION_TYPE.BLOCKED_BY_HOLD);
+});
+
 // ── 7. No epoch dates ──────────────────────────────────────────────────────
 
 test('7. a missing or mangled created date is unknown, never Dec 31, 1969', () => {

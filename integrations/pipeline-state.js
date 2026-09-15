@@ -1233,7 +1233,15 @@ function deriveNextAction(boardLead, twin, context = {}) {
     now, sequencesEnabled: context.sequencesEnabled === true || sequenceState.featureEnabled,
     suppressionReason: item => sendSuppressionReason(item, { suppressedEmails: context.suppressedEmails || new Set() }),
     humanTouchAt: latestEventAt(activities, HUMAN_TOUCH_EVENTS) }) : null;
-  if (hasManualHold(twin?.notes || '') && !manualHoldReleased(twin.notes, now) && sequenceState.status !== 'none') {
+  // A live booked call is human work the hold does not block. Every lead
+  // entering Call Booked is held on purpose, so letting a stale sequence's hold
+  // outrank the call hid the Reschedule / Complete / No Show controls for exactly
+  // the meetings that need them. The hold itself — and send suppression — are
+  // untouched; this only decides what the drawer offers next.
+  const liveBookedCall = stage === 'call_booked'
+    && ['scheduled', 'rescheduled', 'outcome_pending'].includes(callState.status);
+  if (hasManualHold(twin?.notes || '') && !manualHoldReleased(twin.notes, now) && sequenceState.status !== 'none'
+    && !liveBookedCall) {
     return buildAction({ type: ACTION_TYPE.BLOCKED_BY_HOLD, label: 'Blocked by manual hold', dueAt: null,
       owner: ACTION_OWNER.HUMAN, status: ACTION_STATUS.BLOCKED, source: 'canonical-ownership',
       reason: 'MANUAL HOLD — a person must decide whether to resume', needsAttention: true, now });
