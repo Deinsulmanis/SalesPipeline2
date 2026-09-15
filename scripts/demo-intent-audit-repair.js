@@ -7,6 +7,7 @@ const {
   buildDemoPairActivity, demoPairEventFor, bookingLinkEventFor,
 } = require('../integrations/demo-intent-state');
 const { mirrorEvents } = require('../integrations/supabase-mirror');
+const { aggregateDemoPlays, attributeDemoPlays, demoPlayForLead } = require('../integrations/demo-attribution');
 
 const ACTIVITY_HEADER = ['eventId','leadId','sourceLeadId','email','company','eventType','occurredAt','subject','content','metadata'];
 const BOARD_HEADER = ['id','type','first','last','brokerage','tradeType','company','city','cityTrade','phone','email','website','stage','priority','followup','notes','created','emailStatus','lastEmailedAt','emailStep','meetingAt','outcome','conversationContext'];
@@ -25,21 +26,14 @@ const belongsTo = (row, lead) => String(row.sourceLeadId || '').replace(/^CE-/, 
   || String(row.leadId || '').replace(/^CE-/, '') === String(lead.id || '').replace(/^CE-/, '')
   || (emailKey(lead.email) && emailKey(row.email) === emailKey(lead.email));
 
-function demoPairs(rows) {
-  const map = new Map();
-  for (const row of (rows || []).slice(1)) {
-    const [timestamp, company, , ip, userAgent, audioType] = row;
-    if (!timestamp || !company || BLOCKED_IPS.has(String(ip || '').trim())
-      || BOT_UA_PATTERN.test(userAgent || '') || isDatacenterIp(ip)) continue;
-    const key = companyKey(company);
-    const type = String(audioType || '').trim().toLowerCase() === 'intro' ? 'intro' : 'demo';
-    const item = map.get(key) || { intro: 0, demo: 0, introPlayedAt: '', demoPlayedAt: '', last: '' };
-    item[type]++;
-    if (!item[`${type}PlayedAt`] || timestamp < item[`${type}PlayedAt`]) item[`${type}PlayedAt`] = timestamp;
-    if (timestamp > item.last) item.last = timestamp;
-    map.set(key, item);
-  }
-  return map;
+// Attribution is shared with the agent: a play names the lead whose token it
+// carries or, for a token-less legacy row, the ONE lead that owns its company
+// key. A key several leads share is ambiguous and repairs nothing.
+const excludedPlay = ({ ip, userAgent }) => BLOCKED_IPS.has(ip) || BOT_UA_PATTERN.test(userAgent) || isDatacenterIp(ip);
+
+function demoPairs(rows, cold) {
+  const plays = aggregateDemoPlays(rows, { companyKey, isExcluded: excludedPlay });
+  return attributeDemoPlays(cold, plays, { companyKey });
 }
 
 async function main() {
@@ -61,13 +55,13 @@ async function main() {
   const api = google.sheets({ version: 'v4', auth });
   const snapshot = await api.spreadsheets.values.batchGet({
     spreadsheetId: process.env.SPREADSHEET_ID,
-    ranges: ['ColdEmail!A:X','Leads!A:W','ColdCallActivity!A:J','DemoPlays!A:F','Suppression!A:A','IntentFired!A:E'],
+    ranges: ['ColdEmail!A:X','Leads!A:W','ColdCallActivity!A:J','DemoPlays!A:G','Suppression!A:A','IntentFired!A:E'],
   });
   const at = index => snapshot.data.valueRanges?.[index]?.values || [];
   const cold = rowObjects(at(0), COLD_HEADER);
   const board = rowObjects(at(1), BOARD_HEADER);
   const activities = rowObjects(at(2), ACTIVITY_HEADER);
-  const plays = demoPairs(at(3));
+  const attribution = demoPairs(at(3), cold);
   const suppressed = new Set(at(4).slice(1).map(row => emailKey(row[0])).filter(Boolean));
   const firedByLead = new Map(at(5).slice(1)
     .filter(row => row[1] && (row[4] || 'both-audios') === 'both-audios')
@@ -76,7 +70,7 @@ async function main() {
   const affected = [];
   const historicalDeliveryGaps = [];
   for (const lead of cold) {
-    const pair = plays.get(companyKey(lead.company));
+    const pair = demoPlayForLead(attribution, lead.id);
     if (!pair || pair.intro < 1 || pair.demo < 1) continue;
     const mine = activities.filter(row => belongsTo(row, lead));
     const boardLead = board.find(row => String(row.id || '') === `CE-${lead.id}`)
@@ -106,6 +100,7 @@ async function main() {
       canonicalPairPresent: item.canonicalPairPresent,
       introPlayedAt: item.pair.introPlayedAt, demoPlayedAt: item.pair.demoPlayedAt,
     })),
+    ambiguousAttributions: attribution.ambiguous.map(item => ({ via: item.via, key: item.key, leadIds: item.leadIds })),
     historicalDeliveryGapCount: historicalDeliveryGaps.length,
     historicalDeliveryGaps: historicalDeliveryGaps.map(item => ({
       id: item.lead.id, company: item.lead.company,

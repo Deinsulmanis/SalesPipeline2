@@ -112,6 +112,7 @@ const {
   DEMO_PAIR_EVENT, BOOKING_LINK_EVENT, buildDemoPairActivity,
   demoPairEventFor, hasUndeliveredDemoPair, planIntentObservation,
 } = require('./integrations/demo-intent-state');
+const { aggregateDemoPlays, attributeDemoPlays, demoPlayForLead } = require('./integrations/demo-attribution');
 const { oldestDueFirst, followUpSuccessTarget } = require('./integrations/scheduler-fairness');
 const { credentialsFor: gmailCredentialsFor, parseRegistry: parseGmailRegistry } = require('./integrations/gmail-inbox-registry');
 const {
@@ -1610,7 +1611,7 @@ async function loadAgentSnapshot({ forceColdEmail = false } = {}) {
     ['suppression', `${SUPPRESSION_SHEET}!A:E`],
     ['campaigns', `${CAMPAIGN_INTEGRATIONS_SHEET}!A:I`],
     ['providerMappings', `${PROVIDER_LEADS_SHEET}!A:N`],
-    ['demoPlays', 'DemoPlays!A:F'],
+    ['demoPlays', 'DemoPlays!A:G'],
     ['intentFired', `${INTENT_SHEET}!A:E`],
     ['gmailObservationState', `${GMAIL_OBSERVATION_STATE_SHEET}!A:O`],
   ];
@@ -2679,7 +2680,7 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
         }
       }
       if (validateFresh) {
-        const extra = await validateFresh({ fresh, current, mine, board, callState });
+        const extra = await validateFresh({ fresh, current, mine, board, callState, currentRows });
         if (!extra?.allowed) return { allowed: false, code: extra?.code || 'warm_trigger_stale', reason: extra?.reason };
       }
       const ownership = deriveAutomationOwnership(current, { boardLead: board, activities: mine, callState,
@@ -3044,31 +3045,22 @@ async function loadFiredIntents(rowsOverride = null) {
   }
 }
 
-// Reads DemoPlays and returns Map<companyKey, {intro, demo}> of REAL plays.
+// A legacy DemoPlays row (no lead token) is keyed by the cleaned company name.
+// That key is only ever a FALLBACK, and only for a key one lead owns — see
+// integrations/demo-attribution.js.
+const demoCompanyKey = company => normalizeName(cleanCompanyName(company));
+
+// Own IP, bot user agents and cloud egress are not prospects listening.
+const excludedDemoPlay = ({ ip, userAgent }) =>
+  INTENT_BLOCKED_IPS.includes(ip) || BOT_UA_PATTERN.test(userAgent) || isDatacenterIp(ip);
+
+// Reads DemoPlays and returns { byToken, byCompany } of REAL plays. Which lead a
+// play belongs to is decided by attributeDemoPlays(), over the whole corpus.
 async function readRealDemoPlays(rowsOverride = null) {
   const rows = rowsOverride || (await sheets().spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A:F',
+    spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A:G',
   })).data.values || [];
-  const byKey = new Map();
-  for (const row of rows.slice(1)) {
-    const [ts, company, , ip, ua, audioTypeRaw] = row;
-    if (!company) continue;
-    if (INTENT_BLOCKED_IPS.includes((ip || '').trim())) continue;      // own IP
-    if (BOT_UA_PATTERN.test(ua || '')) continue;                        // bot UA
-    if (isDatacenterIp(ip)) continue;                                   // cloud egress
-    const key = normalizeName(cleanCompanyName(company));
-    if (!key) continue;
-    // blank column F predates the intro and was always a receptionist demo
-    const type = String(audioTypeRaw || '').trim().toLowerCase() === 'intro' ? 'intro' : 'demo';
-    if (!byKey.has(key)) byKey.set(key, {
-      intro: 0, demo: 0, last: '', introPlayedAt: '', demoPlayedAt: '',
-    });
-    const e = byKey.get(key);
-    e[type]++;                                    // repeat plays collapse via the pair test below
-    if ((ts || '') > e.last) e.last = ts || '';
-    if (!e[`${type}PlayedAt`] || (ts || '') < e[`${type}PlayedAt`]) e[`${type}PlayedAt`] = ts || '';
-  }
-  return byKey;
+  return aggregateDemoPlays(rows, { companyKey: demoCompanyKey, isExcluded: excludedDemoPlay });
 }
 
 // Mirrors the pixel routes' bot check so a UA rejected there is rejected here.
@@ -3092,17 +3084,28 @@ function buildIntentEmail(lead) {
   };
 }
 
-async function prepareDemoIntentCandidates(allLeads, snapshot = null) {
+// `corpus` is every lead, never a targeted subset: attribution counts how many
+// leads share a legacy company key, and one location on its own looks unique.
+async function prepareDemoIntentCandidates(allLeads, snapshot = null, corpus = allLeads) {
   await ensureIntentSheet();
   const plays = await readRealDemoPlays(snapshot?.demoPlays);
   const fired = await loadFiredIntents(snapshot?.intentFired);
   const activities = snapshot?.activities || await readColdCallActivities();
 
+  // A play belongs to the lead whose token it carries or, for a token-less
+  // legacy row, to the ONE lead that owns its company key. A key several leads
+  // share creates no pair: one listener is never several prospects.
+  const attribution = attributeDemoPlays(corpus, plays, { companyKey: demoCompanyKey });
+  for (const item of attribution.ambiguous) {
+    console.warn(`  ⚠️  [Intent] demo plays for ${item.via === 'lead_token' ? 'token' : 'company key'} `
+      + `"${item.key}" match ${item.leadIds.length} leads — ambiguous, no pair created`);
+  }
+
   // Persist the prospect fact before evaluating any delivery gate. This write
   // has no body, reservation or quota effect. Its stable event id plus the
   // canonical read check make repeated three-minute and normal passes replay-safe.
   for (const lead of allLeads) {
-    const play = plays.get(normalizeName(cleanCompanyName(lead.company)));
+    const play = demoPlayForLead(attribution, lead.id);
     if (!play || play.intro < 1 || play.demo < 1 || demoPairEventFor(lead, activities)) continue;
     // Legacy IntentFired rows were written only after provider delivery. They
     // need an explicit historical delivery bridge, not a new undelivered pair
@@ -3140,8 +3143,8 @@ async function prepareDemoIntentCandidates(allLeads, snapshot = null) {
   return { due, plays, fired, activities };
 }
 
-async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot = null, sendQuota = null, prepared = null) {
-  const state = prepared || await prepareDemoIntentCandidates(allLeads, snapshot);
+async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot = null, sendQuota = null, prepared = null, corpus = allLeads) {
+  const state = prepared || await prepareDemoIntentCandidates(allLeads, snapshot, corpus);
   const { due, activities } = state;
 
   if (!due.length) { console.log('[Intent] no leads with both audios pending.'); return 0; }
@@ -3205,9 +3208,12 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot 
         action: 'AUTO_DEMO_ENGAGEMENT_RESPONSE', body, subject: thread.subject,
         activities, classification: 'DEMO_ENGAGEMENT', ownerMode: 'cold',
         sequenceId: 'demo_booking_link_v1',
-        validateFresh: async ({ fresh, current, mine }) => {
+        validateFresh: async ({ fresh, current, mine, currentRows }) => {
+          // Re-attributed against the fresh FULL corpus, so a company key that
+          // became shared after the pair was recorded fails closed here too.
           const currentPlays = await readRealDemoPlays(fresh.demoPlays);
-          const played = currentPlays.get(normalizeName(cleanCompanyName(current.company)));
+          const played = demoPlayForLead(
+            attributeDemoPlays(currentRows, currentPlays, { companyKey: demoCompanyKey }), current.id);
           if (!played || played.intro < 1 || played.demo < 1) {
             return { allowed: false, code: 'demo_evidence_missing' };
           }
@@ -4152,7 +4158,7 @@ async function run() {
     const intentActivities = snapshot.activities;
     // First persist/derive candidates using the already-loaded CRM snapshot.
     // No Gmail call is made when there is no pending intent.
-    const preparedIntent = await withAuth(() => prepareDemoIntentCandidates(all, snapshot));
+    const preparedIntent = await withAuth(() => prepareDemoIntentCandidates(all, snapshot, allLeadsForDailyCap));
     if (!preparedIntent.due.length) {
       console.log('[Intent] no pending candidates; zero Gmail provider work required.');
       return;
@@ -4300,7 +4306,7 @@ async function run() {
   // the event-driven spawn, so a missed webhook still gets picked up.
   await withAuth(() => runIntentTriggerPass(all, ownershipContext, snapshot, {
     sendsBySender, quotaState, windowQuota,
-  }));
+  }, null, allLeadsForDailyCap));
   todaySent = quotaState.globalCount;
   dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
 

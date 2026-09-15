@@ -153,7 +153,7 @@ test('runtime persists pair before delivery and cold cadence excludes pending in
   const selector = agent.slice(agent.indexOf('function selectFollowUps'), agent.indexOf('function countTodaySends'));
   assert.match(prepare, /buildDemoPairActivity/);
   assert.match(prepare, /recordColdCallActivityStrict\(event\)/);
-  assert.ok(agent.indexOf('prepareDemoIntentCandidates(all, snapshot)')
+  assert.ok(agent.indexOf('prepareDemoIntentCandidates(all, snapshot, allLeadsForDailyCap)')
     < agent.indexOf('runHumanOutboundPass(\n        candidates'));
   assert.match(intent, /deliverHardenedWarmReply/);
   assert.match(intent, /BOOKING_LINK_EVENT/);

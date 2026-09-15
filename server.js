@@ -136,6 +136,7 @@ const { genericReengagementAnalytics } = require('./integrations/generic-reengag
 const { buildCrmHealth } = require('./integrations/crm-health');
 const { observerHealth } = require('./integrations/gmail-observer-health');
 const { hasUndeliveredDemoPair } = require('./integrations/demo-intent-state');
+const { normalizeLeadToken } = require('./integrations/demo-attribution');
 const { observeMailbox } = require('./integrations/gmail-mailbox-observer');
 const { planMailboxEvents } = require('./integrations/mailbox-observation-events');
 const { proveLegacyEvidence, applyProvenEvidence } = require('./integrations/gmail-evidence-reconciliation');
@@ -288,7 +289,8 @@ const proposalToken = id => crypto.createHash('sha1').update(String(id)).digest(
 // above keeps serving links already in circulation). Resolves the token to the
 // lead by hashing column A, logs the open with the SAME cleaned company the
 // old links carried (attribution preserved), then 302s to the Netlify page
-// with identical query params — the page itself is untouched.
+// with the same query params plus `lt`, the lead token. The page sends `lt`
+// back on every demo-play pixel, which is what attributes a play to ONE lead.
 //
 // FALLBACK: an unresolvable token (unknown, sheet error, lead deleted) must
 // never show the prospect an error page — it degrades to the bare proposal
@@ -317,6 +319,9 @@ app.get('/p/:token', async (req, res) => {
       if (lead.company)     fwd.set('company', lead.company);
       if (lead.contactName) fwd.set('contact', lead.contactName);
       if (lead.tradeType)   fwd.set('niche',   lead.tradeType);
+      // The token this link was resolved from, so a demo play on the page names
+      // this lead and no other location that shares its company name.
+      fwd.set('lt', token);
       url.search = fwd.toString();
       dest = url.toString();
     } else {
@@ -375,6 +380,11 @@ app.get('/demo-played', (req, res) => {
   const rawType   = String(req.query.audio_type ?? '').trim().toLowerCase();
   const audioType = (rawType === 'intro' || rawType === 'demo') ? rawType : 'demo';
 
+  // The lead token /p/:token forwarded to the page. It attributes this play to
+  // exactly one lead. Whitelisted like audio_type: anything but a well-formed
+  // token is stored blank, which reads as a legacy company-only row.
+  const leadToken = normalizeLeadToken(req.query.lt);
+
   // Always a no-op pixel response — nothing renders, nothing for the page to
   // read, so there's no failure mode visible to the visitor either way.
   const sendPixel = () => res.status(204).end();
@@ -399,11 +409,12 @@ app.get('/demo-played', (req, res) => {
   // already have clientIp in D and ua in E, and shifting them would silently
   // re-label historical data. Rows written before this change have F blank and
   // were all receptionist-demo plays, so treat blank as 'demo' when filtering.
-  const row = [new Date().toISOString(), company, niche, clientIp, ua, audioType];
+  // lead_token is appended the same way, as column G; blank means a legacy row.
+  const row = [new Date().toISOString(), company, niche, clientIp, ua, audioType, leadToken];
 
   sheets().spreadsheets.values.append({
     spreadsheetId:   SPREADSHEET_ID,
-    range:           'DemoPlays!A:F',
+    range:           'DemoPlays!A:G',
     valueInputOption:'RAW',
     insertDataOption:'INSERT_ROWS',
     requestBody:     { values: [row] },
@@ -411,7 +422,7 @@ app.get('/demo-played', (req, res) => {
     // Event-driven intent trigger: if THIS play just completed an intro+demo
     // pair for this company, fire the follow-up now rather than waiting for the
     // cron. Chained after the append so the pass sees the row it is reacting to.
-    .then(() => maybeFireIntent(company))
+    .then(() => maybeFireIntent(company, leadToken))
     .catch(e => console.error('[/demo-played] Sheet write failed:', e.message));
 
   sendPixel();
@@ -749,15 +760,18 @@ function spawnAgent(dryRun, extraEnv = {}) {
 // Cheap read of DemoPlays only — the agent re-derives everything authoritatively
 // and owns the fired-state check, so a false positive here costs one no-op
 // spawn, never a duplicate email.
-async function companyHasBothAudios(company) {
+async function companyHasBothAudios(company, leadToken = '') {
   const key = openKey(company);
-  if (!key) return false;
+  if (!key && !leadToken) return false;
   const r = await sheets().spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A:F',
+    spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A:G',
   });
   let intro = false, demo = false;
   for (const row of (r.data.values || []).slice(1)) {
-    if (openKey(row[1] || '') !== key) continue;
+    // A tokened play counts only toward its own lead, a legacy play only toward
+    // its company. Attribution itself is the agent's; this only saves a spawn.
+    const rowToken = normalizeLeadToken(row[6]);
+    if (leadToken ? rowToken !== leadToken : (rowToken || openKey(row[1] || '') !== key)) continue;
     const ip = (row[3] || '').trim();
     if (['75.155.151.158'].includes(ip)) continue;      // own IP
     if (BOT_PATTERNS.test(row[4] || '')) continue;      // bot UA
@@ -766,9 +780,9 @@ async function companyHasBothAudios(company) {
   return intro && demo;
 }
 
-async function maybeFireIntent(company) {
+async function maybeFireIntent(company, leadToken = '') {
   try {
-    if (await companyHasBothAudios(company)) {
+    if (await companyHasBothAudios(company, leadToken)) {
       spawnAgentIntentOnly(`both audios played — ${company}`);
     }
   } catch (e) {
@@ -2012,26 +2026,27 @@ app.get('/api/crm/health', requireAuth, async (req, res) => {
   }
 });
 
-// The DemoPlays header was written before audio_type existed, so it still reads
-// 5 columns while rows write 6. Positional data is already correct — this only
-// labels column F. Writes A1:F1 exclusively, so no row data can shift. Guarded
-// by a module flag: repaired at most once per process, never on every request.
+// The DemoPlays header was written before audio_type and lead_token existed, so
+// it can read fewer columns than rows write. Positional data is already correct —
+// this only labels columns F and G. Writes A1:G1 exclusively, so no row data can
+// shift. Guarded by a module flag: repaired at most once per process, never on
+// every request.
 let demoPlaysHeaderChecked = false;
 async function ensureDemoPlaysHeader() {
   if (demoPlaysHeaderChecked) return;
   demoPlaysHeaderChecked = true;   // set first: a failure must not retry-loop
   try {
     const hdr = await sheets().spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A1:F1',
+      spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A1:G1',
     });
     const row = (hdr.data.values || [])[0] || [];
-    if (row.length >= 6 && String(row[5]).trim()) return;   // already labelled
+    if (row.length >= 7 && String(row[6]).trim()) return;   // already labelled
     await sheets().spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A1:F1',
+      spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A1:G1',
       valueInputOption: 'RAW',
-      requestBody: { values: [['timestamp', 'company', 'niche', 'ip', 'ua', 'audio_type']] },
+      requestBody: { values: [['timestamp', 'company', 'niche', 'ip', 'ua', 'audio_type', 'lead_token']] },
     });
-    console.log('[DemoPlays] header extended to include audio_type (column F)');
+    console.log('[DemoPlays] header extended to include lead_token (column G)');
   } catch (e) {
     console.warn('[DemoPlays] header check failed:', e.message);
   }
