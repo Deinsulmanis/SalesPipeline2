@@ -50,7 +50,11 @@ test('scenario 2/3: the demo trigger is deduped durably by leadId|trigger, not b
 });
 
 test('scenario 3: repeated demo plays collapse to a pair test rather than a counter', () => {
-  assert.match(agent, /if \(!play \|\| play\.intro < 1 \|\| play\.demo < 1 \|\| demoPairEventFor\(lead, activities\)\) continue;/);
+  // Restated, not weakened: creation is now guarded on pair HISTORY rather than
+  // on the active pair, so a retracted pair is not written again on the next
+  // pass. The invariant is unchanged — a play never increments a counter, and
+  // never produces a second pair for a lead that already has one.
+  assert.match(agent, /if \(!play \|\| play\.intro < 1 \|\| play\.demo < 1 \|\| hasDemoPairHistory\(lead, activities\)\) continue;/);
   assert.match(agent, /if \(!hasUndeliveredDemoPair\(lead, activities\)\) continue;/);
 });
 

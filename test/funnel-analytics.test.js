@@ -203,8 +203,15 @@ test('the funnel module contains no write or send path whatsoever', () => {
     assert.ok(!src.includes(forbidden), `funnel analytics must never reference ${forbidden}`);
   }
   // Pure: it accepts data and returns data.
-  assert.ok(!/require\(['"](?!\.\/campaign-versions)/.test(src.replace(/^'use strict';\n/, '')),
-    'the only dependency is the attribution module');
+  //
+  // Restated as an exact set rather than a single name. The demo funnel stage
+  // must exclude a RETRACTED pair, and it reads that rule from the same pure
+  // module the send path uses rather than keeping a second copy that could
+  // drift. Both dependencies are pure rule modules with no IO of their own, and
+  // every IO name above still fails this test.
+  const requires = [...src.matchAll(/require\('([^']+)'\)/g)].map(match => match[1]).sort();
+  assert.deepEqual(requires, ['./campaign-versions', './demo-intent-state'],
+    'funnel analytics may depend only on pure local rule modules');
 });
 
 test('the drill-down ships only displayed fields, never whole ColdEmail rows', () => {
