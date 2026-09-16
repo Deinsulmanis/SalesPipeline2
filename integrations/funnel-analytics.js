@@ -1,6 +1,7 @@
 'use strict';
 
 const { LEGACY_UNKNOWN, parseMetadata, attributionFromActivity } = require('./campaign-versions');
+const { activeDemoPairEvents } = require('./demo-intent-state');
 
 const SEND_TYPES = new Set(['initial_email_sent', 'follow_up_sent', 'booking_link_sent', 'sequence_step_sent']);
 const REPLY_TYPES = new Set(['positive_reply', 'meeting_requested', 'late_reply', 'question_reply', 'negative_reply', 'unsubscribe_reply', 'wrong_person_reply', 'needs_human_reply']);
@@ -206,7 +207,9 @@ function buildFunnelAnalytics(input = {}, query = {}) {
       if (GENUINE_REPLY_CATEGORIES.includes(category)) stageSets.replied.add(id);
     }
 
-    const demoEvents = rows.filter(row => row.eventType === 'demo_pair_played');
+    // Active pairs only: a retracted one was attributed to the wrong lead and is
+    // not demo engagement for this one.
+    const demoEvents = activeDemoPairEvents(rows);
     if (demoEvents.some(demo => {
       const demoAt = validTime(demo.occurredAt) || Infinity;
       return sends.some(send => (validTime(send.row.occurredAt) || 0) <= demoAt);

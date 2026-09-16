@@ -1,5 +1,7 @@
 'use strict';
 
+const { activeDemoPairEvents } = require('./demo-intent-state');
+
 const COLD_CALL_STAGES = Object.freeze([
   { id: 'follow_up', label: 'Follow Up' },
   { id: 'hot', label: 'Hot' },
@@ -36,7 +38,8 @@ function scoreColdCallLead(lead = {}, activities = []) {
   const types = new Set(activities.map(row => String(row.eventType || '')));
   let score = 10;
   if (types.has('initial_email_sent')) score += 10;
-  if (types.has('demo_pair_played')) score += 25;
+  // A retracted pair is not engagement — the listener belonged to another lead.
+  if (activeDemoPairEvents(activities).length) score += 25;
   if (types.has('booking_link_sent')) score += 15;
   if (types.has('positive_reply')) score += 25;
   if (lead.meetingAt || types.has('call_booked')) score += 15;

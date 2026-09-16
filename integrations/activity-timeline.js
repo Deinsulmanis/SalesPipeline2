@@ -18,6 +18,7 @@ const SOURCE_BY_TYPE = Object.freeze({
   reactivation_scheduled: 'CRM', reactivation_cancelled: 'CRM',
   initial_email_sent: 'Automation', follow_up_sent: 'Automation', booking_link_sent: 'Automation',
   email_opened: 'Prospect', demo_played: 'Demo', demo_pair_played: 'Demo',
+  demo_pair_retracted: 'Demo',
   positive_reply: 'Prospect', meeting_requested: 'Prospect', late_reply: 'Prospect',
   pipeline_promoted: 'CRM',
   question_reply: 'Prospect', negative_reply: 'Prospect', unsubscribe_reply: 'Prospect',
@@ -121,6 +122,8 @@ function eventPresentation(row, metadata, context = {}) {
     case 'email_opened': return { title: 'Email opened' };
     case 'demo_played': return { title: metadata.count > 1 ? 'Demo played again' : 'Demo played' };
     case 'demo_pair_played': return { title: 'Both demo clips played' };
+    case 'demo_pair_retracted': return { title: 'Demo pair retracted',
+      summary: metadata.reason ? String(metadata.reason) : 'Attributed to another lead' };
     case 'booking_link_sent': return { title: 'Booking-link follow-up sent' };
     case 'pipeline_promoted': return { title: row.subject || 'Added to Sales Pipeline', summary: metadata.trigger ? `Reason: ${String(metadata.trigger).replace(/_/g, ' ')}` : '' };
     case 'stage_changed': {

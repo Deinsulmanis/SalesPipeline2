@@ -110,8 +110,8 @@ const { ACTION: REPLY_RESPONSE_ACTION, decideReplyResponse } = require('./integr
 const { deliverProspectReply } = require('./integrations/prospect-reply-delivery');
 const { findLiveBooking } = require('./integrations/live-booking-gate');
 const {
-  DEMO_PAIR_EVENT, BOOKING_LINK_EVENT, buildDemoPairActivity,
-  demoPairEventFor, hasUndeliveredDemoPair, planIntentObservation,
+  BOOKING_LINK_EVENT, buildDemoPairActivity,
+  demoPairEventFor, hasDemoPairHistory, hasUndeliveredDemoPair, planIntentObservation,
 } = require('./integrations/demo-intent-state');
 const { aggregateDemoPlays, attributeDemoPlays, demoPlayForLead } = require('./integrations/demo-attribution');
 const { oldestDueFirst, followUpSuccessTarget } = require('./integrations/scheduler-fairness');
@@ -3115,7 +3115,10 @@ async function prepareDemoIntentCandidates(allLeads, snapshot = null, corpus = a
   // canonical read check make repeated three-minute and normal passes replay-safe.
   for (const lead of allLeads) {
     const play = demoPlayForLead(attribution, lead.id);
-    if (!play || play.intro < 1 || play.demo < 1 || demoPairEventFor(lead, activities)) continue;
+    // History, not the ACTIVE pair: a retracted pair is a decision that this
+    // lead's play belonged to someone else. Asking for the active pair here
+    // would read that decision as "no pair yet" and write the false one again.
+    if (!play || play.intro < 1 || play.demo < 1 || hasDemoPairHistory(lead, activities)) continue;
     // Legacy IntentFired rows were written only after provider delivery. They
     // need an explicit historical delivery bridge, not a new undelivered pair
     // that would make an already-contacted lead look pending.
@@ -3226,7 +3229,9 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot 
           if (!played || played.intro < 1 || played.demo < 1) {
             return { allowed: false, code: 'demo_evidence_missing' };
           }
-          if (!mine.some(row => row.eventType === DEMO_PAIR_EVENT)) {
+          // Retraction-aware: a superseded pair is not evidence, and a raw
+          // event-type scan cannot tell the difference.
+          if (!demoPairEventFor(current, mine)) {
             return { allowed: false, code: 'canonical_demo_pair_missing' };
           }
           if (mine.some(row => row.eventType === BOOKING_LINK_EVENT)) {
