@@ -5968,12 +5968,22 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   // event-driven, so this only picks up plays whose spawn was skipped because
   // the agent was busy, or that arrived while the process was restarting.
   // Every 3 minutes keeps the worst case inside the ~5-minute target.
-  cron.schedule('*/3 * * * *', () => {
+  //
+  // OFFSET BY ONE MINUTE, DELIBERATELY. This backstop and the scheduled send
+  // window above share agentState.running. Under '*/3' it fired at 0,3,…,57 —
+  // which includes :00 and :30, exactly when the send cron fires. An intent
+  // pass that was still holding the mutex at that instant made the send window
+  // log "Agent already running — skipping this send window" and that window's
+  // ten sends were dropped with no catch-up, costing whole windows a day and
+  // holding production at ~50 sends against an 80 ceiling.
+  // '1-59/3' keeps twenty opportunities an hour and the same uniform 3-minute
+  // spacing, on 1,4,…,58 — so it can never land on a send window again.
+  cron.schedule('1-59/3 * * * *', () => {
     spawnAgentIntentOnly('cron backstop');
   }, {
     timezone: 'America/Vancouver',
   });
-  console.log('[cron] Intent backstop scheduled: every 3 minutes');
+  console.log('[cron] Intent backstop scheduled: every 3 minutes, offset off :00/:30');
 
   // Calendar incremental sync is independently gated. With the flag OFF the
   // first line of the orchestrator returns before reading Calendar, Sheets, or
