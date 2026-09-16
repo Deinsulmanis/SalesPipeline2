@@ -30,7 +30,14 @@ test('opens cannot mutate ownership, stage, safety, priority, sequences, or send
 });
 
 test('verified demo engagement remains the Warm signal and primary card', () => {
-  assert.match(server, /row\.demoEngaged = demoCompanyKeys\.has/);
+  // Restated, not weakened. Demo engagement is still the Warm signal and opens
+  // still cannot create it; what changed is WHO a play belongs to. It is now
+  // attributed to one lead — the token's owner, or the single owner of a
+  // token-less row's company key — instead of every lead sharing a company
+  // name, which credited four Smili locations for one visitor's session.
+  assert.match(server, /const attributedPlay = demoPlayForLead\(demoAttribution, lead\.id\);/);
+  assert.match(server, /row\.demoEngaged = Boolean\(attributedPlay\);/);
+  assert.doesNotMatch(server, /demoCompanyKeys/);
   assert.match(server, /row\.warm = row\.demoEngaged;/);
   assert.match(browser, /id="ce-stat-demo-plays"[^>]*>0<[\s\S]{0,100}Demo Plays/);
   assert.match(browser, /id="ce-stat-warm"[^>]*>0<[\s\S]{0,120}Demo-engaged Leads/);

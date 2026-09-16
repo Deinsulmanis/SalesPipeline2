@@ -136,7 +136,9 @@ const { genericReengagementAnalytics } = require('./integrations/generic-reengag
 const { buildCrmHealth } = require('./integrations/crm-health');
 const { observerHealth } = require('./integrations/gmail-observer-health');
 const { hasUndeliveredDemoPair } = require('./integrations/demo-intent-state');
-const { normalizeLeadToken } = require('./integrations/demo-attribution');
+const {
+  normalizeLeadToken, aggregateDemoPlays, attributeDemoPlays, demoPlayForLead,
+} = require('./integrations/demo-attribution');
 const { observeMailbox } = require('./integrations/gmail-mailbox-observer');
 const { planMailboxEvents } = require('./integrations/mailbox-observation-events');
 const { proveLegacyEvidence, applyProvenEvidence, legacyEvidenceInputs } = require('./integrations/gmail-evidence-reconciliation');
@@ -1411,7 +1413,9 @@ async function loadOutreachDataset() {
     ...(ceFromSupabase ? [] : [`${CE_SHEET_NAME}!A:O`, `${CE_SHEET_NAME}!Q:X`]),
     'ReplyDrafts!A:L',
     `${COLD_CALL_ACTIVITY_SHEET}!A:J`, `${PROVIDER_LEADS_SHEET}!A:N`,
-    'DemoPlays!A:F', 'ProposalOpens!A:F', 'ProposalEngaged!A:F', AGENT_READ_RANGE,
+    // A:G, not A:F — column G carries the lead token, and without it the
+    // dashboard can only fall back to matching plays by company name.
+    'DemoPlays!A:G', 'ProposalOpens!A:F', 'ProposalEngaged!A:F', AGENT_READ_RANGE,
     mailboxCheckpointRange(), 'Suppression!A:A',
   ];
   const snapshot = await sheets().spreadsheets.values.batchGet({
@@ -1546,7 +1550,17 @@ async function loadOutreachDataset() {
   // never per row, and stripped of everything but identity.
   const senderIdentities = visibleSenderIdentities();
   const leadKeys = new Set();
-  const demoCompanyKeys = new Set((demoResponse.data.values || []).slice(1).map(row => openKey(row[1])).filter(Boolean));
+  // Demo engagement is LEAD-scoped, by the same rule the agent sends on: a play
+  // belongs to the lead whose token it carries, or — for a token-less legacy row
+  // — to the ONE lead that owns its company key. A key several locations of one
+  // brand share is ambiguous and credits none of them.
+  //
+  // This was keyed by company name, which is not an identity: one visitor's
+  // session on one Smili Dental location's proposal page lit up the "Demo
+  // played" badge on all four locations, and made each of them read as engaged.
+  const demoAttribution = attributeDemoPlays(leads,
+    aggregateDemoPlays(demoResponse.data.values || [], { companyKey: openKey }),
+    { companyKey: openKey });
   const realOpenCounts = new Map();
   const rows = leads.map(lead => {
     if (lead.stage === 'Queued') counts.queued++;
@@ -1569,7 +1583,14 @@ async function loadOutreachDataset() {
       = (facets.senders[sender.state === 'unknown' || sender.state === 'conflict' ? sender.state : sender.senderId] || 0) + 1;
     const row = toLightRow(lead, categoryByLeadId.get(lead.id), attribution, sender);
     Object.assign(row, pipelineIndex.byColdEmailId.get(lead.id));
-    row.demoEngaged = demoCompanyKeys.has(openKey(lead.company));
+    const attributedPlay = demoPlayForLead(demoAttribution, lead.id);
+    row.demoEngaged = Boolean(attributedPlay);
+    // The counts the row cell and the detail drawer render, so neither has to
+    // aggregate telemetry by company name in the browser.
+    row.demoPlays = attributedPlay ? {
+      count: attributedPlay.intro + attributedPlay.demo,
+      intro: attributedPlay.intro, demo: attributedPlay.demo, last: attributedPlay.last,
+    } : null;
     row.sequenceState = outreachSequenceState(lead);
     const automation = deriveAutomationState(lead);
     row.automationState = automation.state;
@@ -2246,6 +2267,9 @@ app.get('/api/demoPlays', requireAuth, async (_req, res) => {
       ip:        row[3] || '',
       userAgent: row[4] || '',
       audioType: normalizeAudioType(row[5]),
+      // The lead this play names. Blank on rows written before the page
+      // forwarded the token, which are legacy company-keyed evidence.
+      leadToken: normalizeLeadToken(row[6]),
     })));
   } catch (e) {
     console.error('[DemoPlays GET]', e.message);

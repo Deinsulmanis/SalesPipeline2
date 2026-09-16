@@ -6029,7 +6029,9 @@ function renderCeTable() {
     const emailSafe = (l.email || '').replace(/"/g, '&quot;');
     const openKey   = ceCompanyKey(l.company);
     const opens     = ceOpensMap.get(openKey) || 0;
-    const demoEntry = ceDemoMap.get(openKey);
+    // Lead-scoped, from the server's attribution. Never ceDemoMap, which is
+    // keyed by company and would credit every location of a shared brand.
+    const demoEntry = l.demoPlays && l.demoPlays.count ? l.demoPlays : null;
     const hasLateReply = l.lateReply === true || /\[LATE REPLY:/i.test(l.notes || '');
     const pipelineLabel = l.mappingStatus === 'conflict' ? 'Mapping conflict'
       : l.pipelinePresence ? ((STAGES.find(stage => stage.id === l.pipelineStage) || {}).label || l.pipelineStage)
@@ -6821,7 +6823,9 @@ function openCeDetail(id) {
   // ── Demo plays ───────────────────────────────────────────────
   // Rendered above opens: pressing play is the stronger signal.
   const demoKey   = ceCompanyKey(lead.company);
-  const demoEntry = ceDemoMap.get(demoKey);
+  // Lead-scoped like the row cell: a location that never played anything shows
+  // nothing here, even when a sibling location of the same brand did.
+  const demoEntry = lead.demoPlays && lead.demoPlays.count ? lead.demoPlays : null;
   let demosHtml;
   if (!demoEntry) {
     demosHtml = `<p style="font-size:13px;color:var(--text-muted)">No demo plays recorded.</p>`;
