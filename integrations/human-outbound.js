@@ -19,7 +19,7 @@
  * This module observes those messages and turns them into canonical evidence.
  * It is a PLANNER: it returns proposed activities and writes nothing.
  *
- * THREE RULES
+ * FOUR RULES
  *
  * 1. An outbound message is NOT a reply. It is written as `human_response_sent`
  *    and never as any *_reply type, so reply classification, the funnel and
@@ -35,6 +35,13 @@
  * 3. Matching a thread is not adopting an address. A message to a
  *    decision-maker address is conversation evidence only; the lead's canonical
  *    identity is untouched and nothing may auto-send to that address.
+ *
+ * 4. An outbound message in a thread the prospect never wrote into is recorded
+ *    ONLY when the operator attests that exact provider message id. Manual
+ *    follow-ups into silent cold threads are real and the CRM has to hold them,
+ *    or automation keeps reasoning about a lead as untouched — but attestation
+ *    is asserted per message, never inferred, so rule 1's refusal still governs
+ *    every message a sweep discovers on its own.
  */
 
 const { malformedEmailReason } = require('./canonical-reply');
@@ -93,7 +100,14 @@ function matchOutbound(message = {}, { leadsByEmail = new Map(), leadIdByThread 
  * idempotency: a message already recorded proposes nothing.
  */
 function planOutboundActivity(message = {}, context = {}) {
-  const { existingActivitiesByLead = new Map(), threadsWithInbound = new Set() } = context;
+  const {
+    existingActivitiesByLead = new Map(), threadsWithInbound = new Set(),
+    // Provider message ids an operator has personally confirmed sending. Named
+    // one by one by the caller, never derived from a listing, so a sweep can
+    // attest nothing.
+    attestedMessageIds = new Set(),
+  } = context;
+  const attestedIds = attestedMessageIds instanceof Set ? attestedMessageIds : new Set(attestedMessageIds || []);
   const match = matchOutbound(message, context);
   const base = {
     gmailMessageId: message.id || null, gmailThreadId: message.threadId || null,
@@ -124,7 +138,15 @@ function planOutboundActivity(message = {}, context = {}) {
   // answered, flipped those leads to waiting-on-prospect, and silently stopped
   // outreach. The thread carrying an inbound message is the provider's own
   // evidence that a conversation exists.
-  if (!threadsWithInbound.has(String(message.threadId || ''))) {
+  //
+  // ATTESTATION is the one way past this, and it is deliberately narrow: the
+  // operator names the exact provider message id they sent by hand. A real
+  // manual follow-up into a silent cold thread is evidence the CRM must hold —
+  // without it, automation keeps treating the lead as untouched — but it can
+  // never be inferred, only asserted about one identified message.
+  const isResponseToInbound = threadsWithInbound.has(String(message.threadId || ''));
+  const attested = attestedIds.has(String(message.id));
+  if (!isResponseToInbound && !attested) {
     return { ...base, outcome: OUTCOME.NOT_A_RESPONSE, match: match.via, activity: null,
       leadId: match.leadId, company: match.lead.company || '',
       reason: 'no inbound message exists in this thread, so this is an outbound opener rather than a response' };
@@ -160,7 +182,12 @@ function planOutboundActivity(message = {}, context = {}) {
       metadata: {
         provider: 'gmail',
         direction: 'outbound', actor: 'human',
-        trigger: 'gmail_outbound_ingestion',
+        trigger: attested ? 'operator_attested_outbound' : 'gmail_outbound_ingestion',
+        // Whether the prospect had written into this thread. An attested record
+        // says plainly that they had not, so nothing downstream can mistake a
+        // manual opener for the start of a two-sided conversation.
+        attested,
+        isResponseToInbound,
         gmailMessageId: message.id,
         gmailThreadId: message.threadId || '',
         sentAt: message.sentAt || '',
