@@ -17,10 +17,15 @@ test('a busy safe pass skips the scheduled window without creating a catch-up bu
 
 test('late-refused candidates do not consume the successful-send window target', () => {
   const batching = agent.slice(agent.indexOf('const newBatch'), agent.indexOf('console.log(`\\nDone.'));
-  assert.match(batching, /const newBatch\s+= queued;/);
+  // The step-1 batch is the fair-share ORDERING of the whole eligible queue.
+  // Ordering only: it is still the full candidate list, so a late refusal
+  // falls through to the next candidate instead of consuming the window.
+  assert.match(batching, /const newBatch\s+= fairShareQueuedOrder\(queued,/);
   assert.match(batching, /const followBatch\s+= followUps;/);
   assert.doesNotMatch(batching, /warmBatch|warmLeads|getOpenTriggeredLeads/);
   assert.doesNotMatch(batching, /queued\.slice\(0, effectiveCap\)/);
+  assert.doesNotMatch(batching, /fairShareQueuedOrder\([^)]*\)\.slice\(/,
+    'the fair-share order is never pre-truncated to the cap');
   assert.match(batching, /consumeSendingWindowSuccess\(windowQuota, sender\.id\)/);
   assert.match(batching, /sendingWindowRemainingBySender\(windowQuota\)/);
   assert.match(batching, /while \(index < batch\.length && sent < effectiveCap/);

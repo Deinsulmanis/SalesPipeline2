@@ -115,6 +115,7 @@ const {
 } = require('./integrations/demo-intent-state');
 const { aggregateDemoPlays, attributeDemoPlays, demoPlayForLead } = require('./integrations/demo-attribution');
 const { oldestDueFirst, followUpSuccessTarget } = require('./integrations/scheduler-fairness');
+const { fairShareQueuedOrder } = require('./integrations/scheduled-slot-allocator');
 const { credentialsFor: gmailCredentialsFor, parseRegistry: parseGmailRegistry } = require('./integrations/gmail-inbox-registry');
 const {
   configuredSenders, chooseSender, pinnedSenderId, senderCountsToday, successfulSendCountToday,
@@ -4347,7 +4348,16 @@ async function run() {
   // normal five-send batch first scans oldest-due follow-ups until four have
   // actually succeeded, then gives initials their reserved position. Refused
   // candidates consume no allocation, and either pool may refill unused space.
-  const newBatch    = queued;
+  // Staffing and dental share `primary`. Queued order is sheet order, so
+  // without this the niche sitting earlier in the sheet consumed the whole
+  // five-success bucket and the other was deferred with "assigned sender
+  // scheduled-window limit reached". Reorder each sender's slice to the 3:2
+  // staffing/other reservation, spilling unused reserved capacity immediately.
+  // Ordering only: eligibility was decided by selectQueued above, every
+  // attempt-time guard below still runs, and slots are still consumed on
+  // provider success rather than on attempt.
+  const newBatch    = fairShareQueuedOrder(queued,
+    senderId => sendingWindowRemainingBySender(windowQuota).get(senderId) || 0);
   const followBatch = followUps;
   const totalCandidates = newBatch.length + followBatch.length;
 
