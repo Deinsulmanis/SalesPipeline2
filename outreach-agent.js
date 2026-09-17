@@ -2752,8 +2752,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     const fromNote = (message.fromAddr && message.fromAddr !== lead.email.trim().toLowerCase())
       ? ` (from ${message.fromAddr})` : '';
     console.log(`  ↩ Reply from ${lead.email}${fromNote} (${company}) — ${classification}`);
-    lead.emailStatus = classification === 'UNSUBSCRIBE' || classification === 'NOT_INTERESTED'
-      ? 'done' : 'replied'; // exclude from follow-ups this run regardless of classification
+    lead.emailStatus = 'replied'; // exclude from follow-ups this run regardless of classification
 
     if (!DRY_RUN) {
       await withAuth(async () => {
