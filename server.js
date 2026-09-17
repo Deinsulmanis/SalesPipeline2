@@ -18,6 +18,8 @@ const { verifySignature, verifySharedSecret, normalizeEvent } = require('./integ
 const { leadEligibility } = require('./integrations/outreach-policy');
 const { buildEventKey, buildMappingKey, mappingMatchesEvent, normalizeEmail, canApplyProviderTransition, safeAuditPayload, executeEventAttempt, KeyedLock, fetchAllCampaignLeads, aggregateProviderStats, reconciliationHealth, admitSmartleadWebhook, suppressionFromProviderStatus } = require('./integrations/smartlead-safety');
 const { createRequireAuth } = require('./integrations/dashboard-auth');
+const { assertSendAuthorized } = require('./integrations/send-authorization');
+const { guardProviderSend } = require('./integrations/send-safety-revalidate');
 const { parseGoogleServiceAccountJson } = require('./integrations/google-service-account');
 const { createOutreachCache } = require('./integrations/outreach-cache');
 const { classifyReply: classifyProviderReply, CLASSIFICATION_TO_STATUS } = require('./integrations/reply-classifier');
@@ -5691,6 +5693,15 @@ app.post('/api/integrations/smartlead/campaigns/:internalCampaignId/leads/:leadI
     const providerLeads = await migrateProviderMappings();
     const eligibility = leadEligibility({ lead: found.lead, suppressedEmails: suppressed, providerMappings: providerLeads, externalCampaignId: mapping.externalCampaignId });
     if (!eligibility.ok) return res.status(409).json({ error: eligibility.reason });
+    assertSendAuthorized();
+    const safety = await guardProviderSend(found.lead, {
+      loadFreshLead: async () => {
+        const again = await findColdEmailLead({ id: found.lead.id });
+        return again ? again.lead : null;
+      },
+      loadSuppressedEmails: loadSuppressionEmails,
+    }, { purpose: 'cold' });
+    if (!safety.allowed) return res.status(409).json({ error: safety.reason || safety.code });
     const result = await smartleadProvider.addLeads({ externalCampaignId: mapping.externalCampaignId }, [smartleadLeadPayload(found.lead)]);
     const now = new Date().toISOString();
     const externalLeadId = result.lead_ids?.[0] || '';
@@ -5703,6 +5714,9 @@ app.post('/api/integrations/smartlead/campaigns/:internalCampaignId/leads/:leadI
     });
     res.json({ ok: true, testMode: Boolean(result.testMode), result });
   } catch (error) {
+    if (error.code === 'send_unauthorized' || error.code === 'sending_disabled') {
+      return res.status(403).json({ error: error.message });
+    }
     console.warn('[Smartlead add lead]', error.code || error.message);
     res.status(error.status === 422 ? 422 : 502).json({ error: error.message });
   }

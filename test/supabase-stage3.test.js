@@ -845,7 +845,7 @@ test('M3 — a mirror failure cannot undo or obscure a committed Sheets write', 
     'the mirror must run only after the authoritative write has succeeded');
   // ok reports the AUTHORITATIVE outcome; mirrored is reported separately so a
   // deferred mirror is never mistaken for a failed mutation, nor the reverse.
-  assert.match(fn, /return \{ ok: true, leadId: id, fields, mirrored, mirrorReason \}/);
+  assert.match(fn, /return \{ ok: true, leadId: id, fields, mirrored, mirrorReason,\n    keptMarkers, resumeTagKept \}/);
   assert.match(fn, /Sheets write COMMITTED, mirror deferred/,
     'a deferred mirror must say plainly what is still true');
   assert.ok(!/throw/.test(fn.slice(mirror)), 'nothing after the authoritative write may throw');

@@ -75,6 +75,8 @@ const { probeOutreachParity, formatProbeLine } = require('./integrations/outreac
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
 const { parseGoogleServiceAccountJson } = require('./integrations/google-service-account');
 const { staffingSendBlockReason, assertStaffingSendAllowed } = require('./integrations/staffing-launch-gate');
+const { assertSendAuthorized, sendAuthorization } = require('./integrations/send-authorization');
+const { evaluateFreshSendSafety, guardProviderSend } = require('./integrations/send-safety-revalidate');
 const { routedLeadReady } = require('./integrations/campaign-routing');
 // Staffing supplies its own locked copy only. Sender selection, thread pinning,
 // quota, observer, suppression and ownership all stay on the shared path.
@@ -1126,6 +1128,7 @@ function toRawMessage({ to, subject, body, html, inReplyTo, references, messageI
 }
 
 async function sendEmail({ lead, to, subject, body, html, threadId, inReplyTo, references, messageId, sender = PRIMARY_GMAIL_SENDER }) {
+  assertSendAuthorized();
   assertStaffingSendAllowed(lead);
   if (!sender?.sendEligible) throw new Error(`Gmail sender ${sender?.id || 'unknown'} is not delivery eligible`);
   const provider = new GmailOutreachProvider({ send: message => gmailForSender(sender).users.messages.send({
@@ -1163,6 +1166,7 @@ function providerForLead(lead) {
 }
 
 async function enqueueSmartleadLead(lead, mapping) {
+  assertSendAuthorized();
   assertStaffingSendAllowed(lead);
   if (!mapping.externalCampaignId) throw new Error('Smartlead campaign mapping has no external campaign ID');
   if (ACTIVE_PROVIDER_LEADS.has(lead.id) || ACTIVE_PROVIDER_EMAILS.has(normalizeEmail(lead.email))) throw new Error('lead email already has an active provider assignment');
@@ -1177,6 +1181,8 @@ async function enqueueSmartleadLead(lead, mapping) {
     if (!values.includes('mappingKey')) await sheets().spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A1`, valueInputOption: 'RAW', requestBody: { values: [['internalLeadId','provider','externalLeadId','externalCampaignId','mappingId','normalizedStatus','rawStatus','lastProviderEventAt','lastSynchronizedAt','unsubscribedAt','complianceNote','metadata','mappingKey','normalizedEmail']] } });
   }
   const names = String(lead.contactName || '').trim().split(/\s+/);
+  const gate = await guardProviderSend(lead, freshSendSafetyDeps(), { purpose: 'cold' });
+  if (!gate.allowed) throw new Error(gate.reason || gate.code);
   const client = new SmartleadClient();
   const provider = new SmartleadOutreachProvider({ client });
   const result = await provider.addLeads({ externalCampaignId: mapping.externalCampaignId }, [{
@@ -1633,6 +1639,26 @@ async function loadAgentSnapshot({ forceColdEmail = false } = {}) {
   return snapshot;
 }
 
+function freshSendSafetyDeps() {
+  return {
+    env: process.env,
+    loadFreshState: async (leadId) => {
+      const snapshot = await withAuth(() => loadAgentSnapshot({
+        forceColdEmail: outreachWriteAuthority() === 'sheets',
+      }));
+      const rows = await readLeads(snapshot.coldEmail);
+      const match = String(leadId || '');
+      const current = rows.find(row => String(row.id) === match)
+        || rows.find(row => `CE-${row.id}` === match)
+        || null;
+      return {
+        current,
+        suppressedEmails: new Set((snapshot.suppression || []).slice(1).map(row => normEmail(row[0])).filter(Boolean)),
+      };
+    },
+  };
+}
+
 function loadGmailObservationState(rows = []) {
   gmailObservationHistoryBySender.clear();
   gmailObservationDetailsBySender.clear();
@@ -1911,6 +1937,11 @@ async function deliverOrdinaryColdStep({
     activitiesForCycle?.push(reservation);
   } catch (error) {
     return { delivered: false, reason: `delivery reservation could not be persisted: ${error.message}` };
+  }
+
+  const gate = await guardProviderSend(lead, freshSendSafetyDeps(), { purpose: 'cold' });
+  if (!gate.allowed) {
+    return { delivered: false, reason: gate.reason || gate.code };
   }
 
   let result;
@@ -2644,7 +2675,8 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
     },
     finalRevalidate: async () => {
       if (staffingSendBlockReason(lead)) return { allowed: false, code: 'staffing_launch_paused' };
-      if (!SENDING_ENABLED) return { allowed: false, code: 'sending_disabled' };
+      const auth = sendAuthorization();
+      if (!auth.allowed) return { allowed: false, code: auth.code, reason: auth.reason };
       if (observerAutomationReadyBySender.get(sender.id) !== true) return { allowed: false, code: 'observer_not_incremental' };
       // Warm responses are rare, so pay for one fresh batched snapshot at the
       // last possible moment. This catches a booking, hold, suppression, sender
@@ -2659,9 +2691,9 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
       }));
       const currentRows = await readLeads(fresh.coldEmail);
       const current = currentRows.find(row => row.id === lead.id);
-      if (!current || normEmail(current.email) !== normEmail(lead.email)) return { allowed: false, code: 'identity_changed' };
       const suppressed = new Set((fresh.suppression || []).slice(1).map(row => normEmail(row[0])).filter(Boolean));
-      if (sendSuppressionReason(current, { suppressedEmails: suppressed })) return { allowed: false, code: 'suppressed' };
+      const safety = evaluateFreshSendSafety(lead, current, suppressed, { purpose: 'warm' });
+      if (!safety.allowed) return { allowed: false, code: safety.code, reason: safety.reason };
       if (String(current.notes || '').includes('[MANUAL HOLD]')) return { allowed: false, code: 'manual_hold' };
       const freshActivities = await readColdCallActivities(fresh.activityRows);
       const mine = freshActivities.filter(row => row.sourceLeadId === lead.id || row.leadId === `CE-${lead.id}` || normEmail(row.email) === normEmail(lead.email));
@@ -4023,6 +4055,21 @@ async function runStageSequencePass(allLeads, {
       activities.push(reservation); mine.push(reservation);
     } catch (error) {
       console.warn(`[StageSeq] ${boardLead.email} blocked: delivery reservation could not be persisted (${error.message})`);
+      continue;
+    }
+
+    const safetyLead = twin || {
+      id: String(boardLead.id || '').replace(/^CE-/, ''),
+      email: boardLead.email,
+      notes: (twin && twin.notes) || boardLead.notes,
+      stage: (twin && twin.stage) || boardLead.stage,
+      emailStatus: (twin && twin.emailStatus) || boardLead.emailStatus,
+      leadNiche: twin && twin.leadNiche, tradeType: twin && twin.tradeType,
+      emailTemplateId: twin && twin.emailTemplateId, campaign: twin && twin.campaign,
+    };
+    const gate = await guardProviderSend(safetyLead, freshSendSafetyDeps(), { purpose: 'sequence' });
+    if (!gate.allowed) {
+      console.warn(`[StageSeq] ${boardLead.email} blocked: ${gate.reason || gate.code}`);
       continue;
     }
 

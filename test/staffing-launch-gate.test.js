@@ -37,7 +37,7 @@ test('approved queue route stays selectable while actual routing/attribution rem
 test('the actual provider function refuses staffing before constructing or calling Gmail',async()=>{
  const source=fs.readFileSync(require.resolve('../outreach-agent'),'utf8');
  const code=source.slice(source.indexOf('async function sendEmail('),source.indexOf('async function loadOutreachProviderState('));
- let calls=0;const send=new Function('assertStaffingSendAllowed','PRIMARY_GMAIL_SENDER','GmailOutreachProvider','gmailForSender','toRawMessage',`${code};return sendEmail;`)(l=>assertStaffingSendAllowed(l,{}),{},class{constructor(){calls++;}},()=>assert.fail('Gmail must not be constructed'),()=>assert.fail('MIME must not be built'));
+ let calls=0;const send=new Function('assertStaffingSendAllowed','assertSendAuthorized','PRIMARY_GMAIL_SENDER','GmailOutreachProvider','gmailForSender','toRawMessage',`${code};return sendEmail;`)(l=>assertStaffingSendAllowed(l,{}),()=>{},{},class{constructor(){calls++;}},()=>assert.fail('Gmail must not be constructed'),()=>assert.fail('MIME must not be built'));
  await assert.rejects(send({lead,to:'test@example.com'}),/paused/);assert.equal(calls,0);
 });
 test('warm, stage, intent, ordinary and Smartlead boundaries retain the gate',()=>{
@@ -47,7 +47,7 @@ test('warm, stage, intent, ordinary and Smartlead boundaries retain the gate',()
  assert.match(s,/if \(staffingSendBlockReason\(twin \|\| boardLead\)\) continue;/);
  assert.match(s,/sendProvider: payload => sendEmail\(\{ \.\.\.payload, lead \}\)/);
  assert.match(s,/lead: twin \|\| boardLead, to: boardLead.email/);
- assert.match(s,/async function enqueueSmartleadLead\(lead, mapping\) \{\n  assertStaffingSendAllowed\(lead\);/);
+ assert.match(s,/async function enqueueSmartleadLead\(lead, mapping\) \{\n  assertSendAuthorized\(\);\n  assertStaffingSendAllowed\(lead\);/);
 });
 
 test('102 queue commits produce one audit batch and replay produces none',async()=>{
