@@ -20,6 +20,8 @@ const { buildEventKey, buildMappingKey, mappingMatchesEvent, normalizeEmail, can
 const { createRequireAuth } = require('./integrations/dashboard-auth');
 const { assertSendAuthorized } = require('./integrations/send-authorization');
 const { guardProviderSend } = require('./integrations/send-safety-revalidate');
+const { withOutboundReservation, confirmOutboundReservation, sendLockHealth, listUnresolvedReservations } = require('./integrations/send-lock');
+const { smartleadEnqueueActionId } = require('./integrations/outbound-action-id');
 const { parseGoogleServiceAccountJson } = require('./integrations/google-service-account');
 const { createOutreachCache } = require('./integrations/outreach-cache');
 const { classifyReply: classifyProviderReply, CLASSIFICATION_TO_STATUS } = require('./integrations/reply-classifier');
@@ -1862,6 +1864,53 @@ app.get('/api/supabase/mirror-health', requireAuth, async (_req, res) => {
     // Never surface a driver message: it can carry a URL or a header fragment.
     console.error('[supabase-mirror-health]', e.message);
     res.status(500).json({ error: 'mirror health could not be determined' });
+  }
+});
+
+app.get('/api/send-lock/health', requireAuth, async (_req, res) => {
+  try {
+    const health = await sendLockHealth();
+    res.json({
+      feature: 'outbound_send_reservations',
+      authoritativeStore: 'google_sheets',
+      note: 'Dedicated send-lock database only. Never returns the database URL.',
+      ok: health.ok,
+      enabled: health.enabled !== false,
+      code: health.code || null,
+      reason: health.reason || null,
+      table: health.table || null,
+      kind: health.kind || null,
+    });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    res.status(500).json({ error: 'send lock health could not be determined' });
+  }
+});
+
+app.get('/api/send-lock/reservations', requireAuth, async (_req, res) => {
+  try {
+    const listed = await listUnresolvedReservations();
+    const publicRow = row => ({
+      actionId: row.actionId,
+      leadId: row.leadId,
+      provider: row.provider,
+      status: row.status,
+      reservedAt: row.reservedAt,
+      providerAttemptStartedAt: row.providerAttemptStartedAt,
+      providerSucceededAt: row.providerSucceededAt,
+      leaseExpiresAt: row.leaseExpiresAt,
+      lastError: row.lastError,
+    });
+    res.json({
+      enabled: listed.enabled !== false,
+      sentUnconfirmed: (listed.sentUnconfirmed || []).map(publicRow),
+      reconciliationRequired: (listed.reconciliationRequired || []).map(publicRow),
+      staleReserved: (listed.staleReserved || []).map(publicRow),
+      note: 'Read-only. There is no retry-send action; recovery is a separate phase.',
+    });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    res.status(500).json({ error: 'send lock reservations could not be listed' });
   }
 });
 
@@ -5702,7 +5751,13 @@ app.post('/api/integrations/smartlead/campaigns/:internalCampaignId/leads/:leadI
       loadSuppressedEmails: loadSuppressionEmails,
     }, { purpose: 'cold' });
     if (!safety.allowed) return res.status(409).json({ error: safety.reason || safety.code });
-    const result = await smartleadProvider.addLeads({ externalCampaignId: mapping.externalCampaignId }, [smartleadLeadPayload(found.lead)]);
+    const sendAction = {
+      actionId: smartleadEnqueueActionId(found.lead.id, mapping.externalCampaignId),
+      leadId: found.lead.id,
+      actionType: 'smartlead_enqueue',
+      provider: 'smartlead',
+    };
+    const result = await withOutboundReservation(sendAction, () => smartleadProvider.addLeads({ externalCampaignId: mapping.externalCampaignId }, [smartleadLeadPayload(found.lead)]));
     const now = new Date().toISOString();
     const externalLeadId = result.lead_ids?.[0] || '';
     const mappingKey = buildMappingKey({ externalCampaignId: mapping.externalCampaignId, externalLeadId, email: eligibility.email });
@@ -5712,10 +5767,17 @@ app.post('/api/integrations/smartlead/campaigns/:internalCampaignId/leads/:leadI
       mappingId: '', normalizedStatus: result.testMode ? 'Test mode' : (result.added_count ? 'Queued' : 'Skipped'), rawStatus: result.message || '',
       lastProviderEventAt: '', lastSynchronizedAt: now, unsubscribedAt: '', complianceNote: String(req.body.complianceNote || ''), metadata: JSON.stringify({ addedCount: result.added_count || 0, skippedCount: result.skipped_count || 0, attribution }), mappingKey, normalizedEmail: eligibility.email,
     });
+    await confirmOutboundReservation(sendAction.actionId).catch(() => {});
     res.json({ ok: true, testMode: Boolean(result.testMode), result });
   } catch (error) {
-    if (error.code === 'send_unauthorized' || error.code === 'sending_disabled') {
+    if (error.code === 'send_unauthorized' || error.code === 'sending_disabled' || error.code === 'send_lock_required') {
       return res.status(403).json({ error: error.message });
+    }
+    if (error.code === 'lock_database_unavailable' || error.code === 'lock_schema_missing' || error.code === 'send_lock_action_required') {
+      return res.status(503).json({ error: error.message });
+    }
+    if (String(error.code || '').startsWith('reservation_')) {
+      return res.status(409).json({ error: error.message });
     }
     console.warn('[Smartlead add lead]', error.code || error.message);
     res.status(error.status === 422 ? 422 : 502).json({ error: error.message });
@@ -6048,4 +6110,13 @@ app.listen(PORT, () => {
   console.log(mirrorEnabled()
     ? '[supabase-mirror] enabled — canonical activity is shadow-mirrored after each Google Sheets write'
     : '[supabase-mirror] disabled — Google Sheets only (set SUPABASE_URL and SUPABASE_SECRET_KEY to enable)');
+  sendLockHealth().then(health => {
+    console.log(health.enabled === false
+      ? '[send-lock] disabled — dedicated outbound reservation database is not active'
+      : health.ok
+        ? '[send-lock] enabled — outbound provider sends require a durable reservation'
+        : `[send-lock] enabled but unavailable (${health.code || 'error'}) — provider sends will fail closed`);
+  }).catch(() => {
+    console.log('[send-lock] health probe failed — provider sends will fail closed if locking is enabled');
+  });
 });

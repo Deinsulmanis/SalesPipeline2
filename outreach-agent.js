@@ -77,6 +77,13 @@ const { parseGoogleServiceAccountJson } = require('./integrations/google-service
 const { staffingSendBlockReason, assertStaffingSendAllowed } = require('./integrations/staffing-launch-gate');
 const { assertSendAuthorized, sendAuthorization } = require('./integrations/send-authorization');
 const { evaluateFreshSendSafety, guardProviderSend } = require('./integrations/send-safety-revalidate');
+const {
+  withGmailProviderSend, withOutboundReservation, confirmOutboundReservation,
+  isDefinitePreDeliveryFailure,
+} = require('./integrations/send-lock');
+const {
+  ordinaryColdActionId, stageSequenceActionId, smartleadEnqueueActionId,
+} = require('./integrations/outbound-action-id');
 const { routedLeadReady } = require('./integrations/campaign-routing');
 // Staffing supplies its own locked copy only. Sender selection, thread pinning,
 // quota, observer, suppression and ownership all stay on the shared path.
@@ -1127,15 +1134,20 @@ function toRawMessage({ to, subject, body, html, inReplyTo, references, messageI
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-async function sendEmail({ lead, to, subject, body, html, threadId, inReplyTo, references, messageId, sender = PRIMARY_GMAIL_SENDER }) {
+async function sendEmail({ lead, to, subject, body, html, threadId, inReplyTo, references, messageId, sender = PRIMARY_GMAIL_SENDER, sendAction }) {
   assertSendAuthorized();
   assertStaffingSendAllowed(lead);
   if (!sender?.sendEligible) throw new Error(`Gmail sender ${sender?.id || 'unknown'} is not delivery eligible`);
-  const provider = new GmailOutreachProvider({ send: message => gmailForSender(sender).users.messages.send({
-    userId: 'me',
-    requestBody: { raw: toRawMessage({ ...message, fromEmail: sender.email }), ...(message.threadId ? { threadId: message.threadId } : {}) },
-  }) });
-  return provider.sendEmail({ to, subject, body, html, threadId, inReplyTo, references, messageId });
+  return withGmailProviderSend({
+    lead, sendAction, sender,
+    run: async () => {
+      const provider = new GmailOutreachProvider({ send: message => gmailForSender(sender).users.messages.send({
+        userId: 'me',
+        requestBody: { raw: toRawMessage({ ...message, fromEmail: sender.email }), ...(message.threadId ? { threadId: message.threadId } : {}) },
+      }) });
+      return provider.sendEmail({ to, subject, body, html, threadId, inReplyTo, references, messageId });
+    },
+  });
 }
 
 async function loadOutreachProviderState(campaignRowsOverride = null, mappingRowsOverride = null) {
@@ -1183,12 +1195,18 @@ async function enqueueSmartleadLead(lead, mapping) {
   const names = String(lead.contactName || '').trim().split(/\s+/);
   const gate = await guardProviderSend(lead, freshSendSafetyDeps(), { purpose: 'cold' });
   if (!gate.allowed) throw new Error(gate.reason || gate.code);
+  const sendAction = {
+    actionId: smartleadEnqueueActionId(lead.id, mapping.externalCampaignId),
+    leadId: lead.id,
+    actionType: 'smartlead_enqueue',
+    provider: 'smartlead',
+  };
   const client = new SmartleadClient();
   const provider = new SmartleadOutreachProvider({ client });
-  const result = await provider.addLeads({ externalCampaignId: mapping.externalCampaignId }, [{
+  const result = await withOutboundReservation(sendAction, () => provider.addLeads({ externalCampaignId: mapping.externalCampaignId }, [{
     email: lead.email.trim().toLowerCase(), first_name: names[0] || '', last_name: names.slice(1).join(' '), company_name: lead.company || '', website: lead.website || '', location: lead.city || '',
     custom_fields: { practice_name: lead.company || '', city: lead.city || '', website: lead.website || '', niche: lead.tradeType || '', custom_first_line: lead.siteContext || '', service_reference: lead.tier || '', lead_score: lead.rating || '', internal_lead_id: lead.id },
-  }]);
+  }]));
   const now = new Date().toISOString();
   const externalLeadId = result.lead_ids?.[0] || '';
   const normalizedEmail = normalizeEmail(lead.email);
@@ -1201,6 +1219,12 @@ async function enqueueSmartleadLead(lead, mapping) {
   ACTIVE_PROVIDER_LEADS.add(lead.id);
   ACTIVE_PROVIDER_EMAILS.add(normalizedEmail);
   EXISTING_PROVIDER_CAMPAIGN_EMAILS.add(`${mapping.externalCampaignId}:${normalizedEmail}`);
+  await confirmOutboundReservation(sendAction.actionId).catch(error => {
+    console.error(JSON.stringify({
+      event: 'reservation_confirm_failed', action_id: sendAction.actionId, lead_id: lead.id,
+      provider: 'smartlead', status: 'sent_unconfirmed', code: error.code || 'confirm_failed',
+    }));
+  });
   return result;
 }
 
@@ -1944,28 +1968,42 @@ async function deliverOrdinaryColdStep({
     return { delivered: false, reason: gate.reason || gate.code };
   }
 
+  const sendAction = {
+    actionId: ordinaryColdActionId(lead.id, step),
+    leadId: lead.id,
+    actionType: 'gmail_cold_step',
+    provider: 'gmail',
+  };
   let result;
   try {
     result = await sendEmail({
       lead, to: lead.email.trim(), subject, body, html: staffingEmail?.html, sender, messageId: rfcMessageId,
+      sendAction,
       ...(thread ? { threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references } : {}),
     });
   } catch (error) {
-    const status = Number(error?.response?.status || error?.code);
-    const rejectedBeforeDelivery = status >= 400 && status < 500 && ![408, 409, 429].includes(status);
-    if (rejectedBeforeDelivery) {
-      const failure = {
-        eventId: `${reservationEventId}:failed`, leadId: `CE-${lead.id}`, sourceLeadId: lead.id,
-        email: lead.email, company: cleanCompanyName(lead.company) || lead.company || '',
-        eventType: 'ordinary_send_failed', occurredAt: new Date().toISOString(), subject, content: '',
-        metadata: JSON.stringify({ leadId: lead.id, step: Number(step), reservationEventId,
-          senderInboxId: sender.id, error: String(error.message || '').slice(0, 300) }),
-      };
-      try { await recordColdCallActivityStrict(failure); activitiesForCycle?.push(failure); } catch (_) { /* reservation remains fail-closed */ }
+    if (error.code === 'durable_checkpoint_failed') {
+      console.error(JSON.stringify({
+        event: 'PROVIDER_SUCCESS_BUT_DURABLE_SEND_STATE_COULD_NOT_BE_CHECKPOINTED',
+        action_id: sendAction.actionId, lead_id: lead.id, provider: 'gmail',
+      }));
+      result = error.providerResult;
+    } else {
+      const rejectedBeforeDelivery = isDefinitePreDeliveryFailure(error);
+      if (rejectedBeforeDelivery) {
+        const failure = {
+          eventId: `${reservationEventId}:failed`, leadId: `CE-${lead.id}`, sourceLeadId: lead.id,
+          email: lead.email, company: cleanCompanyName(lead.company) || lead.company || '',
+          eventType: 'ordinary_send_failed', occurredAt: new Date().toISOString(), subject, content: '',
+          metadata: JSON.stringify({ leadId: lead.id, step: Number(step), reservationEventId,
+            senderInboxId: sender.id, error: String(error.message || '').slice(0, 300) }),
+        };
+        try { await recordColdCallActivityStrict(failure); activitiesForCycle?.push(failure); } catch (_) { /* reservation remains fail-closed */ }
+      }
+      return { delivered: false, reason: rejectedBeforeDelivery
+        ? `provider rejected before delivery: ${error.message}`
+        : `delivery outcome is ambiguous; reservation retained: ${error.message}` };
     }
-    return { delivered: false, reason: rejectedBeforeDelivery
-      ? `provider rejected before delivery: ${error.message}`
-      : `delivery outcome is ambiguous; reservation retained: ${error.message}` };
   }
 
   // Gmail accepted the message. Consume sender, window and global quota before
@@ -1973,6 +2011,12 @@ async function deliverOrdinaryColdStep({
   if (onProviderSuccess) onProviderSuccess({ recovered: false, occurredAt: new Date().toISOString() });
   const checkpoint = await markSent(lead, step, {
     result, subject, body, attribution, sender, personalizationMetadata, activitiesForCycle,
+  });
+  await confirmOutboundReservation(sendAction.actionId).catch(error => {
+    console.error(JSON.stringify({
+      event: 'reservation_confirm_failed', action_id: sendAction.actionId, lead_id: lead.id,
+      provider: 'gmail', status: 'sent_unconfirmed', code: error.code || 'confirm_failed',
+    }));
   });
   return { delivered: true, recovered: false, result, checkpoint };
 }
@@ -2762,7 +2806,15 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
         }) };
       await recordColdCallActivityStrict(row); activities.push(row); return row;
     },
-    sendProvider: payload => sendEmail({ ...payload, lead }),
+    sendProvider: payload => sendEmail({
+      ...payload, lead,
+      sendAction: {
+        actionId: payload.sendAction?.actionId || payload.actionId,
+        leadId: lead.id,
+        actionType: 'gmail_warm_reply',
+        provider: 'gmail',
+      },
+    }),
     consumeQuota: () => {
       if (activeWindowQuota) consumeSendingWindowSuccess(activeWindowQuota, sender.id);
       if (activeSenderCounts) activeSenderCounts.set(sender.id, (activeSenderCounts.get(sender.id) || 0) + 1);
@@ -2782,6 +2834,7 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
           recoveredAfterCheckpointFailure: Boolean(recovery), ...attribution }) };
       await recordColdCallActivityStrict(row); activities.push(row);
     },
+    confirmDurableReservation: actionId => confirmOutboundReservation(actionId),
     persistFailure: async ({ actionId, reservation, error }) => {
       const row = { eventId: `${actionId}:failed`, leadId: `CE-${lead.id}`, sourceLeadId: lead.id,
         email: lead.email, company: cleanCompanyName(lead.company) || lead.company || '', eventType: 'prospect_reply_failed',
@@ -4073,11 +4126,17 @@ async function runStageSequencePass(allLeads, {
       continue;
     }
 
+    const sendAction = {
+      actionId: stageSequenceActionId(boardLead.id, verdict.sequenceId, step),
+      leadId: twin ? twin.id : String(boardLead.id || '').replace(/^CE-/, ''),
+      actionType: 'gmail_sequence_step',
+      provider: 'gmail',
+    };
     let result;
     try {
       result = await sendEmail({
         lead: twin || boardLead, to: boardLead.email.trim(), subject: built.subject, body: built.body,
-        sender, messageId: built.messageId,
+        sender, messageId: built.messageId, sendAction,
         ...(built.replyToThread ? {
           threadId: built.threadId,
           inReplyTo: built.inReplyTo || undefined,
@@ -4085,32 +4144,38 @@ async function runStageSequencePass(allLeads, {
         } : {}),
       });
     } catch (error) {
-      // A provider failure consumes no quota. Only a definite pre-delivery 4xx
-      // is automatically retryable; ambiguous transport/5xx failures keep the
-      // reservation blocked until Gmail proves whether delivery occurred.
-      console.error(`[StageSeq] send failed for ${boardLead.email}: ${error.message}`);
-      const providerStatus = Number(error?.response?.status || error?.code);
-      const providerRejectedBeforeDelivery = providerStatus >= 400 && providerStatus < 500
-        && ![408, 409, 429].includes(providerStatus);
-      if (!providerRejectedBeforeDelivery) {
-        console.error('[StageSeq] delivery outcome is ambiguous; durable reservation remains blocked until Gmail confirms the Message-ID');
+      if (error.code === 'durable_checkpoint_failed') {
+        console.error(JSON.stringify({
+          event: 'PROVIDER_SUCCESS_BUT_DURABLE_SEND_STATE_COULD_NOT_BE_CHECKPOINTED',
+          action_id: sendAction.actionId, lead_id: boardLead.id, provider: 'gmail',
+        }));
+        result = error.providerResult;
+      } else {
+        // A provider failure consumes no quota. Only a definite pre-delivery 4xx
+        // is automatically retryable; ambiguous transport/5xx failures keep the
+        // reservation blocked until Gmail proves whether delivery occurred.
+        console.error(`[StageSeq] send failed for ${boardLead.email}: ${error.message}`);
+        const providerRejectedBeforeDelivery = isDefinitePreDeliveryFailure(error);
+        if (!providerRejectedBeforeDelivery) {
+          console.error('[StageSeq] delivery outcome is ambiguous; durable reservation remains blocked until Gmail confirms the Message-ID');
+          continue;
+        }
+        const failure = {
+          eventId: `${reservationEventId}:failed`, leadId: boardLead.id,
+          sourceLeadId: twin ? twin.id : '', email: boardLead.email,
+          company: boardLead.company || '', eventType: SEQUENCE_EVENTS.SEND_FAILED,
+          occurredAt: new Date().toISOString(), subject: built.subject, content: '',
+          metadata: JSON.stringify({
+            sequenceId: verdict.sequenceId, step, stepEventId: eventId,
+            reservationEventId, senderInboxId: sender.id, error: String(error.message || '').slice(0, 300),
+          }),
+        };
+        try { await recordColdCallActivityStrict(failure); activities.push(failure); mine.push(failure); }
+        catch (checkpointError) {
+          console.error(`[StageSeq] provider failure checkpoint also failed; reservation remains fail-closed: ${checkpointError.message}`);
+        }
         continue;
       }
-      const failure = {
-        eventId: `${reservationEventId}:failed`, leadId: boardLead.id,
-        sourceLeadId: twin ? twin.id : '', email: boardLead.email,
-        company: boardLead.company || '', eventType: SEQUENCE_EVENTS.SEND_FAILED,
-        occurredAt: new Date().toISOString(), subject: built.subject, content: '',
-        metadata: JSON.stringify({
-          sequenceId: verdict.sequenceId, step, stepEventId: eventId,
-          reservationEventId, senderInboxId: sender.id, error: String(error.message || '').slice(0, 300),
-        }),
-      };
-      try { await recordColdCallActivityStrict(failure); activities.push(failure); mine.push(failure); }
-      catch (checkpointError) {
-        console.error(`[StageSeq] provider failure checkpoint also failed; reservation remains fail-closed: ${checkpointError.message}`);
-      }
-      continue;
     }
 
     // Successful provider delivery consumes both ceilings immediately, before
@@ -4122,6 +4187,12 @@ async function runStageSequencePass(allLeads, {
     sent++;
     try {
       await persistSequenceStep({ eventId, boardLead, twin, verdict, step, built, sender, result });
+      await confirmOutboundReservation(sendAction.actionId).catch(error => {
+        console.error(JSON.stringify({
+          event: 'reservation_confirm_failed', action_id: sendAction.actionId, lead_id: boardLead.id,
+          provider: 'gmail', status: 'sent_unconfirmed', code: error.code || 'confirm_failed',
+        }));
+      });
       console.log(`  [StageSeq] ${verdict.sequenceId} step ${step} -> ${boardLead.email}`);
     } catch (error) {
       console.error(`‼️ [StageSeq] Gmail delivered ${eventId}, but checkpoint failed: ${error.message}`);

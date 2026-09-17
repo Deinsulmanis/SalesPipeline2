@@ -17,6 +17,7 @@ function authorizedEnv(extra = {}) {
     SEND_AUTHORIZED_ENV: 'prod-sender',
     SEND_AUTHORIZED_TOKEN: 'test-sender-token',
     SEND_WORKER_ROLE: REQUIRED_WORKER_ROLE,
+    SEND_LOCK_ENABLED: 'true',
     ...extra,
   };
 }

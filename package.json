@@ -10,6 +10,11 @@
     "dev": "nodemon server.js",
     "gmail:connect": "node connect-gmail-inbox.js",
     "test": "node --test",
+    "test:send-lock": "node --test test/send-reservation-store.test.js test/send-lock-concurrency.test.js test/send-lock-pg.integration.test.js",
+    "send-lock:migrate": "node scripts/send-lock-migrate.js",
+    "send-lock:verify": "node scripts/send-lock-verify.js",
+    "send-lock:health": "node scripts/send-lock-health.js",
+    "send-lock:inspect": "node scripts/send-lock-inspect.js",
     "check": "node --check server.js && node --check outreach-agent.js && node --test"
   },
   "dependencies": {
@@ -20,6 +25,7 @@
     "express": "^4.19.2",
     "googleapis": "^144.0.0",
     "node-cron": "^4.5.0",
+    "pg": "^8.23.0",
     "puppeteer": "^25.3.0"
   },
   "devDependencies": {

@@ -19,6 +19,8 @@ const crypto = require('crypto');
 //   3. RAILWAY_ENVIRONMENT equals SEND_AUTHORIZED_ENV
 //   4. SEND_AUTHORIZED_TOKEN is non-empty
 //   5. SEND_WORKER_ROLE=outreach-sender
+//   6. SEND_LOCK_ENABLED=true (authorized production sender cannot use the
+//      pre-activation unlocked path)
 //
 // Confirm before production deploy (do not set from this change):
 //   SEND_AUTHORIZED_ENV   = <exact production RAILWAY_ENVIRONMENT>
@@ -32,6 +34,7 @@ const AUTHORIZED_ENV_VAR = 'SEND_AUTHORIZED_ENV';
 const AUTHORIZED_TOKEN_VAR = 'SEND_AUTHORIZED_TOKEN';
 const WORKER_ROLE_VAR = 'SEND_WORKER_ROLE';
 const RAILWAY_ENV_VAR = 'RAILWAY_ENVIRONMENT';
+const LOCK_ENABLED_VAR = 'SEND_LOCK_ENABLED';
 const REQUIRED_WORKER_ROLE = 'outreach-sender';
 
 function timingSafeEqualString(a, b) {
@@ -89,6 +92,13 @@ function sendAuthorization(env = process.env) {
     };
   }
 
+  if (String(env[LOCK_ENABLED_VAR] || '').trim().toLowerCase() !== 'true') {
+    return {
+      allowed: false, code: 'send_lock_required',
+      reason: 'authorized sender requires SEND_LOCK_ENABLED=true',
+    };
+  }
+
   return { allowed: true, code: '', reason: '' };
 }
 
@@ -104,6 +114,6 @@ function assertSendAuthorized(env = process.env) {
 
 module.exports = {
   SENDING_ENABLED_VAR, AUTHORIZED_ENV_VAR, AUTHORIZED_TOKEN_VAR, WORKER_ROLE_VAR,
-  RAILWAY_ENV_VAR, REQUIRED_WORKER_ROLE,
+  RAILWAY_ENV_VAR, LOCK_ENABLED_VAR, REQUIRED_WORKER_ROLE,
   sendAuthorization, assertSendAuthorized,
 };

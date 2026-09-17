@@ -18,6 +18,7 @@ function authorizedEnv(extra = {}) {
     [AUTHORIZED_ENV_VAR]: 'prod-sender',
     [AUTHORIZED_TOKEN_VAR]: 'test-sender-token',
     [WORKER_ROLE_VAR]: REQUIRED_WORKER_ROLE,
+    SEND_LOCK_ENABLED: 'true',
     ...extra,
   };
 }
@@ -74,6 +75,12 @@ test('assertSendAuthorized throws a reason and never logs the token', () => {
   assert.doesNotThrow(() => assertSendAuthorized(authorizedEnv()));
 });
 
+test('authorized production-like environment still requires SEND_LOCK_ENABLED', () => {
+  const verdict = sendAuthorization(authorizedEnv({ SEND_LOCK_ENABLED: 'false' }));
+  assert.equal(verdict.allowed, false);
+  assert.equal(verdict.code, 'send_lock_required');
+});
+
 test('authorized production-like environment is allowed', () => {
   const verdict = sendAuthorization(authorizedEnv());
   assert.equal(verdict.allowed, true);
@@ -95,7 +102,7 @@ test('Gmail sendEmail calls assertSendAuthorized before constructing the provide
   }
   const send = new Function(
     'assertStaffingSendAllowed', 'assertSendAuthorized', 'PRIMARY_GMAIL_SENDER',
-    'GmailOutreachProvider', 'gmailForSender', 'toRawMessage',
+    'GmailOutreachProvider', 'gmailForSender', 'toRawMessage', 'withGmailProviderSend',
     `${code}; return sendEmail;`,
   )(
     () => {},
@@ -108,6 +115,7 @@ test('Gmail sendEmail calls assertSendAuthorized before constructing the provide
     Provider,
     () => assert.fail('Gmail client must not be built'),
     () => assert.fail('MIME must not be built'),
+    () => assert.fail('durable lock must not run before authorization'),
   );
   await assert.rejects(
     send({ lead: { id: '1', email: 'a@x.test' }, to: 'a@x.test', sender: { sendEligible: true } }),
@@ -130,7 +138,7 @@ test('authorized sendEmail proceeds to the provider exactly once', async () => {
   }
   const send = new Function(
     'assertStaffingSendAllowed', 'assertSendAuthorized', 'PRIMARY_GMAIL_SENDER',
-    'GmailOutreachProvider', 'gmailForSender', 'toRawMessage',
+    'GmailOutreachProvider', 'gmailForSender', 'toRawMessage', 'withGmailProviderSend',
     `${code}; return sendEmail;`,
   )(
     () => {},
@@ -139,6 +147,7 @@ test('authorized sendEmail proceeds to the provider exactly once', async () => {
     Provider,
     () => ({ users: { messages: { send: async () => ({}) } } }),
     () => 'raw',
+    ({ run }) => run(),
   );
   await send({
     lead: { id: '1', email: 'a@x.test' }, to: 'a@x.test', subject: 's', body: 'b',
@@ -151,7 +160,8 @@ test('authorized sendEmail proceeds to the provider exactly once', async () => {
 test('Smartlead enqueue and ordinary/sequence sends keep the authorization gate at the provider boundary', () => {
   const agent = fs.readFileSync(path.join(root, 'outreach-agent.js'), 'utf8').split('\r\n').join('\n');
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8').split('\r\n').join('\n');
-  assert.match(agent, /async function sendEmail\([\s\S]*?assertSendAuthorized\(\);/);
+  assert.match(agent, /withGmailProviderSend\(/);
+  assert.match(agent, /withOutboundReservation\(sendAction/);
   assert.match(agent, /async function enqueueSmartleadLead\(lead, mapping\) \{\n  assertSendAuthorized\(\);/);
   assert.match(agent, /const gate = await guardProviderSend\(lead, freshSendSafetyDeps\(\), \{ purpose: 'cold' \}\);/);
   assert.match(agent, /const gate = await guardProviderSend\(safetyLead, freshSendSafetyDeps\(\), \{ purpose: 'sequence' \}\);/);
