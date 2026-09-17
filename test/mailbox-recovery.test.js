@@ -114,7 +114,7 @@ test('CHECK_ONLY opt-out uses the classifier unsubscribe_request reason', async 
   assert.deepEqual(unsubPlan.suppressions.map(item => item.reason), ['unsubscribe']);
   assert.equal(JSON.parse(unsubPlan.events.find(event => event.eventType === 'unsubscribe_reply').metadata).reason, 'unsubscribe_request');
 
-  const rejection = fixture([msg('n', lead.email, 'Please stop emailing me.')]);
+  const rejection = fixture([msg('n', lead.email, 'Not interested, thanks.')]);
   const rejectionObservation = await observeMailbox(rejection.input);
   const rejectionPlan = await planMailboxEvents({ ...rejection.input, observation: rejectionObservation });
   assert.equal(rejectionPlan.events.find(event => event.sourceLeadId).eventType, 'negative_reply');

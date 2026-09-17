@@ -10,6 +10,7 @@ const { deriveAutomationOwnership, mayColdSend } = require('./automation-ownersh
 const { sendAuthorization } = require('./send-authorization');
 const { authoritativeProvider } = require('./provider-ownership');
 const { deriveSequenceState } = require('./stage-sequences');
+const { isValidCommercialMailingAddress } = require('./staffing-compliance');
 
 function hasManualHold(lead = {}) {
   return String(lead.notes || '').includes('[MANUAL HOLD]');
@@ -93,6 +94,9 @@ function staffingReadinessReport({
     mutated: false,
     launch, sendAuthorization: { allowed: auth.allowed, code: auth.code },
     campaign: { id: STAFFING_CAMPAIGN.id, copyVersion: 'staffing_locked_v1' },
+    commercialMailingAddressConfigured: isValidCommercialMailingAddress(
+      env.COMMERCIAL_MAILING_ADDRESS || env.MAILING_ADDRESS,
+    ),
     counts, rows,
     note: 'Read-only. SENDING_ENABLED remains whatever the environment already is; this report never sends.',
   };

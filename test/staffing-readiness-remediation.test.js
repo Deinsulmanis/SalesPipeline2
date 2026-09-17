@@ -16,6 +16,7 @@ const { staffingReadinessReport } = require('../integrations/staffing-readiness'
 const { sendAuthorization } = require('../integrations/send-authorization');
 const { staffingLaunchState, ACTIVATION_VARIABLE } = require('../integrations/staffing-launch-gate');
 const { STAFFING_CAMPAIGN, LOCKED_EMAILS, renderStaffingEmail } = require('../integrations/staffing-campaign');
+const { STAFFING_RENDER_OPTIONS } = require('../test-support/staffing-mail');
 
 const root = path.join(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
@@ -206,7 +207,7 @@ test('17. approved staffing sequence copy maps to the intended campaign version'
   assert.match(LOCKED_EMAILS[0], /qualified employer meetings/);
   assert.match(LOCKED_EMAILS[1], /not talking about candidate sourcing/);
   assert.match(LOCKED_EMAILS[2], /more employer accounts/);
-  const email = renderStaffingEmail(staffing(), 1);
+  const email = renderStaffingEmail(staffing(), 1, STAFFING_RENDER_OPTIONS);
   assert.equal(email.subject, 'employer accounts');
   assert.match(email.body, /Harbour Staffing/);
 });

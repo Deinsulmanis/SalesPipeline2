@@ -51,8 +51,12 @@ const BOLD_PHRASE = BOLD_PHRASES[0];
 // sequence; staffing does not get its own scheduler, only its own copy.
 const STAFFING_FOLLOW_UP_DELAY_DAYS = Object.freeze([3, 5]);
 const escapeHtml = text => String(text).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const {
+  appendStaffingComplianceFooter, staffingSenderIdentity, staffingComplianceError,
+  STAFFING_CAMPAIGN_REF,
+} = require('./staffing-compliance');
 
-function renderStaffingPreview(lead, result, step = 1) {
+function renderStaffingPreview(lead, result, step = 1, options = {}) {
   if (!isStaffingCampaign(lead)) throw new Error('Staffing campaign assignment required');
   if (![1, 2, 3].includes(step)) throw new Error('Invalid staffing sequence step');
   if (step === 1 && (!result || result.reviewFlag || !result.hyperPersonalizedOpening)) return null;
@@ -63,8 +67,9 @@ function renderStaffingPreview(lead, result, step = 1) {
   };
   if (!vars.company || Object.values(vars).some(v => /[\r\n]|{{|}}/.test(v))) throw new Error('Invalid template variable');
   const merge = text => text.replace(/{{(\w+)}}/g, (_, key) => vars[key]);
-  const body = merge(LOCKED_EMAILS[step - 1]);
-  // Bold only the locked offer phrase, never a model-authored opener.
+  const identity = staffingSenderIdentity(options.env || process.env, options);
+  const body = appendStaffingComplianceFooter(merge(LOCKED_EMAILS[step - 1]), identity);
+  // Bold only the locked offer phrase, never a model-authored opener or footer.
   const phrase = merge(BOLD_PHRASES[step - 1]);
   let html = body.split(phrase).map(part => escapeHtml(part)).join(`<strong>${escapeHtml(phrase)}</strong>`);
   html = html.split('\n\n').map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('\n');
@@ -88,22 +93,24 @@ function staffingOpeningFor(lead = {}) {
  * leave a placeholder behind, throws so the caller drafts it for review rather
  * than mailing a half-merged template.
  */
-function renderStaffingEmail(lead = {}, step = 1) {
+function renderStaffingEmail(lead = {}, step = 1, options = {}) {
   if (!isStaffingCampaign(lead)) throw new Error('Staffing campaign assignment required');
   if (![1, 2, 3].includes(step)) throw new Error('Invalid staffing sequence step');
   const opening = staffingOpeningFor(lead);
   if (step === 1 && !opening) throw new Error('staffing lead has no stored personalized opening');
-  const rendered = renderStaffingPreview(lead, { hyperPersonalizedOpening: opening, reviewFlag: false }, step);
+  const rendered = renderStaffingPreview(lead, { hyperPersonalizedOpening: opening, reviewFlag: false }, step, options);
   if (!rendered) throw new Error('staffing copy could not be rendered');
   return { subject: rendered.subject, body: rendered.body, html: rendered.html, step };
 }
 
 /** @returns an error string when the assembled staffing email is unsafe, else null. */
-function validateStaffingEmail({ subject, body } = {}, step = 1) {
+function validateStaffingEmail({ subject, body, leadId } = {}, step = 1) {
   const text = String(body || '');
   if (!text.trim()) return 'staffing body is empty';
   if (/{{|}}/.test(text)) return 'staffing body still contains an unmerged placeholder';
   if (step === 1 && String(subject || '').trim() !== 'employer accounts') return 'staffing step 1 subject must be the locked subject';
+  if (step !== 1 && String(subject || '').trim()) return 'staffing follow-up must keep the original thread subject';
+  if (String(subject || '').includes(STAFFING_CAMPAIGN_REF)) return 'staffing subject must not contain the campaign reference';
   // Dental/receptionist language must never reach a staffing prospect.
   if (/receptionist|missed calls?|dental|patients?|clinic/i.test(text)) return 'staffing body contains non-staffing offer language';
   // Anchor on the literal text BEFORE the first placeholder: the merged body
@@ -111,7 +118,7 @@ function validateStaffingEmail({ subject, body } = {}, step = 1) {
   // match verbatim.
   const anchor = String(BOLD_PHRASES[step - 1] || '').split('{{')[0].trim();
   if (anchor && !text.includes(anchor)) return 'staffing body is missing its locked phrase';
-  return null;
+  return staffingComplianceError(text, { leadId });
 }
 
 module.exports = { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_LABELS, isStaffingCampaign, LOCKED_EMAILS, BOLD_PHRASE, BOLD_PHRASES,

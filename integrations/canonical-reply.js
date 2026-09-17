@@ -228,8 +228,10 @@ const UNSUBSCRIBE_MARKERS = [
   // "Please remove us from your mailing list." — the production phrasing that
   // the older `remove me` token missed, so the message fell through to Haiku
   // and was stored as needs_human instead of a hard opt-out.
-  ['remove_us', /\b(?:please\s+)?(?:remove|take)\s+us\s+(?:from|off)\b/i],
+  ['remove_us', /\b(?:please\s+)?(?:remove|take)\s+us(?:\s+(?:from|off))?\b/i],
   ['mailing_list', /\b(?:remove|take)\s+(?:me|us|my (?:name|email|address)|this (?:email|address))\s+(?:from|off)(?:\s+\w+){0,6}\s+(?:your\s+)?(?:mailing|email|contact)\s+list\b/i],
+  ['stop_emailing', /\bstop emailing\b/i],
+  ['dont_contact', /\b(?:please\s+)?don'?t contact me(?:\s+again)?\b/i],
 ];
 
 // A human replied but routed the message onward rather than engaging.
