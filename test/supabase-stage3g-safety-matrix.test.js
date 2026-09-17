@@ -172,7 +172,10 @@ test('32–34. lead types stay isolated: staffing, dental, roofing', () => {
   const staffing = supabaseLead({ leadNiche: 'industrial_staffing', tradeType: 'Staffing Agency',
     emailTemplateId: 'industrial-staffing-employer-v1' });
   const dental = supabaseLead({ leadNiche: 'dental', emailTemplateId: 'dental-v1' });
-  const roofing = supabaseLead({ leadNiche: 'roofing', emailTemplateId: 'roofing-survey-v1' });
+  const roofing = supabaseLead({
+    leadNiche: 'roofing', tradeType: 'Roofer', emailTemplateId: 'roofing-survey-v1',
+    intendedCampaignVersion: 'roofing_survey_v1_measured', campaign: 'Roofing Survey',
+  });
   assert.equal(familyForLead(staffing), 'industrial_staffing');
   assert.equal(familyForLead(dental), 'dental_ai_receptionist');
   assert.equal(familyForLead(roofing), 'roofing_survey');
@@ -185,8 +188,8 @@ test('35–36. inactive campaign and version mismatch behave as before', () => {
   assert.equal(blank.campaign, '');
   assert.equal(blank.intendedCampaignVersion, '');
   const mismatched = supabaseLead({ leadNiche: 'dental', emailTemplateId: 'industrial-staffing-employer-v1' });
-  assert.equal(familyForLead(mismatched), 'industrial_staffing',
-    'the template still wins over the niche, exactly as before Stage 3');
+  assert.equal(familyForLead(mismatched), 'unrouted',
+    'conflicting niche and template fail closed rather than inheriting either offer');
 });
 
 test('37–38. terminal pipeline outcomes and downgrade protection are board state', () => {
@@ -231,6 +234,7 @@ test('OUTAGE — every operational field resolves from the mirror alone', () => 
   const lead = supabaseLead({
     stage: 'Contacted', emailStatus: 'emailed', notes: '[MANUAL HOLD]',
     senderInboxId: 'tryscalelabai', leadNiche: 'industrial_staffing',
+    tradeType: 'Staffing Agency',
     emailTemplateId: 'industrial-staffing-employer-v1', routingRequired: 'true',
     campaign: 'Industrial Staffing Agency', intendedCampaignVersion: 'industrial_staffing_employer_acquisition_v1',
     siteContext: '3 open CDL roles', emailStep: '2', lastEmailedAt: '2026-09-01T14:00:00.000Z',

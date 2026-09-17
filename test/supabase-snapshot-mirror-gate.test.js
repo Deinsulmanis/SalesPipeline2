@@ -45,11 +45,22 @@ function leadRow(overrides = {}) {
 
 function sheetsStub() {
   const batches = [];
+  const notes = {};
   return {
     batches,
-    client: { spreadsheets: { values: { batchUpdate: async (args) => {
-      batches.push(args.requestBody.data); return {};
-    } } } },
+    client: { spreadsheets: { values: {
+      get: async ({ range }) => ({ data: { values: [[notes[range] || '']] } }),
+      batchGet: async ({ ranges }) => ({
+        data: { valueRanges: ranges.map(range => ({ range, values: [[notes[range] || '']] })) },
+      }),
+      batchUpdate: async (args) => {
+        batches.push(args.requestBody.data);
+        for (const entry of args.requestBody.data) {
+          if (/!L\d+$/.test(entry.range)) notes[entry.range] = entry.values[0][0];
+        }
+        return {};
+      },
+    } } },
   };
 }
 

@@ -51,7 +51,7 @@ const { isDatacenterIp } = require('./open-filter');
 // triggers (question replies, both-audios-played) and NOT by any cold template.
 const { bookingSnippet, pricingDeflection, BOOKING_URL, containsBookingLink } = require('./booking');
 // The only source of truth the reply-answering model may state as fact.
-const { PRODUCT_FACTS, NEVER_AUTO_ANSWER } = require('./product-facts');
+const { factsForLead } = require('./product-facts');
 // Fixed commercial promise for the cold email. Deliberately NOT in booking.js:
 // that module is the warm-only booking asset and the cold path is guarded
 // against importing it.
@@ -60,7 +60,8 @@ const { GmailOutreachProvider } = require('./integrations/outreach-providers');
 const { SmartleadClient } = require('./integrations/smartlead-client');
 const { SmartleadOutreachProvider } = require('./integrations/outreach-providers');
 const { classifyReply: classifyProviderReply } = require('./integrations/reply-classifier');
-const { classifyReplyText, isUsableReplyIdentity, REPLY_STATE } = require('./integrations/canonical-reply');
+const { classifyReplyText, isUsableReplyIdentity, REPLY_STATE,
+  hasExplicitUnsubscribePhrase, hasExplicitNegativePhrase } = require('./integrations/canonical-reply');
 // ONE ownership model, shared with the CRM. The sender asks it rather than
 // keeping a second opinion about who may act on a lead.
 const { NON_COLD_STAGES, deriveAutomationOwnership, mayColdSend } = require('./integrations/automation-ownership');
@@ -73,7 +74,17 @@ const { mirrorCycleSnapshotInBackground, outreachStateMode, applyLeadChange,
 // Stage 3D: dual-read measurement only. No decision below reads its result.
 const { probeOutreachParity, formatProbeLine } = require('./integrations/outreach-dual-read');
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
+const { parseGoogleServiceAccountJson } = require('./integrations/google-service-account');
 const { staffingSendBlockReason, assertStaffingSendAllowed } = require('./integrations/staffing-launch-gate');
+const { assertSendAuthorized, sendAuthorization } = require('./integrations/send-authorization');
+const { evaluateFreshSendSafety, guardProviderSend } = require('./integrations/send-safety-revalidate');
+const {
+  withGmailProviderSend, withOutboundReservation, confirmOutboundReservation,
+  isDefinitePreDeliveryFailure,
+} = require('./integrations/send-lock');
+const {
+  ordinaryColdActionId, stageSequenceActionId, smartleadEnqueueActionId,
+} = require('./integrations/outbound-action-id');
 const { routedLeadReady } = require('./integrations/campaign-routing');
 // Staffing supplies its own locked copy only. Sender selection, thread pinning,
 // quota, observer, suppression and ownership all stay on the shared path.
@@ -100,13 +111,16 @@ const { PROMOTION_TRIGGER, resolvePromotionIdentity, promotionDecision } = requi
 const {
   coldSendAttribution, stageSequenceAttribution, acquisitionAttribution,
   attributionFromActivity, replyTouchAttribution, latestSendAttribution, promotionAttribution,
-  LEGACY_UNKNOWN, familyForLead,
+  LEGACY_UNKNOWN, familyForLead, CAMPAIGN_FAMILY, resolveLeadFamily,
 } = require('./integrations/campaign-versions');
 const { findOriginalSentThread, resolveColdFollowUpThread } = require('./integrations/gmail-threading');
 const gmailMailboxObserver = require('./integrations/gmail-mailbox-observer');
 const { planMailboxEvents, commitObservation } = require('./integrations/mailbox-observation-events');
+const { stripQuotedReply } = require('./integrations/reply-reconciliation');
 const { offerForLead, warmResponse } = require('./integrations/offer-config');
-const { ACTION: REPLY_RESPONSE_ACTION, decideReplyResponse } = require('./integrations/reply-response-policy');
+const { ACTION: REPLY_RESPONSE_ACTION, decideReplyResponse, numericConfidence } = require('./integrations/reply-response-policy');
+const { classifyStaffingReply, unroutedReplyDecision, STAFFING_CLARIFICATION } = require('./integrations/staffing-reply-policy');
+const { authoritativeProvider, assertGmailProviderAllowed, assertSmartleadEnqueueAllowed } = require('./integrations/provider-ownership');
 const { deliverProspectReply } = require('./integrations/prospect-reply-delivery');
 const { findLiveBooking } = require('./integrations/live-booking-gate');
 const {
@@ -443,7 +457,7 @@ let bookingCalendarClient = null;
 function calendarForBookingGate() {
   if (!bookingCalendarClient) {
     const auth = new google.auth.GoogleAuth({
-      credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '{}'),
+      credentials: parseGoogleServiceAccountJson(process.env.GOOGLE_SERVICE_ACCOUNT_JSON),
       scopes: ['https://www.googleapis.com/auth/calendar.readonly'],
     });
     bookingCalendarClient = google.calendar({ version: 'v3', auth });
@@ -1124,14 +1138,20 @@ function toRawMessage({ to, subject, body, html, inReplyTo, references, messageI
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-async function sendEmail({ lead, to, subject, body, html, threadId, inReplyTo, references, messageId, sender = PRIMARY_GMAIL_SENDER }) {
+async function sendEmail({ lead, to, subject, body, html, threadId, inReplyTo, references, messageId, sender = PRIMARY_GMAIL_SENDER, sendAction }) {
+  assertSendAuthorized();
   assertStaffingSendAllowed(lead);
   if (!sender?.sendEligible) throw new Error(`Gmail sender ${sender?.id || 'unknown'} is not delivery eligible`);
-  const provider = new GmailOutreachProvider({ send: message => gmailForSender(sender).users.messages.send({
-    userId: 'me',
-    requestBody: { raw: toRawMessage({ ...message, fromEmail: sender.email }), ...(message.threadId ? { threadId: message.threadId } : {}) },
-  }) });
-  return provider.sendEmail({ to, subject, body, html, threadId, inReplyTo, references, messageId });
+  return withGmailProviderSend({
+    lead, sendAction, sender,
+    run: async () => {
+      const provider = new GmailOutreachProvider({ send: message => gmailForSender(sender).users.messages.send({
+        userId: 'me',
+        requestBody: { raw: toRawMessage({ ...message, fromEmail: sender.email }), ...(message.threadId ? { threadId: message.threadId } : {}) },
+      }) });
+      return provider.sendEmail({ to, subject, body, html, threadId, inReplyTo, references, messageId });
+    },
+  });
 }
 
 async function loadOutreachProviderState(campaignRowsOverride = null, mappingRowsOverride = null) {
@@ -1161,8 +1181,23 @@ function providerForLead(lead) {
   return CAMPAIGN_PROVIDERS.get(String(lead.campaign || '').trim()) || { provider: 'gmail', externalCampaignId: '' };
 }
 
+function liveSmartleadMappings(lead = {}) {
+  const email = normalizeEmail(lead.email);
+  if (ACTIVE_PROVIDER_LEADS.has(lead.id) || (email && ACTIVE_PROVIDER_EMAILS.has(email))) {
+    return [{
+      internalLeadId: lead.id, normalizedEmail: email, provider: 'smartlead', normalizedStatus: 'Queued',
+    }];
+  }
+  return [];
+}
+
 async function enqueueSmartleadLead(lead, mapping) {
+  assertSendAuthorized();
   assertStaffingSendAllowed(lead);
+  assertSmartleadEnqueueAllowed({
+    lead, campaignProviders: CAMPAIGN_PROVIDERS,
+    mappings: liveSmartleadMappings(lead),
+  });
   if (!mapping.externalCampaignId) throw new Error('Smartlead campaign mapping has no external campaign ID');
   if (ACTIVE_PROVIDER_LEADS.has(lead.id) || ACTIVE_PROVIDER_EMAILS.has(normalizeEmail(lead.email))) throw new Error('lead email already has an active provider assignment');
   if (EXISTING_PROVIDER_CAMPAIGN_EMAILS.has(`${mapping.externalCampaignId}:${normalizeEmail(lead.email)}`)) throw new Error('lead email already has a mapping in this Smartlead campaign');
@@ -1176,12 +1211,20 @@ async function enqueueSmartleadLead(lead, mapping) {
     if (!values.includes('mappingKey')) await sheets().spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A1`, valueInputOption: 'RAW', requestBody: { values: [['internalLeadId','provider','externalLeadId','externalCampaignId','mappingId','normalizedStatus','rawStatus','lastProviderEventAt','lastSynchronizedAt','unsubscribedAt','complianceNote','metadata','mappingKey','normalizedEmail']] } });
   }
   const names = String(lead.contactName || '').trim().split(/\s+/);
+  const gate = await guardProviderSend(lead, freshSendSafetyDeps(), { purpose: 'cold' });
+  if (!gate.allowed) throw new Error(gate.reason || gate.code);
+  const sendAction = {
+    actionId: smartleadEnqueueActionId(lead.id, mapping.externalCampaignId),
+    leadId: lead.id,
+    actionType: 'smartlead_enqueue',
+    provider: 'smartlead',
+  };
   const client = new SmartleadClient();
   const provider = new SmartleadOutreachProvider({ client });
-  const result = await provider.addLeads({ externalCampaignId: mapping.externalCampaignId }, [{
+  const result = await withOutboundReservation(sendAction, () => provider.addLeads({ externalCampaignId: mapping.externalCampaignId }, [{
     email: lead.email.trim().toLowerCase(), first_name: names[0] || '', last_name: names.slice(1).join(' '), company_name: lead.company || '', website: lead.website || '', location: lead.city || '',
     custom_fields: { practice_name: lead.company || '', city: lead.city || '', website: lead.website || '', niche: lead.tradeType || '', custom_first_line: lead.siteContext || '', service_reference: lead.tier || '', lead_score: lead.rating || '', internal_lead_id: lead.id },
-  }]);
+  }]));
   const now = new Date().toISOString();
   const externalLeadId = result.lead_ids?.[0] || '';
   const normalizedEmail = normalizeEmail(lead.email);
@@ -1194,6 +1237,12 @@ async function enqueueSmartleadLead(lead, mapping) {
   ACTIVE_PROVIDER_LEADS.add(lead.id);
   ACTIVE_PROVIDER_EMAILS.add(normalizedEmail);
   EXISTING_PROVIDER_CAMPAIGN_EMAILS.add(`${mapping.externalCampaignId}:${normalizedEmail}`);
+  await confirmOutboundReservation(sendAction.actionId).catch(error => {
+    console.error(JSON.stringify({
+      event: 'reservation_confirm_failed', action_id: sendAction.actionId, lead_id: lead.id,
+      provider: 'smartlead', status: 'sent_unconfirmed', code: error.code || 'confirm_failed',
+    }));
+  });
   return result;
 }
 
@@ -1422,8 +1471,14 @@ const REPLY_CATEGORIES = new Set(['QUESTION','INTERESTED','MEETING_REQUEST','NOT
 // Never default to INTERESTED: a transient API error would silently promote.
 const CLASSIFY_FALLBACK = 'NEEDS_HUMAN';
 
-async function classifyReply(company, replyBody) {
-  return classifyProviderReply({ provider: 'gmail', lead: { company }, plainTextReply: replyBody, apiKey: ANTHROPIC_API_KEY });
+async function classifyReply(company, replyBody, extra = {}) {
+  return classifyProviderReply({
+    provider: 'gmail',
+    lead: { company, email: extra.email || '' },
+    subject: extra.subject || '',
+    plainTextReply: replyBody,
+    apiKey: ANTHROPIC_API_KEY,
+  });
 }
 
 // ── INBOUND QUESTION ANSWERING ────────────────────────────────────────────────
@@ -1441,24 +1496,35 @@ async function classifyReply(company, replyBody) {
 const ANSWER_MAX_TOKENS = 400;
 
 async function answerQuestion(lead, replyText) {
-  const company = cleanCompanyName(lead.company) || 'your clinic';
+  const scoped = factsForLead(lead);
+  const company = cleanCompanyName(lead.company) || scoped.companyFallback || 'your business';
   const draft = (body, reason, confidence = 0) => ({ mode: 'draft', body, reason, confidence });
+  if (!scoped.ok) {
+    return draft('', scoped.reason || 'unknown niche cannot inherit dental facts', 0);
+  }
 
   const pricingAsked = /\b(pric|cost|fee|charge|how much|\$|rate|budget|quote|monthly|per month)\b/i.test(replyText);
   if (pricingAsked) {
     let offer;
     try { offer = offerForLead(lead); } catch (error) { return draft('', error.message, 0); }
     if (!offer.pricing?.approvedWording) {
-      return draft(pricingDeflection(company),
-        `pricing is not configured; set OFFER_PRICING_JSON.${familyForLead(lead)}.approvedWording`, 0);
+      return draft(pricingDeflection(company, { family: scoped.family, companyFallback: scoped.companyFallback }),
+        `pricing is not configured; set OFFER_PRICING_JSON.${scoped.family}.approvedWording`, 0);
     }
     return { mode: 'auto', body: warmResponse({ action: REPLY_RESPONSE_ACTION.AUTO_PRICING_RESPONSE, lead, offer }),
       reason: 'approved campaign pricing configuration', confidence: 100,
       action: REPLY_RESPONSE_ACTION.AUTO_PRICING_RESPONSE };
   }
 
+  if (scoped.family === CAMPAIGN_FAMILY.STAFFING) {
+    const staffing = classifyStaffingReply(replyText, lead);
+    if (staffing.candidateSide) {
+      return draft(STAFFING_CLARIFICATION, staffing.reason, 0);
+    }
+  }
+
   if (!ANTHROPIC_API_KEY) {
-    return draft(bookingSnippet(company), 'no ANTHROPIC_API_KEY — cannot answer', 0);
+    return draft(bookingSnippet(company, { companyFallback: scoped.companyFallback }), 'no ANTHROPIC_API_KEY — cannot answer', 0);
   }
 
   try {
@@ -1466,17 +1532,17 @@ async function answerQuestion(lead, replyText) {
       model: 'claude-haiku-4-5',
       max_tokens: ANSWER_MAX_TOKENS,
       system: [
-        'You draft short replies on behalf of Deins, who sells 24/7 answering and booking software to dental clinics.',
+        scoped.systemRole,
         '',
         'You may state ONLY what the FACTS below support. If the question needs anything not in',
         'the facts, do not invent it — lower your confidence instead.',
         '',
         '=== FACTS (your only source of truth) ===',
-        PRODUCT_FACTS,
+        scoped.facts,
         '=== END FACTS ===',
         '',
         'NEVER auto-answer questions about:',
-        ...NEVER_AUTO_ANSWER.map(t => `- ${t}`),
+        ...scoped.neverAutoAnswer.map(t => `- ${t}`),
         'For any of those, set confidence to 0 and set needs_human to true.',
         '',
         'STYLE — this matters, previous replies have been called out for sounding like AI:',
@@ -1492,7 +1558,7 @@ async function answerQuestion(lead, replyText) {
         'confidence is how sure you are the answer is accurate AND fully supported by the facts.',
         'Use 0-60 if the facts do not clearly cover it. Only use 85+ when the facts answer it directly.',
       ].join('\n'),
-      messages: [{ role: 'user', content: `Clinic: ${company}\nTheir reply:\n${replyText}` }],
+      messages: [{ role: 'user', content: `${scoped.audience}: ${company}\nTheir reply:\n${replyText}` }],
     });
 
     const raw = (msg.content[0]?.text || '').trim();
@@ -1500,12 +1566,15 @@ async function answerQuestion(lead, replyText) {
     try {
       parsed = JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, ''));
     } catch (_e) {
-      return draft(bookingSnippet(company), `model returned unparseable output: ${raw.slice(0, 120)}`, 0);
+      return draft(bookingSnippet(company, { companyFallback: scoped.companyFallback }), `model returned unparseable output: ${raw.slice(0, 120)}`, 0);
     }
 
     const confidence = Number(parsed.confidence) || 0;
     const answer = String(parsed.answer || '').trim();
     const topic = String(parsed.topic || '').trim();
+    if (scoped.family === CAMPAIGN_FAMILY.STAFFING && /receptionist|missed calls?|dental|patients?|clinic/i.test(answer)) {
+      return draft('', 'staffing answer contained non-staffing offer language', 0);
+    }
 
     // Belt-and-braces pricing catch: the model is told never to answer pricing,
     // but a regex on the INBOUND text means a price question can't slip through
@@ -1518,21 +1587,21 @@ async function answerQuestion(lead, replyText) {
     // lookup; it goes to a human.
     const OBJECTION_PATTERNS = /\b(already have|already use|already using|not convinced|don'?t think|do not think|doesn'?t work|won'?t work|skeptical|sceptical|we'?re (fine|good|happy|all set)|no thanks|not for us|waste of|scam|spam)\b/i;
     if (OBJECTION_PATTERNS.test(replyText)) {
-      return draft(withBooking(answer, company), 'reads as an objection — routed to review, not auto-sent', confidence);
+      return draft(withBooking(answer, company, scoped), 'reads as an objection — routed to review, not auto-sent', confidence);
     }
-    if (parsed.needs_human === true) return draft(withBooking(answer, company), `model flagged needs_human (${topic})`, confidence);
-    if (confidence < ANSWER_CONFIDENCE_FLOOR) return draft(withBooking(answer, company), `confidence ${confidence} < ${ANSWER_CONFIDENCE_FLOOR} (${topic})`, confidence);
-    if (!answer) return draft(bookingSnippet(company), 'model returned an empty answer', confidence);
+    if (parsed.needs_human === true) return draft(withBooking(answer, company, scoped), `model flagged needs_human (${topic})`, confidence);
+    if (confidence < ANSWER_CONFIDENCE_FLOOR) return draft(withBooking(answer, company, scoped), `confidence ${confidence} < ${ANSWER_CONFIDENCE_FLOOR} (${topic})`, confidence);
+    if (!answer) return draft(bookingSnippet(company, { companyFallback: scoped.companyFallback }), 'model returned an empty answer', confidence);
 
-    return { mode: 'auto', body: withBooking(answer, company), reason: `confident answer (${topic})`, confidence };
+    return { mode: 'auto', body: withBooking(answer, company, scoped), reason: `confident answer (${topic})`, confidence };
   } catch (e) {
-    return draft(bookingSnippet(company), `answer API error: ${e.message}`, 0);
+    return draft(bookingSnippet(company, { companyFallback: scoped.companyFallback }), `answer API error: ${e.message}`, 0);
   }
 }
 
 // Answer + the warm booking snippet, in the house voice.
-function withBooking(answer, company) {
-  return `${answer.trim()}\n\n${bookingSnippet(company)}`;
+function withBooking(answer, company, scoped = {}) {
+  return `${answer.trim()}\n\n${bookingSnippet(company, { companyFallback: scoped.companyFallback })}`;
 }
 
 // ── SHEET I/O ─────────────────────────────────────────────────────────────────
@@ -1630,6 +1699,26 @@ async function loadAgentSnapshot({ forceColdEmail = false } = {}) {
   console.log(`[Sheets snapshot] ${wanted.length} datasets loaded in 1 batch read`
     + (coldEmailFromSupabase ? ' (ColdEmail served from Supabase)' : ''));
   return snapshot;
+}
+
+function freshSendSafetyDeps() {
+  return {
+    env: process.env,
+    loadFreshState: async (leadId) => {
+      const snapshot = await withAuth(() => loadAgentSnapshot({
+        forceColdEmail: outreachWriteAuthority() === 'sheets',
+      }));
+      const rows = await readLeads(snapshot.coldEmail);
+      const match = String(leadId || '');
+      const current = rows.find(row => String(row.id) === match)
+        || rows.find(row => `CE-${row.id}` === match)
+        || null;
+      return {
+        current,
+        suppressedEmails: new Set((snapshot.suppression || []).slice(1).map(row => normEmail(row[0])).filter(Boolean)),
+      };
+    },
+  };
 }
 
 function loadGmailObservationState(rows = []) {
@@ -1912,28 +2001,47 @@ async function deliverOrdinaryColdStep({
     return { delivered: false, reason: `delivery reservation could not be persisted: ${error.message}` };
   }
 
+  const gate = await guardProviderSend(lead, freshSendSafetyDeps(), { purpose: 'cold' });
+  if (!gate.allowed) {
+    return { delivered: false, reason: gate.reason || gate.code };
+  }
+
+  const sendAction = {
+    actionId: ordinaryColdActionId(lead.id, step),
+    leadId: lead.id,
+    actionType: 'gmail_cold_step',
+    provider: 'gmail',
+  };
   let result;
   try {
     result = await sendEmail({
       lead, to: lead.email.trim(), subject, body, html: staffingEmail?.html, sender, messageId: rfcMessageId,
+      sendAction,
       ...(thread ? { threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references } : {}),
     });
   } catch (error) {
-    const status = Number(error?.response?.status || error?.code);
-    const rejectedBeforeDelivery = status >= 400 && status < 500 && ![408, 409, 429].includes(status);
-    if (rejectedBeforeDelivery) {
-      const failure = {
-        eventId: `${reservationEventId}:failed`, leadId: `CE-${lead.id}`, sourceLeadId: lead.id,
-        email: lead.email, company: cleanCompanyName(lead.company) || lead.company || '',
-        eventType: 'ordinary_send_failed', occurredAt: new Date().toISOString(), subject, content: '',
-        metadata: JSON.stringify({ leadId: lead.id, step: Number(step), reservationEventId,
-          senderInboxId: sender.id, error: String(error.message || '').slice(0, 300) }),
-      };
-      try { await recordColdCallActivityStrict(failure); activitiesForCycle?.push(failure); } catch (_) { /* reservation remains fail-closed */ }
+    if (error.code === 'durable_checkpoint_failed') {
+      console.error(JSON.stringify({
+        event: 'PROVIDER_SUCCESS_BUT_DURABLE_SEND_STATE_COULD_NOT_BE_CHECKPOINTED',
+        action_id: sendAction.actionId, lead_id: lead.id, provider: 'gmail',
+      }));
+      result = error.providerResult;
+    } else {
+      const rejectedBeforeDelivery = isDefinitePreDeliveryFailure(error);
+      if (rejectedBeforeDelivery) {
+        const failure = {
+          eventId: `${reservationEventId}:failed`, leadId: `CE-${lead.id}`, sourceLeadId: lead.id,
+          email: lead.email, company: cleanCompanyName(lead.company) || lead.company || '',
+          eventType: 'ordinary_send_failed', occurredAt: new Date().toISOString(), subject, content: '',
+          metadata: JSON.stringify({ leadId: lead.id, step: Number(step), reservationEventId,
+            senderInboxId: sender.id, error: String(error.message || '').slice(0, 300) }),
+        };
+        try { await recordColdCallActivityStrict(failure); activitiesForCycle?.push(failure); } catch (_) { /* reservation remains fail-closed */ }
+      }
+      return { delivered: false, reason: rejectedBeforeDelivery
+        ? `provider rejected before delivery: ${error.message}`
+        : `delivery outcome is ambiguous; reservation retained: ${error.message}` };
     }
-    return { delivered: false, reason: rejectedBeforeDelivery
-      ? `provider rejected before delivery: ${error.message}`
-      : `delivery outcome is ambiguous; reservation retained: ${error.message}` };
   }
 
   // Gmail accepted the message. Consume sender, window and global quota before
@@ -1941,6 +2049,12 @@ async function deliverOrdinaryColdStep({
   if (onProviderSuccess) onProviderSuccess({ recovered: false, occurredAt: new Date().toISOString() });
   const checkpoint = await markSent(lead, step, {
     result, subject, body, attribution, sender, personalizationMetadata, activitiesForCycle,
+  });
+  await confirmOutboundReservation(sendAction.actionId).catch(error => {
+    console.error(JSON.stringify({
+      event: 'reservation_confirm_failed', action_id: sendAction.actionId, lead_id: lead.id,
+      provider: 'gmail', status: 'sent_unconfirmed', code: error.code || 'confirm_failed',
+    }));
   });
   return { delivered: true, recovered: false, result, checkpoint };
 }
@@ -2105,10 +2219,17 @@ async function handleNotInterested(lead) {
     console.warn(`[handleNotInterested] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
     return;
   }
+  const notes = String(lead.notes || '');
+  if (/\[REPLY:\s*Not Interested\]/i.test(notes) && String(lead.stage) === 'Done' && String(lead.emailStatus) === 'done') {
+    console.log(`  ✗ ${lead.company} — already marked Done (not interested)`);
+    return;
+  }
   await applyLeadChange(lead.id, {
     stage: 'Done', emailStatus: 'done',
-    notes: prependNote(lead.notes, '[REPLY: Not Interested]'),
+    notes: /\[REPLY:\s*Not Interested\]/i.test(notes) ? notes : prependNote(notes, '[REPLY: Not Interested]'),
   }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
+  lead.stage = 'Done';
+  lead.emailStatus = 'done';
   console.log(`  ✗ ${lead.company} — marked Done (not interested)`);
 }
 
@@ -2118,12 +2239,18 @@ async function handleUnsubscribe(lead) {
     console.warn(`[handleUnsubscribe] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
     return;
   }
-  await applyLeadChange(lead.id, {
-    stage: 'Unsub', emailStatus: 'done',
-    notes: prependNote(lead.notes, '[REPLY: Unsubscribed]'),
-  }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
+  const notes = String(lead.notes || '');
+  const already = /\[REPLY:\s*Unsubscribed\]/i.test(notes) && String(lead.stage) === 'Unsub';
+  if (!already) {
+    await applyLeadChange(lead.id, {
+      stage: 'Unsub', emailStatus: 'done',
+      notes: /\[REPLY:\s*Unsubscribed\]/i.test(notes) ? notes : prependNote(notes, '[REPLY: Unsubscribed]'),
+    }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
+    lead.stage = 'Unsub';
+    lead.emailStatus = 'done';
+  }
   await addSuppression(lead.email, 'unsubscribe', lead.company, 'reply-auto');
-  console.log(`  ⊘ ${lead.company} — marked Unsub (unsubscribe request)`);
+  console.log(`  ⊘ ${lead.company} — ${already ? 'already Unsub; suppression confirmed' : 'marked Unsub (unsubscribe request)'}`);
 }
 
 async function handleOutOfOffice(lead) {
@@ -2266,8 +2393,9 @@ async function handleQuestion(lead, message, replyText, todaySent, activities = 
   }
 
   // ── auto-send ──
-  const company = cleanCompanyName(lead.company) || 'your clinic';
-  const subject = `Re: a quick demo I built for ${company}`;
+  const scoped = factsForLead(lead);
+  const company = cleanCompanyName(lead.company) || scoped.companyFallback || 'your business';
+  const subject = /^re:/i.test(message.subject || '') ? message.subject : `Re: ${message.subject || 'your reply'}`;
   const casl = `---\n${MAILING_ADDRESS}\nReply "unsubscribe" and I'll remove you immediately.`;
   const body = `Hi ${salutationName(lead)},\n\n${answer.body}\n\n${EMAIL_SIGNATURE}\n\n${casl}`;
 
@@ -2306,6 +2434,10 @@ async function handleNeedsHuman(lead, fromAddr) {
   const from        = (fromAddr || '').trim().toLowerCase();
   const differs     = from && from !== emailedAddr;
   const note        = differs ? `[REPLY: Needs human] (replied from ${from})` : '[REPLY: Needs human]';
+  if (String(lead.notes || '').includes(note) && String(lead.stage) === 'Review') {
+    console.log(`  ⚑ ${lead.company} — already queued for human review`);
+    return;
+  }
   await applyLeadChange(lead.id, {
     stage: 'Review', emailStatus: 'replied', notes: prependNote(lead.notes, note),
   }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
@@ -2450,32 +2582,52 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
           checkpoint: state => advanceCheckpoint
             ? withAuth(() => persistGmailObservationState(
               sender.id,
-              // A recovery still in flight keeps the OLD cursor. Advancing it now
-              // would jump the mailbox past a backlog it has not yet read.
-              state.recovery && !state.recovery.complete
+              // A recovery still in flight, or an incremental history read cut
+              // short by quota, keeps the OLD cursor. Advancing it now would
+              // jump the mailbox past mail that has not been classified.
+              (state.recovery && !state.recovery.complete) || state.historyIncomplete || state.trustworthy === false
                 ? (gmailObservationHistoryBySender.get(sender.id) || '')
                 : state.nextHistoryId,
-              { mode: state.recovery && !state.recovery.complete ? 'recovering' : 'history',
-                messagesObserved: state.messagesInspected, recovery: state.recovery }))
+              { mode: state.historyIncomplete ? 'history_incomplete'
+                : (state.recovery && !state.recovery.complete ? 'recovering' : 'history'),
+                messagesObserved: state.messagesInspected, recovery: state.recovery,
+                error: state.historyIncomplete
+                  ? JSON.stringify({
+                    message: 'incomplete Gmail history read; quota exhausted; cursor not advanced',
+                    rateLimited: true, observerHealth: state.observerHealth || 'unhealthy_quota',
+                  })
+                  : undefined }))
             : Promise.resolve(),
         });
-        if (advanceCheckpoint && (!observed.recovery || observed.recovery.complete)) {
+        const incomplete = (observed.recovery && !observed.recovery.complete)
+          || observed.historyIncomplete
+          || observed.trustworthy === false;
+        if (advanceCheckpoint && !incomplete) {
           gmailObservationHistoryBySender.set(sender.id, observed.nextHistoryId);
           if (observed.recovery) log('mailbox_recovery_caught_up',
             { processed: observed.recovery.processed, nextHistoryId: observed.nextHistoryId });
-        } else if (advanceCheckpoint) {
+        } else if (advanceCheckpoint && observed.recovery && !observed.recovery.complete) {
           log('mailbox_recovery_progress_saved', { processedThroughId: observed.recovery.processedThroughId,
             processed: observed.recovery.processed, remaining: observed.recovery.remaining });
+        } else if (advanceCheckpoint && incomplete) {
+          log('mailbox_history_incomplete', {
+            historyIncomplete: Boolean(observed.historyIncomplete),
+            observerHealth: observed.observerHealth || 'unhealthy_incomplete',
+            cursorKept: gmailObservationHistoryBySender.get(sender.id) || '',
+          });
         } else {
           log('candidate_observation_no_cursor_advance', {
             candidates: senderLeads.length, messages: observed.messagesInspected,
           });
         }
       }
-      // Recovery is evidence-only. Historical replies never enter handlers
-      // that promote, enroll, draft or send, even in a send-capable process.
+      // Classification always runs, including CHECK_ONLY and recovery. Send
+      // handlers stay gated separately so a recovered opt-out still suppresses.
       for (const item of plan.replies) {
-        if (!item.historical && !CHECK_ONLY) repliesByLead.set(item.leadId, { ...item.message, observedSenderId: sender.id });
+        repliesByLead.set(item.leadId, {
+          ...item.message, observedSenderId: sender.id,
+          historical: Boolean(item.historical), canonical: item.canonical,
+        });
       }
       // A mailbox mid-recovery has NOT proven that no newer prospect or manual
       // activity exists, so it stays observation-unavailable for every send
@@ -2485,10 +2637,15 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       observerAutomationReadyBySender.set(sender.id,
         !DRY_RUN && observed.mode !== 'bootstrap' && observed.trustworthy !== false);
       observedStateBySender.set(sender.id, observed);
-      log(observed.recovered ? 'mailbox_catchup_completed' : 'history_incremental_ok', {
+      const observationIncomplete = (observed.recovery && !observed.recovery.complete)
+        || observed.historyIncomplete
+        || observed.trustworthy === false;
+      log(observed.recovered ? 'mailbox_catchup_completed'
+        : (observationIncomplete ? 'history_incomplete' : 'history_incremental_ok'), {
         historyId: observed.nextHistoryId, from: observed.from || null, messages: observed.messagesInspected,
         unavailable: observed.unavailable.length, eventsPersisted: plan.events.length, ignored: plan.ignored.length,
         replies: plan.replies.length, historicalReview: plan.replies.filter(item => item.historical).length,
+        trustworthy: observed.trustworthy !== false, observerHealth: observed.observerHealth || null,
       });
       console.log(`[ReplyCheck:${sender.id}] ${observed.mode} observation inspected ${observed.messagesInspected} new/recent message(s) in ${observed.pages} page(s)`);
     } catch (error) {
@@ -2501,42 +2658,76 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     }
   }
 
-  // CHECK_ONLY persisted fresh inbound evidence without running response
-  // handlers. The normal worker may evaluate a still-fresh pending item later;
-  // recovered history is permanently excluded from this retry queue.
-  if (!CHECK_ONLY) for (const row of activitiesForCycle) {
+  // Fresh pending replies still retry send-capable handlers. Terminal
+  // unsubscribe/negative evidence also retries CRM mutation even in CHECK_ONLY
+  // and even after the Gmail cursor has moved past the message.
+  for (const row of activitiesForCycle) {
     let metadata; try { metadata = JSON.parse(row.metadata || '{}'); } catch (_) { continue; }
-    if (!metadata.responsePending || metadata.recoveredDuringOutage || failedSenderIds.has(metadata.senderInboxId)) continue;
-    if (Date.now() - Date.parse(row.occurredAt) > 90 * 60000) continue;
+    if (failedSenderIds.has(metadata.senderInboxId)) continue;
+    const pendingFresh = Boolean(metadata.responsePending) && !metadata.recoveredDuringOutage
+      && Date.now() - Date.parse(row.occurredAt) <= 90 * 60000;
+    const inbound = /reply|meeting_requested/.test(String(row.eventType || ''));
+    if (!pendingFresh && !inbound) continue;
     const mine = activitiesForCycle.filter(item => item.sourceLeadId === row.sourceLeadId);
-    if (mine.some(item => item.eventType === 'gmail_reply_evaluated' && JSON.parse(item.metadata || '{}').sourceEventId === row.eventId)) continue;
-    if (mine.some(item => ['human_response_sent','booking_link_sent'].includes(item.eventType) && item.occurredAt >= row.occurredAt)) continue;
-    const old = repliesByLead.get(row.sourceLeadId);
-    if (old && Number(old.internalDate) >= Date.parse(row.occurredAt)) continue;
-    repliesByLead.set(row.sourceLeadId, { id: metadata.gmailMessageId, threadId: metadata.gmailThreadId,
-      internalDate: String(Date.parse(row.occurredAt)), snippet: row.content,
-      observedSenderId: metadata.senderInboxId, payload: { mimeType: 'text/plain', body: { data: Buffer.from(row.content || '').toString('base64url') },
-        headers: [{ name:'From',value:metadata.from }, { name:'Subject',value:row.subject }, { name:'Message-ID',value:metadata.rfcMessageId }] } });
+    if (pendingFresh && !CHECK_ONLY) {
+      if (mine.some(item => item.eventType === 'gmail_reply_evaluated' && JSON.parse(item.metadata || '{}').sourceEventId === row.eventId)) continue;
+      if (mine.some(item => ['human_response_sent','booking_link_sent'].includes(item.eventType) && item.occurredAt >= row.occurredAt)) continue;
+      const old = repliesByLead.get(row.sourceLeadId);
+      if (old && Number(old.internalDate) >= Date.parse(row.occurredAt)) continue;
+      repliesByLead.set(row.sourceLeadId, { id: metadata.gmailMessageId, threadId: metadata.gmailThreadId,
+        internalDate: String(Date.parse(row.occurredAt)), snippet: row.content,
+        observedSenderId: metadata.senderInboxId, payload: { mimeType: 'text/plain', body: { data: Buffer.from(row.content || '').toString('base64url') },
+          headers: [{ name:'From',value:metadata.from }, { name:'Subject',value:row.subject }, { name:'Message-ID',value:metadata.rfcMessageId }] } });
+      continue;
+    }
+    if (!inbound) continue;
+    const lead = candidates.find(item => item.id === row.sourceLeadId);
+    if (!lead || repliesByLead.has(lead.id)) continue;
+    const text = String(row.content || '');
+    const canonical = classifyReplyText(text, {
+      subject: row.subject || '', currentEmail: lead.email, now: row.occurredAt || null,
+    });
+    const unsub = canonical.reason === 'unsubscribe_request' || row.eventType === 'unsubscribe_reply'
+      || hasExplicitUnsubscribePhrase(text, { subject: row.subject || '' });
+    const neg = canonical.reason === 'explicit_rejection' || row.eventType === 'negative_reply'
+      || hasExplicitNegativePhrase(text, { subject: row.subject || '' });
+    if (!unsub && !neg) continue;
+    const notes = String(lead.notes || '');
+    if (unsub && /\[REPLY:\s*Unsubscribed\]/i.test(notes) && String(lead.stage) === 'Unsub') continue;
+    if (neg && !unsub && /\[REPLY:\s*Not Interested\]/i.test(notes) && String(lead.emailStatus) === 'done') continue;
+    repliesByLead.set(lead.id, {
+      id: metadata.gmailMessageId, threadId: metadata.gmailThreadId,
+      internalDate: String(Date.parse(row.occurredAt) || Date.now()), snippet: row.content,
+      observedSenderId: metadata.senderInboxId || lead.senderInboxId || 'primary',
+      historical: true, terminalReplay: true,
+      payload: { mimeType: 'text/plain', body: { data: Buffer.from(row.content || '').toString('base64url') },
+        headers: [{ name:'From',value:metadata.from || lead.email }, { name:'Subject',value:row.subject },
+          { name:'Message-ID',value:metadata.rfcMessageId }] },
+    });
   }
 
   for (const lead of candidates) {
     const rawMessage = repliesByLead.get(lead.id) || null;
     if (!rawMessage) continue;
 
-    const sender = GMAIL_SENDERS.find(item => item.id === rawMessage.observedSenderId);
-    if (!sender || (lead.senderInboxId && lead.senderInboxId !== sender.id)) continue;
+    const sender = GMAIL_SENDERS.find(item => item.id === (rawMessage.observedSenderId || lead.senderInboxId || 'primary'))
+      || GMAIL_SENDERS[0];
+    if (!sender) continue;
+    if (!rawMessage.terminalReplay && lead.senderInboxId && lead.senderInboxId !== sender.id) continue;
     const message = {
       messageId: rawMessage.id, rfcMessageId: gmailMailboxObserver.headerValue(rawMessage.payload, 'Message-ID'),
       threadId: rawMessage.threadId || '', snippet: rawMessage.snippet || '',
       body: gmailMailboxObserver.firstPlainText(rawMessage.payload).trim().slice(0, 1500),
       subject: gmailMailboxObserver.headerValue(rawMessage.payload, 'Subject'),
       fromAddr: gmailMailboxObserver.parseAddr(gmailMailboxObserver.headerValue(rawMessage.payload, 'From')),
-      occurredAt: new Date(Number(rawMessage.internalDate)).toISOString(), senderInboxId: sender.id,
+      occurredAt: new Date(Number(rawMessage.internalDate) || Date.now()).toISOString(), senderInboxId: sender.id,
     };
 
     found++;
     const company        = cleanCompanyName(lead.company) || lead.email;
-    const replyText      = message.body || message.snippet;
+    const replyText      = stripQuotedReply(message.body || message.snippet || '');
+    const historical     = Boolean(rawMessage.historical || rawMessage.terminalReplay);
+    const maySend        = !CHECK_ONLY && !historical;
     if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE) {
       lead.emailStatus = 'replied';
       if (!DRY_RUN) {
@@ -2546,10 +2737,15 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       else console.log(`  ↩ Roofing survey reply from ${lead.email} (${company}) — no writes in dry run`);
       continue;
     }
-    const classification = await classifyReply(lead.company, replyText);
+    let classification = await classifyReply(lead.company, replyText, { subject: message.subject, email: lead.email });
     const canonicalReply = classifyReplyText(replyText, {
       subject: message.subject || '', currentEmail: lead.email, now: message.occurredAt || null,
     });
+    if (canonicalReply.reason === 'unsubscribe_request' || hasExplicitUnsubscribePhrase(replyText, { subject: message.subject })) {
+      classification = 'UNSUBSCRIBE';
+    } else if (canonicalReply.reason === 'explicit_rejection' || hasExplicitNegativePhrase(replyText, { subject: message.subject })) {
+      classification = 'NOT_INTERESTED';
+    }
     const timingAt = canonicalReply.revisitDate || canonicalReply.returnDate || null;
     classCounts[classification] = (classCounts[classification] || 0) + 1;
 
@@ -2562,6 +2758,16 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       await withAuth(async () => {
         if (!attributionActivities) attributionActivities = activitiesForCycle || await readColdCallActivities();
         await recordActiveReplyActivity(lead, message, replyText, classification, attributionActivities);
+        if (classification === 'UNSUBSCRIBE') return handleUnsubscribe(lead);
+        if (classification === 'NOT_INTERESTED') return handleNotInterested(lead);
+        if (!maySend) {
+          if (classification === 'WRONG_PERSON') return handleWrongPerson(lead);
+          if (classification === 'OUT_OF_OFFICE') return handleOutOfOffice(lead);
+          if (classification === 'QUESTION' || classification === 'NEEDS_HUMAN') {
+            return handleNeedsHuman(lead, message.fromAddr);
+          }
+          return;
+        }
         if (timingAt) return handleTimingReply(lead, message, replyText, timingAt, leads, attributionActivities);
         switch (classification) {
           // A genuine question is answered from product-facts.js when we're
@@ -2569,15 +2775,29 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
           // warm booking snippet. todaySent enforces the touch cap.
           case 'QUESTION':       return handleQuestion(lead, message, replyText, replyPassTodaySent, attributionActivities, outboundObservationOk, senderForPersistedLead(lead));
           case 'INTERESTED': {
+            const blocked = unroutedReplyDecision(lead) || (classifyStaffingReply(replyText, lead).promote === false
+              ? classifyStaffingReply(replyText, lead) : null);
+            if (blocked && blocked.promote === false) {
+              await queueDraft(lead, {
+                mode: 'draft', body: blocked.clarification || '', reason: blocked.reason, confidence: 0,
+              });
+              return handleNeedsHuman(lead, message.fromAddr);
+            }
             await handleInterested(lead, message, replyText, 'positive_reply', leads, attributionActivities);
-            return handlePositiveAutomation(lead, message, 'INTERESTED', attributionActivities);
+            return handlePositiveAutomation(lead, message, 'INTERESTED', attributionActivities, canonicalReply);
           }
           case 'MEETING_REQUEST': {
+            const blocked = unroutedReplyDecision(lead) || (classifyStaffingReply(replyText, lead).promote === false
+              ? classifyStaffingReply(replyText, lead) : null);
+            if (blocked && blocked.promote === false) {
+              await queueDraft(lead, {
+                mode: 'draft', body: blocked.clarification || '', reason: blocked.reason, confidence: 0,
+              });
+              return handleNeedsHuman(lead, message.fromAddr);
+            }
             await handleInterested(lead, message, replyText, 'meeting_requested', leads, attributionActivities);
-            return handlePositiveAutomation(lead, message, 'MEETING_REQUEST', attributionActivities);
+            return handlePositiveAutomation(lead, message, 'MEETING_REQUEST', attributionActivities, canonicalReply);
           }
-          case 'NOT_INTERESTED': return handleNotInterested(lead);
-          case 'UNSUBSCRIBE':    return handleUnsubscribe(lead);
           case 'WRONG_PERSON':   return handleWrongPerson(lead);
           case 'OUT_OF_OFFICE':  return handleOutOfOffice(lead);
           // NEEDS_HUMAN and anything unforeseen surface for review rather than
@@ -2643,7 +2863,8 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
     },
     finalRevalidate: async () => {
       if (staffingSendBlockReason(lead)) return { allowed: false, code: 'staffing_launch_paused' };
-      if (!SENDING_ENABLED) return { allowed: false, code: 'sending_disabled' };
+      const auth = sendAuthorization();
+      if (!auth.allowed) return { allowed: false, code: auth.code, reason: auth.reason };
       if (observerAutomationReadyBySender.get(sender.id) !== true) return { allowed: false, code: 'observer_not_incremental' };
       // Warm responses are rare, so pay for one fresh batched snapshot at the
       // last possible moment. This catches a booking, hold, suppression, sender
@@ -2658,9 +2879,9 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
       }));
       const currentRows = await readLeads(fresh.coldEmail);
       const current = currentRows.find(row => row.id === lead.id);
-      if (!current || normEmail(current.email) !== normEmail(lead.email)) return { allowed: false, code: 'identity_changed' };
       const suppressed = new Set((fresh.suppression || []).slice(1).map(row => normEmail(row[0])).filter(Boolean));
-      if (sendSuppressionReason(current, { suppressedEmails: suppressed })) return { allowed: false, code: 'suppressed' };
+      const safety = evaluateFreshSendSafety(lead, current, suppressed, { purpose: 'warm' });
+      if (!safety.allowed) return { allowed: false, code: safety.code, reason: safety.reason };
       if (String(current.notes || '').includes('[MANUAL HOLD]')) return { allowed: false, code: 'manual_hold' };
       const freshActivities = await readColdCallActivities(fresh.activityRows);
       const mine = freshActivities.filter(row => row.sourceLeadId === lead.id || row.leadId === `CE-${lead.id}` || normEmail(row.email) === normEmail(lead.email));
@@ -2729,7 +2950,20 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
         }) };
       await recordColdCallActivityStrict(row); activities.push(row); return row;
     },
-    sendProvider: payload => sendEmail({ ...payload, lead }),
+    sendProvider: payload => {
+      assertGmailProviderAllowed({
+        lead, campaignProviders: CAMPAIGN_PROVIDERS, mappings: liveSmartleadMappings(lead),
+      });
+      return sendEmail({
+      ...payload, lead,
+      sendAction: {
+        actionId: payload.sendAction?.actionId || payload.actionId,
+        leadId: lead.id,
+        actionType: 'gmail_warm_reply',
+        provider: 'gmail',
+      },
+    });
+    },
     consumeQuota: () => {
       if (activeWindowQuota) consumeSendingWindowSuccess(activeWindowQuota, sender.id);
       if (activeSenderCounts) activeSenderCounts.set(sender.id, (activeSenderCounts.get(sender.id) || 0) + 1);
@@ -2749,6 +2983,7 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
           recoveredAfterCheckpointFailure: Boolean(recovery), ...attribution }) };
       await recordColdCallActivityStrict(row); activities.push(row);
     },
+    confirmDurableReservation: actionId => confirmOutboundReservation(actionId),
     persistFailure: async ({ actionId, reservation, error }) => {
       const row = { eventId: `${actionId}:failed`, leadId: `CE-${lead.id}`, sourceLeadId: lead.id,
         email: lead.email, company: cleanCompanyName(lead.company) || lead.company || '', eventType: 'prospect_reply_failed',
@@ -2762,10 +2997,32 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
   return result;
 }
 
-async function handlePositiveAutomation(lead, message, classification, activities) {
-  const offer = offerForLead(lead);
-  const policy = decideReplyResponse({ classification, confidence: 100, offer, text: message.body || message.snippet || '' });
-  if (!policy.send) return handleNeedsHuman(lead, message.fromAddr);
+async function handlePositiveAutomation(lead, message, classification, activities, canonical = {}) {
+  const unrouted = unroutedReplyDecision(lead);
+  if (unrouted) return handleNeedsHuman(lead, message.fromAddr);
+  const staffing = classifyStaffingReply(message.body || message.snippet || '', lead);
+  if (staffing.promote === false) {
+    await queueDraft(lead, { mode: 'draft', body: staffing.clarification || '', reason: staffing.reason, confidence: 0 });
+    return handleNeedsHuman(lead, message.fromAddr);
+  }
+  let offer;
+  try { offer = offerForLead(lead); } catch (_) { return handleNeedsHuman(lead, message.fromAddr); }
+  const policy = decideReplyResponse({
+    classification,
+    canonical,
+    confidence: numericConfidence({ classification, canonical }),
+    offer,
+    text: message.body || message.snippet || '',
+    family: familyForLead(lead),
+  });
+  if (!policy.send) {
+    if (policy.action === REPLY_RESPONSE_ACTION.HUMAN_REVIEW) {
+      await queueDraft(lead, {
+        mode: 'draft', body: '', reason: policy.reason, confidence: policy.confidence || 0,
+      });
+    }
+    return handleNeedsHuman(lead, message.fromAddr);
+  }
   const body = warmResponse({ action: policy.action, lead, offer });
   const subject = /^re:/i.test(message.subject || '') ? message.subject : `Re: ${message.subject || 'your reply'}`;
   const delivered = await deliverHardenedWarmReply({ lead, message, action: policy.action, body, subject, activities, classification });
@@ -2951,7 +3208,7 @@ async function checkForBounce(lead) {
       const body = extractAllText(full.data.payload).toLowerCase();
       // Broad matches can hit unrelated NDRs — require the lead's own
       // address in the body before trusting it.
-      if (!body.includes(lowerEmail)) continue;
+      if (!gmailMailboxObserver.bounceMentionsRecipient(body, lowerEmail)) continue;
       // A retry/delay notice is not a dead address — skip it.
       if (TRANSIENT_FAILURE.test(body) && !PERMANENT_FAILURE.test(body)) {
         console.log(`  ⏳ ${lead.email} — transient delivery delay, not marking bounced`);
@@ -3187,6 +3444,9 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot 
     }
     if (todaySent >= DAILY_SEND_LIMIT) { console.warn(`  ⏸️  daily cap reached (${todaySent}/${DAILY_SEND_LIMIT}) — deferring to next pass`); break; }
 
+    const family = familyForLead(lead);
+    if (family === CAMPAIGN_FAMILY.STAFFING || family === CAMPAIGN_FAMILY.UNROUTED) continue;
+    if (lead.emailTemplateId === STAFFING_TEMPLATE) continue;
     const { subject, body } = buildIntentEmail(lead);
     if (DRY_RUN)          { console.log(`— WOULD SEND (intent) → ${lead.email}\n   ${subject}`); continue; }
     if (!SENDING_ENABLED) { console.log(`⛔ [kill-switch] would send intent email → ${lead.email}`); continue; }
@@ -3609,6 +3869,21 @@ function staffingFollowUpBody(lead, step) {
   return email.body;
 }
 
+function coldFollowUpBlockReason(lead) {
+  const family = familyForLead(lead);
+  if (family === CAMPAIGN_FAMILY.UNROUTED) return 'unknown or ambiguous niche';
+  if (family === CAMPAIGN_FAMILY.STAFFING && lead.emailTemplateId !== STAFFING_TEMPLATE) {
+    return 'staffing lead missing staffing template';
+  }
+  if (family !== CAMPAIGN_FAMILY.STAFFING && lead.emailTemplateId === STAFFING_TEMPLATE) {
+    return 'staffing template on a non-staffing lead';
+  }
+  if (!authoritativeProvider({
+    lead, campaignProviders: CAMPAIGN_PROVIDERS, mappings: liveSmartleadMappings(lead),
+  }).gmailAllowed) return 'provider is not Gmail';
+  return '';
+}
+
 function selectQueued(leads) {
   return leads.filter(l => {
     if (l.stage !== QUEUE_STAGE) return false;   // you queued it
@@ -3667,6 +3942,10 @@ function selectFollowUps(leads, activities = []) {
     // on anyone having remembered to add it.
     if (NON_COLD_STAGES.includes(String(l.stage || '').trim().toLowerCase())) return false;
     if (l.emailTemplateId === ROOFING_SURVEY_TEMPLATE) return false;
+    const ownership = authoritativeProvider({
+      lead: l, campaignProviders: CAMPAIGN_PROVIDERS, mappings: liveSmartleadMappings(l),
+    });
+    if (!ownership.gmailAllowed) return false;
     if (!isValidEmail(l.email)) return false;
     if (!routedLeadCanUseCurrentSender(l)) return false;
     const currentStep = parseInt(l.emailStep || '0', 10);
@@ -3844,6 +4123,10 @@ async function runStageSequencePass(allLeads, {
     const mine = [...(byKey.get(boardLead.id) || []), ...(email ? byKey.get(email) || [] : [])];
     const twin = target.generic ? target.twin : (twinByEmail.get(email) || null);
     if (staffingSendBlockReason(twin || boardLead)) continue;
+    if (!authoritativeProvider({
+      lead: twin || boardLead, campaignProviders: CAMPAIGN_PROVIDERS,
+      mappings: liveSmartleadMappings(twin || boardLead), activities: mine,
+    }).gmailAllowed) continue;
     const callState = deriveCallLifecycle(boardLead, { activities: mine });
     const hotState = deriveHotState(boardLead, { activities: mine });
     let verdict = evaluateStageSequence({
@@ -4025,11 +4308,41 @@ async function runStageSequencePass(allLeads, {
       continue;
     }
 
+    const safetyLead = twin || {
+      id: String(boardLead.id || '').replace(/^CE-/, ''),
+      email: boardLead.email,
+      notes: (twin && twin.notes) || boardLead.notes,
+      stage: (twin && twin.stage) || boardLead.stage,
+      emailStatus: (twin && twin.emailStatus) || boardLead.emailStatus,
+      leadNiche: twin && twin.leadNiche, tradeType: twin && twin.tradeType,
+      emailTemplateId: twin && twin.emailTemplateId, campaign: twin && twin.campaign,
+    };
+    const gate = await guardProviderSend(safetyLead, freshSendSafetyDeps(), { purpose: 'sequence' });
+    if (!gate.allowed) {
+      console.warn(`[StageSeq] ${boardLead.email} blocked: ${gate.reason || gate.code}`);
+      continue;
+    }
+    try {
+      assertGmailProviderAllowed({
+        lead: safetyLead, campaignProviders: CAMPAIGN_PROVIDERS,
+        mappings: liveSmartleadMappings(safetyLead), activities: mine,
+      });
+    } catch (error) {
+      console.warn(`[StageSeq] ${boardLead.email} blocked: ${error.message}`);
+      continue;
+    }
+
+    const sendAction = {
+      actionId: stageSequenceActionId(boardLead.id, verdict.sequenceId, step),
+      leadId: twin ? twin.id : String(boardLead.id || '').replace(/^CE-/, ''),
+      actionType: 'gmail_sequence_step',
+      provider: 'gmail',
+    };
     let result;
     try {
       result = await sendEmail({
         lead: twin || boardLead, to: boardLead.email.trim(), subject: built.subject, body: built.body,
-        sender, messageId: built.messageId,
+        sender, messageId: built.messageId, sendAction,
         ...(built.replyToThread ? {
           threadId: built.threadId,
           inReplyTo: built.inReplyTo || undefined,
@@ -4037,32 +4350,38 @@ async function runStageSequencePass(allLeads, {
         } : {}),
       });
     } catch (error) {
-      // A provider failure consumes no quota. Only a definite pre-delivery 4xx
-      // is automatically retryable; ambiguous transport/5xx failures keep the
-      // reservation blocked until Gmail proves whether delivery occurred.
-      console.error(`[StageSeq] send failed for ${boardLead.email}: ${error.message}`);
-      const providerStatus = Number(error?.response?.status || error?.code);
-      const providerRejectedBeforeDelivery = providerStatus >= 400 && providerStatus < 500
-        && ![408, 409, 429].includes(providerStatus);
-      if (!providerRejectedBeforeDelivery) {
-        console.error('[StageSeq] delivery outcome is ambiguous; durable reservation remains blocked until Gmail confirms the Message-ID');
+      if (error.code === 'durable_checkpoint_failed') {
+        console.error(JSON.stringify({
+          event: 'PROVIDER_SUCCESS_BUT_DURABLE_SEND_STATE_COULD_NOT_BE_CHECKPOINTED',
+          action_id: sendAction.actionId, lead_id: boardLead.id, provider: 'gmail',
+        }));
+        result = error.providerResult;
+      } else {
+        // A provider failure consumes no quota. Only a definite pre-delivery 4xx
+        // is automatically retryable; ambiguous transport/5xx failures keep the
+        // reservation blocked until Gmail proves whether delivery occurred.
+        console.error(`[StageSeq] send failed for ${boardLead.email}: ${error.message}`);
+        const providerRejectedBeforeDelivery = isDefinitePreDeliveryFailure(error);
+        if (!providerRejectedBeforeDelivery) {
+          console.error('[StageSeq] delivery outcome is ambiguous; durable reservation remains blocked until Gmail confirms the Message-ID');
+          continue;
+        }
+        const failure = {
+          eventId: `${reservationEventId}:failed`, leadId: boardLead.id,
+          sourceLeadId: twin ? twin.id : '', email: boardLead.email,
+          company: boardLead.company || '', eventType: SEQUENCE_EVENTS.SEND_FAILED,
+          occurredAt: new Date().toISOString(), subject: built.subject, content: '',
+          metadata: JSON.stringify({
+            sequenceId: verdict.sequenceId, step, stepEventId: eventId,
+            reservationEventId, senderInboxId: sender.id, error: String(error.message || '').slice(0, 300),
+          }),
+        };
+        try { await recordColdCallActivityStrict(failure); activities.push(failure); mine.push(failure); }
+        catch (checkpointError) {
+          console.error(`[StageSeq] provider failure checkpoint also failed; reservation remains fail-closed: ${checkpointError.message}`);
+        }
         continue;
       }
-      const failure = {
-        eventId: `${reservationEventId}:failed`, leadId: boardLead.id,
-        sourceLeadId: twin ? twin.id : '', email: boardLead.email,
-        company: boardLead.company || '', eventType: SEQUENCE_EVENTS.SEND_FAILED,
-        occurredAt: new Date().toISOString(), subject: built.subject, content: '',
-        metadata: JSON.stringify({
-          sequenceId: verdict.sequenceId, step, stepEventId: eventId,
-          reservationEventId, senderInboxId: sender.id, error: String(error.message || '').slice(0, 300),
-        }),
-      };
-      try { await recordColdCallActivityStrict(failure); activities.push(failure); mine.push(failure); }
-      catch (checkpointError) {
-        console.error(`[StageSeq] provider failure checkpoint also failed; reservation remains fail-closed: ${checkpointError.message}`);
-      }
-      continue;
     }
 
     // Successful provider delivery consumes both ceilings immediately, before
@@ -4074,6 +4393,12 @@ async function runStageSequencePass(allLeads, {
     sent++;
     try {
       await persistSequenceStep({ eventId, boardLead, twin, verdict, step, built, sender, result });
+      await confirmOutboundReservation(sendAction.actionId).catch(error => {
+        console.error(JSON.stringify({
+          event: 'reservation_confirm_failed', action_id: sendAction.actionId, lead_id: boardLead.id,
+          provider: 'gmail', status: 'sent_unconfirmed', code: error.code || 'confirm_failed',
+        }));
+      });
       console.log(`  [StageSeq] ${verdict.sequenceId} step ${step} -> ${boardLead.email}`);
     } catch (error) {
       console.error(`‼️ [StageSeq] Gmail delivered ${eventId}, but checkpoint failed: ${error.message}`);
@@ -4409,6 +4734,11 @@ async function run() {
     const currentStep = parseInt(lead.emailStep, 10);
     const nextStepNum = currentStep + 1;
     const template = FOLLOW_UP_SEQUENCE[currentStep - 1];
+    const blocked = coldFollowUpBlockReason(lead);
+    if (blocked) {
+      console.warn(`⏸️  follow-up deferred → ${lead.email} (${blocked})`);
+      return false;
+    }
     // Staffing follow-ups use their own locked copy; the cadence, sender,
     // thread and every safety gate below remain the shared ones.
     // Only the staffing branch is guarded: dental and roofing keep their exact
@@ -4533,6 +4863,10 @@ async function run() {
     catch (error) { console.warn(`⏸️  sender routing refused → ${lead.email} (${error.message})`); continue; }
     if (!senderChoice.sender) { console.warn(`⏸️  sender routing deferred → ${lead.email} (${senderChoice.reason})`); continue; }
     const selectedSender = senderChoice.sender;
+    if (resolveLeadFamily(lead).family === CAMPAIGN_FAMILY.UNROUTED) {
+      console.warn(`🧭 [routing] skipping step-1 send → ${lead.email} — unknown or ambiguous niche`);
+      continue;
+    }
     const campaignProvider = providerForLead(lead);
     if (campaignProvider.provider === 'smartlead') {
       if (DRY_RUN) { console.log(`— WOULD ADD TO SMARTLEAD → ${lead.email} (campaign ${campaignProvider.externalCampaignId || 'missing mapping'})`); continue; }
@@ -4555,6 +4889,9 @@ async function run() {
         if (invalid) throw new Error(invalid);
         built = { ...email, link: '', opener: 'locked roofing survey copy', openerTier: 'LOCKED', pitchTier: ROOFING_SURVEY_PROFILE };
       } else if (lead.emailTemplateId === STAFFING_TEMPLATE) {
+        if (familyForLead(lead) !== CAMPAIGN_FAMILY.STAFFING) {
+          throw new Error('staffing template cannot send for a non-staffing family');
+        }
         // The opening was researched, audited and approved offline; the agent
         // only merges it. renderStaffingEmail throws when it is missing.
         const email = renderStaffingEmail(lead, 1);
@@ -4562,6 +4899,9 @@ async function run() {
         if (bad) throw new Error(bad);
         built = { ...email, link: '', opener: 'approved staffing opening', openerTier: 'LOCKED', pitchTier: 'industrial_staffing' };
       } else {
+        if (familyForLead(lead) === CAMPAIGN_FAMILY.STAFFING) {
+          throw new Error('staffing lead cannot use dental cold copy');
+        }
         built = await buildEmail(lead);
       }
     } catch (e) {
@@ -4678,6 +5018,11 @@ async function run() {
     const currentStep = parseInt(lead.emailStep, 10);
     const nextStepNum = currentStep + 1;
     const template = FOLLOW_UP_SEQUENCE[currentStep - 1];
+    const blocked = coldFollowUpBlockReason(lead);
+    if (blocked) {
+      console.warn(`⏸️  follow-up deferred → ${lead.email} (${blocked})`);
+      continue;
+    }
     // Staffing follow-ups use their own locked copy; the cadence, sender,
     // thread and every safety gate below remain the shared ones.
     // Only the staffing branch is guarded: dental and roofing keep their exact

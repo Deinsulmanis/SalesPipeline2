@@ -197,7 +197,7 @@ test('Z. dental and roofing behaviour is unchanged by the lead-type work', () =>
   assert.equal(templateById('dental-guarantee-v1').ready, true);
   assert.equal(familyForLead({ leadNiche: 'dental', emailTemplateId: 'dental-guarantee-v1' }), 'dental_ai_receptionist');
   assert.equal(familyForLead({ leadNiche: 'roofing' }), 'roofing_survey');
-  assert.equal(familyForLead({}), 'dental_ai_receptionist', 'documented legacy default is intentionally preserved');
+  assert.equal(familyForLead({}), 'unrouted', 'blank niche must not inherit dental');
   assert.equal(offerForLead({ leadNiche: 'dental' }).targetCustomer, 'dental practices');
   assert.ok(campaignVersionsForRoute({ niche: 'dental' }).length > 0, 'dental still has an active version');
 });

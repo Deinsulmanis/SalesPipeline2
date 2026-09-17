@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { isDefinitePreDeliveryFailure } = require('./provider-delivery-error');
 
 function responseActionId(leadId, inboundMessageId, action) {
   return `reply-action:${crypto.createHash('sha256').update([leadId, inboundMessageId, action].join('|')).digest('hex').slice(0, 32)}`;
@@ -42,16 +43,21 @@ async function deliverProspectReply(input, deps) {
   let result;
   try {
     result = await deps.sendProvider({ to: lead.email, subject, body, sender, messageId: rfcMessageId,
-      threadId: thread.threadId, inReplyTo: inboundMessage.rfcMessageId, references: inboundMessage.rfcMessageId });
+      threadId: thread.threadId, inReplyTo: inboundMessage.rfcMessageId, references: inboundMessage.rfcMessageId,
+      actionId, sendAction: { actionId, leadId: lead.id, actionType: 'gmail_warm_reply', provider: 'gmail' } });
   } catch (error) {
-    const status = Number(error?.response?.status || error?.code);
-    const definite = status >= 400 && status < 500 && ![408, 409, 429].includes(status);
-    if (definite) await deps.persistFailure({ actionId, reservation, error, input });
-    return { delivered: false, code: definite ? 'provider_rejected' : 'provider_ambiguous', actionId, rfcMessageId };
+    if (error.code === 'durable_checkpoint_failed') {
+      result = error.providerResult;
+    } else {
+      const definite = isDefinitePreDeliveryFailure(error);
+      if (definite) await deps.persistFailure({ actionId, reservation, error, input });
+      return { delivered: false, code: definite ? 'provider_rejected' : 'provider_ambiguous', actionId, rfcMessageId };
+    }
   }
   deps.consumeQuota?.({ senderId: sender.id, recovered: false });
   try { await deps.persistDelivered({ actionId, rfcMessageId, result, input, recovery: false }); }
   catch (error) { return { delivered: true, checkpointFailed: true, actionId, rfcMessageId, result, error }; }
+  await deps.confirmDurableReservation?.(actionId);
   return { delivered: true, recovered: false, actionId, rfcMessageId, result };
 }
 

@@ -31,17 +31,26 @@ const quiet = { log() {}, warn() {}, error() {} };
 const OFF = {};                                    // no SUPABASE_* -> mirror disabled
 
 /** Records what would have been written; never touches Google. */
-function sheetsStub({ fail = null } = {}) {
+function sheetsStub({ fail = null, notesByRange = {} } = {}) {
   const batches = [];
+  const notes = { ...notesByRange };
   return {
     batches,
+    notes,
     get ranges() { return batches.flat().map(entry => entry.range); },
     client: {
       spreadsheets: {
         values: {
+          get: async ({ range }) => ({ data: { values: [[notes[range] || '']] } }),
+          batchGet: async ({ ranges }) => ({
+            data: { valueRanges: ranges.map(range => ({ range, values: [[notes[range] || '']] })) },
+          }),
           batchUpdate: async (args) => {
             if (fail) throw new Error(fail);
             batches.push(args.requestBody.data);
+            for (const entry of args.requestBody.data) {
+              if (/!L\d+$/.test(entry.range)) notes[entry.range] = entry.values[0][0];
+            }
             return {};
           },
         },

@@ -115,7 +115,7 @@ test('H. a staffing lead never silently resolves to the dental family', () => {
   // Dental, roofing and legacy rows are untouched by that addition.
   assert.equal(familyForLead({ leadNiche: 'dental', emailTemplateId: 'dental-guarantee-v1' }), 'dental_ai_receptionist');
   assert.equal(familyForLead({ leadNiche: 'roofing', emailTemplateId: 'roofing-survey-v1' }), 'roofing_survey');
-  assert.equal(familyForLead({}), 'dental_ai_receptionist', 'legacy unrouted rows stay dental');
+  assert.equal(familyForLead({}), 'unrouted', 'blank niche must not inherit dental');
 });
 
 // ── I/J/K/L. reply offer context ────────────────────────────────────────────

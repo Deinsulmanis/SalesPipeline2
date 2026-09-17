@@ -311,5 +311,6 @@ test('recovery state is durable across a restart', () => {
   // normal History cursor.
   assert.match(agentSrc, /const recovering = Boolean\(recovery && recovery\.active && !recovery\.complete\)/);
   assert.match(agentSrc, /recovering \? \(recovery\.backoff \? 'backoff' : 'recovering'\) : 'healthy'/);
-  assert.match(agentSrc, /state\.recovery && !state\.recovery\.complete\s*\n?\s*\? \(gmailObservationHistoryBySender\.get\(sender\.id\) \|\| ''\)/);
+  assert.match(agentSrc, /historyIncomplete \|\| state\.trustworthy === false/);
+  assert.match(agentSrc, /gmailObservationHistoryBySender\.get\(sender\.id\) \|\| ''/);
 });

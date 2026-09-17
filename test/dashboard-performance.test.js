@@ -7,6 +7,11 @@ const path = require('node:path');
 
 const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 const browser = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+function sheetColumn(number) {
+  let result = '', n = number;
+  while (n > 0) { n--; result = String.fromCharCode(65 + (n % 26)) + result; n = Math.floor(n / 26); }
+  return result;
+}
 
 test('dashboard lead list skips siteContext without changing the sheet or sending agent', () => {
   assert.match(server, /ranges: \[`\$\{CE_SHEET_NAME\}!A:O`, `\$\{CE_SHEET_NAME\}!Q:X`\]/);
@@ -56,4 +61,25 @@ test('stage changes use a narrow endpoint and never write the hidden site contex
   assert.ok(!/siteContext/.test(route), 'the hidden site context column is never written by a stage change');
   assert.ok(!/values\.(update|append)\(/.test(route),
     'no direct sheet mutation may bypass the abstraction in this route');
+});
+
+test('legacy ColdEmail PUT covers the full A:X row of 24 columns', () => {
+  const route = server.slice(
+    server.indexOf("app.put('/api/coldemail/:id'"),
+    server.indexOf("app.delete('/api/coldemail/:id'"));
+  const columns = [...server.slice(server.indexOf('const CE_COLUMNS'), server.indexOf('const CE_COL_RANGE'))
+    .matchAll(/'([^']+)'/g)].map(match => match[1]);
+  const lastColumn = sheetColumn(columns.length);
+  assert.equal(columns.length, 24);
+  assert.equal(lastColumn, 'X', '24 ColdEmail fields are A:X');
+  assert.match(route, /CE_COLUMNS\.map\(col => lead\[col\] !== undefined \? String\(lead\[col\]\) : ''\)/);
+  assert.match(route, new RegExp(String.raw`\$\{CE_SHEET_NAME\}!A\$\{rowNum\}:${lastColumn}\$\{rowNum\}`));
+  assert.doesNotMatch(route, /:S\$\{rowNum\}/);
+});
+
+test('the localStorage backup HTML is not part of the runtime or build', () => {
+  assert.equal(fs.existsSync(path.join(__dirname, '..', 'index-backup-localstorage.html')), false);
+  assert.doesNotMatch(server, /index-backup-localstorage/);
+  assert.doesNotMatch(browser, /index-backup-localstorage/);
+  assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '..', 'SETUP.md'), 'utf8'), /index-backup-localstorage/);
 });
