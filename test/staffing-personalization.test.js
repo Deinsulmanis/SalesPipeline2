@@ -3,7 +3,7 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const {STAFFING_CAMPAIGN,isStaffingCampaign,renderStaffingPreview,LOCKED_EMAILS}=require('../integrations/staffing-campaign');
 const {CHECKS,SYSTEM,FACT_AUDIT_SYSTEM,AUDIT_SYSTEM,evidenceBlocks,attachEvidence,filterFacts,checkDraft,rebuildFromFacts,
-  personalizeStaffingLead,previewStaffingPersonalization,flagBatchDuplicates}=require('../integrations/staffing-personalization');
+  personalizeStaffingLead,previewStaffingPersonalization,flagBatchDuplicates,EMAIL_ADMISSION,emailAdmission}=require('../integrations/staffing-personalization');
 const {researchStaffingCompany,safeUrl,publicIp}=require('../integrations/staffing-research');
 const {registerStaffingPreviewRoutes}=require('../integrations/staffing-preview-route');
 const {CAMPAIGN_VERSIONS}=require('../integrations/campaign-versions');
@@ -191,9 +191,13 @@ test('absent fact audits, string booleans and incomplete copy audits fail closed
   const r=await personalizeStaffingLead(lead,opts({identity:'true'}));assert.equal(r.confidence,'RETRY_REQUIRED');
   const incomplete=await personalizeStaffingLead(lead,opts({copyAudit:{checks:{oneSentence:true}}}));assert.equal(incomplete.confidence,'REVIEW_REQUIRED');
 });
-test('catch-all, missing status and malformed model responses fail closed',async()=>{
+// An unverified address, and a verified one whose catch-all state was never
+// stated, both still fail closed WITHOUT a fetch. Admitting catch-all did not
+// make "unknown" admissible: 'catch-all' alone is not verified, and bare
+// 'verified' leaves the catch-all risk unquantified.
+test('unverified and unstated-catch-all statuses, and malformed model responses, fail closed',async()=>{
   for(const emailStatus of ['catch-all','verified','']) {
-    const r=await personalizeStaffingLead({...lead,emailStatus},{researchCompany:()=>{throw new Error('must not fetch');}});assert.equal(r.primaryReason,'TIER1_NON_CATCHALL_REQUIRED');
+    const r=await personalizeStaffingLead({...lead,emailStatus},{researchCompany:()=>{throw new Error('must not fetch');}});assert.equal(r.primaryReason,'VERIFIED_EMAIL_WITH_STATED_CATCHALL_REQUIRED');
   }
   const r=await personalizeStaffingLead(lead,{researchCompany:async()=>research,createMessage:async()=>({content:[{type:'text',text:'invalid'}]})});
   assert.equal(r.confidence,'REVIEW_REQUIRED');assert.equal(r.primaryReason,'MODEL_OR_RESPONSE_ERROR');
@@ -339,4 +343,90 @@ test('locked follow-ups, HTML escaping and review preview suppression are preser
 });
 test('QA CSV round-trips multiline evidence and quotes',()=>{
   const rows=[{company:'A, B',evidence:'First line\nSecond "quoted" line'}];assert.deepEqual(parseCsv(csv(rows,['company','evidence'])),rows);
+});
+
+// ── staffing catch-all admission policy ─────────────────────────────────────
+// Policy change: a VERIFIED address on a stated catch-all domain is admitted and
+// tagged, instead of refused at the door. A catch-all domain does not prove the
+// mailbox is bad — it proves the domain will not answer — so it is a
+// deliverability risk to MEASURE, not a reason to discard the lead.
+const catchAllLead={...lead,emailStatus:'verified (catch-all domain)'};
+
+test('emailAdmission admits verified non-catch-all and verified catch-all only',()=>{
+  assert.equal(emailAdmission('verified (NOT catch-all) — Tier 1 send-ready'),EMAIL_ADMISSION.NON_CATCH_ALL);
+  assert.equal(emailAdmission('verified — NOT catch-all'),EMAIL_ADMISSION.NON_CATCH_ALL);
+  assert.equal(emailAdmission('verified (catch-all domain)'),EMAIL_ADMISSION.CATCH_ALL);
+  assert.equal(emailAdmission('Verified, catch-all'),EMAIL_ADMISSION.CATCH_ALL);
+  assert.equal(emailAdmission('verified catchall'),EMAIL_ADMISSION.CATCH_ALL);
+  // not positively verified
+  for(const s of ['catch-all','unverified','unverified (catch-all)','unknown','likely','']) assert.equal(emailAdmission(s),null,s);
+  // verified, but the catch-all dimension was never stated: unknown is NOT catch-all
+  assert.equal(emailAdmission('verified'),null);
+  assert.equal(emailAdmission('verified deliverable'),null);
+  // affirmatively disqualified, even when catch-all is also stated
+  for(const s of ['verified but invalid','verified / undeliverable, catch-all','verified, risky catch-all',
+    'verified bounced catch-all','unverifiable (catch-all)','verified disposable catch-all']) assert.equal(emailAdmission(s),null,s);
+  assert.equal(emailAdmission(null),null);assert.equal(emailAdmission(undefined),null);
+});
+
+// The CRM column ALSO named emailStatus carries a send lifecycle, not a
+// verification verdict. Running this pipeline against a CRM row must hold on
+// every one of those values rather than admit through a field-name collision.
+test('CRM send-lifecycle emailStatus values can never admit a staffing lead',()=>{
+  for(const s of ['','queued','emailed','done','replied','bounced','Contacted','Import'])
+    assert.equal(emailAdmission(s),null,`CRM lifecycle value ${JSON.stringify(s)} must not admit`);
+});
+
+test('a verified catch-all lead now reaches the pipeline and is tagged catch-all admitted',async()=>{
+  const o=opts(),r=await personalizeStaffingLead(catchAllLead,o);
+  assert.equal(o.calls.length,3,'a catch-all lead must now be researched and audited, not refused at the door');
+  assert.equal(r.safeToSend,true);
+  assert.equal(r.confidence,'HIGH');
+  assert.equal(r.emailAdmission,EMAIL_ADMISSION.CATCH_ALL);
+  assert.equal(r.catchAllAdmitted,true,'durable flag must mark admission on a catch-all domain');
+  assert.ok(r.hyperPersonalizedOpening);
+});
+
+test('a verified non-catch-all lead is unchanged and is NOT tagged catch-all',async()=>{
+  const r=await personalizeStaffingLead(lead,opts());
+  assert.equal(r.safeToSend,true);
+  assert.equal(r.emailAdmission,EMAIL_ADMISSION.NON_CATCH_ALL);
+  assert.equal(r.catchAllAdmitted,false,'a non-catch-all admission must not be tagged as catch-all');
+});
+
+test('a lead held at the admission gate still carries its verdict, and is never fetched',async()=>{
+  const r=await personalizeStaffingLead({...lead,emailStatus:'verified'},{researchCompany:()=>{throw new Error('must not fetch');}});
+  assert.equal(r.safeToSend,false);
+  assert.equal(r.primaryReason,'VERIFIED_EMAIL_WITH_STATED_CATCHALL_REQUIRED');
+  assert.equal(r.emailAdmission,null);
+  assert.equal(r.catchAllAdmitted,false);
+});
+
+// Admission decides only whether the ADDRESS may enter. Every later gate must
+// still refuse independently, so a catch-all address gets no easier ride.
+test('admitting catch-all does not weaken the identity, ICP or copy-audit gates',async()=>{
+  const identity=await personalizeStaffingLead(catchAllLead,opts({identity:false}));
+  assert.equal(identity.safeToSend,false,'catch-all lead must still fail unresolved domain identity');
+  assert.equal(identity.primaryReason,'DOMAIN_IDENTITY_UNRESOLVED');
+
+  const mismatch=await personalizeStaffingLead(catchAllLead,opts({extract:{...draft,icpFit:'MISMATCH'},fit:'MISMATCH'}));
+  assert.equal(mismatch.safeToSend,false,'catch-all lead must still be refused on ICP mismatch');
+
+  const auditRefused=await personalizeStaffingLead(catchAllLead,opts({copyAudit:{...audit,checks:{...audit.checks,companyIdentity:false}}}));
+  assert.equal(auditRefused.safeToSend,false,'catch-all lead must still be refused by the copy audit');
+
+  const blocked=await personalizeStaffingLead(catchAllLead,opts({site:{pages:[],failures:['Request failed with status code 403'],reviewRequired:true}}));
+  assert.equal(blocked.safeToSend,false,'catch-all lead must still be refused when retrieval is blocked');
+  assert.equal(blocked.primaryReason,'RETRIEVAL_BLOCKED_403');
+});
+
+// Duplicate-opening resolution is downstream of admission and must treat a
+// catch-all-admitted lead exactly like any other.
+test('duplicate-opening resolution still applies to catch-all admitted leads',async()=>{
+  const first=await personalizeStaffingLead(lead,opts());
+  const second=await personalizeStaffingLead(catchAllLead,opts());
+  assert.equal(first.hyperPersonalizedOpening,second.hyperPersonalizedOpening,'precondition: identical openings');
+  const resolved=await flagBatchDuplicates([first,second],{createMessage:async()=>{throw new Error('no model');}});
+  assert.equal(resolved[0].hyperPersonalizedOpening,first.hyperPersonalizedOpening,'first claimer keeps it');
+  assert.equal(resolved[1].safeToSend,false,'the later collider is held, catch-all or not');
 });
