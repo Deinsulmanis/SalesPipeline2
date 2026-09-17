@@ -207,10 +207,10 @@ test('the four Outreach endpoints share one snapshot instead of re-reading', () 
 
 test('13/14. the snapshot has a bounded TTL and can be forced fresh', () => {
   assert.match(server, /const OUTREACH_CACHE_TTL_MS = 30000;/);
-  assert.match(server, /Date\.now\(\) - outreachCache\.at < OUTREACH_CACHE_TTL_MS/);
+  assert.match(server, /createOutreachCache\(/);
   assert.match(server, /force: req\.query\.refresh === '1'/);
   // Concurrent callers share one in-flight load rather than stampeding.
-  assert.match(server, /if \(!force && outreachCacheLoad\) return outreachCacheLoad;/);
+  assert.match(server, /return outreachDatasetCache\.get\(\{ force \}\)/);
 });
 
 test('15. a write cannot be hidden by the cache', () => {

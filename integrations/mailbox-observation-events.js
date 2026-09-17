@@ -78,7 +78,7 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
       const lead = byId.get(String(leadId));
       const text = stripQuotedReply(firstPlainText(message.payload) || decodeBodies(message.payload) || message.snippet || '');
       const canonical = classifyReplyText(text, { currentEmail: lead.email, subject: headerValue(message.payload,'Subject'), now: occurredAt });
-      const optOut = canonical.signals?.includes('opt_out') || /\b(unsubscribe|remove me|do not contact|stop emailing)\b/i.test(text);
+      const optOut = canonical.reason === 'unsubscribe_request';
       if (optOut) suppressions.push({ email: lead.email, reason: 'unsubscribe', company: lead.company });
       const eventId = `gmail-reply:${message.id}`;
       const already = existing.has(eventId) || activities.some(row => meta(row).gmailMessageId === message.id && /reply|meeting_requested/.test(row.eventType));
