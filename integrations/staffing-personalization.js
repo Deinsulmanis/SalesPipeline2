@@ -302,7 +302,14 @@ async function personalizeStaffingLead(lead,{researchCompany=researchStaffingCom
 }
 async function previewStaffingPersonalization(lead,options) {
   const result=await personalizeStaffingLead(lead,options);
-  return {...result,emailPreview:renderStaffingPreview(lead,result),previewOnly:true};
+  try {
+    return {...result,emailPreview:renderStaffingPreview(lead,result,1,options),previewOnly:true};
+  } catch (error) {
+    if (error.code === 'MISSING_COMMERCIAL_MAILING_ADDRESS') {
+      return {...result,emailPreview:null,previewOnly:true,complianceError:error.message};
+    }
+    throw error;
+  }
 }
 /**
  * Resolve duplicate openings across a batch.

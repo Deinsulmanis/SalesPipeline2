@@ -2,6 +2,8 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const {STAFFING_CAMPAIGN,isStaffingCampaign,renderStaffingPreview,LOCKED_EMAILS}=require('../integrations/staffing-campaign');
+const {appendStaffingComplianceFooter}=require('../integrations/staffing-compliance');
+const {STAFFING_RENDER_OPTIONS}=require('../test-support/staffing-mail');
 const {CHECKS,SYSTEM,FACT_AUDIT_SYSTEM,AUDIT_SYSTEM,evidenceBlocks,attachEvidence,filterFacts,checkDraft,rebuildFromFacts,
   personalizeStaffingLead,previewStaffingPersonalization,flagBatchDuplicates}=require('../integrations/staffing-personalization');
 const {researchStaffingCompany,safeUrl,publicIp}=require('../integrations/staffing-research');
@@ -48,10 +50,10 @@ test('staffing remains a non-sendable approved campaign and dental ready routing
   assert.equal(validateCampaignVersionRoute({niche:STAFFING_CAMPAIGN.niche,emailTemplateId:STAFFING_CAMPAIGN.emailTemplateId,campaignVersionId:STAFFING_CAMPAIGN.id}).ok,true);
 });
 test('strong industrial roles and market remain HIGH with locked copy and exactly one bold phrase',async()=>{
-  const o=opts(),r=await previewStaffingPersonalization(lead,o);
+  const o=opts(),r=await previewStaffingPersonalization(lead,{...o,...STAFFING_RENDER_OPTIONS});
   assert.equal(r.confidence,'HIGH');assert.equal(r.safeToSend,true);assert.equal(r.regenerationCount,0);assert.equal(o.calls.length,3);
   assert.equal(r.emailPreview.subject,'employer accounts');
-  assert.equal(r.emailPreview.body,`Hi Ada,\n\n${good.hyperPersonalizedOpening}\n\nWe help industrial staffing agencies turn that exact market into qualified employer meetings — and we get paid based on the meetings we generate.\n\nWorth seeing how we'd do this for Example Staffing?\n\n— Deins`);
+  assert.equal(r.emailPreview.body,appendStaffingComplianceFooter(`Hi Ada,\n\n${good.hyperPersonalizedOpening}\n\nWe help industrial staffing agencies turn that exact market into qualified employer meetings — and we get paid based on the meetings we generate.\n\nWorth seeing how we'd do this for Example Staffing?\n\n— Deins`,STAFFING_RENDER_OPTIONS));
   assert.equal((r.emailPreview.html.match(/<strong>/g)||[]).length,1);assert.match(r.emailPreview.html,/<strong>we get paid based on the meetings we generate\.<\/strong>/);
 });
 test('valid roles and employer market survive invalid optional geography',async()=>{
@@ -330,7 +332,7 @@ test('authenticated preview API remains isolated from storage and sending',async
   await handlers['/api/staffing/personalization/preview']({body:{lead:{campaign:'Dental'}}},res);assert.equal(status,422);
 });
 test('locked follow-ups, HTML escaping and review preview suppression are preserved',()=>{
-  const r=renderStaffingPreview({...lead,company:'A & B <Partners>'},null,2);
+  const r=renderStaffingPreview({...lead,company:'A & B <Partners>'},null,2,STAFFING_RENDER_OPTIONS);
   assert.match(r.body,/If we don't generate qualified employer meetings, there are no meeting fees\./);assert.match(r.html,/A &amp; B &lt;Partners&gt;/);
   // Each locked step bolds exactly one phrase — step 2 bolds the fulfilment line.
   assert.equal((r.html.match(/<strong>/g)||[]).length,1);
