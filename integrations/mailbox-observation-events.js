@@ -96,8 +96,12 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
             requiresHumanAttention: historical && canonical.genuineHuman !== false,
             autoSendAllowed: false, identityMutationAllowed: false }) };
         add(event);
-        replies.push({ leadId, message, historical, canonical });
       }
+      // Recovery and CHECK_ONLY must still classify through this path. An
+      // already-persisted opt-out/rejection is re-queued so terminal CRM
+      // mutations cannot be skipped just because the Gmail event exists.
+      const terminal = optOut || (canonical.state === 'negative' && canonical.reason === 'explicit_rejection');
+      if (!already || terminal) replies.push({ leadId, message, historical, canonical, alreadyRecorded: already });
     }
   }
   for (const missing of observation.unavailable || []) {

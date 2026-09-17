@@ -166,17 +166,20 @@ function matchMailboxMessages(messages, { leads = [], activities = [], senderInb
   return { replies, bounces };
 }
 
-async function listChangedIds(gmail, { historyId, maxPages = 20 } = {}) {
+async function listChangedIds(gmail, { historyId, maxPages = 20, sleep } = {}) {
   const ids = new Set();
   const stubs = new Map();
+  const readOpts = sleep ? { sleep } : undefined;
   let pageToken;
   let pages = 0;
+  // Do NOT adopt Gmail's latest historyId until every page of this window has
+  // been read. A partial listing that stored HEAD would permanently skip the
+  // unread pages — including after a 403 quota error.
   let nextHistoryId = historyId || null;
   if (historyId) {
     do {
       const response = await providerRead('users.history.list', { userId: 'me', startHistoryId: historyId,
-        maxResults: 500, pageToken }, params => gmail.users.history.list(params));
-      nextHistoryId = response.data.historyId || nextHistoryId;
+        maxResults: 500, pageToken }, params => gmail.users.history.list(params), readOpts);
       for (const history of response.data.history || []) {
         for (const change of [...(history.messagesAdded || []), ...(history.labelsAdded || []), ...(history.labelsRemoved || [])]) {
           if (change.message?.id) { ids.add(change.message.id); stubs.set(change.message.id, change.message); }
@@ -184,6 +187,7 @@ async function listChangedIds(gmail, { historyId, maxPages = 20 } = {}) {
       }
       pageToken = response.data.nextPageToken;
       pages += 1;
+      if (!pageToken) nextHistoryId = response.data.historyId || nextHistoryId;
     } while (pageToken && pages < maxPages);
     if (pageToken) throw new Error(`Gmail History exceeded the ${maxPages}-page safety bound; checkpoint was not advanced`);
     return { ids: [...ids], stubs, nextHistoryId, mode: 'history', pages };
@@ -195,12 +199,13 @@ async function listChangedIds(gmail, { historyId, maxPages = 20 } = {}) {
   return { ids: [], nextHistoryId: profile.data.historyId || null, mode: 'bootstrap', pages: 0 };
 }
 
-async function listCatchup(gmail, { lastSuccessfulObservationAt, maxPages = 20, senderEmail, log = () => {} }) {
+async function listCatchup(gmail, { lastSuccessfulObservationAt, maxPages = 20, senderEmail, log = () => {}, sleep } = {}) {
   const since = Date.parse(lastSuccessfulObservationAt || '');
   if (!Number.isFinite(since)) throw new Error('Mailbox recovery requires persisted lastSuccessfulObservationAt; checkpoint was not advanced');
   // Anchor BEFORE the search. Changes during pagination (including imported old
   // messages) are covered by the History bridge and subsequent incremental run.
-  const profile = await providerRead('users.getProfile', { userId: 'me' }, params => gmail.users.getProfile(params));
+  const readOpts = sleep ? { sleep } : undefined;
+  const profile = await providerRead('users.getProfile', { userId: 'me' }, params => gmail.users.getProfile(params), readOpts);
   if (norm(profile.data.emailAddress) !== norm(senderEmail)) throw new Error('Mailbox identity mismatch; checkpoint was not advanced');
   const anchor = profile.data.historyId;
   if (!anchor) throw new Error('Gmail profile has no History cursor');
@@ -211,12 +216,12 @@ async function listCatchup(gmail, { lastSuccessfulObservationAt, maxPages = 20, 
   let pageToken; let pages = 0;
   do {
     const response = await providerRead('users.messages.list', { userId: 'me', q,
-      includeSpamTrash: true, maxResults: 500, pageToken }, params => gmail.users.messages.list(params));
+      includeSpamTrash: true, maxResults: 500, pageToken }, params => gmail.users.messages.list(params), readOpts);
     for (const stub of response.data.messages || []) stubs.set(stub.id, stub);
     pageToken = response.data.nextPageToken; pages++;
   } while (pageToken && pages < maxPages);
   if (pageToken) throw new Error('Mailbox catch-up exceeded page safety bound; checkpoint was not advanced');
-  const bridge = await listChangedIds(gmail, { historyId: anchor, maxPages });
+  const bridge = await listChangedIds(gmail, { historyId: anchor, maxPages, sleep });
   for (const [id, stub] of bridge.stubs) stubs.set(id, stub);
   return { ids: [...stubs.keys()], stubs, nextHistoryId: bridge.nextHistoryId,
     mode: 'catchup', pages: pages + bridge.pages, from, anchor };
@@ -250,7 +255,7 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
   let recovered = previousHealth === 'unavailable' || (lastSuccessfulObservationAt
     && new Date(now).getTime() - Date.parse(lastSuccessfulObservationAt) > STALE_MS);
   try {
-    listed = await listChangedIds(gmail, { historyId, maxPages });
+    listed = await listChangedIds(gmail, { historyId, maxPages, sleep });
   } catch (error) {
     if (!historyId || statusOf(error) !== 404 || error.observerDetails?.action !== 'users.history.list') throw error;
     log('history_cursor_invalid', { historyId, ...error.observerDetails });
@@ -271,7 +276,7 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
     try {
       const catchup = await listCatchup(gmail, {
         lastSuccessfulObservationAt: resuming ? recoveryState.since : lastSuccessfulObservationAt,
-        maxPages, senderEmail, log,
+        maxPages, senderEmail, log, sleep,
       });
       for (const [id, stub] of listed.stubs || []) if (!catchup.stubs.has(id)) catchup.stubs.set(id, stub);
       listed = { ...catchup, ids: [...catchup.stubs.keys()] };
@@ -315,10 +320,14 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
     } catch (error) {
       // Quota is not a mailbox failure and must not discard proven progress.
       // Stop issuing reads, keep what is proven, and let the caller bank it.
-      if (isRateLimited(error) && recoveryState) {
+      if (isRateLimited(error)) {
         quotaBackoff = { reason: 'gmail_quota', at: new Date(now).toISOString(),
           message: String(error.message || '').slice(0, 200) };
-        log('gmail_quota_backoff', { processedThroughId: provenThroughId, remaining: queue.length - messages.length });
+        log('gmail_quota_backoff', { processedThroughId: provenThroughId,
+          remaining: queue.length - messages.length, recovery: Boolean(recoveryState) });
+        // The failed id is NOT proven. Recovery resumes strictly above the last
+        // proven id; incremental history keeps the START cursor so the unread
+        // window is retried. Never adopt Gmail's HEAD after a quota stop.
         break;
       }
       if (statusOf(error) !== 404) throw error;
@@ -359,13 +368,21 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
         backoff: Boolean(quotaBackoff) });
   }
 
-  return { ...listed, recovered: Boolean(recovered), messages: unique, unavailable,
+  // Incremental quota is the same contract as recovery: keep what is proven,
+  // do not adopt HEAD, mark the run incomplete so the next pass retries the
+  // unresolved window from the last persisted cursor.
+  const historyIncomplete = Boolean(quotaBackoff) && !recoveryState;
+  const trustworthy = !historyIncomplete && (!recoveryResult || recoveryResult.complete);
+
+  return { ...listed,
+    nextHistoryId: historyIncomplete ? (historyId || listed.nextHistoryId) : listed.nextHistoryId,
+    recovered: Boolean(recovered), messages: unique, unavailable,
     messagesInspected: unique.length, discoveredCount: listed.ids.length,
-    recovery: recoveryResult,
-    // While a recovery is still in flight the mailbox has NOT reached a
-    // trustworthy observation point, so the caller must not advance the normal
-    // History checkpoint or treat the inbox as send-safe.
-    trustworthy: !recoveryResult || recoveryResult.complete,
+    recovery: recoveryResult, historyIncomplete, quotaBackoff,
+    observerHealth: !trustworthy ? (quotaBackoff ? 'unhealthy_quota' : 'unhealthy_incomplete') : 'healthy',
+    // While a recovery is still in flight — or an incremental history read was
+    // cut short by quota — the mailbox has NOT reached a trustworthy point.
+    trustworthy,
     ...matchMailboxMessages(unique, { leads, activities, senderInboxId, senderEmail }) };
 }
 

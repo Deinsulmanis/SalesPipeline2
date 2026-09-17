@@ -120,11 +120,15 @@ test('CHECK_ONLY opt-out uses the classifier unsubscribe_request reason', async 
   assert.equal(rejectionPlan.events.find(event => event.sourceLeadId).eventType, 'negative_reply');
   assert.equal(rejectionPlan.suppressions.length, 0);
 });
-test('CHECK_ONLY excludes response handlers and recovery commit has no send capability',()=>{
+test('CHECK_ONLY still applies terminal CRM mutations and never sends',()=>{
   const fs=require('node:fs');const source=fs.readFileSync(require.resolve('../outreach-agent.js'),'utf8');
-  assert.match(source,/!item.historical && !CHECK_ONLY/);
-  assert.match(source,/if \(!CHECK_ONLY\) for \(const row of activitiesForCycle\)/);
-  assert.doesNotMatch(commitObservation.toString(),/sendMail|messages.send|deliver|enroll/);
+  const pass=source.slice(source.indexOf('async function runReplyCheckPass'), source.indexOf('async function commitMailboxObservationCheckpoints'));
+  assert.match(pass,/classification === 'UNSUBSCRIBE'/);
+  assert.match(pass,/classification === 'NOT_INTERESTED'/);
+  assert.match(pass,/const maySend\s*=\s*!CHECK_ONLY && !historical/);
+  assert.match(pass,/if \(!maySend\)/);
+  assert.match(pass,/historyIncomplete/);
+  assert.doesNotMatch(commitObservation.toString(),/sendMail|messages\.send|deliver|enroll/);
 });
 const seq={status:'active',sequenceId:'demo_follow_up_v1',label:'Demo follow-up',step:0,eligible:true,featureEnabled:true,nextDueAt:'2026-09-08T16:00:00Z',dueNow:true};
 for(const [name,board,twin,ctx,owner,pattern] of [

@@ -60,7 +60,8 @@ const { GmailOutreachProvider } = require('./integrations/outreach-providers');
 const { SmartleadClient } = require('./integrations/smartlead-client');
 const { SmartleadOutreachProvider } = require('./integrations/outreach-providers');
 const { classifyReply: classifyProviderReply } = require('./integrations/reply-classifier');
-const { classifyReplyText, isUsableReplyIdentity, REPLY_STATE } = require('./integrations/canonical-reply');
+const { classifyReplyText, isUsableReplyIdentity, REPLY_STATE,
+  hasExplicitUnsubscribePhrase, hasExplicitNegativePhrase } = require('./integrations/canonical-reply');
 // ONE ownership model, shared with the CRM. The sender asks it rather than
 // keeping a second opinion about who may act on a lead.
 const { NON_COLD_STAGES, deriveAutomationOwnership, mayColdSend } = require('./integrations/automation-ownership');
@@ -115,6 +116,7 @@ const {
 const { findOriginalSentThread, resolveColdFollowUpThread } = require('./integrations/gmail-threading');
 const gmailMailboxObserver = require('./integrations/gmail-mailbox-observer');
 const { planMailboxEvents, commitObservation } = require('./integrations/mailbox-observation-events');
+const { stripQuotedReply } = require('./integrations/reply-reconciliation');
 const { offerForLead, warmResponse } = require('./integrations/offer-config');
 const { ACTION: REPLY_RESPONSE_ACTION, decideReplyResponse, numericConfidence } = require('./integrations/reply-response-policy');
 const { classifyStaffingReply, unroutedReplyDecision, STAFFING_CLARIFICATION } = require('./integrations/staffing-reply-policy');
@@ -1469,8 +1471,14 @@ const REPLY_CATEGORIES = new Set(['QUESTION','INTERESTED','MEETING_REQUEST','NOT
 // Never default to INTERESTED: a transient API error would silently promote.
 const CLASSIFY_FALLBACK = 'NEEDS_HUMAN';
 
-async function classifyReply(company, replyBody) {
-  return classifyProviderReply({ provider: 'gmail', lead: { company }, plainTextReply: replyBody, apiKey: ANTHROPIC_API_KEY });
+async function classifyReply(company, replyBody, extra = {}) {
+  return classifyProviderReply({
+    provider: 'gmail',
+    lead: { company, email: extra.email || '' },
+    subject: extra.subject || '',
+    plainTextReply: replyBody,
+    apiKey: ANTHROPIC_API_KEY,
+  });
 }
 
 // ── INBOUND QUESTION ANSWERING ────────────────────────────────────────────────
@@ -2211,10 +2219,17 @@ async function handleNotInterested(lead) {
     console.warn(`[handleNotInterested] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
     return;
   }
+  const notes = String(lead.notes || '');
+  if (/\[REPLY:\s*Not Interested\]/i.test(notes) && String(lead.stage) === 'Done' && String(lead.emailStatus) === 'done') {
+    console.log(`  ✗ ${lead.company} — already marked Done (not interested)`);
+    return;
+  }
   await applyLeadChange(lead.id, {
     stage: 'Done', emailStatus: 'done',
-    notes: prependNote(lead.notes, '[REPLY: Not Interested]'),
+    notes: /\[REPLY:\s*Not Interested\]/i.test(notes) ? notes : prependNote(notes, '[REPLY: Not Interested]'),
   }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
+  lead.stage = 'Done';
+  lead.emailStatus = 'done';
   console.log(`  ✗ ${lead.company} — marked Done (not interested)`);
 }
 
@@ -2224,12 +2239,18 @@ async function handleUnsubscribe(lead) {
     console.warn(`[handleUnsubscribe] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
     return;
   }
-  await applyLeadChange(lead.id, {
-    stage: 'Unsub', emailStatus: 'done',
-    notes: prependNote(lead.notes, '[REPLY: Unsubscribed]'),
-  }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
+  const notes = String(lead.notes || '');
+  const already = /\[REPLY:\s*Unsubscribed\]/i.test(notes) && String(lead.stage) === 'Unsub';
+  if (!already) {
+    await applyLeadChange(lead.id, {
+      stage: 'Unsub', emailStatus: 'done',
+      notes: /\[REPLY:\s*Unsubscribed\]/i.test(notes) ? notes : prependNote(notes, '[REPLY: Unsubscribed]'),
+    }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
+    lead.stage = 'Unsub';
+    lead.emailStatus = 'done';
+  }
   await addSuppression(lead.email, 'unsubscribe', lead.company, 'reply-auto');
-  console.log(`  ⊘ ${lead.company} — marked Unsub (unsubscribe request)`);
+  console.log(`  ⊘ ${lead.company} — ${already ? 'already Unsub; suppression confirmed' : 'marked Unsub (unsubscribe request)'}`);
 }
 
 async function handleOutOfOffice(lead) {
@@ -2413,6 +2434,10 @@ async function handleNeedsHuman(lead, fromAddr) {
   const from        = (fromAddr || '').trim().toLowerCase();
   const differs     = from && from !== emailedAddr;
   const note        = differs ? `[REPLY: Needs human] (replied from ${from})` : '[REPLY: Needs human]';
+  if (String(lead.notes || '').includes(note) && String(lead.stage) === 'Review') {
+    console.log(`  ⚑ ${lead.company} — already queued for human review`);
+    return;
+  }
   await applyLeadChange(lead.id, {
     stage: 'Review', emailStatus: 'replied', notes: prependNote(lead.notes, note),
   }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
@@ -2557,32 +2582,52 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
           checkpoint: state => advanceCheckpoint
             ? withAuth(() => persistGmailObservationState(
               sender.id,
-              // A recovery still in flight keeps the OLD cursor. Advancing it now
-              // would jump the mailbox past a backlog it has not yet read.
-              state.recovery && !state.recovery.complete
+              // A recovery still in flight, or an incremental history read cut
+              // short by quota, keeps the OLD cursor. Advancing it now would
+              // jump the mailbox past mail that has not been classified.
+              (state.recovery && !state.recovery.complete) || state.historyIncomplete || state.trustworthy === false
                 ? (gmailObservationHistoryBySender.get(sender.id) || '')
                 : state.nextHistoryId,
-              { mode: state.recovery && !state.recovery.complete ? 'recovering' : 'history',
-                messagesObserved: state.messagesInspected, recovery: state.recovery }))
+              { mode: state.historyIncomplete ? 'history_incomplete'
+                : (state.recovery && !state.recovery.complete ? 'recovering' : 'history'),
+                messagesObserved: state.messagesInspected, recovery: state.recovery,
+                error: state.historyIncomplete
+                  ? JSON.stringify({
+                    message: 'incomplete Gmail history read; quota exhausted; cursor not advanced',
+                    rateLimited: true, observerHealth: state.observerHealth || 'unhealthy_quota',
+                  })
+                  : undefined }))
             : Promise.resolve(),
         });
-        if (advanceCheckpoint && (!observed.recovery || observed.recovery.complete)) {
+        const incomplete = (observed.recovery && !observed.recovery.complete)
+          || observed.historyIncomplete
+          || observed.trustworthy === false;
+        if (advanceCheckpoint && !incomplete) {
           gmailObservationHistoryBySender.set(sender.id, observed.nextHistoryId);
           if (observed.recovery) log('mailbox_recovery_caught_up',
             { processed: observed.recovery.processed, nextHistoryId: observed.nextHistoryId });
-        } else if (advanceCheckpoint) {
+        } else if (advanceCheckpoint && observed.recovery && !observed.recovery.complete) {
           log('mailbox_recovery_progress_saved', { processedThroughId: observed.recovery.processedThroughId,
             processed: observed.recovery.processed, remaining: observed.recovery.remaining });
+        } else if (advanceCheckpoint && incomplete) {
+          log('mailbox_history_incomplete', {
+            historyIncomplete: Boolean(observed.historyIncomplete),
+            observerHealth: observed.observerHealth || 'unhealthy_incomplete',
+            cursorKept: gmailObservationHistoryBySender.get(sender.id) || '',
+          });
         } else {
           log('candidate_observation_no_cursor_advance', {
             candidates: senderLeads.length, messages: observed.messagesInspected,
           });
         }
       }
-      // Recovery is evidence-only. Historical replies never enter handlers
-      // that promote, enroll, draft or send, even in a send-capable process.
+      // Classification always runs, including CHECK_ONLY and recovery. Send
+      // handlers stay gated separately so a recovered opt-out still suppresses.
       for (const item of plan.replies) {
-        if (!item.historical && !CHECK_ONLY) repliesByLead.set(item.leadId, { ...item.message, observedSenderId: sender.id });
+        repliesByLead.set(item.leadId, {
+          ...item.message, observedSenderId: sender.id,
+          historical: Boolean(item.historical), canonical: item.canonical,
+        });
       }
       // A mailbox mid-recovery has NOT proven that no newer prospect or manual
       // activity exists, so it stays observation-unavailable for every send
@@ -2592,10 +2637,15 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       observerAutomationReadyBySender.set(sender.id,
         !DRY_RUN && observed.mode !== 'bootstrap' && observed.trustworthy !== false);
       observedStateBySender.set(sender.id, observed);
-      log(observed.recovered ? 'mailbox_catchup_completed' : 'history_incremental_ok', {
+      const observationIncomplete = (observed.recovery && !observed.recovery.complete)
+        || observed.historyIncomplete
+        || observed.trustworthy === false;
+      log(observed.recovered ? 'mailbox_catchup_completed'
+        : (observationIncomplete ? 'history_incomplete' : 'history_incremental_ok'), {
         historyId: observed.nextHistoryId, from: observed.from || null, messages: observed.messagesInspected,
         unavailable: observed.unavailable.length, eventsPersisted: plan.events.length, ignored: plan.ignored.length,
         replies: plan.replies.length, historicalReview: plan.replies.filter(item => item.historical).length,
+        trustworthy: observed.trustworthy !== false, observerHealth: observed.observerHealth || null,
       });
       console.log(`[ReplyCheck:${sender.id}] ${observed.mode} observation inspected ${observed.messagesInspected} new/recent message(s) in ${observed.pages} page(s)`);
     } catch (error) {
@@ -2608,42 +2658,76 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     }
   }
 
-  // CHECK_ONLY persisted fresh inbound evidence without running response
-  // handlers. The normal worker may evaluate a still-fresh pending item later;
-  // recovered history is permanently excluded from this retry queue.
-  if (!CHECK_ONLY) for (const row of activitiesForCycle) {
+  // Fresh pending replies still retry send-capable handlers. Terminal
+  // unsubscribe/negative evidence also retries CRM mutation even in CHECK_ONLY
+  // and even after the Gmail cursor has moved past the message.
+  for (const row of activitiesForCycle) {
     let metadata; try { metadata = JSON.parse(row.metadata || '{}'); } catch (_) { continue; }
-    if (!metadata.responsePending || metadata.recoveredDuringOutage || failedSenderIds.has(metadata.senderInboxId)) continue;
-    if (Date.now() - Date.parse(row.occurredAt) > 90 * 60000) continue;
+    if (failedSenderIds.has(metadata.senderInboxId)) continue;
+    const pendingFresh = Boolean(metadata.responsePending) && !metadata.recoveredDuringOutage
+      && Date.now() - Date.parse(row.occurredAt) <= 90 * 60000;
+    const inbound = /reply|meeting_requested/.test(String(row.eventType || ''));
+    if (!pendingFresh && !inbound) continue;
     const mine = activitiesForCycle.filter(item => item.sourceLeadId === row.sourceLeadId);
-    if (mine.some(item => item.eventType === 'gmail_reply_evaluated' && JSON.parse(item.metadata || '{}').sourceEventId === row.eventId)) continue;
-    if (mine.some(item => ['human_response_sent','booking_link_sent'].includes(item.eventType) && item.occurredAt >= row.occurredAt)) continue;
-    const old = repliesByLead.get(row.sourceLeadId);
-    if (old && Number(old.internalDate) >= Date.parse(row.occurredAt)) continue;
-    repliesByLead.set(row.sourceLeadId, { id: metadata.gmailMessageId, threadId: metadata.gmailThreadId,
-      internalDate: String(Date.parse(row.occurredAt)), snippet: row.content,
-      observedSenderId: metadata.senderInboxId, payload: { mimeType: 'text/plain', body: { data: Buffer.from(row.content || '').toString('base64url') },
-        headers: [{ name:'From',value:metadata.from }, { name:'Subject',value:row.subject }, { name:'Message-ID',value:metadata.rfcMessageId }] } });
+    if (pendingFresh && !CHECK_ONLY) {
+      if (mine.some(item => item.eventType === 'gmail_reply_evaluated' && JSON.parse(item.metadata || '{}').sourceEventId === row.eventId)) continue;
+      if (mine.some(item => ['human_response_sent','booking_link_sent'].includes(item.eventType) && item.occurredAt >= row.occurredAt)) continue;
+      const old = repliesByLead.get(row.sourceLeadId);
+      if (old && Number(old.internalDate) >= Date.parse(row.occurredAt)) continue;
+      repliesByLead.set(row.sourceLeadId, { id: metadata.gmailMessageId, threadId: metadata.gmailThreadId,
+        internalDate: String(Date.parse(row.occurredAt)), snippet: row.content,
+        observedSenderId: metadata.senderInboxId, payload: { mimeType: 'text/plain', body: { data: Buffer.from(row.content || '').toString('base64url') },
+          headers: [{ name:'From',value:metadata.from }, { name:'Subject',value:row.subject }, { name:'Message-ID',value:metadata.rfcMessageId }] } });
+      continue;
+    }
+    if (!inbound) continue;
+    const lead = candidates.find(item => item.id === row.sourceLeadId);
+    if (!lead || repliesByLead.has(lead.id)) continue;
+    const text = String(row.content || '');
+    const canonical = classifyReplyText(text, {
+      subject: row.subject || '', currentEmail: lead.email, now: row.occurredAt || null,
+    });
+    const unsub = canonical.reason === 'unsubscribe_request' || row.eventType === 'unsubscribe_reply'
+      || hasExplicitUnsubscribePhrase(text, { subject: row.subject || '' });
+    const neg = canonical.reason === 'explicit_rejection' || row.eventType === 'negative_reply'
+      || hasExplicitNegativePhrase(text, { subject: row.subject || '' });
+    if (!unsub && !neg) continue;
+    const notes = String(lead.notes || '');
+    if (unsub && /\[REPLY:\s*Unsubscribed\]/i.test(notes) && String(lead.stage) === 'Unsub') continue;
+    if (neg && !unsub && /\[REPLY:\s*Not Interested\]/i.test(notes) && String(lead.emailStatus) === 'done') continue;
+    repliesByLead.set(lead.id, {
+      id: metadata.gmailMessageId, threadId: metadata.gmailThreadId,
+      internalDate: String(Date.parse(row.occurredAt) || Date.now()), snippet: row.content,
+      observedSenderId: metadata.senderInboxId || lead.senderInboxId || 'primary',
+      historical: true, terminalReplay: true,
+      payload: { mimeType: 'text/plain', body: { data: Buffer.from(row.content || '').toString('base64url') },
+        headers: [{ name:'From',value:metadata.from || lead.email }, { name:'Subject',value:row.subject },
+          { name:'Message-ID',value:metadata.rfcMessageId }] },
+    });
   }
 
   for (const lead of candidates) {
     const rawMessage = repliesByLead.get(lead.id) || null;
     if (!rawMessage) continue;
 
-    const sender = GMAIL_SENDERS.find(item => item.id === rawMessage.observedSenderId);
-    if (!sender || (lead.senderInboxId && lead.senderInboxId !== sender.id)) continue;
+    const sender = GMAIL_SENDERS.find(item => item.id === (rawMessage.observedSenderId || lead.senderInboxId || 'primary'))
+      || GMAIL_SENDERS[0];
+    if (!sender) continue;
+    if (!rawMessage.terminalReplay && lead.senderInboxId && lead.senderInboxId !== sender.id) continue;
     const message = {
       messageId: rawMessage.id, rfcMessageId: gmailMailboxObserver.headerValue(rawMessage.payload, 'Message-ID'),
       threadId: rawMessage.threadId || '', snippet: rawMessage.snippet || '',
       body: gmailMailboxObserver.firstPlainText(rawMessage.payload).trim().slice(0, 1500),
       subject: gmailMailboxObserver.headerValue(rawMessage.payload, 'Subject'),
       fromAddr: gmailMailboxObserver.parseAddr(gmailMailboxObserver.headerValue(rawMessage.payload, 'From')),
-      occurredAt: new Date(Number(rawMessage.internalDate)).toISOString(), senderInboxId: sender.id,
+      occurredAt: new Date(Number(rawMessage.internalDate) || Date.now()).toISOString(), senderInboxId: sender.id,
     };
 
     found++;
     const company        = cleanCompanyName(lead.company) || lead.email;
-    const replyText      = message.body || message.snippet;
+    const replyText      = stripQuotedReply(message.body || message.snippet || '');
+    const historical     = Boolean(rawMessage.historical || rawMessage.terminalReplay);
+    const maySend        = !CHECK_ONLY && !historical;
     if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE) {
       lead.emailStatus = 'replied';
       if (!DRY_RUN) {
@@ -2653,22 +2737,38 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       else console.log(`  ↩ Roofing survey reply from ${lead.email} (${company}) — no writes in dry run`);
       continue;
     }
-    const classification = await classifyReply(lead.company, replyText);
+    let classification = await classifyReply(lead.company, replyText, { subject: message.subject, email: lead.email });
     const canonicalReply = classifyReplyText(replyText, {
       subject: message.subject || '', currentEmail: lead.email, now: message.occurredAt || null,
     });
+    if (canonicalReply.reason === 'unsubscribe_request' || hasExplicitUnsubscribePhrase(replyText, { subject: message.subject })) {
+      classification = 'UNSUBSCRIBE';
+    } else if (canonicalReply.reason === 'explicit_rejection' || hasExplicitNegativePhrase(replyText, { subject: message.subject })) {
+      classification = 'NOT_INTERESTED';
+    }
     const timingAt = canonicalReply.revisitDate || canonicalReply.returnDate || null;
     classCounts[classification] = (classCounts[classification] || 0) + 1;
 
     const fromNote = (message.fromAddr && message.fromAddr !== lead.email.trim().toLowerCase())
       ? ` (from ${message.fromAddr})` : '';
     console.log(`  ↩ Reply from ${lead.email}${fromNote} (${company}) — ${classification}`);
-    lead.emailStatus = 'replied'; // exclude from follow-ups this run regardless of classification
+    lead.emailStatus = classification === 'UNSUBSCRIBE' || classification === 'NOT_INTERESTED'
+      ? 'done' : 'replied'; // exclude from follow-ups this run regardless of classification
 
     if (!DRY_RUN) {
       await withAuth(async () => {
         if (!attributionActivities) attributionActivities = activitiesForCycle || await readColdCallActivities();
         await recordActiveReplyActivity(lead, message, replyText, classification, attributionActivities);
+        if (classification === 'UNSUBSCRIBE') return handleUnsubscribe(lead);
+        if (classification === 'NOT_INTERESTED') return handleNotInterested(lead);
+        if (!maySend) {
+          if (classification === 'WRONG_PERSON') return handleWrongPerson(lead);
+          if (classification === 'OUT_OF_OFFICE') return handleOutOfOffice(lead);
+          if (classification === 'QUESTION' || classification === 'NEEDS_HUMAN') {
+            return handleNeedsHuman(lead, message.fromAddr);
+          }
+          return;
+        }
         if (timingAt) return handleTimingReply(lead, message, replyText, timingAt, leads, attributionActivities);
         switch (classification) {
           // A genuine question is answered from product-facts.js when we're
@@ -2699,8 +2799,6 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
             await handleInterested(lead, message, replyText, 'meeting_requested', leads, attributionActivities);
             return handlePositiveAutomation(lead, message, 'MEETING_REQUEST', attributionActivities, canonicalReply);
           }
-          case 'NOT_INTERESTED': return handleNotInterested(lead);
-          case 'UNSUBSCRIBE':    return handleUnsubscribe(lead);
           case 'WRONG_PERSON':   return handleWrongPerson(lead);
           case 'OUT_OF_OFFICE':  return handleOutOfOffice(lead);
           // NEEDS_HUMAN and anything unforeseen surface for review rather than

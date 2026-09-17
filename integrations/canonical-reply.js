@@ -73,7 +73,7 @@ const EVIDENCE_SOURCE = Object.freeze({
 
 // Bumped whenever the rules below change meaning, so a stored classification
 // can always be traced to the logic that produced it.
-const CLASSIFIER_VERSION = 'reply_v2_evidence';
+const CLASSIFIER_VERSION = 'reply_v2_evidence_optout_failsafe';
 
 /**
  * The instant canonical reply ingestion became LIVE in production.
@@ -222,7 +222,14 @@ const REJECTION_MARKERS = [
 ];
 
 const UNSUBSCRIBE_MARKERS = [
-  ['unsubscribe', /\b(?:unsubscribe|remove me|take me off|opt[- ]?out)\b/i],
+  ['unsubscribe', /\b(?:unsubscribe|opt[- ]?out)\b/i],
+  ['remove_me', /\bremove me\b/i],
+  ['take_me_off', /\btake me off\b/i],
+  // "Please remove us from your mailing list." — the production phrasing that
+  // the older `remove me` token missed, so the message fell through to Haiku
+  // and was stored as needs_human instead of a hard opt-out.
+  ['remove_us', /\b(?:please\s+)?(?:remove|take)\s+us\s+(?:from|off)\b/i],
+  ['mailing_list', /\b(?:remove|take)\s+(?:me|us|my (?:name|email|address)|this (?:email|address))\s+(?:from|off)(?:\s+\w+){0,6}\s+(?:your\s+)?(?:mailing|email|contact)\s+list\b/i],
 ];
 
 // A human replied but routed the message onward rather than engaging.
@@ -247,6 +254,24 @@ const firstMatch = (markers, text) => {
   for (const [name, pattern] of markers) if (pattern.test(text)) return name;
   return '';
 };
+
+/**
+ * Fail-safe phrase detectors. These do not call a model and do not consult CRM
+ * state. They exist so an explicit opt-out or rejection cannot be lost just
+ * because Haiku is down, rate-limited, or uncertain.
+ */
+function hasExplicitUnsubscribePhrase(text, { subject = '' } = {}) {
+  const body = `${subject}\n${String(text || '')}`.trim();
+  return Boolean(body) && Boolean(firstMatch(UNSUBSCRIBE_MARKERS, body));
+}
+
+function hasExplicitNegativePhrase(text, { subject = '' } = {}) {
+  const body = `${subject}\n${String(text || '')}`.trim();
+  if (!body) return false;
+  if (firstMatch(UNSUBSCRIBE_MARKERS, body)) return false;
+  if (firstMatch(BUYING_INTENT_MARKERS, body)) return false;
+  return Boolean(firstMatch(REJECTION_MARKERS, body));
+}
 
 // ── DATE EXTRACTION ─────────────────────────────────────────────────────────
 
@@ -629,4 +654,5 @@ module.exports = {
   classifyReplyText, resolveReplyState, isGenuineHumanReply, isInboundMessage,
   extractReturnDate, extractRecontactDate, extractProposedEmail, malformedEmailReason, isUsableReplyIdentity,
   legacyTagsFrom, stateFromLegacyTag,
+  hasExplicitUnsubscribePhrase, hasExplicitNegativePhrase, UNSUBSCRIBE_MARKERS, REJECTION_MARKERS,
 };
