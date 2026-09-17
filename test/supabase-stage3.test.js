@@ -604,7 +604,7 @@ test('I6 — no live operational ColdEmail writer bypasses the abstraction', () 
     { fn: 'ensureColdEmailSheet', file: 'server.js', why: 'schema init - writes the header row, never lead state' },
     { fn: 'ensureAgentHeaders', file: 'outreach-agent.js', why: 'schema init - writes the P1 header only' },
     { fn: "app.put('/api/coldemail/:id'", file: 'server.js',
-      why: 'legacy and UI-unreachable; builds 24 values for an A:S range so Sheets rejects it (fail-closed)' },
+      why: 'legacy full-row PUT; still a direct writer, now A:X so all 24 CE_COLUMNS persist' },
   ];
 
   const server = coldEmailWriteSites(serverSrc, 'Leads');

@@ -138,9 +138,3 @@ The app manages these 17 columns in the **Leads** sheet:
 | Q | created |
 
 Do not rearrange or rename these columns — the app reads by position.
-
----
-
-## Fallback
-
-If something goes wrong, `index-backup-localstorage.html` is a full working copy of the previous version that runs from localStorage with no Google account required.

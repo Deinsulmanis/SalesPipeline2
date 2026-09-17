@@ -73,6 +73,7 @@ const { mirrorCycleSnapshotInBackground, outreachStateMode, applyLeadChange,
 // Stage 3D: dual-read measurement only. No decision below reads its result.
 const { probeOutreachParity, formatProbeLine } = require('./integrations/outreach-dual-read');
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
+const { parseGoogleServiceAccountJson } = require('./integrations/google-service-account');
 const { staffingSendBlockReason, assertStaffingSendAllowed } = require('./integrations/staffing-launch-gate');
 const { routedLeadReady } = require('./integrations/campaign-routing');
 // Staffing supplies its own locked copy only. Sender selection, thread pinning,
@@ -443,7 +444,7 @@ let bookingCalendarClient = null;
 function calendarForBookingGate() {
   if (!bookingCalendarClient) {
     const auth = new google.auth.GoogleAuth({
-      credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '{}'),
+      credentials: parseGoogleServiceAccountJson(process.env.GOOGLE_SERVICE_ACCOUNT_JSON),
       scopes: ['https://www.googleapis.com/auth/calendar.readonly'],
     });
     bookingCalendarClient = google.calendar({ version: 'v3', auth });
@@ -2951,7 +2952,7 @@ async function checkForBounce(lead) {
       const body = extractAllText(full.data.payload).toLowerCase();
       // Broad matches can hit unrelated NDRs — require the lead's own
       // address in the body before trusting it.
-      if (!body.includes(lowerEmail)) continue;
+      if (!gmailMailboxObserver.bounceMentionsRecipient(body, lowerEmail)) continue;
       // A retry/delay notice is not a dead address — skip it.
       if (TRANSIENT_FAILURE.test(body) && !PERMANENT_FAILURE.test(body)) {
         console.log(`  ⏳ ${lead.email} — transient delivery delay, not marking bounced`);

@@ -74,3 +74,28 @@ test('permanent bounce is matched locally and a transient delay is not', () => {
   assert.equal(matchMailboxMessages([permanent], { leads, activities: [], senderInboxId: 'primary', senderEmail: 'sender@example.com' }).bounces.get('a').id, 'b1');
   assert.equal(matchMailboxMessages([transient], { leads, activities: [], senderInboxId: 'primary', senderEmail: 'sender@example.com' }).bounces.size, 0);
 });
+
+test('bounce recipient matching uses the parsed address exactly, not a substring', () => {
+  const { bounceMentionsRecipient } = require('../integrations/gmail-mailbox-observer');
+  assert.equal(bounceMentionsRecipient('550 5.1.1 user unknown aa@example.com', 'a@example.com'), false);
+  assert.equal(bounceMentionsRecipient('550 5.1.1 user unknown a@example.com.au', 'a@example.com'), false);
+  assert.equal(bounceMentionsRecipient('Final-Recipient: rfc822; a@example.com', 'a@example.com'), true);
+  assert.equal(bounceMentionsRecipient('550 5.1.1 user unknown A@Example.COM', 'a@example.com'), true);
+  assert.equal(bounceMentionsRecipient('Jane Doe <a@example.com> is not here', 'a@example.com'), true);
+  assert.equal(bounceMentionsRecipient('To: "Clinic Admin" <aa@example.com>', 'a@example.com'), false);
+  const leads = [
+    { id: 'short', email: 'a@example.com', lastEmailedAt: '2026-09-01T00:00:00Z' },
+    { id: 'long', email: 'aa@example.com', lastEmailedAt: '2026-09-01T00:00:00Z' },
+  ];
+  const bounce = message({
+    id: 'b-sub', from: 'Mailer-Daemon <mailer-daemon@gmail.com>', threadId: 'z',
+    at: '2026-09-02T00:00:00Z', text: '550 5.1.1 Address not found aa@example.com',
+  });
+  const matched = matchMailboxMessages([bounce], { leads, activities: [], senderInboxId: 'primary', senderEmail: 'sender@example.com' });
+  assert.equal(matched.bounces.has('short'), false);
+  assert.equal(matched.bounces.get('long').id, 'b-sub');
+  const agent = require('node:fs').readFileSync(require.resolve('../outreach-agent.js'), 'utf8');
+  const probe = agent.slice(agent.indexOf('async function checkForBounce'), agent.indexOf('async function runBounceCheckPass'));
+  assert.match(probe, /bounceMentionsRecipient\(body, lowerEmail\)/);
+  assert.doesNotMatch(probe, /body\.includes\(lowerEmail\)/);
+});

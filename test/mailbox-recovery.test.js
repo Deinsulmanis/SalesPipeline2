@@ -106,6 +106,20 @@ test('observer health becomes warning at 45 minutes and critical at 90',()=>{
   assert.equal(observerHealth(rows,{now:NOW})[0].severity,'warning');
   rows[1][2]=new Date(NOW-91*60000).toISOString();assert.equal(observerHealth(rows,{now:NOW})[0].severity,'critical');
 });
+test('CHECK_ONLY opt-out uses the classifier unsubscribe_request reason', async () => {
+  const unsub = fixture([msg('u', lead.email, 'Please unsubscribe me from this list.')]);
+  const unsubObservation = await observeMailbox(unsub.input);
+  const unsubPlan = await planMailboxEvents({ ...unsub.input, observation: unsubObservation });
+  assert.equal(unsubPlan.events.find(event => event.sourceLeadId).eventType, 'unsubscribe_reply');
+  assert.deepEqual(unsubPlan.suppressions.map(item => item.reason), ['unsubscribe']);
+  assert.equal(JSON.parse(unsubPlan.events.find(event => event.eventType === 'unsubscribe_reply').metadata).reason, 'unsubscribe_request');
+
+  const rejection = fixture([msg('n', lead.email, 'Please stop emailing me.')]);
+  const rejectionObservation = await observeMailbox(rejection.input);
+  const rejectionPlan = await planMailboxEvents({ ...rejection.input, observation: rejectionObservation });
+  assert.equal(rejectionPlan.events.find(event => event.sourceLeadId).eventType, 'negative_reply');
+  assert.equal(rejectionPlan.suppressions.length, 0);
+});
 test('CHECK_ONLY excludes response handlers and recovery commit has no send capability',()=>{
   const fs=require('node:fs');const source=fs.readFileSync(require.resolve('../outreach-agent.js'),'utf8');
   assert.match(source,/!item.historical && !CHECK_ONLY/);

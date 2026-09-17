@@ -16,7 +16,10 @@ const { SmartleadClient } = require('./integrations/smartlead-client');
 const { SmartleadOutreachProvider } = require('./integrations/outreach-providers');
 const { verifySignature, verifySharedSecret, normalizeEvent } = require('./integrations/smartlead-events');
 const { leadEligibility } = require('./integrations/outreach-policy');
-const { buildEventKey, buildMappingKey, mappingMatchesEvent, normalizeEmail, canApplyProviderTransition, safeAuditPayload, executeEventAttempt, KeyedLock, fetchAllCampaignLeads, aggregateProviderStats, reconciliationHealth } = require('./integrations/smartlead-safety');
+const { buildEventKey, buildMappingKey, mappingMatchesEvent, normalizeEmail, canApplyProviderTransition, safeAuditPayload, executeEventAttempt, KeyedLock, fetchAllCampaignLeads, aggregateProviderStats, reconciliationHealth, admitSmartleadWebhook, suppressionFromProviderStatus } = require('./integrations/smartlead-safety');
+const { createRequireAuth } = require('./integrations/dashboard-auth');
+const { parseGoogleServiceAccountJson } = require('./integrations/google-service-account');
+const { createOutreachCache } = require('./integrations/outreach-cache');
 const { classifyReply: classifyProviderReply, CLASSIFICATION_TO_STATUS } = require('./integrations/reply-classifier');
 const {
   buildReplyMetrics, buildStoredClassificationMap,
@@ -481,24 +484,18 @@ app.get('/engaged', (req, res) => {
 // ── DASHBOARD ACCESS CONTROL ──────────────────────────────────────────────────
 // HTTP Basic Auth applied globally — covers static files and all API routes.
 // Set DASHBOARD_USER and DASHBOARD_PASSWORD in .env / Railway env vars.
-function requireAuth(req, res, next) {
-  const header = req.headers.authorization || '';
-  if (req.path.startsWith('/api/internal/gmail-') && readinessTokenAuthorized(header)) return next();
-  const b64    = header.startsWith('Basic ') ? header.slice(6) : '';
-  const [user, pass] = Buffer.from(b64, 'base64').toString().split(':');
-  if (user === process.env.DASHBOARD_USER && pass === process.env.DASHBOARD_PASSWORD) {
-    return next();
-  }
-  res.setHeader('WWW-Authenticate', 'Basic realm="ScaleLab Pipeline"');
-  res.status(401).send('Unauthorized');
-}
-
+// Blank or missing credentials fail closed. Comparison is timing-safe, and
+// repeated failures from the same client are throttled in-process.
 function readinessTokenAuthorized(header) {
   const expected = String(process.env.GMAIL_READINESS_TOKEN || '');
   const supplied = String(header || '').replace(/^Bearer\s+/i, '');
   return Boolean(expected && supplied && expected.length === supplied.length
     && crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(supplied)));
 }
+const requireAuth = createRequireAuth({
+  bypass: req => req.path.startsWith('/api/internal/gmail-')
+    && readinessTokenAuthorized(req.headers.authorization || ''),
+});
 app.use(requireAuth);
 // Isolated research previews only: no Sheets writes, enrollment or outbound provider.
 require('./integrations/staffing-preview-route').registerStaffingPreviewRoutes(app, requireAuth);
@@ -564,7 +561,7 @@ const webhookLocks = new KeyedLock();
 // GoogleAuth mints and auto-refreshes access tokens internally.
 
 const auth = new google.auth.GoogleAuth({
-  credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON),
+  credentials: parseGoogleServiceAccountJson(process.env.GOOGLE_SERVICE_ACCOUNT_JSON),
   scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
@@ -1228,7 +1225,7 @@ async function ensureColdEmailSheet() {
 }
 
 // Same stale-cache guard as findRow() above — ceRowMap has the identical
-// exposure, and its callers are likewise a full-row PUT (A:S) and a DELETE.
+// exposure, and its callers are likewise a full-row PUT (A:X) and a DELETE.
 async function findCERow(id) {
   const cached = ceRowMap.get(id);
   if (cached) {
@@ -1291,12 +1288,18 @@ async function readColdEmailDashboardRows() {
 // hides changes made OUTSIDE this process — e.g. someone editing the sheet by
 // hand or the agent writing from its own process.
 const OUTREACH_CACHE_TTL_MS = 30000;
-let outreachCache = null;
-let outreachCacheLoad = null;
+const outreachDatasetCache = createOutreachCache({
+  load: () => loadOutreachDataset(),
+  ttlMs: OUTREACH_CACHE_TTL_MS,
+});
+
+function currentOutreachCache() {
+  return outreachDatasetCache.peek();
+}
 
 function invalidateOutreachCache(reason) {
-  if (outreachCache) console.log(`[outreach-cache] invalidated (${reason})`);
-  outreachCache = null;
+  if (currentOutreachCache()) console.log(`[outreach-cache] invalidated (${reason})`);
+  outreachDatasetCache.invalidate();
 }
 
 const CE_LIGHT_FIELDS = [
@@ -1702,13 +1705,10 @@ async function loadOutreachDataset() {
 
 // Concurrent callers share one in-flight load rather than each starting their
 // own — four parallel dashboard requests cost one set of reads, not four.
+// Invalidation bumps a generation so a stale in-flight load cannot repopulate
+// the cache after a write.
 async function getOutreachDataset({ force = false } = {}) {
-  if (!force && outreachCache && Date.now() - outreachCache.at < OUTREACH_CACHE_TTL_MS) return outreachCache;
-  if (!force && outreachCacheLoad) return outreachCacheLoad;
-  outreachCacheLoad = loadOutreachDataset()
-    .then(dataset => { outreachCache = dataset; return dataset; })
-    .finally(() => { outreachCacheLoad = null; });
-  return outreachCacheLoad;
+  return outreachDatasetCache.get({ force });
 }
 
 const DEFAULT_CE_PAGE = 100;
@@ -3291,7 +3291,7 @@ app.post('/api/leads/:id/resume-automation', requireAuth, async (req, res) => {
         checkOnly })
         .catch(error => { if (error.rollbackUnconfirmed) releaseLock = false; throw error; })
         .finally(() => {
-          outreachCache = null;
+          invalidateOutreachCache('resume-automation');
           ceRowMap.clear();
           resumeRequests.delete(leadId);
           if (releaseLock) automationLaunchReserved = false;
@@ -3545,7 +3545,7 @@ const CALENDAR_SYNC_HEADER = ['key', 'value', 'updatedAt'];
 // behind a function so nothing is constructed (or fails) until sync is enabled.
 function calendarClient() {
   const auth = new google.auth.GoogleAuth({
-    credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON),
+    credentials: parseGoogleServiceAccountJson(process.env.GOOGLE_SERVICE_ACCOUNT_JSON),
     scopes: ['https://www.googleapis.com/auth/calendar.readonly'],
   });
   return google.calendar({ version: 'v3', auth });
@@ -5106,7 +5106,7 @@ app.put('/api/coldemail/:id', requireAuth, async (req, res) => {
     await withAuth(async () => {
       await sheets().spreadsheets.values.update({
         spreadsheetId:   SPREADSHEET_ID,
-        range:           `${CE_SHEET_NAME}!A${rowNum}:S${rowNum}`,
+        range:           `${CE_SHEET_NAME}!A${rowNum}:X${rowNum}`,
         valueInputOption:'RAW',
         requestBody:     { values: vals },
       });
@@ -5363,7 +5363,7 @@ app.get('/api/integrations/supabase/stage3-parity', requireAuth, (_req, res) => 
   res.json({
     ...stage3ParitySnapshot(mode),
     writeAuthority: outreachWriteAuthority(),
-    lastLeadSource: outreachCache ? outreachCache.leadSource : null,
+    lastLeadSource: currentOutreachCache() ? currentOutreachCache().leadSource : null,
     writes: outreachWriteDiagnostics(),
     note: mode === 'off'
       ? 'Stage 3 is off. Google Sheets is authoritative and Supabase is neither read nor written.'
@@ -5730,6 +5730,11 @@ async function processStoredSmartleadEvent(eventRow) {
     if (campaign) found = await findColdEmailLeadForCampaign(audit.email, campaign.internalCampaignId);
   }
   const now = new Date().toISOString();
+  const email = normalizeEmail(audit.email || found?.lead.email || providerRow?.normalizedEmail);
+  const suppression = suppressionFromProviderStatus(incomingStatus, email);
+  if (suppression) {
+    await addSuppression(suppression.email, suppression.reason, found?.lead.company || '', 'smartlead-webhook', await loadSuppressedEmails());
+  }
   if (providerRow && !canApplyProviderTransition({ currentStatus: providerRow.normalizedStatus, currentEventAt: providerRow.lastProviderEventAt, incomingStatus, incomingEventAt: audit.timestamp })) return 'processed';
   if (found) {
     const noteByStatus = { Replied: '[SMARTLEAD: Reply received]', Bounced: '[BOUNCED: Smartlead]', Unsubscribed: '[REPLY: Unsubscribed]', Interested: '[REPLY: Interested]', 'Not interested': '[REPLY: Not interested]', 'Meeting requested': '[REPLY: Meeting requested]', Question: '[REPLY: Question — review required]', 'Out of office': '[REPLY: Out of office]' };
@@ -5741,7 +5746,6 @@ async function processStoredSmartleadEvent(eventRow) {
     const emailStatus = incomingStatus === 'Sent' ? 'emailed' : ['Replied','Interested','Meeting requested','Question','Not interested','Out of office'].includes(incomingStatus) ? 'replied' : ['Unsubscribed','Bounced'].includes(incomingStatus) ? 'done' : found.lead.emailStatus;
     await applyLeadChange(found.lead.id, { stage, emailStatus, notes: nextNotes },
       { row: found.row, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
-    if (incomingStatus === 'Unsubscribed') await addSuppression(audit.email, 'unsubscribe', found.lead.company, 'smartlead-webhook', await loadSuppressedEmails());
     if (incomingStatus === 'Sent') {
       let providerMetadata = {};
       try { providerMetadata = JSON.parse(providerRow?.metadata || '{}'); } catch (_) {}
@@ -5756,7 +5760,6 @@ async function processStoredSmartleadEvent(eventRow) {
       });
     }
   }
-  const email = normalizeEmail(audit.email || found?.lead.email || providerRow?.normalizedEmail);
   const mappingKey = providerRow?.mappingKey || buildMappingKey({ externalCampaignId: eventRow.externalCampaignId, externalLeadId: eventRow.externalLeadId, email });
   if (mappingKey) {
     let priorMetadata = {};
@@ -5776,7 +5779,8 @@ async function handleSmartleadWebhook(req, res) {
   const requestId = req.get('X-Request-Id') || '';
   const secret = process.env.SMARTLEAD_WEBHOOK_SECRET || '';
   const authenticated = signature ? verifySignature(req.body, signature, secret) : verifySharedSecret(req.query.token, secret);
-  if (!authenticated) return res.status(401).json({ error: 'Invalid webhook authentication' });
+  const admission = admitSmartleadWebhook({ authenticated, integrationEnabled: smartleadClient.integrationEnabled });
+  if (!admission.ok) return res.status(admission.status).json({ error: admission.error });
   let event;
   try { event = JSON.parse(req.body.toString('utf8')); } catch (_) { return res.status(400).json({ error: 'Invalid JSON' }); }
   const eventKey = buildEventKey(req.body, requestId);

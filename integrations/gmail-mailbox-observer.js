@@ -59,6 +59,23 @@ function parseAddr(value) {
   return norm(match ? match[1] : value);
 }
 
+const EMAIL_TOKEN = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
+
+function extractedEmails(text) {
+  const found = new Set();
+  String(text || '').replace(EMAIL_TOKEN, match => {
+    found.add(norm(match));
+    return match;
+  });
+  return found;
+}
+
+function bounceMentionsRecipient(text, email) {
+  const wanted = norm(email);
+  if (!wanted) return false;
+  return extractedEmails(text).has(wanted);
+}
+
 function decodeBodies(payload) {
   const chunks = [];
   const walk = part => {
@@ -127,7 +144,7 @@ function matchMailboxMessages(messages, { leads = [], activities = [], senderInb
       for (const lead of leads) {
         const email = norm(lead.email);
         const afterMs = Date.parse(lead.lastEmailedAt || '');
-        if (!email || !Number.isFinite(afterMs) || occurredMs <= afterMs || !allText.toLowerCase().includes(email)) continue;
+        if (!email || !Number.isFinite(afterMs) || occurredMs <= afterMs || !bounceMentionsRecipient(allText, email)) continue;
         if (TRANSIENT_FAILURE.test(allText) && !PERMANENT_FAILURE.test(allText)) continue;
         if (PERMANENT_FAILURE.test(allText)) bounces.set(lead.id, message);
       }
@@ -353,5 +370,5 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
 }
 
 module.exports = { headerValue, parseAddr, decodeBodies, firstPlainText, matchMailboxMessages,
-  listChangedIds, listCatchup, observeMailbox, providerRead, isRateLimited,
+  bounceMentionsRecipient, extractedEmails, listChangedIds, listCatchup, observeMailbox, providerRead, isRateLimited,
   OVERLAP_MS, STALE_MS, RECOVERY_READ_BUDGET, byIdAscending };

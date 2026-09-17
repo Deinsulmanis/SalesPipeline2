@@ -137,6 +137,7 @@ test('double-click calls share one transaction and a preview cannot mutate', asy
   const sandbox = { app: { post: (_path, _auth, fn) => { handler = fn; } }, requireAuth: () => {},
     resumeRequests: new Map(), automationLaunchReserved: false, agentState: { running: false },
     outreachCache: null, ceRowMap: new Map(), process: { env: {} },
+    invalidateOutreachCache() {},
     readResumeState: () => {}, writeResumeNotes: () => {}, restoreResumeHold: () => {},
     appendColdCallActivities: () => {}, verifyResumeProof: () => {},
     resumePipeline: async () => { runs++; await blocker; return h.run(); } };
