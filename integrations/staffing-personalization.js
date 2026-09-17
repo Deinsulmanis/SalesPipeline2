@@ -1,5 +1,6 @@
 'use strict';
 const Anthropic = require('@anthropic-ai/sdk');
+const { wrapCreateMessage, FEATURES } = require('./anthropic-usage');
 const { STAFFING_CAMPAIGN, isStaffingCampaign, renderStaffingPreview } = require('./staffing-campaign');
 const { clean, domain, researchStaffingCompany } = require('./staffing-research');
 const CHECKS = ['oneSentence','noCompliments','supportedGeography','supportedRoles','supportedIndustries',
@@ -233,20 +234,24 @@ async function personalizeStaffingLead(lead,{researchCompany=researchStaffingCom
   if(research.reviewRequired||!research.pages?.length)return held('RETRY_REQUIRED',retrievalReason(research),research,{retrieval,icpFit:'UNKNOWN'});
   if(!createMessage) {
     if(!process.env.ANTHROPIC_API_KEY)return held('REVIEW_REQUIRED','MODEL_UNAVAILABLE',research,{retrieval,icpFit:'UNKNOWN'});
-    const client=new Anthropic({apiKey:process.env.ANTHROPIC_API_KEY,maxRetries:1,timeout:60000});
+    const client=new Anthropic({apiKey:process.env.ANTHROPIC_API_KEY,maxRetries:0,timeout:60000});
     createMessage=input=>client.messages.create(input);
   }
+  createMessage=wrapCreateMessage(createMessage,{
+    feature:FEATURES.staffing_personalization,campaign:STAFFING_CAMPAIGN.id,
+    leadId:lead.id||lead.email||lead.companyDomain||'',
+  });
   const blocks=evidenceBlocks(research),evidence={company:lead.company,expectedDomain:domain(lead.companyDomain||lead.companyWebsite||lead.website),blocks};
   let calls=0,regenerationCount=0,validatedFacts=[],rejectedFacts=[],extracted,factAudit,openingAudit,checked;
-  const ask=async(system,data,max_tokens)=>{calls++;return parseJson(await createMessage({model:STAFFING_CAMPAIGN.model,temperature:0,max_tokens,system,messages:[{role:'user',content:JSON.stringify(data)}]}));};
+  const ask=async(system,data,max_tokens,operation)=>{calls++;return parseJson(await createMessage({model:STAFFING_CAMPAIGN.model,temperature:0,max_tokens,system,messages:[{role:'user',content:JSON.stringify(data)}]},{operation}));};
   const meta=()=>({retrieval,validatedFacts,rejectedFacts,researchNotes:clean(extracted?.researchNotes),icpFit:factAudit?.icpFit||'UNKNOWN',
     fitReason:clean(factAudit?.reason),fitEvidenceIds:factAudit?.fitEvidenceIds||[],extractedFit:extracted?.icpFit,extractedFitEvidenceIds:extracted?.fitEvidenceIds,
     supportingReasons:dropReasons(rejectedFacts),regenerationCount,modelCalls:calls,
     qaChecks:openingAudit?.checks||{},rejectedOpening:checked?.opening||''});
   try {
-    extracted=await ask(SYSTEM,evidence,3600);
+    extracted=await ask(SYSTEM,evidence,3600,'extract');
     const attached=attachEvidence(extracted.facts,blocks);rejectedFacts=attached.rejected;
-    factAudit=await ask(FACT_AUDIT_SYSTEM,{...evidence,candidateFacts:attached.accepted},2600);
+    factAudit=await ask(FACT_AUDIT_SYSTEM,{...evidence,candidateFacts:attached.accepted},2600,'fact_audit');
     if(extracted.companyIdentityConfirmed!==true||factAudit.companyIdentityConfirmed!==true)return held('RETRY_REQUIRED','DOMAIN_IDENTITY_UNRESOLVED',research,meta());
     retrieval.domainIdentityVerified=true;
     const filtered=filterFacts(attached.accepted,factAudit);validatedFacts=filtered.accepted;rejectedFacts.push(...filtered.rejected);
@@ -266,7 +271,7 @@ async function personalizeStaffingLead(lead,{researchCompany=researchStaffingCom
     if(checked.errors.length)return held('REVIEW_REQUIRED','OPENING_VALIDATION_FAILED',research,{...meta(),supportingReasons:[...dropReasons(rejectedFacts),...checked.errors]});
     for(let pass=0;pass<2;pass++) {
       openingAudit=await ask(AUDIT_SYSTEM,{company:lead.company,expectedDomain:evidence.expectedDomain,icpFit:'FIT',
-        opening:checked.opening,wordCount:checked.wordCount,usedFactIds:checked.facts.map(f=>f.id),validatedFacts:checked.facts},1100);
+        opening:checked.opening,wordCount:checked.wordCount,usedFactIds:checked.facts.map(f=>f.id),validatedFacts:checked.facts},1100,'opening_audit');
       // These exact properties were already checked in code; semantic model miscounts cannot override them.
       openingAudit.checks={...openingAudit.checks,oneSentence:true,reasonableLength:true};
       const failed=CHECKS.filter(k=>openingAudit.checks?.[k]!==true);
@@ -314,9 +319,10 @@ async function previewStaffingPersonalization(lead,options) {
  */
 async function flagBatchDuplicates(results,{createMessage=null}={}) {
   if(!createMessage&&process.env.ANTHROPIC_API_KEY) {
-    const client=new Anthropic({apiKey:process.env.ANTHROPIC_API_KEY,maxRetries:1,timeout:60000});
+    const client=new Anthropic({apiKey:process.env.ANTHROPIC_API_KEY,maxRetries:0,timeout:60000});
     createMessage=input=>client.messages.create(input);
   }
+  if(createMessage) createMessage=wrapCreateMessage(createMessage,{feature:FEATURES.staffing_personalization,operation:'duplicate_audit'});
   const taken=new Map();
   for(let i=0;i<results.length;i++) {
     const r=results[i];

@@ -35,7 +35,7 @@
 
 require('dotenv').config();
 const { google }  = require('googleapis');
-const Anthropic    = require('@anthropic-ai/sdk');
+const { createTrackedAnthropic, wrapCreateMessage, FEATURES: ANTHROPIC_FEATURES } = require('./integrations/anthropic-usage');
 const axios        = require('axios');
 const cheerio      = require('cheerio');
 const fs   = require('fs');
@@ -229,7 +229,9 @@ const ROOFING_SURVEY_URL = String(process.env.ROOFING_SURVEY_URL || '').trim();
 // detection and send phase is restricted to this one durable lead ID. Normal
 // scheduled runs leave it unset and retain their existing behavior.
 const TARGET_LEAD_ID = String(process.env.TARGET_LEAD_ID || '').trim();
-const anthropicClient = ANTHROPIC_API_KEY ? new Anthropic({ apiKey: ANTHROPIC_API_KEY }) : null;
+const anthropicClient = ANTHROPIC_API_KEY
+  ? createTrackedAnthropic({ apiKey: ANTHROPIC_API_KEY })
+  : null;
 const _rawProposalBase = (process.env.PROPOSAL_BASE || '').trim();
 const PROPOSAL_BASE    = (/^https?:\/\//i.test(_rawProposalBase) ? _rawProposalBase : 'https://scalelabaireceptionistproposal.netlify.app').replace(/\/$/, '');
 
@@ -983,8 +985,11 @@ async function generateOpener(lead, siteText) {
   try {
     const niche = nicheFor(lead.tradeType);
     let prompt;
+    // scrapeSite already caps at 1500 chars. Bound again so a pasted or
+    // inherited siteContext cannot silently expand the opener prompt.
+    const boundedSite = String(siteText || '').slice(0, 1500);
 
-    if (siteText) {
+    if (boundedSite) {
       // Tier-2: reference ONE concrete detail from the scraped page
       const cleanCo = cleanCompanyName(lead.company);
       const facts = [
@@ -1001,7 +1006,7 @@ async function generateOpener(lead, siteText) {
         '',
         'Website text (extracted from their homepage — use ONLY what is explicitly stated here):',
         '---',
-        siteText,
+        boundedSite,
         '---',
         '',
         'Rules:',
@@ -1047,6 +1052,11 @@ async function generateOpener(lead, siteText) {
       model: 'claude-haiku-4-5',
       max_tokens: 60,
       messages: [{ role: 'user', content: prompt }],
+    }, {
+      feature: ANTHROPIC_FEATURES.cold_personalization,
+      operation: 'opener',
+      campaign: lead.campaign || lead.intendedCampaignVersion || '',
+      leadId: lead.id || '',
     });
     return msg.content[0]?.text?.trim() || null;
   } catch (e) {
@@ -1474,10 +1484,13 @@ const CLASSIFY_FALLBACK = 'NEEDS_HUMAN';
 async function classifyReply(company, replyBody, extra = {}) {
   return classifyProviderReply({
     provider: 'gmail',
-    lead: { company, email: extra.email || '' },
+    lead: { company, email: extra.email || '', id: extra.leadId || '' },
+    campaign: extra.campaign || {},
     subject: extra.subject || '',
     plainTextReply: replyBody,
     apiKey: ANTHROPIC_API_KEY,
+    messageId: extra.messageId || '',
+    threadId: extra.threadId || '',
   });
 }
 
@@ -1495,7 +1508,7 @@ async function classifyReply(company, replyBody, extra = {}) {
 // mode 'draft' → write to the review queue, never send
 const ANSWER_MAX_TOKENS = 400;
 
-async function answerQuestion(lead, replyText) {
+async function answerQuestion(lead, replyText, extra = {}) {
   const scoped = factsForLead(lead);
   const company = cleanCompanyName(lead.company) || scoped.companyFallback || 'your business';
   const draft = (body, reason, confidence = 0) => ({ mode: 'draft', body, reason, confidence });
@@ -1559,6 +1572,13 @@ async function answerQuestion(lead, replyText) {
         'Use 0-60 if the facts do not clearly cover it. Only use 85+ when the facts answer it directly.',
       ].join('\n'),
       messages: [{ role: 'user', content: `${scoped.audience}: ${company}\nTheir reply:\n${replyText}` }],
+    }, {
+      feature: ANTHROPIC_FEATURES.reply_question_answer,
+      operation: 'answer',
+      campaign: lead.campaign || lead.intendedCampaignVersion || scoped.family || '',
+      leadId: lead.id || '',
+      messageId: extra.messageId || '',
+      threadId: extra.threadId || '',
     });
 
     const raw = (msg.content[0]?.text || '').trim();
@@ -2336,7 +2356,10 @@ async function queueDraft(lead, answer) {
 // draft it for Deins. Either way the lead is tagged so the dashboard shows it.
 async function handleQuestion(lead, message, replyText, todaySent, activities = [], outboundObservationOk = true, sender = senderForPersistedLead(lead)) {
   const rowNum = await resolveRow(lead.id);
-  const answer = await answerQuestion(lead, replyText);
+  const answer = await answerQuestion(lead, replyText, {
+    messageId: message.messageId || '',
+    threadId: message.threadId || '',
+  });
 
   // ── gates that apply to auto-send only ──
   // A drafted reply is never sent by the agent, so it needs no send gate; a
@@ -2461,7 +2484,19 @@ async function handleRoofingSurveyReply(lead, message, replyText, todaySent, act
     await handleNeedsHuman(lead, message.fromAddr);
     return 'flow_disabled';
   }
-  const classification = await classifyRoofingReply({ replyText, createMessage: anthropicClient ? input => anthropicClient.messages.create(input) : null });
+  const classification = await classifyRoofingReply({
+    replyText,
+    createMessage: anthropicClient
+      ? wrapCreateMessage(anthropicClient.messages.create, {
+          feature: ANTHROPIC_FEATURES.roofing_reply_classification,
+          operation: 'classify',
+          campaign: lead.campaign || lead.intendedCampaignVersion || '',
+          leadId: lead.id || '',
+          messageId: message.messageId || '',
+          threadId: message.threadId || '',
+        })
+      : null,
+  });
   console.log(`  [roofing-reply] profile=${ROOFING_SURVEY_PROFILE} classification=${classification.category} reason=${classification.reason_code}`);
   const roofingEventType = classification.category === 'positive' ? 'positive_reply'
     : classification.category === 'negative' ? 'negative_reply'
@@ -2737,7 +2772,11 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       else console.log(`  ↩ Roofing survey reply from ${lead.email} (${company}) — no writes in dry run`);
       continue;
     }
-    let classification = await classifyReply(lead.company, replyText, { subject: message.subject, email: lead.email });
+    let classification = await classifyReply(lead.company, replyText, {
+      subject: message.subject, email: lead.email, leadId: lead.id,
+      campaign: { id: lead.campaign || lead.intendedCampaignVersion || '', name: lead.campaign || '' },
+      messageId: message.messageId, threadId: message.threadId,
+    });
     const canonicalReply = classifyReplyText(replyText, {
       subject: message.subject || '', currentEmail: lead.email, now: message.occurredAt || null,
     });
