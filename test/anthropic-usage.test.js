@@ -225,41 +225,49 @@ test('11. reply safety still works when Claude is unavailable or over budget', a
 });
 
 test('staffing personalization records tagged extract/audit calls', async () => {
-  const page = { url: 'https://example.com/services', title: 'Example Staffing', text: 'Example Staffing supplies welders to manufacturers.' };
+  const { SYSTEM, FACT_AUDIT_SYSTEM, AUDIT_SYSTEM } = require('../integrations/staffing-personalization');
+  const page = { url: 'https://example.com/services', title: 'Example Staffing', text: 'Example Staffing supplies welders, machinists and electricians to manufacturers and serves employers across Northeast Ohio.\nOur headquarters is in Houston.' };
   const facts = [
     { id: 'r', kind: 'role', value: 'welders', evidenceIds: ['p0b0'] },
+    { id: 'r2', kind: 'role', value: 'machinists', evidenceIds: ['p0b0'] },
+    { id: 'r3', kind: 'role', value: 'electricians', evidenceIds: ['p0b0'] },
     { id: 'm', kind: 'employer_market', value: 'manufacturing', evidenceIds: ['p0b0'] },
+    { id: 'g', kind: 'geography', value: 'Northeast Ohio', evidenceIds: ['p0b0'] },
   ];
   const extract = {
-    companyIdentityConfirmed: true, icpFit: 'FIT', fitEvidenceIds: ['p0b0'], researchNotes: 'fit',
-    facts, hyperPersonalizedOpening: 'Saw you place welders for manufacturing employers.', usedFactIds: ['r', 'm'],
+    companyIdentityConfirmed: true, icpFit: 'FIT', fitEvidenceIds: ['p0b0'], researchNotes: 'Industrial staffing service.',
+    facts, hyperPersonalizedOpening: 'Saw you place welders and machinists with manufacturers across Northeast Ohio.', usedFactIds: ['r', 'r2', 'm', 'g'],
   };
+  const checks = Object.fromEntries([
+    'oneSentence','noCompliments','supportedGeography','supportedRoles','supportedIndustries',
+    'noRepetitiveWording','grammar','noCandidateSourcing','marketReferent','reasonableLength','companyIdentity',
+    'staffingBusiness','naturalEmployerLanguage','supportedByValidatedFacts','usedFactIdsComplete',
+  ].map(k => [k, true]));
   const result = await personalizeStaffingLead(staffingLead, {
     researchCompany: async () => ({ pages: [page], failures: [], reviewRequired: false }),
     createMessage: async args => {
-      if (args.system.includes('Extract at most 10')) return { content: [{ type: 'text', text: JSON.stringify(extract) }] };
-      if (args.system.includes('Independently verify')) {
-        return { content: [{ type: 'text', text: JSON.stringify({
-          companyIdentityConfirmed: true, icpFit: 'FIT', fitEvidenceIds: ['p0b0'], reason: 'ok',
-          facts: facts.map(f => ({ id: f.id, kind: f.kind, valid: true, staffingRelationship: true, specificRole: f.kind === 'role', explicitServiceTerritory: false })),
-        }) }] };
-      }
-      return { content: [{ type: 'text', text: JSON.stringify({
-        checks: {
-          oneSentence: true, noCompliments: true, supportedGeography: true, supportedRoles: true, supportedIndustries: true,
-          noRepetitiveWording: true, grammar: true, noCandidateSourcing: true, marketReferent: true, reasonableLength: true,
-          companyIdentity: true, staffingBusiness: true, naturalEmployerLanguage: true, supportedByValidatedFacts: true, usedFactIdsComplete: true,
-        },
-        companySpecific: true, rejectedFactIds: [], reasons: [],
-      }) }] };
+      let payload;
+      if (args.system === SYSTEM) payload = extract;
+      else if (args.system === FACT_AUDIT_SYSTEM) payload = {
+        companyIdentityConfirmed: true, icpFit: 'FIT', fitEvidenceIds: ['p0b0'], reason: 'Services explicitly match',
+        facts: JSON.parse(args.messages[0].content).candidateFacts.map(f => ({
+          id: f.id, kind: f.kind, valid: true, staffingRelationship: true,
+          specificRole: f.kind === 'role', explicitServiceTerritory: f.kind === 'geography',
+        })),
+      };
+      else if (args.system === AUDIT_SYSTEM) payload = { checks, companySpecific: true, rejectedFactIds: [], reasons: [] };
+      else throw new Error('Unexpected model stage');
+      return { content: [{ type: 'text', text: JSON.stringify(payload) }], usage: { input_tokens: 11, output_tokens: 4 } };
     },
   });
   assert.equal(result.confidence, 'HIGH');
   const rows = listUsageRecords();
-  assert.ok(rows.length >= 3);
+  assert.equal(rows.length, 3);
   assert.deepEqual(rows.map(row => row.operation), ['extract', 'fact_audit', 'opening_audit']);
   assert.ok(rows.every(row => row.feature === 'staffing_personalization'));
   assert.ok(rows.every(row => row.campaign === STAFFING_CAMPAIGN.id));
+  assert.equal(rows[0].inputTokens, 11);
+  assert.equal(rows[0].outputTokens, 4);
 });
 
 test('usage endpoint is read-only and returns grouped totals', async () => {
