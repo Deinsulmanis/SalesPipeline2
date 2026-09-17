@@ -56,7 +56,7 @@ function containsBookingLink(text) {
  * @param opts.lead       Optional lead-in sentence placed above the framing.
  */
 function bookingSnippet(cleanedCompany, opts = {}) {
-  const who = (cleanedCompany || '').trim() || 'your clinic';
+  const who = (cleanedCompany || '').trim() || opts.companyFallback || 'your clinic';
   const leadIn = opts.lead ? `${opts.lead}\n\n` : '';
   return `${leadIn}Grab a quick 15 min here and I'll show you exactly what it'd catch for ${who} — and get it set up for you:\n${BOOKING_URL}`;
 }
@@ -65,9 +65,12 @@ function bookingSnippet(cleanedCompany, opts = {}) {
  * Pricing questions never get a number in writing. This is the deflection used
  * by the drafted reply, so the wording stays identical everywhere.
  */
-function pricingDeflection(cleanedCompany) {
-  const who = (cleanedCompany || '').trim() || 'your clinic';
-  return `That's exactly what we cover on a quick call — it depends on how ${who} handles calls now, so quoting a number cold would just be a guess.\n\n${bookingSnippet(who)}`;
+function pricingDeflection(cleanedCompany, opts = {}) {
+  const who = (cleanedCompany || '').trim() || opts.companyFallback || 'your clinic';
+  if (opts.family === 'industrial_staffing') {
+    return `Pricing depends on the market ${who} already serves, so quoting a number cold would just be a guess. That belongs on a short call.\n\n${bookingSnippet(who, opts)}`;
+  }
+  return `That's exactly what we cover on a quick call — it depends on how ${who} handles calls now, so quoting a number cold would just be a guess.\n\n${bookingSnippet(who, opts)}`;
 }
 
 module.exports = { BOOKING_URL, bookingUrlHost, containsBookingLink, bookingSnippet, pricingDeflection };

@@ -10,11 +10,23 @@ const { deriveAutomationOwnership, OWNER } = require('../integrations/automation
 const dental = { id: 'l1', company: 'Example Dental', tradeType: 'Dental', emailTemplateId: 'dental-guarantee-v1' };
 test('normal positive and meeting intent deterministically produce a booking response', () => {
   const offer = offerForLead(dental, {});
-  for (const classification of ['INTERESTED','MEETING_REQUEST']) {
-    const decision = decideReplyResponse({ classification, offer });
-    assert.equal(decision.send, true);
-    assert.match(warmResponse({ action: decision.action, lead: dental, offer }), /calendar\.app\.google/);
-  }
+  const meeting = decideReplyResponse({
+    classification: 'MEETING_REQUEST', offer,
+    canonical: { state: 'positive', confidence: 'high', signals: ['meeting'] },
+  });
+  assert.equal(meeting.send, true);
+  const interested = decideReplyResponse({
+    classification: 'INTERESTED', offer,
+    canonical: { state: 'positive', confidence: 'high', signals: ['expressed_interest'] },
+  });
+  assert.equal(interested.send, true);
+  assert.match(warmResponse({ action: interested.action, lead: dental, offer }), /calendar\.app\.google/);
+});
+test('low-confidence positive classification never auto-sends', () => {
+  const offer = offerForLead(dental, {});
+  const decision = decideReplyResponse({ classification: 'INTERESTED', offer, confidence: 40 });
+  assert.equal(decision.send, false);
+  assert.equal(decision.action, ACTION.HUMAN_REVIEW);
 });
 test('pricing auto-sends only with explicit campaign-approved wording', () => {
   const unconfigured = offerForLead(dental, {});

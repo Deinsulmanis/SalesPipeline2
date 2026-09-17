@@ -4832,12 +4832,20 @@ const { queueSelectedLeads } = require('./integrations/outreach-queue');
 const { staffingLaunchState } = require('./integrations/staffing-launch-gate');
 app.get('/api/staffing/launch-readiness', requireAuth, async (_req, res) => {
   const { STAFFING_CAMPAIGN, LOCKED_EMAILS, BOLD_PHRASES } = require('./integrations/staffing-campaign');
+  const { staffingReadinessReport, staffingSequenceDiff } = require('./integrations/staffing-readiness');
   const corpus = await readOutreachCorpus();
   if (!corpus.ok) return res.status(503).json({ error: 'Canonical staffing state unavailable' });
-  const leads = corpus.leads.filter(lead => lead.leadNiche === STAFFING_CAMPAIGN.niche);
-  const counts = { total: leads.length, Import: leads.filter(l => l.stage === 'Import').length, Queued: leads.filter(l => l.stage === 'Queued').length };
-  res.json({ campaign: STAFFING_CAMPAIGN, counts, ...staffingLaunchState(),
-    sequence: LOCKED_EMAILS.map((body, i) => ({ step: i + 1, subject: i ? 'Same thread' : 'employer accounts', delayDays: [0, 3, 5][i], body, bold: BOLD_PHRASES[i] })) });
+  const dataset = await getOutreachDataset({ force: false }).catch(() => ({ activities: [], boardLeads: [], suppression: [] }));
+  const suppressed = new Set((dataset.suppression || []).map(row => String(row.email || row[0] || '').trim().toLowerCase()).filter(Boolean));
+  const report = staffingReadinessReport({
+    leads: corpus.leads, activities: dataset.activities || [], boardLeads: dataset.boardLeads || [],
+    suppressedEmails: suppressed, env: process.env,
+  });
+  res.json({
+    campaign: STAFFING_CAMPAIGN, ...report, ...staffingLaunchState(),
+    sequence: LOCKED_EMAILS.map((body, i) => ({ step: i + 1, subject: i ? 'Same thread' : 'employer accounts', delayDays: [0, 3, 5][i], body, bold: BOLD_PHRASES[i] })),
+    sequenceDiff: staffingSequenceDiff(),
+  });
 });
 app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
   const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(value => String(value || '').trim()).filter(Boolean))];

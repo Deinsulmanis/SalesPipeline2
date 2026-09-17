@@ -45,7 +45,9 @@ test('warm, stage, intent, ordinary and Smartlead boundaries retain the gate',()
  assert.match(s,/function suppressionReason\(lead\) \{\n  const staffingBlocked = staffingSendBlockReason\(lead\);\n  if \(staffingBlocked\) return staffingBlocked;/);
  assert.match(s,/finalRevalidate: async \(\) => \{\n      if \(staffingSendBlockReason\(lead\)\)/);
  assert.match(s,/if \(staffingSendBlockReason\(twin \|\| boardLead\)\) continue;/);
- assert.match(s,/sendProvider: payload => sendEmail\(\{/);
+ assert.match(s,/sendProvider: payload => \{/);
+ assert.match(s,/assertGmailProviderAllowed\(\{/);
+ assert.match(s,/return sendEmail\(\{/);
  assert.match(s,/sendAction: \{/);
  assert.match(s,/lead: twin \|\| boardLead, to: boardLead.email/);
  assert.match(s,/async function enqueueSmartleadLead\(lead, mapping\) \{\n  assertSendAuthorized\(\);\n  assertStaffingSendAllowed\(lead\);/);

@@ -82,22 +82,59 @@ const ACTIVE_CAMPAIGN_VERSION = Object.freeze({
   industrial_staffing: STAFFING_CAMPAIGN.id,
 });
 
+const CAMPAIGN_FAMILY = Object.freeze({
+  DENTAL: 'dental_ai_receptionist',
+  ROOFING: 'roofing_survey',
+  STAFFING: 'industrial_staffing',
+  UNROUTED: 'unrouted',
+});
+
 function parseMetadata(value) {
   if (value && typeof value === 'object') return value;
   try { return JSON.parse(String(value || '{}')); } catch (_) { return {}; }
 }
 
+function familyFromText(value) {
+  const text = String(value || '').toLowerCase();
+  if (!text) return null;
+  if (text.includes('staffing')) return CAMPAIGN_FAMILY.STAFFING;
+  if (text.includes('roof')) return CAMPAIGN_FAMILY.ROOFING;
+  if (text.includes('dent')) return CAMPAIGN_FAMILY.DENTAL;
+  return null;
+}
+
+function familyFromCampaignVersionId(id) {
+  const version = CAMPAIGN_VERSIONS[String(id || '').trim()];
+  return version ? version.family : null;
+}
+
+function resolveLeadFamily(lead = {}) {
+  const signals = [
+    familyFromText(lead.leadNiche),
+    familyFromText(lead.tradeType),
+    familyFromText(lead.emailTemplateId),
+    familyFromCampaignVersionId(lead.intendedCampaignVersion),
+    familyFromText(lead.campaign),
+    familyFromText(lead.campaignFamily),
+  ].filter(Boolean);
+  const unique = [...new Set(signals)];
+  if (!unique.length) {
+    return {
+      family: CAMPAIGN_FAMILY.UNROUTED, confident: false,
+      reason: 'niche, template, and campaign mapping are blank or unknown',
+    };
+  }
+  if (unique.length > 1) {
+    return {
+      family: CAMPAIGN_FAMILY.UNROUTED, confident: false, candidates: unique,
+      reason: 'campaign mapping is ambiguous',
+    };
+  }
+  return { family: unique[0], confident: true, reason: '' };
+}
+
 function familyForLead(lead = {}) {
-  const niche = String(lead.leadNiche || lead.tradeType || '').toLowerCase();
-  const template = String(lead.emailTemplateId || '').toLowerCase();
-  if (template.includes('roofing') || niche.includes('roof')) return 'roofing_survey';
-  // Staffing is matched BEFORE the dental default below. Without this a staffing
-  // lead resolved to dental_ai_receptionist, which handed the dental offer facts
-  // to staffing reply automation and attributed staffing sends to dental.
-  if (template.includes('staffing') || niche.includes('staffing')) return 'industrial_staffing';
-  if (template.includes('dental') || niche.includes('dent')) return 'dental_ai_receptionist';
-  // Existing unrouted production rows are dental unless explicitly roofing.
-  return 'dental_ai_receptionist';
+  return resolveLeadFamily(lead).family;
 }
 
 function campaignVersion(id) {
@@ -107,7 +144,17 @@ function campaignVersion(id) {
 }
 
 function activeVersionForLead(lead = {}) {
-  const family = familyForLead(lead);
+  const resolved = resolveLeadFamily(lead);
+  const family = resolved.family;
+  if (family === CAMPAIGN_FAMILY.UNROUTED) {
+    const intendedFamily = familyFromCampaignVersionId(lead.intendedCampaignVersion);
+    const nicheFamily = familyFromText(lead.leadNiche) || familyFromText(lead.tradeType)
+      || familyFromText(lead.emailTemplateId) || familyFromText(lead.campaign);
+    if (intendedFamily && nicheFamily && intendedFamily !== nicheFamily) {
+      throw new Error(`Campaign version ${lead.intendedCampaignVersion} is incompatible with ${nicheFamily}`);
+    }
+    throw new Error(resolved.reason || 'Campaign family is unrouted');
+  }
   const id = String(lead.intendedCampaignVersion || '').trim() || ACTIVE_CAMPAIGN_VERSION[family];
   if (!id) throw new Error(`No active campaign version for ${family}`);
   const version = campaignVersion(id);
@@ -235,8 +282,8 @@ function buildCampaignVersionIndex(leads = [], activities = []) {
 }
 
 module.exports = {
-  LEGACY_UNKNOWN, CAMPAIGN_VERSIONS, ACTIVE_CAMPAIGN_VERSION,
-  familyForLead, campaignVersion, activeVersionForLead, coldSendAttribution,
+  LEGACY_UNKNOWN, CAMPAIGN_FAMILY, CAMPAIGN_VERSIONS, ACTIVE_CAMPAIGN_VERSION,
+  familyForLead, resolveLeadFamily, campaignVersion, activeVersionForLead, coldSendAttribution,
   stageSequenceAttribution, attributionFromActivity, replyTouchAttribution,
   acquisitionAttribution, latestSendAttribution, promotionAttribution, parseMetadata,
   buildCampaignVersionIndex,

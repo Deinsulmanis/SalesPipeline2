@@ -51,7 +51,7 @@ const { isDatacenterIp } = require('./open-filter');
 // triggers (question replies, both-audios-played) and NOT by any cold template.
 const { bookingSnippet, pricingDeflection, BOOKING_URL, containsBookingLink } = require('./booking');
 // The only source of truth the reply-answering model may state as fact.
-const { PRODUCT_FACTS, NEVER_AUTO_ANSWER } = require('./product-facts');
+const { factsForLead } = require('./product-facts');
 // Fixed commercial promise for the cold email. Deliberately NOT in booking.js:
 // that module is the warm-only booking asset and the cold path is guarded
 // against importing it.
@@ -110,13 +110,15 @@ const { PROMOTION_TRIGGER, resolvePromotionIdentity, promotionDecision } = requi
 const {
   coldSendAttribution, stageSequenceAttribution, acquisitionAttribution,
   attributionFromActivity, replyTouchAttribution, latestSendAttribution, promotionAttribution,
-  LEGACY_UNKNOWN, familyForLead,
+  LEGACY_UNKNOWN, familyForLead, CAMPAIGN_FAMILY, resolveLeadFamily,
 } = require('./integrations/campaign-versions');
 const { findOriginalSentThread, resolveColdFollowUpThread } = require('./integrations/gmail-threading');
 const gmailMailboxObserver = require('./integrations/gmail-mailbox-observer');
 const { planMailboxEvents, commitObservation } = require('./integrations/mailbox-observation-events');
 const { offerForLead, warmResponse } = require('./integrations/offer-config');
-const { ACTION: REPLY_RESPONSE_ACTION, decideReplyResponse } = require('./integrations/reply-response-policy');
+const { ACTION: REPLY_RESPONSE_ACTION, decideReplyResponse, numericConfidence } = require('./integrations/reply-response-policy');
+const { classifyStaffingReply, unroutedReplyDecision, STAFFING_CLARIFICATION } = require('./integrations/staffing-reply-policy');
+const { authoritativeProvider, assertGmailProviderAllowed, assertSmartleadEnqueueAllowed } = require('./integrations/provider-ownership');
 const { deliverProspectReply } = require('./integrations/prospect-reply-delivery');
 const { findLiveBooking } = require('./integrations/live-booking-gate');
 const {
@@ -1177,9 +1179,23 @@ function providerForLead(lead) {
   return CAMPAIGN_PROVIDERS.get(String(lead.campaign || '').trim()) || { provider: 'gmail', externalCampaignId: '' };
 }
 
+function liveSmartleadMappings(lead = {}) {
+  const email = normalizeEmail(lead.email);
+  if (ACTIVE_PROVIDER_LEADS.has(lead.id) || (email && ACTIVE_PROVIDER_EMAILS.has(email))) {
+    return [{
+      internalLeadId: lead.id, normalizedEmail: email, provider: 'smartlead', normalizedStatus: 'Queued',
+    }];
+  }
+  return [];
+}
+
 async function enqueueSmartleadLead(lead, mapping) {
   assertSendAuthorized();
   assertStaffingSendAllowed(lead);
+  assertSmartleadEnqueueAllowed({
+    lead, campaignProviders: CAMPAIGN_PROVIDERS,
+    mappings: liveSmartleadMappings(lead),
+  });
   if (!mapping.externalCampaignId) throw new Error('Smartlead campaign mapping has no external campaign ID');
   if (ACTIVE_PROVIDER_LEADS.has(lead.id) || ACTIVE_PROVIDER_EMAILS.has(normalizeEmail(lead.email))) throw new Error('lead email already has an active provider assignment');
   if (EXISTING_PROVIDER_CAMPAIGN_EMAILS.has(`${mapping.externalCampaignId}:${normalizeEmail(lead.email)}`)) throw new Error('lead email already has a mapping in this Smartlead campaign');
@@ -1472,24 +1488,35 @@ async function classifyReply(company, replyBody) {
 const ANSWER_MAX_TOKENS = 400;
 
 async function answerQuestion(lead, replyText) {
-  const company = cleanCompanyName(lead.company) || 'your clinic';
+  const scoped = factsForLead(lead);
+  const company = cleanCompanyName(lead.company) || scoped.companyFallback || 'your business';
   const draft = (body, reason, confidence = 0) => ({ mode: 'draft', body, reason, confidence });
+  if (!scoped.ok) {
+    return draft('', scoped.reason || 'unknown niche cannot inherit dental facts', 0);
+  }
 
   const pricingAsked = /\b(pric|cost|fee|charge|how much|\$|rate|budget|quote|monthly|per month)\b/i.test(replyText);
   if (pricingAsked) {
     let offer;
     try { offer = offerForLead(lead); } catch (error) { return draft('', error.message, 0); }
     if (!offer.pricing?.approvedWording) {
-      return draft(pricingDeflection(company),
-        `pricing is not configured; set OFFER_PRICING_JSON.${familyForLead(lead)}.approvedWording`, 0);
+      return draft(pricingDeflection(company, { family: scoped.family, companyFallback: scoped.companyFallback }),
+        `pricing is not configured; set OFFER_PRICING_JSON.${scoped.family}.approvedWording`, 0);
     }
     return { mode: 'auto', body: warmResponse({ action: REPLY_RESPONSE_ACTION.AUTO_PRICING_RESPONSE, lead, offer }),
       reason: 'approved campaign pricing configuration', confidence: 100,
       action: REPLY_RESPONSE_ACTION.AUTO_PRICING_RESPONSE };
   }
 
+  if (scoped.family === CAMPAIGN_FAMILY.STAFFING) {
+    const staffing = classifyStaffingReply(replyText, lead);
+    if (staffing.candidateSide) {
+      return draft(STAFFING_CLARIFICATION, staffing.reason, 0);
+    }
+  }
+
   if (!ANTHROPIC_API_KEY) {
-    return draft(bookingSnippet(company), 'no ANTHROPIC_API_KEY — cannot answer', 0);
+    return draft(bookingSnippet(company, { companyFallback: scoped.companyFallback }), 'no ANTHROPIC_API_KEY — cannot answer', 0);
   }
 
   try {
@@ -1497,17 +1524,17 @@ async function answerQuestion(lead, replyText) {
       model: 'claude-haiku-4-5',
       max_tokens: ANSWER_MAX_TOKENS,
       system: [
-        'You draft short replies on behalf of Deins, who sells 24/7 answering and booking software to dental clinics.',
+        scoped.systemRole,
         '',
         'You may state ONLY what the FACTS below support. If the question needs anything not in',
         'the facts, do not invent it — lower your confidence instead.',
         '',
         '=== FACTS (your only source of truth) ===',
-        PRODUCT_FACTS,
+        scoped.facts,
         '=== END FACTS ===',
         '',
         'NEVER auto-answer questions about:',
-        ...NEVER_AUTO_ANSWER.map(t => `- ${t}`),
+        ...scoped.neverAutoAnswer.map(t => `- ${t}`),
         'For any of those, set confidence to 0 and set needs_human to true.',
         '',
         'STYLE — this matters, previous replies have been called out for sounding like AI:',
@@ -1523,7 +1550,7 @@ async function answerQuestion(lead, replyText) {
         'confidence is how sure you are the answer is accurate AND fully supported by the facts.',
         'Use 0-60 if the facts do not clearly cover it. Only use 85+ when the facts answer it directly.',
       ].join('\n'),
-      messages: [{ role: 'user', content: `Clinic: ${company}\nTheir reply:\n${replyText}` }],
+      messages: [{ role: 'user', content: `${scoped.audience}: ${company}\nTheir reply:\n${replyText}` }],
     });
 
     const raw = (msg.content[0]?.text || '').trim();
@@ -1531,12 +1558,15 @@ async function answerQuestion(lead, replyText) {
     try {
       parsed = JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, ''));
     } catch (_e) {
-      return draft(bookingSnippet(company), `model returned unparseable output: ${raw.slice(0, 120)}`, 0);
+      return draft(bookingSnippet(company, { companyFallback: scoped.companyFallback }), `model returned unparseable output: ${raw.slice(0, 120)}`, 0);
     }
 
     const confidence = Number(parsed.confidence) || 0;
     const answer = String(parsed.answer || '').trim();
     const topic = String(parsed.topic || '').trim();
+    if (scoped.family === CAMPAIGN_FAMILY.STAFFING && /receptionist|missed calls?|dental|patients?|clinic/i.test(answer)) {
+      return draft('', 'staffing answer contained non-staffing offer language', 0);
+    }
 
     // Belt-and-braces pricing catch: the model is told never to answer pricing,
     // but a regex on the INBOUND text means a price question can't slip through
@@ -1549,21 +1579,21 @@ async function answerQuestion(lead, replyText) {
     // lookup; it goes to a human.
     const OBJECTION_PATTERNS = /\b(already have|already use|already using|not convinced|don'?t think|do not think|doesn'?t work|won'?t work|skeptical|sceptical|we'?re (fine|good|happy|all set)|no thanks|not for us|waste of|scam|spam)\b/i;
     if (OBJECTION_PATTERNS.test(replyText)) {
-      return draft(withBooking(answer, company), 'reads as an objection — routed to review, not auto-sent', confidence);
+      return draft(withBooking(answer, company, scoped), 'reads as an objection — routed to review, not auto-sent', confidence);
     }
-    if (parsed.needs_human === true) return draft(withBooking(answer, company), `model flagged needs_human (${topic})`, confidence);
-    if (confidence < ANSWER_CONFIDENCE_FLOOR) return draft(withBooking(answer, company), `confidence ${confidence} < ${ANSWER_CONFIDENCE_FLOOR} (${topic})`, confidence);
-    if (!answer) return draft(bookingSnippet(company), 'model returned an empty answer', confidence);
+    if (parsed.needs_human === true) return draft(withBooking(answer, company, scoped), `model flagged needs_human (${topic})`, confidence);
+    if (confidence < ANSWER_CONFIDENCE_FLOOR) return draft(withBooking(answer, company, scoped), `confidence ${confidence} < ${ANSWER_CONFIDENCE_FLOOR} (${topic})`, confidence);
+    if (!answer) return draft(bookingSnippet(company, { companyFallback: scoped.companyFallback }), 'model returned an empty answer', confidence);
 
-    return { mode: 'auto', body: withBooking(answer, company), reason: `confident answer (${topic})`, confidence };
+    return { mode: 'auto', body: withBooking(answer, company, scoped), reason: `confident answer (${topic})`, confidence };
   } catch (e) {
-    return draft(bookingSnippet(company), `answer API error: ${e.message}`, 0);
+    return draft(bookingSnippet(company, { companyFallback: scoped.companyFallback }), `answer API error: ${e.message}`, 0);
   }
 }
 
 // Answer + the warm booking snippet, in the house voice.
-function withBooking(answer, company) {
-  return `${answer.trim()}\n\n${bookingSnippet(company)}`;
+function withBooking(answer, company, scoped = {}) {
+  return `${answer.trim()}\n\n${bookingSnippet(company, { companyFallback: scoped.companyFallback })}`;
 }
 
 // ── SHEET I/O ─────────────────────────────────────────────────────────────────
@@ -2342,8 +2372,9 @@ async function handleQuestion(lead, message, replyText, todaySent, activities = 
   }
 
   // ── auto-send ──
-  const company = cleanCompanyName(lead.company) || 'your clinic';
-  const subject = `Re: a quick demo I built for ${company}`;
+  const scoped = factsForLead(lead);
+  const company = cleanCompanyName(lead.company) || scoped.companyFallback || 'your business';
+  const subject = /^re:/i.test(message.subject || '') ? message.subject : `Re: ${message.subject || 'your reply'}`;
   const casl = `---\n${MAILING_ADDRESS}\nReply "unsubscribe" and I'll remove you immediately.`;
   const body = `Hi ${salutationName(lead)},\n\n${answer.body}\n\n${EMAIL_SIGNATURE}\n\n${casl}`;
 
@@ -2645,12 +2676,28 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
           // warm booking snippet. todaySent enforces the touch cap.
           case 'QUESTION':       return handleQuestion(lead, message, replyText, replyPassTodaySent, attributionActivities, outboundObservationOk, senderForPersistedLead(lead));
           case 'INTERESTED': {
+            const blocked = unroutedReplyDecision(lead) || (classifyStaffingReply(replyText, lead).promote === false
+              ? classifyStaffingReply(replyText, lead) : null);
+            if (blocked && blocked.promote === false) {
+              await queueDraft(lead, {
+                mode: 'draft', body: blocked.clarification || '', reason: blocked.reason, confidence: 0,
+              });
+              return handleNeedsHuman(lead, message.fromAddr);
+            }
             await handleInterested(lead, message, replyText, 'positive_reply', leads, attributionActivities);
-            return handlePositiveAutomation(lead, message, 'INTERESTED', attributionActivities);
+            return handlePositiveAutomation(lead, message, 'INTERESTED', attributionActivities, canonicalReply);
           }
           case 'MEETING_REQUEST': {
+            const blocked = unroutedReplyDecision(lead) || (classifyStaffingReply(replyText, lead).promote === false
+              ? classifyStaffingReply(replyText, lead) : null);
+            if (blocked && blocked.promote === false) {
+              await queueDraft(lead, {
+                mode: 'draft', body: blocked.clarification || '', reason: blocked.reason, confidence: 0,
+              });
+              return handleNeedsHuman(lead, message.fromAddr);
+            }
             await handleInterested(lead, message, replyText, 'meeting_requested', leads, attributionActivities);
-            return handlePositiveAutomation(lead, message, 'MEETING_REQUEST', attributionActivities);
+            return handlePositiveAutomation(lead, message, 'MEETING_REQUEST', attributionActivities, canonicalReply);
           }
           case 'NOT_INTERESTED': return handleNotInterested(lead);
           case 'UNSUBSCRIBE':    return handleUnsubscribe(lead);
@@ -2806,7 +2853,11 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
         }) };
       await recordColdCallActivityStrict(row); activities.push(row); return row;
     },
-    sendProvider: payload => sendEmail({
+    sendProvider: payload => {
+      assertGmailProviderAllowed({
+        lead, campaignProviders: CAMPAIGN_PROVIDERS, mappings: liveSmartleadMappings(lead),
+      });
+      return sendEmail({
       ...payload, lead,
       sendAction: {
         actionId: payload.sendAction?.actionId || payload.actionId,
@@ -2814,7 +2865,8 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
         actionType: 'gmail_warm_reply',
         provider: 'gmail',
       },
-    }),
+    });
+    },
     consumeQuota: () => {
       if (activeWindowQuota) consumeSendingWindowSuccess(activeWindowQuota, sender.id);
       if (activeSenderCounts) activeSenderCounts.set(sender.id, (activeSenderCounts.get(sender.id) || 0) + 1);
@@ -2848,10 +2900,32 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
   return result;
 }
 
-async function handlePositiveAutomation(lead, message, classification, activities) {
-  const offer = offerForLead(lead);
-  const policy = decideReplyResponse({ classification, confidence: 100, offer, text: message.body || message.snippet || '' });
-  if (!policy.send) return handleNeedsHuman(lead, message.fromAddr);
+async function handlePositiveAutomation(lead, message, classification, activities, canonical = {}) {
+  const unrouted = unroutedReplyDecision(lead);
+  if (unrouted) return handleNeedsHuman(lead, message.fromAddr);
+  const staffing = classifyStaffingReply(message.body || message.snippet || '', lead);
+  if (staffing.promote === false) {
+    await queueDraft(lead, { mode: 'draft', body: staffing.clarification || '', reason: staffing.reason, confidence: 0 });
+    return handleNeedsHuman(lead, message.fromAddr);
+  }
+  let offer;
+  try { offer = offerForLead(lead); } catch (_) { return handleNeedsHuman(lead, message.fromAddr); }
+  const policy = decideReplyResponse({
+    classification,
+    canonical,
+    confidence: numericConfidence({ classification, canonical }),
+    offer,
+    text: message.body || message.snippet || '',
+    family: familyForLead(lead),
+  });
+  if (!policy.send) {
+    if (policy.action === REPLY_RESPONSE_ACTION.HUMAN_REVIEW) {
+      await queueDraft(lead, {
+        mode: 'draft', body: '', reason: policy.reason, confidence: policy.confidence || 0,
+      });
+    }
+    return handleNeedsHuman(lead, message.fromAddr);
+  }
   const body = warmResponse({ action: policy.action, lead, offer });
   const subject = /^re:/i.test(message.subject || '') ? message.subject : `Re: ${message.subject || 'your reply'}`;
   const delivered = await deliverHardenedWarmReply({ lead, message, action: policy.action, body, subject, activities, classification });
@@ -3273,6 +3347,9 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot 
     }
     if (todaySent >= DAILY_SEND_LIMIT) { console.warn(`  ⏸️  daily cap reached (${todaySent}/${DAILY_SEND_LIMIT}) — deferring to next pass`); break; }
 
+    const family = familyForLead(lead);
+    if (family === CAMPAIGN_FAMILY.STAFFING || family === CAMPAIGN_FAMILY.UNROUTED) continue;
+    if (lead.emailTemplateId === STAFFING_TEMPLATE) continue;
     const { subject, body } = buildIntentEmail(lead);
     if (DRY_RUN)          { console.log(`— WOULD SEND (intent) → ${lead.email}\n   ${subject}`); continue; }
     if (!SENDING_ENABLED) { console.log(`⛔ [kill-switch] would send intent email → ${lead.email}`); continue; }
@@ -3695,6 +3772,21 @@ function staffingFollowUpBody(lead, step) {
   return email.body;
 }
 
+function coldFollowUpBlockReason(lead) {
+  const family = familyForLead(lead);
+  if (family === CAMPAIGN_FAMILY.UNROUTED) return 'unknown or ambiguous niche';
+  if (family === CAMPAIGN_FAMILY.STAFFING && lead.emailTemplateId !== STAFFING_TEMPLATE) {
+    return 'staffing lead missing staffing template';
+  }
+  if (family !== CAMPAIGN_FAMILY.STAFFING && lead.emailTemplateId === STAFFING_TEMPLATE) {
+    return 'staffing template on a non-staffing lead';
+  }
+  if (!authoritativeProvider({
+    lead, campaignProviders: CAMPAIGN_PROVIDERS, mappings: liveSmartleadMappings(lead),
+  }).gmailAllowed) return 'provider is not Gmail';
+  return '';
+}
+
 function selectQueued(leads) {
   return leads.filter(l => {
     if (l.stage !== QUEUE_STAGE) return false;   // you queued it
@@ -3753,6 +3845,10 @@ function selectFollowUps(leads, activities = []) {
     // on anyone having remembered to add it.
     if (NON_COLD_STAGES.includes(String(l.stage || '').trim().toLowerCase())) return false;
     if (l.emailTemplateId === ROOFING_SURVEY_TEMPLATE) return false;
+    const ownership = authoritativeProvider({
+      lead: l, campaignProviders: CAMPAIGN_PROVIDERS, mappings: liveSmartleadMappings(l),
+    });
+    if (!ownership.gmailAllowed) return false;
     if (!isValidEmail(l.email)) return false;
     if (!routedLeadCanUseCurrentSender(l)) return false;
     const currentStep = parseInt(l.emailStep || '0', 10);
@@ -3930,6 +4026,10 @@ async function runStageSequencePass(allLeads, {
     const mine = [...(byKey.get(boardLead.id) || []), ...(email ? byKey.get(email) || [] : [])];
     const twin = target.generic ? target.twin : (twinByEmail.get(email) || null);
     if (staffingSendBlockReason(twin || boardLead)) continue;
+    if (!authoritativeProvider({
+      lead: twin || boardLead, campaignProviders: CAMPAIGN_PROVIDERS,
+      mappings: liveSmartleadMappings(twin || boardLead), activities: mine,
+    }).gmailAllowed) continue;
     const callState = deriveCallLifecycle(boardLead, { activities: mine });
     const hotState = deriveHotState(boardLead, { activities: mine });
     let verdict = evaluateStageSequence({
@@ -4123,6 +4223,15 @@ async function runStageSequencePass(allLeads, {
     const gate = await guardProviderSend(safetyLead, freshSendSafetyDeps(), { purpose: 'sequence' });
     if (!gate.allowed) {
       console.warn(`[StageSeq] ${boardLead.email} blocked: ${gate.reason || gate.code}`);
+      continue;
+    }
+    try {
+      assertGmailProviderAllowed({
+        lead: safetyLead, campaignProviders: CAMPAIGN_PROVIDERS,
+        mappings: liveSmartleadMappings(safetyLead), activities: mine,
+      });
+    } catch (error) {
+      console.warn(`[StageSeq] ${boardLead.email} blocked: ${error.message}`);
       continue;
     }
 
@@ -4528,6 +4637,11 @@ async function run() {
     const currentStep = parseInt(lead.emailStep, 10);
     const nextStepNum = currentStep + 1;
     const template = FOLLOW_UP_SEQUENCE[currentStep - 1];
+    const blocked = coldFollowUpBlockReason(lead);
+    if (blocked) {
+      console.warn(`⏸️  follow-up deferred → ${lead.email} (${blocked})`);
+      return false;
+    }
     // Staffing follow-ups use their own locked copy; the cadence, sender,
     // thread and every safety gate below remain the shared ones.
     // Only the staffing branch is guarded: dental and roofing keep their exact
@@ -4652,6 +4766,10 @@ async function run() {
     catch (error) { console.warn(`⏸️  sender routing refused → ${lead.email} (${error.message})`); continue; }
     if (!senderChoice.sender) { console.warn(`⏸️  sender routing deferred → ${lead.email} (${senderChoice.reason})`); continue; }
     const selectedSender = senderChoice.sender;
+    if (resolveLeadFamily(lead).family === CAMPAIGN_FAMILY.UNROUTED) {
+      console.warn(`🧭 [routing] skipping step-1 send → ${lead.email} — unknown or ambiguous niche`);
+      continue;
+    }
     const campaignProvider = providerForLead(lead);
     if (campaignProvider.provider === 'smartlead') {
       if (DRY_RUN) { console.log(`— WOULD ADD TO SMARTLEAD → ${lead.email} (campaign ${campaignProvider.externalCampaignId || 'missing mapping'})`); continue; }
@@ -4674,6 +4792,9 @@ async function run() {
         if (invalid) throw new Error(invalid);
         built = { ...email, link: '', opener: 'locked roofing survey copy', openerTier: 'LOCKED', pitchTier: ROOFING_SURVEY_PROFILE };
       } else if (lead.emailTemplateId === STAFFING_TEMPLATE) {
+        if (familyForLead(lead) !== CAMPAIGN_FAMILY.STAFFING) {
+          throw new Error('staffing template cannot send for a non-staffing family');
+        }
         // The opening was researched, audited and approved offline; the agent
         // only merges it. renderStaffingEmail throws when it is missing.
         const email = renderStaffingEmail(lead, 1);
@@ -4681,6 +4802,9 @@ async function run() {
         if (bad) throw new Error(bad);
         built = { ...email, link: '', opener: 'approved staffing opening', openerTier: 'LOCKED', pitchTier: 'industrial_staffing' };
       } else {
+        if (familyForLead(lead) === CAMPAIGN_FAMILY.STAFFING) {
+          throw new Error('staffing lead cannot use dental cold copy');
+        }
         built = await buildEmail(lead);
       }
     } catch (e) {
@@ -4797,6 +4921,11 @@ async function run() {
     const currentStep = parseInt(lead.emailStep, 10);
     const nextStepNum = currentStep + 1;
     const template = FOLLOW_UP_SEQUENCE[currentStep - 1];
+    const blocked = coldFollowUpBlockReason(lead);
+    if (blocked) {
+      console.warn(`⏸️  follow-up deferred → ${lead.email} (${blocked})`);
+      continue;
+    }
     // Staffing follow-ups use their own locked copy; the cadence, sender,
     // thread and every safety gate below remain the shared ones.
     // Only the staffing branch is guarded: dental and roofing keep their exact

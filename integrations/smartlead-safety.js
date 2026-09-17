@@ -177,4 +177,4 @@ function suppressionFromProviderStatus(incomingStatus, email) {
   return null;
 }
 
-module.exports = { ACTIVE_STATUSES, TERMINAL_STATUSES, normalizeEmail, csvSet, buildEventKey, buildMappingKey, mappingMatchesEvent, leadEligibility, mutationDecision, canApplyProviderTransition, stripText, safeAuditPayload, eventStateTransition, executeEventAttempt, KeyedLock, fetchAllCampaignLeads, aggregateProviderStats, reconciliationHealth, admitSmartleadWebhook, suppressionFromProviderStatus };
+module.exports = { ACTIVE_STATUSES, TERMINAL_STATUSES, REPLY_STATUSES, normalizeEmail, normalizeStatus, csvSet, buildEventKey, buildMappingKey, mappingMatchesEvent, leadEligibility, mutationDecision, canApplyProviderTransition, stripText, safeAuditPayload, eventStateTransition, executeEventAttempt, KeyedLock, fetchAllCampaignLeads, aggregateProviderStats, reconciliationHealth, admitSmartleadWebhook, suppressionFromProviderStatus };
