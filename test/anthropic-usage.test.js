@@ -327,7 +327,11 @@ test('every production Anthropic call site is tracked with an explicit feature',
   assert.match(agent, /ANTHROPIC_FEATURES\.reply_question_answer/);
   assert.match(agent, /boundedSite = String\(siteText \|\| ''\)\.slice\(0, 1500\)/);
   assert.match(agent, /createTrackedAnthropic/);
+  assert.match(agent, /messageId: message\.messageId/);
+  assert.match(agent, /threadId: message\.threadId/);
   assert.doesNotMatch(agent, /new Anthropic\(/);
+  assert.match(read('integrations/reply-classifier.js'), /messageId,/);
+  assert.match(read('server.js'), /messageId: eventRow\.eventKey/);
 });
 
 test('JSONL persistence stores metadata only and respects retention files', async () => {
@@ -351,4 +355,42 @@ test('JSONL persistence stores metadata only and respects retention files', asyn
 
 test('invalid usage date range is rejected', async () => {
   await assert.rejects(() => queryAnthropicUsage({ date: 'not-a-date' }), error => error.code === 'INVALID_DATE');
+});
+
+test('usage query supports an inclusive from/to date range', async () => {
+  await recordUsage({
+    feature: FEATURES.cold_personalization, model: 'claude-haiku-4-5',
+    occurredAt: '2026-09-10T19:00:00.000Z', success: true, inputTokens: 10, outputTokens: 1,
+  });
+  await recordUsage({
+    feature: FEATURES.staffing_personalization, model: 'claude-haiku-4-5',
+    occurredAt: '2026-09-17T19:00:00.000Z', success: true, inputTokens: 20, outputTokens: 2,
+  });
+  const summary = await queryAnthropicUsage({ from: '2026-09-10', to: '2026-09-17' });
+  assert.equal(summary.from, '2026-09-10');
+  assert.equal(summary.to, '2026-09-17');
+  assert.equal(summary.date, null);
+  assert.equal(summary.totals.requests, 2);
+  assert.equal(summary.totals.inputTokens, 30);
+  assert.ok(summary.byFeature.some(row => row.key === 'staffing_personalization'));
+});
+
+test('ambiguous reply classification records leadId messageId and threadId', async () => {
+  const send = fakeSend({ text: 'NEEDS_HUMAN', usage: { input_tokens: 8, output_tokens: 1 } });
+  assert.equal(await classifyReply({
+    plainTextReply: 'zzzz qqqq nnnn',
+    createMessage: send,
+    lead: { id: 'CE-1', company: 'Acme', email: 'a@x.com' },
+    campaign: { id: 'dental' },
+    messageId: 'msg-1',
+    threadId: 'thr-1',
+  }), 'NEEDS_HUMAN');
+  assert.equal(send.calls(), 1);
+  const row = listUsageRecords()[0];
+  assert.equal(row.feature, 'reply_classification');
+  assert.equal(row.leadId, 'CE-1');
+  assert.equal(row.campaign, 'dental');
+  assert.equal(row.messageId, 'msg-1');
+  assert.equal(row.threadId, 'thr-1');
+  assert.equal(row.inputTokens, 8);
 });

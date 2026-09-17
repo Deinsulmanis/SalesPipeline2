@@ -66,7 +66,7 @@ function failSafeReplyCategory(text, options = {}) {
   return '';
 }
 
-async function classifyReply({ provider = 'gmail', lead = {}, campaign = {}, subject = '', plainTextReply = '', conversationContext = '', apiKey = process.env.ANTHROPIC_API_KEY, createMessage } = {}) {
+async function classifyReply({ provider = 'gmail', lead = {}, campaign = {}, subject = '', plainTextReply = '', conversationContext = '', apiKey = process.env.ANTHROPIC_API_KEY, createMessage, messageId = '', threadId = '' } = {}) {
   const reply = stripText(plainTextReply, 5000);
   const options = { subject, currentEmail: lead.email };
   const deterministic = deterministicReplyCategory(reply, options);
@@ -84,6 +84,8 @@ async function classifyReply({ provider = 'gmail', lead = {}, campaign = {}, sub
         operation: 'classify',
         campaign: campaign.name || campaign.id || '',
         leadId: lead.id || lead.email || '',
+        messageId,
+        threadId,
       },
     );
     const msg = await send({

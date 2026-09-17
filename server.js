@@ -5895,7 +5895,14 @@ async function processStoredSmartleadEvent(eventRow) {
   if (!supported.has(eventRow.eventType)) return 'ignored';
   let incomingStatus = normalizeEvent({ event_type: eventRow.eventType, campaign_id: eventRow.externalCampaignId, lead_id: eventRow.externalLeadId, lead_email: audit.email, timestamp: audit.timestamp, category: audit.category, preview_text: audit.replyPreview, subject: audit.subject }).status;
   if (eventRow.eventType === 'EMAIL_REPLY' && audit.replyPreview) {
-    const classification = await classifyProviderReply({ provider: 'smartlead', lead: { company: '' }, campaign: { id: eventRow.externalCampaignId }, subject: audit.subject, plainTextReply: audit.replyPreview });
+    const classification = await classifyProviderReply({
+      provider: 'smartlead',
+      lead: { company: '', id: eventRow.externalLeadId || '' },
+      campaign: { id: eventRow.externalCampaignId },
+      subject: audit.subject,
+      plainTextReply: audit.replyPreview,
+      messageId: eventRow.eventKey || eventRow.requestId || '',
+    });
     incomingStatus = CLASSIFICATION_TO_STATUS[classification] || 'Replied';
   }
   const providerRows = await migrateProviderMappings();

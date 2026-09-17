@@ -1484,10 +1484,13 @@ const CLASSIFY_FALLBACK = 'NEEDS_HUMAN';
 async function classifyReply(company, replyBody, extra = {}) {
   return classifyProviderReply({
     provider: 'gmail',
-    lead: { company, email: extra.email || '' },
+    lead: { company, email: extra.email || '', id: extra.leadId || '' },
+    campaign: extra.campaign || {},
     subject: extra.subject || '',
     plainTextReply: replyBody,
     apiKey: ANTHROPIC_API_KEY,
+    messageId: extra.messageId || '',
+    threadId: extra.threadId || '',
   });
 }
 
@@ -1505,7 +1508,7 @@ async function classifyReply(company, replyBody, extra = {}) {
 // mode 'draft' → write to the review queue, never send
 const ANSWER_MAX_TOKENS = 400;
 
-async function answerQuestion(lead, replyText) {
+async function answerQuestion(lead, replyText, extra = {}) {
   const scoped = factsForLead(lead);
   const company = cleanCompanyName(lead.company) || scoped.companyFallback || 'your business';
   const draft = (body, reason, confidence = 0) => ({ mode: 'draft', body, reason, confidence });
@@ -1574,6 +1577,8 @@ async function answerQuestion(lead, replyText) {
       operation: 'answer',
       campaign: lead.campaign || lead.intendedCampaignVersion || scoped.family || '',
       leadId: lead.id || '',
+      messageId: extra.messageId || '',
+      threadId: extra.threadId || '',
     });
 
     const raw = (msg.content[0]?.text || '').trim();
@@ -2351,7 +2356,10 @@ async function queueDraft(lead, answer) {
 // draft it for Deins. Either way the lead is tagged so the dashboard shows it.
 async function handleQuestion(lead, message, replyText, todaySent, activities = [], outboundObservationOk = true, sender = senderForPersistedLead(lead)) {
   const rowNum = await resolveRow(lead.id);
-  const answer = await answerQuestion(lead, replyText);
+  const answer = await answerQuestion(lead, replyText, {
+    messageId: message.messageId || '',
+    threadId: message.threadId || '',
+  });
 
   // ── gates that apply to auto-send only ──
   // A drafted reply is never sent by the agent, so it needs no send gate; a
@@ -2764,7 +2772,11 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       else console.log(`  ↩ Roofing survey reply from ${lead.email} (${company}) — no writes in dry run`);
       continue;
     }
-    let classification = await classifyReply(lead.company, replyText, { subject: message.subject, email: lead.email });
+    let classification = await classifyReply(lead.company, replyText, {
+      subject: message.subject, email: lead.email, leadId: lead.id,
+      campaign: { id: lead.campaign || lead.intendedCampaignVersion || '', name: lead.campaign || '' },
+      messageId: message.messageId, threadId: message.threadId,
+    });
     const canonicalReply = classifyReplyText(replyText, {
       subject: message.subject || '', currentEmail: lead.email, now: message.occurredAt || null,
     });

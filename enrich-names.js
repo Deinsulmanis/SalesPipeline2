@@ -208,13 +208,14 @@ async function fetchAboutContentHeadless(browser, websiteUrl, company) {
 
 // ── EXTRACTION ────────────────────────────────────────────────────────────────
 
-async function extractOwnerName(company, content, websiteUrl) {
+async function extractOwnerName(company, content, websiteUrl, leadId) {
   try {
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 0 });
     const create = wrapCreateMessage(input => anthropic.messages.create(input), {
       feature: FEATURES.site_research,
       operation: 'extract_owner_name',
       campaign: process.env.CAMPAIGN || '',
+      leadId: leadId || company || '',
     });
     const msg = await create({
       model: 'claude-haiku-4-5',
@@ -368,7 +369,7 @@ async function run() {
         continue;
       }
 
-      const name = await extractOwnerName(company, result.content, result.url);
+      const name = await extractOwnerName(company, result.content, result.url, lead.id);
       if (!name) {
         console.log(`[skip] ${company} — name not found in content`);
         noName++;
