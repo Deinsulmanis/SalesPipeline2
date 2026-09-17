@@ -1,7 +1,7 @@
 'use strict';
 
 const { BOOKING_URL } = require('../booking');
-const { familyForLead } = require('./campaign-versions');
+const { CAMPAIGN_FAMILY, resolveLeadFamily } = require('./campaign-versions');
 
 const OFFERS = Object.freeze({
   dental_ai_receptionist: Object.freeze({
@@ -74,7 +74,11 @@ function parsePricing(raw = process.env.OFFER_PRICING_JSON || '') {
 }
 
 function offerForLead(lead, env = process.env) {
-  const family = familyForLead(lead);
+  const resolved = resolveLeadFamily(lead);
+  const family = resolved.family;
+  if (family === CAMPAIGN_FAMILY.UNROUTED || !resolved.confident) {
+    throw new Error(resolved.reason || 'No approved offer facts for an unrouted lead');
+  }
   const base = OFFERS[family];
   if (!base) throw new Error(`No approved offer facts for ${family}`);
   const pricing = parsePricing(env.OFFER_PRICING_JSON)[family] || null;

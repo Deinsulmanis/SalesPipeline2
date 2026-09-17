@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const { chooseSender } = require('../integrations/gmail-sender-routing');
 const { queueEligibility, queueSelectedLeads } = require('../integrations/outreach-queue');
 const { STAFFING_CAMPAIGN, renderStaffingEmail, BOLD_PHRASES } = require('../integrations/staffing-campaign');
+const { STAFFING_RENDER_OPTIONS } = require('../test-support/staffing-mail');
 const { buildMultipartAlternative } = require('../integrations/email-alternative');
 const { applyLeadChange } = require('../integrations/outreach-state');
 const { createPostgrestDouble } = require('../test-support/postgrest-double');
@@ -19,7 +20,7 @@ const staffing = { id: 'L1', company: 'Example Staffing', email: 'owner@example.
   siteContext: 'Your warehouse staffing team serves local manufacturers.', senderInboxId: 'primary', routingRequired: 'true' };
 const dental = { ...staffing, leadNiche: 'dental', campaign: 'Dental pilot', emailTemplateId: 'dental-guarantee-v1', senderInboxId: 'tryscalelabai' };
 const sent = id => ({ sourceLeadId: 'L1', eventType: 'initial_email_sent', metadata: JSON.stringify({ senderInboxId: id }) });
-const eligibility = (lead, extra = {}) => queueEligibility(lead, { leads: [lead], ...extra });
+const eligibility = (lead, extra = {}) => queueEligibility(lead, { leads: [lead], ...STAFFING_RENDER_OPTIONS, ...extra });
 
 test('new staffing honours chosen scalelabai despite the other inbox having more capacity', () => {
   assert.equal(chooseSender({ lead: staffing, senders, sendsToday: new Map([['primary', 20]]) }).sender.email, senders[0].email);
@@ -67,7 +68,7 @@ test('queue only changes five routing/stage fields and repeated enrollment is a 
   let lead = { ...staffing };
   const mutations = [], events = [];
   const deps = {
-    loadState: async () => ({ leads: [lead] }), validateSelection: () => ({ ok: true }),
+    loadState: async () => ({ leads: [lead], ...STAFFING_RENDER_OPTIONS }), validateSelection: () => ({ ok: true }),
     applyChanges: async changes => changes.map(({ lead: before, patch }) => { mutations.push(patch); lead = { ...before, ...patch }; return { leadId: before.id, status: 'succeeded' }; }),
     appendActivity: async event => events.push(event),
   };
@@ -101,7 +102,7 @@ test('canonical queue refuses a hold that arrived after preflight but before the
 });
 
 for (const step of [1, 2, 3]) test(`step ${step} MIME preserves exact text and its one approved bold phrase`, () => {
-  const email = renderStaffingEmail(staffing, step);
+  const email = renderStaffingEmail(staffing, step, STAFFING_RENDER_OPTIONS);
   const mime = buildMultipartAlternative(email.body, email.html);
   const parts = [...mime.body.matchAll(/Content-Transfer-Encoding: base64\r\n\r\n([A-Za-z0-9+/=\r\n]+?)\r\n--/g)].map(m => Buffer.from(m[1].replace(/\r\n/g, ''), 'base64').toString('utf8'));
   assert.equal(parts[0], email.body); assert.equal(parts[1], email.html);

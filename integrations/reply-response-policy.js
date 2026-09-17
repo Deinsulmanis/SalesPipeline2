@@ -7,28 +7,63 @@ const ACTION = Object.freeze({
   SUPPRESS: 'SUPPRESS', WAIT_OUT_OF_OFFICE: 'WAIT_OUT_OF_OFFICE', HUMAN_REVIEW: 'HUMAN_REVIEW', NO_ACTION: 'NO_ACTION',
 });
 
-function decideReplyResponse({ classification, canonical = {}, confidence = 0, offer = {}, text = '' }) {
+const POSITIVE_AUTOSEND_FLOOR = 85;
+const QUESTION_AUTOSEND_FLOOR = 85;
+
+const CONFIDENCE_SCORE = Object.freeze({
+  high: 90, medium: 70, low: 40, none: 0,
+});
+
+function numericConfidence({ classification = '', canonical = {}, confidence } = {}) {
+  if (Number.isFinite(Number(confidence)) && Number(confidence) > 0) return Number(confidence);
+  const signals = canonical.signals || [];
+  if (String(classification).toUpperCase() === 'MEETING_REQUEST' && signals.includes('meeting')) return 95;
+  if (canonical.confidence === 'high' && canonical.state === 'positive'
+    && (signals.includes('expressed_interest') || signals.includes('willing_to_evaluate')
+      || signals.includes('next_steps') || signals.includes('meeting'))) return 90;
+  return CONFIDENCE_SCORE[canonical.confidence] || 0;
+}
+
+function decideReplyResponse({
+  classification, canonical = {}, confidence = 0, offer = {}, text = '', family = '',
+} = {}) {
   const kind = String(classification || '').toUpperCase();
-  if (kind === 'UNSUBSCRIBE') return { action: ACTION.SUPPRESS, send: false, reason: 'explicit opt-out' };
-  if (kind === 'NOT_INTERESTED') return { action: ACTION.AUTO_NEGATIVE_CLOSE, send: false, reason: 'explicit negative' };
+  const score = numericConfidence({ classification, canonical, confidence });
+  if (kind === 'UNSUBSCRIBE') return { action: ACTION.SUPPRESS, send: false, reason: 'explicit opt-out', confidence: score };
+  if (kind === 'NOT_INTERESTED') return { action: ACTION.AUTO_NEGATIVE_CLOSE, send: false, reason: 'explicit negative', confidence: score };
   if (canonical.revisitDate || canonical.returnDate) {
     return { action: ACTION.AUTO_TIMING_RECONTACT, send: false, reason: 'explicit future date',
-      dueAt: canonical.revisitDate || canonical.returnDate };
+      dueAt: canonical.revisitDate || canonical.returnDate, confidence: score };
   }
-  if (kind === 'OUT_OF_OFFICE') return { action: ACTION.WAIT_OUT_OF_OFFICE, send: false, reason: 'automated reply' };
-  if (kind === 'WRONG_PERSON' || kind === 'NEEDS_HUMAN') return { action: ACTION.HUMAN_REVIEW, send: false, reason: 'identity or meaning requires review' };
-  if (kind === 'MEETING_REQUEST') return { action: ACTION.AUTO_MEETING_RESPONSE, send: true, reason: 'explicit scheduling intent' };
-  if (kind === 'INTERESTED') return { action: ACTION.AUTO_BOOKING_RESPONSE, send: true, reason: 'high-confidence positive intent' };
+  if (kind === 'OUT_OF_OFFICE') return { action: ACTION.WAIT_OUT_OF_OFFICE, send: false, reason: 'automated reply', confidence: score };
+  if (kind === 'WRONG_PERSON' || kind === 'NEEDS_HUMAN') {
+    return { action: ACTION.HUMAN_REVIEW, send: false, reason: 'identity or meaning requires review', confidence: score };
+  }
+  if (kind === 'MEETING_REQUEST') {
+    if (score >= POSITIVE_AUTOSEND_FLOOR) {
+      return { action: ACTION.AUTO_MEETING_RESPONSE, send: true, reason: 'explicit scheduling intent above confidence floor', confidence: score };
+    }
+    return { action: ACTION.HUMAN_REVIEW, send: false, reason: 'meeting request confidence below auto-send floor', confidence: score };
+  }
+  if (kind === 'INTERESTED') {
+    if (score >= POSITIVE_AUTOSEND_FLOOR) {
+      return { action: ACTION.AUTO_BOOKING_RESPONSE, send: true, reason: 'high-confidence positive intent', confidence: score };
+    }
+    return { action: ACTION.HUMAN_REVIEW, send: false, reason: 'positive classification below auto-send confidence floor', confidence: score };
+  }
   if (kind === 'QUESTION') {
     const pricing = /\b(pric|cost|fee|charge|how much|\$|rate|monthly|per month)\b/i.test(text);
     if (pricing) return offer.pricing?.approvedWording
-      ? { action: ACTION.AUTO_PRICING_RESPONSE, send: true, reason: 'approved campaign pricing configured' }
-      : { action: ACTION.HUMAN_REVIEW, send: false, reason: 'pricing is not configured for this campaign' };
-    return Number(confidence) >= 85
-      ? { action: ACTION.AUTO_QUESTION_RESPONSE, send: true, reason: 'grounded answer above confidence threshold' }
-      : { action: ACTION.HUMAN_REVIEW, send: false, reason: 'answer confidence below threshold' };
+      ? { action: ACTION.AUTO_PRICING_RESPONSE, send: true, reason: 'approved campaign pricing configured', confidence: score }
+      : { action: ACTION.HUMAN_REVIEW, send: false, reason: 'pricing is not configured for this campaign', confidence: 0 };
+    return score >= QUESTION_AUTOSEND_FLOOR
+      ? { action: ACTION.AUTO_QUESTION_RESPONSE, send: true, reason: 'grounded answer above confidence threshold', confidence: score }
+      : { action: ACTION.HUMAN_REVIEW, send: false, reason: 'answer confidence below threshold', confidence: score };
   }
-  return { action: ACTION.HUMAN_REVIEW, send: false, reason: 'unsupported classification' };
+  return { action: ACTION.HUMAN_REVIEW, send: false, reason: 'unsupported classification', confidence: score, family };
 }
 
-module.exports = { ACTION, decideReplyResponse };
+module.exports = {
+  ACTION, decideReplyResponse, numericConfidence,
+  POSITIVE_AUTOSEND_FLOOR, QUESTION_AUTOSEND_FLOOR,
+};

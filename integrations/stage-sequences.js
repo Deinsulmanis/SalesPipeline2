@@ -20,6 +20,7 @@
  */
 
 const { addBusinessDays, businessDay } = require('./pipeline-state');
+const { CAMPAIGN_FAMILY, resolveLeadFamily } = require('./campaign-versions');
 // Stage comparisons go through the canonical normaliser, never the raw cell.
 // Legacy rows store values like 'lost', 'warm' or 'Hot', and a raw compare
 // would silently skip both the Hot journey AND the closed-lost stop condition.
@@ -135,6 +136,34 @@ const SEQUENCES = Object.freeze({
   },
 });
 const SEQUENCE_IDS = Object.freeze(Object.keys(SEQUENCES));
+
+const DENTAL_ONLY_SEQUENCES = Object.freeze(['demo_follow_up_v1']);
+
+function sequenceAllowedForLead(sequenceId, lead = {}) {
+  const id = String(sequenceId || '');
+  const resolved = resolveLeadFamily(lead);
+  if (!id) return { ok: false, reason: 'sequence id is required', family: resolved.family };
+  if (id === 'industrial_staffing_cold' && resolved.family !== CAMPAIGN_FAMILY.STAFFING) {
+    return { ok: false, reason: 'staffing sequence cannot attach to a non-staffing lead', family: resolved.family };
+  }
+  if (id === 'dental_ai_receptionist_cold' && resolved.family !== CAMPAIGN_FAMILY.DENTAL) {
+    return { ok: false, reason: 'dental sequence cannot attach to a non-dental lead', family: resolved.family };
+  }
+  if (DENTAL_ONLY_SEQUENCES.includes(id)) {
+    if (resolved.family === CAMPAIGN_FAMILY.STAFFING) {
+      return { ok: false, reason: 'dental sequence cannot attach to a staffing lead', family: resolved.family };
+    }
+    if (resolved.confident && resolved.family && resolved.family !== CAMPAIGN_FAMILY.DENTAL) {
+      return { ok: false, reason: 'demo follow-up copy is dental-only', family: resolved.family };
+    }
+  }
+  if (!resolved.confident || resolved.family === CAMPAIGN_FAMILY.UNROUTED) {
+    if (id === 'industrial_staffing_cold' || id === 'dental_ai_receptionist_cold') {
+      return { ok: false, reason: resolved.reason || 'unrouted lead cannot enter an offer-specific sequence', family: resolved.family };
+    }
+  }
+  return { ok: true, family: resolved.family };
+}
 
 // Which journey wins when more than one looks eligible. Meeting reality first,
 // then the live human conversation, then demo interest, then nurture.
@@ -357,7 +386,11 @@ function evaluateStageSequence(input = {}) {
   if (stage === 'follow_up' && activities.some(row => String(row.eventType || '') === 'booking_link_sent')) {
     offers.push('demo_follow_up_v1');
   }
-  const offered = SEQUENCE_PRECEDENCE.filter(id => offers.includes(id));
+  const offered = SEQUENCE_PRECEDENCE.filter(id => {
+    if (!offers.includes(id)) return false;
+    const allowed = sequenceAllowedForLead(id, twin);
+    return allowed.ok;
+  });
   base.offers = offered;
   base.offer = offered[0] || null;
 
@@ -383,6 +416,10 @@ function evaluateStageSequence(input = {}) {
   if (stop) return { ...base, status: SEQUENCE_STATUS.ACTIVE, stopReason: stop, reason: stop };
 
   if (!definition) return { ...base, reason: 'unknown sequence id — refusing to send' };
+  const allowed = sequenceAllowedForLead(state.sequenceId, twin);
+  if (!allowed.ok) {
+    return { ...base, eligible: false, reason: allowed.reason };
+  }
 
   // Bounded: never past maxSteps.
   if (state.step >= definition.maxSteps) {
@@ -503,6 +540,8 @@ function automaticEnrollmentDecision(input = {}) {
   if (state.status !== SEQUENCE_STATUS.NONE) return { enroll: false, reason: 'sequence state already exists' };
   const sequenceId = String(verdict.offer || '');
   if (!sequenceId) return { enroll: false, reason: 'no unambiguous journey applies' };
+  const allowed = sequenceAllowedForLead(sequenceId, twin);
+  if (!allowed.ok) return { enroll: false, reason: allowed.reason };
   if (verdict.stopReason) return { enroll: false, reason: verdict.stopReason };
   if (!senderProof?.ok) return { enroll: false, reason: senderProof?.reason || 'sender ownership is not proven' };
   if (!thread?.threadId) return { enroll: false, reason: 'conversation thread is not proven for the owning sender' };
@@ -663,6 +702,8 @@ const SEQUENCE_COPY = Object.freeze({
  * preview and the sender produce byte-identical output.
  */
 function buildSequenceEmail(sequenceId, step, lead = {}, options = {}) {
+  const allowed = sequenceAllowedForLead(sequenceId, lead);
+  if (!allowed.ok) return { error: allowed.reason };
   const steps = SEQUENCE_COPY[sequenceId];
   if (!steps) return { error: `unknown sequence "${sequenceId}"` };
   const builder = steps[step - 1];
@@ -710,5 +751,5 @@ module.exports = {
   hasManualHold, stageSequenceSuppressionReason, sequenceStopReason,
   deriveSequenceState, nextStepDueAt, evaluateStageSequence, sequenceStepEventId,
   SEQUENCE_COPY, buildSequenceEmail, resolveSequenceThread, provenSequenceSenderId,
-  automaticEnrollmentDecision, automaticEnrollmentEventId,
+  automaticEnrollmentDecision, automaticEnrollmentEventId, sequenceAllowedForLead,
 };

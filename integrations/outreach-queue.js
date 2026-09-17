@@ -10,7 +10,10 @@ const normalize = value => String(value || '').trim().toLowerCase();
 
 // A pure preflight shared by the queue action and its production-safe dry run.
 // Identity is exact ID first, email second; company names never participate.
-function queueEligibility(lead, { leads = [], activities = [], boardLeads = [], suppressedEmails = new Set() } = {}) {
+function queueEligibility(lead, {
+  leads = [], activities = [], boardLeads = [], suppressedEmails = new Set(),
+  env, mailingAddress, companyName, website,
+} = {}) {
   if (!lead.id || !lead.email || classify(lead.email) !== 'CLEAN') return { ok: false, reason: 'invalid identity' };
   if (leads.filter(item => item.id === lead.id).length !== 1
     || leads.filter(item => normalize(item.email) === normalize(lead.email)).length !== 1) {
@@ -39,7 +42,9 @@ function queueEligibility(lead, { leads = [], activities = [], boardLeads = [], 
     if (!isStaffingCampaign(lead)) return { ok: false, reason: 'staffing campaign attribution conflicts' };
     try {
       for (const step of [1, 2, 3]) {
-        const error = validateStaffingEmail(renderStaffingEmail(lead, step), step);
+        const error = validateStaffingEmail(renderStaffingEmail(lead, step, {
+          env, mailingAddress, companyName, website,
+        }), step);
         if (error) return { ok: false, reason: error };
       }
     } catch (error) { return { ok: false, reason: error.message }; }

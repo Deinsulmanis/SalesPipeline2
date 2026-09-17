@@ -24,6 +24,23 @@ function parseAddr(value) {
   return norm(match ? match[1] : value);
 }
 
+const EMAIL_TOKEN = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
+
+function extractedEmails(text) {
+  const found = new Set();
+  String(text || '').replace(EMAIL_TOKEN, match => {
+    found.add(norm(match));
+    return match;
+  });
+  return found;
+}
+
+function bounceMentionsRecipient(text, email) {
+  const wanted = norm(email);
+  if (!wanted) return false;
+  return extractedEmails(text).has(wanted);
+}
+
 function decodeBodies(payload) {
   const chunks = [];
   const walk = part => {
@@ -92,7 +109,7 @@ function matchMailboxMessages(messages, { leads = [], activities = [], senderInb
       for (const lead of leads) {
         const email = norm(lead.email);
         const afterMs = Date.parse(lead.lastEmailedAt || '');
-        if (!email || !Number.isFinite(afterMs) || occurredMs <= afterMs || !allText.toLowerCase().includes(email)) continue;
+        if (!email || !Number.isFinite(afterMs) || occurredMs <= afterMs || !bounceMentionsRecipient(allText, email)) continue;
         if (TRANSIENT_FAILURE.test(allText) && !PERMANENT_FAILURE.test(allText)) continue;
         if (PERMANENT_FAILURE.test(allText)) bounces.set(lead.id, message);
       }
@@ -119,12 +136,14 @@ async function listChangedIds(gmail, { historyId, maxPages = 20, readOpts } = {}
   const stubs = new Map();
   let pageToken;
   let pages = 0;
+  // Do NOT adopt Gmail's latest historyId until every page of this window has
+  // been read. A partial listing that stored HEAD would permanently skip the
+  // unread pages — including after a 403 quota error.
   let nextHistoryId = historyId || null;
   if (historyId) {
     do {
       const response = await providerRead('users.history.list', { userId: 'me', startHistoryId: historyId,
         maxResults: 500, pageToken, historyTypes: ['messageAdded'] }, params => gmail.users.history.list(params), readOpts);
-      nextHistoryId = response.data.historyId || nextHistoryId;
       for (const history of response.data.history || []) {
         for (const change of history.messagesAdded || []) {
           if (change.message?.id) { ids.add(change.message.id); stubs.set(change.message.id, change.message); }
@@ -132,6 +151,7 @@ async function listChangedIds(gmail, { historyId, maxPages = 20, readOpts } = {}
       }
       pageToken = response.data.nextPageToken;
       pages += 1;
+      if (!pageToken) nextHistoryId = response.data.historyId || nextHistoryId;
     } while (pageToken && pages < maxPages);
     if (pageToken) throw new Error(`Gmail History exceeded the ${maxPages}-page safety bound; checkpoint was not advanced`);
     return { ids: [...ids], stubs, nextHistoryId, mode: 'history', pages };
@@ -287,9 +307,12 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
         const signaled = getMailboxBackoff(senderInboxId, now) || signalMailboxBackoff(senderInboxId, error, { now });
         quotaBackoff = { reason: 'gmail_quota', at: new Date(now).toISOString(),
           until: signaled?.until || '', message: String(error.message || '').slice(0, 200) };
-        log('gmail_quota_backoff', { processedThroughId: provenThroughId, remaining: queue.length - messages.length, until: quotaBackoff.until });
-        if (recoveryState) break;
-        throw error;
+        log('gmail_quota_backoff', { processedThroughId: provenThroughId,
+          remaining: queue.length - messages.length, until: quotaBackoff.until, recovery: Boolean(recoveryState) });
+        // The failed id is NOT proven. Recovery resumes strictly above the last
+        // proven id; incremental history keeps the START cursor so the unread
+        // window is retried. Never adopt Gmail's HEAD after a quota stop.
+        break;
       }
       if (statusOf(error) !== 404) throw error;
       const threadId = listed.stubs?.get(id)?.threadId;
@@ -329,17 +352,25 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
         backoff: Boolean(quotaBackoff) });
   }
 
-  return { ...listed, recovered: Boolean(recovered), messages: unique, unavailable,
+  // Incremental quota is the same contract as recovery: keep what is proven,
+  // do not adopt HEAD, mark the run incomplete so the next pass retries the
+  // unresolved window from the last persisted cursor.
+  const historyIncomplete = Boolean(quotaBackoff) && !recoveryState;
+  const trustworthy = !historyIncomplete && (!recoveryResult || recoveryResult.complete);
+
+  return { ...listed,
+    nextHistoryId: historyIncomplete ? (historyId || listed.nextHistoryId) : listed.nextHistoryId,
+    recovered: Boolean(recovered), messages: unique, unavailable,
     messagesInspected: unique.length, discoveredCount: listed.ids.length,
     messagesFetched, messagesDeduplicated,
-    recovery: recoveryResult,
-    // While a recovery is still in flight the mailbox has NOT reached a
-    // trustworthy observation point, so the caller must not advance the normal
-    // History checkpoint or treat the inbox as send-safe.
-    trustworthy: !recoveryResult || recoveryResult.complete,
+    recovery: recoveryResult, historyIncomplete, quotaBackoff,
+    observerHealth: !trustworthy ? (quotaBackoff ? 'unhealthy_quota' : 'unhealthy_incomplete') : 'healthy',
+    // While a recovery is still in flight — or an incremental history read was
+    // cut short by quota — the mailbox has NOT reached a trustworthy point.
+    trustworthy,
     ...matchMailboxMessages(unique, { leads, activities, senderInboxId, senderEmail }) };
 }
 
 module.exports = { headerValue, parseAddr, decodeBodies, firstPlainText, matchMailboxMessages,
-  listChangedIds, listCatchup, observeMailbox, providerRead, isRateLimited,
+  bounceMentionsRecipient, extractedEmails, listChangedIds, listCatchup, observeMailbox, providerRead, isRateLimited,
   OVERLAP_MS, STALE_MS, RECOVERY_READ_BUDGET, byIdAscending, persistedGmailMessageIds };

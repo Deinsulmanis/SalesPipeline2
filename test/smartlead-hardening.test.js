@@ -7,7 +7,7 @@ const path = require('node:path');
 const { SmartleadClient, SmartleadError } = require('../integrations/smartlead-client');
 const { normalizeEvent } = require('../integrations/smartlead-events');
 const { classifyReply } = require('../integrations/reply-classifier');
-const { normalizeEmail, buildEventKey, buildMappingKey, mappingMatchesEvent, leadEligibility, mutationDecision, canApplyProviderTransition, safeAuditPayload, eventStateTransition, executeEventAttempt, KeyedLock, fetchAllCampaignLeads, aggregateProviderStats, reconciliationHealth } = require('../integrations/smartlead-safety');
+const { normalizeEmail, buildEventKey, buildMappingKey, mappingMatchesEvent, leadEligibility, mutationDecision, canApplyProviderTransition, safeAuditPayload, eventStateTransition, executeEventAttempt, KeyedLock, fetchAllCampaignLeads, aggregateProviderStats, reconciliationHealth, admitSmartleadWebhook, suppressionFromProviderStatus } = require('../integrations/smartlead-safety');
 
 test('event keys prefer request ID and otherwise hash exact body', () => {
   const a = Buffer.from('{"a":1}'), b = Buffer.from('{"a":2}');
@@ -148,4 +148,41 @@ test('failed-event visibility and retry endpoints require dashboard authenticati
 test('browser code contains no Smartlead secrets or API key variables', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
   assert.doesNotMatch(source, /SMARTLEAD_(?:API_KEY|WEBHOOK_SECRET|TEST_RECIPIENT_ALLOWLIST|APPROVED_CAMPAIGN_IDS)/);
+});
+
+test('disabled Smartlead integration fails closed after authentication and does not mutate', () => {
+  const denied = admitSmartleadWebhook({ authenticated: false, integrationEnabled: false });
+  assert.deepEqual(denied, { ok: false, status: 401, error: 'Invalid webhook authentication', mutate: false });
+  const disabled = admitSmartleadWebhook({ authenticated: true, integrationEnabled: false });
+  assert.equal(disabled.ok, false);
+  assert.equal(disabled.status, 503);
+  assert.equal(disabled.mutate, false);
+  const enabled = admitSmartleadWebhook({ authenticated: true, integrationEnabled: true });
+  assert.deepEqual(enabled, { ok: true, mutate: true });
+
+  const source = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const handler = source.slice(source.indexOf('async function handleSmartleadWebhook'), source.indexOf('async function reconcileSmartlead'));
+  assert.match(handler, /admitSmartleadWebhook\(\{ authenticated, integrationEnabled: smartleadClient\.integrationEnabled \}\)/);
+  assert.ok(handler.indexOf('if (!admission.ok)') < handler.indexOf('JSON.parse'),
+    '503/401 must return before parsing or processing the body');
+  assert.ok(handler.indexOf('if (!admission.ok)') < handler.indexOf('appendIntegrationRow'),
+    'disabled/unauthenticated webhooks must return before any event persistence');
+  assert.ok(handler.indexOf('if (!admission.ok)') < handler.indexOf('updateIntegrationHealth'),
+    'disabled webhooks must not write integration health');
+  assert.ok(handler.indexOf('if (!admission.ok)') < handler.indexOf('runStoredEvent'),
+    'disabled webhooks must not process stored events');
+});
+
+test('unsubscribe and bounce suppress by normalized email without a local lead match', () => {
+  assert.deepEqual(suppressionFromProviderStatus('Unsubscribed', '  A@B.COM '), { email: 'a@b.com', reason: 'unsubscribe' });
+  assert.deepEqual(suppressionFromProviderStatus('Bounced', 'Lead@Example.com'), { email: 'lead@example.com', reason: 'bounce' });
+  assert.equal(suppressionFromProviderStatus('Replied', 'a@b.com'), null);
+  assert.equal(suppressionFromProviderStatus('Unsubscribed', ''), null);
+
+  const source = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const processor = source.slice(source.indexOf('async function processStoredSmartleadEvent'), source.indexOf('async function runStoredEvent'));
+  assert.match(processor, /suppressionFromProviderStatus\(incomingStatus, email\)/);
+  assert.match(processor, /addSuppression\(suppression\.email, suppression\.reason/);
+  assert.ok(processor.indexOf('suppressionFromProviderStatus') < processor.indexOf('if (found)'),
+    'suppression must not wait for a unique local lead match');
 });

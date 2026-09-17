@@ -25,6 +25,7 @@ const {
 } = require('../integrations/outreach-state');
 const { queueSelectedLeads } = require('../integrations/outreach-queue');
 const { STAFFING_CAMPAIGN } = require('../integrations/staffing-campaign');
+const { TEST_STAFFING_MAILING_ADDRESS } = require('../test-support/staffing-mail');
 const { MANUAL_HOLD_TAG, sendSuppressionReason } = require('../integrations/pipeline-state');
 
 const root = path.join(__dirname, '..');
@@ -282,7 +283,7 @@ const LEADS = [staffingLead('L1', 'alex@example.com'), staffingLead('L2', 'jorda
 test('a queue action reports each lead\'s verdict and records activity only for leads that queued', async () => {
   const events = [];
   const result = await queueSelectedLeads(REQUEST, {
-    loadState: async () => ({ leads: LEADS }), validateSelection: () => ({ ok: true }),
+    loadState: async () => ({ leads: LEADS, mailingAddress: TEST_STAFFING_MAILING_ADDRESS }), validateSelection: () => ({ ok: true }),
     applyChanges: async changes => changes.map(({ lead }) => ({
       leadId: lead.id, status: { L1: 'succeeded', L2: 'refused', L3: 'conflict' }[lead.id], reason: 'test verdict' })),
     appendActivity: async ({ lead }) => events.push(lead.id),
@@ -298,7 +299,7 @@ test('a queue action reports each lead\'s verdict and records activity only for 
 test('a batch that throws fails every pending lead and invents no success', async () => {
   const events = [];
   const result = await queueSelectedLeads(REQUEST, {
-    loadState: async () => ({ leads: LEADS }), validateSelection: () => ({ ok: true }),
+    loadState: async () => ({ leads: LEADS, mailingAddress: TEST_STAFFING_MAILING_ADDRESS }), validateSelection: () => ({ ok: true }),
     applyChanges: async () => { throw new Error('Supabase unreachable'); },
     appendActivity: async ({ lead }) => events.push(lead.id),
   });
@@ -309,7 +310,7 @@ test('a batch that throws fails every pending lead and invents no success', asyn
 
 test('a lead that comes back with no verdict is failed, never assumed queued', async () => {
   const result = await queueSelectedLeads(REQUEST, {
-    loadState: async () => ({ leads: LEADS }), validateSelection: () => ({ ok: true }),
+    loadState: async () => ({ leads: LEADS, mailingAddress: TEST_STAFFING_MAILING_ADDRESS }), validateSelection: () => ({ ok: true }),
     applyChanges: async () => [{ leadId: 'L1', status: 'succeeded' }, { leadId: 'L2', status: 'done' }],
     appendActivity: async () => {},
   });
@@ -320,7 +321,7 @@ test('retrying a queue after partial success sends only the leads that did not l
   let leads = LEADS.map(lead => ({ ...lead }));
   const sent = [];
   const deps = {
-    loadState: async () => ({ leads }), validateSelection: () => ({ ok: true }),
+    loadState: async () => ({ leads, mailingAddress: TEST_STAFFING_MAILING_ADDRESS }), validateSelection: () => ({ ok: true }),
     applyChanges: async changes => changes.map(({ lead, patch }) => {
       sent.push(lead.id);
       if (lead.id === 'L2' && sent.filter(id => id === 'L2').length === 1) return { leadId: lead.id, status: 'failed', reason: 'transient' };

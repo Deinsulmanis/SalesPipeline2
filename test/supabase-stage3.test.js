@@ -604,7 +604,7 @@ test('I6 — no live operational ColdEmail writer bypasses the abstraction', () 
     { fn: 'ensureColdEmailSheet', file: 'server.js', why: 'schema init - writes the header row, never lead state' },
     { fn: 'ensureAgentHeaders', file: 'outreach-agent.js', why: 'schema init - writes the P1 header only' },
     { fn: "app.put('/api/coldemail/:id'", file: 'server.js',
-      why: 'legacy and UI-unreachable; builds 24 values for an A:S range so Sheets rejects it (fail-closed)' },
+      why: 'legacy full-row PUT; still a direct writer, now A:X so all 24 CE_COLUMNS persist' },
   ];
 
   const server = coldEmailWriteSites(serverSrc, 'Leads');
@@ -845,7 +845,7 @@ test('M3 — a mirror failure cannot undo or obscure a committed Sheets write', 
     'the mirror must run only after the authoritative write has succeeded');
   // ok reports the AUTHORITATIVE outcome; mirrored is reported separately so a
   // deferred mirror is never mistaken for a failed mutation, nor the reverse.
-  assert.match(fn, /return \{ ok: true, leadId: id, fields, mirrored, mirrorReason \}/);
+  assert.match(fn, /return \{ ok: true, leadId: id, fields, mirrored, mirrorReason,\n    keptMarkers, resumeTagKept \}/);
   assert.match(fn, /Sheets write COMMITTED, mirror deferred/,
     'a deferred mirror must say plainly what is still true');
   assert.ok(!/throw/.test(fn.slice(mirror)), 'nothing after the authoritative write may throw');

@@ -13,6 +13,8 @@ const path = require('node:path');
 
 const { STAFFING_CAMPAIGN, isStaffingCampaign, renderStaffingEmail, validateStaffingEmail,
   staffingOpeningFor, STAFFING_FOLLOW_UP_DELAY_DAYS, BOLD_PHRASES } = require('../integrations/staffing-campaign');
+const { appendStaffingComplianceFooter } = require('../integrations/staffing-compliance');
+const { STAFFING_RENDER_OPTIONS } = require('../test-support/staffing-mail');
 const { templateById, routedLeadReady, validateRoute, normalizeNiche,
   campaignVersionsForRoute, validateCampaignVersionRoute } = require('../integrations/campaign-routing');
 const { CAMPAIGN_VERSIONS, familyForLead } = require('../integrations/campaign-versions');
@@ -35,6 +37,8 @@ const imported = (over = {}) => ({
   routingRequired: 'true', intendedCampaignVersion: '', firstName: 'Ada', ...over });
 const routed = (over = {}) => imported({ senderInboxId: 'primary',
   emailTemplateId: STAFFING_CAMPAIGN.emailTemplateId, ...over });
+const render = (lead, step) => renderStaffingEmail(lead, step, STAFFING_RENDER_OPTIONS);
+const withFooter = core => appendStaffingComplianceFooter(core, STAFFING_RENDER_OPTIONS);
 
 // ── A. import row resolves to the staffing campaign ─────────────────────────
 test('A. an imported staffing row resolves to the staffing campaign, not a default', () => {
@@ -47,7 +51,7 @@ test('A. an imported staffing row resolves to the staffing campaign, not a defau
 // ── B. siteContext carries the approved opening ─────────────────────────────
 test('B. siteContext becomes the personalized opening the renderer uses', () => {
   assert.equal(staffingOpeningFor(imported()), OPENING);
-  assert.ok(renderStaffingEmail(routed(), 1).body.includes(OPENING));
+  assert.ok(render(routed(), 1).body.includes(OPENING));
   // An explicit field wins, but nothing is invented when both are absent.
   assert.equal(staffingOpeningFor({ hyperPersonalizedOpening: 'x', siteContext: 'y' }), 'x');
   assert.equal(staffingOpeningFor({}), '');
@@ -56,9 +60,9 @@ test('B. siteContext becomes the personalized opening the renderer uses', () => 
 
 // ── C/D/E. the three locked emails ──────────────────────────────────────────
 test('C. Email #1 renders the locked staffing copy, subject and single bold', () => {
-  const email = renderStaffingEmail(routed(), 1);
+  const email = render(routed(), 1);
   assert.equal(email.subject, 'employer accounts');
-  assert.equal(email.body, `Hi Ada,\n\n${OPENING}\n\nWe help industrial staffing agencies turn that exact market into qualified employer meetings — and we get paid based on the meetings we generate.\n\nWorth seeing how we'd do this for Acme Staffing?\n\n— Deins`);
+  assert.equal(email.body, withFooter(`Hi Ada,\n\n${OPENING}\n\nWe help industrial staffing agencies turn that exact market into qualified employer meetings — and we get paid based on the meetings we generate.\n\nWorth seeing how we'd do this for Acme Staffing?\n\n— Deins`));
   assert.equal((email.html.match(/<strong>/g) || []).length, 1);
   assert.match(email.html, /<strong>we get paid based on the meetings we generate\.<\/strong>/);
   assert.equal(validateStaffingEmail(email, 1), null);
@@ -67,7 +71,7 @@ test('C. Email #1 renders the locked staffing copy, subject and single bold', ()
 });
 
 test('D. Email #2 renders the locked clarification copy with its own bold', () => {
-  const email = renderStaffingEmail(routed(), 2);
+  const email = render(routed(), 2);
   assert.equal(email.subject, null, 'follow-ups thread rather than inventing a subject');
   assert.match(email.body, /we're not talking about candidate sourcing/);
   assert.match(email.body, /30-day employer acquisition pilot built around the roles Acme Staffing already places/);
@@ -78,8 +82,8 @@ test('D. Email #2 renders the locked clarification copy with its own bold', () =
 });
 
 test('E. Email #3 renders the locked close with its bolded question', () => {
-  const email = renderStaffingEmail(routed(), 3);
-  assert.equal(email.body, 'Hi Ada,\n\nQuick question —\n\nis bringing in more employer accounts something Acme Staffing is focused on right now?');
+  const email = render(routed(), 3);
+  assert.equal(email.body, withFooter('Hi Ada,\n\nQuick question —\n\nis bringing in more employer accounts something Acme Staffing is focused on right now?'));
   assert.equal((email.html.match(/<strong>/g) || []).length, 1);
   assert.match(email.html, /<strong>is bringing in more employer accounts something Acme Staffing is focused on right now\?<\/strong>/);
   assert.equal(validateStaffingEmail(email, 3), null);
@@ -89,7 +93,7 @@ test('E. Email #3 renders the locked close with its bolded question', () => {
 // ── F. no dental copy anywhere ──────────────────────────────────────────────
 test('F. no dental or receptionist language can appear in a staffing email', () => {
   for (const step of [1, 2, 3]) {
-    const body = renderStaffingEmail(routed(), step).body;
+    const body = render(routed(), step).body;
     assert.doesNotMatch(body, /receptionist|missed call|dental|patient|clinic|guarantee/i, `step ${step}`);
     assert.doesNotMatch(body, /{{|}}/, `step ${step} has no unmerged placeholder`);
   }
@@ -115,7 +119,7 @@ test('H. a staffing lead never silently resolves to the dental family', () => {
   // Dental, roofing and legacy rows are untouched by that addition.
   assert.equal(familyForLead({ leadNiche: 'dental', emailTemplateId: 'dental-guarantee-v1' }), 'dental_ai_receptionist');
   assert.equal(familyForLead({ leadNiche: 'roofing', emailTemplateId: 'roofing-survey-v1' }), 'roofing_survey');
-  assert.equal(familyForLead({}), 'dental_ai_receptionist', 'legacy unrouted rows stay dental');
+  assert.equal(familyForLead({}), 'unrouted', 'blank niche must not inherit dental');
 });
 
 // ── I/J/K/L. reply offer context ────────────────────────────────────────────

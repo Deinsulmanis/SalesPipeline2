@@ -1,6 +1,6 @@
 'use strict';
 
-const { CAMPAIGN_VERSIONS } = require('./campaign-versions');
+const { CAMPAIGN_VERSIONS, CAMPAIGN_FAMILY, resolveLeadFamily } = require('./campaign-versions');
 const { staffingSendBlockReason, isStaffingLead } = require('./staffing-launch-gate');
 const { STAFFING_CAMPAIGN } = require('./staffing-campaign');
 
@@ -85,14 +85,18 @@ function validateRoute({ niche, senderInboxId, emailTemplateId, inboxes = [], re
   return { ok: true, niche: normalizedNiche, inbox, template };
 }
 
-function routedLeadReady(lead) {
+function routedLeadReady(lead, env = process.env) {
   // Staffing is a post-routing campaign: it has never had unrouted production
   // rows, so it may not use the legacy bypass that exists for old dental and
   // roofing records. A staffing row without explicit routing is refused.
   const staffing = isStaffingLead(lead);
   if (!staffing && String(lead.routingRequired || '').toLowerCase() !== 'true') return { ok: true, legacy: true };
   if (!lead.leadNiche || !lead.senderInboxId || !lead.emailTemplateId) return { ok: false, reason: 'routing assignment is incomplete' };
-  const blocked = staffingSendBlockReason(lead);
+  const resolved = resolveLeadFamily(lead);
+  if (!resolved.confident || resolved.family === CAMPAIGN_FAMILY.UNROUTED) {
+    return { ok: false, reason: resolved.reason || 'unknown or ambiguous niche' };
+  }
+  const blocked = staffingSendBlockReason(lead, env);
   if (blocked) return { ok: false, reason: blocked };
   const template = templateById(lead.emailTemplateId);
   if (!template?.ready) return { ok: false, reason: template?.reason || 'email template is unavailable' };

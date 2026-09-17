@@ -95,7 +95,7 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
       const lead = byId.get(String(leadId));
       const text = stripQuotedReply(firstPlainText(message.payload) || decodeBodies(message.payload) || message.snippet || '');
       const canonical = classifyReplyText(text, { currentEmail: lead.email, subject: headerValue(message.payload,'Subject'), now: occurredAt });
-      const optOut = canonical.signals?.includes('opt_out') || /\b(unsubscribe|remove me|do not contact|stop emailing)\b/i.test(text);
+      const optOut = canonical.reason === 'unsubscribe_request';
       if (optOut) suppressions.push({ email: lead.email, reason: 'unsubscribe', company: lead.company });
       const eventId = `gmail-reply:${message.id}`;
       const already = existing.has(eventId) || activities.some(row => meta(row).gmailMessageId === message.id && /reply|meeting_requested/.test(row.eventType));
@@ -113,8 +113,12 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
             requiresHumanAttention: historical && canonical.genuineHuman !== false,
             autoSendAllowed: false, identityMutationAllowed: false }) };
         add(event);
-        replies.push({ leadId, message, historical, canonical });
       }
+      // Recovery and CHECK_ONLY must still classify through this path. An
+      // already-persisted opt-out/rejection is re-queued so terminal CRM
+      // mutations cannot be skipped just because the Gmail event exists.
+      const terminal = optOut || (canonical.state === 'negative' && canonical.reason === 'explicit_rejection');
+      if (!already || terminal) replies.push({ leadId, message, historical, canonical, alreadyRecorded: already });
     }
   }
   for (const missing of observation.unavailable || []) {
