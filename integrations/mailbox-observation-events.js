@@ -21,6 +21,21 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
   for (const lead of leads) emailBuckets.set(norm(lead.email), [...(emailBuckets.get(norm(lead.email)) || []), lead]);
   const leadsByEmail = new Map([...emailBuckets].filter(([email, rows]) => email && rows.length === 1).map(([email, rows]) => [email, rows[0]]));
   const existingActivitiesByLead = new Map(leads.map(lead => [lead.id, activities.filter(row => row.sourceLeadId === lead.id || row.leadId === `CE-${lead.id}`)]));
+  const inboundEvent = /reply|meeting_requested|email_bounced/;
+  const threadHasCrmInbound = (threadId, lead, at) => {
+    const mine = existingActivitiesByLead.get(lead.id) || [];
+    return mine.some(row => {
+      if (!inboundEvent.test(String(row.eventType || ''))) return false;
+      const data = meta(row);
+      if (String(data.gmailThreadId || '') !== String(threadId || '')) return false;
+      const when = Date.parse(row.occurredAt || data.receivedAt || '');
+      return Number.isFinite(when) && when < at;
+    });
+  };
+  const batchInboundBefore = (threadId, leadEmail, at) => [...observation.messages].some(item =>
+    item.threadId === threadId && Number(item.internalDate) < at
+    && !(item.labelIds || []).includes('SENT')
+    && parseAddr(headerValue(item.payload, 'From')) === norm(leadEmail));
   const threadCache = new Map();
   const add = event => { if (!existing.has(event.eventId)) { events.push(event); existing.add(event.eventId); } };
   // The first outreach timestamp is authoritative for matching, not the most
@@ -46,17 +61,19 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
       if (!lead) { ignored.push({ id: message.id, reason: 'unmatched_outbound' }); continue; }
       const mine = existingActivitiesByLead.get(lead.id) || [];
       if (mine.some(row => meta(row).gmailMessageId === message.id)) continue;
-      if (!threadCache.has(message.threadId)) {
-        const response = await providerRead('users.threads.get', { userId: 'me', id: message.threadId, format: 'metadata', metadataHeaders: ['From'] }, params => gmail.users.threads.get(params));
+      const priorInbound = threadHasCrmInbound(message.threadId, lead, at)
+        || batchInboundBefore(message.threadId, lead.email, at);
+      // Fetch the Gmail thread only when CRM and this batch cannot prove a prior
+      // inbound. Incremental history already delivered the new outbound message.
+      if (!priorInbound && !threadCache.has(message.threadId)) {
+        const response = await providerRead('users.threads.get', { userId: 'me', id: message.threadId, format: 'metadata', metadataHeaders: ['From'] }, params => gmail.users.threads.get(params), { mailboxId: senderInboxId, feature: 'gmail_history_observer' });
         threadCache.set(message.threadId, response.data.messages || []);
       }
-      // Inbound must precede this outbound, from the exact prospect; a future
-      // reply cannot retrospectively turn the automated opener into a human reply.
-      const priorInbound = threadCache.get(message.threadId).some(item => Number(item.internalDate) < at
+      const threadInbound = priorInbound || (threadCache.get(message.threadId) || []).some(item => Number(item.internalDate) < at
         && parseAddr(headerValue(item.payload, 'From')) === norm(lead.email));
       const plan = planOutboundActivity({ id: message.id, threadId: message.threadId, to,
         subject: headerValue(message.payload, 'Subject'), sentAt: occurredAt }, {
-        leadsByEmail, existingActivitiesByLead, threadsWithInbound: new Set(priorInbound ? [message.threadId] : []),
+        leadsByEmail, existingActivitiesByLead, threadsWithInbound: new Set(threadInbound ? [message.threadId] : []),
       });
       if (plan.activity) add({ ...plan.activity, metadata: JSON.stringify({ ...plan.activity.metadata,
         senderInboxId, rfcMessageId, recoveredDuringOutage: observation.recovered }) });

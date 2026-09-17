@@ -135,6 +135,7 @@ const { buildFunnelAnalytics } = require('./integrations/funnel-analytics');
 const { genericReengagementAnalytics } = require('./integrations/generic-reengagement-analytics');
 const { buildCrmHealth } = require('./integrations/crm-health');
 const { observerHealth } = require('./integrations/gmail-observer-health');
+const { gmailUsageSnapshot } = require('./integrations/gmail-api-guard');
 const { hasUndeliveredDemoPair } = require('./integrations/demo-intent-state');
 const {
   normalizeLeadToken, aggregateDemoPlays, attributeDemoPlays, demoPlayForLead,
@@ -5424,6 +5425,52 @@ function operationalMailbox(senderInboxId) {
 }
 
 // Read-only provider trace. No worker launch, provider send or checkpoint write.
+app.get('/api/ops/gmail-usage', requireAuth, async (_req, res) => {
+  try {
+    const dataset = await getOutreachDataset({ force: true });
+    const senders = configuredSenders().filter(item => item.sendEligible);
+    const observers = observerHealth(dataset.mailboxObservationState || [], {
+      senderIds: senders.map(sender => sender.id),
+    });
+    const usage = gmailUsageSnapshot({ mailboxes: senders.map(sender => sender.id) });
+    const mailboxes = observers.map(observer => {
+      const row = usage.mailboxes.find(item => item.mailbox === observer.senderInboxId) || {};
+      return {
+        mailbox: observer.senderInboxId,
+        health: observer.health,
+        lastSuccessfulHistoryCheck: observer.lastSuccessfulAt,
+        checkpointAgeMinutes: observer.checkpointAgeMinutes,
+        currentHistoryId: observer.historyId,
+        backoff: observer.health === 'backoff' || row.backoff || false,
+        backoffUntil: observer.backoffUntil || row.backoffUntil || '',
+        requestsLast5m: row.requestsLast5m || { requests: 0, units: 0, byMethod: {} },
+        requestsLastHour: row.requestsLastHour || { requests: 0, units: 0, byMethod: {} },
+        retries: (row.requestsLastHour && row.requestsLastHour.retries) || 0,
+        rateLimitEvents: (row.requestsLastHour && row.requestsLastHour.rateLimited) || 0,
+        messagesDiscovered: (row.requestsLastHour && row.requestsLastHour.messagesDiscovered) || 0,
+        messagesFetched: (row.requestsLastHour && row.requestsLastHour.messagesFetched) || 0,
+        messagesDeduplicated: (row.requestsLastHour && row.requestsLastHour.messagesDeduplicated) || 0,
+        optionalScansSkipped: row.optionalScansSkipped || 0,
+        followUpsBlocked: row.followUpsBlocked || 0,
+        quotaBackoff: observer.quotaBackoff,
+        cursorState: observer.cursorState,
+        mode: observer.mode,
+      };
+    });
+    res.json({
+      updatedAt: usage.updatedAt,
+      unitsPerMinutePerUser: usage.unitsPerMinutePerUser,
+      quotaUnits: usage.quotaUnits,
+      totals: usage.totals,
+      optionalScansSkipped: usage.optionalScansSkipped,
+      followUpsBlocked: usage.followUpsBlocked,
+      mailboxes,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/ops/mailbox-diagnostic', requireAuth, async (req, res) => {
   try {
     const dataset = await getOutreachDataset({ force: true });

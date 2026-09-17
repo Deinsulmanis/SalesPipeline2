@@ -105,6 +105,14 @@ const {
 const { findOriginalSentThread, resolveColdFollowUpThread } = require('./integrations/gmail-threading');
 const gmailMailboxObserver = require('./integrations/gmail-mailbox-observer');
 const { planMailboxEvents, commitObservation } = require('./integrations/mailbox-observation-events');
+const {
+  wrapGmail, runWithGmailFeature, gmailUsageSnapshot, recordGmailRequest,
+  getMailboxBackoff, hydrateMailboxBackoff, clearMailboxBackoff, shouldSkipOptionalGmail,
+  recordFollowUpBlocked, persistedGmailMessageIds,
+} = require('./integrations/gmail-api-guard');
+const {
+  classifyOutboundTouch, observerFollowUpVerdict, DEFAULT_MAX_AGE_MINUTES: GMAIL_OBSERVER_FOLLOWUP_MAX_AGE_MINUTES,
+} = require('./integrations/gmail-followup-safety');
 const { offerForLead, warmResponse } = require('./integrations/offer-config');
 const { ACTION: REPLY_RESPONSE_ACTION, decideReplyResponse } = require('./integrations/reply-response-policy');
 const { deliverProspectReply } = require('./integrations/prospect-reply-delivery');
@@ -179,6 +187,11 @@ const INTENT_ONLY      = process.env.INTENT_ONLY === 'true';
 const LATE_REPLY_CHECK = process.env.LATE_REPLY_CHECK === 'true';
 const LATE_REPLY_LOOKBACK_DAYS = parseInt(process.env.LATE_REPLY_LOOKBACK_DAYS || String(DEFAULT_LATE_REPLY_LOOKBACK_DAYS), 10);
 const LATE_REPLY_BATCH_LIMIT = parseInt(process.env.LATE_REPLY_BATCH_LIMIT || String(DEFAULT_LATE_REPLY_BATCH_LIMIT), 10);
+// High-frequency sent-mail and terminal-thread scans are owned by the
+// incremental Gmail History observer. These flags restore the legacy Gmail
+// fan-out only for a deliberate audit — never the default check-only path.
+const GMAIL_HUMAN_OUTBOUND_SCAN = process.env.GMAIL_HUMAN_OUTBOUND_SCAN === 'true';
+const GMAIL_LATE_REPLY_THREAD_SCAN = process.env.GMAIL_LATE_REPLY_THREAD_SCAN === 'true';
 // Master kill switch. Fail-safe: sending is OFF unless the env var is the
 // literal string 'true' — an absent or mistyped value means no mail leaves.
 // Checked immediately before every sendEmail call, not at startup, so a
@@ -462,7 +475,10 @@ function authForSender(sender = PRIMARY_GMAIL_SENDER) {
   secondaryAuthById.set(sender.id, auth);
   return auth;
 }
-const gmailForSender = sender => google.gmail({ version: 'v1', auth: authForSender(sender) });
+const gmailForSender = (sender, { instrument = true, feature } = {}) => {
+  const client = google.gmail({ version: 'v1', auth: authForSender(sender) });
+  return instrument ? wrapGmail(client, { mailboxId: sender.id, feature }) : client;
+};
 function senderForPersistedLead(lead) {
   const id = String(lead?.senderInboxId || 'primary').trim() || 'primary';
   const sender = GMAIL_SENDERS.find(item => item.id === id);
@@ -814,7 +830,7 @@ async function readBoardLeads(rowsOverride = null) {
  * One pass, one set of reads, bounded maps. Everything the ownership model
  * needs about a candidate, without a single per-lead fetch.
  */
-function buildOwnershipContext({ boardLeads, activities, outboundObservationOk = true, observationBySender = null }) {
+function buildOwnershipContext({ boardLeads, activities, outboundObservationOk = true, observationBySender = null, observersBySender = null }) {
   const activitiesByLead = new Map();
   for (const row of activities || []) {
     const key = String(row.sourceLeadId || '').trim()
@@ -839,6 +855,7 @@ function buildOwnershipContext({ boardLeads, activities, outboundObservationOk =
     // Explicit: a failed mailbox read must not read as "nobody has replied".
     outboundObservationOk: outboundObservationOk !== false,
     observationBySender,
+    observersBySender,
   };
 }
 
@@ -1127,10 +1144,10 @@ function toRawMessage({ to, subject, body, html, inReplyTo, references, messageI
 async function sendEmail({ lead, to, subject, body, html, threadId, inReplyTo, references, messageId, sender = PRIMARY_GMAIL_SENDER }) {
   assertStaffingSendAllowed(lead);
   if (!sender?.sendEligible) throw new Error(`Gmail sender ${sender?.id || 'unknown'} is not delivery eligible`);
-  const provider = new GmailOutreachProvider({ send: message => gmailForSender(sender).users.messages.send({
+  const provider = new GmailOutreachProvider({ send: message => runWithGmailFeature('send_provider', () => gmailForSender(sender, { feature: 'send_provider' }).users.messages.send({
     userId: 'me',
     requestBody: { raw: toRawMessage({ ...message, fromEmail: sender.email }), ...(message.threadId ? { threadId: message.threadId } : {}) },
-  }) });
+  })) });
   return provider.sendEmail({ to, subject, body, html, threadId, inReplyTo, references, messageId });
 }
 
@@ -1386,7 +1403,8 @@ async function getLateReplyMessages(lead, outbound) {
   try {
     const afterMs = new Date(lead.lastEmailedAt).getTime();
     if (!Number.isFinite(afterMs)) return [];
-    const thread = await gmail().users.threads.get({
+    const sender = senderForPersistedLead(lead);
+    const thread = await gmailForSender(sender, { feature: 'late_reply' }).users.threads.get({
       userId: 'me', id: outbound.threadId, format: 'full',
     });
     const ourAddr = (FROM_EMAIL || '').trim().toLowerCase();
@@ -1646,6 +1664,7 @@ function loadGmailObservationState(rows = []) {
               processedThroughId: row[12] || null, processed: Number(row[13] || 0) }
           : null,
         backoffUntil: row[14] || null });
+    if (senderInboxId && row[14]) hydrateMailboxBackoff(senderInboxId, row[14]);
   }
 }
 
@@ -1662,7 +1681,12 @@ async function persistGmailObservationState(senderId, historyId, details = {}) {
   // healthy would let send gates treat a partial view as proof.
   const recovery = details.recovery || null;
   const recovering = Boolean(recovery && recovery.active && !recovery.complete);
-  const health = error ? 'unavailable' : (recovering ? (recovery.backoff ? 'backoff' : 'recovering') : 'healthy');
+  const quota = /quota|rate limit|429|userRateLimitExceeded|rateLimitExceeded|backoff/i.test(error);
+  const backoffUntil = details.backoffUntil
+    || (recovery && recovery.backoff && (recovery.backoff.until || recovery.backoff.at || ''))
+    || (quota ? (getMailboxBackoff(senderId)?.until || '') : '');
+  const backingOff = Boolean(backoffUntil && Date.parse(backoffUntil) > Date.now());
+  const health = backingOff ? 'backoff' : error ? 'unavailable' : (recovering ? 'recovering' : 'healthy');
   // lastSuccessfulAt marks a TRUSTWORTHY point. A recovery slice advances the
   // high-water instead, so an interrupted catch-up can never look current.
   const successAt = (error || recovering) ? (previous[2] || '') : now;
@@ -1675,7 +1699,7 @@ async function persistGmailObservationState(senderId, historyId, details = {}) {
     recovering ? String(recovery.anchor || '') : '',
     recovering ? String(recovery.processedThroughId || '') : '',
     recovering ? String(recovery.processed || 0) : '',
-    recovering && recovery.backoff ? String(recovery.backoff.at || '') : '']];
+    recovering && recovery.backoff ? String(recovery.backoff.until || recovery.backoff.at || '') : (backingOff ? String(backoffUntil) : '')]];
   if (index > 0) {
     await sheets().spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID,
       range: `${GMAIL_OBSERVATION_STATE_SHEET}!A${index + 1}:O${index + 1}`,
@@ -2433,15 +2457,27 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     // an unknown legacy sender is evidence to observe, never a default inbox.
     const senderLeads = candidates;
     const log = (state, details) => console.log(`[GmailObserver:${sender.id}] ${state} ${JSON.stringify(details)}`);
+    const backoff = getMailboxBackoff(sender.id);
+    if (backoff) {
+      failedSenderIds.add(sender.id);
+      observerAutomationReadyBySender.set(sender.id, false);
+      log('mailbox_backoff_skip', { until: backoff.until, reason: backoff.reason });
+      recordGmailRequest({
+        mailbox: sender.id, method: 'mailbox.optional_skip', feature: 'gmail_history_observer',
+        status: 'skipped', skippedDueToBackoff: true, at: new Date().toISOString(),
+      });
+      continue;
+    }
     try {
-      const observed = await withAuth(() => gmailMailboxObserver.observeMailbox({
-        gmail: gmailForSender(sender), leads: senderLeads,
+      const observed = await withAuth(() => runWithGmailFeature('gmail_history_observer', () => gmailMailboxObserver.observeMailbox({
+        gmail: gmailForSender(sender, { instrument: false }), leads: senderLeads,
         activities: activitiesForCycle || [], senderInboxId: sender.id,
         senderEmail: sender.email, historyId: gmailObservationHistoryBySender.get(sender.id) || null,
         ...gmailObservationDetailsBySender.get(sender.id), log,
         recovery: (gmailObservationDetailsBySender.get(sender.id) || {}).recovery || null,
-      }));
-      const plan = await planMailboxEvents({ observation: observed, gmail: gmailForSender(sender),
+        knownMessageIds: persistedGmailMessageIds(activitiesForCycle || []),
+      })));
+      const plan = await planMailboxEvents({ observation: observed, gmail: gmailForSender(sender, { instrument: false }),
         leads: senderLeads, activities: activitiesForCycle, senderInboxId: sender.id, senderEmail: sender.email });
       if (!DRY_RUN) {
         await commitObservation({ observation: observed, plan, activities: activitiesForCycle,
@@ -2484,9 +2520,17 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       // slice that succeeded, and including a quota backoff.
       observerAutomationReadyBySender.set(sender.id,
         !DRY_RUN && observed.mode !== 'bootstrap' && observed.trustworthy !== false);
+      if (observerAutomationReadyBySender.get(sender.id)) clearMailboxBackoff(sender.id);
       observedStateBySender.set(sender.id, observed);
+      recordGmailRequest({
+        mailbox: sender.id, method: 'mailbox.observe', feature: 'gmail_history_observer',
+        status: 200, messagesDiscovered: observed.discoveredCount,
+        messagesFetched: observed.messagesFetched || 0,
+        messagesDeduplicated: observed.messagesDeduplicated || 0,
+      });
       log(observed.recovered ? 'mailbox_catchup_completed' : 'history_incremental_ok', {
         historyId: observed.nextHistoryId, from: observed.from || null, messages: observed.messagesInspected,
+        fetched: observed.messagesFetched || 0, deduplicated: observed.messagesDeduplicated || 0,
         unavailable: observed.unavailable.length, eventsPersisted: plan.events.length, ignored: plan.ignored.length,
         replies: plan.replies.length, historicalReview: plan.replies.filter(item => item.historical).length,
       });
@@ -2496,7 +2540,8 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       observerAutomationReadyBySender.set(sender.id, false);
       try { await withAuth(() => persistGmailObservationState(sender.id,
         gmailObservationHistoryBySender.get(sender.id) || '',
-        { error: JSON.stringify({ message: error.message, ...error.observerDetails }) })); } catch (_) { /* already unavailable */ }
+        { error: JSON.stringify({ message: error.message, ...error.observerDetails }),
+          backoffUntil: getMailboxBackoff(sender.id)?.until || '' })); } catch (_) { /* already unavailable */ }
       log('observer_unhealthy', { message: error.message, ...error.observerDetails });
     }
   }
@@ -2822,6 +2867,14 @@ async function runLateReplyCheckPass(leads, activitiesForCycle = null) {
   });
   console.log(`[LateReply] ${plan.stats.terminal} terminal · ${plan.stats.insideLookback} inside ${plan.lookbackDays}d · ${plan.stats.usableIdentity} with Gmail identity · ${plan.candidates.length}/${plan.stats.eligible} checking`);
   if (!plan.candidates.length) return;
+  if (!GMAIL_LATE_REPLY_THREAD_SCAN) {
+    console.log('[LateReply] Gmail thread scan retired from the high-frequency path; inbound is owned by the history observer');
+    return;
+  }
+  if (GMAIL_SENDERS.some(sender => shouldSkipOptionalGmail(sender.id, 'late_reply'))) {
+    console.log('[LateReply] skipped — mailbox is in shared Gmail backoff');
+    return;
+  }
 
   const eventIds = existingLateReplyEventIds(activities);
   let recorded = 0;
@@ -2913,7 +2966,7 @@ async function checkForBounce(lead) {
     if (!safeEmail || !safeEmail.includes('@')) return false;
     const lowerEmail = safeEmail.toLowerCase();
     const sender = senderForPersistedLead(lead);
-    const mailbox = gmailForSender(sender);
+    const mailbox = gmailForSender(sender, { feature: 'bounce_check' });
 
     // Two nets, unioned by message id:
     //   subject net — known NDR subjects from any sender;
@@ -3456,7 +3509,12 @@ async function runHumanOutboundPass(leads, activitiesForCycle, sender = null, { 
     }
     return { ok: results.every(item => item.ok), written: results.reduce((n, item) => n + (item.written || 0), 0), senders: results };
   }
-  const mailbox = gmailForSender(sender);
+  if (!GMAIL_HUMAN_OUTBOUND_SCAN || shouldSkipOptionalGmail(sender.id, 'human_outbound')) {
+    const skipped = !GMAIL_HUMAN_OUTBOUND_SCAN ? 'observer_owns_sent' : 'mailbox_backoff';
+    console.log(`[HumanOutbound:${sender.id}] skipped Gmail scan (${skipped}) — incremental observer owns sent-mail detection`);
+    return { ok: true, written: 0, inspected: 0, skipped };
+  }
+  const mailbox = gmailForSender(sender, { feature: 'human_outbound' });
   const leadsByEmail = new Map();
   for (const lead of leads) {
     const email = String(lead.email || '').trim().toLowerCase();
@@ -3571,11 +3629,19 @@ function coldSendGate(lead, context = null) {
   }
   if (context?.observationBySender) {
     const senderId = String(lead.senderInboxId || '').trim();
-    if (!senderId || context.observationBySender.get(senderId) !== true) {
-      return { ownership: null, verdict: { allowed: false,
-        reason: senderId
-          ? `mailbox observation unavailable for owning sender ${senderId} — failing closed`
-          : 'sender proof missing — failing closed' } };
+    const ready = Boolean(senderId && context.observationBySender.get(senderId) === true);
+    const stored = context.observersBySender?.get(senderId) || {};
+    const followUp = observerFollowUpVerdict({
+      lead,
+      observer: {
+        health: ready ? 'healthy' : (stored.health || 'unavailable'),
+        checkpointAgeMinutes: ready ? (stored.checkpointAgeMinutes ?? 0) : (stored.checkpointAgeMinutes ?? null),
+      },
+      maxAgeMinutes: GMAIL_OBSERVER_FOLLOWUP_MAX_AGE_MINUTES,
+    });
+    if (!followUp.allowed) {
+      if (followUp.blockedFollowUp) recordFollowUpBlocked(senderId, lead.id, followUp.code);
+      return { ownership: null, verdict: { allowed: false, reason: followUp.reason } };
     }
   }
   const leadId = String(lead.id || '');
@@ -4192,19 +4258,25 @@ async function run() {
       return;
     }
 
-    // Observe only the established mailboxes and recipient addresses belonging
-    // to pending candidates. This retains manual-outbound proof without reading
-    // every Sent message in every account first.
-    const intentOutboundResults = [];
-    for (const [senderId, candidates] of intentCandidatesBySender) {
-      const sender = GMAIL_SENDERS.find(item => item.id === senderId);
-      const result = await withAuth(() => runHumanOutboundPass(
-        candidates, intentActivities, sender, { candidateOnly: true },
-      ));
-      intentOutboundResults.push({ senderInboxId: senderId, ...result });
+    // The 3-minute intent backstop must not perform mailbox-wide Gmail work.
+    // Reply and human-outbound evidence is owned by the incremental observer on
+    // the check-only / send cadence. This pass only consumes persisted health.
+    const intentObservationBySender = new Map();
+    const observersBySender = new Map();
+    for (const sender of GMAIL_SENDERS.filter(item => item.sendEligible)) {
+      const details = gmailObservationDetailsBySender.get(sender.id) || {};
+      const backoff = getMailboxBackoff(sender.id);
+      const ageMs = Date.parse(details.lastSuccessfulObservationAt || '');
+      const ageMinutes = Number.isFinite(ageMs) ? Math.max(0, (Date.now() - ageMs) / 60000) : null;
+      const ready = !backoff && details.previousHealth === 'healthy' && ageMinutes !== null
+        && ageMinutes <= GMAIL_OBSERVER_FOLLOWUP_MAX_AGE_MINUTES;
+      intentObservationBySender.set(sender.id, ready);
+      observersBySender.set(sender.id, {
+        health: backoff ? 'backoff' : (ready ? 'healthy' : 'unavailable'),
+        checkpointAgeMinutes: ageMinutes === null ? null : Math.round(ageMinutes),
+      });
     }
-    const intentObservationBySender = new Map(intentOutboundResults
-      .map(item => [item.senderInboxId, item.ok === true]));
+    console.log('[Intent] using persisted observer health; zero incremental Gmail mailbox scans this pass.');
     const intentDayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
     const intentSenderCounts = senderCountsToday(intentActivities, intentDayKey);
     const intentQuotaState = { globalCount: Math.max(
@@ -4218,20 +4290,10 @@ async function run() {
     activeWindowQuota = intentWindowQuota;
     activeSenderCounts = intentSenderCounts;
     const intentSenderIds = new Set(intentCandidatesBySender.keys());
-    // This narrow observation must never advance the mailbox-wide cursor: it
-    // deliberately knows only the pending candidates. The normal observer owns
-    // cursor advancement and will reconcile every other identity later.
-    const intentReplies = await runReplyCheckPass(preparedIntent.due, intentQuotaState.globalCount,
-      intentOutboundResults.every(item => item.ok), intentActivities, intentSenderIds,
-      { advanceCheckpoint: false });
-    for (const senderId of intentSenderIds) {
-      if (intentReplies.failedSenderIds.has(senderId)) intentObservationBySender.set(senderId, false);
-    }
-    await runBounceCheckPass(preparedIntent.due, intentReplies.bouncesByLead);
-    await commitMailboxObservationCheckpoints(intentReplies);
     const intentOwnershipContext = buildOwnershipContext({
       boardLeads: intentBoard, activities: intentActivities,
       outboundObservationOk: true, observationBySender: intentObservationBySender,
+      observersBySender,
     });
     await withAuth(() => runIntentTriggerPass(all, intentOwnershipContext, snapshot, {
       sendsBySender: intentSenderCounts, quotaState: intentQuotaState, windowQuota: intentWindowQuota,
@@ -4277,6 +4339,9 @@ async function run() {
   // A mailbox cursor represents all message effects, including durable bounce
   // suppression. It is the last observation write, never an early receipt.
   await commitMailboxObservationCheckpoints(replyObservation);
+  console.log(`[GmailUsage] ${JSON.stringify(gmailUsageSnapshot({
+    mailboxes: GMAIL_SENDERS.filter(sender => sender.sendEligible).map(sender => sender.id),
+  }))}`);
 
   // CHECK_ONLY is observation-only. Return before constructing any execution
   // context or invoking any send-capable stage/intent/cold path.
@@ -4305,7 +4370,17 @@ async function run() {
   // have already run and are unaffected.
   const ownershipContext = buildOwnershipContext({
     boardLeads: ownershipBoard, activities: ownershipActivities,
-    outboundObservationOk: outbound.ok,
+    outboundObservationOk: outbound.ok, observationBySender, observersBySender: new Map(
+      GMAIL_SENDERS.map(sender => {
+        const details = gmailObservationDetailsBySender.get(sender.id) || {};
+        const ageMs = Date.parse(details.lastSuccessfulObservationAt || '');
+        const ageMinutes = Number.isFinite(ageMs) ? Math.max(0, (Date.now() - ageMs) / 60000) : (observationBySender.get(sender.id) ? 0 : null);
+        return [sender.id, {
+          health: observationBySender.get(sender.id) ? 'healthy' : (getMailboxBackoff(sender.id) ? 'backoff' : 'unavailable'),
+          checkpointAgeMinutes: ageMinutes === null ? null : Math.round(ageMinutes),
+        }];
+      }),
+    ),
   });
 
   // Stage-specific recovery journeys. Gated OFF by default and entirely
