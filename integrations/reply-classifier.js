@@ -1,6 +1,7 @@
 'use strict';
 
 const Anthropic = require('@anthropic-ai/sdk');
+const { wrapCreateMessage, FEATURES, TOKEN_BUDGET_EXCEEDED } = require('./anthropic-usage');
 const { stripText } = require('./smartlead-safety');
 const { classifyReplyText, REPLY_STATE, NEEDS_HUMAN_REASON,
   hasExplicitUnsubscribePhrase, hasExplicitNegativePhrase } = require('./canonical-reply');
@@ -76,7 +77,15 @@ async function classifyReply({ provider = 'gmail', lead = {}, campaign = {}, sub
   if (failSafe) return failSafe;
   if (!apiKey && !createMessage) return failSafeReplyCategory(reply, options) || CLASSIFY_FALLBACK;
   try {
-    const send = createMessage || (payload => new Anthropic({ apiKey }).messages.create(payload));
+    const send = wrapCreateMessage(
+      createMessage || (payload => new Anthropic({ apiKey, maxRetries: 0 }).messages.create(payload)),
+      {
+        feature: FEATURES.reply_classification,
+        operation: 'classify',
+        campaign: campaign.name || campaign.id || '',
+        leadId: lead.id || lead.email || '',
+      },
+    );
     const msg = await send({
       model: 'claude-haiku-4-5', max_tokens: 20,
       system: 'Classify a cold-outreach reply as exactly one of: QUESTION, INTERESTED, MEETING_REQUEST, NOT_INTERESTED, UNSUBSCRIBE, OUT_OF_OFFICE, WRONG_PERSON, NEEDS_HUMAN. Prefer NEEDS_HUMAN when unclear. Never infer interest merely because a reply exists.',
@@ -85,7 +94,12 @@ async function classifyReply({ provider = 'gmail', lead = {}, campaign = {}, sub
     const raw = String(msg.content?.[0]?.text || '').trim().toUpperCase();
     if (REPLY_CATEGORIES.has(raw)) return raw;
     return failSafeReplyCategory(reply, options) || CLASSIFY_FALLBACK;
-  } catch (_) { return failSafeReplyCategory(reply, options) || CLASSIFY_FALLBACK; }
+  } catch (error) {
+    if (error && error.code === TOKEN_BUDGET_EXCEEDED) {
+      return failSafeReplyCategory(reply, options) || CLASSIFY_FALLBACK;
+    }
+    return failSafeReplyCategory(reply, options) || CLASSIFY_FALLBACK;
+  }
 }
 
 const CLASSIFICATION_TO_STATUS = { QUESTION: 'Question', INTERESTED: 'Interested', MEETING_REQUEST: 'Meeting requested', NOT_INTERESTED: 'Not interested', UNSUBSCRIBE: 'Unsubscribed', OUT_OF_OFFICE: 'Out of office', WRONG_PERSON: 'Replied', NEEDS_HUMAN: 'Replied' };

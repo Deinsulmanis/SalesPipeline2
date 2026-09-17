@@ -1,5 +1,6 @@
 node_modules/
 .env
+data/anthropic-usage/
 token.json
 .gmail-tokens/
 public/*.json

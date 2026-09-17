@@ -28,6 +28,7 @@ require('dotenv').config();
 
 const { google }  = require('googleapis');
 const Anthropic   = require('@anthropic-ai/sdk');
+const { wrapCreateMessage, FEATURES } = require('./integrations/anthropic-usage');
 const axios       = require('axios');
 const cheerio     = require('cheerio');
 // puppeteer is required lazily inside run() — it is optional at runtime. Railway
@@ -209,8 +210,13 @@ async function fetchAboutContentHeadless(browser, websiteUrl, company) {
 
 async function extractOwnerName(company, content, websiteUrl) {
   try {
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const msg = await anthropic.messages.create({
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 0 });
+    const create = wrapCreateMessage(input => anthropic.messages.create(input), {
+      feature: FEATURES.site_research,
+      operation: 'extract_owner_name',
+      campaign: process.env.CAMPAIGN || '',
+    });
+    const msg = await create({
       model: 'claude-haiku-4-5',
       max_tokens: 20,
       system: [
