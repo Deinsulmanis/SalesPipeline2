@@ -146,25 +146,35 @@ function createPgSendReservationStore({ connectionString, pool: existingPool } =
       }
       return { ok: false, code: 'reservation_not_sending', reason: 'provider success can only be recorded from sending' };
     },
-    async markConfirmed(actionId, leaseOwner) {
+    async markConfirmed(actionId, leaseOwner, { allowReconciliation = false } = {}) {
       const result = await query(
         `UPDATE ${TABLE}
             SET status = $3,
                 confirmed_at = NOW(),
-                updated_at = NOW()
+                updated_at = NOW(),
+                last_error = NULL
           WHERE action_id = $1
-            AND status = $4
             AND ($2::text IS NULL OR lease_owner = $2)
+            AND (
+              status = $4
+              OR ($5::boolean AND status = $6 AND provider_message_id IS NOT NULL AND btrim(provider_message_id) <> '')
+            )
           RETURNING *`,
-        [actionId, leaseOwner || null, STATUS.CONFIRMED, STATUS.SENT_UNCONFIRMED],
+        [
+          actionId, leaseOwner || null, STATUS.CONFIRMED, STATUS.SENT_UNCONFIRMED,
+          allowReconciliation, STATUS.RECONCILIATION_REQUIRED,
+        ],
       );
       if (result.rows[0]) return { ok: true, reservation: rowView(result.rows[0]) };
       const existing = await getReservation(actionId);
       if (!existing) return { ok: false, code: 'reservation_missing', reason: 'reservation not found' };
+      if (existing.status === STATUS.CONFIRMED) {
+        return { ok: true, alreadyConfirmed: true, reservation: existing };
+      }
       if (leaseOwner && existing.leaseOwner && existing.leaseOwner !== leaseOwner) {
         return { ok: false, code: 'reservation_not_owned', reason: 'lease owner does not match' };
       }
-      return { ok: false, code: 'reservation_not_confirmable', reason: 'only sent_unconfirmed rows can be confirmed' };
+      return { ok: false, code: 'reservation_not_confirmable', reason: 'only verified sent_unconfirmed rows can be confirmed' };
     },
     async markPreDeliveryFailed(actionId, leaseOwner, lastError) {
       const result = await query(
@@ -204,16 +214,17 @@ function createPgSendReservationStore({ connectionString, pool: existingPool } =
       const result = await query(
         `SELECT * FROM ${TABLE}
           WHERE status IN ($1, $2)
-             OR (status = $3 AND lease_expires_at < NOW())
+             OR (status IN ($3, $4) AND lease_expires_at < NOW())
           ORDER BY updated_at DESC
           LIMIT 500`,
-        [STATUS.SENT_UNCONFIRMED, STATUS.RECONCILIATION_REQUIRED, STATUS.RESERVED],
+        [STATUS.SENT_UNCONFIRMED, STATUS.RECONCILIATION_REQUIRED, STATUS.RESERVED, STATUS.SENDING],
       );
       const all = result.rows.map(rowView);
       return {
         sentUnconfirmed: all.filter(row => row.status === STATUS.SENT_UNCONFIRMED),
         reconciliationRequired: all.filter(row => row.status === STATUS.RECONCILIATION_REQUIRED),
         staleReserved: all.filter(row => row.status === STATUS.RESERVED),
+        expiredSending: all.filter(row => row.status === STATUS.SENDING),
       };
     },
     async health() {

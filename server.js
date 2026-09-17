@@ -20,8 +20,11 @@ const { buildEventKey, buildMappingKey, mappingMatchesEvent, normalizeEmail, can
 const { createRequireAuth } = require('./integrations/dashboard-auth');
 const { assertSendAuthorized } = require('./integrations/send-authorization');
 const { guardProviderSend } = require('./integrations/send-safety-revalidate');
-const { withOutboundReservation, confirmOutboundReservation, sendLockHealth, listUnresolvedReservations } = require('./integrations/send-lock');
-const { smartleadEnqueueActionId } = require('./integrations/outbound-action-id');
+const { withOutboundReservation, confirmOutboundReservation, confirmReconciledReservation, sendLockHealth, listUnresolvedReservations, getOutboundReservation, markReservationReconciliationRequired } = require('./integrations/send-lock');
+const { smartleadEnqueueActionId, ordinaryColdActionId, parseOutboundActionId } = require('./integrations/outbound-action-id');
+const {
+  operatorRow, listLegacySheetsReservations, reconcileGmailReservation,
+} = require('./integrations/send-reconciliation');
 const { parseGoogleServiceAccountJson } = require('./integrations/google-service-account');
 const { createOutreachCache } = require('./integrations/outreach-cache');
 const { classifyReply: classifyProviderReply, CLASSIFICATION_TO_STATUS } = require('./integrations/reply-classifier');
@@ -1890,23 +1893,14 @@ app.get('/api/send-lock/health', requireAuth, async (_req, res) => {
 app.get('/api/send-lock/reservations', requireAuth, async (_req, res) => {
   try {
     const listed = await listUnresolvedReservations();
-    const publicRow = row => ({
-      actionId: row.actionId,
-      leadId: row.leadId,
-      provider: row.provider,
-      status: row.status,
-      reservedAt: row.reservedAt,
-      providerAttemptStartedAt: row.providerAttemptStartedAt,
-      providerSucceededAt: row.providerSucceededAt,
-      leaseExpiresAt: row.leaseExpiresAt,
-      lastError: row.lastError,
-    });
+    const publicRow = row => operatorRow(row);
     res.json({
       enabled: listed.enabled !== false,
       sentUnconfirmed: (listed.sentUnconfirmed || []).map(publicRow),
       reconciliationRequired: (listed.reconciliationRequired || []).map(publicRow),
       staleReserved: (listed.staleReserved || []).map(publicRow),
-      note: 'Read-only. There is no retry-send action; recovery is a separate phase.',
+      expiredSending: (listed.expiredSending || []).map(publicRow),
+      note: 'Read-only. There is no retry-send action. Use POST /api/ops/send-reconciliation to verify Gmail SENT evidence and repair checkpoints.',
     });
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
@@ -5613,11 +5607,109 @@ app.post('/api/ops/send-recovery', requireAuth, async (req, res) => {
       emailStep: String(step),
       senderInboxId,
     }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
+    await confirmReconciledReservation(ordinaryColdActionId(leadId, step)).catch(() => {});
     res.json({ ok: true, recovered: !existing, alreadyHadActivity: Boolean(existing),
       leadId, providerMessageId, senderInboxId, step, occurredAt });
   } catch (error) {
     console.error('[send recovery]', error.message);
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/ops/send-reconciliation', requireAuth, async (_req, res) => {
+  try {
+    const listed = await listUnresolvedReservations();
+    let legacy = [];
+    try {
+      const dataset = await getOutreachDataset({ force: true });
+      legacy = listLegacySheetsReservations(dataset.activities || []);
+    } catch (_) { /* lock listing still returns if Outreach snapshot is unavailable */ }
+    res.json({
+      enabled: listed.enabled !== false,
+      retryableSend: false,
+      sends: 0,
+      note: 'Read-only. Uncertain sends are never automatically resent.',
+      sentUnconfirmed: (listed.sentUnconfirmed || []).map(row => operatorRow(row)),
+      reconciliationRequired: (listed.reconciliationRequired || []).map(row => operatorRow(row)),
+      staleReserved: (listed.staleReserved || []).map(row => operatorRow(row)),
+      expiredSending: (listed.expiredSending || []).map(row => operatorRow(row)),
+      legacySheetsReservations: legacy,
+    });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    res.status(500).json({ error: 'send reconciliation could not be listed' });
+  }
+});
+
+app.post('/api/ops/send-reconciliation', requireAuth, async (req, res) => {
+  try {
+    const actionId = String(req.body?.actionId || '').trim();
+    if (!actionId) return res.status(422).json({ error: 'actionId is required', sends: 0, retryableSend: false });
+    const reservation = await getOutboundReservation(actionId);
+    if (!reservation) return res.status(404).json({ error: 'reservation not found', actionId, sends: 0, retryableSend: false });
+    if (String(reservation.provider || '').toLowerCase() === 'smartlead') {
+      return res.json({
+        ok: true, actionId, sends: 0, retryableSend: false, code: 'smartlead_manual_only',
+        reason: operatorRow(reservation).reason, reservation: operatorRow(reservation),
+      });
+    }
+    const dataset = await getOutreachDataset({ force: true });
+    const leadId = String(reservation.leadId || '').trim();
+    const matches = dataset.leads.filter(row => row.id === leadId);
+    if (matches.length !== 1) {
+      return res.status(409).json({
+        error: `expected one lead ${leadId}, found ${matches.length}`,
+        actionId, sends: 0, retryableSend: false, code: 'lead_identity_ambiguous',
+      });
+    }
+    const lead = matches[0];
+    const senderInboxId = String(req.body?.senderInboxId || lead.senderInboxId || '').trim();
+    const mailbox = operationalMailbox(senderInboxId);
+    let attribution = null;
+    try {
+      attribution = coldSendAttribution(lead, Number(parseOutboundActionId(actionId).step) || 1);
+    } catch (_) { attribution = null; }
+    const result = await reconcileGmailReservation({
+      reservation, mailbox, lead, activities: dataset.activities || [],
+      store: {
+        markConfirmed: id => confirmReconciledReservation(id),
+        markReconciliationRequired: (id, lastError) => markReservationReconciliationRequired(id, lastError),
+      },
+      applyCheckpoint: async (plan) => {
+        let repaired = false;
+        if (plan.activity) {
+          const event = {
+            ...plan.activity,
+            metadata: JSON.stringify(plan.activity.metadata || {}),
+          };
+          const rows = await readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER);
+          if (!rows.some(row => row.eventId === event.eventId)) {
+            await appendColdCallActivities([event]);
+            repaired = true;
+          }
+        }
+        if (plan.leadFields) {
+          const rowNum = await findCERow(lead.id);
+          if (!rowNum) throw new Error('lead disappeared before checkpoint write');
+          await applyLeadChange(lead.id, plan.leadFields, {
+            row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID,
+          });
+          repaired = true;
+        }
+        return { repaired };
+      },
+      attribution,
+    });
+    res.json({
+      ok: result.ok, actionId, sends: 0, retryableSend: false,
+      verified: Boolean(result.verified), confirmed: Boolean(result.confirmed),
+      repaired: Boolean(result.repaired), code: result.code || null,
+      reason: result.reason || null, alreadyConfirmed: Boolean(result.alreadyConfirmed),
+    });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[send reconciliation]', e.message);
+    res.status(500).json({ error: e.message, sends: 0, retryableSend: false });
   }
 });
 

@@ -4,19 +4,10 @@
 require('dotenv').config();
 const { listUnresolvedReservations, closeSendReservationStore } = require('../integrations/send-lock');
 const { sendLockEnabled } = require('../integrations/send-lock-config');
+const { operatorRow, listLegacySheetsReservations } = require('../integrations/send-reconciliation');
 
 function summarize(row) {
-  return {
-    action_id: row.actionId,
-    lead_id: row.leadId,
-    provider: row.provider,
-    status: row.status,
-    reserved_at: row.reservedAt,
-    provider_attempt_started_at: row.providerAttemptStartedAt,
-    provider_succeeded_at: row.providerSucceededAt,
-    lease_expires_at: row.leaseExpiresAt,
-    last_error: row.lastError,
-  };
+  return operatorRow(row);
 }
 
 async function main() {
@@ -25,12 +16,19 @@ async function main() {
     return;
   }
   const listed = await listUnresolvedReservations();
-  console.log(JSON.stringify({
+  const payload = {
     enabled: true,
-    sent_unconfirmed: listed.sentUnconfirmed.map(summarize),
-    reconciliation_required: listed.reconciliationRequired.map(summarize),
-    stale_reserved: listed.staleReserved.map(summarize),
-  }, null, 2));
+    note: 'Read-only. There is no retry-send action.',
+    sent_unconfirmed: (listed.sentUnconfirmed || []).map(summarize),
+    reconciliation_required: (listed.reconciliationRequired || []).map(summarize),
+    stale_reserved: (listed.staleReserved || []).map(summarize),
+    expired_sending: (listed.expiredSending || []).map(summarize),
+  };
+  if (process.argv.includes('--legacy-help')) {
+    payload.legacy_note = 'Pass activities JSON to classifyLegacySheetsReservations; never automatically resend.';
+    payload.legacy_example = listLegacySheetsReservations([]);
+  }
+  console.log(JSON.stringify(payload, null, 2));
 }
 
 main()

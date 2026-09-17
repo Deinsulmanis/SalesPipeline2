@@ -185,7 +185,21 @@ async function confirmOutboundReservation(actionId, env = process.env) {
   const store = await getStore(env);
   const result = await store.markConfirmed(actionId, LEASE_OWNER);
   if (result.ok) {
-    logSendLock('reservation_confirmed', {
+    logSendLock(result.alreadyConfirmed ? 'reservation_already_confirmed' : 'reservation_confirmed', {
+      actionId, leadId: result.reservation?.leadId, provider: result.reservation?.provider,
+      status: STATUS.CONFIRMED,
+    });
+  }
+  return result;
+}
+
+async function confirmReconciledReservation(actionId, env = process.env) {
+  if (!sendLockEnabled(env) && !injectedStore) return { ok: true, skipped: true };
+  if (!actionId) return { ok: false, code: 'send_lock_action_required' };
+  const store = await getStore(env);
+  const result = await store.markConfirmed(actionId, null, { allowReconciliation: true });
+  if (result.ok) {
+    logSendLock(result.alreadyConfirmed ? 'reservation_already_confirmed' : 'reservation_confirmed', {
       actionId, leadId: result.reservation?.leadId, provider: result.reservation?.provider,
       status: STATUS.CONFIRMED,
     });
@@ -198,14 +212,27 @@ async function getOutboundReservation(actionId, env = process.env) {
   return store.getReservation(actionId);
 }
 
+async function markReservationReconciliationRequired(actionId, lastError, env = process.env) {
+  if (!sendLockEnabled(env) && !injectedStore) return { ok: false, code: 'send_lock_required' };
+  if (!actionId) return { ok: false, code: 'send_lock_action_required' };
+  const store = await getStore(env);
+  return store.markReconciliationRequired(actionId, lastError);
+}
+
 async function listUnresolvedReservations(env = process.env) {
   if (!sendLockEnabled(env) && !injectedStore) {
-    return { enabled: false, sentUnconfirmed: [], reconciliationRequired: [], staleReserved: [] };
+    return { enabled: false, sentUnconfirmed: [], reconciliationRequired: [], staleReserved: [], expiredSending: [] };
   }
   await assertSendLockReady(env);
   const store = await getStore(env);
   const listed = await store.listUnresolved();
-  return { enabled: true, ...listed };
+  return {
+    enabled: true,
+    sentUnconfirmed: listed.sentUnconfirmed || [],
+    reconciliationRequired: listed.reconciliationRequired || [],
+    staleReserved: listed.staleReserved || [],
+    expiredSending: listed.expiredSending || [],
+  };
 }
 
 async function closeSendReservationStore() {
@@ -222,6 +249,8 @@ module.exports = {
   setSendReservationStoreForTests, leaseOwnerId, logSendLock,
   sendLockHealth, assertSendLockReady, sendLockConfig, sendLockEnabled,
   withOutboundReservation, withGmailProviderSend, confirmOutboundReservation,
-  getOutboundReservation, listUnresolvedReservations, closeSendReservationStore,
+  confirmReconciledReservation,
+  getOutboundReservation, markReservationReconciliationRequired,
+  listUnresolvedReservations, closeSendReservationStore,
   isDefinitePreDeliveryFailure, providerIdsFromResult,
 };

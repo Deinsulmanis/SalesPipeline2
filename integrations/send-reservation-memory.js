@@ -112,7 +112,7 @@ function createMemorySendReservationStore({ now = () => new Date(), leaseSeconds
         return { ok: true, reservation: write(row) };
       });
     },
-    async markConfirmed(actionId, leaseOwner) {
+    async markConfirmed(actionId, leaseOwner, { allowReconciliation = false } = {}) {
       return exclusive(async () => {
         const at = current();
         const row = rows.get(actionId);
@@ -120,12 +120,20 @@ function createMemorySendReservationStore({ now = () => new Date(), leaseSeconds
         if (leaseOwner && row.lease_owner && row.lease_owner !== leaseOwner) {
           return { ok: false, code: 'reservation_not_owned', reason: 'lease owner does not match' };
         }
-        if (row.status !== STATUS.SENT_UNCONFIRMED) {
-          return { ok: false, code: 'reservation_not_confirmable', reason: 'only sent_unconfirmed rows can be confirmed' };
+        if (row.status === STATUS.CONFIRMED) {
+          return { ok: true, alreadyConfirmed: true, reservation: read(actionId) };
+        }
+        const fromUnconfirmed = row.status === STATUS.SENT_UNCONFIRMED;
+        const fromReconciled = allowReconciliation
+          && row.status === STATUS.RECONCILIATION_REQUIRED
+          && Boolean(row.provider_message_id);
+        if (!fromUnconfirmed && !fromReconciled) {
+          return { ok: false, code: 'reservation_not_confirmable', reason: 'only verified sent_unconfirmed rows can be confirmed' };
         }
         row.status = STATUS.CONFIRMED;
         row.confirmed_at = at;
         row.updated_at = at;
+        row.last_error = null;
         return { ok: true, reservation: write(row) };
       });
     },
@@ -165,11 +173,12 @@ function createMemorySendReservationStore({ now = () => new Date(), leaseSeconds
       return exclusive(async () => {
         const at = current();
         const all = [...rows.values()].map(row => rowView({ ...row }));
+        const expired = row => row.leaseExpiresAt && new Date(row.leaseExpiresAt).getTime() < at.getTime();
         return {
           sentUnconfirmed: all.filter(row => row.status === STATUS.SENT_UNCONFIRMED),
           reconciliationRequired: all.filter(row => row.status === STATUS.RECONCILIATION_REQUIRED),
-          staleReserved: all.filter(row => row.status === STATUS.RESERVED
-            && row.leaseExpiresAt && new Date(row.leaseExpiresAt).getTime() < at.getTime()),
+          staleReserved: all.filter(row => row.status === STATUS.RESERVED && expired(row)),
+          expiredSending: all.filter(row => row.status === STATUS.SENDING && expired(row)),
         };
       });
     },
