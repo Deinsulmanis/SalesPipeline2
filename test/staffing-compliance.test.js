@@ -161,7 +161,7 @@ test('13. dental campaign templates are not modified', () => {
   const dentalSubject = read('integrations/dental-subject.js');
   assert.doesNotMatch(dental, /SA-48271|STAFFING_REF_LINE|industrial staffing/);
   assert.doesNotMatch(dentalSubject, /SA-48271/);
-  assert.match(dental, /Reply with\n"unsubscribe" and I'll remove you immediately/);
+  assert.match(dental, /Reply with\\n"unsubscribe" and I'll remove you immediately/);
   assert.match(dental, /Ref: \$\{reference\}/);
   assert.equal(fs.readFileSync(path.join(root, 'integrations/dental-email.js'), 'utf8').includes('SA-48271'), false);
 });

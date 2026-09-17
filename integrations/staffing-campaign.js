@@ -108,9 +108,9 @@ function validateStaffingEmail({ subject, body, leadId } = {}, step = 1) {
   const text = String(body || '');
   if (!text.trim()) return 'staffing body is empty';
   if (/{{|}}/.test(text)) return 'staffing body still contains an unmerged placeholder';
+  if (String(subject || '').includes(STAFFING_CAMPAIGN_REF)) return 'staffing subject must not contain the campaign reference';
   if (step === 1 && String(subject || '').trim() !== 'employer accounts') return 'staffing step 1 subject must be the locked subject';
   if (step !== 1 && String(subject || '').trim()) return 'staffing follow-up must keep the original thread subject';
-  if (String(subject || '').includes(STAFFING_CAMPAIGN_REF)) return 'staffing subject must not contain the campaign reference';
   // Dental/receptionist language must never reach a staffing prospect.
   if (/receptionist|missed calls?|dental|patients?|clinic/i.test(text)) return 'staffing body contains non-staffing offer language';
   // Anchor on the literal text BEFORE the first placeholder: the merged body

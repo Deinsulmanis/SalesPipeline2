@@ -68,7 +68,7 @@ test('queue only changes five routing/stage fields and repeated enrollment is a 
   let lead = { ...staffing };
   const mutations = [], events = [];
   const deps = {
-    loadState: async () => ({ leads: [lead] }), validateSelection: () => ({ ok: true }),
+    loadState: async () => ({ leads: [lead], ...STAFFING_RENDER_OPTIONS }), validateSelection: () => ({ ok: true }),
     applyChanges: async changes => changes.map(({ lead: before, patch }) => { mutations.push(patch); lead = { ...before, ...patch }; return { leadId: before.id, status: 'succeeded' }; }),
     appendActivity: async event => events.push(event),
   };
