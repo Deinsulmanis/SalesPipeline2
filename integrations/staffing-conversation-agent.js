@@ -1,6 +1,7 @@
 'use strict';
 
 const Anthropic = require('@anthropic-ai/sdk');
+const { wrapCreateMessage, FEATURES } = require('./anthropic-usage');
 const {
   MODEL, OPERATION, AGENT_VERSION, PROMPT_VERSION,
   staffingAgentApiKey, staffingConversationAgentConfig,
@@ -19,16 +20,18 @@ Never invent pricing, company facts, contact identities, referral contact inform
 Never claim a meeting is booked unless the supplied facts say so.
 Never recommend emailing a referred third party automatically.
 
+Use the supplied production state. Do not ask qualification again when markedQualified is true. Do not recommend SEND_INFO, SEND_BOOKING, or ASK_QUALIFICATION when terminal, currentlyHeld, oooHold, unsubscribed, or notInterested is true.
+
 Rules:
-- explicit unsubscribe → UNSUBSCRIBE
-- clear rejection → MARK_NOT_INTERESTED
-- timing objection → HOLD_FOR_LATER
-- explicit request for information or a website → SEND_INFO
-- interest without qualification context → ASK_QUALIFICATION
-- qualification answer that clearly fits, and qualification was already asked → SEND_BOOKING
-- qualification-like answer when qualification was never asked → ESCALATE_HUMAN
-- existing internal BD/provider → ALREADY_HANDLED
-- referral/wrong person → STORE_REFERRAL
+- explicit unsubscribe, or state.unsubscribed → UNSUBSCRIBE or NO_ACTION
+- clear rejection, or state.notInterested → MARK_NOT_INTERESTED or NO_ACTION
+- timing objection, state.currentlyHeld, or state.oooHold → HOLD_FOR_LATER or NO_ACTION
+- explicit request for information or a website, and sendable → SEND_INFO
+- interest without qualificationAsked → ASK_QUALIFICATION
+- qualification answer that clearly fits, and qualificationAsked → SEND_BOOKING
+- qualification-like answer when qualificationAsked is false → ESCALATE_HUMAN
+- existing internal BD/provider, or state.alreadyHandled → ALREADY_HANDLED
+- referral/wrong person, or state.wrongPerson → STORE_REFERRAL or ESCALATE_HUMAN
 - uncertain/ambiguous → ESCALATE_HUMAN
 
 Return JSON only:
@@ -81,7 +84,12 @@ async function runStaffingConversationAgent({ context, env = process.env, create
     return failClosedResult('dedicated staffing conversation agent key missing', { status: 'unavailable' });
   }
 
-  const send = createMessage || (payload => createStaffingAgentClient({ env, AnthropicImpl }).messages.create(payload));
+  const clientSend = createMessage
+    || (payload => createStaffingAgentClient({ env, AnthropicImpl }).messages.create(payload));
+  const send = wrapCreateMessage(clientSend, {
+    feature: FEATURES.staffing_conversation_agent_shadow,
+    operation: OPERATION,
+  });
   try {
     const message = await send({
       model: MODEL,

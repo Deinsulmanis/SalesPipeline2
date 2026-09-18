@@ -151,35 +151,59 @@ async function evaluateStaffingConversationShadow({
   }
 }
 
-function pendingStaffingShadowItems({ leads = [], activities = [] } = {}) {
+function pendingStaffingShadowItems({ leads = [], activities = [], productionByMessageId = new Map() } = {}) {
   const staffing = new Map(leads.filter(isStaffingCampaign).map(lead => [String(lead.id), lead]));
   const evaluated = new Set(
     activities.filter(row => row.eventType === EVENT_TYPE || String(row.eventId || '').startsWith(`${EVENT_TYPE}:`))
       .map(row => String(parseMetadata(row.metadata).gmailMessageId || String(row.eventId || '').replace(`${EVENT_TYPE}:`, ''))),
   );
-  const pending = [];
+  const replyByMessageId = new Map();
   for (const row of activities) {
     if (!REPLY_EVENT_SET.has(String(row.eventType || ''))) continue;
     const meta = parseMetadata(row.metadata);
     const messageId = String(meta.gmailMessageId || '').trim();
-    if (!messageId || evaluated.has(messageId)) continue;
-    const lead = staffing.get(String(row.sourceLeadId || '').replace(/^CE-/, ''));
-    if (!lead) continue;
-    pending.push({
-      lead,
-      message: {
-        messageId,
-        threadId: String(meta.gmailThreadId || ''),
-        rfcMessageId: String(meta.rfcMessageId || ''),
-        subject: String(row.subject || ''),
-        body: String(row.content || ''),
-        snippet: String(row.content || ''),
-        occurredAt: String(row.occurredAt || ''),
-      },
-      replyText: String(row.content || ''),
-      productionClassification: String(meta.classification || ''),
-    });
+    if (messageId && !replyByMessageId.has(messageId)) replyByMessageId.set(messageId, row);
+  }
+  const pending = [];
+  const consider = (lead, message, replyText, productionClassification) => {
+    const messageId = String(message.messageId || '').trim();
+    if (!messageId || evaluated.has(messageId) || !lead || !isStaffingCampaign(lead)) return;
+    pending.push({ lead, message, replyText: String(replyText || ''), productionClassification: String(productionClassification || '') });
     evaluated.add(messageId);
+  };
+
+  for (const row of activities) {
+    const eventType = String(row.eventType || '');
+    const fromReply = REPLY_EVENT_SET.has(eventType);
+    const fromEvaluated = eventType === 'gmail_reply_evaluated';
+    if (!fromReply && !fromEvaluated) continue;
+    const meta = parseMetadata(row.metadata);
+    const messageId = String(meta.gmailMessageId || String(meta.sourceEventId || '').replace(/^gmail-reply:/, '')).trim();
+    if (!messageId || evaluated.has(messageId)) continue;
+    const lead = staffing.get(String(row.sourceLeadId || '').replace(/^CE-/, ''))
+      || staffing.get(String(row.leadId || '').replace(/^CE-/, ''));
+    if (!lead) continue;
+    const replyRow = fromReply ? row : replyByMessageId.get(messageId);
+    const replyMeta = replyRow ? parseMetadata(replyRow.metadata) : meta;
+    consider(lead, {
+      messageId,
+      threadId: String(replyMeta.gmailThreadId || meta.gmailThreadId || ''),
+      rfcMessageId: String(replyMeta.rfcMessageId || meta.rfcMessageId || ''),
+      subject: String((replyRow || row).subject || ''),
+      body: String((replyRow || row).content || ''),
+      snippet: String((replyRow || row).content || ''),
+      occurredAt: String((replyRow || row).occurredAt || row.occurredAt || ''),
+    }, (replyRow || row).content || '', replyMeta.classification || meta.classification || '');
+  }
+
+  for (const [messageId, production] of productionByMessageId.entries()) {
+    const lead = production.lead || staffing.get(String(production.leadId || ''));
+    consider(
+      lead,
+      production.message || { messageId },
+      production.replyText || '',
+      production.classification || '',
+    );
   }
   return pending;
 }
@@ -192,7 +216,7 @@ async function observeStaffingConversationShadows({
   const config = staffingConversationAgentConfig(env);
   if (!config.enabled) return { skipped: true, status: 'disabled', evaluated: 0, reused: 0, calledModel: 0 };
 
-  const pending = pendingStaffingShadowItems({ leads, activities });
+  const pending = pendingStaffingShadowItems({ leads, activities, productionByMessageId });
   let evaluated = 0, reused = 0, calledModel = 0;
   const results = [];
   for (const item of pending) {

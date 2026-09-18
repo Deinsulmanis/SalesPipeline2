@@ -10,12 +10,13 @@ const {
   staffingConversationAgentConfig, staffingAgentApiKey, normalizeAgentOutput,
   failClosedResult, broadlyAgree, EVENT_TYPE, shadowEventId, OPERATION,
 } = require('../integrations/staffing-agent-schema');
-const { buildStaffingAgentContext, conversationState } = require('../integrations/staffing-agent-context');
+const { buildStaffingAgentContext, conversationState, compactAgentUserPayload } = require('../integrations/staffing-agent-context');
 const { runStaffingConversationAgent, SYSTEM_PROMPT, parseJsonObject } = require('../integrations/staffing-conversation-agent');
 const {
   evaluateStaffingConversationShadow, observeStaffingConversationShadows,
 } = require('../integrations/staffing-agent-shadow');
 const { STAFFING_CAMPAIGN } = require('../integrations/staffing-campaign');
+const { STAFFING_NOTE } = require('../integrations/staffing-reply-policy');
 const { decideReplyResponse } = require('../integrations/reply-response-policy');
 
 const root = path.join(__dirname, '..');
@@ -147,7 +148,7 @@ test('malformed JSON from the model parser fails closed', () => {
 
 test('context includes stored staffing facts and does not invent research', () => {
   const lead = staffingLead({
-    notes: '[STAFFING HIGH]\n[STAFFING QUALIFICATION ASKED]\n[REPLY: Question — auto-answered, booking link sent]',
+    notes: `[STAFFING HIGH]\n${STAFFING_NOTE.QUALIFY_ASKED}\n[REPLY: Question — auto-answered, booking link sent]`,
   });
   const activities = [
     replyEvent(lead, inbound({ messageId: 'old', body: 'Tell me more' }), 'QUESTION'),
@@ -185,14 +186,17 @@ test('qualification markers are read-only and absent by default', () => {
   assert.equal(state.qualificationReceived, false);
   assert.equal(state.markedQualified, false);
   assert.equal(state.bookingLinkSent, false);
-  const asked = conversationState(staffingLead({ notes: '[STAFFING QUALIFICATION ASKED]' }), []);
-  const received = conversationState(staffingLead({ notes: '[STAFFING QUALIFICATION RECEIVED]' }), []);
-  const qualified = conversationState(staffingLead({ notes: '[STAFFING QUALIFIED]' }), []);
-  const info = conversationState(staffingLead({ notes: 'see https://scalelabai.ca/staffing/' }), []);
+  const asked = conversationState(staffingLead({ notes: STAFFING_NOTE.QUALIFY_ASKED }), []);
+  const received = conversationState(staffingLead({ notes: STAFFING_NOTE.QUALIFY_RECEIVED }), []);
+  const qualified = conversationState(staffingLead({ notes: STAFFING_NOTE.QUALIFIED }), []);
+  const unclear = conversationState(staffingLead({ notes: STAFFING_NOTE.QUALIFY_UNCLEAR }), []);
+  const info = conversationState(staffingLead({ notes: STAFFING_NOTE.INFO_SENT }), []);
   assert.equal(asked.qualificationAsked, true);
   assert.equal(received.qualificationReceived, true);
   assert.equal(qualified.markedQualified, true);
+  assert.equal(unclear.qualificationUnclear, true);
   assert.equal(info.infoSent, true);
+  assert.equal(conversationState(staffingLead({ notes: '[STAFFING QUALIFICATION ASKED]' }), []).qualificationAsked, false);
 });
 
 // ── recommendation cases (mocked Anthropic) ─────────────────────────────────
@@ -224,7 +228,7 @@ for (const [name, reply, action, over] of CASES) {
 }
 
 test('qualification answer after qualification was asked recommends SEND_BOOKING', async () => {
-  const lead = staffingLead({ notes: '[STAFFING HIGH]\n[STAFFING QUALIFICATION ASKED]' });
+  const lead = staffingLead({ notes: `[STAFFING HIGH]\n${STAFFING_NOTE.QUALIFY_ASKED}` });
   const reply = 'We place welders and machinists for manufacturers around Houston';
   const { result } = await shadowEval({
     lead, message: inbound({ body: reply }), replyText: reply,
@@ -423,8 +427,10 @@ test('token usage is recorded against staffing_conversation_agent_shadow', async
 test('system prompt stays compact and forbids invented facts', () => {
   assert.match(SYSTEM_PROMPT, /employer acquisition, not candidate sourcing/);
   assert.match(SYSTEM_PROMPT, /Never invent pricing/);
-  assert.match(SYSTEM_PROMPT, /explicit unsubscribe → UNSUBSCRIBE/);
-  assert.ok(SYSTEM_PROMPT.length < 2200, 'prompt must stay compact');
+  assert.match(SYSTEM_PROMPT, /explicit unsubscribe/);
+  assert.match(SYSTEM_PROMPT, /UNSUBSCRIBE/);
+  assert.match(SYSTEM_PROMPT, /markedQualified/);
+  assert.ok(SYSTEM_PROMPT.length < 2800, 'prompt must stay compact');
 });
 
 test('outreach-agent invokes shadow observation without routing on it', () => {
@@ -437,6 +443,10 @@ test('outreach-agent invokes shadow observation without routing on it', () => {
   assert.match(replySwitch, /case 'INTERESTED':/);
   assert.doesNotMatch(replySwitch, /recommendedAction/);
   assert.match(agent, /\[staffing-shadow\] failed closed/);
+  assert.match(agent, /staffingShadowProduction\.set/);
+  assert.match(agent, /already evaluated, skipping model/);
+  assert.match(agent, /inboundAlreadyEvaluated\(activitiesForCycle, message\.messageId\)/);
+  assert.doesNotMatch(agent, /STAFFING_CONVERSATION_AGENT_MODE === 'active'/);
 });
 
 test('.env.example documents disabled shadow flags and does not contain a secret value', () => {
@@ -454,3 +464,219 @@ test('shadow event id is stable per inbound Gmail message', () => {
   assert.equal(shadowEventId('abc'), 'staffing_agent_shadow:abc');
   assert.equal(shadowEventId(''), '');
 });
+
+function futureResume() {
+  return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+}
+
+test('live production states are visible in the agent payload', () => {
+  const resume = futureResume();
+  const cases = [
+    ['qualify asked', STAFFING_NOTE.QUALIFY_ASKED, { qualificationAsked: true, sendable: true }],
+    ['info sent', STAFFING_NOTE.INFO_SENT, { infoSent: true, qualificationAsked: false }],
+    ['qualify received', STAFFING_NOTE.QUALIFY_RECEIVED, { qualificationReceived: true }],
+    ['qualified', STAFFING_NOTE.QUALIFIED, { markedQualified: true }],
+    ['qualify unclear', STAFFING_NOTE.QUALIFY_UNCLEAR, { qualificationUnclear: true }],
+    ['manual hold', `[MANUAL HOLD] [RESUME: ${resume}]`, { currentlyHeld: true, manualHold: true, sendable: false }],
+    ['not interested', '[REPLY: Not Interested]', { notInterested: true, terminal: true, sendable: false }],
+    ['unsubscribed', '[REPLY: Unsubscribed]', { unsubscribed: true, terminal: true, sendable: false }],
+    ['ooo', '[REPLY: OOO — retry in 7d]', { oooHold: true, sendable: false }],
+    ['wrong person', '[REPLY: Wrong Person — Sarah]', { wrongPerson: true }],
+    ['already handled', '[REPLY: Already handled — internal BD]', { alreadyHandled: true, sendable: false }],
+  ];
+  for (const [name, notes, expected] of cases) {
+    const state = conversationState(staffingLead({ notes }), []);
+    for (const [key, value] of Object.entries(expected)) {
+      assert.equal(state[key], value, `${name} ${key}`);
+    }
+    const payload = compactAgentUserPayload(buildStaffingAgentContext({
+      lead: staffingLead({ notes }), message: inbound(), replyText: 'Interested',
+    }));
+    for (const [key, value] of Object.entries(expected)) {
+      assert.equal(payload.state[key], value, `payload ${name} ${key}`);
+    }
+  }
+});
+
+test('live: Interested with no qualification asked recommends ASK_QUALIFICATION', async () => {
+  const { result, calls } = await shadowEval({
+    replyText: 'Interested',
+    modelOutput: recommendation('ASK_QUALIFICATION', { intent: 'INTERESTED' }),
+  });
+  const payload = JSON.parse(calls[0].messages[0].content);
+  assert.equal(payload.state.qualificationAsked, false);
+  assert.equal(result.result.recommendedAction, 'ASK_QUALIFICATION');
+});
+
+test('live: Send me some info recommends SEND_INFO', async () => {
+  const { result } = await shadowEval({
+    replyText: 'Send me some info',
+    modelOutput: recommendation('SEND_INFO', { intent: 'QUESTION' }),
+  });
+  assert.equal(result.result.recommendedAction, 'SEND_INFO');
+});
+
+test('live: qualification answer after QUALIFY ASKED recommends SEND_BOOKING', async () => {
+  const lead = staffingLead({ notes: STAFFING_NOTE.QUALIFY_ASKED });
+  const reply = 'We place welders and machinists for manufacturers around Houston';
+  const { result, calls } = await shadowEval({
+    lead, replyText: reply,
+    modelOutput: recommendation('SEND_BOOKING', { intent: 'INTERESTED', fit: 'FIT' }),
+  });
+  assert.equal(JSON.parse(calls[0].messages[0].content).state.qualificationAsked, true);
+  assert.equal(result.result.recommendedAction, 'SEND_BOOKING');
+});
+
+test('live: same qualification answer without pending state is conservative', async () => {
+  const reply = 'We place welders and machinists for manufacturers around Houston';
+  const { result, calls } = await shadowEval({
+    replyText: reply,
+    modelOutput: recommendation('ESCALATE_HUMAN', { intent: 'AMBIGUOUS' }),
+  });
+  assert.equal(JSON.parse(calls[0].messages[0].content).state.qualificationAsked, false);
+  assert.equal(result.result.recommendedAction, 'ESCALATE_HUMAN');
+});
+
+test('live: already qualified does not ask qualification again', async () => {
+  const lead = staffingLead({ notes: `${STAFFING_NOTE.QUALIFY_ASKED} ${STAFFING_NOTE.QUALIFIED}` });
+  const { result, calls } = await shadowEval({
+    lead, replyText: 'Sounds good',
+    modelOutput: recommendation('NO_ACTION', { intent: 'INTERESTED' }),
+  });
+  const state = JSON.parse(calls[0].messages[0].content).state;
+  assert.equal(state.markedQualified, true);
+  assert.notEqual(result.result.recommendedAction, 'ASK_QUALIFICATION');
+});
+
+test('live: terminal unsubscribe does not recommend a send', async () => {
+  const lead = staffingLead({ notes: '[REPLY: Unsubscribed]', stage: 'Unsub', emailStatus: 'done' });
+  const { result, calls } = await shadowEval({
+    lead, replyText: 'please unsubscribe',
+    modelOutput: recommendation('NO_ACTION', { intent: 'UNSUBSCRIBE' }),
+  });
+  const state = JSON.parse(calls[0].messages[0].content).state;
+  assert.equal(state.unsubscribed, true);
+  assert.equal(state.terminal, true);
+  assert.ok(['NO_ACTION', 'UNSUBSCRIBE'].includes(result.result.recommendedAction));
+  assert.ok(!['SEND_BOOKING', 'SEND_INFO', 'ASK_QUALIFICATION'].includes(result.result.recommendedAction));
+});
+
+test('live: not interested is terminal and non-sendable', async () => {
+  const lead = staffingLead({ notes: '[REPLY: Not Interested]', stage: 'Done', emailStatus: 'done' });
+  const { result, calls } = await shadowEval({
+    lead, replyText: 'Not interested',
+    modelOutput: recommendation('MARK_NOT_INTERESTED', { intent: 'NOT_INTERESTED' }),
+  });
+  const state = JSON.parse(calls[0].messages[0].content).state;
+  assert.equal(state.notInterested, true);
+  assert.equal(state.sendable, false);
+  assert.ok(!['SEND_BOOKING', 'SEND_INFO'].includes(result.result.recommendedAction));
+});
+
+test('live: timing hold does not recommend booking or info', async () => {
+  const lead = staffingLead({ notes: `[MANUAL HOLD] [RESUME: ${futureResume()}] [REPLY: Timing — recontact later]` });
+  const { result, calls } = await shadowEval({
+    lead, replyText: 'Maybe next quarter',
+    modelOutput: recommendation('HOLD_FOR_LATER', { intent: 'TIMING' }),
+  });
+  const state = JSON.parse(calls[0].messages[0].content).state;
+  assert.equal(state.currentlyHeld, true);
+  assert.equal(state.sendable, false);
+  assert.ok(['HOLD_FOR_LATER', 'NO_ACTION', 'ESCALATE_HUMAN'].includes(result.result.recommendedAction));
+  assert.ok(!['SEND_BOOKING', 'SEND_INFO'].includes(result.result.recommendedAction));
+});
+
+test('live: OOO hold is not an aggressive follow-up', async () => {
+  const lead = staffingLead({ notes: '[REPLY: OOO — retry in 7d] [MANUAL HOLD]' });
+  const { result, calls } = await shadowEval({
+    lead, replyText: 'I am out of office until next week',
+    modelOutput: recommendation('HOLD_FOR_LATER', { intent: 'TIMING' }),
+  });
+  const state = JSON.parse(calls[0].messages[0].content).state;
+  assert.equal(state.oooHold, true);
+  assert.equal(state.sendable, false);
+  assert.ok(['HOLD_FOR_LATER', 'NO_ACTION'].includes(result.result.recommendedAction));
+});
+
+test('live: referral never recommends booking', async () => {
+  const lead = staffingLead({ notes: '[REPLY: Wrong Person — talk to Sarah]' });
+  const { result, calls } = await shadowEval({
+    lead, replyText: 'I am not the right person, talk to Sarah',
+    modelOutput: recommendation('STORE_REFERRAL', { intent: 'REFERRAL' }),
+  });
+  const state = JSON.parse(calls[0].messages[0].content).state;
+  assert.equal(state.wrongPerson, true);
+  assert.ok(['STORE_REFERRAL', 'ESCALATE_HUMAN'].includes(result.result.recommendedAction));
+  assert.notEqual(result.result.recommendedAction, 'SEND_BOOKING');
+});
+
+test('live: already handled internal BD/provider', async () => {
+  const lead = staffingLead({ notes: '[REPLY: Already handled — internal BD team]' });
+  const { result, calls } = await shadowEval({
+    lead, replyText: 'We already have an internal BD team',
+    modelOutput: recommendation('ALREADY_HANDLED', { intent: 'EXISTING_PROVIDER' }),
+  });
+  const state = JSON.parse(calls[0].messages[0].content).state;
+  assert.equal(state.alreadyHandled, true);
+  assert.equal(result.result.recommendedAction, 'ALREADY_HANDLED');
+});
+
+test('gmail_reply_evaluated CHECK_ONLY repeats reuse the stored shadow result', async () => {
+  const lead = staffingLead();
+  const message = inbound({ body: 'Interested' });
+  const activities = [{
+    eventId: `gmail-evaluated:inbox:${message.messageId}`,
+    leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email, company: lead.company,
+    eventType: 'gmail_reply_evaluated', occurredAt: message.occurredAt, subject: '', content: '',
+    metadata: JSON.stringify({
+      sourceEventId: `gmail-reply:${message.messageId}`,
+      gmailMessageId: message.messageId,
+      classification: 'INTERESTED',
+    }),
+  }];
+  const calls = [];
+  const env = enabledEnv();
+  const createMessage = async payload => {
+    calls.push(payload);
+    return jsonMessage(recommendation('ASK_QUALIFICATION'));
+  };
+  const persistEvent = async event => activities.push(event);
+  const productionByMessageId = new Map([[message.messageId, {
+    classification: 'INTERESTED', lead, message, replyText: 'Interested',
+  }]]);
+  const first = await observeStaffingConversationShadows({
+    leads: [lead], activities, checkOnly: true, persistEvent, env, createMessage, productionByMessageId,
+  });
+  const second = await observeStaffingConversationShadows({
+    leads: [lead], activities, checkOnly: true, persistEvent, env, createMessage, productionByMessageId,
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(first.calledModel, 1);
+  assert.equal(first.evaluated, 1);
+  assert.equal(second.evaluated, 0);
+  assert.equal(activities.filter(row => row.eventType === EVENT_TYPE).length, 1);
+  assert.equal(activities.filter(row => row.eventType === 'gmail_reply_evaluated').length, 1);
+  assert.equal(JSON.parse(activities.find(row => row.eventType === EVENT_TYPE).metadata).gmailMessageId, message.messageId);
+});
+
+test('missing dedicated key records unavailable once and does not call Anthropic on CHECK_ONLY repeats', async () => {
+  const lead = staffingLead();
+  const message = inbound();
+  const activities = [replyEvent(lead, message)];
+  let createCalls = 0;
+  const env = enabledEnv({ [STAFFING_AGENT_KEY_ENV]: '' });
+  const persistEvent = async event => activities.push(event);
+  const first = await observeStaffingConversationShadows({
+    leads: [lead], activities, checkOnly: true, persistEvent, env,
+    createMessage: async () => { createCalls++; return jsonMessage(recommendation('ASK_QUALIFICATION')); },
+  });
+  const second = await observeStaffingConversationShadows({
+    leads: [lead], activities, checkOnly: true, persistEvent, env,
+    createMessage: async () => { createCalls++; return jsonMessage(recommendation('ASK_QUALIFICATION')); },
+  });
+  assert.equal(createCalls, 0);
+  assert.equal(first.results[0].status, 'unavailable');
+  assert.equal(second.evaluated, 0);
+  assert.equal(activities.filter(row => row.eventType === EVENT_TYPE).length, 1);
+});
+
