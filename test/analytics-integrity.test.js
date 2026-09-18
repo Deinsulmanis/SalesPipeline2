@@ -171,7 +171,14 @@ test('10. cancellation keeps the original booking and records cancelled separate
   assert.equal(meetings.cancelled.size, 1);
   const funnel = buildFunnelAnalytics({
     leads: [{ id: 'a', email: 'a@test.ca', emailStatus: 'emailed' }],
-    activities: [confirmedSend('a', '2026-09-01T18:00:00.000Z'), ...activities],
+    activities: [
+      confirmedSend('a', '2026-09-01T18:00:00.000Z'),
+      ev({
+        sourceLeadId: 'a', eventType: 'pipeline_promoted', occurredAt: '2026-09-09T18:00:00.000Z',
+        metadata: { toStage: 'hot', acquisitionCampaignVersion: DENTAL, acquisitionCampaignFamily: 'dental_ai_receptionist' },
+      }),
+      ...activities,
+    ],
     boardLeads: [{ id: 'CE-a', email: 'a@test.ca', stage: 'call_booked' }],
     replyRecords: [], currentVersion: DENTAL,
   }, { version: DENTAL });
