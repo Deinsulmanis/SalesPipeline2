@@ -108,7 +108,8 @@ for (const step of [1, 2, 3]) test(`step ${step} MIME preserves exact text and i
   assert.equal(parts[0], email.body); assert.equal(parts[1], email.html);
   assert.equal((email.html.match(/<strong>/g) || []).length, 1);
   assert.ok(email.html.includes(BOLD_PHRASES[step - 1].replace('{{company}}', staffing.company)));
-  assert.ok(!email.body.includes('https://scalelabai.ca/staffing/'));
+  if (step === 2) assert.ok(email.body.includes('https://scalelabai.ca/staffing/'));
+  else assert.ok(!email.body.includes('https://scalelabai.ca/staffing/'));
 });
 test('server queue uses canonical full rows and expected-state mutations', () => {
   const source = fs.readFileSync(require.resolve('../server.js'), 'utf8').split('\r\n').join('\n');

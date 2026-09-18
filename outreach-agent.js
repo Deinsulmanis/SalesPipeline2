@@ -88,7 +88,7 @@ const {
 const { routedLeadReady } = require('./integrations/campaign-routing');
 // Staffing supplies its own locked copy only. Sender selection, thread pinning,
 // quota, observer, suppression and ownership all stay on the shared path.
-const { STAFFING_CAMPAIGN, renderStaffingEmail, validateStaffingEmail } = require('./integrations/staffing-campaign');
+const { STAFFING_CAMPAIGN, renderStaffingEmail, validateStaffingEmail, isStaffingCampaign } = require('./integrations/staffing-campaign');
 const STAFFING_TEMPLATE = STAFFING_CAMPAIGN.emailTemplateId;
 // The reactivation gate is defined once, in the shared pipeline-state model.
 const { manualHoldReleased, applyHoldToNotes, stageRequiresHold,
@@ -127,7 +127,9 @@ const {
 } = require('./integrations/gmail-followup-safety');
 const { offerForLead, warmResponse } = require('./integrations/offer-config');
 const { ACTION: REPLY_RESPONSE_ACTION, decideReplyResponse, numericConfidence } = require('./integrations/reply-response-policy');
-const { classifyStaffingReply, unroutedReplyDecision, STAFFING_CLARIFICATION } = require('./integrations/staffing-reply-policy');
+const { classifyStaffingReply, unroutedReplyDecision, STAFFING_CLARIFICATION,
+  overlayStaffingReplyClassification, notesForStaffingWarmAction, inboundWarmReplyAlreadySent,
+} = require('./integrations/staffing-reply-policy');
 const { authoritativeProvider, assertGmailProviderAllowed, assertSmartleadEnqueueAllowed } = require('./integrations/provider-ownership');
 const { deliverProspectReply } = require('./integrations/prospect-reply-delivery');
 const { findLiveBooking } = require('./integrations/live-booking-gate');
@@ -2382,6 +2384,15 @@ async function queueDraft(lead, answer) {
 // A genuine question. Answer it from the facts if we're confident; otherwise
 // draft it for Deins. Either way the lead is tagged so the dashboard shows it.
 async function handleQuestion(lead, message, replyText, todaySent, activities = [], outboundObservationOk = true, sender = senderForPersistedLead(lead)) {
+  if (isStaffingCampaign(lead)) {
+    const overlay = overlayStaffingReplyClassification({
+      text: replyText, lead, classification: 'QUESTION',
+      canonical: classifyReplyText(replyText, { subject: message.subject || '', currentEmail: lead.email }),
+    });
+    if (['SEND_INFO', 'INTERESTED', 'STAFFING_QUALIFICATION'].includes(overlay.classification)) {
+      return handlePositiveAutomation(lead, message, overlay.classification, activities, overlay.canonical);
+    }
+  }
   const rowNum = await resolveRow(lead.id);
   const answer = await answerQuestion(lead, replyText, {
     messageId: message.messageId || '',
@@ -2833,6 +2844,15 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     } else if (canonicalReply.reason === 'explicit_rejection' || hasExplicitNegativePhrase(replyText, { subject: message.subject })) {
       classification = 'NOT_INTERESTED';
     }
+    let staffingOverlay = null;
+    if (isStaffingCampaign(lead) && classification !== 'UNSUBSCRIBE' && classification !== 'NOT_INTERESTED') {
+      staffingOverlay = overlayStaffingReplyClassification({
+        text: replyText, lead, classification, canonical: canonicalReply,
+      });
+      if (staffingOverlay.overlay && staffingOverlay.classification) {
+        classification = staffingOverlay.classification;
+      }
+    }
     const timingAt = canonicalReply.revisitDate || canonicalReply.returnDate || null;
     classCounts[classification] = (classCounts[classification] || 0) + 1;
 
@@ -2861,6 +2881,14 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
           // confident, otherwise drafted for review. Both paths append the
           // warm booking snippet. todaySent enforces the touch cap.
           case 'QUESTION':       return handleQuestion(lead, message, replyText, replyPassTodaySent, attributionActivities, outboundObservationOk, senderForPersistedLead(lead));
+          case 'SEND_INFO':
+            return handlePositiveAutomation(lead, message, 'SEND_INFO', attributionActivities, staffingOverlay?.canonical || canonicalReply);
+          case 'STAFFING_QUALIFICATION': {
+            if (staffingOverlay?.fit === 'clear') {
+              await handleInterested(lead, message, replyText, 'positive_reply', leads, attributionActivities);
+            }
+            return handlePositiveAutomation(lead, message, 'STAFFING_QUALIFICATION', attributionActivities, staffingOverlay?.canonical || canonicalReply);
+          }
           case 'INTERESTED': {
             const blocked = unroutedReplyDecision(lead) || (classifyStaffingReply(replyText, lead).promote === false
               ? classifyStaffingReply(replyText, lead) : null);
@@ -2871,7 +2899,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
               return handleNeedsHuman(lead, message.fromAddr);
             }
             await handleInterested(lead, message, replyText, 'positive_reply', leads, attributionActivities);
-            return handlePositiveAutomation(lead, message, 'INTERESTED', attributionActivities, canonicalReply);
+            return handlePositiveAutomation(lead, message, 'INTERESTED', attributionActivities, staffingOverlay?.canonical || canonicalReply);
           }
           case 'MEETING_REQUEST': {
             const blocked = unroutedReplyDecision(lead) || (classifyStaffingReply(replyText, lead).promote === false
@@ -3087,20 +3115,35 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
 async function handlePositiveAutomation(lead, message, classification, activities, canonical = {}) {
   const unrouted = unroutedReplyDecision(lead);
   if (unrouted) return handleNeedsHuman(lead, message.fromAddr);
-  const staffing = classifyStaffingReply(message.body || message.snippet || '', lead);
+  const replyText = stripQuotedReply(message.body || message.snippet || '');
+  const staffing = classifyStaffingReply(replyText, lead);
   if (staffing.promote === false) {
     await queueDraft(lead, { mode: 'draft', body: staffing.clarification || '', reason: staffing.reason, confidence: 0 });
     return handleNeedsHuman(lead, message.fromAddr);
   }
+  const overlay = isStaffingCampaign(lead)
+    ? overlayStaffingReplyClassification({ text: replyText, lead, classification, canonical })
+    : null;
+  const effectiveClassification = overlay?.classification || classification;
+  const effectiveCanonical = overlay?.canonical || canonical;
+  if (overlay?.notesTag) {
+    const rowNum = await resolveRow(lead.id);
+    if (rowNum) {
+      const notes = prependNote(lead.notes, overlay.notesTag);
+      lead.notes = notes;
+      await applyLeadChange(lead.id, { notes }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
+    }
+  }
   let offer;
   try { offer = offerForLead(lead); } catch (_) { return handleNeedsHuman(lead, message.fromAddr); }
   const policy = decideReplyResponse({
-    classification,
-    canonical,
-    confidence: numericConfidence({ classification, canonical }),
+    classification: effectiveClassification,
+    canonical: effectiveCanonical,
+    confidence: overlay?.confidence || numericConfidence({ classification: effectiveClassification, canonical: effectiveCanonical }),
     offer,
-    text: message.body || message.snippet || '',
+    text: replyText,
     family: familyForLead(lead),
+    qualificationFit: overlay?.fit || '',
   });
   if (!policy.send) {
     if (policy.action === REPLY_RESPONSE_ACTION.HUMAN_REVIEW) {
@@ -3110,10 +3153,28 @@ async function handlePositiveAutomation(lead, message, classification, activitie
     }
     return handleNeedsHuman(lead, message.fromAddr);
   }
+  if (inboundWarmReplyAlreadySent(activities, message.messageId)) {
+    return { delivered: true, alreadyCheckpointed: true };
+  }
   const body = warmResponse({ action: policy.action, lead, offer });
   const subject = /^re:/i.test(message.subject || '') ? message.subject : `Re: ${message.subject || 'your reply'}`;
-  const delivered = await deliverHardenedWarmReply({ lead, message, action: policy.action, body, subject, activities, classification });
-  if (!delivered.delivered) await handleNeedsHuman(lead, message.fromAddr);
+  const delivered = await deliverHardenedWarmReply({ lead, message, action: policy.action, body, subject, activities, classification: effectiveClassification });
+  if (!delivered.delivered) {
+    await handleNeedsHuman(lead, message.fromAddr);
+    return delivered;
+  }
+  const staffingNotes = notesForStaffingWarmAction(policy.action);
+  if (staffingNotes.length) {
+    const rowNum = await resolveRow(lead.id);
+    if (rowNum) {
+      let notes = lead.notes;
+      for (const tag of staffingNotes) notes = prependNote(notes, tag);
+      lead.notes = notes;
+      await applyLeadChange(lead.id, {
+        stage: 'Replied', emailStatus: 'replied', notes,
+      }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
+    }
+  }
   return delivered;
 }
 

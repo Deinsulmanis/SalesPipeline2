@@ -3,9 +3,18 @@
 const ACTION = Object.freeze({
   AUTO_BOOKING_RESPONSE: 'AUTO_BOOKING_RESPONSE', AUTO_MEETING_RESPONSE: 'AUTO_MEETING_RESPONSE',
   AUTO_QUESTION_RESPONSE: 'AUTO_QUESTION_RESPONSE', AUTO_PRICING_RESPONSE: 'AUTO_PRICING_RESPONSE',
+  AUTO_STAFFING_QUALIFY_QUESTION: 'AUTO_STAFFING_QUALIFY_QUESTION',
+  AUTO_STAFFING_SEND_INFO: 'AUTO_STAFFING_SEND_INFO',
+  AUTO_STAFFING_QUALIFIED: 'AUTO_STAFFING_QUALIFIED',
   AUTO_TIMING_RECONTACT: 'AUTO_TIMING_RECONTACT', AUTO_NEGATIVE_CLOSE: 'AUTO_NEGATIVE_CLOSE',
   SUPPRESS: 'SUPPRESS', WAIT_OUT_OF_OFFICE: 'WAIT_OUT_OF_OFFICE', HUMAN_REVIEW: 'HUMAN_REVIEW', NO_ACTION: 'NO_ACTION',
 });
+
+const STAFFING_OFFER_ID = 'industrial_staffing_employer_acquisition_v1';
+
+function isStaffingReplyContext({ family = '', offer = {} } = {}) {
+  return family === 'industrial_staffing' || offer.id === STAFFING_OFFER_ID;
+}
 
 const POSITIVE_AUTOSEND_FLOOR = 85;
 const QUESTION_AUTOSEND_FLOOR = 85;
@@ -26,6 +35,7 @@ function numericConfidence({ classification = '', canonical = {}, confidence } =
 
 function decideReplyResponse({
   classification, canonical = {}, confidence = 0, offer = {}, text = '', family = '',
+  qualificationFit = '',
 } = {}) {
   const kind = String(classification || '').toUpperCase();
   const score = numericConfidence({ classification, canonical, confidence });
@@ -45,8 +55,31 @@ function decideReplyResponse({
     }
     return { action: ACTION.HUMAN_REVIEW, send: false, reason: 'meeting request confidence below auto-send floor', confidence: score };
   }
+  if (kind === 'SEND_INFO') {
+    if (isStaffingReplyContext({ family, offer }) && score >= POSITIVE_AUTOSEND_FLOOR) {
+      return { action: ACTION.AUTO_STAFFING_SEND_INFO, send: true, reason: 'staffing information request sends landing page', confidence: score };
+    }
+    return { action: ACTION.HUMAN_REVIEW, send: false, reason: 'send-info is not auto-sent outside staffing', confidence: score };
+  }
+  if (kind === 'STAFFING_QUALIFICATION') {
+    if (!isStaffingReplyContext({ family, offer })) {
+      return { action: ACTION.HUMAN_REVIEW, send: false, reason: 'staffing qualification is staffing-only', confidence: score };
+    }
+    if (qualificationFit === 'clear' && score >= POSITIVE_AUTOSEND_FLOOR) {
+      return { action: ACTION.AUTO_STAFFING_QUALIFIED, send: true, reason: 'staffing qualification fits the employer-acquisition offer', confidence: score };
+    }
+    return {
+      action: ACTION.HUMAN_REVIEW, send: false, confidence: score,
+      reason: qualificationFit === 'unclear'
+        ? 'staffing qualification answer is unclear'
+        : 'unrelated reply while staffing qualification is pending',
+    };
+  }
   if (kind === 'INTERESTED') {
     if (score >= POSITIVE_AUTOSEND_FLOOR) {
+      if (isStaffingReplyContext({ family, offer })) {
+        return { action: ACTION.AUTO_STAFFING_QUALIFY_QUESTION, send: true, reason: 'staffing interest asks qualification before booking', confidence: score };
+      }
       return { action: ACTION.AUTO_BOOKING_RESPONSE, send: true, reason: 'high-confidence positive intent', confidence: score };
     }
     return { action: ACTION.HUMAN_REVIEW, send: false, reason: 'positive classification below auto-send confidence floor', confidence: score };
@@ -64,6 +97,6 @@ function decideReplyResponse({
 }
 
 module.exports = {
-  ACTION, decideReplyResponse, numericConfidence,
+  ACTION, decideReplyResponse, numericConfidence, isStaffingReplyContext,
   POSITIVE_AUTOSEND_FLOOR, QUESTION_AUTOSEND_FLOOR,
 };

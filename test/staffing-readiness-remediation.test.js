@@ -72,15 +72,21 @@ test('dental still resolves to dental and roofing still resolves to roofing', ()
   assert.notEqual(familyForLead(staffing()), familyForLead(dental()));
 });
 
-test('3. clear staffing interest above threshold may take the warm path but still requires 2B/2C gates', () => {
+test('3. clear staffing interest above threshold asks qualification and does not book', () => {
+  const offer = offerForLead(staffing());
   const decision = decideReplyResponse({
     classification: 'INTERESTED',
     canonical: { state: 'positive', confidence: 'high', signals: ['expressed_interest'] },
-    offer: offerForLead(staffing()),
+    offer,
     text: 'Yes we are interested in more employer accounts',
   });
   assert.equal(decision.send, true);
+  assert.equal(decision.action, ACTION.AUTO_STAFFING_QUALIFY_QUESTION);
   assert.ok(decision.confidence >= POSITIVE_AUTOSEND_FLOOR);
+  const { warmResponse } = require('../integrations/offer-config');
+  const body = warmResponse({ action: decision.action, lead: staffing(), offer });
+  assert.match(body, /What roles and industries/);
+  assert.doesNotMatch(body, /calendar\.app\.google/);
   const agent = read('outreach-agent.js');
   const positive = agent.slice(agent.indexOf('async function handlePositiveAutomation'), agent.indexOf('async function handleTimingReply'));
   assert.match(positive, /deliverHardenedWarmReply/);

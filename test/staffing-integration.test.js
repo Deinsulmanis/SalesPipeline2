@@ -76,6 +76,8 @@ test('D. Email #2 renders the locked clarification copy with its own bold', () =
   assert.match(email.body, /we're not talking about candidate sourcing/);
   assert.match(email.body, /30-day employer acquisition pilot built around the roles Acme Staffing already places/);
   assert.match(email.body, /If we don't generate qualified employer meetings, there are no meeting fees\./);
+  assert.match(email.body, /https:\/\/scalelabai\.ca\/staffing\//);
+  assert.match(email.body, /Open to seeing what this could look like for Acme Staffing\?/);
   assert.equal((email.html.match(/<strong>/g) || []).length, 1);
   assert.match(email.html, /<strong>We handle the prospecting, outreach and qualification, then put interested employers directly on your calendar\.<\/strong>/);
   assert.equal(validateStaffingEmail(email, 2), null);
