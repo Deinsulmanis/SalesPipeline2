@@ -133,6 +133,7 @@ const {
 } = require('./integrations/campaign-versions');
 const { buildFunnelAnalytics } = require('./integrations/funnel-analytics');
 const { genericReengagementAnalytics } = require('./integrations/generic-reengagement-analytics');
+const { buildAnalyticsIntegrity } = require('./integrations/analytics-integrity');
 const { buildCrmHealth } = require('./integrations/crm-health');
 const { observerHealth } = require('./integrations/gmail-observer-health');
 const { hasUndeliveredDemoPair } = require('./integrations/demo-intent-state');
@@ -5401,6 +5402,42 @@ app.get('/api/ops/send-audit', requireAuth, (req, res) => {
     try { return res.json(JSON.parse(stdout)); }
     catch (_) { return res.status(502).json({ error: 'send audit returned invalid output' }); }
   });
+});
+
+// Read-only analytics integrity. Compares dashboard totals to canonical
+// provider-confirmed evidence. Never writes, never sends, never regenerates
+// the daily digest (that path mutates DailyDigest).
+app.get('/api/ops/analytics-integrity', requireAuth, async (req, res) => {
+  try {
+    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const funnelInput = {
+      leads: dataset.leads, boardLeads: dataset.boardLeads, activities: dataset.activities,
+      replyRecords: dataset.replyRecords,
+      currentVersion: ACTIVE_CAMPAIGN_VERSION.dental_ai_receptionist,
+    };
+    const funnelLifetime = buildFunnelAnalytics(funnelInput, { version: 'lifetime' });
+    const dentalFunnel = buildFunnelAnalytics(funnelInput, { version: ACTIVE_CAMPAIGN_VERSION.dental_ai_receptionist });
+    const staffingFunnel = buildFunnelAnalytics(funnelInput, { version: ACTIVE_CAMPAIGN_VERSION.industrial_staffing });
+    const report = buildAnalyticsIntegrity({
+      leads: dataset.leads,
+      activities: dataset.activities,
+      boardLeads: dataset.boardLeads,
+      replyRecords: dataset.replyRecords,
+      metrics: dataset.metrics,
+      sendActivity: dataset.sendActivity,
+      leadSource: dataset.leadSource,
+      funnelLifetime,
+      dentalFunnel,
+      staffingFunnel,
+      outreachMode: outreachStateMode(),
+      writeAuthority: outreachWriteAuthority(),
+    });
+    res.json(report);
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[analytics-integrity]', error.message);
+    res.status(500).json({ error: 'analytics integrity could not be computed' });
+  }
 });
 
 function operationalMailbox(senderInboxId) {

@@ -22,7 +22,8 @@ const NEGATIVE = new Set(['negative_reply', 'wrong_person_reply']);
 const UNSUB = new Set(['unsubscribe_reply']);
 const OOO = new Set(['out_of_office_reply']);
 const HUMAN_REVIEW = new Set(['needs_human_reply', 'question_reply', 'late_reply']);
-const BOOKED = new Set(['call_booked', 'meeting_rescheduled']);
+const NEW_BOOKING = new Set(['call_booked']);
+const MEETING_PRESENT = new Set(['call_booked', 'meeting_rescheduled']);
 const REPLY_TYPES = new Set([...POSITIVE, ...NEGATIVE, ...UNSUB, ...OOO, ...HUMAN_REVIEW]);
 
 const normEmail = value => String(value || '').trim().toLowerCase();
@@ -91,7 +92,7 @@ function genericReengagementAnalytics(input = {}) {
     const after = sorted.filter(row => String(row.occurredAt || '') > from);
 
     // A lead replied at most once for rate purposes; the funnel counts people.
-    let replied = false; let positive = false;
+    let replied = false; let positive = false; let booked = false;
     for (const row of after) {
       const type = String(row.eventType || '');
       if (REPLY_TYPES.has(type)) {
@@ -105,13 +106,13 @@ function genericReengagementAnalytics(input = {}) {
         if (!step2At || String(row.occurredAt) < step2At) totals.step1Replies++;
         else totals.step2Replies++;
       }
-      if (BOOKED.has(type)) totals.bookedMeetings++;
+      if (NEW_BOOKING.has(type) && !booked) { booked = true; totals.bookedMeetings++; }
       if (type === 'closed_won') totals.closedWon++;
     }
 
     // Why Step 2 never went out.
     if (!step2) {
-      const meetingFirst = after.some(row => BOOKED.has(String(row.eventType || '')));
+      const meetingFirst = after.some(row => MEETING_PRESENT.has(String(row.eventType || '')));
       if (meetingFirst) totals.meetingBeforeStep2++;
       else if (replied || stops.length) totals.blockedBeforeStep2++;
     }
