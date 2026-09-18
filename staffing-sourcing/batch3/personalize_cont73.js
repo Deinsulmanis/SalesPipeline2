@@ -213,11 +213,26 @@ async function personalizeCont73({ input, out, priorRoot, concurrency = 3, maxRe
     await runPool(retry, `retry-${attempt}`);
   }
 
-  const afterPersonalization = results.map(r => r || {
-    classification: 'RETRY_REQUIRED', primaryReason: 'NOT_PROCESSED', hyperPersonalizedOpening: '',
+  // Dense fill: Array#map skips holes, and a credits-exhausted stop leaves
+  // unprocessed indexes empty. flagBatchDuplicates cannot see undefined rows.
+  const afterPersonalization = rows.map((row, i) => results[i] || {
+    ...row,
+    campaign: STAFFING_CAMPAIGN.name,
+    campaignId: STAFFING_CAMPAIGN.id,
+    classification: 'RETRY_REQUIRED',
+    primaryReason: stoppedForCredits ? 'MODEL_CREDITS_EXHAUSTED' : 'NOT_PROCESSED',
+    hyperPersonalizedOpening: '',
+    safeToSend: false,
+    reviewFlag: true,
+    catchAllSource: isCatchAllRow(row),
+    supportingReasons: [stoppedForCredits
+      ? 'unprocessed_after_model_credit_exhaustion'
+      : 'unprocessed'],
+    continuationPass: 'phase2-cont73',
   });
   const claimants = priorClaimants(priorRoot);
-  await flagBatchDuplicates([...claimants, ...afterPersonalization], { createMessage });
+  const duplicateInput = [...claimants, ...afterPersonalization].filter(r => r && typeof r === 'object');
+  await flagBatchDuplicates(duplicateInput, { createMessage });
 
   const counts = afterPersonalization.reduce((a, r) => {
     a[r.classification] = (a[r.classification] || 0) + 1;
