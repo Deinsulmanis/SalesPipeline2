@@ -1,0 +1,780 @@
+{
+  "keep_name": [
+    {
+      "company": "Modern Machining Solutions",
+      "class": "keep_name",
+      "person_id": "66f483bfed41c30001716117",
+      "first_name": "Tate",
+      "title": "President & CEO",
+      "title_rank": 1,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "All Skilled Construction, LLC",
+      "class": "keep_name",
+      "person_id": "557139ab73696447f9c61a00",
+      "first_name": "Lori",
+      "title": "CEO",
+      "title_rank": 1,
+      "src": "skilledtrades-strict-p1.json"
+    },
+    {
+      "company": "Construction Staffing & Recruiting",
+      "class": "keep_name",
+      "person_id": "670e991ee84e460001c9a658",
+      "first_name": "Casey",
+      "title": "Senior Director SLED, Human Capital Leader, VP of Recruiting, VP of Sales, VP of Talent Acquisition",
+      "title_rank": 4,
+      "src": "construction-strict-p1.json"
+    },
+    {
+      "company": "Delta Construction Partners, Inc.",
+      "class": "keep_name",
+      "person_id": "5fb9fc1b3c588a0001f71af5",
+      "first_name": "Bob",
+      "title": "CEO Founder",
+      "title_rank": 0,
+      "src": "construction-strict-p1.json"
+    },
+    {
+      "company": "Virtual Construction Assistants",
+      "class": "keep_name",
+      "person_id": "66fbc3a9b7896f000194c518",
+      "first_name": "Joel",
+      "title": "Founder / CEO",
+      "title_rank": 0,
+      "src": "construction-strict-p1.json"
+    },
+    {
+      "company": "Kaye/Bassman Architecture | Engineering | Construction | Real Estate",
+      "class": "keep_name",
+      "person_id": "670024b648009d0001b3792e",
+      "first_name": "Will",
+      "title": "Managing Partner",
+      "title_rank": 3,
+      "src": "construction-strict-p1.json"
+    },
+    {
+      "company": "Premier Construction Recruiting LLC",
+      "class": "keep_name",
+      "person_id": "66f46d213f32670001460ee3",
+      "first_name": "Jon",
+      "title": "President/CEO",
+      "title_rank": 1,
+      "src": "construction-strict-p1.json"
+    },
+    {
+      "company": "TeamOne Logistics, LLC",
+      "class": "keep_name",
+      "person_id": "66fe69c7afd16b000147c5f9",
+      "first_name": "Page",
+      "title": "Chief Executive Officer",
+      "title_rank": 1,
+      "src": "logistics-strict-p1.json"
+    },
+    {
+      "company": "Belmar Integrated Logistics, Inc.",
+      "class": "keep_name",
+      "person_id": "67033ea18ab9420001af8133",
+      "first_name": "Marco",
+      "title": "Chief Executive Officer",
+      "title_rank": 1,
+      "src": "logistics-strict-p1.json"
+    }
+  ],
+  "generic_staffing": [
+    {
+      "company": "Superior Staffing",
+      "class": "generic_staffing",
+      "person_id": "66fc629ede6cae00017edcd6",
+      "first_name": "Heriberto",
+      "title": "CEO- President- Founder- Owner",
+      "title_rank": 0,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "Coronado Staffing Group",
+      "class": "generic_staffing",
+      "person_id": "5aaa79e7a6da9893614b3662",
+      "first_name": "Scott",
+      "title": "Co-Founder & Managing Partner",
+      "title_rank": 0,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "TA Staffing",
+      "class": "generic_staffing",
+      "person_id": "5f86c02905836500018acfdf",
+      "first_name": "Jeff",
+      "title": "President / Managing Partner",
+      "title_rank": 2,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "11th Hour Staffing, Inc",
+      "class": "generic_staffing",
+      "person_id": "66fb8f64cdf51100011f7942",
+      "first_name": "Carrie",
+      "title": "Co-Founder/President/CEO",
+      "title_rank": 0,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "Applied Staffing Group, LLC",
+      "class": "generic_staffing",
+      "person_id": "66f45e6f0313d40001408358",
+      "first_name": "Todd",
+      "title": "Owner and Managing Partner",
+      "title_rank": 0,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "SmartTalent Staffing and Recruiting",
+      "class": "generic_staffing",
+      "person_id": "68c950b3049de80001d30db2",
+      "first_name": "Smarttalent",
+      "title": "Founder & CEO",
+      "title_rank": 0,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "Josephine's Professional Staffing, Inc.",
+      "class": "generic_staffing",
+      "person_id": "66fca4100cbf9000016826db",
+      "first_name": "Josephine",
+      "title": "CEO/Founder",
+      "title_rank": 0,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "On Site Personnel",
+      "class": "generic_staffing",
+      "person_id": "6700e77daec44900018708f4",
+      "first_name": "Luan",
+      "title": "CEO/President",
+      "title_rank": 1,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "Spectrum Staffing Services",
+      "class": "generic_staffing",
+      "person_id": "6103e5a145b21300012b677b",
+      "first_name": "Joe",
+      "title": "President/CEO",
+      "title_rank": 1,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "West End Workforce",
+      "class": "generic_staffing",
+      "person_id": "66f1809fe756a3000199c045",
+      "first_name": "Tracy",
+      "title": "Founder + CEO",
+      "title_rank": 0,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "G1 Staffing",
+      "class": "generic_staffing",
+      "person_id": "5b269bc1a6da9877cb976625",
+      "first_name": "John",
+      "title": "Managing Partner",
+      "title_rank": 3,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "Summit Staffing, Inc",
+      "class": "generic_staffing",
+      "person_id": "66fc80db0cbf9000016012e3",
+      "first_name": "Fiorella",
+      "title": "Founder & CEO",
+      "title_rank": 0,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "Elective Staffing",
+      "class": "generic_staffing",
+      "person_id": "60f3bf1bad431d0001018ddb",
+      "first_name": "Amelia",
+      "title": "CEO & Owner",
+      "title_rank": 0,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "All About Personnel",
+      "class": "generic_staffing",
+      "person_id": "66fbe9be3762040001f355f2",
+      "first_name": "Vince",
+      "title": "Co-Founder/Chief Executive Officer",
+      "title_rank": 0,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "GTRJOBS - Staffing + Recruiting",
+      "class": "generic_staffing",
+      "person_id": "66f5cc8de26af50001ee32dc",
+      "first_name": "Patrick",
+      "title": "Founder & CEO",
+      "title_rank": 0,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "Tru Staffing",
+      "class": "generic_staffing",
+      "person_id": "66f55a6460d35e0001f21791",
+      "first_name": "Jared",
+      "title": "Founder & CEO",
+      "title_rank": 0,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "Unlocking Greatness Staffing, Inc.",
+      "class": "generic_staffing",
+      "person_id": "66f83860f3aaa200011fd29b",
+      "first_name": "Zenja",
+      "title": "CEO/President",
+      "title_rank": 1,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "Employment Service Connection, Inc.",
+      "class": "generic_staffing",
+      "person_id": "66ffc00eb358ea0001076456",
+      "first_name": "Michael",
+      "title": "President/CEO",
+      "title_rank": 1,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "Alura Workforce Solutions",
+      "class": "generic_staffing",
+      "person_id": "54ec1481746869444c55614b",
+      "first_name": "Brian",
+      "title": "Managing Partner, President",
+      "title_rank": 2,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "Spotlight Staffing",
+      "class": "generic_staffing",
+      "person_id": "66f5a05e0d978b00012f842d",
+      "first_name": "Terace",
+      "title": "Owner/CEO",
+      "title_rank": 0,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "Citywide Staffing",
+      "class": "generic_staffing",
+      "person_id": "66f8ab928dcef000015bffe4",
+      "first_name": "Crissy",
+      "title": "President & CEO",
+      "title_rank": 1,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "ProStaffing",
+      "class": "generic_staffing",
+      "person_id": "66faa615bd0c94000155329d",
+      "first_name": "Jamie",
+      "title": "Chief Executive Officer",
+      "title_rank": 1,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "Excelsior Staffing",
+      "class": "generic_staffing",
+      "person_id": "66fb8e25cdf51100011f25f8",
+      "first_name": "Norris",
+      "title": "President and CEO",
+      "title_rank": 1,
+      "src": "manufacturing-strict-p1.json"
+    },
+    {
+      "company": "Innovative Staffing",
+      "class": "generic_staffing",
+      "person_id": "61aa6f49d76ebf0001640530",
+      "first_name": "Paul",
+      "title": "Founder & President",
+      "title_rank": 0,
+      "src": "warehouse-strict-p1.json"
+    },
+    {
+      "company": "Principle Personnel Group",
+      "class": "generic_staffing",
+      "person_id": "66f8c28e8dcef0000160bc77",
+      "first_name": "David",
+      "title": "Chief Executive Officer",
+      "title_rank": 1,
+      "src": "warehouse-strict-p1.json"
+    },
+    {
+      "company": "Keen Search & Staffing, LLC",
+      "class": "generic_staffing",
+      "person_id": "54a40ccd74686938ac7caa28",
+      "first_name": "Lannie",
+      "title": "Managing Director",
+      "title_rank": 3,
+      "src": "warehouse-strict-p1.json"
+    },
+    {
+      "company": "RMG STAFFING",
+      "class": "generic_staffing",
+      "person_id": "66a53acadfa2e8000146ac1b",
+      "first_name": "Ricardo",
+      "title": "President & CEO",
+      "title_rank": 1,
+      "src": "warehouse-strict-p1.json"
+    },
+    {
+      "company": "Express Employment Omaha",
+      "class": "generic_staffing",
+      "person_id": "54a9367f746869334a53620f",
+      "first_name": "Travis",
+      "title": "Managing Partner",
+      "title_rank": 3,
+      "src": "warehouse-strict-p1.json"
+    },
+    {
+      "company": "Visions Staffing Solutions LLC",
+      "class": "generic_staffing",
+      "person_id": "6937bdca3b0fe400017ddd5c",
+      "first_name": "Karina",
+      "title": "Chief Executive Officer",
+      "title_rank": 1,
+      "src": "warehouse-strict-p1.json"
+    },
+    {
+      "company": "Elite Staffing Solutions",
+      "class": "generic_staffing",
+      "person_id": "54c20281746869163974206b",
+      "first_name": "Tuly",
+      "title": "Chief Executive Officer",
+      "title_rank": 1,
+      "src": "warehouse-strict-p1.json"
+    },
+    {
+      "company": "Timeline Staffing LLC",
+      "class": "generic_staffing",
+      "person_id": "670d692baf22f00001e27b2b",
+      "first_name": "Delia",
+      "title": "Chief Executive Officer",
+      "title_rank": 1,
+      "src": "warehouse-strict-p1.json"
+    },
+    {
+      "company": "Prime Time Personnel",
+      "class": "generic_staffing",
+      "person_id": "57e03c99a6da980e1b86f981",
+      "first_name": "Laura",
+      "title": "Past President & CEO",
+      "title_rank": 1,
+      "src": "warehouse-strict-p1.json"
+    },
+    {
+      "company": "Anchor Employment Services, Inc.",
+      "class": "generic_staffing",
+      "person_id": "66f8720d8dcef000014db553",
+      "first_name": "RJ",
+      "title": "Chief Executive Officer",
+      "title_rank": 1,
+      "src": "warehouse-strict-p1.json"
+    },
+    {
+      "company": "HJG Staffing",
+      "class": "generic_staffing",
+      "person_id": "670801e7d13e570001ff7daa",
+      "first_name": "Sally",
+      "title": "Managing Director",
+      "title_rank": 3,
+      "src": "warehouse-strict-p1.json"
+    },
+    {
+      "company": "Protech Staffing",
+      "class": "generic_staffing",
+      "person_id": "66f1b8619073fb0001259f77",
+      "first_name": "Leo",
+      "title": "CEO",
+      "title_rank": 1,
+      "src": "warehouse-strict-p1.json"
+    },
+    {
+      "company": "Vald Staffing",
+      "class": "generic_staffing",
+      "person_id": "635054c71cc282000172ac06",
+      "first_name": "Christian",
+      "title": "Chief Executive Officer",
+      "title_rank": 1,
+      "src": "warehouse-strict-p1.json"
+    },
+    {
+      "company": "Insight Staffing Solutions",
+      "class": "generic_staffing",
+      "person_id": "66fe15307673080001ea3dc0",
+      "first_name": "Lupe",
+      "title": "Chief Executive Officer",
+      "title_rank": 1,
+      "src": "warehouse-strict-p1.json"
+    },
+    {
+      "company": "KBC Staffing",
+      "class": "generic_staffing",
+      "person_id": "66f871f08dcef000014dae9a",
+      "first_name": "Rich",
+      "title": "Founder/President",
+      "title_rank": 0,
+      "src": "warehouse-strict-p1.json"
+    },
+    {
+      "company": "Waterfront Staffing LLC",
+      "class": "generic_staffing",
+      "person_id": "66f30b1e292a0f0001533645",
+      "first_name": "Karen",
+      "title": "Founder/Owner",
+      "title_rank": 0,
+      "src": "warehouse-strict-p1.json"
+    },
+    {
+      "company": "Arch Staffing Group, Inc.",
+      "class": "generic_staffing",
+      "person_id": "670697c8f3f939000194d2dc",
+      "first_name": "Joe",
+      "title": "Managing Partner",
+      "title_rank": 3,
+      "src": "skilledtrades-strict-p1.json"
+    },
+    {
+      "company": "NOLA Staffing",
+      "class": "generic_staffing",
+      "person_id": "66f86e178dcef000014ca7bc",
+      "first_name": "Monique",
+      "title": "Chief Executive Officer",
+      "title_rank": 1,
+      "src": "skilledtrades-strict-p1.json"
+    },
+    {
+      "company": "West Sound Workforce",
+      "class": "generic_staffing",
+      "person_id": "54a489dc74686938acbece4f",
+      "first_name": "Monica",
+      "title": "President & CEO",
+      "title_rank": 1,
+      "src": "skilledtrades-strict-p1.json"
+    },
+    {
+      "company": "Staffing Resources",
+      "class": "generic_staffing",
+      "person_id": "66fb017462bbf80001d49b91",
+      "first_name": "Debbie",
+      "title": "CEO & Founder",
+      "title_rank": 0,
+      "src": "skilledtrades-strict-p1.json"
+    },
+    {
+      "company": "Topeka Staffing",
+      "class": "generic_staffing",
+      "person_id": "67f034ad0798950001d5c150",
+      "first_name": "Ozkar",
+      "title": "Business Owner",
+      "title_rank": 0,
+      "src": "skilledtrades-strict-p1.json"
+    },
+    {
+      "company": "Taurus Staffing Solutions",
+      "class": "generic_staffing",
+      "person_id": "670e90c44c568c000162fc9c",
+      "first_name": "Kristie",
+      "title": "Chief Executive Officer",
+      "title_rank": 1,
+      "src": "skilledtrades-strict-p1.json"
+    },
+    {
+      "company": "Superior Staffing Inc.",
+      "class": "generic_staffing",
+      "person_id": "66f40a7ace5b4f00012eb7f0",
+      "first_name": "Crystal",
+      "title": "CEO",
+      "title_rank": 1,
+      "src": "skilledtrades-strict-p1.json"
+    },
+    {
+      "company": "O2 Employment Services",
+      "class": "generic_staffing",
+      "person_id": "66fc80af0cbf900001600479",
+      "first_name": "Heidi",
+      "title": "CEO",
+      "title_rank": 1,
+      "src": "skilledtrades-strict-p1.json"
+    },
+    {
+      "company": "Pinnacle Staffing Group",
+      "class": "generic_staffing",
+      "person_id": "5fbcbe35670629000142ad3e",
+      "first_name": "Tim",
+      "title": "Managing Director",
+      "title_rank": 3,
+      "src": "skilledtrades-strict-p1.json"
+    },
+    {
+      "company": "NW Employment Solutions",
+      "class": "generic_staffing",
+      "person_id": "66fd62bfe8f278000105a774",
+      "first_name": "Kasey",
+      "title": "Co-Owner/President",
+      "title_rank": 0,
+      "src": "skilledtrades-strict-p1.json"
+    },
+    {
+      "company": "Interfuse Staffing",
+      "class": "generic_staffing",
+      "person_id": "60252ef04d187e0001dd3b14",
+      "first_name": "Vincent",
+      "title": "President",
+      "title_rank": 2,
+      "src": "skilledtrades-strict-p1.json"
+    },
+    {
+      "company": "William W. Professional Staffing LLC",
+      "class": "generic_staffing",
+      "person_id": "66f5a4d615081b00013e79ea",
+      "first_name": "Shawndetta",
+      "title": "Chief Executive Officer",
+      "title_rank": 1,
+      "src": "construction-strict-p1.json"
+    },
+    {
+      "company": "Captivate Staffing Group",
+      "class": "generic_staffing",
+      "person_id": "54a5f95874686932093b15b8",
+      "first_name": "Geoffrey",
+      "title": "CEO",
+      "title_rank": 1,
+      "src": "construction-strict-p1.json"
+    },
+    {
+      "company": "AEON Staffing Group",
+      "class": "generic_staffing",
+      "person_id": "66f8a5398dcef000015a9aa2",
+      "first_name": "Sean",
+      "title": "CEO & Founder",
+      "title_rank": 0,
+      "src": "construction-strict-p1.json"
+    },
+    {
+      "company": "Employment Source - Billings MT",
+      "class": "generic_staffing",
+      "person_id": "66fb87b1cdf51100011d8156",
+      "first_name": "Sandra",
+      "title": "CEO/President",
+      "title_rank": 1,
+      "src": "construction-strict-p1.json"
+    },
+    {
+      "company": "Clean Power Staffing",
+      "class": "generic_staffing",
+      "person_id": "6844d1cd31f22f0001f8a2c4",
+      "first_name": "Ruben",
+      "title": "Managing Director | Founder",
+      "title_rank": 0,
+      "src": "construction-strict-p1.json"
+    },
+    {
+      "company": "Murphy's Family Staffing",
+      "class": "generic_staffing",
+      "person_id": "66f8920a8dcef000015612c9",
+      "first_name": "Justin",
+      "title": "President and CEO",
+      "title_rank": 1,
+      "src": "construction-strict-p1.json"
+    },
+    {
+      "company": "Denver Staffing Services LLC",
+      "class": "generic_staffing",
+      "person_id": "66f876308dcef000014ed55e",
+      "first_name": "Cindy",
+      "title": "CEO/Founder and Recruiting Director",
+      "title_rank": 0,
+      "src": "construction-strict-p1.json"
+    },
+    {
+      "company": "Stability Staffing and Consulting",
+      "class": "generic_staffing",
+      "person_id": "54a56daa7468693209a10496",
+      "first_name": "Jennifer",
+      "title": "President / CEO",
+      "title_rank": 1,
+      "src": "logistics-strict-p1.json"
+    },
+    {
+      "company": "James Staffing Partners",
+      "class": "generic_staffing",
+      "person_id": "66f8dd158dcef00001662455",
+      "first_name": "Ryan",
+      "title": "President/Founder",
+      "title_rank": 0,
+      "src": "logistics-strict-p1.json"
+    },
+    {
+      "company": "CE Personnel Services",
+      "class": "generic_staffing",
+      "person_id": "5b8b2b87324d4437c7dbc690",
+      "first_name": "Estefania",
+      "title": "Chief Executive Officer",
+      "title_rank": 1,
+      "src": "logistics-strict-p1.json"
+    },
+    {
+      "company": "Legacy Employment Solutions",
+      "class": "generic_staffing",
+      "person_id": "66f79ec9fe82a1000153d1ca",
+      "first_name": "Kimberly",
+      "title": "President and Founder",
+      "title_rank": 0,
+      "src": "logistics-strict-p1.json"
+    },
+    {
+      "company": "DNA Staffing Consultants LLC",
+      "class": "generic_staffing",
+      "person_id": "675ac0997785b30001489e29",
+      "first_name": "Elden",
+      "title": "President/Owner",
+      "title_rank": 0,
+      "src": "logistics-strict-p1.json"
+    },
+    {
+      "company": "AlohaHP - Workforce Solutions",
+      "class": "generic_staffing",
+      "person_id": "66fc89760cbf900001625201",
+      "first_name": "Kathleen",
+      "title": "Founder + CEO",
+      "title_rank": 0,
+      "src": "lightind-strict-p1.json"
+    },
+    {
+      "company": "Moreno Staffing",
+      "class": "generic_staffing",
+      "person_id": "661d968e543d6300079f258f",
+      "first_name": "Jose",
+      "title": "Founder / CEO",
+      "title_rank": 0,
+      "src": "lightind-strict-p1.json"
+    },
+    {
+      "company": "Noll Staffing and Assessment",
+      "class": "generic_staffing",
+      "person_id": "66f5aedf4c63fc0001e28380",
+      "first_name": "Doug",
+      "title": "CEO",
+      "title_rank": 1,
+      "src": "lightind-strict-p1.json"
+    },
+    {
+      "company": "Long Island Temps",
+      "class": "generic_staffing",
+      "person_id": "66f89d0410530c00010d5f8a",
+      "first_name": "Robert",
+      "title": "CEO",
+      "title_rank": 1,
+      "src": "lightind-strict-p1.json"
+    },
+    {
+      "company": "The Ursitti Group Staffing Solutions",
+      "class": "generic_staffing",
+      "person_id": "680a144f8036b900019ccacf",
+      "first_name": "Misty",
+      "title": "Managing Director",
+      "title_rank": 3,
+      "src": "lightind-strict-p1.json"
+    },
+    {
+      "company": "Sawyer Staffing",
+      "class": "generic_staffing",
+      "person_id": "60cf628ca2de3a00019450a6",
+      "first_name": "Randy",
+      "title": "Owner and President",
+      "title_rank": 0,
+      "src": "lightind-strict-p1.json"
+    },
+    {
+      "company": "RELY Workforce Group",
+      "class": "generic_staffing",
+      "person_id": "6a569173faf1c200019b2cda",
+      "first_name": "Douglas",
+      "title": "CEO",
+      "title_rank": 1,
+      "src": "lightind-strict-p1.json"
+    },
+    {
+      "company": "Strategic Staffing Solutions",
+      "class": "generic_staffing",
+      "person_id": "54a747ad7468696220bbe525",
+      "first_name": "John",
+      "title": "President",
+      "title_rank": 2,
+      "src": "lightind-strict-p1.json"
+    },
+    {
+      "company": "Phoenix Staffing and Management Systems",
+      "class": "generic_staffing",
+      "person_id": "66f892fa8dcef00001563f9f",
+      "first_name": "Jerry",
+      "title": "Chief Executive Officer",
+      "title_rank": 1,
+      "src": "lightind-strict-p1.json"
+    },
+    {
+      "company": "Consolidated Staffing, Inc.",
+      "class": "generic_staffing",
+      "person_id": "678ec618cafcaf000106bb6b",
+      "first_name": "Josh",
+      "title": "Chief Executive Officer",
+      "title_rank": 1,
+      "src": "lightind-strict-p1.json"
+    },
+    {
+      "company": "Murray Resources - Best Staffing Agency",
+      "class": "generic_staffing",
+      "person_id": "66ede8eb5c597900019aef8f",
+      "first_name": "Keith",
+      "title": "Managing Partner",
+      "title_rank": 3,
+      "src": "lightind-strict-p1.json"
+    },
+    {
+      "company": "Personnel Services Unlimited",
+      "class": "generic_staffing",
+      "person_id": "6014b0af956e8300014fd602",
+      "first_name": "Tim",
+      "title": "President",
+      "title_rank": 2,
+      "src": "lightind-strict-p1.json"
+    },
+    {
+      "company": "Professional Staffing Group, LLC",
+      "class": "generic_staffing",
+      "person_id": "66f6fa57535ef50001a25e2a",
+      "first_name": "Brenda",
+      "title": "President/Owner",
+      "title_rank": 0,
+      "src": "lightind-strict-p1.json"
+    },
+    {
+      "company": "WorkForce Unlimited",
+      "class": "generic_staffing",
+      "person_id": "679cf25f4403750001682144",
+      "first_name": "Michelle",
+      "title": "Executive Administrator to CEO/Co-Founder",
+      "title_rank": 0,
+      "src": "lightind-strict-p1.json"
+    },
+    {
+      "company": "Lanmark Staffing",
+      "class": "generic_staffing",
+      "person_id": "6704406806c0e000017ac31e",
+      "first_name": "Lana",
+      "title": "President",
+      "title_rank": 2,
+      "src": "lightind-strict-p1.json"
+    }
+  ]
+}

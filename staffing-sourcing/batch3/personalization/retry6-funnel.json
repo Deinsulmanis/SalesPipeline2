@@ -1,0 +1,85 @@
+{
+  "attempted": 6,
+  "HIGH": 0,
+  "MEDIUM": 0,
+  "RETRY_REQUIRED": 6,
+  "ICP_MISMATCH": 0,
+  "REVIEW_REQUIRED": 0,
+  "auditFailures": 0,
+  "duplicateDemotions": 0,
+  "accepted": 0,
+  "outcomes": [
+    {
+      "company": "LEAD Industrial Staffing",
+      "email": "blopez@leadstaff.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "RETRIEVAL_UNUSABLE",
+      "opening": "",
+      "pages": 0,
+      "failures": [
+        "non_public_address"
+      ],
+      "catchAll": false
+    },
+    {
+      "company": "Action Labor and Staffing Connection",
+      "email": "jmarotta@actionlabor.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "RETRIEVAL_UNUSABLE",
+      "opening": "",
+      "pages": 0,
+      "failures": [
+        "unable to verify the first certificate"
+      ],
+      "catchAll": false
+    },
+    {
+      "company": "Labor On Site",
+      "email": "avargas@laboronsite.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "RETRIEVAL_UNUSABLE",
+      "opening": "",
+      "pages": 0,
+      "failures": [
+        "unusable_or_blocked_page"
+      ],
+      "catchAll": false
+    },
+    {
+      "company": "Skilled Trades Staffing",
+      "email": "bflores@st-staffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "RETRIEVAL_UNUSABLE",
+      "opening": "",
+      "pages": 0,
+      "failures": [
+        "Request failed with status code 409"
+      ],
+      "catchAll": true
+    },
+    {
+      "company": "Staffing Authority, LLC",
+      "email": "larry@staffingauthority.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "RETRIEVAL_UNUSABLE",
+      "opening": "",
+      "pages": 0,
+      "failures": [
+        "certificate has expired"
+      ],
+      "catchAll": false
+    },
+    {
+      "company": "Capital Area Staffing Solutions, Inc.",
+      "email": "dawnt@capitalareastaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "RETRIEVAL_BLOCKED_403",
+      "opening": "",
+      "pages": 0,
+      "failures": [
+        "Request failed with status code 403"
+      ],
+      "catchAll": false
+    }
+  ]
+}
