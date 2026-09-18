@@ -60,7 +60,7 @@ const {
 // Stage 2: read-side validation only. Sheets still serves every user-facing
 // timeline; Supabase is read alongside so parity can be measured on real data.
 const { timelineMode, readCanonicalTimeline, compareTimelines,
-  supabaseMayServeTimeline } = require('./integrations/supabase-timeline');
+  supabaseMayServeTimeline, readRecentCrmEvents } = require('./integrations/supabase-timeline');
 const { readTimelineHybrid, hybridMayServeTimeline, compareHybridActivities,
   FALLBACK: HYBRID_FALLBACK } = require('./integrations/supabase-timeline-hybrid');
 
@@ -143,6 +143,8 @@ const {
 } = require('./integrations/campaign-versions');
 const { buildFunnelAnalytics } = require('./integrations/funnel-analytics');
 const { genericReengagementAnalytics } = require('./integrations/generic-reengagement-analytics');
+const { buildAnalyticsIntegrity } = require('./integrations/analytics-integrity');
+const { buildConfirmedSendActivity, buildCanonicalDigest, bouncedLeadIds } = require('./integrations/canonical-sends');
 const { buildCrmHealth } = require('./integrations/crm-health');
 const { observerHealth } = require('./integrations/gmail-observer-health');
 const { gmailUsageSnapshot } = require('./integrations/gmail-api-guard');
@@ -1337,7 +1339,7 @@ function campaignLabelFor(lead) {
 // campaign_notes and website: they are ~70% of the old payload and no column
 // renders them. The two facts the UI DID read out of notes are precomputed
 // here as flags instead.
-function toLightRow(lead, category, attribution = {}, sender = null) {
+function toLightRow(lead, category, attribution = {}, sender = null, extras = {}) {
   const row = {};
   for (const field of CE_LIGHT_FIELDS) row[field] = lead[field] || '';
   // Which inbox owns this conversation. Resolved server-side from the canonical
@@ -1354,7 +1356,8 @@ function toLightRow(lead, category, attribution = {}, sender = null) {
   }
   row.replyCategory = category || '';
   row.lateReply = /\[LATE REPLY:/i.test(lead.notes || '');
-  row.bounced = /\[BOUNCED/i.test(lead.notes || '');
+  row.bounced = Boolean(extras.bouncedLeadIds && extras.bouncedLeadIds.has(lead.id))
+    || /\[BOUNCED/i.test(lead.notes || '');
   row.manualHold = /\[MANUAL HOLD\]/i.test(lead.notes || '');
   row.suppressed = row.bounced || /\[(?:UNSUBSCRIBED|SUPPRESSED|BOUNCED)/i.test(lead.notes || '') || /^(?:Unsub|Unsubscribed)$/i.test(lead.stage || '');
   row.campaignVersion = attribution.campaignVersion || LEGACY_UNKNOWN;
@@ -1562,6 +1565,7 @@ async function loadOutreachDataset() {
   // never per row, and stripped of everything but identity.
   const senderIdentities = visibleSenderIdentities();
   const leadKeys = new Set();
+  const bounceIds = bouncedLeadIds({ leads, activities });
   // Demo engagement is LEAD-scoped, by the same rule the agent sends on: a play
   // belongs to the lead whose token it carries, or — for a token-less legacy row
   // — to the ONE lead that owns its company key. A key several locations of one
@@ -1593,7 +1597,7 @@ async function loadOutreachDataset() {
     });
     facets.senders[sender.state === 'unknown' || sender.state === 'conflict' ? sender.state : sender.senderId]
       = (facets.senders[sender.state === 'unknown' || sender.state === 'conflict' ? sender.state : sender.senderId] || 0) + 1;
-    const row = toLightRow(lead, categoryByLeadId.get(lead.id), attribution, sender);
+    const row = toLightRow(lead, categoryByLeadId.get(lead.id), attribution, sender, { bouncedLeadIds: bounceIds });
     Object.assign(row, pipelineIndex.byColdEmailId.get(lead.id));
     const attributedPlay = demoPlayForLead(demoAttribution, lead.id);
     row.demoEngaged = Boolean(attributedPlay);
@@ -1678,23 +1682,9 @@ async function loadOutreachDataset() {
   };
 
   // Daily send activity belongs to the full shared snapshot, never the
-  // paginated browser page. Activity is also the truthful unit here: a lead
-  // can have several sends while lastEmailedAt only remembers the latest one.
-  const sendTypes = new Set(['initial_email_sent', 'follow_up_sent', 'booking_link_sent', 'sequence_step_sent']);
-  const dailySends = new Map();
-  const seenSendEvents = new Set();
-  for (const row of activities) {
-    if (!sendTypes.has(String(row.eventType || ''))) continue;
-    const eventKey = String(row.eventId || `${row.leadId || row.sourceLeadId}:${row.eventType}:${row.occurredAt}`);
-    if (seenSendEvents.has(eventKey)) continue;
-    const sentAt = new Date(row.occurredAt);
-    if (!Number.isFinite(sentAt.getTime())) continue;
-    seenSendEvents.add(eventKey);
-    const date = sentAt.toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
-    dailySends.set(date, (dailySends.get(date) || 0) + 1);
-  }
-  const sendActivity = [...dailySends.entries()].sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, count]) => ({ date, count }));
+  // paginated browser page. Only provider-confirmed successful sends count:
+  // unconfirmed send-typed rows, reservations, and failures are zero.
+  const sendActivity = buildConfirmedSendActivity(activities);
 
   return {
     at: Date.now(),
@@ -2161,19 +2151,24 @@ async function ensureDigestSheet() {
 
 // Computes today's numbers from the source tabs. Read-only.
 async function computeDigest(day) {
-  const [ceR, opR, dpR, drR, inR] = await Promise.all([
+  const [ceR, opR, dpR, drR, inR, actR] = await Promise.all([
     sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE }),
     sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ProposalOpens!A:F' }),
     sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A:F' }),
     sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ReplyDrafts!A:I' }).catch(() => ({ data: {} })),
     sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'IntentFired!A:E' }).catch(() => ({ data: {} })),
+    sheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${COLD_CALL_ACTIVITY_SHEET}!A:J`,
+    }).catch(() => ({ data: {} })),
   ]);
 
   const leadRows = (ceR.data.values || []).slice(1).filter(r => r[0]);
+  const leads = leadRows.map(r => Object.fromEntries(CE_COLUMNS.map((field, i) => [field, r[i] || ''])));
+  const activities = (actR.data.values || []).slice(1).map(row => Object.fromEntries(
+    COLD_CALL_ACTIVITY_HEADER.map((field, i) => [field, row[i] || '']),
+  ));
+  const canonical = buildCanonicalDigest({ day, activities, leads });
   const isToday  = ts => { try { return ts && vanDay(new Date(ts)) === day; } catch (_e) { return false; } };
-
-  // ── emails sent today (lastEmailedAt lands on every send path) ──
-  const emailsSent = leadRows.filter(r => isToday(r[9])).length;
 
   // ── real opens today: the shared scanner filter, not raw rows ──
   const opens = (opR.data.values || []).slice(1).map(r => ({
@@ -2202,23 +2197,6 @@ async function computeDigest(day) {
   }
   const bothPairs = [...pairKeys.values()].filter(v => v.intro && v.demo).length;
 
-  // ── replies today, by Haiku classification (read off the notes tags) ──
-  const TAGS = [
-    ['Question',       /\[REPLY: Question/],
-    ['Interested',     /\[REPLY: Interested\]/],
-    ['Not Interested', /\[REPLY: Not Interested\]/],
-    ['Unsubscribed',   /\[REPLY: Unsubscribed\]/],
-    ['Wrong Person',   /\[REPLY: Wrong Person/],
-    ['OOO',            /\[REPLY: OOO/],
-    ['Needs Human',    /\[REPLY: Needs Human|\[NEEDS REVIEW/],
-  ];
-  const repliedToday = leadRows.filter(r => isToday(r[9]) && /\[REPLY:/.test(r[11] || ''));
-  const replyBreakdown = {};
-  for (const [label, re] of TAGS) {
-    const n = repliedToday.filter(r => re.test(r[11] || '')).length;
-    if (n) replyBreakdown[label] = n;
-  }
-
   // ── auto-answers vs drafts ──
   const autoAnswered = leadRows.filter(r => isToday(r[9]) && /auto-answered/.test(r[11] || '')).length;
   const draftRows = (drR.data.values || []).slice(1);
@@ -2235,12 +2213,14 @@ async function computeDigest(day) {
   return {
     date: day,
     generatedAt: new Date().toISOString(),
-    emailsSent,
+    emailsSent: canonical.emailsSent,
     realOpens,
     demoPlays: { intro: introToday, demo: demoToday, total: playsToday.length, companiesWithBothPairs: bothPairs },
-    replies: { total: repliedToday.length, breakdown: replyBreakdown },
+    replies: canonical.replies,
+    bookings: canonical.bookings,
     answers: { autoSent: autoAnswered, draftsCreated: draftsToday, draftsPending },
     bookingLinksSent: { total: Object.values(bookingByTrigger).reduce((a, b) => a + b, 0), byTrigger: bookingByTrigger },
+    sendClasses: canonical.sendClasses,
   };
 }
 
@@ -5456,6 +5436,46 @@ app.get('/api/ops/send-audit', requireAuth, (req, res) => {
     try { return res.json(JSON.parse(stdout)); }
     catch (_) { return res.status(502).json({ error: 'send audit returned invalid output' }); }
   });
+});
+
+// Read-only analytics integrity. Compares dashboard totals to canonical
+// provider-confirmed evidence. Never writes, never sends, never regenerates
+// the daily digest (that path mutates DailyDigest).
+app.get('/api/ops/analytics-integrity', requireAuth, async (req, res) => {
+  try {
+    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const funnelInput = {
+      leads: dataset.leads, boardLeads: dataset.boardLeads, activities: dataset.activities,
+      replyRecords: dataset.replyRecords,
+      currentVersion: ACTIVE_CAMPAIGN_VERSION.dental_ai_receptionist,
+    };
+    const funnelLifetime = buildFunnelAnalytics(funnelInput, { version: 'lifetime' });
+    const dentalFunnel = buildFunnelAnalytics(funnelInput, { version: ACTIVE_CAMPAIGN_VERSION.dental_ai_receptionist });
+    const staffingFunnel = buildFunnelAnalytics(funnelInput, { version: ACTIVE_CAMPAIGN_VERSION.industrial_staffing });
+    const sinceDay = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+    const crmSample = await readRecentCrmEvents({ since: sinceDay, limit: 8000 });
+    const report = buildAnalyticsIntegrity({
+      leads: dataset.leads,
+      activities: dataset.activities,
+      boardLeads: dataset.boardLeads,
+      replyRecords: dataset.replyRecords,
+      metrics: dataset.metrics,
+      sendActivity: dataset.sendActivity,
+      leadSource: dataset.leadSource,
+      funnelLifetime,
+      dentalFunnel,
+      staffingFunnel,
+      outreachMode: outreachStateMode(),
+      writeAuthority: outreachWriteAuthority(),
+      suppressedEmails: [...(dataset.suppressedEmails || [])],
+      crmEvents: crmSample.ok ? crmSample.events : undefined,
+    });
+    res.json(report);
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[analytics-integrity]', error.message);
+    res.status(500).json({ error: 'analytics integrity could not be computed' });
+  }
 });
 
 function operationalMailbox(senderInboxId) {
