@@ -83,3 +83,22 @@ Canonical `POST /api/coldemail/import` then `POST /api/coldemail/queue` into the
 - 58/58 exactly one `lead_queued` activity
 - 12/12 catch-all notes include `[B3 CATCH-ALL]`
 - No manual send; production agent stayed INTENT-ONLY with zero Gmail provider work during this run
+
+## Phase 2 continuation post-write
+
+Canonical `POST /api/coldemail/import` then `POST /api/coldemail/queue` into the existing Industrial Staffing Agency campaign. Only the 6 continuation leads that cleared every existing gate were written.
+
+- Imported 6 (0 duplicates, 0 junk, 0 suppressed)
+- Queued 6 (`primary` / `industrial-staffing-employer-v1` / `industrial_staffing_employer_acquisition_v1`)
+- Staffing corpus 327 → 333 (delta 6)
+- Queued 319 → 325 (delta 6)
+- Sent unchanged at 8
+- Dental total unchanged at 1316
+- 6/6 canonical ids unique, 6/6 mirrors `mirrored: true`, 0 CAS conflicts
+- 6/6 exactly one `lead_queued` activity; 0 send events; `lastEmailedAt` empty
+- 5/5 catch-all notes include `[B3 CATCH-ALL]`; Alliance Workforce (non-catch-all) does not
+- Launch readiness `missingPersonalization: 0` across 333 staffing rows
+- Campaign sending state left `Active / sending`; copy version still `staffing_locked_v1`
+- Held-6 emails still absent from the live corpus
+- No manual send; no agent trigger; no additional Apollo spend; Gmail worktree and dental records untouched
+
