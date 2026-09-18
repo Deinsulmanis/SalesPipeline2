@@ -691,6 +691,13 @@
   .inbox-route-meta { margin-top: 2px; font-size: 10px; color: var(--text-muted); }
   .inbox-route-badge { white-space: nowrap; border-radius: 999px; padding: 3px 8px; font-size: 10px; font-weight: 700; color: var(--green); background: color-mix(in srgb, var(--green) 10%, transparent); }
   .inbox-route-row.warming .inbox-route-badge { color: var(--orange); background: color-mix(in srgb, var(--orange) 10%, transparent); }
+  .inbox-sender-card { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; background: var(--wash-1); }
+  .inbox-sender-card + .inbox-sender-card { margin-top: 10px; }
+  .inbox-sender-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; margin: 8px 0 10px; font-size: 12px; color: var(--text-secondary); }
+  .inbox-sender-grid b { color: var(--text); font-weight: 600; }
+  .inbox-sender-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .inbox-sender-actions .btn-save, .inbox-sender-actions .btn-cancel { padding: 6px 12px; font-size: 12px; }
+  .inbox-sender-actions .btn-save:disabled, .inbox-sender-actions .btn-cancel:disabled { opacity: .45; cursor: not-allowed; transform: none; box-shadow: none; }
 
   .form-actions { display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }
 
@@ -6290,9 +6297,9 @@ function renderGmailInboxSelector() {
   }
   select.innerHTML = inboxes.map(inbox => `<option value="${escAttr(inbox.id)}" ${inbox.currentRoute ? 'selected' : ''} ${inbox.currentRoute ? '' : 'disabled'}>${esc(inbox.email)}${inbox.currentRoute ? ' — Current sender' : ` — ${inbox.status}`}</option>`).join('');
   status.innerHTML = `<div class="inbox-route-head"><span class="inbox-route-kicker">Gmail sending rail</span><span class="inbox-route-readonly">View only</span></div><div class="inbox-route-list">${inboxes.map(inbox => {
-    const warming = inbox.status === 'warming';
-    const label = inbox.currentRoute ? 'Current' : (warming ? 'Warming · locked' : inbox.status);
-    const meta = inbox.currentRoute ? `${inbox.dailyLimit}/day configured` : `${inbox.dailyLimit}/day · ${inbox.identityVerified ? 'Identity verified' : (inbox.credentialConfigured ? 'Credential ready' : 'Credential missing')}`;
+    const warming = inbox.status === 'warming' || inbox.status === 'ready' || !inbox.sendEligible;
+    const label = inbox.sendEligible ? 'Current' : (inbox.status === 'warming' ? 'Warming · locked' : inbox.status === 'ready' ? 'Ready · inactive' : `${inbox.status} · inactive`);
+    const meta = `${inbox.dailyLimit}/day · ${inbox.perRunLimit || 5}/run · ${inbox.sendEligible ? 'Cold sending active' : 'Cold sending inactive'}`;
     return `<div class="inbox-route-row ${warming ? 'warming' : ''}"><span class="inbox-route-dot" aria-hidden="true"></span><div><div class="inbox-route-email">${esc(inbox.email)}</div><div class="inbox-route-meta">${esc(meta)}</div></div><span class="inbox-route-badge">${esc(label)}</span></div>`;
   }).join('')}</div>`;
 }
@@ -7527,27 +7534,83 @@ async function loadSettingsWorkspace() {
     ];
     host.innerHTML = cards.map(([label,on,copy]) => `<div class="status-card"><div class="status-card-head"><b>${esc(label)}</b><span class="state-pill" data-on="${on}">${on ? 'Enabled' : 'Off'}</span></div><p>${esc(copy)}</p></div>`).join('');
   }
-  renderSettingsInboxRouting(inboxData?.inboxes || null);
+  renderSettingsInboxRouting(inboxData || null);
   document.getElementById('agent-panel').style.display = 'block';
 }
 
-function renderSettingsInboxRouting(inboxes) {
+function warmupLabel(status) {
+  if (status === 'warming') return 'Warming';
+  if (status === 'ready') return 'Ready';
+  if (status === 'active') return 'Active';
+  if (status === 'paused') return 'Paused';
+  if (status === 'error') return 'Error';
+  return status || 'Unknown';
+}
+
+function observerLabel(inbox) {
+  const health = inbox.observerHealth || inbox.observer?.health || '';
+  if (health === 'healthy') return 'Healthy';
+  if (health === 'warning' || health === 'recovering' || health === 'backoff') return 'Warning';
+  return 'Unavailable';
+}
+
+async function mutateGmailInbox(id, action) {
+  const response = await fetch(`/api/integrations/gmail-inboxes/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || data.blockers?.join('; ') || 'Sender update failed');
+  return data;
+}
+
+async function markSenderWarmupReady(id) {
+  try { await mutateGmailInbox(id, 'mark-ready'); await loadSettingsWorkspace(); }
+  catch (error) { showToast(error.message, 'error'); }
+}
+
+async function activateConfiguredSender(id) {
+  try { await mutateGmailInbox(id, 'activate'); await loadSettingsWorkspace(); }
+  catch (error) { showToast(error.message, 'error'); }
+}
+
+async function pauseConfiguredSender(id) {
+  try { await mutateGmailInbox(id, 'pause'); await loadSettingsWorkspace(); }
+  catch (error) { showToast(error.message, 'error'); }
+}
+
+function renderSettingsInboxRouting(payload) {
   const host = document.getElementById('settings-inbox-routing');
   if (!host) return;
+  const inboxes = Array.isArray(payload) ? payload : payload?.inboxes;
+  const capacity = Array.isArray(payload) ? null : payload?.capacity;
   if (!inboxes) {
     host.innerHTML = '<div class="workspace-empty"><strong>Sender status unavailable</strong>No setting was changed. Refresh to try loading the configured inboxes again.</div>';
     return;
   }
-  const current = inboxes.find(inbox => inbox.currentRoute);
-  host.innerHTML = `<div class="status-card-head"><div><div class="workspace-eyebrow">Sender routing</div><h3 style="margin:4px 0">Active sending inbox</h3></div><span class="state-pill" data-on="${Boolean(current)}">${current ? 'Configured' : 'Unavailable'}</span></div>
-    <p style="color:var(--text-muted);font-size:12px;margin:6px 0 14px">The live sender uses the canonical primary Gmail configuration. Viewing this status does not send email or change any sending gate.</p>
-    <div class="form-group" style="margin-bottom:12px"><label for="settings-inbox-select">Configured sending accounts</label><select id="settings-inbox-select" disabled>${inboxes.length ? inboxes.map(inbox => `<option value="${escAttr(inbox.id)}">${esc(inbox.email)} — ${inbox.sendEligible && inbox.deliveryImplemented ? 'Delivery enabled' : inbox.status}</option>`).join('') : '<option>No configured inboxes</option>'}</select><div style="font-size:11px;color:var(--text-muted);margin-top:6px">Dental sender eligibility is configured server-side. Follow-ups remain pinned to the inbox and Gmail thread that sent Email 1.</div></div>
-    <div class="inbox-route-shell"><div class="inbox-route-head"><span class="inbox-route-kicker">Available accounts</span><span class="inbox-route-readonly">View only</span></div><div class="inbox-route-list">${inboxes.length ? inboxes.map(inbox => {
-      const unavailable = !inbox.currentRoute;
-      const label = inbox.currentRoute ? 'Selected' : `${inbox.status} · unavailable`;
-      const readiness = inbox.currentRoute ? `${inbox.dailyLimit}/day configured` : `${inbox.dailyLimit}/day · ${inbox.identityVerified ? 'Identity verified' : (inbox.credentialConfigured ? 'Credential ready' : 'Credential missing')}`;
-      return `<div class="inbox-route-row ${unavailable ? 'warming' : ''}"><span class="inbox-route-dot" aria-hidden="true"></span><div><div class="inbox-route-email">${esc(inbox.email)}</div><div class="inbox-route-meta">${esc(readiness)}</div></div><span class="inbox-route-badge">${esc(label)}</span></div>`;
-    }).join('') : '<div class="inbox-route-row"><div></div><div class="inbox-route-meta">No Gmail inboxes are configured.</div></div>'}</div></div>`;
+  const current = inboxes.find(inbox => inbox.sendEligible);
+  host.innerHTML = `<div class="status-card-head"><div><div class="workspace-eyebrow">Sender routing</div><h3 style="margin:4px 0">Configured Gmail senders</h3></div><span class="state-pill" data-on="${Boolean(current)}">${capacity ? `${capacity.activeSenders} active · ${capacity.globalDailyLimit}/day` : (current ? 'Configured' : 'Unavailable')}</span></div>
+    <p style="color:var(--text-muted);font-size:12px;margin:6px 0 14px">Cold sending membership is explicit. Marking warmup ready does not activate a sender. Activation does not send mail or change the schedule.</p>
+    <div class="form-group" style="margin-bottom:12px"><label for="settings-inbox-select">Configured sending accounts</label><select id="settings-inbox-select" disabled>${inboxes.length ? inboxes.map(inbox => `<option value="${escAttr(inbox.id)}">${esc(inbox.email)} — ${inbox.sendEligible && inbox.deliveryImplemented ? 'Delivery enabled' : inbox.status}</option>`).join('') : '<option>No configured inboxes</option>'}</select><div style="font-size:11px;color:var(--text-muted);margin-top:6px">Dental sender eligibility is configured server-side. Follow-ups remain pinned to the inbox and Gmail thread that sent Email 1. Global live cap follows active inboxes only.</div></div>
+    <div class="inbox-route-shell"><div class="inbox-route-head"><span class="inbox-route-kicker">Available accounts</span><span class="inbox-route-readonly">Operator controls</span></div></div>
+    ${inboxes.length ? inboxes.map(inbox => {
+      const controls = inbox.controls || {};
+      return `<div class="inbox-sender-card ${inbox.sendEligible ? '' : 'warming'}">
+        <div class="inbox-route-email">${esc(inbox.email)}</div>
+        <div class="inbox-sender-grid">
+          <div>Provider: <b>Gmail</b></div>
+          <div>Warmup: <b>${esc(warmupLabel(inbox.warmupStatus || inbox.status))}</b></div>
+          <div>Cold sending: <b>${inbox.sendingActive || inbox.sendEligible ? 'Active' : 'Inactive'}</b></div>
+          <div>Observer: <b>${esc(observerLabel(inbox))}</b></div>
+          <div>Daily cap: <b>${esc(String(inbox.dailyLimit))}</b></div>
+          <div>Per-run cap: <b>${esc(String(inbox.perRunLimit || 5))}</b></div>
+          <div>Sent today: <b>${esc(String(inbox.sentToday ?? 0))}</b></div>
+          <div>Remaining today: <b>${esc(String(inbox.remainingToday ?? inbox.dailyLimit))}</b></div>
+        </div>
+        <div class="inbox-sender-actions">
+          <button type="button" class="btn-cancel" ${controls.canMarkReady ? '' : 'disabled'} onclick="markSenderWarmupReady('${escAttr(inbox.id)}')">Mark Warmup Ready</button>
+          <button type="button" class="btn-save" ${controls.canActivate ? '' : 'disabled'} onclick="activateConfiguredSender('${escAttr(inbox.id)}')">Activate Sender</button>
+          <button type="button" class="btn-cancel" ${controls.canPause ? '' : 'disabled'} onclick="pauseConfiguredSender('${escAttr(inbox.id)}')">Pause Sender</button>
+        </div>
+      </div>`;
+    }).join('') : '<div class="inbox-route-row"><div></div><div class="inbox-route-meta">No Gmail inboxes are configured.</div></div>'}`;
 }
 
 window.addEventListener('hashchange', () => setWorkspace(location.hash.slice(1) || 'pipeline', { replace: true }));
