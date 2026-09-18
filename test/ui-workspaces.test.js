@@ -31,7 +31,7 @@ test('Inbox consumes canonical reply records and canonical Next Actions', () => 
 });
 
 test('Daily Sends uses the full cached activity aggregate, not visible rows', () => {
-  assert.match(server, /const sendActivity = \[\.\.\.dailySends\.entries\(\)\]/);
+  assert.match(server, /const sendActivity = buildConfirmedSendActivity\(activities\)/);
   assert.match(server, /sendActivity: dataset\.sendActivity/);
   const chart = html.slice(html.indexOf('function buildSendChart()'), html.indexOf('function renderCeTable()'));
   assert.match(chart, /ceOutreachStats\?\.sendActivity/);
