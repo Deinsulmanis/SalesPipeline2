@@ -10,9 +10,10 @@ const {
 } = require('../integrations/gmail-mailbox-observer');
 const { planMailboxEvents, commitObservation } = require('../integrations/mailbox-observation-events');
 const {
-  resetGmailUsageForTests, gmailRequest, gmailUsageSnapshot, QUOTA_UNITS,
+  resetGmailUsageForTests, gmailRequest, gmailUsageSnapshot, QUOTA_UNITS, unitsOf,
   signalMailboxBackoff, getMailboxBackoff, shouldSkipOptionalGmail, clearMailboxBackoff,
-  wrapGmail, persistedGmailMessageIds, recordFollowUpBlocked,
+  wrapGmail, persistedGmailMessageIds, recordFollowUpBlocked, recordGmailRequest,
+  hydrateEventsFromDisk, clearGmailUsageMemoryForTests,
 } = require('../integrations/gmail-api-guard');
 const {
   classifyOutboundTouch, observerFollowUpVerdict,
@@ -417,4 +418,35 @@ test('unclassified outbound fails closed while the observer is unhealthy', () =>
   });
   assert.equal(verdict.allowed, false);
   assert.equal(verdict.code, 'observer_stale_unclassified');
+});
+
+test('mailbox bookkeeping rows do not consume Gmail quota units', () => {
+  assert.equal(unitsOf('mailbox.observe'), 0);
+  assert.equal(unitsOf('mailbox.backoff'), 0);
+  assert.equal(unitsOf('mailbox.optional_skip'), 0);
+  assert.equal(unitsOf('users.history.list'), 2);
+});
+
+test('usage counters survive a new check-only process by merging the usage file', () => {
+  resetGmailUsageForTests();
+  recordGmailRequest({
+    mailbox: 'tryscalelabai', method: 'users.history.list', status: 200,
+    feature: 'gmail_history_observer', at: '2026-09-17T22:45:06.000Z',
+  });
+  recordGmailRequest({
+    mailbox: 'tryscalelabai', method: 'mailbox.observe', status: 200,
+    feature: 'gmail_history_observer', at: '2026-09-17T22:45:06.100Z',
+  });
+  clearGmailUsageMemoryForTests();
+  hydrateEventsFromDisk();
+  recordGmailRequest({
+    mailbox: 'tryscalelabai', method: 'users.history.list', status: 200,
+    feature: 'gmail_history_observer', at: '2026-09-17T23:15:06.000Z',
+  });
+  const snap = gmailUsageSnapshot({ now: new Date('2026-09-17T23:15:11Z'), mailboxes: ['tryscalelabai'] });
+  assert.equal(snap.totals.lastHour.byMethod['users.history.list'], 2);
+  assert.equal(snap.totals.lastHour.byMethod['mailbox.observe'], 1);
+  assert.equal(snap.totals.lastHour.units, 4, 'two history.list (2+2) plus zero-unit observe');
+  const tryScale = snap.mailboxes.find(row => row.mailbox === 'tryscalelabai');
+  assert.equal(tryScale.requestsLastHour.byMethod['users.history.list'], 2);
 });

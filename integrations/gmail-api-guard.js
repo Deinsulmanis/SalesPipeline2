@@ -39,7 +39,13 @@ const followUpsBlocked = [];
 
 const norm = value => String(value || '').trim().toLowerCase();
 const statusOf = error => Number(error?.response?.status || error?.code);
-const unitsOf = method => QUOTA_UNITS[method] || 5;
+function unitsOf(method) {
+  if (Object.prototype.hasOwnProperty.call(QUOTA_UNITS, method)) return QUOTA_UNITS[method];
+  // Bookkeeping rows (mailbox.observe, mailbox.backoff, optional skips) are
+  // not Gmail API calls and must not inflate quota-unit totals.
+  if (String(method || '').startsWith('mailbox.')) return 0;
+  return 5;
+}
 
 function isRateLimited(error) {
   const status = statusOf(error);
@@ -64,12 +70,42 @@ function currentMailbox() { return mailboxStore.getStore() || null; }
 function runWithGmailFeature(feature, fn) { return featureStore.run(feature, fn); }
 function runWithGmailMailbox(mailboxId, fn) { return mailboxStore.run(mailboxId, fn); }
 
+function eventKey(row) {
+  return `${row.at}|${row.mailbox}|${row.method}|${row.status}|${row.retryAttempt}|${row.feature}`;
+}
+
+function mergeEvents(rows) {
+  const seen = new Set();
+  const unique = [];
+  for (const row of rows || []) {
+    const key = eventKey(row);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(row);
+  }
+  unique.sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
+  return unique;
+}
+
+function persistEvents() {
+  try {
+    const kept = mergeEvents([...loadPersistedEvents(), ...events]).slice(-1500);
+    events.length = 0;
+    events.push(...kept);
+    fs.writeFileSync(USAGE_FILE, JSON.stringify({ updatedAt: new Date().toISOString(), events: kept }));
+  } catch (_) { /* ephemeral observability; never fail a Gmail call for this */ }
+}
+
 function recordEvent(entry) {
   events.push(entry);
   if (events.length > MAX_EVENTS) events.splice(0, events.length - MAX_EVENTS);
-  try {
-    fs.writeFileSync(USAGE_FILE, JSON.stringify({ updatedAt: new Date().toISOString(), events: events.slice(-1500) }));
-  } catch (_) { /* ephemeral observability; never fail a Gmail call for this */ }
+  persistEvents();
+}
+
+function hydrateEventsFromDisk() {
+  const kept = mergeEvents([...loadPersistedEvents(), ...events]).slice(-MAX_EVENTS);
+  events.length = 0;
+  events.push(...kept);
 }
 
 function recordGmailRequest(partial) {
@@ -340,6 +376,11 @@ function gmailUsageSnapshot({ now = new Date(), mailboxes = [] } = {}) {
 }
 
 function resetGmailUsageForTests() {
+  clearGmailUsageMemoryForTests();
+  try { fs.unlinkSync(USAGE_FILE); } catch (_) { /* no persisted snapshot yet */ }
+}
+
+function clearGmailUsageMemoryForTests() {
   events.length = 0;
   skippedOptional.length = 0;
   followUpsBlocked.length = 0;
@@ -365,6 +406,8 @@ function persistedGmailMessageIds(activities = []) {
   return ids;
 }
 
+hydrateEventsFromDisk();
+
 module.exports = {
   QUOTA_UNITS, UNITS_PER_MINUTE_PER_USER, QUOTA_RETRY_DELAYS_MS, MAX_CONCURRENCY_PER_MAILBOX,
   isRateLimited, statusOf, unitsOf, retryAfterMs,
@@ -373,5 +416,5 @@ module.exports = {
   signalMailboxBackoff, hydrateMailboxBackoff, getMailboxBackoff, clearMailboxBackoff,
   shouldSkipOptionalGmail, recordFollowUpBlocked,
   gmailUsageSnapshot, resetGmailUsageForTests, persistedGmailMessageIds,
-  OPTIONAL_FEATURES, REQUIRED_FEATURES,
+  hydrateEventsFromDisk, clearGmailUsageMemoryForTests, OPTIONAL_FEATURES, REQUIRED_FEATURES,
 };
