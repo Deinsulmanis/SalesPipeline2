@@ -140,8 +140,9 @@ const { oldestDueFirst, followUpSuccessTarget } = require('./integrations/schedu
 const { fairShareQueuedOrder } = require('./integrations/scheduled-slot-allocator');
 const { credentialsFor: gmailCredentialsFor, parseRegistry: parseGmailRegistry } = require('./integrations/gmail-inbox-registry');
 const {
-  configuredSenders, chooseSender, pinnedSenderId, senderCountsToday, successfulSendCountToday,
+  configuredSenders, observableSenders, chooseSender, pinnedSenderId, senderCountsToday, successfulSendCountToday,
 } = require('./integrations/gmail-sender-routing');
+const { capacityFromEnv } = require('./integrations/gmail-sender-capacity');
 const {
   createSendingWindowQuota, sendingWindowVerdict, consumeSendingWindowSuccess,
   sendingWindowRemainingBySender, sendingWindowSnapshot,
@@ -218,9 +219,11 @@ const SENDING_ENABLED  = process.env.SENDING_ENABLED === 'true';
 // engine can ship, be previewed and be tested without a single stage email
 // leaving. Both must be true for a stage step to send.
 const STAGE_SEQUENCES_ENABLED = process.env.STAGE_SEQUENCES_ENABLED === 'true';
-const DAILY_CAP        = parseInt(process.env.DAILY_CAP || '12', 10);
-const PER_INBOX_RUN_CAP = parseInt(process.env.PER_INBOX_RUN_CAP || String(DAILY_CAP), 10);
-const DAILY_SEND_LIMIT = parseInt(process.env.DAILY_SEND_LIMIT || '40', 10);
+const GMAIL_SENDERS_BOOT = configuredSenders();
+const SENDER_CAPACITY = capacityFromEnv(GMAIL_SENDERS_BOOT);
+const DAILY_CAP        = SENDER_CAPACITY.globalPerRunLimit;
+const PER_INBOX_RUN_CAP = parseInt(process.env.PER_INBOX_RUN_CAP || '5', 10);
+const DAILY_SEND_LIMIT = SENDER_CAPACITY.globalDailyLimit;
 // Below this, a drafted answer goes to the review queue instead of the prospect.
 // Deliberately high: a wrong auto-answer costs more than a slower human one.
 const ANSWER_CONFIDENCE_FLOOR = parseInt(process.env.ANSWER_CONFIDENCE_FLOOR || '85', 10);
@@ -457,7 +460,7 @@ async function withAuth(fn) {
 
 const sheets = () => wrapSheetsReadClient(google.sheets({ version: 'v4', auth: oauth2Client }));
 const gmail  = () => google.gmail({ version: 'v1', auth: oauth2Client });
-const GMAIL_SENDERS = configuredSenders();
+const GMAIL_SENDERS = GMAIL_SENDERS_BOOT;
 const PRIMARY_GMAIL_SENDER = GMAIL_SENDERS.find(sender => sender.id === 'primary');
 const gmailObservationHistoryBySender = new Map();
 const gmailObservationDetailsBySender = new Map();
@@ -2618,8 +2621,8 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
 
   // One incremental mailbox observation per inbox. Gmail query volume now
   // grows with new mailbox messages, not with the number of CRM leads.
-  for (const sender of GMAIL_SENDERS.filter(item => item.sendEligible
-    && (!senderIds || senderIds.has(item.id)))) {
+  for (const sender of observableSenders(GMAIL_SENDERS).filter(item =>
+    !senderIds || senderIds.has(item.id))) {
     // Include every CRM identity: an already-replied lead can write again, and
     // an unknown legacy sender is evidence to observe, never a default inbox.
     const senderLeads = candidates;
@@ -3777,7 +3780,7 @@ function suppressionReason(lead) {
 // How far back the outbound observation looks each cycle. Idempotency is what
 // guarantees correctness — this only bounds the work. A few days of overlap
 // costs one extra list page and makes a missed cycle self-healing.
-const OUR_ADDRESS_PATTERN = /scalelabai|tryscalelab/i;
+const OUR_ADDRESS_PATTERN = /scalelabai|tryscalelab|scalelabaiteam/i;
 const HUMAN_OUTBOUND_LOOKBACK_DAYS = parseInt(process.env.HUMAN_OUTBOUND_LOOKBACK_DAYS || '3', 10);
 
 /**
@@ -3803,7 +3806,7 @@ const HUMAN_OUTBOUND_LOOKBACK_DAYS = parseInt(process.env.HUMAN_OUTBOUND_LOOKBAC
 async function runHumanOutboundPass(leads, activitiesForCycle, sender = null, { candidateOnly = false } = {}) {
   if (!sender) {
     const results = [];
-    for (const mailbox of GMAIL_SENDERS.filter(item => item.sendEligible)) {
+    for (const mailbox of observableSenders(GMAIL_SENDERS)) {
       results.push({ senderInboxId: mailbox.id, ...(await runHumanOutboundPass(leads, activitiesForCycle, mailbox, { candidateOnly })) });
     }
     return { ok: results.every(item => item.ok), written: results.reduce((n, item) => n + (item.written || 0), 0), senders: results };

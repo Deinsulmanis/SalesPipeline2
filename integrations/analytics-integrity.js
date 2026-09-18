@@ -393,6 +393,7 @@ module.exports = {
   recentReportingDays,
   integrityStatus,
   buildAnalyticsIntegrity,
+  attributionBreakdown,
   conversionsExceeding100,
   delta,
 };

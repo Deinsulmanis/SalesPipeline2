@@ -1,6 +1,9 @@
 'use strict';
 
-const { parseRegistry } = require('./gmail-inbox-registry');
+const {
+  parseRegistry, withDefaultInboxes, parseRuntimeOverlay, applySenderRuntime,
+} = require('./gmail-inbox-registry');
+const { DEFAULT_INBOX_DAILY_LIMIT, DEFAULT_INBOX_PER_RUN_LIMIT } = require('./gmail-sender-capacity');
 
 function parseMetadata(value) {
   try { return value && typeof value === 'object' ? value : JSON.parse(String(value || '{}')); }
@@ -11,16 +14,28 @@ function configuredSenders(env = process.env) {
   const primary = {
     id: 'primary', email: String(env.FROM_EMAIL || '').trim().toLowerCase(),
     tokenEnv: 'GMAIL_TOKEN_JSON', oauthClient: 'primary', status: 'active',
-    dailyLimit: Number(env.GMAIL_PRIMARY_DAILY_LIMIT || env.DAILY_SEND_LIMIT || 40),
+    provider: 'gmail', observerEnabled: true,
+    dailyLimit: Number(env.GMAIL_PRIMARY_DAILY_LIMIT || DEFAULT_INBOX_DAILY_LIMIT),
+    perRunLimit: Number(env.GMAIL_PRIMARY_PER_RUN_LIMIT || DEFAULT_INBOX_PER_RUN_LIMIT),
     credentialConfigured: Boolean(env.GMAIL_TOKEN_JSON),
   };
-  const secondary = parseRegistry(env.GMAIL_INBOX_REGISTRY_JSON || '[]').map(entry => ({
-    ...entry, oauthClient: 'secondary', credentialConfigured: Boolean(env[entry.tokenEnv]),
+  const secondary = withDefaultInboxes(parseRegistry(env.GMAIL_INBOX_REGISTRY_JSON || '[]')).map(entry => ({
+    ...entry, oauthClient: 'secondary', provider: 'gmail',
+    perRunLimit: Number(entry.perRunLimit || DEFAULT_INBOX_PER_RUN_LIMIT),
+    observerEnabled: entry.observerEnabled !== false,
+    credentialConfigured: Boolean(env[entry.tokenEnv]),
   }));
-  return [primary, ...secondary].map(sender => ({
+  const senders = [primary, ...secondary].map(sender => ({
     ...sender,
     sendEligible: sender.status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured,
   }));
+  return applySenderRuntime(senders, parseRuntimeOverlay(env.GMAIL_SENDER_RUNTIME_JSON || '[]'));
+}
+
+function observableSenders(senders = []) {
+  return (senders || []).filter(sender => sender
+    && sender.observerEnabled !== false
+    && sender.credentialConfigured);
 }
 
 function allowedForLead(sender, lead = {}) {
@@ -164,7 +179,7 @@ function successfulSendCountToday(activities = [], dayKey) {
 }
 
 module.exports = {
-  SUCCESSFUL_SEND_EVENTS, configuredSenders, allowedForLead, senderEvidence,
+  SUCCESSFUL_SEND_EVENTS, configuredSenders, observableSenders, allowedForLead, senderEvidence,
   sentSenderEvidence, SENDER_ATTRIBUTED_EVENTS, pinnedSenderId, chooseSender,
   senderCountsToday, successfulSendCountToday,
 };
