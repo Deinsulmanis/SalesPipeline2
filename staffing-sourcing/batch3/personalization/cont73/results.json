@@ -1,0 +1,1135 @@
+{
+  "funnel": {
+    "attempted": 73,
+    "liveCommit": "732e215",
+    "codeDigest": "0caa20fc47f4e8a1de14eb6ec20905530f960d9e7c89aac76bf051fdcbb19bb8",
+    "stoppedForCredits": true,
+    "priorBatch3Claimants": 58,
+    "counts": {
+      "HIGH": 5,
+      "MEDIUM": 1,
+      "RETRY_REQUIRED": 61,
+      "REVIEW_REQUIRED": 5,
+      "ICP_MISMATCH": 1
+    },
+    "acceptedHigh": 5,
+    "acceptedMedium": 1,
+    "accepted": 6,
+    "retrievalBlocked": 2,
+    "icpRefusals": 1,
+    "auditFailures": 2,
+    "duplicateOpeningDemotions": 3,
+    "infrastructureRetryRequired": 61,
+    "catchAllAccepted": 5,
+    "nonCatchAllAccepted": 1,
+    "byReason": {
+      "HIGH:VERIFIED_SPECIFIC_EMPLOYER_MARKET": 5,
+      "MEDIUM:VERIFIED_EMPLOYER_MARKET": 1,
+      "RETRY_REQUIRED:RETRIEVAL_UNUSABLE": 2,
+      "ICP_MISMATCH:PROFESSIONAL_OR_NONINDUSTRIAL_STAFFING": 1,
+      "REVIEW_REQUIRED:DUPLICATE_OPENING_IN_BATCH": 3,
+      "REVIEW_REQUIRED:OPENING_AUDIT_FAILED": 2,
+      "RETRY_REQUIRED:MODEL_CREDITS_EXHAUSTED": 59
+    }
+  },
+  "campaign": {
+    "id": "industrial_staffing_employer_acquisition_v1",
+    "name": "Industrial Staffing Agency",
+    "template": "industrial-staffing-employer-v1"
+  },
+  "results": [
+    {
+      "company": "Alliance Workforce Solutions",
+      "companyDomain": "alliancewf.com",
+      "email": "snardello@alliancewf.com",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place welders and warehouse unloaders for light industrial manufacturers across Florida.",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": true,
+      "supportingReasons": [],
+      "modelCalls": 3
+    },
+    {
+      "company": "Superior Staffing",
+      "companyDomain": "superior-staffing.com",
+      "email": "hvale@superior-staffing.com",
+      "classification": "MEDIUM",
+      "primaryReason": "VERIFIED_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you focus on manufacturing staffing for employers.",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": true,
+      "supportingReasons": [
+        "OPTIONAL_EMPLOYER_MARKET_DROPPED",
+        "OPTIONAL_GEOGRAPHY_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "RampUp Labor",
+      "companyDomain": "rampuplabor.com",
+      "email": "sean@rampuplabor.com",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place electricians and welders and pipefitters for construction contractors.",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": true,
+      "supportingReasons": [
+        "OPTIONAL_GEOGRAPHY_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "LoneStar Labor Management",
+      "companyDomain": "lonestarlabormgt.com",
+      "email": "chris.linton@lonestarlabormgt.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "RETRIEVAL_UNUSABLE",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [],
+      "modelCalls": 0
+    },
+    {
+      "company": "Fundamental Labor Strategies, Inc.",
+      "companyDomain": "fundamentallabor.com",
+      "email": "jmuntz@fundamentallabor.com",
+      "classification": "ICP_MISMATCH",
+      "primaryReason": "PROFESSIONAL_OR_NONINDUSTRIAL_STAFFING",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": false,
+      "supportingReasons": [
+        "OPTIONAL_ROLE_DROPPED",
+        "OPTIONAL_EMPLOYER_MARKET_DROPPED",
+        "OPTIONAL_FACT_DROPPED"
+      ],
+      "modelCalls": 2
+    },
+    {
+      "company": "Trades Labor Corporation",
+      "companyDomain": "tradeslabor.com",
+      "email": "auburn@tradeslabor.com",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place carpenters and welders for construction contractors.",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": true,
+      "supportingReasons": [],
+      "modelCalls": 3
+    },
+    {
+      "company": "Regal Staffing Services",
+      "companyDomain": "regalstaffing.com",
+      "email": "tom@regalstaffing.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "DUPLICATE_OPENING_IN_BATCH",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": false,
+      "supportingReasons": [
+        "OPTIONAL_GEOGRAPHY_DROPPED",
+        "OPTIONAL_ROLE_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "Arrow Staffing",
+      "companyDomain": "arrowstaffing.com",
+      "email": "mdiaz@arrowstaffing.com",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place machine operators and quality control technicians for manufacturers.",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": true,
+      "supportingReasons": [],
+      "modelCalls": 3
+    },
+    {
+      "company": "SmartTalent Staffing and Recruiting",
+      "companyDomain": "smarttalentstaffing.com",
+      "email": "smarttalent@smarttalentstaffing.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "OPENING_AUDIT_FAILED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": false,
+      "supportingReasons": [
+        "naturalEmployerLanguage",
+        "supportedByValidatedFacts",
+        "f6 evidence describes warehouse assistance as a service offering, not an employer market. The quote does not establish that SmartTalent places workers FOR warehouse employers; it describes their own staffing capability. 'Warehouse employers' is not semantically supported.",
+        "Opening conflates staffing service (warehouse assistance) with employer market (warehouse employers), violating the distinction that workers are placed FOR employers, not into employers' own operations."
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "Spotlight Staffing",
+      "companyDomain": "spotlightstaff.com",
+      "email": "tjohnson@spotlight-staffing.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "DUPLICATE_OPENING_IN_BATCH",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": false,
+      "supportingReasons": [
+        "OPTIONAL_GEOGRAPHY_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "Tru Staffing",
+      "companyDomain": "trustaffing.com",
+      "email": "jared@trustaffingpartners.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "OPENING_AUDIT_FAILED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": false,
+      "supportingReasons": [
+        "OPTIONAL_EMPLOYER_MARKET_DROPPED",
+        "noCandidateSourcing",
+        "noCandidateSourcing: Opening mentions 'database' concept indirectly via 'place' language, but f2 evidence explicitly states 'Our database of forklift operators'—this candidate-sourcing framing appears in the source material and influences the opening's implicit positioning."
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "Excelsior Staffing",
+      "companyDomain": "excelsiorstaffing.com",
+      "email": "nblount@excelsiorstaffing.com",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place warehouse, assembly, and manufacturing workers across light industrial roles.",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": true,
+      "supportingReasons": [],
+      "modelCalls": 3
+    },
+    {
+      "company": "KAD Staffing",
+      "companyDomain": "kadstaffing.com",
+      "email": "kevin@kadstaffing.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "DUPLICATE_OPENING_IN_BATCH",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": false,
+      "supportingReasons": [
+        "OPTIONAL_EMPLOYER_MARKET_DROPPED",
+        "OPTIONAL_GEOGRAPHY_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "All About Personnel",
+      "companyDomain": "aapstaff.com",
+      "email": "vtempo@aapstaff.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": false,
+      "supportingReasons": [
+        "Anthropic balance must be restored before model validation can run."
+      ],
+      "modelCalls": 2
+    },
+    {
+      "company": "Summit Staffing, Inc",
+      "companyDomain": "summitstaffing.com",
+      "email": "fa@summitstaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "RETRIEVAL_UNUSABLE",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [],
+      "modelCalls": 0
+    },
+    {
+      "company": "Clean Power Staffing",
+      "companyDomain": "cleanpowerstaffing.com",
+      "email": "ruben@cleanpowerstaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": false,
+      "supportingReasons": [
+        "Anthropic balance must be restored before model validation can run."
+      ],
+      "modelCalls": 2
+    },
+    {
+      "company": "Coryer Staffing",
+      "companyDomain": "coryerstaffing.com",
+      "email": "elizabeth@coryerstaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": false,
+      "supportingReasons": [
+        "Anthropic balance must be restored before model validation can run."
+      ],
+      "modelCalls": 2
+    },
+    {
+      "company": "Elective Staffing",
+      "companyDomain": "electivestaffing.com",
+      "email": "amelia.garcia@electivestaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": false,
+      "supportingReasons": [
+        "Anthropic balance must be restored before model validation can run."
+      ],
+      "modelCalls": 1
+    },
+    {
+      "company": "United Employment Group, Inc.",
+      "companyDomain": "unitedemploymentgroup.com",
+      "email": "mstauffer@unitedemploymentgroup.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": false,
+      "supportingReasons": [
+        "Anthropic balance must be restored before model validation can run."
+      ],
+      "modelCalls": 1
+    },
+    {
+      "company": "Sawyer Staffing",
+      "companyDomain": "sawyerstaffing.com",
+      "email": "randy.sawyer@sawyerstaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": false,
+      "supportingReasons": [
+        "Anthropic balance must be restored before model validation can run."
+      ],
+      "modelCalls": 1
+    },
+    {
+      "company": "GTRJOBS - Staffing + Recruiting",
+      "companyDomain": "gtrjobs.com",
+      "email": "pmurphy@gtrjobs.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "True Response Staffing",
+      "companyDomain": "true-response.com",
+      "email": "tatum@true-response.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Denver Staffing Services LLC",
+      "companyDomain": "denverstaffingservices.com",
+      "email": "cindy@denverstaffingservices.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Employment Service Connection, Inc.",
+      "companyDomain": "escstaff.com",
+      "email": "mwaldron@escstaff.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Employment Source - Billings MT",
+      "companyDomain": "employment-source.biz",
+      "email": "smammenga@employment-source.biz",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Excel Personnel Services",
+      "companyDomain": "excelpersonnelservices.com",
+      "email": "michelle.hodapp@excelpersonnelservices.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "NR Staffing & Recruiting, LLC.",
+      "companyDomain": "nrstaffingus.com",
+      "email": "noe@nrstaffingus.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "On Site Personnel",
+      "companyDomain": "onsitepersonnel.com",
+      "email": "pnguyen@onsitepersonnel.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Personnel Staffing, Inc.",
+      "companyDomain": "personnelstaffing.com",
+      "email": "brigitte@personnelstaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Phoenix Staffing and Management Systems",
+      "companyDomain": "phoenixstaffing.net",
+      "email": "jerome@phoenixstaffing.net",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Timeline Staffing LLC",
+      "companyDomain": "timelinestaffing.com",
+      "email": "delia@timelinestaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Vald Staffing",
+      "companyDomain": "valdstaffing.com",
+      "email": "c.valdez@valdstaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Visions Staffing Solutions LLC",
+      "companyDomain": "visionsstaffingsolutions.com",
+      "email": "karina@visionsstaffingsolutions.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Walker Business & Staffing",
+      "companyDomain": "walkerservices.com",
+      "email": "voni@walkerservices.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Enterprise Staffing Solutions",
+      "companyDomain": "enterprisestaffing.net",
+      "email": "jeronimo.bonilla@enterprisestaffing.net",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "J & J Staffing Resources",
+      "companyDomain": "jjstaff.com",
+      "email": "sean.malady@jjstaff.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "RPM Staffing Professionals, Inc.",
+      "companyDomain": "rpmstaffing.net",
+      "email": "julie@rpmstaffing.net",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "See Us Now Staffing, Inc.",
+      "companyDomain": "seeusnowstaffing.com",
+      "email": "stephanym@seeusnowstaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Seymour Staffing Professionals, Inc.",
+      "companyDomain": "seymourstaffing.com",
+      "email": "mikemiller@seymourstaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "TA Staffing",
+      "companyDomain": "tastaffing.com",
+      "email": "gabby.miner@tastaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Turner Staffing Group",
+      "companyDomain": "turnerstaffing.com",
+      "email": "joe.lord@turnerstaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "G1 Staffing",
+      "companyDomain": "g1-staffing.com",
+      "email": "john.woods@g1-staffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Quality Staffing USA",
+      "companyDomain": "qualitystaffingusa.com",
+      "email": "kbertoncino@quality-staffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Keen Search & Staffing, LLC",
+      "companyDomain": "keenstaffing.com",
+      "email": "lmorgan@keenstaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "The Staffing Alliance",
+      "companyDomain": "thestaffingalliance.com",
+      "email": "mwinfree@thestaffingalliance.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "1 Resource Group Staffing",
+      "companyDomain": "1resourcegroup.com",
+      "email": "misty.stinson@1resourcegroup.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Aria Staffing",
+      "companyDomain": "ariastaffing.com",
+      "email": "susan@ariastaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Great Work! Employment Services Co",
+      "companyDomain": "greatwork.jobs",
+      "email": "bperez@greatwork.jobs",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Kable Staffing",
+      "companyDomain": "kablestaffing.com",
+      "email": "thowell@kablestaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "WorkSteer Staffing",
+      "companyDomain": "worksteer.com",
+      "email": "jake@worksteer.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Xcel Staffing",
+      "companyDomain": "xcelstaffing.com",
+      "email": "brad@xcelstaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "TruFit Staffing",
+      "companyDomain": "trufitstaffing.com",
+      "email": "geoff@trufitstaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Kimber Personnel",
+      "companyDomain": "kimbertx.com",
+      "email": "kimber@kimbertx.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Direct Personnel",
+      "companyDomain": "mainestaff.com",
+      "email": "rholden@mainestaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Teamtemps Personnel Staffing, Inc.",
+      "companyDomain": "teamtemps.net",
+      "email": "gpanizzi@teamtemps.net",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Augusta Staffing Associates",
+      "companyDomain": "augustastaffing.com",
+      "email": "ckelly@augustastaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Jaci Carroll Staffing, Inc.",
+      "companyDomain": "jacicarroll.com",
+      "email": "eanthony@jacicarroll.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Top Quality Staffing Solutions",
+      "companyDomain": "topqualitystaffingsolutions.com",
+      "email": "diamond.payne@topqualitystaffingsolutions.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Ctrust Staffing LLC",
+      "companyDomain": "ctruststaffing.com",
+      "email": "corina@ctruststaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "UpStream Workforce Solutions",
+      "companyDomain": "us-workforce.com",
+      "email": "twagy@us-workforce.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Universal Staffing Solutions, Inc.",
+      "companyDomain": "ustaffingservice.com",
+      "email": "cestrada@ustaffingservice.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Carol Harris Staffing, LLC DBA CHS Solutions",
+      "companyDomain": "chstaffing.com",
+      "email": "carol@chstaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Staffing Support Solutions",
+      "companyDomain": "staffingsupportsolutions.com",
+      "email": "chris@staffingsupportsolutions.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Pettit Staffing Services",
+      "companyDomain": "pettitstaffing.com",
+      "email": "christine@pettitstaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "I&L Staffing",
+      "companyDomain": "ilstaffing.us",
+      "email": "jose@il-staffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Performance Staffing Solutions, Inc.",
+      "companyDomain": "performss.com",
+      "email": "kristen.little@performss.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "ASR Staffing Solutions, Inc.",
+      "companyDomain": "asrstaffing.com",
+      "email": "brian@asrstaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Sunrise Staffing Services, LLC",
+      "companyDomain": "sunrisestaffingservices.com",
+      "email": "chris.ryan@sunrisestaffingservices.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "R.O.I Employment Solutions, LLC",
+      "companyDomain": "roiemployment.com",
+      "email": "roi@roiemployment.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Legacy Employment Solutions",
+      "companyDomain": "legacyemploymentsolutions.org",
+      "email": "k_valerio@legacyemploymentsolutions.org",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Foothills Staffing",
+      "companyDomain": "foothillsstaffing.com",
+      "email": "robyngilbert@foothillsstaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Top Shelf Staffing,LLC",
+      "companyDomain": "topshelfstaffing.net",
+      "email": "cblackwell@topshelfstaffing.net",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    },
+    {
+      "company": "Sierra Staffing Group",
+      "companyDomain": "sierrastaffinggroup.com",
+      "email": "cole@sierrastaffinggroup.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "MODEL_CREDITS_EXHAUSTED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "supportingReasons": [
+        "unprocessed_after_model_credit_exhaustion"
+      ],
+      "modelCalls": 0
+    }
+  ]
+}

@@ -45,6 +45,30 @@ Additional sourcing under the remaining 286-credit allowance produced **73** new
 
 Live preflight vs current corpus: 0 email overlap, 0 company-name overlap, 58 unique emails/companies, every accepted row has an opening, `[B3]` notes, and `[B3 CATCH-ALL]` only on the 12 catch-all rows.
 
+## Phase 2 continuation personalization (73 new candidates only)
+
+Processed **only** `out/batch3-continuation-approved-candidates.csv` (73 unique emails). The original 84 / imported 58 were not re-run. The six older infrastructure-held leads were not retried. Live pipeline commit `732e215` unchanged. No additional Apollo credits.
+
+Anthropic live key is exhausted (`MODEL_CREDITS_EXHAUSTED`). Completed non-infra cache was reused. Unprocessed remainder is held retry-required; acceptance was not forced.
+
+| Gate | Count |
+| --- | ---: |
+| Attempted | 73 |
+| Accepted HIGH | 5 |
+| Accepted MEDIUM | 1 |
+| **Accepted for import** | **6** |
+| Retrieval blocked/unusable | 2 |
+| ICP refusals | 1 |
+| Audit / opening validation failures | 2 |
+| Duplicate-opening demotions | 3 |
+| Infrastructure / retry-required | 61 |
+| Catch-all accepted | 5 |
+| Non-catch-all accepted | 1 |
+
+Retry-required split: 2 `RETRIEVAL_UNUSABLE` + 59 `MODEL_CREDITS_EXHAUSTED` (includes dense-filled unprocessed rows after the model-credit stop). Duplicate-opening first claimants were the prior 58 Batch 3 accepted openings.
+
+Live preflight vs current corpus **327 / 319 / 8** (dental 1316): 0 email overlap, 0 company overlap, 0 domain overlap, 0 overlap with the original 58 or held-6. Every accepted row has an opening, `[B3]` notes, and `[B3 CATCH-ALL]` only on the 5 catch-all rows.
+
 ## Post-write
 
 Canonical `POST /api/coldemail/import` then `POST /api/coldemail/queue` into the existing Industrial Staffing Agency campaign.
