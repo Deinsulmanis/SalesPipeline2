@@ -417,7 +417,7 @@ test('a failed provider send records no activity', async () => {
 test('sending cadence, caps and delays are untouched', () => {
   assert.match(agentSrc, /const MIN_DELAY = 45 \* 1000;/);
   assert.match(agentSrc, /const MAX_DELAY = 120 \* 1000;/);
-  assert.match(agentSrc, /DAILY_SEND_LIMIT \|\| '40'/);
+  assert.match(agentSrc, /DAILY_SEND_LIMIT = SENDER_CAPACITY\.globalDailyLimit/);
   assert.match(agentSrc, /delayDays: 3,/);
   assert.match(agentSrc, /delayDays: 5,/);
 });

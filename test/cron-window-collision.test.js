@@ -77,15 +77,18 @@ test('the two schedules can no longer collide on any minute', () => {
 });
 
 test('6. no production send limit changed', () => {
-  // The repair is a schedule offset and nothing else.
+  // The repair is a schedule offset. Per-inbox window size stays 5; the
+  // combined run/day ceilings are derived from ACTIVE inboxes, not hardcoded
+  // to a two-inbox total.
   assert.match(server, /const SCHEDULED_SEND_PER_INBOX_CAP = 5;/);
-  assert.match(server, /const SCHEDULED_SEND_TOTAL_CAP = 10;/);
-  assert.match(server, /PER_INBOX_RUN_CAP: String\(SCHEDULED_SEND_PER_INBOX_CAP\)/);
-  assert.match(server, /DAILY_CAP: String\(SCHEDULED_SEND_TOTAL_CAP\)/);
+  assert.match(server, /function scheduledSendCaps/);
+  assert.match(server, /PER_INBOX_RUN_CAP: String\(caps\.perInbox\)/);
+  assert.match(server, /DAILY_CAP: String\(caps\.total\)/);
+  assert.doesNotMatch(server, /const SCHEDULED_SEND_TOTAL_CAP = 10;/);
   const agent = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
-  assert.match(agent, /const DAILY_SEND_LIMIT = parseInt\(process\.env\.DAILY_SEND_LIMIT \|\| '40', 10\);/);
+  assert.match(agent, /const DAILY_SEND_LIMIT = SENDER_CAPACITY\.globalDailyLimit;/);
   const routing = fs.readFileSync(path.join(__dirname, '..', 'integrations', 'gmail-sender-routing.js'), 'utf8');
-  assert.match(routing, /dailyLimit: Number\(env\.GMAIL_PRIMARY_DAILY_LIMIT \|\| env\.DAILY_SEND_LIMIT \|\| 40\)/);
+  assert.match(routing, /dailyLimit: Number\(env\.GMAIL_PRIMARY_DAILY_LIMIT \|\| DEFAULT_INBOX_DAILY_LIMIT\)/);
   const fairness = fs.readFileSync(path.join(__dirname, '..', 'integrations', 'scheduler-fairness.js'), 'utf8');
   assert.match(fairness, /return Math\.min\(4, Math\.max\(0, Number\(cap\) - 1\)\);/,
     'the 4-follow-up/1-initial policy is untouched');
