@@ -80,6 +80,7 @@ function terminalExclusionReason(lead, suppressedEmails = new Set()) {
   const notes = String(lead.notes || '');
   const lateReplyPending = /\[LATE REPLY:/i.test(notes);
   if ((/\[REPLY:\s*Unsubscribed\]/i.test(notes) || /^unsub(?:scribed)?$/i.test(String(lead.stage || '').trim())) && !lateReplyPending) return 'unsubscribed';
+  if (/\[REPLY:\s*Not Interested\]/i.test(notes) && !lateReplyPending) return 'not_interested';
   if (/\[BOUNCED/i.test(notes)) return 'bounced';
   if (suppressedEmails.has(normalizeEmail(lead.email))) return 'suppressed';
   return '';
@@ -157,7 +158,8 @@ async function processLateReply({ lead, message, outbound, classify, existingEve
     // Recovery path: the activity may have committed immediately before a
     // transient suppression write failed. The row tag already blocks sends;
     // this retry restores the durable, email-keyed suppression record.
-    if (/\[REPLY:\s*Unsubscribed\]/i.test(String(lead.notes || ''))) await addSuppression(lead);
+    if (/\[REPLY:\s*Unsubscribed\]/i.test(String(lead.notes || ''))) await addSuppression(lead, 'unsubscribe');
+    if (/\[REPLY:\s*Not Interested\]/i.test(String(lead.notes || ''))) await addSuppression(lead, 'not_interested');
     return { status: 'duplicate', eventId };
   }
 
@@ -174,7 +176,8 @@ async function processLateReply({ lead, message, outbound, classify, existingEve
   const activity = buildLateReplyActivity(lead, message, safeClassification, outbound);
   await recordActivity(activity);
   existingEventIds.add(eventId);
-  if (safeClassification === 'UNSUBSCRIBE') await addSuppression(lead);
+  if (safeClassification === 'UNSUBSCRIBE') await addSuppression(lead, 'unsubscribe');
+  if (safeClassification === 'NOT_INTERESTED') await addSuppression(lead, 'not_interested');
   return { status: 'recorded', classification: safeClassification, activity };
 }
 

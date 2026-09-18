@@ -47,7 +47,7 @@ const AUTOMATION_STATES = Object.freeze({
 // Notes tags that outreach-agent.js treats as hard suppression. Mirrored (not
 // imported) because requiring the agent would execute its run() on import.
 // Kept in sync deliberately: see SUPPRESSION_TAGS in outreach-agent.js.
-const SUPPRESSION_NOTE_TAGS = Object.freeze(['[REPLY: Unsubscribed]', '[BOUNCED']);
+const SUPPRESSION_NOTE_TAGS = Object.freeze(['[REPLY: Unsubscribed]', '[REPLY: Not Interested]', '[BOUNCED']);
 
 // A human took over. Written into ColdEmail notes by PUT /api/leads/:id when a
 // lead enters a human-owned stage, and listed in SUPPRESSION_TAGS in
@@ -1282,7 +1282,13 @@ function deriveNextAction(boardLead, twin, context = {}) {
   const permanentSuppression = sendSuppressionReason(twin || lead, {
     suppressedEmails: context.suppressedEmails || new Set(),
   });
-  if (permanentSuppression && permanentSuppression !== MANUAL_HOLD_TAG && reply) {
+  // Not Interested blocks cold sends via SEND_SUPPRESSION_TAGS, but it is not
+  // the same CRM terminal as Unsubscribed/bounce. Canonical inbound evidence
+  // (for example a later timing reply) still outranks a stale notes tag.
+  const permanentLoss = permanentSuppression
+    && permanentSuppression !== MANUAL_HOLD_TAG
+    && permanentSuppression !== '[REPLY: Not Interested]';
+  if (permanentLoss && reply) {
     return nothing(ACTION_TYPE.NONE_LOST, 'None — suppressed',
       `suppressed (${permanentSuppression}); no sales follow-up applies`);
   }

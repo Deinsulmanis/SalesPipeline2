@@ -68,12 +68,30 @@ const OFFERS = Object.freeze({
   }),
 });
 
-function parsePricing(raw = process.env.OFFER_PRICING_JSON || '') {
-  if (!String(raw).trim()) return {};
+function parsePricing(raw = process.env.OFFER_PRICING_JSON || '', env = process.env) {
+  if (!String(raw).trim()) {
+    const staffingWording = String(env.STAFFING_PRICING_APPROVED_WORDING || '').trim();
+    return staffingWording ? { industrial_staffing: { approvedWording: staffingWording } } : {};
+  }
   let parsed;
   try { parsed = JSON.parse(raw); } catch (_) { throw new Error('OFFER_PRICING_JSON must be valid JSON'); }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('OFFER_PRICING_JSON must be an object');
+  const staffingWording = String(env.STAFFING_PRICING_APPROVED_WORDING || '').trim();
+  if (staffingWording && !(parsed.industrial_staffing && parsed.industrial_staffing.approvedWording)) {
+    parsed = { ...parsed, industrial_staffing: { approvedWording: staffingWording } };
+  }
   return parsed;
+}
+
+function bookingUrlForFamily(family, env = process.env) {
+  const fallback = BOOKING_URL;
+  if (family === CAMPAIGN_FAMILY.STAFFING) {
+    return String(env.STAFFING_BOOKING_URL || env.BOOKING_URL || fallback).trim() || fallback;
+  }
+  if (family === CAMPAIGN_FAMILY.DENTAL || family === 'dental_ai_receptionist') {
+    return String(env.DENTAL_BOOKING_URL || env.BOOKING_URL || fallback).trim() || fallback;
+  }
+  return String(env.BOOKING_URL || fallback).trim() || fallback;
 }
 
 function offerForLead(lead, env = process.env) {
@@ -84,11 +102,11 @@ function offerForLead(lead, env = process.env) {
   }
   const base = OFFERS[family];
   if (!base) throw new Error(`No approved offer facts for ${family}`);
-  const pricing = parsePricing(env.OFFER_PRICING_JSON)[family] || null;
+  const pricing = parsePricing(env.OFFER_PRICING_JSON, env)[family] || null;
   if (pricing && (!pricing.approvedWording || typeof pricing.approvedWording !== 'string')) {
     throw new Error(`Pricing for ${family} requires approvedWording`);
   }
-  return Object.freeze({ ...base, pricing });
+  return Object.freeze({ ...base, pricing, bookingUrl: bookingUrlForFamily(family, env) });
 }
 
 function warmResponse({ action, lead, offer, answer = '' }) {
@@ -117,4 +135,4 @@ function warmResponse({ action, lead, offer, answer = '' }) {
   throw new Error(`Unsupported warm response action ${action}`);
 }
 
-module.exports = { OFFERS, parsePricing, offerForLead, warmResponse };
+module.exports = { OFFERS, parsePricing, offerForLead, warmResponse, bookingUrlForFamily };

@@ -118,7 +118,7 @@ test('CHECK_ONLY opt-out uses the classifier unsubscribe_request reason', async 
   const rejectionObservation = await observeMailbox(rejection.input);
   const rejectionPlan = await planMailboxEvents({ ...rejection.input, observation: rejectionObservation });
   assert.equal(rejectionPlan.events.find(event => event.sourceLeadId).eventType, 'negative_reply');
-  assert.equal(rejectionPlan.suppressions.length, 0);
+  assert.deepEqual(rejectionPlan.suppressions.map(item => item.reason), ['not_interested']);
 });
 test('CHECK_ONLY still applies terminal CRM mutations and never sends',()=>{
   const fs=require('node:fs');const source=fs.readFileSync(require.resolve('../outreach-agent.js'),'utf8');

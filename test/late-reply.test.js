@@ -52,7 +52,7 @@ function harness(classification = 'INTERESTED') {
       classify: async () => classification,
       existingEventIds: eventIds,
       writeNotes: async (_lead, notes) => writes.push(notes),
-      addSuppression: async target => suppressions.push(target.email),
+      addSuppression: async (target, reason) => suppressions.push({ email: target.email, reason: reason || 'unsubscribe' }),
       recordActivity: async activity => activities.push(activity),
     },
   };
@@ -95,6 +95,7 @@ test('latest usable outbound identity is selected', () => {
 test('unsubscribed, bounced, suppressed, malformed, and non-done leads are excluded', () => {
   const inputs = [
     lead({ id: 'u', notes: '[REPLY: Unsubscribed]' }),
+    lead({ id: 'n', notes: '[REPLY: Not Interested]' }),
     lead({ id: 'b', notes: '[BOUNCED]' }),
     lead({ id: 's', email: 'blocked@example.ca' }),
     lead({ id: 'm', email: 'bad' }),
@@ -160,15 +161,16 @@ for (const [classification, metric] of [
   });
 }
 
-test('late unsubscribe invokes durable suppression and ordinary negative does not', async () => {
+test('late unsubscribe and not-interested both invoke durable suppression', async () => {
   const optOut = harness('UNSUBSCRIBE');
   await processLateReply({ lead: lead(), message: message({ body: 'unsubscribe me' }), ...optOut.deps });
-  assert.deepEqual(optOut.suppressions, ['owner@example.ca']);
+  assert.deepEqual(optOut.suppressions, [{ email: 'owner@example.ca', reason: 'unsubscribe' }]);
   assert.match(optOut.writes[0], /\[REPLY: Unsubscribed\]/);
 
   const negative = harness('NOT_INTERESTED');
   await processLateReply({ lead: lead(), message: message({ messageId: 'reply-2', body: 'not interested' }), ...negative.deps });
-  assert.equal(negative.suppressions.length, 0);
+  assert.deepEqual(negative.suppressions, [{ email: 'owner@example.ca', reason: 'not_interested' }]);
+  assert.match(negative.writes[0], /\[REPLY: Not Interested\]/);
 });
 
 test('late reply leaves all automation state and MANUAL HOLD unchanged', async () => {

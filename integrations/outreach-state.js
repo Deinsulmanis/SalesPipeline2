@@ -677,7 +677,7 @@ function conflictRefusal(current, patch) {
 //
 // Only a hold is a pause a human chose. Resume removes it by passing
 // releaseMarkers: ['[MANUAL HOLD]']; opt-out and bounce cannot be released here.
-const SAFETY_NOTE_MARKERS = Object.freeze(['[REPLY: Unsubscribed]', '[BOUNCED', MANUAL_HOLD_MARKER]);
+const SAFETY_NOTE_MARKERS = Object.freeze(['[REPLY: Unsubscribed]', '[REPLY: Not Interested]', '[BOUNCED', MANUAL_HOLD_MARKER]);
 const RELEASABLE_NOTE_MARKERS = Object.freeze([MANUAL_HOLD_MARKER]);
 
 /** The marker exactly as it appears in `notes`, or null. Detection ignores case. */

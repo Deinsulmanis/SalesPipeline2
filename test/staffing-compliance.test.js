@@ -11,7 +11,8 @@ const {
 const {
   STAFFING_CAMPAIGN_REF, STAFFING_REF_LINE, STAFFING_UNSUBSCRIBE_LINE,
   STAFFING_COMMERCIAL_NOTICE, STAFFING_OPT_OUT_LINE, STAFFING_GMAIL_FILTER_QUERY,
-  MISSING_COMMERCIAL_MAILING_ADDRESS, isValidCommercialMailingAddress,
+  MISSING_COMMERCIAL_MAILING_ADDRESS, TEST_FIXTURE_COMMERCIAL_MAILING_ADDRESS,
+  isValidCommercialMailingAddress,
   resolveCommercialMailingAddress, formatStaffingComplianceFooter,
 } = require('../integrations/staffing-compliance');
 const { classifyReply } = require('../integrations/reply-classifier');
@@ -172,6 +173,14 @@ test('14. fail-closed mailing address, global send-lock, and Gmail body preserva
   assert.equal(isValidCommercialMailingAddress(TEST_STAFFING_MAILING_ADDRESS), true);
   assert.equal(isValidCommercialMailingAddress('PO Box 123, New Westminster, BC V3L 1A1'), true);
   assert.throws(() => resolveCommercialMailingAddress({}), error => error.code === MISSING_COMMERCIAL_MAILING_ADDRESS);
+  assert.throws(
+    () => resolveCommercialMailingAddress({ COMMERCIAL_MAILING_ADDRESS: TEST_STAFFING_MAILING_ADDRESS }),
+    error => error.code === TEST_FIXTURE_COMMERCIAL_MAILING_ADDRESS,
+  );
+  assert.equal(
+    resolveCommercialMailingAddress({}, TEST_STAFFING_MAILING_ADDRESS),
+    TEST_STAFFING_MAILING_ADDRESS,
+  );
   assert.throws(() => renderStaffingEmail(staffingLead(), 1, { env: { MAILING_ADDRESS: 'ScaleLab AI, New Westminster, BC' } }),
     /commercial mailing address/);
 

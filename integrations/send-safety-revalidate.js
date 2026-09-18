@@ -12,6 +12,7 @@ function normalizeEmail(value) {
 function suppressionCode(reason) {
   if (reason === '[MANUAL HOLD]') return 'manual_hold';
   if (reason === '[REPLY: Unsubscribed]') return 'unsubscribed';
+  if (reason === '[REPLY: Not Interested]') return 'not_interested';
   if (String(reason || '').startsWith('[BOUNCED')) return 'bounced';
   if (reason === 'suppression-list') return 'suppressed';
   return 'suppressed';

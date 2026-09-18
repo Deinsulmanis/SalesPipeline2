@@ -188,7 +188,7 @@ const INBOUND_REPLY_EVENTS = Object.freeze([
 const HUMAN_INTERVENTION_EVENTS = Object.freeze(['human_response_sent', 'conversation_note']);
 const BOOKING_EVENTS = Object.freeze(['call_booked', 'meeting_rescheduled']);
 
-const HARD_SUPPRESSION_TAGS = Object.freeze(['[REPLY: Unsubscribed]', '[BOUNCED']);
+const HARD_SUPPRESSION_TAGS = Object.freeze(['[REPLY: Unsubscribed]', '[REPLY: Not Interested]', '[BOUNCED']);
 
 function latestAt(activities, types) {
   let latest = '';

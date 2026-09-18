@@ -12,7 +12,13 @@ const CANDIDATE_SIDE_MARKERS = Object.freeze([
 
 const NOT_QUALIFIED_MARKERS = Object.freeze([
   ['already_have_bd', /\b(?:already have|already use|already doing).{0,60}(?:business development|biz dev|\bbd\b|sales (?:team|people)|outbound|employers?)\b/i],
-  ['referral', /\b(?:talk to|speak (?:with|to)|contact|reach out to).{0,40}(?:manager|colleague|someone else|other)\b|\bwrong person\b|\bnot (?:the right|my) (?:person|department)\b/i],
+  ['already_have_someone', /\bwe already have someone doing this\b/i],
+  ['already_use_company', /\bwe already use another (?:company|vendor|provider|agency)\b/i],
+  ['already_do_outbound', /\bwe already do outbound\b/i],
+  ['internal_bd', /\b(?:we have an internal (?:sales|bd|business development) team|our (?:bd|sales|business development) team handles|internal (?:bd|sales) team)\b/i],
+  ['in_house', /\bwe handle this in[- ]house\b/i],
+  ['already_covered', /\bwe(?:'?ve| have) already got this covered\b/i],
+  ['referral', /\b(?:i(?:'| a)m not the right person|talk to|speak (?:with|to)|you should speak with|send this to|contact).{0,40}(?:manager|colleague|someone else|other|vp|director|sarah|john|[A-Z][a-z]{1,30})\b|\bwrong person\b|\bnot (?:the right|my) (?:person|department)\b|\b[A-Z][a-z]{1,30} handles this\b/],
   ['vendor', /\b(?:are you hiring vendors?|partnership opportunity|we sell)\b/i],
 ]);
 
@@ -32,7 +38,7 @@ const STAFFING_INTEREST_MARKERS = Object.freeze([
 const STAFFING_SEND_INFO_MARKERS = Object.freeze([
   ['send_info', /\b(?:can you |could you |please )?send (?:me )?(?:some |more |the )?(?:info|information|details)\b/i],
   ['website', /\b(?:do you have |have you got |what(?:['’]s| is) your )?(?:a |your )?website\b/i],
-  ['read_more', /\bwhere can i (?:read|learn|see|find) more\b/i],
+  ['read_more', /\bwhere can i (?:read|learn|see|find) (?:more|about this|about it)\b/i],
   ['see_how', /\b(?:can i see how (?:it|this) works|how (?:does|would) (?:it|this) work|see how (?:it|this) works)\b/i],
 ]);
 
@@ -95,11 +101,13 @@ function classifyStaffingReply(text = '', lead = {}) {
     };
   }
   if (notQualified) {
+    const referral = notQualified === 'referral';
     return {
       family, staffing: true, candidateSide: false, qualifiedEmployer: false,
       signal: notQualified, clarification: '',
       action: ACTION.HUMAN_REVIEW, send: false, promote: false,
-      reason: notQualified === 'referral'
+      classification: referral ? 'WRONG_PERSON' : 'ALREADY_HANDLED',
+      reason: referral
         ? 'wrong person or referral is not a qualified employer meeting'
         : 'existing business-development or unrelated request is not a qualified employer meeting',
     };
@@ -191,14 +199,15 @@ function overlayStaffingReplyClassification({ text = '', lead = {}, classificati
     classification: kind, canonical, confidence: 0, fit: '', intent: '', overlay: false,
   };
   if (family !== CAMPAIGN_FAMILY.STAFFING) return passthrough;
-  if (kind === 'UNSUBSCRIBE' || kind === 'NOT_INTERESTED' || kind === 'OUT_OF_OFFICE' || kind === 'WRONG_PERSON') {
+  if (kind === 'UNSUBSCRIBE' || kind === 'NOT_INTERESTED' || kind === 'OUT_OF_OFFICE' || kind === 'WRONG_PERSON' || kind === 'ALREADY_HANDLED') {
     return { ...passthrough, overlay: false };
   }
 
   const blocked = classifyStaffingReply(body, lead);
   if (blocked.promote === false) {
+    const blockedKind = blocked.classification || 'ALREADY_HANDLED';
     return {
-      classification: kind || 'NEEDS_HUMAN', canonical, confidence: 0, fit: '', intent: '',
+      classification: blockedKind, canonical, confidence: 0, fit: '', intent: '',
       overlay: true, blocked, send: false, action: ACTION.HUMAN_REVIEW, reason: blocked.reason,
     };
   }
