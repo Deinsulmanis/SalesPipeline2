@@ -18,7 +18,26 @@ Live staffing before processing: **269 total / 261 queued / 8 sent**. Dental tot
 | Catch-all accepted | 12 |
 | Non-catch-all accepted | 46 |
 
-No Anthropic credit exhaustion. Retry-required remaining: 5 `RETRIEVAL_UNUSABLE`, 1 `RETRIEVAL_BLOCKED_403`. These were retried twice and remain held.
+No Anthropic credit exhaustion. Retry-required remaining after the original run: 5 `RETRIEVAL_UNUSABLE`, 1 `RETRIEVAL_BLOCKED_403`.
+
+## Phase 1 infrastructure retry (6 held leads only)
+
+Retried only the six previously held emails. Cached research was reused when present; homepage retrieval still failed closed. Thresholds were not lowered and acceptance was not forced. None of the 58 imported leads, the 20 genuine ICP/audit/duplicate holds, Batch 1/2, or dental records were reprocessed.
+
+| Outcome | Count |
+| --- | ---: |
+| Attempted | 6 |
+| Accepted HIGH | 0 |
+| Accepted MEDIUM | 0 |
+| Imported | 0 |
+| Queued | 0 |
+| Still `RETRY_REQUIRED` | 6 |
+| ICP mismatch | 0 |
+| Audit failure | 0 |
+
+Per-lead retrieval failures: `non_public_address` (leadstaff.com), SSL verify (actionlabor.com), `unusable_or_blocked_page` (laboronsite.com), HTTP 409 (st-staffing.com), expired certificate (staffingauthority.com), HTTP 403 (capitalareastaffing.com).
+
+Live staffing after retry (no writes): **327 total / 319 queued / 8 sent**. Dental total still 1316.
 
 Live preflight vs current corpus: 0 email overlap, 0 company-name overlap, 58 unique emails/companies, every accepted row has an opening, `[B3]` notes, and `[B3 CATCH-ALL]` only on the 12 catch-all rows.
 
