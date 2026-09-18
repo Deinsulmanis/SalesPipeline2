@@ -34,9 +34,11 @@ function isStaffingCampaign(lead = {}) {
   return true;
 }
 
+const STAFFING_LANDING_PAGE_URL = 'https://scalelabai.ca/staffing/';
+
 const LOCKED_EMAILS = Object.freeze([
   `Hi {{firstName}},\n\n{{hyperPersonalizedOpening}}\n\nWe help industrial staffing agencies turn that exact market into qualified employer meetings — and we get paid based on the meetings we generate.\n\nWorth seeing how we'd do this for {{company}}?\n\n— Deins`,
-  `Hi {{firstName}},\n\nJust to clarify — we're not talking about candidate sourcing.\n\nWe run a 30-day employer acquisition pilot built around the roles {{company}} already places.\n\nWe handle the prospecting, outreach and qualification, then put interested employers directly on your calendar.\n\nIf we don't generate qualified employer meetings, there are no meeting fees.\n\nOpen to seeing what that could look like for {{company}}?`,
+  `Hi {{firstName}},\n\nJust to clarify — we're not talking about candidate sourcing.\n\nWe run a 30-day employer acquisition pilot built around the roles {{company}} already places.\n\nWe handle the prospecting, outreach and qualification, then put interested employers directly on your calendar.\n\nIf we don't generate qualified employer meetings, there are no meeting fees.\n\nYou can see how it works here:\n${STAFFING_LANDING_PAGE_URL}\n\nOpen to seeing what this could look like for {{company}}?`,
   `Hi {{firstName}},\n\nQuick question —\n\nis bringing in more employer accounts something {{company}} is focused on right now?`,
 ]);
 // One bold phrase per step, exactly as locked. Step 3's bold contains a
@@ -121,5 +123,5 @@ function validateStaffingEmail({ subject, body, leadId } = {}, step = 1) {
   return staffingComplianceError(text, { leadId });
 }
 
-module.exports = { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_LABELS, isStaffingCampaign, LOCKED_EMAILS, BOLD_PHRASE, BOLD_PHRASES,
+module.exports = { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_LABELS, isStaffingCampaign, STAFFING_LANDING_PAGE_URL, LOCKED_EMAILS, BOLD_PHRASE, BOLD_PHRASES,
   STAFFING_FOLLOW_UP_DELAY_DAYS, renderStaffingPreview, staffingOpeningFor, renderStaffingEmail, validateStaffingEmail };

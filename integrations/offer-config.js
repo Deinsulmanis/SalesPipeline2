@@ -2,6 +2,9 @@
 
 const { BOOKING_URL } = require('../booking');
 const { CAMPAIGN_FAMILY, resolveLeadFamily } = require('./campaign-versions');
+const {
+  staffingQualifyQuestionReply, staffingSendInfoReply, staffingQualifiedReply,
+} = require('./staffing-reply-policy');
 
 const OFFERS = Object.freeze({
   dental_ai_receptionist: Object.freeze({
@@ -96,6 +99,13 @@ function warmResponse({ action, lead, offer, answer = '' }) {
     ? `Grab a quick 15 min here and I’ll show you how it would work for ${company}:\n${offer.bookingUrl}` : '';
   if (action === 'AUTO_BOOKING_RESPONSE') return `Absolutely — happy to show you.\n\n${booking}`;
   if (action === 'AUTO_MEETING_RESPONSE') return `Yes — the easiest way to pick a time that works is here:\n${offer.bookingUrl}`;
+  if (action === 'AUTO_STAFFING_QUALIFY_QUESTION') return staffingQualifyQuestionReply();
+  if (action === 'AUTO_STAFFING_SEND_INFO') return staffingSendInfoReply();
+  if (action === 'AUTO_STAFFING_QUALIFIED') {
+    return staffingQualifiedReply({
+      company, bookingUrl: offer.bookingUrl, landingPageUrl: offer.landingPageUrl,
+    });
+  }
   if (action === 'AUTO_PRICING_RESPONSE') {
     if (!offer.pricing?.approvedWording) throw new Error('approved pricing is not configured');
     return `${offer.pricing.approvedWording.trim()}\n\n${booking}`;
