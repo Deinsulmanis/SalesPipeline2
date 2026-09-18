@@ -137,9 +137,8 @@ test('8. send events and unique contacted leads are different metrics', () => {
 
 test('9. Daily Sends is server-aggregated and independent of page or filter', () => {
   const server = readSource(path.join(root, 'server.js'));
-  assert.match(server, /const sendTypes = new Set\(\['initial_email_sent', 'follow_up_sent', 'booking_link_sent', 'sequence_step_sent'\]\)/);
+  assert.match(server, /buildConfirmedSendActivity\(activities\)/);
   assert.match(server, /timeZone: 'America\/Vancouver'/);
-  assert.match(server, /if \(seenSendEvents\.has\(eventKey\)\) continue;/, 'deduped by event id');
   // The chart reads the server aggregate, never the visible rows.
   assert.match(browser, /ceOutreachStats\?\.sendActivity/);
   // Scoped to the function BODY — anchoring on the first mention would match
@@ -289,8 +288,8 @@ const sliceFn = (source, name) => {
 };
 
 test('19. the send chart is named for all outbound sends, because that is what it counts', () => {
-  const server = readSource(path.join(root, 'server.js'));
-  const types = server.slice(server.indexOf('sendTypes'), server.indexOf('sendTypes') + 260);
+  const canonical = readSource(path.join(root, 'integrations', 'canonical-sends.js'));
+  const types = canonical.slice(canonical.indexOf('CONFIRMED_SEND_TYPES'), canonical.indexOf('SEND_TYPE_SET'));
   for (const type of ['initial_email_sent', 'follow_up_sent', 'booking_link_sent', 'sequence_step_sent']) {
     assert.ok(types.includes(type), `${type} must be part of the aggregate the chart renders`);
   }

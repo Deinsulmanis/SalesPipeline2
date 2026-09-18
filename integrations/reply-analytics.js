@@ -2,6 +2,9 @@
 
 const { deterministicReplyCategory } = require('./reply-classifier');
 const { resolveReplyState, EVIDENCE_SOURCE } = require('./canonical-reply');
+const {
+  canonicalSendRows, uniqueCanonicalBounces, flattenActivitiesByLeadId,
+} = require('./canonical-sends');
 
 const ANALYTICS_CATEGORY = Object.freeze({
   POSITIVE: 'positive', NEGATIVE: 'negative', NEEDS_HUMAN: 'needs_human',
@@ -60,6 +63,10 @@ function leadHasReply(lead = {}) {
   const labels = [...String(lead.notes || '').matchAll(/\[REPLY:\s*([^\]]+)\]/gi)];
   const hasHumanReplyTag = labels.some(match => categoryFromNoteLabel(match[1]) !== ANALYTICS_CATEGORY.EXCLUDED);
   return hasHumanReplyTag || String(lead.emailStatus || '').trim().toLowerCase() === 'replied';
+}
+
+function leadHasCanonicalInbound(activities = []) {
+  return (activities || []).some(row => REPLY_EVIDENCE_TYPES.has(String(row.eventType || '')));
 }
 
 /**
@@ -155,13 +162,14 @@ function buildReplyRecords(leads = [], { classificationsByLeadId = new Map(), ev
     const id = String(lead.id || '').trim();
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    if (!leadHasReply(lead)) continue;
+    const inboundActivities = activitiesByLeadId.get(id) || [];
+    if (!leadHasReply(lead) && !leadHasCanonicalInbound(inboundActivities)) continue;
     const evidence = evidenceByLeadId.get(id) || [];
     const latest = evidence[0] || null;
     const notes = String(lead.notes || '');
     records.push({
       leadId: id,
-      category: categoryFromEvidence(lead, activitiesByLeadId.get(id) || [], classificationsByLeadId.get(id) || []),
+      category: categoryFromEvidence(lead, inboundActivities, classificationsByLeadId.get(id) || []),
       company: String(lead.company || ''),
       contactName: String(lead.contactName || ''),
       email: String(lead.email || ''),
@@ -215,14 +223,25 @@ function buildReplyMetrics(leads = [], { classificationsByLeadId = new Map(), ev
     contacted: 0, delivered: 0, positiveReplyRate: 0,
   };
   const seen = new Set();
+  const activities = flattenActivitiesByLeadId(activitiesByLeadId);
+  const confirmedSends = canonicalSendRows(activities).confirmed.length;
+  const uniqueBounces = uniqueCanonicalBounces({ leads, activities });
+  const bouncedLeadSet = new Set(uniqueBounces.map(row => row.leadId).filter(Boolean));
   for (const lead of leads || []) {
     const id = String(lead.id || '').trim();
     if (!id || seen.has(id)) continue;
     seen.add(id);
     const contacted = Boolean(String(lead.emailStatus || '').trim());
     if (contacted) metrics.contacted++;
-    if (contacted && !/\[BOUNCED/i.test(String(lead.notes || ''))) metrics.delivered++;
+    if (confirmedSends === 0 && contacted && !bouncedLeadSet.has(id) && !/\[BOUNCED/i.test(String(lead.notes || ''))) {
+      metrics.delivered++;
+    }
   }
+  // When send activity is present, delivered is confirmed sends minus unique
+  // canonical bounces (activity, [BOUNCED] note, and suppression collapse to one).
+  if (confirmedSends > 0) metrics.delivered = Math.max(0, confirmedSends - uniqueBounces.length);
+  metrics.confirmedSends = confirmedSends;
+  metrics.canonicalBounces = uniqueBounces.length;
   // The SAME records the drill-down returns, so a card and its list can never
   // disagree — and the same canonical evidence hierarchy the funnel uses.
   const records = buildReplyRecords(leads, { classificationsByLeadId, evidenceByLeadId, activitiesByLeadId });
@@ -307,6 +326,7 @@ async function applyBackfillPlan(plan, { existingKeys = new Set(), writeClassifi
 
 module.exports = {
   ANALYTICS_CATEGORY, analyticsCategoryFor, categoriesFromNotes, leadHasReply,
+  leadHasCanonicalInbound,
   classificationFromLead, buildReplyMetrics, buildStoredClassificationMap,
   buildReplyEvidenceMap, buildReplyRecords, filterReplyRecords, categoryFromEvidence,
   GENUINE_REPLY_CATEGORIES,

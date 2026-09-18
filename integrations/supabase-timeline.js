@@ -244,7 +244,24 @@ function supabaseMayServeTimeline(result, { authoritativeCount = null } = {}) {
   return { allowed: true, reason: 'ok' };
 }
 
+async function readRecentCrmEvents({ since = '', limit = 5000, env = process.env } = {}) {
+  const config = mirrorConfig(env);
+  if (!config.enabled) return { ok: false, events: [], source: 'supabase', reason: config.reason };
+  const bounded = Math.max(1, Math.min(Number(limit) || DEFAULT_LIMIT, 8000));
+  const filters = ['select=event_id,lead_id,source_lead_id,event_type,occurred_at,provider_message_id,metadata',
+    'order=occurred_at.desc.nullslast,event_id.desc', `limit=${bounded}`];
+  if (since) filters.push(`occurred_at=gte.${encodeURIComponent(since)}`);
+  const url = `${config.url}/rest/v1/${TABLE}?${filters.join('&')}`;
+  try {
+    const rows = await getJson(url, config);
+    return { ok: true, events: (rows || []).map(toCanonicalActivity), source: 'supabase', reason: 'ok' };
+  } catch (error) {
+    const reason = error && error.name === 'AbortError' ? `timeout after ${REQUEST_TIMEOUT_MS}ms` : (error && error.message) || 'unreachable';
+    return { ok: false, events: [], source: 'supabase', reason };
+  }
+}
+
 module.exports = {
   CONTENT_BEARING_TYPES, DEFAULT_LIMIT, timelineMode, toCanonicalActivity, sortCanonical,
-  readCanonicalTimeline, readCanonicalTimelines, compareTimelines, supabaseMayServeTimeline,
+  readCanonicalTimeline, readCanonicalTimelines, readRecentCrmEvents, compareTimelines, supabaseMayServeTimeline,
 };

@@ -50,9 +50,25 @@ function sendMatches(attribution, filters) {
   return true;
 }
 
+function vancouverDay(value) {
+  const at = validTime(value);
+  return at === null ? '' : new Date(at).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+}
+
 function withinCohort(row, filters) {
   const at = validTime(row.occurredAt);
-  if (at === null) return filters.from === null && filters.to === null;
+  if (at === null) {
+    return filters.from === null && filters.to === null && filters.dayFrom === null && filters.dayTo === null;
+  }
+  if (filters.dayFrom !== null || filters.dayTo !== null) {
+    const day = vancouverDay(row.occurredAt);
+    if (!day) return false;
+    if (filters.dayFrom !== null && day < filters.dayFrom) return false;
+    if (filters.dayTo !== null && day > filters.dayTo) return false;
+    if (filters.dayFrom === null && filters.from !== null && at < filters.from) return false;
+    if (filters.dayTo === null && filters.to !== null && at > filters.to) return false;
+    return true;
+  }
   return (filters.from === null || at >= filters.from) && (filters.to === null || at <= filters.to);
 }
 
@@ -87,10 +103,18 @@ function buildFunnelAnalytics(input = {}, query = {}) {
   const replyRecords = input.replyRecords || [];
   const currentVersion = input.currentVersion || '';
   const version = selectedVersion(query.version, currentVersion);
-  const from = query.from ? validTime(query.from) : null;
-  const toRaw = query.to ? validTime(query.to) : null;
+  const fromRaw = String(query.from || '').trim();
+  const toRawStr = String(query.to || '').trim();
+  const dateOnlyFrom = Boolean(fromRaw) && fromRaw.length <= 10;
+  const dateOnlyTo = Boolean(toRawStr) && toRawStr.length <= 10;
+  const from = fromRaw ? validTime(fromRaw) : null;
+  const toRaw = toRawStr ? validTime(toRawStr) : null;
   const filters = {
-    version, from, to: toRaw === null ? null : toRaw + (String(query.to).length <= 10 ? 86399999 : 0),
+    version,
+    from: dateOnlyFrom ? null : from,
+    to: (dateOnlyTo || toRaw === null) ? null : toRaw,
+    dayFrom: dateOnlyFrom ? fromRaw : null,
+    dayTo: dateOnlyTo ? toRawStr : null,
     family: String(query.family || ''), personalizationLevel: query.personalizationLevel === undefined ? '' : String(query.personalizationLevel),
     angle: String(query.angle || ''), subjectStrategy: String(query.subjectStrategy || ''),
     copyVersion: String(query.copyVersion || ''), sequenceId: String(query.sequenceId || ''),
@@ -185,7 +209,10 @@ function buildFunnelAnalytics(input = {}, query = {}) {
       const metadata = parseMetadata(reply.metadata);
       const touch = metadata.replyTouch || {};
       const touchVersion = touch.campaignVersion || LEGACY_UNKNOWN;
-      if (version !== 'lifetime' && !versionMatches(touchVersion, version)) continue;
+      // Gmail observer events do not stamp replyTouch. A lead already in this
+      // send cohort still replied; only an explicit OTHER-version touch is skipped.
+      const explicitOtherVersion = Boolean(touch.campaignVersion) && !versionMatches(touchVersion, version);
+      if (version !== 'lifetime' && explicitOtherVersion) continue;
       replyMessages.push(reply);
       const category = categoryForReply(reply, categoryByLead.get(id));
       attributedReply = true; attributedFallbackCategory = category;
