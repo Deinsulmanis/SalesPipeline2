@@ -1,0 +1,526 @@
+{
+  "before": {
+    "total": 333,
+    "queued": 325,
+    "sent": 8,
+    "dentalTotal": 1316,
+    "unfiltered": 2182
+  },
+  "csvRows": 21,
+  "preflightAccepted": 21,
+  "preflightBlocked": [],
+  "import": {
+    "imported": 21,
+    "duplicates": 0,
+    "invalid": 0,
+    "junk": 0,
+    "suppressed": 0
+  },
+  "queue": {
+    "requested": 21,
+    "succeeded": 21,
+    "unchanged": 0,
+    "refused": 0,
+    "conflict": 0,
+    "failed": 0,
+    "activityFailures": 0,
+    "queued": 21,
+    "alreadyQueued": 0,
+    "queuedIds": [
+      "mu6ebrtq0vywcmq1c7k",
+      "mu6ebrtq2yrbl990ctz",
+      "mu6ebrtq4uvho12b5av",
+      "mu6ebrtq69skyko5t1o",
+      "mu6ebrtq71dppa6p8r5",
+      "mu6ebrtq7exinzmjr9k",
+      "mu6ebrtq9igdeh1m0xm",
+      "mu6ebrtqa92ezk2y05k",
+      "mu6ebrtqe52kv7o6kaj",
+      "mu6ebrtqfqt23az516k",
+      "mu6ebrtqhbj0ak0qn3f",
+      "mu6ebrtqi1bwazh3c4",
+      "mu6ebrtqifdot48av6a",
+      "mu6ebrtqj2o1wetjbs",
+      "mu6ebrtqjpkgy126ly",
+      "mu6ebrtqkey0idrsgyf",
+      "mu6ebrtqkp9v4dn5oig",
+      "mu6ebrtqnvsb893cz2p",
+      "mu6ebrtqpkec2g0z8ak",
+      "mu6ebrtqs5k99ib39f",
+      "mu6ebrtqx3ip561qud"
+    ],
+    "results": [
+      {
+        "leadId": "mu6ebrtq0vywcmq1c7k",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6ebrtq2yrbl990ctz",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6ebrtq4uvho12b5av",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6ebrtq69skyko5t1o",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6ebrtq71dppa6p8r5",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6ebrtq7exinzmjr9k",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6ebrtq9igdeh1m0xm",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6ebrtqa92ezk2y05k",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6ebrtqe52kv7o6kaj",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6ebrtqfqt23az516k",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6ebrtqhbj0ak0qn3f",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6ebrtqi1bwazh3c4",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6ebrtqifdot48av6a",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6ebrtqj2o1wetjbs",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6ebrtqjpkgy126ly",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6ebrtqkey0idrsgyf",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6ebrtqkp9v4dn5oig",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6ebrtqnvsb893cz2p",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6ebrtqpkec2g0z8ak",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6ebrtqs5k99ib39f",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6ebrtqx3ip561qud",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      }
+    ],
+    "senderInboxId": "primary",
+    "campaignVersionId": "industrial_staffing_employer_acquisition_v1",
+    "emailTemplateId": "industrial-staffing-employer-v1"
+  },
+  "after": {
+    "total": 354,
+    "queued": 346,
+    "sent": 8,
+    "dentalTotal": 1316,
+    "unfiltered": 2203,
+    "corpusDelta": 21,
+    "dentalDelta": 0
+  },
+  "verification": {
+    "importedCount": 21,
+    "newCanonical": 21,
+    "queue": {
+      "requested": 21,
+      "succeeded": 21,
+      "unchanged": 0,
+      "failed": 0,
+      "conflict": 0,
+      "queuedIds": [
+        "mu6ebrtq0vywcmq1c7k",
+        "mu6ebrtq2yrbl990ctz",
+        "mu6ebrtq4uvho12b5av",
+        "mu6ebrtq69skyko5t1o",
+        "mu6ebrtq71dppa6p8r5",
+        "mu6ebrtq7exinzmjr9k",
+        "mu6ebrtq9igdeh1m0xm",
+        "mu6ebrtqa92ezk2y05k",
+        "mu6ebrtqe52kv7o6kaj",
+        "mu6ebrtqfqt23az516k",
+        "mu6ebrtqhbj0ak0qn3f",
+        "mu6ebrtqi1bwazh3c4",
+        "mu6ebrtqifdot48av6a",
+        "mu6ebrtqj2o1wetjbs",
+        "mu6ebrtqjpkgy126ly",
+        "mu6ebrtqkey0idrsgyf",
+        "mu6ebrtqkp9v4dn5oig",
+        "mu6ebrtqnvsb893cz2p",
+        "mu6ebrtqpkec2g0z8ak",
+        "mu6ebrtqs5k99ib39f",
+        "mu6ebrtqx3ip561qud"
+      ]
+    },
+    "notesCatchAll": [],
+    "notesB3": 0,
+    "sender": [
+      "primary"
+    ],
+    "template": [
+      ""
+    ],
+    "version": [
+      ""
+    ],
+    "stages": [
+      "Queued"
+    ],
+    "activities": [
+      {
+        "id": "mu6ebrtq0vywcmq1c7k",
+        "email": "thowell@kablestaffing.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6ebrtq2yrbl990ctz",
+        "email": "chris@staffingsupportsolutions.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6ebrtq4uvho12b5av",
+        "email": "karina@visionsstaffingsolutions.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6ebrtq69skyko5t1o",
+        "email": "pmurphy@gtrjobs.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6ebrtq71dppa6p8r5",
+        "email": "kristen.little@performss.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6ebrtq7exinzmjr9k",
+        "email": "eanthony@jacicarroll.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6ebrtq9igdeh1m0xm",
+        "email": "geoff@trufitstaffing.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6ebrtqa92ezk2y05k",
+        "email": "smammenga@employment-source.biz",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6ebrtqe52kv7o6kaj",
+        "email": "mwinfree@thestaffingalliance.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6ebrtqfqt23az516k",
+        "email": "jeronimo.bonilla@enterprisestaffing.net",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6ebrtqhbj0ak0qn3f",
+        "email": "john.woods@g1-staffing.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6ebrtqi1bwazh3c4",
+        "email": "sean.malady@jjstaff.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6ebrtqifdot48av6a",
+        "email": "jose@il-staffing.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6ebrtqj2o1wetjbs",
+        "email": "michelle.hodapp@excelpersonnelservices.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6ebrtqjpkgy126ly",
+        "email": "pnguyen@onsitepersonnel.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6ebrtqkey0idrsgyf",
+        "email": "gpanizzi@teamtemps.net",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6ebrtqkp9v4dn5oig",
+        "email": "c.valdez@valdstaffing.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6ebrtqnvsb893cz2p",
+        "email": "joe.lord@turnerstaffing.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6ebrtqpkec2g0z8ak",
+        "email": "noe@nrstaffingus.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6ebrtqs5k99ib39f",
+        "email": "kimber@kimbertx.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6ebrtqx3ip561qud",
+        "email": "vtempo@aapstaff.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      }
+    ],
+    "dentalUntouched": true
+  },
+  "afterImport": {
+    "total": 354,
+    "queued": 325,
+    "sent": 8,
+    "dentalTotal": 1316,
+    "newLeadCount": 21,
+    "missing": [],
+    "extra": []
+  }
+}

@@ -102,3 +102,47 @@ Canonical `POST /api/coldemail/import` then `POST /api/coldemail/queue` into the
 - Held-6 emails still absent from the live corpus
 - No manual send; no agent trigger; no additional Apollo spend; Gmail worktree and dental records untouched
 
+## Credits-exhausted recovery (59 leads only)
+
+Final Anthropic-funded recovery of continuation leads held as `MODEL_CREDITS_EXHAUSTED`. Completed HIGH/MEDIUM/REVIEW/ICP outcomes, the two `RETRIEVAL_UNUSABLE` continuation holds, and the six older infrastructure-held leads were not retried. Live pipeline `732e215` unchanged.
+
+Pre-run inventory: **6** already had usable cached pages; **53** required fresh homepage retrieval. All 59 still needed extract / fact-audit / opening-audit model calls. The run reused **7** research snapshots (6 prior + 1 in-run retry) and fetched **52** homepages.
+
+| Gate | Count |
+| --- | ---: |
+| Attempted | 59 |
+| Cached research reused | 7 |
+| Fresh research required | 52 |
+| Accepted HIGH | 17 |
+| Accepted MEDIUM | 4 |
+| **Accepted for import** | **21** |
+| Retrieval blocked/unusable | 11 |
+| ICP refusals | 14 |
+| Audit / opening validation failures | 6 |
+| Duplicate-opening demotions | 7 |
+| Remaining retry-required | 11 |
+| Catch-all accepted | 4 |
+| Non-catch-all accepted | 17 |
+
+Remaining retry-required is retrieval/domain only (`RETRIEVAL_UNUSABLE` 5, `RETRIEVAL_PAGE_NOT_FOUND` 3, `RETRIEVAL_BLOCKED_403` 1, `DOMAIN_IDENTITY_UNRESOLVED` 2). Zero `MODEL_CREDITS_EXHAUSTED`. Anthropic usage: 133 calls, 0 errors, 946,819 input tokens, 88,442 output tokens.
+
+Live preflight vs **333 / 325 / 8** (dental 1316): 21 unique emails, 0 overlap with live corpus, original 58, continuation 6, or held-6.
+
+## Credits-exhausted recovery post-write
+
+- Imported 21 (0 duplicates, 0 junk, 0 suppressed)
+- Queued 21 (`primary` / `industrial-staffing-employer-v1` / `industrial_staffing_employer_acquisition_v1`)
+- Staffing corpus 333 → 354 (delta 21)
+- Queued 325 → 346 (delta 21)
+- Sent unchanged at 8
+- Dental total unchanged at 1316
+- 21/21 canonical ids unique, 21/21 mirrors `mirrored: true`, 0 CAS conflicts
+- 21/21 exactly one `lead_queued` activity; 0 send events; `lastEmailedAt` empty
+- 4/4 catch-all notes include `[B3 CATCH-ALL]`; 17/17 non-catch-all notes do not
+- Launch readiness `missingPersonalization: 0` across 354 staffing rows
+- Campaign sending state left `Active / sending`; copy version still `staffing_locked_v1`
+- Held-6 emails still absent
+- No manual send; no agent trigger; no Apollo spend; Gmail worktree and dental records untouched
+- Stopped after this recovery; no further sourcing or retry cycle
+
+
