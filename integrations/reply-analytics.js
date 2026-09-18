@@ -62,6 +62,10 @@ function leadHasReply(lead = {}) {
   return hasHumanReplyTag || String(lead.emailStatus || '').trim().toLowerCase() === 'replied';
 }
 
+function leadHasCanonicalInbound(activities = []) {
+  return (activities || []).some(row => REPLY_EVIDENCE_TYPES.has(String(row.eventType || '')));
+}
+
 /**
  * A lead's reply category, from EVIDENCE ONLY.
  *
@@ -155,13 +159,14 @@ function buildReplyRecords(leads = [], { classificationsByLeadId = new Map(), ev
     const id = String(lead.id || '').trim();
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    if (!leadHasReply(lead)) continue;
+    const inboundActivities = activitiesByLeadId.get(id) || [];
+    if (!leadHasReply(lead) && !leadHasCanonicalInbound(inboundActivities)) continue;
     const evidence = evidenceByLeadId.get(id) || [];
     const latest = evidence[0] || null;
     const notes = String(lead.notes || '');
     records.push({
       leadId: id,
-      category: categoryFromEvidence(lead, activitiesByLeadId.get(id) || [], classificationsByLeadId.get(id) || []),
+      category: categoryFromEvidence(lead, inboundActivities, classificationsByLeadId.get(id) || []),
       company: String(lead.company || ''),
       contactName: String(lead.contactName || ''),
       email: String(lead.email || ''),
@@ -307,6 +312,7 @@ async function applyBackfillPlan(plan, { existingKeys = new Set(), writeClassifi
 
 module.exports = {
   ANALYTICS_CATEGORY, analyticsCategoryFor, categoriesFromNotes, leadHasReply,
+  leadHasCanonicalInbound,
   classificationFromLead, buildReplyMetrics, buildStoredClassificationMap,
   buildReplyEvidenceMap, buildReplyRecords, filterReplyRecords, categoryFromEvidence,
   GENUINE_REPLY_CATEGORIES,

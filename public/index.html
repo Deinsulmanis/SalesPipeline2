@@ -5646,7 +5646,17 @@ function funnelRate(value) { return value === null || value === undefined ? '—
 function funnelQuery(stage = '') {
   const params = new URLSearchParams({ version: document.getElementById('funnel-version')?.value || 'current' });
   const days = document.getElementById('funnel-window')?.value || 'all';
-  if (days !== 'all') params.set('from', new Date(Date.now() - Number(days) * 86400000).toISOString());
+  if (days !== 'all') {
+    const vanParts = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Vancouver', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+    const y = Number(vanParts.find(part => part.type === 'year').value);
+    const m = Number(vanParts.find(part => part.type === 'month').value);
+    const d = Number(vanParts.find(part => part.type === 'day').value);
+    const today = new Date(Date.UTC(y, m - 1, d));
+    const from = new Date(today);
+    from.setUTCDate(from.getUTCDate() - (Number(days) - 1));
+    params.set('from', from.toISOString().slice(0, 10));
+    params.set('to', today.toISOString().slice(0, 10));
+  }
   const level = document.getElementById('funnel-level')?.value || ''; if (level) params.set('personalizationLevel', level);
   const family = document.getElementById('funnel-family')?.value || ''; if (family) params.set('family', family);
   const angle = document.getElementById('funnel-angle')?.value || ''; if (angle) params.set('angle', angle);
