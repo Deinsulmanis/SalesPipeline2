@@ -209,7 +209,10 @@ function buildFunnelAnalytics(input = {}, query = {}) {
       const metadata = parseMetadata(reply.metadata);
       const touch = metadata.replyTouch || {};
       const touchVersion = touch.campaignVersion || LEGACY_UNKNOWN;
-      if (version !== 'lifetime' && !versionMatches(touchVersion, version)) continue;
+      // Gmail observer events do not stamp replyTouch. A lead already in this
+      // send cohort still replied; only an explicit OTHER-version touch is skipped.
+      const explicitOtherVersion = Boolean(touch.campaignVersion) && !versionMatches(touchVersion, version);
+      if (version !== 'lifetime' && explicitOtherVersion) continue;
       replyMessages.push(reply);
       const category = categoryForReply(reply, categoryByLead.get(id));
       attributedReply = true; attributedFallbackCategory = category;
