@@ -1,0 +1,980 @@
+{
+  "funnel": {
+    "attempted": 59,
+    "liveCommit": "732e215",
+    "stoppedForCredits": false,
+    "cachedResearchReused": 7,
+    "freshResearchRequired": 52,
+    "priorClaimants": 64,
+    "counts": {
+      "HIGH": 17,
+      "MEDIUM": 4,
+      "RETRY_REQUIRED": 11,
+      "REVIEW_REQUIRED": 23,
+      "ICP_MISMATCH": 4
+    },
+    "acceptedHigh": 17,
+    "acceptedMedium": 4,
+    "accepted": 21,
+    "retrievalBlocked": 11,
+    "icpRefusals": 14,
+    "auditFailures": 6,
+    "duplicateOpeningDemotions": 7,
+    "remainingRetryRequired": 11,
+    "catchAllAccepted": 4,
+    "nonCatchAllAccepted": 17,
+    "usage": {
+      "anthropicCalls": 133,
+      "anthropicErrors": 0,
+      "inputTokens": 946819,
+      "outputTokens": 88442,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0
+    },
+    "byReason": {
+      "HIGH:VERIFIED_SPECIFIC_EMPLOYER_MARKET": 17,
+      "ICP_MISMATCH:PROFESSIONAL_OR_NONINDUSTRIAL_STAFFING": 4,
+      "REVIEW_REQUIRED:INDUSTRIAL_STAFFING_NOT_CONFIRMED": 8,
+      "REVIEW_REQUIRED:ICP_ASSESSMENT_CONFLICT": 2,
+      "REVIEW_REQUIRED:OPENING_AUDIT_FAILED": 6,
+      "MEDIUM:VERIFIED_EMPLOYER_MARKET": 4,
+      "RETRY_REQUIRED:RETRIEVAL_PAGE_NOT_FOUND": 3,
+      "REVIEW_REQUIRED:DUPLICATE_OPENING_IN_BATCH": 7,
+      "RETRY_REQUIRED:RETRIEVAL_BLOCKED_403": 1,
+      "RETRY_REQUIRED:RETRIEVAL_UNUSABLE": 5,
+      "RETRY_REQUIRED:DOMAIN_IDENTITY_UNRESOLVED": 2
+    }
+  },
+  "campaign": {
+    "id": "industrial_staffing_employer_acquisition_v1",
+    "name": "Industrial Staffing Agency",
+    "template": "industrial-staffing-employer-v1"
+  },
+  "results": [
+    {
+      "company": "All About Personnel",
+      "companyDomain": "aapstaff.com",
+      "email": "vtempo@aapstaff.com",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place assembly, machining, and machine operators for aerospace, chemical, and food manufacturing employers.",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": true,
+      "researchReused": true,
+      "supportingReasons": [],
+      "modelCalls": 3
+    },
+    {
+      "company": "Clean Power Staffing",
+      "companyDomain": "cleanpowerstaffing.com",
+      "email": "ruben@cleanpowerstaffing.com",
+      "classification": "ICP_MISMATCH",
+      "primaryReason": "PROFESSIONAL_OR_NONINDUSTRIAL_STAFFING",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": false,
+      "researchReused": true,
+      "supportingReasons": [
+        "OPTIONAL_EMPLOYER_MARKET_DROPPED",
+        "OPTIONAL_ROLE_DROPPED",
+        "OPTIONAL_FACT_DROPPED"
+      ],
+      "modelCalls": 2
+    },
+    {
+      "company": "Coryer Staffing",
+      "companyDomain": "coryerstaffing.com",
+      "email": "elizabeth@coryerstaffing.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "INDUSTRIAL_STAFFING_NOT_CONFIRMED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": false,
+      "researchReused": true,
+      "supportingReasons": [
+        "OPTIONAL_GEOGRAPHY_DROPPED",
+        "OPTIONAL_EMPLOYER_MARKET_DROPPED"
+      ],
+      "modelCalls": 2
+    },
+    {
+      "company": "Elective Staffing",
+      "companyDomain": "electivestaffing.com",
+      "email": "amelia.garcia@electivestaffing.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "ICP_ASSESSMENT_CONFLICT",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": false,
+      "researchReused": true,
+      "supportingReasons": [
+        "OPTIONAL_EMPLOYER_MARKET_DROPPED"
+      ],
+      "modelCalls": 2
+    },
+    {
+      "company": "United Employment Group, Inc.",
+      "companyDomain": "unitedemploymentgroup.com",
+      "email": "mstauffer@unitedemploymentgroup.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "OPENING_AUDIT_FAILED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": false,
+      "researchReused": true,
+      "supportingReasons": [
+        "OPTIONAL_ROLE_DROPPED",
+        "supportedByValidatedFacts",
+        "usedFactIdsComplete",
+        "f8 evidence ('CNC Machining') is a service category label only, not a staffing placement claim; does not establish that machinists and CNC operators were actually placed in metals manufacturing.",
+        "Opening claims 'machinists and CNC operators in metals manufacturing' but f8 provides no evidence of placement activity, employer outcomes, or role-market pairing—only a service name."
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "Sawyer Staffing",
+      "companyDomain": "sawyerstaffing.com",
+      "email": "randy.sawyer@sawyerstaffing.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "INDUSTRIAL_STAFFING_NOT_CONFIRMED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": false,
+      "researchReused": true,
+      "supportingReasons": [],
+      "modelCalls": 2
+    },
+    {
+      "company": "GTRJOBS - Staffing + Recruiting",
+      "companyDomain": "gtrjobs.com",
+      "email": "pmurphy@gtrjobs.com",
+      "classification": "MEDIUM",
+      "primaryReason": "VERIFIED_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place warehouse, manufacturing, and precision machining talent for automotive and aerospace employers.",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": true,
+      "researchReused": false,
+      "supportingReasons": [],
+      "modelCalls": 3
+    },
+    {
+      "company": "True Response Staffing",
+      "companyDomain": "true-response.com",
+      "email": "tatum@true-response.com",
+      "classification": "ICP_MISMATCH",
+      "primaryReason": "PROFESSIONAL_OR_NONINDUSTRIAL_STAFFING",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_EMPLOYER_MARKET_DROPPED",
+        "OPTIONAL_ROLE_DROPPED"
+      ],
+      "modelCalls": 2
+    },
+    {
+      "company": "Denver Staffing Services LLC",
+      "companyDomain": "denverstaffingservices.com",
+      "email": "cindy@denverstaffingservices.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "RETRIEVAL_PAGE_NOT_FOUND",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [],
+      "modelCalls": 0
+    },
+    {
+      "company": "Employment Service Connection, Inc.",
+      "companyDomain": "escstaff.com",
+      "email": "mwaldron@escstaff.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "INDUSTRIAL_STAFFING_NOT_CONFIRMED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_GEOGRAPHY_DROPPED"
+      ],
+      "modelCalls": 2
+    },
+    {
+      "company": "Employment Source - Billings MT",
+      "companyDomain": "employment-source.biz",
+      "email": "smammenga@employment-source.biz",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place welders and warehouse laborers across Montana and the region.",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": true,
+      "researchReused": false,
+      "supportingReasons": [],
+      "modelCalls": 3
+    },
+    {
+      "company": "Excel Personnel Services",
+      "companyDomain": "excelpersonnelservices.com",
+      "email": "michelle.hodapp@excelpersonnelservices.com",
+      "classification": "MEDIUM",
+      "primaryReason": "VERIFIED_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you focus on industrial staffing for employers.",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": true,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_EMPLOYER_MARKET_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "NR Staffing & Recruiting, LLC.",
+      "companyDomain": "nrstaffingus.com",
+      "email": "noe@nrstaffingus.com",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place welders and electricians for manufacturers.",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": true,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_ROLE_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "On Site Personnel",
+      "companyDomain": "onsitepersonnel.com",
+      "email": "pnguyen@onsitepersonnel.com",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place assembly line workers and machine operators for warehousing employers.",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": true,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_GEOGRAPHY_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "Personnel Staffing, Inc.",
+      "companyDomain": "personnelstaffing.com",
+      "email": "brigitte@personnelstaffing.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "DUPLICATE_OPENING_IN_BATCH",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_EMPLOYER_MARKET_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "Phoenix Staffing and Management Systems",
+      "companyDomain": "phoenixstaffing.net",
+      "email": "jerome@phoenixstaffing.net",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "RETRIEVAL_PAGE_NOT_FOUND",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [],
+      "modelCalls": 0
+    },
+    {
+      "company": "Timeline Staffing LLC",
+      "companyDomain": "timelinestaffing.com",
+      "email": "delia@timelinestaffing.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "INDUSTRIAL_STAFFING_NOT_CONFIRMED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [],
+      "modelCalls": 2
+    },
+    {
+      "company": "Vald Staffing",
+      "companyDomain": "valdstaffing.com",
+      "email": "c.valdez@valdstaffing.com",
+      "classification": "MEDIUM",
+      "primaryReason": "VERIFIED_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you focus on warehouses staffing for employers.",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": true,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_FACT_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "Visions Staffing Solutions LLC",
+      "companyDomain": "visionsstaffingsolutions.com",
+      "email": "karina@visionsstaffingsolutions.com",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place CNC machinists, welders, and forklift operators for manufacturers and logistics operations.",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": true,
+      "researchReused": false,
+      "supportingReasons": [],
+      "modelCalls": 3
+    },
+    {
+      "company": "Walker Business & Staffing",
+      "companyDomain": "walkerservices.com",
+      "email": "voni@walkerservices.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "RETRIEVAL_BLOCKED_403",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [],
+      "modelCalls": 0
+    },
+    {
+      "company": "Enterprise Staffing Solutions",
+      "companyDomain": "enterprisestaffing.net",
+      "email": "jeronimo.bonilla@enterprisestaffing.net",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place on-site supervisors managing rosters for light industrial employers.",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": true,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_EMPLOYER_MARKET_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "J & J Staffing Resources",
+      "companyDomain": "jjstaff.com",
+      "email": "sean.malady@jjstaff.com",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place warehouse workers and logistics workers for manufacturers.",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": true,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_GEOGRAPHY_DROPPED",
+        "DUPLICATE_ALTERNATE_COMPOSITION"
+      ],
+      "modelCalls": 4
+    },
+    {
+      "company": "RPM Staffing Professionals, Inc.",
+      "companyDomain": "rpmstaffing.net",
+      "email": "julie@rpmstaffing.net",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "DUPLICATE_OPENING_IN_BATCH",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_EMPLOYER_MARKET_DROPPED",
+        "OPTIONAL_ROLE_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "See Us Now Staffing, Inc.",
+      "companyDomain": "seeusnowstaffing.com",
+      "email": "stephanym@seeusnowstaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "RETRIEVAL_UNUSABLE",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [],
+      "modelCalls": 0
+    },
+    {
+      "company": "Seymour Staffing Professionals, Inc.",
+      "companyDomain": "seymourstaffing.com",
+      "email": "mikemiller@seymourstaffing.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "ICP_ASSESSMENT_CONFLICT",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [],
+      "modelCalls": 2
+    },
+    {
+      "company": "TA Staffing",
+      "companyDomain": "tastaffing.com",
+      "email": "gabby.miner@tastaffing.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "OPENING_AUDIT_FAILED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_GEOGRAPHY_DROPPED",
+        "noRepetitiveWording",
+        "noRepetitiveWording: 'and' appears four times in rapid succession (production and assembly workers and machine operators and CNC operators), creating awkward, list-heavy phrasing that violates conversational tone."
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "Turner Staffing Group",
+      "companyDomain": "turnerstaffing.com",
+      "email": "joe.lord@turnerstaffing.com",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place heavy equipment operators and laborers for construction contractors.",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": true,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_EMPLOYER_MARKET_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "G1 Staffing",
+      "companyDomain": "g1-staffing.com",
+      "email": "john.woods@g1-staffing.com",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place general laborers, carpenters, and machinists for manufacturers and construction contractors across Arkansas and Oklahoma.",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": true,
+      "researchReused": false,
+      "supportingReasons": [],
+      "modelCalls": 3
+    },
+    {
+      "company": "Quality Staffing USA",
+      "companyDomain": "qualitystaffingusa.com",
+      "email": "kbertoncino@quality-staffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "RETRIEVAL_UNUSABLE",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [],
+      "modelCalls": 0
+    },
+    {
+      "company": "Keen Search & Staffing, LLC",
+      "companyDomain": "keenstaffing.com",
+      "email": "lmorgan@keenstaffing.com",
+      "classification": "ICP_MISMATCH",
+      "primaryReason": "PROFESSIONAL_OR_NONINDUSTRIAL_STAFFING",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_EMPLOYER_MARKET_DROPPED"
+      ],
+      "modelCalls": 2
+    },
+    {
+      "company": "The Staffing Alliance",
+      "companyDomain": "thestaffingalliance.com",
+      "email": "mwinfree@thestaffingalliance.com",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place production/assembly workers and certified forklift operators for manufacturers.",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": true,
+      "researchReused": false,
+      "supportingReasons": [],
+      "modelCalls": 3
+    },
+    {
+      "company": "1 Resource Group Staffing",
+      "companyDomain": "1resourcegroup.com",
+      "email": "misty.stinson@1resourcegroup.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "INDUSTRIAL_STAFFING_NOT_CONFIRMED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_ROLE_DROPPED"
+      ],
+      "modelCalls": 2
+    },
+    {
+      "company": "Aria Staffing",
+      "companyDomain": "ariastaffing.com",
+      "email": "susan@ariastaffing.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "OPENING_AUDIT_FAILED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_EMPLOYER_MARKET_DROPPED",
+        "OPTIONAL_ROLE_DROPPED",
+        "naturalEmployerLanguage",
+        "supportedByValidatedFacts",
+        "usedFactIdsComplete",
+        "f5 is a candidate-facing role description ('whether you want to be'), not evidence of employer placement activity or staffing service offering.",
+        "Opening conflates warehouse employers (f1) with a manufacturing role (f5) without validated evidence that floor manufacture managers are placed FOR warehouse employers.",
+        "Natural employer language requires roles + market alignment; 'floor manufacture manager for warehouse employers' lacks semantic support."
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "Great Work! Employment Services Co",
+      "companyDomain": "greatwork.jobs",
+      "email": "bperez@greatwork.jobs",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "OPENING_AUDIT_FAILED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [
+        "noRepetitiveWording",
+        "naturalEmployerLanguage",
+        "Repetitive wording: 'warehouse workers' and 'warehouse employers' repeat the same term; opening lacks specificity and natural flow.",
+        "Unnatural employer language: 'warehouse employers' is awkward; prefer 'manufacturers' or 'warehouse operators' or simply omit employer noun.",
+        "Low specificity: opening is generic and does not establish a concrete staffing niche or differentiated market beyond the single role-market pair."
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "Kable Staffing",
+      "companyDomain": "kablestaffing.com",
+      "email": "thowell@kablestaffing.com",
+      "classification": "MEDIUM",
+      "primaryReason": "VERIFIED_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place warehouse, light industrial and skilled trades workers across Cincinnati and Northern Kentucky.",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": true,
+      "researchReused": false,
+      "supportingReasons": [],
+      "modelCalls": 3
+    },
+    {
+      "company": "WorkSteer Staffing",
+      "companyDomain": "worksteer.com",
+      "email": "jake@worksteer.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "OPENING_AUDIT_FAILED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [
+        "grammar",
+        "Grammar error: 'electrician and apprentices' should be 'electricians and apprentices' (plural agreement with compound role list)."
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "Xcel Staffing",
+      "companyDomain": "xcelstaffing.com",
+      "email": "brad@xcelstaffing.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "DUPLICATE_OPENING_IN_BATCH",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_EMPLOYER_MARKET_DROPPED",
+        "OPTIONAL_GEOGRAPHY_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "TruFit Staffing",
+      "companyDomain": "trufitstaffing.com",
+      "email": "geoff@trufitstaffing.com",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place CNC machinists and industrial electricians for manufacturers.",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": true,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_GEOGRAPHY_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "Kimber Personnel",
+      "companyDomain": "kimbertx.com",
+      "email": "kimber@kimbertx.com",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place construction workers and warehouse workers for construction contractors.",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": true,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_EMPLOYER_MARKET_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "Direct Personnel",
+      "companyDomain": "mainestaff.com",
+      "email": "rholden@mainestaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "DOMAIN_IDENTITY_UNRESOLVED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [],
+      "modelCalls": 0
+    },
+    {
+      "company": "Teamtemps Personnel Staffing, Inc.",
+      "companyDomain": "teamtemps.net",
+      "email": "gpanizzi@teamtemps.net",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place forklift drivers, machine operators and warehouse workers for manufacturers across southern Georgia.",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": true,
+      "researchReused": false,
+      "supportingReasons": [],
+      "modelCalls": 3
+    },
+    {
+      "company": "Augusta Staffing Associates",
+      "companyDomain": "augustastaffing.com",
+      "email": "ckelly@augustastaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "RETRIEVAL_UNUSABLE",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [],
+      "modelCalls": 0
+    },
+    {
+      "company": "Jaci Carroll Staffing, Inc.",
+      "companyDomain": "jacicarroll.com",
+      "email": "eanthony@jacicarroll.com",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place precision assemblers and machine operators for warehouse employers.",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": true,
+      "researchReused": false,
+      "supportingReasons": [],
+      "modelCalls": 3
+    },
+    {
+      "company": "Top Quality Staffing Solutions",
+      "companyDomain": "topqualitystaffingsolutions.com",
+      "email": "diamond.payne@topqualitystaffingsolutions.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "RETRIEVAL_PAGE_NOT_FOUND",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [],
+      "modelCalls": 0
+    },
+    {
+      "company": "Ctrust Staffing LLC",
+      "companyDomain": "ctruststaffing.com",
+      "email": "corina@ctruststaffing.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "DUPLICATE_OPENING_IN_BATCH",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_GEOGRAPHY_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "UpStream Workforce Solutions",
+      "companyDomain": "us-workforce.com",
+      "email": "twagy@us-workforce.com",
+      "classification": "ICP_MISMATCH",
+      "primaryReason": "PROFESSIONAL_OR_NONINDUSTRIAL_STAFFING",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_EMPLOYER_MARKET_DROPPED",
+        "OPTIONAL_FACT_DROPPED"
+      ],
+      "modelCalls": 2
+    },
+    {
+      "company": "Universal Staffing Solutions, Inc.",
+      "companyDomain": "ustaffingservice.com",
+      "email": "cestrada@ustaffingservice.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "RETRIEVAL_UNUSABLE",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [],
+      "modelCalls": 0
+    },
+    {
+      "company": "Carol Harris Staffing, LLC DBA CHS Solutions",
+      "companyDomain": "chstaffing.com",
+      "email": "carol@chstaffing.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "DOMAIN_IDENTITY_UNRESOLVED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [],
+      "modelCalls": 0
+    },
+    {
+      "company": "Staffing Support Solutions",
+      "companyDomain": "staffingsupportsolutions.com",
+      "email": "chris@staffingsupportsolutions.com",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place solar installation workers and sheet metal workers for construction contractors.",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": true,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_EMPLOYER_MARKET_DROPPED",
+        "OPTIONAL_GEOGRAPHY_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "Pettit Staffing Services",
+      "companyDomain": "pettitstaffing.com",
+      "email": "christine@pettitstaffing.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "DUPLICATE_OPENING_IN_BATCH",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_ROLE_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "I&L Staffing",
+      "companyDomain": "ilstaffing.us",
+      "email": "jose@il-staffing.com",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place forklift operators and machine operators for warehouse employers.",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": true,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_GEOGRAPHY_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "Performance Staffing Solutions, Inc.",
+      "companyDomain": "performss.com",
+      "email": "kristen.little@performss.com",
+      "classification": "HIGH",
+      "primaryReason": "VERIFIED_SPECIFIC_EMPLOYER_MARKET",
+      "hyperPersonalizedOpening": "Saw you place forklift operators and warehouse workers for distribution companies.",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": true,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_GEOGRAPHY_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "ASR Staffing Solutions, Inc.",
+      "companyDomain": "asrstaffing.com",
+      "email": "brian@asrstaffing.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "OPENING_AUDIT_FAILED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [
+        "supportedByValidatedFacts",
+        "usedFactIdsComplete",
+        "f7 (warehousing) does not support 'for warehousing employers'—the evidence lists warehouse job titles (forklift, shipping/receiving, pick/pack), not employers in the warehousing sector. Welders and CNC machinists are industrial/manufacturing roles, not warehouse roles. The opening conflates two unrelated staffing markets."
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "Sunrise Staffing Services, LLC",
+      "companyDomain": "sunrisestaffingservices.com",
+      "email": "chris.ryan@sunrisestaffingservices.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "DUPLICATE_OPENING_IN_BATCH",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_EMPLOYER_MARKET_DROPPED"
+      ],
+      "modelCalls": 3
+    },
+    {
+      "company": "R.O.I Employment Solutions, LLC",
+      "companyDomain": "roiemployment.com",
+      "email": "roi@roiemployment.com",
+      "classification": "RETRY_REQUIRED",
+      "primaryReason": "RETRIEVAL_UNUSABLE",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": null,
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [],
+      "modelCalls": 0
+    },
+    {
+      "company": "Legacy Employment Solutions",
+      "companyDomain": "legacyemploymentsolutions.org",
+      "email": "k_valerio@legacyemploymentsolutions.org",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "INDUSTRIAL_STAFFING_NOT_CONFIRMED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": false,
+      "researchReused": true,
+      "supportingReasons": [],
+      "modelCalls": 2
+    },
+    {
+      "company": "Foothills Staffing",
+      "companyDomain": "foothillsstaffing.com",
+      "email": "robyngilbert@foothillsstaffing.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "INDUSTRIAL_STAFFING_NOT_CONFIRMED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_GEOGRAPHY_DROPPED"
+      ],
+      "modelCalls": 2
+    },
+    {
+      "company": "Top Shelf Staffing,LLC",
+      "companyDomain": "topshelfstaffing.net",
+      "email": "cblackwell@topshelfstaffing.net",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "INDUSTRIAL_STAFFING_NOT_CONFIRMED",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": false,
+      "emailAdmission": "verified_non_catch_all",
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_GEOGRAPHY_DROPPED"
+      ],
+      "modelCalls": 2
+    },
+    {
+      "company": "Sierra Staffing Group",
+      "companyDomain": "sierrastaffinggroup.com",
+      "email": "cole@sierrastaffinggroup.com",
+      "classification": "REVIEW_REQUIRED",
+      "primaryReason": "DUPLICATE_OPENING_IN_BATCH",
+      "hyperPersonalizedOpening": "",
+      "catchAllAdmitted": true,
+      "emailAdmission": "verified_catch_all",
+      "safeToSend": false,
+      "researchReused": false,
+      "supportingReasons": [
+        "OPTIONAL_EMPLOYER_MARKET_DROPPED"
+      ],
+      "modelCalls": 3
+    }
+  ]
+}
