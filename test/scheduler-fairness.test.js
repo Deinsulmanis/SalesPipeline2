@@ -70,7 +70,7 @@ test('follow-up fairness is applied independently to each inbox bucket', async (
 test('production policy retains daily cap, refill, thread gate and demo stop', () => {
   const agent = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  assert.match(agent, /DAILY_SEND_LIMIT\s*=\s*parseInt\(process\.env\.DAILY_SEND_LIMIT \|\| '40'/);
+  assert.match(agent, /DAILY_SEND_LIMIT = SENDER_CAPACITY\.globalDailyLimit/);
   assert.equal(followUpSuccessTarget(5), 4);
   assert.match(agent, /followBatchesBySender/);
   assert.match(agent, /fillSenderFollowUps\(sender\.id, followUpSuccessTarget\(senderRemaining\)\)/);

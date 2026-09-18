@@ -15,8 +15,14 @@ test('secondary inbox remains isolated and dormant while warming', () => {
   assert.equal(publicRegistry([entry], {}).at(0).sendEligible, false);
 });
 
-test('warming inbox fails closed when given a send allowance', () => {
-  assert.throws(() => parseRegistry(JSON.stringify([{ id: 'x', email: 'x@example.com', status: 'warming', tokenEnv: 'GMAIL_X_TOKEN_JSON', dailyLimit: 1 }])), /dailyLimit 0/);
+test('warming inbox may carry intended caps without becoming send-eligible', () => {
+  const [entry] = parseRegistry(JSON.stringify([{
+    id: 'x', email: 'x@example.com', status: 'warming', tokenEnv: 'GMAIL_X_TOKEN_JSON',
+    dailyLimit: 40, perRunLimit: 5,
+  }]));
+  assert.equal(entry.dailyLimit, 40);
+  assert.equal(entry.perRunLimit, 5);
+  assert.equal(publicRegistry([entry], { GMAIL_X_TOKEN_JSON: '{}' }).at(0).sendEligible, false);
 });
 
 test('secondary inbox cannot reuse the live primary credential variable', () => {

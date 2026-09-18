@@ -118,7 +118,7 @@ async function applyProvenEvidence({plan,approvedHash,appendEvent,writeSender,re
  * credentials makes the proof unavailable. It fails closed; it is never skipped.
  */
 function legacyEvidenceRoster(senders) {
-  const roster = (senders || []).filter(sender => sender && norm(sender.status) !== 'warming');
+  const roster = (senders || []).filter(sender => sender && !['warming', 'ready'].includes(norm(sender.status)));
   const expected = [...new Set(roster.map(sender => String(sender.id || '').trim()).filter(Boolean))];
   if (!expected.length) throw new Error('No configured sending mailbox; sender proof is unavailable');
   const uncredentialed = roster.filter(sender => !sender.credentialConfigured).map(sender => sender.id);

@@ -59,12 +59,13 @@ test('eight scheduled windows can deliver forty per inbox and eighty total witho
   assert.ok(worstExpectedMinuteReads < 60, 'normal scheduling stays well below the per-user minute quota');
 });
 
-test('scheduler exposes exactly eight windows and passes strict 5 + 5 capacity', () => {
+test('scheduler exposes exactly eight windows and passes strict 5 per inbox with derived totals', () => {
   assert.match(server, /const SCHEDULED_SEND_PER_INBOX_CAP = 5;/);
-  assert.match(server, /const SCHEDULED_SEND_TOTAL_CAP = 10;/);
+  assert.match(server, /function scheduledSendCaps/);
   assert.match(server, /cron\.schedule\('0,30 8-11 \* \* 1-5'/);
-  assert.match(server, /DAILY_CAP: String\(SCHEDULED_SEND_TOTAL_CAP\)/);
-  assert.match(server, /PER_INBOX_RUN_CAP: String\(SCHEDULED_SEND_PER_INBOX_CAP\)/);
+  assert.match(server, /DAILY_CAP: String\(caps\.total\)/);
+  assert.match(server, /PER_INBOX_RUN_CAP: String\(caps\.perInbox\)/);
+  assert.doesNotMatch(server, /const SCHEDULED_SEND_TOTAL_CAP = 10;/);
   assert.doesNotMatch(server, /SCHEDULED_SEND_PER_RUN_CAP/);
 });
 

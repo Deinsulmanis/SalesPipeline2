@@ -33,10 +33,14 @@ const {
   buildReplyRecords, buildReplyEvidenceMap, filterReplyRecords,
   GENUINE_REPLY_CATEGORIES,
 } = require('./integrations/reply-analytics');
-const { parseRegistry: parseGmailInboxRegistry, publicRegistry: publicGmailInboxRegistry,
-  credentialsFor: gmailInboxCredentialsFor,
+const { parseRegistry: parseGmailInboxRegistry,
+  credentialsFor: gmailInboxCredentialsFor, withDefaultInboxes, parseRuntimeOverlay,
   verifyInbox: verifyGmailInbox, verifyMailboxAccess } = require('./integrations/gmail-inbox-registry');
-const { configuredSenders, senderCountsToday, successfulSendCountToday } = require('./integrations/gmail-sender-routing');
+const { configuredSenders, observableSenders, senderCountsToday, successfulSendCountToday } = require('./integrations/gmail-sender-routing');
+const { capacityFromEnv, DEFAULT_INBOX_PER_RUN_LIMIT } = require('./integrations/gmail-sender-capacity');
+const {
+  markWarmupReady, activateSender, pauseSender, activationBlockers,
+} = require('./integrations/gmail-sender-lifecycle');
 // Read-only presentation over the sender ownership the send path already
 // decides. Resolves nothing of its own — see integrations/sender-visibility.js.
 const {
@@ -562,6 +566,8 @@ const GMAIL_OBSERVATION_STATE_SHEET = 'GmailObservationState';
 const GMAIL_OBSERVATION_STATE_HEADER = ['senderInboxId','historyId','lastSuccessfulAt','lastAttemptAt','lastError','health','mode','bootstrapState','messagesObserved'];
 const mailboxCheckpointRange = () => `${GMAIL_OBSERVATION_STATE_SHEET}!A:I`;
 const mailboxCheckpointSchema = () => [GMAIL_OBSERVATION_STATE_SHEET, GMAIL_OBSERVATION_STATE_HEADER];
+const GMAIL_SENDER_RUNTIME_SHEET = 'GmailSenderRuntime';
+const GMAIL_SENDER_RUNTIME_HEADER = ['senderInboxId', 'status', 'updatedAt', 'updatedBy'];
 
 const smartleadClient = new SmartleadClient();
 const smartleadProvider = new SmartleadOutreachProvider({ client: smartleadClient });
@@ -685,6 +691,37 @@ async function updateIntegrationHealth(patch) {
   await upsertIntegrationRow(INTEGRATION_HEALTH_SHEET, INTEGRATION_HEALTH_HEADER, 'provider', { provider: 'smartlead', ...patch, updatedAt: now });
 }
 
+function publishSenderRuntime(overlay) {
+  process.env.GMAIL_SENDER_RUNTIME_JSON = JSON.stringify(overlay || []);
+}
+
+async function loadSenderRuntimeOverlay() {
+  try {
+    const rows = await readIntegrationRows(GMAIL_SENDER_RUNTIME_SHEET, GMAIL_SENDER_RUNTIME_HEADER);
+    publishSenderRuntime(rows.map(row => ({
+      id: String(row.senderInboxId || '').trim(),
+      status: String(row.status || '').trim().toLowerCase(),
+    })).filter(row => row.id && row.status));
+  } catch (error) {
+    console.warn(`[gmail-sender-runtime] overlay unavailable (${error.message}); using registry status`);
+  }
+}
+
+async function persistSenderRuntimeStatus(senderId, status, updatedBy = 'operator') {
+  await upsertIntegrationRow(GMAIL_SENDER_RUNTIME_SHEET, GMAIL_SENDER_RUNTIME_HEADER, 'senderInboxId', {
+    senderInboxId: senderId, status, updatedAt: new Date().toISOString(), updatedBy,
+  });
+  const overlay = parseRuntimeOverlay(process.env.GMAIL_SENDER_RUNTIME_JSON || '[]')
+    .filter(row => row.id !== senderId);
+  overlay.push({ id: senderId, status });
+  publishSenderRuntime(overlay);
+}
+
+loadSenderRuntimeOverlay().catch(error => {
+  console.warn(`[gmail-sender-runtime] boot load failed (${error.message})`);
+});
+
+
 // In-memory row index: lead.id → 1-based sheet row number
 const rowMap = new Map();
 let sheetIdCache = null;
@@ -700,7 +737,16 @@ const agentState = { running: false, dryRun: true, startedAt: null, log: [], exi
 let   agentChild = null;
 let automationLaunchReserved = false;
 const SCHEDULED_SEND_PER_INBOX_CAP = 5;
-const SCHEDULED_SEND_TOTAL_CAP = 10;
+
+function scheduledSendCaps(senders = configuredSenders()) {
+  const capacity = capacityFromEnv(senders);
+  return {
+    perInbox: SCHEDULED_SEND_PER_INBOX_CAP,
+    total: capacity.globalPerRunLimit,
+    daily: capacity.globalDailyLimit,
+    activeCount: capacity.activeCount,
+  };
+}
 
 function agentPushLine(line) {
   agentState.log.push({ ts: new Date().toISOString(), line });
@@ -759,7 +805,14 @@ function startAgentProcess(extraEnv, dryRun) {
 }
 
 function spawnAgent(dryRun, extraEnv = {}) {
-  startAgentProcess({ DRY_RUN: dryRun ? 'true' : 'false', ...extraEnv }, dryRun);
+  const caps = scheduledSendCaps();
+  startAgentProcess({
+    DRY_RUN: dryRun ? 'true' : 'false',
+    DAILY_CAP: String(caps.total),
+    PER_INBOX_RUN_CAP: String(caps.perInbox),
+    GMAIL_SENDER_RUNTIME_JSON: process.env.GMAIL_SENDER_RUNTIME_JSON || '[]',
+    ...extraEnv,
+  }, dryRun);
 }
 
 // Check-only pass: real sheet writes (reply/bounce detection), no sends.
@@ -1818,8 +1871,14 @@ app.get('/api/campaign-versions', requireAuth, (req, res) => {
 // tokens, account identifiers, or raw environment values.
 app.get('/api/crm/ui-status', requireAuth, (_req, res) => {
   const enabled = value => String(value || '').trim().toLowerCase() === 'true';
+  const capacity = capacityFromEnv(configuredSenders());
   res.json({
-    sending: { enabled: enabled(process.env.SENDING_ENABLED), dailyLimit: Number(process.env.DAILY_SEND_LIMIT) || null },
+    sending: {
+      enabled: enabled(process.env.SENDING_ENABLED),
+      dailyLimit: capacity.globalDailyLimit,
+      perRunLimit: capacity.globalPerRunLimit,
+      activeSenders: capacity.activeCount,
+    },
     stageSequences: { enabled: enabled(process.env.STAGE_SEQUENCES_ENABLED) },
     calendarSync: { enabled: enabled(process.env.GOOGLE_CALENDAR_BOOKING_SYNC_ENABLED), configured: Boolean(process.env.GOOGLE_BOOKING_CALENDAR_ID) },
     smartlead: { enabled: enabled(process.env.SMARTLEAD_INTEGRATION_ENABLED), liveMutations: enabled(process.env.SMARTLEAD_LIVE_MUTATIONS_ENABLED) },
@@ -1987,13 +2046,13 @@ app.get('/api/crm/health', requireAuth, async (req, res) => {
       calendarSyncState,
       canonicalReplyBoundary: process.env.CANONICAL_REPLY_BOUNDARY || null,
       mailboxObservationState: dataset.mailboxObservationState,
-      observerSenderIds: configuredSenders().filter(item => item.sendEligible).map(item => item.id),
+      observerSenderIds: observableSenders(configuredSenders()).map(item => item.id),
       funnel,
     });
     let gmailObserver;
     try {
       const rows = dataset.mailboxObservationState || [];
-      gmailObserver = observerHealth(rows, { senderIds: configuredSenders().filter(item => item.sendEligible).map(item => item.id) });
+      gmailObserver = observerHealth(rows, { senderIds: observableSenders(configuredSenders()).map(item => item.id) });
     } catch (error) {
       gmailObserver = [{ health: 'unavailable', lastError: `checkpoint state unavailable: ${error.message}` }];
     }
@@ -2739,7 +2798,7 @@ function bookingLinkBlockerFor(lead, activities, dataset, now = new Date()) {
   };
 
   const observers = observerHealth(dataset.mailboxObservationState || [], {
-    now, senderIds: senders.filter(item => item.sendEligible).map(item => item.id),
+    now, senderIds: observableSenders(senders).map(item => item.id),
   });
   const observer = observers.find(item => item.senderInboxId === sender.id);
   if (!observer || observer.health !== 'healthy') return {
@@ -2753,7 +2812,7 @@ function bookingLinkBlockerFor(lead, activities, dataset, now = new Date()) {
   const dayKey = now.toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
   const senderCount = senderCountsToday(dataset.activities || [], dayKey).get(sender.id) || 0;
   const globalCount = successfulSendCountToday(dataset.activities || [], dayKey);
-  const globalLimit = Number(process.env.DAILY_SEND_LIMIT || 80);
+  const globalLimit = capacityFromEnv(senders).globalDailyLimit;
   if (globalCount >= globalLimit) return {
     code: 'global_quota',
     label: 'Booking link pending — daily send capacity reached',
@@ -2848,7 +2907,7 @@ app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
       twin = await findColdEmailTwin(req.params.id, lead.email);
       const dataset = await getOutreachDataset();
       const observers = observerHealth(dataset.mailboxObservationState || [], {
-        senderIds: configuredSenders().filter(item => item.sendEligible).map(item => item.id) });
+        senderIds: observableSenders(configuredSenders()).map(item => item.id) });
       pipeline = {
         automation: deriveAutomationState(twin),
         conflict: automationConflict(lead, twin),
@@ -2966,7 +3025,7 @@ app.get('/api/leads/next-actions', requireAuth, async (_req, res) => {
 
     const now = new Date();
     const observers = observerHealth(observerResponse.data.values || [], { now,
-      senderIds: configuredSenders().filter(item => item.sendEligible).map(item => item.id) });
+      senderIds: observableSenders(configuredSenders()).map(item => item.id) });
     const suppressedEmails = new Set((suppressionResponse.data.values || []).slice(1).map(row => normalizeEmail(row[0])));
     const entries = leads.map(lead => {
       const email = normalizeEmail(lead.email);
@@ -4041,10 +4100,10 @@ app.get('/api/leads/:id/sequence', requireAuth, async (req, res) => {
     const dayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
     const senderCount = sender ? (senderCountsToday(ctx.allActivities, dayKey).get(sender.id) || 0) : null;
     const globalCount = successfulSendCountToday(ctx.allActivities, dayKey);
-    const globalLimit = Number(process.env.DAILY_SEND_LIMIT || 80);
+    const globalLimit = capacityFromEnv(senders).globalDailyLimit;
     const observerDataset = await getOutreachDataset();
     const observer = observerHealth(observerDataset.mailboxObservationState || [], {
-      senderIds: configuredSenders().filter(item => item.sendEligible).map(item => item.id),
+      senderIds: observableSenders(configuredSenders()).map(item => item.id),
     }).find(item => item.senderInboxId === senderProof.senderInboxId);
     const latestEnrollment = ctx.activities.filter(row => row.eventType === SEQUENCE_EVENTS.ENROLLED)
       .sort((a, b) => String(b.occurredAt || '').localeCompare(String(a.occurredAt || '')))[0];
@@ -5042,7 +5101,7 @@ app.get('/api/coldemail/:id/activity', requireAuth, async (req, res) => {
     }, lead, {
       activities, now,
       observers: observerHealth(dataset.mailboxObservationState || [], { now,
-        senderIds: configuredSenders().filter(item => item.sendEligible).map(item => item.id) }),
+        senderIds: observableSenders(configuredSenders()).map(item => item.id) }),
       suppressedEmails: dataset.suppressedEmails || new Set(),
       sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true',
       outreachOnly: !boardLead,
@@ -5375,15 +5434,22 @@ function visibleSenderIdentities() {
 }
 
 function gmailInboxOptions() {
-  const secondary = publicGmailInboxRegistry(parseGmailInboxRegistry());
-  secondary.forEach(inbox => { inbox.deliveryImplemented = true; inbox.currentRoute = inbox.sendEligible; });
-  const primary = {
-      id: 'primary', email: process.env.FROM_EMAIL || 'Current Gmail inbox', status: 'active',
-      dailyLimit: Number(process.env.GMAIL_PRIMARY_DAILY_LIMIT || process.env.DAILY_SEND_LIMIT || 40), credentialConfigured: Boolean(process.env.GMAIL_TOKEN_JSON),
-      identityVerified: true, sendEligible: Boolean(process.env.GMAIL_TOKEN_JSON), currentRoute: true,
-      deliveryImplemented: true,
-  };
-  return [primary, ...secondary];
+  return configuredSenders().map(sender => ({
+    id: sender.id,
+    email: sender.email || (sender.id === 'primary' ? 'Current Gmail inbox' : ''),
+    status: sender.status,
+    warmupStatus: sender.status,
+    provider: 'gmail',
+    dailyLimit: sender.dailyLimit,
+    perRunLimit: sender.perRunLimit || DEFAULT_INBOX_PER_RUN_LIMIT,
+    observerEnabled: sender.observerEnabled !== false,
+    credentialConfigured: sender.credentialConfigured,
+    identityVerified: sender.id === 'primary' ? Boolean(process.env.GMAIL_TOKEN_JSON) : sender.credentialConfigured,
+    sendEligible: sender.sendEligible,
+    sendingActive: Boolean(sender.sendEligible),
+    currentRoute: Boolean(sender.sendEligible),
+    deliveryImplemented: true,
+  }));
 }
 
 app.get('/api/integrations/supabase/stage2-parity', requireAuth, (_req, res) => {
@@ -5408,9 +5474,63 @@ app.get('/api/integrations/supabase/stage3-parity', requireAuth, (_req, res) => 
   });
 });
 
-app.get('/api/integrations/gmail-inboxes', requireAuth, (_req, res) => {
-  try { res.json({ inboxes: gmailInboxOptions() }); }
-  catch (error) { res.status(500).json({ error: error.message }); }
+app.get('/api/integrations/gmail-inboxes', requireAuth, async (_req, res) => {
+  try {
+    const inboxes = gmailInboxOptions();
+    const senders = configuredSenders();
+    const capacity = capacityFromEnv(senders);
+    let observers = [];
+    let sentToday = new Map();
+    try {
+      const dataset = await getOutreachDataset();
+      const dayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+      sentToday = senderCountsToday(dataset.activities || [], dayKey);
+      observers = observerHealth(dataset.mailboxObservationState || [], {
+        senderIds: observableSenders(senders).map(item => item.id),
+      });
+    } catch (_) { /* status-only fallback: registry remains visible */ }
+    res.json({
+      inboxes: inboxes.map(inbox => {
+        const observer = observers.find(item => item.senderInboxId === inbox.id) || null;
+        const sent = sentToday.get(inbox.id) || 0;
+        const remaining = Math.max(0, Number(inbox.dailyLimit || 0) - sent);
+        const auth = {
+          authenticated: inbox.credentialConfigured,
+          identityVerified: inbox.identityVerified,
+        };
+        const blockers = activationBlockers(
+          senders.find(item => item.id === inbox.id) || inbox,
+          { auth, observer, senders },
+        );
+        const observerLabel = !inbox.credentialConfigured ? 'unavailable'
+          : !observer ? 'unavailable'
+          : observer.health === 'healthy' ? 'healthy'
+          : observer.health === 'backoff' || observer.quotaBackoff ? 'warning'
+          : observer.health === 'recovering' ? 'warning'
+          : 'unavailable';
+        return {
+          ...inbox,
+          observerHealth: observerLabel,
+          observer,
+          sentToday: sent,
+          remainingToday: remaining,
+          controls: {
+            canMarkReady: inbox.status === 'warming',
+            canActivate: inbox.status === 'ready' && blockers.length === 0,
+            canPause: inbox.status === 'active',
+            activationBlockers: blockers,
+          },
+        };
+      }),
+      capacity: {
+        activeSenders: capacity.activeCount,
+        globalDailyLimit: capacity.globalDailyLimit,
+        globalPerRunLimit: capacity.globalPerRunLimit,
+        dailyCeiling: capacity.dailyCeiling,
+        perRunCeiling: capacity.perRunCeiling,
+      },
+    });
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 // On-demand, authenticated reconciliation. It runs in a short-lived process so
@@ -5487,7 +5607,7 @@ function operationalMailbox(senderInboxId) {
     auth.setCredentials(JSON.parse(process.env.GMAIL_TOKEN_JSON || '{}'));
     return { id, email: String(process.env.FROM_EMAIL || '').toLowerCase(), gmail: google.gmail({ version: 'v1', auth }) };
   }
-  const entry = parseGmailInboxRegistry().find(item => item.id === id);
+  const entry = withDefaultInboxes(parseGmailInboxRegistry()).find(item => item.id === id);
   if (!entry) throw new Error(`sender inbox ${id || '(blank)'} is not configured`);
   const auth = new google.auth.OAuth2(
     process.env.GMAIL_SECONDARY_GOOGLE_CLIENT_ID,
@@ -5502,7 +5622,7 @@ function operationalMailbox(senderInboxId) {
 app.get('/api/ops/gmail-usage', requireAuth, async (_req, res) => {
   try {
     const dataset = await getOutreachDataset({ force: true });
-    const senders = configuredSenders().filter(item => item.sendEligible);
+    const senders = observableSenders(configuredSenders());
     const observers = observerHealth(dataset.mailboxObservationState || [], {
       senderIds: senders.map(sender => sender.id),
     });
@@ -5549,7 +5669,7 @@ app.get('/api/ops/mailbox-diagnostic', requireAuth, async (req, res) => {
   try {
     const dataset = await getOutreachDataset({ force: true });
     const results = [];
-    for (const sender of configuredSenders().filter(item => item.sendEligible)) {
+    for (const sender of observableSenders(configuredSenders())) {
       const mailbox = operationalMailbox(sender.id);
       const row = (dataset.mailboxObservationState || []).find(row => row[0] === sender.id) || [];
       const trace = [];
@@ -5806,10 +5926,125 @@ app.get('/api/outreach/routing-options', requireAuth, (_req, res) => {
 
 app.post('/api/integrations/gmail-inboxes/:id/verify', requireAuth, async (req, res) => {
   try {
-    const entry = parseGmailInboxRegistry().find(item => item.id === req.params.id);
-    if (!entry) return res.status(404).json({ error: 'Gmail inbox is not registered' });
+    const entry = withDefaultInboxes(parseGmailInboxRegistry()).find(item => item.id === req.params.id)
+      || configuredSenders().find(item => item.id === req.params.id);
+    if (!entry || entry.id === 'primary') {
+      if (req.params.id === 'primary') {
+        const primaryAuth = new google.auth.OAuth2(
+          process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET, process.env.GOOGLE_REDIRECT_URI,
+        );
+        primaryAuth.setCredentials(JSON.parse(process.env.GMAIL_TOKEN_JSON || '{}'));
+        return res.json(await verifyMailboxAccess({
+          gmail: google.gmail({ version: 'v1', auth: primaryAuth }), expectedEmail: process.env.FROM_EMAIL,
+          result: { id: 'primary', status: 'active', dailyLimit: Number(process.env.GMAIL_PRIMARY_DAILY_LIMIT || 40), credentialConfigured: true },
+        }));
+      }
+      return res.status(404).json({ error: 'Gmail inbox is not registered' });
+    }
     res.json(await verifyGmailInbox(entry));
   } catch (error) { res.status(422).json({ error: error.message }); }
+});
+
+function senderById(id) {
+  return configuredSenders().find(item => item.id === String(id || '').trim()) || null;
+}
+
+async function senderHealthContext(sender) {
+  let observer = null;
+  try {
+    const dataset = await getOutreachDataset();
+    observer = observerHealth(dataset.mailboxObservationState || [], {
+      senderIds: observableSenders(configuredSenders()).map(item => item.id),
+    }).find(item => item.senderInboxId === sender.id) || null;
+  } catch (_) { observer = null; }
+  let auth = { authenticated: Boolean(sender.credentialConfigured), identityVerified: Boolean(sender.credentialConfigured) };
+  try {
+    if (sender.id === 'primary') {
+      const primaryAuth = new google.auth.OAuth2(
+        process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET, process.env.GOOGLE_REDIRECT_URI,
+      );
+      primaryAuth.setCredentials(JSON.parse(process.env.GMAIL_TOKEN_JSON || '{}'));
+      auth = await verifyMailboxAccess({
+        gmail: google.gmail({ version: 'v1', auth: primaryAuth }), expectedEmail: sender.email,
+      });
+    } else if (sender.credentialConfigured) {
+      auth = await verifyGmailInbox(sender);
+    }
+  } catch (_) {
+    auth = { authenticated: false, identityVerified: false };
+  }
+  return { auth, observer, senders: configuredSenders() };
+}
+
+app.post('/api/integrations/gmail-inboxes/:id/mark-ready', requireAuth, async (req, res) => {
+  try {
+    const sender = senderById(req.params.id);
+    if (!sender) return res.status(404).json({ error: 'Gmail inbox is not registered' });
+    const next = markWarmupReady(sender);
+    await persistSenderRuntimeStatus(sender.id, next.status);
+    res.json({ ok: true, id: sender.id, status: next.status, sendEligible: false, sends: 0 });
+  } catch (error) { res.status(422).json({ error: error.message }); }
+});
+
+app.post('/api/integrations/gmail-inboxes/:id/activate', requireAuth, async (req, res) => {
+  try {
+    const sender = senderById(req.params.id);
+    if (!sender) return res.status(404).json({ error: 'Gmail inbox is not registered' });
+    const context = await senderHealthContext(sender);
+    const next = activateSender(sender, context);
+    await persistSenderRuntimeStatus(sender.id, next.status);
+    const capacity = capacityFromEnv(configuredSenders());
+    res.json({
+      ok: true, id: sender.id, status: next.status, sendEligible: next.sendEligible,
+      capacity, sends: 0, triggeredOutreach: false,
+    });
+  } catch (error) { res.status(422).json({ error: error.message, blockers: error.blockers || [] }); }
+});
+
+app.post('/api/integrations/gmail-inboxes/:id/pause', requireAuth, async (req, res) => {
+  try {
+    const sender = senderById(req.params.id);
+    if (!sender) return res.status(404).json({ error: 'Gmail inbox is not registered' });
+    const next = pauseSender(sender);
+    await persistSenderRuntimeStatus(sender.id, next.status);
+    let observerCursor = null;
+    try {
+      const dataset = await getOutreachDataset();
+      const row = (dataset.mailboxObservationState || []).find(item => item[0] === sender.id) || [];
+      observerCursor = { senderInboxId: sender.id, historyId: row[1] || '', lastSuccessfulAt: row[2] || '' };
+    } catch (_) { observerCursor = { senderInboxId: sender.id, historyId: '', lastSuccessfulAt: '' }; }
+    res.json({
+      ok: true, id: sender.id, status: next.status, sendEligible: false,
+      observerEnabled: next.observerEnabled, observerCursor, sends: 0,
+    });
+  } catch (error) { res.status(422).json({ error: error.message }); }
+});
+
+app.get('/api/ops/send-quota', requireAuth, async (_req, res) => {
+  try {
+    const senders = configuredSenders();
+    const capacity = capacityFromEnv(senders);
+    const dayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+    let sentToday = new Map();
+    try {
+      const dataset = await getOutreachDataset();
+      sentToday = senderCountsToday(dataset.activities || [], dayKey);
+    } catch (_) { sentToday = new Map(); }
+    res.json({
+      dayKey,
+      activeSenders: capacity.activeCount,
+      globalDailyLimit: capacity.globalDailyLimit,
+      globalPerRunLimit: capacity.globalPerRunLimit,
+      dailyCeiling: capacity.dailyCeiling,
+      perRunCeiling: capacity.perRunCeiling,
+      inboxes: senders.map(sender => ({
+        id: sender.id, email: sender.email, status: sender.status,
+        sendEligible: sender.sendEligible, dailyLimit: sender.dailyLimit,
+        perRunLimit: sender.perRunLimit, sentToday: sentToday.get(sender.id) || 0,
+        remainingToday: Math.max(0, Number(sender.dailyLimit || 0) - (sentToday.get(sender.id) || 0)),
+      })),
+    });
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 // Token-protected, read-only production diagnostic. It cannot send or mutate
@@ -5826,7 +6061,17 @@ app.get('/api/internal/gmail-readiness', async (req, res) => {
       result: { id: 'primary', status: 'active', dailyLimit: Number(process.env.GMAIL_PRIMARY_DAILY_LIMIT || process.env.DAILY_SEND_LIMIT || 40), credentialConfigured: true },
     });
     const secondary = [];
-    for (const entry of parseGmailInboxRegistry()) secondary.push(await verifyGmailInbox(entry));
+    for (const entry of withDefaultInboxes(parseGmailInboxRegistry())) {
+      if (!process.env[entry.tokenEnv]) {
+        secondary.push({
+          id: entry.id, email: entry.email, status: entry.status, dailyLimit: entry.dailyLimit,
+          perRunLimit: entry.perRunLimit, credentialConfigured: false, authenticated: false,
+          sendEligible: false, observerEnabled: entry.observerEnabled !== false,
+        });
+        continue;
+      }
+      secondary.push(await verifyGmailInbox(entry));
+    }
     res.json({ ok: true, inboxes: [primary, ...secondary] });
   } catch (error) {
     res.status(422).json({ ok: false, error: error.message });
@@ -6174,11 +6419,12 @@ app.post('/api/enrich/names', requireAuth, (_req, res) => {
 if (process.env.RAILWAY_ENVIRONMENT) {
   // Per-window sender buckets for the scheduled batches. The morning cron fires
   // 8 times a day (:00/:30, 8–11:30am Pacific); each active inbox may deliver
-  // at most 5 successes per window and both inboxes share a 10-success ceiling.
-  // That naturally reaches 40 primary + 40 secondary = 80 without letting one
-  // inbox borrow unused capacity from the other. These are per-RUN knobs only.
-  // Each mailbox also has its own 40/day ceiling and the shared global ceiling
-  // is 80/day; Pipeline recovery sends consume those same ledgers.
+  // at most 5 successes per window. The combined per-run ceiling is derived from
+  // ACTIVE cold-send inboxes, so 2×5=10 today and 3×5=15 after a later
+  // activation, without a code change. Inactive/warming inboxes do not raise it.
+  // Each mailbox also has its own 40/day ceiling; the global daily ceiling is
+  // min(safety cap, sum of active inbox daily limits). Pipeline recovery sends
+  // consume those same ledgers.
   // Sends fire only in a weekday morning window, evenly at :00 and :30 of
   // 8am–11:30am Pacific (8 runs: 8:00, 8:30, 9:00, 9:30, 10:00, 10:30, 11:00,
   // 11:30). That lands 9:00am–12:30pm for Mountain (AB) leads too. Overnight
@@ -6193,18 +6439,21 @@ if (process.env.RAILWAY_ENVIRONMENT) {
       console.log('[cron] Agent already running — skipping this send window; no catch-up burst will be queued');
       return;
     }
+    const caps = scheduledSendCaps();
     await launchAutomationAfterCalendar('scheduled outreach run', () => {
       if (agentState.running) return false;
       spawnAgent(false, {
-        DAILY_CAP: String(SCHEDULED_SEND_TOTAL_CAP),
-        PER_INBOX_RUN_CAP: String(SCHEDULED_SEND_PER_INBOX_CAP),
+        DAILY_CAP: String(caps.total),
+        PER_INBOX_RUN_CAP: String(caps.perInbox),
+        GMAIL_SENDER_RUNTIME_JSON: process.env.GMAIL_SENDER_RUNTIME_JSON || '[]',
       });
       return true;
     });
   }, {
     timezone: 'America/Vancouver',
   });
-  console.log(`[cron] Outreach agent scheduled: :00 and :30, 8–11:30am Pacific, Mon–Fri (${SCHEDULED_SEND_PER_INBOX_CAP}/inbox, ${SCHEDULED_SEND_TOTAL_CAP}/run)`);
+  const bootCaps = scheduledSendCaps();
+  console.log(`[cron] Outreach agent scheduled: :00 and :30, 8–11:30am Pacific, Mon–Fri (${bootCaps.perInbox}/inbox, ${bootCaps.total}/run, ${bootCaps.daily}/day, ${bootCaps.activeCount} active)`);
 
   // :15/:45, never :00/:30 — the send cron above fires on :00 and :30, so the
   // check-only pass is offset by 15 min to avoid racing it for the
