@@ -400,6 +400,14 @@ test('the confirmation modal states the facts and the reassurance', () => {
 test('nothing reactivates existing leads automatically', () => {
   // No migration, no bulk write, no startup sweep.
   assert.ok(!/backfillReactivation|bulkReactivate|migrateHolds/.test(serverSrc));
-  const agentWrites = agentSrc.match(/applyResumeToNotes|clearResumeFromNotes/g) || [];
-  assert.equal(agentWrites.length, 0, 'the agent never writes reactivation state');
+  assert.equal((agentSrc.match(/clearResumeFromNotes/g) || []).length, 0,
+    'the agent never clears reactivation state in bulk');
+  const ooo = agentSrc.slice(agentSrc.indexOf('async function handleOutOfOffice'),
+    agentSrc.indexOf('async function handleWrongPerson'));
+  const timing = agentSrc.slice(agentSrc.indexOf('async function handleTimingReply'),
+    agentSrc.indexOf('async function writeLateReplyNotes'));
+  assert.match(ooo, /applyResumeToNotes/, 'OOO holds reuse the existing resume tag');
+  assert.match(timing, /applyResumeToNotes/, 'dated timing holds reuse the existing resume tag');
+  const writes = agentSrc.match(/applyResumeToNotes\(/g) || [];
+  assert.equal(writes.length, 2, 'resume tags are written only from inbound OOO/timing handlers');
 });
