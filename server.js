@@ -6543,4 +6543,11 @@ app.listen(PORT, () => {
   }).catch(() => {
     console.log('[send-lock] health probe failed — provider sends will fail closed if locking is enabled');
   });
+  try {
+    const { staffingConversationAgentConfig, ZERO_AUTHORITY } = require('./integrations/staffing-agent-schema');
+    const shadow = staffingConversationAgentConfig(process.env);
+    console.log(`[staffing-shadow] init enabled=${shadow.enabled} mode=${shadow.mode} keyConfigured=${shadow.keyConfigured} requestedMode=${shadow.requestedMode || 'none'} authority=${JSON.stringify(ZERO_AUTHORITY)}`);
+  } catch (error) {
+    console.warn(`[staffing-shadow] init failed closed: ${error.message}`);
+  }
 });

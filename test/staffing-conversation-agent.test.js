@@ -433,6 +433,16 @@ test('system prompt stays compact and forbids invented facts', () => {
   assert.ok(SYSTEM_PROMPT.length < 2800, 'prompt must stay compact');
 });
 
+test('server boot logs shadow init without a secret or active mode', () => {
+  const server = read('server.js');
+  assert.match(server, /\[staffing-shadow\] init enabled=/);
+  assert.match(server, /staffingConversationAgentConfig\(process\.env\)/);
+  assert.doesNotMatch(server, /STAFFING_CONVERSATION_AGENT_MODE === 'active'/);
+  const boot = server.slice(server.indexOf('[staffing-shadow] init'), server.indexOf('[staffing-shadow] init') + 400);
+  assert.doesNotMatch(boot, /process\.env\.ANTHROPIC_STAFFING_CONVERSATION_AGENT_KEY/);
+  assert.doesNotMatch(boot, /ANTHROPIC_API_KEY/);
+});
+
 test('outreach-agent invokes shadow observation without routing on it', () => {
   const agent = read('outreach-agent.js');
   assert.match(agent, /observeStaffingConversationShadows\(/);
