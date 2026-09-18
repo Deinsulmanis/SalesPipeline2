@@ -39,6 +39,10 @@ Per-lead retrieval failures: `non_public_address` (leadstaff.com), SSL verify (a
 
 Live staffing after retry (no writes): **327 total / 319 queued / 8 sent**. Dental total still 1316.
 
+## Phase 2 sourcing continuation (not personalized)
+
+Additional sourcing under the remaining 286-credit allowance produced **73** new approved candidates (cumulative **157** / **310** credits / **90** unspent of the 400 cap). Phase 2 candidates were **not** personalized, imported, queued, or sent. Live staffing after Phase 2 sourcing is unchanged: **327 / 319 / 8**. Dental still 1316.
+
 Live preflight vs current corpus: 0 email overlap, 0 company-name overlap, 58 unique emails/companies, every accepted row has an opening, `[B3]` notes, and `[B3 CATCH-ALL]` only on the 12 catch-all rows.
 
 ## Post-write

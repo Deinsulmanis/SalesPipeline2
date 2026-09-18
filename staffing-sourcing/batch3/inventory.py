@@ -173,8 +173,8 @@ def main():
         'keep_name': remaining_keep,
         'generic_pass': remaining_generic_pass,
         'generic_need_site': remaining_generic_need_site,
-        'generic_no_domain': remaining_generic_no_domain[:400],
-        'unclear': remaining_unclear[:80],
+        'generic_no_domain': remaining_generic_no_domain,
+        'unclear': remaining_unclear,
     }
     (RAW / 'remaining-inventory.json').write_text(json.dumps(out, indent=2))
     print(json.dumps(summary, indent=2))

@@ -1,36 +1,44 @@
-# Batch 3 duplicate / exclusion report
+# Batch 3 duplicate / exclusion report (continuation)
 
-Comparison baseline: live staffing CRM export (269 leads) + Apollo list `ScaleLab — Staffing — Already Sourced` (227 accounts) + this batch's own approved set.
+Comparison baseline: live staffing corpus (**327** leads after the 58 imported Batch 3 rows) + Apollo list `ScaleLab — Staffing — Already Sourced` + this batch's own approved set.
 
-Approved candidates were checked on normalized email and company domain. **0 approved emails and 0 approved domains overlap the live corpus.**
+**58** approved sourcing emails overlap live corpus. Those are the previously imported Batch 3 pass-1 leads, not Phase 2. The **73** continuation candidates have **0** live email overlap. The six Phase 1 retry emails are still sourcing-approved and still absent from live (never imported).
 
-## Post-reveal held / rejected (27 rows)
+## Post-reveal held / rejected (150 rows)
 
-See `batch3-duplicate-exclusion-report.csv` and `batch3-rejected-held.csv`.
+See `batch3-rejected-held.csv`.
 
 | Reason | Count | Treatment |
 | --- | ---: | --- |
-| email_domain_mismatch (unrelated email vs company domain) | 10 | Held for review; not auto-approved |
-| held_weak_industrial_evidence | 4 | Held |
-| held_white_collar_mix | 3 | Held |
-| national_exclusion (PROSTAR / Proman group keywords) | 1 | Rejected, not approved |
-| medical / professional / admin / exec-search / HRO / IT / event-legal mixes | 8 | Held |
-| guessed-domain entity mismatch | 1 | Held |
+| email_domain_mismatch | 32 | Held; not auto-approved |
+| held_white_collar_mix | 28 | Held |
+| held_weak_industrial_evidence | 21 | Held |
+| held_white_collar_or_off_niche_keywords | 19 | Held |
+| held_it_mix | 10 | Held |
+| held_medical_mix | 9 | Held |
+| held_exec_search_mix | 8 | Held |
+| held_hospitality_event_mix | 5 | Held |
+| other off-niche / professional / HRO / RPO / entity mismatch | 16 | Held |
+| national_exclusion (PROSTAR / Proman) | 1 | Rejected |
 
-Related-domain emails (e.g. `laborrocket.com` vs `laborrocketjobs.com`, hyphen variants) were approved when the registrable names clearly matched.
+Related-domain emails (hyphen / substring ≥6 on the registrable name) were approved when the domains clearly matched.
 
-## Pre-reveal exclusions (people-dump unique companies)
+## Pre-reveal exclusions (current dumps)
 
 | Class / skip | Count | Credits spent |
 | --- | ---: | --- |
-| National/enterprise name (Randstad, Manpower, Adecco, Employbridge, TrueBlue, Aerotek, Actalent, Kelly, Insight Global, Kforce, Proman/PROSTAR, Express, Staffmark, Allegis, etc.) | 36 | 0 (plus 1 post-reveal PROSTAR credit, then rejected) |
-| ICP name reject (healthcare, IT-only, legal, PEO/payroll, dental, etc.) | 31 | 0 |
-| Construction contractor without staffing language | 8 | 0 |
-| Duplicate vs live corpus / already-sourced / Batch 3 approved name | 305+ | 0 |
-| Weak title (non-buyer) | 6 | 0 |
-| Generic staffing already website-rejected | 31+ | 0 |
+| Duplicate company name vs live / already-sourced / Batch 3 | 330 | 0 |
+| Already revealed or dispositioned | 289 | 0 |
+| Generic staffing already website-rejected | 230 | 0 |
+| ICP name reject (healthcare, IT-only, legal, PEO/payroll, dental, etc.) | 70 | 0 |
+| National / enterprise name | 44 | 0 |
+| Construction contractor without staffing language | 12 | 0 |
+| Weak title (non-buyer) | 10 | 0 |
+| Duplicate company domain | 1 | 0 |
 
-Integrity Staffing (`integritystaffing.com`) and Quinyx (SaaS false-positive domain guess) were banned before reveal.
+Banned before reveal: Integrity Staffing (`integritystaffing.com`), Quinyx (`quinyx.com`).
+
+Skipped after free site/org review this continuation: Applied Staffing (entity mismatch), CitiStaffing (nationwide), Innovative Anesthesia, Scion, MDS, LIVIT (white-collar professionals), Spak/Spark unresolved domain, Vital Staffing (healthcare), Bear Staffing (no industrial evidence), Hatch Staffing (no industrial evidence), APR / Structure / Move (403 / unreadable).
 
 ## One-buyer rule
 
@@ -38,4 +46,4 @@ One contact per company. Additional people at already-approved or corpus compani
 
 ## Not imported
 
-This report is sourcing/screening only. Held rows are preserved for human review, not queued.
+This report is sourcing/screening only. Held rows are preserved for human review. Phase 2 approved rows are **not** queued.
