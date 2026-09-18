@@ -47,7 +47,7 @@ const AUTOMATION_STATES = Object.freeze({
 // Notes tags that outreach-agent.js treats as hard suppression. Mirrored (not
 // imported) because requiring the agent would execute its run() on import.
 // Kept in sync deliberately: see SUPPRESSION_TAGS in outreach-agent.js.
-const SUPPRESSION_NOTE_TAGS = Object.freeze(['[REPLY: Unsubscribed]', '[BOUNCED']);
+const SUPPRESSION_NOTE_TAGS = Object.freeze(['[REPLY: Unsubscribed]', '[REPLY: Not Interested]', '[BOUNCED']);
 
 // A human took over. Written into ColdEmail notes by PUT /api/leads/:id when a
 // lead enters a human-owned stage, and listed in SUPPRESSION_TAGS in

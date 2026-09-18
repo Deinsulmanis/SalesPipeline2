@@ -20,9 +20,16 @@ const STAFFING_COMMERCIAL_NOTICE = 'This is a commercial email.';
 const STAFFING_OPT_OUT_LINE = `${STAFFING_COMMERCIAL_NOTICE} ${STAFFING_UNSUBSCRIBE_LINE}`;
 const STAFFING_GMAIL_FILTER_QUERY = `"${STAFFING_CAMPAIGN_REF}"`;
 const MISSING_COMMERCIAL_MAILING_ADDRESS = 'MISSING_COMMERCIAL_MAILING_ADDRESS';
+const TEST_FIXTURE_COMMERCIAL_MAILING_ADDRESS = 'TEST_FIXTURE_COMMERCIAL_MAILING_ADDRESS';
 
 const PLACEHOLDER = /your company|your city, province|change-me|placeholder/i;
 const STREET_OR_BOX = /(?:p\.?\s*o\.?\s*box\b|po box\b|\bbox\s+\d+|\brr\.?\s*\d+|\brural route\b|\bgeneral delivery\b|\b\d{1,6}\s+[A-Za-z0-9.'/-]+)/i;
+// The test-support fixture that was copied into Railway and rendered live.
+const TEST_FIXTURE_MAILING_ADDRESS = /1\s+harbour\s+street/i;
+
+function looksLikeTestFixtureMailingAddress(value) {
+  return TEST_FIXTURE_MAILING_ADDRESS.test(String(value || ''));
+}
 
 function isValidCommercialMailingAddress(value) {
   const text = String(value || '').replace(/\s+/g, ' ').trim();
@@ -34,9 +41,20 @@ function isValidCommercialMailingAddress(value) {
 }
 
 function resolveCommercialMailingAddress(env = process.env, explicit) {
-  const raw = explicit !== undefined
+  const fromExplicit = explicit !== undefined;
+  const raw = fromExplicit
     ? String(explicit || '').trim()
     : String(env.COMMERCIAL_MAILING_ADDRESS || env.MAILING_ADDRESS || '').trim();
+  // The Harbour Street value is a test-support fixture that was copied into
+  // Railway. Env-sourced production identity must not render it. Explicit
+  // overrides remain available so existing tests can keep using the fixture.
+  if (!fromExplicit && looksLikeTestFixtureMailingAddress(raw)) {
+    const error = new Error(
+      'staffing commercial mailing address is the Harbour Street test fixture; set COMMERCIAL_MAILING_ADDRESS to the real mailing address',
+    );
+    error.code = TEST_FIXTURE_COMMERCIAL_MAILING_ADDRESS;
+    throw error;
+  }
   if (!isValidCommercialMailingAddress(raw)) {
     const error = new Error(
       'staffing commercial mailing address is missing or is not a valid physical postal address',
@@ -100,7 +118,9 @@ module.exports = {
   STAFFING_OPT_OUT_LINE,
   STAFFING_GMAIL_FILTER_QUERY,
   MISSING_COMMERCIAL_MAILING_ADDRESS,
+  TEST_FIXTURE_COMMERCIAL_MAILING_ADDRESS,
   isValidCommercialMailingAddress,
+  looksLikeTestFixtureMailingAddress,
   resolveCommercialMailingAddress,
   staffingSenderIdentity,
   formatStaffingComplianceFooter,

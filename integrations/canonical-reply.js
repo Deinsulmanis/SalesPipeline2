@@ -59,6 +59,9 @@ const NEEDS_HUMAN_REASON = Object.freeze({
   // a seventh reply state: the message is still a human reply needing a person,
   // and what changes is only what we should DO about it.
   DEFERRED_TIMING: 'deferred_timing',
+  // Existing provider / internal BD / already covered. Not a rejection and not
+  // interest — a person needs to read it, and automation must not promote.
+  ALREADY_HANDLED: 'already_handled',
   UNCLEAR_INTENT: 'unclear_intent',
 });
 
@@ -73,7 +76,7 @@ const EVIDENCE_SOURCE = Object.freeze({
 
 // Bumped whenever the rules below change meaning, so a stored classification
 // can always be traced to the logic that produced it.
-const CLASSIFIER_VERSION = 'reply_v2_evidence_optout_failsafe';
+const CLASSIFIER_VERSION = 'reply_v3_staffing_remediation';
 
 /**
  * The instant canonical reply ingestion became LIVE in production.
@@ -178,6 +181,10 @@ const AUTOMATED_MARKERS = [
 const OUT_OF_OFFICE_MARKERS = [
   ['ooo_phrase', /\b(?:out of (?:the )?office|on (?:vacation|holiday|leave|annual leave)|away from (?:my|the) (?:desk|office))\b/i],
   ['currently_away', /\b(?:i am|i'?m|we are|we'?re) (?:currently )?away\b/i],
+  ['out_until', /\b(?:i am|i'?m|i will be|i'?ll be)?\s*(?:out|away)(?: of (?:the )?office)? until\b/i],
+  ['away_period', /\baway this (?:week|month)\b/i],
+  ['back_weekday', /\b(?:i(?:'| wi)ll be back|back(?: in (?:the )?(?:office|on))?) (?:on |next )?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i],
+  ['automatic_reply_header', /\bautomatic reply\b/i],
 ];
 
 // A closure claim requires the BUSINESS to be closed. A bare "back in the
@@ -217,7 +224,7 @@ const BUYING_INTENT_MARKERS = [
 // Explicit rejection. Note what is NOT here: criticism of AI, doubts about
 // accents, worries about reliability. Those are objections, not refusals.
 const REJECTION_MARKERS = [
-  ['not_interested', /\b(?:not interested|no(?:t)? a fit|not for us|we'?re (?:all set|good)|no thank(?:s| you)|pass on this|we'?ll pass)\b/i],
+  ['not_interested', /\b(?:not interested|no(?:t)? a fit|not for us|we'?re (?:all set|good)|no thank(?:s| you)|pass on this|we'?ll pass|we(?:'?re| are) not interested|we don'?t need this|do(?:n'?t| not) need this|not something we(?:'?re| are) looking for|we(?:'?re| are) not looking for this)\b/i],
   ['stop_contact', /\b(?:stop (?:emailing|contacting)|don'?t contact|do not contact|leave us alone)\b/i],
 ];
 
@@ -230,8 +237,10 @@ const UNSUBSCRIBE_MARKERS = [
   // and was stored as needs_human instead of a hard opt-out.
   ['remove_us', /\b(?:please\s+)?(?:remove|take)\s+us(?:\s+(?:from|off))?\b/i],
   ['mailing_list', /\b(?:remove|take)\s+(?:me|us|my (?:name|email|address)|this (?:email|address))\s+(?:from|off)(?:\s+\w+){0,6}\s+(?:your\s+)?(?:mailing|email|contact)\s+list\b/i],
-  ['stop_emailing', /\bstop emailing\b/i],
+  ['stop_emailing', /\bstop emailing(?:\s+me)?\b/i],
   ['dont_contact', /\b(?:please\s+)?don'?t contact me(?:\s+again)?\b/i],
+  ['dont_email_again', /\b(?:don'?t|do not) email me(?:\s+again)?\b/i],
+  ['do_not_contact_me', /\bdo not contact me\b/i],
 ];
 
 // A human replied but routed the message onward rather than engaging.
@@ -243,13 +252,33 @@ const FORWARDED_MARKERS = [
 // is NOT enough on its own, because the operational answer (revisit) implies a
 // commitment we should only make when the prospect actually made one.
 const DEFERRAL_MARKERS = [
-  ['will_reconnect', /\b(?:(?:will|we'?ll|I'?ll) (?:reach (?:back )?out|be in touch|get back to you|contact you|follow up)(?: (?:again|later|then|afterwards?))?|circle back (?:with you )?(?:later|then|once))\b/i],
+  ['will_reconnect', /\b(?:(?:will|we'?ll|I'?ll) (?:reach (?:back )?out|be in touch|get back to you|contact you|follow up)(?: (?:again|later|then|afterwards?))?|circle back (?:with you )?(?:later|then|once|next quarter))\b/i],
   ['not_right_now', /\b(?:not (?:right now|at (?:this|the) (?:time|moment))|now is not|timing (?:is|isn'?t) (?:not )?(?:right|good)|revisit (?:this )?(?:later|next)|check back)\b/i],
   ['after_milestone', /\b(?:once (?:that|this|we(?:'| a)?re|things|it) (?:has been |is |are )?(?:completed?|done|finished|settled|sorted|live)|after (?:we|our) [a-z ]{0,30}(?:complete|finish|launch|migrat|revamp))\b/i],
+  ['maybe_next_month', /\bmaybe next month\b/i],
+  ['reach_out_later', /\breach out later\b/i],
+  ['check_back_weeks', /\bcheck back in a few weeks\b/i],
+  ['circle_back_quarter', /\bcircle back next quarter\b/i],
+  ['try_me_month', /\btry me in (?:january|february|march|april|may|june|july|august|september|october|november|december)\b/i],
 ];
 
 const WRONG_PERSON_MARKERS = [
-  ['wrong_person', /\b(?:wrong person|not the right person|i (?:don'?t|do not) handle|i'?m not the one who)\b/i],
+  ['wrong_person', /\b(?:wrong person|not the right person|i (?:don'?t|do not) handle|i'?m not the one who|i(?:'| a)m not the right person)\b/i],
+  ['named_referral', /\b(?:talk to|speak (?:with|to)|you should speak with|send this to|contact)\s+(?!me\b|you\b|us\b)(?:our\s+)?(?:vp(?:\s+of\s+sales)?|vice president(?: of sales)?|business development director|branch manager|sales (?:director|manager)|bd (?:director|manager)|[A-Za-z][A-Za-z.'-]{1,30})\b/i],
+  ['handles_this', /\b(?:[A-Za-z][A-Za-z.'-]{1,30}|our (?:branch manager|bd team|sales team|vp of sales|business development director)) handles this\b/i],
+];
+
+// Existing provider / internal team. Checked after buying intent so a pricing
+// question still outranks "we already have a vendor", and after rejection so
+// "not interested, we already have someone" stays a refusal.
+const ALREADY_HANDLED_MARKERS = [
+  ['already_have_someone', /\bwe already have someone doing this\b/i],
+  ['already_use_company', /\bwe already use another (?:company|vendor|provider|agency)\b/i],
+  ['already_do_outbound', /\bwe already do outbound\b/i],
+  ['internal_team', /\b(?:we have an internal (?:sales|bd|business development) team|our (?:bd|sales|business development) team handles|internal (?:bd|sales|business development))\b/i],
+  ['in_house', /\bwe handle this in[- ]house\b/i],
+  ['already_covered', /\bwe(?:'?ve| have) already got this covered\b/i],
+  ['already_have_doing', /\b(?:already have|already use|already doing).{0,60}(?:business development|biz dev|\bbd\b|sales (?:team|people)|outbound)\b/i],
 ];
 
 const firstMatch = (markers, text) => {
@@ -287,8 +316,27 @@ const MONTH_RE = MONTHS.join('|');
  * "21st" is not, and returns ''. Inventing a date here would silently schedule
  * real outreach at a real business on a guess, so ambiguity always loses.
  */
-function extractReturnDate(text, { year } = {}) {
+const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+const WEEKDAY_RE = WEEKDAYS.join('|');
+
+function yearFromNow(now) {
+  const ms = Date.parse(now || '');
+  return Number.isFinite(ms) ? new Date(ms).getUTCFullYear() : 0;
+}
+
+function nextWeekdayIso(base, weekdayIndex) {
+  const start = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate()));
+  let delta = (weekdayIndex - start.getUTCDay() + 7) % 7;
+  if (delta === 0) delta = 7;
+  start.setUTCDate(start.getUTCDate() + delta);
+  return start.toISOString().slice(0, 10);
+}
+
+function extractReturnDate(text, { year, now = null } = {}) {
   const value = String(text || '');
+  const baseMs = Date.parse(now || '');
+  const base = Number.isFinite(baseMs) ? new Date(baseMs) : null;
+  const resolvedYear = year || (base ? base.getUTCFullYear() : 0);
   // Anchored to an explicit return/reopen phrase so a random date in a
   // signature or an appointment reminder is never mistaken for a return.
   const anchored = new RegExp(
@@ -296,16 +344,29 @@ function extractReturnDate(text, { year } = {}) {
     `(?:the\\s+)?(?:(${MONTH_RE})\\s+(\\d{1,2})|(\\d{1,2})\\s+(${MONTH_RE}))`,
     'i');
   const match = anchored.exec(value);
-  if (!match) return '';
-  const monthName = lower(match[1] || match[4]);
-  const day = Number(match[2] || match[3]);
-  const monthIndex = MONTHS.indexOf(monthName);
-  if (monthIndex < 0 || !Number.isInteger(day) || day < 1 || day > 31) return '';
-  // A year is only used when supplied by the caller; we never guess one.
-  if (!year) return '';
-  const iso = new Date(Date.UTC(year, monthIndex, day));
-  if (iso.getUTCMonth() !== monthIndex || iso.getUTCDate() !== day) return '';
-  return iso.toISOString().slice(0, 10);
+  if (match) {
+    const monthName = lower(match[1] || match[4]);
+    const day = Number(match[2] || match[3]);
+    const monthIndex = MONTHS.indexOf(monthName);
+    if (monthIndex >= 0 && Number.isInteger(day) && day >= 1 && day <= 31 && resolvedYear) {
+      const iso = new Date(Date.UTC(resolvedYear, monthIndex, day));
+      if (iso.getUTCMonth() === monthIndex && iso.getUTCDate() === day) {
+        return iso.toISOString().slice(0, 10);
+      }
+    }
+  }
+  // Weekday returns are only resolved when the inbound timestamp is known.
+  // "until Monday" from a dated message is evidence; inventing a week is not.
+  if (base) {
+    const weekday = new RegExp(
+      `(?:until|back(?: in (?:the )?(?:office|on))?|return(?:s|ing)?(?: on)?)\\s+(?:next\\s+)?(${WEEKDAY_RE})\\b`,
+      'i').exec(value);
+    if (weekday) {
+      const weekdayIndex = WEEKDAYS.indexOf(lower(weekday[1]));
+      if (weekdayIndex >= 0) return nextWeekdayIso(base, weekdayIndex);
+    }
+  }
+  return '';
 }
 
 /**
@@ -339,10 +400,10 @@ function extractRecontactDate(text, { now = null, year = null } = {}) {
     }
   }
   if (!base) return '';
-  if (/\b(?:follow up|reach out|try me|contact me|circle back|check back|revisit)(?:\s+(?:with me|again))?\s+(?:in\s+)?next month\b/i.test(value)) {
+  if (/\b(?:(?:follow up|reach out|try me|contact me|circle back|check back|revisit)(?:\s+(?:with me|again))?\s+(?:in\s+)?next month|maybe next month)\b/i.test(value)) {
     return new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 1, 1)).toISOString().slice(0, 10);
   }
-  if (/\b(?:follow up|reach out|try me|contact me|circle back|check back|revisit)(?:\s+(?:with me|again))?\s+(?:in\s+)?next quarter\b/i.test(value)) {
+  if (/\b(?:(?:follow up|reach out|try me|contact me|circle back|check back|revisit)(?:\s+(?:with me|again))?\s+(?:in\s+)?next quarter|circle back next quarter)\b/i.test(value)) {
     const nextQuarterMonth = (Math.floor(base.getUTCMonth() / 3) + 1) * 3;
     return new Date(Date.UTC(base.getUTCFullYear(), nextQuarterMonth, 1)).toISOString().slice(0, 10);
   }
@@ -423,7 +484,7 @@ function classifyReplyText(text, { subject = '', currentEmail = '', year = null,
       : ooo ? AUTOMATED_SUBTYPE.OUT_OF_OFFICE
         : AUTOMATED_SUBTYPE.AUTORESPONDER;
     signals.push(closure || ooo || auto);
-    const returnDate = extractReturnDate(body, { year });
+    const returnDate = extractReturnDate(body, { year: year || yearFromNow(now), now });
     return result(REPLY_STATE.AUTOMATED_REPLY, {
       subtype, returnDate: returnDate || null,
       confidence: returnDate ? 'high' : 'medium',
@@ -456,6 +517,15 @@ function classifyReplyText(text, { subject = '', currentEmail = '', year = null,
   if (rejection) {
     signals.push(rejection);
     return result(REPLY_STATE.NEGATIVE, { reason: 'explicit_rejection', confidence: 'high' });
+  }
+
+  // 5b. Existing provider / internal team. Not interest and not an opt-out.
+  const alreadyHandled = firstMatch(ALREADY_HANDLED_MARKERS, body);
+  if (alreadyHandled) {
+    signals.push(alreadyHandled);
+    return result(REPLY_STATE.NEEDS_HUMAN, {
+      reason: NEEDS_HUMAN_REASON.ALREADY_HANDLED, confidence: 'high',
+    });
   }
 
   // 6. Genuine human, but a person needs to read it.
@@ -657,4 +727,5 @@ module.exports = {
   extractReturnDate, extractRecontactDate, extractProposedEmail, malformedEmailReason, isUsableReplyIdentity,
   legacyTagsFrom, stateFromLegacyTag,
   hasExplicitUnsubscribePhrase, hasExplicitNegativePhrase, UNSUBSCRIBE_MARKERS, REJECTION_MARKERS,
+  ALREADY_HANDLED_MARKERS, WRONG_PERSON_MARKERS,
 };

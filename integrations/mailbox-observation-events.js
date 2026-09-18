@@ -4,6 +4,7 @@
 // Canonical evidence is committed before any subsequent automation evaluation.
 const { headerValue, parseAddr, firstPlainText, decodeBodies, matchMailboxMessages, providerRead } = require('./gmail-mailbox-observer');
 const { classifyReplyText } = require('./canonical-reply');
+const { uniqueSuppressions, suppressionForCanonical, inboundAlreadyEvaluated } = require('./inbound-reply-guard');
 const { eventTypeFor, stripQuotedReply } = require('./reply-reconciliation');
 const { planOutboundActivity } = require('./human-outbound');
 const norm = value => String(value || '').trim().toLowerCase();
@@ -94,21 +95,23 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
     for (const [leadId] of matched.replies) {
       const lead = byId.get(String(leadId));
       const text = stripQuotedReply(firstPlainText(message.payload) || decodeBodies(message.payload) || message.snippet || '');
-      const canonical = classifyReplyText(text, { currentEmail: lead.email, subject: headerValue(message.payload,'Subject'), now: occurredAt });
-      const optOut = canonical.reason === 'unsubscribe_request';
-      if (optOut) suppressions.push({ email: lead.email, reason: 'unsubscribe', company: lead.company });
+      const canonical = classifyReplyText(text, { currentEmail: lead.email, subject: headerValue(message.payload,'Subject'), now: occurredAt, year: new Date(at).getUTCFullYear() });
+      const suppression = suppressionForCanonical(canonical, lead);
+      if (suppression) suppressions.push(suppression);
       const eventId = `gmail-reply:${message.id}`;
       const already = existing.has(eventId) || activities.some(row => meta(row).gmailMessageId === message.id && /reply|meeting_requested/.test(row.eventType));
+      const evaluated = inboundAlreadyEvaluated(activities, message.id);
       const historical = observation.recovered || new Date(now).getTime() - at > 90 * 60000;
       if (!already) {
         const event = { eventId, leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email, company: lead.company,
-          eventType: optOut ? 'unsubscribe_reply' : eventTypeFor(canonical.state), occurredAt,
+          eventType: canonical.reason === 'unsubscribe_request' ? 'unsubscribe_reply' : eventTypeFor(canonical.state), occurredAt,
           subject: headerValue(message.payload,'Subject'), content: text.slice(0, 1500),
           metadata: JSON.stringify({ provider: 'gmail', senderInboxId, gmailMessageId: message.id,
             gmailThreadId: message.threadId, rfcMessageId, from, matchedColdEmailId: lead.id, receivedAt: occurredAt,
             canonicalState: canonical.state, subtype: canonical.subtype, reason: canonical.reason,
             genuineHuman: canonical.genuineHuman, confidence: canonical.confidence, classifierVersion: canonical.classifierVersion,
             returnDate: canonical.returnDate, revisitDate: canonical.revisitDate, proposedEmail: canonical.proposedEmail,
+            suppliedContact: canonical.suppliedContact || null,
             recoveredDuringOutage: historical, responsePending: !historical,
             requiresHumanAttention: historical && canonical.genuineHuman !== false,
             autoSendAllowed: false, identityMutationAllowed: false }) };
@@ -117,8 +120,11 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
       // Recovery and CHECK_ONLY must still classify through this path. An
       // already-persisted opt-out/rejection is re-queued so terminal CRM
       // mutations cannot be skipped just because the Gmail event exists.
-      const terminal = optOut || (canonical.state === 'negative' && canonical.reason === 'explicit_rejection');
-      if (!already || terminal) replies.push({ leadId, message, historical, canonical, alreadyRecorded: already });
+      const terminal = canonical.reason === 'unsubscribe_request'
+        || (canonical.state === 'negative' && canonical.reason === 'explicit_rejection');
+      if ((!already && !evaluated) || terminal) {
+        replies.push({ leadId, message, historical, canonical, alreadyRecorded: already || evaluated });
+      }
     }
   }
   for (const missing of observation.unavailable || []) {
@@ -136,7 +142,7 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
       crmEvents: events.filter(event => event.sourceLeadId).map(event => ({ eventId: event.eventId, leadId: event.sourceLeadId, type: event.eventType })),
       autoSendAllowed: false }),
   });
-  return { events, suppressions, replies, ignored };
+  return { events, suppressions: uniqueSuppressions(suppressions), replies, ignored };
 }
 
 async function commitObservation({ observation, plan, appendEvent, suppress, checkpoint, activities }) {

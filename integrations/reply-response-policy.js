@@ -41,6 +41,9 @@ function decideReplyResponse({
   const score = numericConfidence({ classification, canonical, confidence });
   if (kind === 'UNSUBSCRIBE') return { action: ACTION.SUPPRESS, send: false, reason: 'explicit opt-out', confidence: score };
   if (kind === 'NOT_INTERESTED') return { action: ACTION.AUTO_NEGATIVE_CLOSE, send: false, reason: 'explicit negative', confidence: score };
+  if (kind === 'ALREADY_HANDLED') {
+    return { action: ACTION.HUMAN_REVIEW, send: false, reason: 'existing provider or internal team requires review', confidence: score };
+  }
   if (canonical.revisitDate || canonical.returnDate) {
     return { action: ACTION.AUTO_TIMING_RECONTACT, send: false, reason: 'explicit future date',
       dueAt: canonical.revisitDate || canonical.returnDate, confidence: score };

@@ -311,7 +311,7 @@ test('8. a Not Interested reply stops cold follow-ups and stage sequences', () =
     activities: [{ eventType: 'negative_reply', occurredAt: '2026-09-17T16:03:00Z' }],
     suppressedEmails: new Set(), enrolledAt: '2026-09-01T00:00:00Z',
   });
-  assert.equal(stop, 'the prospect replied');
+  assert.equal(stop, 'suppressed ([REPLY: Not Interested])');
   const handler = agentSrc.slice(agentSrc.indexOf('async function handleNotInterested'),
     agentSrc.indexOf('async function handleUnsubscribe'));
   assert.match(handler, /stage: 'Done'/);

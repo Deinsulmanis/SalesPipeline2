@@ -98,7 +98,7 @@ test('every send loop consults suppressionReason, so one tag covers them all', (
   assert.ok(!/const SUPPRESSION_TAGS\s*=/.test(agentSrc), 'the agent must not redeclare the tag list');
   const { SEND_SUPPRESSION_TAGS } = require('../integrations/pipeline-state');
   assert.deepEqual([...SEND_SUPPRESSION_TAGS],
-    ['[REPLY: Unsubscribed]', '[BOUNCED', '[MANUAL HOLD]'],
+    ['[REPLY: Unsubscribed]', '[REPLY: Not Interested]', '[BOUNCED', '[MANUAL HOLD]'],
     'the permanent opt-out tags must still come before the reversible hold');
 });
 
@@ -304,9 +304,12 @@ test('validation and hold run only on a real transition, not on every save', () 
 
 function sendActivity() {
   const logged = [];
+  const { staffingFunnelFromSend } = require('../integrations/staffing-funnel');
+  const { familyForLead } = require('../integrations/campaign-versions');
   const { recordSendActivity } = load(agentSrc, ['recordSendActivity'], {
     recordColdCallActivityStrict: async (r) => { logged.push(r); },
     cleanCompanyName: c => String(c || '').trim(),
+    staffingFunnelFromSend, familyForLead,
   });
   return { recordSendActivity, logged };
 }

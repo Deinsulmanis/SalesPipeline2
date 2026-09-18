@@ -61,7 +61,7 @@ const { SmartleadClient } = require('./integrations/smartlead-client');
 const { SmartleadOutreachProvider } = require('./integrations/outreach-providers');
 const { classifyReply: classifyProviderReply } = require('./integrations/reply-classifier');
 const { classifyReplyText, isUsableReplyIdentity, REPLY_STATE,
-  hasExplicitUnsubscribePhrase, hasExplicitNegativePhrase } = require('./integrations/canonical-reply');
+  hasExplicitUnsubscribePhrase, hasExplicitNegativePhrase, NEEDS_HUMAN_REASON } = require('./integrations/canonical-reply');
 // ONE ownership model, shared with the CRM. The sender asks it rather than
 // keeping a second opinion about who may act on a lead.
 const { NON_COLD_STAGES, deriveAutomationOwnership, mayColdSend } = require('./integrations/automation-ownership');
@@ -91,7 +91,7 @@ const { routedLeadReady } = require('./integrations/campaign-routing');
 const { STAFFING_CAMPAIGN, renderStaffingEmail, validateStaffingEmail, isStaffingCampaign } = require('./integrations/staffing-campaign');
 const STAFFING_TEMPLATE = STAFFING_CAMPAIGN.emailTemplateId;
 // The reactivation gate is defined once, in the shared pipeline-state model.
-const { manualHoldReleased, applyHoldToNotes, stageRequiresHold,
+const { manualHoldReleased, applyHoldToNotes, applyResumeToNotes, stageRequiresHold,
   deriveCallLifecycle, deriveHotState, sendSuppressionReason } = require('./integrations/pipeline-state');
 const {
   evaluateStageSequence, buildSequenceEmail, sequenceStepEventId, SEQUENCE_EVENTS,
@@ -130,6 +130,15 @@ const { ACTION: REPLY_RESPONSE_ACTION, decideReplyResponse, numericConfidence } 
 const { classifyStaffingReply, unroutedReplyDecision, STAFFING_CLARIFICATION,
   overlayStaffingReplyClassification, notesForStaffingWarmAction, inboundWarmReplyAlreadySent,
 } = require('./integrations/staffing-reply-policy');
+const {
+  inboundAlreadyEvaluated, committedInboundClassification,
+  skipHandlerForEvaluatedMessage, NOTE_ALREADY_HANDLED,
+} = require('./integrations/inbound-reply-guard');
+const { commercialListUnsubscribeHeaders } = require('./integrations/commercial-email-headers');
+const {
+  staffingFunnelFromSend, staffingFunnelFromReply, staffingFunnelFromWarmDelivery,
+} = require('./integrations/staffing-funnel');
+const { STAFFING_CAMPAIGN_REF } = require('./integrations/staffing-compliance');
 const { authoritativeProvider, assertGmailProviderAllowed, assertSmartleadEnqueueAllowed } = require('./integrations/provider-ownership');
 const { deliverProspectReply } = require('./integrations/prospect-reply-delivery');
 const { findLiveBooking } = require('./integrations/live-booking-gate');
@@ -1152,7 +1161,7 @@ function encodeHeaderValue(value) {
 }
 
 // RFC-822 message → base64url for the Gmail API
-function toRawMessage({ to, subject, body, html, inReplyTo, references, messageId, fromEmail = FROM_EMAIL }) {
+function toRawMessage({ to, subject, body, html, inReplyTo, references, messageId, fromEmail = FROM_EMAIL, extraHeaders = [] }) {
   const alternative = html ? require('./integrations/email-alternative').buildMultipartAlternative(body, html) : null;
   const headers = [
     `From: ${FROM_NAME} <${fromEmail}>`,
@@ -1161,6 +1170,9 @@ function toRawMessage({ to, subject, body, html, inReplyTo, references, messageI
     'MIME-Version: 1.0',
     alternative ? `Content-Type: ${alternative.contentType}` : 'Content-Type: text/plain; charset="UTF-8"',
   ];
+  for (const header of extraHeaders) {
+    if (header) headers.push(header);
+  }
   if (inReplyTo) headers.push(`In-Reply-To: ${inReplyTo}`);
   if (references) headers.push(`References: ${references}`);
   if (messageId) headers.push(`Message-ID: ${messageId}`);
@@ -1170,7 +1182,7 @@ function toRawMessage({ to, subject, body, html, inReplyTo, references, messageI
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-async function sendEmail({ lead, to, subject, body, html, threadId, inReplyTo, references, messageId, sender = PRIMARY_GMAIL_SENDER, sendAction }) {
+async function sendEmail({ lead, to, subject, body, html, threadId, inReplyTo, references, messageId, sender = PRIMARY_GMAIL_SENDER, sendAction, extraHeaders = [] }) {
   assertSendAuthorized();
   assertStaffingSendAllowed(lead);
   if (!sender?.sendEligible) throw new Error(`Gmail sender ${sender?.id || 'unknown'} is not delivery eligible`);
@@ -1179,7 +1191,7 @@ async function sendEmail({ lead, to, subject, body, html, threadId, inReplyTo, r
     run: async () => {
       const provider = new GmailOutreachProvider({ send: message => runWithGmailFeature('send_provider', () => gmailForSender(sender, { feature: 'send_provider' }).users.messages.send({
         userId: 'me',
-        requestBody: { raw: toRawMessage({ ...message, fromEmail: sender.email }), ...(message.threadId ? { threadId: message.threadId } : {}) },
+        requestBody: { raw: toRawMessage({ ...message, fromEmail: sender.email, extraHeaders }), ...(message.threadId ? { threadId: message.threadId } : {}) },
       })) });
       return provider.sendEmail({ to, subject, body, html, threadId, inReplyTo, references, messageId });
     },
@@ -1514,6 +1526,8 @@ async function classifyReply(company, replyBody, extra = {}) {
     apiKey: ANTHROPIC_API_KEY,
     messageId: extra.messageId || '',
     threadId: extra.threadId || '',
+    alreadyEvaluated: Boolean(extra.alreadyEvaluated),
+    priorClassification: extra.priorClassification || '',
   });
 }
 
@@ -1900,6 +1914,9 @@ async function recordSendActivity(lead, step, sendMeta, sentAt) {
       provider: 'gmail', providerMessageId: messageId, senderInboxId,
       templateId: lead.emailTemplateId || '', campaign: lead.campaign || '',
       personalization: (sendMeta && sendMeta.personalizationMetadata) || null,
+      staffingFunnel: staffingFunnelFromSend({
+        step: Number(step), family: familyForLead(lead), body: String((sendMeta && sendMeta.body) || ''),
+      }) || undefined,
       ...attribution,
     }),
   };
@@ -2066,6 +2083,10 @@ async function deliverOrdinaryColdStep({
     result = await sendEmail({
       lead, to: lead.email.trim(), subject, body, html: staffingEmail?.html, sender, messageId: rfcMessageId,
       sendAction,
+      extraHeaders: commercialListUnsubscribeHeaders({
+        fromEmail: sender.email || FROM_EMAIL,
+        campaignRef: isStaffingCampaign(lead) ? STAFFING_CAMPAIGN_REF : '',
+      }),
       ...(thread ? { threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references } : {}),
     });
   } catch (error) {
@@ -2189,6 +2210,7 @@ async function handleInterested(lead, message = {}, replyText = '', eventType = 
 const ACTIVE_REPLY_EVENT_TYPES = Object.freeze({
   QUESTION: 'question_reply', NOT_INTERESTED: 'negative_reply', UNSUBSCRIBE: 'unsubscribe_reply',
   WRONG_PERSON: 'wrong_person_reply', OUT_OF_OFFICE: 'out_of_office_reply', NEEDS_HUMAN: 'needs_human_reply',
+  ALREADY_HANDLED: 'needs_human_reply',
 });
 
 // The legacy category the send path routes on, mapped to the canonical state
@@ -2237,7 +2259,7 @@ async function recordActiveReplyActivity(lead, message, replyText, classificatio
       classification, from: message.fromAddr || lead.email,
       gmailMessageId: message.messageId || '', gmailThreadId: message.threadId || '',
       rfcMessageId: message.rfcMessageId || '', detectedAfterSequence: false,
-      requiresHumanAttention: ['QUESTION', 'WRONG_PERSON', 'NEEDS_HUMAN'].includes(classification),
+      requiresHumanAttention: ['QUESTION', 'WRONG_PERSON', 'NEEDS_HUMAN', 'ALREADY_HANDLED'].includes(classification),
       replyTouch: touch,
       // ── canonical reply evidence ──────────────────────────────────────────
       // Stored so analytics never re-reads Gmail, and so a reply's meaning is
@@ -2257,7 +2279,11 @@ async function recordActiveReplyActivity(lead, message, replyText, classificatio
       revisitDate: canonical.revisitDate || null,
       // Evidence only. Nothing may act on this without a human approving it.
       proposedEmail: canonical.proposedEmail || null,
+      suppliedContact: canonical.suppliedContact || null,
       identityMutationAllowed: false,
+      staffingFunnel: staffingFunnelFromReply({
+        classification, family: familyForLead(lead),
+      }) || undefined,
     }),
   });
 }
@@ -2269,17 +2295,17 @@ async function handleNotInterested(lead) {
     return;
   }
   const notes = String(lead.notes || '');
-  if (/\[REPLY:\s*Not Interested\]/i.test(notes) && String(lead.stage) === 'Done' && String(lead.emailStatus) === 'done') {
-    console.log(`  ✗ ${lead.company} — already marked Done (not interested)`);
-    return;
+  const already = /\[REPLY:\s*Not Interested\]/i.test(notes) && String(lead.stage) === 'Done' && String(lead.emailStatus) === 'done';
+  if (!already) {
+    await applyLeadChange(lead.id, {
+      stage: 'Done', emailStatus: 'done',
+      notes: /\[REPLY:\s*Not Interested\]/i.test(notes) ? notes : prependNote(notes, '[REPLY: Not Interested]'),
+    }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
+    lead.stage = 'Done';
+    lead.emailStatus = 'done';
   }
-  await applyLeadChange(lead.id, {
-    stage: 'Done', emailStatus: 'done',
-    notes: /\[REPLY:\s*Not Interested\]/i.test(notes) ? notes : prependNote(notes, '[REPLY: Not Interested]'),
-  }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
-  lead.stage = 'Done';
-  lead.emailStatus = 'done';
-  console.log(`  ✗ ${lead.company} — marked Done (not interested)`);
+  await addSuppression(lead.email, 'not_interested', lead.company, 'reply-auto');
+  console.log(`  ✗ ${lead.company} — ${already ? 'already Done; suppression confirmed' : 'marked Done (not interested)'}`);
 }
 
 async function handleUnsubscribe(lead) {
@@ -2302,32 +2328,84 @@ async function handleUnsubscribe(lead) {
   console.log(`  ⊘ ${lead.company} — ${already ? 'already Unsub; suppression confirmed' : 'marked Unsub (unsubscribe request)'}`);
 }
 
-async function handleOutOfOffice(lead) {
+async function handleOutOfOffice(lead, { returnDate = '', occurredAt = '' } = {}) {
   const rowNum = await resolveRow(lead.id);
   if (!rowNum) {
     console.warn(`[handleOutOfOffice] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
     return;
   }
-  const newDate = new Date(lead.lastEmailedAt);
-  newDate.setDate(newDate.getDate() + 7);
+  const notes = String(lead.notes || '');
+  if (/\[REPLY:\s*OOO/i.test(notes) && String(lead.notes || '').includes('[MANUAL HOLD]')) {
+    console.log(`  ⏸ ${lead.company} — already on OOO hold`);
+    return;
+  }
+  const stated = Date.parse(returnDate || '');
+  const conservative = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const resumeAt = Number.isFinite(stated) && stated > Date.now()
+    ? new Date(stated).toISOString()
+    : conservative;
+  const marker = Number.isFinite(stated)
+    ? `[REPLY: OOO until ${String(returnDate).slice(0, 10)}]`
+    : '[REPLY: OOO — retry in 7d]';
+  let nextNotes = /\[REPLY:\s*OOO/i.test(notes) ? notes : prependNote(notes, marker);
+  nextNotes = applyHoldToNotes(nextNotes);
+  nextNotes = applyResumeToNotes(nextNotes, resumeAt);
   await applyLeadChange(lead.id, {
-    lastEmailedAt: newDate.toISOString(),
-    notes: prependNote(lead.notes, '[REPLY: OOO — retry in 7d]'),
+    notes: nextNotes,
   }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
-  console.log(`  ⏸ ${lead.company} — OOO detected, follow-up delayed 7 days`);
+  lead.notes = nextNotes;
+  console.log(`  ⏸ ${lead.company} — OOO hold until ${resumeAt}`);
 }
 
-async function handleWrongPerson(lead) {
+async function handleWrongPerson(lead, { replyText = '', suppliedContact = '', proposedEmail = '' } = {}) {
   const rowNum = await resolveRow(lead.id);
   if (!rowNum) {
     console.warn(`[handleWrongPerson] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
     return;
   }
+  const notes = String(lead.notes || '');
+  if (/\[REPLY:\s*Wrong Person/i.test(notes) && String(lead.emailStatus) === 'replied') {
+    console.log(`  ↪ ${lead.company} — already flagged wrong person`);
+    return;
+  }
+  const evidence = [
+    '[REPLY: Wrong Person — needs re-enrichment]',
+    suppliedContact || proposedEmail ? `[REFERRAL CONTACT: ${suppliedContact || proposedEmail}]` : '',
+    replyText ? `[REFERRAL EVIDENCE: ${String(replyText).replace(/\s+/g, ' ').trim().slice(0, 280)}]` : '',
+  ].filter(Boolean).join(' ');
+  const nextNotes = notes.includes('[REPLY: Wrong Person') ? notes : prependNote(notes, evidence);
   await applyLeadChange(lead.id, {
-    stage: 'Replied', emailStatus: 'replied',
-    notes: prependNote(lead.notes, '[REPLY: Wrong Person — needs re-enrichment]'),
+    stage: 'Review', emailStatus: 'replied',
+    notes: nextNotes,
   }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
-  console.log(`  ↪ ${lead.company} — wrong person, flagged for re-enrichment`);
+  lead.stage = 'Review';
+  lead.emailStatus = 'replied';
+  lead.notes = nextNotes;
+  console.log(`  ↪ ${lead.company} — wrong person, flagged for human review`);
+}
+
+async function handleAlreadyHandled(lead, { replyText = '' } = {}) {
+  const rowNum = await resolveRow(lead.id);
+  if (!rowNum) {
+    console.warn(`[handleAlreadyHandled] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
+    return;
+  }
+  const notes = String(lead.notes || '');
+  if (notes.includes(NOTE_ALREADY_HANDLED) && String(lead.stage) === 'Review') {
+    console.log(`  ⚑ ${lead.company} — already queued as already-handled`);
+    return;
+  }
+  const evidence = replyText
+    ? `${NOTE_ALREADY_HANDLED} ${String(replyText).replace(/\s+/g, ' ').trim().slice(0, 280)}`
+    : NOTE_ALREADY_HANDLED;
+  const nextNotes = notes.includes(NOTE_ALREADY_HANDLED) ? notes : prependNote(notes, evidence);
+  await applyLeadChange(lead.id, {
+    stage: 'Review', emailStatus: 'replied', notes: nextNotes,
+  }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
+  lead.stage = 'Review';
+  lead.emailStatus = 'replied';
+  lead.notes = nextNotes;
+  console.log(`  ⚑ ${lead.company} — already handled / internal team, human review`);
 }
 
 // Ambiguous-but-real reply: stop the sequence and surface for a human. When the
@@ -2787,8 +2865,10 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       || hasExplicitNegativePhrase(text, { subject: row.subject || '' });
     if (!unsub && !neg) continue;
     const notes = String(lead.notes || '');
-    if (unsub && /\[REPLY:\s*Unsubscribed\]/i.test(notes) && String(lead.stage) === 'Unsub') continue;
-    if (neg && !unsub && /\[REPLY:\s*Not Interested\]/i.test(notes) && String(lead.emailStatus) === 'done') continue;
+    if (unsub && /\[REPLY:\s*Unsubscribed\]/i.test(notes) && String(lead.stage) === 'Unsub'
+      && SUPPRESSED_EMAILS.has(normEmail(lead.email))) continue;
+    if (neg && !unsub && /\[REPLY:\s*Not Interested\]/i.test(notes) && String(lead.emailStatus) === 'done'
+      && SUPPRESSED_EMAILS.has(normEmail(lead.email))) continue;
     repliesByLead.set(lead.id, {
       id: metadata.gmailMessageId, threadId: metadata.gmailThreadId,
       internalDate: String(Date.parse(row.occurredAt) || Date.now()), snippet: row.content,
@@ -2831,18 +2911,29 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       else console.log(`  ↩ Roofing survey reply from ${lead.email} (${company}) — no writes in dry run`);
       continue;
     }
-    let classification = await classifyReply(lead.company, replyText, {
-      subject: message.subject, email: lead.email, leadId: lead.id,
-      campaign: { id: lead.campaign || lead.intendedCampaignVersion || '', name: lead.campaign || '' },
-      messageId: message.messageId, threadId: message.threadId,
-    });
+    const alreadyEvaluated = inboundAlreadyEvaluated(activitiesForCycle, message.messageId);
+    const priorClassification = committedInboundClassification(activitiesForCycle, message.messageId);
     const canonicalReply = classifyReplyText(replyText, {
       subject: message.subject || '', currentEmail: lead.email, now: message.occurredAt || null,
     });
+    if (alreadyEvaluated && skipHandlerForEvaluatedMessage({
+      alreadyEvaluated, classification: priorClassification, lead, suppressedEmails: SUPPRESSED_EMAILS,
+    }) && canonicalReply.reason !== 'unsubscribe_request' && canonicalReply.reason !== 'explicit_rejection') {
+      console.log(`  ↩ ${lead.email} (${company}) — inbound ${message.messageId} already evaluated, skipping model`);
+      continue;
+    }
+    let classification;
     if (canonicalReply.reason === 'unsubscribe_request' || hasExplicitUnsubscribePhrase(replyText, { subject: message.subject })) {
       classification = 'UNSUBSCRIBE';
     } else if (canonicalReply.reason === 'explicit_rejection' || hasExplicitNegativePhrase(replyText, { subject: message.subject })) {
       classification = 'NOT_INTERESTED';
+    } else {
+      classification = await classifyReply(lead.company, replyText, {
+        subject: message.subject, email: lead.email, leadId: lead.id,
+        campaign: { id: lead.campaign || lead.intendedCampaignVersion || '', name: lead.campaign || '' },
+        messageId: message.messageId, threadId: message.threadId,
+        alreadyEvaluated, priorClassification,
+      });
     }
     let staffingOverlay = null;
     if (isStaffingCampaign(lead) && classification !== 'UNSUBSCRIBE' && classification !== 'NOT_INTERESTED') {
@@ -2853,7 +2944,6 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
         classification = staffingOverlay.classification;
       }
     }
-    const timingAt = canonicalReply.revisitDate || canonicalReply.returnDate || null;
     classCounts[classification] = (classCounts[classification] || 0) + 1;
 
     const fromNote = (message.fromAddr && message.fromAddr !== lead.email.trim().toLowerCase())
@@ -2867,15 +2957,29 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
         await recordActiveReplyActivity(lead, message, replyText, classification, attributionActivities);
         if (classification === 'UNSUBSCRIBE') return handleUnsubscribe(lead);
         if (classification === 'NOT_INTERESTED') return handleNotInterested(lead);
+        const timingHold = canonicalReply.reason === NEEDS_HUMAN_REASON.DEFERRED_TIMING
+          || canonicalReply.revisitDate;
+        if (timingHold) {
+          return handleTimingReply(lead, message, replyText, canonicalReply.revisitDate || '', leads, attributionActivities);
+        }
+        if (classification === 'ALREADY_HANDLED') {
+          return handleAlreadyHandled(lead, { replyText });
+        }
+        if (classification === 'WRONG_PERSON') {
+          return handleWrongPerson(lead, {
+            replyText, suppliedContact: canonicalReply.suppliedContact || '',
+            proposedEmail: canonicalReply.proposedEmail || '',
+          });
+        }
+        if (classification === 'OUT_OF_OFFICE') {
+          return handleOutOfOffice(lead, { returnDate: canonicalReply.returnDate || '', occurredAt: message.occurredAt });
+        }
         if (!maySend) {
-          if (classification === 'WRONG_PERSON') return handleWrongPerson(lead);
-          if (classification === 'OUT_OF_OFFICE') return handleOutOfOffice(lead);
           if (classification === 'QUESTION' || classification === 'NEEDS_HUMAN') {
             return handleNeedsHuman(lead, message.fromAddr);
           }
           return;
         }
-        if (timingAt) return handleTimingReply(lead, message, replyText, timingAt, leads, attributionActivities);
         switch (classification) {
           // A genuine question is answered from product-facts.js when we're
           // confident, otherwise drafted for review. Both paths append the
@@ -2924,7 +3028,12 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       await recordMailboxActivity({ eventId: `gmail-evaluated:${sender.id}:${message.messageId}`,
         leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email, company: lead.company,
         eventType: 'gmail_reply_evaluated', occurredAt: new Date().toISOString(), subject: '', content: '',
-        metadata: JSON.stringify({ sourceEventId: `gmail-reply:${message.messageId}`, senderInboxId: sender.id }) });
+        metadata: JSON.stringify({
+          sourceEventId: `gmail-reply:${message.messageId}`,
+          gmailMessageId: message.messageId,
+          senderInboxId: sender.id,
+          classification,
+        }) });
     }
   }
 
@@ -2934,6 +3043,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     UNSUBSCRIBE:    'Unsubscribe',
     OUT_OF_OFFICE:  'OOO',
     WRONG_PERSON:   'Wrong Person',
+    ALREADY_HANDLED:'Already handled',
     NEEDS_HUMAN:    'Needs human review',
   };
   const breakdown = Object.entries(classCounts)
@@ -3095,7 +3205,11 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
         metadata: JSON.stringify({ actionId, action, classification, senderInboxId: sender.id,
           gmailMessageId: data.id || data.providerMessageId || '', gmailThreadId: data.threadId || message.threadId,
           rfcMessageId: data.rfcMessageId || rfcMessageId, inboundMessageId: message.messageId,
-          recoveredAfterCheckpointFailure: Boolean(recovery), ...attribution }) };
+          recoveredAfterCheckpointFailure: Boolean(recovery),
+          staffingFunnelEvents: staffingFunnelFromWarmDelivery({
+            action, body, family: familyForLead(lead),
+          }),
+          ...attribution }) };
       await recordColdCallActivityStrict(row); activities.push(row);
     },
     confirmDurableReservation: actionId => confirmOutboundReservation(actionId),
@@ -3180,28 +3294,52 @@ async function handlePositiveAutomation(lead, message, classification, activitie
 
 async function handleTimingReply(lead, message, replyText, recontactAt, allLeads, activities) {
   const at = new Date(recontactAt);
-  if (!Number.isFinite(at.getTime()) || at.getTime() <= Date.now()) return handleNeedsHuman(lead, message.fromAddr);
-  const boardId = await upsertColdCallLeadFromEvent(lead, 'follow_up',
-    `Prospect requested recontact at ${at.toISOString()}.`, {
-      trigger: PROMOTION_TRIGGER.TIMING_REPLY, recontactAt: at.toISOString(),
-      coldEmailTwinCount: coldEmailTwinCount(allLeads, lead.email),
-    });
-  if (!boardId) return handleNeedsHuman(lead, message.fromAddr);
-  const eventId = automaticEnrollmentEventId(boardId, 'timing_recontact_v1', at.toISOString());
-  if (!activities.some(row => row.eventId === eventId)) {
-    const row = { eventId, leadId: boardId, sourceLeadId: lead.id, email: lead.email,
-      company: cleanCompanyName(lead.company) || lead.company || '', eventType: SEQUENCE_EVENTS.ENROLLED,
-      occurredAt: message.occurredAt || new Date().toISOString(), subject: '', content: '',
-      metadata: JSON.stringify({ sequenceId: 'timing_recontact_v1', recontactAt: at.toISOString(),
-        enrollmentMode: 'automatic', authorization: 'prospect_stated_date',
-        senderInboxId: message.senderInboxId, gmailThreadId: message.threadId,
-        sourceReplyMessageId: message.messageId }) };
-    await recordColdCallActivityStrict(row); activities.push(row);
-  }
+  const dated = Number.isFinite(at.getTime()) && at.getTime() > Date.now();
   const rowNum = await resolveRow(lead.id);
-  if (rowNum) await applyLeadChange(lead.id,
-    { notes: prependNote(lead.notes, `[REPLY: Timing — recontact ${at.toISOString()}]`) }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
-  return { scheduled: true, recontactAt: at.toISOString() };
+  if (!rowNum) {
+    console.warn(`[handleTimingReply] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
+    return;
+  }
+  const notes = String(lead.notes || '');
+  if (/\[REPLY:\s*Timing/i.test(notes) && String(lead.emailStatus) === 'replied') {
+    console.log(`  ⏳ ${lead.company} — already on timing hold`);
+    return { scheduled: dated, recontactAt: dated ? at.toISOString() : null };
+  }
+  if (dated) {
+    const boardId = await upsertColdCallLeadFromEvent(lead, 'follow_up',
+      `Prospect requested recontact at ${at.toISOString()}.`, {
+        trigger: PROMOTION_TRIGGER.TIMING_REPLY, recontactAt: at.toISOString(),
+        coldEmailTwinCount: coldEmailTwinCount(allLeads, lead.email),
+      });
+    if (boardId) {
+      const eventId = automaticEnrollmentEventId(boardId, 'timing_recontact_v1', at.toISOString());
+      if (!activities.some(row => row.eventId === eventId)) {
+        const row = { eventId, leadId: boardId, sourceLeadId: lead.id, email: lead.email,
+          company: cleanCompanyName(lead.company) || lead.company || '', eventType: SEQUENCE_EVENTS.ENROLLED,
+          occurredAt: message.occurredAt || new Date().toISOString(), subject: '', content: '',
+          metadata: JSON.stringify({ sequenceId: 'timing_recontact_v1', recontactAt: at.toISOString(),
+            enrollmentMode: 'automatic', authorization: 'prospect_stated_date',
+            senderInboxId: message.senderInboxId, gmailThreadId: message.threadId,
+            sourceReplyMessageId: message.messageId,
+            staffingFunnel: familyForLead(lead) === 'industrial_staffing' ? 'staffing_not_now' : undefined }) };
+        await recordColdCallActivityStrict(row); activities.push(row);
+      }
+    }
+  }
+  const evidence = String(replyText || message.snippet || '').replace(/\s+/g, ' ').trim().slice(0, 280);
+  const marker = dated
+    ? `[REPLY: Timing — recontact ${at.toISOString()}]`
+    : '[REPLY: Timing — hold for human review]';
+  let nextNotes = /\[REPLY:\s*Timing/i.test(notes) ? notes : prependNote(notes, evidence ? `${marker} ${evidence}` : marker);
+  nextNotes = applyHoldToNotes(nextNotes);
+  if (dated) nextNotes = applyResumeToNotes(nextNotes, at.toISOString());
+  await applyLeadChange(lead.id, {
+    stage: 'Review', emailStatus: 'replied', notes: nextNotes,
+  }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
+  lead.stage = 'Review';
+  lead.emailStatus = 'replied';
+  lead.notes = nextNotes;
+  return { scheduled: dated, recontactAt: dated ? at.toISOString() : null };
 }
 
 async function writeLateReplyNotes(lead, notes) {
@@ -3248,7 +3386,7 @@ async function runLateReplyCheckPass(leads, activitiesForCycle = null) {
         classify: classifyReply,
         existingEventIds: eventIds,
         writeNotes: (target, notes) => withAuth(() => writeLateReplyNotes(target, notes)),
-        addSuppression: target => withAuth(() => addSuppression(target.email, 'unsubscribe', target.company, 'late-reply-auto')),
+        addSuppression: (target, reason = 'unsubscribe') => withAuth(() => addSuppression(target.email, reason, target.company, 'late-reply-auto')),
         recordActivity: activity => withAuth(() => recordColdCallActivityStrict(activity)),
       });
       if (result.status !== 'recorded') continue;

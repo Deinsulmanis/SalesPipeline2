@@ -6,7 +6,7 @@ const { stripText } = require('./smartlead-safety');
 const { classifyReplyText, REPLY_STATE, NEEDS_HUMAN_REASON,
   hasExplicitUnsubscribePhrase, hasExplicitNegativePhrase } = require('./canonical-reply');
 
-const REPLY_CATEGORIES = new Set(['QUESTION','INTERESTED','MEETING_REQUEST','NOT_INTERESTED','UNSUBSCRIBE','OUT_OF_OFFICE','WRONG_PERSON','NEEDS_HUMAN']);
+const REPLY_CATEGORIES = new Set(['QUESTION','INTERESTED','MEETING_REQUEST','NOT_INTERESTED','UNSUBSCRIBE','OUT_OF_OFFICE','WRONG_PERSON','NEEDS_HUMAN','ALREADY_HANDLED','SEND_INFO']);
 const CLASSIFY_FALLBACK = 'NEEDS_HUMAN';
 
 // Canonical state -> the legacy category vocabulary the send path and the
@@ -41,6 +41,15 @@ function deterministicReplyCategory(text, options = {}) {
   // stronger action than an ordinary negative.
   if (resolved.reason === 'unsubscribe_request') return 'UNSUBSCRIBE';
   if (resolved.state === REPLY_STATE.NEEDS_HUMAN
+    && resolved.reason === NEEDS_HUMAN_REASON.ALREADY_HANDLED) return 'ALREADY_HANDLED';
+  if (resolved.state === REPLY_STATE.NEEDS_HUMAN
+    && (resolved.reason === NEEDS_HUMAN_REASON.FORWARDED_TO_DECISION_MAKER
+      || resolved.reason === NEEDS_HUMAN_REASON.DECISION_MAKER_CONTACT_SUPPLIED)) {
+    return 'WRONG_PERSON';
+  }
+  if (resolved.state === REPLY_STATE.NEEDS_HUMAN
+    && resolved.reason === NEEDS_HUMAN_REASON.DEFERRED_TIMING) return 'NEEDS_HUMAN';
+  if (resolved.state === REPLY_STATE.NEEDS_HUMAN
     && resolved.reason === NEEDS_HUMAN_REASON.QUESTION_OR_OBJECTION) return 'QUESTION';
   // A request to meet is a stronger, separately-actioned signal than general
   // interest, so it keeps its own legacy category.
@@ -66,7 +75,7 @@ function failSafeReplyCategory(text, options = {}) {
   return '';
 }
 
-async function classifyReply({ provider = 'gmail', lead = {}, campaign = {}, subject = '', plainTextReply = '', conversationContext = '', apiKey = process.env.ANTHROPIC_API_KEY, createMessage, messageId = '', threadId = '' } = {}) {
+async function classifyReply({ provider = 'gmail', lead = {}, campaign = {}, subject = '', plainTextReply = '', conversationContext = '', apiKey = process.env.ANTHROPIC_API_KEY, createMessage, messageId = '', threadId = '', alreadyEvaluated = false, priorClassification = '' } = {}) {
   const reply = stripText(plainTextReply, 5000);
   const options = { subject, currentEmail: lead.email };
   const deterministic = deterministicReplyCategory(reply, options);
@@ -75,6 +84,7 @@ async function classifyReply({ provider = 'gmail', lead = {}, campaign = {}, sub
   // explicit opt-out or rejection must never wait on a model call.
   const failSafe = failSafeReplyCategory(reply, options);
   if (failSafe) return failSafe;
+  if (alreadyEvaluated) return priorClassification || CLASSIFY_FALLBACK;
   if (!apiKey && !createMessage) return failSafeReplyCategory(reply, options) || CLASSIFY_FALLBACK;
   try {
     const send = wrapCreateMessage(
@@ -104,6 +114,6 @@ async function classifyReply({ provider = 'gmail', lead = {}, campaign = {}, sub
   }
 }
 
-const CLASSIFICATION_TO_STATUS = { QUESTION: 'Question', INTERESTED: 'Interested', MEETING_REQUEST: 'Meeting requested', NOT_INTERESTED: 'Not interested', UNSUBSCRIBE: 'Unsubscribed', OUT_OF_OFFICE: 'Out of office', WRONG_PERSON: 'Replied', NEEDS_HUMAN: 'Replied' };
+const CLASSIFICATION_TO_STATUS = { QUESTION: 'Question', INTERESTED: 'Interested', MEETING_REQUEST: 'Meeting requested', NOT_INTERESTED: 'Not interested', UNSUBSCRIBE: 'Unsubscribed', OUT_OF_OFFICE: 'Out of office', WRONG_PERSON: 'Replied', NEEDS_HUMAN: 'Replied', ALREADY_HANDLED: 'Replied', SEND_INFO: 'Replied' };
 
 module.exports = { classifyReply, deterministicReplyCategory, failSafeReplyCategory, CLASSIFICATION_TO_STATUS, REPLY_CATEGORIES, CLASSIFY_FALLBACK };
