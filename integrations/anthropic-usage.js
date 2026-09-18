@@ -15,6 +15,7 @@ const FEATURES = Object.freeze({
   roofing_personalization: 'roofing_personalization',
   roofing_reply_classification: 'roofing_reply_classification',
   intent_classification: 'intent_classification',
+  staffing_conversation_agent_shadow: 'staffing_conversation_agent_shadow',
   other: 'other',
 });
 

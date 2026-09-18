@@ -125,6 +125,7 @@ const {
 const {
   classifyOutboundTouch, observerFollowUpVerdict, DEFAULT_MAX_AGE_MINUTES: GMAIL_OBSERVER_FOLLOWUP_MAX_AGE_MINUTES,
 } = require('./integrations/gmail-followup-safety');
+const { observeStaffingConversationShadows, evaluateStaffingConversationShadow } = require('./integrations/staffing-agent-shadow');
 const { offerForLead, warmResponse } = require('./integrations/offer-config');
 const { ACTION: REPLY_RESPONSE_ACTION, decideReplyResponse, numericConfidence } = require('./integrations/reply-response-policy');
 const { classifyStaffingReply, unroutedReplyDecision, STAFFING_CLARIFICATION,
@@ -2704,6 +2705,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
   let attributionActivities = null;
   const failedSenderIds = new Set();
   const repliesByLead = new Map();
+  const staffingShadowProduction = new Map();
   const bouncesByLead = new Map();
   const pendingHistory = new Map();
   const observedStateBySender = new Map();
@@ -2919,6 +2921,11 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     if (alreadyEvaluated && skipHandlerForEvaluatedMessage({
       alreadyEvaluated, classification: priorClassification, lead, suppressedEmails: SUPPRESSED_EMAILS,
     }) && canonicalReply.reason !== 'unsubscribe_request' && canonicalReply.reason !== 'explicit_rejection') {
+      if (message.messageId) {
+        staffingShadowProduction.set(message.messageId, {
+          classification: priorClassification, lead, message, replyText,
+        });
+      }
       console.log(`  ↩ ${lead.email} (${company}) — inbound ${message.messageId} already evaluated, skipping model`);
       continue;
     }
@@ -2943,6 +2950,11 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       if (staffingOverlay.overlay && staffingOverlay.classification) {
         classification = staffingOverlay.classification;
       }
+    }
+    if (message.messageId) {
+      staffingShadowProduction.set(message.messageId, {
+        classification, lead, message, replyText,
+      });
     }
     classCounts[classification] = (classCounts[classification] || 0) + 1;
 
@@ -3054,6 +3066,19 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
   console.log(`[ReplyCheck] ${found} repl${found === 1 ? 'y' : 'ies'} found / ${candidates.length} checked`);
   if (breakdown) console.log(`  → ${breakdown}`);
   console.log();
+  if (!DRY_RUN) {
+    try {
+      await observeStaffingConversationShadows({
+        leads: candidates,
+        activities: activitiesForCycle,
+        checkOnly: CHECK_ONLY,
+        persistEvent: event => withAuth(() => recordMailboxActivity(event)),
+        productionByMessageId: staffingShadowProduction,
+      });
+    } catch (error) {
+      console.warn(`[staffing-shadow] failed closed: ${error.message}`);
+    }
+  }
   // The caller advances checkpoints only AFTER bounce writes and durable
   // suppression have also succeeded. Returning the pending cursors here keeps
   // a crash between reply and bounce processing replayable and idempotent.
@@ -3390,6 +3415,16 @@ async function runLateReplyCheckPass(leads, activitiesForCycle = null) {
         recordActivity: activity => withAuth(() => recordColdCallActivityStrict(activity)),
       });
       if (result.status !== 'recorded') continue;
+      try {
+        await evaluateStaffingConversationShadow({
+          lead, message, replyText: message.body || message.snippet || '',
+          activities,
+          productionClassification: result.classification,
+          persistEvent: event => withAuth(() => recordMailboxActivity(event)),
+        });
+      } catch (error) {
+        console.warn(`[staffing-shadow] late-reply failed closed: ${error.message}`);
+      }
       if (result.classification === 'INTERESTED' || result.classification === 'MEETING_REQUEST') {
         const coldCallLeadId = await withAuth(() => upsertColdCallLeadFromEvent(
           lead, 'hot', 'Auto-promoted from a canonical late positive reply.',
