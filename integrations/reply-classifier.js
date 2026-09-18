@@ -1,8 +1,10 @@
 'use strict';
 
 const Anthropic = require('@anthropic-ai/sdk');
+const { wrapCreateMessage, FEATURES, TOKEN_BUDGET_EXCEEDED } = require('./anthropic-usage');
 const { stripText } = require('./smartlead-safety');
-const { classifyReplyText, REPLY_STATE, NEEDS_HUMAN_REASON } = require('./canonical-reply');
+const { classifyReplyText, REPLY_STATE, NEEDS_HUMAN_REASON,
+  hasExplicitUnsubscribePhrase, hasExplicitNegativePhrase } = require('./canonical-reply');
 
 const REPLY_CATEGORIES = new Set(['QUESTION','INTERESTED','MEETING_REQUEST','NOT_INTERESTED','UNSUBSCRIBE','OUT_OF_OFFICE','WRONG_PERSON','NEEDS_HUMAN']);
 const CLASSIFY_FALLBACK = 'NEEDS_HUMAN';
@@ -58,23 +60,50 @@ function deterministicReplyCategory(text, options = {}) {
   return CANONICAL_TO_LEGACY[resolved.state] || 'NEEDS_HUMAN';
 }
 
-async function classifyReply({ provider = 'gmail', lead = {}, campaign = {}, subject = '', plainTextReply = '', conversationContext = '', apiKey = process.env.ANTHROPIC_API_KEY, createMessage } = {}) {
+function failSafeReplyCategory(text, options = {}) {
+  if (hasExplicitUnsubscribePhrase(text, options)) return 'UNSUBSCRIBE';
+  if (hasExplicitNegativePhrase(text, options)) return 'NOT_INTERESTED';
+  return '';
+}
+
+async function classifyReply({ provider = 'gmail', lead = {}, campaign = {}, subject = '', plainTextReply = '', conversationContext = '', apiKey = process.env.ANTHROPIC_API_KEY, createMessage, messageId = '', threadId = '' } = {}) {
   const reply = stripText(plainTextReply, 5000);
-  const deterministic = deterministicReplyCategory(reply);
+  const options = { subject, currentEmail: lead.email };
+  const deterministic = deterministicReplyCategory(reply, options);
   if (deterministic) return deterministic;
-  if (!apiKey && !createMessage) return CLASSIFY_FALLBACK;
+  // Even if the canonical pass declined (low confidence / empty body edge), an
+  // explicit opt-out or rejection must never wait on a model call.
+  const failSafe = failSafeReplyCategory(reply, options);
+  if (failSafe) return failSafe;
+  if (!apiKey && !createMessage) return failSafeReplyCategory(reply, options) || CLASSIFY_FALLBACK;
   try {
-    const send = createMessage || (payload => new Anthropic({ apiKey }).messages.create(payload));
+    const send = wrapCreateMessage(
+      createMessage || (payload => new Anthropic({ apiKey, maxRetries: 0 }).messages.create(payload)),
+      {
+        feature: FEATURES.reply_classification,
+        operation: 'classify',
+        campaign: campaign.name || campaign.id || '',
+        leadId: lead.id || lead.email || '',
+        messageId,
+        threadId,
+      },
+    );
     const msg = await send({
       model: 'claude-haiku-4-5', max_tokens: 20,
       system: 'Classify a cold-outreach reply as exactly one of: QUESTION, INTERESTED, MEETING_REQUEST, NOT_INTERESTED, UNSUBSCRIBE, OUT_OF_OFFICE, WRONG_PERSON, NEEDS_HUMAN. Prefer NEEDS_HUMAN when unclear. Never infer interest merely because a reply exists.',
       messages: [{ role: 'user', content: `Provider: ${provider}\nCompany: ${lead.company || ''}\nCampaign: ${campaign.name || ''}\nSubject: ${subject}\nReply: ${reply}\nContext: ${stripText(conversationContext, 3000)}` }],
     });
     const raw = String(msg.content?.[0]?.text || '').trim().toUpperCase();
-    return REPLY_CATEGORIES.has(raw) ? raw : CLASSIFY_FALLBACK;
-  } catch (_) { return CLASSIFY_FALLBACK; }
+    if (REPLY_CATEGORIES.has(raw)) return raw;
+    return failSafeReplyCategory(reply, options) || CLASSIFY_FALLBACK;
+  } catch (error) {
+    if (error && error.code === TOKEN_BUDGET_EXCEEDED) {
+      return failSafeReplyCategory(reply, options) || CLASSIFY_FALLBACK;
+    }
+    return failSafeReplyCategory(reply, options) || CLASSIFY_FALLBACK;
+  }
 }
 
 const CLASSIFICATION_TO_STATUS = { QUESTION: 'Question', INTERESTED: 'Interested', MEETING_REQUEST: 'Meeting requested', NOT_INTERESTED: 'Not interested', UNSUBSCRIBE: 'Unsubscribed', OUT_OF_OFFICE: 'Out of office', WRONG_PERSON: 'Replied', NEEDS_HUMAN: 'Replied' };
 
-module.exports = { classifyReply, deterministicReplyCategory, CLASSIFICATION_TO_STATUS, REPLY_CATEGORIES, CLASSIFY_FALLBACK };
+module.exports = { classifyReply, deterministicReplyCategory, failSafeReplyCategory, CLASSIFICATION_TO_STATUS, REPLY_CATEGORIES, CLASSIFY_FALLBACK };

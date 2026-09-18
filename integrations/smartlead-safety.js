@@ -163,4 +163,18 @@ function reconciliationHealth(result, at) {
   return patch;
 }
 
-module.exports = { ACTIVE_STATUSES, TERMINAL_STATUSES, normalizeEmail, csvSet, buildEventKey, buildMappingKey, mappingMatchesEvent, leadEligibility, mutationDecision, canApplyProviderTransition, stripText, safeAuditPayload, eventStateTransition, executeEventAttempt, KeyedLock, fetchAllCampaignLeads, aggregateProviderStats, reconciliationHealth };
+function admitSmartleadWebhook({ authenticated, integrationEnabled }) {
+  if (!authenticated) return { ok: false, status: 401, error: 'Invalid webhook authentication', mutate: false };
+  if (!integrationEnabled) return { ok: false, status: 503, error: 'Smartlead integration is disabled', mutate: false };
+  return { ok: true, mutate: true };
+}
+
+function suppressionFromProviderStatus(incomingStatus, email) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) return null;
+  if (incomingStatus === 'Unsubscribed') return { email: normalized, reason: 'unsubscribe' };
+  if (incomingStatus === 'Bounced') return { email: normalized, reason: 'bounce' };
+  return null;
+}
+
+module.exports = { ACTIVE_STATUSES, TERMINAL_STATUSES, REPLY_STATUSES, normalizeEmail, normalizeStatus, csvSet, buildEventKey, buildMappingKey, mappingMatchesEvent, leadEligibility, mutationDecision, canApplyProviderTransition, stripText, safeAuditPayload, eventStateTransition, executeEventAttempt, KeyedLock, fetchAllCampaignLeads, aggregateProviderStats, reconciliationHealth, admitSmartleadWebhook, suppressionFromProviderStatus };

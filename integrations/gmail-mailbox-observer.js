@@ -1,5 +1,10 @@
 'use strict';
 
+const {
+  providerRead, isRateLimited, statusOf, persistedGmailMessageIds,
+  getMailboxBackoff, signalMailboxBackoff, QUOTA_RETRY_DELAYS_MS,
+} = require('./gmail-api-guard');
+
 const DAEMON_FROM = /mailer-daemon|postmaster/i;
 const AUTOMATED_FROM = /mailer-daemon|postmaster|no-?reply|do-?not-?reply/i;
 const PERMANENT_FAILURE = /permanent|address not found|no such (?:user|mailbox|address|recipient)|user unknown|does(?: not|n['’]?t) exist|mailbox (?:full|unavailable|is full)|recipient (?:rejected|not found|address rejected)|account (?:has been )?(?:disabled|closed|suspended)|\b55[013456]\b|\b5\.\d\.\d\b/i;
@@ -8,46 +13,6 @@ const TRANSIENT_FAILURE = /delivery (?:is )?incomplete|will (?:retry|keep trying
 const norm = value => String(value || '').trim().toLowerCase();
 const OVERLAP_MS = 5 * 60 * 1000;
 const STALE_MS = 90 * 60 * 1000;
-const statusOf = error => Number(error?.response?.status || error?.code);
-
-// Gmail rate-limits per user per minute and answers 429, or 403 with a quota
-// reason. Neither says anything is wrong with the mailbox — they say "slow
-// down" — so treating them as failures is what stranded the primary observer:
-// a stale checkpoint means a large catch-up, a large catch-up trips the
-// per-minute ceiling, the whole observation throws, the checkpoint stays put,
-// and the next pass re-runs the same oversized scan into the same wall. The
-// backlog could never drain.
-//
-// Bounded on purpose. Four attempts with exponential backoff is enough to ride
-// out a per-minute ceiling; anything longer would hold a pass open indefinitely
-// and turn one degraded mailbox into a stuck process.
-const QUOTA_RETRY_DELAYS_MS = Object.freeze([1000, 4000, 12000]);
-const isRateLimited = error => {
-  const status = statusOf(error);
-  if (status === 429) return true;
-  // 403 is overloaded: quota exhaustion is retryable, a permissions problem is
-  // not, and retrying the latter would be pointless traffic against a mailbox
-  // that will never answer.
-  return status === 403 && /quota|rate limit|user rate/i.test(String(error?.message || ''));
-};
-
-async function providerRead(action, params, read, { sleep = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
-  for (let attempt = 0; ; attempt++) {
-    try { return await read(params); }
-    catch (error) {
-      if (isRateLimited(error) && attempt < QUOTA_RETRY_DELAYS_MS.length) {
-        await sleep(QUOTA_RETRY_DELAYS_MS[attempt]);
-        continue;
-      }
-      // Deliberately omit the request object: googleapis attaches OAuth headers.
-      error.observerDetails = {
-        action, params, status: statusOf(error), message: error.message,
-        rateLimited: isRateLimited(error), attempts: attempt + 1,
-      };
-      throw error;
-    }
-  }
-}
 
 function headerValue(payload, name) {
   const wanted = norm(name);
@@ -57,6 +22,23 @@ function headerValue(payload, name) {
 function parseAddr(value) {
   const match = /<([^>]+)>/.exec(value || '');
   return norm(match ? match[1] : value);
+}
+
+const EMAIL_TOKEN = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
+
+function extractedEmails(text) {
+  const found = new Set();
+  String(text || '').replace(EMAIL_TOKEN, match => {
+    found.add(norm(match));
+    return match;
+  });
+  return found;
+}
+
+function bounceMentionsRecipient(text, email) {
+  const wanted = norm(email);
+  if (!wanted) return false;
+  return extractedEmails(text).has(wanted);
 }
 
 function decodeBodies(payload) {
@@ -127,7 +109,7 @@ function matchMailboxMessages(messages, { leads = [], activities = [], senderInb
       for (const lead of leads) {
         const email = norm(lead.email);
         const afterMs = Date.parse(lead.lastEmailedAt || '');
-        if (!email || !Number.isFinite(afterMs) || occurredMs <= afterMs || !allText.toLowerCase().includes(email)) continue;
+        if (!email || !Number.isFinite(afterMs) || occurredMs <= afterMs || !bounceMentionsRecipient(allText, email)) continue;
         if (TRANSIENT_FAILURE.test(allText) && !PERMANENT_FAILURE.test(allText)) continue;
         if (PERMANENT_FAILURE.test(allText)) bounces.set(lead.id, message);
       }
@@ -149,24 +131,27 @@ function matchMailboxMessages(messages, { leads = [], activities = [], senderInb
   return { replies, bounces };
 }
 
-async function listChangedIds(gmail, { historyId, maxPages = 20 } = {}) {
+async function listChangedIds(gmail, { historyId, maxPages = 20, readOpts } = {}) {
   const ids = new Set();
   const stubs = new Map();
   let pageToken;
   let pages = 0;
+  // Do NOT adopt Gmail's latest historyId until every page of this window has
+  // been read. A partial listing that stored HEAD would permanently skip the
+  // unread pages — including after a 403 quota error.
   let nextHistoryId = historyId || null;
   if (historyId) {
     do {
       const response = await providerRead('users.history.list', { userId: 'me', startHistoryId: historyId,
-        maxResults: 500, pageToken }, params => gmail.users.history.list(params));
-      nextHistoryId = response.data.historyId || nextHistoryId;
+        maxResults: 500, pageToken, historyTypes: ['messageAdded'] }, params => gmail.users.history.list(params), readOpts);
       for (const history of response.data.history || []) {
-        for (const change of [...(history.messagesAdded || []), ...(history.labelsAdded || []), ...(history.labelsRemoved || [])]) {
+        for (const change of history.messagesAdded || []) {
           if (change.message?.id) { ids.add(change.message.id); stubs.set(change.message.id, change.message); }
         }
       }
       pageToken = response.data.nextPageToken;
       pages += 1;
+      if (!pageToken) nextHistoryId = response.data.historyId || nextHistoryId;
     } while (pageToken && pages < maxPages);
     if (pageToken) throw new Error(`Gmail History exceeded the ${maxPages}-page safety bound; checkpoint was not advanced`);
     return { ids: [...ids], stubs, nextHistoryId, mode: 'history', pages };
@@ -174,16 +159,16 @@ async function listChangedIds(gmail, { historyId, maxPages = 20 } = {}) {
   // Safe bootstrap establishes "from now onward" and deliberately returns no
   // messages. Replaying even a seven-day lookback could mutate or answer a
   // historical conversation merely because this code was deployed.
-  const profile = await providerRead('users.getProfile', { userId: 'me' }, params => gmail.users.getProfile(params));
+  const profile = await providerRead('users.getProfile', { userId: 'me' }, params => gmail.users.getProfile(params), readOpts);
   return { ids: [], nextHistoryId: profile.data.historyId || null, mode: 'bootstrap', pages: 0 };
 }
 
-async function listCatchup(gmail, { lastSuccessfulObservationAt, maxPages = 20, senderEmail, log = () => {} }) {
+async function listCatchup(gmail, { lastSuccessfulObservationAt, maxPages = 20, senderEmail, log = () => {}, readOpts } = {}) {
   const since = Date.parse(lastSuccessfulObservationAt || '');
   if (!Number.isFinite(since)) throw new Error('Mailbox recovery requires persisted lastSuccessfulObservationAt; checkpoint was not advanced');
   // Anchor BEFORE the search. Changes during pagination (including imported old
   // messages) are covered by the History bridge and subsequent incremental run.
-  const profile = await providerRead('users.getProfile', { userId: 'me' }, params => gmail.users.getProfile(params));
+  const profile = await providerRead('users.getProfile', { userId: 'me' }, params => gmail.users.getProfile(params), readOpts);
   if (norm(profile.data.emailAddress) !== norm(senderEmail)) throw new Error('Mailbox identity mismatch; checkpoint was not advanced');
   const anchor = profile.data.historyId;
   if (!anchor) throw new Error('Gmail profile has no History cursor');
@@ -194,12 +179,12 @@ async function listCatchup(gmail, { lastSuccessfulObservationAt, maxPages = 20, 
   let pageToken; let pages = 0;
   do {
     const response = await providerRead('users.messages.list', { userId: 'me', q,
-      includeSpamTrash: true, maxResults: 500, pageToken }, params => gmail.users.messages.list(params));
+      includeSpamTrash: true, maxResults: 500, pageToken }, params => gmail.users.messages.list(params), readOpts);
     for (const stub of response.data.messages || []) stubs.set(stub.id, stub);
     pageToken = response.data.nextPageToken; pages++;
   } while (pageToken && pages < maxPages);
   if (pageToken) throw new Error('Mailbox catch-up exceeded page safety bound; checkpoint was not advanced');
-  const bridge = await listChangedIds(gmail, { historyId: anchor, maxPages });
+  const bridge = await listChangedIds(gmail, { historyId: anchor, maxPages, readOpts });
   for (const [id, stub] of bridge.stubs) stubs.set(id, stub);
   return { ids: [...stubs.keys()], stubs, nextHistoryId: bridge.nextHistoryId,
     mode: 'catchup', pages: pages + bridge.pages, from, anchor };
@@ -226,15 +211,27 @@ const byIdAscending = (a, b) => (String(a).length - String(b).length) || String(
 
 async function observeMailbox({ gmail, leads = [], activities = [], senderInboxId, senderEmail, historyId = null,
   lastSuccessfulObservationAt = null, previousHealth = null, maxPages = 20, now = new Date(), log = () => {},
-  recovery = null, readBudget = RECOVERY_READ_BUDGET, sleep = undefined }) {
+  recovery = null, readBudget = RECOVERY_READ_BUDGET, sleep = undefined, knownMessageIds = null }) {
   // Injectable so tests exercise the real retry path without wall-clock waits.
-  const readOpts = sleep ? { sleep } : undefined;
+  const readOpts = {
+    mailboxId: senderInboxId, feature: 'gmail_history_observer',
+    ...(sleep ? { sleep, jitter: false } : {}),
+  };
+  const knownIds = knownMessageIds instanceof Set ? knownMessageIds : persistedGmailMessageIds(activities);
   let listed;
-  let recovered = previousHealth === 'unavailable' || (lastSuccessfulObservationAt
-    && new Date(now).getTime() - Date.parse(lastSuccessfulObservationAt) > STALE_MS);
+  // Catch-up is ONLY for an invalid/expired History cursor, or a recovery already
+  // in flight. Quota 403 and a stale checkpoint with a still-valid historyId must
+  // retry incrementally — a broad rescan is what exhausted the per-user minute.
+  void previousHealth;
+  let recovered = false;
   try {
-    listed = await listChangedIds(gmail, { historyId, maxPages });
+    listed = await listChangedIds(gmail, { historyId, maxPages, readOpts });
   } catch (error) {
+    if (isRateLimited(error)) {
+      const backoff = getMailboxBackoff(senderInboxId, now) || signalMailboxBackoff(senderInboxId, error, { now });
+      log('gmail_quota_backoff', { historyId, until: backoff?.until, ...error.observerDetails });
+      throw error;
+    }
     if (!historyId || statusOf(error) !== 404 || error.observerDetails?.action !== 'users.history.list') throw error;
     log('history_cursor_invalid', { historyId, ...error.observerDetails });
     recovered = true;
@@ -254,7 +251,7 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
     try {
       const catchup = await listCatchup(gmail, {
         lastSuccessfulObservationAt: resuming ? recoveryState.since : lastSuccessfulObservationAt,
-        maxPages, senderEmail, log,
+        maxPages, senderEmail, log, readOpts,
       });
       for (const [id, stub] of listed.stubs || []) if (!catchup.stubs.has(id)) catchup.stubs.set(id, stub);
       listed = { ...catchup, ids: [...catchup.stubs.keys()] };
@@ -287,21 +284,34 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
   const messages = [];
   const unavailable = [];
   // The high-water only moves across ids this pass genuinely resolved — fetched,
-  // or explicitly represented as a provider gap. It is returned as a PROPOSAL:
-  // the caller persists it only after the canonical events commit.
+  // already persisted, or explicitly represented as a provider gap. It is a
+  // PROPOSAL: the caller persists it only after the canonical events commit.
   let provenThroughId = recoveryState ? recoveryState.processedThroughId : null;
   let quotaBackoff = null;
+  let messagesFetched = 0;
+  let messagesDeduplicated = 0;
   for (const id of slice) {
+    if (knownIds.has(id)) {
+      messagesDeduplicated += 1;
+      provenThroughId = id;
+      continue;
+    }
     try {
       const response = await providerRead('users.messages.get', { userId: 'me', id, format: 'full' }, params => gmail.users.messages.get(params), readOpts);
       messages.push(response.data);
+      messagesFetched += 1;
     } catch (error) {
       // Quota is not a mailbox failure and must not discard proven progress.
       // Stop issuing reads, keep what is proven, and let the caller bank it.
-      if (isRateLimited(error) && recoveryState) {
+      if (isRateLimited(error)) {
+        const signaled = getMailboxBackoff(senderInboxId, now) || signalMailboxBackoff(senderInboxId, error, { now });
         quotaBackoff = { reason: 'gmail_quota', at: new Date(now).toISOString(),
-          message: String(error.message || '').slice(0, 200) };
-        log('gmail_quota_backoff', { processedThroughId: provenThroughId, remaining: queue.length - messages.length });
+          until: signaled?.until || '', message: String(error.message || '').slice(0, 200) };
+        log('gmail_quota_backoff', { processedThroughId: provenThroughId,
+          remaining: queue.length - messages.length, until: quotaBackoff.until, recovery: Boolean(recoveryState) });
+        // The failed id is NOT proven. Recovery resumes strictly above the last
+        // proven id; incremental history keeps the START cursor so the unread
+        // window is retried. Never adopt Gmail's HEAD after a quota stop.
         break;
       }
       if (statusOf(error) !== 404) throw error;
@@ -311,7 +321,7 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
       let threadRecovered = false;
       if (threadId) {
         try {
-          const thread = await providerRead('users.threads.get', { userId: 'me', id: threadId, format: 'full' }, params => gmail.users.threads.get(params));
+          const thread = await providerRead('users.threads.get', { userId: 'me', id: threadId, format: 'full' }, params => gmail.users.threads.get(params), readOpts);
           messages.push(...thread.data.messages || []); threadRecovered = true;
         } catch (threadError) { if (statusOf(threadError) !== 404) throw threadError; }
       }
@@ -342,16 +352,25 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
         backoff: Boolean(quotaBackoff) });
   }
 
-  return { ...listed, recovered: Boolean(recovered), messages: unique, unavailable,
+  // Incremental quota is the same contract as recovery: keep what is proven,
+  // do not adopt HEAD, mark the run incomplete so the next pass retries the
+  // unresolved window from the last persisted cursor.
+  const historyIncomplete = Boolean(quotaBackoff) && !recoveryState;
+  const trustworthy = !historyIncomplete && (!recoveryResult || recoveryResult.complete);
+
+  return { ...listed,
+    nextHistoryId: historyIncomplete ? (historyId || listed.nextHistoryId) : listed.nextHistoryId,
+    recovered: Boolean(recovered), messages: unique, unavailable,
     messagesInspected: unique.length, discoveredCount: listed.ids.length,
-    recovery: recoveryResult,
-    // While a recovery is still in flight the mailbox has NOT reached a
-    // trustworthy observation point, so the caller must not advance the normal
-    // History checkpoint or treat the inbox as send-safe.
-    trustworthy: !recoveryResult || recoveryResult.complete,
+    messagesFetched, messagesDeduplicated,
+    recovery: recoveryResult, historyIncomplete, quotaBackoff,
+    observerHealth: !trustworthy ? (quotaBackoff ? 'unhealthy_quota' : 'unhealthy_incomplete') : 'healthy',
+    // While a recovery is still in flight — or an incremental history read was
+    // cut short by quota — the mailbox has NOT reached a trustworthy point.
+    trustworthy,
     ...matchMailboxMessages(unique, { leads, activities, senderInboxId, senderEmail }) };
 }
 
 module.exports = { headerValue, parseAddr, decodeBodies, firstPlainText, matchMailboxMessages,
-  listChangedIds, listCatchup, observeMailbox, providerRead, isRateLimited,
-  OVERLAP_MS, STALE_MS, RECOVERY_READ_BUDGET, byIdAscending };
+  bounceMentionsRecipient, extractedEmails, listChangedIds, listCatchup, observeMailbox, providerRead, isRateLimited,
+  OVERLAP_MS, STALE_MS, RECOVERY_READ_BUDGET, byIdAscending, persistedGmailMessageIds };

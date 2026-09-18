@@ -154,21 +154,20 @@ test('runtime persists pair before delivery and cold cadence excludes pending in
   assert.match(prepare, /buildDemoPairActivity/);
   assert.match(prepare, /recordColdCallActivityStrict\(event\)/);
   assert.ok(agent.indexOf('prepareDemoIntentCandidates(all, snapshot, allLeadsForDailyCap)')
-    < agent.indexOf('runHumanOutboundPass(\n        candidates'));
+    < agent.indexOf('runIntentTriggerPass(all, intentOwnershipContext, snapshot,'));
   assert.match(intent, /deliverHardenedWarmReply/);
   assert.match(intent, /BOOKING_LINK_EVENT/);
   assert.match(selector, /hasUndeliveredDemoPair\(l, activities\)/);
 });
 
-test('three-minute worker exits before Gmail with zero candidates and scopes Sent queries by recipient', () => {
+test('three-minute worker exits before Gmail with zero candidates and does not scan mailboxes', () => {
   const branch = agent.slice(agent.indexOf('if (INTENT_ONLY && !CHECK_ONLY)'),
     agent.indexOf('let todaySent', agent.indexOf('if (INTENT_ONLY && !CHECK_ONLY)')));
-  assert.ok(branch.indexOf('if (!preparedIntent.due.length)') < branch.indexOf('runHumanOutboundPass('));
+  assert.ok(branch.indexOf('if (!preparedIntent.due.length)') > 0);
   assert.match(branch, /planIntentObservation\(preparedIntent\.due, GMAIL_SENDERS\)/);
-  assert.match(branch, /runReplyCheckPass\(preparedIntent\.due,[\s\S]*intentSenderIds,[\s\S]*advanceCheckpoint: false/);
-  assert.match(branch, /must never advance the mailbox-wide cursor/);
-  assert.match(agent, /candidate_observation_no_cursor_advance/);
-  assert.match(agent, /candidateOnly[\s\S]*recipientScope/);
+  assert.match(branch, /using persisted observer health; zero incremental Gmail mailbox scans this pass/);
+  assert.doesNotMatch(branch, /runReplyCheckPass\(preparedIntent\.due/);
+  assert.doesNotMatch(branch, /advanceCheckpoint: false/);
 });
 
 test('Outreach detail returns canonical Next Action and drawer contains no cold-date decision fork', () => {

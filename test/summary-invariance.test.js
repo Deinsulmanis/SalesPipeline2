@@ -226,5 +226,5 @@ test('18/23. no Gmail polling and no send path on the Outreach load', () => {
 test('search remains debounced and the cache is still shared', () => {
   assert.match(browser, /ceSearchTimer = setTimeout\(\(\) => reloadCePage\(\), 250\);/);
   assert.match(server, /const OUTREACH_CACHE_TTL_MS = 30000;/);
-  assert.match(server, /if \(!force && outreachCacheLoad\) return outreachCacheLoad;/);
+  assert.match(server, /return outreachDatasetCache\.get\(\{ force \}\)/);
 });

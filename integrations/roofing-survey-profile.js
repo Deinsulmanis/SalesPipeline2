@@ -1,5 +1,7 @@
 'use strict';
 
+const { wrapCreateMessage, FEATURES, TOKEN_BUDGET_EXCEEDED } = require('./anthropic-usage');
+
 const PROFILE_ID = 'roofing_survey_reply_first';
 const TEMPLATE_ID = 'roofing-survey-v1';
 const MODEL = process.env.ANTHROPIC_HAIKU_MODEL || 'claude-haiku-4-5';
@@ -115,14 +117,21 @@ async function classifyReply({ replyText = '', createMessage } = {}) {
   if (deterministic) return deterministic;
   if (!createMessage) return result('ambiguous', 0, false, true, 'invalid_model_output');
   try {
-    const response = await createMessage({
+    const send = wrapCreateMessage(createMessage, {
+      feature: FEATURES.roofing_reply_classification,
+      operation: 'classify',
+    });
+    const response = await send({
       model: MODEL, max_tokens: 120, temperature: 0,
       system: `You classify replies to a neutral roofing-industry survey invitation. Return ONLY JSON with category, confidence (0-1), should_send_survey, requires_human_review, reason_code. Categories: ${[...CATEGORIES].join(', ')}. Never infer permission. Questions, ambiguity, hostility, privacy/legal concerns, conflicting intent, and already-completed claims require human review. Allowed reason codes: ${[...REASON_CODES].join(', ')}.`,
       messages: [{ role: 'user', content: `Reply:\n${latestReply.slice(0, 3000)}` }],
     });
     const raw = String(response.content?.[0]?.text || '').trim().replace(/^```(?:json)?\s*|\s*```$/g, '');
     return validateClassification(JSON.parse(raw)) || result('ambiguous', 0, false, true, 'invalid_model_output');
-  } catch (_) { return result('ambiguous', 0, false, true, 'invalid_model_output'); }
+  } catch (error) {
+    if (error && error.code === TOKEN_BUDGET_EXCEEDED) return result('ambiguous', 0, false, true, 'invalid_model_output');
+    return result('ambiguous', 0, false, true, 'invalid_model_output');
+  }
 }
 
 function renderPositiveReply(lead, surveyUrl, options = {}) {

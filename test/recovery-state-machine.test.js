@@ -310,6 +310,8 @@ test('recovery state is durable across a restart', () => {
   // A recovery in flight is never written as healthy, and never advances the
   // normal History cursor.
   assert.match(agentSrc, /const recovering = Boolean\(recovery && recovery\.active && !recovery\.complete\)/);
+  assert.match(agentSrc, /backingOff \? String\(backoffUntil\)/);
   assert.match(agentSrc, /recovering \? \(recovery\.backoff \? 'backoff' : 'recovering'\) : 'healthy'/);
-  assert.match(agentSrc, /state\.recovery && !state\.recovery\.complete\s*\n?\s*\? \(gmailObservationHistoryBySender\.get\(sender\.id\) \|\| ''\)/);
+  assert.match(agentSrc, /historyIncomplete \|\| state\.trustworthy === false/);
+  assert.match(agentSrc, /gmailObservationHistoryBySender\.get\(sender\.id\) \|\| ''/);
 });

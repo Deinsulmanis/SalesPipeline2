@@ -733,6 +733,52 @@ function preserveResumeTag(canonicalNotes, nextNotes) {
   return { notes: [...canonicalTags, stripped].filter(Boolean).join(' '), changed: true };
 }
 
+/**
+ * Sheets-canonical notes merge. Same order as applyCanonicalChange: resume tag
+ * first (unless resumeIntent), then send-safety markers. PURE.
+ */
+function mergeNotesPatch(canonicalNotes, patchNotes, { releaseMarkers = [], resumeIntent = false } = {}) {
+  const resume = !resumeIntent
+    ? preserveResumeTag(canonicalNotes, patchNotes)
+    : { notes: patchNotes === null || patchNotes === undefined ? '' : String(patchNotes), changed: false };
+  const safe = preserveSafetyMarkers(canonicalNotes, resume.notes, { releaseMarkers });
+  return { notes: safe.notes, kept: safe.kept, resumeTagKept: resume.changed };
+}
+
+function notesCellRange(sheetName, row) {
+  return `${sheetName}!${columnLetterFor('notes')}${row}`;
+}
+
+function notesValueFromRange(valueRange) {
+  return String(valueRange?.values?.[0]?.[0] ?? '');
+}
+
+async function readCanonicalSheetNotes(sheetsClient, spreadsheetId, range, leadId) {
+  const reader = sheetsClient && sheetsClient.spreadsheets && sheetsClient.spreadsheets.values;
+  if (!reader || typeof reader.get !== 'function') {
+    throw new Error(`cannot read current notes to preserve safety markers for ${leadId}: Sheets reader is unavailable`);
+  }
+  try {
+    const response = await reader.get({ spreadsheetId, range });
+    return notesValueFromRange(response && response.data);
+  } catch (error) {
+    throw new Error(`cannot read current notes to preserve safety markers for ${leadId}: ${error.message}`);
+  }
+}
+
+function notePreservedMarkers(id, merged, logger) {
+  if (merged.kept.length) {
+    writeDiagnostics.safetyMarkersKept += merged.kept.length;
+    logger.warn(`[outreach-state] lead ${id}: a notes write would have removed ${merged.kept.join(', ')}; `
+      + 'kept it. Safety state in canonical notes outranks a value built from an older read.');
+  }
+  if (merged.resumeTagKept) {
+    writeDiagnostics.resumeTagsKept++;
+    logger.warn(`[outreach-state] lead ${id}: a notes write without resume intent would have changed the `
+      + 'scheduled-resume tag; kept the canonical one. Only reactivation and Resume set or clear it.');
+  }
+}
+
 const headersForWrite = (config, extra = {}) => ({
   apikey: config.key, Authorization: `Bearer ${config.key}`,
   'Content-Type': 'application/json', ...extra,
@@ -907,10 +953,28 @@ async function applyLeadChange(leadId, patch, {
   const unknown = fields.filter(field => !Object.prototype.hasOwnProperty.call(FIELD_MAP, field));
   if (unknown.length) throw new Error(`unknown ColdEmail field(s): ${unknown.join(', ')}`);
 
+  const writesNotes = Object.prototype.hasOwnProperty.call(patch, 'notes');
+  let notesPatch = patch;
+  let keptMarkers = [];
+  let resumeTagKept = false;
+
+  // Sheets authority: re-read the durable Notes cell and keep send-safety /
+  // resume markers a stale in-memory prepend would otherwise erase. Supabase
+  // authority does this inside applyCanonicalChange instead.
+  if (writesNotes && outreachWriteAuthority(env) === 'sheets') {
+    const canonicalNotes = await readCanonicalSheetNotes(
+      sheetsClient, spreadsheetId, notesCellRange(sheetName, parsedRow), id);
+    const merged = mergeNotesPatch(canonicalNotes, patch.notes, { releaseMarkers, resumeIntent });
+    keptMarkers = merged.kept;
+    resumeTagKept = merged.resumeTagKept;
+    notesPatch = { ...patch, notes: merged.notes };
+    notePreservedMarkers(id, merged, logger);
+  }
+
   const data = [
     ...fields.map(field => ({
       range: `${sheetName}!${columnLetterFor(field)}${parsedRow}`,
-      values: [[patch[field] === null || patch[field] === undefined ? '' : String(patch[field])]],
+      values: [[notesPatch[field] === null || notesPatch[field] === undefined ? '' : String(notesPatch[field])]],
     })),
     ...extraData,
   ];
@@ -985,7 +1049,7 @@ async function applyLeadChange(leadId, patch, {
   let mirrorReason = 'skipped';
   if (fields.length && outreachStateMode(env) !== 'off') {
     const started = Date.now();
-    const result = await mirrorOutreachLeadFields(id, patch, { env, logger });
+    const result = await mirrorOutreachLeadFields(id, notesPatch, { env, logger });
     const latency = Date.now() - started;
     if (latency > writeDiagnostics.maxMirrorLatencyMs) writeDiagnostics.maxMirrorLatencyMs = latency;
     mirrored = result.mirrored === 1;
@@ -1009,7 +1073,8 @@ async function applyLeadChange(leadId, patch, {
   // time we are here. `mirrored` is reported separately and is never conflated
   // with it: a deferred mirror is not a failed mutation, and a committed
   // mutation must never be reported as current in Supabase when it is not.
-  return { ok: true, leadId: id, fields, mirrored, mirrorReason };
+  return { ok: true, leadId: id, fields, mirrored, mirrorReason,
+    keptMarkers, resumeTagKept };
 }
 
 const BATCH_STATUSES = Object.freeze(['succeeded', 'unchanged', 'refused', 'conflict', 'failed']);
@@ -1139,6 +1204,39 @@ async function applyLeadChanges(changes, {
   }
 
   // ── Sheets canonical (Stage 3B–3E) ────────────────────────────────────────
+  // Re-read durable Notes before writing so a stale patch cannot lift a hold,
+  // opt-out, bounce, or scheduled-resume tag. Fail closed if the read fails.
+  const notesWrites = prepared.filter(change => Object.prototype.hasOwnProperty.call(change.patch, 'notes'));
+  if (notesWrites.length) {
+    const reader = sheetsClient.spreadsheets && sheetsClient.spreadsheets.values;
+    if (!reader || (typeof reader.batchGet !== 'function' && typeof reader.get !== 'function')) {
+      throw new Error('cannot read current notes to preserve safety markers: Sheets reader is unavailable');
+    }
+    const ranges = notesWrites.map(change => notesCellRange(sheetName, change.row));
+    let valueRanges = [];
+    try {
+      if (typeof reader.batchGet === 'function') {
+        const response = await reader.batchGet({ spreadsheetId, ranges });
+        valueRanges = response.data.valueRanges || [];
+      } else {
+        for (const range of ranges) {
+          const response = await reader.get({ spreadsheetId, range });
+          valueRanges.push(response.data);
+        }
+      }
+    } catch (error) {
+      throw new Error(`cannot read current notes to preserve safety markers: ${error.message}`);
+    }
+    notesWrites.forEach((change, index) => {
+      const merged = mergeNotesPatch(notesValueFromRange(valueRanges[index]), change.patch.notes, {
+        releaseMarkers: change.releaseMarkers || [],
+        resumeIntent: Boolean(change.resumeIntent),
+      });
+      change.patch = { ...change.patch, notes: merged.notes };
+      notePreservedMarkers(change.id, merged, logger);
+    });
+  }
+
   // AUTHORITATIVE WRITE. One batch, one failure mode, throws as before.
   const data = [...extraData, ...prepared.flatMap(change => cellsFor(change.row, change.patch))];
   await sheetsClient.spreadsheets.values.batchUpdate({
@@ -1153,7 +1251,7 @@ async function applyLeadChanges(changes, {
   let reason = 'skipped';
   if (list.length && outreachStateMode(env) !== 'off') {
     const started = Date.now();
-    const results = await Promise.all(list.map(change =>
+    const results = await Promise.all(prepared.map(change =>
       mirrorOutreachLeadFields(change.leadId, change.patch, { env, logger })));
     const latency = Date.now() - started;
     if (latency > writeDiagnostics.maxMirrorLatencyMs) writeDiagnostics.maxMirrorLatencyMs = latency;
@@ -1188,6 +1286,6 @@ module.exports = {
   listOutreachLeads, countOutreachLeads, compareOutreachLead,
   applyLeadChange, applyLeadChanges, columnLetterFor,
   applyCanonicalChange, conflictRefusal, readCanonicalLead, MAX_CAS_ATTEMPTS,
-  preserveSafetyMarkers, SAFETY_NOTE_MARKERS, preserveResumeTag, BATCH_STATUSES,
+  preserveSafetyMarkers, SAFETY_NOTE_MARKERS, preserveResumeTag, mergeNotesPatch, BATCH_STATUSES,
   outreachWriteDiagnostics, resetOutreachWriteDiagnostics,
 };

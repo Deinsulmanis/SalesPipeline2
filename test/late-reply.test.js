@@ -192,7 +192,7 @@ test('late-reply processor has no outbound send dependency or sequence restart p
 test('late watcher uses known threads without broad Gmail message search', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
   const body = source.slice(source.indexOf('async function getLateReplyMessages'), source.indexOf('const REPLY_CATEGORIES'));
-  assert.match(body, /gmail\(\)\.users\.threads\.get/);
+  assert.match(body, /gmailForSender\(sender, \{ feature: 'late_reply' \}\)\.users\.threads\.get/);
   assert.doesNotMatch(body, /users\.messages\.list/);
 });
 

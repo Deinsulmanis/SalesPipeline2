@@ -246,9 +246,10 @@ test('the demo-intent booking-link path also requires fresh canonical ownership'
   assert.doesNotMatch(pass, /await sendEmail\(/);
 
   const intentOnly = agent.slice(agent.indexOf('if (INTENT_ONLY && !CHECK_ONLY)'));
-  assert.ok(intentOnly.indexOf('runHumanOutboundPass(all, intentActivities)')
+  assert.match(intentOnly, /using persisted observer health/);
+  assert.ok(intentOnly.indexOf('using persisted observer health')
     < intentOnly.indexOf('runIntentTriggerPass(all, intentOwnershipContext, snapshot,'),
-  'intent-only observes Gmail before evaluating its send trigger');
+  'intent-only uses persisted observer health before evaluating its send trigger');
 });
 
 test('a failed Gmail observation fails closed for sends only', () => {

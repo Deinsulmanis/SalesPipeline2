@@ -16,7 +16,17 @@ const { SmartleadClient } = require('./integrations/smartlead-client');
 const { SmartleadOutreachProvider } = require('./integrations/outreach-providers');
 const { verifySignature, verifySharedSecret, normalizeEvent } = require('./integrations/smartlead-events');
 const { leadEligibility } = require('./integrations/outreach-policy');
-const { buildEventKey, buildMappingKey, mappingMatchesEvent, normalizeEmail, canApplyProviderTransition, safeAuditPayload, executeEventAttempt, KeyedLock, fetchAllCampaignLeads, aggregateProviderStats, reconciliationHealth } = require('./integrations/smartlead-safety');
+const { buildEventKey, buildMappingKey, mappingMatchesEvent, normalizeEmail, canApplyProviderTransition, safeAuditPayload, executeEventAttempt, KeyedLock, fetchAllCampaignLeads, aggregateProviderStats, reconciliationHealth, admitSmartleadWebhook, suppressionFromProviderStatus } = require('./integrations/smartlead-safety');
+const { createRequireAuth } = require('./integrations/dashboard-auth');
+const { assertSendAuthorized } = require('./integrations/send-authorization');
+const { guardProviderSend } = require('./integrations/send-safety-revalidate');
+const { withOutboundReservation, confirmOutboundReservation, confirmReconciledReservation, sendLockHealth, listUnresolvedReservations, getOutboundReservation, markReservationReconciliationRequired } = require('./integrations/send-lock');
+const { smartleadEnqueueActionId, ordinaryColdActionId, parseOutboundActionId } = require('./integrations/outbound-action-id');
+const {
+  operatorRow, listLegacySheetsReservations, reconcileGmailReservation,
+} = require('./integrations/send-reconciliation');
+const { parseGoogleServiceAccountJson } = require('./integrations/google-service-account');
+const { createOutreachCache } = require('./integrations/outreach-cache');
 const { classifyReply: classifyProviderReply, CLASSIFICATION_TO_STATUS } = require('./integrations/reply-classifier');
 const {
   buildReplyMetrics, buildStoredClassificationMap,
@@ -135,6 +145,7 @@ const { buildFunnelAnalytics } = require('./integrations/funnel-analytics');
 const { genericReengagementAnalytics } = require('./integrations/generic-reengagement-analytics');
 const { buildCrmHealth } = require('./integrations/crm-health');
 const { observerHealth } = require('./integrations/gmail-observer-health');
+const { gmailUsageSnapshot } = require('./integrations/gmail-api-guard');
 const { hasUndeliveredDemoPair } = require('./integrations/demo-intent-state');
 const {
   normalizeLeadToken, aggregateDemoPlays, attributeDemoPlays, demoPlayForLead,
@@ -481,27 +492,22 @@ app.get('/engaged', (req, res) => {
 // ── DASHBOARD ACCESS CONTROL ──────────────────────────────────────────────────
 // HTTP Basic Auth applied globally — covers static files and all API routes.
 // Set DASHBOARD_USER and DASHBOARD_PASSWORD in .env / Railway env vars.
-function requireAuth(req, res, next) {
-  const header = req.headers.authorization || '';
-  if (req.path.startsWith('/api/internal/gmail-') && readinessTokenAuthorized(header)) return next();
-  const b64    = header.startsWith('Basic ') ? header.slice(6) : '';
-  const [user, pass] = Buffer.from(b64, 'base64').toString().split(':');
-  if (user === process.env.DASHBOARD_USER && pass === process.env.DASHBOARD_PASSWORD) {
-    return next();
-  }
-  res.setHeader('WWW-Authenticate', 'Basic realm="ScaleLab Pipeline"');
-  res.status(401).send('Unauthorized');
-}
-
+// Blank or missing credentials fail closed. Comparison is timing-safe, and
+// repeated failures from the same client are throttled in-process.
 function readinessTokenAuthorized(header) {
   const expected = String(process.env.GMAIL_READINESS_TOKEN || '');
   const supplied = String(header || '').replace(/^Bearer\s+/i, '');
   return Boolean(expected && supplied && expected.length === supplied.length
     && crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(supplied)));
 }
+const requireAuth = createRequireAuth({
+  bypass: req => req.path.startsWith('/api/internal/gmail-')
+    && readinessTokenAuthorized(req.headers.authorization || ''),
+});
 app.use(requireAuth);
 // Isolated research previews only: no Sheets writes, enrollment or outbound provider.
 require('./integrations/staffing-preview-route').registerStaffingPreviewRoutes(app, requireAuth);
+require('./integrations/anthropic-usage-route').registerAnthropicUsageRoutes(app, requireAuth);
 app.use(express.static(path.join(__dirname, 'public')));
 
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
@@ -564,7 +570,7 @@ const webhookLocks = new KeyedLock();
 // GoogleAuth mints and auto-refreshes access tokens internally.
 
 const auth = new google.auth.GoogleAuth({
-  credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON),
+  credentials: parseGoogleServiceAccountJson(process.env.GOOGLE_SERVICE_ACCOUNT_JSON),
   scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
@@ -1228,7 +1234,7 @@ async function ensureColdEmailSheet() {
 }
 
 // Same stale-cache guard as findRow() above — ceRowMap has the identical
-// exposure, and its callers are likewise a full-row PUT (A:S) and a DELETE.
+// exposure, and its callers are likewise a full-row PUT (A:X) and a DELETE.
 async function findCERow(id) {
   const cached = ceRowMap.get(id);
   if (cached) {
@@ -1291,12 +1297,18 @@ async function readColdEmailDashboardRows() {
 // hides changes made OUTSIDE this process — e.g. someone editing the sheet by
 // hand or the agent writing from its own process.
 const OUTREACH_CACHE_TTL_MS = 30000;
-let outreachCache = null;
-let outreachCacheLoad = null;
+const outreachDatasetCache = createOutreachCache({
+  load: () => loadOutreachDataset(),
+  ttlMs: OUTREACH_CACHE_TTL_MS,
+});
+
+function currentOutreachCache() {
+  return outreachDatasetCache.peek();
+}
 
 function invalidateOutreachCache(reason) {
-  if (outreachCache) console.log(`[outreach-cache] invalidated (${reason})`);
-  outreachCache = null;
+  if (currentOutreachCache()) console.log(`[outreach-cache] invalidated (${reason})`);
+  outreachDatasetCache.invalidate();
 }
 
 const CE_LIGHT_FIELDS = [
@@ -1702,13 +1714,10 @@ async function loadOutreachDataset() {
 
 // Concurrent callers share one in-flight load rather than each starting their
 // own — four parallel dashboard requests cost one set of reads, not four.
+// Invalidation bumps a generation so a stale in-flight load cannot repopulate
+// the cache after a write.
 async function getOutreachDataset({ force = false } = {}) {
-  if (!force && outreachCache && Date.now() - outreachCache.at < OUTREACH_CACHE_TTL_MS) return outreachCache;
-  if (!force && outreachCacheLoad) return outreachCacheLoad;
-  outreachCacheLoad = loadOutreachDataset()
-    .then(dataset => { outreachCache = dataset; return dataset; })
-    .finally(() => { outreachCacheLoad = null; });
-  return outreachCacheLoad;
+  return outreachDatasetCache.get({ force });
 }
 
 const DEFAULT_CE_PAGE = 100;
@@ -1860,6 +1869,44 @@ app.get('/api/supabase/mirror-health', requireAuth, async (_req, res) => {
     // Never surface a driver message: it can carry a URL or a header fragment.
     console.error('[supabase-mirror-health]', e.message);
     res.status(500).json({ error: 'mirror health could not be determined' });
+  }
+});
+
+app.get('/api/send-lock/health', requireAuth, async (_req, res) => {
+  try {
+    const health = await sendLockHealth();
+    res.json({
+      feature: 'outbound_send_reservations',
+      authoritativeStore: 'google_sheets',
+      note: 'Dedicated send-lock database only. Never returns the database URL.',
+      ok: health.ok,
+      enabled: health.enabled !== false,
+      code: health.code || null,
+      reason: health.reason || null,
+      table: health.table || null,
+      kind: health.kind || null,
+    });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    res.status(500).json({ error: 'send lock health could not be determined' });
+  }
+});
+
+app.get('/api/send-lock/reservations', requireAuth, async (_req, res) => {
+  try {
+    const listed = await listUnresolvedReservations();
+    const publicRow = row => operatorRow(row);
+    res.json({
+      enabled: listed.enabled !== false,
+      sentUnconfirmed: (listed.sentUnconfirmed || []).map(publicRow),
+      reconciliationRequired: (listed.reconciliationRequired || []).map(publicRow),
+      staleReserved: (listed.staleReserved || []).map(publicRow),
+      expiredSending: (listed.expiredSending || []).map(publicRow),
+      note: 'Read-only. There is no retry-send action. Use POST /api/ops/send-reconciliation to verify Gmail SENT evidence and repair checkpoints.',
+    });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    res.status(500).json({ error: 'send lock reservations could not be listed' });
   }
 });
 
@@ -3291,7 +3338,7 @@ app.post('/api/leads/:id/resume-automation', requireAuth, async (req, res) => {
         checkOnly })
         .catch(error => { if (error.rollbackUnconfirmed) releaseLock = false; throw error; })
         .finally(() => {
-          outreachCache = null;
+          invalidateOutreachCache('resume-automation');
           ceRowMap.clear();
           resumeRequests.delete(leadId);
           if (releaseLock) automationLaunchReserved = false;
@@ -3545,7 +3592,7 @@ const CALENDAR_SYNC_HEADER = ['key', 'value', 'updatedAt'];
 // behind a function so nothing is constructed (or fails) until sync is enabled.
 function calendarClient() {
   const auth = new google.auth.GoogleAuth({
-    credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON),
+    credentials: parseGoogleServiceAccountJson(process.env.GOOGLE_SERVICE_ACCOUNT_JSON),
     scopes: ['https://www.googleapis.com/auth/calendar.readonly'],
   });
   return google.calendar({ version: 'v3', auth });
@@ -4787,12 +4834,20 @@ const { queueSelectedLeads } = require('./integrations/outreach-queue');
 const { staffingLaunchState } = require('./integrations/staffing-launch-gate');
 app.get('/api/staffing/launch-readiness', requireAuth, async (_req, res) => {
   const { STAFFING_CAMPAIGN, LOCKED_EMAILS, BOLD_PHRASES } = require('./integrations/staffing-campaign');
+  const { staffingReadinessReport, staffingSequenceDiff } = require('./integrations/staffing-readiness');
   const corpus = await readOutreachCorpus();
   if (!corpus.ok) return res.status(503).json({ error: 'Canonical staffing state unavailable' });
-  const leads = corpus.leads.filter(lead => lead.leadNiche === STAFFING_CAMPAIGN.niche);
-  const counts = { total: leads.length, Import: leads.filter(l => l.stage === 'Import').length, Queued: leads.filter(l => l.stage === 'Queued').length };
-  res.json({ campaign: STAFFING_CAMPAIGN, counts, ...staffingLaunchState(),
-    sequence: LOCKED_EMAILS.map((body, i) => ({ step: i + 1, subject: i ? 'Same thread' : 'employer accounts', delayDays: [0, 3, 5][i], body, bold: BOLD_PHRASES[i] })) });
+  const dataset = await getOutreachDataset({ force: false }).catch(() => ({ activities: [], boardLeads: [], suppression: [] }));
+  const suppressed = new Set((dataset.suppression || []).map(row => String(row.email || row[0] || '').trim().toLowerCase()).filter(Boolean));
+  const report = staffingReadinessReport({
+    leads: corpus.leads, activities: dataset.activities || [], boardLeads: dataset.boardLeads || [],
+    suppressedEmails: suppressed, env: process.env,
+  });
+  res.json({
+    campaign: STAFFING_CAMPAIGN, ...report, ...staffingLaunchState(),
+    sequence: LOCKED_EMAILS.map((body, i) => ({ step: i + 1, subject: i ? 'Same thread' : 'employer accounts', delayDays: [0, 3, 5][i], body, bold: BOLD_PHRASES[i] })),
+    sequenceDiff: staffingSequenceDiff(),
+  });
 });
 app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
   const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(value => String(value || '').trim()).filter(Boolean))];
@@ -5106,7 +5161,7 @@ app.put('/api/coldemail/:id', requireAuth, async (req, res) => {
     await withAuth(async () => {
       await sheets().spreadsheets.values.update({
         spreadsheetId:   SPREADSHEET_ID,
-        range:           `${CE_SHEET_NAME}!A${rowNum}:S${rowNum}`,
+        range:           `${CE_SHEET_NAME}!A${rowNum}:X${rowNum}`,
         valueInputOption:'RAW',
         requestBody:     { values: vals },
       });
@@ -5363,7 +5418,7 @@ app.get('/api/integrations/supabase/stage3-parity', requireAuth, (_req, res) => 
   res.json({
     ...stage3ParitySnapshot(mode),
     writeAuthority: outreachWriteAuthority(),
-    lastLeadSource: outreachCache ? outreachCache.leadSource : null,
+    lastLeadSource: currentOutreachCache() ? currentOutreachCache().leadSource : null,
     writes: outreachWriteDiagnostics(),
     note: mode === 'off'
       ? 'Stage 3 is off. Google Sheets is authoritative and Supabase is neither read nor written.'
@@ -5424,6 +5479,52 @@ function operationalMailbox(senderInboxId) {
 }
 
 // Read-only provider trace. No worker launch, provider send or checkpoint write.
+app.get('/api/ops/gmail-usage', requireAuth, async (_req, res) => {
+  try {
+    const dataset = await getOutreachDataset({ force: true });
+    const senders = configuredSenders().filter(item => item.sendEligible);
+    const observers = observerHealth(dataset.mailboxObservationState || [], {
+      senderIds: senders.map(sender => sender.id),
+    });
+    const usage = gmailUsageSnapshot({ mailboxes: senders.map(sender => sender.id) });
+    const mailboxes = observers.map(observer => {
+      const row = usage.mailboxes.find(item => item.mailbox === observer.senderInboxId) || {};
+      return {
+        mailbox: observer.senderInboxId,
+        health: observer.health,
+        lastSuccessfulHistoryCheck: observer.lastSuccessfulAt,
+        checkpointAgeMinutes: observer.checkpointAgeMinutes,
+        currentHistoryId: observer.historyId,
+        backoff: observer.health === 'backoff' || row.backoff || false,
+        backoffUntil: observer.backoffUntil || row.backoffUntil || '',
+        requestsLast5m: row.requestsLast5m || { requests: 0, units: 0, byMethod: {} },
+        requestsLastHour: row.requestsLastHour || { requests: 0, units: 0, byMethod: {} },
+        retries: (row.requestsLastHour && row.requestsLastHour.retries) || 0,
+        rateLimitEvents: (row.requestsLastHour && row.requestsLastHour.rateLimited) || 0,
+        messagesDiscovered: (row.requestsLastHour && row.requestsLastHour.messagesDiscovered) || 0,
+        messagesFetched: (row.requestsLastHour && row.requestsLastHour.messagesFetched) || 0,
+        messagesDeduplicated: (row.requestsLastHour && row.requestsLastHour.messagesDeduplicated) || 0,
+        optionalScansSkipped: row.optionalScansSkipped || 0,
+        followUpsBlocked: row.followUpsBlocked || 0,
+        quotaBackoff: observer.quotaBackoff,
+        cursorState: observer.cursorState,
+        mode: observer.mode,
+      };
+    });
+    res.json({
+      updatedAt: usage.updatedAt,
+      unitsPerMinutePerUser: usage.unitsPerMinutePerUser,
+      quotaUnits: usage.quotaUnits,
+      totals: usage.totals,
+      optionalScansSkipped: usage.optionalScansSkipped,
+      followUpsBlocked: usage.followUpsBlocked,
+      mailboxes,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/ops/mailbox-diagnostic', requireAuth, async (req, res) => {
   try {
     const dataset = await getOutreachDataset({ force: true });
@@ -5562,11 +5663,109 @@ app.post('/api/ops/send-recovery', requireAuth, async (req, res) => {
       emailStep: String(step),
       senderInboxId,
     }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
+    await confirmReconciledReservation(ordinaryColdActionId(leadId, step)).catch(() => {});
     res.json({ ok: true, recovered: !existing, alreadyHadActivity: Boolean(existing),
       leadId, providerMessageId, senderInboxId, step, occurredAt });
   } catch (error) {
     console.error('[send recovery]', error.message);
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/ops/send-reconciliation', requireAuth, async (_req, res) => {
+  try {
+    const listed = await listUnresolvedReservations();
+    let legacy = [];
+    try {
+      const dataset = await getOutreachDataset({ force: true });
+      legacy = listLegacySheetsReservations(dataset.activities || []);
+    } catch (_) { /* lock listing still returns if Outreach snapshot is unavailable */ }
+    res.json({
+      enabled: listed.enabled !== false,
+      retryableSend: false,
+      sends: 0,
+      note: 'Read-only. Uncertain sends are never automatically resent.',
+      sentUnconfirmed: (listed.sentUnconfirmed || []).map(row => operatorRow(row)),
+      reconciliationRequired: (listed.reconciliationRequired || []).map(row => operatorRow(row)),
+      staleReserved: (listed.staleReserved || []).map(row => operatorRow(row)),
+      expiredSending: (listed.expiredSending || []).map(row => operatorRow(row)),
+      legacySheetsReservations: legacy,
+    });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    res.status(500).json({ error: 'send reconciliation could not be listed' });
+  }
+});
+
+app.post('/api/ops/send-reconciliation', requireAuth, async (req, res) => {
+  try {
+    const actionId = String(req.body?.actionId || '').trim();
+    if (!actionId) return res.status(422).json({ error: 'actionId is required', sends: 0, retryableSend: false });
+    const reservation = await getOutboundReservation(actionId);
+    if (!reservation) return res.status(404).json({ error: 'reservation not found', actionId, sends: 0, retryableSend: false });
+    if (String(reservation.provider || '').toLowerCase() === 'smartlead') {
+      return res.json({
+        ok: true, actionId, sends: 0, retryableSend: false, code: 'smartlead_manual_only',
+        reason: operatorRow(reservation).reason, reservation: operatorRow(reservation),
+      });
+    }
+    const dataset = await getOutreachDataset({ force: true });
+    const leadId = String(reservation.leadId || '').trim();
+    const matches = dataset.leads.filter(row => row.id === leadId);
+    if (matches.length !== 1) {
+      return res.status(409).json({
+        error: `expected one lead ${leadId}, found ${matches.length}`,
+        actionId, sends: 0, retryableSend: false, code: 'lead_identity_ambiguous',
+      });
+    }
+    const lead = matches[0];
+    const senderInboxId = String(req.body?.senderInboxId || lead.senderInboxId || '').trim();
+    const mailbox = operationalMailbox(senderInboxId);
+    let attribution = null;
+    try {
+      attribution = coldSendAttribution(lead, Number(parseOutboundActionId(actionId).step) || 1);
+    } catch (_) { attribution = null; }
+    const result = await reconcileGmailReservation({
+      reservation, mailbox, lead, activities: dataset.activities || [],
+      store: {
+        markConfirmed: id => confirmReconciledReservation(id),
+        markReconciliationRequired: (id, lastError) => markReservationReconciliationRequired(id, lastError),
+      },
+      applyCheckpoint: async (plan) => {
+        let repaired = false;
+        if (plan.activity) {
+          const event = {
+            ...plan.activity,
+            metadata: JSON.stringify(plan.activity.metadata || {}),
+          };
+          const rows = await readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER);
+          if (!rows.some(row => row.eventId === event.eventId)) {
+            await appendColdCallActivities([event]);
+            repaired = true;
+          }
+        }
+        if (plan.leadFields) {
+          const rowNum = await findCERow(lead.id);
+          if (!rowNum) throw new Error('lead disappeared before checkpoint write');
+          await applyLeadChange(lead.id, plan.leadFields, {
+            row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID,
+          });
+          repaired = true;
+        }
+        return { repaired };
+      },
+      attribution,
+    });
+    res.json({
+      ok: result.ok, actionId, sends: 0, retryableSend: false,
+      verified: Boolean(result.verified), confirmed: Boolean(result.confirmed),
+      repaired: Boolean(result.repaired), code: result.code || null,
+      reason: result.reason || null, alreadyConfirmed: Boolean(result.alreadyConfirmed),
+    });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[send reconciliation]', e.message);
+    res.status(500).json({ error: e.message, sends: 0, retryableSend: false });
   }
 });
 
@@ -5691,7 +5890,22 @@ app.post('/api/integrations/smartlead/campaigns/:internalCampaignId/leads/:leadI
     const providerLeads = await migrateProviderMappings();
     const eligibility = leadEligibility({ lead: found.lead, suppressedEmails: suppressed, providerMappings: providerLeads, externalCampaignId: mapping.externalCampaignId });
     if (!eligibility.ok) return res.status(409).json({ error: eligibility.reason });
-    const result = await smartleadProvider.addLeads({ externalCampaignId: mapping.externalCampaignId }, [smartleadLeadPayload(found.lead)]);
+    assertSendAuthorized();
+    const safety = await guardProviderSend(found.lead, {
+      loadFreshLead: async () => {
+        const again = await findColdEmailLead({ id: found.lead.id });
+        return again ? again.lead : null;
+      },
+      loadSuppressedEmails: loadSuppressionEmails,
+    }, { purpose: 'cold' });
+    if (!safety.allowed) return res.status(409).json({ error: safety.reason || safety.code });
+    const sendAction = {
+      actionId: smartleadEnqueueActionId(found.lead.id, mapping.externalCampaignId),
+      leadId: found.lead.id,
+      actionType: 'smartlead_enqueue',
+      provider: 'smartlead',
+    };
+    const result = await withOutboundReservation(sendAction, () => smartleadProvider.addLeads({ externalCampaignId: mapping.externalCampaignId }, [smartleadLeadPayload(found.lead)]));
     const now = new Date().toISOString();
     const externalLeadId = result.lead_ids?.[0] || '';
     const mappingKey = buildMappingKey({ externalCampaignId: mapping.externalCampaignId, externalLeadId, email: eligibility.email });
@@ -5701,8 +5915,18 @@ app.post('/api/integrations/smartlead/campaigns/:internalCampaignId/leads/:leadI
       mappingId: '', normalizedStatus: result.testMode ? 'Test mode' : (result.added_count ? 'Queued' : 'Skipped'), rawStatus: result.message || '',
       lastProviderEventAt: '', lastSynchronizedAt: now, unsubscribedAt: '', complianceNote: String(req.body.complianceNote || ''), metadata: JSON.stringify({ addedCount: result.added_count || 0, skippedCount: result.skipped_count || 0, attribution }), mappingKey, normalizedEmail: eligibility.email,
     });
+    await confirmOutboundReservation(sendAction.actionId).catch(() => {});
     res.json({ ok: true, testMode: Boolean(result.testMode), result });
   } catch (error) {
+    if (error.code === 'send_unauthorized' || error.code === 'sending_disabled' || error.code === 'send_lock_required') {
+      return res.status(403).json({ error: error.message });
+    }
+    if (error.code === 'lock_database_unavailable' || error.code === 'lock_schema_missing' || error.code === 'send_lock_action_required') {
+      return res.status(503).json({ error: error.message });
+    }
+    if (String(error.code || '').startsWith('reservation_')) {
+      return res.status(409).json({ error: error.message });
+    }
     console.warn('[Smartlead add lead]', error.code || error.message);
     res.status(error.status === 422 ? 422 : 502).json({ error: error.message });
   }
@@ -5718,7 +5942,14 @@ async function processStoredSmartleadEvent(eventRow) {
   if (!supported.has(eventRow.eventType)) return 'ignored';
   let incomingStatus = normalizeEvent({ event_type: eventRow.eventType, campaign_id: eventRow.externalCampaignId, lead_id: eventRow.externalLeadId, lead_email: audit.email, timestamp: audit.timestamp, category: audit.category, preview_text: audit.replyPreview, subject: audit.subject }).status;
   if (eventRow.eventType === 'EMAIL_REPLY' && audit.replyPreview) {
-    const classification = await classifyProviderReply({ provider: 'smartlead', lead: { company: '' }, campaign: { id: eventRow.externalCampaignId }, subject: audit.subject, plainTextReply: audit.replyPreview });
+    const classification = await classifyProviderReply({
+      provider: 'smartlead',
+      lead: { company: '', id: eventRow.externalLeadId || '' },
+      campaign: { id: eventRow.externalCampaignId },
+      subject: audit.subject,
+      plainTextReply: audit.replyPreview,
+      messageId: eventRow.eventKey || eventRow.requestId || '',
+    });
     incomingStatus = CLASSIFICATION_TO_STATUS[classification] || 'Replied';
   }
   const providerRows = await migrateProviderMappings();
@@ -5730,6 +5961,11 @@ async function processStoredSmartleadEvent(eventRow) {
     if (campaign) found = await findColdEmailLeadForCampaign(audit.email, campaign.internalCampaignId);
   }
   const now = new Date().toISOString();
+  const email = normalizeEmail(audit.email || found?.lead.email || providerRow?.normalizedEmail);
+  const suppression = suppressionFromProviderStatus(incomingStatus, email);
+  if (suppression) {
+    await addSuppression(suppression.email, suppression.reason, found?.lead.company || '', 'smartlead-webhook', await loadSuppressedEmails());
+  }
   if (providerRow && !canApplyProviderTransition({ currentStatus: providerRow.normalizedStatus, currentEventAt: providerRow.lastProviderEventAt, incomingStatus, incomingEventAt: audit.timestamp })) return 'processed';
   if (found) {
     const noteByStatus = { Replied: '[SMARTLEAD: Reply received]', Bounced: '[BOUNCED: Smartlead]', Unsubscribed: '[REPLY: Unsubscribed]', Interested: '[REPLY: Interested]', 'Not interested': '[REPLY: Not interested]', 'Meeting requested': '[REPLY: Meeting requested]', Question: '[REPLY: Question — review required]', 'Out of office': '[REPLY: Out of office]' };
@@ -5741,7 +5977,6 @@ async function processStoredSmartleadEvent(eventRow) {
     const emailStatus = incomingStatus === 'Sent' ? 'emailed' : ['Replied','Interested','Meeting requested','Question','Not interested','Out of office'].includes(incomingStatus) ? 'replied' : ['Unsubscribed','Bounced'].includes(incomingStatus) ? 'done' : found.lead.emailStatus;
     await applyLeadChange(found.lead.id, { stage, emailStatus, notes: nextNotes },
       { row: found.row, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
-    if (incomingStatus === 'Unsubscribed') await addSuppression(audit.email, 'unsubscribe', found.lead.company, 'smartlead-webhook', await loadSuppressedEmails());
     if (incomingStatus === 'Sent') {
       let providerMetadata = {};
       try { providerMetadata = JSON.parse(providerRow?.metadata || '{}'); } catch (_) {}
@@ -5756,7 +5991,6 @@ async function processStoredSmartleadEvent(eventRow) {
       });
     }
   }
-  const email = normalizeEmail(audit.email || found?.lead.email || providerRow?.normalizedEmail);
   const mappingKey = providerRow?.mappingKey || buildMappingKey({ externalCampaignId: eventRow.externalCampaignId, externalLeadId: eventRow.externalLeadId, email });
   if (mappingKey) {
     let priorMetadata = {};
@@ -5776,7 +6010,8 @@ async function handleSmartleadWebhook(req, res) {
   const requestId = req.get('X-Request-Id') || '';
   const secret = process.env.SMARTLEAD_WEBHOOK_SECRET || '';
   const authenticated = signature ? verifySignature(req.body, signature, secret) : verifySharedSecret(req.query.token, secret);
-  if (!authenticated) return res.status(401).json({ error: 'Invalid webhook authentication' });
+  const admission = admitSmartleadWebhook({ authenticated, integrationEnabled: smartleadClient.integrationEnabled });
+  if (!admission.ok) return res.status(admission.status).json({ error: admission.error });
   let event;
   try { event = JSON.parse(req.body.toString('utf8')); } catch (_) { return res.status(400).json({ error: 'Invalid JSON' }); }
   const eventKey = buildEventKey(req.body, requestId);
@@ -6030,4 +6265,13 @@ app.listen(PORT, () => {
   console.log(mirrorEnabled()
     ? '[supabase-mirror] enabled — canonical activity is shadow-mirrored after each Google Sheets write'
     : '[supabase-mirror] disabled — Google Sheets only (set SUPABASE_URL and SUPABASE_SECRET_KEY to enable)');
+  sendLockHealth().then(health => {
+    console.log(health.enabled === false
+      ? '[send-lock] disabled — dedicated outbound reservation database is not active'
+      : health.ok
+        ? '[send-lock] enabled — outbound provider sends require a durable reservation'
+        : `[send-lock] enabled but unavailable (${health.code || 'error'}) — provider sends will fail closed`);
+  }).catch(() => {
+    console.log('[send-lock] health probe failed — provider sends will fail closed if locking is enabled');
+  });
 });
