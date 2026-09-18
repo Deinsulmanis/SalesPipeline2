@@ -17,165 +17,82 @@
  */
 
 const { inspectActivityIntegrity } = require('./activity-timeline');
-const { buildReplyMetrics, buildReplyRecords, GENUINE_REPLY_CATEGORIES } = require('./reply-analytics');
-const { attributionFromActivity, parseMetadata, LEGACY_UNKNOWN, ACTIVE_CAMPAIGN_VERSION } = require('./campaign-versions');
+const { buildReplyMetrics } = require('./reply-analytics');
 const { STAFFING_CAMPAIGN } = require('./staffing-campaign');
+const { ACTIVE_CAMPAIGN_VERSION } = require('./campaign-versions');
+const {
+  REPORTING_TIMEZONE,
+  CONFIRMED_SEND_TYPES,
+  classifySendEvent,
+  vancouverDay,
+  eventKey,
+  providerMessageId,
+  providerName,
+  sourceLeadId,
+  groupCount,
+  classifyReplyEvent,
+  canonicalSendRows,
+  dashboardSendRows,
+  buildConfirmedSendActivity,
+  canonicalReplyMessages,
+  canonicalMeetingLeads,
+  uniqueCanonicalBounces,
+  canonicalDelivered,
+  bouncedLeadIds,
+  classifyCrmSendAgainstProvider,
+  buildCanonicalDigest,
+  compareSourceLag,
+  recentReportingDays,
+  countsForDay,
+  parseMetadata,
+  attributionFromActivity,
+  LEGACY_UNKNOWN,
+} = require('./canonical-sends');
 
-const REPORTING_TIMEZONE = 'America/Vancouver';
-
-const CONFIRMED_SEND_TYPES = Object.freeze([
-  'initial_email_sent', 'follow_up_sent', 'booking_link_sent', 'sequence_step_sent',
-]);
-const SEND_TYPE_SET = new Set(CONFIRMED_SEND_TYPES);
-const RESERVED_TYPES = new Set(['ordinary_send_reserved', 'sequence_send_reserved']);
-const FAILED_TYPES = new Set(['ordinary_send_failed', 'sequence_send_failed']);
-const REPLY_MESSAGE_TYPES = new Set([
-  'positive_reply', 'meeting_requested', 'late_reply', 'question_reply',
-  'negative_reply', 'unsubscribe_reply', 'wrong_person_reply',
-  'needs_human_reply', 'out_of_office_reply',
-]);
-
-function vancouverDay(value) {
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return '';
-  return date.toLocaleDateString('en-CA', { timeZone: REPORTING_TIMEZONE });
-}
-
-function eventKey(row) {
-  return String(row.eventId || `${row.leadId || row.sourceLeadId}:${row.eventType}:${row.occurredAt}`);
-}
-
-function providerMessageId(row) {
-  const meta = parseMetadata(row.metadata);
-  return String(meta.gmailMessageId || meta.providerMessageId || '').trim();
-}
-
-function providerName(row) {
-  const meta = parseMetadata(row.metadata);
-  const named = String(meta.provider || '').trim().toLowerCase();
-  if (named) return named;
-  const id = String(row.eventId || '');
-  if (id.startsWith('gmail:') || id.startsWith('gmail-')) return 'gmail';
-  if (id.startsWith('smartlead:') || named === 'smartlead') return 'smartlead';
-  return named || 'unknown';
-}
-
-function sourceLeadId(row) {
-  return String(row.sourceLeadId || '').trim() || String(row.leadId || '').replace(/^CE-/, '').trim();
-}
-
-/**
- * Classify one activity row for send counting.
- * reserved / failed / ignored never enter canonical or dashboard send totals.
- * confirmed = send type + provider message id.
- * unconfirmed = send type without provider message id (sent_unconfirmed).
- */
-function classifySendEvent(row = {}) {
-  const type = String(row.eventType || '');
-  if (RESERVED_TYPES.has(type)) return 'reserved';
-  if (FAILED_TYPES.has(type)) return 'failed';
-  if (!SEND_TYPE_SET.has(type)) return 'ignored';
-  return providerMessageId(row) ? 'confirmed' : 'unconfirmed';
-}
-
-function uniqueBy(rows, keyFn) {
-  const seen = new Set();
-  const out = [];
-  for (const row of rows) {
-    const key = keyFn(row);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    out.push(row);
-  }
-  return out;
-}
-
-function groupCount(rows, keyFn) {
-  const groups = {};
-  for (const row of rows) {
-    const key = keyFn(row) || '(blank)';
-    groups[key] = (groups[key] || 0) + 1;
-  }
-  return groups;
-}
-
-function classifyReplyEvent(row = {}) {
-  const type = String(row.eventType || '');
-  if (type === 'unsubscribe_reply') return 'unsubscribe';
-  if (type === 'negative_reply') return 'negative';
-  if (type === 'positive_reply' || type === 'meeting_requested') return 'positive';
-  if (type === 'out_of_office_reply') return 'out_of_office';
-  if (type === 'wrong_person_reply') return 'wrong_person';
-  if (type === 'needs_human_reply' || type === 'question_reply' || type === 'late_reply') return 'needs_human';
-  return 'other';
-}
-
-function canonicalSendRows(activities = []) {
-  const confirmed = [];
-  const unconfirmed = [];
-  const reserved = [];
-  const failed = [];
-  const seenEvents = new Set();
-  for (const row of activities) {
-    const key = eventKey(row);
-    if (seenEvents.has(key)) continue;
-    seenEvents.add(key);
-    const kind = classifySendEvent(row);
-    if (kind === 'confirmed') confirmed.push(row);
-    else if (kind === 'unconfirmed') unconfirmed.push(row);
-    else if (kind === 'reserved') reserved.push(row);
-    else if (kind === 'failed') failed.push(row);
-  }
-  const confirmedOnce = uniqueBy(confirmed, row => providerMessageId(row) || eventKey(row));
-  return { confirmed: confirmedOnce, unconfirmed, reserved, failed };
-}
-
-function dashboardSendRows(activities = []) {
-  const rows = [];
-  const seen = new Set();
-  for (const row of activities) {
-    if (!SEND_TYPE_SET.has(String(row.eventType || ''))) continue;
-    const key = eventKey(row);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const sentAt = new Date(row.occurredAt);
-    if (!Number.isFinite(sentAt.getTime())) continue;
-    rows.push(row);
-  }
-  return rows;
-}
-
-function canonicalReplyMessages(activities = []) {
-  const rows = [];
-  const seenEvents = new Set();
-  for (const row of activities) {
-    if (!REPLY_MESSAGE_TYPES.has(String(row.eventType || ''))) continue;
-    const key = eventKey(row);
-    if (seenEvents.has(key)) continue;
-    seenEvents.add(key);
-    rows.push(row);
-  }
-  return uniqueBy(rows, row => providerMessageId(row) || eventKey(row));
-}
-
-function canonicalMeetingLeads(activities = []) {
-  const booked = new Set();
-  const rescheduled = new Set();
-  const cancelled = new Set();
-  const noShow = new Set();
-  const completed = new Set();
-  for (const row of activities) {
-    const id = sourceLeadId(row);
-    if (!id) continue;
-    const type = String(row.eventType || '');
-    if (type === 'call_booked') booked.add(id);
-    else if (type === 'meeting_rescheduled') rescheduled.add(id);
-    else if (type === 'meeting_cancelled') cancelled.add(id);
-    else if (type === 'meeting_no_show') noShow.add(id);
-    else if (type === 'meeting_completed') completed.add(id);
-  }
-  return { booked, rescheduled, cancelled, noShow, completed };
-}
+const FUNNEL_METRIC_DEFINITIONS = Object.freeze({
+  sent: {
+    numerator: 'unique leads with a qualifying send in the selected campaign cohort',
+    denominator: null,
+    include: 'initial_email_sent, follow_up_sent, booking_link_sent, sequence_step_sent attributed to the selected campaign version; lifetime also includes historical send-state leads with no activity',
+    exclude: 'ordinary_send_reserved, sequence_send_reserved, ordinary_send_failed, sequence_send_failed, other campaign versions',
+  },
+  replied: {
+    numerator: 'unique sent-cohort leads with a genuine inbound reply event (positive, negative, needs_human, unclassified)',
+    denominator: 'sent',
+    include: 'canonical inbound reply activity on a lead already in the sent cohort, including Gmail observer replies without replyTouch',
+    exclude: 'automated_reply, out_of_office, contact_change_review, unknown/evidence-free, explicit other-version replyTouch',
+  },
+  positive: {
+    numerator: 'unique sent-cohort leads whose canonical reply category is positive or meeting_requested',
+    denominator: 'sent (sentToPositive) or replied (replyToPositive)',
+    include: 'positive_reply, meeting_requested, INTERESTED/MEETING_REQUEST classification',
+    exclude: 'needs_human, negative, unsubscribe, automated, unknown',
+  },
+  qualified: {
+    numerator: 'unique sent-cohort leads promoted to Hot (pipeline_promoted toStage=hot, or acquisition-matched hot+)',
+    denominator: 'positive (positiveToHot)',
+    include: 'pipeline_promoted to hot with matching acquisitionCampaignVersion; lifetime may use board stage hot/call_booked/closed_won',
+    exclude: 'lost-from-any-stage without a Hot event; other-campaign acquisition',
+  },
+  meeting: {
+    numerator: 'unique sent-cohort leads with a call_booked event (or lifetime board meetingAt on a booked+ stage)',
+    denominator: 'hot (hotToCallBooked)',
+    include: 'call_booked once per lead',
+    exclude: 'meeting_rescheduled, meeting_cancelled, duplicate calendar sync of the same lead, staffing vs dental mismatch',
+  },
+  show: {
+    numerator: 'unique sent-cohort leads with meeting_completed',
+    denominator: 'callBooked (callBookedToHeld) or callHeld+noShow (showRate)',
+    include: 'meeting_completed',
+    exclude: 'meeting_no_show is the complementary show-rate term, not a show; cancellation is not a show',
+  },
+  won: {
+    numerator: 'unique sent-cohort leads whose board stage is closed_won with matching acquisition',
+    denominator: 'callHeld (callHeldToWon) or sent (sentToWon)',
+    include: 'board closed_won on a lead that entered the sent cohort',
+    exclude: 'closed_won board rows that never mapped to a qualifying outreach send (outsideFunnel)',
+  },
+});
 
 function attributionBreakdown(rows) {
   return {
@@ -206,7 +123,7 @@ function latestEvidenceTime(activities = []) {
   let latest = '';
   for (const row of activities) {
     const type = String(row.eventType || '');
-    if (!SEND_TYPE_SET.has(type) && !REPLY_MESSAGE_TYPES.has(type) && type !== 'sender_evidence_reconciled') continue;
+    if (!CONFIRMED_SEND_TYPES.includes(type) && !['positive_reply', 'meeting_requested', 'late_reply', 'question_reply', 'negative_reply', 'unsubscribe_reply', 'wrong_person_reply', 'needs_human_reply', 'out_of_office_reply', 'sender_evidence_reconciled'].includes(type)) continue;
     const at = String(row.occurredAt || '');
     if (at > latest) latest = at;
   }
@@ -245,6 +162,27 @@ function bounceMismatch({ leads = [], activities = [] }) {
   return { eventWithoutTagCount: eventWithoutTag.length, tagWithoutEventCount: tagWithoutEvent.length };
 }
 
+function chartReconcile(sendActivity, confirmed) {
+  if (!Array.isArray(sendActivity) || !sendActivity.length) {
+    return { chart14DayTotal: 0, chartDelta: 0, chartCompared: false };
+  }
+  const dates = new Set(sendActivity.map(row => row.date).filter(Boolean));
+  const canonicalInWindow = confirmed.filter(row => dates.has(vancouverDay(row.occurredAt))).length;
+  const chart14DayTotal = sendActivity.reduce((sum, row) => sum + (Number(row.count) || 0), 0);
+  return { chart14DayTotal, chartDelta: chart14DayTotal - canonicalInWindow, chartCompared: true };
+}
+
+function integrityStatus({ sends, replies, meetings, duplicates, attribution, sourceLag }) {
+  const abs = value => Math.abs(Number(value) || 0);
+  if (!attribution.isolated) return 'critical';
+  if (abs(sends.delta) > 0 || (sends.chartCompared && abs(sends.chartDelta) > 0) || abs(meetings.delta) > 0) return 'critical';
+  if ((duplicates.sendProviderIds || 0) > 0) return 'critical';
+  if (abs(replies.delta) > 0) return 'warning';
+  if ((sends.unconfirmed || 0) > 0) return 'warning';
+  if (sourceLag && sourceLag.status && !['same', 'unavailable'].includes(sourceLag.status)) return 'warning';
+  return 'healthy';
+}
+
 /**
  * Build the integrity report. Pure: input snapshot in, JSON out.
  */
@@ -264,6 +202,7 @@ function buildAnalyticsIntegrity(input = {}) {
   const sends = canonicalSendRows(activities);
   const dashboardSendEvents = dashboardSendRows(activities);
   const dashboardSendTotal = dashboardSendEvents.length;
+  const chart = chartReconcile(sendActivity, sends.confirmed);
 
   const providerClaimants = new Map();
   for (const row of dashboardSendEvents.concat(canonicalReplyMessages(activities))) {
@@ -295,7 +234,6 @@ function buildAnalyticsIntegrity(input = {}) {
 
   const staffingSent = new Set(staffingFunnel ? (staffingFunnel.stageLeadIds?.sent || []) : []);
   const dentalSent = new Set(dentalFunnel ? (dentalFunnel.stageLeadIds?.sent || []) : []);
-  // Funnel responses strip stageLeadIds. Fall back to attribution on confirmed sends.
   let staffingInDental = 0;
   let dentalInStaffing = 0;
   if (staffingSent.size || dentalSent.size) {
@@ -315,14 +253,36 @@ function buildAnalyticsIntegrity(input = {}) {
 
   const bounce = bounceMismatch({ leads, activities });
   const exceeding = conversionsExceeding100(funnelLifetime?.conversions || {});
+  const bounces = uniqueCanonicalBounces({ leads, activities, suppressedEmails: input.suppressedEmails || [] });
 
   const canonicalSends = sends.confirmed.length;
   const canonicalReplyLeadCount = replyLeads.size;
   const canonicalMeetings = meetings.booked.size;
 
-  return {
+  const now = input.now || Date.now();
+  const reportingDays = recentReportingDays(now);
+  const days = reportingDays.map(item => ({
+    ...item,
+    ...countsForDay(activities, item.day),
+    dashboardSends: (sendActivity.find(row => row.date === item.day)?.count) ?? countsForDay(activities, item.day).canonicalSends,
+  }));
+  for (const day of days) day.sendDelta = day.dashboardSends - day.canonicalSends;
+
+  let sourceLag = { status: 'unavailable', note: 'crm_events sample not supplied' };
+  if (Array.isArray(input.crmEvents)) {
+    const sinceDay = reportingDays.map(item => item.day).sort()[0] || '';
+    sourceLag = compareSourceLag(activities, input.crmEvents, { sinceDay });
+  }
+
+  const digestPreview = buildCanonicalDigest({
+    day: vancouverDay(now),
+    activities,
+    leads,
+  });
+
+  const report = {
     timezone: REPORTING_TIMEZONE,
-    generatedAt: new Date(input.now || Date.now()).toISOString(),
+    generatedAt: new Date(now).toISOString(),
     latestReconciliationTime: latestEvidenceTime(activities),
     leadSource: input.leadSource || 'unknown',
     activitySource: 'google_sheets_cold_call_activity',
@@ -335,7 +295,9 @@ function buildAnalyticsIntegrity(input = {}) {
       unconfirmed: sends.unconfirmed.length,
       reserved: sends.reserved.length,
       failed: sends.failed.length,
-      chart14DayTotal: sendActivity.reduce((sum, row) => sum + (Number(row.count) || 0), 0),
+      chart14DayTotal: chart.chart14DayTotal,
+      chartDelta: chart.chartDelta,
+      chartCompared: chart.chartCompared,
       ...attributionBreakdown(sends.confirmed),
     },
     replies: {
@@ -377,6 +339,12 @@ function buildAnalyticsIntegrity(input = {}) {
       gmailSmartleadDoubleAttribute: doubleAttributed.length,
       note: 'Funnel and stats read ColdCallActivity from Google Sheets even when outreach leads come from Supabase. Events are not unioned, so the same send is not double-counted across stores.',
     },
+    sourceLag,
+    bounce: {
+      unique: bounces.length,
+      delivered: canonicalDelivered({ leads, activities, suppressedEmails: input.suppressedEmails || [] }),
+      confirmedSends: canonicalSends,
+    },
     attribution: {
       staffingInDental,
       dentalInStaffing,
@@ -385,11 +353,18 @@ function buildAnalyticsIntegrity(input = {}) {
     funnel: {
       conversionsExceeding100: exceeding,
       repliesPartition: funnelLifetime ? funnelLifetime.reconciliation?.repliesPartition : null,
+      definitions: FUNNEL_METRIC_DEFINITIONS,
     },
+    days,
     digest: {
-      note: 'Daily digest emailsSent is lead-based lastEmailedAt; the send chart is message-based confirmed+unconfirmed send activity. Integrity does not regenerate the digest (that write is out of scope).',
+      note: 'Daily digest emailsSent and replies.total are canonical confirmed send events and inbound reply events on the Vancouver day. Integrity does not regenerate DailyDigest (that write is out of scope).',
+      preview: digestPreview,
     },
   };
+  report.status = integrityStatus(report);
+  report.duplicates = report.duplicates;
+  report.unattributed = report.unattributed;
+  return report;
 }
 
 function delta(canonical, dashboard) {
@@ -399,12 +374,24 @@ function delta(canonical, dashboard) {
 module.exports = {
   REPORTING_TIMEZONE,
   CONFIRMED_SEND_TYPES,
+  FUNNEL_METRIC_DEFINITIONS,
   classifySendEvent,
   vancouverDay,
+  eventKey,
+  providerMessageId,
   canonicalSendRows,
   dashboardSendRows,
+  buildConfirmedSendActivity,
   canonicalReplyMessages,
   canonicalMeetingLeads,
+  uniqueCanonicalBounces,
+  canonicalDelivered,
+  bouncedLeadIds,
+  classifyCrmSendAgainstProvider,
+  buildCanonicalDigest,
+  compareSourceLag,
+  recentReportingDays,
+  integrityStatus,
   buildAnalyticsIntegrity,
   conversionsExceeding100,
   delta,
