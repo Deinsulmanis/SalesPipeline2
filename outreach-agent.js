@@ -105,6 +105,7 @@ const {
 const { findOriginalSentThread, resolveColdFollowUpThread } = require('./integrations/gmail-threading');
 const gmailMailboxObserver = require('./integrations/gmail-mailbox-observer');
 const { planMailboxEvents, commitObservation } = require('./integrations/mailbox-observation-events');
+const { observeStaffingConversationShadows, evaluateStaffingConversationShadow } = require('./integrations/staffing-agent-shadow');
 const { offerForLead, warmResponse } = require('./integrations/offer-config');
 const { ACTION: REPLY_RESPONSE_ACTION, decideReplyResponse } = require('./integrations/reply-response-policy');
 const { deliverProspectReply } = require('./integrations/prospect-reply-delivery');
@@ -2421,6 +2422,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
   let attributionActivities = null;
   const failedSenderIds = new Set();
   const repliesByLead = new Map();
+  const staffingShadowProduction = new Map();
   const bouncesByLead = new Map();
   const pendingHistory = new Map();
   const observedStateBySender = new Map();
@@ -2547,6 +2549,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       continue;
     }
     const classification = await classifyReply(lead.company, replyText);
+    if (message.messageId) staffingShadowProduction.set(message.messageId, { classification });
     const canonicalReply = classifyReplyText(replyText, {
       subject: message.subject || '', currentEmail: lead.email, now: message.occurredAt || null,
     });
@@ -2609,6 +2612,19 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
   console.log(`[ReplyCheck] ${found} repl${found === 1 ? 'y' : 'ies'} found / ${candidates.length} checked`);
   if (breakdown) console.log(`  → ${breakdown}`);
   console.log();
+  if (!DRY_RUN) {
+    try {
+      await observeStaffingConversationShadows({
+        leads: candidates,
+        activities: activitiesForCycle,
+        checkOnly: CHECK_ONLY,
+        persistEvent: event => withAuth(() => recordMailboxActivity(event)),
+        productionByMessageId: staffingShadowProduction,
+      });
+    } catch (error) {
+      console.warn(`[staffing-shadow] failed closed: ${error.message}`);
+    }
+  }
   // The caller advances checkpoints only AFTER bounce writes and durable
   // suppression have also succeeded. Returning the pending cursors here keeps
   // a crash between reply and bounce processing replayable and idempotent.
@@ -2839,6 +2855,16 @@ async function runLateReplyCheckPass(leads, activitiesForCycle = null) {
         recordActivity: activity => withAuth(() => recordColdCallActivityStrict(activity)),
       });
       if (result.status !== 'recorded') continue;
+      try {
+        await evaluateStaffingConversationShadow({
+          lead, message, replyText: message.body || message.snippet || '',
+          activities,
+          productionClassification: result.classification,
+          persistEvent: event => withAuth(() => recordMailboxActivity(event)),
+        });
+      } catch (error) {
+        console.warn(`[staffing-shadow] late-reply failed closed: ${error.message}`);
+      }
       if (result.classification === 'INTERESTED' || result.classification === 'MEETING_REQUEST') {
         const coldCallLeadId = await withAuth(() => upsertColdCallLeadFromEvent(
           lead, 'hot', 'Auto-promoted from a canonical late positive reply.',

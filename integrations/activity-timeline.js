@@ -17,6 +17,7 @@ const SOURCE_BY_TYPE = Object.freeze({
   automation_held: 'CRM', automation_hold_released: 'CRM',
   reactivation_scheduled: 'CRM', reactivation_cancelled: 'CRM',
   initial_email_sent: 'Automation', follow_up_sent: 'Automation', booking_link_sent: 'Automation',
+  staffing_agent_shadow: 'Observation',
   email_opened: 'Prospect', demo_played: 'Demo', demo_pair_played: 'Demo',
   demo_pair_retracted: 'Demo',
   positive_reply: 'Prospect', meeting_requested: 'Prospect', late_reply: 'Prospect',
@@ -125,6 +126,10 @@ function eventPresentation(row, metadata, context = {}) {
     case 'demo_pair_retracted': return { title: 'Demo pair retracted',
       summary: metadata.reason ? String(metadata.reason) : 'Attributed to another lead' };
     case 'booking_link_sent': return { title: 'Booking-link follow-up sent' };
+    case 'staffing_agent_shadow': return {
+      title: 'Staffing agent shadow recommendation',
+      summary: metadata.recommendedAction ? `Recommended: ${metadata.recommendedAction}` : '',
+    };
     case 'pipeline_promoted': return { title: row.subject || 'Added to Sales Pipeline', summary: metadata.trigger ? `Reason: ${String(metadata.trigger).replace(/_/g, ' ')}` : '' };
     case 'stage_changed': {
       const from = prettyStage(metadata.fromStage);
