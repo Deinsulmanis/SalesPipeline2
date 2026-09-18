@@ -8,6 +8,8 @@ const path = require('path');
 const {
   classifySendEvent, vancouverDay, canonicalSendRows, dashboardSendRows,
   canonicalReplyMessages, canonicalMeetingLeads, buildAnalyticsIntegrity,
+  buildConfirmedSendActivity, buildCanonicalDigest, uniqueCanonicalBounces,
+  canonicalDelivered, classifyCrmSendAgainstProvider,
 } = require('../integrations/analytics-integrity');
 const { buildReplyMetrics, buildReplyRecords } = require('../integrations/reply-analytics');
 const { buildFunnelAnalytics } = require('../integrations/funnel-analytics');
@@ -59,7 +61,7 @@ test('1. confirmed provider send counts once', () => {
   assert.equal(confirmed.length, 1);
 });
 
-test('2. failed send counts zero', () => {
+test('3. failed send counts zero', () => {
   const activities = [
     ev({ sourceLeadId: 'a', eventType: 'ordinary_send_failed', occurredAt: '2026-09-16T18:00:00.000Z' }),
     ev({ sourceLeadId: 'a', eventType: 'sequence_send_failed', occurredAt: '2026-09-16T18:01:00.000Z' }),
@@ -70,7 +72,7 @@ test('2. failed send counts zero', () => {
   assert.equal(classifySendEvent(activities[0]), 'failed');
 });
 
-test('3. sent_unconfirmed does not double-count and is not canonical', () => {
+test('2. unconfirmed send counts zero', () => {
   const unconfirmed = ev({
     sourceLeadId: 'a', eventType: 'initial_email_sent', occurredAt: '2026-09-16T18:00:00.000Z',
     metadata: { campaignVersion: DENTAL, campaignFamily: 'dental_ai_receptionist' },
@@ -79,11 +81,12 @@ test('3. sent_unconfirmed does not double-count and is not canonical', () => {
   const rows = canonicalSendRows([unconfirmed, confirmed]);
   assert.equal(rows.unconfirmed.length, 1);
   assert.equal(rows.confirmed.length, 1);
-  assert.equal(dashboardSendRows([unconfirmed, confirmed]).length, 2);
+  assert.equal(dashboardSendRows([unconfirmed, confirmed]).length, 1);
   const report = buildAnalyticsIntegrity({ activities: [unconfirmed, confirmed], leads: [{ id: 'a', email: 'a@test.ca' }] });
   assert.equal(report.sends.canonical, 1);
-  assert.equal(report.sends.dashboard, 2);
-  assert.equal(report.sends.delta, 1);
+  assert.equal(report.sends.dashboard, 1);
+  assert.equal(report.sends.delta, 0);
+  assert.equal(report.sends.unconfirmed, 1);
 });
 
 test('4. reconciled send with the same Gmail id counts once', () => {
@@ -320,6 +323,7 @@ test('16. dashboard totals equal canonical fixture totals when every send is con
   assert.equal(report.meetings.dashboard, 1);
   assert.equal(report.meetings.delta, 0);
   assert.equal(report.timezone, 'America/Vancouver');
+  assert.equal(report.status, 'healthy');
 });
 
 test('Gmail-only inbound (no tag, emailStatus emailed) now appears on reply cards', () => {
@@ -333,12 +337,17 @@ test('Gmail-only inbound (no tag, emailStatus emailed) now appears on reply card
   assert.equal(metrics.inboundMessages, 1);
 });
 
-test('reserved send types never enter dashboard send rows', () => {
+test('4. reservation counts zero', () => {
   const rows = dashboardSendRows([
     ev({ sourceLeadId: 'a', eventType: 'ordinary_send_reserved', occurredAt: '2026-09-16T18:00:00.000Z' }),
     ev({ sourceLeadId: 'a', eventType: 'sequence_send_reserved', occurredAt: '2026-09-16T18:01:00.000Z' }),
   ]);
   assert.equal(rows.length, 0);
+  const { confirmed, reserved } = canonicalSendRows([
+    ev({ sourceLeadId: 'a', eventType: 'ordinary_send_reserved', occurredAt: '2026-09-16T18:00:00.000Z' }),
+  ]);
+  assert.equal(confirmed.length, 0);
+  assert.equal(reserved.length, 1);
 });
 
 test('the integrity endpoint is authenticated, read-only, and uses the shared snapshot', () => {
@@ -361,3 +370,153 @@ test('Last 7/30 funnel windows send Vancouver calendar dates, not UTC rolling ho
   assert.match(body, /params\.set\('to'/);
   assert.doesNotMatch(body, /86400000\)\.toISOString\(\)/);
 });
+
+test('5. reconciled confirmed send counts once against Gmail evidence', () => {
+  const first = confirmedSend('a', '2026-09-16T18:00:00.000Z', { gmailMessageId: 'same-msg' });
+  assert.equal(classifyCrmSendAgainstProvider(first, new Set(['same-msg'])), 'CONFIRMED_SEND');
+  assert.equal(classifyCrmSendAgainstProvider(first, new Set()), 'RECONCILIATION_REQUIRED');
+});
+
+test('6. send chart equals canonical sends', () => {
+  const activities = [
+    confirmedSend('a', '2026-09-16T18:00:00.000Z'),
+    confirmedSend('b', '2026-09-16T19:00:00.000Z', { gmailMessageId: 'gm-b' }),
+    ev({ sourceLeadId: 'c', eventType: 'initial_email_sent', occurredAt: '2026-09-16T20:00:00.000Z' }),
+    ev({ sourceLeadId: 'd', eventType: 'ordinary_send_reserved', occurredAt: '2026-09-16T20:01:00.000Z' }),
+    ev({ sourceLeadId: 'e', eventType: 'ordinary_send_failed', occurredAt: '2026-09-16T20:02:00.000Z' }),
+  ];
+  const chart = buildConfirmedSendActivity(activities);
+  const canonical = canonicalSendRows(activities).confirmed.length;
+  assert.equal(chart.reduce((sum, row) => sum + row.count, 0), canonical);
+  assert.equal(canonical, 2);
+  const report = buildAnalyticsIntegrity({ activities, sendActivity: chart, leads: [{ id: 'a' }, { id: 'b' }] });
+  assert.equal(report.sends.chart14DayTotal, report.sends.canonical);
+  assert.equal(report.sends.chartDelta, 0);
+});
+
+test('7. digest sends uses confirmed event count, not lastEmailedAt', () => {
+  const digest = buildCanonicalDigest({
+    day: '2026-09-16',
+    leads: [
+      { id: 'a', lastEmailedAt: '2026-09-16T18:00:00.000Z', notes: '' },
+      { id: 'b', lastEmailedAt: '2026-09-16T18:00:00.000Z', notes: '' },
+    ],
+    activities: [
+      confirmedSend('a', '2026-09-16T18:00:00.000Z'),
+      confirmedSend('a', '2026-09-16T22:00:00.000Z', { gmailMessageId: 'second' }),
+      ev({ sourceLeadId: 'b', eventType: 'initial_email_sent', occurredAt: '2026-09-16T18:00:00.000Z' }),
+    ],
+  });
+  assert.equal(digest.emailsSent, 2);
+  assert.equal(digest.sendClasses.unconfirmed, 1);
+  const server = readSource(path.join(root, 'server.js'));
+  const start = server.indexOf('async function computeDigest');
+  const body = server.slice(start, server.indexOf('async function getOrCreateDigest'));
+  assert.match(body, /buildCanonicalDigest/);
+  assert.doesNotMatch(body, /emailsSent = leadRows\.filter/);
+});
+
+test('8. digest replies uses arrival events, not lastEmailedAt plus [REPLY:] tags', () => {
+  const digest = buildCanonicalDigest({
+    day: '2026-09-17',
+    leads: [{
+      id: 'a', lastEmailedAt: '2026-09-16T18:00:00.000Z',
+      notes: '[REPLY: Interested]',
+    }],
+    activities: [
+      ev({
+        sourceLeadId: 'a', eventType: 'positive_reply', occurredAt: '2026-09-17T18:00:00.000Z',
+        eventId: 'gmail-reply:r1', metadata: { canonicalState: 'positive', gmailMessageId: 'r1' },
+      }),
+    ],
+  });
+  assert.equal(digest.replies.total, 1);
+  assert.equal(digest.replies.positive, 1);
+  const taggedSameSendDay = buildCanonicalDigest({
+    day: '2026-09-16',
+    leads: [{ id: 'a', lastEmailedAt: '2026-09-16T18:00:00.000Z', notes: '[REPLY: Interested]' }],
+    activities: [],
+  });
+  assert.equal(taggedSameSendDay.replies.total, 0);
+});
+
+test('12. canonical bounce reduces delivered once', () => {
+  const leads = [
+    { id: 'a', email: 'a@test.ca', emailStatus: 'emailed', notes: '' },
+    { id: 'b', email: 'b@test.ca', emailStatus: 'emailed', notes: '' },
+  ];
+  const activities = [
+    confirmedSend('a', '2026-09-16T18:00:00.000Z'),
+    confirmedSend('b', '2026-09-16T18:01:00.000Z', { gmailMessageId: 'gm-b' }),
+    ev({
+      sourceLeadId: 'b', eventType: 'email_bounced', occurredAt: '2026-09-16T18:10:00.000Z',
+      metadata: { gmailMessageId: 'gm-b' },
+    }),
+  ];
+  assert.equal(canonicalDelivered({ leads, activities }), 1);
+  const activitiesByLeadId = new Map([
+    ['a', [activities[0]]],
+    ['b', [activities[1], activities[2]]],
+  ]);
+  const metrics = buildReplyMetrics(leads, { activitiesByLeadId });
+  assert.equal(metrics.delivered, 1);
+  assert.equal(metrics.canonicalBounces, 1);
+});
+
+test('13. duplicate bounce representation does not double-count', () => {
+  const leads = [{ id: 'a', email: 'a@test.ca', emailStatus: 'done', notes: '[BOUNCED - 550]' }];
+  const activities = [
+    confirmedSend('a', '2026-09-16T18:00:00.000Z'),
+    ev({
+      sourceLeadId: 'a', eventType: 'email_bounced', occurredAt: '2026-09-16T18:10:00.000Z',
+      metadata: { gmailMessageId: 'gm-a-2026-09-16T18:00:00.000Z' },
+    }),
+    ev({
+      sourceLeadId: 'a', eventType: 'email_bounced', occurredAt: '2026-09-16T18:11:00.000Z',
+      eventId: 'bounce-note', metadata: { gmailMessageId: 'gm-a-2026-09-16T18:00:00.000Z' },
+    }),
+  ];
+  const bounces = uniqueCanonicalBounces({ leads, activities, suppressedEmails: ['a@test.ca'] });
+  assert.equal(bounces.length, 1);
+  assert.equal(canonicalDelivered({ leads, activities, suppressedEmails: ['a@test.ca'] }), 0);
+});
+
+test('17. integrity endpoint correctly reports a delta', () => {
+  const activities = [confirmedSend('a', '2026-09-16T18:00:00.000Z')];
+  const report = buildAnalyticsIntegrity({
+    activities,
+    leads: [{ id: 'a', email: 'a@test.ca' }],
+    sendActivity: [{ date: '2026-09-16', count: 4 }],
+  });
+  assert.equal(report.sends.canonical, 1);
+  assert.equal(report.sends.chart14DayTotal, 4);
+  assert.equal(report.sends.chartDelta, 3);
+  assert.equal(report.status, 'critical');
+  const server = readSource(path.join(root, 'server.js'));
+  assert.match(server, /app.get\('\/api\/ops\/analytics-integrity'/);
+});
+
+test('18. healthy fixture returns delta zero and status healthy', () => {
+  const leads = [{ id: 'a', email: 'a@test.ca', emailStatus: 'emailed', notes: '' }];
+  const activities = [confirmedSend('a', '2026-09-16T18:00:00.000Z')];
+  const sendActivity = buildConfirmedSendActivity(activities);
+  const report = buildAnalyticsIntegrity({
+    leads, activities, sendActivity, now: '2026-09-16T20:00:00.000Z',
+    crmEvents: activities,
+  });
+  assert.equal(report.sends.delta, 0);
+  assert.equal(report.sends.chartDelta, 0);
+  assert.equal(report.replies.delta, 0);
+  assert.equal(report.meetings.delta, 0);
+  assert.equal(report.status, 'healthy');
+  assert.ok(['same', 'unavailable'].includes(report.sourceLag.status) || report.sourceLag.status === 'same');
+});
+
+test('digest regeneration stays write-gated and is not invoked by integrity', () => {
+  const server = readSource(path.join(root, 'server.js'));
+  assert.match(server, /async function getOrCreateDigest/);
+  const start = server.indexOf("app.get('/api/ops/analytics-integrity'");
+  const body = server.slice(start, server.indexOf('function operationalMailbox'));
+  assert.doesNotMatch(body, /getOrCreateDigest/);
+});
+
