@@ -514,6 +514,7 @@ app.use(requireAuth);
 // Isolated research previews only: no Sheets writes, enrollment or outbound provider.
 require('./integrations/staffing-preview-route').registerStaffingPreviewRoutes(app, requireAuth);
 require('./integrations/anthropic-usage-route').registerAnthropicUsageRoutes(app, requireAuth);
+require('./integrations/research-icp/routes').registerResearchRoutes(app, requireAuth);
 app.use(express.static(path.join(__dirname, 'public')));
 
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;

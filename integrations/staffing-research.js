@@ -112,4 +112,4 @@ async function researchStaffingCompany(lead, { fetch = fetchPage, maxPages = 6 }
   }
   return { pages: pages.map(({ links, ...page }) => page), failures, reviewRequired: false, retrieval };
 }
-module.exports = { clean, domain, safeUrl, publicIp, rankLink, researchStaffingCompany };
+module.exports = { clean, domain, safeUrl, publicIp, rankLink, researchStaffingCompany, fetchPage };
