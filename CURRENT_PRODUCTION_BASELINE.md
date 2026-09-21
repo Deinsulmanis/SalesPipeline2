@@ -1,7 +1,7 @@
 # Current production baseline
 
 **Last reconciled:** 2026-09-21
-**Start all new work from:** `dev/current-production-baseline`
+**Start all new work from:** `main` or `dev/current-production-baseline` (kept identical)
 
 Read this file before starting any code change. If production has moved since the date above, re-verify it before trusting anything below. Check the Railway deployment's commit and branch, then re-run the checks listed at the end.
 
@@ -10,10 +10,10 @@ Read this file before starting any code change. If production has moved since th
 | Item | Value |
 |---|---|
 | Railway project / service | `modest-peace` / `SalesPipeline2` (https://receptionist.scalelabai.ca) |
-| Deploy branch | `cursor/staffing-agent-shadow-production-7402` |
-| Deployed commit | `442ba7004e65b01744ecef59bebcd031d979fbff` ("fix: constrain research ICP V1 JSON output and retain response audits") |
-| Canonical development branch | `dev/current-production-baseline`: production `442ba70` plus documentation-only commits |
-| `main` | Stale: 33 commits behind production, no unique work. Do not branch from it until it is fast-forwarded. |
+| Current Railway production source | `cursor/staffing-agent-shadow-production-7402` at `442ba7004e65b01744ecef59bebcd031d979fbff` ("fix: constrain research ICP V1 JSON output and retain response audits") |
+| Canonical development baseline | `main` and `dev/current-production-baseline`, kept identical. Aligned at `d44d0ca` (production `442ba70` plus documentation) and then this documentation correction. They contain no code beyond production. |
+
+The canonical development baseline and the Railway production source are different branches. Merging into `main` does not deploy anything. Production changes only when a revision is deployed from its Railway source branch.
 
 ## What is live, shadow or off (verified from production logs, 2026-09-21)
 
@@ -62,7 +62,7 @@ Do not re-run these.
 | Branch | Status |
 |---|---|
 | `codex/research-icp-v1` | Stale. Its one commit is already in production as `883f6a0`. |
-| `main`, `origin/main`, `integrate/throughput-and-fairshare` | Stale. Behind production, with nothing unique. |
+| `integrate/throughput-and-fairshare` | Stale. Behind production, with nothing unique. |
 | `origin/cursor/staffing-conversation-agent-shadow-9196` | Stale. Same agent code as production `7bf9933`, built on an older base. |
 | `origin/cursor/analytics-integrity-audit-f212` | Stale. Reworked into production as `8dc2444` / `4d964a7`. |
 | `feat/fair-share-scheduled-allocator`, `fix/intent-backstop-cron-collision` | Stale. Their patches are already in production. |
