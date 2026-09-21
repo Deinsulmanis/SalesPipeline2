@@ -28,6 +28,9 @@ const { displayStageFor } = require('./cold-call-pipeline');
 const { ANALYTICS_CATEGORY, categoriesFromNotes, classificationFromLead } = require('./reply-analytics');
 const { deriveOperationalAction, REPLY_ACTION, DUE_SOURCE } = require('./reply-operations');
 const { activeOverrides, OVERRIDE_KIND } = require('./reply-overrides');
+// ONE definition of "we answered the prospect" (human, automated warm reply,
+// recorded conversation, or meeting). Never re-list those events here.
+const { latestResponseAt } = require('./prospect-response');
 // The sender's OWN ownership verdict. Reactivation asks the same question the
 // agent asks before it mails anyone, rather than keeping a second opinion.
 const { OWNER, BLOCKED_BY } = require('./automation-ownership');
@@ -583,7 +586,6 @@ const REPLY_EVENTS = Object.freeze([
   'positive_reply', 'meeting_requested', 'late_reply', 'question_reply',
   'negative_reply', 'unsubscribe_reply', 'wrong_person_reply', 'needs_human_reply',
 ]);
-const HUMAN_TOUCH_EVENTS = Object.freeze(['human_response_sent', 'conversation_note', 'call_booked']);
 
 function latestEventAt(activities, types) {
   let latest = '';
@@ -611,7 +613,7 @@ function replyEvidence(twin, activities) {
     category: classificationFromLead(twin || {}, []),
     occurredAt: replyAt,
     late,
-    answeredAt: latestEventAt(activities, HUMAN_TOUCH_EVENTS),
+    answeredAt: latestResponseAt(activities),
   };
 }
 
@@ -660,12 +662,6 @@ const HOT_STALENESS = Object.freeze({
 // them appear here and none of them reset the timer.
 const MEANINGFUL_INBOUND_EVENTS = Object.freeze(
   REPLY_EVENTS.filter(type => type !== 'unsubscribe_reply'));
-const MEANINGFUL_HUMAN_EVENTS = Object.freeze([
-  'human_response_sent',   // we answered them — recorded, never sent from here
-  'conversation_note',     // a human wrote up the conversation
-  'call_booked',
-  'meeting_rescheduled',
-]);
 
 // A bare YYYY-MM-DD (what the follow-up field holds) is ALREADY a calendar day.
 // Running it through businessDay() would parse it as UTC midnight and then shift
@@ -699,7 +695,9 @@ function addBusinessDays(iso, days) {
  */
 function lastMeaningfulInteraction(activities = []) {
   const inboundAt = latestEventAt(activities, MEANINGFUL_INBOUND_EVENTS);
-  const humanAt = latestEventAt(activities, MEANINGFUL_HUMAN_EVENTS);
+  // Our side of the conversation: prospect-facing replies (human or automated),
+  // a recorded conversation, or a meeting. Cold steps and nudges never count.
+  const humanAt = latestResponseAt(activities);
   const candidates = [inboundAt, humanAt].filter(Boolean).sort();
   return {
     inboundAt,
@@ -1232,7 +1230,7 @@ function deriveNextAction(boardLead, twin, context = {}) {
   const ownership = twin?.email ? deriveAutomationOwnership(twin, { boardLead: lead, activities, callState, sequenceState,
     now, sequencesEnabled: context.sequencesEnabled === true || sequenceState.featureEnabled,
     suppressionReason: item => sendSuppressionReason(item, { suppressedEmails: context.suppressedEmails || new Set() }),
-    humanTouchAt: latestEventAt(activities, HUMAN_TOUCH_EVENTS) }) : null;
+    humanTouchAt: latestResponseAt(activities) }) : null;
   // A live booked call is human work the hold does not block. Every lead
   // entering Call Booked is held on purpose, so letting a stale sequence's hold
   // outrank the call hid the Reschedule / Complete / No Show controls for exactly
@@ -1297,7 +1295,7 @@ function deriveNextAction(boardLead, twin, context = {}) {
     manualOverride: overrides.classification,
     manualActionOverride: overrides.action,
     manualFollowUpDate: manualDate,
-    humanTouchAt: latestEventAt(activities, HUMAN_TOUCH_EVENTS),
+    humanTouchAt: latestResponseAt(activities),
   });
   if (operational.action !== REPLY_ACTION.INVESTIGATE || reply) {
     if (reply && reply.late && operational.source !== 'already_answered') {
@@ -1596,7 +1594,7 @@ module.exports = {
   AUTOMATION_STATES, SUPPRESSION_NOTE_TAGS, MANUAL_HOLD_TAG,
   SEND_SUPPRESSION_TAGS, sendSuppressionReason, HUMAN_OWNED_STAGES,
   REACTIVATION_MODES, resumeAtFromNotes, manualHoldReleased,
-  HOT_FOLLOW_UP, WAITING_ON, HOT_STALENESS, MEANINGFUL_INBOUND_EVENTS, MEANINGFUL_HUMAN_EVENTS,
+  HOT_FOLLOW_UP, WAITING_ON, HOT_STALENESS, MEANINGFUL_INBOUND_EVENTS,
   CALL_STATUS, CALL_EVENTS, CALL_BOOKING_EVENTS, CALL_RESOLUTION_EVENTS,
   deriveCallLifecycle, callLifecycleActions,
   addBusinessDays, calendarDayOf, lastMeaningfulInteraction, deriveHotState,

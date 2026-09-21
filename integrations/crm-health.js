@@ -56,6 +56,7 @@ const SEVERITY = Object.freeze({
 });
 const { observerHealth } = require('./gmail-observer-health');
 const { provenSequenceSenderId } = require('./stage-sequences');
+const { latestResponseAt } = require('./prospect-response');
 
 function observerChecks(context, index) {
   if (!context.mailboxObservationState) return [];
@@ -1134,8 +1135,10 @@ function ownershipChecks({ leads, boardLeads, suppressionReason = null, sendingE
     const lastInbound = activities.filter(row => /_reply$/.test(String(row.eventType || '')))
       .map(row => Date.parse(row.occurredAt || '')).filter(Number.isFinite).sort().pop();
     if (!lastInbound) return false;
-    const lastOutbound = activities.filter(row => String(row.eventType || '') === 'human_response_sent')
-      .map(row => Date.parse(row.occurredAt || '')).filter(Number.isFinite).sort().pop();
+    // "Answered" is the one shared definition: a human or automated reply, a
+    // recorded conversation or a meeting. The observer check above stays on
+    // human_response_sent alone, because it measures Gmail observation itself.
+    const lastOutbound = Date.parse(latestResponseAt(activities) || '') || null;
     // Answered more than 14 days ago and still nothing recorded back.
     return (!lastOutbound || lastOutbound < lastInbound)
       && (new Date(now).getTime() - lastInbound) > 14 * 86400000;

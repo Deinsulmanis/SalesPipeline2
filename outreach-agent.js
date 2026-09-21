@@ -66,6 +66,7 @@ const { classifyReplyText, isUsableReplyIdentity, REPLY_STATE,
 // keeping a second opinion about who may act on a lead.
 const { NON_COLD_STAGES, deriveAutomationOwnership, mayColdSend } = require('./integrations/automation-ownership');
 const { planHumanOutboundIngestion, matchOutbound, latestHumanOutboundAt } = require('./integrations/human-outbound');
+const { latestResponseAt } = require('./integrations/prospect-response');
 // Stage 1 Supabase mirror. Optional and non-blocking: the agent's authoritative
 // write is the Google Sheets append above it, and this cannot affect it.
 const { mirrorEventsInBackground } = require('./integrations/supabase-mirror');
@@ -4245,8 +4246,10 @@ function coldSendGate(lead, context = null) {
     : null;
   const ownership = deriveAutomationOwnership(lead, {
     boardLead, activities, callState,
-    // The manual reply observed moments ago in this same cycle.
-    humanTouchAt: latestHumanOutboundAt(activities),
+    // When we last answered the prospect: a manual reply observed moments ago
+    // in this cycle, an automated warm reply, a recorded conversation or a
+    // meeting. The same definition the CRM displays.
+    humanTouchAt: latestResponseAt(activities),
     suppressionReason,
     sendingEnabled: SENDING_ENABLED,
     sequencesEnabled: STAGE_SEQUENCES_ENABLED,

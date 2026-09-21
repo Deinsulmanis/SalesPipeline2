@@ -192,7 +192,7 @@ const { commitCallBooked } = require('./integrations/call-booking');
 // Reactivation asks the sender's own ownership question rather than keeping a
 // second opinion about who may contact a lead.
 const { deriveAutomationOwnership, ownershipSummary } = require('./integrations/automation-ownership');
-const { latestHumanOutboundAt } = require('./integrations/human-outbound');
+const { latestResponseAt, isResponseEvidence } = require('./integrations/prospect-response');
 // Mirrors the agent's flag. Read at request time so a Railway variable change
 // takes effect without a code deploy.
 const SENDING_ENABLED = () => process.env.SENDING_ENABLED === 'true';
@@ -2064,12 +2064,11 @@ app.get('/api/crm/health', requireAuth, async (req, res) => {
     const repliesToday = activityToday.filter(row => LEGACY_REPLY_EVENT_TYPES.includes(String(row.eventType || '')));
     const positiveToday = repliesToday.filter(row => metadataOf(row).canonicalState === REPLY_STATE.POSITIVE
       || ['positive_reply','meeting_requested'].includes(String(row.eventType || '')));
-    const responseTypes = new Set(['booking_link_sent','human_response_sent','call_booked','meeting_rescheduled']);
     const newlyStrandedPositive = positiveToday.filter(reply => !(dataset.activities || []).some(row => {
       const sameLead = String(row.sourceLeadId || '') === String(reply.sourceLeadId || '')
         || String(row.leadId || '') === String(reply.leadId || '')
         || (row.email && normalizeEmail(row.email) === normalizeEmail(reply.email));
-      return sameLead && responseTypes.has(String(row.eventType || ''))
+      return sameLead && isResponseEvidence(row)
         && Date.parse(row.occurredAt || '') >= Date.parse(reply.occurredAt || '');
     }));
     const oldestOverdue = health.findings.find(item => item.id === 'reply.overdue_human_action');
@@ -2707,7 +2706,7 @@ async function buildReactivationOwnership(leadId, boardLead, suppressedEmails) {
     ok: true, activities, callState,
     ownershipFor: twin => deriveAutomationOwnership({ ...twin, notes: releaseHoldFromNotes(twin.notes || '') }, {
       boardLead, activities, callState,
-      humanTouchAt: latestHumanOutboundAt(activities),
+      humanTouchAt: latestResponseAt(activities),
       suppressionReason: suppressionReader,
       sendingEnabled: SENDING_ENABLED(),
       sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true',
@@ -2937,7 +2936,7 @@ app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
             });
             const verdict = deriveAutomationOwnership(twin || {}, {
               boardLead: lead, activities, callState, sequenceState,
-              humanTouchAt: latestHumanOutboundAt(activities),
+              humanTouchAt: latestResponseAt(activities),
               sendingEnabled: SENDING_ENABLED(),
               sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true',
             });
