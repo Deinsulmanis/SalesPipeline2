@@ -6,12 +6,14 @@
 
 This is the practical operating manual for SalesPipeline2. Keep it open while working replies, opportunities, meetings, and campaign reporting.
 
-> **Current production status**
+> **Current production status** (verified from Railway production logs 2026-09-21, commit `442ba70`)
 >
-> - Regular cold outreach sending is enabled.
-> - Stage/recovery sequences are disabled.
-> - Google Calendar booking sync is disabled but configured.
+> - Regular cold outreach sending is enabled, including the staffing campaign.
+> - Stage/recovery sequences are **enabled** (the pass runs each send window; individual journeys still need eligibility and, for most, explicit enrollment).
+> - Google Calendar booking sync is **enabled** and runs every 5 minutes.
 > - Do not enable a disabled automation merely because it appears available.
+>
+> For the authoritative, dated list of live, shadow and disabled systems, see `CURRENT_PRODUCTION_BASELINE.md`. Where this guide and that file disagree, that file wins.
 
 ## Table of contents
 
@@ -82,7 +84,7 @@ This separation is why an answered positive reply stays historically Positive bu
 - Read the prospect's message and the lead timeline before responding.
 - Follow the displayed Next Action and owner; do not send just because a cadence date is due.
 - Use Gmail normally for personal replies. Avoid sending a second follow-up while the CRM already shows Waiting on prospect.
-- When a call is booked, rescheduled, cancelled, completed, or missed, record the lifecycle change in the supported CRM controls while Calendar sync is off.
+- When a call is booked, rescheduled, cancelled, completed, or missed, record completed, no-show and outcome changes in the supported CRM controls; Calendar sync records bookings, reschedules and cancellations automatically.
 - Record the sales outcome after a completed call.
 
 ### End of day — about 5 minutes
@@ -159,7 +161,7 @@ This separation is why an answered positive reply stays historically Positive bu
 
 **Use it for:** viewing stage-sequence status, current step, and next scheduled action.
 
-**Current state:** **disabled**. No stage-specific recovery sequence can send. Regular cold outreach is controlled separately.
+**Current state:** **enabled** as of 2026-09-21. An enrolled, eligible journey can send when every stop condition and gate passes. Regular cold outreach is controlled separately.
 
 **Common actions:** review visible sequence state. Enrollment/pause/resume/cancel controls appear in the lead drawer only where supported and require confirmation.
 
@@ -236,7 +238,7 @@ Major operator-facing actions include:
 | Sales call / confirm meeting | A meeting owns the next move |
 | Record call outcome | A past meeting needs an explicit outcome |
 | Hot follow-up / Hot review | A live opportunity is due, overdue, stale, or unclear |
-| Sequence step / sequence review | A stage journey is scheduled or needs review; production sequences are currently disabled |
+| Sequence step / sequence review | A stage journey is scheduled or needs review; production sequences are enabled as of 2026-09-21 |
 | Automated first send / follow-up | Ordinary cold automation owns a valid due action |
 | No next action / Won / Lost | Nothing executable is currently appropriate |
 
@@ -379,7 +381,7 @@ Never copy a supplied address into the canonical identity merely because it appe
 
 ## 10. Sequences
 
-> **Production stage sequences are currently disabled.** Existing state may be visible, but no stage/recovery sequence can send while the flag is off. Regular cold outreach has a separate control and may continue.
+> **Production stage sequences are currently enabled** (verified 2026-09-21). An eligible, enrolled journey can send when every stop condition and gate passes. Regular cold outreach has a separate control. The checklist below still applies before enrolling leads or turning on new journeys.
 
 The system contains five bounded recovery journeys:
 
@@ -411,9 +413,9 @@ No sequence removes MANUAL HOLD or rewrites ordinary cold cadence history.
 
 ### Current Calendar status
 
-Google Calendar sync is **disabled but configured**. The CRM does not currently read/write booking events automatically through the sync.
+Google Calendar sync is **enabled** (verified 2026-09-21). Every 5 minutes it reads the booking calendar and records bookings, reschedules and cancellations as CRM meeting events. It defers while the outreach agent is running.
 
-While it remains disabled, use the supported lead/call controls to keep meeting state current. Do not create fake bookings for testing.
+Completed, no-show and sales outcomes are still recorded by hand through the supported lead/call controls. If the sync is ever turned off, use those same controls to keep meeting state current. Do not create fake bookings for testing.
 
 ### Meeting ownership
 
@@ -581,7 +583,7 @@ The protections stack. Passing one check does not make a lead sendable.
 | Campaign says `legacy_unknown` | No trustworthy historical version evidence | Timeline attribution and campaign activation boundary | Leave it honest unless provider-backed evidence exists |
 | Supplied contact email is not used | It is evidence, not approved identity | Contact review action and identity conflicts | Review/approve safely; approval itself sends nothing |
 | Meeting is not appearing | Calendar sync is off, missing manual lifecycle record, invalid/missing time, or identity mismatch | Bookings, Pipeline drawer, Settings Calendar status | Record/repair the supported meeting state manually; do not fake a booking |
-| Sequences say disabled | Production sequence flag is off by design | Settings and Sequences | Leave off unless the full enablement checklist is deliberately completed |
+| Sequences say disabled | The production sequence flag has been turned off (it was on as of 2026-09-21) | Settings and Sequences | Leave off unless the full enablement checklist is deliberately completed |
 | CRM Health shows Warning | Operational or data-quality issue without current critical risk | Exact finding and affected leads | Resolve proportionately; do not shut down all sending automatically |
 | CRM Health shows Critical | Possible unsafe execution or serious integrity failure | Finding, affected leads, ownership, suppression, identity, provider evidence | Do not expand automation; determine send impact and resolve the root issue |
 
@@ -687,9 +689,9 @@ Important activities include provider-backed inbound reply events, `human_respon
 
 ### Major feature flags
 
-- `SENDING_ENABLED` — regular provider execution master switch; currently true
-- `STAGE_SEQUENCES_ENABLED` — stage/recovery journey execution; currently false
-- `GOOGLE_CALENDAR_BOOKING_SYNC_ENABLED` — Calendar booking sync; currently false
+- `SENDING_ENABLED` — regular provider execution master switch; true as of 2026-09-21
+- `STAGE_SEQUENCES_ENABLED` — stage/recovery journey execution; true as of 2026-09-21
+- `GOOGLE_CALENDAR_BOOKING_SYNC_ENABLED` — Calendar booking sync; true as of 2026-09-21
 - provider-specific integration/live-mutation flags — displayed only as safe status in Settings
 
 No secret values belong in this guide.
