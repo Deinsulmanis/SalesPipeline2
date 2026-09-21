@@ -25,6 +25,7 @@ const {
   REPLY_STATE, NEEDS_HUMAN_REASON, AUTOMATED_SUBTYPE, EVIDENCE_SOURCE,
   GENUINE_HUMAN_STATES, resolveReplyState, classifyReplyText,
 } = require('./canonical-reply');
+const { latestResponseAt } = require('./prospect-response');
 
 /**
  * Operational actions. These EXTEND the existing ACTION_TYPE vocabulary in
@@ -314,7 +315,7 @@ module.exports = {
 function deriveOperationalAction(lead = {}, {
   activities = [], boardLead = null,
   manualOverride = null, manualActionOverride = null, manualFollowUpDate = '',
-  humanTouchAt = null,
+  humanTouchAt,
 } = {}) {
   // A human decision about what to DO outranks everything derived — but it is
   // stored separately from the reply classification, so acting on a lead later
@@ -370,17 +371,21 @@ function deriveOperationalAction(lead = {}, {
     }
   }
 
-  // Unless we already answered it. Checked here rather than earlier
-  // because it only makes sense against a reply we actually found.
+  // Unless we already answered it: a human reply, an automated warm reply, a
+  // recorded conversation or a meeting, per the one shared definition. Callers
+  // may pass the instant; otherwise it is read from the same activities.
+  // Checked here rather than earlier because it only makes sense against a
+  // reply we actually found.
+  const answeredAt = humanTouchAt === undefined ? latestResponseAt(activities) : humanTouchAt;
   const repliedAt = derived.evidence.occurredAt;
-  if (repliedAt && answeredAfter(repliedAt, humanTouchAt)
+  if (repliedAt && answeredAfter(repliedAt, answeredAt)
     && derived.owner === ACTION_OWNER.HUMAN
     && derived.action !== REPLY_ACTION.CONTACT_CHANGE_REVIEW) {
     return { ...operation({
       action: REPLY_ACTION.WAIT,
       reason: 'we replied after their last message; the ball is with the prospect',
       owner: ACTION_OWNER.PROSPECT, waitingOn: WAITING_ON.PROSPECT, priority: PRIORITY.LOW,
-      evidence: { ...derived.evidence, answeredAt: humanTouchAt },
+      evidence: { ...derived.evidence, answeredAt },
     }), source: 'already_answered' };
   }
 

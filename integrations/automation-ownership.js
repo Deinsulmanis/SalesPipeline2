@@ -33,6 +33,7 @@ const { classify: classifyLeadEmail } = require('../check-leads');
 const { REPLY_ACTION, ACTION_OWNER: OP_OWNER, WAITING_ON, deriveOperationalAction } = require('./reply-operations');
 const { malformedEmailReason } = require('./canonical-reply');
 const { leadHasReply } = require('./reply-analytics');
+const { latestResponseAt } = require('./prospect-response');
 
 /**
  * Who owns the next executable move. Deliberately small, and mapped onto the
@@ -230,12 +231,16 @@ function pipelineStageOwnership({ stage, sequenceState, callState, sequencesEnab
 function deriveAutomationOwnership(lead = {}, {
   boardLead = null, activities = [], callState = null, sequenceState = null,
   suppressionReason = null, manualActionOverride = null, manualOverride = null,
-  humanTouchAt = null, unrecordedHumanTouch = false,
+  humanTouchAt, unrecordedHumanTouch = false,
   sendingEnabled = false, sequencesEnabled = false,
   now = new Date(), coldCadenceDue = false, replyResponseDecision = null,
 } = {}) {
   const stage = norm(lead.stage);
   const boardStage = norm(boardLead && boardLead.stage);
+  // When did we last answer the prospect? Callers may pass it; otherwise it is
+  // read from the same activities, through the one shared definition, so every
+  // caller (sender, Pipeline, CRM Health, queue checks) gets the same answer.
+  const answeredAt = humanTouchAt === undefined ? latestResponseAt(activities) : humanTouchAt;
 
   // ── 1. Identity ──────────────────────────────────────────────────────────
   const identityIssue = malformedEmailReason(lead.email)
@@ -289,14 +294,14 @@ function deriveAutomationOwnership(lead = {}, {
       reason: 'a manual outbound message exists with no canonical CRM record; automation is held until the timeline is complete',
       blockedBy: BLOCKED_BY.UNRECORDED_HUMAN_TOUCH,
       resumeCondition: 'record the manual touch in the canonical timeline',
-      evidence: { humanTouchAt: isoOrNull(humanTouchAt) },
+      evidence: { humanTouchAt: isoOrNull(answeredAt) },
     });
   }
 
   // The Phase 2.2 operational truth, consumed rather than re-derived.
   const operation = deriveOperationalAction(lead, {
     activities, boardLead, callState, now,
-    manualOverride, manualActionOverride, humanTouchAt,
+    manualOverride, manualActionOverride, humanTouchAt: answeredAt,
     manualFollowUpDate: boardLead ? boardLead.followup : '',
     suppressionReason,
   });
