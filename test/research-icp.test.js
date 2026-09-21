@@ -5,7 +5,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createAgent } = require('../integrations/research-icp/agent');
 const { config, VERSION } = require('../integrations/research-icp/config');
-const { CLASSIFICATIONS, validate, outputSchema, emptyResearch, validateResearch, validateFit } = require('../integrations/research-icp/schema');
+const { CLASSIFICATIONS, validate, researchSchema, fitSchema, outputSchema, parseMessage, emptyResearch, validateResearch, validateFit } = require('../integrations/research-icp/schema');
+const { providerFormat } = require('../integrations/research-icp/provider-output');
 const { normalizeInput, compareHistorical } = require('../integrations/research-icp/input');
 const { collectSources } = require('../integrations/research-icp/sources');
 const { resolveCampaign, STAFFING_ID } = require('../integrations/research-icp/campaigns');
@@ -323,4 +324,160 @@ test('manual endpoint refuses overlapping executions and releases its lock', asy
   assert.equal((await request('/api/agents/research/test', input())).status, 409);
   finish({ status: 'succeeded' });
   assert.equal((await first).status, 200);
+});
+
+// Synthetic serialization fixtures: the raw text for production run
+// 6285d2ca-05a9-49bb-b24b-b449e2d79c43 was not retained and cannot be replayed.
+for (const [name, wrap] of [
+  ['plain JSON', text => ` \n${text}\n `],
+  ['JSON fence', text => `\n\x60\x60\x60json\n${text}\n\x60\x60\x60\n`],
+  ['bare fence with CRLF', text => `\x60\x60\x60\r\n${text}\r\n\x60\x60\x60`],
+]) test(`serialization accepts one object: ${name}`, () => {
+  const response = message(facts());
+  response.content[0].text = wrap(response.content[0].text);
+  const original = structuredClone(response);
+  assert.deepEqual(parseMessage(response, researchSchema), facts());
+  assert.deepEqual(response, original, 'parsing must not destroy raw text');
+});
+
+for (const [name, text] of [
+  ['leading prose', `Here is the result:\n${JSON.stringify(facts())}`],
+  ['trailing prose', `${JSON.stringify(facts())}\nDone.`],
+  ['two objects', `${JSON.stringify(facts())}\n${JSON.stringify(facts())}`],
+  ['two fences', `\x60\x60\x60json\n{}\n\x60\x60\x60\n\x60\x60\x60json\n{}\n\x60\x60\x60`],
+  ['unknown fence language', `\x60\x60\x60javascript\n${JSON.stringify(facts())}\n\x60\x60\x60`],
+  ['malformed escape', String.raw`{"summary":"bad\q escape"}`],
+  ['unclosed JSON despite end_turn', '{"companyName":"Example"'],
+  ['trailing comma', '{"companyName":"Example",}'],
+  ['refusal-like prose with end_turn', 'I cannot provide that JSON.'],
+]) test(`serialization rejects ${name}; raw response survives safe failure`, async () => {
+  const response = { ...message(facts()), id: 'msg_fixture', _request_id: 'req_fixture',
+    content: [{ type: 'text', text }], usage: { input_tokens: 1468, output_tokens: 1932 } };
+  const logs = [];
+  let count = 0;
+  const h = harness({ createMessage: async () => { count++; return response; },
+    logger: { info: (...args) => logs.push(args), error: (...args) => logs.push(args) } });
+  const result = await h.agent.run(input());
+  assert.equal(result.errorCode, 'MALFORMED_MODEL_JSON');
+  assert.equal(result.status, 'failed');
+  assert.equal(result.result.campaignFit.classification, 'INSUFFICIENT_EVIDENCE');
+  assert.equal(result.result.campaignFit.confidence, 0);
+  assert.equal(count, 1, 'no repair model call or fit call after malformed research');
+  assert.deepEqual(h.rows[0].provider_responses, [{ phase: 'research', response, validation: 'json_parse' }]);
+  assert.equal(result.provider_responses, undefined);
+  assert.doesNotMatch(JSON.stringify([result, logs]), /req_fixture|msg_fixture/);
+});
+
+for (const [name, response, stage] of [
+  ['provider refusal', { ...message(facts()), stop_reason: 'refusal' }, 'response_envelope'],
+  ['provider truncation', { ...message(facts()), stop_reason: 'max_tokens' }, 'response_envelope'],
+  ['missing text', { ...message(facts()), content: [{ type: 'text' }] }, 'response_envelope'],
+  ['array instead of object', message([facts()]), 'schema_validation'],
+  ['null instead of object', message(null), 'schema_validation'],
+  ['missing required facts', message({}), 'schema_validation'],
+  ['excess fields', message({ ...facts(), surprise: true }), 'schema_validation'],
+]) test(`serialization audits ${name} separately from JSON syntax failure`, async () => {
+  const h = harness({ createMessage: async () => response });
+  const result = await h.agent.run(input());
+  assert.equal(result.errorCode, 'INVALID_MODEL_OUTPUT');
+  assert.equal(result.result.campaignFit.classification, 'INSUFFICIENT_EVIDENCE');
+  assert.deepEqual(h.rows[0].provider_responses[0], { phase: 'research', response, validation: stage });
+});
+
+test('provider schema retains exact enums/required fields and leaves server limits untouched', () => {
+  for (const schema of [researchSchema, fitSchema]) {
+    const original = structuredClone(schema);
+    const format = providerFormat(schema);
+    assert.equal(format.type, 'json_schema');
+    function compare(local, wire) {
+      for (const key of ['enum', 'type', 'required', 'additionalProperties']) assert.deepEqual(wire[key], local[key]);
+      for (const key of ['maxLength', 'maxItems', 'minimum', 'maximum']) {
+        assert.equal(wire[key], undefined);
+        if (Object.hasOwn(local, key)) assert.ok(wire.description.includes(`${key}: ${local[key]}`));
+      }
+      if (local.properties) {
+        assert.deepEqual(Object.keys(wire.properties), Object.keys(local.properties));
+        for (const key of Object.keys(local.properties)) compare(local.properties[key], wire.properties[key]);
+      }
+      if (local.items) compare(local.items, wire.items);
+    }
+    compare(schema, format.schema);
+    assert.deepEqual(schema, original);
+  }
+});
+
+test('local validation still rejects lowercased classification and all provider-unsupported limits', () => {
+  for (const patch of [{ classification: 'high' }, { confidence: 1.1 }, { confidence: '0.9' },
+    { reasons: ['x'.repeat(4001)] }, { reasons: Array(41).fill('reason') }, { evidenceIndexes: [-1] }]) {
+    assert.throws(() => parseMessage(message({ ...fit(), ...patch }), fitSchema), error => error.stage === 'schema_validation');
+  }
+});
+
+test('installed SDK serializes structured output for BOTH phases and preserves provider request IDs', async () => {
+  const Anthropic = require('@anthropic-ai/sdk');
+  const wire = [];
+  const client = new Anthropic({ apiKey: 'fixture-key', maxRetries: 0, fetch: async (_url, options) => {
+    wire.push(JSON.parse(options.body));
+    return new Response(JSON.stringify({ ...message(wire.length === 1 ? facts() : fit()), id: `msg_${wire.length}`, type: 'message', role: 'assistant' }),
+      { status: 200, headers: { 'content-type': 'application/json', 'request-id': `req_${wire.length}` } });
+  } });
+  const h = harness({ createMessage: payload => client.messages.create(payload) });
+  const result = await h.agent.run(input());
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.result.version, 'research_icp_v1');
+  assert.equal(wire.length, 2);
+  assert.deepEqual(wire.map(p => p.output_config.format), [providerFormat(researchSchema), providerFormat(fitSchema)]);
+  assert.ok(wire.every(p => p.model === 'claude-haiku-4-5' && p.max_tokens === 6500));
+  assert.deepEqual(h.rows[0].provider_responses.map(r => [r.phase, r.response._request_id, r.validation]),
+    [['research', 'req_1', 'schema_validated'], ['campaign_fit', 'req_2', 'schema_validated']]);
+  assert.doesNotMatch(JSON.stringify(result), /req_1|msg_1/);
+});
+
+test('fit serialization failure preserves both raw phases and never coerces an invalid classification', async () => {
+  const replies = [message(facts()), message(fit('high'))];
+  let count = 0;
+  const h = harness({ createMessage: async () => replies[count++] });
+  const result = await h.agent.run(input());
+  assert.equal(count, 2);
+  assert.equal(result.errorCode, 'INVALID_MODEL_OUTPUT');
+  assert.equal(result.result.campaignFit.classification, 'INSUFFICIENT_EVIDENCE');
+  assert.deepEqual(h.rows[0].provider_responses.map(r => r.response), replies);
+  assert.equal(h.rows[0].provider_responses[1].validation, 'schema_validation');
+});
+
+test('missing audit-column migration stops execution before retrieval or model spending', async () => {
+  const store = createStore({ env: { SUPABASE_URL: 'https://database.example', SUPABASE_SECRET_KEY: 'secret' },
+    fetchImpl: async (_url, options) => {
+      assert.equal(options.method, 'POST');
+      assert.deepEqual(JSON.parse(options.body).provider_responses, []);
+      return { ok: false }; // PostgREST missing-column error.
+    } });
+  const h = harness({ store, research: async () => assert.fail('must reserve audit row first') });
+  await assert.rejects(h.agent.run(input()), /RESEARCH_STORAGE_UNAVAILABLE/);
+  assert.equal(h.calls.length, 0);
+});
+
+test('fence recovery completes both phases without altering the original audit text', async () => {
+  const replies = [message(facts()), message(fit())];
+  for (const reply of replies) reply.content[0].text = `\x60\x60\x60json\n${reply.content[0].text}\n\x60\x60\x60`;
+  let count = 0;
+  const h = harness({ createMessage: async () => replies[count++] });
+  const result = await h.agent.run(input());
+  assert.equal(result.status, 'succeeded');
+  assert.equal(count, 2);
+  assert.deepEqual(h.rows[0].provider_responses.map(r => r.response), replies);
+});
+
+test('provider rejection never falls back to unconstrained output or an extra model call', async () => {
+  let count = 0;
+  const h = harness({ createMessage: async payload => {
+    count++;
+    assert.equal(payload.output_config.format.type, 'json_schema');
+    throw new Error('unsupported model/schema: secret provider detail');
+  } });
+  const result = await h.agent.run(input());
+  assert.equal(count, 1);
+  assert.equal(result.errorCode, 'MODEL_PROVIDER_FAILURE');
+  assert.deepEqual(h.rows[0].provider_responses, []);
+  assert.doesNotMatch(JSON.stringify([result, h.rows]), /secret provider detail/);
 });

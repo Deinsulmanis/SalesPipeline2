@@ -1,5 +1,12 @@
 # Research/ICP Agent V1
 
+**September 21 serialization update:** V1 was subsequently deployed and its first
+production test failed JSON parsing. The implementation-only correction remains
+`research_icp_v1`; see [the investigation, fix and validation report](RESEARCH_ICP_V1_SERIALIZATION_FIX.md).
+That report supersedes the original implementation-time deployment/setup status
+below. The correction is local only and requires the new additive provider-response
+audit migration before deployment; do not repeat the original applied migration.
+
 Implemented as manual, shadow-only company research and campaign evaluation. It is
 disabled by default. No deployment, migration application, live model call, Apollo
 call, or production lead change was performed during implementation.

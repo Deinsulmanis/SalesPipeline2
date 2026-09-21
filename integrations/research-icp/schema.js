@@ -42,12 +42,21 @@ function validate(value, schema, path = '$') {
   return value;
 }
 function parseMessage(message, schema) {
+  const reject = (code, stage) => { throw Object.assign(new Error(code), { stage }); };
   if (message?.stop_reason !== 'end_turn' || !Array.isArray(message.content)
-    || message.content.some(c => c.type !== 'text')) throw new Error('INVALID_MODEL_RESPONSE');
+    || !message.content.length || message.content.some(c => c?.type !== 'text' || typeof c.text !== 'string')) {
+    reject('INVALID_MODEL_RESPONSE', 'response_envelope');
+  }
+  let text = message.content.map(c => c.text).join('\n').trim();
+  // Only an entire, known Markdown wrapper is recoverable. Never extract a JSON
+  // substring from prose, combine objects, repair syntax or invent field values.
+  const fence = /^```(?:json)?[\t ]*\r?\n([\s\S]*?)\r?\n```$/i.exec(text);
+  if (fence) text = fence[1];
   let parsed;
-  try { parsed = JSON.parse(message.content.map(c => c.text).join('\n')); }
-  catch { throw new Error('MALFORMED_MODEL_JSON'); }
-  return validate(parsed, schema);
+  try { parsed = JSON.parse(text); }
+  catch { reject('MALFORMED_MODEL_JSON', 'json_parse'); }
+  try { return validate(parsed, schema); }
+  catch (error) { error.stage = 'schema_validation'; throw error; }
 }
 function validateResearch(research, sources) {
   validate(research, researchSchema);

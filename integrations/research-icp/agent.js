@@ -8,6 +8,7 @@ const { createStore } = require('./store');
 const { readLead } = require('./read-lead');
 const { domain } = require('../staffing-research');
 const { RESEARCH_PROMPT, FIT_PROMPT } = require('./prompts');
+const { providerFormat } = require('./provider-output');
 const { researchSchema, fitSchema, outputSchema, parseMessage, validate, validateResearch, validateFit, emptyResearch } = require('./schema');
 
 function createAgent({ env = process.env, store = createStore({ env }), loadLead = id => readLead(id, { env }),
@@ -26,8 +27,9 @@ function createAgent({ env = process.env, store = createStore({ env }), loadLead
     await store.start({ run_id: runId, started_at: startedAt, lead_id: input.leadId,
       company: input.company.name, domain: input.company.domain, campaign_id: input.campaign.id,
       agent: cfg.agent, version: cfg.version, mode: cfg.mode, model: cfg.model, status: 'running',
-      input_snapshot: input, research_run_id: raw.researchRunId || null });
+      input_snapshot: input, research_run_id: raw.researchRunId || null, provider_responses: [] });
     let companyResearch = emptyResearch(), sources = [], warnings = [], usage = [], errorCode = null;
+    const providerResponses = [];
     let historical = historicalRequested;
     let campaignFit = { campaignId: input.campaign.id, classification: 'INSUFFICIENT_EVIDENCE', confidence: 0,
       reasons: [], disqualifiers: [], evidenceIndexes: [] };
@@ -62,11 +64,26 @@ function createAgent({ env = process.env, store = createStore({ env }), loadLead
       const call = async (phase, system, data, schema) => {
         let message;
         try { message = await send({ model: cfg.model, max_tokens: 6500, system,
+          output_config: { format: providerFormat(schema) },
           messages: [{ role: 'user', content: JSON.stringify(data) }] }); }
         catch { throw new Error('MODEL_PROVIDER_FAILURE'); }
-        usage.push({ phase, model: typeof message.model === 'string' ? message.model : cfg.model,
-          inputTokens: Number(message.usage?.input_tokens) || 0, outputTokens: Number(message.usage?.output_tokens) || 0 });
-        return parseMessage(message, schema);
+        // Snapshot before parsing/normalization; retain exact text and provider
+        // metadata in the protected audit row, never in ordinary logs/results.
+        const audit = { phase, response: structuredClone(message), validation: 'pending' };
+        // The SDK attaches this header as a non-enumerable property, so cloning
+        // the message alone loses it. Retain it explicitly for provider support.
+        if (typeof message?._request_id === 'string') audit.response._request_id = message._request_id;
+        providerResponses.push(audit);
+        usage.push({ phase, model: typeof message?.model === 'string' ? message.model : cfg.model,
+          inputTokens: Number(message?.usage?.input_tokens) || 0, outputTokens: Number(message?.usage?.output_tokens) || 0 });
+        try {
+          const parsed = parseMessage(message, schema);
+          audit.validation = 'schema_validated';
+          return parsed;
+        } catch (error) {
+          audit.validation = error.stage || 'invalid_response';
+          throw error;
+        }
       };
       if (raw.researchRunId) {
         const previous = await store.get(raw.researchRunId);
@@ -111,7 +128,8 @@ function createAgent({ env = process.env, store = createStore({ env }), loadLead
     const completed = { completed_at: new Date().toISOString(), lead_id: input.leadId,
       company: input.company.name, domain: input.company.domain, campaign_id: input.campaign.id,
       input_snapshot: input, sources, output, classification: campaignFit.classification, confidence: campaignFit.confidence,
-      comparison, status: errorCode ? 'failed' : 'succeeded', error_code: errorCode, latency_ms: Date.now() - started, usage };
+      comparison, status: errorCode ? 'failed' : 'succeeded', error_code: errorCode, latency_ms: Date.now() - started, usage,
+      provider_responses: providerResponses };
     try { await store.finish(runId, completed); }
     catch { logger.error?.('[research-icp]', { runId, code: 'RESEARCH_STORAGE_UNAVAILABLE' }); throw new Error('RESEARCH_STORAGE_UNAVAILABLE'); }
     logger.info?.('[research-icp]', { runId, status: completed.status, classification: campaignFit.classification });
