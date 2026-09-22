@@ -22,15 +22,25 @@ function observerIsFresh(observer = {}, { now = new Date(), maxAgeMinutes = DEFA
 
 function observerFollowUpVerdict({
   lead = {}, observer = null, now = new Date(),
-  maxAgeMinutes = DEFAULT_MAX_AGE_MINUTES,
+  maxAgeMinutes = DEFAULT_MAX_AGE_MINUTES, senderResolved = true,
 } = {}) {
   const kind = classifyOutboundTouch(lead);
-  const fresh = observerIsFresh(observer || {}, { now, maxAgeMinutes });
+  const fresh = senderResolved && observerIsFresh(observer || {}, { now, maxAgeMinutes });
   if (fresh) return { allowed: true, kind, code: 'observer_healthy', reason: 'mailbox observer is fresh' };
   if (kind === 'first_touch') {
     return {
       allowed: true, kind, code: 'first_touch_allowed_observer_stale',
       reason: 'first-touch safety does not depend on detecting a previous reply',
+    };
+  }
+  // An unknown owning mailbox is NOT a freshness problem, and saying it is sent
+  // operators to look at Gmail health that was fine all along. There is no
+  // mailbox to measure, so this fails closed for its own reason: the follow-up
+  // cannot be proven to continue the right conversation from the right inbox.
+  if (!senderResolved) {
+    return {
+      allowed: false, kind, code: 'owning_sender_unresolved', blockedFollowUp: kind === 'follow_up',
+      reason: 'automated follow-up blocked — the owning mailbox for this lead is unproven, so mailbox freshness cannot be evaluated',
     };
   }
   if (kind === 'follow_up') {

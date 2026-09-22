@@ -2497,6 +2497,36 @@ async function queueDraft(lead, answer) {
   console.log(`  ✎ Draft queued for review — ${lead.email} (${answer.reason})`);
 }
 
+// The emailStatus a step-1 lead carries once its cold copy failed validation
+// and a draft is waiting for a human. selectQueued() already refuses any
+// non-empty emailStatus, so this one value is the whole mechanism: no new
+// state machine, no new sheet, and the existing "clear emailStatus to
+// re-queue" rule is how remediation puts the lead back.
+const COLD_DRAFT_STATUS = 'draft';
+
+/**
+ * Take a validation-failed step-1 lead out of queued selection.
+ *
+ * NOT suppression and NOT a terminal state: the lead keeps its stage, its
+ * address and its place in the CRM, and nothing here can ever cause a send.
+ * It exists so one permanently invalid lead cannot re-consume an opener call,
+ * a draft row and a scheduled window's attention twice an hour forever.
+ */
+async function markColdStepDrafted(lead, reason) {
+  try {
+    const rowNum = await resolveRow(lead.id);
+    await applyLeadChange(lead.id, { emailStatus: COLD_DRAFT_STATUS },
+      { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
+    // Same-cycle visibility: later selectors in THIS pass must not pick it up.
+    lead.emailStatus = COLD_DRAFT_STATUS;
+    console.log(`  ⏸️  Parked for review — ${lead.email} (emailStatus="${COLD_DRAFT_STATUS}"; clear it to re-queue)`);
+  } catch (error) {
+    // A failed park is not a reason to send anything. The draft row already
+    // exists, so the worst case is the previous behaviour: it is reconsidered.
+    console.warn(`[Drafts] could not park ${lead.email} after validation failure (${error.message}) — ${reason}`);
+  }
+}
+
 // A genuine question. Answer it from the facts if we're confident; otherwise
 // draft it for Deins. Either way the lead is tagged so the dashboard shows it.
 async function handleQuestion(lead, message, replyText, todaySent, activities = [], outboundObservationOk = true, sender = senderForPersistedLead(lead), decision = null) {
@@ -4273,11 +4303,23 @@ function coldSendGate(lead, context = null) {
       reason: 'manual outbound observation failed this pass — mailbox may be stale, failing closed' } };
   }
   if (context?.observationBySender) {
-    const senderId = String(lead.senderInboxId || '').trim();
+    // ONE definition of "which mailbox owns this lead". The send path resolves
+    // it from delivered-message evidence (pinnedSenderId) and only then from
+    // the queue assignment; this gate used to read the lead column alone. A
+    // legacy row whose sender lives in its activities therefore had no mailbox
+    // to look up, scored 'unavailable', and was refused as though Gmail were
+    // stale while the observer was healthy the whole time. A sender conflict
+    // resolves to nothing and fails closed, exactly as the send path does.
+    let senderId = '';
+    try {
+      senderId = pinnedSenderId(lead, context.activitiesByLead?.get(String(lead.id || '')) || [])
+        || String(lead.senderInboxId || '').trim();
+    } catch (_) { senderId = ''; }
     const ready = Boolean(senderId && context.observationBySender.get(senderId) === true);
     const stored = context.observersBySender?.get(senderId) || {};
     const followUp = observerFollowUpVerdict({
       lead,
+      senderResolved: Boolean(senderId),
       observer: {
         health: ready ? 'healthy' : (stored.health || 'unavailable'),
         checkpointAgeMinutes: ready ? (stored.checkpointAgeMinutes ?? 0) : (stored.checkpointAgeMinutes ?? null),
@@ -4285,7 +4327,7 @@ function coldSendGate(lead, context = null) {
       maxAgeMinutes: GMAIL_OBSERVER_FOLLOWUP_MAX_AGE_MINUTES,
     });
     if (!followUp.allowed) {
-      if (followUp.blockedFollowUp) recordFollowUpBlocked(senderId, lead.id, followUp.code);
+      if (followUp.blockedFollowUp) recordFollowUpBlocked(senderId || 'unresolved', lead.id, followUp.code);
       return { ownership: null, verdict: { allowed: false, reason: followUp.reason } };
     }
   }
@@ -5399,6 +5441,14 @@ async function run() {
           mode: 'draft', body, confidence: 0,
           reason: `cold email failed validation: ${invalid}`,
         }));
+        // Park the lead OUT of queued selection once its draft exists. The copy
+        // is deterministically invalid for this data, so re-deciding it every
+        // 30 minutes only re-spends an opener call and appends a duplicate
+        // draft row, while the window's remaining capacity goes to nobody. The
+        // lead is not deleted and not suppressed: stage stays "Queued", the
+        // ReplyDrafts row holds the exact failure, and clearing emailStatus —
+        // the documented re-queue path — puts it straight back in the pool.
+        await withAuth(() => markColdStepDrafted(lead, invalid));
       }
       continue;
     }
