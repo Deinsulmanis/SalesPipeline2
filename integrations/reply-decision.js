@@ -453,7 +453,7 @@ function parseMetadata(value) {
 const leadKey = value => String(value || '').replace(/^CE-/, '').trim();
 
 function parseReplyDecision(row = {}) {
-  if (String(row.eventType || '') !== REPLY_DECISION_EVENT) return null;
+  if (!row || String(row.eventType || '') !== REPLY_DECISION_EVENT) return null;
   const meta = parseMetadata(row.metadata);
   const messageId = String(meta.inboundMessageId || meta.gmailMessageId || '').trim();
   if (!messageId) return null;
@@ -468,7 +468,7 @@ function parseReplyDecision(row = {}) {
 function replyDecisionsByKey(activities = []) {
   const byKey = new Map();
   const rows = [...(activities || [])]
-    .filter(row => String(row.eventType || '') === REPLY_DECISION_EVENT)
+    .filter(row => row && String(row.eventType || '') === REPLY_DECISION_EVENT)
     .sort((a, b) => String(a.occurredAt || '').localeCompare(String(b.occurredAt || '')));
   for (const row of rows) {
     const decision = parseReplyDecision(row);
@@ -500,7 +500,7 @@ function applyReplyDecisionsToReplyEvidence(activities = []) {
   const decisions = replyDecisionsByKey(activities);
   if (!decisions.size) return activities;
   return activities.map((row) => {
-    if (!LEGACY_REPLY_EVENT_TYPES.includes(String(row.eventType || ''))) return row;
+    if (!row || !LEGACY_REPLY_EVENT_TYPES.includes(String(row.eventType || ''))) return row;
     const meta = parseMetadata(row.metadata);
     const messageId = String(meta.gmailMessageId || '').trim();
     const decision = messageId && decisions.get(`${leadKey(row.sourceLeadId || row.leadId)}:${messageId}`);
@@ -513,6 +513,125 @@ function applyReplyDecisionsToReplyEvidence(activities = []) {
       canonicalStateSource: 'reply_decision',
       replyDecisionId: decision.decisionId || null,
     };
+    return { ...row, metadata: typeof row.metadata === 'object' && row.metadata ? next : JSON.stringify(next) };
+  });
+}
+
+// ── Operational read layer ──────────────────────────────────────────────────
+//
+// Analytics asks "what did production classify?" and takes the final state as
+// is (applyReplyDecisionsToReplyEvidence above). Operational consumers (Inbox,
+// Next Action, ownership, CRM Health) ask "what is the job now?", and there a
+// decision is accepted only where it cannot make a lead LESS human-owned than
+// the rule reading without production having executed the stricter outcome.
+// The decision is interpretation and policy evidence. It never stands in for
+// the suppression list, holds, meetings or send gates, which are checked
+// separately and first.
+
+// Canonical reasons that correspond exactly to a final category. Used only
+// when the decision changed the state, so the row's reason is not left
+// describing the rule classifier's reading of a different state.
+const CATEGORY_REASON = Object.freeze({
+  UNSUBSCRIBE: 'unsubscribe_request',
+  QUESTION: NEEDS_HUMAN_REASON.QUESTION_OR_OBJECTION,
+  ALREADY_HANDLED: NEEDS_HUMAN_REASON.ALREADY_HANDLED,
+});
+
+// Rule states that carry a safety fact (an opt-out, a proposed identity). A
+// later interpretation never replaces them operationally.
+const RULE_SAFETY_STATES = new Set([REPLY_STATE.NEGATIVE, REPLY_STATE.CONTACT_CHANGE_REVIEW]);
+
+/**
+ * Whether an operational consumer may use this decision's final state instead
+ * of the rule classifier's. Returns { accepted, reason }.
+ */
+function operationalAcceptance(decision, ruleState) {
+  if (!decision || !decision.canonicalState) return { accepted: false, reason: 'no_decision' };
+  const finalState = decision.canonicalState;
+  if (!ruleState || finalState === ruleState) return { accepted: true, reason: 'agrees_with_rule' };
+  if (RULE_SAFETY_STATES.has(ruleState)) return { accepted: false, reason: 'rule_safety_state' };
+  // Closing a conversation, or parking it behind an autoresponder, removes
+  // human ownership. Accept it only when production really did it.
+  if (finalState === REPLY_STATE.NEGATIVE) {
+    return decision.executionStatus === EXECUTION_STATUS.SUPPRESSED
+      ? { accepted: true, reason: 'suppression_executed' }
+      : { accepted: false, reason: 'negative_not_executed' };
+  }
+  if (finalState === REPLY_STATE.AUTOMATED_REPLY) {
+    return decision.executionStatus === EXECUTION_STATUS.WAITING
+      ? { accepted: true, reason: 'hold_executed' }
+      : { accepted: false, reason: 'automated_reply_not_executed' };
+  }
+  if (finalState === REPLY_STATE.POSITIVE || finalState === REPLY_STATE.NEEDS_HUMAN) {
+    return { accepted: true, reason: 'human_owned_either_way' };
+  }
+  return { accepted: false, reason: 'unsupported_final_state' };
+}
+
+// The decision facts an operator or evaluator needs beside a reply.
+function decisionSummary(decision, acceptance) {
+  if (!decision) return null;
+  return {
+    decisionId: decision.decisionId || null,
+    finalClassification: decision.finalClassification || null,
+    finalClassificationSource: decision.finalClassificationSource || null,
+    canonicalState: decision.canonicalState || null,
+    policyAction: decision.policyAction || null,
+    policySend: decision.policySend === true,
+    executedAction: decision.executedAction || null,
+    executionStatus: decision.executionStatus || null,
+    executionCode: decision.executionCode || null,
+    fallbackAction: decision.fallbackAction || null,
+    requiresHumanAttention: decision.requiresHumanAttention === true,
+    operationallyAccepted: Boolean(acceptance && acceptance.accepted),
+    acceptanceReason: (acceptance && acceptance.reason) || null,
+  };
+}
+
+/**
+ * The shared read helper: production's decision for one inbound message, and
+ * whether operational consumers may use its final state. `source` is
+ * 'reply_decision' when a decision exists and 'legacy' otherwise (every reply
+ * before decision records existed), in which case callers keep their
+ * existing derivation.
+ */
+function effectiveReplyDecision({ activities = [], messageId = '', leadId = '', ruleState = null } = {}) {
+  const decision = replyDecisionFor(activities, messageId, leadId);
+  if (!decision) return { source: 'legacy', decision: null, accepted: false, summary: null };
+  const acceptance = operationalAcceptance(decision, ruleState);
+  return { source: 'reply_decision', decision, accepted: acceptance.accepted, summary: decisionSummary(decision, acceptance) };
+}
+
+/**
+ * Reply evidence for operational consumers. Like the analytics view, but a
+ * decision only replaces the rule state where operationalAcceptance allows,
+ * and the decision facts ride along on the row either way. A final
+ * MEETING_REQUEST carries the meeting signal so it reads as book-a-call.
+ */
+function operationalReplyEvidence(activities = []) {
+  const decisions = replyDecisionsByKey(activities);
+  if (!decisions.size) return activities;
+  return activities.map((row) => {
+    if (!row || !LEGACY_REPLY_EVENT_TYPES.includes(String(row.eventType || ''))) return row;
+    const meta = parseMetadata(row.metadata);
+    const messageId = String(meta.gmailMessageId || '').trim();
+    const decision = messageId && decisions.get(`${leadKey(row.sourceLeadId || row.leadId)}:${messageId}`);
+    if (!decision) return row;
+    const ruleState = meta.canonicalState || null;
+    const acceptance = operationalAcceptance(decision, ruleState);
+    const next = { ...meta, replyDecision: decisionSummary(decision, acceptance) };
+    if (acceptance.accepted) {
+      const changed = decision.canonicalState !== ruleState;
+      next.canonicalState = decision.canonicalState;
+      next.ruleCanonicalState = ruleState;
+      next.canonicalStateSource = 'reply_decision';
+      next.classification = decision.finalClassification || meta.classification || '';
+      if (changed) next.reason = CATEGORY_REASON[decision.finalClassification] || null;
+      if (decision.finalClassification === 'MEETING_REQUEST') {
+        const signals = Array.isArray(meta.evidenceSignals) ? meta.evidenceSignals : [];
+        next.evidenceSignals = signals.includes('meeting') ? signals : [...signals, 'meeting'];
+      }
+    }
     return { ...row, metadata: typeof row.metadata === 'object' && row.metadata ? next : JSON.stringify(next) };
   });
 }
@@ -539,4 +658,5 @@ module.exports = {
   executionForRoute, executionForDelivery, finalizeReplyDecision, finalCanonicalState,
   replyDecisionEventId, replyDecisionActivity, parseReplyDecision, replyDecisionsByKey,
   replyDecisionFor, applyReplyDecisionsToReplyEvidence, productionFactsFromDecision,
+  operationalAcceptance, effectiveReplyDecision, operationalReplyEvidence,
 };

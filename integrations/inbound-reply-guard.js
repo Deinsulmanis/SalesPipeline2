@@ -5,6 +5,7 @@ const {
 } = require('./canonical-reply');
 const { failSafeReplyCategory, deterministicReplyCategory } = require('./reply-classifier');
 const { evaluateFreshSendSafety } = require('./send-safety-revalidate');
+const { replyDecisionFor } = require('./reply-decision');
 
 const NOTE_UNSUBSCRIBED = '[REPLY: Unsubscribed]';
 const NOTE_NOT_INTERESTED = '[REPLY: Not Interested]';
@@ -41,9 +42,17 @@ function inboundAlreadyEvaluated(activities = [], messageId = '') {
   });
 }
 
+/**
+ * What production already decided this message meant. Answered from the reply
+ * decision when one exists; replies from before decision records keep the old
+ * answer, the classification stored on their reply event. (Whether the message
+ * was already HANDLED is a different question: inboundAlreadyEvaluated.)
+ */
 function committedInboundClassification(activities = [], messageId = '') {
   const id = String(messageId || '').trim();
   if (!id) return '';
+  const decided = replyDecisionFor(activities, id);
+  if (decided && decided.finalClassification) return String(decided.finalClassification).toUpperCase();
   const inbound = activities.find((row) => {
     if (!/reply|meeting_requested/.test(String(row.eventType || ''))) return false;
     return inboundMessageIdOf(row) === id;
