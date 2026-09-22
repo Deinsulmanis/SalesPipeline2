@@ -150,7 +150,9 @@ const {
 const { aggregateDemoPlays, attributeDemoPlays, demoPlayForLead } = require('./integrations/demo-attribution');
 const { oldestDueFirst, followUpSuccessTarget } = require('./integrations/scheduler-fairness');
 const { fairShareQueuedOrder } = require('./integrations/scheduled-slot-allocator');
-const { credentialsFor: gmailCredentialsFor, parseRegistry: parseGmailRegistry } = require('./integrations/gmail-inbox-registry');
+const {
+  credentialsFor: gmailCredentialsFor, parseRegistry: parseGmailRegistry, withDefaultInboxes: withDefaultGmailInboxes,
+} = require('./integrations/gmail-inbox-registry');
 const {
   configuredSenders, observableSenders, chooseSender, pinnedSenderId, senderCountsToday, successfulSendCountToday,
 } = require('./integrations/gmail-sender-routing');
@@ -505,7 +507,9 @@ const secondaryAuthById = new Map();
 function authForSender(sender = PRIMARY_GMAIL_SENDER) {
   if (sender.id === 'primary') { loadToken(); return oauth2Client; }
   if (secondaryAuthById.has(sender.id)) return secondaryAuthById.get(sender.id);
-  const entry = parseGmailRegistry().find(item => item.id === sender.id);
+  // Same roster configuredSenders() builds GMAIL_SENDERS from, so a code-default
+  // inbox that is observed or sent from can also authenticate.
+  const entry = withDefaultGmailInboxes(parseGmailRegistry()).find(item => item.id === sender.id);
   if (!entry) throw new Error(`Gmail sender ${sender.id} is not registered`);
   const auth = new google.auth.OAuth2(process.env.GMAIL_SECONDARY_GOOGLE_CLIENT_ID,
     process.env.GMAIL_SECONDARY_GOOGLE_CLIENT_SECRET, process.env.GMAIL_SECONDARY_GOOGLE_REDIRECT_URI);

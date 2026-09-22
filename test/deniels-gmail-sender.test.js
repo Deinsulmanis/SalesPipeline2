@@ -81,6 +81,18 @@ test('A. deniels is a registered Gmail sender with its own id, address and crede
   assert.equal(deniels().oauthClient, 'secondary');
 });
 
+test('A. the agent authenticates every configured sender from the same roster, including code defaults', () => {
+  // Production's registry variable does not list deniels: the auth lookup must
+  // not be narrower than the roster that schedules its observer.
+  const agent = read('outreach-agent.js');
+  const auth = agent.slice(agent.indexOf('function authForSender('), agent.indexOf('const gmailForSender'));
+  assert.match(auth, /withDefaultGmailInboxes\(parseGmailRegistry\(\)\)\.find\(item => item\.id === sender\.id\)/);
+  const liveRoster = withDefaultInboxes(parseRegistry(LIVE_REGISTRY_WITHOUT_DENIELS.GMAIL_INBOX_REGISTRY_JSON));
+  for (const sender of configuredSenders(LIVE_REGISTRY_WITHOUT_DENIELS).filter(item => item.id !== 'primary')) {
+    assert.ok(liveRoster.some(entry => entry.id === sender.id && entry.tokenEnv === sender.tokenEnv), `${sender.id} can authenticate`);
+  }
+});
+
 test('A. deniels ships dormant: warming cannot send, and no credential means no observer and no send', () => {
   const warming = deniels(DEPLOYED);
   assert.equal(warming.status, 'warming');
