@@ -59,7 +59,14 @@ const { guaranteeFor, hasIntactGuarantee } = require('./guarantee');
 const { GmailOutreachProvider } = require('./integrations/outreach-providers');
 const { SmartleadClient } = require('./integrations/smartlead-client');
 const { SmartleadOutreachProvider } = require('./integrations/outreach-providers');
-const { classifyReply: classifyProviderReply } = require('./integrations/reply-classifier');
+const { classifyReplyDetailed: classifyProviderReplyDetailed, deterministicReplyCategory } = require('./integrations/reply-classifier');
+const {
+  interpretInboundReply, recordPolicy: recordReplyPolicy, recordExecution: recordReplyExecution,
+  addEffect: addReplyEffect, executionForRoute, executionForDelivery, finalizeReplyDecision,
+  replyDecisionActivity, replyDecisionFor, productionFactsFromDecision,
+  ROUTE: REPLY_ROUTE, EXECUTION_STATUS: REPLY_EXECUTION_STATUS, EFFECT: REPLY_EFFECT,
+  POLICY_SOURCE: REPLY_POLICY_SOURCE,
+} = require('./integrations/reply-decision');
 const { classifyReplyText, isUsableReplyIdentity, REPLY_STATE,
   hasExplicitUnsubscribePhrase, hasExplicitNegativePhrase, NEEDS_HUMAN_REASON } = require('./integrations/canonical-reply');
 // ONE ownership model, shared with the CRM. The sender asks it rather than
@@ -128,7 +135,7 @@ const {
 } = require('./integrations/gmail-followup-safety');
 const { observeStaffingConversationShadows, evaluateStaffingConversationShadow } = require('./integrations/staffing-agent-shadow');
 const { offerForLead, warmResponse } = require('./integrations/offer-config');
-const { ACTION: REPLY_RESPONSE_ACTION, decideReplyResponse, numericConfidence } = require('./integrations/reply-response-policy');
+const { ACTION: REPLY_RESPONSE_ACTION, decideReplyResponse, numericConfidence, POSITIVE_AUTOSEND_FLOOR } = require('./integrations/reply-response-policy');
 const { classifyStaffingReply, unroutedReplyDecision, STAFFING_CLARIFICATION,
   overlayStaffingReplyClassification, notesForStaffingWarmAction, inboundWarmReplyAlreadySent,
 } = require('./integrations/staffing-reply-policy');
@@ -1518,8 +1525,10 @@ const REPLY_CATEGORIES = new Set(['QUESTION','INTERESTED','MEETING_REQUEST','NOT
 // Never default to INTERESTED: a transient API error would silently promote.
 const CLASSIFY_FALLBACK = 'NEEDS_HUMAN';
 
-async function classifyReply(company, replyBody, extra = {}) {
-  return classifyProviderReply({
+// The category plus the component that produced it (rule, fail-safe phrase,
+// model, model fallback, prior evaluation). The reply decision records both.
+async function classifyReplyWithProvenance(company, replyBody, extra = {}) {
+  return classifyProviderReplyDetailed({
     provider: 'gmail',
     lead: { company, email: extra.email || '', id: extra.leadId || '' },
     campaign: extra.campaign || {},
@@ -1531,6 +1540,10 @@ async function classifyReply(company, replyBody, extra = {}) {
     alreadyEvaluated: Boolean(extra.alreadyEvaluated),
     priorClassification: extra.priorClassification || '',
   });
+}
+
+async function classifyReply(company, replyBody, extra = {}) {
+  return (await classifyReplyWithProvenance(company, replyBody, extra)).classification;
 }
 
 // ── INBOUND QUESTION ANSWERING ────────────────────────────────────────────────
@@ -2290,11 +2303,34 @@ async function recordActiveReplyActivity(lead, message, replyText, classificatio
   });
 }
 
+// Append-only and idempotent: one reply_decision_recorded event per lead and
+// inbound Gmail message. The in-memory check covers this pass; recordMailboxActivity
+// re-reads the ledger before appending, which covers a retried or overlapping run.
+// Best-effort by design: the decision describes what the handlers already did,
+// and failing the pass over it would re-run handlers and the classifier for a
+// message that has been acted on.
+async function persistReplyDecision(lead, decision, activities = []) {
+  const row = replyDecisionActivity(decision, { company: cleanCompanyName(lead.company) || lead.company || '' });
+  if (!row) {
+    console.warn(`[reply-decision] not persisted for ${lead.email}: inbound message id missing`);
+    return null;
+  }
+  if (activities.some(item => String(item.eventId || '') === row.eventId)) return null;
+  try {
+    await withAuth(() => recordMailboxActivity(row));
+    activities.push(row);
+    return row;
+  } catch (error) {
+    console.warn(`[reply-decision] persist failed for ${row.eventId}: ${error.message}`);
+    return null;
+  }
+}
+
 async function handleNotInterested(lead) {
   const rowNum = await resolveRow(lead.id);
   if (!rowNum) {
     console.warn(`[handleNotInterested] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
-    return;
+    return { skipped: 'lead_row_missing' };
   }
   const notes = String(lead.notes || '');
   const already = /\[REPLY:\s*Not Interested\]/i.test(notes) && String(lead.stage) === 'Done' && String(lead.emailStatus) === 'done';
@@ -2314,7 +2350,7 @@ async function handleUnsubscribe(lead) {
   const rowNum = await resolveRow(lead.id);
   if (!rowNum) {
     console.warn(`[handleUnsubscribe] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
-    return;
+    return { skipped: 'lead_row_missing' };
   }
   const notes = String(lead.notes || '');
   const already = /\[REPLY:\s*Unsubscribed\]/i.test(notes) && String(lead.stage) === 'Unsub';
@@ -2334,7 +2370,7 @@ async function handleOutOfOffice(lead, { returnDate = '', occurredAt = '' } = {}
   const rowNum = await resolveRow(lead.id);
   if (!rowNum) {
     console.warn(`[handleOutOfOffice] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
-    return;
+    return { skipped: 'lead_row_missing' };
   }
   const notes = String(lead.notes || '');
   if (/\[REPLY:\s*OOO/i.test(notes) && String(lead.notes || '').includes('[MANUAL HOLD]')) {
@@ -2363,7 +2399,7 @@ async function handleWrongPerson(lead, { replyText = '', suppliedContact = '', p
   const rowNum = await resolveRow(lead.id);
   if (!rowNum) {
     console.warn(`[handleWrongPerson] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
-    return;
+    return { skipped: 'lead_row_missing' };
   }
   const notes = String(lead.notes || '');
   if (/\[REPLY:\s*Wrong Person/i.test(notes) && String(lead.emailStatus) === 'replied') {
@@ -2390,7 +2426,7 @@ async function handleAlreadyHandled(lead, { replyText = '' } = {}) {
   const rowNum = await resolveRow(lead.id);
   if (!rowNum) {
     console.warn(`[handleAlreadyHandled] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
-    return;
+    return { skipped: 'lead_row_missing' };
   }
   const notes = String(lead.notes || '');
   if (notes.includes(NOTE_ALREADY_HANDLED) && String(lead.stage) === 'Review') {
@@ -2463,14 +2499,14 @@ async function queueDraft(lead, answer) {
 
 // A genuine question. Answer it from the facts if we're confident; otherwise
 // draft it for Deins. Either way the lead is tagged so the dashboard shows it.
-async function handleQuestion(lead, message, replyText, todaySent, activities = [], outboundObservationOk = true, sender = senderForPersistedLead(lead)) {
+async function handleQuestion(lead, message, replyText, todaySent, activities = [], outboundObservationOk = true, sender = senderForPersistedLead(lead), decision = null) {
   if (isStaffingCampaign(lead)) {
     const overlay = overlayStaffingReplyClassification({
       text: replyText, lead, classification: 'QUESTION',
       canonical: classifyReplyText(replyText, { subject: message.subject || '', currentEmail: lead.email }),
     });
     if (['SEND_INFO', 'INTERESTED', 'STAFFING_QUALIFICATION'].includes(overlay.classification)) {
-      return handlePositiveAutomation(lead, message, overlay.classification, activities, overlay.canonical);
+      return handlePositiveAutomation(lead, message, overlay.classification, activities, overlay.canonical, { decision, overlay });
     }
   }
   const rowNum = await resolveRow(lead.id);
@@ -2478,34 +2514,51 @@ async function handleQuestion(lead, message, replyText, todaySent, activities = 
     messageId: message.messageId || '',
     threadId: message.threadId || '',
   });
+  // A question's policy is the answerer's verdict: a confident, grounded
+  // answer is meant to auto-send; pricing without approved wording, objections,
+  // model doubt and low confidence go to a human. The gates below may still
+  // stop the send, which is recorded as execution, not as a different policy.
+  const answerAction = answer.action || REPLY_RESPONSE_ACTION.AUTO_QUESTION_RESPONSE;
+  recordReplyPolicy(decision, {
+    action: answer.mode === 'auto' ? answerAction : REPLY_RESPONSE_ACTION.HUMAN_REVIEW,
+    send: answer.mode === 'auto', reason: answer.reason, classification: 'QUESTION',
+    source: REPLY_POLICY_SOURCE.QUESTION_ANSWERER,
+    confidence: answer.confidence, confidenceSource: 'answer_model', floor: ANSWER_CONFIDENCE_FLOOR,
+  });
 
   // ── gates that apply to auto-send only ──
   // A drafted reply is never sent by the agent, so it needs no send gate; a
   // human reviews and sends it, at which point these no longer apply.
   let mode = answer.mode;
   let gateReason = '';
+  let gateCode = '';
   if (mode === 'auto') {
     const humanTouchAt = latestHumanOutboundAt(activities);
     const suppressed = suppressionReason(lead);
     if (CHECK_ONLY) {
       mode = 'draft';
+      gateCode = 'check_only';
       gateReason = 'CHECK_ONLY is observation-only and cannot send';
       answer.reason = `${answer.reason} — held: ${gateReason}`;
     } else if (!outboundObservationOk) {
       mode = 'draft';
+      gateCode = 'outbound_observation_failed';
       gateReason = 'manual outbound observation failed, so mailbox state may be stale';
       answer.reason = `${answer.reason} — held: ${gateReason}`;
     } else if (humanTouchAt) {
       mode = 'draft';
+      gateCode = 'human_response_observed';
       gateReason = `a human response was already observed at ${humanTouchAt}`;
       answer.reason = `${answer.reason} — held: ${gateReason}`;
     } else if (suppressed) {
       mode = 'blocked';
+      gateCode = 'suppressed';
       gateReason = `suppressed (${suppressed})`;
     } else if (todaySent >= DAILY_SEND_LIMIT) {
       // Touch cap: an auto-answer is a real send and counts against the same
       // daily ceiling as outreach, so a busy day can't over-mail.
       mode = 'draft';
+      gateCode = 'daily_send_cap';
       gateReason = `daily send cap reached (${todaySent}/${DAILY_SEND_LIMIT})`;
       answer.reason = `${answer.reason} — held: ${gateReason}`;
     }
@@ -2519,6 +2572,9 @@ async function handleQuestion(lead, message, replyText, todaySent, activities = 
         notes: prependNote(lead.notes, `[REPLY: Question — not answered, ${gateReason}]`),
       }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
     }
+    recordReplyExecution(decision, {
+      executedAction: null, status: REPLY_EXECUTION_STATUS.BLOCKED, code: gateCode, reason: gateReason,
+    });
     return;
   }
 
@@ -2530,6 +2586,11 @@ async function handleQuestion(lead, message, replyText, todaySent, activities = 
         notes: prependNote(lead.notes, '[REPLY: Question — draft awaiting review]'),
       }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
     }
+    recordReplyExecution(decision, gateCode
+      ? { executedAction: null, status: REPLY_EXECUTION_STATUS.BLOCKED, code: gateCode, reason: gateReason,
+        fallbackAction: REPLY_RESPONSE_ACTION.HUMAN_REVIEW, effects: [REPLY_EFFECT.DRAFT_QUEUED] }
+      : { executedAction: REPLY_RESPONSE_ACTION.HUMAN_REVIEW, status: REPLY_EXECUTION_STATUS.ROUTED_TO_HUMAN,
+        effects: [REPLY_EFFECT.DRAFT_QUEUED] });
     return;
   }
 
@@ -2542,16 +2603,21 @@ async function handleQuestion(lead, message, replyText, todaySent, activities = 
 
   if (!SENDING_ENABLED) {
     console.log(`⛔ [kill-switch] would auto-answer → ${lead.email}`);
+    recordReplyExecution(decision, {
+      executedAction: null, status: REPLY_EXECUTION_STATUS.BLOCKED, code: 'sending_disabled',
+    });
     return;
   }
   const attribution = stageSequenceAttribution({
     acquisition: latestSendAttribution(activities), sequenceId: 'question_auto_answer_v1', step: 1,
   });
   const delivered = await deliverHardenedWarmReply({ lead, message,
-    action: answer.action || REPLY_RESPONSE_ACTION.AUTO_QUESTION_RESPONSE, body, subject,
-    activities, classification: 'QUESTION' });
+    action: answerAction, body, subject,
+    activities, classification: 'QUESTION', replyDecisionId: decision?.decisionId || '' });
+  recordReplyExecution(decision, executionForDelivery(answerAction, delivered));
   if (!delivered.delivered) {
     await queueDraft(lead, { ...answer, reason: `${answer.reason} — hardened delivery blocked: ${delivered.code}` });
+    addReplyEffect(decision, REPLY_EFFECT.DRAFT_QUEUED);
     return;
   }
   const sentAt = new Date().toISOString();
@@ -2569,7 +2635,7 @@ async function handleNeedsHuman(lead, fromAddr) {
   const rowNum = await resolveRow(lead.id);
   if (!rowNum) {
     console.warn(`[handleNeedsHuman] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
-    return;
+    return { skipped: 'lead_row_missing' };
   }
   const emailedAddr = (lead.email || '').trim().toLowerCase();
   const from        = (fromAddr || '').trim().toLowerCase();
@@ -2923,121 +2989,115 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       alreadyEvaluated, classification: priorClassification, lead, suppressedEmails: SUPPRESSED_EMAILS,
     }) && canonicalReply.reason !== 'unsubscribe_request' && canonicalReply.reason !== 'explicit_rejection') {
       if (message.messageId) {
+        // Production decided this message on an earlier pass. The shadow is
+        // compared with that recorded decision, never a recomputation of it.
+        const prior = replyDecisionFor(activitiesForCycle, message.messageId, lead.id);
         staffingShadowProduction.set(message.messageId, {
-          classification: priorClassification, lead, message, replyText,
+          classification: prior?.finalClassification || priorClassification, lead, message, replyText,
+          decision: productionFactsFromDecision(prior),
         });
       }
       console.log(`  ↩ ${lead.email} (${company}) — inbound ${message.messageId} already evaluated, skipping model`);
       continue;
     }
-    let classification;
-    if (canonicalReply.reason === 'unsubscribe_request' || hasExplicitUnsubscribePhrase(replyText, { subject: message.subject })) {
-      classification = 'UNSUBSCRIBE';
-    } else if (canonicalReply.reason === 'explicit_rejection' || hasExplicitNegativePhrase(replyText, { subject: message.subject })) {
-      classification = 'NOT_INTERESTED';
-    } else {
-      classification = await classifyReply(lead.company, replyText, {
+    // ONE decision for this inbound message. It names every component
+    // classification, the final one production acts on, the policy action and,
+    // once the handlers below have run, what was actually executed. Routing,
+    // the persisted record, analytics and the shadow comparison all read it.
+    // Explicit opt-out and rejection are decided before any classifier call.
+    const { decision: replyDecision, overlay: staffingOverlay } = await interpretInboundReply({
+      lead, message, replyText, ruleCanonical: canonicalReply, maySend,
+      ruleCategory: deterministicReplyCategory,
+      classify: () => classifyReplyWithProvenance(lead.company, replyText, {
         subject: message.subject, email: lead.email, leadId: lead.id,
         campaign: { id: lead.campaign || lead.intendedCampaignVersion || '', name: lead.campaign || '' },
         messageId: message.messageId, threadId: message.threadId,
         alreadyEvaluated, priorClassification,
-      });
-    }
-    let staffingOverlay = null;
-    if (isStaffingCampaign(lead) && classification !== 'UNSUBSCRIBE' && classification !== 'NOT_INTERESTED') {
-      staffingOverlay = overlayStaffingReplyClassification({
-        text: replyText, lead, classification, canonical: canonicalReply,
-      });
-      if (staffingOverlay.overlay && staffingOverlay.classification) {
-        classification = staffingOverlay.classification;
-      }
-    }
-    if (message.messageId) {
-      staffingShadowProduction.set(message.messageId, {
-        classification, lead, message, replyText,
-      });
-    }
+      }),
+    });
+    const classification = replyDecision.finalClassification;
     classCounts[classification] = (classCounts[classification] || 0) + 1;
 
     const fromNote = (message.fromAddr && message.fromAddr !== lead.email.trim().toLowerCase())
       ? ` (from ${message.fromAddr})` : '';
-    console.log(`  ↩ Reply from ${lead.email}${fromNote} (${company}) — ${classification}`);
+    console.log(`  ↩ Reply from ${lead.email}${fromNote} (${company}) — ${classification}`
+      + ` [${replyDecision.finalClassificationSource}; route ${replyDecision.route}]`);
     lead.emailStatus = 'replied'; // exclude from follow-ups this run regardless of classification
 
     if (!DRY_RUN) {
       await withAuth(async () => {
         if (!attributionActivities) attributionActivities = activitiesForCycle || await readColdCallActivities();
         await recordActiveReplyActivity(lead, message, replyText, classification, attributionActivities);
-        if (classification === 'UNSUBSCRIBE') return handleUnsubscribe(lead);
-        if (classification === 'NOT_INTERESTED') return handleNotInterested(lead);
-        const timingHold = canonicalReply.reason === NEEDS_HUMAN_REASON.DEFERRED_TIMING
-          || canonicalReply.revisitDate;
-        if (timingHold) {
-          return handleTimingReply(lead, message, replyText, canonicalReply.revisitDate || '', leads, attributionActivities);
-        }
-        if (classification === 'ALREADY_HANDLED') {
-          return handleAlreadyHandled(lead, { replyText });
-        }
-        if (classification === 'WRONG_PERSON') {
-          return handleWrongPerson(lead, {
-            replyText, suppliedContact: canonicalReply.suppliedContact || '',
-            proposedEmail: canonicalReply.proposedEmail || '',
-          });
-        }
-        if (classification === 'OUT_OF_OFFICE') {
-          return handleOutOfOffice(lead, { returnDate: canonicalReply.returnDate || '', occurredAt: message.occurredAt });
-        }
-        if (!maySend) {
-          if (classification === 'QUESTION' || classification === 'NEEDS_HUMAN') {
-            return handleNeedsHuman(lead, message.fromAddr);
-          }
-          return;
-        }
-        switch (classification) {
+        const decisionOptions = { decision: replyDecision, overlay: staffingOverlay };
+        const route = replyDecision.route;
+        let result;
+        switch (route) {
+          case REPLY_ROUTE.UNSUBSCRIBE: result = await handleUnsubscribe(lead); break;
+          case REPLY_ROUTE.NOT_INTERESTED: result = await handleNotInterested(lead); break;
+          case REPLY_ROUTE.TIMING:
+            result = await handleTimingReply(lead, message, replyText, canonicalReply.revisitDate || '', leads, attributionActivities);
+            break;
+          case REPLY_ROUTE.ALREADY_HANDLED: result = await handleAlreadyHandled(lead, { replyText }); break;
+          case REPLY_ROUTE.WRONG_PERSON:
+            result = await handleWrongPerson(lead, {
+              replyText, suppliedContact: canonicalReply.suppliedContact || '',
+              proposedEmail: canonicalReply.proposedEmail || '',
+            });
+            break;
+          case REPLY_ROUTE.OUT_OF_OFFICE:
+            result = await handleOutOfOffice(lead, { returnDate: canonicalReply.returnDate || '', occurredAt: message.occurredAt });
+            break;
+          // Historical or CHECK_ONLY: no send-capable handler may run.
+          case REPLY_ROUTE.HISTORICAL_REVIEW: result = await handleNeedsHuman(lead, message.fromAddr); break;
+          case REPLY_ROUTE.HISTORICAL_NO_ACTION: result = undefined; break;
           // A genuine question is answered from product-facts.js when we're
           // confident, otherwise drafted for review. Both paths append the
           // warm booking snippet. todaySent enforces the touch cap.
-          case 'QUESTION':       return handleQuestion(lead, message, replyText, replyPassTodaySent, attributionActivities, outboundObservationOk, senderForPersistedLead(lead));
-          case 'SEND_INFO':
-            return handlePositiveAutomation(lead, message, 'SEND_INFO', attributionActivities, staffingOverlay?.canonical || canonicalReply);
-          case 'STAFFING_QUALIFICATION': {
+          case REPLY_ROUTE.QUESTION:
+            return handleQuestion(lead, message, replyText, replyPassTodaySent, attributionActivities, outboundObservationOk, senderForPersistedLead(lead), replyDecision);
+          case REPLY_ROUTE.SEND_INFO:
+            return handlePositiveAutomation(lead, message, 'SEND_INFO', attributionActivities, staffingOverlay?.canonical || canonicalReply, decisionOptions);
+          case REPLY_ROUTE.STAFFING_QUALIFICATION: {
             if (staffingOverlay?.fit === 'clear') {
-              await handleInterested(lead, message, replyText, 'positive_reply', leads, attributionActivities);
+              const promoted = await handleInterested(lead, message, replyText, 'positive_reply', leads, attributionActivities);
+              if (promoted) addReplyEffect(replyDecision, REPLY_EFFECT.PROMOTED_HOT);
             }
-            return handlePositiveAutomation(lead, message, 'STAFFING_QUALIFICATION', attributionActivities, staffingOverlay?.canonical || canonicalReply);
+            return handlePositiveAutomation(lead, message, 'STAFFING_QUALIFICATION', attributionActivities, staffingOverlay?.canonical || canonicalReply, decisionOptions);
           }
-          case 'INTERESTED': {
+          case REPLY_ROUTE.INTERESTED:
+          case REPLY_ROUTE.MEETING_REQUEST: {
+            const meeting = route === REPLY_ROUTE.MEETING_REQUEST;
             const blocked = unroutedReplyDecision(lead) || (classifyStaffingReply(replyText, lead).promote === false
               ? classifyStaffingReply(replyText, lead) : null);
             if (blocked && blocked.promote === false) {
               await queueDraft(lead, {
                 mode: 'draft', body: blocked.clarification || '', reason: blocked.reason, confidence: 0,
               });
-              return handleNeedsHuman(lead, message.fromAddr);
-            }
-            await handleInterested(lead, message, replyText, 'positive_reply', leads, attributionActivities);
-            return handlePositiveAutomation(lead, message, 'INTERESTED', attributionActivities, staffingOverlay?.canonical || canonicalReply);
-          }
-          case 'MEETING_REQUEST': {
-            const blocked = unroutedReplyDecision(lead) || (classifyStaffingReply(replyText, lead).promote === false
-              ? classifyStaffingReply(replyText, lead) : null);
-            if (blocked && blocked.promote === false) {
-              await queueDraft(lead, {
-                mode: 'draft', body: blocked.clarification || '', reason: blocked.reason, confidence: 0,
+              recordReplyPolicy(replyDecision, {
+                action: REPLY_RESPONSE_ACTION.HUMAN_REVIEW, reason: blocked.reason,
+                source: REPLY_POLICY_SOURCE.STAFFING_GUARD, classification,
               });
-              return handleNeedsHuman(lead, message.fromAddr);
+              const routed = await handleNeedsHuman(lead, message.fromAddr);
+              recordReplyExecution(replyDecision, {
+                ...executionForRoute(REPLY_ROUTE.NEEDS_HUMAN, routed), effects: [REPLY_EFFECT.DRAFT_QUEUED],
+              });
+              return routed;
             }
-            await handleInterested(lead, message, replyText, 'meeting_requested', leads, attributionActivities);
-            return handlePositiveAutomation(lead, message, 'MEETING_REQUEST', attributionActivities, canonicalReply);
+            const promoted = await handleInterested(lead, message, replyText, meeting ? 'meeting_requested' : 'positive_reply', leads, attributionActivities);
+            if (promoted) addReplyEffect(replyDecision, REPLY_EFFECT.PROMOTED_HOT);
+            return handlePositiveAutomation(lead, message, classification, attributionActivities,
+              meeting ? canonicalReply : (staffingOverlay?.canonical || canonicalReply), decisionOptions);
           }
-          case 'WRONG_PERSON':   return handleWrongPerson(lead);
-          case 'OUT_OF_OFFICE':  return handleOutOfOffice(lead);
           // NEEDS_HUMAN and anything unforeseen surface for review rather than
           // silently delaying — never promote or close on an ambiguous reply.
-          case 'NEEDS_HUMAN':
-          default:               return handleNeedsHuman(lead, message.fromAddr);
+          case REPLY_ROUTE.NEEDS_HUMAN:
+          default: result = await handleNeedsHuman(lead, message.fromAddr);
         }
+        recordReplyExecution(replyDecision, executionForRoute(route, result));
+        return result;
       });
+      finalizeReplyDecision(replyDecision);
+      await persistReplyDecision(lead, replyDecision, activitiesForCycle);
       await recordMailboxActivity({ eventId: `gmail-evaluated:${sender.id}:${message.messageId}`,
         leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email, company: lead.company,
         eventType: 'gmail_reply_evaluated', occurredAt: new Date().toISOString(), subject: '', content: '',
@@ -3046,7 +3106,14 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
           gmailMessageId: message.messageId,
           senderInboxId: sender.id,
           classification,
+          replyDecisionId: replyDecision.decisionId || undefined,
         }) });
+    }
+    if (message.messageId) {
+      staffingShadowProduction.set(message.messageId, {
+        classification, action: replyDecision.policyAction || '', lead, message, replyText,
+        decision: productionFactsFromDecision(replyDecision),
+      });
     }
   }
 
@@ -3097,7 +3164,7 @@ async function commitMailboxObservationCheckpoints(observation = {}) {
 }
 
 async function deliverHardenedWarmReply({ lead, message, action, body, subject, activities, classification,
-  ownerMode = 'reply', sequenceId = 'prospect_reply_v1', validateFresh = null }) {
+  ownerMode = 'reply', sequenceId = 'prospect_reply_v1', validateFresh = null, replyDecisionId = '' }) {
   const sender = senderForPersistedLead(lead);
   const metadataOf = row => { try { return JSON.parse(row.metadata || '{}'); } catch (_) { return {}; } };
   const result = await deliverProspectReply({
@@ -3198,6 +3265,7 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
         occurredAt: new Date().toISOString(), subject, content: '', metadata: JSON.stringify({
           actionId, action, senderInboxId: sender.id, gmailThreadId: message.threadId,
           inboundMessageId: message.messageId, rfcMessageId, classification,
+          ...(replyDecisionId ? { replyDecisionId } : {}),
         }) };
       await recordColdCallActivityStrict(row); activities.push(row); return row;
     },
@@ -3231,6 +3299,7 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
         metadata: JSON.stringify({ actionId, action, classification, senderInboxId: sender.id,
           gmailMessageId: data.id || data.providerMessageId || '', gmailThreadId: data.threadId || message.threadId,
           rfcMessageId: data.rfcMessageId || rfcMessageId, inboundMessageId: message.messageId,
+          ...(replyDecisionId ? { replyDecisionId } : {}),
           recoveredAfterCheckpointFailure: Boolean(recovery),
           staffingFunnelEvents: staffingFunnelFromWarmDelivery({
             action, body, family: familyForLead(lead),
@@ -3252,18 +3321,37 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
   return result;
 }
 
-async function handlePositiveAutomation(lead, message, classification, activities, canonical = {}) {
+async function handlePositiveAutomation(lead, message, classification, activities, canonical = {},
+  { decision = null, overlay: decidedOverlay } = {}) {
+  // Routes to human review and records that as this reply's execution.
+  const routeToHuman = async ({ policy = null, effects = [] } = {}) => {
+    if (policy) recordReplyPolicy(decision, { action: REPLY_RESPONSE_ACTION.HUMAN_REVIEW, send: false, classification, ...policy });
+    const routed = await handleNeedsHuman(lead, message.fromAddr);
+    recordReplyExecution(decision, { ...executionForRoute(REPLY_ROUTE.NEEDS_HUMAN, routed), effects });
+    return routed;
+  };
   const unrouted = unroutedReplyDecision(lead);
-  if (unrouted) return handleNeedsHuman(lead, message.fromAddr);
+  if (unrouted) {
+    return routeToHuman({ policy: { reason: unrouted.reason, source: REPLY_POLICY_SOURCE.STAFFING_GUARD } });
+  }
   const replyText = stripQuotedReply(message.body || message.snippet || '');
   const staffing = classifyStaffingReply(replyText, lead);
   if (staffing.promote === false) {
     await queueDraft(lead, { mode: 'draft', body: staffing.clarification || '', reason: staffing.reason, confidence: 0 });
-    return handleNeedsHuman(lead, message.fromAddr);
+    return routeToHuman({
+      policy: { reason: staffing.reason, source: REPLY_POLICY_SOURCE.STAFFING_GUARD },
+      effects: [REPLY_EFFECT.DRAFT_QUEUED],
+    });
   }
-  const overlay = isStaffingCampaign(lead)
-    ? overlayStaffingReplyClassification({ text: replyText, lead, classification, canonical })
-    : null;
+  // The reply pass already applied the staffing overlay when it built this
+  // message's decision. Reuse that result rather than classifying the message
+  // a second time, so the policy below sees the classification the decision
+  // records. Only a caller without a decision recomputes it.
+  const overlay = decidedOverlay !== undefined
+    ? decidedOverlay
+    : (isStaffingCampaign(lead)
+      ? overlayStaffingReplyClassification({ text: replyText, lead, classification, canonical })
+      : null);
   const effectiveClassification = overlay?.classification || classification;
   const effectiveCanonical = overlay?.canonical || canonical;
   if (overlay?.notesTag) {
@@ -3275,7 +3363,12 @@ async function handlePositiveAutomation(lead, message, classification, activitie
     }
   }
   let offer;
-  try { offer = offerForLead(lead); } catch (_) { return handleNeedsHuman(lead, message.fromAddr); }
+  try { offer = offerForLead(lead); } catch (_) {
+    return routeToHuman({ policy: {
+      reason: 'offer configuration unavailable for this lead', source: REPLY_POLICY_SOURCE.REPLY_RESPONSE_POLICY,
+      classification: effectiveClassification,
+    } });
+  }
   const policy = decideReplyResponse({
     classification: effectiveClassification,
     canonical: effectiveCanonical,
@@ -3285,20 +3378,35 @@ async function handlePositiveAutomation(lead, message, classification, activitie
     family: familyForLead(lead),
     qualificationFit: overlay?.fit || '',
   });
+  // The auto-send score is not a classification confidence: it is the staffing
+  // overlay's marker score when the overlay set one, otherwise a score derived
+  // from the rule classifier's signals. Both are compared with the same floor.
+  recordReplyPolicy(decision, {
+    action: policy.action, send: policy.send, reason: policy.reason, classification: effectiveClassification,
+    source: REPLY_POLICY_SOURCE.REPLY_RESPONSE_POLICY, confidence: policy.confidence,
+    confidenceSource: overlay?.confidence ? 'staffing_overlay' : 'rule_signals', floor: POSITIVE_AUTOSEND_FLOOR,
+  });
   if (!policy.send) {
     if (policy.action === REPLY_RESPONSE_ACTION.HUMAN_REVIEW) {
       await queueDraft(lead, {
         mode: 'draft', body: '', reason: policy.reason, confidence: policy.confidence || 0,
       });
     }
-    return handleNeedsHuman(lead, message.fromAddr);
+    return routeToHuman({
+      effects: policy.action === REPLY_RESPONSE_ACTION.HUMAN_REVIEW ? [REPLY_EFFECT.DRAFT_QUEUED] : [],
+    });
   }
   if (inboundWarmReplyAlreadySent(activities, message.messageId)) {
+    recordReplyExecution(decision, {
+      executedAction: policy.action, status: REPLY_EXECUTION_STATUS.ALREADY_SENT, code: 'inbound_already_answered',
+    });
     return { delivered: true, alreadyCheckpointed: true };
   }
   const body = warmResponse({ action: policy.action, lead, offer });
   const subject = /^re:/i.test(message.subject || '') ? message.subject : `Re: ${message.subject || 'your reply'}`;
-  const delivered = await deliverHardenedWarmReply({ lead, message, action: policy.action, body, subject, activities, classification: effectiveClassification });
+  const delivered = await deliverHardenedWarmReply({ lead, message, action: policy.action, body, subject, activities,
+    classification: effectiveClassification, replyDecisionId: decision?.decisionId || '' });
+  recordReplyExecution(decision, executionForDelivery(policy.action, delivered));
   if (!delivered.delivered) {
     await handleNeedsHuman(lead, message.fromAddr);
     return delivered;
@@ -3324,7 +3432,7 @@ async function handleTimingReply(lead, message, replyText, recontactAt, allLeads
   const rowNum = await resolveRow(lead.id);
   if (!rowNum) {
     console.warn(`[handleTimingReply] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
-    return;
+    return { skipped: 'lead_row_missing' };
   }
   const notes = String(lead.notes || '');
   if (/\[REPLY:\s*Timing/i.test(notes) && String(lead.emailStatus) === 'replied') {
