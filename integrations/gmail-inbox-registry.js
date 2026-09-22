@@ -28,6 +28,16 @@ const DEFAULT_SECONDARY_INBOXES = Object.freeze([
     perRunLimit: 2,
     observerEnabled: true,
   }),
+  // Second mailbox on tryscalelabai.ca, same pattern and caps as deniels.
+  Object.freeze({
+    id: 'deniels_tryscalelabai',
+    email: 'deniels@tryscalelabai.ca',
+    status: 'warming',
+    tokenEnv: 'GMAIL_DENIELS_TRYSCALELABAI_TOKEN_JSON',
+    dailyLimit: 10,
+    perRunLimit: 2,
+    observerEnabled: true,
+  }),
 ]);
 
 function parseEntry(entry, index, seenIds, seenEmails) {

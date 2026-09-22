@@ -48,6 +48,7 @@ test('deployment settings resolve to 50 per established sender / 100 total with 
     { email: 'deins@tryscalelabai.ca', dailyLimit: 50, perRunLimit: 5, status: 'active' },
     { email: 'deins@scalelabaiteam.com', dailyLimit: 40, perRunLimit: 5, status: 'warming' },
     { email: 'deniels@scalelabai.ca', dailyLimit: 10, perRunLimit: 2, status: 'warming' },
+    { email: 'deniels@tryscalelabai.ca', dailyLimit: 10, perRunLimit: 2, status: 'warming' },
   ]);
 });
 

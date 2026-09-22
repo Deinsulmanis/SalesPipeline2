@@ -139,7 +139,7 @@ test('C. existing sender caps are identical before and after deniels is added an
   }));
   assert.deepEqual(shape(ACTIVATED), shape(DEPLOYED));
   assert.deepEqual(shape(ACTIVATED).map(({ id, dailyLimit, perRunLimit }) => [id, dailyLimit, perRunLimit]), [
-    ['primary', 50, 5], ['tryscalelabai', 50, 5], ['scalelabaiteam', 40, 5],
+    ['primary', 50, 5], ['tryscalelabai', 50, 5], ['scalelabaiteam', 40, 5], ['deniels_tryscalelabai', 10, 2],
   ]);
 });
 
