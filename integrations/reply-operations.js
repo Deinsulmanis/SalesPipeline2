@@ -26,6 +26,7 @@ const {
   GENUINE_HUMAN_STATES, resolveReplyState, classifyReplyText,
 } = require('./canonical-reply');
 const { latestResponseAt } = require('./prospect-response');
+const { operationalReplyEvidence } = require('./reply-decision');
 
 /**
  * Operational actions. These EXTEND the existing ACTION_TYPE vocabulary in
@@ -114,9 +115,16 @@ const isoOrNull = value => {
 function deriveReplyOperation(lead = {}, {
   activities = [], manualOverride = null, manualFollowUpDate = '',
 } = {}) {
-  const resolved = resolveReplyState(lead, { activities, manualOverride });
+  // What production decided the message meant, where a reply decision exists
+  // and may be used operationally; the rule reading otherwise, which is also
+  // every reply from before decision records existed. A manual override still
+  // outranks both.
+  const resolved = resolveReplyState(lead, { activities: operationalReplyEvidence(activities), manualOverride });
   const evidence = {
     canonicalState: resolved.state,
+    canonicalStateSource: resolved.canonicalStateSource || null,
+    ruleCanonicalState: resolved.ruleCanonicalState || null,
+    replyDecision: resolved.replyDecision || null,
     canonicalReason: resolved.reason || null,
     subtype: resolved.subtype || null,
     evidenceSource: resolved.source,
@@ -360,13 +368,16 @@ function deriveOperationalAction(lead = {}, {
           revisitDate: interpreted.revisitDate || null,
           suppliedContact: interpreted.suppliedContact || null,
         }, manualFollowUpDate });
-        return { ...contextual, source: 'crm_context_interpretation', evidence: {
+        return withUndeliveredAutoReply({ ...contextual, source: 'crm_context_interpretation', evidence: {
           ...contextual.evidence, canonicalState: derived.evidence.canonicalState,
           canonicalReason: derived.evidence.canonicalReason,
+          canonicalStateSource: derived.evidence.canonicalStateSource,
+          ruleCanonicalState: derived.evidence.ruleCanonicalState,
+          replyDecision: derived.evidence.replyDecision,
           operationalReason: interpreted.reason,
           evidenceSource: derived.evidence.evidenceSource,
           contextSource: boardLead.conversationContext ? 'conversation_context' : 'crm_notes',
-        } };
+        } });
       }
     }
   }
@@ -389,7 +400,24 @@ function deriveOperationalAction(lead = {}, {
     }), source: 'already_answered' };
   }
 
-  return { ...derived, source: 'reply_evidence' };
+  return { ...withUndeliveredAutoReply(derived), source: 'reply_evidence' };
+}
+
+/**
+ * Production meant to answer automatically and did not (a gate refused it, or
+ * the provider failed). The job stays with a human, and says why. Whether we
+ * answered at all is still decided by the response taxonomy above, never by
+ * the decision record.
+ */
+function withUndeliveredAutoReply(op) {
+  const decision = op.evidence && op.evidence.replyDecision;
+  if (!decision || !decision.policySend || decision.executedAction || op.owner !== ACTION_OWNER.HUMAN) return op;
+  const code = decision.executionCode ? `: ${decision.executionCode}` : '';
+  return {
+    ...op,
+    reason: `${op.reason}; the automated ${decision.policyAction} was not sent (${decision.executionStatus}${code})`,
+    requiresHumanReview: true,
+  };
 }
 
 module.exports.deriveOperationalAction = deriveOperationalAction;

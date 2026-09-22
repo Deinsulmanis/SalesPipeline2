@@ -57,6 +57,7 @@ const SEVERITY = Object.freeze({
 const { observerHealth } = require('./gmail-observer-health');
 const { provenSequenceSenderId } = require('./stage-sequences');
 const { latestResponseAt } = require('./prospect-response');
+const { parseReplyDecision } = require('./reply-decision');
 
 function observerChecks(context, index) {
   if (!context.mailboxObservationState) return [];
@@ -342,6 +343,34 @@ function replyChecks({ leads, replyRecords = [], canonicalReplyBoundary = null, 
       affected: overdueHuman.length, sample: overdueHuman,
       classification: 'operational', requiresHumanReview: true })
     : pass('reply.overdue_human_action', CATEGORY.REPLY, 'No dated human reply operation is overdue.'));
+
+  // Production decided to answer automatically and the send did not happen (a
+  // gate refused it or the provider failed), and nobody has answered since.
+  // Read from the reply decision; "answered" is the response taxonomy's call.
+  const undelivered = [];
+  for (const [leadId, rows] of index.activityByLead) {
+    for (const row of rows) {
+      const decision = parseReplyDecision(row);
+      if (!decision || decision.policySend !== true || decision.executedAction) continue;
+      const repliedAt = Date.parse(decision.receivedAt || decision.decidedAt || '');
+      const answeredAt = Date.parse(latestResponseAt(rows) || '');
+      if (Number.isFinite(answeredAt) && Number.isFinite(repliedAt) && answeredAt > repliedAt) continue;
+      const lead = index.byId.get(String(leadId));
+      undelivered.push({
+        id: leadId, company: lead ? lead.company : '', policyAction: decision.policyAction,
+        executionStatus: decision.executionStatus, executionCode: decision.executionCode || null,
+        finalClassification: decision.finalClassification,
+      });
+    }
+  }
+  out.push(undelivered.length
+    ? finding({ id: 'reply.auto_reply_not_delivered', category: CATEGORY.REPLY,
+      severity: SEVERITY.WARNING, status: STATUS.FAIL,
+      summary: `${undelivered.length} reply(ies) were meant to get an automatic answer that was not sent, and nobody has answered since.`,
+      affected: undelivered.length, sample: undelivered,
+      classification: 'operational', requiresHumanReview: true })
+    : pass('reply.auto_reply_not_delivered', CATEGORY.REPLY,
+      'Every automatic answer production decided to send was sent, or someone answered since.'));
 
   const invalidOverrides = [];
   for (const [leadId, rows] of index.activityByLead) {

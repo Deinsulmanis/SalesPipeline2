@@ -685,6 +685,12 @@ function resolveReplyState(lead = {}, { activities = [], manualOverride = null }
           suppliedContact: meta.suppliedContact || null,
           evidenceSignals: Array.isArray(meta.evidenceSignals) ? meta.evidenceSignals : [],
           confidence: meta.confidence || null,
+          // Present only on rows read through reply-decision's operational
+          // view: production's decision for this message, and whether the
+          // state above is that decision's or the rule classifier's.
+          replyDecision: meta.replyDecision || null,
+          canonicalStateSource: meta.canonicalStateSource || null,
+          ruleCanonicalState: meta.ruleCanonicalState || null,
         };
       }
     }
