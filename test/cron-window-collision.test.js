@@ -26,7 +26,7 @@ const cron = require('node-cron');
 const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 
 const INTENT_CRON = '1-59/3 * * * *';
-const SEND_CRON = '0,30 8-11 * * 1-5';
+const SEND_CRON = '0,30 7-11 * * 1-5';
 
 /** The minutes an expression actually fires on, per node-cron itself. */
 function fireMinutes(expr, samples = 240) {
@@ -52,7 +52,7 @@ test('2. the intent cron never fires at minute 30', () => {
 test('3. the scheduled send cron still fires at :00 and :30', () => {
   const minutes = fireMinutes(SEND_CRON);
   assert.deepEqual(minutes, [0, 30], 'the send window schedule is unchanged');
-  assert.match(server, /cron\.schedule\('0,30 8-11 \* \* 1-5'/);
+  assert.match(server, /cron\.schedule\('0,30 7-11 \* \* 1-5'/);
 });
 
 test('4. there are still 20 intent-backstop opportunities per hour', () => {

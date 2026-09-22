@@ -200,7 +200,7 @@ test('late watcher uses known threads without broad Gmail message search', () =>
 
 test('late watcher runs daily inside existing check-only scheduler without changing send cadence', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  assert.match(source, /cron\.schedule\('0,30 8-11 \* \* 1-5'/);
+  assert.match(source, /cron\.schedule\('0,30 7-11 \* \* 1-5'/);
   assert.match(source, /cron\.schedule\('15,45 \* \* \* \*'/);
   assert.match(source, /clock\.hour === '12' && clock\.minute === '15'/);
   assert.match(source, /LATE_REPLY_CHECK: 'true'/);

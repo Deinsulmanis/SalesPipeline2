@@ -34,9 +34,9 @@ test('late-refused candidates do not consume the successful-send window target',
   assert.ok((batching.match(/sent\+\+/g) || []).length >= 2, 'only successful provider paths advance reporting');
 });
 
-test('eight scheduled windows can deliver forty per inbox and eighty total without approaching Sheets read quota', async () => {
+test('ten scheduled windows can deliver fifty per inbox and one hundred total without approaching Sheets read quota', async () => {
   const delivered = new Map([['primary', 0], ['secondary', 0]]);
-  for (let window = 0; window < 8; window++) {
+  for (let window = 0; window < 10; window++) {
     for (const senderId of delivered.keys()) {
       const result = await simulateFairBatch({
         initials: [{ id: `${senderId}-initial-${window}` }],
@@ -48,8 +48,8 @@ test('eight scheduled windows can deliver forty per inbox and eighty total witho
       delivered.set(senderId, delivered.get(senderId) + result.sent);
     }
   }
-  assert.deepEqual([...delivered.values()], [40, 40]);
-  assert.equal([...delivered.values()].reduce((sum, value) => sum + value, 0), 80);
+  assert.deepEqual([...delivered.values()], [50, 50]);
+  assert.equal([...delivered.values()].reduce((sum, value) => sum + value, 0), 100);
 
   // Steady-state worst collision: a ten-success LIVE pass (one shared
   // snapshot + ten targeted row checks), Calendar (state, shared dataset,
@@ -59,10 +59,23 @@ test('eight scheduled windows can deliver forty per inbox and eighty total witho
   assert.ok(worstExpectedMinuteReads < 60, 'normal scheduling stays well below the per-user minute quota');
 });
 
-test('scheduler exposes exactly eight windows and passes strict 5 per inbox with derived totals', () => {
+test('the send cron fires exactly ten weekday windows, 7:00–11:30 Pacific, clear of the 12:15 late-reply pass', () => {
+  const cron = require('node-cron');
+  const task = cron.createTask('0,30 7-11 * * 1-5', () => {}, { scheduled: false, timezone: 'America/Vancouver' });
+  const slots = [...new Set(task.getNextRuns(40).map(d => d.toLocaleTimeString('en-GB', {
+    timeZone: 'America/Vancouver', hour: '2-digit', minute: '2-digit',
+  })))].sort();
+  assert.deepEqual(slots, ['07:00', '07:30', '08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30']);
+  // 10 windows × 5 per inbox reaches a 50/day inbox limit; 10 × 10 reaches 100.
+  assert.ok(slots.length * 5 >= 50);
+  assert.ok(slots.length * 10 >= 100);
+  assert.ok(!slots.some(slot => slot >= '12:00'), 'no send run may hold the mutex at the 12:15 late-reply pass');
+});
+
+test('scheduler passes strict 5 per inbox with derived totals', () => {
   assert.match(server, /const SCHEDULED_SEND_PER_INBOX_CAP = 5;/);
   assert.match(server, /function scheduledSendCaps/);
-  assert.match(server, /cron\.schedule\('0,30 8-11 \* \* 1-5'/);
+  assert.match(server, /cron\.schedule\('0,30 7-11 \* \* 1-5'/);
   assert.match(server, /DAILY_CAP: String\(caps\.total\)/);
   assert.match(server, /PER_INBOX_RUN_CAP: String\(caps\.perInbox\)/);
   assert.doesNotMatch(server, /const SCHEDULED_SEND_TOTAL_CAP = 10;/);
