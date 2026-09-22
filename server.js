@@ -6419,20 +6419,26 @@ app.post('/api/enrich/names', requireAuth, (_req, res) => {
 
 if (process.env.RAILWAY_ENVIRONMENT) {
   // Per-window sender buckets for the scheduled batches. The morning cron fires
-  // 8 times a day (:00/:30, 8–11:30am Pacific); each active inbox may deliver
+  // 10 times a day (:00/:30, 7–11:30am Pacific); each active inbox may deliver
   // at most 5 successes per window. The combined per-run ceiling is derived from
   // ACTIVE cold-send inboxes, so 2×5=10 today and 3×5=15 after a later
   // activation, without a code change. Inactive/warming inboxes do not raise it.
-  // Each mailbox also has its own 40/day ceiling; the global daily ceiling is
-  // min(safety cap, sum of active inbox daily limits). Pipeline recovery sends
-  // consume those same ledgers.
+  // Each mailbox also has its own daily ceiling (GMAIL_PRIMARY_DAILY_LIMIT /
+  // registry dailyLimit); the global daily ceiling is min(safety cap, sum of
+  // active inbox daily limits). Pipeline recovery sends consume those same
+  // ledgers. Window count × 5 must reach each inbox's daily limit: 10 × 5 = 50
+  // per inbox and 10 × 10 = 100 combined. Eight windows physically capped
+  // production at 40/inbox and 80/day whatever the configured limits said.
   // Sends fire only in a weekday morning window, evenly at :00 and :30 of
-  // 8am–11:30am Pacific (8 runs: 8:00, 8:30, 9:00, 9:30, 10:00, 10:30, 11:00,
-  // 11:30). That lands 9:00am–12:30pm for Mountain (AB) leads too. Overnight
-  // sends are gone — a human doesn't email at 4am, and inboxes are freshest
-  // mid-morning. The timezone pin below makes these fields Pacific-local and
-  // handles PDT/PST automatically; do NOT hand-convert to UTC.
-  cron.schedule('0,30 8-11 * * 1-5', async () => {
+  // 7am–11:30am Pacific (10 runs: 7:00, 7:30, 8:00, 8:30, 9:00, 9:30, 10:00,
+  // 10:30, 11:00, 11:30). That lands 8:00am–12:30pm for Mountain (AB) leads
+  // too. The window grows earlier, not later, so the last run still finishes
+  // well before the 12:15 check-only pass that hosts the daily late-reply
+  // watcher. Overnight sends are gone — a human doesn't email at 4am, and
+  // inboxes are freshest mid-morning. The timezone pin below makes these
+  // fields Pacific-local and handles PDT/PST automatically; do NOT
+  // hand-convert to UTC.
+  cron.schedule('0,30 7-11 * * 1-5', async () => {
     console.log('[cron] Triggering scheduled outreach agent run...');
     if (agentState.running || automationLaunchReserved) {
       // Never replay missed windows back-to-back. A slow run must reduce the
@@ -6454,7 +6460,7 @@ if (process.env.RAILWAY_ENVIRONMENT) {
     timezone: 'America/Vancouver',
   });
   const bootCaps = scheduledSendCaps();
-  console.log(`[cron] Outreach agent scheduled: :00 and :30, 8–11:30am Pacific, Mon–Fri (${bootCaps.perInbox}/inbox, ${bootCaps.total}/run, ${bootCaps.daily}/day, ${bootCaps.activeCount} active)`);
+  console.log(`[cron] Outreach agent scheduled: :00 and :30, 7–11:30am Pacific, Mon–Fri (${bootCaps.perInbox}/inbox, ${bootCaps.total}/run, ${bootCaps.daily}/day, ${bootCaps.activeCount} active)`);
 
   // :15/:45, never :00/:30 — the send cron above fires on :00 and :30, so the
   // check-only pass is offset by 15 min to avoid racing it for the
