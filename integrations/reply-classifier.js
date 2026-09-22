@@ -5,6 +5,8 @@ const { wrapCreateMessage, FEATURES, TOKEN_BUDGET_EXCEEDED } = require('./anthro
 const { stripText } = require('./smartlead-safety');
 const { classifyReplyText, REPLY_STATE, NEEDS_HUMAN_REASON,
   hasExplicitUnsubscribePhrase, hasExplicitNegativePhrase } = require('./canonical-reply');
+// Which component produced the category; recorded on the reply decision.
+const { CLASSIFICATION_SOURCE } = require('./reply-decision');
 
 const REPLY_CATEGORIES = new Set(['QUESTION','INTERESTED','MEETING_REQUEST','NOT_INTERESTED','UNSUBSCRIBE','OUT_OF_OFFICE','WRONG_PERSON','NEEDS_HUMAN','ALREADY_HANDLED','SEND_INFO']);
 const CLASSIFY_FALLBACK = 'NEEDS_HUMAN';
@@ -75,17 +77,35 @@ function failSafeReplyCategory(text, options = {}) {
   return '';
 }
 
-async function classifyReply({ provider = 'gmail', lead = {}, campaign = {}, subject = '', plainTextReply = '', conversationContext = '', apiKey = process.env.ANTHROPIC_API_KEY, createMessage, messageId = '', threadId = '', alreadyEvaluated = false, priorClassification = '' } = {}) {
+const REPLY_CLASSIFIER_MODEL = 'claude-haiku-4-5';
+
+/**
+ * classifyReply, plus the provenance of its answer. The category returned is
+ * exactly what classifyReply returns; nothing here changes which one wins.
+ */
+async function classifyReplyDetailed({ provider = 'gmail', lead = {}, campaign = {}, subject = '', plainTextReply = '', conversationContext = '', apiKey = process.env.ANTHROPIC_API_KEY, createMessage, messageId = '', threadId = '', alreadyEvaluated = false, priorClassification = '' } = {}) {
   const reply = stripText(plainTextReply, 5000);
   const options = { subject, currentEmail: lead.email };
   const deterministic = deterministicReplyCategory(reply, options);
-  if (deterministic) return deterministic;
+  const detail = (classification, source, model = {}) => ({
+    classification, source, ruleClassification: deterministic || '',
+    modelClassification: model.classification || '', modelStatus: model.status || 'not_called',
+    model: model.status && model.status !== 'no_api_key' ? REPLY_CLASSIFIER_MODEL : '',
+  });
+  if (deterministic) return detail(deterministic, CLASSIFICATION_SOURCE.RULE);
   // Even if the canonical pass declined (low confidence / empty body edge), an
   // explicit opt-out or rejection must never wait on a model call.
   const failSafe = failSafeReplyCategory(reply, options);
-  if (failSafe) return failSafe;
-  if (alreadyEvaluated) return priorClassification || CLASSIFY_FALLBACK;
-  if (!apiKey && !createMessage) return failSafeReplyCategory(reply, options) || CLASSIFY_FALLBACK;
+  if (failSafe) return detail(failSafe, CLASSIFICATION_SOURCE.FAIL_SAFE_PHRASE);
+  if (alreadyEvaluated) {
+    return priorClassification
+      ? detail(priorClassification, CLASSIFICATION_SOURCE.PRIOR_EVALUATION)
+      : detail(CLASSIFY_FALLBACK, CLASSIFICATION_SOURCE.MODEL_FALLBACK);
+  }
+  if (!apiKey && !createMessage) {
+    return detail(failSafeReplyCategory(reply, options) || CLASSIFY_FALLBACK,
+      CLASSIFICATION_SOURCE.MODEL_FALLBACK, { status: 'no_api_key' });
+  }
   try {
     const send = wrapCreateMessage(
       createMessage || (payload => new Anthropic({ apiKey, maxRetries: 0 }).messages.create(payload)),
@@ -99,21 +119,31 @@ async function classifyReply({ provider = 'gmail', lead = {}, campaign = {}, sub
       },
     );
     const msg = await send({
-      model: 'claude-haiku-4-5', max_tokens: 20,
+      model: REPLY_CLASSIFIER_MODEL, max_tokens: 20,
       system: 'Classify a cold-outreach reply as exactly one of: QUESTION, INTERESTED, MEETING_REQUEST, NOT_INTERESTED, UNSUBSCRIBE, OUT_OF_OFFICE, WRONG_PERSON, NEEDS_HUMAN. Prefer NEEDS_HUMAN when unclear. Never infer interest merely because a reply exists.',
       messages: [{ role: 'user', content: `Provider: ${provider}\nCompany: ${lead.company || ''}\nCampaign: ${campaign.name || ''}\nSubject: ${subject}\nReply: ${reply}\nContext: ${stripText(conversationContext, 3000)}` }],
     });
     const raw = String(msg.content?.[0]?.text || '').trim().toUpperCase();
-    if (REPLY_CATEGORIES.has(raw)) return raw;
-    return failSafeReplyCategory(reply, options) || CLASSIFY_FALLBACK;
+    if (REPLY_CATEGORIES.has(raw)) return detail(raw, CLASSIFICATION_SOURCE.MODEL, { classification: raw, status: 'ok' });
+    return detail(failSafeReplyCategory(reply, options) || CLASSIFY_FALLBACK,
+      CLASSIFICATION_SOURCE.MODEL_FALLBACK, { status: 'invalid_output' });
   } catch (error) {
     if (error && error.code === TOKEN_BUDGET_EXCEEDED) {
-      return failSafeReplyCategory(reply, options) || CLASSIFY_FALLBACK;
+      return detail(failSafeReplyCategory(reply, options) || CLASSIFY_FALLBACK,
+        CLASSIFICATION_SOURCE.MODEL_FALLBACK, { status: 'budget_exceeded' });
     }
-    return failSafeReplyCategory(reply, options) || CLASSIFY_FALLBACK;
+    return detail(failSafeReplyCategory(reply, options) || CLASSIFY_FALLBACK,
+      CLASSIFICATION_SOURCE.MODEL_FALLBACK, { status: 'error' });
   }
+}
+
+async function classifyReply(input = {}) {
+  return (await classifyReplyDetailed(input)).classification;
 }
 
 const CLASSIFICATION_TO_STATUS = { QUESTION: 'Question', INTERESTED: 'Interested', MEETING_REQUEST: 'Meeting requested', NOT_INTERESTED: 'Not interested', UNSUBSCRIBE: 'Unsubscribed', OUT_OF_OFFICE: 'Out of office', WRONG_PERSON: 'Replied', NEEDS_HUMAN: 'Replied', ALREADY_HANDLED: 'Replied', SEND_INFO: 'Replied' };
 
-module.exports = { classifyReply, deterministicReplyCategory, failSafeReplyCategory, CLASSIFICATION_TO_STATUS, REPLY_CATEGORIES, CLASSIFY_FALLBACK };
+module.exports = {
+  classifyReply, classifyReplyDetailed, deterministicReplyCategory, failSafeReplyCategory,
+  CLASSIFICATION_TO_STATUS, REPLY_CATEGORIES, CLASSIFY_FALLBACK, CLASSIFICATION_SOURCE, REPLY_CLASSIFIER_MODEL,
+};

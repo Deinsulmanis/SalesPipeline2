@@ -153,10 +153,17 @@ test('CHECK_ONLY opt-out uses the classifier unsubscribe_request reason', async 
 test('CHECK_ONLY still applies terminal CRM mutations and never sends',()=>{
   const fs=require('node:fs');const source=fs.readFileSync(require.resolve('../outreach-agent.js'),'utf8');
   const pass=source.slice(source.indexOf('async function runReplyCheckPass'), source.indexOf('async function commitMailboxObservationCheckpoints'));
-  assert.match(pass,/classification === 'UNSUBSCRIBE'/);
-  assert.match(pass,/classification === 'NOT_INTERESTED'/);
+  // Terminal routes are dispatched from the reply decision; planReplyRoute
+  // places them ahead of the maySend check (test/reply-decision.test.js).
+  assert.match(pass,/case REPLY_ROUTE\.UNSUBSCRIBE: result = await handleUnsubscribe\(lead\)/);
+  assert.match(pass,/case REPLY_ROUTE\.NOT_INTERESTED: result = await handleNotInterested\(lead\)/);
+  assert.match(pass,/interpretInboundReply\(\{\s*lead, message, replyText, ruleCanonical: canonicalReply, maySend,/);
   assert.match(pass,/const maySend\s*=\s*!CHECK_ONLY && !historical/);
-  assert.match(pass,/if \(!maySend\)/);
+  const planner=fs.readFileSync(require.resolve('../integrations/reply-decision.js'),'utf8');
+  const route=planner.slice(planner.indexOf('function planReplyRoute'));
+  assert.match(route,/if \(!maySend\)/);
+  assert.ok(route.indexOf("kind === 'UNSUBSCRIBE'")<route.indexOf('if (!maySend)'),'opt-out is routed before the send gate');
+  assert.ok(route.indexOf("kind === 'NOT_INTERESTED'")<route.indexOf('if (!maySend)'),'rejection is routed before the send gate');
   assert.match(pass,/historyIncomplete/);
   assert.doesNotMatch(commitObservation.toString(),/sendMail|messages\.send|deliver|enroll/);
 });

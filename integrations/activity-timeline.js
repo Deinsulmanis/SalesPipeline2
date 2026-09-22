@@ -18,6 +18,7 @@ const SOURCE_BY_TYPE = Object.freeze({
   reactivation_scheduled: 'CRM', reactivation_cancelled: 'CRM',
   initial_email_sent: 'Automation', follow_up_sent: 'Automation', booking_link_sent: 'Automation',
   staffing_agent_shadow: 'Observation',
+  reply_decision_recorded: 'Automation',
   email_opened: 'Prospect', demo_played: 'Demo', demo_pair_played: 'Demo',
   demo_pair_retracted: 'Demo',
   positive_reply: 'Prospect', meeting_requested: 'Prospect', late_reply: 'Prospect',
@@ -126,6 +127,14 @@ function eventPresentation(row, metadata, context = {}) {
     case 'demo_pair_retracted': return { title: 'Demo pair retracted',
       summary: metadata.reason ? String(metadata.reason) : 'Attributed to another lead' };
     case 'booking_link_sent': return { title: 'Booking-link follow-up sent' };
+    case 'reply_decision_recorded': return {
+      title: 'Reply decision recorded',
+      summary: [
+        metadata.finalClassification ? `Read as ${metadata.finalClassification}` : '',
+        metadata.policyAction ? `policy ${metadata.policyAction}` : '',
+        metadata.executionStatus ? `outcome ${String(metadata.executionStatus).replace(/_/g, ' ')}` : '',
+      ].filter(Boolean).join(' · '),
+    };
     case 'staffing_agent_shadow': return {
       title: 'Staffing agent shadow recommendation',
       summary: metadata.recommendedAction ? `Recommended: ${metadata.recommendedAction}` : '',

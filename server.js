@@ -164,6 +164,7 @@ const {
   evaluateContactChange, buildContactChangeDecision,
 } = require('./integrations/reply-overrides');
 const { REPLY_STATE, LEGACY_REPLY_EVENT_TYPES, resolveReplyState } = require('./integrations/canonical-reply');
+const { applyReplyDecisionsToReplyEvidence } = require('./integrations/reply-decision');
 const { REPLY_ACTION, WAITING_ON: REPLY_WAITING_ON } = require('./integrations/reply-operations');
 const {
   classifyCalendarEvent, matchBookingIdentity, bookingLifecycleAction,
@@ -2061,7 +2062,10 @@ app.get('/api/crm/health', requireAuth, async (req, res) => {
     const metadataOf = row => { try { return JSON.parse(row.metadata || '{}'); } catch (_) { return {}; } };
     const activityToday = (dataset.activities || []).filter(row => row.occurredAt
       && new Date(row.occurredAt).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' }) === dayKey);
-    const repliesToday = activityToday.filter(row => LEGACY_REPLY_EVENT_TYPES.includes(String(row.eventType || '')));
+    // Reply rows as production decided them, so a reply the model or staffing
+    // overlay classified positive counts as positive here too.
+    const repliesToday = applyReplyDecisionsToReplyEvidence(activityToday)
+      .filter(row => LEGACY_REPLY_EVENT_TYPES.includes(String(row.eventType || '')));
     const positiveToday = repliesToday.filter(row => metadataOf(row).canonicalState === REPLY_STATE.POSITIVE
       || ['positive_reply','meeting_requested'].includes(String(row.eventType || '')));
     const newlyStrandedPositive = positiveToday.filter(reply => !(dataset.activities || []).some(row => {

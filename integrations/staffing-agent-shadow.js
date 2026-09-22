@@ -10,15 +10,13 @@
 
 const { isStaffingCampaign } = require('./staffing-campaign');
 const { LEGACY_REPLY_EVENT_TYPES } = require('./canonical-reply');
-const { deterministicReplyCategory } = require('./reply-classifier');
-const { decideReplyResponse } = require('./reply-response-policy');
-const { offerForLead } = require('./offer-config');
+const { replyDecisionFor, productionFactsFromDecision } = require('./reply-decision');
 const { buildStaffingAgentContext } = require('./staffing-agent-context');
 const { runStaffingConversationAgent } = require('./staffing-conversation-agent');
 const {
   EVENT_TYPE, AGENT_VERSION, PROMPT_VERSION, OPERATION, MODEL,
   ZERO_AUTHORITY, shadowEventId, staffingConversationAgentConfig,
-  staffingAgentApiKey, failClosedResult, broadlyAgree,
+  staffingAgentApiKey, failClosedResult, broadlyAgree, actionAgreesWithPolicy,
 } = require('./staffing-agent-schema');
 
 const REPLY_EVENT_SET = new Set(LEGACY_REPLY_EVENT_TYPES);
@@ -35,17 +33,32 @@ function existingShadow(activities = [], messageId) {
     || (row.eventType === EVENT_TYPE && parseMetadata(row.metadata).gmailMessageId === String(messageId))) || null;
 }
 
-function observableProductionAction(lead, classification, replyText) {
-  try {
-    const offer = offerForLead(lead);
-    return decideReplyResponse({ classification, offer, text: replyText }).action || '';
-  } catch (_) {
-    return '';
-  }
+/**
+ * What production actually decided for this message. The shadow never
+ * recomputes it: re-running the reply policy without its real inputs is how
+ * every auto-send used to be recorded as HUMAN_REVIEW. In order of authority:
+ *   1. the reply decision passed in by this pass
+ *   2. the persisted reply_decision_recorded event
+ *   3. a classification production recorded before decision records existed
+ * and otherwise an explicit "unavailable".
+ */
+function productionFacts({ lead, messageId, activities, productionDecision, productionClassification, productionAction }) {
+  const decision = productionDecision
+    || productionFactsFromDecision(replyDecisionFor(activities, messageId, lead && lead.id));
+  if (decision) return decision;
+  const classification = String(productionClassification || '').trim().toUpperCase();
+  const policyAction = String(productionAction || '').trim().toUpperCase();
+  return {
+    source: classification || policyAction ? 'recorded_classification' : 'unavailable',
+    decisionId: null, classification, classificationSource: null, canonicalState: null,
+    policyAction, executedAction: '', executionStatus: '',
+  };
 }
 
-function shadowActivity({ lead, message, context, result, productionClassification, productionAction, checkOnly, now }) {
+function shadowActivity({ lead, message, context, result, production, checkOnly, now }) {
   const messageId = String(message.messageId || message.id || '');
+  const productionClassification = production.classification;
+  const productionAction = production.policyAction;
   const agree = broadlyAgree(productionClassification, result.recommendedAction);
   return {
     eventId: shadowEventId(messageId),
@@ -63,6 +76,19 @@ function shadowActivity({ lead, message, context, result, productionClassificati
       gmailThreadId: String(message.threadId || ''),
       productionClassification: productionClassification || '',
       productionAction: productionAction || '',
+      // Production's recorded decision, compared three ways: the agent against
+      // the final interpretation (broadlyAgree), the agent against the policy
+      // action, and the policy action against what was actually executed.
+      productionDecisionSource: production.source,
+      productionDecisionId: production.decisionId || null,
+      productionClassificationSource: production.classificationSource || null,
+      productionCanonicalState: production.canonicalState || null,
+      productionPolicyAction: productionAction || null,
+      productionExecutedAction: production.executedAction || null,
+      productionExecutionStatus: production.executionStatus || null,
+      actionAgreesWithPolicy: actionAgreesWithPolicy(result.recommendedAction, productionAction),
+      policyExecuted: productionAction && production.executionStatus
+        ? production.executedAction === productionAction : null,
       agentIntent: result.intent,
       agentConfidence: result.confidence,
       agentFit: result.fit,
@@ -87,7 +113,7 @@ function shadowActivity({ lead, message, context, result, productionClassificati
 
 async function evaluateStaffingConversationShadow({
   lead, message = {}, replyText = '', activities = [],
-  productionClassification = '', productionAction = '',
+  productionClassification = '', productionAction = '', productionDecision = null,
   checkOnly = false, now,
   persistEvent, env = process.env, createMessage, AnthropicImpl,
 } = {}) {
@@ -111,10 +137,9 @@ async function evaluateStaffingConversationShadow({
   }
 
   const context = buildStaffingAgentContext({ lead, message, replyText, activities });
-  const classification = productionClassification
-    || deterministicReplyCategory(replyText || message.body || message.snippet || '')
-    || '';
-  const action = productionAction || observableProductionAction(lead, classification, replyText || message.body || '');
+  const production = productionFacts({
+    lead, messageId, activities, productionDecision, productionClassification, productionAction,
+  });
 
   let result;
   if (!staffingAgentApiKey(env)) {
@@ -124,9 +149,7 @@ async function evaluateStaffingConversationShadow({
   }
 
   const event = shadowActivity({
-    lead, message, context, result,
-    productionClassification: classification,
-    productionAction: action,
+    lead, message, context, result, production,
     checkOnly, now,
   });
 
@@ -230,6 +253,7 @@ async function observeStaffingConversationShadows({
         activities,
         productionClassification: production.classification || item.productionClassification,
         productionAction: production.action || '',
+        productionDecision: production.decision || null,
         checkOnly, now, persistEvent, env, createMessage, AnthropicImpl,
       });
     } catch (error) {

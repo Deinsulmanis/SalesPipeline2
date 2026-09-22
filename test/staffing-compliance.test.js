@@ -143,7 +143,7 @@ test('9-11. unsubscribe creates/preserves global suppression and is idempotent',
   const handler = agent.slice(agent.indexOf('async function handleUnsubscribe'), agent.indexOf('async function handleOutOfOffice'));
   assert.match(handler, /already Unsub; suppression confirmed/);
   assert.match(handler, /await addSuppression\(lead\.email, 'unsubscribe', lead\.company, 'reply-auto'\)/);
-  assert.match(agent, /if \(classification === 'UNSUBSCRIBE'\) return handleUnsubscribe\(lead\);/);
+  assert.match(agent, /case REPLY_ROUTE\.UNSUBSCRIBE: result = await handleUnsubscribe\(lead\);/);
   assert.ok(!/auto.?unsuppress|suppressedAt \+|expires?At/.test(agent), 'unsubscribe must not auto-expire');
 });
 

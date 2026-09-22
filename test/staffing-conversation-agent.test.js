@@ -449,8 +449,8 @@ test('outreach-agent invokes shadow observation without routing on it', () => {
   assert.match(agent, /evaluateStaffingConversationShadow\(/);
   const interested = agent.slice(agent.indexOf('async function handleInterested'), agent.indexOf('const ACTIVE_REPLY_EVENT_TYPES'));
   assert.doesNotMatch(interested, /recommendedAction/);
-  const replySwitch = agent.slice(agent.indexOf("switch (classification)"), agent.indexOf('await recordMailboxActivity({ eventId: `gmail-evaluated:'));
-  assert.match(replySwitch, /case 'INTERESTED':/);
+  const replySwitch = agent.slice(agent.indexOf("switch (route)"), agent.indexOf('await recordMailboxActivity({ eventId: `gmail-evaluated:'));
+  assert.match(replySwitch, /case REPLY_ROUTE\.INTERESTED:/);
   assert.doesNotMatch(replySwitch, /recommendedAction/);
   assert.match(agent, /\[staffing-shadow\] failed closed/);
   assert.match(agent, /staffingShadowProduction\.set/);

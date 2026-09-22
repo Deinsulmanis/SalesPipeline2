@@ -165,10 +165,34 @@ function broadlyAgree(productionClassification, recommendedAction) {
   return Boolean(allowed && allowed.includes(String(recommendedAction || '').trim().toUpperCase()));
 }
 
+// The agent's recommended action against production's POLICY action (the
+// reply-response-policy vocabulary). Separate from broadlyAgree, which
+// compares the recommendation with production's interpretation.
+const RECOMMENDED_ACTION_POLICY_AGREEMENT = Object.freeze({
+  ASK_QUALIFICATION: Object.freeze(['AUTO_STAFFING_QUALIFY_QUESTION']),
+  SEND_INFO: Object.freeze(['AUTO_STAFFING_SEND_INFO', 'AUTO_QUESTION_RESPONSE', 'AUTO_PRICING_RESPONSE']),
+  SEND_BOOKING: Object.freeze(['AUTO_BOOKING_RESPONSE', 'AUTO_MEETING_RESPONSE', 'AUTO_STAFFING_QUALIFIED']),
+  HOLD_FOR_LATER: Object.freeze(['AUTO_TIMING_RECONTACT', 'WAIT_OUT_OF_OFFICE']),
+  MARK_NOT_INTERESTED: Object.freeze(['AUTO_NEGATIVE_CLOSE']),
+  UNSUBSCRIBE: Object.freeze(['SUPPRESS']),
+  STORE_REFERRAL: Object.freeze(['HUMAN_REVIEW']),
+  ALREADY_HANDLED: Object.freeze(['HUMAN_REVIEW', 'NO_ACTION']),
+  ESCALATE_HUMAN: Object.freeze(['HUMAN_REVIEW']),
+  NO_ACTION: Object.freeze(['NO_ACTION', 'WAIT_OUT_OF_OFFICE']),
+});
+
+/** null when production recorded no policy action to compare against. */
+function actionAgreesWithPolicy(recommendedAction, policyAction) {
+  const policy = String(policyAction || '').trim().toUpperCase();
+  if (!policy) return null;
+  const allowed = RECOMMENDED_ACTION_POLICY_AGREEMENT[String(recommendedAction || '').trim().toUpperCase()];
+  return Boolean(allowed && allowed.includes(policy));
+}
+
 module.exports = {
   AGENT_VERSION, PROMPT_VERSION, OPERATION, EVENT_TYPE, MODEL, STAFFING_AGENT_KEY_ENV,
   ZERO_AUTHORITY, RECOMMENDED_ACTIONS, RECOMMENDED_ACTION_SET, INTENTS, FITS,
   REQUIRED_OUTPUT_FIELDS, shadowEventId, staffingAgentApiKey, staffingConversationAgentConfig,
   normalizeConfidence, failClosedResult, normalizeAgentOutput, broadlyAgree,
-  CLASSIFICATION_ACTION_AGREEMENT,
+  CLASSIFICATION_ACTION_AGREEMENT, RECOMMENDED_ACTION_POLICY_AGREEMENT, actionAgreesWithPolicy,
 };
