@@ -15,6 +15,19 @@ const DEFAULT_SECONDARY_INBOXES = Object.freeze([
     perRunLimit: DEFAULT_INBOX_PER_RUN_LIMIT,
     observerEnabled: true,
   }),
+  // New mailbox on the established scalelabai.ca domain. Smartlead warms it
+  // independently; campaign sends use this Gmail sender only after the
+  // operator activates it behind the healthy-observer gate. Deliberately
+  // conservative caps: 10/day spread at 2 per window. Raise them by hand.
+  Object.freeze({
+    id: 'deniels',
+    email: 'deniels@scalelabai.ca',
+    status: 'warming',
+    tokenEnv: 'GMAIL_DENIELS_TOKEN_JSON',
+    dailyLimit: 10,
+    perRunLimit: 2,
+    observerEnabled: true,
+  }),
 ]);
 
 function parseEntry(entry, index, seenIds, seenEmails) {

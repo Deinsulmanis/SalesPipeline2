@@ -11,7 +11,7 @@ const env = {
 const dental = { id: 'L', tradeType: 'Dental' };
 const activity = (senderInboxId, type = 'initial_email_sent') => ({ eventType: type, sourceLeadId: 'L', occurredAt: '2026-09-01T17:00:00Z', metadata: JSON.stringify({ senderInboxId }) });
 
-test('both independently credentialed active senders are eligible for dental', () => assert.deepEqual(configuredSenders(env).map(s => [s.id,s.sendEligible]), [['primary',true],['b',true],['scalelabaiteam',false]]));
+test('both independently credentialed active senders are eligible for dental', () => assert.deepEqual(configuredSenders(env).map(s => [s.id,s.sendEligible]), [['primary',true],['b',true],['scalelabaiteam',false],['deniels',false]]));
 test('least-used policy deterministically distributes new dental leads', () => assert.equal(chooseSender({ lead:dental,senders:configuredSenders(env),sendsToday:new Map([['primary',2],['b',1]]) }).sender.id, 'b'));
 test('first successful sender evidence pins all follow-ups', () => assert.equal(chooseSender({ lead:dental,activities:[activity('b')],senders:configuredSenders(env),step:2 }).sender.id, 'b'));
 test('follow-up cannot migrate when its sender is exhausted', () => assert.equal(chooseSender({ lead:dental,activities:[activity('b')],senders:configuredSenders(env),sendsToday:new Map([['b',20]]),step:2 }).sender, null));

@@ -474,6 +474,13 @@ const sheets = () => wrapSheetsReadClient(google.sheets({ version: 'v4', auth: o
 const gmail  = () => google.gmail({ version: 'v1', auth: oauth2Client });
 const GMAIL_SENDERS = GMAIL_SENDERS_BOOT;
 const PRIMARY_GMAIL_SENDER = GMAIL_SENDERS.find(sender => sender.id === 'primary');
+// Each mailbox's registered per-run cap, bounded above by PER_INBOX_RUN_CAP
+// inside the window quota. Senders at the default keep today's bucket size. A
+// malformed value keeps the uniform bucket: the quota is built before the
+// reply-check pass, which must never be skipped over a pacing typo.
+const SENDER_PER_RUN_LIMITS = new Map(GMAIL_SENDERS
+  .filter(sender => Number.isInteger(sender.perRunLimit) && sender.perRunLimit >= 0)
+  .map(sender => [sender.id, sender.perRunLimit]));
 const gmailObservationHistoryBySender = new Map();
 const gmailObservationDetailsBySender = new Map();
 let activeWindowQuota = null;
@@ -4928,6 +4935,7 @@ async function run() {
     const intentWindowQuota = createSendingWindowQuota({
       senderIds: [...intentCandidatesBySender.keys()],
       perSenderLimit: PER_INBOX_RUN_CAP, globalLimit: DAILY_CAP,
+      perSenderLimits: SENDER_PER_RUN_LIMITS,
     });
     activeQuotaState = intentQuotaState;
     activeWindowQuota = intentWindowQuota;
@@ -4963,6 +4971,7 @@ async function run() {
     senderIds: GMAIL_SENDERS.filter(sender => sender.sendEligible).map(sender => sender.id),
     perSenderLimit: PER_INBOX_RUN_CAP,
     globalLimit: DAILY_CAP,
+    perSenderLimits: SENDER_PER_RUN_LIMITS,
   });
   activeQuotaState = quotaState;
   activeWindowQuota = windowQuota;
