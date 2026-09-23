@@ -7,7 +7,20 @@ const { classifyReplyText } = require('./canonical-reply');
 const { uniqueSuppressions, suppressionForCanonical, inboundAlreadyEvaluated } = require('./inbound-reply-guard');
 const { eventTypeFor, stripQuotedReply } = require('./reply-reconciliation');
 const { planOutboundActivity } = require('./human-outbound');
+const { providerMessageId } = require('./canonical-sends');
 const norm = value => String(value || '').trim().toLowerCase();
+
+const HUMAN_REPLY_TEXT_LIMIT = 1500;
+
+// What a person actually wrote, from the Gmail message itself: the text/plain
+// part only — never the HTML part or the snippet, which can carry the quoted
+// thread — quote-stripped exactly as inbound replies are. '' when there is no
+// readable plain text; the human evidence is recorded either way.
+function humanReplyText(payload) {
+  let text = '';
+  try { text = stripQuotedReply(firstPlainText(payload)); } catch (_) { text = ''; }
+  return { text: text.slice(0, HUMAN_REPLY_TEXT_LIMIT), truncated: text.length > HUMAN_REPLY_TEXT_LIMIT };
+}
 const meta = row => { try { return typeof row.metadata === 'object' ? row.metadata : JSON.parse(row.metadata || '{}'); } catch (_) { return {}; } };
 const addresses = text => String(text || '').split(',').map(parseAddr).filter(Boolean);
 
@@ -61,7 +74,10 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
       const lead = matches[0];
       if (!lead) { ignored.push({ id: message.id, reason: 'unmatched_outbound' }); continue; }
       const mine = existingActivitiesByLead.get(lead.id) || [];
-      if (mine.some(row => meta(row).gmailMessageId === message.id)) continue;
+      // Already recorded under the canonical provider id, whichever key the
+      // writer used — cold steps, warm replies and earlier observations use
+      // gmailMessageId, stage-sequence sends use providerMessageId.
+      if (mine.some(row => providerMessageId(row) === message.id)) continue;
       const priorInbound = threadHasCrmInbound(message.threadId, lead, at)
         || batchInboundBefore(message.threadId, lead.email, at);
       // Fetch the Gmail thread only when CRM and this batch cannot prove a prior
@@ -76,9 +92,13 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
         subject: headerValue(message.payload, 'Subject'), sentAt: occurredAt }, {
         leadsByEmail, existingActivitiesByLead, threadsWithInbound: new Set(threadInbound ? [message.threadId] : []),
       });
-      if (plan.activity) add({ ...plan.activity, metadata: JSON.stringify({ ...plan.activity.metadata,
-        senderInboxId, rfcMessageId, recoveredDuringOutage: observation.recovered }) });
-      else ignored.push({ id: message.id, reason: plan.outcome });
+      if (plan.activity) {
+        const reply = humanReplyText(message.payload);
+        add({ ...plan.activity, content: reply.text, metadata: JSON.stringify({ ...plan.activity.metadata,
+          senderInboxId, rfcMessageId, recoveredDuringOutage: observation.recovered,
+          contentCapture: reply.text ? 'quote_stripped_plain_text' : 'unavailable',
+          contentTruncated: reply.truncated }) });
+      } else ignored.push({ id: message.id, reason: plan.outcome });
       continue;
     }
     const matched = matchMailboxMessages([message], { leads: matchLeads, activities, senderInboxId, senderEmail });
@@ -162,4 +182,4 @@ async function commitObservation({ observation, plan, appendEvent, appendEvents,
   return { persisted: plan.events.length, suppressed: plan.suppressions.length };
 }
 
-module.exports = { planMailboxEvents, commitObservation };
+module.exports = { planMailboxEvents, commitObservation, humanReplyText, HUMAN_REPLY_TEXT_LIMIT };

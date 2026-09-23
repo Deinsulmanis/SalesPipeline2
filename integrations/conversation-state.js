@@ -413,6 +413,10 @@ function buildTurns({ rows, ledgerRows, lead, boardLead, messageTexts }) {
       const reconstructed = primary.messageId && messageTexts[primary.messageId];
       if (meta.trigger === 'crm_log_response' && content.trim()) {
         contentSource = 'operator_logged_note';
+      } else if (content.trim()) {
+        // Captured by the Gmail observer from the sent message itself.
+        contentSource = 'ledger_human_reply_text';
+        truncated = meta.contentTruncated === true || content.length >= INBOUND_TEXT_LIMIT;
       } else if (reconstructed && String(reconstructed.text || '').trim()) {
         content = String(reconstructed.text);
         contentSource = String(reconstructed.source || 'provider_message');
