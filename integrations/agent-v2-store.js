@@ -36,13 +36,13 @@ function createPgAgentV2Store({ connectionString, pool: existingPool } = {}) {
     if (!schemaReady) schemaReady = pool.query(`SELECT decision_id, lead_id, message_id,
       claimed_at, claim_token, claim_attempts, model_started_at,
       completed_at, created_at, action_id, record
-      FROM agent_v2_shadow_decisions LIMIT 0`)
+      FROM public.agent_v2_shadow_decisions LIMIT 0`)
       .catch(error => { schemaReady = null; throw error; });
     await schemaReady;
   }
   async function get(decisionId) {
     await ensureSchema();
-    const rows = await pool.query('SELECT record FROM agent_v2_shadow_decisions WHERE decision_id = $1', [decisionId]);
+    const rows = await pool.query('SELECT record FROM public.agent_v2_shadow_decisions WHERE decision_id = $1', [decisionId]);
     return rows.rows[0]?.record || null;
   }
   async function claim({ decisionId, leadId, messageId }) {
@@ -76,7 +76,7 @@ function createPgAgentV2Store({ connectionString, pool: existingPool } = {}) {
       }
       locked = true;
       const token = crypto.randomUUID();
-      const result = await client.query(`INSERT INTO agent_v2_shadow_decisions
+      const result = await client.query(`INSERT INTO public.agent_v2_shadow_decisions
         (decision_id, lead_id, message_id, claimed_at, claim_token, claim_attempts)
         VALUES ($1, $2, $3, now(), $4, 1)
         ON CONFLICT (decision_id) DO UPDATE SET
@@ -88,7 +88,7 @@ function createPgAgentV2Store({ connectionString, pool: existingPool } = {}) {
       [decisionId, leadId, messageId, token]);
       if (!result.rows.length) {
         const prior = await client.query(`SELECT decision_id, lead_id, message_id, record
-          FROM agent_v2_shadow_decisions WHERE decision_id = $1`, [decisionId]);
+          FROM public.agent_v2_shadow_decisions WHERE decision_id = $1`, [decisionId]);
         const row = prior.rows[0];
         if (!row || row.lead_id !== leadId || row.message_id !== messageId || !row.record)
           throw new Error('shadow decision identity conflict');
@@ -103,7 +103,7 @@ function createPgAgentV2Store({ connectionString, pool: existingPool } = {}) {
         priorModelAttempt: Boolean(row.model_started_at),
         async markModelStarted() {
           if (released || controller.signal.aborted) throw new Error('shadow claim lost');
-          const marked = await client.query(`UPDATE agent_v2_shadow_decisions
+          const marked = await client.query(`UPDATE public.agent_v2_shadow_decisions
             SET model_started_at = now()
             WHERE decision_id = $1 AND claim_token = $2
               AND record IS NULL AND model_started_at IS NULL
@@ -112,7 +112,7 @@ function createPgAgentV2Store({ connectionString, pool: existingPool } = {}) {
         },
         async complete(record) {
           if (released || controller.signal.aborted) throw new Error('shadow claim lost');
-          const saved = await client.query(`UPDATE agent_v2_shadow_decisions
+          const saved = await client.query(`UPDATE public.agent_v2_shadow_decisions
             SET record = $3::jsonb, action_id = $4, created_at = $5,
                 completed_at = now()
             WHERE decision_id = $1 AND claim_token = $2 AND record IS NULL

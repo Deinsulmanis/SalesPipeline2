@@ -1,5 +1,67 @@
 # Agent v2: structured shadow decisions
 
+## Production pilot preparation
+
+The production application is Railway `modest-peace / production / SalesPipeline2`.
+Its `SEND_LOCK_DATABASE_URL` references the separate PostgreSQL 18 `Postgres`
+service in the same project. That database holds send reservations and is the
+correct PostgreSQL service for the new, independent shadow table. It is not the
+Supabase outreach mirror, and Google Sheets remains the conversation source.
+
+Run `db/migrations/20260923000000_agent_v2_shadow_decisions.sql` once against
+that PostgreSQL service with an administrative connection. The migration has
+one `CREATE TABLE public.agent_v2_shadow_decisions` statement. It contains no
+`ALTER`, `UPDATE`, `DELETE`, trigger, or reference to any existing table. It
+deliberately fails if the table already exists; inspect an existing table
+before proceeding. The shadow worker only verifies the table at runtime and
+does not run DDL.
+
+Create a new login role using an administrative `psql` session. Set its secret
+with interactive `\password agent_v2_shadow_worker` so it is not placed in a
+command argument or repository file:
+
+```sql
+CREATE ROLE agent_v2_shadow_worker LOGIN NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION;
+GRANT USAGE ON SCHEMA public TO agent_v2_shadow_worker;
+GRANT SELECT, INSERT, UPDATE ON TABLE public.agent_v2_shadow_decisions
+  TO agent_v2_shadow_worker;
+```
+
+Configure only the independent shadow worker with a connection URL for that
+role as `AGENT_V2_SHADOW_DATABASE_URL`. Do not reuse `SEND_LOCK_DATABASE_URL`
+or give this role privileges on send reservations or any lead, CRM, activity,
+sender, booking, suppression, or reply-decision table. Before use, run these
+read-only permission checks as the shadow role; every non-shadow table must
+return no `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, or `TRIGGER`
+privilege:
+
+```sql
+SELECT current_database(), current_user,
+       to_regclass('public.agent_v2_shadow_decisions') AS shadow_table;
+SELECT has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'SELECT') AS can_read,
+       has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'INSERT') AS can_claim,
+       has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'UPDATE') AS can_complete,
+       has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'DELETE') AS can_delete,
+       has_schema_privilege(current_user, 'public', 'CREATE') AS can_create;
+SELECT schemaname, tablename
+FROM pg_tables
+WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
+  AND (schemaname, tablename) <> ('public', 'agent_v2_shadow_decisions')
+  AND (has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'SELECT')
+    OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'INSERT')
+    OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'UPDATE')
+    OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'DELETE')
+    OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'TRUNCATE')
+    OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'TRIGGER'));
+```
+
+The final query must return zero rows. Check that the first three shadow
+privileges are true, and shadow `DELETE` and schema `CREATE` are false. A
+PostgreSQL session advisory lock requires no table write or additional role
+grant; the integration test exercises it with this restricted role. Railway's
+connected OAuth access exposes variable names but not their values, so live
+migration and role creation require a credential-bearing operator session.
+
 Agent v2 reads the existing Phase 1 `conversation_state_v1` result. The
 standalone worker never runs in `outreach-agent.js` or `server.js`, and its
 recommendation cannot be consumed by a send, reservation, CRM, calendar,

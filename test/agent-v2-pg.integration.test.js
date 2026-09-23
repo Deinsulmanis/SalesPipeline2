@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+const { Client } = require('pg');
 const { createPgAgentV2Store, decisionIdFor } = require('../integrations/agent-v2-store');
 const { evaluateAgentV2Shadow } = require('../integrations/agent-v2-shadow');
 
@@ -36,7 +37,56 @@ test('Postgres shadow store: durable claim, concurrent exclusion, crash recovery
     const decisionId = decisionIdFor(leadId, messageId);
     try {
       await migrator.applyMigration();
+      await assert.rejects(migrator.applyMigration(), /already exists/);
+      if (process.env.AGENT_V2_TEST_WORKER_ROLE) {
+        const role = process.env.AGENT_V2_TEST_WORKER_ROLE;
+        if (!/^[a-z_][a-z0-9_]*$/.test(role)) throw new Error('invalid test worker role');
+        const admin = new Client({ connectionString: migrationUrl });
+        await admin.connect();
+        try {
+          await admin.query(`GRANT USAGE ON SCHEMA public TO ${role}`);
+          await admin.query(`GRANT SELECT, INSERT, UPDATE ON public.agent_v2_shadow_decisions TO ${role}`);
+        } finally { await admin.end(); }
+      }
       await b.ensureSchema();
+      const worker = new Client({ connectionString: url });
+      await worker.connect();
+      try {
+        const grants = await worker.query(`SELECT
+          has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'SELECT') AS can_read,
+          has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'INSERT') AS can_insert,
+          has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'UPDATE') AS can_update,
+          has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'DELETE') AS can_delete,
+          has_schema_privilege(current_user, 'public', 'CREATE') AS can_create,
+          to_regclass('public.outbound_send_reservations') AS unrelated_table`);
+        assert.equal(grants.rows[0].can_read, true);
+        assert.equal(grants.rows[0].can_insert, true);
+        assert.equal(grants.rows[0].can_update, true);
+        if (migrationUrl !== url) {
+          assert.equal(grants.rows[0].can_delete, false);
+          assert.equal(grants.rows[0].can_create, false);
+          if (grants.rows[0].unrelated_table) {
+            const denied = await worker.query(`SELECT
+              has_table_privilege(current_user, 'public.outbound_send_reservations', 'SELECT') AS can_read,
+              has_table_privilege(current_user, 'public.outbound_send_reservations', 'INSERT') AS can_insert,
+              has_table_privilege(current_user, 'public.outbound_send_reservations', 'UPDATE') AS can_update,
+              has_table_privilege(current_user, 'public.outbound_send_reservations', 'DELETE') AS can_delete`);
+            assert.ok(Object.values(denied.rows[0]).every(value => value === false));
+            await assert.rejects(worker.query('INSERT INTO public.outbound_send_reservations DEFAULT VALUES'),
+              /permission denied/);
+          }
+          const unrelated = await worker.query(`SELECT schemaname, tablename FROM pg_tables
+            WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
+              AND (schemaname, tablename) <> ('public', 'agent_v2_shadow_decisions')
+              AND (has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'SELECT')
+                OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'INSERT')
+                OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'UPDATE')
+                OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'DELETE')
+                OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'TRUNCATE')
+                OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'TRIGGER'))`);
+          assert.deepEqual(unrelated.rows, []);
+        }
+      } finally { await worker.end(); }
       const crashed = await a.claim({ decisionId, leadId, messageId });
       assert.equal(crashed.status, 'claimed');
       const blocked = await b.claim({ decisionId, leadId, messageId });
