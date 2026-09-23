@@ -135,9 +135,11 @@ const {
 } = require('./integrations/gmail-followup-safety');
 const { observeStaffingConversationShadows, evaluateStaffingConversationShadow } = require('./integrations/staffing-agent-shadow');
 const { offerForLead, warmResponse } = require('./integrations/offer-config');
-const { ACTION: REPLY_RESPONSE_ACTION, decideReplyResponse, numericConfidence, POSITIVE_AUTOSEND_FLOOR } = require('./integrations/reply-response-policy');
+const { ACTION: REPLY_RESPONSE_ACTION, decideReplyResponse, numericConfidence, POSITIVE_AUTOSEND_FLOOR,
+  isStaffingReplyContext } = require('./integrations/reply-response-policy');
 const { classifyStaffingReply, unroutedReplyDecision, STAFFING_CLARIFICATION,
   overlayStaffingReplyClassification, notesForStaffingWarmAction, inboundWarmReplyAlreadySent,
+  staffingReplyHistory, staffingRepeatReason, staffingHumanTouchBlock,
 } = require('./integrations/staffing-reply-policy');
 const {
   inboundAlreadyEvaluated, committedInboundClassification,
@@ -1600,7 +1602,7 @@ async function answerQuestion(lead, replyText, extra = {}) {
   }
 
   if (!ANTHROPIC_API_KEY) {
-    return draft(bookingSnippet(company, { companyFallback: scoped.companyFallback }), 'no ANTHROPIC_API_KEY — cannot answer', 0);
+    return draft(bookingSnippet(company, { family: scoped.family, companyFallback: scoped.companyFallback }), 'no ANTHROPIC_API_KEY — cannot answer', 0);
   }
 
   try {
@@ -1649,7 +1651,7 @@ async function answerQuestion(lead, replyText, extra = {}) {
     try {
       parsed = JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, ''));
     } catch (_e) {
-      return draft(bookingSnippet(company, { companyFallback: scoped.companyFallback }), `model returned unparseable output: ${raw.slice(0, 120)}`, 0);
+      return draft(bookingSnippet(company, { family: scoped.family, companyFallback: scoped.companyFallback }), `model returned unparseable output: ${raw.slice(0, 120)}`, 0);
     }
 
     const confidence = Number(parsed.confidence) || 0;
@@ -1674,17 +1676,22 @@ async function answerQuestion(lead, replyText, extra = {}) {
     }
     if (parsed.needs_human === true) return draft(withBooking(answer, company, scoped), `model flagged needs_human (${topic})`, confidence);
     if (confidence < ANSWER_CONFIDENCE_FLOOR) return draft(withBooking(answer, company, scoped), `confidence ${confidence} < ${ANSWER_CONFIDENCE_FLOOR} (${topic})`, confidence);
-    if (!answer) return draft(bookingSnippet(company, { companyFallback: scoped.companyFallback }), 'model returned an empty answer', confidence);
+    if (!answer) return draft(bookingSnippet(company, { family: scoped.family, companyFallback: scoped.companyFallback }), 'model returned an empty answer', confidence);
+    // Model-written text for a draft-only offer is proposed, never sent: the
+    // model's own confidence cannot authorise it.
+    if (scoped.draftOnlyModelAnswers) {
+      return draft(withBooking(answer, company, scoped), `model-written answer drafted for review (${topic}, confidence ${confidence})`, confidence);
+    }
 
     return { mode: 'auto', body: withBooking(answer, company, scoped), reason: `confident answer (${topic})`, confidence };
   } catch (e) {
-    return draft(bookingSnippet(company, { companyFallback: scoped.companyFallback }), `answer API error: ${e.message}`, 0);
+    return draft(bookingSnippet(company, { family: scoped.family, companyFallback: scoped.companyFallback }), `answer API error: ${e.message}`, 0);
   }
 }
 
 // Answer + the warm booking snippet, in the house voice.
 function withBooking(answer, company, scoped = {}) {
-  return `${answer.trim()}\n\n${bookingSnippet(company, { companyFallback: scoped.companyFallback })}`;
+  return `${answer.trim()}\n\n${bookingSnippet(company, { family: scoped.family, companyFallback: scoped.companyFallback })}`;
 }
 
 // ── SHEET I/O ─────────────────────────────────────────────────────────────────
@@ -2547,7 +2554,8 @@ async function handleQuestion(lead, message, replyText, todaySent, activities = 
       canonical: classifyReplyText(replyText, { subject: message.subject || '', currentEmail: lead.email }),
     });
     if (['SEND_INFO', 'INTERESTED', 'STAFFING_QUALIFICATION'].includes(overlay.classification)) {
-      return handlePositiveAutomation(lead, message, overlay.classification, activities, overlay.canonical, { decision, overlay });
+      return handlePositiveAutomation(lead, message, overlay.classification, activities, overlay.canonical,
+        { decision, overlay, outboundObservationOk });
     }
   }
   const rowNum = await resolveRow(lead.id);
@@ -3069,7 +3077,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       await withAuth(async () => {
         if (!attributionActivities) attributionActivities = activitiesForCycle || await readColdCallActivities();
         await recordActiveReplyActivity(lead, message, replyText, classification, attributionActivities);
-        const decisionOptions = { decision: replyDecision, overlay: staffingOverlay };
+        const decisionOptions = { decision: replyDecision, overlay: staffingOverlay, outboundObservationOk };
         const route = replyDecision.route;
         let result;
         switch (route) {
@@ -3363,7 +3371,7 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
 }
 
 async function handlePositiveAutomation(lead, message, classification, activities, canonical = {},
-  { decision = null, overlay: decidedOverlay } = {}) {
+  { decision = null, overlay: decidedOverlay, outboundObservationOk = false } = {}) {
   // Routes to human review and records that as this reply's execution.
   const routeToHuman = async ({ policy = null, effects = [] } = {}) => {
     if (policy) recordReplyPolicy(decision, { action: REPLY_RESPONSE_ACTION.HUMAN_REVIEW, send: false, classification, ...policy });
@@ -3410,7 +3418,7 @@ async function handlePositiveAutomation(lead, message, classification, activitie
       classification: effectiveClassification,
     } });
   }
-  const policy = decideReplyResponse({
+  let policy = decideReplyResponse({
     classification: effectiveClassification,
     canonical: effectiveCanonical,
     confidence: overlay?.confidence || numericConfidence({ classification: effectiveClassification, canonical: effectiveCanonical }),
@@ -3419,12 +3427,19 @@ async function handlePositiveAutomation(lead, message, classification, activitie
     family: familyForLead(lead),
     qualificationFit: overlay?.fit || '',
   });
+  // A staffing reply this conversation has already had is not sent again: a
+  // qualified lead is not re-asked, and the information is not re-sent.
+  const repeated = policy.send
+    ? staffingRepeatReason(policy.action, staffingReplyHistory({ lead, activities }))
+    : '';
+  if (repeated) policy = { ...policy, action: REPLY_RESPONSE_ACTION.HUMAN_REVIEW, send: false, reason: repeated };
   // The auto-send score is not a classification confidence: it is the staffing
   // overlay's marker score when the overlay set one, otherwise a score derived
   // from the rule classifier's signals. Both are compared with the same floor.
   recordReplyPolicy(decision, {
     action: policy.action, send: policy.send, reason: policy.reason, classification: effectiveClassification,
-    source: REPLY_POLICY_SOURCE.REPLY_RESPONSE_POLICY, confidence: policy.confidence,
+    source: repeated ? REPLY_POLICY_SOURCE.STAFFING_GUARD : REPLY_POLICY_SOURCE.REPLY_RESPONSE_POLICY,
+    confidence: policy.confidence,
     confidenceSource: overlay?.confidence ? 'staffing_overlay' : 'rule_signals', floor: POSITIVE_AUTOSEND_FLOOR,
   });
   if (!policy.send) {
@@ -3445,6 +3460,22 @@ async function handlePositiveAutomation(lead, message, classification, activitie
   }
   const body = warmResponse({ action: policy.action, lead, offer });
   const subject = /^re:/i.test(message.subject || '') ? message.subject : `Re: ${message.subject || 'your reply'}`;
+  // A person who replied by hand owns a staffing conversation: the automated
+  // reply is held as a draft, exactly as the question auto-answer is.
+  const humanHold = isStaffingReplyContext({ family: familyForLead(lead), offer })
+    ? staffingHumanTouchBlock({ lead, activities, outboundObservationOk })
+    : null;
+  if (humanHold) {
+    await queueDraft(lead, {
+      mode: 'draft', body, reason: `${policy.reason} — held: ${humanHold.reason}`, confidence: policy.confidence || 0,
+    });
+    await handleNeedsHuman(lead, message.fromAddr);
+    recordReplyExecution(decision, {
+      executedAction: null, status: REPLY_EXECUTION_STATUS.BLOCKED, code: humanHold.code, reason: humanHold.reason,
+      fallbackAction: REPLY_RESPONSE_ACTION.HUMAN_REVIEW, effects: [REPLY_EFFECT.DRAFT_QUEUED],
+    });
+    return { delivered: false, code: humanHold.code, reason: humanHold.reason };
+  }
   const delivered = await deliverHardenedWarmReply({ lead, message, action: policy.action, body, subject, activities,
     classification: effectiveClassification, replyDecisionId: decision?.decisionId || '' });
   recordReplyExecution(decision, executionForDelivery(policy.action, delivered));

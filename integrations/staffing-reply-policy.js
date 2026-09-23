@@ -3,6 +3,7 @@
 const { CAMPAIGN_FAMILY, familyForLead, resolveLeadFamily } = require('./campaign-versions');
 const { ACTION } = require('./reply-response-policy');
 const { STAFFING_LANDING_PAGE_URL } = require('./staffing-campaign');
+const { latestHumanOutboundAt } = require('./human-outbound');
 
 const CANDIDATE_SIDE_MARKERS = Object.freeze([
   ['looking_for_work', /\b(?:looking for (?:a )?job|i am (?:a )?(?:candidate|job seeker)|hire me|my resume|resume attached|i need (?:a )?job)\b/i],
@@ -303,6 +304,72 @@ function inboundWarmReplyAlreadySent(activities = [], inboundMessageId = '') {
   });
 }
 
+// This lead's rows, matched the way the warm-send final gate matches them.
+function activitiesForLead(activities = [], lead = {}) {
+  const id = String(lead.id || '').trim();
+  const email = String(lead.email || '').trim().toLowerCase();
+  return (activities || []).filter(row => row && (
+    (id && (String(row.sourceLeadId || '') === id || String(row.leadId || '') === `CE-${id}`))
+    || (email && String(row.email || '').trim().toLowerCase() === email)));
+}
+
+/**
+ * Which staffing replies this conversation has already had. Read from the
+ * notes tags written after each delivered staffing reply AND from the
+ * delivered replies themselves: a tag lost to a failed notes write after a
+ * real send must not make the same reply sendable again.
+ */
+function staffingReplyHistory({ lead = {}, activities = [] } = {}) {
+  const tags = staffingConversationState(lead.notes);
+  const sent = new Set(activitiesForLead(activities, lead)
+    .filter(row => String(row.eventType || '') === 'booking_link_sent')
+    .map((row) => {
+      try { return String(JSON.parse(row.metadata || '{}').action || ''); } catch (_) { return ''; }
+    }));
+  return {
+    qualifyAsked: tags.qualifyAsked
+      || sent.has(ACTION.AUTO_STAFFING_QUALIFY_QUESTION) || sent.has(ACTION.AUTO_STAFFING_SEND_INFO),
+    qualified: tags.qualified || sent.has(ACTION.AUTO_STAFFING_QUALIFIED),
+    // The qualified reply carries the landing page too.
+    infoSent: tags.infoSent || tags.qualified
+      || sent.has(ACTION.AUTO_STAFFING_SEND_INFO) || sent.has(ACTION.AUTO_STAFFING_QUALIFIED),
+  };
+}
+
+/**
+ * Why a staffing reply the conversation has already had must not be sent
+ * again, or '' when it may proceed. The caller routes a refusal to a human.
+ */
+function staffingRepeatReason(action, history = {}) {
+  if (action === ACTION.AUTO_STAFFING_QUALIFY_QUESTION) {
+    if (history.qualified) return 'staffing lead is already qualified; the qualification question is not asked again';
+    if (history.qualifyAsked) return 'staffing qualification question was already asked; it is not asked again';
+  }
+  if (action === ACTION.AUTO_STAFFING_SEND_INFO && history.infoSent) {
+    return 'staffing information was already sent in this conversation; it is not sent again';
+  }
+  if (action === ACTION.AUTO_STAFFING_QUALIFIED && history.qualified) {
+    return 'staffing qualified reply was already sent; it is not sent again';
+  }
+  return '';
+}
+
+/**
+ * A person who replied by hand owns a staffing conversation, so automated
+ * staffing replies do not answer over them. Same evidence, codes and
+ * stale-mailbox rule as the question auto-answer, scoped to this lead.
+ * Returns { code, reason } when automation must hold, else null.
+ */
+function staffingHumanTouchBlock({ lead = {}, activities = [], outboundObservationOk = false } = {}) {
+  if (!outboundObservationOk) {
+    return { code: 'outbound_observation_failed', reason: 'manual outbound observation failed, so mailbox state may be stale' };
+  }
+  const humanTouchAt = latestHumanOutboundAt(activitiesForLead(activities, lead));
+  return humanTouchAt
+    ? { code: 'human_response_observed', reason: `a human response was already observed at ${humanTouchAt}` }
+    : null;
+}
+
 module.exports = {
   STAFFING_CLARIFICATION, STAFFING_LANDING_PAGE_URL, STAFFING_NOTE,
   STAFFING_QUALIFY_QUESTION, STAFFING_SEND_INFO_REPLY,
@@ -313,4 +380,5 @@ module.exports = {
   classifyStaffingQualificationAnswer, overlayStaffingReplyClassification,
   staffingQualifyQuestionReply, staffingSendInfoReply, staffingQualifiedReply,
   notesForStaffingWarmAction, inboundWarmReplyAlreadySent,
+  staffingReplyHistory, staffingRepeatReason, staffingHumanTouchBlock,
 };

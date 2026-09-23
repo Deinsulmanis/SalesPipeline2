@@ -77,6 +77,9 @@ const FAMILY_FACTS = Object.freeze({
     audience: 'industrial staffing agencies',
     companyFallback: 'your agency',
     systemRole: 'You draft short replies on behalf of Deins, who sells employer-acquisition help to industrial staffing agencies. Never mention dental, clinics, patients, receptionists, or call answering.',
+    // The model may propose a staffing answer, but model-written staffing text
+    // is always a draft for review: its own confidence never authorises a send.
+    draftOnlyModelAnswers: true,
   }),
   [CAMPAIGN_FAMILY.ROOFING]: Object.freeze({
     facts: ROOFING_PRODUCT_FACTS,
