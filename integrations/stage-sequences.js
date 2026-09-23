@@ -19,7 +19,10 @@
  * auditable. See deriveSequenceState().
  */
 
-const { addBusinessDays, businessDay } = require('./pipeline-state');
+const { addBusinessDays, businessDay, MEANINGFUL_INBOUND_EVENTS } = require('./pipeline-state');
+const {
+  isResponseEvidence, HUMAN_RESPONSE_EVENT, RECORDED_CONVERSATION_EVENTS, MEETING_RESPONSE_EVENTS,
+} = require('./prospect-response');
 const { CAMPAIGN_FAMILY, resolveLeadFamily } = require('./campaign-versions');
 // Stage comparisons go through the canonical normaliser, never the raw cell.
 // Legacy rows store values like 'lost', 'warm' or 'Hot', and a raw compare
@@ -189,6 +192,23 @@ const HUMAN_INTERVENTION_EVENTS = Object.freeze(['human_response_sent', 'convers
 const BOOKING_EVENTS = Object.freeze(['call_booked', 'meeting_rescheduled']);
 
 const HARD_SUPPRESSION_TAGS = Object.freeze(['[REPLY: Unsubscribed]', '[REPLY: Not Interested]', '[BOUNCED']);
+
+// Answers a person or a meeting provides. An automated warm reply also answers
+// the prospect (prospect-response.js), but it may not on its own authorise
+// automatic Hot follow-up: that still needs one of these after the prospect's
+// last message, exactly as before automated replies counted as answers.
+const PERSON_OR_MEETING_RESPONSE_EVENTS = Object.freeze([
+  HUMAN_RESPONSE_EVENT, ...RECORDED_CONVERSATION_EVENTS, ...MEETING_RESPONSE_EVENTS,
+]);
+
+function answeredOnlyByAutomation(activities = []) {
+  const automated = (activities || []).some(row => isResponseEvidence(row)
+    && !PERSON_OR_MEETING_RESPONSE_EVENTS.includes(String((row && row.eventType) || '')));
+  if (!automated) return false;
+  const personAt = latestAt(activities, PERSON_OR_MEETING_RESPONSE_EVENTS);
+  const inboundAt = latestAt(activities, MEANINGFUL_INBOUND_EVENTS);
+  return !(personAt && (!inboundAt || personAt >= inboundAt));
+}
 
 function latestAt(activities, types) {
   let latest = '';
@@ -558,6 +578,9 @@ function automaticEnrollmentDecision(input = {}) {
     && !(hotState && hotState.waitingOn === 'waiting_on_prospect'
       && ['follow_up_due', 'overdue', 'stale', 'severely_stale'].includes(hotState.staleness))) {
     return { enroll: false, reason: 'Hot lead is not due while waiting on the prospect' };
+  }
+  if (sequenceId === 'hot_stale_v1' && answeredOnlyByAutomation(activities)) {
+    return { enroll: false, reason: 'answered only by an automated reply; automatic Hot follow-up needs a human response, recorded conversation or meeting' };
   }
   if (sequenceId === 'no_show_recovery_v1' && String(callState?.status || '') !== 'no_show') {
     return { enroll: false, reason: 'explicit no-show event is missing' };

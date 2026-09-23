@@ -16,7 +16,7 @@ const {
 } = require('../integrations/pipeline-state');
 const { deriveOperationalAction, REPLY_ACTION } = require('../integrations/reply-operations');
 const { deriveAutomationOwnership, mayColdSend, OWNER } = require('../integrations/automation-ownership');
-const { evaluateStageSequence } = require('../integrations/stage-sequences');
+const { evaluateStageSequence, automaticEnrollmentDecision } = require('../integrations/stage-sequences');
 
 // Thu 27 Aug 2026, 12:00 Vancouver. Every test pins `now`.
 const NOW = new Date('2026-08-27T19:00:00.000Z');
@@ -175,6 +175,67 @@ test('I. hot_stale_v1 is offered only once the chase is due after an automated r
 
   // An unanswered reply is human work, never a recovery journey.
   assert.deepEqual(offersAt(due, [positiveReply()]), []);
+});
+
+// ── Automatic Hot follow-up still needs a person or a meeting ──────────────
+//
+// An automated warm reply answers the prospect everywhere (tests above), but it
+// may not by itself authorise automatic hot_stale_v1 enrollment. Offer, Inbox
+// and ownership stay as they are; only the automatic enrollment is gated.
+
+const LATER = new Date('2026-09-10T19:00:00.000Z'); // well past every chase window
+const dentalTwin = { ...hotTwin, leadNiche: 'dental', tradeType: 'dental', emailTemplateId: 'dental-guarantee-v1' };
+function hotEnrollment(activities, now = LATER) {
+  const hotState = deriveHotState({ stage: 'hot' }, { now, activities });
+  const verdict = evaluateStageSequence({ boardLead: { stage: 'hot' }, twin: dentalTwin, activities, now, hotState, featureEnabled: true });
+  return {
+    hotState, verdict,
+    decision: automaticEnrollmentDecision({
+      twin: dentalTwin, activities, verdict, hotState, now,
+      senderProof: { ok: true, senderInboxId: 'primary' }, thread: { threadId: 'thread-1' },
+    }),
+  };
+}
+
+test('J. a stale Hot lead answered only by an automated warm reply cannot auto-enroll in hot_stale_v1', () => {
+  for (const action of ['AUTO_BOOKING_RESPONSE', 'AUTO_QUESTION_RESPONSE', 'AUTO_STAFFING_QUALIFIED']) {
+    const { hotState, verdict, decision } = hotEnrollment([positiveReply(), warmReply(action)]);
+    assert.equal(hotState.waitingOn, WAITING_ON.PROSPECT, 'the automated reply still counts as answering them');
+    assert.ok(verdict.offers.includes('hot_stale_v1'), 'still offered to a person, unchanged');
+    assert.equal(decision.enroll, false, `${action} alone must not auto-enroll`);
+    assert.match(decision.reason, /answered only by an automated reply/);
+  }
+});
+
+test('J. the same lead auto-enrolls once a human response, recorded conversation or meeting answers it', () => {
+  const HUMAN_AT = '2026-08-28T16:00:00.000Z';
+  for (const evidence of [
+    ev('human_response_sent', HUMAN_AT),
+    ev('conversation_note', HUMAN_AT),
+    ev('call_booked', HUMAN_AT),
+    ev('meeting_rescheduled', HUMAN_AT),
+  ]) {
+    const { decision } = hotEnrollment([positiveReply(), warmReply('AUTO_BOOKING_RESPONSE'), evidence]);
+    assert.equal(decision.enroll, true, `${evidence.eventType} restores automatic enrollment`);
+    assert.equal(decision.sequenceId, 'hot_stale_v1');
+  }
+});
+
+test('J. person evidence must answer the latest message; an older human reply does not cover a newer auto-answered one', () => {
+  const activities = [
+    positiveReply('2026-08-20T16:00:00.000Z'), ev('human_response_sent', '2026-08-20T17:00:00.000Z'),
+    positiveReply(REPLY_AT), warmReply('AUTO_BOOKING_RESPONSE'),
+  ];
+  assert.equal(hotEnrollment(activities).decision.enroll, false);
+});
+
+test('J. without any automated reply, hot_stale_v1 automatic enrollment is exactly as before', () => {
+  assert.equal(hotEnrollment([positiveReply(), ev('human_response_sent', ANSWER_AT)]).decision.enroll, true);
+  // The demo-intent email and legacy rows never counted as answers, so they are not "automated answers" here.
+  const legacy = [positiveReply(), ev('human_response_sent', ANSWER_AT),
+    ev('booking_link_sent', '2026-08-27T18:00:00.000Z', { action: 'AUTO_DEMO_ENGAGEMENT_RESPONSE' }),
+    ev('booking_link_sent', '2026-08-27T18:30:00.000Z', {})];
+  assert.equal(hotEnrollment(legacy).decision.enroll, true);
 });
 
 // ── Execution and display ask the same question ─────────────────────────────
