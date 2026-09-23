@@ -222,5 +222,5 @@ function compactAgentUserPayload(context) {
 }
 
 module.exports = {
-  LANDING_PAGE, buildStaffingAgentContext, compactAgentUserPayload, conversationState,
+  LANDING_PAGE, buildStaffingAgentContext, compactAgentUserPayload, conversationState, storedResearch,
 };

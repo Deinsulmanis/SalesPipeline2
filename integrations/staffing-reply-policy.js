@@ -380,5 +380,5 @@ module.exports = {
   classifyStaffingQualificationAnswer, overlayStaffingReplyClassification,
   staffingQualifyQuestionReply, staffingSendInfoReply, staffingQualifiedReply,
   notesForStaffingWarmAction, inboundWarmReplyAlreadySent,
-  staffingReplyHistory, staffingRepeatReason, staffingHumanTouchBlock,
+  staffingReplyHistory, staffingRepeatReason, staffingHumanTouchBlock, isPricingQuestion,
 };

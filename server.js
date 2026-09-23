@@ -166,6 +166,10 @@ const {
 const { REPLY_STATE, LEGACY_REPLY_EVENT_TYPES, resolveReplyState } = require('./integrations/canonical-reply');
 const { applyReplyDecisionsToReplyEvidence } = require('./integrations/reply-decision');
 const { REPLY_ACTION, WAITING_ON: REPLY_WAITING_ON } = require('./integrations/reply-operations');
+const { buildConversationState } = require('./integrations/conversation-state');
+const {
+  indexConversationEvidence, selectConversationEvidence, loadHumanReplyTexts,
+} = require('./integrations/conversation-evidence');
 const {
   classifyCalendarEvent, matchBookingIdentity, bookingLifecycleAction,
   nextSyncState, providerEventKey, runGoogleCalendarSync: orchestrateGoogleCalendarSync,
@@ -5621,6 +5625,49 @@ function operationalMailbox(senderInboxId) {
   auth.setCredentials(gmailInboxCredentialsFor(entry));
   return { id, email: entry.email, gmail: google.gmail({ version: 'v1', auth }) };
 }
+
+// Read-only conversation state for one lead (ColdEmail id, CE-<id> or Pipeline
+// id). It derives state and returns it: no write, send, enrolment, hold, stage
+// change or model call. The snapshot is the dashboard's cached dataset, so a
+// warm cache costs no Sheets read; ?refresh=1 forces the usual one batchGet.
+// ?humanText=1 also reads up to ten recorded human replies from Gmail (read
+// only, verified against the recorded mailbox and thread) to show their text.
+app.get('/api/ops/conversation-state/:leadId', requireAuth, async (req, res) => {
+  try {
+    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const index = indexConversationEvidence({
+      leads: dataset.leads, boardLeads: dataset.boardLeads, activities: dataset.activities,
+    });
+    const selected = selectConversationEvidence(index, req.params.leadId);
+    if (!selected.lead && !selected.boardLead) return res.status(404).json({ error: 'not found' });
+    const humanText = req.query.humanText === '1'
+      ? await loadHumanReplyTexts({ activities: selected.activities, mailboxFor: operationalMailbox })
+      : null;
+    const state = buildConversationState({
+      lead: selected.lead, boardLead: selected.boardLead, activities: selected.activities,
+      suppressedEmails: dataset.suppressedEmails, messageTexts: humanText ? humanText.texts : {},
+      selection: selected.selection,
+      config: { sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true', sendingEnabled: SENDING_ENABLED() },
+      now: new Date(),
+    });
+    res.json({
+      state,
+      load: {
+        datasetAt: dataset.at ? new Date(dataset.at).toISOString() : null,
+        leadSource: dataset.leadSource || null,
+        humanText: humanText ? {
+          attempted: humanText.attempted, gmailRequests: humanText.providerCalls,
+          fetched: Object.keys(humanText.texts).length,
+          failures: humanText.failures, skippedOverLimit: humanText.skippedOverLimit,
+        } : null,
+      },
+    });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[conversation-state]', e.message);
+    res.status(500).json({ error: 'conversation state could not be derived' });
+  }
+});
 
 // Read-only provider trace. No worker launch, provider send or checkpoint write.
 app.get('/api/ops/gmail-usage', requireAuth, async (_req, res) => {
