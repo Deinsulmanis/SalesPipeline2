@@ -16,10 +16,18 @@ writes. `--model` calls the dedicated Anthropic key, but does not persist.
 
 Persisting requires all of `--live --model --persist`,
 `AGENT_V2_SHADOW_ENABLED=true`, `ANTHROPIC_AGENT_V2_KEY`, and
-`SEND_LOCK_DATABASE_URL`. The only write is to
-`agent_v2_shadow_decisions`. It is intentionally a separate worker; no
-production scheduler or reply handler invokes it. A scheduler can be added
-only after this shadow behavior is reviewed and approved.
+`AGENT_V2_SHADOW_DATABASE_URL`, plus `--lead=<lead id> --message=<provider message id>`.
+The identified message must be the latest inbound for that lead and have a
+recorded production reply decision. One invocation can evaluate at most that
+one inbound. The worker reads Sheets with a read-only scope, never reads Gmail,
+and writes only `agent_v2_shadow_decisions`. Apply the SQL migration separately
+before running the worker. Give the worker database role `SELECT`, `INSERT`, and
+`UPDATE` on this table only; it does not need access to send reservations or
+other production tables, and it performs no runtime DDL. It is not called by the production
+reply handler, send path, or scheduler. The operational trigger is an explicit
+one-shot invocation after a natural inbound has been recorded. A future
+independent scheduler may invoke the same command with genuine IDs; no scheduler
+is installed by Phase 2.
 
 ## Contract
 
@@ -44,15 +52,35 @@ only after this shadow behavior is reviewed and approved.
 
 `decisionId = agent-v2:sha256(leadId + NUL + providerMessageId)`. The Postgres
 table has both a decision primary key and `UNIQUE (lead_id, message_id)`.
-`INSERT ... ON CONFLICT DO NOTHING` and readback return the first saved record;
-replay does not create another. Model errors produce a saved coded handoff.
-Database failures surface as errors and the worker exits nonzero after the
-batch; they are never reported as persisted decisions. Inbound rows without a
-provider message ID are reported as errors rather than assigned a guessed ID.
+Before a model call, the worker takes a PostgreSQL session advisory lock and
+commits an incomplete claim row. It then durably marks the model attempt as
+started before making exactly one API request. A second worker sees the held
+lock and spends no model tokens. Completion updates that row only while the
+same session holds the lock. A crash releases the lock; the next worker can
+take over the incomplete claim. If the model-start marker exists, recovery
+saves a coded, empty `MODEL_ERROR` handoff without another API request. A
+completed record is immutable and returned on replay.
+The model request receives an abort signal if the database session fails.
+Model and validation errors produce a saved coded, empty `MODEL_ERROR` handoff.
+Database failures surface as errors and never count as completed decisions.
+Inbound rows without a provider message ID are not assigned a guessed ID.
 
-This design gives one durable shadow record for each processable inbound while
-the worker is run. It does not promise that a disabled or unscheduled worker
-has evaluated production messages. It does not rewrite historical evidence.
+Each run emits bounded counts for attempts, completions, busy claims, reuse,
+handoffs, model failures, validation failures, tokens, latency, estimated cost,
+and a coded cross-tab against the recorded production policy action. The saved
+record includes the exact model version returned by the API, token usage,
+latency, cost estimate, and recorded production decision for later comparison.
+The estimate uses the published standard Haiku 4.5 API rates of $1 per million
+input tokens and $5 per million output tokens; actual billing may differ.
+
+This design gives one durable shadow record for each selected processable
+inbound while the worker is run. An unscheduled worker does not evaluate new
+messages automatically. It does not rewrite historical evidence. An incomplete
+claim may be evaluated after a crash only if no model attempt was marked. The
+marker can precede an API request that never actually reached the provider; in
+that case recovery deliberately records an unresolved model attempt rather
+than spending tokens again. A lost database session during an in-flight API
+call is aborted locally; provider-side token accounting may still be uncertain.
 
 ## Evaluation limits
 

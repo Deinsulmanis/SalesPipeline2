@@ -10,36 +10,47 @@ const { SCHEMA_VERSION, INPUT_VERSION, CATALOG_VERSION, EVENT_TYPE, MODEL, AUTHO
 // table. Callers never receive an executable action or a send authorization.
 async function evaluateAgentV2Shadow({ state, messageId, store, model = runAgentV2Model,
   apiKey = '', createMessage, now = new Date() } = {}) {
-  if (!store || typeof store.get !== 'function' || typeof store.putIfAbsent !== 'function')
+  if (!store || typeof store.claim !== 'function')
     throw new Error('shadow decision store required');
   const input = buildAgentV2Input(state, messageId);
   const decisionId = decisionIdFor(input.leadId, input.messageId);
-  const previous = await store.get(decisionId);
-  if (previous) {
-    if (previous.leadId !== input.leadId || previous.messageId !== input.messageId)
-      throw new Error('shadow decision identity conflict');
-    return { persisted: true, reused: true, calledModel: false, record: previous };
-  }
-  let modelResult = { raw: null, status: 'guarded', usage: { inputTokens: 0, outputTokens: 0 } };
-  const forced = guardCode(input);
-  if (!forced) modelResult = await model(input, { apiKey, createMessage });
-  const decision = forced ? guarded(input, forced) : validateModelDecision(modelResult?.raw, input);
-  const createdAt = now instanceof Date ? now.toISOString() : new Date(now).toISOString();
-  const record = {
-    decisionId, eventType: EVENT_TYPE, schemaVersion: SCHEMA_VERSION,
-    inputVersion: INPUT_VERSION, catalogVersion: CATALOG_VERSION,
-    leadId: input.leadId, messageId: input.messageId,
-    stateDigest: input.stateDigest, inputDigest: input.inputDigest,
-    createdAt, decision, model: MODEL,
-    modelStatus: modelResult?.status || 'model_error',
-    usage: modelResult?.usage || { inputTokens: 0, outputTokens: 0 },
-    authority: AUTHORITY,
-  };
-  const saved = await store.putIfAbsent(record);
-  if (!saved?.record || saved.record.decisionId !== decisionId)
-    throw new Error('shadow decision persistence not confirmed');
-  return { persisted: true, reused: !saved.inserted,
-    calledModel: !forced && modelResult?.status !== 'key_unavailable', record: saved.record };
+  const claim = await store.claim({ decisionId, leadId: input.leadId, messageId: input.messageId });
+  if (claim.status === 'busy') return { persisted: false, busy: true, reused: false, calledModel: false };
+  if (claim.status === 'complete') return { persisted: true, reused: true, calledModel: false, record: claim.record };
+  if (claim.status !== 'claimed') throw new Error('shadow claim not confirmed');
+  try {
+    let modelResult = { raw: null, status: 'guarded', usage: { inputTokens: 0, outputTokens: 0 } };
+    const forced = guardCode(input);
+    if (!forced && claim.priorModelAttempt) {
+      modelResult.status = 'previous_model_attempt_unresolved';
+    } else if (!forced) {
+      await claim.markModelStarted();
+      try { modelResult = await model(input, { apiKey, createMessage, signal: claim.signal }); }
+      catch (_) { modelResult = { raw: null, status: 'model_error', usage: { inputTokens: 0, outputTokens: 0 } }; }
+    }
+    if (claim.signal?.aborted) throw new Error('shadow claim lost during model call');
+    const decision = forced ? guarded(input, forced)
+      : claim.priorModelAttempt ? guarded(input, 'MODEL_ERROR', 'unresolved_model_attempt')
+        : validateModelDecision(modelResult?.raw, input);
+    const createdAt = now instanceof Date ? now.toISOString() : new Date(now).toISOString();
+    const record = {
+      decisionId, eventType: EVENT_TYPE, schemaVersion: SCHEMA_VERSION,
+      inputVersion: INPUT_VERSION, catalogVersion: CATALOG_VERSION,
+      leadId: input.leadId, messageId: input.messageId,
+      stateDigest: input.stateDigest, inputDigest: input.inputDigest,
+      createdAt, decision, model: modelResult?.model || MODEL,
+      modelStatus: modelResult?.status || 'model_error',
+      usage: modelResult?.usage || { inputTokens: 0, outputTokens: 0 },
+      latencyMs: Number(modelResult?.latencyMs || 0),
+      estimatedCostUsd: modelResult?.estimatedCostUsd ?? null,
+      apiCostUsd: modelResult?.apiCostUsd ?? null,
+      productionDecision: input.currentState?.productionDecision || null,
+      authority: AUTHORITY,
+    };
+    const saved = await claim.complete(record);
+    if (!saved || saved.decisionId !== decisionId) throw new Error('shadow decision persistence not confirmed');
+    return { persisted: true, reused: false, calledModel: !forced && !claim.priorModelAttempt, record: saved };
+  } finally { await claim.release(); }
 }
 
 module.exports = { evaluateAgentV2Shadow };

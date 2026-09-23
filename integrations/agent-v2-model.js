@@ -26,16 +26,24 @@ function usage(message) {
   };
 }
 
-async function runAgentV2Model(input, { createMessage, apiKey = '', AnthropicImpl } = {}) {
+// First-party standard API price for pinned Haiku 4.5, USD per million tokens.
+// This is an estimate; the API response does not normally include a charge.
+function estimatedCostUsd(tokens) {
+  return Number(((tokens.inputTokens + 5 * tokens.outputTokens) / 1e6).toFixed(8));
+}
+
+async function runAgentV2Model(input, { createMessage, apiKey = '', AnthropicImpl, signal } = {}) {
   if (!createMessage && !String(apiKey).trim()) {
-    return { raw: null, status: 'key_unavailable', usage: { inputTokens: 0, outputTokens: 0 } };
+    return { raw: null, status: 'key_unavailable', model: MODEL,
+      usage: { inputTokens: 0, outputTokens: 0 }, latencyMs: 0, estimatedCostUsd: null, apiCostUsd: null };
   }
+  const started = process.hrtime.bigint();
   try {
     let send = createMessage;
     if (!send) {
       const Anthropic = AnthropicImpl || require('@anthropic-ai/sdk');
-      const client = new Anthropic({ apiKey, maxRetries: 1, timeout: 20000 });
-      send = payload => client.messages.create(payload);
+      const client = new Anthropic({ apiKey, maxRetries: 0, timeout: 20000 });
+      send = payload => client.messages.create(payload, { signal });
     }
     const message = await send({ model: MODEL, max_tokens: 400, temperature: 0,
       system: SYSTEM_PROMPT, messages: [{ role: 'user', content: JSON.stringify(input) }],
@@ -45,15 +53,24 @@ async function runAgentV2Model(input, { createMessage, apiKey = '', AnthropicImp
     });
     const blocks = Array.isArray(message?.content) ? message.content : [];
     const calls = blocks.filter(block => block?.type === 'tool_use');
+    const tokens = usage(message);
+    const metrics = { model: message?.model || MODEL, usage: tokens,
+      latencyMs: Number(process.hrtime.bigint() - started) / 1e6,
+      estimatedCostUsd: estimatedCostUsd(tokens),
+      apiCostUsd: Number.isFinite(message?.cost_usd) ? message.cost_usd : null };
+    if (message?.model && message.model !== MODEL)
+      return { raw: null, status: 'model_mismatch', ...metrics };
     if (message?.stop_reason !== 'tool_use' || blocks.length !== 1 || calls.length !== 1
       || calls[0].name !== 'record_shadow_decision') {
-      return { raw: null, status: 'invalid_response', usage: usage(message) };
+      return { raw: null, status: 'invalid_response', ...metrics };
     }
-    return { raw: calls[0].input, status: 'ok', usage: usage(message) };
+    return { raw: calls[0].input, status: 'ok', ...metrics };
   } catch (error) {
     return { raw: null, status: 'model_error', errorCode: String(error?.code || error?.status || 'unknown').slice(0, 60),
-      usage: { inputTokens: 0, outputTokens: 0 } };
+      model: MODEL, usage: { inputTokens: 0, outputTokens: 0 },
+      latencyMs: Number(process.hrtime.bigint() - started) / 1e6,
+      estimatedCostUsd: null, apiCostUsd: null };
   }
 }
 
-module.exports = { SYSTEM_PROMPT, runAgentV2Model };
+module.exports = { SYSTEM_PROMPT, runAgentV2Model, estimatedCostUsd };

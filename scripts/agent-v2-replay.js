@@ -9,7 +9,7 @@
  *
  * node scripts/agent-v2-replay.js --snapshot=fixtures/snapshot.json --now=2026-09-23T00:00:00Z
  * node scripts/agent-v2-replay.js --live --limit=50
- * AGENT_V2_SHADOW_ENABLED=true node scripts/agent-v2-replay.js --live --model --persist
+ * AGENT_V2_SHADOW_ENABLED=true node scripts/agent-v2-replay.js --live --model --persist --lead=<id> --message=<provider-id>
  */
 
 require('dotenv').config({ quiet: true });
@@ -34,7 +34,7 @@ function optionsFrom(argv) {
   for (const arg of argv) {
     if (!arg.startsWith('--')) throw new Error(`unexpected argument: ${arg}`);
     const [key, ...parts] = arg.slice(2).split('=');
-    if (!['snapshot', 'now', 'lead', 'limit', 'live', 'model', 'persist'].includes(key))
+    if (!['snapshot', 'now', 'lead', 'message', 'limit', 'live', 'model', 'persist'].includes(key))
       throw new Error(`unknown option: ${key}`);
     options[key] = parts.length ? parts.join('=') : true;
   }
@@ -42,7 +42,9 @@ function optionsFrom(argv) {
   if (options.snapshot && !options.now) throw new Error('--now is required for deterministic snapshot replay');
   if (options.persist && (!options.live || !options.model || process.env.AGENT_V2_SHADOW_ENABLED !== 'true'))
     throw new Error('--persist requires --live --model and AGENT_V2_SHADOW_ENABLED=true');
-  if (options.persist && (!process.env.ANTHROPIC_AGENT_V2_KEY || !process.env.SEND_LOCK_DATABASE_URL))
+  if (options.persist && (!options.lead || !options.message || options.limit))
+    throw new Error('--persist requires one --lead and --message, without --limit');
+  if (options.persist && (!process.env.ANTHROPIC_AGENT_V2_KEY || !process.env.AGENT_V2_SHADOW_DATABASE_URL))
     throw new Error('shadow model key and database URL required for persistence');
   if (options.model && !process.env.ANTHROPIC_AGENT_V2_KEY)
     throw new Error('ANTHROPIC_AGENT_V2_KEY required for --model');
@@ -74,13 +76,16 @@ async function liveSnapshot() {
   };
 }
 
-async function replay({ snapshot, now, leadId = '', limit = Infinity, model = false, persist = false,
+async function replay({ snapshot, now, leadId = '', messageId = '', limit = Infinity, model = false, persist = false,
   store = null, callModel = runAgentV2Model, apiKey = '' }) {
+  if (persist && (!leadId || !messageId)) throw new Error('persistent shadow evaluation requires lead and message identity');
   const index = indexConversationEvidence(snapshot);
   const counts = { conversations: 0, inbound: 0, inputsBuilt: 0, evaluated: 0,
-    modelNotCalled: 0, persisted: 0, reused: 0,
-    guarded: 0, modelCalls: 0, inputTokens: 0, outputTokens: 0, errors: 0,
-    actions: {}, handoffs: {}, errorsByCode: {} };
+    attempted: 0, completed: 0, modelNotCalled: 0, persisted: 0, reused: 0, busy: 0,
+    guarded: 0, modelCalls: 0, modelFailures: 0, validationFailures: 0,
+    inputTokens: 0, outputTokens: 0, latencyMs: 0, estimatedCostUsd: 0,
+    apiCostUsd: 0, apiCostReports: 0, errors: 0,
+    actions: {}, handoffs: {}, productionComparison: {}, errorsByCode: {} };
   const add = (bucket, key) => { bucket[key] = (bucket[key] || 0) + 1; };
   for (const lead of snapshot.leads || []) {
     if (leadId && String(lead.id) !== leadId) continue;
@@ -96,21 +101,41 @@ async function replay({ snapshot, now, leadId = '', limit = Infinity, model = fa
     if (state.identity.family !== 'industrial_staffing') continue;
     counts.conversations++;
     const inbound = state.turns.filter(turn => turn.direction === 'inbound');
+    if (persist && (inbound[inbound.length - 1]?.messageId !== messageId
+      || inbound[inbound.length - 1]?.decision?.status !== 'recorded'))
+      throw new Error('target must be the latest inbound with a recorded production decision');
     for (const turn of inbound) {
+      if (messageId && turn.messageId !== messageId) continue;
       counts.inbound++;
       if (!turn.messageId) { counts.errors++; add(counts.errorsByCode, 'MISSING_PROVIDER_ID'); continue; }
       try {
+        counts.attempted++;
         let decision;
         if (persist) {
           const result = await evaluateAgentV2Shadow({ state, messageId: turn.messageId,
             store, model: callModel, apiKey, now });
           counts.inputsBuilt++;
+          if (result.busy) { counts.busy++; return counts; }
           decision = result.record.decision;
           if (result.reused) counts.reused++;
-          else counts.persisted++;
+          else { counts.persisted++; counts.completed++; }
           if (result.calledModel) counts.modelCalls++;
-          counts.inputTokens += result.reused ? 0 : Number(result.record.usage?.inputTokens || 0);
-          counts.outputTokens += result.reused ? 0 : Number(result.record.usage?.outputTokens || 0);
+          if (!result.reused) {
+            counts.inputTokens += Number(result.record.usage?.inputTokens || 0);
+            counts.outputTokens += Number(result.record.usage?.outputTokens || 0);
+            counts.latencyMs += Number(result.record.latencyMs || 0);
+            counts.estimatedCostUsd += Number(result.record.estimatedCostUsd || 0);
+            if (result.record.apiCostUsd != null) {
+              counts.apiCostUsd += Number(result.record.apiCostUsd);
+              counts.apiCostReports++;
+            }
+            if (['model_error', 'invalid_response', 'model_mismatch', 'key_unavailable',
+              'previous_model_attempt_unresolved'].includes(result.record.modelStatus)) counts.modelFailures++;
+            if (decision.status === 'invalid_model_output') counts.validationFailures++;
+          }
+          const production = result.record.productionDecision?.policyAction || 'MISSING';
+          const policyActions = new Set(Object.values(require('../integrations/reply-response-policy').ACTION));
+          add(counts.productionComparison, `${policyActions.has(production) ? production : 'OTHER'}:${decision.actionId}`);
         } else {
           const input = buildAgentV2Input(state, turn.messageId);
           counts.inputsBuilt++;
@@ -121,7 +146,12 @@ async function replay({ snapshot, now, leadId = '', limit = Infinity, model = fa
             counts.modelCalls++;
             counts.inputTokens += Number(result.usage?.inputTokens || 0);
             counts.outputTokens += Number(result.usage?.outputTokens || 0);
+            counts.latencyMs += Number(result.latencyMs || 0);
+            counts.estimatedCostUsd += Number(result.estimatedCostUsd || 0);
+            if (result.apiCostUsd != null) { counts.apiCostUsd += Number(result.apiCostUsd); counts.apiCostReports++; }
+            if (['model_error', 'invalid_response', 'model_mismatch', 'key_unavailable'].includes(result.status)) counts.modelFailures++;
             decision = validateModelDecision(result.raw, input);
+            if (decision.status === 'invalid_model_output') counts.validationFailures++;
           } else {
             counts.modelNotCalled++;
             if (counts.inbound >= limit) return counts;
@@ -133,9 +163,11 @@ async function replay({ snapshot, now, leadId = '', limit = Infinity, model = fa
         add(counts.actions, decision.actionId);
         if (decision.handoffCode !== 'NONE') add(counts.handoffs, decision.handoffCode);
       } catch (_) { counts.errors++; add(counts.errorsByCode, 'SHADOW_EVALUATION_FAILED'); }
+      if (persist) return counts;
       if (counts.inbound >= limit) return counts;
     }
   }
+  if (persist && counts.inbound !== 1) throw new Error('target inbound not found in live snapshot');
   return counts;
 }
 
@@ -144,9 +176,10 @@ async function main() {
   const snapshot = options.live ? await liveSnapshot() : JSON.parse(fs.readFileSync(options.snapshot, 'utf8'));
   const now = options.now ? new Date(options.now) : new Date();
   if (!Number.isFinite(now.getTime())) throw new Error('invalid --now');
-  const store = options.persist ? createPgAgentV2Store({ connectionString: process.env.SEND_LOCK_DATABASE_URL }) : null;
+  const store = options.persist ? createPgAgentV2Store({ connectionString: process.env.AGENT_V2_SHADOW_DATABASE_URL }) : null;
   try {
     const result = await replay({ snapshot, now, leadId: String(options.lead || ''),
+      messageId: String(options.message || ''),
       limit: options.limit ? Number(options.limit) : Infinity, model: Boolean(options.model),
       persist: Boolean(options.persist), store, apiKey: process.env.ANTHROPIC_AGENT_V2_KEY || '' });
     process.stdout.write(`${JSON.stringify({ shadowOnly: true, writes: options.persist ? 'agent_v2_shadow_decisions only' : 'none',

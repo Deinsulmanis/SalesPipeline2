@@ -48,12 +48,21 @@ function proposal(input, overrides = {}) {
 }
 function memoryStore() {
   const rows = new Map();
-  return { rows, get: async id => rows.get(id) || null,
-    putIfAbsent: async record => {
-      const prior = rows.get(record.decisionId);
-      if (prior) return { inserted: false, record: prior };
-      rows.set(record.decisionId, record);
-      return { inserted: true, record };
+  const active = new Set();
+  return { rows, active, get: async id => rows.get(id)?.record || null,
+    claim: async ({ decisionId, leadId, messageId }) => {
+      if (active.has(decisionId)) return { status: 'busy' };
+      const prior = rows.get(decisionId);
+      if (prior?.record) return { status: 'complete', record: prior.record };
+      if (prior && (prior.leadId !== leadId || prior.messageId !== messageId)) throw new Error('identity conflict');
+      active.add(decisionId);
+      rows.set(decisionId, { leadId, messageId, record: null,
+        modelStarted: Boolean(prior?.modelStarted), attempts: (prior?.attempts || 0) + 1 });
+      return { status: 'claimed', signal: new AbortController().signal,
+        priorModelAttempt: Boolean(prior?.modelStarted),
+        markModelStarted: async () => { rows.get(decisionId).modelStarted = true; },
+        complete: async record => { rows.get(decisionId).record = record; return record; },
+        release: async () => { active.delete(decisionId); } };
     } };
 }
 
@@ -174,42 +183,74 @@ test('a fixed decision id and unique insert persist one record per inbound messa
   assert.equal(first.record.usage.inputTokens, 100);
 });
 
-test('simultaneous evaluations can call the model twice but persist one record', async () => {
+test('simultaneous workers claim before the model and spend tokens once', async () => {
   const store = memoryStore();
   const state = stateFor('Interested.');
-  const model = async input => ({ raw: proposal(input), status: 'ok', usage: { inputTokens: 2, outputTokens: 1 } });
+  let calls = 0;
+  let finish;
+  const model = async input => { calls++; await new Promise(resolve => { finish = resolve; });
+    return { raw: proposal(input), status: 'ok', usage: { inputTokens: 2, outputTokens: 1 } }; };
+  const first = evaluateAgentV2Shadow({ state, messageId: 'm1', store, model });
+  await new Promise(resolve => setImmediate(resolve));
+  const competing = await evaluateAgentV2Shadow({ state, messageId: 'm1', store, model });
+  assert.equal(competing.busy, true);
+  assert.equal(calls, 1);
+  finish();
+  await first;
   const results = await Promise.all([1, 2].map(() => evaluateAgentV2Shadow({ state, messageId: 'm1', store, model })));
   assert.equal(store.rows.size, 1);
-  assert.equal(results.filter(r => !r.reused).length, 1);
+  assert.equal(results.filter(r => r.reused).length, 2);
+  assert.equal(calls, 1);
 });
 
-test('Postgres adapter writes only its shadow table and reuses the unique decision', async () => {
-  const rows = new Map();
-  const sql = [];
-  const pool = { query: async (statement, params = []) => {
-    sql.push(statement);
-    if (/CREATE TABLE IF NOT EXISTS/.test(statement)) return { rows: [] };
-    if (/SELECT record.*decision_id/.test(statement)) return { rows: rows.has(params[0]) ? [{ record: rows.get(params[0]) }] : [] };
-    if (/INSERT INTO/.test(statement)) {
-      const record = JSON.parse(params[5]);
-      if (rows.has(record.decisionId)) return { rows: [] };
-      rows.set(record.decisionId, record);
-      return { rows: [{ record }] };
-    }
-    if (/SELECT record.*lead_id/.test(statement)) return { rows: [...rows.values()]
-      .filter(row => row.leadId === params[0] && row.messageId === params[1]).map(record => ({ record })) };
-    throw new Error(`unrecognized SQL: ${statement}`);
-  } };
-  const store = createPgAgentV2Store({ pool });
+test('an incomplete claim is recoverable while a completed decision is immutable', async () => {
+  const store = memoryStore();
+  const id = decisionIdFor('S1', 'm1');
+  const crashed = await store.claim({ decisionId: id, leadId: 'S1', messageId: 'm1' });
+  await crashed.release();
   const state = stateFor('Please send information.');
-  const model = async input => ({ raw: proposal(input), status: 'ok', usage: { inputTokens: 1, outputTokens: 1 } });
+  let calls = 0;
+  const model = async input => { calls++; return { raw: proposal(input), status: 'ok',
+    usage: { inputTokens: 1, outputTokens: 1 } }; };
+  const recovered = await evaluateAgentV2Shadow({ state, messageId: 'm1', store, model });
+  const replayed = await evaluateAgentV2Shadow({ state, messageId: 'm1', store, model });
+  assert.equal(store.rows.get(id).attempts, 2);
+  assert.equal(recovered.persisted, true);
+  assert.equal(replayed.reused, true);
+  assert.equal(calls, 1);
+});
+
+test('a crash after starting the model fails closed without a second model call', async () => {
+  const store = memoryStore();
+  const id = decisionIdFor('S1', 'm1');
+  const crashed = await store.claim({ decisionId: id, leadId: 'S1', messageId: 'm1' });
+  await crashed.markModelStarted();
+  await crashed.release();
+  const recovered = await evaluateAgentV2Shadow({ state: stateFor('Please send information.'),
+    messageId: 'm1', store, model: async () => { throw new Error('model must not be called again'); } });
+  assert.equal(recovered.calledModel, false);
+  assert.equal(recovered.record.modelStatus, 'previous_model_attempt_unresolved');
+  assert.equal(recovered.record.decision.handoffCode, 'MODEL_ERROR');
+  assert.equal(recovered.record.decision.suggestedWording, '');
+});
+
+test('invalid model output is saved once as a coded, empty handoff', async () => {
+  const store = memoryStore();
+  let calls = 0;
+  const model = async () => { calls++; return { raw: { invented: 'SEND' }, status: 'ok',
+    model: 'claude-haiku-4-5-20251001', latencyMs: 14,
+    usage: { inputTokens: 90, outputTokens: 20 }, estimatedCostUsd: 0.00019 }; };
+  const state = stateFor('Please send information.');
   const first = await evaluateAgentV2Shadow({ state, messageId: 'm1', store, model });
-  const second = await evaluateAgentV2Shadow({ state, messageId: 'm1', store, model });
-  assert.equal(first.persisted, true);
-  assert.equal(second.reused, true);
-  assert.equal(rows.size, 1);
-  assert.ok(sql.every(statement => !/outbound_send_reservations|ColdEmail|UPDATE|DELETE/i.test(statement)));
-  assert.match(sql.find(statement => /CREATE TABLE/.test(statement)), /UNIQUE \(lead_id, message_id\)/);
+  const again = await evaluateAgentV2Shadow({ state, messageId: 'm1', store, model });
+  assert.equal(first.record.decision.status, 'invalid_model_output');
+  assert.equal(first.record.decision.handoffCode, 'MODEL_ERROR');
+  assert.equal(first.record.decision.suggestedWording, '');
+  assert.equal(first.record.model, 'claude-haiku-4-5-20251001');
+  assert.equal(first.record.latencyMs, 14);
+  assert.equal(first.record.estimatedCostUsd, 0.00019);
+  assert.equal(again.reused, true);
+  assert.equal(calls, 1);
 });
 
 test('persistence failure is visible, and earlier inbound turns do not see future state', async () => {
@@ -222,7 +263,7 @@ test('persistence failure is visible, and earlier inbound turns do not see futur
   assert.equal(historical.turns.some(turn => turn.messageId === 'm2'), false);
   assert.equal(historical.currentState, null);
   assert.equal(guardCode(historical), 'STATE_UNAVAILABLE');
-  const store = { get: async () => null, putIfAbsent: async () => { throw new Error('database unavailable'); } };
+  const store = { claim: async () => { throw new Error('database unavailable'); } };
   await assert.rejects(evaluateAgentV2Shadow({ state, messageId: 'm1', store,
     model: async () => { throw new Error('model should not be called'); } }), /database unavailable/);
 });
@@ -238,12 +279,47 @@ test('model tool output must be exactly one structured JSON tool call', async ()
   assert.equal(valid.status, 'ok');
   assert.equal(valid.raw.version, SCHEMA_VERSION);
   assert.equal(valid.usage.inputTokens, 25);
+  assert.equal(valid.estimatedCostUsd, 0.000085);
+  assert.ok(valid.latencyMs >= 0);
   assert.equal(request.tool_choice.name, 'record_shadow_decision');
   assert.equal(request.tools[0].input_schema.additionalProperties, false);
   const invalid = await runAgentV2Model(input, { createMessage: async () => ({
     stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify(proposal(input)) }] }) });
   assert.equal(invalid.status, 'invalid_response');
   assert.equal(invalid.raw, null);
+  assert.equal(invalid.status, 'invalid_response');
+});
+
+test('configured SDK path pins model version and passes claim abort signal', async () => {
+  const input = buildAgentV2Input(stateFor('Send information.'), 'm1');
+  const controller = new AbortController();
+  let requested;
+  let requestOptions;
+  class AnthropicStub {
+    constructor(options) {
+      assert.equal(options.apiKey, 'test-only');
+      this.messages = { create: async (payload, optionsForCall) => {
+        requested = payload;
+        requestOptions = optionsForCall;
+        return { model: 'claude-haiku-4-5-20251001', stop_reason: 'tool_use',
+          content: [{ type: 'tool_use', name: 'record_shadow_decision', input: proposal(input) }],
+          usage: { input_tokens: 100, output_tokens: 20 } };
+      } };
+    }
+  }
+  const result = await runAgentV2Model(input, { apiKey: 'test-only', AnthropicImpl: AnthropicStub,
+    signal: controller.signal });
+  assert.equal(requested.model, 'claude-haiku-4-5-20251001');
+  assert.equal(requestOptions.signal, controller.signal);
+  assert.equal(result.model, requested.model);
+  assert.equal(result.estimatedCostUsd, 0.0002);
+  assert.equal(result.status, 'ok');
+  const mismatched = await runAgentV2Model(input, { createMessage: async () => ({
+    model: 'claude-haiku-4-5-other', stop_reason: 'tool_use',
+    content: [{ type: 'tool_use', name: 'record_shadow_decision', input: proposal(input) }],
+    usage: { input_tokens: 1, output_tokens: 1 } }) });
+  assert.equal(mismatched.status, 'model_mismatch');
+  assert.equal(mismatched.raw, null);
 });
 
 test('real Phase 1 builder feeds the replay harness; no production module imports Agent v2', async () => {
@@ -257,7 +333,12 @@ test('real Phase 1 builder feeds the replay harness; no production module import
       classification: 'SEND_INFO', from: lead.email, genuineHuman: true }) },
   { eventId: 'gmail-evaluated:primary:m1', leadId: 'CE-S1', sourceLeadId: 'S1', email: lead.email,
     company: lead.company, eventType: 'gmail_reply_evaluated', occurredAt: '2026-09-23T17:01:00.000Z',
-    subject: '', content: '', metadata: JSON.stringify({ gmailMessageId: 'm1', classification: 'SEND_INFO' }) }];
+    subject: '', content: '', metadata: JSON.stringify({ gmailMessageId: 'm1', classification: 'SEND_INFO' }) },
+  { eventId: 'reply-decision:S1:m1', leadId: 'CE-S1', sourceLeadId: 'S1', email: lead.email,
+    company: lead.company, eventType: 'reply_decision_recorded', occurredAt: '2026-09-23T17:01:00.000Z',
+    subject: '', content: '', metadata: JSON.stringify({ inboundMessageId: 'm1', leadId: 'S1',
+      decisionId: 'reply-decision:S1:m1', finalClassification: 'SEND_INFO', policyAction: 'HUMAN_REVIEW',
+      executionStatus: 'recorded' }) }];
   const snapshot = { leads: [lead], boardLeads: [], activities, suppressedEmails: [] };
   const state = buildConversationState({ lead, activities, now: NOW,
     config: { sequencesEnabled: true, sendingEnabled: true } });
@@ -273,6 +354,26 @@ test('real Phase 1 builder feeds the replay harness; no production module import
   assert.equal(counts.modelCalls, 0);
   assert.equal(counts.persisted, 0);
   assert.equal(counts.errors, 0);
+  const store = memoryStore();
+  let calls = 0;
+  const callModel = async actual => { calls++; return { raw: proposal(actual), status: 'ok',
+    model: 'claude-haiku-4-5-20251001', usage: { inputTokens: 200, outputTokens: 30 },
+    latencyMs: 125, estimatedCostUsd: 0.00035 }; };
+  const first = await replay({ snapshot, now: new Date(NOW), leadId: 'S1', messageId: 'm1',
+    persist: true, store, callModel });
+  const second = await replay({ snapshot, now: new Date(NOW), leadId: 'S1', messageId: 'm1',
+    persist: true, store, callModel });
+  assert.equal(first.attempted, 1);
+  assert.equal(first.completed, 1);
+  assert.equal(first.modelCalls, 1);
+  assert.equal(first.latencyMs, 125);
+  assert.equal(first.estimatedCostUsd, 0.00035);
+  assert.equal(first.productionComparison['HUMAN_REVIEW:SUGGEST_INFO'], 1);
+  assert.equal(second.reused, 1);
+  assert.equal(second.completed, 0);
+  assert.equal(calls, 1);
+  await assert.rejects(replay({ snapshot, now: new Date(NOW), leadId: 'S1', messageId: 'unknown',
+    persist: true, store, callModel }), /latest inbound/);
   assert.throws(() => optionsFrom(['--live', '--persist']), /requires --live --model/);
   for (const file of ['outreach-agent.js', 'server.js', 'integrations/reply-response-policy.js']) {
     assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), /agent-v2-(?:shadow|model|validation)/);

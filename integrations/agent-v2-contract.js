@@ -4,7 +4,7 @@
 const SCHEMA_VERSION = 'agent_v2_decision_v1';
 const INPUT_VERSION = 'agent_v2_input_v1';
 const CATALOG_VERSION = 'industrial_staffing_offer_v1';
-const MODEL = 'claude-haiku-4-5';
+const MODEL = 'claude-haiku-4-5-20251001';
 const EVENT_TYPE = 'agent_v2_shadow_decision';
 const AUTHORITY = Object.freeze({ send: false, reserve: false, crm: false, ownership: false,
   suppression: false, holds: false, booking: false, calendar: false, sequences: false,
