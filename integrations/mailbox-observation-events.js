@@ -145,13 +145,18 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
   return { events, suppressions: uniqueSuppressions(suppressions), replies, ignored };
 }
 
-async function commitObservation({ observation, plan, appendEvent, suppress, checkpoint, activities }) {
+async function commitObservation({ observation, plan, appendEvent, appendEvents, suppress, checkpoint, activities }) {
   // Capabilities intentionally exclude sending. A partial failure throws before
   // the checkpoint. The caller must persist unhealthy against the OLD cursor.
   for (const item of plan.suppressions) await suppress(item);
-  for (const event of plan.events) {
-    await appendEvent(event);
-    activities.push(event);
+  if (appendEvents && plan.events.length) {
+    await appendEvents(plan.events);
+    activities.push(...plan.events);
+  } else {
+    for (const event of plan.events) {
+      await appendEvent(event);
+      activities.push(event);
+    }
   }
   await checkpoint(observation);
   return { persisted: plan.events.length, suppressed: plan.suppressions.length };

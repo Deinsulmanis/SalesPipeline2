@@ -114,6 +114,7 @@ const {
   sequenceRfcMessageId, coldStepRfcMessageId, verifyThreadOwnership, findSuccessfulSequenceSend,
 } = require('./integrations/gmail-stage-sequence');
 const { wrapSheetsReadClient } = require('./integrations/google-sheets-resilience');
+const { persistActivityEvents } = require('./integrations/activity-ledger-batch');
 const { stageSendGate } = require('./integrations/pipeline-sequence-safety');
 const { PROMOTION_TRIGGER, resolvePromotionIdentity, promotionDecision } = require('./integrations/promotion-policy');
 const {
@@ -1879,16 +1880,15 @@ async function persistGmailObservationState(senderId, historyId, details = {}) {
 }
 
 async function recordMailboxActivity(event) {
-  // Read before retry as well as after append: a timed-out successful Sheets
-  // request must not create a second deterministic event on retry.
-  const current = await readColdCallActivities();
-  const previous = current.find(row => row.eventId === event.eventId);
-  if (previous) return;
-  await recordColdCallActivityStrict(event);
-  const saved = (await readColdCallActivities()).find(row => row.eventId === event.eventId);
-  if (!saved || saved.eventType !== event.eventType || saved.metadata !== event.metadata) {
-    throw new Error(`Mailbox event readback failed: ${event.eventId}`);
-  }
+  await recordMailboxActivities([event]);
+}
+
+async function recordMailboxActivities(events) {
+  const client = sheets();
+  return persistActivityEvents({ events, values: client.spreadsheets.values,
+    spreadsheetId: SPREADSHEET_ID, sheetName: COLD_CALL_ACTIVITY_SHEET,
+    header: COLD_CALL_ACTIVITY_HEADER, ensureSheet: ensureColdCallActivitySheet,
+    mirrorEvents: mirrorEventsInBackground });
 }
 
 // Re-resolve a lead's CURRENT sheet row by id, immediately before writing.
@@ -2858,7 +2858,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
         leads: senderLeads, activities: activitiesForCycle, senderInboxId: sender.id, senderEmail: sender.email });
       if (!DRY_RUN) {
         await commitObservation({ observation: observed, plan, activities: activitiesForCycle,
-          appendEvent: event => withAuth(() => recordMailboxActivity(event)),
+          appendEvents: events => withAuth(() => recordMailboxActivities(events)),
           suppress: item => withAuth(() => addSuppression(item.email, item.reason, item.company, 'gmail-observer')),
           checkpoint: state => advanceCheckpoint
             ? withAuth(() => persistGmailObservationState(
