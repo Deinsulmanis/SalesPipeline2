@@ -8,7 +8,16 @@ const { createPgAgentV2Store, decisionIdFor } = require('../integrations/agent-v
 const { evaluateAgentV2Shadow } = require('../integrations/agent-v2-shadow');
 
 const url = process.env.AGENT_V2_TEST_DATABASE_URL || '';
-const migrationUrl = process.env.AGENT_V2_TEST_MIGRATION_DATABASE_URL || url;
+const migrationUrl = process.env.AGENT_V2_TEST_MIGRATION_DATABASE_URL || '';
+
+async function workerDuplicate(connectionString, decisionId, leadId, messageId) {
+  const client = new Client({ connectionString });
+  await client.connect();
+  try {
+    await client.query(`INSERT INTO public.agent_v2_shadow_decisions (decision_id, lead_id, message_id)
+      VALUES ($1, $2, $3)`, [`${decisionId}:duplicate`, leadId, messageId]);
+  } finally { await client.end(); }
+}
 
 function state(leadId, messageId) {
   return {
@@ -27,7 +36,13 @@ function state(leadId, messageId) {
 }
 
 test('Postgres shadow store: durable claim, concurrent exclusion, crash recovery, readback and invalid output',
-  { skip: !url }, async () => {
+  { skip: !url || !migrationUrl || process.env.AGENT_V2_TEST_TEMPORARY_DATABASE !== 'true'
+      || process.env.AGENT_V2_TEST_WORKER_ROLE !== 'agent_v2_shadow_worker' }, async () => {
+    for (const connectionString of [url, migrationUrl]) {
+      const host = new URL(connectionString).hostname;
+      assert.ok(['localhost', '127.0.0.1', '::1'].includes(host),
+        'integration test may only apply its migration to local temporary Postgres');
+    }
     const a = createPgAgentV2Store({ connectionString: url });
     const b = createPgAgentV2Store({ connectionString: url });
     const migrator = createPgAgentV2Store({ connectionString: migrationUrl });
@@ -38,16 +53,25 @@ test('Postgres shadow store: durable claim, concurrent exclusion, crash recovery
     try {
       await migrator.applyMigration();
       await assert.rejects(migrator.applyMigration(), /already exists/);
-      if (process.env.AGENT_V2_TEST_WORKER_ROLE) {
-        const role = process.env.AGENT_V2_TEST_WORKER_ROLE;
-        if (!/^[a-z_][a-z0-9_]*$/.test(role)) throw new Error('invalid test worker role');
-        const admin = new Client({ connectionString: migrationUrl });
-        await admin.connect();
-        try {
-          await admin.query(`GRANT USAGE ON SCHEMA public TO ${role}`);
-          await admin.query(`GRANT SELECT, INSERT, UPDATE ON public.agent_v2_shadow_decisions TO ${role}`);
-        } finally { await admin.end(); }
-      }
+      const admin = new Client({ connectionString: migrationUrl });
+      await admin.connect();
+      try {
+        const security = await admin.query(`SELECT c.relrowsecurity AS rls_enabled,
+          has_table_privilege('anon', 'public.agent_v2_shadow_decisions', 'SELECT') AS anon_can_read,
+          has_table_privilege('authenticated', 'public.agent_v2_shadow_decisions', 'INSERT') AS authenticated_can_insert,
+          has_table_privilege('service_role', 'public.agent_v2_shadow_decisions', 'UPDATE') AS service_can_update
+          FROM pg_class c WHERE c.oid = 'public.agent_v2_shadow_decisions'::regclass`);
+        assert.deepEqual(security.rows[0], { rls_enabled: true,
+          anon_can_read: false, authenticated_can_insert: false, service_can_update: false });
+      } finally { await admin.end(); }
+      const grantClient = new Client({ connectionString: migrationUrl });
+      await grantClient.connect();
+      try {
+        await grantClient.query('GRANT USAGE ON SCHEMA public TO agent_v2_shadow_worker');
+        await grantClient.query('GRANT SELECT, INSERT, UPDATE ON public.agent_v2_shadow_decisions TO agent_v2_shadow_worker');
+      } finally { await grantClient.end(); }
+      assert.equal((await a.verifySessionLock()).ok, true);
+      assert.equal((await a.verifyPrivileges()).ok, true);
       await b.ensureSchema();
       const worker = new Client({ connectionString: url });
       await worker.connect();
@@ -62,30 +86,28 @@ test('Postgres shadow store: durable claim, concurrent exclusion, crash recovery
         assert.equal(grants.rows[0].can_read, true);
         assert.equal(grants.rows[0].can_insert, true);
         assert.equal(grants.rows[0].can_update, true);
-        if (migrationUrl !== url) {
-          assert.equal(grants.rows[0].can_delete, false);
-          assert.equal(grants.rows[0].can_create, false);
-          if (grants.rows[0].unrelated_table) {
-            const denied = await worker.query(`SELECT
-              has_table_privilege(current_user, 'public.outbound_send_reservations', 'SELECT') AS can_read,
-              has_table_privilege(current_user, 'public.outbound_send_reservations', 'INSERT') AS can_insert,
-              has_table_privilege(current_user, 'public.outbound_send_reservations', 'UPDATE') AS can_update,
-              has_table_privilege(current_user, 'public.outbound_send_reservations', 'DELETE') AS can_delete`);
-            assert.ok(Object.values(denied.rows[0]).every(value => value === false));
-            await assert.rejects(worker.query('INSERT INTO public.outbound_send_reservations DEFAULT VALUES'),
-              /permission denied/);
-          }
-          const unrelated = await worker.query(`SELECT schemaname, tablename FROM pg_tables
-            WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
-              AND (schemaname, tablename) <> ('public', 'agent_v2_shadow_decisions')
-              AND (has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'SELECT')
-                OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'INSERT')
-                OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'UPDATE')
-                OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'DELETE')
-                OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'TRUNCATE')
-                OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'TRIGGER'))`);
-          assert.deepEqual(unrelated.rows, []);
+        assert.equal(grants.rows[0].can_delete, false);
+        assert.equal(grants.rows[0].can_create, false);
+        if (grants.rows[0].unrelated_table) {
+          const denied = await worker.query(`SELECT
+            has_table_privilege(current_user, 'public.outbound_send_reservations', 'SELECT') AS can_read,
+            has_table_privilege(current_user, 'public.outbound_send_reservations', 'INSERT') AS can_insert,
+            has_table_privilege(current_user, 'public.outbound_send_reservations', 'UPDATE') AS can_update,
+            has_table_privilege(current_user, 'public.outbound_send_reservations', 'DELETE') AS can_delete`);
+          assert.ok(Object.values(denied.rows[0]).every(value => value === false));
+          await assert.rejects(worker.query('INSERT INTO public.outbound_send_reservations DEFAULT VALUES'),
+            /permission denied/);
         }
+        const unrelated = await worker.query(`SELECT schemaname, tablename FROM pg_tables
+          WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
+            AND (schemaname, tablename) <> ('public', 'agent_v2_shadow_decisions')
+            AND (has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'SELECT')
+              OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'INSERT')
+              OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'UPDATE')
+              OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'DELETE')
+              OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'TRUNCATE')
+              OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'TRIGGER'))`);
+        assert.deepEqual(unrelated.rows, []);
       } finally { await worker.end(); }
       const crashed = await a.claim({ decisionId, leadId, messageId });
       assert.equal(crashed.status, 'claimed');
@@ -101,6 +123,8 @@ test('Postgres shadow store: durable claim, concurrent exclusion, crash recovery
       assert.equal(first.record.decision.handoffCode, 'MODEL_ERROR');
       assert.equal(first.record.decision.suggestedWording, '');
       assert.deepEqual(await a.get(decisionId), first.record);
+      await assert.rejects(workerDuplicate(migrationUrl, decisionId, leadId, messageId),
+        error => error.code === '23505');
       const replayed = await evaluateAgentV2Shadow({ state: state(leadId, messageId), messageId, store: a, model });
       assert.equal(replayed.reused, true);
       assert.equal(calls, 1);
@@ -116,6 +140,24 @@ test('Postgres shadow store: durable claim, concurrent exclusion, crash recovery
       assert.equal(recovered.record.modelStatus, 'previous_model_attempt_unresolved');
       assert.equal(recovered.record.decision.handoffCode, 'MODEL_ERROR');
       assert.equal(calls, 1);
+
+      const terminatedMessageId = `terminated:${suffix}`;
+      const terminatedId = decisionIdFor(leadId, terminatedMessageId);
+      const abandoned = await a.claim({ decisionId: terminatedId, leadId,
+        messageId: terminatedMessageId });
+      await abandoned.markModelStarted();
+      const killer = new Client({ connectionString: migrationUrl });
+      await killer.connect();
+      try {
+        const killed = await killer.query('SELECT pg_terminate_backend($1) AS terminated', [abandoned.backendPid]);
+        assert.equal(killed.rows[0].terminated, true);
+      } finally { await killer.end(); }
+      await abandoned.release().catch(() => {});
+      const afterCrash = await b.claim({ decisionId: terminatedId, leadId,
+        messageId: terminatedMessageId });
+      assert.equal(afterCrash.status, 'claimed');
+      assert.equal(afterCrash.priorModelAttempt, true);
+      await afterCrash.release();
 
       const racingMessageId = `race:${suffix}`;
       let unblock;

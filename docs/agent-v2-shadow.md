@@ -3,18 +3,20 @@
 ## Production pilot preparation
 
 The production application is Railway `modest-peace / production / SalesPipeline2`.
-Its `SEND_LOCK_DATABASE_URL` references the separate PostgreSQL 18 `Postgres`
-service in the same project. That database holds send reservations and is the
-correct PostgreSQL service for the new, independent shadow table. It is not the
-Supabase outreach mirror, and Google Sheets remains the conversation source.
+Agent v2 shadow persistence is intended for the existing Supabase application
+Postgres. Railway's `SEND_LOCK_DATABASE_URL` remains dedicated to send
+reservations. Google Sheets remains the source for the Phase 1 conversation
+snapshot and canonical activity until their own migration is completed.
 
-Run `db/migrations/20260923000000_agent_v2_shadow_decisions.sql` once against
-that PostgreSQL service with an administrative connection. The migration has
-one `CREATE TABLE public.agent_v2_shadow_decisions` statement. It contains no
-`ALTER`, `UPDATE`, `DELETE`, trigger, or reference to any existing table. It
-deliberately fails if the table already exists; inspect an existing table
-before proceeding. The shadow worker only verifies the table at runtime and
-does not run DDL.
+After a separate review, first create the restricted role shown below. Then run
+`supabase/migrations/20260923000000_agent_v2_shadow_decisions.sql` against the
+intended Supabase project with an administrative connection. It creates only
+`public.agent_v2_shadow_decisions`, enables RLS on that new table, and revokes
+default API-role access to it. It has no statement touching any existing table
+and deliberately fails if the shadow table already exists. Inspect an existing
+table before proceeding. The worker only verifies schema at runtime and runs
+no DDL. The migration and production role have **not** been applied by this
+candidate.
 
 Create a new login role using an administrative `psql` session. Set its secret
 with interactive `\password agent_v2_shadow_worker` so it is not placed in a
@@ -23,14 +25,32 @@ command argument or repository file:
 ```sql
 CREATE ROLE agent_v2_shadow_worker LOGIN NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION;
 GRANT USAGE ON SCHEMA public TO agent_v2_shadow_worker;
+```
+
+After applying the table migration, grant only its required operations:
+
+```sql
 GRANT SELECT, INSERT, UPDATE ON TABLE public.agent_v2_shadow_decisions
   TO agent_v2_shadow_worker;
 ```
 
-Configure only the independent shadow worker with a connection URL for that
-role as `AGENT_V2_SHADOW_DATABASE_URL`. Do not reuse `SEND_LOCK_DATABASE_URL`
-or give this role privileges on send reservations or any lead, CRM, activity,
-sender, booking, suppression, or reply-decision table. Before use, run these
+Configure only the independent shadow worker with a Supabase Postgres URL for
+that role as `AGENT_V2_SUPABASE_DATABASE_URL`. Create the role before applying
+the table migration, because its RLS policies name that role. Grant table
+privileges only after the migration. The old
+`AGENT_V2_SHADOW_DATABASE_URL` is intentionally ignored. Never reuse
+`SEND_LOCK_DATABASE_URL` or `SUPABASE_SECRET_KEY`, or grant this role privileges
+on any lead, CRM, activity, sender, booking, suppression, research, or
+reply-decision table. Use Supavisor **session mode** on port 5432. This mode
+gives the worker one backend session while it holds the claim. Supavisor
+transaction mode on port 6543 cannot preserve a session
+advisory lock throughout claim, model call, and completion. The worker rejects
+non-Supabase session-pooler hosts, port 6543, and a non-shadow database username before any
+snapshot read or model call. The username's project suffix must match the
+existing `SUPABASE_URL`. It also tests two real connections for exclusive
+session locking before a persistent run.
+
+Before use, run these
 read-only permission checks as the shadow role; every non-shadow table must
 return no `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, or `TRIGGER`
 privilege:
@@ -56,11 +76,23 @@ WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
 ```
 
 The final query must return zero rows. Check that the first three shadow
-privileges are true, and shadow `DELETE` and schema `CREATE` are false. A
-PostgreSQL session advisory lock requires no table write or additional role
-grant; the integration test exercises it with this restricted role. Railway's
-connected OAuth access exposes variable names but not their values, so live
-migration and role creation require a credential-bearing operator session.
+privileges are true, and shadow `DELETE` and schema `CREATE` are false. Verify
+the role has no memberships that grant unrelated permissions, and inspect the
+effective privileges of every non-shadow table. A PostgreSQL session advisory
+lock requires no table grant; the integration test exercises it with this
+restricted role. The connected Railway OAuth access exposes variable names but
+not their values, so production configuration and Supabase schema must be
+verified separately before migration or activation.
+
+After role creation, run `node scripts/agent-v2-supabase-preflight.js --session-only`
+with the restricted session-pooler URL. It makes no table change or model call;
+it checks the connected role and tests one advisory lock across two simultaneous
+connections. After the migration and grants, run the same command without
+`--session-only` to check table existence, RLS, effective table privileges,
+and lack of access to other application tables. The persistent worker runs
+these connection and privilege checks again before any model call. A test on
+temporary Postgres does not replace this check against the actual Supabase
+session endpoint.
 
 Agent v2 reads the existing Phase 1 `conversation_state_v1` result. The
 standalone worker never runs in `outreach-agent.js` or `server.js`, and its
@@ -78,7 +110,7 @@ writes. `--model` calls the dedicated Anthropic key, but does not persist.
 
 Persisting requires all of `--live --model --persist`,
 `AGENT_V2_SHADOW_ENABLED=true`, `ANTHROPIC_AGENT_V2_KEY`, and
-`AGENT_V2_SHADOW_DATABASE_URL`, plus `--lead=<lead id> --message=<provider message id>`.
+`AGENT_V2_SUPABASE_DATABASE_URL`, plus `--lead=<lead id> --message=<provider message id>`.
 The identified message must be the latest inbound for that lead and have a
 recorded production reply decision. One invocation can evaluate at most that
 one inbound. The worker reads Sheets with a read-only scope, never reads Gmail,
