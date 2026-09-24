@@ -140,9 +140,15 @@ test('session preflight proves lock exclusion and reacquisition after release', 
     '202:lock:true', '202:unlock:true', '202:release', '101:release']);
 });
 
-test('session preflight fails closed when PostgreSQL reports no TLS', async () => {
-  assert.equal(await verifyTls({ query: async () => ({ rows: [{ active: true }] }) }), true);
-  for (const rows of [[], [{ active: false }]]) {
-    await assert.rejects(verifyTls({ query: async () => ({ rows }) }), /not using TLS/);
+test('session preflight requires verified client TLS and treats backend SSL as diagnostic', async () => {
+  const verified = { connection: { stream: { encrypted: true, authorized: true } },
+    query: async () => ({ rows: [{ active: false }] }) };
+  assert.deepEqual(await verifyTls(verified),
+    { clientTlsVerified: true, backendSslActive: false });
+  assert.deepEqual(await verifyTls({ ...verified, query: async () => { throw new Error('unavailable'); } }),
+    { clientTlsVerified: true, backendSslActive: null });
+  for (const stream of [{ encrypted: false, authorized: true },
+    { encrypted: true, authorized: false }, {}]) {
+    await assert.rejects(verifyTls({ ...verified, connection: { stream } }), /verified TLS/);
   }
 });

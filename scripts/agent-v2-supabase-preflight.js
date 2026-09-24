@@ -9,10 +9,17 @@ const { Client } = require('pg');
 const { agentV2SupabasePgConfig, createPgAgentV2Store } = require('../integrations/agent-v2-store');
 
 async function verifyTls(client) {
-  const result = await client.query('SELECT ssl AS active FROM pg_stat_ssl WHERE pid = pg_backend_pid()');
-  if (result.rows.length !== 1 || result.rows[0].active !== true)
-    throw new Error('Agent v2 Supabase connection is not using TLS');
-  return true;
+  const stream = client.connection?.stream;
+  if (stream?.encrypted !== true || stream?.authorized !== true)
+    throw new Error('Agent v2 Supabase client connection is not using verified TLS');
+  // Behind Supavisor, pg_stat_ssl describes its backend connection, not this client TLS channel.
+  let backendSslActive = null;
+  try {
+    const result = await client.query('SELECT ssl AS active FROM pg_stat_ssl WHERE pid = pg_backend_pid()');
+    if (result.rows.length === 1 && typeof result.rows[0].active === 'boolean')
+      backendSslActive = result.rows[0].active;
+  } catch { /* Backend SSL visibility is diagnostic only. */ }
+  return { clientTlsVerified: true, backendSslActive };
 }
 
 async function verifyElevatedRoleDenied(client) {
@@ -70,7 +77,7 @@ async function main() {
     failureStage = 'client-connect';
     await client.connect();
     failureStage = 'tls';
-    await verifyTls(client);
+    const tls = await verifyTls(client);
     failureStage = 'elevated-role';
     await verifyElevatedRoleDenied(client);
     failureStage = 'named-table-denials';
@@ -83,7 +90,8 @@ async function main() {
       throw new Error('restricted role identity check failed');
     if (sessionOnly) {
       process.stdout.write(`${JSON.stringify({ mode, roleVerified: true,
-        projectSuffixVerified: true, port5432Verified: true, tlsActive: true,
+        projectSuffixVerified: true, port5432Verified: true, tlsActive: tls.clientTlsVerified,
+        pgStatSslBackendActive: tls.backendSslActive, pgStatSslScope: 'Supavisor-to-Postgres backend',
         loginRoleMatchesCurrentRole: true, backendPidStable: lock.backendPidStable,
         firstLockAcquired: lock.firstLockAcquired,
         competingLockBlocked: lock.competingLockBlocked,
@@ -99,7 +107,8 @@ async function main() {
     failureStage = 'privileges';
     await store.verifyPrivileges();
     process.stdout.write(`${JSON.stringify({ mode, roleVerified: true,
-      tlsActive: true, sessionLockVerified: true,
+      tlsActive: tls.clientTlsVerified, pgStatSslBackendActive: tls.backendSslActive,
+      pgStatSslScope: 'Supavisor-to-Postgres backend', sessionLockVerified: true,
       lockReacquiredAfterRelease: lock.reacquiredAfterRelease,
       tableExists: true, schemaVerified: true,
       privilegesVerified: true, roleRestrictionsVerified: true })}\n`);
