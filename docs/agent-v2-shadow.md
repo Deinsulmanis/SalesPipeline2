@@ -8,6 +8,14 @@ Postgres. Railway's `SEND_LOCK_DATABASE_URL` remains dedicated to send
 reservations. Google Sheets remains the source for the Phase 1 conversation
 snapshot and canonical activity until their own migration is completed.
 
+The operator verified `SUPABASE_OUTREACH_WRITES=supabase` and
+`SUPABASE_TIMELINE_MODE=primary` on 2026-09-23. The Supabase project ref is
+`lasyefxhuwysjebasdbf`; its Session pooler host is
+`aws-0-ca-central-1.pooler.supabase.com`, port `5432`, database `postgres`.
+The worker username for this project is
+`agent_v2_shadow_worker.lasyefxhuwysjebasdbf`, never the admin username.
+Live catalog and migration-history results still require read-only verification.
+
 After a separate review, first create the restricted role shown below. Then run
 `supabase/migrations/20260923000000_agent_v2_shadow_decisions.sql` against the
 intended Supabase project with an administrative connection. It creates only
@@ -23,7 +31,9 @@ with interactive `\password agent_v2_shadow_worker` so it is not placed in a
 command argument or repository file:
 
 ```sql
-CREATE ROLE agent_v2_shadow_worker LOGIN NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION;
+CREATE ROLE agent_v2_shadow_worker
+  LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT
+  NOCREATEDB NOCREATEROLE NOREPLICATION;
 GRANT USAGE ON SCHEMA public TO agent_v2_shadow_worker;
 ```
 
@@ -56,8 +66,13 @@ return no `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, or `TRIGGER`
 privilege:
 
 ```sql
-SELECT current_database(), current_user,
+SELECT current_database(), current_user, session_user,
        to_regclass('public.agent_v2_shadow_decisions') AS shadow_table;
+SELECT rolcanlogin, rolsuper, rolbypassrls, rolinherit, rolcreatedb,
+       rolcreaterole, rolreplication
+FROM pg_roles WHERE rolname = current_user;
+SELECT roleid::regrole AS granted_role
+FROM pg_auth_members WHERE member = (SELECT oid FROM pg_roles WHERE rolname = current_user);
 SELECT has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'SELECT') AS can_read,
        has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'INSERT') AS can_claim,
        has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'UPDATE') AS can_complete,
@@ -75,19 +90,24 @@ WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
     OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'TRIGGER'));
 ```
 
-The final query must return zero rows. Check that the first three shadow
-privileges are true, and shadow `DELETE` and schema `CREATE` are false. Verify
-the role has no memberships that grant unrelated permissions, and inspect the
-effective privileges of every non-shadow table. A PostgreSQL session advisory
-lock requires no table grant; the integration test exercises it with this
-restricted role. The connected Railway OAuth access exposes variable names but
-not their values, so production configuration and Supabase schema must be
-verified separately before migration or activation.
+The membership and unrelated-table queries must return zero rows. Check that
+`session_user = current_user`, only `rolcanlogin` is true among the listed role
+attributes, the first three shadow privileges are true, and shadow `DELETE`
+and schema `CREATE` are false. With no memberships and no superuser privilege,
+the role cannot `SET ROLE` into an elevated role. The preflight also checks
+effective `CREATE` in every non-system schema and effective table privileges.
+A PostgreSQL session advisory lock requires no table grant; the integration
+test exercises it with this restricted role. The connected Railway OAuth
+access exposes variable names but not their values; the two authority settings
+above were provided by the operator. Supabase schema still needs read-only
+verification before migration or activation.
 
 After role creation, run `node scripts/agent-v2-supabase-preflight.js --session-only`
 with the restricted session-pooler URL. It makes no table change or model call;
-it checks the connected role and tests one advisory lock across two simultaneous
-connections. After the migration and grants, run the same command without
+it checks role attributes, memberships, schema and unrelated-table privileges,
+then tests one advisory lock across two simultaneous connections while checking
+backend and login identity before and after the competing lock attempt.
+After the migration and grants, run the same command without
 `--session-only` to check table existence, RLS, effective table privileges,
 and lack of access to other application tables. The persistent worker runs
 these connection and privilege checks again before any model call. A test on

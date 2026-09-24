@@ -64,15 +64,27 @@ function createPgAgentV2Store({ connectionString, pool: existingPool } = {}) {
     let secondLocked = false;
     try {
       second = await pool.connect();
-      const before = await first.query('SELECT pg_backend_pid() AS pid, pg_try_advisory_lock($1::bigint) AS acquired', [key]);
+      const before = await first.query(`SELECT pg_backend_pid() AS pid, current_user AS role,
+        session_user AS login_role, pg_try_advisory_lock($1::bigint) AS acquired`, [key]);
       firstLocked = before.rows[0]?.acquired === true;
       if (!firstLocked) throw new Error('Agent v2 session lock could not be acquired');
-      const after = await first.query('SELECT pg_backend_pid() AS pid');
-      if (after.rows[0]?.pid !== before.rows[0].pid)
-        throw new Error('Agent v2 database session changed across queries');
-      const competing = await second.query('SELECT pg_try_advisory_lock($1::bigint) AS acquired', [key]);
+      const expected = before.rows[0];
+      if (expected.role !== 'agent_v2_shadow_worker' || expected.login_role !== expected.role)
+        throw new Error('Agent v2 advisory lock session has the wrong database identity');
+      async function assertFirstSession() {
+        const actual = (await first.query('SELECT pg_backend_pid() AS pid, current_user AS role, session_user AS login_role')).rows[0];
+        if (actual.pid !== expected.pid || actual.role !== expected.role || actual.login_role !== expected.login_role)
+          throw new Error('Agent v2 database session identity changed while the advisory lock was held');
+      }
+      await assertFirstSession();
+      const competing = await second.query(`SELECT pg_backend_pid() AS pid, current_user AS role,
+        session_user AS login_role, pg_try_advisory_lock($1::bigint) AS acquired`, [key]);
       secondLocked = competing.rows[0]?.acquired === true;
+      if (competing.rows[0]?.pid === expected.pid || competing.rows[0]?.role !== expected.role
+        || competing.rows[0]?.login_role !== expected.login_role)
+        throw new Error('Agent v2 competing lock session has the wrong database identity');
       if (secondLocked) throw new Error('Agent v2 advisory lock was not exclusive across sessions');
+      await assertFirstSession();
       return { ok: true, backendPid: before.rows[0].pid };
     } finally {
       if (secondLocked) await second.query('SELECT pg_advisory_unlock($1::bigint)', [key]).catch(() => {});
@@ -93,20 +105,35 @@ function createPgAgentV2Store({ connectionString, pool: existingPool } = {}) {
       .catch(error => { schemaReady = null; throw error; });
     await schemaReady;
   }
-  async function verifyPrivileges() {
-    const result = await pool.query(`SELECT current_user AS role,
+  async function verifyRoleRestrictions() {
+    const result = await pool.query(`SELECT current_user AS role, session_user AS login_role,
+      r.rolcanlogin AS can_login, r.rolinherit AS inherits,
+      r.rolcreatedb AS can_create_db, r.rolcreaterole AS can_create_role,
+      r.rolreplication AS can_replicate, r.rolbypassrls AS bypasses_rls,
+      r.rolsuper AS is_superuser,
+      EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member = r.oid) AS has_memberships,
+      EXISTS (SELECT 1 FROM pg_roles elevated
+        WHERE elevated.rolname IN ('service_role', 'authenticated', 'anon',
+          'authenticator', 'postgres', 'supabase_admin', 'pg_database_owner',
+          'supabase_auth_admin', 'supabase_storage_admin', 'pg_monitor',
+          'pg_read_all_data', 'pg_write_all_data')
+          AND pg_has_role(r.oid, elevated.oid, 'MEMBER')) AS can_assume_elevated,
       has_schema_privilege(current_user, 'public', 'USAGE') AS schema_usage,
-      has_schema_privilege(current_user, 'public', 'CREATE') AS schema_create,
-      has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'SELECT') AS can_read,
-      has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'INSERT') AS can_insert,
-      has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'UPDATE') AS can_update,
-      has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'DELETE') AS can_delete,
-      (SELECT relrowsecurity FROM pg_class
-        WHERE oid = 'public.agent_v2_shadow_decisions'::regclass) AS rls_enabled`);
+      has_schema_privilege(current_user, 'public', 'CREATE') AS schema_create
+      FROM pg_roles r WHERE r.rolname = current_user`);
     const role = result.rows[0];
-    if (role.role !== 'agent_v2_shadow_worker' || !role.schema_usage || role.schema_create
-      || !role.can_read || !role.can_insert || !role.can_update || role.can_delete || !role.rls_enabled)
-      throw new Error('Agent v2 shadow role privileges are not restricted as required');
+    if (!role || role.role !== 'agent_v2_shadow_worker' || role.login_role !== role.role
+      || !role.can_login || role.inherits || role.can_create_db || role.can_create_role
+      || role.can_replicate || role.bypasses_rls || role.is_superuser
+      || role.has_memberships || role.can_assume_elevated
+      || !role.schema_usage || role.schema_create)
+      throw new Error('Agent v2 shadow role attributes or memberships are not restricted as required');
+    const creatableSchemas = await pool.query(`SELECT nspname FROM pg_namespace
+      WHERE nspname NOT IN ('pg_catalog', 'information_schema')
+        AND nspname NOT LIKE 'pg_toast%'
+        AND nspname NOT LIKE 'pg_temp_%'
+        AND has_schema_privilege(current_user, oid, 'CREATE')`);
+    if (creatableSchemas.rows.length) throw new Error('Agent v2 shadow role can create in a schema');
     const unrelated = await pool.query(`SELECT schemaname, tablename FROM pg_tables
       WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
         AND (schemaname, tablename) <> ('public', 'agent_v2_shadow_decisions')
@@ -115,8 +142,28 @@ function createPgAgentV2Store({ connectionString, pool: existingPool } = {}) {
           OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'UPDATE')
           OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'DELETE')
           OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'TRUNCATE')
+          OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'REFERENCES')
           OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'TRIGGER'))`);
     if (unrelated.rows.length) throw new Error('Agent v2 shadow role can access unrelated tables');
+    return { ok: true };
+  }
+  async function verifyPrivileges() {
+    await verifyRoleRestrictions();
+    const result = await pool.query(`SELECT current_user AS role,
+      has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'SELECT') AS can_read,
+      has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'INSERT') AS can_insert,
+      has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'UPDATE') AS can_update,
+      has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'DELETE') AS can_delete,
+      has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'TRUNCATE') AS can_truncate,
+      has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'REFERENCES') AS can_reference,
+      has_table_privilege(current_user, 'public.agent_v2_shadow_decisions', 'TRIGGER') AS can_trigger,
+      (SELECT relrowsecurity FROM pg_class
+        WHERE oid = 'public.agent_v2_shadow_decisions'::regclass) AS rls_enabled`);
+    const role = result.rows[0];
+    if (role.role !== 'agent_v2_shadow_worker' || !role.can_read || !role.can_insert
+      || !role.can_update || role.can_delete || role.can_truncate || role.can_reference
+      || role.can_trigger || !role.rls_enabled)
+      throw new Error('Agent v2 shadow role privileges are not restricted as required');
     return { ok: true };
   }
   async function get(decisionId) {
@@ -222,7 +269,7 @@ function createPgAgentV2Store({ connectionString, pool: existingPool } = {}) {
       throw error;
     }
   }
-  return { applyMigration, ensureSchema, verifySessionLock, verifyPrivileges, get, claim,
+  return { applyMigration, ensureSchema, verifySessionLock, verifyRoleRestrictions, verifyPrivileges, get, claim,
     close: () => existingPool ? Promise.resolve() : pool.end() };
 }
 

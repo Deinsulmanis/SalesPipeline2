@@ -16,18 +16,18 @@ async function main() {
   const store = createPgAgentV2Store({ connectionString });
   const client = new Client({ connectionString });
   try {
+    await store.verifyRoleRestrictions();
     await store.verifySessionLock();
     await client.connect();
-    const identity = await client.query(`SELECT current_user AS role,
-      has_schema_privilege(current_user, 'public', 'USAGE') AS schema_usage,
-      has_schema_privilege(current_user, 'public', 'CREATE') AS schema_create,
+    const identity = await client.query(`SELECT current_user AS role, session_user AS login_role,
       to_regclass('public.agent_v2_shadow_decisions') IS NOT NULL AS table_exists`);
     const row = identity.rows[0];
-    if (row.role !== 'agent_v2_shadow_worker' || !row.schema_usage || row.schema_create)
-      throw new Error('restricted role/schema privilege check failed');
+    if (row.role !== 'agent_v2_shadow_worker' || row.login_role !== row.role)
+      throw new Error('restricted role identity check failed');
     if (sessionOnly) {
       process.stdout.write(`${JSON.stringify({ mode, roleVerified: true,
-        sessionLockVerified: true, tableExists: row.table_exists, schemaVerified: true })}\n`);
+        sessionLockVerified: true, tableExists: row.table_exists,
+        roleRestrictionsVerified: true })}\n`);
       return;
     }
     if (!row.table_exists) throw new Error('Agent v2 shadow table is absent');
@@ -35,7 +35,7 @@ async function main() {
     await store.verifyPrivileges();
     process.stdout.write(`${JSON.stringify({ mode, roleVerified: true,
       sessionLockVerified: true, tableExists: true, schemaVerified: true,
-      privilegesVerified: true })}\n`);
+      privilegesVerified: true, roleRestrictionsVerified: true })}\n`);
   } finally {
     await client.end().catch(() => {});
     await store.close();

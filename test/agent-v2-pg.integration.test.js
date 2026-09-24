@@ -71,7 +71,29 @@ test('Postgres shadow store: durable claim, concurrent exclusion, crash recovery
         await grantClient.query('GRANT SELECT, INSERT, UPDATE ON public.agent_v2_shadow_decisions TO agent_v2_shadow_worker');
       } finally { await grantClient.end(); }
       assert.equal((await a.verifySessionLock()).ok, true);
+      assert.equal((await a.verifyRoleRestrictions()).ok, true);
       assert.equal((await a.verifyPrivileges()).ok, true);
+      const roleAdmin = new Client({ connectionString: migrationUrl });
+      await roleAdmin.connect();
+      try {
+        await roleAdmin.query('GRANT anon TO agent_v2_shadow_worker');
+        try {
+          await assert.rejects(a.verifyRoleRestrictions(), /attributes or memberships/);
+        } finally { await roleAdmin.query('REVOKE anon FROM agent_v2_shadow_worker'); }
+        await roleAdmin.query('GRANT CREATE ON SCHEMA public TO agent_v2_shadow_worker');
+        try {
+          await assert.rejects(a.verifyRoleRestrictions(), /attributes or memberships|can create in a schema/);
+        } finally { await roleAdmin.query('REVOKE CREATE ON SCHEMA public FROM agent_v2_shadow_worker'); }
+        await roleAdmin.query('GRANT SELECT ON public.outbound_send_reservations TO agent_v2_shadow_worker');
+        try {
+          await assert.rejects(a.verifyRoleRestrictions(), /unrelated tables/);
+        } finally { await roleAdmin.query('REVOKE SELECT ON public.outbound_send_reservations FROM agent_v2_shadow_worker'); }
+        await roleAdmin.query('GRANT DELETE ON public.agent_v2_shadow_decisions TO agent_v2_shadow_worker');
+        try {
+          await assert.rejects(a.verifyPrivileges(), /privileges are not restricted/);
+        } finally { await roleAdmin.query('REVOKE DELETE ON public.agent_v2_shadow_decisions FROM agent_v2_shadow_worker'); }
+      } finally { await roleAdmin.end(); }
+      assert.equal((await a.verifyRoleRestrictions()).ok, true);
       await b.ensureSchema();
       const worker = new Client({ connectionString: url });
       await worker.connect();
