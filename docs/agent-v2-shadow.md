@@ -14,9 +14,16 @@ The operator verified `SUPABASE_OUTREACH_WRITES=supabase` and
 `aws-0-ca-central-1.pooler.supabase.com`, port `5432`, database `postgres`.
 The worker username for this project is
 `agent_v2_shadow_worker.lasyefxhuwysjebasdbf`, never the admin username.
-Live catalog and migration-history results still require read-only verification.
+The existing `public.research_icp_runs` table and its `provider_responses`
+JSONB column belong to the separate Research/ICP V1 agent. The operator
+confirmed that migrations `20260921000000` and `20260921010000` are live in
+this project; do not rerun either. Agent v2 uses only
+`public.agent_v2_shadow_decisions`. Its migration below remains a separate
+infrastructure step, subject to a fresh live catalog check.
 
-After a separate review, first create the restricted role shown below. Then run
+The live restricted-role and Supavisor setup is performed separately through
+the infrastructure lane. After review, first create the restricted role shown
+below. Then run
 `supabase/migrations/20260923000000_agent_v2_shadow_decisions.sql` against the
 intended Supabase project with an administrative connection. It creates only
 `public.agent_v2_shadow_decisions`, enables RLS on that new table, and revokes
@@ -58,7 +65,10 @@ advisory lock throughout claim, model call, and completion. The worker rejects
 non-Supabase session-pooler hosts, port 6543, and a non-shadow database username before any
 snapshot read or model call. The username's project suffix must match the
 existing `SUPABASE_URL`. It also tests two real connections for exclusive
-session locking before a persistent run.
+session locking before a persistent run. The URI must name database `postgres`
+and include `sslmode=require` or `sslmode=verify-full`; the worker rejects a
+URI that does not require TLS. Other URI query parameters are rejected because
+the PostgreSQL driver can use them to override the checked host, port, or role.
 
 Before use, run these
 read-only permission checks as the shadow role; every non-shadow table must
@@ -97,10 +107,9 @@ and schema `CREATE` are false. With no memberships and no superuser privilege,
 the role cannot `SET ROLE` into an elevated role. The preflight also checks
 effective `CREATE` in every non-system schema and effective table privileges.
 A PostgreSQL session advisory lock requires no table grant; the integration
-test exercises it with this restricted role. The connected Railway OAuth
-access exposes variable names but not their values; the two authority settings
-above were provided by the operator. Supabase schema still needs read-only
-verification before migration or activation.
+test exercises it with this restricted role. The two authority settings above
+were provided by the operator. The Agent v2 shadow table and role require
+fresh infrastructure verification before migration or activation.
 
 After role creation, run `node scripts/agent-v2-supabase-preflight.js --session-only`
 with the restricted session-pooler URL. It makes no table change or model call;

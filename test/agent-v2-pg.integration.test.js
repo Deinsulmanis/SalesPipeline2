@@ -163,6 +163,31 @@ test('Postgres shadow store: durable claim, concurrent exclusion, crash recovery
       assert.equal(recovered.record.decision.handoffCode, 'MODEL_ERROR');
       assert.equal(calls, 1);
 
+      const updateDeniedMessageId = `update-denied:${suffix}`;
+      const roleAdminAfterClaim = new Client({ connectionString: migrationUrl });
+      await roleAdminAfterClaim.connect();
+      let updateDeniedCalls = 0;
+      try {
+        await assert.rejects(evaluateAgentV2Shadow({
+          state: state(leadId, updateDeniedMessageId), messageId: updateDeniedMessageId,
+          store: a, model: async () => {
+            updateDeniedCalls++;
+            await roleAdminAfterClaim.query('REVOKE UPDATE ON public.agent_v2_shadow_decisions FROM agent_v2_shadow_worker');
+            return { status: 'ok', raw: { invented: true }, usage: { inputTokens: 1, outputTokens: 1 } };
+          },
+        }), error => error.code === '42501');
+      } finally {
+        await roleAdminAfterClaim.query('GRANT UPDATE ON public.agent_v2_shadow_decisions TO agent_v2_shadow_worker');
+        await roleAdminAfterClaim.end();
+      }
+      const updateDeniedRecovery = await evaluateAgentV2Shadow({
+        state: state(leadId, updateDeniedMessageId), messageId: updateDeniedMessageId,
+        store: b, model: async () => { updateDeniedCalls++; throw new Error('model must not be called again'); },
+      });
+      assert.equal(updateDeniedRecovery.calledModel, false);
+      assert.equal(updateDeniedRecovery.record.modelStatus, 'previous_model_attempt_unresolved');
+      assert.equal(updateDeniedCalls, 1);
+
       const terminatedMessageId = `terminated:${suffix}`;
       const terminatedId = decisionIdFor(leadId, terminatedMessageId);
       const abandoned = await a.claim({ decisionId: terminatedId, leadId,

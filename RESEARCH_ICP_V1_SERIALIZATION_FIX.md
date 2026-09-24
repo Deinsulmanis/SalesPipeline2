@@ -6,6 +6,10 @@ remain `research_icp` / `research_icp_v1`. This correction has not been deployed
 No live company/model test, configuration change or migration application was
 performed for this correction.
 
+Current-state note (operator verified 2026-09-23): both Research/ICP migrations
+are live in the target Supabase project. The release prerequisite at the end of
+this historical report is complete and must not be repeated for Agent v2.
+
 ## Failed production run: what is known
 
 Run `6285d2ca-05a9-49bb-b24b-b449e2d79c43` researched Tradeco Construction and
@@ -134,9 +138,9 @@ Full local outputs: `research-icp-serialization-tests.log` and
 
 ## Release prerequisite and version
 
-Apply **only the new** `20260921010000_research_icp_provider_responses.sql` migration
-before deploying this correction. The original `research_icp_runs` migration is
-already applied and must not be repeated for this fix. The new column inherits the
+`20260921010000_research_icp_provider_responses.sql` and the original
+`research_icp_runs` migration are already live in the target Supabase project.
+Do not rerun either for Agent v2. The column inherits the
 existing table's RLS and service-role access; no other table, trigger or grant changes.
 The initial audit insert explicitly includes the new field, so a missing migration
 stops the run before retrieval or model spending.

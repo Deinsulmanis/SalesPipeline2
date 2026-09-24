@@ -6,8 +6,8 @@ const { runAgentV2Model } = require('./agent-v2-model');
 const { decisionIdFor } = require('./agent-v2-store');
 const { SCHEMA_VERSION, INPUT_VERSION, CATALOG_VERSION, EVENT_TYPE, MODEL, AUTHORITY } = require('./agent-v2-contract');
 
-// The only side effect permitted here is an insert into the dedicated shadow
-// table. Callers never receive an executable action or a send authorization.
+// Side effects are confined to claim and completion writes in the dedicated
+// shadow table. Callers never receive an executable action or send authorization.
 async function evaluateAgentV2Shadow({ state, messageId, store, model = runAgentV2Model,
   apiKey = '', createMessage, now = new Date() } = {}) {
   if (!store || typeof store.claim !== 'function')

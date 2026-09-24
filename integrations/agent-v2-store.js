@@ -22,6 +22,12 @@ function assertSupabaseSessionConnectionString(connectionString, expectedSupabas
     throw new Error('Agent v2 requires a Supabase session-pooler host');
   if (url.port !== '5432')
     throw new Error('Agent v2 requires Supabase port 5432; transaction pooling is unsafe for session locks');
+  if (url.pathname !== '/postgres')
+    throw new Error('Agent v2 requires the Supabase postgres database');
+  const parameters = [...url.searchParams];
+  if (parameters.length !== 1 || parameters[0][0] !== 'sslmode'
+    || !['require', 'verify-full'].includes(parameters[0][1]))
+    throw new Error('Agent v2 requires only sslmode=require or sslmode=verify-full in the database URL');
   const user = decodeURIComponent(url.username);
   if (!/^agent_v2_shadow_worker\.[a-z0-9-]+$/.test(user))
     throw new Error('Agent v2 requires the dedicated shadow worker database role');
