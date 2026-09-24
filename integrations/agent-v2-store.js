@@ -91,7 +91,20 @@ function createPgAgentV2Store({ connectionString, pool: existingPool } = {}) {
         throw new Error('Agent v2 competing lock session has the wrong database identity');
       if (secondLocked) throw new Error('Agent v2 advisory lock was not exclusive across sessions');
       await assertFirstSession();
-      return { ok: true, backendPid: before.rows[0].pid };
+      const released = await first.query(`SELECT pg_backend_pid() AS pid,
+        pg_advisory_unlock($1::bigint) AS released`, [key]);
+      if (released.rows[0]?.pid !== expected.pid || released.rows[0]?.released !== true)
+        throw new Error('Agent v2 first session did not release its advisory lock');
+      firstLocked = false;
+      const reacquired = await second.query(`SELECT pg_backend_pid() AS pid, current_user AS role,
+        session_user AS login_role, pg_try_advisory_lock($1::bigint) AS acquired`, [key]);
+      secondLocked = reacquired.rows[0]?.acquired === true;
+      if (!secondLocked || reacquired.rows[0]?.pid !== competing.rows[0].pid
+        || reacquired.rows[0]?.role !== expected.role
+        || reacquired.rows[0]?.login_role !== expected.login_role)
+        throw new Error('Agent v2 competing session could not reacquire the released advisory lock');
+      return { ok: true, backendPid: expected.pid, backendPidStable: true,
+        firstLockAcquired: true, competingLockBlocked: true, reacquiredAfterRelease: true };
     } finally {
       if (secondLocked) await second.query('SELECT pg_advisory_unlock($1::bigint)', [key]).catch(() => {});
       if (firstLocked) await first.query('SELECT pg_advisory_unlock($1::bigint)', [key]).catch(() => {});
