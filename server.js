@@ -37,7 +37,7 @@ const { parseRegistry: parseGmailInboxRegistry,
   credentialsFor: gmailInboxCredentialsFor, withDefaultInboxes, parseRuntimeOverlay,
   verifyInbox: verifyGmailInbox, verifyMailboxAccess, isStaffingOnlySender } = require('./integrations/gmail-inbox-registry');
 const { configuredSenders, observableSenders, senderCountsToday, successfulSendCountToday } = require('./integrations/gmail-sender-routing');
-const { capacityFromEnv, DEFAULT_INBOX_PER_RUN_LIMIT } = require('./integrations/gmail-sender-capacity');
+const { capacityFromEnv, DEFAULT_INBOX_PER_RUN_LIMIT, MAX_INBOX_PER_RUN_LIMIT } = require('./integrations/gmail-sender-capacity');
 const {
   markWarmupReady, activateSender, pauseSender, activationBlockers,
 } = require('./integrations/gmail-sender-lifecycle');
@@ -743,7 +743,9 @@ const LOG_CAP    = 300;
 const agentState = { running: false, dryRun: true, startedAt: null, log: [], exitCode: null };
 let   agentChild = null;
 let automationLaunchReserved = false;
-const SCHEDULED_SEND_PER_INBOX_CAP = 5;
+// Ceiling on any one inbox's scheduled-window bucket. Each inbox's own
+// perRunLimit can only lower it, so a 5- or 2-per-window inbox is unaffected.
+const SCHEDULED_SEND_PER_INBOX_CAP = MAX_INBOX_PER_RUN_LIMIT;
 
 function scheduledSendCaps(senders = configuredSenders()) {
   const capacity = capacityFromEnv(senders);

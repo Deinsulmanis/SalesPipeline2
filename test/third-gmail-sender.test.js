@@ -268,7 +268,7 @@ test('activation and pause endpoints exist and do not trigger outreach', () => {
 
 test('scheduled caps are derived from active inboxes rather than hardcoded 2-inbox totals', () => {
   const server = read('server.js');
-  assert.match(server, /const SCHEDULED_SEND_PER_INBOX_CAP = 5;/);
+  assert.match(server, /const SCHEDULED_SEND_PER_INBOX_CAP = MAX_INBOX_PER_RUN_LIMIT;/);
   assert.match(server, /function scheduledSendCaps/);
   assert.match(server, /DAILY_CAP: String\(caps\.total\)/);
   assert.doesNotMatch(server, /const SCHEDULED_SEND_TOTAL_CAP = 10;/);

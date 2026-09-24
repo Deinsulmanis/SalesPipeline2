@@ -277,9 +277,11 @@ const anthropicClient = ANTHROPIC_API_KEY
 const _rawProposalBase = (process.env.PROPOSAL_BASE || '').trim();
 const PROPOSAL_BASE    = (/^https?:\/\//i.test(_rawProposalBase) ? _rawProposalBase : 'https://scalelabaireceptionistproposal.netlify.app').replace(/\/$/, '');
 
-// Random pause between sends so traffic looks human (ms)
-const MIN_DELAY = 45 * 1000;
-const MAX_DELAY = 120 * 1000;
+// Random pause between sends so traffic looks human (ms). A 21-send window
+// averages ~22 min at this range, so a pass ends well before the next :00/:30
+// slot; a pass still running there makes that slot skip (no catch-up).
+const MIN_DELAY = 30 * 1000;
+const MAX_DELAY = 90 * 1000;
 
 // ColdEmail columns A:X — must stay in sync with CE_COLUMNS in server.js
 //   A=id  B=company  C=contactName  D=email  E=city  F=tradeType  G=website

@@ -387,11 +387,13 @@ test('G. Activate Sender refuses deniels until auth, observer and history cursor
   const active = activateSender(ready, { auth: healthyAuth, observer: healthyObserver, senders });
   assert.equal(active.status, 'active');
   assert.equal(active.dailyLimit, 10);
-  // Lower caps pass the gate; caps above the standard inbox default still do not.
+  // Lower caps pass the gate; caps above the supported maximum still do not.
   assert.ok(activationBlockers({ ...ready, dailyLimit: 41 }, { auth: healthyAuth, observer: healthyObserver, senders })
     .includes('dailyLimit must be between 1 and 40'));
-  assert.ok(activationBlockers({ ...ready, perRunLimit: 6 }, { auth: healthyAuth, observer: healthyObserver, senders })
-    .includes('perRunLimit must be between 1 and 5'));
+  assert.ok(!activationBlockers({ ...ready, perRunLimit: 6 }, { auth: healthyAuth, observer: healthyObserver, senders })
+    .some(item => /perRunLimit/.test(item)), '6 per window is a supported cap');
+  assert.ok(activationBlockers({ ...ready, perRunLimit: 7 }, { auth: healthyAuth, observer: healthyObserver, senders })
+    .includes('perRunLimit must be between 1 and 6'));
   assert.ok(activationBlockers({ ...ready, dailyLimit: 0 }, { auth: healthyAuth, observer: healthyObserver, senders })
     .includes('dailyLimit must be between 1 and 40'));
 });
