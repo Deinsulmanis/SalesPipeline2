@@ -140,7 +140,16 @@ replays a local snapshot with zero API calls and zero writes.
 datasets in one read-only Sheets batch request. It makes no model calls or
 writes. `--model` calls the dedicated Anthropic key, but does not persist.
 
-Persisting requires all of `--live --model --persist`,
+`node scripts/agent-v2-replay.js --synthetic-pilot --model --persist` is an
+explicit one-shot integration check using the fixed synthetic Phase 1 fixture
+in `test/fixtures/agent-v2-synthetic-pilot.json`. It uses the same model,
+validation, claim, and Supabase store as the live one-shot path. The CLI does
+not accept alternate lead, message, timestamp, or snapshot arguments in this
+mode. A second identical invocation reads the completed row without another
+model call. The synthetic row remains in the shadow ledger for administrative
+cleanup; the restricted worker has no DELETE privilege.
+
+Persisting a genuine inbound requires all of `--live --model --persist`,
 `AGENT_V2_SHADOW_ENABLED=true`, `ANTHROPIC_AGENT_V2_KEY`, and
 `AGENT_V2_SUPABASE_DATABASE_URL`, plus `--lead=<lead id> --message=<provider message id>`.
 The identified message must be the latest inbound for that lead and have a

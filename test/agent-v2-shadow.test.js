@@ -374,8 +374,27 @@ test('real Phase 1 builder feeds the replay harness; no production module import
   assert.equal(calls, 1);
   await assert.rejects(replay({ snapshot, now: new Date(NOW), leadId: 'S1', messageId: 'unknown',
     persist: true, store, callModel }), /latest inbound/);
-  assert.throws(() => optionsFrom(['--live', '--persist']), /requires --live --model/);
+  assert.throws(() => optionsFrom(['--live', '--persist']), /requires --live or --synthetic-pilot, --model/);
   for (const file of ['outreach-agent.js', 'server.js', 'integrations/reply-response-policy.js']) {
     assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), /agent-v2-(?:shadow|model|validation)/);
   }
+});
+
+test('fixed synthetic pilot fixture builds one eligible Phase 1 staffing inbound', () => {
+  const snapshot = require('./fixtures/agent-v2-synthetic-pilot.json');
+  assert.equal(snapshot.leads.length, 1);
+  assert.equal(snapshot.leads[0].email, 'synthetic-agent-v2-pilot@example.test');
+  const state = buildConversationState({ lead: snapshot.leads[0], activities: snapshot.activities,
+    suppressedEmails: new Set(snapshot.suppressedEmails),
+    config: { sequencesEnabled: true, sendingEnabled: true },
+    now: '2026-09-24T17:02:00.000Z' });
+  const inbound = state.turns.filter(turn => turn.direction === 'inbound');
+  assert.equal(state.identity.family, 'industrial_staffing');
+  assert.equal(inbound.length, 1);
+  assert.equal(inbound[0].genuineHuman, true);
+  assert.match(inbound[0].messageId, /^SYNTHETIC_AGENT_V2_PILOT_/);
+  const input = buildAgentV2Input(state, inbound[0].messageId);
+  assert.equal(input.currentState.productionDecision.status, 'recorded');
+  assert.equal(guardCode(input), null);
+  assert.deepEqual(input.riskFlags, []);
 });

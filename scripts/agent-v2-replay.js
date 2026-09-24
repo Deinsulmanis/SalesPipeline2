@@ -14,6 +14,7 @@
 
 require('dotenv').config({ quiet: true });
 const fs = require('node:fs');
+const path = require('node:path');
 const { buildConversationState } = require('../integrations/conversation-state');
 const { indexConversationEvidence, selectConversationEvidence } = require('../integrations/conversation-evidence');
 const { buildAgentV2Input } = require('../integrations/agent-v2-input');
@@ -28,20 +29,36 @@ const CE_COLUMNS = ['id', 'company', 'contactName', 'email', 'city', 'tradeType'
   'enrichment_attempted', 'leadNiche', 'senderInboxId', 'emailTemplateId', 'routingRequired', 'intendedCampaignVersion'];
 const BOARD_COLUMNS = ['id', 'type', 'first', 'last', 'brokerage', 'tradeType', 'company', 'city', 'cityTrade', 'phone',
   'email', 'website', 'stage', 'priority', 'followup', 'notes', 'created'];
+const SYNTHETIC_PILOT = Object.freeze({
+  snapshot: path.join(__dirname, '..', 'test', 'fixtures', 'agent-v2-synthetic-pilot.json'),
+  now: '2026-09-24T17:02:00.000Z',
+  leadId: 'SYNTHETIC_AGENT_V2_PILOT_20260924_LEAD_001',
+  messageId: 'SYNTHETIC_AGENT_V2_PILOT_20260924_MESSAGE_001',
+});
 
 function optionsFrom(argv) {
   const options = {};
   for (const arg of argv) {
     if (!arg.startsWith('--')) throw new Error(`unexpected argument: ${arg}`);
     const [key, ...parts] = arg.slice(2).split('=');
-    if (!['snapshot', 'now', 'lead', 'message', 'limit', 'live', 'model', 'persist'].includes(key))
+    if (!['snapshot', 'now', 'lead', 'message', 'limit', 'live', 'model', 'persist', 'synthetic-pilot'].includes(key))
       throw new Error(`unknown option: ${key}`);
     options[key] = parts.length ? parts.join('=') : true;
   }
+  if (options['synthetic-pilot']) {
+    if (options['synthetic-pilot'] !== true || options.live || options.snapshot || options.now
+      || options.lead || options.message || options.limit || options.model !== true || options.persist !== true)
+      throw new Error('--synthetic-pilot requires only --model --persist');
+    options.snapshot = SYNTHETIC_PILOT.snapshot;
+    options.now = SYNTHETIC_PILOT.now;
+    options.lead = SYNTHETIC_PILOT.leadId;
+    options.message = SYNTHETIC_PILOT.messageId;
+  }
   if (Boolean(options.snapshot) === Boolean(options.live)) throw new Error('choose exactly one of --snapshot or --live');
   if (options.snapshot && !options.now) throw new Error('--now is required for deterministic snapshot replay');
-  if (options.persist && (!options.live || !options.model || process.env.AGENT_V2_SHADOW_ENABLED !== 'true'))
-    throw new Error('--persist requires --live --model and AGENT_V2_SHADOW_ENABLED=true');
+  if (options.persist && (!(options.live || options['synthetic-pilot']) || !options.model
+    || process.env.AGENT_V2_SHADOW_ENABLED !== 'true'))
+    throw new Error('--persist requires --live or --synthetic-pilot, --model, and AGENT_V2_SHADOW_ENABLED=true');
   if (options.persist && (!options.lead || !options.message || options.limit))
     throw new Error('--persist requires one --lead and --message, without --limit');
   if (options.persist && (!process.env.ANTHROPIC_AGENT_V2_KEY || !process.env.AGENT_V2_SUPABASE_DATABASE_URL))

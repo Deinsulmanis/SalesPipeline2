@@ -68,6 +68,40 @@ test('dormant Agent v2 needs no database credential; persistence fails closed wi
   }
 });
 
+test('synthetic pilot uses only its fixed fixture and explicit one-shot persistence gate', () => {
+  const names = ['AGENT_V2_SHADOW_ENABLED', 'AGENT_V2_SUPABASE_DATABASE_URL',
+    'AGENT_V2_SUPABASE_CA_CERT', 'ANTHROPIC_AGENT_V2_KEY', 'SUPABASE_URL'];
+  const original = Object.fromEntries(names.map(name => [name, process.env[name]]));
+  try {
+    process.env.AGENT_V2_SHADOW_ENABLED = 'true';
+    process.env.AGENT_V2_SUPABASE_DATABASE_URL = sessionUrl;
+    process.env.AGENT_V2_SUPABASE_CA_CERT = tls.rootCertificates[0];
+    process.env.ANTHROPIC_AGENT_V2_KEY = 'test-only';
+    process.env.SUPABASE_URL = projectUrl;
+    const options = optionsFrom(['--synthetic-pilot', '--model', '--persist']);
+    assert.equal(options.snapshot, path.join(__dirname, 'fixtures', 'agent-v2-synthetic-pilot.json'));
+    assert.match(options.lead, /^SYNTHETIC_AGENT_V2_PILOT_/);
+    assert.match(options.message, /^SYNTHETIC_AGENT_V2_PILOT_/);
+    for (const extra of ['--live', '--snapshot=other.json', '--now=2026-09-24T18:00:00Z',
+      '--lead=other', '--message=other', '--limit=2']) {
+      assert.throws(() => optionsFrom(['--synthetic-pilot', '--model', '--persist', extra]));
+    }
+    assert.throws(() => optionsFrom(['--synthetic-pilot', '--model']));
+    assert.throws(() => optionsFrom(['--synthetic-pilot', '--persist']));
+    assert.throws(() => optionsFrom(['--synthetic-pilot=false', '--model', '--persist']));
+    assert.throws(() => optionsFrom(['--snapshot=other.json', '--now=2026-09-24T18:00:00Z',
+      '--model', '--persist', '--lead=other', '--message=other']));
+    delete process.env.AGENT_V2_SHADOW_ENABLED;
+    assert.throws(() => optionsFrom(['--synthetic-pilot', '--model', '--persist']),
+      /AGENT_V2_SHADOW_ENABLED=true/);
+  } finally {
+    for (const name of names) {
+      if (original[name] === undefined) delete process.env[name];
+      else process.env[name] = original[name];
+    }
+  }
+});
+
 test('Agent v2 builds explicit verified-TLS pg options from the validated URI and CA', () => {
   const ca = tls.rootCertificates[0];
   const config = agentV2SupabasePgConfig(sessionUrl, projectUrl, ca);
