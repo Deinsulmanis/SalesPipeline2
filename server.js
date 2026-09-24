@@ -35,7 +35,7 @@ const {
 } = require('./integrations/reply-analytics');
 const { parseRegistry: parseGmailInboxRegistry,
   credentialsFor: gmailInboxCredentialsFor, withDefaultInboxes, parseRuntimeOverlay,
-  verifyInbox: verifyGmailInbox, verifyMailboxAccess } = require('./integrations/gmail-inbox-registry');
+  verifyInbox: verifyGmailInbox, verifyMailboxAccess, isStaffingOnlySender } = require('./integrations/gmail-inbox-registry');
 const { configuredSenders, observableSenders, senderCountsToday, successfulSendCountToday } = require('./integrations/gmail-sender-routing');
 const { capacityFromEnv, DEFAULT_INBOX_PER_RUN_LIMIT } = require('./integrations/gmail-sender-capacity');
 const {
@@ -5539,6 +5539,7 @@ function gmailInboxOptions() {
     dailyLimit: sender.dailyLimit,
     perRunLimit: sender.perRunLimit || DEFAULT_INBOX_PER_RUN_LIMIT,
     observerEnabled: sender.observerEnabled !== false,
+    staffingOnly: isStaffingOnlySender(sender),
     credentialConfigured: sender.credentialConfigured,
     identityVerified: sender.id === 'primary' ? Boolean(process.env.GMAIL_TOKEN_JSON) : sender.credentialConfigured,
     sendEligible: sender.sendEligible,
