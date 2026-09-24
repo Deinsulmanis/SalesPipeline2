@@ -42,13 +42,14 @@ const DEFAULT_SECONDARY_INBOXES = Object.freeze([
     perRunLimit: 2,
     observerEnabled: true,
   }),
-  // Second mailbox on tryscalelabai.ca, same pattern as deniels: 10/day at 2 per window.
+  // Second mailbox on tryscalelabai.ca, same pattern and caps as deniels:
+  // 20/day (raised from 10 on 2026-09-24) at 2 per window.
   Object.freeze({
     id: 'deniels_tryscalelabai',
     email: 'deniels@tryscalelabai.ca',
     status: 'warming',
     tokenEnv: 'GMAIL_DENIELS_TRYSCALELABAI_TOKEN_JSON',
-    dailyLimit: 10,
+    dailyLimit: 20,
     perRunLimit: 2,
     observerEnabled: true,
   }),

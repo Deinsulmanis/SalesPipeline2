@@ -62,7 +62,7 @@ test('registered with its own id, address and credential variable, even when the
   const entry = byId(withDefaultInboxes(parseRegistry(PRODUCTION.GMAIL_INBOX_REGISTRY_JSON)), ID);
   assert.deepEqual(
     { email: entry.email, tokenEnv: entry.tokenEnv, status: entry.status, dailyLimit: entry.dailyLimit, perRunLimit: entry.perRunLimit, observerEnabled: entry.observerEnabled },
-    { email: EMAIL, tokenEnv: TOKEN_ENV, status: 'warming', dailyLimit: 10, perRunLimit: 2, observerEnabled: true },
+    { email: EMAIL, tokenEnv: TOKEN_ENV, status: 'warming', dailyLimit: 20, perRunLimit: 2, observerEnabled: true },
   );
   const senders = configuredSenders(PRODUCTION);
   for (const key of ['id', 'email', 'tokenEnv']) {
@@ -137,9 +137,9 @@ test('its own 2-per-window bucket; ten windows fill the 120 ceiling once active'
     }
     assert.ok((daily.get(ID) || 0) <= 2 * (window + 1), 'never more than 2 per window');
   }
-  // Active sum is 50 + 50 + 20 + 10 = 130, so the 120 ceiling binds: deniels
-  // gets its 20 at 2/window and the two 5/window inboxes absorb the shortfall.
-  assert.deepEqual(Object.fromEntries(daily), { [ID]: 10, deniels: 20, tryscalelabai: 45, primary: 45 });
+  // Active sum is 50 + 50 + 20 + 20 = 140, so the 120 ceiling binds in the ninth
+  // window: 14 per window, new mailbox first (worst case), the rest absorb it.
+  assert.deepEqual(Object.fromEntries(daily), { [ID]: 18, deniels: 18, tryscalelabai: 44, primary: 40 });
   assert.equal(total, 120);
 });
 
@@ -173,7 +173,7 @@ test('Activate Sender refuses until warmup is marked ready and auth, observer an
   assert.ok(blockers({ auth: healthyAuth, observer: { ...healthyObserver, cursorState: 'missing' } }).includes('history cursor missing'));
   assert.ok(blockers({ auth: { authenticated: false }, observer: healthyObserver }).includes('gmail auth unhealthy'));
   assert.deepEqual(blockers({ auth: healthyAuth, observer: healthyObserver }), []);
-  assert.equal(activateSender(ready, { auth: healthyAuth, observer: healthyObserver, senders }).dailyLimit, 10);
+  assert.equal(activateSender(ready, { auth: healthyAuth, observer: healthyObserver, senders }).dailyLimit, 20);
 });
 
 test('existing conversations stay with their mailbox; its sends are charged to it alone', () => {
