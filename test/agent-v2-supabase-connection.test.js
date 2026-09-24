@@ -82,6 +82,10 @@ test('synthetic pilot uses only its fixed fixture and explicit one-shot persiste
     assert.equal(options.snapshot, path.join(__dirname, 'fixtures', 'agent-v2-synthetic-pilot.json'));
     assert.match(options.lead, /^SYNTHETIC_AGENT_V2_PILOT_/);
     assert.match(options.message, /^SYNTHETIC_AGENT_V2_PILOT_/);
+    const second = optionsFrom(['--synthetic-pilot=second', '--model', '--persist']);
+    assert.equal(second.snapshot, path.join(__dirname, 'fixtures', 'agent-v2-synthetic-pilot-second.json'));
+    assert.equal(second.lead, 'SYNTHETIC_AGENT_V2_PILOT_20260924_LEAD_002');
+    assert.equal(second.message, 'SYNTHETIC_AGENT_V2_PILOT_20260924_MESSAGE_002');
     for (const extra of ['--live', '--snapshot=other.json', '--now=2026-09-24T18:00:00Z',
       '--lead=other', '--message=other', '--limit=2']) {
       assert.throws(() => optionsFrom(['--synthetic-pilot', '--model', '--persist', extra]));

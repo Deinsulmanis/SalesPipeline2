@@ -147,6 +147,35 @@ test('malformed or unsupported output fails closed, and confidence never grants 
   assert.equal(validateModelDecision(proposal(input, { confidence: 1 }), input).actionId, 'SUGGEST_INFO');
 });
 
+test('tool contract guides slot selection while validation rejects incompatible action slots', async () => {
+  const input = buildAgentV2Input(stateFor('What does the 30-day pilot involve?'), 'm1');
+  const incompatible = proposal(input, { actionId: 'SUGGEST_FACT_ANSWER',
+    factIds: ['F_30_DAY_PILOT'], templateId: 'FACTS_ONLY',
+    reasonCode: 'APPROVED_FACT_MATCH', slotIds: ['roles'] });
+  let request;
+  const model = await runAgentV2Model(input, { createMessage: async payload => {
+    request = payload;
+    return { model: 'claude-haiku-4-5-20251001', stop_reason: 'tool_use',
+      content: [{ type: 'tool_use', name: 'record_shadow_decision', input: incompatible }],
+      usage: { input_tokens: 10, output_tokens: 10 } };
+  } });
+  assert.equal(model.status, 'ok');
+  assert.deepEqual(model.raw.slotIds, ['roles']);
+  assert.match(request.system, /Set slotIds to \[\] for every other action/);
+  assert.match(request.tools[0].input_schema.properties.slotIds.description,
+    /Nonempty only for SUGGEST_QUALIFICATION/);
+  const rejected = validateModelDecision(model.raw, input);
+  assert.equal(rejected.status, 'invalid_model_output');
+  assert.equal(rejected.validationError, 'unexpected slot IDs');
+  assert.equal(rejected.actionId, 'HANDOFF');
+  assert.equal(rejected.handoffCode, 'MODEL_ERROR');
+  assert.equal(validateModelDecision(proposal(input, { slotIds: ['geography'] }), input).validationError,
+    'unexpected slot IDs');
+  assert.equal(validateModelDecision({ ...incompatible, slotIds: [] }, input).status, 'valid');
+  assert.equal(validateModelDecision(proposal(input, { actionId: 'SUGGEST_QUALIFICATION',
+    factIds: [], templateId: 'QUALIFY', slotIds: ['roles'], reasonCode: 'QUALIFICATION_GAP' }), input).status, 'valid');
+});
+
 test('pricing text can render only catalog pricing facts; unsupported slots and objections fail', () => {
   const input = buildAgentV2Input(stateFor('Is this performance-based pricing?'), 'm1');
   assert.equal(guardCode(input), null);
@@ -253,6 +282,33 @@ test('invalid model output is saved once as a coded, empty handoff', async () =>
   assert.equal(calls, 1);
 });
 
+test('shadow audit retains incompatible raw slots without granting them authority', async () => {
+  const store = memoryStore();
+  const state = stateFor('What does the 30-day pilot involve?');
+  const input = buildAgentV2Input(state, 'm1');
+  // Representative failure class: the exact first-pilot tool input was not retained.
+  const incompatible = proposal(input, { actionId: 'SUGGEST_FACT_ANSWER',
+    factIds: ['F_30_DAY_PILOT'], templateId: 'FACTS_ONLY',
+    reasonCode: 'APPROVED_FACT_MATCH', slotIds: ['roles'] });
+  let calls = 0;
+  const model = async () => { calls++; return { status: 'ok', raw: incompatible,
+    providerMessageId: 'synthetic-provider-response', usage: { inputTokens: 2, outputTokens: 1 } }; };
+  const first = await evaluateAgentV2Shadow({ state, messageId: 'm1', store, model });
+  const replayed = await evaluateAgentV2Shadow({ state, messageId: 'm1', store, model });
+  assert.deepEqual(first.record.rawModelToolInput, incompatible);
+  assert.equal(first.record.providerMessageId, 'synthetic-provider-response');
+  assert.equal(first.record.decision.validationError, 'unexpected slot IDs');
+  assert.equal(first.record.decision.actionId, 'HANDOFF');
+  assert.equal(first.record.decision.handoffCode, 'MODEL_ERROR');
+  assert.deepEqual(first.record.decision.slotIds, []);
+  assert.deepEqual(first.record.authority, AUTHORITY);
+  assert.ok(Object.values(first.record.authority).every(value => value === false));
+  assert.equal(replayed.reused, true);
+  assert.equal(replayed.record, first.record);
+  assert.equal(store.rows.get(first.record.decisionId).attempts, 1);
+  assert.equal(calls, 1);
+});
+
 test('persistence failure is visible, and earlier inbound turns do not see future state', async () => {
   const state = stateFor('Interested.');
   const later = { ...state.turns[0], turnId: 'turn:m2', index: 1, messageId: 'm2',
@@ -273,11 +329,12 @@ test('model tool output must be exactly one structured JSON tool call', async ()
   let request;
   const valid = await runAgentV2Model(input, { createMessage: async payload => {
     request = payload;
-    return { stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'record_shadow_decision',
+    return { id: 'synthetic-provider-response', stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'record_shadow_decision',
       input: proposal(input) }], usage: { input_tokens: 25, output_tokens: 12 } };
   } });
   assert.equal(valid.status, 'ok');
   assert.equal(valid.raw.version, SCHEMA_VERSION);
+  assert.equal(valid.providerMessageId, 'synthetic-provider-response');
   assert.equal(valid.usage.inputTokens, 25);
   assert.equal(valid.estimatedCostUsd, 0.000085);
   assert.ok(valid.latencyMs >= 0);
@@ -381,20 +438,22 @@ test('real Phase 1 builder feeds the replay harness; no production module import
 });
 
 test('fixed synthetic pilot fixture builds one eligible Phase 1 staffing inbound', () => {
-  const snapshot = require('./fixtures/agent-v2-synthetic-pilot.json');
-  assert.equal(snapshot.leads.length, 1);
-  assert.equal(snapshot.leads[0].email, 'synthetic-agent-v2-pilot@example.test');
-  const state = buildConversationState({ lead: snapshot.leads[0], activities: snapshot.activities,
-    suppressedEmails: new Set(snapshot.suppressedEmails),
-    config: { sequencesEnabled: true, sendingEnabled: true },
-    now: '2026-09-24T17:02:00.000Z' });
-  const inbound = state.turns.filter(turn => turn.direction === 'inbound');
-  assert.equal(state.identity.family, 'industrial_staffing');
-  assert.equal(inbound.length, 1);
-  assert.equal(inbound[0].genuineHuman, true);
-  assert.match(inbound[0].messageId, /^SYNTHETIC_AGENT_V2_PILOT_/);
-  const input = buildAgentV2Input(state, inbound[0].messageId);
-  assert.equal(input.currentState.productionDecision.status, 'recorded');
-  assert.equal(guardCode(input), null);
-  assert.deepEqual(input.riskFlags, []);
+  for (const file of ['agent-v2-synthetic-pilot.json', 'agent-v2-synthetic-pilot-second.json']) {
+    const snapshot = require(`./fixtures/${file}`);
+    assert.equal(snapshot.leads.length, 1);
+    assert.match(snapshot.leads[0].email, /^synthetic-agent-v2-pilot/);
+    const state = buildConversationState({ lead: snapshot.leads[0], activities: snapshot.activities,
+      suppressedEmails: new Set(snapshot.suppressedEmails),
+      config: { sequencesEnabled: true, sendingEnabled: true },
+      now: '2026-09-24T17:02:00.000Z' });
+    const inbound = state.turns.filter(turn => turn.direction === 'inbound');
+    assert.equal(state.identity.family, 'industrial_staffing');
+    assert.equal(inbound.length, 1);
+    assert.equal(inbound[0].genuineHuman, true);
+    assert.match(inbound[0].messageId, /^SYNTHETIC_AGENT_V2_PILOT_/);
+    const input = buildAgentV2Input(state, inbound[0].messageId);
+    assert.equal(input.currentState.productionDecision.status, 'recorded');
+    assert.equal(guardCode(input), null);
+    assert.deepEqual(input.riskFlags, []);
+  }
 });

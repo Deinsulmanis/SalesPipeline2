@@ -35,6 +35,12 @@ const SYNTHETIC_PILOT = Object.freeze({
   leadId: 'SYNTHETIC_AGENT_V2_PILOT_20260924_LEAD_001',
   messageId: 'SYNTHETIC_AGENT_V2_PILOT_20260924_MESSAGE_001',
 });
+const SYNTHETIC_PILOT_SECOND = Object.freeze({
+  snapshot: path.join(__dirname, '..', 'test', 'fixtures', 'agent-v2-synthetic-pilot-second.json'),
+  now: SYNTHETIC_PILOT.now,
+  leadId: 'SYNTHETIC_AGENT_V2_PILOT_20260924_LEAD_002',
+  messageId: 'SYNTHETIC_AGENT_V2_PILOT_20260924_MESSAGE_002',
+});
 
 function optionsFrom(argv) {
   const options = {};
@@ -46,13 +52,14 @@ function optionsFrom(argv) {
     options[key] = parts.length ? parts.join('=') : true;
   }
   if (options['synthetic-pilot']) {
-    if (options['synthetic-pilot'] !== true || options.live || options.snapshot || options.now
+    if (![true, 'second'].includes(options['synthetic-pilot']) || options.live || options.snapshot || options.now
       || options.lead || options.message || options.limit || options.model !== true || options.persist !== true)
-      throw new Error('--synthetic-pilot requires only --model --persist');
-    options.snapshot = SYNTHETIC_PILOT.snapshot;
-    options.now = SYNTHETIC_PILOT.now;
-    options.lead = SYNTHETIC_PILOT.leadId;
-    options.message = SYNTHETIC_PILOT.messageId;
+      throw new Error('--synthetic-pilot requires only --model --persist, optionally =second');
+    const pilot = options['synthetic-pilot'] === 'second' ? SYNTHETIC_PILOT_SECOND : SYNTHETIC_PILOT;
+    options.snapshot = pilot.snapshot;
+    options.now = pilot.now;
+    options.lead = pilot.leadId;
+    options.message = pilot.messageId;
   }
   if (Boolean(options.snapshot) === Boolean(options.live)) throw new Error('choose exactly one of --snapshot or --live');
   if (options.snapshot && !options.now) throw new Error('--now is required for deterministic snapshot replay');

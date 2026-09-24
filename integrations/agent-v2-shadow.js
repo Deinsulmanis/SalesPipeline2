@@ -40,6 +40,9 @@ async function evaluateAgentV2Shadow({ state, messageId, store, model = runAgent
       stateDigest: input.stateDigest, inputDigest: input.inputDigest,
       createdAt, decision, model: modelResult?.model || MODEL,
       modelStatus: modelResult?.status || 'model_error',
+      // Audit data only. The validator's decision above remains the sole advisory output.
+      rawModelToolInput: modelResult?.status === 'ok' ? modelResult.raw : null,
+      providerMessageId: modelResult?.providerMessageId || null,
       usage: modelResult?.usage || { inputTokens: 0, outputTokens: 0 },
       latencyMs: Number(modelResult?.latencyMs || 0),
       estimatedCostUsd: modelResult?.estimatedCostUsd ?? null,
