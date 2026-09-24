@@ -217,6 +217,16 @@ function createPgAgentV2Store({ connectionString, expectedSupabaseUrl, caCert, p
     const rows = await pool.query('SELECT record FROM public.agent_v2_shadow_decisions WHERE decision_id = $1', [decisionId]);
     return rows.rows[0]?.record || null;
   }
+  // Phase 5 reads completion evidence from the ledger itself, never from the
+  // in-memory model result returned by the shadow worker.
+  async function getDecisionRow(decisionId) {
+    await ensureSchema();
+    const rows = await pool.query(`SELECT decision_id, lead_id, message_id,
+      claimed_at, claim_token, claim_attempts, model_started_at,
+      completed_at, created_at, action_id, record
+      FROM public.agent_v2_shadow_decisions WHERE decision_id = $1`, [decisionId]);
+    return rows.rows[0] || null;
+  }
   async function claim({ decisionId, leadId, messageId }) {
     await ensureSchema();
     const client = await pool.connect();
@@ -315,7 +325,8 @@ function createPgAgentV2Store({ connectionString, expectedSupabaseUrl, caCert, p
       throw error;
     }
   }
-  return { applyMigration, ensureSchema, verifySessionLock, verifyRoleRestrictions, verifyPrivileges, get, claim,
+  return { applyMigration, ensureSchema, verifySessionLock, verifyRoleRestrictions, verifyPrivileges,
+    get, getDecisionRow, claim,
     close: () => existingPool ? Promise.resolve() : pool.end() };
 }
 

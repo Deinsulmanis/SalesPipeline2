@@ -38,6 +38,9 @@ async function evaluateAgentV2Shadow({ state, messageId, store, model = runAgent
       inputVersion: INPUT_VERSION, catalogVersion: CATALOG_VERSION,
       leadId: input.leadId, messageId: input.messageId,
       stateDigest: input.stateDigest, inputDigest: input.inputDigest,
+      // Audit clock used by Phase 1's input digest. A later read-only rebuild
+      // can hold this clock fixed while loading current evidence.
+      stateAsOf: input.asOf,
       createdAt, decision, model: modelResult?.model || MODEL,
       modelStatus: modelResult?.status || 'model_error',
       // Audit data only. The validator's decision above remains the sole advisory output.
