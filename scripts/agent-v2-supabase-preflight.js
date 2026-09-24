@@ -6,12 +6,47 @@
 // Run without that flag after migration/grants, before any model invocation.
 require('dotenv').config({ quiet: true });
 const { Client } = require('pg');
-const { assertSupabaseSessionConnectionString, createPgAgentV2Store } = require('../integrations/agent-v2-store');
+const { agentV2SupabasePgConfig, createPgAgentV2Store } = require('../integrations/agent-v2-store');
 
 async function verifyTls(client) {
   const result = await client.query('SELECT ssl AS active FROM pg_stat_ssl WHERE pid = pg_backend_pid()');
   if (result.rows.length !== 1 || result.rows[0].active !== true)
     throw new Error('Agent v2 Supabase connection is not using TLS');
+  return true;
+}
+
+async function verifyElevatedRoleDenied(client) {
+  let assumed = false;
+  try {
+    await client.query('SET ROLE service_role');
+    assumed = true;
+  } catch (error) {
+    if (error?.code !== '42501') throw new Error('Agent v2 elevated SET ROLE denial could not be verified');
+  } finally {
+    if (assumed) await client.query('RESET ROLE').catch(() => {});
+  }
+  if (assumed) throw new Error('Agent v2 worker can assume service_role');
+  const identity = (await client.query('SELECT current_user AS role, session_user AS login_role')).rows[0];
+  if (identity?.role !== 'agent_v2_shadow_worker' || identity?.login_role !== identity.role)
+    throw new Error('Agent v2 role identity changed after SET ROLE check');
+  return true;
+}
+
+async function verifyNamedTableDenials(client) {
+  for (const table of ['crm_events', 'outreach_leads', 'research_icp_runs']) {
+    const result = await client.query(`SELECT to_regclass($1) IS NOT NULL AS present,
+      COALESCE(has_table_privilege(current_user, to_regclass($1), 'SELECT'), false) AS can_select,
+      COALESCE(has_table_privilege(current_user, to_regclass($1), 'INSERT'), false) AS can_insert,
+      COALESCE(has_table_privilege(current_user, to_regclass($1), 'UPDATE'), false) AS can_update,
+      COALESCE(has_table_privilege(current_user, to_regclass($1), 'DELETE'), false) AS can_delete,
+      COALESCE(has_table_privilege(current_user, to_regclass($1), 'TRUNCATE'), false) AS can_truncate,
+      COALESCE(has_table_privilege(current_user, to_regclass($1), 'REFERENCES'), false) AS can_reference,
+      COALESCE(has_table_privilege(current_user, to_regclass($1), 'TRIGGER'), false) AS can_trigger`,
+    [`public.${table}`]);
+    const row = result.rows[0];
+    if (!row?.present || Object.entries(row).some(([key, value]) => key !== 'present' && value !== false))
+      throw new Error('Agent v2 worker has access to a protected application table');
+  }
   return true;
 }
 
@@ -21,9 +56,12 @@ async function main() {
   const sessionOnly = process.argv.length === 3 && process.argv[2] === '--session-only';
   if (!sessionOnly && process.argv.length !== 2) throw new Error('unexpected preflight option');
   const connectionString = process.env.AGENT_V2_SUPABASE_DATABASE_URL;
-  const { mode } = assertSupabaseSessionConnectionString(connectionString, process.env.SUPABASE_URL);
-  const store = createPgAgentV2Store({ connectionString });
-  const client = new Client({ connectionString });
+  const connectionConfig = agentV2SupabasePgConfig(connectionString,
+    process.env.SUPABASE_URL, process.env.AGENT_V2_SUPABASE_CA_CERT);
+  const mode = 'session-pooler';
+  const store = createPgAgentV2Store({ connectionString, expectedSupabaseUrl: process.env.SUPABASE_URL,
+    caCert: process.env.AGENT_V2_SUPABASE_CA_CERT });
+  const client = new Client(connectionConfig);
   try {
     failureStage = 'role-restrictions';
     await store.verifyRoleRestrictions();
@@ -33,6 +71,10 @@ async function main() {
     await client.connect();
     failureStage = 'tls';
     await verifyTls(client);
+    failureStage = 'elevated-role';
+    await verifyElevatedRoleDenied(client);
+    failureStage = 'named-table-denials';
+    await verifyNamedTableDenials(client);
     failureStage = 'identity';
     const identity = await client.query(`SELECT current_user AS role, session_user AS login_role,
       to_regclass('public.agent_v2_shadow_decisions') IS NOT NULL AS table_exists`);
@@ -73,6 +115,10 @@ if (require.main === module) main().catch(error => {
     'Agent v2 shadow role attributes or memberships are not restricted as required',
     'Agent v2 shadow role can create in a schema',
     'Agent v2 shadow role can access unrelated tables',
+    'Agent v2 Supabase CA certificate is required in PEM format',
+    'Agent v2 Supabase CA certificate is malformed',
+    'Agent v2 worker has access to a protected application table',
+    'Agent v2 worker can assume service_role',
   ]);
   const detail = safeRoleErrors.has(error?.message) ? error.message
     : /^[A-Z0-9_]{2,32}$/.test(error?.code || '') ? `driver code ${error.code}`

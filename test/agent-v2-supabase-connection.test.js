@@ -2,42 +2,51 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { assertSupabaseSessionConnectionString, createPgAgentV2Store } = require('../integrations/agent-v2-store');
+const tls = require('node:tls');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const { assertSupabaseSessionConnectionString, agentV2SupabasePgConfig,
+  createPgAgentV2Store } = require('../integrations/agent-v2-store');
 const { optionsFrom } = require('../scripts/agent-v2-replay');
 const { verifyTls } = require('../scripts/agent-v2-supabase-preflight');
 
-const sessionUrl = 'postgresql://agent_v2_shadow_worker.projectref:secret@aws-0-us-west-2.pooler.supabase.com:5432/postgres?sslmode=require';
+const projectUrl = 'https://lasyefxhuwysjebasdbf.supabase.co';
+const sessionUrl = 'postgresql://agent_v2_shadow_worker.lasyefxhuwysjebasdbf:test-secret@aws-0-us-west-2.pooler.supabase.com:5432/postgres?sslmode=require';
 
 test('Agent v2 permits only a restricted Supabase session-pooler connection', () => {
   assert.deepEqual(assertSupabaseSessionConnectionString(
     sessionUrl,
-    'https://projectref.supabase.co'),
+    projectUrl),
   { mode: 'session-pooler' });
   assert.deepEqual(assertSupabaseSessionConnectionString(
-    sessionUrl.replace('sslmode=require', 'sslmode=verify-full'), 'https://projectref.supabase.co'),
+    sessionUrl.replace('sslmode=require', 'sslmode=verify-full'), projectUrl),
   { mode: 'session-pooler' });
   for (const url of [
     sessionUrl.replace(':5432/', ':6543/'),
-    sessionUrl.replace('agent_v2_shadow_worker.projectref', 'postgres.projectref'),
-    sessionUrl.replace('aws-0-us-west-2.pooler.supabase.com', 'db.projectref.supabase.co'),
+    sessionUrl.replace('agent_v2_shadow_worker.lasyefxhuwysjebasdbf', 'postgres.lasyefxhuwysjebasdbf'),
+    sessionUrl.replace('aws-0-us-west-2.pooler.supabase.com', 'db.lasyefxhuwysjebasdbf.supabase.co'),
     sessionUrl.replace('aws-0-us-west-2.pooler.supabase.com', 'postgres.railway.internal'),
     sessionUrl.replace('/postgres?', '/other?'),
     sessionUrl.replace('?sslmode=require', ''),
     sessionUrl.replace('sslmode=require', 'sslmode=disable'),
+    sessionUrl.replace('sslmode=require', 'sslmode=no-verify'),
     `${sessionUrl}&sslmode=disable`,
     `${sessionUrl}&host=postgres.railway.internal`,
     `${sessionUrl}&port=6543`,
-    `${sessionUrl}&user=postgres.projectref`,
+    `${sessionUrl}&user=postgres.lasyefxhuwysjebasdbf`,
     `${sessionUrl}&uselibpqcompat=true`,
-    'https://projectref.supabase.co',
-  ]) assert.throws(() => assertSupabaseSessionConnectionString(url, 'https://projectref.supabase.co'));
+    projectUrl,
+  ]) assert.throws(() => assertSupabaseSessionConnectionString(url, projectUrl));
   assert.throws(() => assertSupabaseSessionConnectionString(
-    sessionUrl.replace('agent_v2_shadow_worker.projectref', 'agent_v2_shadow_worker.otherproject'),
-    'https://projectref.supabase.co'));
+    sessionUrl.replace('agent_v2_shadow_worker.lasyefxhuwysjebasdbf', 'agent_v2_shadow_worker.otherproject'),
+    projectUrl));
+  assert.throws(() => assertSupabaseSessionConnectionString(sessionUrl,
+    'https://otherproject.supabase.co'));
 });
 
 test('dormant Agent v2 needs no database credential; persistence fails closed without it', () => {
   const names = ['AGENT_V2_SHADOW_ENABLED', 'AGENT_V2_SUPABASE_DATABASE_URL',
+    'AGENT_V2_SUPABASE_CA_CERT',
     'ANTHROPIC_AGENT_V2_KEY', 'SUPABASE_URL'];
   const original = Object.fromEntries(names.map(name => [name, process.env[name]]));
   try {
@@ -49,13 +58,52 @@ test('dormant Agent v2 needs no database credential; persistence fails closed wi
     assert.throws(() => optionsFrom(persist), /database URL required/);
     process.env.ANTHROPIC_AGENT_V2_KEY = 'test-only';
     process.env.AGENT_V2_SUPABASE_DATABASE_URL = sessionUrl.replace('?sslmode=require', '');
-    process.env.SUPABASE_URL = 'https://projectref.supabase.co';
+    process.env.SUPABASE_URL = projectUrl;
     assert.throws(() => optionsFrom(persist), /sslmode/);
   } finally {
     for (const name of names) {
       if (original[name] === undefined) delete process.env[name];
       else process.env[name] = original[name];
     }
+  }
+});
+
+test('Agent v2 builds explicit verified-TLS pg options from the validated URI and CA', () => {
+  const ca = tls.rootCertificates[0];
+  const config = agentV2SupabasePgConfig(sessionUrl, projectUrl, ca);
+  assert.equal(Object.hasOwn(config, 'connectionString'), false);
+  assert.equal(config.host, 'aws-0-us-west-2.pooler.supabase.com');
+  assert.equal(config.port, 5432);
+  assert.equal(config.database, 'postgres');
+  assert.equal(config.user, 'agent_v2_shadow_worker.lasyefxhuwysjebasdbf');
+  assert.equal(config.ssl.rejectUnauthorized, true);
+  assert.equal(config.ssl.servername, config.host);
+  assert.ok(config.ssl.ca.startsWith('-----BEGIN CERTIFICATE-----'));
+  assert.throws(() => agentV2SupabasePgConfig(sessionUrl, projectUrl, ''), /CA certificate/);
+  assert.throws(() => agentV2SupabasePgConfig(sessionUrl, projectUrl, 'invalid-ca-marker'), /CA certificate/);
+  assert.throws(() => createPgAgentV2Store({ connectionString: sessionUrl,
+    expectedSupabaseUrl: projectUrl, caCert: '' }), /CA certificate/);
+  for (const url of [sessionUrl.replace('sslmode=require', 'sslmode=no-verify'),
+    `${sessionUrl}&uselibpqcompat=true`, `${sessionUrl}&ssl=false`]) {
+    assert.throws(() => agentV2SupabasePgConfig(url, projectUrl, ca));
+  }
+});
+
+test('preflight diagnostics never print a password, URI, or CA contents', () => {
+  const env = { ...process.env, AGENT_V2_SUPABASE_DATABASE_URL: sessionUrl,
+    SUPABASE_URL: projectUrl, AGENT_V2_SUPABASE_CA_CERT: 'invalid-ca-marker',
+    AGENT_V2_SHADOW_ENABLED: 'true', ANTHROPIC_AGENT_V2_KEY: 'test-model-key' };
+  for (const args of [
+    ['agent-v2-supabase-preflight.js', '--session-only'],
+    ['agent-v2-replay.js', '--live', '--model', '--persist', '--lead=L1', '--message=M1'],
+  ]) {
+    const result = spawnSync(process.execPath,
+      [path.join(__dirname, '..', 'scripts', args[0]), ...args.slice(1)],
+      { env, encoding: 'utf8', timeout: 10000 });
+    assert.equal(result.status, 1);
+    const output = `${result.stdout}${result.stderr}`;
+    for (const secret of ['test-secret', sessionUrl, 'invalid-ca-marker', 'test-model-key'])
+      assert.equal(output.includes(secret), false);
   }
 });
 

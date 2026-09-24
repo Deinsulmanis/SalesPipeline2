@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const { Client } = require('pg');
+const { Client, Pool } = require('pg');
 const { createPgAgentV2Store, decisionIdFor } = require('../integrations/agent-v2-store');
 const { evaluateAgentV2Shadow } = require('../integrations/agent-v2-shadow');
 
@@ -43,9 +43,12 @@ test('Postgres shadow store: durable claim, concurrent exclusion, crash recovery
       assert.ok(['localhost', '127.0.0.1', '::1'].includes(host),
         'integration test may only apply its migration to local temporary Postgres');
     }
-    const a = createPgAgentV2Store({ connectionString: url });
-    const b = createPgAgentV2Store({ connectionString: url });
-    const migrator = createPgAgentV2Store({ connectionString: migrationUrl });
+    const aPool = new Pool({ connectionString: url, max: 2 });
+    const bPool = new Pool({ connectionString: url, max: 2 });
+    const migratorPool = new Pool({ connectionString: migrationUrl, max: 2 });
+    const a = createPgAgentV2Store({ pool: aPool });
+    const b = createPgAgentV2Store({ pool: bPool });
+    const migrator = createPgAgentV2Store({ pool: migratorPool });
     const suffix = crypto.randomUUID();
     const leadId = `agent-v2-test:${suffix}`;
     const messageId = `inbound:${suffix}`;
@@ -223,5 +226,5 @@ test('Postgres shadow store: durable claim, concurrent exclusion, crash recovery
       assert.equal(racingCalls, 1);
       unblock();
       await running;
-    } finally { await Promise.all([a.close(), b.close(), migrator.close()]); }
+    } finally { await Promise.all([aPool.end(), bPool.end(), migratorPool.end()]); }
   });

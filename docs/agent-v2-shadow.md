@@ -69,6 +69,9 @@ session locking before a persistent run. The URI must name database `postgres`
 and include `sslmode=require` or `sslmode=verify-full`; the worker rejects a
 URI that does not require TLS. Other URI query parameters are rejected because
 the PostgreSQL driver can use them to override the checked host, port, or role.
+Set `AGENT_V2_SUPABASE_CA_CERT` to the project's PEM CA certificate. The worker
+builds `pg` connection options from the validated URI and configures certificate
+and hostname verification explicitly; the raw URI is never passed to `pg`.
 
 Before use, run these
 read-only permission checks as the shadow role; every non-shadow table must

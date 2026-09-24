@@ -20,7 +20,7 @@ const { buildAgentV2Input } = require('../integrations/agent-v2-input');
 const { guardCode, guarded, validateModelDecision } = require('../integrations/agent-v2-validation');
 const { runAgentV2Model } = require('../integrations/agent-v2-model');
 const { evaluateAgentV2Shadow } = require('../integrations/agent-v2-shadow');
-const { createPgAgentV2Store, assertSupabaseSessionConnectionString } = require('../integrations/agent-v2-store');
+const { createPgAgentV2Store, agentV2SupabasePgConfig } = require('../integrations/agent-v2-store');
 const { COLD_CALL_ACTIVITY_HEADER } = require('../integrations/cold-call-pipeline');
 
 const CE_COLUMNS = ['id', 'company', 'contactName', 'email', 'city', 'tradeType', 'website', 'stage', 'emailStatus',
@@ -46,8 +46,8 @@ function optionsFrom(argv) {
     throw new Error('--persist requires one --lead and --message, without --limit');
   if (options.persist && (!process.env.ANTHROPIC_AGENT_V2_KEY || !process.env.AGENT_V2_SUPABASE_DATABASE_URL))
     throw new Error('shadow model key and database URL required for persistence');
-  if (options.persist) assertSupabaseSessionConnectionString(
-    process.env.AGENT_V2_SUPABASE_DATABASE_URL, process.env.SUPABASE_URL);
+  if (options.persist) agentV2SupabasePgConfig(process.env.AGENT_V2_SUPABASE_DATABASE_URL,
+    process.env.SUPABASE_URL, process.env.AGENT_V2_SUPABASE_CA_CERT);
   if (options.model && !process.env.ANTHROPIC_AGENT_V2_KEY)
     throw new Error('ANTHROPIC_AGENT_V2_KEY required for --model');
   if (options.limit && (!Number.isInteger(Number(options.limit)) || Number(options.limit) < 1))
@@ -178,7 +178,11 @@ async function main() {
   const snapshot = options.live ? await liveSnapshot() : JSON.parse(fs.readFileSync(options.snapshot, 'utf8'));
   const now = options.now ? new Date(options.now) : new Date();
   if (!Number.isFinite(now.getTime())) throw new Error('invalid --now');
-  const store = options.persist ? createPgAgentV2Store({ connectionString: process.env.AGENT_V2_SUPABASE_DATABASE_URL }) : null;
+  const store = options.persist ? createPgAgentV2Store({
+    connectionString: process.env.AGENT_V2_SUPABASE_DATABASE_URL,
+    expectedSupabaseUrl: process.env.SUPABASE_URL,
+    caCert: process.env.AGENT_V2_SUPABASE_CA_CERT,
+  }) : null;
   try {
     if (store) {
       await store.verifySessionLock();
@@ -196,7 +200,8 @@ async function main() {
 }
 
 if (require.main === module) main().catch(error => {
-  console.error(`agent v2 replay failed: ${error.message}`);
+  // Driver and TLS errors may contain connection details; keep worker output bounded.
+  console.error('agent v2 replay failed; inspect shadow worker configuration and database access.');
   process.exitCode = 1;
 });
 

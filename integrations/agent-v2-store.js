@@ -3,6 +3,9 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const tls = require('node:tls');
+
+const PROJECT_REF = 'lasyefxhuwysjebasdbf';
 
 const MIGRATION = path.join(__dirname, '..', 'supabase', 'migrations',
   '20260923000000_agent_v2_shadow_decisions.sql');
@@ -36,9 +39,29 @@ function assertSupabaseSessionConnectionString(connectionString, expectedSupabas
   try { expectedHost = new URL(expectedSupabaseUrl).hostname.toLowerCase(); }
   catch { throw new Error('SUPABASE_URL is required to verify the Agent v2 project'); }
   const project = /^([a-z0-9-]+)\.supabase\.co$/.exec(expectedHost)?.[1];
-  if (!project || user !== `agent_v2_shadow_worker.${project}`)
+  if (project !== PROJECT_REF || user !== `agent_v2_shadow_worker.${PROJECT_REF}`)
     throw new Error('Agent v2 database role does not match the configured Supabase project');
   return { mode: 'session-pooler' };
+}
+
+function agentV2SupabasePgConfig(connectionString, expectedSupabaseUrl, caCert) {
+  assertSupabaseSessionConnectionString(connectionString, expectedSupabaseUrl);
+  const ca = String(caCert || '').trim().replace(/\\n/g, '\n');
+  if (!ca || !/^-----BEGIN CERTIFICATE-----[\s\S]+-----END CERTIFICATE-----$/.test(ca))
+    throw new Error('Agent v2 Supabase CA certificate is required in PEM format');
+  try { tls.createSecureContext({ ca }); }
+  catch { throw new Error('Agent v2 Supabase CA certificate is malformed'); }
+  const url = new URL(connectionString);
+  let user;
+  let password;
+  try {
+    user = decodeURIComponent(url.username);
+    password = decodeURIComponent(url.password);
+  } catch { throw new Error('invalid Agent v2 Supabase Postgres credentials'); }
+  return {
+    host: url.hostname.toLowerCase(), port: 5432, database: 'postgres', user, password,
+    ssl: { ca, rejectUnauthorized: true, servername: url.hostname.toLowerCase() },
+  };
 }
 
 function decisionIdFor(leadId, messageId) {
@@ -56,10 +79,12 @@ function lockKeyFor(decisionId) {
   return BigInt.asIntN(64, BigInt(`0x${hex}`)).toString();
 }
 
-function createPgAgentV2Store({ connectionString, pool: existingPool } = {}) {
+function createPgAgentV2Store({ connectionString, expectedSupabaseUrl, caCert, pool: existingPool } = {}) {
   if (!connectionString && !existingPool) throw new Error('shadow database connection required');
+  const connectionConfig = existingPool ? null
+    : agentV2SupabasePgConfig(connectionString, expectedSupabaseUrl, caCert);
   const Pool = existingPool ? null : require('pg').Pool;
-  const pool = existingPool || new Pool({ connectionString, max: 2,
+  const pool = existingPool || new Pool({ ...connectionConfig, max: 2,
     idleTimeoutMillis: 10000, connectionTimeoutMillis: 4000 });
   let schemaReady = null;
   async function verifySessionLock() {
@@ -292,4 +317,5 @@ function createPgAgentV2Store({ connectionString, pool: existingPool } = {}) {
     close: () => existingPool ? Promise.resolve() : pool.end() };
 }
 
-module.exports = { decisionIdFor, lockKeyFor, assertSupabaseSessionConnectionString, createPgAgentV2Store };
+module.exports = { decisionIdFor, lockKeyFor, assertSupabaseSessionConnectionString,
+  agentV2SupabasePgConfig, createPgAgentV2Store };
