@@ -19,7 +19,7 @@ const STAFFING = STAFFING_CAMPAIGN.niche;
 const EXISTING = ['primary', 'tryscalelabai', 'deniels', 'deniels_tryscalelabai'];
 
 // Production-shaped roster: primary + tryscalelabai (registry) active at 50/5,
-// both deniels inboxes active via the runtime overlay at 10/2, and
+// deniels active via the runtime overlay at 20/2 and deniels_tryscalelabai at 10/2, and
 // scalelabaiteam hypothetically active at its 40/5 code default.
 function productionEnv({ registry, runtime } = {}) {
   return {
@@ -56,7 +56,7 @@ test('fixture mirrors production: five senders, scalelabaiteam active at 40/5 an
   const senders = roster();
   assert.deepEqual(senders.map(sender => [sender.id, sender.sendEligible, sender.dailyLimit, sender.perRunLimit]), [
     ['primary', true, 50, 5], ['tryscalelabai', true, 50, 5], ['scalelabaiteam', true, 40, 5],
-    ['deniels', true, 10, 2], ['deniels_tryscalelabai', true, 10, 2],
+    ['deniels', true, 20, 2], ['deniels_tryscalelabai', true, 10, 2],
   ]);
   assert.equal(byId(senders, 'scalelabaiteam').staffingOnly, true);
   for (const id of EXISTING) {
@@ -77,7 +77,7 @@ test('dental: dynamic balancing never selects scalelabaiteam, even when it is th
 
 test('dental: with every other inbox exhausted the lead waits instead of falling through to scalelabaiteam', () => {
   const senders = roster();
-  const full = new Map([['primary', 50], ['tryscalelabai', 50], ['deniels', 10], ['deniels_tryscalelabai', 10], ['scalelabaiteam', 0]]);
+  const full = new Map([['primary', 50], ['tryscalelabai', 50], ['deniels', 20], ['deniels_tryscalelabai', 10], ['scalelabaiteam', 0]]);
   const choice = chooseSender({ lead: { id: 'D2', tradeType: 'Dental' }, senders, sendsToday: full });
   assert.equal(choice.sender, null);
   assert.equal(choice.reason, 'no eligible sender capacity');

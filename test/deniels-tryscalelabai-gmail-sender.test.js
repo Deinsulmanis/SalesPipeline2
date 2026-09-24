@@ -88,10 +88,12 @@ test('warming: never eligible, never routed to, and an explicit assignment is re
 test('contributes 0 capacity while warming, including after the ceiling is raised to 120', () => {
   assert.deepEqual(
     (({ activeCount, dailySum, globalDailyLimit, globalPerRunLimit }) => ({ activeCount, dailySum, globalDailyLimit, globalPerRunLimit }))(capacity(PRODUCTION)),
-    { activeCount: 3, dailySum: 110, globalDailyLimit: 110, globalPerRunLimit: 12 },
+    { activeCount: 3, dailySum: 120, globalDailyLimit: 110, globalPerRunLimit: 12 },
   );
+  // 50 + 50 + deniels 20: the warming mailbox adds nothing to the sum.
   const ceilingRaised = { ...PRODUCTION, GMAIL_GLOBAL_DAILY_CEILING: '120' };
-  assert.equal(capacity(ceilingRaised).globalDailyLimit, 110);
+  assert.equal(capacity(ceilingRaised).dailySum, 120);
+  assert.equal(capacity(ceilingRaised).globalDailyLimit, 120);
   assert.equal(capacity(ceilingRaised).globalPerRunLimit, 12);
 });
 
@@ -108,11 +110,11 @@ test('existing sender caps are unchanged by the new registration', () => {
     .map(({ id, status, dailyLimit, perRunLimit, sendEligible }) => ({ id, status, dailyLimit, perRunLimit, sendEligible }));
   assert.deepEqual(shape(activated(120)), shape(PRODUCTION));
   assert.deepEqual(shape(PRODUCTION).map(({ id, dailyLimit, perRunLimit }) => [id, dailyLimit, perRunLimit]), [
-    ['primary', 50, 5], ['tryscalelabai', 50, 5], ['scalelabaiteam', 40, 5], ['deniels', 10, 2],
+    ['primary', 50, 5], ['tryscalelabai', 50, 5], ['scalelabaiteam', 40, 5], ['deniels', 20, 2],
   ]);
 });
 
-test('its own 2-per-window bucket; ten windows reach 50 / 50 / 10 / 10 = 120 once active', () => {
+test('its own 2-per-window bucket; ten windows fill the 120 ceiling once active', () => {
   const env = activated(120);
   const senders = configuredSenders(env);
   const active = senders.filter(item => item.sendEligible);
@@ -135,7 +137,9 @@ test('its own 2-per-window bucket; ten windows reach 50 / 50 / 10 / 10 = 120 onc
     }
     assert.ok((daily.get(ID) || 0) <= 2 * (window + 1), 'never more than 2 per window');
   }
-  assert.deepEqual(Object.fromEntries(daily), { [ID]: 10, deniels: 10, tryscalelabai: 50, primary: 50 });
+  // Active sum is 50 + 50 + 20 + 10 = 130, so the 120 ceiling binds: deniels
+  // gets its 20 at 2/window and the two 5/window inboxes absorb the shortfall.
+  assert.deepEqual(Object.fromEntries(daily), { [ID]: 10, deniels: 20, tryscalelabai: 45, primary: 45 });
   assert.equal(total, 120);
 });
 

@@ -30,18 +30,19 @@ const DEFAULT_SECONDARY_INBOXES = Object.freeze([
   }),
   // New mailbox on the established scalelabai.ca domain. Smartlead warms it
   // independently; campaign sends use this Gmail sender only after the
-  // operator activates it behind the healthy-observer gate. Deliberately
-  // conservative caps: 10/day spread at 2 per window. Raise them by hand.
+  // operator activates it behind the healthy-observer gate. Conservative
+  // caps: 20/day (raised from 10 on 2026-09-24) spread at 2 per window, so the
+  // ten weekday windows are its whole day. Raise them by hand.
   Object.freeze({
     id: 'deniels',
     email: 'deniels@scalelabai.ca',
     status: 'warming',
     tokenEnv: 'GMAIL_DENIELS_TOKEN_JSON',
-    dailyLimit: 10,
+    dailyLimit: 20,
     perRunLimit: 2,
     observerEnabled: true,
   }),
-  // Second mailbox on tryscalelabai.ca, same pattern and caps as deniels.
+  // Second mailbox on tryscalelabai.ca, same pattern as deniels: 10/day at 2 per window.
   Object.freeze({
     id: 'deniels_tryscalelabai',
     email: 'deniels@tryscalelabai.ca',
