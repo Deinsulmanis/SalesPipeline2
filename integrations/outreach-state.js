@@ -481,6 +481,12 @@ async function countOutreachLeads({ env = process.env } = {}) {
   }
 }
 
+// Per-process count of whole-corpus reads. Each one is the single largest
+// Supabase egress unit this application spends, so it is metered by the
+// process that pays it rather than inferred from logs.
+const corpusReadStats = { reads: 0, failures: 0 };
+function outreachCorpusReadStats() { return { ...corpusReadStats }; }
+
 /**
  * The WHOLE operational corpus as complete ColdEmail rows, ordered by lead id.
  *
@@ -494,6 +500,13 @@ async function countOutreachLeads({ env = process.env } = {}) {
  * and findCERow() already do.
  */
 async function readOutreachCorpus({ env = process.env, pageSize = 1000 } = {}) {
+  corpusReadStats.reads += 1;
+  const result = await readOutreachCorpusPages({ env, pageSize });
+  if (!result.ok) corpusReadStats.failures += 1;
+  return result;
+}
+
+async function readOutreachCorpusPages({ env, pageSize }) {
   const leads = [];
   for (let offset = 0; ; offset += pageSize) {
     const page = await listOutreachLeads({ limit: pageSize, offset, env });
@@ -1277,7 +1290,7 @@ async function applyLeadChanges(changes, {
 module.exports = {
   TABLE, FIELD_MAP, SHEET_FIELDS, CRITICAL_FIELDS, NONCRITICAL_FIELDS,
   outreachStateMode, outreachWriteAuthority, sheetsFallbackAllowed,
-  readOutreachCorpus, isCompleteLead, missingFields, describeUnmirrorable,
+  readOutreachCorpus, outreachCorpusReadStats, isCompleteLead, missingFields, describeUnmirrorable,
   toOutreachLeadRow, toOutreachLeadPatch, fromOutreachLeadRow,
   mirrorOutreachLeads, mirrorOutreachLeadFields,
   mirrorOutreachLeadsInBackground, mirrorOutreachLeadFieldsInBackground,

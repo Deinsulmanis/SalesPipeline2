@@ -159,6 +159,7 @@ const {
   demoPairEventFor, hasDemoPairHistory, hasUndeliveredDemoPair, planIntentObservation,
 } = require('./integrations/demo-intent-state');
 const { aggregateDemoPlays, attributeDemoPlays, demoPlayForLead } = require('./integrations/demo-attribution');
+const { INTENT_STATE_SOURCE, formatIntentStateLine, pendingIntentWork } = require('./integrations/intent-backstop');
 const { oldestDueFirst, followUpSuccessTarget } = require('./integrations/scheduler-fairness');
 const { fairShareQueuedOrder } = require('./integrations/scheduled-slot-allocator');
 const {
@@ -3920,7 +3921,36 @@ async function prepareDemoIntentCandidates(allLeads, snapshot = null, corpus = a
     due.push(lead);
   }
 
+  // Read back by the server, which launches the three-minute intent backstop
+  // only while work may be pending. Reported before any delivery is attempted;
+  // when a pass then delivers, runIntentTriggerPass() reports what is left, and
+  // the server judges a process by its LAST report.
+  console.log(formatIntentStateLine({
+    due: due.length, source: INTENT_STATE_SOURCE.PREPARE, scope: TARGET_LEAD_ID ? 'target' : 'all',
+  }));
   return { due, plays, fired, activities };
+}
+
+// Check-only's contribution to the intent backstop: the same predicates over the
+// snapshot this pass already holds, with no write and no extra read. It is the
+// one observer that notices intent work created OUTSIDE the demo-play flow — a
+// corpus change that makes a legacy company key unique, a repair script — so it
+// can arm the backstop, never disarm it.
+async function reportIntentWorkHint(allLeads, snapshot, corpus) {
+  const scope = TARGET_LEAD_ID ? 'target' : 'all';
+  try {
+    const due = pendingIntentWork({
+      leads: allLeads, corpus,
+      plays: await readRealDemoPlays(snapshot.demoPlays),
+      fired: await loadFiredIntents(snapshot.intentFired),
+      activities: snapshot.activities || [],
+      companyKey: demoCompanyKey,
+    });
+    console.log(formatIntentStateLine({ due, source: INTENT_STATE_SOURCE.CHECK_ONLY_HINT, scope }));
+  } catch (error) {
+    console.warn(`[intent-state] check-only hint unavailable: ${(error && error.message) || 'unknown'}`);
+    console.log(formatIntentStateLine({ due: null, source: INTENT_STATE_SOURCE.CHECK_ONLY_HINT, scope }));
+  }
 }
 
 async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot = null, sendQuota = null, prepared = null, corpus = allLeads) {
@@ -4078,6 +4108,12 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot 
     }
   }
   console.log(`[Intent] ${sent} intent email(s) sent.`);
+  // What is still undelivered after this pass: every due lead that was not
+  // delivered AND recorded, whatever stopped it. Zero lets the server leave the
+  // backstop idle; anything else keeps it polling.
+  console.log(formatIntentStateLine({
+    due: due.length - sent, source: INTENT_STATE_SOURCE.INTENT_PASS, scope: TARGET_LEAD_ID ? 'target' : 'all',
+  }));
   return sent;
 }
 
@@ -5029,6 +5065,10 @@ async function run() {
     all.splice(0, all.length, target);
     console.log(`[target] Controlled run restricted to lead ${TARGET_LEAD_ID}`);
   }
+
+  // Before any Gmail work, so an observer failure later in the pass cannot
+  // suppress the report. Pure computation over the snapshot already loaded.
+  if (CHECK_ONLY) await reportIntentWorkHint(all, snapshot, allLeadsForDailyCap);
 
   // INTENT_ONLY still observes inbound replies, bounces and manual Gmail
   // responses before deriving canonical ownership. It skips cold/stage send

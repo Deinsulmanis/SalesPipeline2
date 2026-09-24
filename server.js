@@ -54,8 +54,9 @@ const { mirrorEventsInBackground, mirrorEnabled, mirrorHealth } = require('./int
 const {
   mirrorOutreachLeadsInBackground, mirrorOutreachLeadFieldsInBackground, outreachStateMode,
   applyLeadChange, applyLeadChanges, outreachWriteDiagnostics,
-  readOutreachCorpus, sheetsFallbackAllowed, outreachWriteAuthority,
+  readOutreachCorpus, sheetsFallbackAllowed, outreachWriteAuthority, outreachCorpusReadStats,
 } = require('./integrations/outreach-state');
+const { createIntentBackstop, BACKSTOP_REASON } = require('./integrations/intent-backstop');
 // Stage 3D: dual-read measurement only. Nothing branches on its output.
 const {
   probeOutreachParityInBackground, stage3ParitySnapshot, DASHBOARD_OMITTED_FIELDS,
@@ -759,17 +760,56 @@ function agentPushLine(line) {
   if (agentState.log.length > LOG_CAP) agentState.log.shift();
 }
 
+// Whether a three-minute backstop tick should launch an intent-only pass. It
+// starts armed (boot) and is disarmed only by a clean intent pass that saw no
+// pending work — see integrations/intent-backstop.js.
+const intentBackstop = createIntentBackstop();
+
+// Hourly egress meter: one summary line, never per-row. Server-side corpus
+// reads come from outreach-state's own counter; agent-process reads are
+// counted from the line every agent corpus read already prints.
+const AGENT_CORPUS_READ_LINE = '[outreach-read] automation corpus from Supabase';
+const egressMeter = {
+  calendarChecks: 0, calendarZeroEvent: 0, calendarContextLoads: 0,
+  intentDemoLaunches: 0, intentBackstopLaunches: 0, agentCorpusReads: 0,
+  serverCorpusReadsAtLastReport: 0, backstopTicksAtLastReport: 0, backstopIdleAtLastReport: 0,
+};
+function reportEgressMeter() {
+  const corpus = outreachCorpusReadStats();
+  const backstop = intentBackstop.snapshot();
+  console.log(`[egress-meter] last hour: corpusReads server=${corpus.reads - egressMeter.serverCorpusReadsAtLastReport}`
+    + ` agent=${egressMeter.agentCorpusReads}`
+    + ` | calendar checks=${egressMeter.calendarChecks} zeroEvent=${egressMeter.calendarZeroEvent}`
+    + ` contextLoads=${egressMeter.calendarContextLoads}`
+    + ` | intent launches demo=${egressMeter.intentDemoLaunches} backstop=${egressMeter.intentBackstopLaunches}`
+    + ` | backstop ticks=${backstop.ticks - egressMeter.backstopTicksAtLastReport}`
+    + ` idle=${backstop.idleTicks - egressMeter.backstopIdleAtLastReport}`
+    + ` armed=${backstop.armed ? backstop.reasons.join(',') : 'no'}`);
+  Object.assign(egressMeter, {
+    calendarChecks: 0, calendarZeroEvent: 0, calendarContextLoads: 0,
+    intentDemoLaunches: 0, intentBackstopLaunches: 0, agentCorpusReads: 0,
+    serverCorpusReadsAtLastReport: corpus.reads,
+    backstopTicksAtLastReport: backstop.ticks, backstopIdleAtLastReport: backstop.idleTicks,
+  });
+}
+
 // Shared launcher for the outreach-agent subprocess. extraEnv overrides the
 // agent's mode (DRY_RUN / CHECK_ONLY) and per-run knobs (DAILY_CAP). All three
 // triggers — UI, the morning send cron and the :15/:45 check-only cron — funnel
 // through here and share agentState, so agentState.running is a single
 // mutual-exclusion flag across all.
-function startAgentProcess(extraEnv, dryRun) {
+function startAgentProcess(extraEnv, dryRun, { intentTrigger = null } = {}) {
   agentState.running   = true;
   agentState.dryRun    = dryRun;
   agentState.startedAt = new Date().toISOString();
   agentState.log       = [];
   agentState.exitCode  = null;
+  // Every process reports its intent state; only an intent-only pass's report
+  // may disarm the backstop. Every other mode's reports can only arm it.
+  const intentRun = intentBackstop.onAgentStarted({
+    intent: extraEnv.INTENT_ONLY === 'true' && extraEnv.CHECK_ONLY !== 'true',
+    trigger: intentTrigger || '',
+  });
 
   const child = spawn('node', ['outreach-agent.js'], {
     cwd: __dirname,
@@ -781,6 +821,12 @@ function startAgentProcess(extraEnv, dryRun) {
   child.stderr.pipe(process.stderr);
 
   let outBuf = '', errBuf = '';
+  // Intent-state reports (which arm or disarm the backstop) and corpus reads
+  // (metered). Read alongside the parity probe, never instead of it.
+  const readAgentLine = l => {
+    intentBackstop.onAgentLine(l, intentRun);
+    if (l.includes(AGENT_CORPUS_READ_LINE)) egressMeter.agentCorpusReads += 1;
+  };
 
   child.stdout.setEncoding('utf8');
   child.stdout.on('data', chunk => {
@@ -791,6 +837,7 @@ function startAgentProcess(extraEnv, dryRun) {
     // reported parity into the shared diagnostics before the line is just log
     // text, so the safety-critical comparison reaches the parity endpoint.
     lines.forEach(l => { ingestProbeLine(l); agentPushLine(l); });
+    lines.forEach(readAgentLine);
   });
 
   child.stderr.setEncoding('utf8');
@@ -802,11 +849,27 @@ function startAgentProcess(extraEnv, dryRun) {
   });
 
   child.on('exit', code => {
-    if (outBuf) { agentPushLine(outBuf); outBuf = ''; }
+    if (outBuf) { readAgentLine(outBuf); agentPushLine(outBuf); outBuf = ''; }
     if (errBuf) { agentPushLine('[stderr] ' + errBuf); errBuf = ''; }
     agentState.running  = false;
     agentState.exitCode = code;
     agentChild = null;
+  });
+
+  // 'close', not 'exit': it fires only after stdout has been fully drained, so
+  // a process's last intent-state report cannot arrive after its verdict. For an
+  // intent-only pass, a non-zero or signal exit or a missing report leaves the
+  // backstop armed.
+  child.on('close', code => {
+    if (outBuf) { readAgentLine(outBuf); agentPushLine(outBuf); outBuf = ''; }
+    const wasArmed = intentBackstop.snapshot().armed;
+    const verdict = intentBackstop.onAgentClosed(intentRun, code);
+    const armed = intentBackstop.snapshot().armed;
+    if (intentRun.intent || armed !== wasArmed) {
+      console.log(`[intent-backstop] ${intentRun.intent ? `${intentRun.trigger} intent pass` : 'agent run'} `
+        + `closed (exit ${code}) — ${armed ? `armed: ${intentBackstop.snapshot().reasons.join(',')}` : 'disarmed'}`
+        + ` (${verdict.reason})`);
+    }
   });
 }
 
@@ -851,29 +914,47 @@ async function companyHasBothAudios(company, leadToken = '') {
   return intro && demo;
 }
 
+// A false negative here would strand a pair until some other pass noticed it,
+// because the backstop no longer polls blindly. It cannot produce one: the
+// agent pairs a token row only with rows of the same token (checked exactly
+// here), and a legacy row only with rows whose normalizeName(cleanCompanyName)
+// key matches — equal keys under that normaliser are equal under openKey too,
+// and the bot and own-IP exclusions are identical (the agent additionally drops
+// datacenter IPs). test/intent-backstop.test.js pins all three.
 async function maybeFireIntent(company, leadToken = '') {
   try {
     if (await companyHasBothAudios(company, leadToken)) {
-      spawnAgentIntentOnly(`both audios played — ${company}`);
+      spawnAgentIntentOnly(`both audios played — ${company}`, { trigger: 'demo' });
     }
   } catch (e) {
-    // Never let intent detection break the tracking pixel; the cron backstop
-    // will catch this play on its next tick.
+    // Never let intent detection break the tracking pixel. The backstop is
+    // armed, so the next tick runs the pass this check could not confirm.
+    intentBackstop.markNeeded(BACKSTOP_REASON.DEMO_LAUNCH_SKIPPED);
     console.warn('[intent] pair check failed:', e.message);
   }
 }
 
-function spawnAgentIntentOnly(why) {
+// trigger 'demo' is the immediate path; 'backstop' is the three-minute tick.
+// A demo launch that does not start arms the backstop; a backstop launch that
+// does not start was armed already and stays armed.
+function spawnAgentIntentOnly(why, { trigger = 'backstop' } = {}) {
+  const skipped = () => { if (trigger === 'demo') intentBackstop.markNeeded(BACKSTOP_REASON.DEMO_LAUNCH_SKIPPED); };
   if (agentState.running || automationLaunchReserved) {
+    skipped();
     console.log(`[intent] agent busy — skipping intent spawn (${why}); the cron backstop will retry`);
     return;
   }
   launchAutomationAfterCalendar(`intent-only pass: ${why}`, () => {
     if (agentState.running) return false;
     console.log(`[intent] spawning intent-only pass (${why})`);
-    startAgentProcess({ DRY_RUN: 'false', INTENT_ONLY: 'true' }, false);
+    if (trigger === 'demo') egressMeter.intentDemoLaunches += 1; else egressMeter.intentBackstopLaunches += 1;
+    startAgentProcess({ DRY_RUN: 'false', INTENT_ONLY: 'true' }, false, { intentTrigger: trigger });
     return true;
-  }).catch(error => console.error('[Calendar safety] intent pass blocked:', error.message));
+  }).then(result => { if (!result || !result.launched) skipped(); })
+    .catch(error => {
+      skipped();
+      console.error('[Calendar safety] intent pass blocked:', error.message);
+    });
 }
 
 function spawnAgentCheckOnly(extraEnv = {}) {
@@ -3942,7 +4023,7 @@ async function applyCalendarPlanItem(item, context) {
 
 async function runGoogleCalendarSync() {
   const readiness = calendarSyncReadiness();
-  return orchestrateGoogleCalendarSync({
+  const result = await orchestrateGoogleCalendarSync({
     enabled: readiness.enabled,
     calendarId: BOOKING_CALENDAR_ID,
     appointmentScheduleId: BOOKING_APPOINTMENT_SCHEDULE_ID,
@@ -3954,6 +4035,13 @@ async function runGoogleCalendarSync() {
     writeState: writeCalendarSyncState,
     logger: console,
   });
+  // Metered, not logged per call: this runs before every launch.
+  if (result && result.ok && !result.skipped) {
+    egressMeter.calendarChecks += 1;
+    if (result.contextLoaded) egressMeter.calendarContextLoads += 1;
+    else egressMeter.calendarZeroEvent += 1;
+  }
+  return result;
 }
 
 // A booking can arrive between scheduler cycles. Every application-owned path
@@ -6539,12 +6627,19 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   // holding production at ~50 sends against an 80 ceiling.
   // '1-59/3' keeps twenty opportunities an hour and the same uniform 3-minute
   // spacing, on 1,4,…,58 — so it can never land on a send window again.
+  //
+  // CONDITIONAL. A tick launches only while the backstop is armed — at boot, after
+  // a demo launch that did not start, after a failed or unreported pass, or while
+  // a pass or the check-only hint reports pending intent work. A tick with
+  // nothing pending launches nothing, so it downloads nothing.
   cron.schedule('1-59/3 * * * *', () => {
-    spawnAgentIntentOnly('cron backstop');
+    const tick = intentBackstop.onTick();
+    if (!tick.run) return;
+    spawnAgentIntentOnly(`cron backstop: ${tick.reasons.join(',')}`, { trigger: 'backstop' });
   }, {
     timezone: 'America/Vancouver',
   });
-  console.log('[cron] Intent backstop scheduled: every 3 minutes, offset off :00/:30');
+  console.log('[cron] Intent backstop scheduled: every 3 minutes while armed, offset off :00/:30');
 
   // Calendar incremental sync is independently gated. With the flag OFF the
   // first line of the orchestrator returns before reading Calendar, Sheets, or
@@ -6556,7 +6651,10 @@ if (process.env.RAILWAY_ENVIRONMENT) {
     }
     observeCalendarBeforeAutomation('periodic reconciliation')
       .then(result => {
-        if (!result.skipped) console.log(`[Calendar sync] complete — ${result.mutations || 0} mutation(s)`);
+        if (!result.skipped) {
+          console.log(`[Calendar sync] complete — ${result.mutations || 0} mutation(s), `
+            + `${result.events || 0} event(s), booking context ${result.contextLoaded ? 'loaded' : 'not needed'}`);
+        }
       })
       .catch(error => console.error('[Calendar sync] unhandled failure:', error.message));
   }, { timezone: 'America/Vancouver' });
@@ -6579,6 +6677,8 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   }, { timezone: 'America/Vancouver' });
   console.log('[cron] Smartlead reconciliation scheduled: hourly at :12');
   console.log('[cron] Daily digest scheduled: 18:00 Pacific');
+  // One line an hour: corpus reads, Calendar checks and intent launches.
+  cron.schedule('59 * * * *', reportEgressMeter, { timezone: 'America/Vancouver' });
   console.log('[cron] Check-only pass scheduled: :15 and :45 every hour');
   console.log('[cron] Late-reply terminal watcher hosted by check-only: daily at 12:15 Pacific');
 }
