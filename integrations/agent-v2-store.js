@@ -178,16 +178,18 @@ function createPgAgentV2Store({ connectionString, expectedSupabaseUrl, caCert, p
         AND nspname NOT LIKE 'pg_temp_%'
         AND has_schema_privilege(current_user, oid, 'CREATE')`);
     if (creatableSchemas.rows.length) throw new Error('Agent v2 shadow role can create in a schema');
-    const unrelated = await pool.query(`SELECT schemaname, tablename FROM pg_tables
-      WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
-        AND (schemaname, tablename) <> ('public', 'agent_v2_shadow_decisions')
-        AND (has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'SELECT')
-          OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'INSERT')
-          OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'UPDATE')
-          OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'DELETE')
-          OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'TRUNCATE')
-          OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'REFERENCES')
-          OR has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'TRIGGER'))`);
+    const unrelated = await pool.query(`SELECT n.nspname, c.relname FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE c.relkind IN ('r', 'p')
+        AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+        AND (n.nspname, c.relname) <> ('public', 'agent_v2_shadow_decisions')
+        AND (has_table_privilege(current_user, c.oid, 'SELECT')
+          OR has_table_privilege(current_user, c.oid, 'INSERT')
+          OR has_table_privilege(current_user, c.oid, 'UPDATE')
+          OR has_table_privilege(current_user, c.oid, 'DELETE')
+          OR has_table_privilege(current_user, c.oid, 'TRUNCATE')
+          OR has_table_privilege(current_user, c.oid, 'REFERENCES')
+          OR has_table_privilege(current_user, c.oid, 'TRIGGER'))`);
     if (unrelated.rows.length) throw new Error('Agent v2 shadow role can access unrelated tables');
     return { ok: true };
   }
