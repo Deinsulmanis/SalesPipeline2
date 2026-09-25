@@ -12,7 +12,9 @@
  *   validate -> one landing_ingest call (1 s timeout) -> 204 either way.
  *   Transient failures go to a small bounded retry buffer; nothing depends on
  *   it, and the page is best-effort by design. The only non-204 answer is a
- *   verified internal-mark code: 200 {"marked":true}.
+ *   verified internal-mark code: 200 {"marked":true}. Any other method gets a
+ *   bare 405 (Allow: POST) before dashboard authentication, so opening the
+ *   public URL never shows the dashboard's login prompt.
  *
  * DASHBOARD (authenticated)
  *   GET /api/landing/internal-mark        a short-lived code + the staffing URL
@@ -113,6 +115,9 @@ function registerLandingCollectorRoute(app, options = {}) {
     (req, res, next) => collector.handle(req, res).catch(next),
     // Oversized or unreadable bodies, and any unexpected error: same silent answer.
     (error, req, res, _next) => { if (!res.headersSent) res.status(204).end(); });
+  // Every other method stops here. Falling through would reach dashboard
+  // authentication, and its login prompt would appear on the public site.
+  app.all(COLLECTOR_PATH, (req, res) => res.status(405).set({ Allow: 'POST', 'Cache-Control': 'no-store' }).end());
   const timer = setInterval(() => { collector.drainRetries().catch(() => {}); }, RETRY_BUFFER.intervalMs);
   if (typeof timer.unref === 'function') timer.unref();
   return collector;

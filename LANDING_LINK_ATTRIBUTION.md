@@ -144,6 +144,10 @@ registered before the global JSON parser and dashboard auth, with its own
   raw user agent. The user agent is reduced to coarse classes.
 - **One `landing_ingest` call** with a 1 s timeout. The answer is always 204,
   except a verified internal-mark code, which gets 200 `{"marked":true}`.
+- **Any other method** (GET, HEAD, OPTIONS, …) gets a bare 405 with
+  `Allow: POST`, before dashboard authentication. Opening
+  `scalelabai.ca/staffing/api/lp` in a browser never shows the dashboard's
+  login prompt.
   Transient failures get one retry from a 200-item, 2-minute in-memory buffer;
   nothing depends on it.
 - **Health:** `GET /api/landing/collector-health` (dashboard auth) returns

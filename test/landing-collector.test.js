@@ -13,6 +13,7 @@ const {
 } = require('../integrations/landing-collector');
 const { registerLandingCollectorRoute, registerLandingInternalMarkRoutes } = require('../integrations/landing-collector-route');
 const { landingTokenHash } = require('../integrations/landing-link-token');
+const { createRequireAuth } = require('../integrations/dashboard-auth');
 
 const SECRET = 'proxy-signing-secret-for-tests-0123456789';
 const SITE = '010e32a7-2fed-4882-bcc9-62004863bc16';
@@ -204,11 +205,57 @@ test('dashboard mark endpoint: authenticated, short-lived code, clear link', asy
   });
 });
 
-test('server.js: collector before the JSON parser and dashboard auth; mark routes after auth', () => {
+test('collector path: every method but POST is a bare 405 before dashboard auth; nothing else changes', async () => {
+  const calls = [];
+  let smartlead = 0;
+  await withApp(app => {
+    // The same order as server.js, with the real dashboard authentication.
+    app.post('/api/webhooks/smartlead', express.raw({ type: 'application/json', limit: '1mb' }), (req, res) => {
+      smartlead += 1;
+      res.status(Buffer.isBuffer(req.body) ? 200 : 500).end();
+    });
+    const collector = registerLandingCollectorRoute(app, { env: ENABLED, ingest: async payload => { calls.push(payload); return { ok: true }; }, nowMs: () => NOW * 1000, logger: silent });
+    app.use(express.json({ limit: '10mb' }));
+    app.use(createRequireAuth({ getUser: () => 'operator', getPassword: () => 'correct horse battery staple' }));
+    registerLandingInternalMarkRoutes(app, (req, res, next) => next(), { env: ENABLED, nowMs: () => NOW * 1000, collector });
+    app.get('/api/leads', (req, res) => res.json({ leads: [] }));
+    app.post('/api/echo', (req, res) => res.json({ parsed: req.body }));
+    return collector;
+  }, async base => {
+    for (const method of ['GET', 'HEAD', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
+      for (const suffix of ['/api/landing/e', '/api/landing/e/?x=1']) {
+        const response = await fetch(`${base}${suffix}`, { method });
+        assert.equal(response.status, 405, `${method} ${suffix}`);
+        assert.equal(response.headers.get('allow'), 'POST');
+        assert.equal(response.headers.get('www-authenticate'), null, `${method} must not challenge`);
+        assert.equal(response.headers.get('set-cookie'), null);
+        assert.equal(await response.text(), '');
+      }
+    }
+    assert.equal((await post(base, eventsBody())).status, 204, 'POST still reaches the collector');
+    assert.equal(calls.length, 1);
+
+    const leads = await fetch(`${base}/api/leads`);
+    assert.equal(leads.status, 401, 'dashboard paths stay protected');
+    assert.match(leads.headers.get('www-authenticate'), /^Basic /);
+    assert.equal((await fetch(`${base}/api/landing/internal-mark`)).status, 401);
+    assert.equal((await fetch(`${base}/api/landing/collector-health`)).status, 401);
+    const basic = `Basic ${Buffer.from('operator:correct horse battery staple').toString('base64')}`;
+    assert.equal((await fetch(`${base}/api/leads`, { headers: { authorization: basic } })).status, 200);
+    const echo = await fetch(`${base}/api/echo`, { method: 'POST', body: '{"a":1}', headers: { authorization: basic, 'content-type': 'application/json' } });
+    assert.deepEqual(await echo.json(), { parsed: { a: 1 } }, 'the JSON parser still applies after the collector');
+    const hook = await fetch(`${base}/api/webhooks/smartlead`, { method: 'POST', body: '{"event":"x"}', headers: { 'content-type': 'application/json' } });
+    assert.equal(hook.status, 200, 'Smartlead still receives its raw body without auth');
+    assert.equal(smartlead, 1);
+  });
+});
+
+test('server.js: Smartlead webhook and collector before the JSON parser and dashboard auth; mark routes after auth', () => {
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8').replace(/\r\n/g, '\n');
+  const smartlead = server.indexOf("app.post('/api/webhooks/smartlead', express.raw(");
   const collector = server.indexOf('registerLandingCollectorRoute(app)');
   const json = server.indexOf("app.use(express.json({ limit: '10mb' }))");
   const auth = server.indexOf('app.use(requireAuth);');
   const mark = server.indexOf('registerLandingInternalMarkRoutes(app, requireAuth');
-  assert.ok(collector > 0 && collector < json && json < auth && auth < mark);
+  assert.ok(smartlead > 0 && smartlead < collector && collector < json && json < auth && auth < mark);
 });
