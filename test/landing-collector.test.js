@@ -205,7 +205,7 @@ test('dashboard mark endpoint: authenticated, short-lived code, clear link', asy
 });
 
 test('server.js: collector before the JSON parser and dashboard auth; mark routes after auth', () => {
-  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8').replace(/\r\n/g, '\n');
   const collector = server.indexOf('registerLandingCollectorRoute(app)');
   const json = server.indexOf("app.use(express.json({ limit: '10mb' }))");
   const auth = server.indexOf('app.use(requireAuth);');

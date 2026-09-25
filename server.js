@@ -211,6 +211,7 @@ app.post('/api/webhooks/smartlead', express.raw({ type: 'application/json', limi
 // Also before the JSON parser and dashboard auth; a no-op 204 unless
 // LANDING_COLLECTOR_ENABLED is exactly "true".
 const landingCollectorRoutes = require('./integrations/landing-collector-route');
+const { runLandingReconciliation } = require('./integrations/landing-attribution-reconcile');
 const landingCollector = landingCollectorRoutes.registerLandingCollectorRoute(app);
 app.use(express.json({ limit: '10mb' }));
 
@@ -6669,6 +6670,25 @@ if (process.env.RAILWAY_ENVIRONMENT) {
       .catch(error => console.error('[Calendar sync] unhandled failure:', error.message));
   }, { timezone: 'America/Vancouver' });
   console.log('[cron] Google Calendar booking sync scheduled every 5 minutes (feature-gated)');
+
+  // Staffing landing attribution: backfill issuances from the activity ledger,
+  // link early sessions, daily retention. Supabase landing functions only; the
+  // first line returns unless LANDING_RECONCILER_ENABLED is exactly "true".
+  let landingReconcileInFlight = false;
+  cron.schedule('4,19,34,49 * * * *', () => {
+    if (landingReconcileInFlight) return;
+    landingReconcileInFlight = true;
+    runLandingReconciliation()
+      .then(summary => {
+        if (!summary.skipped) {
+          console.log(`[landing-reconcile] ${summary.issued} issued, ${summary.markedSent} marked sent, `
+            + `${summary.conflicts} conflict(s), ${summary.failures} failure(s)`);
+        }
+      })
+      .catch(error => console.error('[landing-reconcile] unhandled failure:', error.message))
+      .finally(() => { landingReconcileInFlight = false; });
+  }, { timezone: 'America/Vancouver' });
+  console.log('[cron] Landing attribution reconciler scheduled every 15 minutes (feature-gated)');
 
   // Daily digest — 18:00 America/Vancouver. getOrCreateDigest is idempotent, so
   // a restart, a re-fire, or a dashboard load on the same day all reuse the

@@ -135,7 +135,8 @@ test('store RPC: posts to /rest/v1/rpc/<name> with the server key, bounded, neve
   assert.deepEqual([thrown.ok, thrown.error], [false, 'socket hang up']);
 });
 
-const agent = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
+// Normalised so the structural checks don't depend on the checkout's line endings.
+const agent = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8').replace(/\r\n/g, '\n');
 const between = (from, to) => agent.slice(agent.indexOf(from), agent.indexOf(to, agent.indexOf(from)));
 const delivery = between('async function deliverOrdinaryColdStep', '// Phase 4: mark a lead');
 
@@ -179,7 +180,7 @@ test('no log line can print a landing link or token', () => {
   for (const line of agent.split('\n').filter(text => /console\.(log|warn|error|info)/.test(text))) {
     assert.equal(/landingPlan\.(url|token)|landingLink\.url|\.token\b/.test(line), false, line.trim());
   }
-  const issuance = fs.readFileSync(path.join(__dirname, '..', 'integrations', 'landing-link-issuance.js'), 'utf8');
+  const issuance = fs.readFileSync(path.join(__dirname, '..', 'integrations', 'landing-link-issuance.js'), 'utf8').replace(/\r\n/g, '\n');
   for (const line of issuance.split('\n').filter(text => /logger\.(warn|error|log)/.test(text))) {
     assert.equal(/plan\.(url|token)|token_hash/.test(line), false, line.trim());
   }

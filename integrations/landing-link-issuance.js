@@ -51,7 +51,7 @@ function staffingWarmReplyLandingPlan({ lead, inboundMessageId, action, activiti
 }
 
 /** The issuance row for a tracked plan. Carries ids and categories only, never contact details. */
-function buildIssuanceRecord({ plan, actionId, lead, triggerAction = null, campaignVersion = null, templateId, templateVersion, senderInboxId, env = process.env }) {
+function buildIssuanceRecord({ plan, actionId, lead, triggerAction = null, campaignVersion = null, templateId, templateVersion, senderInboxId, isTest = null, env = process.env }) {
   if (!plan?.tracked) throw new Error('only a tracked landing link has an issuance');
   return {
     issuance_key: plan.issuanceKey,
@@ -66,7 +66,8 @@ function buildIssuanceRecord({ plan, actionId, lead, triggerAction = null, campa
     template_id: String(templateId || ''),
     template_version: String(templateVersion || ''),
     sender_inbox_id: String(senderInboxId || ''),
-    is_test: isTestRecipient(lead.email, env),
+    // The reconciler passes isTest from the recipient's domain; the send path derives it.
+    is_test: typeof isTest === 'boolean' ? isTest : isTestRecipient(lead.email, env),
   };
 }
 

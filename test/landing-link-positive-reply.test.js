@@ -70,7 +70,8 @@ test('a reply retried after key rotation keeps its first reservation pin', () =>
   assert.equal(plan('AUTO_STAFFING_QUALIFIED', ROTATED, [plainReserved]).tracked, false);
 });
 
-const agent = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
+// Normalised so the structural checks don't depend on the checkout's line endings.
+const agent = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8').replace(/\r\n/g, '\n');
 const slice = (from, to) => agent.slice(agent.indexOf(from), agent.indexOf(to, agent.indexOf(from) + from.length));
 const handler = slice('async function handlePositiveAutomation', '\nasync function handleTimingReply');
 const warm = slice('async function deliverHardenedWarmReply', '\n// Phase 6 reads the same canonical stores');

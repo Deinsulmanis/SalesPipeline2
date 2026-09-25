@@ -21,7 +21,8 @@
 
 const express = require('express');
 const { STAFFING_LANDING_PAGE_URL } = require('./staffing-campaign');
-const { FLAG, SECRET, SETTING, RATE_LIMIT, RETRY_BUFFER, flagEnabled } = require('./landing-attribution-config');
+const { FLAG, SECRET, SETTING, RATE_LIMIT, RETRY_BUFFER, flagEnabled, reconcilerEnabled } = require('./landing-attribution-config');
+const { landingReconcileStatus } = require('./landing-attribution-reconcile');
 const {
   verifyNetlifySignature, originAllowed, classifyUserAgent, normalizeCollectorRequest,
   CollectorRateLimiter, IngestRetryBuffer, isTransientFailure, mintInternalMarkCode, verifyInternalMarkCode,
@@ -132,7 +133,10 @@ function registerLandingInternalMarkRoutes(app, requireAuth, { env = process.env
   });
   app.get('/api/landing/collector-health', requireAuth, (_req, res) => {
     res.set('Cache-Control', 'no-store');
-    res.json(collector ? collector.health() : { enabled: flagEnabled(FLAG.COLLECTOR, env), registered: false });
+    res.json({
+      ...(collector ? collector.health() : { enabled: flagEnabled(FLAG.COLLECTOR, env), registered: false }),
+      reconciler: { enabled: reconcilerEnabled(env), ...landingReconcileStatus() },
+    });
   });
 }
 

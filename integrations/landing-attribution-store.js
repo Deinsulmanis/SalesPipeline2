@@ -56,4 +56,22 @@ function ingestLandingEvents(payload, options = {}) {
   return callRpc('landing_ingest', { p: payload }, { timeoutMs: TIMEOUT_MS.ingest, ...options });
 }
 
-module.exports = { callRpc, issueLandingLink, markLandingLinkSent, ingestLandingEvents };
+/** Canonical sends/reservations carrying a tracked landing pin whose issuance is missing or unsent. */
+function landingBackfillCandidates(query, options = {}) {
+  return callRpc('landing_backfill_candidates', { p: query }, { timeoutMs: TIMEOUT_MS.reconcile, ...options });
+}
+
+/** Link sessions that arrived before their issuance existed. Returns a count. */
+function resolvePendingLandingSessions(options = {}) {
+  return callRpc('landing_resolve_pending_sessions', { p: {} }, { timeoutMs: TIMEOUT_MS.reconcile, ...options });
+}
+
+/** Delete rows past their retention period. Periods come from landing-attribution-config. */
+function applyLandingRetention(days, options = {}) {
+  return callRpc('landing_apply_retention', { p: days }, { timeoutMs: TIMEOUT_MS.reconcile, ...options });
+}
+
+module.exports = {
+  callRpc, issueLandingLink, markLandingLinkSent, ingestLandingEvents,
+  landingBackfillCandidates, resolvePendingLandingSessions, applyLandingRetention,
+};
