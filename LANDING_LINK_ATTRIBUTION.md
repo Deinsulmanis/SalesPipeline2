@@ -238,6 +238,24 @@ The page still loads for that link; its events are ignored.
 File: `supabase/migrations/20260925000000_landing_link_attribution.sql`. It is
 idempotent and needs no extension.
 
+**Applied to production on 2026-09-25** (PostgreSQL 17.6, project
+`lasyefxhuwysjebasdbf`). Supabase recorded it as version `20260925191955`. The
+recorded SQL is byte-identical to this file (md5 `8517788f19c84f8b2721098d83e3721b`).
+Verified on the live database:
+- 3 tables with RLS on and no policies;
+- 4 `security_invoker` views, 8 SECURITY DEFINER functions with a pinned
+  `search_path`, all 15 indexes and all 20 constraints;
+- `PUBLIC`, `anon`, `authenticated` and `authenticator` hold no privilege on
+  any of them;
+- as `anon` and `authenticated`, all 32 read, write and call attempts are
+  refused, and through REST both public keys get 401 on all 15 endpoints;
+- `service_role` ran issue, ingest (idempotent replay, token mismatch), views,
+  mark-sent, retention and forget in a rolled-back transaction.
+
+Do not re-run it.
+
+To apply it to another project:
+
 1. Review it, then apply it once in the SQL editor of the outreach project.
 2. Verify through PostgREST with the server key, e.g.
    `POST /rest/v1/rpc/landing_resolve_pending_sessions` with body `{"p":{}}`
