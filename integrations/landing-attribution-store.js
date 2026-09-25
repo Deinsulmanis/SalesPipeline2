@@ -51,4 +51,9 @@ function markLandingLinkSent(update, options = {}) {
   return callRpc('landing_mark_link_sent', { p: update }, { timeoutMs: TIMEOUT_MS.markSent, ...options });
 }
 
-module.exports = { callRpc, issueLandingLink, markLandingLinkSent };
+/** One collector batch: session upsert, idempotent event insert and tier rollup. */
+function ingestLandingEvents(payload, options = {}) {
+  return callRpc('landing_ingest', { p: payload }, { timeoutMs: TIMEOUT_MS.ingest, ...options });
+}
+
+module.exports = { callRpc, issueLandingLink, markLandingLinkSent, ingestLandingEvents };

@@ -207,6 +207,11 @@ const app = express();
 // Smartlead signs the exact request bytes. This public route must be registered
 // before the global JSON parser and dashboard authentication middleware.
 app.post('/api/webhooks/smartlead', express.raw({ type: 'application/json', limit: '1mb' }), handleSmartleadWebhook);
+// Staffing landing-page collector (public, Netlify-signed, 2 KB text body).
+// Also before the JSON parser and dashboard auth; a no-op 204 unless
+// LANDING_COLLECTOR_ENABLED is exactly "true".
+const landingCollectorRoutes = require('./integrations/landing-collector-route');
+const landingCollector = landingCollectorRoutes.registerLandingCollectorRoute(app);
 app.use(express.json({ limit: '10mb' }));
 
 // ── PROPOSAL OPEN TRACKING (public — no auth) ─────────────────────────────────
@@ -521,6 +526,8 @@ app.use(requireAuth);
 require('./integrations/staffing-preview-route').registerStaffingPreviewRoutes(app, requireAuth);
 require('./integrations/anthropic-usage-route').registerAnthropicUsageRoutes(app, requireAuth);
 require('./integrations/research-icp/routes').registerResearchRoutes(app, requireAuth);
+// "Mark this browser internal" codes and collector counters (dashboard only).
+landingCollectorRoutes.registerLandingInternalMarkRoutes(app, requireAuth, { collector: landingCollector });
 app.use(express.static(path.join(__dirname, 'public')));
 
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;

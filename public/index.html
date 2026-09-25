@@ -7535,7 +7535,47 @@ async function loadSettingsWorkspace() {
     host.innerHTML = cards.map(([label,on,copy]) => `<div class="status-card"><div class="status-card-head"><b>${esc(label)}</b><span class="state-pill" data-on="${on}">${on ? 'Enabled' : 'Off'}</span></div><p>${esc(copy)}</p></div>`).join('');
   }
   renderSettingsInboxRouting(inboxData || null);
+  renderLandingInternalMark();
   document.getElementById('agent-panel').style.display = 'block';
+}
+
+// Marks THIS browser internal on the staffing landing page: a five-minute,
+// single-use code from the authenticated API, confirmed by the page itself.
+function renderLandingInternalMark() {
+  const routing = document.getElementById('settings-inbox-routing');
+  if (!routing) return;
+  let host = document.getElementById('settings-landing-internal');
+  if (!host) {
+    routing.insertAdjacentHTML('afterend', '<div id="settings-landing-internal" class="workspace-surface" style="margin-top:14px" aria-live="polite"></div>');
+    host = document.getElementById('settings-landing-internal');
+  }
+  host.innerHTML = `<div class="workspace-eyebrow">Staffing landing page</div><h3 style="margin:4px 0">Mark this browser internal</h3>
+    <p style="color:var(--text-muted);font-size:12px;margin:6px 0 12px">Opens the staffing page with a five-minute, single-use code. Once the page confirms it, this browser's visits are left out of analytics and prospect attribution, including when you open a prospect's link from Gmail Sent. Mark every browser and device you use.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn-save" id="landing-mark-internal">Mark this browser internal</button><button type="button" class="btn-cancel" id="landing-clear-internal">Clear internal mark</button></div>
+    <p id="landing-mark-status" style="color:var(--text-muted);font-size:12px;margin:10px 0 0"></p>`;
+  const status = document.getElementById('landing-mark-status');
+  document.getElementById('landing-mark-internal').onclick = async () => {
+    // Open synchronously so pop-up blockers allow it, then navigate once the code arrives.
+    const tab = window.open('', '_blank');
+    if (tab) tab.opener = null;
+    status.textContent = 'Requesting a code…';
+    try {
+      const response = await fetch('/api/landing/internal-mark', { cache: 'no-store' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.url) throw new Error(data.error || 'Internal marking is not available.');
+      if (tab) tab.location.href = data.url;
+      status.textContent = data.collectorEnabled
+        ? `Opened the staffing page. The code expires at ${new Date(data.expiresAt).toLocaleTimeString()}.`
+        : 'Opened the staffing page, but the collector is off, so the page cannot confirm the mark yet.';
+    } catch (error) {
+      if (tab) tab.close();
+      status.textContent = error.message || 'Internal marking is not available.';
+    }
+  };
+  document.getElementById('landing-clear-internal').onclick = () => {
+    window.open('https://scalelabai.ca/staffing/#sl-mark=off', '_blank', 'noopener');
+    status.textContent = 'Opened the staffing page to clear the mark in this browser.';
+  };
 }
 
 function warmupLabel(status) {
