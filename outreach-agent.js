@@ -99,7 +99,8 @@ const { routedLeadReady } = require('./integrations/campaign-routing');
 const { STAFFING_CAMPAIGN, renderStaffingEmail, validateStaffingEmail, isStaffingCampaign } = require('./integrations/staffing-campaign');
 const { landingLinkMetadata, PLAN_STATUS: LANDING_PLAN_STATUS } = require('./integrations/landing-link-token');
 const {
-  staffingColdStepLandingPlan, buildIssuanceRecord, ensureLandingIssuance, recordLandingLinkSent,
+  staffingColdStepLandingPlan, staffingWarmReplyLandingPlan, warmReplyTemplate,
+  buildIssuanceRecord, ensureLandingIssuance, recordLandingLinkSent,
 } = require('./integrations/landing-link-issuance');
 const STAFFING_TEMPLATE = STAFFING_CAMPAIGN.emailTemplateId;
 // The reactivation gate is defined once, in the shared pipeline-state model.
@@ -3284,9 +3285,20 @@ async function commitMailboxObservationCheckpoints(observation = {}) {
 }
 
 async function deliverHardenedWarmReply({ lead, message, action, body, subject, activities, classification,
-  ownerMode = 'reply', sequenceId = 'prospect_reply_v1', validateFresh = null, replyDecisionId = '' }) {
+  ownerMode = 'reply', sequenceId = 'prospect_reply_v1', validateFresh = null, replyDecisionId = '', landingPlan = null }) {
   const sender = senderForPersistedLead(lead);
   const metadataOf = row => { try { return JSON.parse(row.metadata || '{}'); } catch (_) { return {}; } };
+  // Staffing positive-reply landing link (automated delivery only; null for
+  // every other caller). A blocked plan refuses before any provider work.
+  if (landingPlan?.status === LANDING_PLAN_STATUS.BLOCKED) {
+    return { delivered: false, code: 'landing_link_blocked', reason: `landing link blocked: ${landingPlan.reason}` };
+  }
+  const landingLink = landingLinkMetadata(landingPlan);
+  const landingRecord = landingPlan?.tracked ? buildIssuanceRecord({
+    plan: landingPlan, actionId: responseActionId(lead.id, message.messageId, action), lead, triggerAction: action,
+    campaignVersion: latestSendAttribution(activities)?.campaignVersion, ...warmReplyTemplate(action), senderInboxId: sender.id,
+  }) : null;
+  let landingSent = null;
   const result = await deliverProspectReply({
     lead, sender, thread: { threadId: message.threadId }, inboundMessage: message,
     action, subject, body, checkOnly: CHECK_ONLY,
@@ -3368,6 +3380,12 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
         const window = sendingWindowVerdict(activeWindowQuota, sender.id);
         if (!window.allowed) return { allowed: false, code: 'window_quota', reason: window.reason };
       }
+      // Last, after every existing gate and before the reservation: best-effort
+      // issuance write. Only a stored row that contradicts this render refuses.
+      if (landingRecord) {
+        const issuance = await ensureLandingIssuance({ plan: landingPlan, record: landingRecord });
+        if (!issuance.proceed) return { allowed: false, code: 'landing_link_conflict', reason: issuance.reason };
+      }
       return { allowed: true };
     },
     verifyThread: async ({ threadId, senderEmail, recipientEmail, inboundMessageId }) => {
@@ -3386,6 +3404,7 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
           actionId, action, senderInboxId: sender.id, gmailThreadId: message.threadId,
           inboundMessageId: message.messageId, rfcMessageId, classification,
           ...(replyDecisionId ? { replyDecisionId } : {}),
+          ...(landingLink ? { landingLink } : {}),
         }) };
       await recordColdCallActivityStrict(row); activities.push(row); return row;
     },
@@ -3424,10 +3443,21 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
           staffingFunnelEvents: staffingFunnelFromWarmDelivery({
             action, body, family: familyForLead(lead),
           }),
-          ...attribution }) };
+          ...attribution,
+          ...(landingLink ? { landingLink } : {}) }) };
       await recordColdCallActivityStrict(row); activities.push(row);
+      if (landingRecord) {
+        landingSent = { sentAt: row.occurredAt, result: recovered || result };
+        // A recovery has no send-lock confirmation after it, so mark it here.
+        if (recovery) await recordLandingLinkSent({ plan: landingPlan, record: landingRecord, ...landingSent });
+      }
     },
-    confirmDurableReservation: actionId => confirmOutboundReservation(actionId),
+    confirmDurableReservation: async actionId => {
+      const confirmed = await confirmOutboundReservation(actionId);
+      // After the send-lock confirmation: attribution bookkeeping only.
+      if (landingRecord && landingSent) await recordLandingLinkSent({ plan: landingPlan, record: landingRecord, ...landingSent });
+      return confirmed;
+    },
     persistFailure: async ({ actionId, reservation, error }) => {
       const row = { eventId: `${actionId}:failed`, leadId: `CE-${lead.id}`, sourceLeadId: lead.id,
         email: lead.email, company: cleanCompanyName(lead.company) || lead.company || '', eventType: 'prospect_reply_failed',
@@ -3767,11 +3797,19 @@ async function handlePositiveAutomation(lead, message, classification, activitie
       reason: 'Agent v2 initial authority permits qualification only', confidence: policy.confidence || 0 });
     return routeToHuman({ effects: [REPLY_EFFECT.DRAFT_QUEUED] });
   }
+  // Tracked staffing landing link for AUTOMATED delivery only. Every draft
+  // (above, and on an Agent v2 hold below) keeps the plain URL in `body`, and
+  // the Agent v2 branch is untouched.
+  const landingPlan = agentV2Cutover ? null : staffingWarmReplyLandingPlan({
+    lead, inboundMessageId: message.messageId, action: policy.action, activities,
+  });
+  const deliveryBody = landingPlan?.tracked
+    ? warmResponse({ action: policy.action, lead, offer, landingPageUrl: landingPlan.url }) : body;
   const delivered = agentV2Cutover
     ? await deliverAgentV2Qualification({ lead, message, activities, decision,
       outboundObservationOk, subject })
-    : await deliverHardenedWarmReply({ lead, message, action: policy.action, body, subject, activities,
-      classification: effectiveClassification, replyDecisionId: decision?.decisionId || '' });
+    : await deliverHardenedWarmReply({ lead, message, action: policy.action, body: deliveryBody, subject, activities,
+      classification: effectiveClassification, replyDecisionId: decision?.decisionId || '', landingPlan });
   recordReplyExecution(decision, executionForDelivery(policy.action, delivered));
   if (!delivered.delivered) {
     if (agentV2Cutover && !delivered.reconciliationRequired) {
