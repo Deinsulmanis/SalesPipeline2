@@ -97,6 +97,10 @@ const { routedLeadReady } = require('./integrations/campaign-routing');
 // Staffing supplies its own locked copy only. Sender selection, thread pinning,
 // quota, observer, suppression and ownership all stay on the shared path.
 const { STAFFING_CAMPAIGN, renderStaffingEmail, validateStaffingEmail, isStaffingCampaign } = require('./integrations/staffing-campaign');
+const { landingLinkMetadata, PLAN_STATUS: LANDING_PLAN_STATUS } = require('./integrations/landing-link-token');
+const {
+  staffingColdStepLandingPlan, buildIssuanceRecord, ensureLandingIssuance, recordLandingLinkSent,
+} = require('./integrations/landing-link-issuance');
 const STAFFING_TEMPLATE = STAFFING_CAMPAIGN.emailTemplateId;
 // The reactivation gate is defined once, in the shared pipeline-state model.
 const { manualHoldReleased, applyHoldToNotes, applyResumeToNotes, stageRequiresHold,
@@ -1962,6 +1966,9 @@ async function recordSendActivity(lead, step, sendMeta, sentAt) {
         step: Number(step), family: familyForLead(lead), body: String((sendMeta && sendMeta.body) || ''),
       }) || undefined,
       ...attribution,
+      // Tracked staffing landing link: the pin (issuance key + key version),
+      // never the token. Absent for every untracked send.
+      ...(sendMeta?.landingLink ? { landingLink: sendMeta.landingLink } : {}),
     }),
   };
   const activities = sendMeta?.activitiesForCycle;
@@ -2042,9 +2049,23 @@ async function deliverOrdinaryColdStep({
   lead, step, sender, subject, body, attribution, activitiesForCycle,
   personalizationMetadata = null, thread = null, onProviderSuccess = null,
 }) {
+  // Staffing Follow-up #2 landing link. Pure and pinned: re-derived here from
+  // the same action id and earlier attempts the caller rendered from, so the
+  // locked-copy comparison below also proves the URL is unchanged. Null for
+  // every other step and template.
+  const landingPlan = lead.emailTemplateId === STAFFING_TEMPLATE
+    ? staffingColdStepLandingPlan({ lead, step, activities: activitiesForCycle || [] }) : null;
+  if (landingPlan?.status === LANDING_PLAN_STATUS.BLOCKED) return { delivered: false, reason: `landing link blocked: ${landingPlan.reason}` };
+  const landingLink = landingLinkMetadata(landingPlan);
+  const landingRecord = landingPlan?.tracked ? buildIssuanceRecord({
+    plan: landingPlan, actionId: ordinaryColdActionId(lead.id, step), lead,
+    campaignVersion: attribution?.campaignVersion, templateId: lead.emailTemplateId,
+    templateVersion: attribution?.copyVersion, senderInboxId: sender.id,
+  }) : null;
   // Preview HTML previously disappeared before Gmail's plain-text-only MIME
   // assembly. Preserve the approved bold phrase without changing the text.
-  const staffingEmail = lead.emailTemplateId === STAFFING_TEMPLATE ? renderStaffingEmail(lead, step) : null;
+  const staffingEmail = lead.emailTemplateId === STAFFING_TEMPLATE
+    ? renderStaffingEmail(lead, step, landingPlan?.tracked ? { landingPageUrl: landingPlan.url } : {}) : null;
   if (staffingEmail && staffingEmail.body !== body) return { delivered: false, reason: 'staffing delivery body differs from locked copy' };
   const mailbox = gmailForSender(sender);
   const rfcMessageId = coldStepRfcMessageId(lead.id, step, sender.email);
@@ -2068,8 +2089,10 @@ async function deliverOrdinaryColdStep({
     const checkpoint = await markSent(lead, step, {
       result: recovered, subject, body, attribution, sender, personalizationMetadata,
       occurredAt: recovered.occurredAt || new Date().toISOString(), activitiesForCycle,
+      ...(landingLink ? { landingLink } : {}),
     });
     console.warn(`[Cold recovery] restored step ${step} for ${lead.email} from Gmail; no duplicate sent`);
+    if (landingRecord) await recordLandingLinkSent({ plan: landingPlan, record: landingRecord, sentAt: recovered.occurredAt, result: recovered });
     return { delivered: true, recovered: true, checkpoint };
   }
 
@@ -2094,6 +2117,14 @@ async function deliverOrdinaryColdStep({
     return { delivered: false, reason: 'an unresolved delivery reservation exists and Gmail has not confirmed it' };
   }
 
+  // Tracked landing link: best-effort issuance write BEFORE the reservation,
+  // so a stored row that contradicts this render refuses the send without
+  // leaving a reservation behind. A failed or slow write never blocks.
+  if (landingRecord) {
+    const issuance = await ensureLandingIssuance({ plan: landingPlan, record: landingRecord });
+    if (!issuance.proceed) return { delivered: false, reason: issuance.reason };
+  }
+
   const reservationEventId = `cold-reserve:${lead.id}:step${step}:attempt${reservations.length + 1}`;
   const reservation = {
     eventId: reservationEventId, leadId: `CE-${lead.id}`, sourceLeadId: lead.id,
@@ -2102,6 +2133,8 @@ async function deliverOrdinaryColdStep({
     subject, content: '', metadata: JSON.stringify({
       leadId: lead.id, step: Number(step), senderInboxId: sender.id,
       rfcMessageId, gmailThreadId: thread?.threadId || '',
+      // The pin every later render of this action must honour.
+      ...(landingLink ? { landingLink } : {}),
     }),
   };
   try {
@@ -2163,6 +2196,7 @@ async function deliverOrdinaryColdStep({
   if (onProviderSuccess) onProviderSuccess({ recovered: false, occurredAt: new Date().toISOString() });
   const checkpoint = await markSent(lead, step, {
     result, subject, body, attribution, sender, personalizationMetadata, activitiesForCycle,
+    ...(landingLink ? { landingLink } : {}),
   });
   await confirmOutboundReservation(sendAction.actionId).catch(error => {
     console.error(JSON.stringify({
@@ -2170,6 +2204,8 @@ async function deliverOrdinaryColdStep({
       provider: 'gmail', status: 'sent_unconfirmed', code: error.code || 'confirm_failed',
     }));
   });
+  // After every send-lock and CRM checkpoint: attribution bookkeeping only.
+  if (landingRecord) await recordLandingLinkSent({ plan: landingPlan, record: landingRecord, sentAt: new Date().toISOString(), result });
   return { delivered: true, recovered: false, result, checkpoint };
 }
 
@@ -4697,8 +4733,13 @@ function coldSendGate(lead, context = null) {
 
 // Renders a staffing follow-up, or throws so the caller defers rather than
 // falling back to ordinary cold copy.
-function staffingFollowUpBody(lead, step) {
-  const email = renderStaffingEmail(lead, step);
+// activities: this run's canonical rows. Step 2 carries the landing link, and
+// its plan is pinned by the action's earlier attempts; deliverOrdinaryColdStep
+// re-derives the same plan and compares the rendered body before any send.
+function staffingFollowUpBody(lead, step, activities = []) {
+  const landingPlan = staffingColdStepLandingPlan({ lead, step, activities });
+  if (landingPlan?.status === LANDING_PLAN_STATUS.BLOCKED) throw new Error(`landing link blocked: ${landingPlan.reason}`);
+  const email = renderStaffingEmail(lead, step, landingPlan?.tracked ? { landingPageUrl: landingPlan.url } : {});
   const bad = validateStaffingEmail(email, step);
   if (bad) throw new Error(bad);
   return email.body;
@@ -5595,7 +5636,7 @@ async function run() {
     // previous behaviour, including how a copy failure propagates.
     let body;
     if (lead.emailTemplateId === STAFFING_TEMPLATE) {
-      try { body = staffingFollowUpBody(lead, nextStepNum); }
+      try { body = staffingFollowUpBody(lead, nextStepNum, ownershipActivities); }
       catch (error) {
         console.warn(`⏸️  follow-up deferred → ${lead.email} (${error.message})`);
         return false;
@@ -5887,7 +5928,7 @@ async function run() {
     // previous behaviour, including how a copy failure propagates.
     let body;
     if (lead.emailTemplateId === STAFFING_TEMPLATE) {
-      try { body = staffingFollowUpBody(lead, nextStepNum); }
+      try { body = staffingFollowUpBody(lead, nextStepNum, ownershipActivities); }
       catch (error) {
         console.warn(`⏸️  follow-up deferred → ${lead.email} (${error.message})`);
         continue;
