@@ -88,7 +88,7 @@ const { assertSendAuthorized, sendAuthorization } = require('./integrations/send
 const { evaluateFreshSendSafety, guardProviderSend } = require('./integrations/send-safety-revalidate');
 const {
   withGmailProviderSend, withOutboundReservation, confirmOutboundReservation,
-  isDefinitePreDeliveryFailure,
+  isDefinitePreDeliveryFailure, getOutboundReservation, STATUS: SEND_RESERVATION_STATUS,
 } = require('./integrations/send-lock');
 const {
   ordinaryColdActionId, stageSequenceActionId, smartleadEnqueueActionId,
@@ -152,7 +152,15 @@ const {
 } = require('./integrations/staffing-funnel');
 const { STAFFING_CAMPAIGN_REF } = require('./integrations/staffing-compliance');
 const { authoritativeProvider, assertGmailProviderAllowed, assertSmartleadEnqueueAllowed } = require('./integrations/provider-ownership');
-const { deliverProspectReply } = require('./integrations/prospect-reply-delivery');
+const { deliverProspectReply, responseActionId } = require('./integrations/prospect-reply-delivery');
+const { buildConversationState } = require('./integrations/conversation-state');
+const { indexConversationEvidence, selectConversationEvidence } = require('./integrations/conversation-evidence');
+const { createPgAgentV2Store } = require('./integrations/agent-v2-store');
+const { runAgentV2OneShotReadiness } = require('./integrations/agent-v2-orchestration');
+const { executeAgentV2Qualification, FLAG: AGENT_V2_EXECUTION_FLAG } = require('./integrations/agent-v2-execution');
+const { QUALIFY_ACTION: AGENT_V2_QUALIFY_ACTION, pendingDecisionActivity,
+  pendingDecisionFor, pendingProofMatches,
+  confirmedQualificationActivity } = require('./integrations/agent-v2-pending-decision');
 const { findLiveBooking } = require('./integrations/live-booking-gate');
 const {
   BOOKING_LINK_EVENT, buildDemoPairActivity,
@@ -2330,19 +2338,20 @@ async function recordActiveReplyActivity(lead, message, replyText, classificatio
 // Best-effort by design: the decision describes what the handlers already did,
 // and failing the pass over it would re-run handlers and the classifier for a
 // message that has been acted on.
-async function persistReplyDecision(lead, decision, activities = []) {
+async function persistReplyDecision(lead, decision, activities = [], { strict = false } = {}) {
   const row = replyDecisionActivity(decision, { company: cleanCompanyName(lead.company) || lead.company || '' });
   if (!row) {
     console.warn(`[reply-decision] not persisted for ${lead.email}: inbound message id missing`);
     return null;
   }
-  if (activities.some(item => String(item.eventId || '') === row.eventId)) return null;
+  if (activities.some(item => String(item.eventId || '') === row.eventId)) return strict ? row : null;
   try {
     await withAuth(() => recordMailboxActivity(row));
     activities.push(row);
     return row;
   } catch (error) {
     console.warn(`[reply-decision] persist failed for ${row.eventId}: ${error.message}`);
+    if (strict) throw error;
     return null;
   }
 }
@@ -2584,6 +2593,13 @@ async function handleQuestion(lead, message, replyText, todaySent, activities = 
   let mode = answer.mode;
   let gateReason = '';
   let gateCode = '';
+  if (mode === 'auto' && isStaffingCampaign(lead)
+    && process.env[AGENT_V2_EXECUTION_FLAG] === 'true') {
+    mode = 'draft';
+    gateCode = 'agent_v2_question_draft_only';
+    gateReason = 'staffing questions require human review during the Agent v2 qualification rollout';
+    answer.reason = `${answer.reason} — held: ${gateReason}`;
+  }
   if (mode === 'auto') {
     const humanTouchAt = latestHumanOutboundAt(activities);
     const suppressed = suppressionReason(lead);
@@ -3081,6 +3097,16 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
         if (!attributionActivities) attributionActivities = activitiesForCycle || await readColdCallActivities();
         await recordActiveReplyActivity(lead, message, replyText, classification, attributionActivities);
         const decisionOptions = { decision: replyDecision, overlay: staffingOverlay, outboundObservationOk };
+        // If delivery was recorded but the final reply-decision append failed,
+        // finish that same inbound lifecycle without rerunning a handler or a
+        // model. The delivered event must carry the exact response identity.
+        const pending = process.env[AGENT_V2_EXECUTION_FLAG] === 'true'
+          ? pendingDecisionFor(attributionActivities, message.messageId, lead.id) : null;
+        if (pending && confirmedQualificationActivity(attributionActivities,
+          lead.id, message.messageId, message.senderInboxId)) {
+          return handlePositiveAutomation(lead, message, pending.finalClassification,
+            attributionActivities, staffingOverlay?.canonical || canonicalReply, decisionOptions);
+        }
         const route = replyDecision.route;
         let result;
         switch (route) {
@@ -3149,7 +3175,13 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
         return result;
       });
       finalizeReplyDecision(replyDecision);
-      await persistReplyDecision(lead, replyDecision, activitiesForCycle);
+      // A Phase 6 pending record must get a durable final outcome. A failed
+      // append leaves the inbound unevaluated so its deterministic IDs can be
+      // reconciled on the next pass; legacy best-effort behavior stays intact.
+      await persistReplyDecision(lead, replyDecision, activitiesForCycle, {
+        strict: process.env[AGENT_V2_EXECUTION_FLAG] === 'true'
+          && Boolean(pendingDecisionFor(activitiesForCycle, message.messageId, lead.id)),
+      });
       await recordMailboxActivity({ eventId: `gmail-evaluated:${sender.id}:${message.messageId}`,
         leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email, company: lead.company,
         eventType: 'gmail_reply_evaluated', occurredAt: new Date().toISOString(), subject: '', content: '',
@@ -3373,6 +3405,192 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
   return result;
 }
 
+// Phase 6 reads the same canonical stores as the existing warm-send final gate.
+// A fixed asOf clock preserves Phase 2's digest while fresh rows expose any
+// intervening human, suppression, or provider activity as a digest change.
+async function loadAgentV2ReplyEvidence(leadId, asOf = null, snapshot = null) {
+  const fresh = snapshot || await withAuth(() => loadAgentSnapshot({
+    forceColdEmail: outreachWriteAuthority() === 'sheets',
+  }));
+  const [leads, boardLeads, allActivities] = await Promise.all([
+    readLeads(fresh.coldEmail), readBoardLeads(fresh.board), readColdCallActivities(fresh.activityRows),
+  ]);
+  const suppressedEmails = new Set((fresh.suppression || []).slice(1)
+    .map(row => normEmail(row[0])).filter(Boolean));
+  const selected = selectConversationEvidence(indexConversationEvidence({
+    leads, boardLeads, activities: allActivities,
+  }), leadId);
+  if (!selected.lead || selected.lead.id !== leadId) throw new Error('Agent v2 lead identity unavailable');
+  const state = buildConversationState({ lead: selected.lead, boardLead: selected.boardLead,
+    activities: selected.activities, selection: selected.selection, suppressedEmails,
+    config: { sequencesEnabled: STAGE_SEQUENCES_ENABLED, sendingEnabled: SENDING_ENABLED },
+    now: asOf || new Date().toISOString() });
+  return { fresh, lead: selected.lead, activities: selected.activities,
+    allActivities, suppressedEmails, state };
+}
+
+async function phase0ForAgentV2Reply({ state, leadId, messageId }, senderId, outboundObservationOk) {
+  const fresh = await loadAgentV2ReplyEvidence(leadId, state.asOf);
+  const current = fresh.lead;
+  return { leadId, messageId, stateDigest: fresh.state.evidenceDigest,
+    observedAt: new Date().toISOString(),
+    outboundObservationOk: outboundObservationOk === true
+      && observerAutomationReadyBySender.get(senderId) === true,
+    alreadyHandled: inboundWarmReplyAlreadySent(fresh.activities, messageId)
+      || Boolean(replyDecisionFor(fresh.activities, messageId, leadId)),
+    humanTouchBlock: staffingHumanTouchBlock({ lead: current, activities: fresh.activities,
+      outboundObservationOk }),
+    repeatReason: staffingRepeatReason(AGENT_V2_QUALIFY_ACTION,
+      staffingReplyHistory({ lead: current, activities: fresh.activities })),
+    suppressionReason: sendSuppressionReason(current, { suppressedEmails: fresh.suppressedEmails }) || '',
+  };
+}
+
+async function liveSafetyForAgentV2Reply({ leadId, messageId, decisionId, stateDigest,
+  senderInboxId, phase1State }, originalLead, originalMessage, outboundObservationOk) {
+  const fresh = await loadAgentV2ReplyEvidence(leadId, phase1State.asOf);
+  const current = fresh.lead;
+  const state = fresh.state;
+  const sender = GMAIL_SENDERS.find(item => item.id === senderInboxId);
+  let pinned = null;
+  try { pinned = pinnedSenderId(current, fresh.activities); } catch (_) { /* fail closed */ }
+  const day = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+  const freshSenderCount = senderCountsToday(fresh.allActivities, day).get(senderInboxId) || 0;
+  const freshGlobalCount = successfulSendCountToday(fresh.allActivities, day);
+  let providerThreadLatest = false;
+  if (sender?.sendEligible && originalMessage.threadId && originalMessage.messageId) {
+    try {
+      const gmail = gmailForSender(sender);
+      const ownership = await verifyThreadOwnership({ gmail, threadId: originalMessage.threadId,
+        senderEmail: sender.email, recipientEmail: current.email });
+      if (ownership.ok) {
+        const thread = await gmail.users.threads.get({ userId: 'me', id: originalMessage.threadId,
+          format: 'metadata', metadataHeaders: ['From'] });
+        const ordered = (thread.data.messages || []).sort((a, b) =>
+          Number(a.internalDate || 0) - Number(b.internalDate || 0));
+        providerThreadLatest = ordered.at(-1)?.id === messageId;
+      }
+    } catch (_) { /* fail closed */ }
+  }
+  const humanClear = !staffingHumanTouchBlock({ lead: current, activities: fresh.activities,
+    outboundObservationOk }) && state.ownership.humanTakeover.value === false;
+  const repeatClear = !inboundWarmReplyAlreadySent(fresh.activities, messageId)
+    && !staffingRepeatReason(AGENT_V2_QUALIFY_ACTION,
+      staffingReplyHistory({ lead: current, activities: fresh.activities }));
+  const suppressionClear = !sendSuppressionReason(current, { suppressedEmails: fresh.suppressedEmails })
+    && evaluateFreshSendSafety(originalLead, current, fresh.suppressedEmails, { purpose: 'warm' }).allowed;
+  const windowAvailable = Boolean(activeWindowQuota
+    && sendingWindowVerdict(activeWindowQuota, senderInboxId).allowed);
+  const quotaAvailable = Boolean(sender && activeSenderCounts && activeQuotaState
+    && Math.max(activeSenderCounts.get(senderInboxId) || 0, freshSenderCount) < sender.dailyLimit
+    && Math.max(activeQuotaState.globalCount || 0, freshGlobalCount) < DAILY_SEND_LIMIT);
+  const currentSendAuthorized = Boolean(process.env[AGENT_V2_EXECUTION_FLAG] === 'true'
+    && process.env.AGENT_V2_SHADOW_ENABLED === 'true' && !CHECK_ONLY && !DRY_RUN
+    && sendAuthorization().allowed && !staffingSendBlockReason(current)
+    && observerAutomationReadyBySender.get(senderInboxId) === true);
+  const noConflictingEvidence = !state.evidenceWarnings.length && !state.ambiguities.length
+    && state.thread.threadIds.length === 1;
+  const safety = { leadId, messageId, decisionId, stateDigest,
+    senderInboxId, providerThreadLatest, humanClear, repeatClear,
+    suppressionClear, senderOwnershipProven: pinned === senderInboxId
+      && state.thread.ownershipStatus === 'proven',
+    senderEligible: Boolean(sender?.sendEligible && isStaffingCampaign(current)
+      && senderForPersistedLead(current).id === senderInboxId),
+    quotaAvailable, windowAvailable, currentSendAuthorized,
+    noNewerInbound: state.latest?.inbound?.messageId === messageId,
+    noConflictingEvidence };
+  safety.allowed = state.evidenceDigest === stateDigest && state.identity.leadId === leadId
+    && current.id === originalLead.id && normEmail(current.email) === normEmail(originalLead.email)
+    && state.identity.family === 'industrial_staffing' && !state.terminalState.isTerminal
+    && state.responseState.answered === 'no'
+    && Object.entries(safety).every(([key, value]) =>
+      !['providerThreadLatest', 'humanClear', 'repeatClear', 'suppressionClear',
+        'senderOwnershipProven', 'senderEligible', 'quotaAvailable', 'windowAvailable',
+        'currentSendAuthorized', 'noNewerInbound', 'noConflictingEvidence'].includes(key) || value === true);
+  return safety;
+}
+
+async function deliverAgentV2Qualification({ lead, message, activities, decision,
+  outboundObservationOk, subject }) {
+  const sources = activities.filter(row => row.eventId === `gmail-reply:${message.messageId}`);
+  if (sources.length !== 1) return { delivered: false, code: 'provider_proof_unavailable' };
+  const pending = pendingDecisionActivity({ lead, message, decision, sourceRow: sources[0] });
+  if (!pending) return { delivered: false, code: 'provider_proof_invalid' };
+  const existingPending = activities.some(row => row.eventId === pending.eventId);
+  if (existingPending && !pendingDecisionFor(activities, message.messageId, lead.id))
+    return { delivered: false, code: 'pending_decision_conflict' };
+  if (!existingPending) {
+    try {
+      await recordMailboxActivity(pending);
+      activities.push(pending);
+    } catch (_) { return { delivered: false, code: 'pending_decision_not_durable' }; }
+  }
+  if (process.env[AGENT_V2_EXECUTION_FLAG] !== 'true'
+    || process.env.AGENT_V2_SHADOW_ENABLED !== 'true'
+    || !process.env.ANTHROPIC_AGENT_V2_KEY)
+    return { delivered: false, code: 'agent_v2_execution_unavailable' };
+  let store;
+  try {
+    store = createPgAgentV2Store({ connectionString: process.env.AGENT_V2_SUPABASE_DATABASE_URL,
+      expectedSupabaseUrl: process.env.SUPABASE_URL, caCert: process.env.AGENT_V2_SUPABASE_CA_CERT });
+    await store.verifyPrivileges();
+    const loadCurrentState = async ({ leadId, asOf } = {}) =>
+      (await loadAgentV2ReplyEvidence(leadId, asOf)).state;
+    const checkPhase0 = args => phase0ForAgentV2Reply(args, message.senderInboxId,
+      outboundObservationOk);
+    const initial = await loadAgentV2ReplyEvidence(lead.id);
+    const target = initial.state.turns.find(turn => turn.direction === 'inbound'
+      && turn.messageId === message.messageId);
+    if (!pendingProofMatches(initial.state, target)
+      || initial.state.latest?.inbound?.messageId !== message.messageId)
+      return { delivered: false, code: 'pending_state_unverified' };
+    await runAgentV2OneShotReadiness({ leadId: lead.id,
+      messageId: message.messageId, store, loadCurrentState, checkPhase0,
+      apiKey: process.env.ANTHROPIC_AGENT_V2_KEY });
+    const execution = await executeAgentV2Qualification({ leadId: lead.id,
+      messageId: message.messageId, store, loadCurrentState, checkPhase0,
+      liveSafety: args => liveSafetyForAgentV2Reply(args, lead, message, outboundObservationOk),
+      deliver: async ({ body, action, decisionId, stateDigest, stateAsOf }) =>
+        deliverHardenedWarmReply({ lead, message, action, body, subject, activities,
+          classification: decision.finalClassification, replyDecisionId: decision.decisionId,
+          validateFresh: async ({ fresh, current, mine }) => {
+            if (process.env[AGENT_V2_EXECUTION_FLAG] !== 'true'
+              || !sendAuthorization().allowed || !isStaffingCampaign(current))
+              return { allowed: false, code: 'agent_v2_kill_switch_or_campaign_changed' };
+            const checked = await loadAgentV2ReplyEvidence(lead.id, stateAsOf, fresh);
+            const inbound = checked.state.turns.find(turn => turn.direction === 'inbound'
+              && turn.messageId === message.messageId);
+            if (checked.state.evidenceDigest !== stateDigest
+              || checked.state.latest?.inbound?.messageId !== message.messageId
+              || !pendingProofMatches(checked.state, inbound)
+              || checked.state.responseState.answered !== 'no'
+              || checked.state.evidenceWarnings.length || checked.state.ambiguities.length
+              || inboundWarmReplyAlreadySent(mine, message.messageId)
+              || staffingHumanTouchBlock({ lead: current, activities: mine, outboundObservationOk })
+              || staffingRepeatReason(action, staffingReplyHistory({ lead: current, activities: mine })))
+              return { allowed: false, code: 'agent_v2_state_changed_before_send' };
+            const row = await store.getDecisionRow(decisionId);
+            return row?.completed_at && row.record?.stateDigest === stateDigest
+              && row.record?.decision?.actionId === 'SUGGEST_QUALIFICATION'
+              ? { allowed: true } : { allowed: false, code: 'agent_v2_decision_changed_before_send' };
+          } }),
+    });
+    if (execution.executionStatus === 'SENT') return { delivered: true,
+      actionId: responseActionId(lead.id, message.messageId, AGENT_V2_QUALIFY_ACTION),
+      result: { data: { id: execution.providerMessageId } } };
+    if (execution.executionStatus === 'ALREADY_SENT') return { delivered: true,
+      recovered: true, alreadyCheckpointed: true,
+      actionId: responseActionId(lead.id, message.messageId, AGENT_V2_QUALIFY_ACTION),
+      result: { data: { id: execution.providerMessageId } } };
+    const reconciliationRequired = execution.executionStatus === 'RECONCILIATION_REQUIRED';
+    return { delivered: false,
+      code: reconciliationRequired ? 'provider_ambiguous'
+        : execution.executionReasonCode || 'agent_v2_blocked',
+      reason: execution.executionReasonCode || null, reconciliationRequired };
+  } catch (_) { return { delivered: false, code: 'agent_v2_execution_unavailable' }; }
+  finally { await store?.close().catch(() => {}); }
+}
+
 async function handlePositiveAutomation(lead, message, classification, activities, canonical = {},
   { decision = null, overlay: decidedOverlay, outboundObservationOk = false } = {}) {
   // Routes to human review and records that as this reply's execution.
@@ -3382,6 +3600,33 @@ async function handlePositiveAutomation(lead, message, classification, activitie
     recordReplyExecution(decision, { ...executionForRoute(REPLY_ROUTE.NEEDS_HUMAN, routed), effects });
     return routed;
   };
+  const priorPending = process.env[AGENT_V2_EXECUTION_FLAG] === 'true'
+    && isStaffingCampaign(lead)
+    ? pendingDecisionFor(activities, message.messageId, lead.id) : null;
+  const priorDelivery = priorPending && confirmedQualificationActivity(activities,
+    lead.id, message.messageId, message.senderInboxId);
+  if (priorDelivery) {
+    recordReplyPolicy(decision, { action: AGENT_V2_QUALIFY_ACTION, send: true,
+      reason: 'previous qualification delivery confirmed by the activity ledger',
+      source: REPLY_POLICY_SOURCE.STAFFING_GUARD, classification: priorPending.finalClassification });
+    let reservation;
+    try { reservation = await getOutboundReservation(responseActionId(lead.id,
+      message.messageId, AGENT_V2_QUALIFY_ACTION)); } catch (_) { /* fail closed */ }
+    if (reservation?.status !== SEND_RESERVATION_STATUS.CONFIRMED
+      || !reservation.providerMessageId
+      || reservation.actionId !== responseActionId(lead.id, message.messageId, AGENT_V2_QUALIFY_ACTION)
+      || reservation.leadId !== lead.id || reservation.actionType !== 'gmail_warm_reply'
+      || reservation.provider !== 'gmail') {
+      const routed = await handleNeedsHuman(lead, message.fromAddr);
+      recordReplyExecution(decision, { executedAction: null,
+        status: REPLY_EXECUTION_STATUS.FAILED, code: 'agent_v2_reservation_reconciliation_required',
+        fallbackAction: REPLY_RESPONSE_ACTION.HUMAN_REVIEW });
+      return routed;
+    }
+    recordReplyExecution(decision, { executedAction: AGENT_V2_QUALIFY_ACTION,
+      status: REPLY_EXECUTION_STATUS.ALREADY_SENT, code: 'prior_agent_v2_delivery_confirmed' });
+    return { delivered: true, alreadyCheckpointed: true };
+  }
   const unrouted = unroutedReplyDecision(lead);
   if (unrouted) {
     return routeToHuman({ policy: { reason: unrouted.reason, source: REPLY_POLICY_SOURCE.STAFFING_GUARD } });
@@ -3479,10 +3724,25 @@ async function handlePositiveAutomation(lead, message, classification, activitie
     });
     return { delivered: false, code: humanHold.code, reason: humanHold.reason };
   }
-  const delivered = await deliverHardenedWarmReply({ lead, message, action: policy.action, body, subject, activities,
-    classification: effectiveClassification, replyDecisionId: decision?.decisionId || '' });
+  const agentV2Cutover = isStaffingCampaign(lead)
+    && process.env[AGENT_V2_EXECUTION_FLAG] === 'true';
+  if (agentV2Cutover && policy.action !== AGENT_V2_QUALIFY_ACTION) {
+    await queueDraft(lead, { mode: 'draft', body,
+      reason: 'Agent v2 initial authority permits qualification only', confidence: policy.confidence || 0 });
+    return routeToHuman({ effects: [REPLY_EFFECT.DRAFT_QUEUED] });
+  }
+  const delivered = agentV2Cutover
+    ? await deliverAgentV2Qualification({ lead, message, activities, decision,
+      outboundObservationOk, subject })
+    : await deliverHardenedWarmReply({ lead, message, action: policy.action, body, subject, activities,
+      classification: effectiveClassification, replyDecisionId: decision?.decisionId || '' });
   recordReplyExecution(decision, executionForDelivery(policy.action, delivered));
   if (!delivered.delivered) {
+    if (agentV2Cutover && !delivered.reconciliationRequired) {
+      await queueDraft(lead, { mode: 'draft', body,
+        reason: `Agent v2 execution held: ${delivered.code}`, confidence: policy.confidence || 0 });
+      addReplyEffect(decision, REPLY_EFFECT.DRAFT_QUEUED);
+    }
     await handleNeedsHuman(lead, message.fromAddr);
     return delivered;
   }

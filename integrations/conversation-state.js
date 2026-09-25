@@ -27,6 +27,7 @@
 const crypto = require('crypto');
 const { LEGACY_REPLY_EVENT_TYPES, REPLY_STATE, NEEDS_HUMAN_REASON } = require('./canonical-reply');
 const { replyDecisionFor } = require('./reply-decision');
+const { PENDING_VERSION, PENDING_STATUS, pendingDecisionFor } = require('./agent-v2-pending-decision');
 const { deriveAutomationOwnership, executableOwners } = require('./automation-ownership');
 const { deriveOperationalAction, REPLY_ACTION } = require('./reply-operations');
 const { leadHasReply } = require('./reply-analytics');
@@ -60,7 +61,7 @@ const CONVERSATION_STATE_VERSION = 'conversation_state_v1';
  */
 const EVIDENCE_PRECEDENCE = Object.freeze([
   'terminal: unsubscribe > not interested > bounce > suppression list > closed stage > manual hold > out of office; each is reported with its own evidence and none is hidden by another',
-  'meaning of an inbound message: reply_decision_recorded > gmail_reply_evaluated classification > the reply event\'s own classification; a message is never re-classified here',
+  'meaning of an inbound message: reply_decision_recorded > reply_decision_pending_execution > gmail_reply_evaluated classification > the reply event\'s own classification; a message is never re-classified here',
   'a sent message: a delivered *_sent row with provider ids is a turn; a reservation, draft or failure never becomes a turn',
   'meeting: the call lifecycle (calendar/CRM events + board meetingAt, via deriveCallLifecycle) > meeting intent > booking link sent; a link is never a booking',
   'qualification: a delivered staffing reply action > a [STAFFING ...] note tag; slot values come only from the prospect\'s own words, never from research',
@@ -255,7 +256,7 @@ function normalizeConversationEvidence({ activities = [] } = {}) {
 function decisionSummary(decision, evaluated) {
   const evaluatedDecisionId = evaluated ? String(evaluated.metadata.replyDecisionId || '') : '';
   let status = 'not_evaluated';
-  if (decision) status = 'recorded';
+  if (decision) status = decision.version === PENDING_VERSION ? PENDING_STATUS : 'recorded';
   else if (evaluated && evaluatedDecisionId) status = 'evaluated_decision_missing';
   else if (evaluated) status = 'legacy_evaluated';
   return {
@@ -274,6 +275,7 @@ function decisionSummary(decision, evaluated) {
     policySource: decision ? decision.policySource || null : null,
     executedAction: decision ? decision.executedAction || null : null,
     executionStatus: decision ? decision.executionStatus || null : null,
+    providerProof: decision?.version === PENDING_VERSION ? decision.providerProof || null : null,
     executionCode: decision ? decision.executionCode || null : null,
     requiresHumanAttention: decision ? decision.requiresHumanAttention === true : null,
     effects: decision && Array.isArray(decision.effects) ? [...decision.effects] : [],
@@ -365,7 +367,9 @@ function buildTurns({ rows, ledgerRows, lead, boardLead, messageTexts }) {
     const primary = group.find(row => row.eventId === `gmail-reply:${row.messageId}`) || group[0];
     const withText = group.find(row => row.content.trim()) || primary;
     const content = withText.content;
-    const decision = primary.messageId ? replyDecisionFor(ledgerRows, primary.messageId, leadId || undefined) : null;
+    const finalDecision = primary.messageId ? replyDecisionFor(ledgerRows, primary.messageId, leadId || undefined) : null;
+    const decision = finalDecision || (primary.messageId
+      ? pendingDecisionFor(ledgerRows, primary.messageId, leadId) : null);
     const evaluated = primary.messageId ? evaluatedByMessage.get(primary.messageId) || null : null;
     const from = norm(primary.metadata.from);
     const canonicalState = (decision && decision.canonicalState) || primary.metadata.canonicalState || null;

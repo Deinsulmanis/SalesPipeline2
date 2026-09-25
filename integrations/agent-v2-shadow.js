@@ -6,8 +6,8 @@ const { runAgentV2Model } = require('./agent-v2-model');
 const { decisionIdFor } = require('./agent-v2-store');
 const { SCHEMA_VERSION, INPUT_VERSION, CATALOG_VERSION, EVENT_TYPE, MODEL, AUTHORITY } = require('./agent-v2-contract');
 
-// The only side effect permitted here is an insert into the dedicated shadow
-// table. Callers never receive an executable action or a send authorization.
+// Side effects are confined to claim and completion writes in the dedicated
+// shadow table. Callers never receive an executable action or send authorization.
 async function evaluateAgentV2Shadow({ state, messageId, store, model = runAgentV2Model,
   apiKey = '', createMessage, now = new Date() } = {}) {
   if (!store || typeof store.claim !== 'function')
@@ -38,8 +38,14 @@ async function evaluateAgentV2Shadow({ state, messageId, store, model = runAgent
       inputVersion: INPUT_VERSION, catalogVersion: CATALOG_VERSION,
       leadId: input.leadId, messageId: input.messageId,
       stateDigest: input.stateDigest, inputDigest: input.inputDigest,
+      // Audit clock used by Phase 1's input digest. A later read-only rebuild
+      // can hold this clock fixed while loading current evidence.
+      stateAsOf: input.asOf,
       createdAt, decision, model: modelResult?.model || MODEL,
       modelStatus: modelResult?.status || 'model_error',
+      // Audit data only. The validator's decision above remains the sole advisory output.
+      rawModelToolInput: modelResult?.status === 'ok' ? modelResult.raw : null,
+      providerMessageId: modelResult?.providerMessageId || null,
       usage: modelResult?.usage || { inputTokens: 0, outputTokens: 0 },
       latencyMs: Number(modelResult?.latencyMs || 0),
       estimatedCostUsd: modelResult?.estimatedCostUsd ?? null,

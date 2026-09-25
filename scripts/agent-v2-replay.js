@@ -5,7 +5,7 @@
  * Standalone Agent v2 replay / shadow worker. Default: no model call, no write.
  * --live reads one Sheets snapshot with a read-only scope. --model permits model
  * evaluation, still read-only. --persist additionally requires the shadow-only
- * feature flag and writes ONLY agent_v2_shadow_decisions in Postgres.
+ * feature flag and writes ONLY agent_v2_shadow_decisions in Supabase Postgres.
  *
  * node scripts/agent-v2-replay.js --snapshot=fixtures/snapshot.json --now=2026-09-23T00:00:00Z
  * node scripts/agent-v2-replay.js --live --limit=50
@@ -14,13 +14,14 @@
 
 require('dotenv').config({ quiet: true });
 const fs = require('node:fs');
+const path = require('node:path');
 const { buildConversationState } = require('../integrations/conversation-state');
 const { indexConversationEvidence, selectConversationEvidence } = require('../integrations/conversation-evidence');
 const { buildAgentV2Input } = require('../integrations/agent-v2-input');
 const { guardCode, guarded, validateModelDecision } = require('../integrations/agent-v2-validation');
 const { runAgentV2Model } = require('../integrations/agent-v2-model');
 const { evaluateAgentV2Shadow } = require('../integrations/agent-v2-shadow');
-const { createPgAgentV2Store } = require('../integrations/agent-v2-store');
+const { createPgAgentV2Store, agentV2SupabasePgConfig } = require('../integrations/agent-v2-store');
 const { COLD_CALL_ACTIVITY_HEADER } = require('../integrations/cold-call-pipeline');
 
 const CE_COLUMNS = ['id', 'company', 'contactName', 'email', 'city', 'tradeType', 'website', 'stage', 'emailStatus',
@@ -28,24 +29,49 @@ const CE_COLUMNS = ['id', 'company', 'contactName', 'email', 'city', 'tradeType'
   'enrichment_attempted', 'leadNiche', 'senderInboxId', 'emailTemplateId', 'routingRequired', 'intendedCampaignVersion'];
 const BOARD_COLUMNS = ['id', 'type', 'first', 'last', 'brokerage', 'tradeType', 'company', 'city', 'cityTrade', 'phone',
   'email', 'website', 'stage', 'priority', 'followup', 'notes', 'created'];
+const SYNTHETIC_PILOT = Object.freeze({
+  snapshot: path.join(__dirname, '..', 'test', 'fixtures', 'agent-v2-synthetic-pilot.json'),
+  now: '2026-09-24T17:02:00.000Z',
+  leadId: 'SYNTHETIC_AGENT_V2_PILOT_20260924_LEAD_001',
+  messageId: 'SYNTHETIC_AGENT_V2_PILOT_20260924_MESSAGE_001',
+});
+const SYNTHETIC_PILOT_SECOND = Object.freeze({
+  snapshot: path.join(__dirname, '..', 'test', 'fixtures', 'agent-v2-synthetic-pilot-second.json'),
+  now: SYNTHETIC_PILOT.now,
+  leadId: 'SYNTHETIC_AGENT_V2_PILOT_20260924_LEAD_002',
+  messageId: 'SYNTHETIC_AGENT_V2_PILOT_20260924_MESSAGE_002',
+});
 
 function optionsFrom(argv) {
   const options = {};
   for (const arg of argv) {
     if (!arg.startsWith('--')) throw new Error(`unexpected argument: ${arg}`);
     const [key, ...parts] = arg.slice(2).split('=');
-    if (!['snapshot', 'now', 'lead', 'message', 'limit', 'live', 'model', 'persist'].includes(key))
+    if (!['snapshot', 'now', 'lead', 'message', 'limit', 'live', 'model', 'persist', 'synthetic-pilot'].includes(key))
       throw new Error(`unknown option: ${key}`);
     options[key] = parts.length ? parts.join('=') : true;
   }
+  if (options['synthetic-pilot']) {
+    if (![true, 'second'].includes(options['synthetic-pilot']) || options.live || options.snapshot || options.now
+      || options.lead || options.message || options.limit || options.model !== true || options.persist !== true)
+      throw new Error('--synthetic-pilot requires only --model --persist, optionally =second');
+    const pilot = options['synthetic-pilot'] === 'second' ? SYNTHETIC_PILOT_SECOND : SYNTHETIC_PILOT;
+    options.snapshot = pilot.snapshot;
+    options.now = pilot.now;
+    options.lead = pilot.leadId;
+    options.message = pilot.messageId;
+  }
   if (Boolean(options.snapshot) === Boolean(options.live)) throw new Error('choose exactly one of --snapshot or --live');
   if (options.snapshot && !options.now) throw new Error('--now is required for deterministic snapshot replay');
-  if (options.persist && (!options.live || !options.model || process.env.AGENT_V2_SHADOW_ENABLED !== 'true'))
-    throw new Error('--persist requires --live --model and AGENT_V2_SHADOW_ENABLED=true');
+  if (options.persist && (!(options.live || options['synthetic-pilot']) || !options.model
+    || process.env.AGENT_V2_SHADOW_ENABLED !== 'true'))
+    throw new Error('--persist requires --live or --synthetic-pilot, --model, and AGENT_V2_SHADOW_ENABLED=true');
   if (options.persist && (!options.lead || !options.message || options.limit))
     throw new Error('--persist requires one --lead and --message, without --limit');
-  if (options.persist && (!process.env.ANTHROPIC_AGENT_V2_KEY || !process.env.AGENT_V2_SHADOW_DATABASE_URL))
+  if (options.persist && (!process.env.ANTHROPIC_AGENT_V2_KEY || !process.env.AGENT_V2_SUPABASE_DATABASE_URL))
     throw new Error('shadow model key and database URL required for persistence');
+  if (options.persist) agentV2SupabasePgConfig(process.env.AGENT_V2_SUPABASE_DATABASE_URL,
+    process.env.SUPABASE_URL, process.env.AGENT_V2_SUPABASE_CA_CERT);
   if (options.model && !process.env.ANTHROPIC_AGENT_V2_KEY)
     throw new Error('ANTHROPIC_AGENT_V2_KEY required for --model');
   if (options.limit && (!Number.isInteger(Number(options.limit)) || Number(options.limit) < 1))
@@ -176,8 +202,17 @@ async function main() {
   const snapshot = options.live ? await liveSnapshot() : JSON.parse(fs.readFileSync(options.snapshot, 'utf8'));
   const now = options.now ? new Date(options.now) : new Date();
   if (!Number.isFinite(now.getTime())) throw new Error('invalid --now');
-  const store = options.persist ? createPgAgentV2Store({ connectionString: process.env.AGENT_V2_SHADOW_DATABASE_URL }) : null;
+  const store = options.persist ? createPgAgentV2Store({
+    connectionString: process.env.AGENT_V2_SUPABASE_DATABASE_URL,
+    expectedSupabaseUrl: process.env.SUPABASE_URL,
+    caCert: process.env.AGENT_V2_SUPABASE_CA_CERT,
+  }) : null;
   try {
+    if (store) {
+      await store.verifySessionLock();
+      await store.ensureSchema();
+      await store.verifyPrivileges();
+    }
     const result = await replay({ snapshot, now, leadId: String(options.lead || ''),
       messageId: String(options.message || ''),
       limit: options.limit ? Number(options.limit) : Infinity, model: Boolean(options.model),
@@ -189,7 +224,8 @@ async function main() {
 }
 
 if (require.main === module) main().catch(error => {
-  console.error(`agent v2 replay failed: ${error.message}`);
+  // Driver and TLS errors may contain connection details; keep worker output bounded.
+  console.error('agent v2 replay failed; inspect shadow worker configuration and database access.');
   process.exitCode = 1;
 });
 

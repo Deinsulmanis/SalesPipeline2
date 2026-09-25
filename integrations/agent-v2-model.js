@@ -11,8 +11,9 @@ Use only approved fact IDs in the supplied catalog. Never infer prices, guarante
 results, employer demand, campaign volume or meeting availability. A pricing amount or unsupported
 commercial request, proof/results request, complaint, conflicting evidence, human takeover,
 unsubscribe, rejection, OOO, or booking/reschedule ambiguity must be handed off or left alone.
-Use evidence refs from allowedEvidenceRefs, including targetRef. Choose slot IDs only from
-${SLOT_IDS.join(', ')}; objection types only from ${OBJECTION_TYPES.join(', ')}.
+Use evidence refs from allowedEvidenceRefs, including targetRef. Set slotIds to a nonempty list
+of currently unfilled slots from ${SLOT_IDS.join(', ')} only for SUGGEST_QUALIFICATION.
+Set slotIds to [] for every other action. Objection types: ${OBJECTION_TYPES.join(', ')}.
 Handoff codes: ${HANDOFF_CODES.join(', ')}. Templates: ${TEMPLATE_IDS.join(', ')}.
 Reason codes: ${REASON_CODES.join(', ')}.
 The application renders suggested wording from templates and approved fact IDs; do not write prose
@@ -64,7 +65,7 @@ async function runAgentV2Model(input, { createMessage, apiKey = '', AnthropicImp
       || calls[0].name !== 'record_shadow_decision') {
       return { raw: null, status: 'invalid_response', ...metrics };
     }
-    return { raw: calls[0].input, status: 'ok', ...metrics };
+    return { raw: calls[0].input, providerMessageId: message?.id || null, status: 'ok', ...metrics };
   } catch (error) {
     return { raw: null, status: 'model_error', errorCode: String(error?.code || error?.status || 'unknown').slice(0, 60),
       model: MODEL, usage: { inputTokens: 0, outputTokens: 0 },

@@ -207,7 +207,7 @@ test('the staffing hold runs before delivery and drafts instead of sending', () 
 test('every staffing positive path receives the outbound observation verdict', () => {
   assert.match(agent, /const decisionOptions = \{ decision: replyDecision, overlay: staffingOverlay, outboundObservationOk \};/);
   const calls = [...agent.matchAll(/(?<!function )handlePositiveAutomation\(([^;]*?)\);/gs)].map(m => m[1]);
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 5);
   for (const args of calls) assert.match(args, /decisionOptions|outboundObservationOk \}/, args);
   const question = between('async function handleQuestion', 'async function handleNeedsHuman');
   assert.match(question, /\{ decision, overlay, outboundObservationOk \}/);
@@ -295,7 +295,7 @@ test('Not Interested, Unsubscribe and OOO behaviour is unchanged', async () => {
 });
 
 test('booking-link send gates remain unchanged', () => {
-  const deliver = between('async function deliverHardenedWarmReply', 'async function handlePositiveAutomation');
+  const deliver = between('async function deliverHardenedWarmReply', 'async function loadAgentV2ReplyEvidence');
   const gates = [
     "if (staffingSendBlockReason(lead)) return { allowed: false, code: 'staffing_launch_paused' }",
     'const auth = sendAuthorization();',
