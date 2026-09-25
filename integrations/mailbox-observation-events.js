@@ -2,7 +2,7 @@
 
 // Observation has no sender, stage writer, enrollment capability or model API.
 // Canonical evidence is committed before any subsequent automation evaluation.
-const { headerValue, parseAddr, firstPlainText, decodeBodies, matchMailboxMessages, providerRead } = require('./gmail-mailbox-observer');
+const { headerValue, parseAddr, firstPlainText, firstHtmlText, decodeBodies, matchMailboxMessages, providerRead } = require('./gmail-mailbox-observer');
 const { classifyReplyText } = require('./canonical-reply');
 const { uniqueSuppressions, suppressionForCanonical, inboundAlreadyEvaluated } = require('./inbound-reply-guard');
 const { eventTypeFor, stripQuotedReply } = require('./reply-reconciliation');
@@ -11,6 +11,18 @@ const { providerMessageId } = require('./canonical-sends');
 const norm = value => String(value || '').trim().toLowerCase();
 
 const HUMAN_REPLY_TEXT_LIMIT = 1500;
+
+// The words the sender actually wrote, and the ONLY text a reply classifier may
+// read. text/plain when the client sent it; otherwise the text/html part, cut
+// at its quote markup before it becomes text (iPhone Mail sends HTML alone).
+// The snippet is a last resort: a flattened preview that can run into the quote,
+// so it is stripped the same way. The provider message is never modified — it
+// stays in Gmail, addressed by the gmailMessageId every event carries.
+function ownReplyText(payload, snippet = '') {
+  let raw = '';
+  try { raw = firstPlainText(payload) || firstHtmlText(payload) || decodeBodies(payload) || ''; } catch (_) { raw = ''; }
+  return stripQuotedReply(raw || snippet || '');
+}
 
 // What a person actually wrote, from the Gmail message itself: the text/plain
 // part only — never the HTML part or the snippet, which can carry the quoted
@@ -114,7 +126,7 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
     }
     for (const [leadId] of matched.replies) {
       const lead = byId.get(String(leadId));
-      const text = stripQuotedReply(firstPlainText(message.payload) || decodeBodies(message.payload) || message.snippet || '');
+      const text = ownReplyText(message.payload, message.snippet);
       const canonical = classifyReplyText(text, { currentEmail: lead.email, subject: headerValue(message.payload,'Subject'), now: occurredAt, year: new Date(at).getUTCFullYear() });
       const suppression = suppressionForCanonical(canonical, lead);
       if (suppression) suppressions.push(suppression);
@@ -182,4 +194,4 @@ async function commitObservation({ observation, plan, appendEvent, appendEvents,
   return { persisted: plan.events.length, suppressed: plan.suppressions.length };
 }
 
-module.exports = { planMailboxEvents, commitObservation, humanReplyText, HUMAN_REPLY_TEXT_LIMIT };
+module.exports = { planMailboxEvents, commitObservation, humanReplyText, ownReplyText, HUMAN_REPLY_TEXT_LIMIT };
