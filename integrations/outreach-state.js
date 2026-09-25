@@ -693,6 +693,21 @@ function conflictRefusal(current, patch) {
 const SAFETY_NOTE_MARKERS = Object.freeze(['[REPLY: Unsubscribed]', '[REPLY: Not Interested]', '[BOUNCED', MANUAL_HOLD_MARKER]);
 const RELEASABLE_NOTE_MARKERS = Object.freeze([MANUAL_HOLD_MARKER]);
 
+// The one exception to "opt-out is permanent": an opt-out our own classifier
+// invented (our quoted footer read as the prospect's words) may be released by
+// the audited false-opt-out correction, and by nothing else. It is not a
+// releaseMarkers entry — no ordinary writer can ask for it — but a separate,
+// fully-specified authorization naming the lead, the inbound message, the human
+// override that disproved the opt-out, and the correction's audit event. A
+// genuine opt-out has no such override, and the correction refuses to build one.
+const CORRECTABLE_OPT_OUT_MARKER = '[REPLY: Unsubscribed]';
+const OPT_OUT_CORRECTION_FIELDS = Object.freeze(['leadId', 'providerMessageId', 'overrideId', 'correctionEventId']);
+
+function isOptOutCorrection(correction) {
+  return Boolean(correction) && typeof correction === 'object'
+    && OPT_OUT_CORRECTION_FIELDS.every(field => typeof correction[field] === 'string' && correction[field].trim());
+}
+
 /** The marker exactly as it appears in `notes`, or null. Detection ignores case. */
 function markerIn(notes, marker) {
   const haystack = String(notes || '');
@@ -711,13 +726,15 @@ function markerIn(notes, marker) {
  * exact form the send-time check looks for — never a case variant that check
  * would not recognise.
  */
-function preserveSafetyMarkers(canonicalNotes, nextNotes, { releaseMarkers = [] } = {}) {
+function preserveSafetyMarkers(canonicalNotes, nextNotes, { releaseMarkers = [], optOutCorrection = null } = {}) {
   const next = nextNotes === null || nextNotes === undefined ? '' : String(nextNotes);
   const kept = [];
   for (const marker of SAFETY_NOTE_MARKERS) {
     const present = markerIn(canonicalNotes, marker);
     if (!present || next.includes(marker) || next.includes(present)) continue;
     if (RELEASABLE_NOTE_MARKERS.includes(marker) && releaseMarkers.includes(marker)) continue;
+    // Exact form only: a case variant is not the marker the classifier wrote.
+    if (marker === CORRECTABLE_OPT_OUT_MARKER && present === marker && isOptOutCorrection(optOutCorrection)) continue;
     kept.push(present);
   }
   return { notes: kept.length ? [...kept, next].filter(Boolean).join(' ') : next, kept };
@@ -750,11 +767,11 @@ function preserveResumeTag(canonicalNotes, nextNotes) {
  * Sheets-canonical notes merge. Same order as applyCanonicalChange: resume tag
  * first (unless resumeIntent), then send-safety markers. PURE.
  */
-function mergeNotesPatch(canonicalNotes, patchNotes, { releaseMarkers = [], resumeIntent = false } = {}) {
+function mergeNotesPatch(canonicalNotes, patchNotes, { releaseMarkers = [], resumeIntent = false, optOutCorrection = null } = {}) {
   const resume = !resumeIntent
     ? preserveResumeTag(canonicalNotes, patchNotes)
     : { notes: patchNotes === null || patchNotes === undefined ? '' : String(patchNotes), changed: false };
-  const safe = preserveSafetyMarkers(canonicalNotes, resume.notes, { releaseMarkers });
+  const safe = preserveSafetyMarkers(canonicalNotes, resume.notes, { releaseMarkers, optOutCorrection });
   return { notes: safe.notes, kept: safe.kept, resumeTagKept: resume.changed };
 }
 
@@ -851,8 +868,11 @@ async function casAttempt(id, patch, revision, { env = process.env }) {
  */
 async function applyCanonicalChange(id, patch, {
   env = process.env, logger = console, expectedState = null,
-  releaseMarkers = [], resumeIntent = false, skipIfUnchanged = false,
+  releaseMarkers = [], resumeIntent = false, skipIfUnchanged = false, optOutCorrection = null,
 } = {}) {
+  if (optOutCorrection && (!isOptOutCorrection(optOutCorrection) || optOutCorrection.leadId !== id)) {
+    return { ok: false, refused: true, conflicts: 0, reason: 'opt-out correction authorization is incomplete or names a different lead' };
+  }
   const column = {};
   for (const [field, value] of Object.entries(patch)) {
     column[FIELD_MAP[field]] = value === null || value === undefined ? '' : String(value);
@@ -873,7 +893,7 @@ async function applyCanonicalChange(id, patch, {
       ? preserveResumeTag(current.lead.notes, patch.notes)
       : { notes: writesNotes ? patch.notes : null, changed: false };
     const safe = writesNotes
-      ? preserveSafetyMarkers(current.lead.notes, resume.notes, { releaseMarkers })
+      ? preserveSafetyMarkers(current.lead.notes, resume.notes, { releaseMarkers, optOutCorrection })
       : { notes: null, kept: [] };
     const notesAdjusted = writesNotes && (resume.changed || safe.kept.length > 0);
     const attemptColumns = notesAdjusted ? { ...column, notes: safe.notes } : column;
@@ -950,9 +970,13 @@ async function applyLeadChange(leadId, patch, {
   expectedState = null,
   releaseMarkers = [],
   resumeIntent = false,
+  optOutCorrection = null,
 } = {}) {
   const id = String(leadId || '').trim();
   if (!id) throw new Error('applyLeadChange requires a lead id');
+  if (optOutCorrection && (!isOptOutCorrection(optOutCorrection) || optOutCorrection.leadId !== id)) {
+    throw new Error(`opt-out correction authorization is incomplete or names a different lead than ${id}`);
+  }
   if (!sheetsClient || !spreadsheetId) throw new Error('applyLeadChange requires a Sheets client and spreadsheetId');
   const fields = Object.keys(patch || {});
   if (!fields.length && !extraData.length) throw new Error('applyLeadChange requires at least one field');
@@ -977,7 +1001,7 @@ async function applyLeadChange(leadId, patch, {
   if (writesNotes && outreachWriteAuthority(env) === 'sheets') {
     const canonicalNotes = await readCanonicalSheetNotes(
       sheetsClient, spreadsheetId, notesCellRange(sheetName, parsedRow), id);
-    const merged = mergeNotesPatch(canonicalNotes, patch.notes, { releaseMarkers, resumeIntent });
+    const merged = mergeNotesPatch(canonicalNotes, patch.notes, { releaseMarkers, resumeIntent, optOutCorrection });
     keptMarkers = merged.kept;
     resumeTagKept = merged.resumeTagKept;
     notesPatch = { ...patch, notes: merged.notes };
@@ -995,7 +1019,7 @@ async function applyLeadChange(leadId, patch, {
   // ── Stage 3F: Supabase canonical ──────────────────────────────────────────
   // The authority flip lives here and nowhere else. No call site changes.
   if (outreachWriteAuthority(env) === 'supabase') {
-    const canonical = await applyCanonicalChange(id, patch, { env, logger, expectedState, releaseMarkers, resumeIntent });
+    const canonical = await applyCanonicalChange(id, patch, { env, logger, expectedState, releaseMarkers, resumeIntent, optOutCorrection });
     if (!canonical.ok) {
       // A refusal is a CORRECT outcome, not a transport failure: the lead moved
       // to state that outranks this mutation. Either way the caller asked for a
@@ -1300,5 +1324,6 @@ module.exports = {
   applyLeadChange, applyLeadChanges, columnLetterFor,
   applyCanonicalChange, conflictRefusal, readCanonicalLead, MAX_CAS_ATTEMPTS,
   preserveSafetyMarkers, SAFETY_NOTE_MARKERS, preserveResumeTag, mergeNotesPatch, BATCH_STATUSES,
+  CORRECTABLE_OPT_OUT_MARKER, isOptOutCorrection,
   outreachWriteDiagnostics, resetOutreachWriteDiagnostics,
 };
