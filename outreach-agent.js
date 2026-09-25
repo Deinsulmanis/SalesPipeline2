@@ -128,6 +128,7 @@ const {
   LEGACY_UNKNOWN, familyForLead, CAMPAIGN_FAMILY, resolveLeadFamily,
 } = require('./integrations/campaign-versions');
 const { findOriginalSentThread, resolveColdFollowUpThread } = require('./integrations/gmail-threading');
+const { appendLeadsRow } = require('./integrations/leads-sheet-append');
 const gmailMailboxObserver = require('./integrations/gmail-mailbox-observer');
 const { planMailboxEvents, commitObservation, ownReplyText } = require('./integrations/mailbox-observation-events');
 const { stripQuotedReply } = require('./integrations/reply-reconciliation');
@@ -424,11 +425,8 @@ async function upsertColdCallLeadFromEvent(lead, stage, note, options = {}) {
       website: lead.website || '', stage: decision.targetStage, priority: decision.targetStage === 'hot' ? 'hot' : 'warm',
       followup: new Date().toISOString().split('T')[0], notes: note || '', created: new Date().toISOString(),
     };
-    await sheets().spreadsheets.values.append({
-      spreadsheetId: SPREADSHEET_ID, range: LEADS_RANGE,
-      valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
-      requestBody: { values: [LEADS_COLUMNS.map(col => String(promotedLead[col] ?? ''))] },
-    });
+    await appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: LEADS_SHEET,
+      values: LEADS_COLUMNS.map(col => String(promotedLead[col] ?? '')) });
     return targetId;
   } catch (error) {
     console.warn(`[ColdCalls] non-blocking automation failure for ${lead.email}: ${error.message}`);

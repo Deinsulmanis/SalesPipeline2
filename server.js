@@ -38,6 +38,7 @@ const { parseRegistry: parseGmailInboxRegistry,
   verifyInbox: verifyGmailInbox, verifyMailboxAccess, isStaffingOnlySender } = require('./integrations/gmail-inbox-registry');
 const { configuredSenders, observableSenders, senderCountsToday, successfulSendCountToday } = require('./integrations/gmail-sender-routing');
 const { capacityFromEnv, DEFAULT_INBOX_PER_RUN_LIMIT, MAX_INBOX_PER_RUN_LIMIT } = require('./integrations/gmail-sender-capacity');
+const { appendLeadsRow } = require('./integrations/leads-sheet-append');
 const {
   markWarmupReady, activateSender, pauseSender, activationBlockers,
 } = require('./integrations/gmail-sender-lifecycle');
@@ -1088,15 +1089,8 @@ app.post('/api/leads', requireAuth, async (req, res) => {
   const vals = [COLUMNS.map(col => lead[col] !== undefined ? String(lead[col]) : '')];
   try {
     await withAuth(async () => {
-      const resp = await sheets().spreadsheets.values.append({
-        spreadsheetId:   SPREADSHEET_ID,
-        range:           COL_RANGE,
-        valueInputOption:'RAW',
-        insertDataOption:'INSERT_ROWS',
-        requestBody:     { values: vals },
-      });
-      const m = (resp.data.updates?.updatedRange || '').match(/!A(\d+)/);
-      if (m) rowMap.set(lead.id, parseInt(m[1]));
+      const written = await appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: SHEET_NAME, values: vals[0] });
+      if (written.row) rowMap.set(lead.id, written.row);
     });
     try {
       const occurredAt = Number.isFinite(Date.parse(String(lead.created || '')))
@@ -3928,11 +3922,8 @@ async function applyCalendarPlanItem(item, context) {
       };
       // Human-owned stage safety is fail-closed: hold before creating the card.
       if (stageRequiresHold('call_booked')) await withAuth(() => applyManualHold(boardId, boardLead.email));
-      await withAuth(() => sheets().spreadsheets.values.append({
-        spreadsheetId: SPREADSHEET_ID, range: AGENT_READ_RANGE,
-        valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
-        requestBody: { values: [[...COLUMNS.map(field => String(boardLead[field] ?? '')), '', '', '', meetingAt, '', '']] },
-      }));
+      await withAuth(() => appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: SHEET_NAME,
+        values: [...COLUMNS.map(field => String(boardLead[field] ?? '')), '', '', '', meetingAt, '', ''] }));
       createdBoard = true;
       context.boardLeads.push(boardLead);
       const promotionEventId = stableActivityId('pipeline-promotion', [ceLead.id, boardId, 'call_booked', PROMOTION_TRIGGER.MEETING_BOOKED]);
@@ -5406,11 +5397,8 @@ app.post('/api/coldemail/:id/promote', requireAuth, async (req, res) => {
         valueInputOption: 'RAW', requestBody: { values: [[meetingAt || identity.boardLead.meetingAt || '', outcome || identity.boardLead.outcome || '']] },
       }));
     } else {
-      await withAuth(() => sheets().spreadsheets.values.append({
-        spreadsheetId: SPREADSHEET_ID, range: AGENT_READ_RANGE,
-        valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
-        requestBody: { values: [[...COLUMNS.map(field => String(boardLead[field] ?? '')), '', '', '', meetingAt, outcome, String(req.body?.conversationContext || '').trim().slice(0, 10000)]] },
-      }));
+      await withAuth(() => appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: SHEET_NAME,
+        values: [...COLUMNS.map(field => String(boardLead[field] ?? '')), '', '', '', meetingAt, outcome, String(req.body?.conversationContext || '').trim().slice(0, 10000)] }));
     }
 
     const eventId = stableActivityId('pipeline-promotion', [ceLead.id, boardId, decision.targetStage, PROMOTION_TRIGGER.MANUAL]);
