@@ -56,7 +56,9 @@ const {
   mirrorOutreachLeadsInBackground, mirrorOutreachLeadFieldsInBackground, outreachStateMode,
   applyLeadChange, applyLeadChanges, outreachWriteDiagnostics,
   readOutreachCorpus, sheetsFallbackAllowed, outreachWriteAuthority, outreachCorpusReadStats,
+  readCanonicalLead,
 } = require('./integrations/outreach-state');
+const { applyFalseOptOutCorrection, FALSE_OPT_OUT_TAG } = require('./integrations/false-opt-out-correction');
 const { createIntentBackstop, BACKSTOP_REASON } = require('./integrations/intent-backstop');
 // Stage 3D: dual-read measurement only. Nothing branches on its output.
 const {
@@ -3598,6 +3600,100 @@ app.post('/api/leads/:id/reply-override/reverse', requireAuth, async (req, res) 
     res.json({ ok: true, duplicate: false, eventId });
   } catch (error) {
     console.error('[Reply override reversal]', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── FALSE OPT-OUT CORRECTION ────────────────────────────────────────────────
+// The one supported way to lift an opt-out tag our own classifier invented. The
+// decision logic, every refusal and the audit record live in
+// integrations/false-opt-out-correction.js; this route only reads canonical
+// state and supplies the existing writers. Nothing here can send, reserve,
+// enrol, change stage/emailStatus, touch the suppression list or lift a hold.
+async function loadFalseOptOutState(leadId) {
+  const id = String(leadId || '').trim();
+  const ceIds = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:A` });
+  const rows = (ceIds.data.values || []).map((cells, index) => [cells[0], index + 1])
+    .filter(([value, row]) => row > 1 && value === id);
+  let lead = null;
+  if (outreachWriteAuthority() === 'supabase') {
+    const canonical = await readCanonicalLead(id);
+    if (canonical.ok) lead = canonical.lead;
+    else if (canonical.reason !== 'lead not found in Supabase') throw new Error(`canonical outreach state unavailable: ${canonical.reason}`);
+  } else if (rows.length === 1) {
+    lead = (await findColdEmailLead({ id }))?.lead || null;
+  }
+  const [boardResponse, activities, suppressedEmails] = await Promise.all([
+    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: AGENT_READ_RANGE }),
+    readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER),
+    loadSuppressionEmails(),
+  ]);
+  const email = normalizeEmail(lead?.email || '');
+  const cards = (boardResponse.data.values || []).map((values, index) => ({ values, row: index + 1 })).slice(1)
+    .filter(({ values }) => values[0] === `CE-${id}` || (email && normalizeEmail(values[10] || '') === email))
+    .map(({ values, row }) => ({ card: Object.fromEntries(COLUMNS.map((field, i) => [field, values[i] || ''])), row }));
+  // The durable send lock is the authority on in-flight sends. Unverifiable is a refusal.
+  let reservations;
+  try {
+    const listed = await listUnresolvedReservations();
+    if (!listed.enabled) {
+      reservations = { ok: false, reason: 'the send lock is not enabled, so no reservation can be ruled out' };
+    } else {
+      const unresolved = [...listed.sentUnconfirmed, ...listed.reconciliationRequired, ...listed.staleReserved, ...listed.expiredSending]
+        .filter(item => item.leadId === id);
+      const nextSteps = [];
+      for (const step of [1, 2, 3]) {
+        const actionId = `gmail-cold:${id}:step:${step}`;
+        const reservation = await getOutboundReservation(actionId);
+        if (reservation) nextSteps.push({ actionId, status: reservation.status });
+      }
+      reservations = { ok: true, unresolved, nextSteps };
+    }
+  } catch (error) {
+    reservations = { ok: false, reason: error.message };
+  }
+  return {
+    lead, leadMatches: lead ? rows.length : 0, row: rows[0] ? rows[0][1] : null,
+    boardLeads: cards.map(item => item.card), boardRow: cards[0] ? cards[0].row : null,
+    activities, suppressedEmails, reservations,
+    automationRunning: Boolean(agentState.running || automationLaunchReserved),
+  };
+}
+
+app.post('/api/coldemail/:id/false-opt-out-correction', requireAuth, async (req, res) => {
+  const leadId = String(req.params.id || '').trim();
+  try {
+    const result = await withAuth(() => applyFalseOptOutCorrection({
+      leadId, messageId: String(req.body?.providerMessageId || ''), overrideId: String(req.body?.overrideId || ''),
+      by: String(req.body?.by || ''),
+    }, {
+      loadState: () => loadFalseOptOutState(leadId),
+      writeLeadNotes: ({ lead, row, notes, expectedState, optOutCorrection }) => applyLeadChange(lead.id, { notes }, {
+        row, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID, expectedState, optOutCorrection,
+      }),
+      writeBoardNotes: async ({ boardRow, boardId, expectedNotes, notes }) => {
+        // Verify the exact card before its single notes cell is written.
+        const current = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${boardRow}:Q${boardRow}` });
+        const cells = current.data.values?.[0] || [];
+        if (cells[0] !== boardId || (cells[15] || '') !== expectedNotes) throw new Error('Pipeline card changed before correction; nothing written');
+        await sheets().spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!P${boardRow}`,
+          valueInputOption: 'RAW', requestBody: { values: [[notes]] } });
+      },
+      appendActivity: event => appendColdCallActivities([event]),
+      now: () => new Date().toISOString(),
+    }));
+    if (result.status === 'refused') return res.status(409).json({ ok: false, ...result, automationResumed: false });
+    const after = await withAuth(() => loadFalseOptOutState(leadId));
+    res.json({ ok: true, ...result, automationResumed: false, verified: {
+      leadTagPresent: String(after.lead?.notes || '').includes(FALSE_OPT_OUT_TAG),
+      cardTagPresent: after.boardLeads.some(card => String(card.notes || '').includes(FALSE_OPT_OUT_TAG)),
+      manualHold: String(after.lead?.notes || '').includes(MANUAL_HOLD_TAG),
+      stage: after.lead?.stage || '', emailStatus: after.lead?.emailStatus || '', emailStep: after.lead?.emailStep || '',
+      pipelineCards: after.boardLeads.length,
+    } });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[False opt-out correction]', error.message);
     res.status(500).json({ error: error.message });
   }
 });
