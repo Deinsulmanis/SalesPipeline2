@@ -68,7 +68,7 @@ const {
   POLICY_SOURCE: REPLY_POLICY_SOURCE,
 } = require('./integrations/reply-decision');
 const { classifyReplyText, isUsableReplyIdentity, REPLY_STATE,
-  hasExplicitUnsubscribePhrase, hasExplicitNegativePhrase, NEEDS_HUMAN_REASON } = require('./integrations/canonical-reply');
+  NEEDS_HUMAN_REASON } = require('./integrations/canonical-reply');
 // ONE ownership model, shared with the CRM. The sender asks it rather than
 // keeping a second opinion about who may act on a lead.
 const { NON_COLD_STAGES, deriveAutomationOwnership, mayColdSend } = require('./integrations/automation-ownership');
@@ -129,7 +129,7 @@ const {
 } = require('./integrations/campaign-versions');
 const { findOriginalSentThread, resolveColdFollowUpThread } = require('./integrations/gmail-threading');
 const gmailMailboxObserver = require('./integrations/gmail-mailbox-observer');
-const { planMailboxEvents, commitObservation } = require('./integrations/mailbox-observation-events');
+const { planMailboxEvents, commitObservation, ownReplyText } = require('./integrations/mailbox-observation-events');
 const { stripQuotedReply } = require('./integrations/reply-reconciliation');
 const {
   wrapGmail, runWithGmailFeature, gmailUsageSnapshot, recordGmailRequest,
@@ -149,7 +149,7 @@ const { classifyStaffingReply, unroutedReplyDecision, STAFFING_CLARIFICATION,
 } = require('./integrations/staffing-reply-policy');
 const {
   inboundAlreadyEvaluated, committedInboundClassification,
-  skipHandlerForEvaluatedMessage, NOTE_ALREADY_HANDLED,
+  skipHandlerForEvaluatedMessage, recordedTerminalReply, NOTE_ALREADY_HANDLED,
 } = require('./integrations/inbound-reply-guard');
 const { commercialListUnsubscribeHeaders } = require('./integrations/commercial-email-headers');
 const {
@@ -1537,7 +1537,7 @@ async function getLateReplyMessages(lead, outbound) {
         threadId: m.threadId || outbound.threadId,
         subject: headerValue(m.payload, 'Subject'),
         snippet: m.snippet || '',
-        body: extractPlainText(m.payload).trim().slice(0, 1500),
+        body: ownReplyText(m.payload, m.snippet).slice(0, 1500),
         fromAddr: parseAddr(headerValue(m.payload, 'From')),
         occurredAt: new Date(ms).toISOString(),
       }));
@@ -3029,20 +3029,21 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     if (!inbound) continue;
     const lead = candidates.find(item => item.id === row.sourceLeadId);
     if (!lead || repliesByLead.has(lead.id)) continue;
-    const text = String(row.content || '');
-    const canonical = classifyReplyText(text, {
-      subject: row.subject || '', currentEmail: lead.email, now: row.occurredAt || null,
-    });
-    const unsub = canonical.reason === 'unsubscribe_request' || row.eventType === 'unsubscribe_reply'
-      || hasExplicitUnsubscribePhrase(text, { subject: row.subject || '' });
-    const neg = canonical.reason === 'explicit_rejection' || row.eventType === 'negative_reply'
-      || hasExplicitNegativePhrase(text, { subject: row.subject || '' });
+    // Re-read from the prospect's own words, not from a type our quoted
+    // footer may have produced; see recordedTerminalReply.
+    const recorded = recordedTerminalReply(row, { currentEmail: lead.email });
+    const unsub = recorded.unsubscribe;
+    const neg = recorded.rejection;
     if (!unsub && !neg) continue;
     const notes = String(lead.notes || '');
-    if (unsub && /\[REPLY:\s*Unsubscribed\]/i.test(notes) && String(lead.stage) === 'Unsub'
-      && SUPPRESSED_EMAILS.has(normEmail(lead.email))) continue;
-    if (neg && !unsub && /\[REPLY:\s*Not Interested\]/i.test(notes) && String(lead.emailStatus) === 'done'
-      && SUPPRESSED_EMAILS.has(normEmail(lead.email))) continue;
+    const optOutApplied = /\[REPLY:\s*Unsubscribed\]/i.test(notes) && String(lead.stage) === 'Unsub'
+      && SUPPRESSED_EMAILS.has(normEmail(lead.email));
+    if (unsub && optOutApplied) continue;
+    // An applied opt-out already outranks a rejection. Without this, re-reading
+    // an old footer-contaminated opt-out as "not interested" would move a lead
+    // that is correctly Unsub back to Done.
+    if (neg && !unsub && (optOutApplied || (/\[REPLY:\s*Not Interested\]/i.test(notes) && String(lead.emailStatus) === 'done'
+      && SUPPRESSED_EMAILS.has(normEmail(lead.email))))) continue;
     repliesByLead.set(lead.id, {
       id: metadata.gmailMessageId, threadId: metadata.gmailThreadId,
       internalDate: String(Date.parse(row.occurredAt) || Date.now()), snippet: row.content,
@@ -3065,7 +3066,9 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     const message = {
       messageId: rawMessage.id, rfcMessageId: gmailMailboxObserver.headerValue(rawMessage.payload, 'Message-ID'),
       threadId: rawMessage.threadId || '', snippet: rawMessage.snippet || '',
-      body: gmailMailboxObserver.firstPlainText(rawMessage.payload).trim().slice(0, 1500),
+      // The prospect's own words only; quote-stripped before the length cap,
+      // because an HTML head alone can exceed it.
+      body: ownReplyText(rawMessage.payload, rawMessage.snippet).slice(0, 1500),
       subject: gmailMailboxObserver.headerValue(rawMessage.payload, 'Subject'),
       fromAddr: gmailMailboxObserver.parseAddr(gmailMailboxObserver.headerValue(rawMessage.payload, 'From')),
       occurredAt: new Date(Number(rawMessage.internalDate) || Date.now()).toISOString(), senderInboxId: sender.id,

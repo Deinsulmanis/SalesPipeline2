@@ -67,6 +67,20 @@ function firstPlainText(payload) {
   return '';
 }
 
+// The first text/html leaf. Read only when a message has no text/plain part:
+// iPhone Mail sends multipart/alternative with HTML alone.
+function firstHtmlText(payload) {
+  if (!payload) return '';
+  if (payload.mimeType === 'text/html' && payload.body?.data) {
+    return Buffer.from(payload.body.data, 'base64url').toString('utf8');
+  }
+  for (const child of payload.parts || []) {
+    const html = firstHtmlText(child);
+    if (html) return html;
+  }
+  return '';
+}
+
 function candidateIndexes(leads, activities, senderInboxId) {
   const byEmail = new Map();
   const byThread = new Map();
@@ -379,6 +393,6 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
     ...matchMailboxMessages(unique, { leads, activities, senderInboxId, senderEmail }) };
 }
 
-module.exports = { headerValue, parseAddr, decodeBodies, firstPlainText, matchMailboxMessages,
+module.exports = { headerValue, parseAddr, decodeBodies, firstPlainText, firstHtmlText, matchMailboxMessages,
   bounceMentionsRecipient, extractedEmails, listChangedIds, listCatchup, observeMailbox, providerRead, isRateLimited,
   OVERLAP_MS, STALE_MS, RECOVERY_READ_BUDGET, byIdAscending, persistedGmailMessageIds };
