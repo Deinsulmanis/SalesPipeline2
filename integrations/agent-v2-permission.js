@@ -4,6 +4,7 @@ const { isDeepStrictEqual } = require('node:util');
 const { buildAgentV2Input } = require('./agent-v2-input');
 const { guardCode, validateModelDecision } = require('./agent-v2-validation');
 const { decisionIdFor } = require('./agent-v2-store');
+const { PENDING_STATUS, pendingProofMatches } = require('./agent-v2-pending-decision');
 const { ACTION_IDS, AUTHORITY, CATALOG_VERSION, EVENT_TYPE, INPUT_VERSION,
   OUTPUT_FIELDS, SCHEMA_VERSION, SLOT_IDS } = require('./agent-v2-contract');
 
@@ -67,6 +68,8 @@ function evaluateAgentV2Permission(state, record) {
     return result(VERDICT.DENY, 'NON_HUMAN_INBOUND', record);
   if (target.genuineHuman !== true)
     return result(VERDICT.HANDOFF, 'HUMAN_INBOUND_UNPROVEN', record);
+  if (target.decision?.status === PENDING_STATUS && !pendingProofMatches(state, target))
+    return result(VERDICT.DENY, 'PENDING_PROVIDER_PROOF_INVALID', record);
 
   const forced = guardCode(input);
   if (forced) return result(['UNSUBSCRIBE', 'NOT_INTERESTED', 'STATE_UNAVAILABLE'].includes(forced)
@@ -80,7 +83,7 @@ function evaluateAgentV2Permission(state, record) {
     return result(VERDICT.DENY, 'ALREADY_HANDLED', record);
   if (state.responseState.answered !== 'no')
     return result(VERDICT.HANDOFF, 'RESPONSE_STATE_UNAVAILABLE', record);
-  if (target.decision?.status !== 'recorded' || target.decision.exists !== true
+  if (!['recorded', PENDING_STATUS].includes(target.decision?.status) || target.decision.exists !== true
     || !target.decision.finalClassification || !target.decision.policyAction)
     return result(VERDICT.HANDOFF, 'PRODUCTION_DECISION_MISSING', record);
   if (target.decision.finalClassification === 'ALREADY_HANDLED'
@@ -88,7 +91,9 @@ function evaluateAgentV2Permission(state, record) {
     return result(VERDICT.HANDOFF, 'HUMAN_REVIEW_REQUIRED', record);
   if (target.decision.finalClassification === 'WRONG_PERSON')
     return result(VERDICT.HANDOFF, 'WRONG_PERSON_REFERRAL', record);
-  if (target.decision.executionStatus !== 'recorded')
+  if (!((target.decision.status === 'recorded' && target.decision.executionStatus === 'recorded')
+    || (target.decision.status === PENDING_STATUS
+      && target.decision.executionStatus === PENDING_STATUS)))
     return result(VERDICT.HANDOFF, 'PRODUCTION_ALREADY_HANDLED', record);
   if (!state.ownership.owner || state.ownership.owner === 'unknown'
     || state.thread.ownershipStatus !== 'proven')

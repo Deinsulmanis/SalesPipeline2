@@ -268,7 +268,7 @@ test('one-shot uses claim before model start, reads the durable row, and replay 
   assert.equal(row.decision_id, DECISION);
 });
 
-test('one-shot refuses unverified inbound before claim and contains no executor imports', async () => {
+test('one-shot refuses unverified inbound before claim and Phase 5 stays free of executors', async () => {
   let claims = 0;
   const store = { claim: async () => { claims++; throw Error('must not claim'); },
     getDecisionRow: async () => null };
@@ -286,8 +286,7 @@ test('one-shot refuses unverified inbound before claim and contains no executor 
   const source = fs.readFileSync(path.join(__dirname, '..', 'integrations',
     'agent-v2-orchestration.js'), 'utf8');
   assert.doesNotMatch(source, /googleapis|gmail|sendEmail|queueDraft|calendar|applyLeadChange|senderReservation/i);
-  for (const file of ['server.js', 'outreach-agent.js']) {
-    assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'),
-      /agent-v2-orchestration/);
-  }
+  assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8'),
+    /agent-v2-orchestration/);
+  assert.doesNotMatch(source, /agent-v2-execution|prospect-reply-delivery|send-lock/);
 });

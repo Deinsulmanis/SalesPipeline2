@@ -821,7 +821,7 @@ test('the same builder works across families: dental turns and ownership, no sta
 test('precedence is documented in the state itself', () => {
   const state = build({ lead: staffingLead(), activities: [] });
   assert.deepEqual(state.sources.precedence, EVIDENCE_PRECEDENCE);
-  assert.ok(EVIDENCE_PRECEDENCE.some(line => /reply_decision_recorded > gmail_reply_evaluated/.test(line)));
+  assert.ok(EVIDENCE_PRECEDENCE.some(line => /reply_decision_recorded > reply_decision_pending_execution > gmail_reply_evaluated/.test(line)));
   assert.ok(EVIDENCE_PRECEDENCE.some(line => /a link is never a booking/.test(line)));
 });
 
@@ -933,8 +933,8 @@ test('the inspection endpoint is authenticated, snapshot-backed and cannot mutat
   }
 });
 
-test('no production decision path consumes the conversation state', () => {
-  for (const file of ['outreach-agent.js', 'integrations/reply-response-policy.js', 'integrations/staffing-reply-policy.js',
+test('the Phase 1 builder remains read-only and legacy policy modules do not consume it', () => {
+  for (const file of ['integrations/reply-response-policy.js', 'integrations/staffing-reply-policy.js',
     'integrations/automation-ownership.js', 'integrations/reply-decision.js', 'integrations/stage-sequences.js',
     'integrations/staffing-agent-shadow.js', 'integrations/prospect-reply-delivery.js', 'integrations/send-safety-revalidate.js']) {
     assert.doesNotMatch(readSource(file), /conversation-state|conversation-evidence/, file);

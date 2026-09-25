@@ -6,6 +6,7 @@ const { decisionIdFor } = require('./agent-v2-store');
 const { evaluateAgentV2Permission, VERDICT } = require('./agent-v2-permission');
 const { renderAgentV2Wording } = require('./agent-v2-wording');
 const { AUTHORITY } = require('./agent-v2-contract');
+const { PENDING_STATUS, pendingProofMatches } = require('./agent-v2-pending-decision');
 
 const ORCHESTRATION_VERSION = 'agent_v2_readiness_v1';
 
@@ -58,9 +59,11 @@ function verifiedInbound(state, leadId, messageId) {
   return Boolean(input.leadId === leadId && !input.historical && input.stateDigest
     && target?.genuineHuman === true && !target.automatedReply
     && target.contentAvailable && String(target.content || '').trim()
-    && target.decision?.status === 'recorded' && target.decision?.exists === true
+    && (target.decision?.status === 'recorded'
+      || (target.decision?.status === PENDING_STATUS && pendingProofMatches(state, target)))
+    && target.decision?.exists === true
     && target.decision.finalClassification && target.decision.policyAction
-    && target.decision.executionStatus === 'recorded');
+    && target.decision.executionStatus === target.decision.status);
 }
 
 function phase0Passes(observation, state, row, leadId, messageId) {
