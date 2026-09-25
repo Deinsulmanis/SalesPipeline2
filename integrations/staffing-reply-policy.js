@@ -2,7 +2,7 @@
 
 const { CAMPAIGN_FAMILY, familyForLead, resolveLeadFamily } = require('./campaign-versions');
 const { ACTION } = require('./reply-response-policy');
-const { STAFFING_LANDING_PAGE_URL } = require('./staffing-campaign');
+const { STAFFING_LANDING_PAGE_URL, withStaffingLandingUrl } = require('./staffing-campaign');
 const { latestHumanOutboundAt } = require('./human-outbound');
 
 const CANDIDATE_SIDE_MARKERS = Object.freeze([
@@ -267,8 +267,10 @@ function staffingQualifyQuestionReply() {
   return STAFFING_QUALIFY_QUESTION;
 }
 
-function staffingSendInfoReply() {
-  return STAFFING_SEND_INFO_REPLY;
+// A tracked URL is only passed on the automated-delivery path; drafts and
+// every other caller get the plain constant, byte for byte.
+function staffingSendInfoReply({ landingPageUrl = '' } = {}) {
+  return landingPageUrl ? withStaffingLandingUrl(STAFFING_SEND_INFO_REPLY, landingPageUrl) : STAFFING_SEND_INFO_REPLY;
 }
 
 function staffingQualifiedReply({ company = '', bookingUrl = '', landingPageUrl = STAFFING_LANDING_PAGE_URL } = {}) {
