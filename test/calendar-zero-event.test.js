@@ -199,9 +199,11 @@ test('F1 fail-closed: with Supabase authoritative, an unreadable corpus refuses 
   assert.match(agent, /run\(\)\.catch\(e => \{\s*console\.error\('\\n\[FATAL\]', e\.message\);\s*process\.exit\(1\);/);
 });
 
-test('F1 the per-send fresh-state re-check (F3) is untouched', () => {
+// F3 (2026-09-26): the per-send re-check was the remaining per-send corpus
+// download. It now reads the one lead being sent to; see fresh-send-state.js.
+test('F3 the per-send fresh-state re-check reads the one lead, not the corpus', () => {
   const fresh = agent.slice(agent.indexOf('function freshSendSafetyDeps()'),
     agent.indexOf('function loadGmailObservationState('));
-  assert.match(fresh, /const rows = await readLeads\(snapshot\.coldEmail\);/);
-  assert.doesNotMatch(fresh, /getOutreachLeadById/);
+  assert.doesNotMatch(fresh, /readLeads\(snapshot\.coldEmail\)/);
+  assert.match(fresh, /getLeadById: id => getOutreachLeadById\(id\)/);
 });

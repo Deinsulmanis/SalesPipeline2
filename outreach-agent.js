@@ -78,7 +78,8 @@ const { latestResponseAt } = require('./integrations/prospect-response');
 // write is the Google Sheets append above it, and this cannot affect it.
 const { mirrorEventsInBackground } = require('./integrations/supabase-mirror');
 const { mirrorCycleSnapshotInBackground, outreachStateMode, applyLeadChange,
-  readOutreachCorpus, sheetsFallbackAllowed, outreachWriteAuthority } = require('./integrations/outreach-state');
+  readOutreachCorpus, sheetsFallbackAllowed, outreachWriteAuthority, getOutreachLeadById } = require('./integrations/outreach-state');
+const { freshLeadFromSnapshot, createFreshSendStateLoader } = require('./integrations/fresh-send-state');
 // Stage 3D: dual-read measurement only. No decision below reads its result.
 const { probeOutreachParity, formatProbeLine } = require('./integrations/outreach-dual-read');
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
@@ -1806,23 +1807,20 @@ async function loadAgentSnapshot({ forceColdEmail = false } = {}) {
   return snapshot;
 }
 
+// The last-moment revalidation before every provider send reads the ONE lead
+// being sent to, fresh from canonical state — never the whole corpus. See
+// integrations/fresh-send-state.js.
 function freshSendSafetyDeps() {
   return {
     env: process.env,
-    loadFreshState: async (leadId) => {
-      const snapshot = await withAuth(() => loadAgentSnapshot({
+    loadFreshState: createFreshSendStateLoader({
+      loadSnapshot: () => withAuth(() => loadAgentSnapshot({
         forceColdEmail: outreachWriteAuthority() === 'sheets',
-      }));
-      const rows = await readLeads(snapshot.coldEmail);
-      const match = String(leadId || '');
-      const current = rows.find(row => String(row.id) === match)
-        || rows.find(row => `CE-${row.id}` === match)
-        || null;
-      return {
-        current,
-        suppressedEmails: new Set((snapshot.suppression || []).slice(1).map(row => normEmail(row[0])).filter(Boolean)),
-      };
-    },
+      })),
+      readSheetLeads: rows => readLeads(rows),
+      getLeadById: id => getOutreachLeadById(id),
+      suppressedFrom: snapshot => new Set((snapshot.suppression || []).slice(1).map(row => normEmail(row[0])).filter(Boolean)),
+    }),
   };
 }
 
@@ -3328,8 +3326,8 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
       const fresh = await withAuth(() => loadAgentSnapshot({
         forceColdEmail: outreachWriteAuthority() === 'sheets',
       }));
-      const currentRows = await readLeads(fresh.coldEmail);
-      const current = currentRows.find(row => row.id === lead.id);
+      const current = await freshLeadFromSnapshot({ snapshot: fresh, leadId: lead.id,
+        readSheetLeads: rows => readLeads(rows), getLeadById: id => getOutreachLeadById(id) });
       const suppressed = new Set((fresh.suppression || []).slice(1).map(row => normEmail(row[0])).filter(Boolean));
       const safety = evaluateFreshSendSafety(lead, current, suppressed, { purpose: 'warm' });
       if (!safety.allowed) return { allowed: false, code: safety.code, reason: safety.reason };

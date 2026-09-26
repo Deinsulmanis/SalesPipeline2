@@ -375,7 +375,12 @@ test('W5. no send gate, limit or sequence path was touched', () => {
 // production pays them: one per agent process, one per per-send fresh check,
 // and one per Calendar check that loads booking context.
 
-const MODES = { production: { f1: false, f2a: false }, f1: { f1: true, f2a: false }, f1f2a: { f1: true, f2a: true } };
+const MODES = {
+  production: { f1: false, f2a: false, f3: false }, f1: { f1: true, f2a: false, f3: false },
+  f1f2a: { f1: true, f2a: true, f3: false },
+  // F3: the per-send revalidation reads the one lead being sent to, not the corpus.
+  f1f2af3: { f1: true, f2a: true, f3: true },
+};
 
 class Sim {
   // Durations from production: an intent-only or check-only pass finishes
@@ -427,7 +432,8 @@ class Sim {
     if (kind === 'check-only') {
       say({ due: this.pending.size, source: 'check-only-hint' });
     } else {
-      if (kind === 'send') this.reads.agent += this.sendsPerRun;   // per-send fresh re-check (F3, unchanged)
+      // Per-send fresh re-check: one full corpus read per send until F3; one row after.
+      if (kind === 'send' && !this.f3) this.reads.agent += this.sendsPerRun;
       const due = [...this.pending.values()];
       say({ due: due.length, source: 'prepare' });
       if (kind === 'intent' && this.intentFailAt.has(t)) code = 1;
@@ -495,17 +501,19 @@ test('D0. the model reproduces the measured production baseline: 50 full-corpus 
 test('D-budget. full-corpus reads per day: production vs F1 vs F1 + F2a', () => {
   const day = (mode, start) => new Sim({ mode }).run(start, start + 1440);
   const budget = {};
-  for (const mode of ['production', 'f1', 'f1f2a']) {
+  for (const mode of ['production', 'f1', 'f1f2a', 'f1f2af3']) {
     budget[mode] = { weekday: day(mode, MON).corpusReads, weekend: day(mode, SAT).corpusReads };
   }
   // Written out so a change in any path shows up here as a number.
   // Weekend production = 24 x 50, the measured hourly rate. Weekdays add ten
-  // send runs, each paying one corpus read plus one per send (F3, unchanged),
-  // while holding the mutex against the ticks that would otherwise fire.
+  // send runs, each paying one corpus read plus (until F3) one per send, while
+  // holding the mutex against the ticks that would otherwise fire. F3 removes
+  // the per-send corpus reads: each send reads one row instead.
   assert.deepEqual(budget, {
     production: { weekday: 1160, weekend: 1200 },
     f1: { weekday: 548, weekend: 528 },
     f1f2a: { weekday: 119, weekend: 49 },
+    f1f2af3: { weekday: 59, weekend: 49 },
   });
   assert.ok(budget.f1.weekday < budget.production.weekday * 0.5);
   assert.ok(budget.f1f2a.weekday < budget.production.weekday * 0.12);
@@ -625,6 +633,7 @@ test('D10. outside send windows nothing new sends: only check-only and needed in
     return [...sim.delivered.entries()].map(([id, list]) => [id, list.map(d => d.t)]).sort();
   };
   assert.deepEqual(outcome('f1f2a'), outcome('production'));
+  assert.deepEqual(outcome('f1f2af3'), outcome('production'), 'F3 changes reads, never deliveries');
 });
 
 test('D11. work created outside the demo flow is found by the check-only hint', () => {
