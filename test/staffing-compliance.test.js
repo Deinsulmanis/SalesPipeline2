@@ -154,7 +154,7 @@ test('12. compliance footer does not affect subject or thread identity', () => {
   assert.doesNotMatch(render(1).subject, /SA-48271/);
   assert.match(validateStaffingEmail({ subject: 'employer accounts SA-48271', body: render(1).body }, 1) || '', /must not contain the campaign reference/);
   const agent = read('outreach-agent.js');
-  assert.match(agent, /if \(lead\.emailTemplateId === STAFFING_TEMPLATE\) \{\n\s*try \{ body = staffingFollowUpBody\(lead, nextStepNum\); \}/);
+  assert.match(agent, /if \(lead\.emailTemplateId === STAFFING_TEMPLATE\) \{\n\s*try \{ body = staffingFollowUpBody\(lead, nextStepNum, ownershipActivities\); \}/);
 });
 
 test('13. dental campaign templates are not modified', () => {

@@ -488,9 +488,22 @@ test('H4 — NO production read path consults Supabase for an operational decisi
   for (const reader of readers) {
     assert.ok(!serverSrc.includes(reader),
       `server.js must not call ${reader} — Sheets is authoritative for operational state in Stage 3`);
+    // F3 (2026-09-26) sanctions exactly ONE per-lead reader in the sender: the
+    // last-moment send revalidation reads the one lead being sent to, instead of
+    // re-downloading the corpus per send. It is reached only when the snapshot
+    // carries no Sheets ColdEmail rows — primary mode with Supabase write
+    // authority, the configuration in which the corpus read already decides from
+    // Supabase — so it adds no decision path that another mode could reach.
+    if (reader === 'getOutreachLeadById') continue;
     assert.ok(!agentSrc.includes(reader),
       `outreach-agent.js must not call ${reader} — the sender must never read from the mirror`);
   }
+  const uses = agentSrc.split('\n').filter(line => line.includes('getOutreachLeadById')).map(line => line.trim());
+  assert.deepEqual(uses, [
+    'readOutreachCorpus, sheetsFallbackAllowed, outreachWriteAuthority, getOutreachLeadById } = require(\'./integrations/outreach-state\');',
+    'getLeadById: id => getOutreachLeadById(id),',
+    'readSheetLeads: rows => readLeads(rows), getLeadById: id => getOutreachLeadById(id) });',
+  ], 'the only per-lead canonical read in the sender is the send-time revalidation (per-send gate + warm final gate)');
 });
 
 test('H5 — primary mode is honoured by the two corpus reads, and only those', () => {
@@ -907,6 +920,9 @@ test('N2 — no DECISION path reads the mirror; only measurement may', () => {
   for (const file of appFiles) {
     const src = readSource(file);
     for (const reader of readers) {
+      // F3: the sender's send-time revalidation of the one lead being emailed is
+      // the single sanctioned per-lead read; H4 pins its exact call sites.
+      if (path.basename(file) === 'outreach-agent.js' && reader === 'getOutreachLeadById') continue;
       assert.ok(!src.includes(reader),
         `${path.basename(file)} must not call ${reader} — Sheets is authoritative in Stage 3`);
     }

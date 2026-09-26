@@ -72,8 +72,9 @@ test('the send cron fires exactly ten weekday windows, 7:00–11:30 Pacific, cle
   assert.ok(!slots.some(slot => slot >= '12:00'), 'no send run may hold the mutex at the 12:15 late-reply pass');
 });
 
-test('scheduler passes strict 5 per inbox with derived totals', () => {
-  assert.match(server, /const SCHEDULED_SEND_PER_INBOX_CAP = 5;/);
+test('scheduler passes a strict 6-per-inbox ceiling with derived totals', () => {
+  assert.match(server, /const SCHEDULED_SEND_PER_INBOX_CAP = MAX_INBOX_PER_RUN_LIMIT;/);
+  assert.equal(require('../integrations/gmail-sender-capacity').MAX_INBOX_PER_RUN_LIMIT, 6);
   assert.match(server, /function scheduledSendCaps/);
   assert.match(server, /cron\.schedule\('0,30 7-11 \* \* 1-5'/);
   assert.match(server, /DAILY_CAP: String\(caps\.total\)/);

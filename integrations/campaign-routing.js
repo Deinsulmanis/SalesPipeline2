@@ -3,6 +3,7 @@
 const { CAMPAIGN_VERSIONS, CAMPAIGN_FAMILY, resolveLeadFamily } = require('./campaign-versions');
 const { staffingSendBlockReason, isStaffingLead } = require('./staffing-launch-gate');
 const { STAFFING_CAMPAIGN } = require('./staffing-campaign');
+const { isStaffingOnlySender } = require('./gmail-inbox-registry');
 
 const EMAIL_TEMPLATES = Object.freeze([
   Object.freeze({ id: STAFFING_CAMPAIGN.emailTemplateId, name: STAFFING_CAMPAIGN.name,
@@ -79,6 +80,9 @@ function validateRoute({ niche, senderInboxId, emailTemplateId, inboxes = [], re
   if (!inbox) return { ok: false, reason: 'A registered sending inbox is required' };
   if (!inbox.sendEligible) return { ok: false, reason: `${inbox.email} is not eligible to send` };
   if (!inbox.deliveryImplemented) return { ok: false, reason: `${inbox.email} is connected but sender routing is not active yet` };
+  if (isStaffingOnlySender(inbox) && normalizedNiche !== STAFFING_CAMPAIGN.niche) {
+    return { ok: false, reason: `${inbox.email} is reserved for staffing agency leads` };
+  }
   if (!template) return { ok: false, reason: 'A registered email template is required' };
   if (template.niche !== normalizedNiche) return { ok: false, reason: `${template.name} cannot be used for ${normalizedNiche} leads` };
   if (requireReady && !template.ready) return { ok: false, reason: template.reason || `${template.name} is not ready` };

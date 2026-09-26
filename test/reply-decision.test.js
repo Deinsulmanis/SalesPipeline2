@@ -378,8 +378,11 @@ test('H. reprocessing the same inbound message cannot produce a second, contradi
   const writer = agent.slice(agent.indexOf('async function persistReplyDecision'), agent.indexOf('async function handleNotInterested'));
   assert.ok(writer.indexOf("String(item.eventId || '') === row.eventId") < writer.indexOf('recordMailboxActivity(row)'));
   const mailboxWriter = agent.slice(agent.indexOf('async function recordMailboxActivity'), agent.indexOf('// Re-resolve a lead'));
-  assert.match(mailboxWriter, /current\.find\(row => row\.eventId === event\.eventId\)/,
-    'recordMailboxActivity re-reads the ledger before appending');
+  assert.match(mailboxWriter, /recordMailboxActivities\(\[event\]\)/);
+  const ledgerWriter = read('integrations/activity-ledger-batch.js');
+  assert.match(ledgerWriter, /const existing = new Set\(\(await read\(\)\)\.map\(row => row\.eventId\)\)/);
+  assert.ok(ledgerWriter.indexOf('if (existing.has(eventId)) continue') < ledgerWriter.indexOf('await values.append'),
+    'the shared ledger writer re-reads IDs and suppresses a replay before appending');
 });
 
 // ── I. shadow evaluation ────────────────────────────────────────────────────

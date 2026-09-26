@@ -4,8 +4,9 @@
 production test failed JSON parsing. The implementation-only correction remains
 `research_icp_v1`; see [the investigation, fix and validation report](RESEARCH_ICP_V1_SERIALIZATION_FIX.md).
 That report supersedes the original implementation-time deployment/setup status
-below. The correction is local only and requires the new additive provider-response
-audit migration before deployment; do not repeat the original applied migration.
+below. As verified by the operator on 2026-09-23, both Research/ICP migrations
+(`20260921000000` and `20260921010000`) are already live. Do not rerun them
+for Agent v2. The setup directions below are retained as historical context.
 
 Implemented as manual, shadow-only company research and campaign evaluation. It is
 disabled by default. No deployment, migration application, live model call, Apollo
@@ -69,9 +70,9 @@ is preserved and excluded from this implementation's commit.
 
 ## Database setup and storage
 
-Apply **only** `supabase/migrations/20260921000000_research_icp_runs.sql` to the
-intended Supabase project during your normal release process. Do not indiscriminately
-apply unrelated pending migrations. This migration has not been applied here.
+`supabase/migrations/20260921000000_research_icp_runs.sql` is already live in
+the target Supabase project. Do not rerun it for Agent v2 or apply unrelated
+pending migrations as part of the Agent v2 pilot.
 
 The new `public.research_icp_runs` table has RLS enabled and no anon/authenticated
 access. Server service-role access permits insert, select and update. There are no

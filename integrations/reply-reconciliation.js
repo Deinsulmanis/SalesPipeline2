@@ -48,6 +48,55 @@ const RECONCILE_STATUS = Object.freeze({
 
 const norm = value => String(value || '').trim().toLowerCase();
 
+// Where the quoted thread starts in an HTML reply. Mail clients mark it with
+// markup, not a text line: Apple Mail and Thunderbird wrap it in
+// <blockquote type="cite"> with the "On … wrote:" attribution INSIDE the tag,
+// mid-line; Gmail uses div.gmail_quote; Outlook #divRplyFwdMsg / #appendonsend;
+// Yahoo .yahoo_quoted. Everything from the first of these on is someone else's
+// words — in practice our own cold email, compliance footer included.
+const HTML_QUOTE_START = [
+  /<blockquote\b/i,
+  /<div\b[^>]*\bclass=["'][^"']*\b(?:gmail_quote|gmail_attr|yahoo_quoted|moz-cite-prefix|protonmail_quote)\b/i,
+  /<[a-z]+\b[^>]*\bid=["'](?:divRplyFwdMsg|appendonsend|mail-editor-reference-message-container)["']/i,
+];
+
+const HTML_MARKUP = /<(?:!doctype|html|head|body|div|p|br|span|blockquote|table|meta)\b[^>]*>/i;
+
+function looksLikeHtml(text) {
+  return HTML_MARKUP.test(String(text || ''));
+}
+
+/**
+ * The part of an HTML reply above its quoted thread, still as HTML. Head, style
+ * and script are dropped even when unterminated, because a stored copy may have
+ * been truncated mid-tag.
+ */
+function stripQuotedHtml(html) {
+  const value = String(html || '').replace(/<(head|style|script)\b[\s\S]*?(?:<\/\1\s*>|$)/gi, ' ');
+  let cut = value.length;
+  for (const marker of HTML_QUOTE_START) {
+    const match = marker.exec(value);
+    if (match && match.index < cut) cut = match.index;
+  }
+  return value.slice(0, cut);
+}
+
+// Our own compliance sentences. A client can quote them with no marker at all
+// (an inline reply, a forward pasted as text), and they contain the literal
+// word "unsubscribe". They are matched as OUR sentences, so a prospect's own
+// "unsubscribe" or "remove me" is never touched.
+const OWN_OUTBOUND_COPY = [
+  /This is a commercial email\.?/gi,
+  /Not relevant\?\s*(?=Reply\b)/gi,
+  /You(?:'|’)re receiving this because your business is publicly listed\.?/gi,
+  /Reply\s+["“”]unsubscribe["“”]\s+and\s+I(?:(?:'|’)ll)?\s+(?:remove you(?:\s+immediately)?|won(?:'|’)t follow up again)\.?/gi,
+  /\bRef:\s*S[AL]-[A-Za-z0-9-]+/g,
+];
+
+function scrubOwnOutboundCopy(text) {
+  return OWN_OUTBOUND_COPY.reduce((value, pattern) => value.replace(pattern, ' '), String(text || ''));
+}
+
 /**
  * Keep only the sender's OWN words, discarding the quoted thread beneath them.
  *
@@ -56,9 +105,16 @@ const norm = value => String(value || '').trim().toLowerCase();
  * cold email quoted underneath. Classifying the whole blob meant classifying
  * our own copy, and three leads whose legacy tag correctly said "positive"
  * came back "negative" purely from that contamination.
+ *
+ * HTML is cut at its quote markup before it becomes text: an iPhone Mail reply
+ * carries no text/plain part, and its "On … wrote:" sits mid-line inside a
+ * blockquote, so line markers alone let the whole quoted cold email — and its
+ * "Reply "unsubscribe"" footer — through to the classifier. Flattened text (a
+ * Gmail snippet) carries the attribution mid-line too.
  */
 function stripQuotedReply(text) {
-  const body = String(text || '').split('\r\n').join('\n');
+  let body = String(text || '').split('\r\n').join('\n');
+  if (looksLikeHtml(body)) body = htmlToText(stripQuotedHtml(body));
   const markers = [
     /^\s*On .{0,200}wrote:\s*$/m,          // Gmail / Apple Mail
     /^\s*-{2,}\s*Original Message\s*-{2,}/im,
@@ -66,13 +122,18 @@ function stripQuotedReply(text) {
     /^\s*_{10,}\s*$/m,                     // Outlook divider
     /^\s*Sent from my /m,
     /^>/m,                                  // classic quote prefix
+    // Mid-line attribution. It must name an address or a dated time, so prose
+    // such as "on Monday you wrote: …" is not mistaken for a quote.
+    /\bOn\s[^\n]{0,200}?(?:@[^\s>]+>?|\b\d{4}\b[^\n]{0,80}?\b\d{1,2}:\d{2}\b)[^\n]{0,120}?\bwrote:/,
+    /-{2,}\s*Original Message\s*-{2,}/i,
+    /\bFrom:\s[^\n]{1,200}?\bSent:\s/,
   ];
   let cut = body.length;
   for (const marker of markers) {
     const match = marker.exec(body);
     if (match && match.index < cut) cut = match.index;
   }
-  return body.slice(0, cut).trim();
+  return scrubOwnOutboundCopy(body.slice(0, cut)).trim();
 }
 
 /**
@@ -86,11 +147,15 @@ function htmlToText(html) {
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
     .replace(/<br\s*\/?>/gi, NEWLINE)
-    .replace(/<\/(p|div|tr|li|h[1-6])>/gi, NEWLINE)
+    .replace(/<\/(p|div|tr|li|h[1-6]|blockquote|table)>/gi, NEWLINE)
+    .replace(/<(?:blockquote|hr)\b[^>]*>/gi, NEWLINE)
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&')
     .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&#39;|&apos;/gi, "'")
     .replace(/&quot;/gi, '"')
+    .replace(/&[lr]squo;/gi, "'").replace(/&[lr]dquo;/gi, '"')
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(parseInt(code, 16)))
     .replace(/[^\S\n]+/g, ' ')
     .replace(/\n{3,}/g, NEWLINE + NEWLINE)
     .trim();
@@ -100,8 +165,7 @@ function htmlToText(html) {
 function classifiableText(message = {}) {
   const fromPlain = stripQuotedReply(message.body || '');
   if (fromPlain) return fromPlain;
-  const fromHtml = stripQuotedReply(htmlToText(message.html || ''));
-  return fromHtml;
+  return stripQuotedReply(message.html || '');
 }
 
 /** `gmail-reply:<messageId>` — the same identity the live writer uses. */
@@ -331,6 +395,6 @@ function planReconciliation(entries = []) {
 
 module.exports = {
   RECONCILE_STATUS, planLeadReconciliation, planReconciliation,
-  stripQuotedReply, htmlToText, classifiableText,
+  stripQuotedReply, htmlToText, classifiableText, stripQuotedHtml, looksLikeHtml, scrubOwnOutboundCopy,
   reconciledEventId, alreadyRecorded, eventTypeFor,
 };

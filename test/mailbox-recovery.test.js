@@ -85,6 +85,36 @@ test('message 404 is retained as a provider evidence gap, not a cursor reset',as
   const plan=await planMailboxEvents({...input,observation});assert.equal(plan.events[0].eventType,'gmail_observation_gap');
   assert.equal(plan.events[0].sourceLeadId,'');
 });
+test('many vanished messages in one thread recover that thread once, not once per message',async()=>{
+  // The 2026-09-23 primary backoff: ~40 deleted messages across 3 threads cost 38
+  // full-thread reads per pass, tripped the per-user quota and never advanced.
+  const vanished = ['a1','a2','a3','a4','a5'].map(id => ({ id, threadId:'tA' })).concat([{ id:'b1', threadId:'tB' }, { id:'b2', threadId:'tB' }]);
+  const calls = [];
+  const gmail = { users:{
+    history:{ list:async () => ({ data:{ historyId:'201', history:vanished.map(m => ({ messagesAdded:[{ message:m }] })) } }) },
+    messages:{ get:async p => { calls.push(['get',p.id]); throw gone(); } },
+    threads:{ get:async p => { calls.push(['thread',p.id]); return { data:{ messages:[msg(`${p.id}-kept`,lead.email,'still here',false,'2026-09-08T17:00:00Z')] } }; } },
+  }};
+  const observation = await observeMailbox({ gmail, leads:[lead], activities:[], senderInboxId:'primary', senderEmail:'sender@example.com',
+    historyId:'100', lastSuccessfulObservationAt:NOW.toISOString(), now:NOW });
+  assert.deepEqual(calls.filter(c => c[0]==='thread').map(c => c[1]), ['tA','tB'], 'one full-thread read per thread');
+  assert.equal(calls.filter(c => c[0]==='get').length, 7, 'every vanished message is still attempted');
+  assert.equal(observation.unavailable.length, 7, 'every vanished message is still recorded as a provider gap');
+  assert.ok(observation.unavailable.every(gap => gap.threadRecovered === true));
+});
+test('a thread that is itself gone is tried once and every message in it stays an unrecovered gap',async()=>{
+  const calls = [];
+  const gmail = { users:{
+    history:{ list:async () => ({ data:{ historyId:'201', history:['x1','x2','x3'].map(id => ({ messagesAdded:[{ message:{ id, threadId:'tX' } }] })) } }) },
+    messages:{ get:async () => { throw gone(); } },
+    threads:{ get:async p => { calls.push(p.id); throw gone(); } },
+  }};
+  const observation = await observeMailbox({ gmail, leads:[lead], activities:[], senderInboxId:'primary', senderEmail:'sender@example.com',
+    historyId:'100', lastSuccessfulObservationAt:NOW.toISOString(), now:NOW });
+  assert.deepEqual(calls, ['tX']);
+  assert.equal(observation.unavailable.length, 3);
+  assert.ok(observation.unavailable.every(gap => gap.threadRecovered === false));
+});
 test('wrong mailbox binding fails catch-up closed',async()=>{
   const {input}=fixture([],{email:'wrong@example.com'});await assert.rejects(()=>observeMailbox(input),/identity mismatch/);
 });

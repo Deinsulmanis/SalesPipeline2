@@ -1,6 +1,8 @@
 'use strict';
 
-const { DEFAULT_INBOX_DAILY_LIMIT, DEFAULT_INBOX_PER_RUN_LIMIT } = require('./gmail-sender-capacity');
+const {
+  DEFAULT_INBOX_DAILY_LIMIT, DEFAULT_INBOX_PER_RUN_LIMIT, MAX_INBOX_PER_RUN_LIMIT,
+} = require('./gmail-sender-capacity');
 
 const WARMUP_STATUS = Object.freeze({
   WARMING: 'warming',
@@ -28,11 +30,15 @@ function activationBlockers(sender = {}, {
   const status = String(sender.status || '');
   if (status !== WARMUP_STATUS.READY) blockers.push('warmup is not ready');
   if (String(sender.provider || 'gmail') !== 'gmail') blockers.push('provider must be gmail');
-  if (Number(sender.dailyLimit) !== DEFAULT_INBOX_DAILY_LIMIT) {
-    blockers.push(`dailyLimit must be ${DEFAULT_INBOX_DAILY_LIMIT}`);
+  // The defaults are ceilings for a newly activated inbox, not exact values:
+  // a more conservative cap is always acceptable, a larger one never is.
+  const dailyLimit = Number(sender.dailyLimit);
+  if (!Number.isInteger(dailyLimit) || dailyLimit < 1 || dailyLimit > DEFAULT_INBOX_DAILY_LIMIT) {
+    blockers.push(`dailyLimit must be between 1 and ${DEFAULT_INBOX_DAILY_LIMIT}`);
   }
-  if (Number(sender.perRunLimit || DEFAULT_INBOX_PER_RUN_LIMIT) !== DEFAULT_INBOX_PER_RUN_LIMIT) {
-    blockers.push(`perRunLimit must be ${DEFAULT_INBOX_PER_RUN_LIMIT}`);
+  const perRunLimit = Number(sender.perRunLimit || DEFAULT_INBOX_PER_RUN_LIMIT);
+  if (!Number.isInteger(perRunLimit) || perRunLimit < 1 || perRunLimit > MAX_INBOX_PER_RUN_LIMIT) {
+    blockers.push(`perRunLimit must be between 1 and ${MAX_INBOX_PER_RUN_LIMIT}`);
   }
   if (!sender.credentialConfigured) blockers.push('gmail auth is not configured');
   if (auth) {

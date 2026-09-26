@@ -77,10 +77,12 @@ test('the two schedules can no longer collide on any minute', () => {
 });
 
 test('6. no production send limit changed', () => {
-  // The repair is a schedule offset. Per-inbox window size stays 5; the
+  // The repair is a schedule offset. The per-inbox window ceiling is the shared
+  // MAX_INBOX_PER_RUN_LIMIT (6); the
   // combined run/day ceilings are derived from ACTIVE inboxes, not hardcoded
   // to a two-inbox total.
-  assert.match(server, /const SCHEDULED_SEND_PER_INBOX_CAP = 5;/);
+  assert.match(server, /const SCHEDULED_SEND_PER_INBOX_CAP = MAX_INBOX_PER_RUN_LIMIT;/);
+  assert.equal(require('../integrations/gmail-sender-capacity').MAX_INBOX_PER_RUN_LIMIT, 6);
   assert.match(server, /function scheduledSendCaps/);
   assert.match(server, /PER_INBOX_RUN_CAP: String\(caps\.perInbox\)/);
   assert.match(server, /DAILY_CAP: String\(caps\.total\)/);

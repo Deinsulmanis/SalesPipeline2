@@ -2,12 +2,37 @@
 
 // Observation has no sender, stage writer, enrollment capability or model API.
 // Canonical evidence is committed before any subsequent automation evaluation.
-const { headerValue, parseAddr, firstPlainText, decodeBodies, matchMailboxMessages, providerRead } = require('./gmail-mailbox-observer');
+const { headerValue, parseAddr, firstPlainText, firstHtmlText, decodeBodies, matchMailboxMessages, providerRead } = require('./gmail-mailbox-observer');
 const { classifyReplyText } = require('./canonical-reply');
 const { uniqueSuppressions, suppressionForCanonical, inboundAlreadyEvaluated } = require('./inbound-reply-guard');
 const { eventTypeFor, stripQuotedReply } = require('./reply-reconciliation');
 const { planOutboundActivity } = require('./human-outbound');
+const { providerMessageId } = require('./canonical-sends');
 const norm = value => String(value || '').trim().toLowerCase();
+
+const HUMAN_REPLY_TEXT_LIMIT = 1500;
+
+// The words the sender actually wrote, and the ONLY text a reply classifier may
+// read. text/plain when the client sent it; otherwise the text/html part, cut
+// at its quote markup before it becomes text (iPhone Mail sends HTML alone).
+// The snippet is a last resort: a flattened preview that can run into the quote,
+// so it is stripped the same way. The provider message is never modified — it
+// stays in Gmail, addressed by the gmailMessageId every event carries.
+function ownReplyText(payload, snippet = '') {
+  let raw = '';
+  try { raw = firstPlainText(payload) || firstHtmlText(payload) || decodeBodies(payload) || ''; } catch (_) { raw = ''; }
+  return stripQuotedReply(raw || snippet || '');
+}
+
+// What a person actually wrote, from the Gmail message itself: the text/plain
+// part only — never the HTML part or the snippet, which can carry the quoted
+// thread — quote-stripped exactly as inbound replies are. '' when there is no
+// readable plain text; the human evidence is recorded either way.
+function humanReplyText(payload) {
+  let text = '';
+  try { text = stripQuotedReply(firstPlainText(payload)); } catch (_) { text = ''; }
+  return { text: text.slice(0, HUMAN_REPLY_TEXT_LIMIT), truncated: text.length > HUMAN_REPLY_TEXT_LIMIT };
+}
 const meta = row => { try { return typeof row.metadata === 'object' ? row.metadata : JSON.parse(row.metadata || '{}'); } catch (_) { return {}; } };
 const addresses = text => String(text || '').split(',').map(parseAddr).filter(Boolean);
 
@@ -61,7 +86,10 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
       const lead = matches[0];
       if (!lead) { ignored.push({ id: message.id, reason: 'unmatched_outbound' }); continue; }
       const mine = existingActivitiesByLead.get(lead.id) || [];
-      if (mine.some(row => meta(row).gmailMessageId === message.id)) continue;
+      // Already recorded under the canonical provider id, whichever key the
+      // writer used — cold steps, warm replies and earlier observations use
+      // gmailMessageId, stage-sequence sends use providerMessageId.
+      if (mine.some(row => providerMessageId(row) === message.id)) continue;
       const priorInbound = threadHasCrmInbound(message.threadId, lead, at)
         || batchInboundBefore(message.threadId, lead.email, at);
       // Fetch the Gmail thread only when CRM and this batch cannot prove a prior
@@ -76,9 +104,13 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
         subject: headerValue(message.payload, 'Subject'), sentAt: occurredAt }, {
         leadsByEmail, existingActivitiesByLead, threadsWithInbound: new Set(threadInbound ? [message.threadId] : []),
       });
-      if (plan.activity) add({ ...plan.activity, metadata: JSON.stringify({ ...plan.activity.metadata,
-        senderInboxId, rfcMessageId, recoveredDuringOutage: observation.recovered }) });
-      else ignored.push({ id: message.id, reason: plan.outcome });
+      if (plan.activity) {
+        const reply = humanReplyText(message.payload);
+        add({ ...plan.activity, content: reply.text, metadata: JSON.stringify({ ...plan.activity.metadata,
+          senderInboxId, rfcMessageId, recoveredDuringOutage: observation.recovered,
+          contentCapture: reply.text ? 'quote_stripped_plain_text' : 'unavailable',
+          contentTruncated: reply.truncated }) });
+      } else ignored.push({ id: message.id, reason: plan.outcome });
       continue;
     }
     const matched = matchMailboxMessages([message], { leads: matchLeads, activities, senderInboxId, senderEmail });
@@ -94,7 +126,7 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
     }
     for (const [leadId] of matched.replies) {
       const lead = byId.get(String(leadId));
-      const text = stripQuotedReply(firstPlainText(message.payload) || decodeBodies(message.payload) || message.snippet || '');
+      const text = ownReplyText(message.payload, message.snippet);
       const canonical = classifyReplyText(text, { currentEmail: lead.email, subject: headerValue(message.payload,'Subject'), now: occurredAt, year: new Date(at).getUTCFullYear() });
       const suppression = suppressionForCanonical(canonical, lead);
       if (suppression) suppressions.push(suppression);
@@ -145,16 +177,21 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
   return { events, suppressions: uniqueSuppressions(suppressions), replies, ignored };
 }
 
-async function commitObservation({ observation, plan, appendEvent, suppress, checkpoint, activities }) {
+async function commitObservation({ observation, plan, appendEvent, appendEvents, suppress, checkpoint, activities }) {
   // Capabilities intentionally exclude sending. A partial failure throws before
   // the checkpoint. The caller must persist unhealthy against the OLD cursor.
   for (const item of plan.suppressions) await suppress(item);
-  for (const event of plan.events) {
-    await appendEvent(event);
-    activities.push(event);
+  if (appendEvents && plan.events.length) {
+    await appendEvents(plan.events);
+    activities.push(...plan.events);
+  } else {
+    for (const event of plan.events) {
+      await appendEvent(event);
+      activities.push(event);
+    }
   }
   await checkpoint(observation);
   return { persisted: plan.events.length, suppressed: plan.suppressions.length };
 }
 
-module.exports = { planMailboxEvents, commitObservation };
+module.exports = { planMailboxEvents, commitObservation, humanReplyText, ownReplyText, HUMAN_REPLY_TEXT_LIMIT };

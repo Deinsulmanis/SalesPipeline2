@@ -418,8 +418,8 @@ test('a failed provider send records no activity', async () => {
 // ── 6. REGRESSION: nothing about sending changed ────────────────────────────
 
 test('sending cadence, caps and delays are untouched', () => {
-  assert.match(agentSrc, /const MIN_DELAY = 45 \* 1000;/);
-  assert.match(agentSrc, /const MAX_DELAY = 120 \* 1000;/);
+  assert.match(agentSrc, /const MIN_DELAY = 30 \* 1000;/);
+  assert.match(agentSrc, /const MAX_DELAY = 90 \* 1000;/);
   assert.match(agentSrc, /DAILY_SEND_LIMIT = SENDER_CAPACITY\.globalDailyLimit/);
   assert.match(agentSrc, /delayDays: 3,/);
   assert.match(agentSrc, /delayDays: 5,/);

@@ -35,6 +35,26 @@ function isStaffingCampaign(lead = {}) {
 }
 
 const STAFFING_LANDING_PAGE_URL = 'https://scalelabai.ca/staffing/';
+// A tracked link is the plain URL plus one opaque token (see landing-link-token.js).
+const TRACKED_STAFFING_LANDING_URL = /^https:\/\/scalelabai\.ca\/staffing\/\?t=[A-Za-z0-9_-]{22}$/;
+
+function isTrackedStaffingLandingUrl(url) {
+  return typeof url === 'string' && TRACKED_STAFFING_LANDING_URL.test(url);
+}
+
+/**
+ * The locked copy with its landing-page URL swapped for a tracked one. Without a
+ * tracked URL the text is returned untouched, so untracked renders stay
+ * byte-identical. The swap happens on the template, before merge, so only the
+ * locked occurrence can change.
+ */
+function withStaffingLandingUrl(text, landingPageUrl) {
+  if (!landingPageUrl) return text;
+  if (!isTrackedStaffingLandingUrl(landingPageUrl)) throw new Error('staffing landing-page URL is not a tracked landing link');
+  const parts = String(text).split(STAFFING_LANDING_PAGE_URL);
+  if (parts.length !== 2) throw new Error('staffing copy must contain the landing-page URL exactly once');
+  return parts.join(landingPageUrl);
+}
 
 const LOCKED_EMAILS = Object.freeze([
   `Hi {{firstName}},\n\n{{hyperPersonalizedOpening}}\n\nWe help industrial staffing agencies turn that exact market into qualified employer meetings — and we get paid based on the meetings we generate.\n\nWorth seeing how we'd do this for {{company}}?\n\n— Deins`,
@@ -70,7 +90,10 @@ function renderStaffingPreview(lead, result, step = 1, options = {}) {
   if (!vars.company || Object.values(vars).some(v => /[\r\n]|{{|}}/.test(v))) throw new Error('Invalid template variable');
   const merge = text => text.replace(/{{(\w+)}}/g, (_, key) => vars[key]);
   const identity = staffingSenderIdentity(options.env || process.env, options);
-  const body = appendStaffingComplianceFooter(merge(LOCKED_EMAILS[step - 1]), identity);
+  // Only step 2 carries the landing page; a tracked URL anywhere else is a caller bug.
+  if (options.landingPageUrl && step !== 2) throw new Error('only staffing step 2 carries the landing-page URL');
+  const template = withStaffingLandingUrl(LOCKED_EMAILS[step - 1], options.landingPageUrl);
+  const body = appendStaffingComplianceFooter(merge(template), identity);
   // Bold only the locked offer phrase, never a model-authored opener or footer.
   const phrase = merge(BOLD_PHRASES[step - 1]);
   let html = body.split(phrase).map(part => escapeHtml(part)).join(`<strong>${escapeHtml(phrase)}</strong>`);
@@ -124,4 +147,5 @@ function validateStaffingEmail({ subject, body, leadId } = {}, step = 1) {
 }
 
 module.exports = { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_LABELS, isStaffingCampaign, STAFFING_LANDING_PAGE_URL, LOCKED_EMAILS, BOLD_PHRASE, BOLD_PHRASES,
-  STAFFING_FOLLOW_UP_DELAY_DAYS, renderStaffingPreview, staffingOpeningFor, renderStaffingEmail, validateStaffingEmail };
+  STAFFING_FOLLOW_UP_DELAY_DAYS, renderStaffingPreview, staffingOpeningFor, renderStaffingEmail, validateStaffingEmail,
+  isTrackedStaffingLandingUrl, withStaffingLandingUrl };

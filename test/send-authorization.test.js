@@ -93,7 +93,7 @@ test('Gmail sendEmail calls assertSendAuthorized before constructing the provide
     source.indexOf('async function sendEmail('),
     source.indexOf('async function loadOutreachProviderState('),
   );
-  assert.match(code, /assertSendAuthorized\(\);\n  assertStaffingSendAllowed\(lead\);/);
+  assert.match(code, /assertSendAuthorized\(\);\r?\n  assertStaffingSendAllowed\(lead\);/);
 
   let constructed = 0;
   class Provider {

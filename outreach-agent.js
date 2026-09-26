@@ -68,7 +68,7 @@ const {
   POLICY_SOURCE: REPLY_POLICY_SOURCE,
 } = require('./integrations/reply-decision');
 const { classifyReplyText, isUsableReplyIdentity, REPLY_STATE,
-  hasExplicitUnsubscribePhrase, hasExplicitNegativePhrase, NEEDS_HUMAN_REASON } = require('./integrations/canonical-reply');
+  NEEDS_HUMAN_REASON } = require('./integrations/canonical-reply');
 // ONE ownership model, shared with the CRM. The sender asks it rather than
 // keeping a second opinion about who may act on a lead.
 const { NON_COLD_STAGES, deriveAutomationOwnership, mayColdSend } = require('./integrations/automation-ownership');
@@ -78,7 +78,8 @@ const { latestResponseAt } = require('./integrations/prospect-response');
 // write is the Google Sheets append above it, and this cannot affect it.
 const { mirrorEventsInBackground } = require('./integrations/supabase-mirror');
 const { mirrorCycleSnapshotInBackground, outreachStateMode, applyLeadChange,
-  readOutreachCorpus, sheetsFallbackAllowed, outreachWriteAuthority } = require('./integrations/outreach-state');
+  readOutreachCorpus, sheetsFallbackAllowed, outreachWriteAuthority, getOutreachLeadById } = require('./integrations/outreach-state');
+const { freshLeadFromSnapshot, createFreshSendStateLoader } = require('./integrations/fresh-send-state');
 // Stage 3D: dual-read measurement only. No decision below reads its result.
 const { probeOutreachParity, formatProbeLine } = require('./integrations/outreach-dual-read');
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
@@ -88,7 +89,7 @@ const { assertSendAuthorized, sendAuthorization } = require('./integrations/send
 const { evaluateFreshSendSafety, guardProviderSend } = require('./integrations/send-safety-revalidate');
 const {
   withGmailProviderSend, withOutboundReservation, confirmOutboundReservation,
-  isDefinitePreDeliveryFailure,
+  isDefinitePreDeliveryFailure, getOutboundReservation, STATUS: SEND_RESERVATION_STATUS,
 } = require('./integrations/send-lock');
 const {
   ordinaryColdActionId, stageSequenceActionId, smartleadEnqueueActionId,
@@ -97,6 +98,11 @@ const { routedLeadReady } = require('./integrations/campaign-routing');
 // Staffing supplies its own locked copy only. Sender selection, thread pinning,
 // quota, observer, suppression and ownership all stay on the shared path.
 const { STAFFING_CAMPAIGN, renderStaffingEmail, validateStaffingEmail, isStaffingCampaign } = require('./integrations/staffing-campaign');
+const { landingLinkMetadata, PLAN_STATUS: LANDING_PLAN_STATUS } = require('./integrations/landing-link-token');
+const {
+  staffingColdStepLandingPlan, staffingWarmReplyLandingPlan, warmReplyTemplate,
+  buildIssuanceRecord, ensureLandingIssuance, recordLandingLinkSent,
+} = require('./integrations/landing-link-issuance');
 const STAFFING_TEMPLATE = STAFFING_CAMPAIGN.emailTemplateId;
 // The reactivation gate is defined once, in the shared pipeline-state model.
 const { manualHoldReleased, applyHoldToNotes, applyResumeToNotes, stageRequiresHold,
@@ -114,6 +120,7 @@ const {
   sequenceRfcMessageId, coldStepRfcMessageId, verifyThreadOwnership, findSuccessfulSequenceSend,
 } = require('./integrations/gmail-stage-sequence');
 const { wrapSheetsReadClient } = require('./integrations/google-sheets-resilience');
+const { persistActivityEvents } = require('./integrations/activity-ledger-batch');
 const { stageSendGate } = require('./integrations/pipeline-sequence-safety');
 const { PROMOTION_TRIGGER, resolvePromotionIdentity, promotionDecision } = require('./integrations/promotion-policy');
 const {
@@ -122,8 +129,9 @@ const {
   LEGACY_UNKNOWN, familyForLead, CAMPAIGN_FAMILY, resolveLeadFamily,
 } = require('./integrations/campaign-versions');
 const { findOriginalSentThread, resolveColdFollowUpThread } = require('./integrations/gmail-threading');
+const { appendLeadsRow } = require('./integrations/leads-sheet-append');
 const gmailMailboxObserver = require('./integrations/gmail-mailbox-observer');
-const { planMailboxEvents, commitObservation } = require('./integrations/mailbox-observation-events');
+const { planMailboxEvents, commitObservation, ownReplyText } = require('./integrations/mailbox-observation-events');
 const { stripQuotedReply } = require('./integrations/reply-reconciliation');
 const {
   wrapGmail, runWithGmailFeature, gmailUsageSnapshot, recordGmailRequest,
@@ -135,13 +143,15 @@ const {
 } = require('./integrations/gmail-followup-safety');
 const { observeStaffingConversationShadows, evaluateStaffingConversationShadow } = require('./integrations/staffing-agent-shadow');
 const { offerForLead, warmResponse } = require('./integrations/offer-config');
-const { ACTION: REPLY_RESPONSE_ACTION, decideReplyResponse, numericConfidence, POSITIVE_AUTOSEND_FLOOR } = require('./integrations/reply-response-policy');
+const { ACTION: REPLY_RESPONSE_ACTION, decideReplyResponse, numericConfidence, POSITIVE_AUTOSEND_FLOOR,
+  isStaffingReplyContext } = require('./integrations/reply-response-policy');
 const { classifyStaffingReply, unroutedReplyDecision, STAFFING_CLARIFICATION,
   overlayStaffingReplyClassification, notesForStaffingWarmAction, inboundWarmReplyAlreadySent,
+  staffingReplyHistory, staffingRepeatReason, staffingHumanTouchBlock,
 } = require('./integrations/staffing-reply-policy');
 const {
   inboundAlreadyEvaluated, committedInboundClassification,
-  skipHandlerForEvaluatedMessage, NOTE_ALREADY_HANDLED,
+  skipHandlerForEvaluatedMessage, recordedTerminalReply, NOTE_ALREADY_HANDLED,
 } = require('./integrations/inbound-reply-guard');
 const { commercialListUnsubscribeHeaders } = require('./integrations/commercial-email-headers');
 const {
@@ -149,16 +159,27 @@ const {
 } = require('./integrations/staffing-funnel');
 const { STAFFING_CAMPAIGN_REF } = require('./integrations/staffing-compliance');
 const { authoritativeProvider, assertGmailProviderAllowed, assertSmartleadEnqueueAllowed } = require('./integrations/provider-ownership');
-const { deliverProspectReply } = require('./integrations/prospect-reply-delivery');
+const { deliverProspectReply, responseActionId } = require('./integrations/prospect-reply-delivery');
+const { buildConversationState } = require('./integrations/conversation-state');
+const { indexConversationEvidence, selectConversationEvidence } = require('./integrations/conversation-evidence');
+const { createPgAgentV2Store } = require('./integrations/agent-v2-store');
+const { runAgentV2OneShotReadiness } = require('./integrations/agent-v2-orchestration');
+const { executeAgentV2Qualification, FLAG: AGENT_V2_EXECUTION_FLAG } = require('./integrations/agent-v2-execution');
+const { QUALIFY_ACTION: AGENT_V2_QUALIFY_ACTION, pendingDecisionActivity,
+  pendingDecisionFor, pendingProofMatches,
+  confirmedQualificationActivity } = require('./integrations/agent-v2-pending-decision');
 const { findLiveBooking } = require('./integrations/live-booking-gate');
 const {
   BOOKING_LINK_EVENT, buildDemoPairActivity,
   demoPairEventFor, hasDemoPairHistory, hasUndeliveredDemoPair, planIntentObservation,
 } = require('./integrations/demo-intent-state');
 const { aggregateDemoPlays, attributeDemoPlays, demoPlayForLead } = require('./integrations/demo-attribution');
+const { INTENT_STATE_SOURCE, formatIntentStateLine, pendingIntentWork } = require('./integrations/intent-backstop');
 const { oldestDueFirst, followUpSuccessTarget } = require('./integrations/scheduler-fairness');
 const { fairShareQueuedOrder } = require('./integrations/scheduled-slot-allocator');
-const { credentialsFor: gmailCredentialsFor, parseRegistry: parseGmailRegistry } = require('./integrations/gmail-inbox-registry');
+const {
+  credentialsFor: gmailCredentialsFor, parseRegistry: parseGmailRegistry, withDefaultInboxes: withDefaultGmailInboxes,
+} = require('./integrations/gmail-inbox-registry');
 const {
   configuredSenders, observableSenders, chooseSender, pinnedSenderId, senderCountsToday, successfulSendCountToday,
 } = require('./integrations/gmail-sender-routing');
@@ -271,9 +292,11 @@ const anthropicClient = ANTHROPIC_API_KEY
 const _rawProposalBase = (process.env.PROPOSAL_BASE || '').trim();
 const PROPOSAL_BASE    = (/^https?:\/\//i.test(_rawProposalBase) ? _rawProposalBase : 'https://scalelabaireceptionistproposal.netlify.app').replace(/\/$/, '');
 
-// Random pause between sends so traffic looks human (ms)
-const MIN_DELAY = 45 * 1000;
-const MAX_DELAY = 120 * 1000;
+// Random pause between sends so traffic looks human (ms). A 21-send window
+// averages ~22 min at this range, so a pass ends well before the next :00/:30
+// slot; a pass still running there makes that slot skip (no catch-up).
+const MIN_DELAY = 30 * 1000;
+const MAX_DELAY = 90 * 1000;
 
 // ColdEmail columns A:X — must stay in sync with CE_COLUMNS in server.js
 //   A=id  B=company  C=contactName  D=email  E=city  F=tradeType  G=website
@@ -403,11 +426,8 @@ async function upsertColdCallLeadFromEvent(lead, stage, note, options = {}) {
       website: lead.website || '', stage: decision.targetStage, priority: decision.targetStage === 'hot' ? 'hot' : 'warm',
       followup: new Date().toISOString().split('T')[0], notes: note || '', created: new Date().toISOString(),
     };
-    await sheets().spreadsheets.values.append({
-      spreadsheetId: SPREADSHEET_ID, range: LEADS_RANGE,
-      valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
-      requestBody: { values: [LEADS_COLUMNS.map(col => String(promotedLead[col] ?? ''))] },
-    });
+    await appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: LEADS_SHEET,
+      values: LEADS_COLUMNS.map(col => String(promotedLead[col] ?? '')) });
     return targetId;
   } catch (error) {
     console.warn(`[ColdCalls] non-blocking automation failure for ${lead.email}: ${error.message}`);
@@ -482,6 +502,13 @@ const sheets = () => wrapSheetsReadClient(google.sheets({ version: 'v4', auth: o
 const gmail  = () => google.gmail({ version: 'v1', auth: oauth2Client });
 const GMAIL_SENDERS = GMAIL_SENDERS_BOOT;
 const PRIMARY_GMAIL_SENDER = GMAIL_SENDERS.find(sender => sender.id === 'primary');
+// Each mailbox's registered per-run cap, bounded above by PER_INBOX_RUN_CAP
+// inside the window quota. Senders at the default keep today's bucket size. A
+// malformed value keeps the uniform bucket: the quota is built before the
+// reply-check pass, which must never be skipped over a pacing typo.
+const SENDER_PER_RUN_LIMITS = new Map(GMAIL_SENDERS
+  .filter(sender => Number.isInteger(sender.perRunLimit) && sender.perRunLimit >= 0)
+  .map(sender => [sender.id, sender.perRunLimit]));
 const gmailObservationHistoryBySender = new Map();
 const gmailObservationDetailsBySender = new Map();
 let activeWindowQuota = null;
@@ -506,7 +533,9 @@ const secondaryAuthById = new Map();
 function authForSender(sender = PRIMARY_GMAIL_SENDER) {
   if (sender.id === 'primary') { loadToken(); return oauth2Client; }
   if (secondaryAuthById.has(sender.id)) return secondaryAuthById.get(sender.id);
-  const entry = parseGmailRegistry().find(item => item.id === sender.id);
+  // Same roster configuredSenders() builds GMAIL_SENDERS from, so a code-default
+  // inbox that is observed or sent from can also authenticate.
+  const entry = withDefaultGmailInboxes(parseGmailRegistry()).find(item => item.id === sender.id);
   if (!entry) throw new Error(`Gmail sender ${sender.id} is not registered`);
   const auth = new google.auth.OAuth2(process.env.GMAIL_SECONDARY_GOOGLE_CLIENT_ID,
     process.env.GMAIL_SECONDARY_GOOGLE_CLIENT_SECRET, process.env.GMAIL_SECONDARY_GOOGLE_REDIRECT_URI);
@@ -1507,7 +1536,7 @@ async function getLateReplyMessages(lead, outbound) {
         threadId: m.threadId || outbound.threadId,
         subject: headerValue(m.payload, 'Subject'),
         snippet: m.snippet || '',
-        body: extractPlainText(m.payload).trim().slice(0, 1500),
+        body: ownReplyText(m.payload, m.snippet).slice(0, 1500),
         fromAddr: parseAddr(headerValue(m.payload, 'From')),
         occurredAt: new Date(ms).toISOString(),
       }));
@@ -1589,7 +1618,7 @@ async function answerQuestion(lead, replyText, extra = {}) {
   }
 
   if (!ANTHROPIC_API_KEY) {
-    return draft(bookingSnippet(company, { companyFallback: scoped.companyFallback }), 'no ANTHROPIC_API_KEY — cannot answer', 0);
+    return draft(bookingSnippet(company, { family: scoped.family, companyFallback: scoped.companyFallback }), 'no ANTHROPIC_API_KEY — cannot answer', 0);
   }
 
   try {
@@ -1638,7 +1667,7 @@ async function answerQuestion(lead, replyText, extra = {}) {
     try {
       parsed = JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, ''));
     } catch (_e) {
-      return draft(bookingSnippet(company, { companyFallback: scoped.companyFallback }), `model returned unparseable output: ${raw.slice(0, 120)}`, 0);
+      return draft(bookingSnippet(company, { family: scoped.family, companyFallback: scoped.companyFallback }), `model returned unparseable output: ${raw.slice(0, 120)}`, 0);
     }
 
     const confidence = Number(parsed.confidence) || 0;
@@ -1663,17 +1692,22 @@ async function answerQuestion(lead, replyText, extra = {}) {
     }
     if (parsed.needs_human === true) return draft(withBooking(answer, company, scoped), `model flagged needs_human (${topic})`, confidence);
     if (confidence < ANSWER_CONFIDENCE_FLOOR) return draft(withBooking(answer, company, scoped), `confidence ${confidence} < ${ANSWER_CONFIDENCE_FLOOR} (${topic})`, confidence);
-    if (!answer) return draft(bookingSnippet(company, { companyFallback: scoped.companyFallback }), 'model returned an empty answer', confidence);
+    if (!answer) return draft(bookingSnippet(company, { family: scoped.family, companyFallback: scoped.companyFallback }), 'model returned an empty answer', confidence);
+    // Model-written text for a draft-only offer is proposed, never sent: the
+    // model's own confidence cannot authorise it.
+    if (scoped.draftOnlyModelAnswers) {
+      return draft(withBooking(answer, company, scoped), `model-written answer drafted for review (${topic}, confidence ${confidence})`, confidence);
+    }
 
     return { mode: 'auto', body: withBooking(answer, company, scoped), reason: `confident answer (${topic})`, confidence };
   } catch (e) {
-    return draft(bookingSnippet(company, { companyFallback: scoped.companyFallback }), `answer API error: ${e.message}`, 0);
+    return draft(bookingSnippet(company, { family: scoped.family, companyFallback: scoped.companyFallback }), `answer API error: ${e.message}`, 0);
   }
 }
 
 // Answer + the warm booking snippet, in the house voice.
 function withBooking(answer, company, scoped = {}) {
-  return `${answer.trim()}\n\n${bookingSnippet(company, { companyFallback: scoped.companyFallback })}`;
+  return `${answer.trim()}\n\n${bookingSnippet(company, { family: scoped.family, companyFallback: scoped.companyFallback })}`;
 }
 
 // ── SHEET I/O ─────────────────────────────────────────────────────────────────
@@ -1773,23 +1807,20 @@ async function loadAgentSnapshot({ forceColdEmail = false } = {}) {
   return snapshot;
 }
 
+// The last-moment revalidation before every provider send reads the ONE lead
+// being sent to, fresh from canonical state — never the whole corpus. See
+// integrations/fresh-send-state.js.
 function freshSendSafetyDeps() {
   return {
     env: process.env,
-    loadFreshState: async (leadId) => {
-      const snapshot = await withAuth(() => loadAgentSnapshot({
+    loadFreshState: createFreshSendStateLoader({
+      loadSnapshot: () => withAuth(() => loadAgentSnapshot({
         forceColdEmail: outreachWriteAuthority() === 'sheets',
-      }));
-      const rows = await readLeads(snapshot.coldEmail);
-      const match = String(leadId || '');
-      const current = rows.find(row => String(row.id) === match)
-        || rows.find(row => `CE-${row.id}` === match)
-        || null;
-      return {
-        current,
-        suppressedEmails: new Set((snapshot.suppression || []).slice(1).map(row => normEmail(row[0])).filter(Boolean)),
-      };
-    },
+      })),
+      readSheetLeads: rows => readLeads(rows),
+      getLeadById: id => getOutreachLeadById(id),
+      suppressedFrom: snapshot => new Set((snapshot.suppression || []).slice(1).map(row => normEmail(row[0])).filter(Boolean)),
+    }),
   };
 }
 
@@ -1861,16 +1892,15 @@ async function persistGmailObservationState(senderId, historyId, details = {}) {
 }
 
 async function recordMailboxActivity(event) {
-  // Read before retry as well as after append: a timed-out successful Sheets
-  // request must not create a second deterministic event on retry.
-  const current = await readColdCallActivities();
-  const previous = current.find(row => row.eventId === event.eventId);
-  if (previous) return;
-  await recordColdCallActivityStrict(event);
-  const saved = (await readColdCallActivities()).find(row => row.eventId === event.eventId);
-  if (!saved || saved.eventType !== event.eventType || saved.metadata !== event.metadata) {
-    throw new Error(`Mailbox event readback failed: ${event.eventId}`);
-  }
+  await recordMailboxActivities([event]);
+}
+
+async function recordMailboxActivities(events) {
+  const client = sheets();
+  return persistActivityEvents({ events, values: client.spreadsheets.values,
+    spreadsheetId: SPREADSHEET_ID, sheetName: COLD_CALL_ACTIVITY_SHEET,
+    header: COLD_CALL_ACTIVITY_HEADER, ensureSheet: ensureColdCallActivitySheet,
+    mirrorEvents: mirrorEventsInBackground });
 }
 
 // Re-resolve a lead's CURRENT sheet row by id, immediately before writing.
@@ -1933,6 +1963,9 @@ async function recordSendActivity(lead, step, sendMeta, sentAt) {
         step: Number(step), family: familyForLead(lead), body: String((sendMeta && sendMeta.body) || ''),
       }) || undefined,
       ...attribution,
+      // Tracked staffing landing link: the pin (issuance key + key version),
+      // never the token. Absent for every untracked send.
+      ...(sendMeta?.landingLink ? { landingLink: sendMeta.landingLink } : {}),
     }),
   };
   const activities = sendMeta?.activitiesForCycle;
@@ -2013,9 +2046,23 @@ async function deliverOrdinaryColdStep({
   lead, step, sender, subject, body, attribution, activitiesForCycle,
   personalizationMetadata = null, thread = null, onProviderSuccess = null,
 }) {
+  // Staffing Follow-up #2 landing link. Pure and pinned: re-derived here from
+  // the same action id and earlier attempts the caller rendered from, so the
+  // locked-copy comparison below also proves the URL is unchanged. Null for
+  // every other step and template.
+  const landingPlan = lead.emailTemplateId === STAFFING_TEMPLATE
+    ? staffingColdStepLandingPlan({ lead, step, activities: activitiesForCycle || [] }) : null;
+  if (landingPlan?.status === LANDING_PLAN_STATUS.BLOCKED) return { delivered: false, reason: `landing link blocked: ${landingPlan.reason}` };
+  const landingLink = landingLinkMetadata(landingPlan);
+  const landingRecord = landingPlan?.tracked ? buildIssuanceRecord({
+    plan: landingPlan, actionId: ordinaryColdActionId(lead.id, step), lead,
+    campaignVersion: attribution?.campaignVersion, templateId: lead.emailTemplateId,
+    templateVersion: attribution?.copyVersion, senderInboxId: sender.id,
+  }) : null;
   // Preview HTML previously disappeared before Gmail's plain-text-only MIME
   // assembly. Preserve the approved bold phrase without changing the text.
-  const staffingEmail = lead.emailTemplateId === STAFFING_TEMPLATE ? renderStaffingEmail(lead, step) : null;
+  const staffingEmail = lead.emailTemplateId === STAFFING_TEMPLATE
+    ? renderStaffingEmail(lead, step, landingPlan?.tracked ? { landingPageUrl: landingPlan.url } : {}) : null;
   if (staffingEmail && staffingEmail.body !== body) return { delivered: false, reason: 'staffing delivery body differs from locked copy' };
   const mailbox = gmailForSender(sender);
   const rfcMessageId = coldStepRfcMessageId(lead.id, step, sender.email);
@@ -2039,8 +2086,10 @@ async function deliverOrdinaryColdStep({
     const checkpoint = await markSent(lead, step, {
       result: recovered, subject, body, attribution, sender, personalizationMetadata,
       occurredAt: recovered.occurredAt || new Date().toISOString(), activitiesForCycle,
+      ...(landingLink ? { landingLink } : {}),
     });
     console.warn(`[Cold recovery] restored step ${step} for ${lead.email} from Gmail; no duplicate sent`);
+    if (landingRecord) await recordLandingLinkSent({ plan: landingPlan, record: landingRecord, sentAt: recovered.occurredAt, result: recovered });
     return { delivered: true, recovered: true, checkpoint };
   }
 
@@ -2065,6 +2114,14 @@ async function deliverOrdinaryColdStep({
     return { delivered: false, reason: 'an unresolved delivery reservation exists and Gmail has not confirmed it' };
   }
 
+  // Tracked landing link: best-effort issuance write BEFORE the reservation,
+  // so a stored row that contradicts this render refuses the send without
+  // leaving a reservation behind. A failed or slow write never blocks.
+  if (landingRecord) {
+    const issuance = await ensureLandingIssuance({ plan: landingPlan, record: landingRecord });
+    if (!issuance.proceed) return { delivered: false, reason: issuance.reason };
+  }
+
   const reservationEventId = `cold-reserve:${lead.id}:step${step}:attempt${reservations.length + 1}`;
   const reservation = {
     eventId: reservationEventId, leadId: `CE-${lead.id}`, sourceLeadId: lead.id,
@@ -2073,6 +2130,8 @@ async function deliverOrdinaryColdStep({
     subject, content: '', metadata: JSON.stringify({
       leadId: lead.id, step: Number(step), senderInboxId: sender.id,
       rfcMessageId, gmailThreadId: thread?.threadId || '',
+      // The pin every later render of this action must honour.
+      ...(landingLink ? { landingLink } : {}),
     }),
   };
   try {
@@ -2134,6 +2193,7 @@ async function deliverOrdinaryColdStep({
   if (onProviderSuccess) onProviderSuccess({ recovered: false, occurredAt: new Date().toISOString() });
   const checkpoint = await markSent(lead, step, {
     result, subject, body, attribution, sender, personalizationMetadata, activitiesForCycle,
+    ...(landingLink ? { landingLink } : {}),
   });
   await confirmOutboundReservation(sendAction.actionId).catch(error => {
     console.error(JSON.stringify({
@@ -2141,6 +2201,8 @@ async function deliverOrdinaryColdStep({
       provider: 'gmail', status: 'sent_unconfirmed', code: error.code || 'confirm_failed',
     }));
   });
+  // After every send-lock and CRM checkpoint: attribution bookkeeping only.
+  if (landingRecord) await recordLandingLinkSent({ plan: landingPlan, record: landingRecord, sentAt: new Date().toISOString(), result });
   return { delivered: true, recovered: false, result, checkpoint };
 }
 
@@ -2309,19 +2371,20 @@ async function recordActiveReplyActivity(lead, message, replyText, classificatio
 // Best-effort by design: the decision describes what the handlers already did,
 // and failing the pass over it would re-run handlers and the classifier for a
 // message that has been acted on.
-async function persistReplyDecision(lead, decision, activities = []) {
+async function persistReplyDecision(lead, decision, activities = [], { strict = false } = {}) {
   const row = replyDecisionActivity(decision, { company: cleanCompanyName(lead.company) || lead.company || '' });
   if (!row) {
     console.warn(`[reply-decision] not persisted for ${lead.email}: inbound message id missing`);
     return null;
   }
-  if (activities.some(item => String(item.eventId || '') === row.eventId)) return null;
+  if (activities.some(item => String(item.eventId || '') === row.eventId)) return strict ? row : null;
   try {
     await withAuth(() => recordMailboxActivity(row));
     activities.push(row);
     return row;
   } catch (error) {
     console.warn(`[reply-decision] persist failed for ${row.eventId}: ${error.message}`);
+    if (strict) throw error;
     return null;
   }
 }
@@ -2536,7 +2599,8 @@ async function handleQuestion(lead, message, replyText, todaySent, activities = 
       canonical: classifyReplyText(replyText, { subject: message.subject || '', currentEmail: lead.email }),
     });
     if (['SEND_INFO', 'INTERESTED', 'STAFFING_QUALIFICATION'].includes(overlay.classification)) {
-      return handlePositiveAutomation(lead, message, overlay.classification, activities, overlay.canonical, { decision, overlay });
+      return handlePositiveAutomation(lead, message, overlay.classification, activities, overlay.canonical,
+        { decision, overlay, outboundObservationOk });
     }
   }
   const rowNum = await resolveRow(lead.id);
@@ -2562,6 +2626,13 @@ async function handleQuestion(lead, message, replyText, todaySent, activities = 
   let mode = answer.mode;
   let gateReason = '';
   let gateCode = '';
+  if (mode === 'auto' && isStaffingCampaign(lead)
+    && process.env[AGENT_V2_EXECUTION_FLAG] === 'true') {
+    mode = 'draft';
+    gateCode = 'agent_v2_question_draft_only';
+    gateReason = 'staffing questions require human review during the Agent v2 qualification rollout';
+    answer.reason = `${answer.reason} — held: ${gateReason}`;
+  }
   if (mode === 'auto') {
     const humanTouchAt = latestHumanOutboundAt(activities);
     const suppressed = suppressionReason(lead);
@@ -2839,7 +2910,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
         leads: senderLeads, activities: activitiesForCycle, senderInboxId: sender.id, senderEmail: sender.email });
       if (!DRY_RUN) {
         await commitObservation({ observation: observed, plan, activities: activitiesForCycle,
-          appendEvent: event => withAuth(() => recordMailboxActivity(event)),
+          appendEvents: events => withAuth(() => recordMailboxActivities(events)),
           suppress: item => withAuth(() => addSuppression(item.email, item.reason, item.company, 'gmail-observer')),
           checkpoint: state => advanceCheckpoint
             ? withAuth(() => persistGmailObservationState(
@@ -2954,20 +3025,21 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     if (!inbound) continue;
     const lead = candidates.find(item => item.id === row.sourceLeadId);
     if (!lead || repliesByLead.has(lead.id)) continue;
-    const text = String(row.content || '');
-    const canonical = classifyReplyText(text, {
-      subject: row.subject || '', currentEmail: lead.email, now: row.occurredAt || null,
-    });
-    const unsub = canonical.reason === 'unsubscribe_request' || row.eventType === 'unsubscribe_reply'
-      || hasExplicitUnsubscribePhrase(text, { subject: row.subject || '' });
-    const neg = canonical.reason === 'explicit_rejection' || row.eventType === 'negative_reply'
-      || hasExplicitNegativePhrase(text, { subject: row.subject || '' });
+    // Re-read from the prospect's own words, not from a type our quoted
+    // footer may have produced; see recordedTerminalReply.
+    const recorded = recordedTerminalReply(row, { currentEmail: lead.email });
+    const unsub = recorded.unsubscribe;
+    const neg = recorded.rejection;
     if (!unsub && !neg) continue;
     const notes = String(lead.notes || '');
-    if (unsub && /\[REPLY:\s*Unsubscribed\]/i.test(notes) && String(lead.stage) === 'Unsub'
-      && SUPPRESSED_EMAILS.has(normEmail(lead.email))) continue;
-    if (neg && !unsub && /\[REPLY:\s*Not Interested\]/i.test(notes) && String(lead.emailStatus) === 'done'
-      && SUPPRESSED_EMAILS.has(normEmail(lead.email))) continue;
+    const optOutApplied = /\[REPLY:\s*Unsubscribed\]/i.test(notes) && String(lead.stage) === 'Unsub'
+      && SUPPRESSED_EMAILS.has(normEmail(lead.email));
+    if (unsub && optOutApplied) continue;
+    // An applied opt-out already outranks a rejection. Without this, re-reading
+    // an old footer-contaminated opt-out as "not interested" would move a lead
+    // that is correctly Unsub back to Done.
+    if (neg && !unsub && (optOutApplied || (/\[REPLY:\s*Not Interested\]/i.test(notes) && String(lead.emailStatus) === 'done'
+      && SUPPRESSED_EMAILS.has(normEmail(lead.email))))) continue;
     repliesByLead.set(lead.id, {
       id: metadata.gmailMessageId, threadId: metadata.gmailThreadId,
       internalDate: String(Date.parse(row.occurredAt) || Date.now()), snippet: row.content,
@@ -2990,7 +3062,9 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     const message = {
       messageId: rawMessage.id, rfcMessageId: gmailMailboxObserver.headerValue(rawMessage.payload, 'Message-ID'),
       threadId: rawMessage.threadId || '', snippet: rawMessage.snippet || '',
-      body: gmailMailboxObserver.firstPlainText(rawMessage.payload).trim().slice(0, 1500),
+      // The prospect's own words only; quote-stripped before the length cap,
+      // because an HTML head alone can exceed it.
+      body: ownReplyText(rawMessage.payload, rawMessage.snippet).slice(0, 1500),
       subject: gmailMailboxObserver.headerValue(rawMessage.payload, 'Subject'),
       fromAddr: gmailMailboxObserver.parseAddr(gmailMailboxObserver.headerValue(rawMessage.payload, 'From')),
       occurredAt: new Date(Number(rawMessage.internalDate) || Date.now()).toISOString(), senderInboxId: sender.id,
@@ -3058,7 +3132,17 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       await withAuth(async () => {
         if (!attributionActivities) attributionActivities = activitiesForCycle || await readColdCallActivities();
         await recordActiveReplyActivity(lead, message, replyText, classification, attributionActivities);
-        const decisionOptions = { decision: replyDecision, overlay: staffingOverlay };
+        const decisionOptions = { decision: replyDecision, overlay: staffingOverlay, outboundObservationOk };
+        // If delivery was recorded but the final reply-decision append failed,
+        // finish that same inbound lifecycle without rerunning a handler or a
+        // model. The delivered event must carry the exact response identity.
+        const pending = process.env[AGENT_V2_EXECUTION_FLAG] === 'true'
+          ? pendingDecisionFor(attributionActivities, message.messageId, lead.id) : null;
+        if (pending && confirmedQualificationActivity(attributionActivities,
+          lead.id, message.messageId, message.senderInboxId)) {
+          return handlePositiveAutomation(lead, message, pending.finalClassification,
+            attributionActivities, staffingOverlay?.canonical || canonicalReply, decisionOptions);
+        }
         const route = replyDecision.route;
         let result;
         switch (route) {
@@ -3127,7 +3211,13 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
         return result;
       });
       finalizeReplyDecision(replyDecision);
-      await persistReplyDecision(lead, replyDecision, activitiesForCycle);
+      // A Phase 6 pending record must get a durable final outcome. A failed
+      // append leaves the inbound unevaluated so its deterministic IDs can be
+      // reconciled on the next pass; legacy best-effort behavior stays intact.
+      await persistReplyDecision(lead, replyDecision, activitiesForCycle, {
+        strict: process.env[AGENT_V2_EXECUTION_FLAG] === 'true'
+          && Boolean(pendingDecisionFor(activitiesForCycle, message.messageId, lead.id)),
+      });
       await recordMailboxActivity({ eventId: `gmail-evaluated:${sender.id}:${message.messageId}`,
         leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email, company: lead.company,
         eventType: 'gmail_reply_evaluated', occurredAt: new Date().toISOString(), subject: '', content: '',
@@ -3194,9 +3284,20 @@ async function commitMailboxObservationCheckpoints(observation = {}) {
 }
 
 async function deliverHardenedWarmReply({ lead, message, action, body, subject, activities, classification,
-  ownerMode = 'reply', sequenceId = 'prospect_reply_v1', validateFresh = null, replyDecisionId = '' }) {
+  ownerMode = 'reply', sequenceId = 'prospect_reply_v1', validateFresh = null, replyDecisionId = '', landingPlan = null }) {
   const sender = senderForPersistedLead(lead);
   const metadataOf = row => { try { return JSON.parse(row.metadata || '{}'); } catch (_) { return {}; } };
+  // Staffing positive-reply landing link (automated delivery only; null for
+  // every other caller). A blocked plan refuses before any provider work.
+  if (landingPlan?.status === LANDING_PLAN_STATUS.BLOCKED) {
+    return { delivered: false, code: 'landing_link_blocked', reason: `landing link blocked: ${landingPlan.reason}` };
+  }
+  const landingLink = landingLinkMetadata(landingPlan);
+  const landingRecord = landingPlan?.tracked ? buildIssuanceRecord({
+    plan: landingPlan, actionId: responseActionId(lead.id, message.messageId, action), lead, triggerAction: action,
+    campaignVersion: latestSendAttribution(activities)?.campaignVersion, ...warmReplyTemplate(action), senderInboxId: sender.id,
+  }) : null;
+  let landingSent = null;
   const result = await deliverProspectReply({
     lead, sender, thread: { threadId: message.threadId }, inboundMessage: message,
     action, subject, body, checkOnly: CHECK_ONLY,
@@ -3225,8 +3326,8 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
       const fresh = await withAuth(() => loadAgentSnapshot({
         forceColdEmail: outreachWriteAuthority() === 'sheets',
       }));
-      const currentRows = await readLeads(fresh.coldEmail);
-      const current = currentRows.find(row => row.id === lead.id);
+      const current = await freshLeadFromSnapshot({ snapshot: fresh, leadId: lead.id,
+        readSheetLeads: rows => readLeads(rows), getLeadById: id => getOutreachLeadById(id) });
       const suppressed = new Set((fresh.suppression || []).slice(1).map(row => normEmail(row[0])).filter(Boolean));
       const safety = evaluateFreshSendSafety(lead, current, suppressed, { purpose: 'warm' });
       if (!safety.allowed) return { allowed: false, code: safety.code, reason: safety.reason };
@@ -3278,6 +3379,12 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
         const window = sendingWindowVerdict(activeWindowQuota, sender.id);
         if (!window.allowed) return { allowed: false, code: 'window_quota', reason: window.reason };
       }
+      // Last, after every existing gate and before the reservation: best-effort
+      // issuance write. Only a stored row that contradicts this render refuses.
+      if (landingRecord) {
+        const issuance = await ensureLandingIssuance({ plan: landingPlan, record: landingRecord });
+        if (!issuance.proceed) return { allowed: false, code: 'landing_link_conflict', reason: issuance.reason };
+      }
       return { allowed: true };
     },
     verifyThread: async ({ threadId, senderEmail, recipientEmail, inboundMessageId }) => {
@@ -3296,6 +3403,7 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
           actionId, action, senderInboxId: sender.id, gmailThreadId: message.threadId,
           inboundMessageId: message.messageId, rfcMessageId, classification,
           ...(replyDecisionId ? { replyDecisionId } : {}),
+          ...(landingLink ? { landingLink } : {}),
         }) };
       await recordColdCallActivityStrict(row); activities.push(row); return row;
     },
@@ -3334,10 +3442,21 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
           staffingFunnelEvents: staffingFunnelFromWarmDelivery({
             action, body, family: familyForLead(lead),
           }),
-          ...attribution }) };
+          ...attribution,
+          ...(landingLink ? { landingLink } : {}) }) };
       await recordColdCallActivityStrict(row); activities.push(row);
+      if (landingRecord) {
+        landingSent = { sentAt: row.occurredAt, result: recovered || result };
+        // A recovery has no send-lock confirmation after it, so mark it here.
+        if (recovery) await recordLandingLinkSent({ plan: landingPlan, record: landingRecord, ...landingSent });
+      }
     },
-    confirmDurableReservation: actionId => confirmOutboundReservation(actionId),
+    confirmDurableReservation: async actionId => {
+      const confirmed = await confirmOutboundReservation(actionId);
+      // After the send-lock confirmation: attribution bookkeeping only.
+      if (landingRecord && landingSent) await recordLandingLinkSent({ plan: landingPlan, record: landingRecord, ...landingSent });
+      return confirmed;
+    },
     persistFailure: async ({ actionId, reservation, error }) => {
       const row = { eventId: `${actionId}:failed`, leadId: `CE-${lead.id}`, sourceLeadId: lead.id,
         email: lead.email, company: cleanCompanyName(lead.company) || lead.company || '', eventType: 'prospect_reply_failed',
@@ -3351,8 +3470,194 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
   return result;
 }
 
+// Phase 6 reads the same canonical stores as the existing warm-send final gate.
+// A fixed asOf clock preserves Phase 2's digest while fresh rows expose any
+// intervening human, suppression, or provider activity as a digest change.
+async function loadAgentV2ReplyEvidence(leadId, asOf = null, snapshot = null) {
+  const fresh = snapshot || await withAuth(() => loadAgentSnapshot({
+    forceColdEmail: outreachWriteAuthority() === 'sheets',
+  }));
+  const [leads, boardLeads, allActivities] = await Promise.all([
+    readLeads(fresh.coldEmail), readBoardLeads(fresh.board), readColdCallActivities(fresh.activityRows),
+  ]);
+  const suppressedEmails = new Set((fresh.suppression || []).slice(1)
+    .map(row => normEmail(row[0])).filter(Boolean));
+  const selected = selectConversationEvidence(indexConversationEvidence({
+    leads, boardLeads, activities: allActivities,
+  }), leadId);
+  if (!selected.lead || selected.lead.id !== leadId) throw new Error('Agent v2 lead identity unavailable');
+  const state = buildConversationState({ lead: selected.lead, boardLead: selected.boardLead,
+    activities: selected.activities, selection: selected.selection, suppressedEmails,
+    config: { sequencesEnabled: STAGE_SEQUENCES_ENABLED, sendingEnabled: SENDING_ENABLED },
+    now: asOf || new Date().toISOString() });
+  return { fresh, lead: selected.lead, activities: selected.activities,
+    allActivities, suppressedEmails, state };
+}
+
+async function phase0ForAgentV2Reply({ state, leadId, messageId }, senderId, outboundObservationOk) {
+  const fresh = await loadAgentV2ReplyEvidence(leadId, state.asOf);
+  const current = fresh.lead;
+  return { leadId, messageId, stateDigest: fresh.state.evidenceDigest,
+    observedAt: new Date().toISOString(),
+    outboundObservationOk: outboundObservationOk === true
+      && observerAutomationReadyBySender.get(senderId) === true,
+    alreadyHandled: inboundWarmReplyAlreadySent(fresh.activities, messageId)
+      || Boolean(replyDecisionFor(fresh.activities, messageId, leadId)),
+    humanTouchBlock: staffingHumanTouchBlock({ lead: current, activities: fresh.activities,
+      outboundObservationOk }),
+    repeatReason: staffingRepeatReason(AGENT_V2_QUALIFY_ACTION,
+      staffingReplyHistory({ lead: current, activities: fresh.activities })),
+    suppressionReason: sendSuppressionReason(current, { suppressedEmails: fresh.suppressedEmails }) || '',
+  };
+}
+
+async function liveSafetyForAgentV2Reply({ leadId, messageId, decisionId, stateDigest,
+  senderInboxId, phase1State }, originalLead, originalMessage, outboundObservationOk) {
+  const fresh = await loadAgentV2ReplyEvidence(leadId, phase1State.asOf);
+  const current = fresh.lead;
+  const state = fresh.state;
+  const sender = GMAIL_SENDERS.find(item => item.id === senderInboxId);
+  let pinned = null;
+  try { pinned = pinnedSenderId(current, fresh.activities); } catch (_) { /* fail closed */ }
+  const day = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+  const freshSenderCount = senderCountsToday(fresh.allActivities, day).get(senderInboxId) || 0;
+  const freshGlobalCount = successfulSendCountToday(fresh.allActivities, day);
+  let providerThreadLatest = false;
+  if (sender?.sendEligible && originalMessage.threadId && originalMessage.messageId) {
+    try {
+      const gmail = gmailForSender(sender);
+      const ownership = await verifyThreadOwnership({ gmail, threadId: originalMessage.threadId,
+        senderEmail: sender.email, recipientEmail: current.email });
+      if (ownership.ok) {
+        const thread = await gmail.users.threads.get({ userId: 'me', id: originalMessage.threadId,
+          format: 'metadata', metadataHeaders: ['From'] });
+        const ordered = (thread.data.messages || []).sort((a, b) =>
+          Number(a.internalDate || 0) - Number(b.internalDate || 0));
+        providerThreadLatest = ordered.at(-1)?.id === messageId;
+      }
+    } catch (_) { /* fail closed */ }
+  }
+  const humanClear = !staffingHumanTouchBlock({ lead: current, activities: fresh.activities,
+    outboundObservationOk }) && state.ownership.humanTakeover.value === false;
+  const repeatClear = !inboundWarmReplyAlreadySent(fresh.activities, messageId)
+    && !staffingRepeatReason(AGENT_V2_QUALIFY_ACTION,
+      staffingReplyHistory({ lead: current, activities: fresh.activities }));
+  const suppressionClear = !sendSuppressionReason(current, { suppressedEmails: fresh.suppressedEmails })
+    && evaluateFreshSendSafety(originalLead, current, fresh.suppressedEmails, { purpose: 'warm' }).allowed;
+  const windowAvailable = Boolean(activeWindowQuota
+    && sendingWindowVerdict(activeWindowQuota, senderInboxId).allowed);
+  const quotaAvailable = Boolean(sender && activeSenderCounts && activeQuotaState
+    && Math.max(activeSenderCounts.get(senderInboxId) || 0, freshSenderCount) < sender.dailyLimit
+    && Math.max(activeQuotaState.globalCount || 0, freshGlobalCount) < DAILY_SEND_LIMIT);
+  const currentSendAuthorized = Boolean(process.env[AGENT_V2_EXECUTION_FLAG] === 'true'
+    && process.env.AGENT_V2_SHADOW_ENABLED === 'true' && !CHECK_ONLY && !DRY_RUN
+    && sendAuthorization().allowed && !staffingSendBlockReason(current)
+    && observerAutomationReadyBySender.get(senderInboxId) === true);
+  const noConflictingEvidence = !state.evidenceWarnings.length && !state.ambiguities.length
+    && state.thread.threadIds.length === 1;
+  const safety = { leadId, messageId, decisionId, stateDigest,
+    senderInboxId, providerThreadLatest, humanClear, repeatClear,
+    suppressionClear, senderOwnershipProven: pinned === senderInboxId
+      && state.thread.ownershipStatus === 'proven',
+    senderEligible: Boolean(sender?.sendEligible && isStaffingCampaign(current)
+      && senderForPersistedLead(current).id === senderInboxId),
+    quotaAvailable, windowAvailable, currentSendAuthorized,
+    noNewerInbound: state.latest?.inbound?.messageId === messageId,
+    noConflictingEvidence };
+  safety.allowed = state.evidenceDigest === stateDigest && state.identity.leadId === leadId
+    && current.id === originalLead.id && normEmail(current.email) === normEmail(originalLead.email)
+    && state.identity.family === 'industrial_staffing' && !state.terminalState.isTerminal
+    && state.responseState.answered === 'no'
+    && Object.entries(safety).every(([key, value]) =>
+      !['providerThreadLatest', 'humanClear', 'repeatClear', 'suppressionClear',
+        'senderOwnershipProven', 'senderEligible', 'quotaAvailable', 'windowAvailable',
+        'currentSendAuthorized', 'noNewerInbound', 'noConflictingEvidence'].includes(key) || value === true);
+  return safety;
+}
+
+async function deliverAgentV2Qualification({ lead, message, activities, decision,
+  outboundObservationOk, subject }) {
+  const sources = activities.filter(row => row.eventId === `gmail-reply:${message.messageId}`);
+  if (sources.length !== 1) return { delivered: false, code: 'provider_proof_unavailable' };
+  const pending = pendingDecisionActivity({ lead, message, decision, sourceRow: sources[0] });
+  if (!pending) return { delivered: false, code: 'provider_proof_invalid' };
+  const existingPending = activities.some(row => row.eventId === pending.eventId);
+  if (existingPending && !pendingDecisionFor(activities, message.messageId, lead.id))
+    return { delivered: false, code: 'pending_decision_conflict' };
+  if (!existingPending) {
+    try {
+      await recordMailboxActivity(pending);
+      activities.push(pending);
+    } catch (_) { return { delivered: false, code: 'pending_decision_not_durable' }; }
+  }
+  if (process.env[AGENT_V2_EXECUTION_FLAG] !== 'true'
+    || process.env.AGENT_V2_SHADOW_ENABLED !== 'true'
+    || !process.env.ANTHROPIC_AGENT_V2_KEY)
+    return { delivered: false, code: 'agent_v2_execution_unavailable' };
+  let store;
+  try {
+    store = createPgAgentV2Store({ connectionString: process.env.AGENT_V2_SUPABASE_DATABASE_URL,
+      expectedSupabaseUrl: process.env.SUPABASE_URL, caCert: process.env.AGENT_V2_SUPABASE_CA_CERT });
+    await store.verifyPrivileges();
+    const loadCurrentState = async ({ leadId, asOf } = {}) =>
+      (await loadAgentV2ReplyEvidence(leadId, asOf)).state;
+    const checkPhase0 = args => phase0ForAgentV2Reply(args, message.senderInboxId,
+      outboundObservationOk);
+    const initial = await loadAgentV2ReplyEvidence(lead.id);
+    const target = initial.state.turns.find(turn => turn.direction === 'inbound'
+      && turn.messageId === message.messageId);
+    if (!pendingProofMatches(initial.state, target)
+      || initial.state.latest?.inbound?.messageId !== message.messageId)
+      return { delivered: false, code: 'pending_state_unverified' };
+    await runAgentV2OneShotReadiness({ leadId: lead.id,
+      messageId: message.messageId, store, loadCurrentState, checkPhase0,
+      apiKey: process.env.ANTHROPIC_AGENT_V2_KEY });
+    const execution = await executeAgentV2Qualification({ leadId: lead.id,
+      messageId: message.messageId, store, loadCurrentState, checkPhase0,
+      liveSafety: args => liveSafetyForAgentV2Reply(args, lead, message, outboundObservationOk),
+      deliver: async ({ body, action, decisionId, stateDigest, stateAsOf }) =>
+        deliverHardenedWarmReply({ lead, message, action, body, subject, activities,
+          classification: decision.finalClassification, replyDecisionId: decision.decisionId,
+          validateFresh: async ({ fresh, current, mine }) => {
+            if (process.env[AGENT_V2_EXECUTION_FLAG] !== 'true'
+              || !sendAuthorization().allowed || !isStaffingCampaign(current))
+              return { allowed: false, code: 'agent_v2_kill_switch_or_campaign_changed' };
+            const checked = await loadAgentV2ReplyEvidence(lead.id, stateAsOf, fresh);
+            const inbound = checked.state.turns.find(turn => turn.direction === 'inbound'
+              && turn.messageId === message.messageId);
+            if (checked.state.evidenceDigest !== stateDigest
+              || checked.state.latest?.inbound?.messageId !== message.messageId
+              || !pendingProofMatches(checked.state, inbound)
+              || checked.state.responseState.answered !== 'no'
+              || checked.state.evidenceWarnings.length || checked.state.ambiguities.length
+              || inboundWarmReplyAlreadySent(mine, message.messageId)
+              || staffingHumanTouchBlock({ lead: current, activities: mine, outboundObservationOk })
+              || staffingRepeatReason(action, staffingReplyHistory({ lead: current, activities: mine })))
+              return { allowed: false, code: 'agent_v2_state_changed_before_send' };
+            const row = await store.getDecisionRow(decisionId);
+            return row?.completed_at && row.record?.stateDigest === stateDigest
+              && row.record?.decision?.actionId === 'SUGGEST_QUALIFICATION'
+              ? { allowed: true } : { allowed: false, code: 'agent_v2_decision_changed_before_send' };
+          } }),
+    });
+    if (execution.executionStatus === 'SENT') return { delivered: true,
+      actionId: responseActionId(lead.id, message.messageId, AGENT_V2_QUALIFY_ACTION),
+      result: { data: { id: execution.providerMessageId } } };
+    if (execution.executionStatus === 'ALREADY_SENT') return { delivered: true,
+      recovered: true, alreadyCheckpointed: true,
+      actionId: responseActionId(lead.id, message.messageId, AGENT_V2_QUALIFY_ACTION),
+      result: { data: { id: execution.providerMessageId } } };
+    const reconciliationRequired = execution.executionStatus === 'RECONCILIATION_REQUIRED';
+    return { delivered: false,
+      code: reconciliationRequired ? 'provider_ambiguous'
+        : execution.executionReasonCode || 'agent_v2_blocked',
+      reason: execution.executionReasonCode || null, reconciliationRequired };
+  } catch (_) { return { delivered: false, code: 'agent_v2_execution_unavailable' }; }
+  finally { await store?.close().catch(() => {}); }
+}
+
 async function handlePositiveAutomation(lead, message, classification, activities, canonical = {},
-  { decision = null, overlay: decidedOverlay } = {}) {
+  { decision = null, overlay: decidedOverlay, outboundObservationOk = false } = {}) {
   // Routes to human review and records that as this reply's execution.
   const routeToHuman = async ({ policy = null, effects = [] } = {}) => {
     if (policy) recordReplyPolicy(decision, { action: REPLY_RESPONSE_ACTION.HUMAN_REVIEW, send: false, classification, ...policy });
@@ -3360,6 +3665,33 @@ async function handlePositiveAutomation(lead, message, classification, activitie
     recordReplyExecution(decision, { ...executionForRoute(REPLY_ROUTE.NEEDS_HUMAN, routed), effects });
     return routed;
   };
+  const priorPending = process.env[AGENT_V2_EXECUTION_FLAG] === 'true'
+    && isStaffingCampaign(lead)
+    ? pendingDecisionFor(activities, message.messageId, lead.id) : null;
+  const priorDelivery = priorPending && confirmedQualificationActivity(activities,
+    lead.id, message.messageId, message.senderInboxId);
+  if (priorDelivery) {
+    recordReplyPolicy(decision, { action: AGENT_V2_QUALIFY_ACTION, send: true,
+      reason: 'previous qualification delivery confirmed by the activity ledger',
+      source: REPLY_POLICY_SOURCE.STAFFING_GUARD, classification: priorPending.finalClassification });
+    let reservation;
+    try { reservation = await getOutboundReservation(responseActionId(lead.id,
+      message.messageId, AGENT_V2_QUALIFY_ACTION)); } catch (_) { /* fail closed */ }
+    if (reservation?.status !== SEND_RESERVATION_STATUS.CONFIRMED
+      || !reservation.providerMessageId
+      || reservation.actionId !== responseActionId(lead.id, message.messageId, AGENT_V2_QUALIFY_ACTION)
+      || reservation.leadId !== lead.id || reservation.actionType !== 'gmail_warm_reply'
+      || reservation.provider !== 'gmail') {
+      const routed = await handleNeedsHuman(lead, message.fromAddr);
+      recordReplyExecution(decision, { executedAction: null,
+        status: REPLY_EXECUTION_STATUS.FAILED, code: 'agent_v2_reservation_reconciliation_required',
+        fallbackAction: REPLY_RESPONSE_ACTION.HUMAN_REVIEW });
+      return routed;
+    }
+    recordReplyExecution(decision, { executedAction: AGENT_V2_QUALIFY_ACTION,
+      status: REPLY_EXECUTION_STATUS.ALREADY_SENT, code: 'prior_agent_v2_delivery_confirmed' });
+    return { delivered: true, alreadyCheckpointed: true };
+  }
   const unrouted = unroutedReplyDecision(lead);
   if (unrouted) {
     return routeToHuman({ policy: { reason: unrouted.reason, source: REPLY_POLICY_SOURCE.STAFFING_GUARD } });
@@ -3399,7 +3731,7 @@ async function handlePositiveAutomation(lead, message, classification, activitie
       classification: effectiveClassification,
     } });
   }
-  const policy = decideReplyResponse({
+  let policy = decideReplyResponse({
     classification: effectiveClassification,
     canonical: effectiveCanonical,
     confidence: overlay?.confidence || numericConfidence({ classification: effectiveClassification, canonical: effectiveCanonical }),
@@ -3408,12 +3740,19 @@ async function handlePositiveAutomation(lead, message, classification, activitie
     family: familyForLead(lead),
     qualificationFit: overlay?.fit || '',
   });
+  // A staffing reply this conversation has already had is not sent again: a
+  // qualified lead is not re-asked, and the information is not re-sent.
+  const repeated = policy.send
+    ? staffingRepeatReason(policy.action, staffingReplyHistory({ lead, activities }))
+    : '';
+  if (repeated) policy = { ...policy, action: REPLY_RESPONSE_ACTION.HUMAN_REVIEW, send: false, reason: repeated };
   // The auto-send score is not a classification confidence: it is the staffing
   // overlay's marker score when the overlay set one, otherwise a score derived
   // from the rule classifier's signals. Both are compared with the same floor.
   recordReplyPolicy(decision, {
     action: policy.action, send: policy.send, reason: policy.reason, classification: effectiveClassification,
-    source: REPLY_POLICY_SOURCE.REPLY_RESPONSE_POLICY, confidence: policy.confidence,
+    source: repeated ? REPLY_POLICY_SOURCE.STAFFING_GUARD : REPLY_POLICY_SOURCE.REPLY_RESPONSE_POLICY,
+    confidence: policy.confidence,
     confidenceSource: overlay?.confidence ? 'staffing_overlay' : 'rule_signals', floor: POSITIVE_AUTOSEND_FLOOR,
   });
   if (!policy.send) {
@@ -3434,10 +3773,49 @@ async function handlePositiveAutomation(lead, message, classification, activitie
   }
   const body = warmResponse({ action: policy.action, lead, offer });
   const subject = /^re:/i.test(message.subject || '') ? message.subject : `Re: ${message.subject || 'your reply'}`;
-  const delivered = await deliverHardenedWarmReply({ lead, message, action: policy.action, body, subject, activities,
-    classification: effectiveClassification, replyDecisionId: decision?.decisionId || '' });
+  // A person who replied by hand owns a staffing conversation: the automated
+  // reply is held as a draft, exactly as the question auto-answer is.
+  const humanHold = isStaffingReplyContext({ family: familyForLead(lead), offer })
+    ? staffingHumanTouchBlock({ lead, activities, outboundObservationOk })
+    : null;
+  if (humanHold) {
+    await queueDraft(lead, {
+      mode: 'draft', body, reason: `${policy.reason} — held: ${humanHold.reason}`, confidence: policy.confidence || 0,
+    });
+    await handleNeedsHuman(lead, message.fromAddr);
+    recordReplyExecution(decision, {
+      executedAction: null, status: REPLY_EXECUTION_STATUS.BLOCKED, code: humanHold.code, reason: humanHold.reason,
+      fallbackAction: REPLY_RESPONSE_ACTION.HUMAN_REVIEW, effects: [REPLY_EFFECT.DRAFT_QUEUED],
+    });
+    return { delivered: false, code: humanHold.code, reason: humanHold.reason };
+  }
+  const agentV2Cutover = isStaffingCampaign(lead)
+    && process.env[AGENT_V2_EXECUTION_FLAG] === 'true';
+  if (agentV2Cutover && policy.action !== AGENT_V2_QUALIFY_ACTION) {
+    await queueDraft(lead, { mode: 'draft', body,
+      reason: 'Agent v2 initial authority permits qualification only', confidence: policy.confidence || 0 });
+    return routeToHuman({ effects: [REPLY_EFFECT.DRAFT_QUEUED] });
+  }
+  // Tracked staffing landing link for AUTOMATED delivery only. Every draft
+  // (above, and on an Agent v2 hold below) keeps the plain URL in `body`, and
+  // the Agent v2 branch is untouched.
+  const landingPlan = agentV2Cutover ? null : staffingWarmReplyLandingPlan({
+    lead, inboundMessageId: message.messageId, action: policy.action, activities,
+  });
+  const deliveryBody = landingPlan?.tracked
+    ? warmResponse({ action: policy.action, lead, offer, landingPageUrl: landingPlan.url }) : body;
+  const delivered = agentV2Cutover
+    ? await deliverAgentV2Qualification({ lead, message, activities, decision,
+      outboundObservationOk, subject })
+    : await deliverHardenedWarmReply({ lead, message, action: policy.action, body: deliveryBody, subject, activities,
+      classification: effectiveClassification, replyDecisionId: decision?.decisionId || '', landingPlan });
   recordReplyExecution(decision, executionForDelivery(policy.action, delivered));
   if (!delivered.delivered) {
+    if (agentV2Cutover && !delivered.reconciliationRequired) {
+      await queueDraft(lead, { mode: 'draft', body,
+        reason: `Agent v2 execution held: ${delivered.code}`, confidence: policy.confidence || 0 });
+      addReplyEffect(decision, REPLY_EFFECT.DRAFT_QUEUED);
+    }
     await handleNeedsHuman(lead, message.fromAddr);
     return delivered;
   }
@@ -3878,7 +4256,36 @@ async function prepareDemoIntentCandidates(allLeads, snapshot = null, corpus = a
     due.push(lead);
   }
 
+  // Read back by the server, which launches the three-minute intent backstop
+  // only while work may be pending. Reported before any delivery is attempted;
+  // when a pass then delivers, runIntentTriggerPass() reports what is left, and
+  // the server judges a process by its LAST report.
+  console.log(formatIntentStateLine({
+    due: due.length, source: INTENT_STATE_SOURCE.PREPARE, scope: TARGET_LEAD_ID ? 'target' : 'all',
+  }));
   return { due, plays, fired, activities };
+}
+
+// Check-only's contribution to the intent backstop: the same predicates over the
+// snapshot this pass already holds, with no write and no extra read. It is the
+// one observer that notices intent work created OUTSIDE the demo-play flow — a
+// corpus change that makes a legacy company key unique, a repair script — so it
+// can arm the backstop, never disarm it.
+async function reportIntentWorkHint(allLeads, snapshot, corpus) {
+  const scope = TARGET_LEAD_ID ? 'target' : 'all';
+  try {
+    const due = pendingIntentWork({
+      leads: allLeads, corpus,
+      plays: await readRealDemoPlays(snapshot.demoPlays),
+      fired: await loadFiredIntents(snapshot.intentFired),
+      activities: snapshot.activities || [],
+      companyKey: demoCompanyKey,
+    });
+    console.log(formatIntentStateLine({ due, source: INTENT_STATE_SOURCE.CHECK_ONLY_HINT, scope }));
+  } catch (error) {
+    console.warn(`[intent-state] check-only hint unavailable: ${(error && error.message) || 'unknown'}`);
+    console.log(formatIntentStateLine({ due: null, source: INTENT_STATE_SOURCE.CHECK_ONLY_HINT, scope }));
+  }
 }
 
 async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot = null, sendQuota = null, prepared = null, corpus = allLeads) {
@@ -4036,6 +4443,12 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot 
     }
   }
   console.log(`[Intent] ${sent} intent email(s) sent.`);
+  // What is still undelivered after this pass: every due lead that was not
+  // delivered AND recorded, whatever stopped it. Zero lets the server leave the
+  // backstop idle; anything else keeps it polling.
+  console.log(formatIntentStateLine({
+    due: due.length - sent, source: INTENT_STATE_SOURCE.INTENT_PASS, scope: TARGET_LEAD_ID ? 'target' : 'all',
+  }));
   return sent;
 }
 
@@ -4357,8 +4770,13 @@ function coldSendGate(lead, context = null) {
 
 // Renders a staffing follow-up, or throws so the caller defers rather than
 // falling back to ordinary cold copy.
-function staffingFollowUpBody(lead, step) {
-  const email = renderStaffingEmail(lead, step);
+// activities: this run's canonical rows. Step 2 carries the landing link, and
+// its plan is pinned by the action's earlier attempts; deliverOrdinaryColdStep
+// re-derives the same plan and compares the rendered body before any send.
+function staffingFollowUpBody(lead, step, activities = []) {
+  const landingPlan = staffingColdStepLandingPlan({ lead, step, activities });
+  if (landingPlan?.status === LANDING_PLAN_STATUS.BLOCKED) throw new Error(`landing link blocked: ${landingPlan.reason}`);
+  const email = renderStaffingEmail(lead, step, landingPlan?.tracked ? { landingPageUrl: landingPlan.url } : {});
   const bad = validateStaffingEmail(email, step);
   if (bad) throw new Error(bad);
   return email.body;
@@ -4988,6 +5406,10 @@ async function run() {
     console.log(`[target] Controlled run restricted to lead ${TARGET_LEAD_ID}`);
   }
 
+  // Before any Gmail work, so an observer failure later in the pass cannot
+  // suppress the report. Pure computation over the snapshot already loaded.
+  if (CHECK_ONLY) await reportIntentWorkHint(all, snapshot, allLeadsForDailyCap);
+
   // INTENT_ONLY still observes inbound replies, bounces and manual Gmail
   // responses before deriving canonical ownership. It skips cold/stage send
   // selection, but is not an escape hatch around mailbox freshness or gates.
@@ -5039,6 +5461,7 @@ async function run() {
     const intentWindowQuota = createSendingWindowQuota({
       senderIds: [...intentCandidatesBySender.keys()],
       perSenderLimit: PER_INBOX_RUN_CAP, globalLimit: DAILY_CAP,
+      perSenderLimits: SENDER_PER_RUN_LIMITS,
     });
     activeQuotaState = intentQuotaState;
     activeWindowQuota = intentWindowQuota;
@@ -5074,6 +5497,7 @@ async function run() {
     senderIds: GMAIL_SENDERS.filter(sender => sender.sendEligible).map(sender => sender.id),
     perSenderLimit: PER_INBOX_RUN_CAP,
     globalLimit: DAILY_CAP,
+    perSenderLimits: SENDER_PER_RUN_LIMITS,
   });
   activeQuotaState = quotaState;
   activeWindowQuota = windowQuota;
@@ -5249,7 +5673,7 @@ async function run() {
     // previous behaviour, including how a copy failure propagates.
     let body;
     if (lead.emailTemplateId === STAFFING_TEMPLATE) {
-      try { body = staffingFollowUpBody(lead, nextStepNum); }
+      try { body = staffingFollowUpBody(lead, nextStepNum, ownershipActivities); }
       catch (error) {
         console.warn(`⏸️  follow-up deferred → ${lead.email} (${error.message})`);
         return false;
@@ -5541,7 +5965,7 @@ async function run() {
     // previous behaviour, including how a copy failure propagates.
     let body;
     if (lead.emailTemplateId === STAFFING_TEMPLATE) {
-      try { body = staffingFollowUpBody(lead, nextStepNum); }
+      try { body = staffingFollowUpBody(lead, nextStepNum, ownershipActivities); }
       catch (error) {
         console.warn(`⏸️  follow-up deferred → ${lead.email} (${error.message})`);
         continue;
