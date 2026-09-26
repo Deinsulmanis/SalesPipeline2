@@ -287,6 +287,42 @@ PGLITE_DIR=<dir> node scripts/landing-attribution-migration-check.mjs
 - `landing_funnel_daily`: by sent date, source, campaign, sender and template
   version.
 
+## Staffing Funnel dashboard
+
+The workspace is **Growth → Staffing Funnel** (`#staffing`). It is fed by
+`GET /api/landing/funnel`, which requires dashboard auth and sends
+`Cache-Control: no-store`.
+
+**Query parameters:**
+- `range`: `7d`, `30d` or `90d`, or `custom` with `from`/`to` as YYYY-MM-DD
+  Vancouver days.
+- `source`, `campaign`, `sender`, `template`: filter the links.
+- `includeTest=1`: include test links.
+- `includeInternal=1`: add a separate count of internal, debug and unresolved
+  sessions.
+
+The period is the links' **send date**. A link's sessions and bookings count
+towards the period it was sent in.
+
+- **Sources of truth:**
+  - tiers and flags come from `landing_session_facts`;
+  - booking labels come from `landing_booking_attribution`;
+  - the code only filters and counts.
+- **What it shows:**
+  - summary cards;
+  - conversion rates, each naming its grain (links sent, sessions or leads);
+  - a Follow-up #2 vs positive-reply breakdown;
+  - the four booking labels;
+  - visit quality: each session at its highest tier, plus neutral signals. No
+    session is ever labelled human or bot;
+  - a lead activity table that opens the existing outreach drawer.
+- **Excluded by default:** internal, debug and test traffic. Bookings by leads on
+  `LANDING_TEST_EMAIL_DOMAINS` are also hidden unless test links are included.
+- **Never exposed:** every query names its columns, so no token, token hash,
+  action id, IP address or user agent reaches the response. Lead details are
+  fetched only for the leads on screen, never for the whole outreach corpus.
+- **Supabase failure:** returns 503 with a generic message.
+
 ## Out of scope, for now
 
 - **Manual dashboard replies.** A link typed by hand is plain and untracked.

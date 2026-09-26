@@ -530,6 +530,8 @@ require('./integrations/anthropic-usage-route').registerAnthropicUsageRoutes(app
 require('./integrations/research-icp/routes').registerResearchRoutes(app, requireAuth);
 // "Mark this browser internal" codes and collector counters (dashboard only).
 landingCollectorRoutes.registerLandingInternalMarkRoutes(app, requireAuth, { collector: landingCollector });
+// Staffing Landing Funnel workspace (dashboard only; read-only).
+require('./integrations/landing-dashboard-route').registerLandingDashboardRoutes(app, requireAuth);
 app.use(express.static(path.join(__dirname, 'public')));
 
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
