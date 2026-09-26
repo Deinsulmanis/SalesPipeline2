@@ -2,6 +2,7 @@
 
 const { deterministicReplyCategory } = require('./reply-classifier');
 const { resolveReplyState, EVIDENCE_SOURCE } = require('./canonical-reply');
+const { applyReplyDecisionsToReplyEvidence } = require('./reply-decision');
 const {
   canonicalSendRows, uniqueCanonicalBounces, flattenActivitiesByLeadId,
 } = require('./canonical-sends');
@@ -90,7 +91,10 @@ function leadHasCanonicalInbound(activities = []) {
  * canonical-reply documents, and the tag remains the fallback beneath it.
  */
 function categoryFromEvidence(lead = {}, activities = [], storedClassifications = []) {
-  const resolved = resolveReplyState(lead, { activities });
+  // A reply production decided is counted as production decided it: the final
+  // classification's state, not the rule classifier's first reading. Replies
+  // from before decision records existed keep their stored evidence.
+  const resolved = resolveReplyState(lead, { activities: applyReplyDecisionsToReplyEvidence(activities || []) });
   if (resolved.source === EVIDENCE_SOURCE.CANONICAL_ACTIVITY) {
     return CANONICAL_STATE_CATEGORY[resolved.state] || ANALYTICS_CATEGORY.UNKNOWN;
   }
@@ -129,7 +133,7 @@ const REPLY_EVIDENCE_TYPES = new Set([
 
 function buildReplyEvidenceMap(activities = []) {
   const byLead = new Map();
-  for (const row of activities || []) {
+  for (const row of applyReplyDecisionsToReplyEvidence(activities || [])) {
     const eventType = String(row.eventType || '');
     if (!REPLY_EVIDENCE_TYPES.has(eventType)) continue;
     const id = String(row.sourceLeadId || row.leadId || '').replace(/^CE-/, '').trim();

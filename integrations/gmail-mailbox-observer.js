@@ -67,6 +67,20 @@ function firstPlainText(payload) {
   return '';
 }
 
+// The first text/html leaf. Read only when a message has no text/plain part:
+// iPhone Mail sends multipart/alternative with HTML alone.
+function firstHtmlText(payload) {
+  if (!payload) return '';
+  if (payload.mimeType === 'text/html' && payload.body?.data) {
+    return Buffer.from(payload.body.data, 'base64url').toString('utf8');
+  }
+  for (const child of payload.parts || []) {
+    const html = firstHtmlText(child);
+    if (html) return html;
+  }
+  return '';
+}
+
 function candidateIndexes(leads, activities, senderInboxId) {
   const byEmail = new Map();
   const byThread = new Map();
@@ -290,6 +304,11 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
   let quotaBackoff = null;
   let messagesFetched = 0;
   let messagesDeduplicated = 0;
+  // One thread recovery per thread per pass. Every vanished message in a thread
+  // recovers the same thread, and refetching it per message turned a handful of
+  // deleted messages into a full-thread read storm that exhausted the per-user
+  // Gmail quota on every pass, so the mailbox could never advance its cursor.
+  const recoveredThreads = new Map();
   for (const id of slice) {
     if (knownIds.has(id)) {
       messagesDeduplicated += 1;
@@ -319,11 +338,14 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
       // A vanished resource is NOT an expired cursor. Preserve the provider
       // tombstone and attempt thread recovery; never report it as zero events.
       let threadRecovered = false;
-      if (threadId) {
+      if (threadId && recoveredThreads.has(threadId)) {
+        threadRecovered = recoveredThreads.get(threadId);
+      } else if (threadId) {
         try {
           const thread = await providerRead('users.threads.get', { userId: 'me', id: threadId, format: 'full' }, params => gmail.users.threads.get(params), readOpts);
           messages.push(...thread.data.messages || []); threadRecovered = true;
         } catch (threadError) { if (statusOf(threadError) !== 404) throw threadError; }
+        recoveredThreads.set(threadId, threadRecovered);
       }
       unavailable.push({ id, threadId: threadId || '', status: 404, threadRecovered,
         classification: 'provider_resource_unavailable', contentRecoverable: false });
@@ -371,6 +393,6 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
     ...matchMailboxMessages(unique, { leads, activities, senderInboxId, senderEmail }) };
 }
 
-module.exports = { headerValue, parseAddr, decodeBodies, firstPlainText, matchMailboxMessages,
+module.exports = { headerValue, parseAddr, decodeBodies, firstPlainText, firstHtmlText, matchMailboxMessages,
   bounceMentionsRecipient, extractedEmails, listChangedIds, listCatchup, observeMailbox, providerRead, isRateLimited,
   OVERLAP_MS, STALE_MS, RECOVERY_READ_BUDGET, byIdAscending, persistedGmailMessageIds };

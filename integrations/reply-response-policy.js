@@ -16,6 +16,10 @@ function isStaffingReplyContext({ family = '', offer = {} } = {}) {
   return family === 'industrial_staffing' || offer.id === STAFFING_OFFER_ID;
 }
 
+// Stamped on every reply decision. Bump it when a rule below changes, so an
+// evaluator can tell which policy produced a recorded action.
+const POLICY_VERSION = 'reply_response_policy_v1';
+
 const POSITIVE_AUTOSEND_FLOOR = 85;
 const QUESTION_AUTOSEND_FLOOR = 85;
 
@@ -101,5 +105,5 @@ function decideReplyResponse({
 
 module.exports = {
   ACTION, decideReplyResponse, numericConfidence, isStaffingReplyContext,
-  POSITIVE_AUTOSEND_FLOOR, QUESTION_AUTOSEND_FLOOR,
+  POSITIVE_AUTOSEND_FLOOR, QUESTION_AUTOSEND_FLOOR, POLICY_VERSION,
 };

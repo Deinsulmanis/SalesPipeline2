@@ -1,0 +1,56 @@
+{
+  "leads": [
+    {
+      "id": "SYNTHETIC_AGENT_V2_PILOT_20260924_LEAD_002",
+      "email": "synthetic-agent-v2-pilot-2@example.test",
+      "company": "Synthetic Industrial Staffing Agency",
+      "campaign": "Industrial Staffing",
+      "leadNiche": "industrial_staffing",
+      "stage": "Replied",
+      "emailStatus": "replied",
+      "emailStep": "1",
+      "notes": "",
+      "senderInboxId": "primary"
+    }
+  ],
+  "boardLeads": [],
+  "activities": [
+    {
+      "eventId": "synthetic-agent-v2-pilot:outbound:002",
+      "leadId": "CE-SYNTHETIC_AGENT_V2_PILOT_20260924_LEAD_002",
+      "sourceLeadId": "SYNTHETIC_AGENT_V2_PILOT_20260924_LEAD_002",
+      "email": "synthetic-agent-v2-pilot-2@example.test",
+      "company": "Synthetic Industrial Staffing Agency",
+      "eventType": "initial_email_sent",
+      "occurredAt": "2026-09-24T17:00:00.000Z",
+      "subject": "Synthetic employer acquisition pilot",
+      "content": "ScaleLab works with industrial and skilled-trades staffing agencies. The employer acquisition pilot lasts 30 days.",
+      "metadata": "{\"gmailMessageId\":\"SYNTHETIC_AGENT_V2_PILOT_20260924_OUTBOUND_002\",\"gmailThreadId\":\"SYNTHETIC_AGENT_V2_PILOT_20260924_THREAD_002\",\"senderInboxId\":\"primary\",\"step\":1}"
+    },
+    {
+      "eventId": "gmail-reply:SYNTHETIC_AGENT_V2_PILOT_20260924_MESSAGE_002",
+      "leadId": "CE-SYNTHETIC_AGENT_V2_PILOT_20260924_LEAD_002",
+      "sourceLeadId": "SYNTHETIC_AGENT_V2_PILOT_20260924_LEAD_002",
+      "email": "synthetic-agent-v2-pilot-2@example.test",
+      "company": "Synthetic Industrial Staffing Agency",
+      "eventType": "question_reply",
+      "occurredAt": "2026-09-24T17:01:00.000Z",
+      "subject": "Re: Synthetic employer acquisition pilot",
+      "content": "I'm interested. What does the 30-day employer acquisition pilot involve for an industrial staffing agency?",
+      "metadata": "{\"gmailMessageId\":\"SYNTHETIC_AGENT_V2_PILOT_20260924_MESSAGE_002\",\"gmailThreadId\":\"SYNTHETIC_AGENT_V2_PILOT_20260924_THREAD_002\",\"senderInboxId\":\"primary\",\"classification\":\"QUESTION\",\"from\":\"synthetic-agent-v2-pilot-2@example.test\",\"genuineHuman\":true}"
+    },
+    {
+      "eventId": "reply-decision:SYNTHETIC_AGENT_V2_PILOT_20260924_LEAD_002:SYNTHETIC_AGENT_V2_PILOT_20260924_MESSAGE_002",
+      "leadId": "CE-SYNTHETIC_AGENT_V2_PILOT_20260924_LEAD_002",
+      "sourceLeadId": "SYNTHETIC_AGENT_V2_PILOT_20260924_LEAD_002",
+      "email": "synthetic-agent-v2-pilot-2@example.test",
+      "company": "Synthetic Industrial Staffing Agency",
+      "eventType": "reply_decision_recorded",
+      "occurredAt": "2026-09-24T17:01:30.000Z",
+      "subject": "",
+      "content": "",
+      "metadata": "{\"inboundMessageId\":\"SYNTHETIC_AGENT_V2_PILOT_20260924_MESSAGE_002\",\"leadId\":\"SYNTHETIC_AGENT_V2_PILOT_20260924_LEAD_002\",\"decisionId\":\"reply-decision:SYNTHETIC_AGENT_V2_PILOT_20260924_LEAD_002:SYNTHETIC_AGENT_V2_PILOT_20260924_MESSAGE_002\",\"finalClassification\":\"QUESTION\",\"policyAction\":\"HUMAN_REVIEW\",\"executionStatus\":\"recorded\"}"
+    }
+  ],
+  "suppressedEmails": []
+}

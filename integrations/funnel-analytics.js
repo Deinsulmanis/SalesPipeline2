@@ -2,6 +2,7 @@
 
 const { LEGACY_UNKNOWN, parseMetadata, attributionFromActivity } = require('./campaign-versions');
 const { activeDemoPairEvents } = require('./demo-intent-state');
+const { applyReplyDecisionsToReplyEvidence } = require('./reply-decision');
 
 const SEND_TYPES = new Set(['initial_email_sent', 'follow_up_sent', 'booking_link_sent', 'sequence_step_sent']);
 const REPLY_TYPES = new Set(['positive_reply', 'meeting_requested', 'late_reply', 'question_reply', 'negative_reply', 'unsubscribe_reply', 'wrong_person_reply', 'needs_human_reply']);
@@ -75,6 +76,9 @@ function withinCohort(row, filters) {
 function categoryForReply(row, fallback = '') {
   const type = String(row.eventType || '');
   const metadata = parseMetadata(row.metadata);
+  // A reply production decided carries its final state (reply-decision).
+  if (metadata.canonicalStateSource === 'reply_decision'
+    && ['positive', 'negative', 'needs_human'].includes(metadata.canonicalState)) return metadata.canonicalState;
   const classification = String(metadata.classification || fallback || '').toUpperCase();
   if (['positive_reply', 'meeting_requested'].includes(type) || /INTERESTED|MEETING_REQUEST|POSITIVE/.test(classification)) return 'positive';
   if (['negative_reply', 'unsubscribe_reply'].includes(type) || /NOT_INTERESTED|NEGATIVE|UNSUBSCRIBE/.test(classification)) return 'negative';
@@ -99,7 +103,7 @@ function acquisitionFor(rows) {
 function buildFunnelAnalytics(input = {}, query = {}) {
   const leads = input.leads || [];
   const boardLeads = input.boardLeads || [];
-  const activities = input.activities || [];
+  const activities = applyReplyDecisionsToReplyEvidence(input.activities || []);
   const replyRecords = input.replyRecords || [];
   const currentVersion = input.currentVersion || '';
   const version = selectedVersion(query.version, currentVersion);

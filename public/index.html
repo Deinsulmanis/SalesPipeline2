@@ -1983,6 +1983,10 @@
   .funnel-kpis{display:grid;grid-template-columns:repeat(7,minmax(92px,1fr));gap:8px;margin:16px 0}.funnel-kpi{padding:11px;background:var(--tint-faint);border:1px solid var(--border);border-radius:var(--radius-sm)}.funnel-kpi strong{display:block;font-size:20px}.funnel-kpi span{font-size:11px;color:var(--text-muted)}
   .funnel-flow{display:grid;grid-template-columns:repeat(8,minmax(88px,1fr));gap:7px}.funnel-step{appearance:none;text-align:left;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:11px;min-height:82px;cursor:pointer}.funnel-step:hover{border-color:var(--border-hover);transform:translateY(-2px)}.funnel-step b{display:block;font-size:21px}.funnel-step small{display:block;color:var(--text-muted);margin-top:3px}
   .funnel-secondary{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px}.funnel-mini-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.funnel-mini{padding:8px;border-radius:var(--radius-sm);background:var(--tint-faint);font-size:12px}.funnel-mini b{display:block;font-size:16px}
+  .sf-toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px}.sf-field{display:grid;gap:4px;font-size:11px;color:var(--text-muted)}.sf-field select,.sf-field input[type=date]{width:auto;min-width:130px;padding:7px 9px}.sf-check{display:flex;gap:6px;align-items:center;font-size:12px;color:var(--text-secondary);min-height:44px}
+  .sf-note{font-size:12px;color:var(--text-muted);margin:4px 0 0}.sf-section{margin-top:16px}.sf-section h3{margin:0 0 8px;font-size:15px}.sf-kpis{grid-template-columns:repeat(4,minmax(120px,1fr))}.sf-table-wrap{overflow-x:auto}.sf-table-wrap .funnel-table{min-width:640px}.sf-table-wrap .funnel-table td.num,.sf-table-wrap .funnel-table th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .sf-link{appearance:none;background:none;border:0;padding:0;color:var(--primary);cursor:pointer;font:inherit;text-align:left;min-height:28px}.sf-link:hover{text-decoration:underline}.sf-bar{height:6px;border-radius:3px;background:var(--tint-faint);overflow:hidden;min-width:80px}.sf-bar i{display:block;height:100%;background:var(--primary)}
+  @media(max-width:700px){.sf-kpis{grid-template-columns:repeat(2,1fr)}.sf-field,.sf-field select,.sf-field input[type=date]{width:100%;min-width:100%}}
   .funnel-analytics details{margin-top:16px}.funnel-analytics summary{cursor:pointer;color:var(--primary)}.funnel-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:12px}.funnel-table th,.funnel-table td{padding:7px;border-bottom:1px solid var(--border);text-align:left}
   .health-panel{margin:18px 28px;padding:16px 20px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-lg)}
   .health-head{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;cursor:pointer}
@@ -2051,6 +2055,7 @@
     <button class="crm-nav-btn" data-workspace="outreach" onclick="setWorkspace('outreach')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m3 11 18-8-7 18-3-7-8-3Z"/><path d="m11 14 4-4"/></svg><span>Outreach</span></button>
     <button class="crm-nav-btn" data-workspace="campaigns" onclick="setWorkspace('campaigns')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 19V9m6 10V5m6 14v-7m4 7V3"/></svg><span>Campaigns</span></button>
     <button class="crm-nav-btn" data-workspace="analytics" onclick="setWorkspace('analytics')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 19V5m0 14h16"/><path d="m7 15 4-4 3 2 5-7"/></svg><span>Analytics</span></button>
+    <button class="crm-nav-btn" data-workspace="staffing" onclick="setWorkspace('staffing')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 4h18l-7 8v6l-4 2v-8L3 4Z"/></svg><span>Staffing Funnel</span></button>
     <button class="crm-nav-btn" data-workspace="sequences" onclick="setWorkspace('sequences')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M5 6h14M5 12h10M5 18h6"/><path d="m17 15 3 3-3 3"/></svg><span>Sequences</span></button>
     <div class="crm-nav-group">System</div>
     <button class="crm-nav-btn" data-workspace="health" onclick="setWorkspace('health')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-5"/></svg><span>CRM Health</span></button>
@@ -7324,6 +7329,7 @@ const WORKSPACES = Object.freeze({
   inbox:     ['Inbox', 'Replies and conversations that need a human decision'],
   campaigns: ['Campaigns', 'Measured campaign versions and outbound context'],
   analytics: ['Analytics', 'Funnel performance, engagement, and sending activity'],
+  staffing:  ['Staffing Funnel', 'Tracked staffing links, landing-page visits and assisted bookings'],
   sequences: ['Sequences', 'Stage follow-up enrollment and delivery state'],
   bookings:  ['Bookings', 'Scheduled calls and explicit meeting outcomes'],
   health:    ['CRM Health', 'Automation risk, data quality, and operational backlog'],
@@ -7357,6 +7363,7 @@ function installWorkspaceShell() {
   const inbox = make('inbox', workspaceIntro('Human attention', 'Inbox', 'What prospects said, what should happen next, and who owns the move.'));
   const campaigns = make('campaigns', workspaceIntro('Attribution', 'Campaigns', 'Measured campaign versions remain separate from legacy activity with unknown attribution.'));
   const analytics = make('analytics', workspaceIntro('Performance', 'Analytics', 'Campaign funnel, replies, engagement signals, and daily sending activity.'));
+  const staffing = make('staffing', workspaceIntro('Outreach links', 'Staffing Funnel', 'What happened after a tracked staffing link was sent: visits, engagement tiers, video, booking clicks and assisted bookings.'));
   const sequences = make('sequences', workspaceIntro('Automation', 'Sequences', 'Explicit stage-sequence enrollment, current step, and next scheduled action.'));
   const bookings = make('bookings', workspaceIntro('Call lifecycle', 'Bookings', 'Upcoming calls, outcome-needed meetings, cancellations, and no-shows.'));
   const health = make('health', workspaceIntro('System status', 'CRM Health', 'Active automation risk is separated from operational backlog and historical debt.'));
@@ -7374,6 +7381,7 @@ function installWorkspaceShell() {
 
   inbox.insertAdjacentHTML('beforeend', '<div class="inbox-toolbar" id="inbox-toolbar"></div><p id="inbox-note" style="color:var(--text-muted);font-size:12px;margin:0 0 10px">An operational queue over the same canonical reply records Analytics measures — not a second count. Every inbound message appears here, including the automated and unattributable ones that Analytics deliberately keeps out of reply rates, so <b>All replies</b> equals <b>Inbound Messages</b> and is larger than <b>Genuine Replies</b>. Filters overlap: a message can be both Positive and Needs response.</p><div id="inbox-content" class="workspace-empty"><strong>Loading the reply queue…</strong>Canonical reply evidence is being prepared.</div>');
   sequences.insertAdjacentHTML('beforeend', '<div id="sequences-status" class="workspace-surface">Loading sequence status…</div>');
+  staffing.insertAdjacentHTML('beforeend', '<div id="staffing-funnel-content" aria-live="polite"><div class="workspace-empty"><strong>Loading the staffing funnel…</strong>Reading tracked links, landing-page sessions and bookings.</div></div>');
   bookings.insertAdjacentHTML('beforeend', '<div id="bookings-content" class="workspace-empty"><strong>Loading call lifecycle…</strong>Current meeting state is being prepared.</div>');
   settings.insertAdjacentHTML('afterbegin', '<div id="settings-status" class="status-grid" style="margin-bottom:14px"></div><div id="settings-inbox-routing" class="workspace-surface" aria-live="polite"><div class="workspace-empty"><strong>Loading sender routing…</strong>Reading configured Gmail inbox status.</div></div>');
 
@@ -7434,8 +7442,140 @@ async function loadWorkspace(name) {
   }
   if (name === 'health') { await loadCrmHealth(); document.getElementById('crm-health-body').hidden = false; document.getElementById('crm-health-toggle').setAttribute('aria-expanded','true'); return; }
   if (name === 'sequences') return loadSequencesWorkspace();
+  if (name === 'staffing') return loadStaffingFunnel();
   if (name === 'bookings') return loadBookingsWorkspace();
   if (name === 'settings') return loadSettingsWorkspace();
+}
+
+// ============================================================
+// STAFFING LANDING FUNNEL — first-party attribution for tracked staffing links.
+// Read-only. Tiers and booking labels come from SQL; this only renders them.
+// Internal, debug and test traffic are excluded unless asked for.
+// ============================================================
+let staffingFunnelFilters = { range: '30d', from: '', to: '', source: '', campaign: '', sender: '', template: '', includeTest: false, includeInternal: false };
+
+async function loadStaffingFunnel() {
+  const host = document.getElementById('staffing-funnel-content');
+  if (!host) return;
+  host.innerHTML = '<div class="workspace-empty"><strong>Loading the staffing funnel…</strong>Reading tracked links, landing-page sessions and bookings.</div>';
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(staffingFunnelFilters)) {
+    if (value === true) params.set(key, '1');
+    else if (value) params.set(key, value);
+  }
+  try {
+    const response = await fetch('/api/landing/funnel?' + params.toString());
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    host.innerHTML = renderStaffingFunnel(await response.json());
+  } catch (_) {
+    host.innerHTML = '<div class="workspace-empty"><strong>Staffing funnel unavailable</strong>The landing attribution data could not be loaded. Nothing was changed; try again shortly.</div>';
+  }
+}
+
+function setStaffingFunnelFilter(key, value) {
+  staffingFunnelFilters = { ...staffingFunnelFilters, [key]: value };
+  if (key === 'range' && value === 'custom' && !(staffingFunnelFilters.from && staffingFunnelFilters.to)) {
+    const day = offset => new Date(Date.now() - offset * 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+    staffingFunnelFilters = { ...staffingFunnelFilters, from: day(29), to: day(0) };
+  }
+  loadStaffingFunnel();
+}
+
+function renderStaffingFunnel(data) {
+  const f = data.filters || {};
+  const o = data.options || {};
+  const s = data.summary || {};
+  const n = value => (Number.isFinite(value) ? value.toLocaleString('en-CA') : '0');
+  const pct = value => (value === null || value === undefined ? '—' : `${(value * 100).toFixed(1)}%`);
+  const when = iso => (iso ? new Date(iso).toLocaleString('en-CA', { timeZone: 'America/Vancouver', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—');
+  const SOURCE = { followup_2: 'Follow-up #2', positive_reply: 'Positive reply' };
+  const GRAIN = { links: 'links sent', sessions: 'sessions', leads: 'leads' };
+  const TIER = { none: 'Link sent, no visit', raw: 'Raw', visible: 'Visible', engaged: 'Engaged', interacted: 'Interacted', intent: 'Intent' };
+  const LABEL = { page_assisted: 'Page-assisted', visited_before_booking: 'Visited before booking', link_sent_no_visit: 'Link sent, no visit', no_link_issued: 'No link issued' };
+  const LABEL_HELP = {
+    page_assisted: 'A booking click or dialog on their link within 2 hours before booking.',
+    visited_before_booking: 'An engaged visit on their link within 30 days before booking.',
+    link_sent_no_visit: 'A link was sent before the booking, with no engaged visit.',
+    no_link_issued: 'No tracked link was sent before the booking.',
+  };
+  const VIDEO = { playing: 'Played', 25: '25%', 50: '50%', 75: '75%', complete: 'Completed' };
+  const choice = (key, label, values, render = value => value) => `<label class="sf-field"><span>${esc(label)}</span><select onchange="setStaffingFunnelFilter('${key}', this.value)"><option value="">All</option>${(values || []).map(value => `<option value="${escAttr(value)}"${f[key] === value ? ' selected' : ''}>${esc(render(value))}</option>`).join('')}</select></label>`;
+  const table = (head, rows, empty) => rows.length
+    ? `<div class="sf-table-wrap"><table class="funnel-table"><thead><tr>${head.map(([text, cls]) => `<th${cls ? ` class="${cls}"` : ''}>${esc(text)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`
+    : `<div class="workspace-empty">${empty}</div>`;
+
+  const toolbar = `<div class="sf-toolbar" role="group" aria-label="Staffing funnel filters">
+    <label class="sf-field"><span>Links sent in</span><select onchange="setStaffingFunnelFilter('range', this.value)">${[['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['90d', 'Last 90 days'], ['custom', 'Custom dates']].map(([value, label]) => `<option value="${value}"${f.range === value ? ' selected' : ''}>${label}</option>`).join('')}</select></label>
+    ${f.range === 'custom' ? `<label class="sf-field"><span>From</span><input type="date" value="${escAttr(f.fromDay || '')}" onchange="setStaffingFunnelFilter('from', this.value)"></label><label class="sf-field"><span>To</span><input type="date" value="${escAttr(f.toDay || '')}" onchange="setStaffingFunnelFilter('to', this.value)"></label>` : ''}
+    ${choice('source', 'Source', o.sources, value => SOURCE[value] || value)}
+    ${choice('campaign', 'Campaign', o.campaigns)}
+    ${choice('sender', 'Sender inbox', o.senders)}
+    ${choice('template', 'Template version', o.templates)}
+    <label class="sf-check"><input type="checkbox"${f.includeTest ? ' checked' : ''} onchange="setStaffingFunnelFilter('includeTest', this.checked)"> Include test links</label>
+    <label class="sf-check"><input type="checkbox"${f.includeInternal ? ' checked' : ''} onchange="setStaffingFunnelFilter('includeInternal', this.checked)"> Show internal/debug counts</label>
+  </div>
+  <p class="sf-note">Links sent ${esc(when(f.from))} – ${esc(when(f.to))} (Pacific). ${f.includeTest ? '<b>Test links are included.</b> ' : 'Test links are excluded. '}Internal and debug browsers are always left out of these numbers.
+  ${data.status && data.status.trackingEnabled === false ? ' <span class="state-pill" data-on="false">Link tracking off</span> New emails carry the plain URL, so only links already sent can change.' : ''}</p>
+  ${data.truncated ? '<p class="sf-note"><b>Showing the first 5,000 rows of a table.</b> Narrow the dates for exact totals.</p>' : ''}`;
+
+  const kpis = [
+    ['Tracked links sent', s.linksSent, 'Tracked staffing links sent in the period.'],
+    ['Leads sent a link', s.leadsReached, 'Distinct leads who received at least one tracked link.'],
+    ['Raw sessions', s.rawSessions, 'The page reported with the link. Not proof of a person.'],
+    ['Visible sessions', s.visibleSessions, 'The page was visible on screen.'],
+    ['Engaged sessions', s.engagedSessions, 'Visible and (10 s visible, real input, video, or booking click/dialog).'],
+    ['Interacted sessions', s.interactedSessions, 'Real pointer, touch, key or wheel input, or real scrolling.'],
+    ['Intent sessions', s.intentSessions, 'Video playing, a real booking click, or the booking dialog opened.'],
+    ['Video plays', s.videoPlays, 'Sessions where the explainer actually played.'],
+    ['Video 25%', s.video25, 'Sessions that watched a quarter of the video.'],
+    ['Video 50%', s.video50, 'Sessions that watched half of the video.'],
+    ['Video 75%', s.video75, 'Sessions that watched three quarters.'],
+    ['Video completes', s.videoCompletes, 'Sessions that watched to the end.'],
+    ['Meeting section views', s.meetingSectionViews, 'Half the qualified-meeting card in view for a second.'],
+    ['Booking clicks', s.bookingCtaClicks, 'Sessions with a real click on a booking button.'],
+    ['Booking dialogs', s.bookingDialogsOpened, 'Sessions where the scheduler dialog opened.'],
+    ['Assisted bookings', s.assistedBookings, 'Bookings labelled page-assisted or visited-before-booking. Assisted, not caused.'],
+  ];
+  const kpiHtml = `<div class="funnel-kpis sf-kpis">${kpis.map(([label, value, help]) => `<div class="funnel-kpi" title="${escAttr(help)}"><strong>${esc(n(value))}</strong><span>${esc(label)}</span></div>`).join('')}</div>`;
+
+  const rates = table([['Step'], ['Rate', 'num'], ['Count', 'num'], ['Denominator']],
+    (data.rates || []).map(r => `<tr><td>${esc(r.label)}</td><td class="num"><b>${esc(pct(r.value))}</b></td><td class="num">${esc(n(r.numerator))} / ${esc(n(r.denominator))}</td><td>per ${esc(GRAIN[r.grain] || r.grain)}</td></tr>`),
+    '<strong>No conversion data yet</strong>');
+
+  const sources = table([['Source'], ['Links', 'num'], ['Leads', 'num'], ['Raw', 'num'], ['Engaged', 'num'], ['Interacted', 'num'], ['Intent', 'num'], ['Video plays', 'num'], ['Booking clicks', 'num'], ['Assisted bookings', 'num'], ['Links engaged', 'num']],
+    (data.bySource || []).map(entry => { const c = entry.counts || {}; const engaged = (entry.rates || []).find(r => r.key === 'link_to_engaged'); return `<tr><td>${esc(SOURCE[entry.source] || entry.source)}</td><td class="num">${esc(n(c.linksSent))}</td><td class="num">${esc(n(c.leadsReached))}</td><td class="num">${esc(n(c.rawSessions))}</td><td class="num">${esc(n(c.engagedSessions))}</td><td class="num">${esc(n(c.interactedSessions))}</td><td class="num">${esc(n(c.intentSessions))}</td><td class="num">${esc(n(c.videoPlays))}</td><td class="num">${esc(n(c.bookingCtaClicks))}</td><td class="num">${esc(n(c.assistedBookings))}</td><td class="num">${esc(pct(engaged && engaged.value))}</td></tr>`; }),
+    '<strong>No sources yet</strong>');
+
+  const b = data.bookings || { byLabel: {}, rows: [], total: 0 };
+  const bookingCards = `<div class="funnel-kpis sf-kpis">${Object.keys(LABEL).map(key => `<div class="funnel-kpi" title="${escAttr(LABEL_HELP[key])}"><strong>${esc(n((b.byLabel || {})[key] || 0))}</strong><span>${esc(LABEL[key])}</span></div>`).join('')}</div>`;
+  const bookingRows = table([['Lead'], ['Booked'], ['Meeting'], ['Assist label'], ['Link source']],
+    (b.rows || []).map(row => `<tr><td><button type="button" class="sf-link" onclick="openCeDetail('${escAttr(row.leadId)}')">${esc(row.company || row.leadId)}</button></td><td>${esc(when(row.bookedAt))}</td><td>${esc(when(row.meetingAt))}</td><td title="${escAttr(LABEL_HELP[row.assistLabel] || '')}">${esc(LABEL[row.assistLabel] || row.assistLabel)}</td><td>${esc(SOURCE[row.source] || '—')}</td></tr>`),
+    '<strong>No bookings in this period</strong>Bookings recorded by the Calendar sync appear here with their assist label.');
+
+  const q = data.quality || { tiers: {}, signals: {} };
+  const sessionsTotal = Object.values(q.tiers || {}).reduce((sum, value) => sum + (value || 0), 0);
+  const tierRows = ['intent', 'interacted', 'engaged', 'visible', 'raw'].map(key => { const count = (q.tiers || {})[key] || 0; const share = sessionsTotal ? count / sessionsTotal : 0; return `<tr><td>${esc(TIER[key])}${key === 'raw' ? ' only' : ''}</td><td class="num">${esc(n(count))}</td><td class="num">${esc(pct(sessionsTotal ? share : null))}</td><td><div class="sf-bar" aria-hidden="true"><i style="width:${(share * 100).toFixed(1)}%"></i></div></td></tr>`; });
+  const signals = q.signals || {};
+  const signalRows = [['Browser automation flag (webdriver)', signals.webdriver], ['Headless browser user agent', signals.headless], ['Self-declared bot user agent', signals.declaredBot], ['Opened within a minute of sending', signals.openedWithinMinuteOfSend], ['Instant scroll jump', signals.instantScrollJump], ['Never visible', signals.neverVisible]]
+    .map(([label, value]) => `<tr><td>${esc(label)}</td><td class="num">${esc(n(value || 0))}</td></tr>`);
+  const quality = `<p class="sf-note">Each session is counted once, at the highest tier it reached. The signals are shown only to help explain patterns: none of them proves a visitor is or isn't a person.</p>
+    ${table([['Highest tier reached'], ['Sessions', 'num'], ['Share', 'num'], ['']], sessionsTotal ? tierRows : [], '<strong>No sessions yet</strong>')}
+    ${sessionsTotal ? table([['Supporting signal'], ['Sessions', 'num']], signalRows, '') : ''}`;
+
+  const leads = data.leads || { rows: [], total: 0 };
+  const leadRows = table([['Company'], ['Contact'], ['Source'], ['Link sent'], ['Latest visit'], ['Highest tier'], ['Video'], ['Booking button'], ['Meeting']],
+    (leads.rows || []).map(row => `<tr><td><button type="button" class="sf-link" onclick="openCeDetail('${escAttr(row.leadId)}')">${esc(row.company || row.email || row.leadId)}</button>${row.isTest ? ' <span class="state-pill">Test</span>' : ''}</td><td>${esc(row.contact || '')}<br><small style="color:var(--text-muted)">${esc(row.email || '')}</small></td><td>${esc(SOURCE[row.source] || row.source)}</td><td>${esc(when(row.linkSentAt))}</td><td>${esc(when(row.latestVisitAt))}</td><td>${esc(TIER[row.highestTier] || row.highestTier)}</td><td>${esc(row.videoFurthest ? VIDEO[row.videoFurthest] : '—')}</td><td>${row.bookingCtaClicked ? (row.bookingDialogOpened ? 'Clicked · dialog' : 'Clicked') : (row.bookingDialogOpened ? 'Dialog' : '—')}</td><td>${row.booking ? `${esc(when(row.booking.meetingAt || row.booking.bookedAt))}<br><small style="color:var(--text-muted)">${esc(LABEL[row.booking.assistLabel] || row.booking.assistLabel)}</small>` : '—'}</td></tr>`),
+    `<strong>No tracked links were sent in this period</strong>${data.status && data.status.trackingEnabled === false ? 'Link tracking is off, so this stays empty until it is switched on.' : 'Widen the dates or clear a filter.'}`);
+
+  const monitor = data.monitor ? `<div class="sf-section"><h3>Internal and debug traffic</h3><p class="sf-note">Kept out of every number above. Unresolved sessions carried a link code that matched no sent link.</p><div class="funnel-kpis sf-kpis"><div class="funnel-kpi"><strong>${esc(n(data.monitor.internalSessions))}</strong><span>Internal sessions</span></div><div class="funnel-kpi"><strong>${esc(n(data.monitor.debugSessions))}</strong><span>Debug sessions</span></div><div class="funnel-kpi"><strong>${esc(n(data.monitor.unresolvedSessions))}</strong><span>Unresolved sessions</span></div></div></div>` : '';
+
+  return `<div class="workspace-surface">${toolbar}${kpiHtml}
+    <div class="sf-section"><h3>Conversion</h3><p class="sf-note">Each rate names its denominator. Links, leads and sessions are different counts and are never mixed.</p>${rates}</div>
+    <div class="sf-section"><h3>By source</h3>${sources}</div>
+    <div class="sf-section"><h3>Bookings</h3><p class="sf-note">From the Google Calendar sync, matched to a lead by exact attendee email. Labels describe assistance, not causation.</p>${bookingCards}${bookingRows}</div>
+    <div class="sf-section"><h3>Visit quality</h3>${quality}</div>
+    <div class="sf-section"><h3>Lead activity${leads.total > (leads.rows || []).length ? ` <small style="color:var(--text-muted);font-weight:400">(showing ${esc(n((leads.rows || []).length))} of ${esc(n(leads.total))})</small>` : ''}</h3>${leadRows}</div>
+    ${monitor}</div>`;
 }
 
 const INBOX_FILTERS = Object.freeze([
@@ -7535,7 +7675,47 @@ async function loadSettingsWorkspace() {
     host.innerHTML = cards.map(([label,on,copy]) => `<div class="status-card"><div class="status-card-head"><b>${esc(label)}</b><span class="state-pill" data-on="${on}">${on ? 'Enabled' : 'Off'}</span></div><p>${esc(copy)}</p></div>`).join('');
   }
   renderSettingsInboxRouting(inboxData || null);
+  renderLandingInternalMark();
   document.getElementById('agent-panel').style.display = 'block';
+}
+
+// Marks THIS browser internal on the staffing landing page: a five-minute,
+// single-use code from the authenticated API, confirmed by the page itself.
+function renderLandingInternalMark() {
+  const routing = document.getElementById('settings-inbox-routing');
+  if (!routing) return;
+  let host = document.getElementById('settings-landing-internal');
+  if (!host) {
+    routing.insertAdjacentHTML('afterend', '<div id="settings-landing-internal" class="workspace-surface" style="margin-top:14px" aria-live="polite"></div>');
+    host = document.getElementById('settings-landing-internal');
+  }
+  host.innerHTML = `<div class="workspace-eyebrow">Staffing landing page</div><h3 style="margin:4px 0">Mark this browser internal</h3>
+    <p style="color:var(--text-muted);font-size:12px;margin:6px 0 12px">Opens the staffing page with a five-minute, single-use code. Once the page confirms it, this browser's visits are left out of analytics and prospect attribution, including when you open a prospect's link from Gmail Sent. Mark every browser and device you use.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn-save" id="landing-mark-internal">Mark this browser internal</button><button type="button" class="btn-cancel" id="landing-clear-internal">Clear internal mark</button></div>
+    <p id="landing-mark-status" style="color:var(--text-muted);font-size:12px;margin:10px 0 0"></p>`;
+  const status = document.getElementById('landing-mark-status');
+  document.getElementById('landing-mark-internal').onclick = async () => {
+    // Open synchronously so pop-up blockers allow it, then navigate once the code arrives.
+    const tab = window.open('', '_blank');
+    if (tab) tab.opener = null;
+    status.textContent = 'Requesting a code…';
+    try {
+      const response = await fetch('/api/landing/internal-mark', { cache: 'no-store' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.url) throw new Error(data.error || 'Internal marking is not available.');
+      if (tab) tab.location.href = data.url;
+      status.textContent = data.collectorEnabled
+        ? `Opened the staffing page. The code expires at ${new Date(data.expiresAt).toLocaleTimeString()}.`
+        : 'Opened the staffing page, but the collector is off, so the page cannot confirm the mark yet.';
+    } catch (error) {
+      if (tab) tab.close();
+      status.textContent = error.message || 'Internal marking is not available.';
+    }
+  };
+  document.getElementById('landing-clear-internal').onclick = () => {
+    window.open('https://scalelabai.ca/staffing/#sl-mark=off', '_blank', 'noopener');
+    status.textContent = 'Opened the staffing page to clear the mark in this browser.';
+  };
 }
 
 function warmupLabel(status) {

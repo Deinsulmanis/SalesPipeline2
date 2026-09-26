@@ -6,15 +6,26 @@ function positiveLimit(value, label) {
   return parsed;
 }
 
-function createSendingWindowQuota({ senderIds = [], perSenderLimit, globalLimit } = {}) {
+// perSenderLimits (optional, id -> limit) lets a mailbox registered with a
+// smaller per-run cap spread its daily volume across windows. It can only
+// LOWER a sender's bucket: the effective limit is min(perSenderLimit, own).
+function createSendingWindowQuota({ senderIds = [], perSenderLimit, globalLimit, perSenderLimits = null } = {}) {
   const ids = [...new Set(senderIds.map(id => String(id || '').trim()).filter(Boolean))];
+  const ceiling = positiveLimit(perSenderLimit, 'perSenderLimit');
+  const own = perSenderLimits instanceof Map ? perSenderLimits : new Map(Object.entries(perSenderLimits || {}));
   return {
     senderIds: ids,
-    perSenderLimit: positiveLimit(perSenderLimit, 'perSenderLimit'),
+    perSenderLimit: ceiling,
+    limitBySender: new Map(ids.map(id => [id, own.has(id)
+      ? Math.min(ceiling, positiveLimit(own.get(id), `perSenderLimits.${id}`)) : ceiling])),
     globalLimit: positiveLimit(globalLimit, 'globalLimit'),
     globalSuccesses: 0,
     successesBySender: new Map(ids.map(id => [id, 0])),
   };
+}
+
+function senderLimit(quota, id) {
+  return quota.limitBySender?.has(id) ? quota.limitBySender.get(id) : quota.perSenderLimit;
 }
 
 function sendingWindowVerdict(quota, senderId) {
@@ -25,7 +36,7 @@ function sendingWindowVerdict(quota, senderId) {
   if (quota.globalSuccesses >= quota.globalLimit) {
     return { allowed: false, reason: 'scheduled-window global limit reached' };
   }
-  if ((quota.successesBySender.get(id) || 0) >= quota.perSenderLimit) {
+  if ((quota.successesBySender.get(id) || 0) >= senderLimit(quota, id)) {
     return { allowed: false, reason: 'sender scheduled-window limit reached' };
   }
   return { allowed: true, reason: '' };
@@ -43,7 +54,7 @@ function consumeSendingWindowSuccess(quota, senderId) {
 function sendingWindowRemainingBySender(quota) {
   const globalRemaining = Math.max(0, quota.globalLimit - quota.globalSuccesses);
   return new Map(quota.senderIds.map(id => [id, Math.min(globalRemaining,
-    Math.max(0, quota.perSenderLimit - (quota.successesBySender.get(id) || 0)))]));
+    Math.max(0, senderLimit(quota, id) - (quota.successesBySender.get(id) || 0)))]));
 }
 
 function sendingWindowSnapshot(quota) {

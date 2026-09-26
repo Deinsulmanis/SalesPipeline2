@@ -1,10 +1,12 @@
 'use strict';
 
 const {
-  hasExplicitUnsubscribePhrase, hasExplicitNegativePhrase,
+  hasExplicitUnsubscribePhrase, hasExplicitNegativePhrase, classifyReplyText,
 } = require('./canonical-reply');
+const { stripQuotedReply } = require('./reply-reconciliation');
 const { failSafeReplyCategory, deterministicReplyCategory } = require('./reply-classifier');
 const { evaluateFreshSendSafety } = require('./send-safety-revalidate');
+const { replyDecisionFor } = require('./reply-decision');
 
 const NOTE_UNSUBSCRIBED = '[REPLY: Unsubscribed]';
 const NOTE_NOT_INTERESTED = '[REPLY: Not Interested]';
@@ -41,9 +43,17 @@ function inboundAlreadyEvaluated(activities = [], messageId = '') {
   });
 }
 
+/**
+ * What production already decided this message meant. Answered from the reply
+ * decision when one exists; replies from before decision records keep the old
+ * answer, the classification stored on their reply event. (Whether the message
+ * was already HANDLED is a different question: inboundAlreadyEvaluated.)
+ */
 function committedInboundClassification(activities = [], messageId = '') {
   const id = String(messageId || '').trim();
   if (!id) return '';
+  const decided = replyDecisionFor(activities, id);
+  if (decided && decided.finalClassification) return String(decided.finalClassification).toUpperCase();
   const inbound = activities.find((row) => {
     if (!/reply|meeting_requested/.test(String(row.eventType || ''))) return false;
     return inboundMessageIdOf(row) === id;
@@ -104,6 +114,36 @@ function shouldReplayTerminalCrm({ classification = '', lead = {}, suppressedEma
   return false;
 }
 
+/**
+ * Whether a persisted inbound reply event still says opt-out or rejection.
+ *
+ * The stored text is re-read through the same own-words extraction the live
+ * path uses. An event recorded before HTML replies were quote-stripped holds
+ * the raw message — our quoted cold email and its "Reply "unsubscribe"" footer
+ * included — and its type was derived from that. When the prospect's own words
+ * are recoverable and differ from what was stored, they decide. Clean or
+ * unrecoverable evidence keeps the recorded verdict, so this can only ever stop
+ * re-applying a verdict our own copy produced; it never lifts a suppression.
+ */
+function recordedTerminalReply(row = {}, { currentEmail = '' } = {}) {
+  const stored = String(row.content || '');
+  const subject = String(row.subject || '');
+  const text = stripQuotedReply(stored);
+  const squash = value => value.replace(/\s+/g, ' ').trim();
+  const recordedTypeTrusted = !text || squash(text) === squash(stored);
+  const canonical = classifyReplyText(text, { subject, currentEmail, now: row.occurredAt || null });
+  const eventType = String(row.eventType || '');
+  return {
+    text, recordedTypeTrusted, canonical,
+    unsubscribe: canonical.reason === 'unsubscribe_request'
+      || (recordedTypeTrusted && eventType === 'unsubscribe_reply')
+      || hasExplicitUnsubscribePhrase(text, { subject }),
+    rejection: canonical.reason === 'explicit_rejection'
+      || (recordedTypeTrusted && eventType === 'negative_reply')
+      || hasExplicitNegativePhrase(text, { subject }),
+  };
+}
+
 function uniqueSuppressions(items = []) {
   const seen = new Set();
   const out = [];
@@ -159,7 +199,7 @@ module.exports = {
   NOTE_UNSUBSCRIBED, NOTE_NOT_INTERESTED, NOTE_OOO, NOTE_TIMING, NOTE_WRONG_PERSON,
   NOTE_ALREADY_HANDLED, NOTE_NEEDS_HUMAN,
   inboundAlreadyEvaluated, committedInboundClassification, inboundMessageIdOf,
-  shouldCallReplyModel, terminalIntentFromText, shouldReplayTerminalCrm,
+  shouldCallReplyModel, terminalIntentFromText, shouldReplayTerminalCrm, recordedTerminalReply,
   uniqueSuppressions, suppressionForCanonical, skipHandlerForEvaluatedMessage,
   scheduledSendAfterInboundOptOut, checkOnlyPersistsClassification,
 };

@@ -35,9 +35,10 @@ const {
 } = require('./integrations/reply-analytics');
 const { parseRegistry: parseGmailInboxRegistry,
   credentialsFor: gmailInboxCredentialsFor, withDefaultInboxes, parseRuntimeOverlay,
-  verifyInbox: verifyGmailInbox, verifyMailboxAccess } = require('./integrations/gmail-inbox-registry');
+  verifyInbox: verifyGmailInbox, verifyMailboxAccess, isStaffingOnlySender } = require('./integrations/gmail-inbox-registry');
 const { configuredSenders, observableSenders, senderCountsToday, successfulSendCountToday } = require('./integrations/gmail-sender-routing');
-const { capacityFromEnv, DEFAULT_INBOX_PER_RUN_LIMIT } = require('./integrations/gmail-sender-capacity');
+const { capacityFromEnv, DEFAULT_INBOX_PER_RUN_LIMIT, MAX_INBOX_PER_RUN_LIMIT } = require('./integrations/gmail-sender-capacity');
+const { appendLeadsRow } = require('./integrations/leads-sheet-append');
 const {
   markWarmupReady, activateSender, pauseSender, activationBlockers,
 } = require('./integrations/gmail-sender-lifecycle');
@@ -54,8 +55,11 @@ const { mirrorEventsInBackground, mirrorEnabled, mirrorHealth } = require('./int
 const {
   mirrorOutreachLeadsInBackground, mirrorOutreachLeadFieldsInBackground, outreachStateMode,
   applyLeadChange, applyLeadChanges, outreachWriteDiagnostics,
-  readOutreachCorpus, sheetsFallbackAllowed, outreachWriteAuthority,
+  readOutreachCorpus, sheetsFallbackAllowed, outreachWriteAuthority, outreachCorpusReadStats,
+  readCanonicalLead,
 } = require('./integrations/outreach-state');
+const { applyFalseOptOutCorrection, FALSE_OPT_OUT_TAG } = require('./integrations/false-opt-out-correction');
+const { createIntentBackstop, BACKSTOP_REASON } = require('./integrations/intent-backstop');
 // Stage 3D: dual-read measurement only. Nothing branches on its output.
 const {
   probeOutreachParityInBackground, stage3ParitySnapshot, DASHBOARD_OMITTED_FIELDS,
@@ -164,7 +168,12 @@ const {
   evaluateContactChange, buildContactChangeDecision,
 } = require('./integrations/reply-overrides');
 const { REPLY_STATE, LEGACY_REPLY_EVENT_TYPES, resolveReplyState } = require('./integrations/canonical-reply');
+const { applyReplyDecisionsToReplyEvidence } = require('./integrations/reply-decision');
 const { REPLY_ACTION, WAITING_ON: REPLY_WAITING_ON } = require('./integrations/reply-operations');
+const { buildConversationState } = require('./integrations/conversation-state');
+const {
+  indexConversationEvidence, selectConversationEvidence, loadHumanReplyTexts,
+} = require('./integrations/conversation-evidence');
 const {
   classifyCalendarEvent, matchBookingIdentity, bookingLifecycleAction,
   nextSyncState, providerEventKey, runGoogleCalendarSync: orchestrateGoogleCalendarSync,
@@ -192,7 +201,7 @@ const { commitCallBooked } = require('./integrations/call-booking');
 // Reactivation asks the sender's own ownership question rather than keeping a
 // second opinion about who may contact a lead.
 const { deriveAutomationOwnership, ownershipSummary } = require('./integrations/automation-ownership');
-const { latestHumanOutboundAt } = require('./integrations/human-outbound');
+const { latestResponseAt, isResponseEvidence } = require('./integrations/prospect-response');
 // Mirrors the agent's flag. Read at request time so a Railway variable change
 // takes effect without a code deploy.
 const SENDING_ENABLED = () => process.env.SENDING_ENABLED === 'true';
@@ -201,6 +210,12 @@ const app = express();
 // Smartlead signs the exact request bytes. This public route must be registered
 // before the global JSON parser and dashboard authentication middleware.
 app.post('/api/webhooks/smartlead', express.raw({ type: 'application/json', limit: '1mb' }), handleSmartleadWebhook);
+// Staffing landing-page collector (public, Netlify-signed, 2 KB text body).
+// Also before the JSON parser and dashboard auth; a no-op 204 unless
+// LANDING_COLLECTOR_ENABLED is exactly "true".
+const landingCollectorRoutes = require('./integrations/landing-collector-route');
+const { runLandingReconciliation } = require('./integrations/landing-attribution-reconcile');
+const landingCollector = landingCollectorRoutes.registerLandingCollectorRoute(app);
 app.use(express.json({ limit: '10mb' }));
 
 // ── PROPOSAL OPEN TRACKING (public — no auth) ─────────────────────────────────
@@ -514,6 +529,11 @@ app.use(requireAuth);
 // Isolated research previews only: no Sheets writes, enrollment or outbound provider.
 require('./integrations/staffing-preview-route').registerStaffingPreviewRoutes(app, requireAuth);
 require('./integrations/anthropic-usage-route').registerAnthropicUsageRoutes(app, requireAuth);
+require('./integrations/research-icp/routes').registerResearchRoutes(app, requireAuth);
+// "Mark this browser internal" codes and collector counters (dashboard only).
+landingCollectorRoutes.registerLandingInternalMarkRoutes(app, requireAuth, { collector: landingCollector });
+// Staffing Landing Funnel workspace (dashboard only; read-only).
+require('./integrations/landing-dashboard-route').registerLandingDashboardRoutes(app, requireAuth);
 app.use(express.static(path.join(__dirname, 'public')));
 
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
@@ -736,7 +756,9 @@ const LOG_CAP    = 300;
 const agentState = { running: false, dryRun: true, startedAt: null, log: [], exitCode: null };
 let   agentChild = null;
 let automationLaunchReserved = false;
-const SCHEDULED_SEND_PER_INBOX_CAP = 5;
+// Ceiling on any one inbox's scheduled-window bucket. Each inbox's own
+// perRunLimit can only lower it, so a 5- or 2-per-window inbox is unaffected.
+const SCHEDULED_SEND_PER_INBOX_CAP = MAX_INBOX_PER_RUN_LIMIT;
 
 function scheduledSendCaps(senders = configuredSenders()) {
   const capacity = capacityFromEnv(senders);
@@ -753,17 +775,56 @@ function agentPushLine(line) {
   if (agentState.log.length > LOG_CAP) agentState.log.shift();
 }
 
+// Whether a three-minute backstop tick should launch an intent-only pass. It
+// starts armed (boot) and is disarmed only by a clean intent pass that saw no
+// pending work — see integrations/intent-backstop.js.
+const intentBackstop = createIntentBackstop();
+
+// Hourly egress meter: one summary line, never per-row. Server-side corpus
+// reads come from outreach-state's own counter; agent-process reads are
+// counted from the line every agent corpus read already prints.
+const AGENT_CORPUS_READ_LINE = '[outreach-read] automation corpus from Supabase';
+const egressMeter = {
+  calendarChecks: 0, calendarZeroEvent: 0, calendarContextLoads: 0,
+  intentDemoLaunches: 0, intentBackstopLaunches: 0, agentCorpusReads: 0,
+  serverCorpusReadsAtLastReport: 0, backstopTicksAtLastReport: 0, backstopIdleAtLastReport: 0,
+};
+function reportEgressMeter() {
+  const corpus = outreachCorpusReadStats();
+  const backstop = intentBackstop.snapshot();
+  console.log(`[egress-meter] last hour: corpusReads server=${corpus.reads - egressMeter.serverCorpusReadsAtLastReport}`
+    + ` agent=${egressMeter.agentCorpusReads}`
+    + ` | calendar checks=${egressMeter.calendarChecks} zeroEvent=${egressMeter.calendarZeroEvent}`
+    + ` contextLoads=${egressMeter.calendarContextLoads}`
+    + ` | intent launches demo=${egressMeter.intentDemoLaunches} backstop=${egressMeter.intentBackstopLaunches}`
+    + ` | backstop ticks=${backstop.ticks - egressMeter.backstopTicksAtLastReport}`
+    + ` idle=${backstop.idleTicks - egressMeter.backstopIdleAtLastReport}`
+    + ` armed=${backstop.armed ? backstop.reasons.join(',') : 'no'}`);
+  Object.assign(egressMeter, {
+    calendarChecks: 0, calendarZeroEvent: 0, calendarContextLoads: 0,
+    intentDemoLaunches: 0, intentBackstopLaunches: 0, agentCorpusReads: 0,
+    serverCorpusReadsAtLastReport: corpus.reads,
+    backstopTicksAtLastReport: backstop.ticks, backstopIdleAtLastReport: backstop.idleTicks,
+  });
+}
+
 // Shared launcher for the outreach-agent subprocess. extraEnv overrides the
 // agent's mode (DRY_RUN / CHECK_ONLY) and per-run knobs (DAILY_CAP). All three
 // triggers — UI, the morning send cron and the :15/:45 check-only cron — funnel
 // through here and share agentState, so agentState.running is a single
 // mutual-exclusion flag across all.
-function startAgentProcess(extraEnv, dryRun) {
+function startAgentProcess(extraEnv, dryRun, { intentTrigger = null } = {}) {
   agentState.running   = true;
   agentState.dryRun    = dryRun;
   agentState.startedAt = new Date().toISOString();
   agentState.log       = [];
   agentState.exitCode  = null;
+  // Every process reports its intent state; only an intent-only pass's report
+  // may disarm the backstop. Every other mode's reports can only arm it.
+  const intentRun = intentBackstop.onAgentStarted({
+    intent: extraEnv.INTENT_ONLY === 'true' && extraEnv.CHECK_ONLY !== 'true',
+    trigger: intentTrigger || '',
+  });
 
   const child = spawn('node', ['outreach-agent.js'], {
     cwd: __dirname,
@@ -775,6 +836,12 @@ function startAgentProcess(extraEnv, dryRun) {
   child.stderr.pipe(process.stderr);
 
   let outBuf = '', errBuf = '';
+  // Intent-state reports (which arm or disarm the backstop) and corpus reads
+  // (metered). Read alongside the parity probe, never instead of it.
+  const readAgentLine = l => {
+    intentBackstop.onAgentLine(l, intentRun);
+    if (l.includes(AGENT_CORPUS_READ_LINE)) egressMeter.agentCorpusReads += 1;
+  };
 
   child.stdout.setEncoding('utf8');
   child.stdout.on('data', chunk => {
@@ -785,6 +852,7 @@ function startAgentProcess(extraEnv, dryRun) {
     // reported parity into the shared diagnostics before the line is just log
     // text, so the safety-critical comparison reaches the parity endpoint.
     lines.forEach(l => { ingestProbeLine(l); agentPushLine(l); });
+    lines.forEach(readAgentLine);
   });
 
   child.stderr.setEncoding('utf8');
@@ -796,11 +864,27 @@ function startAgentProcess(extraEnv, dryRun) {
   });
 
   child.on('exit', code => {
-    if (outBuf) { agentPushLine(outBuf); outBuf = ''; }
+    if (outBuf) { readAgentLine(outBuf); agentPushLine(outBuf); outBuf = ''; }
     if (errBuf) { agentPushLine('[stderr] ' + errBuf); errBuf = ''; }
     agentState.running  = false;
     agentState.exitCode = code;
     agentChild = null;
+  });
+
+  // 'close', not 'exit': it fires only after stdout has been fully drained, so
+  // a process's last intent-state report cannot arrive after its verdict. For an
+  // intent-only pass, a non-zero or signal exit or a missing report leaves the
+  // backstop armed.
+  child.on('close', code => {
+    if (outBuf) { readAgentLine(outBuf); agentPushLine(outBuf); outBuf = ''; }
+    const wasArmed = intentBackstop.snapshot().armed;
+    const verdict = intentBackstop.onAgentClosed(intentRun, code);
+    const armed = intentBackstop.snapshot().armed;
+    if (intentRun.intent || armed !== wasArmed) {
+      console.log(`[intent-backstop] ${intentRun.intent ? `${intentRun.trigger} intent pass` : 'agent run'} `
+        + `closed (exit ${code}) — ${armed ? `armed: ${intentBackstop.snapshot().reasons.join(',')}` : 'disarmed'}`
+        + ` (${verdict.reason})`);
+    }
   });
 }
 
@@ -845,29 +929,47 @@ async function companyHasBothAudios(company, leadToken = '') {
   return intro && demo;
 }
 
+// A false negative here would strand a pair until some other pass noticed it,
+// because the backstop no longer polls blindly. It cannot produce one: the
+// agent pairs a token row only with rows of the same token (checked exactly
+// here), and a legacy row only with rows whose normalizeName(cleanCompanyName)
+// key matches — equal keys under that normaliser are equal under openKey too,
+// and the bot and own-IP exclusions are identical (the agent additionally drops
+// datacenter IPs). test/intent-backstop.test.js pins all three.
 async function maybeFireIntent(company, leadToken = '') {
   try {
     if (await companyHasBothAudios(company, leadToken)) {
-      spawnAgentIntentOnly(`both audios played — ${company}`);
+      spawnAgentIntentOnly(`both audios played — ${company}`, { trigger: 'demo' });
     }
   } catch (e) {
-    // Never let intent detection break the tracking pixel; the cron backstop
-    // will catch this play on its next tick.
+    // Never let intent detection break the tracking pixel. The backstop is
+    // armed, so the next tick runs the pass this check could not confirm.
+    intentBackstop.markNeeded(BACKSTOP_REASON.DEMO_LAUNCH_SKIPPED);
     console.warn('[intent] pair check failed:', e.message);
   }
 }
 
-function spawnAgentIntentOnly(why) {
+// trigger 'demo' is the immediate path; 'backstop' is the three-minute tick.
+// A demo launch that does not start arms the backstop; a backstop launch that
+// does not start was armed already and stays armed.
+function spawnAgentIntentOnly(why, { trigger = 'backstop' } = {}) {
+  const skipped = () => { if (trigger === 'demo') intentBackstop.markNeeded(BACKSTOP_REASON.DEMO_LAUNCH_SKIPPED); };
   if (agentState.running || automationLaunchReserved) {
+    skipped();
     console.log(`[intent] agent busy — skipping intent spawn (${why}); the cron backstop will retry`);
     return;
   }
   launchAutomationAfterCalendar(`intent-only pass: ${why}`, () => {
     if (agentState.running) return false;
     console.log(`[intent] spawning intent-only pass (${why})`);
-    startAgentProcess({ DRY_RUN: 'false', INTENT_ONLY: 'true' }, false);
+    if (trigger === 'demo') egressMeter.intentDemoLaunches += 1; else egressMeter.intentBackstopLaunches += 1;
+    startAgentProcess({ DRY_RUN: 'false', INTENT_ONLY: 'true' }, false, { intentTrigger: trigger });
     return true;
-  }).catch(error => console.error('[Calendar safety] intent pass blocked:', error.message));
+  }).then(result => { if (!result || !result.launched) skipped(); })
+    .catch(error => {
+      skipped();
+      console.error('[Calendar safety] intent pass blocked:', error.message);
+    });
 }
 
 function spawnAgentCheckOnly(extraEnv = {}) {
@@ -991,15 +1093,8 @@ app.post('/api/leads', requireAuth, async (req, res) => {
   const vals = [COLUMNS.map(col => lead[col] !== undefined ? String(lead[col]) : '')];
   try {
     await withAuth(async () => {
-      const resp = await sheets().spreadsheets.values.append({
-        spreadsheetId:   SPREADSHEET_ID,
-        range:           COL_RANGE,
-        valueInputOption:'RAW',
-        insertDataOption:'INSERT_ROWS',
-        requestBody:     { values: vals },
-      });
-      const m = (resp.data.updates?.updatedRange || '').match(/!A(\d+)/);
-      if (m) rowMap.set(lead.id, parseInt(m[1]));
+      const written = await appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: SHEET_NAME, values: vals[0] });
+      if (written.row) rowMap.set(lead.id, written.row);
     });
     try {
       const occurredAt = Number.isFinite(Date.parse(String(lead.created || '')))
@@ -2060,15 +2155,17 @@ app.get('/api/crm/health', requireAuth, async (req, res) => {
     const metadataOf = row => { try { return JSON.parse(row.metadata || '{}'); } catch (_) { return {}; } };
     const activityToday = (dataset.activities || []).filter(row => row.occurredAt
       && new Date(row.occurredAt).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' }) === dayKey);
-    const repliesToday = activityToday.filter(row => LEGACY_REPLY_EVENT_TYPES.includes(String(row.eventType || '')));
+    // Reply rows as production decided them, so a reply the model or staffing
+    // overlay classified positive counts as positive here too.
+    const repliesToday = applyReplyDecisionsToReplyEvidence(activityToday)
+      .filter(row => LEGACY_REPLY_EVENT_TYPES.includes(String(row.eventType || '')));
     const positiveToday = repliesToday.filter(row => metadataOf(row).canonicalState === REPLY_STATE.POSITIVE
       || ['positive_reply','meeting_requested'].includes(String(row.eventType || '')));
-    const responseTypes = new Set(['booking_link_sent','human_response_sent','call_booked','meeting_rescheduled']);
     const newlyStrandedPositive = positiveToday.filter(reply => !(dataset.activities || []).some(row => {
       const sameLead = String(row.sourceLeadId || '') === String(reply.sourceLeadId || '')
         || String(row.leadId || '') === String(reply.leadId || '')
         || (row.email && normalizeEmail(row.email) === normalizeEmail(reply.email));
-      return sameLead && responseTypes.has(String(row.eventType || ''))
+      return sameLead && isResponseEvidence(row)
         && Date.parse(row.occurredAt || '') >= Date.parse(reply.occurredAt || '');
     }));
     const oldestOverdue = health.findings.find(item => item.id === 'reply.overdue_human_action');
@@ -2706,7 +2803,7 @@ async function buildReactivationOwnership(leadId, boardLead, suppressedEmails) {
     ok: true, activities, callState,
     ownershipFor: twin => deriveAutomationOwnership({ ...twin, notes: releaseHoldFromNotes(twin.notes || '') }, {
       boardLead, activities, callState,
-      humanTouchAt: latestHumanOutboundAt(activities),
+      humanTouchAt: latestResponseAt(activities),
       suppressionReason: suppressionReader,
       sendingEnabled: SENDING_ENABLED(),
       sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true',
@@ -2936,7 +3033,7 @@ app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
             });
             const verdict = deriveAutomationOwnership(twin || {}, {
               boardLead: lead, activities, callState, sequenceState,
-              humanTouchAt: latestHumanOutboundAt(activities),
+              humanTouchAt: latestResponseAt(activities),
               sendingEnabled: SENDING_ENABLED(),
               sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true',
             });
@@ -3509,6 +3606,100 @@ app.post('/api/leads/:id/reply-override/reverse', requireAuth, async (req, res) 
   }
 });
 
+// ── FALSE OPT-OUT CORRECTION ────────────────────────────────────────────────
+// The one supported way to lift an opt-out tag our own classifier invented. The
+// decision logic, every refusal and the audit record live in
+// integrations/false-opt-out-correction.js; this route only reads canonical
+// state and supplies the existing writers. Nothing here can send, reserve,
+// enrol, change stage/emailStatus, touch the suppression list or lift a hold.
+async function loadFalseOptOutState(leadId) {
+  const id = String(leadId || '').trim();
+  const ceIds = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:A` });
+  const rows = (ceIds.data.values || []).map((cells, index) => [cells[0], index + 1])
+    .filter(([value, row]) => row > 1 && value === id);
+  let lead = null;
+  if (outreachWriteAuthority() === 'supabase') {
+    const canonical = await readCanonicalLead(id);
+    if (canonical.ok) lead = canonical.lead;
+    else if (canonical.reason !== 'lead not found in Supabase') throw new Error(`canonical outreach state unavailable: ${canonical.reason}`);
+  } else if (rows.length === 1) {
+    lead = (await findColdEmailLead({ id }))?.lead || null;
+  }
+  const [boardResponse, activities, suppressedEmails] = await Promise.all([
+    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: AGENT_READ_RANGE }),
+    readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER),
+    loadSuppressionEmails(),
+  ]);
+  const email = normalizeEmail(lead?.email || '');
+  const cards = (boardResponse.data.values || []).map((values, index) => ({ values, row: index + 1 })).slice(1)
+    .filter(({ values }) => values[0] === `CE-${id}` || (email && normalizeEmail(values[10] || '') === email))
+    .map(({ values, row }) => ({ card: Object.fromEntries(COLUMNS.map((field, i) => [field, values[i] || ''])), row }));
+  // The durable send lock is the authority on in-flight sends. Unverifiable is a refusal.
+  let reservations;
+  try {
+    const listed = await listUnresolvedReservations();
+    if (!listed.enabled) {
+      reservations = { ok: false, reason: 'the send lock is not enabled, so no reservation can be ruled out' };
+    } else {
+      const unresolved = [...listed.sentUnconfirmed, ...listed.reconciliationRequired, ...listed.staleReserved, ...listed.expiredSending]
+        .filter(item => item.leadId === id);
+      const nextSteps = [];
+      for (const step of [1, 2, 3]) {
+        const actionId = `gmail-cold:${id}:step:${step}`;
+        const reservation = await getOutboundReservation(actionId);
+        if (reservation) nextSteps.push({ actionId, status: reservation.status });
+      }
+      reservations = { ok: true, unresolved, nextSteps };
+    }
+  } catch (error) {
+    reservations = { ok: false, reason: error.message };
+  }
+  return {
+    lead, leadMatches: lead ? rows.length : 0, row: rows[0] ? rows[0][1] : null,
+    boardLeads: cards.map(item => item.card), boardRow: cards[0] ? cards[0].row : null,
+    activities, suppressedEmails, reservations,
+    automationRunning: Boolean(agentState.running || automationLaunchReserved),
+  };
+}
+
+app.post('/api/coldemail/:id/false-opt-out-correction', requireAuth, async (req, res) => {
+  const leadId = String(req.params.id || '').trim();
+  try {
+    const result = await withAuth(() => applyFalseOptOutCorrection({
+      leadId, messageId: String(req.body?.providerMessageId || ''), overrideId: String(req.body?.overrideId || ''),
+      by: String(req.body?.by || ''),
+    }, {
+      loadState: () => loadFalseOptOutState(leadId),
+      writeLeadNotes: ({ lead, row, notes, expectedState, optOutCorrection }) => applyLeadChange(lead.id, { notes }, {
+        row, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID, expectedState, optOutCorrection,
+      }),
+      writeBoardNotes: async ({ boardRow, boardId, expectedNotes, notes }) => {
+        // Verify the exact card before its single notes cell is written.
+        const current = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${boardRow}:Q${boardRow}` });
+        const cells = current.data.values?.[0] || [];
+        if (cells[0] !== boardId || (cells[15] || '') !== expectedNotes) throw new Error('Pipeline card changed before correction; nothing written');
+        await sheets().spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!P${boardRow}`,
+          valueInputOption: 'RAW', requestBody: { values: [[notes]] } });
+      },
+      appendActivity: event => appendColdCallActivities([event]),
+      now: () => new Date().toISOString(),
+    }));
+    if (result.status === 'refused') return res.status(409).json({ ok: false, ...result, automationResumed: false });
+    const after = await withAuth(() => loadFalseOptOutState(leadId));
+    res.json({ ok: true, ...result, automationResumed: false, verified: {
+      leadTagPresent: String(after.lead?.notes || '').includes(FALSE_OPT_OUT_TAG),
+      cardTagPresent: after.boardLeads.some(card => String(card.notes || '').includes(FALSE_OPT_OUT_TAG)),
+      manualHold: String(after.lead?.notes || '').includes(MANUAL_HOLD_TAG),
+      stage: after.lead?.stage || '', emailStatus: after.lead?.emailStatus || '', emailStep: after.lead?.emailStep || '',
+      pipelineCards: after.boardLeads.length,
+    } });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[False opt-out correction]', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/api/leads/:id/contact-change', requireAuth, async (req, res) => {
   try {
     const rowNum = await withAuth(() => findRow(req.params.id));
@@ -3829,11 +4020,8 @@ async function applyCalendarPlanItem(item, context) {
       };
       // Human-owned stage safety is fail-closed: hold before creating the card.
       if (stageRequiresHold('call_booked')) await withAuth(() => applyManualHold(boardId, boardLead.email));
-      await withAuth(() => sheets().spreadsheets.values.append({
-        spreadsheetId: SPREADSHEET_ID, range: AGENT_READ_RANGE,
-        valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
-        requestBody: { values: [[...COLUMNS.map(field => String(boardLead[field] ?? '')), '', '', '', meetingAt, '', '']] },
-      }));
+      await withAuth(() => appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: SHEET_NAME,
+        values: [...COLUMNS.map(field => String(boardLead[field] ?? '')), '', '', '', meetingAt, '', ''] }));
       createdBoard = true;
       context.boardLeads.push(boardLead);
       const promotionEventId = stableActivityId('pipeline-promotion', [ceLead.id, boardId, 'call_booked', PROMOTION_TRIGGER.MEETING_BOOKED]);
@@ -3934,7 +4122,7 @@ async function applyCalendarPlanItem(item, context) {
 
 async function runGoogleCalendarSync() {
   const readiness = calendarSyncReadiness();
-  return orchestrateGoogleCalendarSync({
+  const result = await orchestrateGoogleCalendarSync({
     enabled: readiness.enabled,
     calendarId: BOOKING_CALENDAR_ID,
     appointmentScheduleId: BOOKING_APPOINTMENT_SCHEDULE_ID,
@@ -3946,6 +4134,13 @@ async function runGoogleCalendarSync() {
     writeState: writeCalendarSyncState,
     logger: console,
   });
+  // Metered, not logged per call: this runs before every launch.
+  if (result && result.ok && !result.skipped) {
+    egressMeter.calendarChecks += 1;
+    if (result.contextLoaded) egressMeter.calendarContextLoads += 1;
+    else egressMeter.calendarZeroEvent += 1;
+  }
+  return result;
 }
 
 // A booking can arrive between scheduler cycles. Every application-owned path
@@ -5300,11 +5495,8 @@ app.post('/api/coldemail/:id/promote', requireAuth, async (req, res) => {
         valueInputOption: 'RAW', requestBody: { values: [[meetingAt || identity.boardLead.meetingAt || '', outcome || identity.boardLead.outcome || '']] },
       }));
     } else {
-      await withAuth(() => sheets().spreadsheets.values.append({
-        spreadsheetId: SPREADSHEET_ID, range: AGENT_READ_RANGE,
-        valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
-        requestBody: { values: [[...COLUMNS.map(field => String(boardLead[field] ?? '')), '', '', '', meetingAt, outcome, String(req.body?.conversationContext || '').trim().slice(0, 10000)]] },
-      }));
+      await withAuth(() => appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: SHEET_NAME,
+        values: [...COLUMNS.map(field => String(boardLead[field] ?? '')), '', '', '', meetingAt, outcome, String(req.body?.conversationContext || '').trim().slice(0, 10000)] }));
     }
 
     const eventId = stableActivityId('pipeline-promotion', [ceLead.id, boardId, decision.targetStage, PROMOTION_TRIGGER.MANUAL]);
@@ -5443,6 +5635,7 @@ function gmailInboxOptions() {
     dailyLimit: sender.dailyLimit,
     perRunLimit: sender.perRunLimit || DEFAULT_INBOX_PER_RUN_LIMIT,
     observerEnabled: sender.observerEnabled !== false,
+    staffingOnly: isStaffingOnlySender(sender),
     credentialConfigured: sender.credentialConfigured,
     identityVerified: sender.id === 'primary' ? Boolean(process.env.GMAIL_TOKEN_JSON) : sender.credentialConfigured,
     sendEligible: sender.sendEligible,
@@ -5617,6 +5810,49 @@ function operationalMailbox(senderInboxId) {
   auth.setCredentials(gmailInboxCredentialsFor(entry));
   return { id, email: entry.email, gmail: google.gmail({ version: 'v1', auth }) };
 }
+
+// Read-only conversation state for one lead (ColdEmail id, CE-<id> or Pipeline
+// id). It derives state and returns it: no write, send, enrolment, hold, stage
+// change or model call. The snapshot is the dashboard's cached dataset, so a
+// warm cache costs no Sheets read; ?refresh=1 forces the usual one batchGet.
+// ?humanText=1 also reads up to ten recorded human replies from Gmail (read
+// only, verified against the recorded mailbox and thread) to show their text.
+app.get('/api/ops/conversation-state/:leadId', requireAuth, async (req, res) => {
+  try {
+    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const index = indexConversationEvidence({
+      leads: dataset.leads, boardLeads: dataset.boardLeads, activities: dataset.activities,
+    });
+    const selected = selectConversationEvidence(index, req.params.leadId);
+    if (!selected.lead && !selected.boardLead) return res.status(404).json({ error: 'not found' });
+    const humanText = req.query.humanText === '1'
+      ? await loadHumanReplyTexts({ activities: selected.activities, mailboxFor: operationalMailbox })
+      : null;
+    const state = buildConversationState({
+      lead: selected.lead, boardLead: selected.boardLead, activities: selected.activities,
+      suppressedEmails: dataset.suppressedEmails, messageTexts: humanText ? humanText.texts : {},
+      selection: selected.selection,
+      config: { sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true', sendingEnabled: SENDING_ENABLED() },
+      now: new Date(),
+    });
+    res.json({
+      state,
+      load: {
+        datasetAt: dataset.at ? new Date(dataset.at).toISOString() : null,
+        leadSource: dataset.leadSource || null,
+        humanText: humanText ? {
+          attempted: humanText.attempted, gmailRequests: humanText.providerCalls,
+          fetched: Object.keys(humanText.texts).length,
+          failures: humanText.failures, skippedOverLimit: humanText.skippedOverLimit,
+        } : null,
+      },
+    });
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[conversation-state]', e.message);
+    res.status(500).json({ error: 'conversation state could not be derived' });
+  }
+});
 
 // Read-only provider trace. No worker launch, provider send or checkpoint write.
 app.get('/api/ops/gmail-usage', requireAuth, async (_req, res) => {
@@ -6418,20 +6654,26 @@ app.post('/api/enrich/names', requireAuth, (_req, res) => {
 
 if (process.env.RAILWAY_ENVIRONMENT) {
   // Per-window sender buckets for the scheduled batches. The morning cron fires
-  // 8 times a day (:00/:30, 8–11:30am Pacific); each active inbox may deliver
+  // 10 times a day (:00/:30, 7–11:30am Pacific); each active inbox may deliver
   // at most 5 successes per window. The combined per-run ceiling is derived from
   // ACTIVE cold-send inboxes, so 2×5=10 today and 3×5=15 after a later
   // activation, without a code change. Inactive/warming inboxes do not raise it.
-  // Each mailbox also has its own 40/day ceiling; the global daily ceiling is
-  // min(safety cap, sum of active inbox daily limits). Pipeline recovery sends
-  // consume those same ledgers.
+  // Each mailbox also has its own daily ceiling (GMAIL_PRIMARY_DAILY_LIMIT /
+  // registry dailyLimit); the global daily ceiling is min(safety cap, sum of
+  // active inbox daily limits). Pipeline recovery sends consume those same
+  // ledgers. Window count × 5 must reach each inbox's daily limit: 10 × 5 = 50
+  // per inbox and 10 × 10 = 100 combined. Eight windows physically capped
+  // production at 40/inbox and 80/day whatever the configured limits said.
   // Sends fire only in a weekday morning window, evenly at :00 and :30 of
-  // 8am–11:30am Pacific (8 runs: 8:00, 8:30, 9:00, 9:30, 10:00, 10:30, 11:00,
-  // 11:30). That lands 9:00am–12:30pm for Mountain (AB) leads too. Overnight
-  // sends are gone — a human doesn't email at 4am, and inboxes are freshest
-  // mid-morning. The timezone pin below makes these fields Pacific-local and
-  // handles PDT/PST automatically; do NOT hand-convert to UTC.
-  cron.schedule('0,30 8-11 * * 1-5', async () => {
+  // 7am–11:30am Pacific (10 runs: 7:00, 7:30, 8:00, 8:30, 9:00, 9:30, 10:00,
+  // 10:30, 11:00, 11:30). That lands 8:00am–12:30pm for Mountain (AB) leads
+  // too. The window grows earlier, not later, so the last run still finishes
+  // well before the 12:15 check-only pass that hosts the daily late-reply
+  // watcher. Overnight sends are gone — a human doesn't email at 4am, and
+  // inboxes are freshest mid-morning. The timezone pin below makes these
+  // fields Pacific-local and handles PDT/PST automatically; do NOT
+  // hand-convert to UTC.
+  cron.schedule('0,30 7-11 * * 1-5', async () => {
     console.log('[cron] Triggering scheduled outreach agent run...');
     if (agentState.running || automationLaunchReserved) {
       // Never replay missed windows back-to-back. A slow run must reduce the
@@ -6453,7 +6695,7 @@ if (process.env.RAILWAY_ENVIRONMENT) {
     timezone: 'America/Vancouver',
   });
   const bootCaps = scheduledSendCaps();
-  console.log(`[cron] Outreach agent scheduled: :00 and :30, 8–11:30am Pacific, Mon–Fri (${bootCaps.perInbox}/inbox, ${bootCaps.total}/run, ${bootCaps.daily}/day, ${bootCaps.activeCount} active)`);
+  console.log(`[cron] Outreach agent scheduled: :00 and :30, 7–11:30am Pacific, Mon–Fri (${bootCaps.perInbox}/inbox, ${bootCaps.total}/run, ${bootCaps.daily}/day, ${bootCaps.activeCount} active)`);
 
   // :15/:45, never :00/:30 — the send cron above fires on :00 and :30, so the
   // check-only pass is offset by 15 min to avoid racing it for the
@@ -6482,12 +6724,19 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   // holding production at ~50 sends against an 80 ceiling.
   // '1-59/3' keeps twenty opportunities an hour and the same uniform 3-minute
   // spacing, on 1,4,…,58 — so it can never land on a send window again.
+  //
+  // CONDITIONAL. A tick launches only while the backstop is armed — at boot, after
+  // a demo launch that did not start, after a failed or unreported pass, or while
+  // a pass or the check-only hint reports pending intent work. A tick with
+  // nothing pending launches nothing, so it downloads nothing.
   cron.schedule('1-59/3 * * * *', () => {
-    spawnAgentIntentOnly('cron backstop');
+    const tick = intentBackstop.onTick();
+    if (!tick.run) return;
+    spawnAgentIntentOnly(`cron backstop: ${tick.reasons.join(',')}`, { trigger: 'backstop' });
   }, {
     timezone: 'America/Vancouver',
   });
-  console.log('[cron] Intent backstop scheduled: every 3 minutes, offset off :00/:30');
+  console.log('[cron] Intent backstop scheduled: every 3 minutes while armed, offset off :00/:30');
 
   // Calendar incremental sync is independently gated. With the flag OFF the
   // first line of the orchestrator returns before reading Calendar, Sheets, or
@@ -6499,11 +6748,33 @@ if (process.env.RAILWAY_ENVIRONMENT) {
     }
     observeCalendarBeforeAutomation('periodic reconciliation')
       .then(result => {
-        if (!result.skipped) console.log(`[Calendar sync] complete — ${result.mutations || 0} mutation(s)`);
+        if (!result.skipped) {
+          console.log(`[Calendar sync] complete — ${result.mutations || 0} mutation(s), `
+            + `${result.events || 0} event(s), booking context ${result.contextLoaded ? 'loaded' : 'not needed'}`);
+        }
       })
       .catch(error => console.error('[Calendar sync] unhandled failure:', error.message));
   }, { timezone: 'America/Vancouver' });
   console.log('[cron] Google Calendar booking sync scheduled every 5 minutes (feature-gated)');
+
+  // Staffing landing attribution: backfill issuances from the activity ledger,
+  // link early sessions, daily retention. Supabase landing functions only; the
+  // first line returns unless LANDING_RECONCILER_ENABLED is exactly "true".
+  let landingReconcileInFlight = false;
+  cron.schedule('4,19,34,49 * * * *', () => {
+    if (landingReconcileInFlight) return;
+    landingReconcileInFlight = true;
+    runLandingReconciliation()
+      .then(summary => {
+        if (!summary.skipped) {
+          console.log(`[landing-reconcile] ${summary.issued} issued, ${summary.markedSent} marked sent, `
+            + `${summary.conflicts} conflict(s), ${summary.failures} failure(s)`);
+        }
+      })
+      .catch(error => console.error('[landing-reconcile] unhandled failure:', error.message))
+      .finally(() => { landingReconcileInFlight = false; });
+  }, { timezone: 'America/Vancouver' });
+  console.log('[cron] Landing attribution reconciler scheduled every 15 minutes (feature-gated)');
 
   // Daily digest — 18:00 America/Vancouver. getOrCreateDigest is idempotent, so
   // a restart, a re-fire, or a dashboard load on the same day all reuse the
@@ -6522,6 +6793,8 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   }, { timezone: 'America/Vancouver' });
   console.log('[cron] Smartlead reconciliation scheduled: hourly at :12');
   console.log('[cron] Daily digest scheduled: 18:00 Pacific');
+  // One line an hour: corpus reads, Calendar checks and intent launches.
+  cron.schedule('59 * * * *', reportEgressMeter, { timezone: 'America/Vancouver' });
   console.log('[cron] Check-only pass scheduled: :15 and :45 every hour');
   console.log('[cron] Late-reply terminal watcher hosted by check-only: daily at 12:15 Pacific');
 }
@@ -6543,4 +6816,11 @@ app.listen(PORT, () => {
   }).catch(() => {
     console.log('[send-lock] health probe failed — provider sends will fail closed if locking is enabled');
   });
+  try {
+    const { staffingConversationAgentConfig, ZERO_AUTHORITY } = require('./integrations/staffing-agent-schema');
+    const shadow = staffingConversationAgentConfig(process.env);
+    console.log(`[staffing-shadow] init enabled=${shadow.enabled} mode=${shadow.mode} keyConfigured=${shadow.keyConfigured} requestedMode=${shadow.requestedMode || 'none'} authority=${JSON.stringify(ZERO_AUTHORITY)}`);
+  } catch (error) {
+    console.warn(`[staffing-shadow] init failed closed: ${error.message}`);
+  }
 });
