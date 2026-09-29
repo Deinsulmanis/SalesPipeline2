@@ -54,22 +54,38 @@ function queueEligibility(lead, {
 
 const QUEUE_STATUSES = Object.freeze(['succeeded', 'unchanged', 'refused', 'conflict', 'failed']);
 
+// senderInboxId === AUTO_SENDER asks for capacity-weighted assignment: each lead
+// gets its own inbox from assignSenders(), decided against the same canonical
+// state the rest of the selection is validated in. A named inbox still means
+// exactly that inbox for every selected lead.
+const AUTO_SENDER = 'auto';
+
 async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaignVersionId }, {
-  loadState, validateSelection, applyChanges, appendActivity, appendActivities, now = () => new Date().toISOString(),
+  loadState, validateSelection, applyChanges, appendActivity, appendActivities, assignSenders,
+  now = () => new Date().toISOString(),
 }) {
   const state = await loadState();
   const selected = state.leads.filter(lead => ids.includes(lead.id));
   if (selected.length !== ids.length) return { status: 409, error: 'One or more selected leads no longer exist or have duplicate identities' };
   if (new Set(selected.map(lead => String(lead.campaign || '').trim())).size !== 1) return { status: 422, error: 'Queue leads from one campaign at a time' };
+  let assignments = null;
+  if (senderInboxId === AUTO_SENDER) {
+    if (!assignSenders) return { status: 422, error: 'Automatic sender assignment is unavailable' };
+    const assigned = assignSenders(selected.map(lead => ({ ...lead, emailTemplateId, intendedCampaignVersion: campaignVersionId })), state);
+    const refused = assigned.refused || [];
+    if (refused.length) return { status: 422, error: `${refused[0].leadId}: ${refused[0].reason}` };
+    assignments = assigned.assignments;
+  }
+  const senderFor = lead => (assignments ? assignments.get(lead.id) : senderInboxId);
   // Validate the entire selection before any mutation. A repeated request with
   // exactly the same route is a no-op, not another enrollment/audit event.
   for (const lead of selected) {
     const eligible = queueEligibility(lead, state);
     if (!eligible.ok) return { status: 409, error: `${lead.company || lead.id}: ${eligible.reason}` };
-    const route = validateSelection(lead);
+    const route = validateSelection(lead, senderFor(lead));
     if (!route.ok) return { status: 422, error: route.reason };
   }
-  const patch = { stage: 'Queued', senderInboxId, emailTemplateId, routingRequired: 'true', intendedCampaignVersion: campaignVersionId };
+  const patchFor = lead => ({ stage: 'Queued', senderInboxId: senderFor(lead), emailTemplateId, routingRequired: 'true', intendedCampaignVersion: campaignVersionId });
 
   // Leads are independent: nothing is all-or-nothing across them, so each gets
   // its own verdict from the canonical mutation path. A refused or failed lead
@@ -79,7 +95,7 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
   const auditBatch = [];
   const pending = [];
   for (const lead of selected) {
-    if (Object.entries(patch).every(([key, value]) => lead[key] === value)) {
+    if (Object.entries(patchFor(lead)).every(([key, value]) => lead[key] === value)) {
       results.push({ leadId: lead.id, status: 'unchanged', reason: 'already queued with this route' });
     } else {
       pending.push(lead);
@@ -88,7 +104,7 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
   if (pending.length) {
     let applied;
     try {
-      applied = await applyChanges(pending.map(lead => ({ lead, patch })));
+      applied = await applyChanges(pending.map(lead => ({ lead, patch: patchFor(lead) })));
     } catch (error) {
       applied = pending.map(lead => ({ leadId: lead.id, status: 'failed', reason: error.message }));
     }
@@ -97,7 +113,7 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
       const result = { ...(byId.get(lead.id) || { leadId: lead.id, status: 'failed', reason: 'no verdict was returned for this lead' }) };
       if (!QUEUE_STATUSES.includes(result.status)) Object.assign(result, { status: 'failed', reason: `unrecognised verdict ${result.status}` });
       if (result.status === 'succeeded') {
-        const event = { lead, occurredAt: now(), patch };
+        const event = { lead, occurredAt: now(), patch: patchFor(lead) };
         if (appendActivities) auditBatch.push({ result, event });
         else {
           try { await appendActivity(event); }
@@ -125,6 +141,7 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
     ...summary, queued: summary.succeeded, alreadyQueued: summary.unchanged,
     queuedIds: results.filter(result => result.status === 'succeeded').map(result => result.leadId),
     results, senderInboxId, campaignVersionId, emailTemplateId,
+    ...(assignments ? { assignedSenders: Object.fromEntries(assignments) } : {}),
   };
   const notQueued = summary.refused + summary.conflict + summary.failed;
   if (!notQueued && !summary.activityFailures) return response;
@@ -135,4 +152,4 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
       + 'Review each lead; retrying does not re-enroll committed leads.' };
 }
 
-module.exports = { queueEligibility, queueSelectedLeads };
+module.exports = { AUTO_SENDER, queueEligibility, queueSelectedLeads };

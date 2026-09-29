@@ -5064,7 +5064,10 @@ app.patch('/api/leads/:id/call-details', requireAuth, async (req, res) => {
   }
 });
 
-const { queueSelectedLeads } = require('./integrations/outreach-queue');
+const { queueSelectedLeads, AUTO_SENDER } = require('./integrations/outreach-queue');
+const {
+  assignBatch, planSenderRebalance, nextSendDayHorizon,
+} = require('./integrations/sender-balance');
 const { staffingLaunchState } = require('./integrations/staffing-launch-gate');
 app.get('/api/staffing/launch-readiness', requireAuth, async (_req, res) => {
   const { STAFFING_CAMPAIGN, LOCKED_EMAILS, BOLD_PHRASES } = require('./integrations/staffing-campaign');
@@ -5098,18 +5101,27 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
         if (outreachWriteAuthority() === 'supabase') {
           const corpus = await readOutreachCorpus();
           if (!corpus.ok) throw new Error('Canonical Outreach state unavailable: ' + corpus.reason);
-          return { ...dataset, leads: corpus.leads };
+          const lockedLeadIds = senderInboxId === AUTO_SENDER ? await unresolvedReservationLeadIds() : undefined;
+          return { ...dataset, leads: corpus.leads, lockedLeadIds };
         }
         const response = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE });
         const leads = (response.data.values || []).slice(1).map(row => Object.fromEntries(CE_COLUMNS.map((field, i) => [field, row[i] || ''])));
         return { ...dataset, leads };
       },
-      validateSelection: lead => {
+      // 'auto': one capacity-weighted inbox per lead, from the same canonical
+      // state loadState() just read, plus the durable send lock's open rows.
+      assignSenders: senderInboxId === AUTO_SENDER ? (batch, state) => (state.lockedLeadIds instanceof Set
+        ? assignBatch({ batch, input: { ...state, senders: configuredSenders(), lockedLeadIds: state.lockedLeadIds,
+          horizon: nextSendDayHorizon(new Date()), env: process.env } })
+        : { assignments: new Map(), refused: [{ leadId: batch[0]?.id || '',
+          reason: 'automatic sender assignment requires Supabase canonical state and the durable send lock' }] })
+        : undefined,
+      validateSelection: (lead, leadSender) => {
         if (normalizeNiche(lead.leadNiche || lead.tradeType) === 'industrial_staffing'
           && (outreachStateMode() !== 'primary' || outreachWriteAuthority() !== 'supabase')) {
           return { ok: false, reason: 'Staffing queue requires Supabase primary reads and canonical writes; current production authority must be reconciled first' };
         }
-        const route = validateRoute({ niche: lead.leadNiche || lead.tradeType, senderInboxId, emailTemplateId, inboxes: gmailInboxOptions() });
+        const route = validateRoute({ niche: lead.leadNiche || lead.tradeType, senderInboxId: leadSender, emailTemplateId, inboxes: gmailInboxOptions() });
         if (!route.ok) return route;
         const versionRoute = validateCampaignVersionRoute({ niche: lead.leadNiche || lead.tradeType, emailTemplateId, campaignVersionId });
         if (!versionRoute.ok) return versionRoute;
@@ -5136,10 +5148,11 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
         return [...unresolved, ...batch.results];
       },
       appendActivities: events => appendColdCallActivities(events.map(({ lead, occurredAt, patch }) => ({
-        eventId: stableActivityId('lead-queued', [lead.id, senderInboxId, campaignVersionId, emailTemplateId, occurredAt]),
+        eventId: stableActivityId('lead-queued', [lead.id, patch.senderInboxId, campaignVersionId, emailTemplateId, occurredAt]),
         leadId: 'CE-' + lead.id, sourceLeadId: lead.id, email: lead.email || '', company: lead.company || '',
         eventType: 'lead_queued', occurredAt, subject: 'Queued for outreach', content: '',
-        metadata: JSON.stringify({ senderInboxId, intendedCampaignVersion: campaignVersionId, emailTemplateId, campaign: lead.campaign || '', trigger: 'outreach_queue' }),
+        metadata: JSON.stringify({ senderInboxId: patch.senderInboxId, intendedCampaignVersion: campaignVersionId, emailTemplateId, campaign: lead.campaign || '',
+          trigger: 'outreach_queue', ...(senderInboxId === AUTO_SENDER ? { senderAssignment: 'capacity_weighted' } : {}) }),
       }))),
     }));
     invalidateOutreachCache('outreach_queue');
@@ -5150,6 +5163,150 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
     if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
     console.error('[ColdEmail Queue]', error.message);
     res.status(500).json({ error: 'Could not queue selected leads' });
+  }
+});
+
+// ── SENDER BALANCE (capacity-weighted step-1 assignment) ─────────────────────
+// A step-1 sender is an instruction the send path honours without fallback, so
+// an inbox that holds no assigned step-1 leads sends nothing however much
+// capacity it has. Admission ('auto' above) spreads new work; this refill moves
+// only unsent, unowned, unreserved step-1 leads from an inbox holding more than
+// its day's target to one holding less. It writes senderInboxId and nothing
+// else, one compare-and-set per lead, and never runs beside a send pass.
+
+async function unresolvedReservationLeadIds() {
+  const listed = await listUnresolvedReservations();
+  if (listed.enabled === false) throw new Error('Durable send lock is disabled; sender balancing refuses to run without it');
+  return new Set(['sentUnconfirmed', 'reconciliationRequired', 'staleReserved', 'expiredSending']
+    .flatMap(key => listed[key] || [])
+    .map(row => String(row.leadId || '').replace(/^CE-/, '')).filter(Boolean));
+}
+
+async function loadSenderBalanceInput() {
+  if (outreachStateMode() !== 'primary' || outreachWriteAuthority() !== 'supabase') {
+    throw new Error('Sender balancing requires Supabase primary reads and canonical writes');
+  }
+  const dataset = await getOutreachDataset({ force: true });
+  const corpus = await readOutreachCorpus();
+  if (!corpus.ok) throw new Error('Canonical Outreach state unavailable: ' + corpus.reason);
+  return {
+    leads: corpus.leads, activities: dataset.activities || [], boardLeads: dataset.boardLeads || [],
+    suppressedEmails: dataset.suppressedEmails || new Set(),
+    lockedLeadIds: await unresolvedReservationLeadIds(),
+    senders: configuredSenders(), horizon: nextSendDayHorizon(new Date()), env: process.env,
+  };
+}
+
+// 06:55–12:00 Pacific on weekdays: the send windows and their passes.
+function insideSendWindow(now = new Date()) {
+  const pacific = new Date(now.toLocaleString('en-US', { timeZone: 'America/Vancouver' }));
+  const minutes = pacific.getHours() * 60 + pacific.getMinutes();
+  return ![0, 6].includes(pacific.getDay()) && minutes >= 6 * 60 + 55 && minutes < 12 * 60;
+}
+
+const SENDER_REBALANCE_MAX_MOVES = 400;
+let senderRebalanceInFlight = false;
+
+function senderBalanceView(plan) {
+  return {
+    horizon: new Date(plan.horizon).toISOString(), bufferRatio: plan.bufferRatio,
+    formula: 'target = dailyLimit + ceil(dailyLimit × bufferRatio); load = pinned follow-ups due by horizon + assigned movable step-1; deficit = max(0, target − load)',
+    before: plan.before, after: plan.after, shortages: plan.shortages, excluded: plan.excluded,
+    moves: plan.moves.map(({ leadId, from, to, niche }) => ({ leadId, from, to, niche })),
+  };
+}
+
+async function runSenderRebalance({ trigger, apply }) {
+  if (senderRebalanceInFlight) return { status: 409, error: 'A sender rebalance is already running' };
+  if (apply && (agentState.running || automationLaunchReserved)) {
+    return { status: 409, error: 'An agent pass is active or launching; sender assignments are not changed beside it' };
+  }
+  if (apply && insideSendWindow()) {
+    return { status: 409, error: 'Sender assignments are not changed between 06:55 and 12:00 Pacific on weekdays' };
+  }
+  senderRebalanceInFlight = true;
+  // Holding the launch reservation keeps any agent pass from starting while
+  // assignments are being written; the refill runs well clear of a send tick.
+  if (apply) automationLaunchReserved = true;
+  try {
+    const input = await withAuth(() => loadSenderBalanceInput());
+    const plan = planSenderRebalance(input);
+    const view = senderBalanceView(plan);
+    if (!apply) return { status: 200, applied: false, ...view };
+    if (!plan.moves.length) return { status: 200, applied: true, moved: 0, ...view };
+    if (plan.moves.length > SENDER_REBALANCE_MAX_MOVES) {
+      return { status: 409, applied: false, error: `Plan has ${plan.moves.length} moves, above the ${SENDER_REBALANCE_MAX_MOVES} safety limit`, ...view };
+    }
+    const column = await withAuth(() => sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:A` }));
+    const rowsById = new Map();
+    (column.data.values || []).forEach((cells, index) => {
+      if (index > 0 && cells[0]) rowsById.set(cells[0], [...(rowsById.get(cells[0]) || []), index + 1]);
+    });
+    const resolvable = plan.moves.filter(move => (rowsById.get(move.leadId) || []).length === 1);
+    const results = plan.moves.filter(move => !resolvable.includes(move)).map(move => ({
+      leadId: move.leadId, status: 'failed', reason: 'lead identity is not exactly one ColdEmail row' }));
+    if (resolvable.length) {
+      // Compare-and-set against the exact state the plan was made from: a lead
+      // that changed in any way since (sent, replied, held, re-routed) is refused.
+      const batch = await withAuth(() => applyLeadChanges(resolvable.map(move => ({
+        leadId: move.leadId, patch: { senderInboxId: move.to }, row: rowsById.get(move.leadId)[0], expectedState: move.expectedState,
+      })), { sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID }));
+      results.push(...batch.results);
+    }
+    const byId = new Map(plan.moves.map(move => [move.leadId, move]));
+    const moved = results.filter(result => result.status === 'succeeded').map(result => byId.get(result.leadId));
+    let auditRecorded = true;
+    if (moved.length) {
+      const occurredAt = new Date().toISOString();
+      try {
+        await appendColdCallActivities(moved.map(move => ({
+          eventId: stableActivityId('lead-sender-rebalanced', [move.leadId, move.from, move.to, occurredAt]),
+          leadId: 'CE-' + move.leadId, sourceLeadId: move.leadId, email: move.expectedState.email || '',
+          company: move.expectedState.company || '', eventType: 'lead_sender_rebalanced', occurredAt,
+          subject: 'Sending inbox reassigned', content: '',
+          metadata: JSON.stringify({ fromSenderInboxId: move.from, toSenderInboxId: move.to, niche: move.niche,
+            reason: 'capacity_rebalance', trigger }),
+        })));
+      } catch (error) {
+        auditRecorded = false;
+        console.error('[sender-balance] assignments committed but audit append failed:', error.message);
+      }
+      invalidateOutreachCache('sender_rebalance');
+      ceRowMap.clear();
+    }
+    const count = status => results.filter(result => result.status === status).length;
+    console.log(`[sender-balance] ${trigger}: ${moved.length}/${plan.moves.length} step-1 lead(s) reassigned `
+      + `(${count('conflict')} conflict, ${count('refused')} refused, ${count('failed')} failed); `
+      + plan.after.map(row => `${row.id}:${row.load}/${row.target}`).join(', '));
+    return { status: 200, applied: true, moved: moved.length, auditRecorded,
+      conflict: count('conflict'), refused: count('refused'), failed: count('failed'),
+      results: results.map(({ leadId, status, reason }) => ({ leadId, status, reason: reason || '' })), ...view };
+  } finally {
+    senderRebalanceInFlight = false;
+    if (apply) automationLaunchReserved = false;
+  }
+}
+
+// Read-only plan: what the refill would move right now, and why.
+app.get('/api/ops/sender-balance', requireAuth, async (_req, res) => {
+  try {
+    const result = await runSenderRebalance({ trigger: 'ops_plan', apply: false });
+    res.status(result.status).json(result);
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[sender-balance plan]', error.message);
+    res.status(503).json({ error: 'Sender balance could not be planned' });
+  }
+});
+
+app.post('/api/ops/sender-balance', requireAuth, async (_req, res) => {
+  try {
+    const result = await runSenderRebalance({ trigger: 'ops_manual', apply: true });
+    res.status(result.status).json(result);
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[sender-balance apply]', error.message);
+    res.status(503).json({ error: 'Sender balance could not be applied' });
   }
 });
 
@@ -6775,6 +6932,21 @@ if (process.env.RAILWAY_ENVIRONMENT) {
       .finally(() => { landingReconcileInFlight = false; });
   }, { timezone: 'America/Vancouver' });
   console.log('[cron] Landing attribution reconciler scheduled every 15 minutes (feature-gated)');
+
+  // Pre-window sender refill, 06:40 Pacific on weekdays, twenty minutes before
+  // the first send tick. 06:50 retries a run that found a pass active (an armed
+  // intent backstop can also fire at :40); on a balanced queue it moves nothing,
+  // and the 06:55 send-window guard refuses anything later. Admission already
+  // balances new work; this catches what admission cannot see coming — an
+  // inbox activated after its peers were loaded, follow-up waves that fill one
+  // inbox's day, and leads routed by hand. It moves unsent unowned step-1 leads
+  // only, and does nothing when every inbox already holds its day's target.
+  cron.schedule('40,50 6 * * 1-5', () => {
+    runSenderRebalance({ trigger: 'scheduled_pre_window', apply: true })
+      .then(result => { if (result.status !== 200) console.warn(`[sender-balance] scheduled refill skipped: ${result.error}`); })
+      .catch(error => console.error('[sender-balance] scheduled refill failed:', error.message));
+  }, { timezone: 'America/Vancouver' });
+  console.log('[cron] Sender refill scheduled: 06:40 and 06:50 Pacific, Mon–Fri (unsent step-1 leads only; the second run is a no-op once balanced)');
 
   // Daily digest — 18:00 America/Vancouver. getOrCreateDigest is idempotent, so
   // a restart, a re-fire, or a dashboard load on the same day all reuse the

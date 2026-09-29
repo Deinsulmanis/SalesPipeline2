@@ -13,7 +13,7 @@ const REPLY_TYPES = new Set([
 ]);
 
 const SOURCE_BY_TYPE = Object.freeze({
-  lead_created: 'CRM', lead_queued: 'CRM', stage_changed: 'CRM',
+  lead_created: 'CRM', lead_queued: 'CRM', lead_sender_rebalanced: 'CRM', stage_changed: 'CRM',
   automation_held: 'CRM', automation_hold_released: 'CRM',
   reactivation_scheduled: 'CRM', reactivation_cancelled: 'CRM',
   initial_email_sent: 'Automation', follow_up_sent: 'Automation', booking_link_sent: 'Automation',
@@ -119,6 +119,8 @@ function eventPresentation(row, metadata, context = {}) {
   switch (type) {
     case 'lead_created': return { title: 'Lead created' };
     case 'lead_queued': return { title: 'Lead queued for outreach' };
+    case 'lead_sender_rebalanced': return { title: 'Sending inbox reassigned',
+      summary: metadata.fromSenderInboxId && metadata.toSenderInboxId ? `${metadata.fromSenderInboxId} → ${metadata.toSenderInboxId} (unsent first email)` : '' };
     case 'initial_email_sent': return { title: 'Initial email sent', summary: row.subject ? `Subject: ${row.subject}` : '' };
     case 'follow_up_sent': return { title: step ? `Follow-up email sent · step ${step}` : 'Follow-up email sent', summary: row.subject ? `Subject: ${row.subject}` : '' };
     case 'email_opened': return { title: 'Email opened' };
