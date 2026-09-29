@@ -366,3 +366,24 @@ test('sender registry: clientId is optional (default ScaleLab), validated, and e
   assert.throws(() => parseRegistry(JSON.stringify([{ id: 'x', email: 'x@y.invalid', tokenEnv: 'GMAIL_X_TOKEN_JSON', clientId: 'acme' }])), /unknown client/);
   assert.throws(() => parseRegistry(JSON.stringify([{ id: 'x', email: 'x@y.invalid', tokenEnv: 'GMAIL_X_TOKEN_JSON', clientId: 'jole', staffingOnly: true }])), /staffing-only/);
 });
+
+// ── RECONCILED WITH THE SENDER-BALANCE REPAIR (e06e538) ────────────────────
+test('sender balance (repaired): automatic assignment never crosses clients, even toward the idlest inbox', () => {
+  const { assignNewLeads } = require('../integrations/sender-balance');
+  const original = process.env.GMAIL_INBOX_REGISTRY_JSON;
+  process.env.GMAIL_INBOX_REGISTRY_JSON = JSON.stringify([{ id: 'jole_test', email: 'outreach@jole-test.invalid', status: 'warming', tokenEnv: 'GMAIL_JOLE_TEST_TOKEN_JSON', dailyLimit: 0, clientId: 'jole' }]);
+  try {
+    // The Jole inbox is empty and largest, so capacity alone would pick it.
+    const senders = [
+      { ...SCALELAB_SENDER, dailyLimit: 5 },
+      { ...JOLE_SENDER, dailyLimit: 500 },
+    ];
+    const dental = Array.from({ length: 20 }, (_, i) => scalelabDental({ id: `d${i}`, email: `d${i}@dental.example.com`, senderInboxId: '', stage: 'Queued' }));
+    const admitted = assignNewLeads({ batch: dental, senders });
+    assert.equal([...admitted.assignments.values()].includes('jole_test'), false);
+    const jole = assignNewLeads({ batch: [joleLead({ senderInboxId: '' })], senders: [{ ...SCALELAB_SENDER, dailyLimit: 500 }] });
+    assert.equal(jole.assignments.get('jole-lead-1'), undefined, 'no ScaleLab fallback for a Jole lead');
+  } finally {
+    if (original === undefined) delete process.env.GMAIL_INBOX_REGISTRY_JSON; else process.env.GMAIL_INBOX_REGISTRY_JSON = original;
+  }
+});
