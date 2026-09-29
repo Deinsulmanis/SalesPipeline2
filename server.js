@@ -135,7 +135,12 @@ async function stage2TimelineProbe({ leadId, sourceLeadId, email, authoritative,
   }
 }
 const { simulateRouting } = require('./integrations/gmail-routing-simulation');
-const { EMAIL_TEMPLATES, LEAD_TYPES, LEAD_TYPE_IDS, normalizeNiche, leadTypeLabel, isKnownLeadType, campaignVersionsForRoute, validateCampaignVersionRoute, validateRoute } = require('./integrations/campaign-routing');
+const { EMAIL_TEMPLATES, LEAD_TYPES, LEAD_TYPE_IDS, normalizeNiche, leadTypeLabel, isKnownLeadType, campaignVersionsForRoute, validateCampaignVersionRoute, validateRoute, routedLeadReady } = require('./integrations/campaign-routing');
+// Managed clients (internal operator views only; clients never log in).
+const { registerClientRoutes } = require('./integrations/clients/routes');
+const { leadsForClient } = require('./integrations/clients/ownership');
+const { resolveClientId, DEFAULT_CLIENT_ID } = require('./integrations/clients/registry');
+const { getLedgerStore } = require('./integrations/clients/ledger-store');
 const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE, qualifyLead: qualifyRoofingLead } = require('./integrations/roofing-survey-profile');
 const {
   COLD_CALL_ACTIVITY_SHEET,
@@ -1927,7 +1932,17 @@ function filterOutreachRows(rows, query) {
 app.get('/api/coldemail', requireAuth, async (req, res) => {
   try {
     const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
-    const filtered = filterOutreachRows(dataset.rows, req.query);
+    // Optional client scope, applied here on the server: the browser never
+    // receives another client's rows to hide. Absent means the legacy
+    // behaviour (every row).
+    let scopedRows = dataset.rows;
+    if (req.query.client !== undefined) {
+      const client = resolveClientId(req.query.client);
+      if (!client.ok) return res.status(400).json({ error: client.reason, code: client.code });
+      const ids = new Set(leadsForClient(dataset.leads || [], client.clientId).map(lead => String(lead.id)));
+      scopedRows = dataset.rows.filter(row => ids.has(String(row.id)));
+    }
+    const filtered = filterOutreachRows(scopedRows, req.query);
     const requested = req.query.limit === undefined ? DEFAULT_CE_PAGE : parseInt(req.query.limit, 10);
     const limit = Number.isFinite(requested) && requested > 0 ? Math.min(requested, MAX_CE_PAGE) : 0;
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
@@ -1935,7 +1950,7 @@ app.get('/api/coldemail', requireAuth, async (req, res) => {
     res.json({
       leads: page,
       total: filtered.length,
-      totalUnfiltered: dataset.rows.length,
+      totalUnfiltered: scopedRows.length,
       offset, limit,
       hasMore: limit ? offset + page.length < filtered.length : false,
       counts: dataset.counts,
@@ -1955,6 +1970,14 @@ app.get('/api/coldemail', requireAuth, async (req, res) => {
     console.error('[ColdEmail GET]', e.message);
     res.status(500).json({ error: e.message });
   }
+});
+
+registerClientRoutes(app, {
+  requireAuth,
+  loadDataset: options => withAuth(() => getOutreachDataset(options)),
+  getStore: () => getLedgerStore(),
+  senders: () => configuredSenders(),
+  routedLeadReady,
 });
 
 app.get('/api/campaign-versions', requireAuth, (req, res) => {
@@ -5121,7 +5144,7 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
           && (outreachStateMode() !== 'primary' || outreachWriteAuthority() !== 'supabase')) {
           return { ok: false, reason: 'Staffing queue requires Supabase primary reads and canonical writes; current production authority must be reconciled first' };
         }
-        const route = validateRoute({ niche: lead.leadNiche || lead.tradeType, senderInboxId: leadSender, emailTemplateId, inboxes: gmailInboxOptions() });
+        const route = validateRoute({ niche: lead.leadNiche || lead.tradeType, senderInboxId: leadSender, emailTemplateId, inboxes: gmailInboxOptions(), lead, campaignVersionId });
         if (!route.ok) return route;
         const versionRoute = validateCampaignVersionRoute({ niche: lead.leadNiche || lead.tradeType, emailTemplateId, campaignVersionId });
         if (!versionRoute.ok) return versionRoute;
@@ -5793,6 +5816,7 @@ function gmailInboxOptions() {
     perRunLimit: sender.perRunLimit || DEFAULT_INBOX_PER_RUN_LIMIT,
     observerEnabled: sender.observerEnabled !== false,
     staffingOnly: isStaffingOnlySender(sender),
+    clientId: sender.clientId || DEFAULT_CLIENT_ID,
     credentialConfigured: sender.credentialConfigured,
     identityVerified: sender.id === 'primary' ? Boolean(process.env.GMAIL_TOKEN_JSON) : sender.credentialConfigured,
     sendEligible: sender.sendEligible,

@@ -2040,13 +2040,41 @@
   @media(max-width:980px){body.workspace-ready{grid-template-columns:72px minmax(0,1fr)}.crm-sidebar{padding-inline:8px}.crm-brand{padding-inline:8px}.crm-brand-copy,.crm-nav-btn span,.crm-nav-group,.crm-sidebar-foot{display:none}.crm-nav-btn{justify-content:center;padding:9px}.crm-nav-btn svg{width:19px;height:19px}.crm-workspace{padding:18px}.inbox-row{grid-template-columns:minmax(160px,.7fr) minmax(230px,1.3fr)}}
   @media(max-width:700px){body.workspace-ready{display:block;padding-top:64px}.crm-sidebar{position:fixed;left:0;top:0;width:224px;transform:translateX(-100%);transition:transform 180ms;z-index:100}.crm-sidebar.open{transform:translateX(0)}.crm-brand-copy,.crm-nav-btn span,.crm-nav-group,.crm-sidebar-foot{display:block}.crm-nav-btn{justify-content:flex-start}.sidebar-toggle{display:grid;place-items:center}body.workspace-ready>header{position:fixed;left:0;right:0;top:0;height:64px}.crm-workspace{padding:14px}.header-right .search-wrap{display:none}.inbox-row{grid-template-columns:1fr;gap:9px}.inbox-action{padding-top:8px;border-top:1px solid var(--border)}.workspace-intro{align-items:flex-start}.operational-row{align-items:flex-start}.operational-row-meta{max-width:45%}}
   @media(prefers-reduced-motion:reduce){.crm-sidebar,.crm-nav-btn{transition-duration:.01ms!important}}
+  /* Managed clients — internal operator views. A client never sees this UI. */
+  .client-switch{margin:0 6px 6px;padding:10px;border:1px solid var(--border);border-radius:9px;background:var(--tint-faint)}
+  .client-switch label{display:block;font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--text-muted);font-weight:750;margin-bottom:6px}
+  .client-switch select{width:100%;min-height:44px;padding:8px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface);color:var(--text);font:inherit;font-size:13px}
+  .client-switch select:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+  body[data-client-mode="managed"] .crm-nav-btn:not([data-client-scope="all"]),body[data-client-mode="managed"] .crm-nav-group:not([data-client-scope="all"]){display:none}
+  .client-badge{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:750;padding:3px 9px;border-radius:999px;border:1px solid var(--border);background:var(--tint-soft);color:var(--text)}
+  .client-send{font-size:11px;font-weight:750;padding:3px 9px;border-radius:999px}
+  .client-send[data-on="false"]{color:var(--warn);background:var(--warn-bg)}.client-send[data-on="true"]{color:var(--success);background:var(--success-bg)}
+  .client-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin:16px 0}
+  .client-card{padding:16px;border:1px solid var(--border);border-radius:10px;background:var(--surface)}
+  .client-card h3{font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--text-muted);margin:0 0 10px}
+  .client-kv{display:flex;justify-content:space-between;gap:8px;font-size:13px;padding:5px 0;border-bottom:1px solid var(--border)}.client-kv:last-child{border-bottom:0}.client-kv b{font-variant-numeric:tabular-nums}
+  .client-table{width:100%;border-collapse:collapse;font-size:12px}.client-table th,.client-table td{text-align:left;padding:8px;border-bottom:1px solid var(--border);vertical-align:top}.client-table th{color:var(--text-muted);font-weight:650}
+  .client-section{margin-top:24px}.client-section h3{font-size:14px;margin:0 0 8px}
+  .client-note{font-size:12px;color:var(--text-muted);margin:6px 0 0;max-width:760px;line-height:1.5}
+  .client-form{display:grid;gap:8px;margin-top:8px}.client-form label{font-size:11px;color:var(--text-secondary);font-weight:650}
+  .client-form textarea{width:100%;min-height:44px;padding:8px;border-radius:7px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font:inherit;font-size:13px}
+  .client-btn{min-height:44px;padding:0 16px;border-radius:8px;border:1px solid var(--border-hover);background:var(--tint-soft);color:var(--text);font-weight:700;cursor:pointer;transition:transform 200ms cubic-bezier(.4,0,.2,1),background 200ms}
+  .client-btn:hover{transform:translateY(-2px);background:var(--tint-faint)}.client-btn:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+  .client-table-wrap{overflow-x:auto}
+  @media(max-width:700px){.client-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 
 <aside class="crm-sidebar" id="crm-sidebar" aria-label="CRM workspaces">
   <div class="crm-brand"><span class="crm-brand-mark">S</span><span class="crm-brand-copy">ScaleLab AI<small>Sales workspace</small></span></div>
+  <div class="client-switch">
+    <label for="client-select">Client workspace</label>
+    <select id="client-select" onchange="setActiveClient(this.value)"><option value="scalelab">ScaleLab AI</option></select>
+  </div>
   <nav class="crm-nav">
+    <div class="crm-nav-group" data-client-scope="all">Clients</div>
+    <button class="crm-nav-btn" data-workspace="clients" data-client-scope="all" onclick="setWorkspace('clients')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13h18"/></svg><span>Client Ops</span></button>
     <div class="crm-nav-group">Sales</div>
     <button class="crm-nav-btn active" data-workspace="pipeline" onclick="setWorkspace('pipeline')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 5h16M4 12h10M4 19h7"/><circle cx="18" cy="12" r="2"/><circle cx="15" cy="19" r="2"/></svg><span>Pipeline</span></button>
     <button class="crm-nav-btn" data-workspace="inbox" onclick="setWorkspace('inbox')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 4h16v14H4z"/><path d="M4 13h4l2 3h4l2-3h4"/></svg><span>Inbox</span></button>
@@ -5518,6 +5546,8 @@ function ceQuery(extra = {}) {
   const params = new URLSearchParams();
   const stage = ['all', 'agent', 'opens', 'demos', 'campaigns'].includes(ceActiveFilter) ? 'all' : ceActiveFilter;
   params.set('stage', stage);
+  // The server scopes the directory to the selected client.
+  params.set('client', activeClientId);
   if (ceCampaignFilter) params.set('campaign', ceCampaignFilter);
   if (ceNicheFilter && ceNicheFilter !== 'all') params.set('niche', ceNicheFilter);
   if (ceSearchQuery) params.set('search', ceSearchQuery);
@@ -7338,7 +7368,11 @@ const WORKSPACES = Object.freeze({
   bookings:  ['Bookings', 'Scheduled calls and explicit meeting outcomes'],
   health:    ['CRM Health', 'Automation risk, data quality, and operational backlog'],
   settings:  ['Settings', 'Read-only production configuration and provider status'],
+  clients:   ['Client Ops', 'Managed-client outreach, conversations, meetings and billing'],
 });
+// Workspaces that show a managed client's own data. Everything else is a
+// ScaleLab operational view and is hidden while a managed client is selected.
+const MANAGED_CLIENT_WORKSPACES = Object.freeze(['clients']);
 
 let activeWorkspace = 'pipeline';
 let workspaceLoaded = Object.create(null);
@@ -7372,6 +7406,8 @@ function installWorkspaceShell() {
   const bookings = make('bookings', workspaceIntro('Call lifecycle', 'Bookings', 'Upcoming calls, outcome-needed meetings, cancellations, and no-shows.'));
   const health = make('health', workspaceIntro('System status', 'CRM Health', 'Active automation risk is separated from operational backlog and historical debt.'));
   const settings = make('settings', workspaceIntro('Configuration', 'Settings', 'Safe, read-only status. Credentials and secrets are never displayed here.'));
+  const clientsWs = make('clients', workspaceIntro('Managed clients', 'Client Ops', 'One client at a time, filtered on the server. Clients have no access to this system; ScaleLab operates every workspace here.'));
+  clientsWs.insertAdjacentHTML('beforeend', '<div id="client-ops-content" aria-live="polite"><div class="workspace-empty"><strong>Loading client operations…</strong>Reading the selected client.</div></div>');
 
   const pipelineStats = document.querySelector('body > .stats-bar');
   const pipelineFilters = document.querySelector('body > .filter-bar');
@@ -7410,6 +7446,7 @@ function toggleSidebar() { document.getElementById('crm-sidebar')?.classList.tog
 
 async function setWorkspace(name, { replace = false } = {}) {
   if (!WORKSPACES[name]) name = 'pipeline';
+  if (activeClientIsManaged() && !MANAGED_CLIENT_WORKSPACES.includes(name)) name = 'clients';
   activeWorkspace = name;
   document.querySelectorAll('.crm-workspace').forEach(node => node.classList.toggle('active', node.id === `ws-${name}`));
   document.querySelectorAll('.crm-nav-btn').forEach(node => node.classList.toggle('active', node.dataset.workspace === name));
@@ -7449,7 +7486,171 @@ async function loadWorkspace(name) {
   if (name === 'staffing') return loadStaffingFunnel();
   if (name === 'bookings') return loadBookingsWorkspace();
   if (name === 'settings') return loadSettingsWorkspace();
+  if (name === 'clients') return loadClientOpsWorkspace();
 }
+
+// ============================================================
+// MANAGED CLIENTS — internal ScaleLab operator workspace.
+// The selected client scopes the Outreach directory and Client Ops on the
+// server. A client never logs in; nothing here is client-facing.
+// ============================================================
+let managedClients = [{ clientId: 'scalelab', displayName: 'ScaleLab AI', isDefault: true }];
+let activeClientId = 'scalelab';
+try { activeClientId = localStorage.getItem('sp2.activeClient') || 'scalelab'; } catch (_) { activeClientId = 'scalelab'; }
+
+// esc() leaves quotes alone; attribute values need them escaped too.
+function escAttr(value) { return esc(value).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+function activeClient() { return managedClients.find(item => item.clientId === activeClientId) || managedClients[0]; }
+function activeClientIsManaged() { const client = activeClient(); return Boolean(client && !client.isDefault); }
+
+async function loadManagedClients() {
+  try {
+    const response = await fetch('/api/clients');
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (Array.isArray(data.clients) && data.clients.length) managedClients = data.clients;
+  } catch (error) {
+    showToast('Could not load clients: ' + error.message, 'error');
+  }
+  if (!managedClients.some(item => item.clientId === activeClientId)) activeClientId = 'scalelab';
+  const select = document.getElementById('client-select');
+  if (select) {
+    select.innerHTML = managedClients.map(item => `<option value="${escAttr(item.clientId)}">${esc(item.displayName)}</option>`).join('');
+    select.value = activeClientId;
+  }
+  applyClientMode();
+}
+
+function applyClientMode() {
+  document.body.dataset.clientMode = activeClientIsManaged() ? 'managed' : 'default';
+}
+
+async function setActiveClient(clientId) {
+  if (!managedClients.some(item => item.clientId === clientId)) return;
+  activeClientId = clientId;
+  try { localStorage.setItem('sp2.activeClient', clientId); } catch (_) { /* per-viewer convenience only */ }
+  applyClientMode();
+  // Client-scoped read models reload from the server for the new client.
+  workspaceLoaded.outreach = false;
+  await setWorkspace(activeClientIsManaged() ? 'clients' : activeWorkspace, { replace: true });
+}
+
+function clientMoney(cents, currency) {
+  return currency ? new Intl.NumberFormat('en-US', { style: 'currency', currency }).format((cents || 0) / 100) : '—';
+}
+function clientKv(label, value) { return `<div class="client-kv"><span>${esc(label)}</span><b>${esc(value ?? '—')}</b></div>`; }
+function clientCard(title, rows) { return `<div class="client-card"><h3>${esc(title)}</h3>${rows.join('')}</div>`; }
+
+async function loadClientOpsWorkspace() {
+  const host = document.getElementById('client-ops-content');
+  if (!host) return;
+  const client = activeClient();
+  host.innerHTML = `<div class="workspace-empty"><strong>Loading ${esc(client.displayName)}…</strong>Scoped on the server to this client only.</div>`;
+  try {
+    const response = await fetch(`/api/clients/${encodeURIComponent(client.clientId)}/overview`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const o = await response.json();
+    const s = o.sending || {};
+    const header = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <span class="client-badge">${esc(o.client.displayName)}</span>
+      <span class="client-send" data-on="${s.sendingEnabled ? 'true' : 'false'}">Sending ${s.sendingEnabled ? 'ON' : 'OFF'}</span>
+      ${o.client.platformAccess === 'none' ? '<span class="client-badge">No platform access</span>' : ''}
+    </div>
+    ${s.sendingEnabled ? '' : `<p class="client-note">${esc(s.blockReason || 'Sending is disabled for this client')}. Turning it on is a separate, explicit decision.</p>`}`;
+    const pipelineRows = !o.pipeline ? null : o.pipeline.available ? [
+      clientKv('Qualifying', o.pipeline.qualifyingConversations), clientKv('Awaiting clarification', o.pipeline.awaitingClarification),
+      clientKv('Meetings booked', o.pipeline.meetingsBooked), clientKv('Meetings held', o.pipeline.meetingsHeld),
+      clientKv('Qualified held', o.pipeline.qualifiedHeld), clientKv('No-show', o.pipeline.noShow), clientKv('Cancelled', o.pipeline.cancelled),
+    ] : [clientKv('Ledger', 'unavailable')];
+    const b = o.billing;
+    const billingRows = !b ? null : [
+      clientKv('Model', 'Per qualified held meeting'), clientKv('Performance fee', clientMoney(b.configuredFeeCents, b.currency)),
+      clientKv('Billable meetings', b.available ? b.billableMeetings : '—'),
+      clientKv('Accrued', b.available ? clientMoney(b.accruedCents, b.currency) : '—'),
+      clientKv('Invoiced', b.available ? clientMoney(b.invoicedCents, b.currency) : '—'),
+    ];
+    const grid = `<div class="client-grid">
+      ${clientCard('Leads', [clientKv('Imported', o.leads.imported), clientKv('Approved', o.leads.approved), clientKv('Routing-ready', o.leads.routingReady), clientKv('Queued', o.leads.queued), clientKv('Sent', o.leads.sent)])}
+      ${clientCard('Sending', [clientKv('Sends', o.deliverability.sends), clientKv('Delivered (est.)', o.deliverability.deliveredEstimate), clientKv('Bounced', o.deliverability.bounced), clientKv('Suppressed', o.deliverability.suppressed), clientKv('Senders', o.deliverability.senders.length)])}
+      ${clientCard('Replies', [clientKv('Replies', o.replies.total), clientKv('Positive', o.replies.positive), clientKv('Neutral', o.replies.neutral), clientKv('Negative', o.replies.negative), clientKv('Unsubscribe', o.replies.unsubscribe)])}
+      ${pipelineRows ? clientCard('Pipeline', pipelineRows) : ''}
+      ${billingRows ? clientCard('Billing', billingRows) : ''}
+    </div>`;
+    const campaigns = o.campaigns.length ? `<div class="client-section"><h3>Campaigns</h3><div class="client-table-wrap"><table class="client-table"><thead><tr><th>#</th><th>Campaign</th><th>Status</th><th>Leads</th><th>Sendable</th></tr></thead><tbody>
+      ${o.campaigns.map(c => `<tr><td>${esc(c.number)}</td><td><b>${esc(c.label)}</b><div class="client-note">${esc(c.icp?.summary || '')}</div></td><td>${esc(c.status)}</td><td>${esc(c.leads)}</td><td>${c.sendable ? 'Yes' : esc('No — ' + (c.blockedBy || ''))}</td></tr>`).join('')}
+    </tbody></table></div></div>` : '';
+    const ledgerNote = o.pipeline && !o.pipeline.available ? `<p class="client-note">Meeting ledger unavailable: ${esc(o.pipeline.reason || '')}</p>` : '';
+    const leadsSlot = activeClientIsManaged() ? '<div id="client-leads"></div>' : '';
+    host.innerHTML = header + grid + campaigns + leadsSlot + (o.pipeline?.available ? '<div id="client-ledger"></div>' : ledgerNote);
+    if (activeClientIsManaged()) await renderClientLeads(client.clientId);
+    if (o.pipeline?.available) await renderClientLedger(client.clientId);
+  } catch (error) {
+    host.innerHTML = `<div class="workspace-empty"><strong>Client operations unavailable</strong>${esc(error.message)}</div>`;
+  }
+}
+
+async function renderClientLeads(clientId) {
+  const host = document.getElementById('client-leads');
+  if (!host) return;
+  try {
+    const response = await fetch(`/api/clients/${encodeURIComponent(clientId)}/leads?limit=200`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    const rows = (data.leads || []).map(lead => `<tr><td><b>${esc(lead.company || '—')}</b><div class="client-note">${esc(lead.contactName || '')}</div></td><td>${esc(lead.email)}</td><td>${esc(lead.campaign || '—')}</td><td>${esc(lead.stage || '—')}${lead.emailStatus ? ' · ' + esc(lead.emailStatus) : ''}</td><td>${esc(lead.senderInboxId || 'unassigned')}</td><td>${lead.routingReady ? 'Yes' : 'No'}</td></tr>`).join('');
+    host.innerHTML = `<div class="client-section"><h3>Leads (${esc(data.total)})</h3>
+      <p class="client-note">Only this client's leads, selected on the server.${data.total > (data.leads || []).length ? ` Showing the first ${esc((data.leads || []).length)}.` : ''}</p>
+      <div class="client-table-wrap"><table class="client-table"><thead><tr><th>Employer</th><th>Email</th><th>Campaign</th><th>State</th><th>Sender</th><th>Routing-ready</th></tr></thead><tbody>
+      ${rows || '<tr><td colspan="6">No leads imported for this client yet.</td></tr>'}
+      </tbody></table></div></div>`;
+  } catch (error) {
+    host.innerHTML = `<p class="client-note">Leads unavailable: ${esc(error.message)}</p>`;
+  }
+}
+
+async function renderClientLedger(clientId) {
+  const host = document.getElementById('client-ledger');
+  if (!host) return;
+  const base = `/api/clients/${encodeURIComponent(clientId)}`;
+  const [clar, meet] = await Promise.all([
+    fetch(`${base}/clarifications?status=open`).then(r => r.json()),
+    fetch(`${base}/meetings`).then(r => r.json()),
+  ]);
+  const open = clar.clarifications || [];
+  const meetings = meet.meetings || [];
+  const forms = open.map(item => `<form class="client-card client-form" data-client="${escAttr(clientId)}" data-clarification="${escAttr(item.clarification_id)}" onsubmit="answerClientClarification(event)">
+      <div><b>${esc(item.question)}</b><div class="client-note">Topics: ${esc((item.topics || []).join(', ') || '—')} · Lead ${esc(item.lead_id)}</div></div>
+      <label for="ans-${escAttr(item.clarification_id)}">Answer from the client</label>
+      <textarea id="ans-${escAttr(item.clarification_id)}" name="answer" required rows="3"></textarea>
+      <button class="client-btn" type="submit">Record answer</button></form>`).join('');
+  const rows = meetings.map(m => `<tr><td>${esc(m.lead_id)}</td><td>${esc(m.meeting_status)}</td><td>${esc(m.scheduled_for ? new Date(m.scheduled_for).toLocaleString() : '—')}</td><td>${esc(m.attendee_name || '—')}<div class="client-note">${esc(m.attendee_title || '')}</div></td><td>${m.billable ? esc('Yes · ' + clientMoney(m.performance_fee_cents, m.currency)) : esc('No — ' + (m.billable_reason || ''))}</td><td>${esc(m.invoice_status)}</td></tr>`).join('');
+  host.innerHTML = `<div class="client-section"><h3>Awaiting client clarification (${open.length})</h3>
+    <p class="client-note">Questions only the client can answer. Get the answer from the client outside this system, record it here, then continue the employer conversation.</p>
+    ${forms || '<div class="workspace-empty">Nothing is waiting on the client.</div>'}
+  </div>
+  <div class="client-section"><h3>Meeting ledger (${meetings.length})</h3>
+    <p class="client-note">Billable only when a meeting is held with an in-market employer and a decision-maker. A booking, cancellation or no-show never bills.</p>
+    <div class="client-table-wrap"><table class="client-table"><thead><tr><th>Lead</th><th>Status</th><th>Scheduled</th><th>Attendee</th><th>Billable</th><th>Invoice</th></tr></thead><tbody>
+    ${rows || '<tr><td colspan="6">No meetings recorded.</td></tr>'}
+    </tbody></table></div></div>`;
+}
+
+async function answerClientClarification(event) {
+  event.preventDefault();
+  const form = event.target;
+  const answer = new FormData(form).get('answer');
+  try {
+    const response = await fetch(`/api/clients/${encodeURIComponent(form.dataset.client)}/clarifications/${encodeURIComponent(form.dataset.clarification)}/answer`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answer }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    showToast('Answer recorded. Continue the employer conversation.', 'success');
+    await loadClientOpsWorkspace();
+  } catch (error) {
+    showToast('Could not record the answer: ' + error.message, 'error');
+  }
+}
+
 
 // ============================================================
 // STAFFING LANDING FUNNEL — first-party attribution for tracked staffing links.
@@ -7806,6 +8007,7 @@ document.getElementById('search').addEventListener('input', function() {
 
 async function init() {
   installWorkspaceShell();
+  await loadManagedClients();
   showLoadingOverlay('Loading your leads…');
   try {
     await loadLeads();

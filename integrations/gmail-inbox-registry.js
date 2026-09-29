@@ -2,6 +2,7 @@
 
 const { google } = require('googleapis');
 const { DEFAULT_INBOX_DAILY_LIMIT, DEFAULT_INBOX_PER_RUN_LIMIT } = require('./gmail-sender-capacity');
+const { DEFAULT_CLIENT_ID, resolveClientId } = require('./clients/registry');
 
 const STATUSES = new Set(['warming', 'ready', 'active', 'paused', 'error']);
 
@@ -64,6 +65,10 @@ function parseEntry(entry, index, seenIds, seenEmails) {
   const perRunLimit = Number(entry?.perRunLimit ?? DEFAULT_INBOX_PER_RUN_LIMIT);
   const observerEnabled = entry?.observerEnabled !== false;
   const staffingOnly = entry?.staffingOnly === true;
+  // The managed client this inbox serves. Omitted means the default client,
+  // which is every inbox that existed before clients did. An unknown client is
+  // a configuration error, never a silent default.
+  const rawClientId = String(entry?.clientId ?? '').trim();
   if (!id || !/^[a-z0-9_-]+$/i.test(id)) throw new Error(`Gmail inbox entry ${index + 1} has an invalid id`);
   if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error(`Gmail inbox ${id} has an invalid email`);
   if (!STATUSES.has(status)) throw new Error(`Gmail inbox ${id} has an invalid status`);
@@ -71,11 +76,19 @@ function parseEntry(entry, index, seenIds, seenEmails) {
   if (!/^GMAIL_[A-Z0-9_]+_TOKEN_JSON$/.test(tokenEnv)) throw new Error(`Gmail inbox ${id} has an invalid tokenEnv`);
   if (!Number.isInteger(dailyLimit) || dailyLimit < 0) throw new Error(`Gmail inbox ${id} has an invalid dailyLimit`);
   if (!Number.isInteger(perRunLimit) || perRunLimit < 0) throw new Error(`Gmail inbox ${id} has an invalid perRunLimit`);
+  let clientId = '';
+  if (rawClientId) {
+    const resolved = resolveClientId(rawClientId);
+    if (!resolved.ok) throw new Error(`Gmail inbox ${id} names an unknown client`);
+    clientId = resolved.clientId;
+  }
+  if (staffingOnly && clientId && clientId !== DEFAULT_CLIENT_ID) throw new Error(`Gmail inbox ${id} cannot be staffing-only for another client`);
   if (seenIds.has(id) || seenEmails.has(email)) throw new Error(`Duplicate Gmail inbox entry: ${id}`);
   seenIds.add(id); seenEmails.add(email);
   return Object.freeze({
     id, email, status, tokenEnv, dailyLimit, perRunLimit, observerEnabled, provider: 'gmail',
     ...(staffingOnly ? { staffingOnly } : {}),
+    ...(clientId ? { clientId } : {}),
   });
 }
 
@@ -113,6 +126,7 @@ function publicRegistry(entries, env = process.env) {
     observerEnabled: entry.observerEnabled !== false, provider: 'gmail',
     credentialConfigured: Boolean(env[entry.tokenEnv]),
     sendEligible: sendEligibleFor(entry, env),
+    clientId: entry.clientId || DEFAULT_CLIENT_ID,
   }));
 }
 

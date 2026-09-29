@@ -9,6 +9,7 @@ const {
 const { createPgSendReservationStore } = require('./send-reservation-store');
 const { isDefinitePreDeliveryFailure, providerIdsFromResult } = require('./provider-delivery-error');
 const { STATUS } = require('./send-reservation-rules');
+const { checkActionOwnership } = require('./clients/ownership');
 
 const LEASE_OWNER = `${os.hostname()}:${process.pid}:${crypto.randomUUID()}`;
 
@@ -32,6 +33,7 @@ function logSendLock(event, fields = {}) {
     status: fields.status || null,
   };
   if (fields.code) payload.code = fields.code;
+  if (fields.clientId) payload.client_id = fields.clientId;
   console.log(JSON.stringify(payload));
 }
 
@@ -84,7 +86,25 @@ async function assertSendLockReady(env = process.env) {
   return health;
 }
 
+// A reservation belongs to exactly one client. An action whose lead, sender,
+// campaign and template disagree is refused before any row exists — on the
+// locked and the pre-activation unlocked path alike. Actions without an
+// ownership block (legacy callers) are unchanged.
+function assertActionOwnership(action) {
+  const owner = checkActionOwnership(action?.ownership);
+  if (!owner.ok) {
+    logSendLock('reservation_denied', {
+      actionId: action?.actionId, leadId: action?.leadId, provider: action?.provider, code: owner.code,
+    });
+    const error = new Error(owner.reason);
+    error.code = owner.code;
+    throw error;
+  }
+  return owner.clientId || undefined;
+}
+
 async function withOutboundReservation(action, run, env = process.env) {
+  const clientId = assertActionOwnership(action);
   if (!sendLockEnabled(env) && !injectedStore) return run();
   if (!action?.actionId) {
     const error = new Error('durable send reservation action_id is required');
@@ -109,7 +129,7 @@ async function withOutboundReservation(action, run, env = process.env) {
   }
   logSendLock('reservation_acquired', {
     actionId: action.actionId, leadId: action.leadId, provider: action.provider,
-    status: reserved.reservation.status,
+    status: reserved.reservation.status, clientId,
   });
   const started = await store.markProviderAttemptStarted(action.actionId, LEASE_OWNER);
   if (!started.ok) {
@@ -167,6 +187,7 @@ async function withOutboundReservation(action, run, env = process.env) {
 }
 
 async function withGmailProviderSend({ lead, sendAction, run, env = process.env }) {
+  assertActionOwnership(sendAction);
   if (!sendLockEnabled(env) && !injectedStore) return run();
   const action = sendAction && sendAction.actionId ? sendAction : null;
   if (!action) {
