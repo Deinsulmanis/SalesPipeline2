@@ -67,6 +67,17 @@ slot synchronously). `/api/agent/status` shows `running`.
 | Launch gate | `server.js` → `observeCalendarBeforeAutomation`, `launchAutomationAfterCalendar` (`[Calendar safety] … blocked` in logs) |
 | Booking → promotion | `server.js` `applyCalendarPlanItem`; `integrations/promotion-policy.js` (`promotionSuppressionReason` blocks automatic promotion of suppressed leads) |
 
+## Managed clients
+
+| Concern | Where |
+|---|---|
+| Client registry / config | `integrations/clients/registry.js`, `client-configs.js` (Jole: sending disabled, no platform access) |
+| Ownership (lead/sender/campaign/template) | `integrations/clients/ownership.js` → `checkClientConsistency`; enforced in `validateRoute`, `routedLeadReady`, `allowedForLead`, `evaluateFreshSendSafety`, `withOutboundReservation`, observers, reply loop |
+| Client send switch | `integrations/clients/send-policy.js` (`sending.enabled` + `CLIENT_SENDING_AUTHORIZED`) |
+| Suppression scopes | `integrations/clients/suppression.js` (global → client), `ledger-store.js` `client_suppressions` |
+| Managed replies / clarifications / meetings | `reply-policy.js`, `reply-pipeline.js`, `ledger.js` |
+| Design + launch checklist | `docs/multi-client-architecture.md` |
+
 ## Read-only production endpoints (Basic auth)
 
 `/api/agent/status`, `/api/send-lock/health`, `/api/send-lock/reservations`,
