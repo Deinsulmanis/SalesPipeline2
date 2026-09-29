@@ -4,7 +4,7 @@ const { classify } = require('../check-leads');
 const { sendSuppressionReason } = require('./pipeline-state');
 const { leadHasReply } = require('./reply-analytics');
 const { deriveAutomationOwnership } = require('./automation-ownership');
-const { isStaffingCampaign, renderStaffingEmail, validateStaffingEmail } = require('./staffing-campaign');
+const { isStaffingCampaign, staffingReviewStatus, renderStaffingEmail, validateStaffingEmail } = require('./staffing-campaign');
 
 const normalize = value => String(value || '').trim().toLowerCase();
 
@@ -40,6 +40,10 @@ function queueEligibility(lead, {
   if (!ownership.sendAllowed || ownership.owner !== 'cold_automation') return { ok: false, reason: ownership.reason, ownership };
   if (normalize(lead.leadNiche).includes('staffing')) {
     if (!isStaffingCampaign(lead)) return { ok: false, reason: 'staffing campaign attribution conflicts' };
+    const review = staffingReviewStatus(lead);
+    if (review && (review.fit !== 'ICP_CONFIRMED' || !review.routingReady
+      || !['SPECIFIC_HIGH', 'BROAD_MEDIUM', 'SAFE_FALLBACK', 'NONE_REQUIRED'].includes(review.personalization)))
+      return { ok: false, reason: 'staffing fit or routing review is held' };
     try {
       for (const step of [1, 2, 3]) {
         const error = validateStaffingEmail(renderStaffingEmail(lead, step, {

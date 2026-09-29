@@ -22,12 +22,17 @@
 //
 // WORKLOAD MODEL (per active, send-eligible inbox)
 //
-//   target    = dailyLimit + ceil(dailyLimit × bufferRatio)
-//   followUps = pinned follow-ups that will be due by the planning horizon
-//   firstTouch= step-1 leads already assigned to it that are safely movable
-//   load      = followUps + firstTouch
-//   deficit   = max(0, target − load)
-//   giveable  = min(firstTouch, max(0, load − target))
+//   target      = dailyLimit + ceil(dailyLimit × bufferRatio)   (soft)
+//   followUps   = pinned follow-ups that will be due by the planning horizon
+//   firstTouch  = step-1 leads already assigned to it that are safely movable
+//   load        = followUps + firstTouch
+//   hardDeficit = max(0, dailyLimit − load)
+//   deficit     = max(0, target − load)
+//
+// The refill fills in two phases. Phase A brings every inbox up to its
+// dailyLimit, taking only from inboxes above their own dailyLimit. Phase B then
+// fills toward the buffered target, taking only from inboxes above their own
+// target. The buffer is resilience, never a reason to leave send capacity idle.
 //
 // Follow-ups are counted, never moved: a follow-up belongs to the mailbox that
 // sent step 1, and that is decided by delivered-message evidence elsewhere.
@@ -193,6 +198,7 @@ function senderWorkload(input) {
     return {
       id: sender.id, dailyLimit: Number(sender.dailyLimit), staffingOnly: isStaffingOnlySender(sender),
       target, followUps: followUps.get(sender.id), firstTouch, load,
+      hardDeficit: Math.max(0, Number(sender.dailyLimit) - load),
       deficit: Math.max(0, target - load), giveable: Math.min(firstTouch, Math.max(0, load - target)),
     };
   });
@@ -218,54 +224,73 @@ function planSenderRebalance(input) {
       const [ra, ia] = sortKey(a); const [rb, ib] = sortKey(b);
       return ra - rb || ia.localeCompare(ib);
     });
-  // An unassigned (or incompatibly assigned) movable lead is freely giveable.
-  const orphanDonor = { id: '', giveable: Infinity };
   const moves = [];
   const movedIds = new Set();
 
-  const donorFor = item => (item.current ? rows.get(item.current) : orphanDonor);
-  for (;;) {
-    const recipients = [...rows.values()].filter(row => row.target - row.load > 0);
-    if (!recipients.length) break;
-    // Staffing-only inboxes can use only staffing leads, so they choose first;
-    // then the inbox with the largest unfilled share of its own capacity.
-    recipients.sort((a, b) => (b.staffingOnly - a.staffingOnly)
-      || unfilledShare(b) - unfilledShare(a) || order.indexOf(a.id) - order.indexOf(b.id));
-    let moved = false;
-    for (const recipient of recipients) {
-      const options = pool.filter(item => !movedIds.has(item.lead.id)
-        && item.current !== recipient.id
-        && item.compatible.includes(recipient.id)
-        && donorFor(item).giveable > 0);
-      if (!options.length) continue;
-      // Prefer the lead fewest other short inboxes could use, so a flexible
-      // inbox does not consume supply a restricted one needs; then orphans;
-      // then the donor with the most surplus; then oldest row.
+  // One fill phase. `level(row)` is both the recipient's goal and the donor's
+  // floor: a lead moves only from an inbox holding more than its level to one
+  // holding less, so no donor is ever pushed below the level being filled. An
+  // unassigned (or incompatibly assigned) movable lead has no donor to protect.
+  function fill(level) {
+    const surplus = item => (item.current ? rows.get(item.current).load - level(rows.get(item.current)) : Infinity);
+    const share = row => (level(row) - row.load) / row.dailyLimit;
+    for (;;) {
+      const recipients = [...rows.values()].filter(row => level(row) - row.load > 0);
+      if (!recipients.length) return;
+      // Staffing-only inboxes can use only staffing leads, so they choose first;
+      // then the inbox with the largest unfilled share of its own capacity.
+      recipients.sort((a, b) => (b.staffingOnly - a.staffingOnly)
+        || share(b) - share(a) || order.indexOf(a.id) - order.indexOf(b.id));
       const shortIds = new Set(recipients.map(row => row.id));
       const scarcity = item => item.compatible.filter(id => shortIds.has(id)).length;
-      options.sort((a, b) => scarcity(a) - scarcity(b)
-        || (a.current ? 1 : 0) - (b.current ? 1 : 0)
-        || donorFor(b).giveable - donorFor(a).giveable);
-      const pick = options[0];
-      const donor = donorFor(pick);
-      donor.giveable -= 1;
-      if (pick.current) { donor.load -= 1; donor.firstTouch -= 1; }
-      recipient.load += 1; recipient.firstTouch += 1;
-      movedIds.add(pick.lead.id);
-      moves.push({ leadId: pick.lead.id, from: pick.current || text(pick.lead.senderInboxId),
-        to: recipient.id, niche: normalizeNiche(pick.lead.leadNiche || pick.lead.tradeType),
-        expectedState: pick.lead });
-      moved = true;
-      break; // re-rank after every single move
+      let moved = false;
+      for (const recipient of recipients) {
+        const options = pool.filter(item => !movedIds.has(item.lead.id)
+          && item.current !== recipient.id
+          && item.compatible.includes(recipient.id)
+          && surplus(item) > 0);
+        if (!options.length) continue;
+        // Prefer the lead fewest other short inboxes could use, so a flexible
+        // inbox does not consume supply a restricted one needs; then orphans;
+        // then the donor with the most surplus above this level; then oldest row.
+        options.sort((a, b) => scarcity(a) - scarcity(b)
+          || (a.current ? 1 : 0) - (b.current ? 1 : 0)
+          || surplus(b) - surplus(a));
+        const pick = options[0];
+        if (pick.current) {
+          const donor = rows.get(pick.current);
+          donor.load -= 1; donor.firstTouch -= 1;
+        }
+        recipient.load += 1; recipient.firstTouch += 1;
+        movedIds.add(pick.lead.id);
+        moves.push({ leadId: pick.lead.id, from: pick.current || text(pick.lead.senderInboxId),
+          to: recipient.id, niche: normalizeNiche(pick.lead.leadNiche || pick.lead.tradeType),
+          expectedState: pick.lead });
+        moved = true;
+        break; // re-rank after every single move
+      }
+      if (!moved) return;
     }
-    if (!moved) break;
   }
 
-  const after = [...rows.values()].map(row => ({ ...row, deficit: Math.max(0, row.target - row.load) }));
+  // Phase A — hard daily capacity. Idle send capacity is the real loss, so
+  // every inbox is first brought up to its dailyLimit, with donors held at
+  // their own dailyLimit (never below what they can send themselves).
+  fill(row => row.dailyLimit);
+  // Phase B — resilience. Only then fill toward the buffered target, with
+  // donors held at their own buffered target, exactly as before.
+  fill(row => row.target);
+
+  const after = [...rows.values()].map(row => ({ ...row,
+    hardDeficit: Math.max(0, row.dailyLimit - row.load), deficit: Math.max(0, row.target - row.load),
+    giveable: Math.min(row.firstTouch, Math.max(0, row.load - row.target)) }));
   return {
     before: workload.senders,
     after,
     moves,
+    // Send capacity that will sit idle: no compatible movable supply exists.
+    hardShortages: after.filter(row => row.hardDeficit > 0).map(row => ({ senderInboxId: row.id, unfilled: row.hardDeficit })),
+    // Shortfall against the buffered (soft) target, which includes the above.
     shortages: after.filter(row => row.deficit > 0).map(row => ({ senderInboxId: row.id, unfilled: row.deficit })),
     excluded: workload.excluded,
     horizon: workload.horizon,
