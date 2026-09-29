@@ -59,6 +59,9 @@ const STYLE = `Write exactly one factual, conversational sentence, 8–22 words,
 Never write "Saw your team places". Prefer up to three concrete roles and one or two employer markets. No praise or fluff.
 Prefer "Saw you place" over "Saw you placing". Workers are placed FOR employers, not INTO employers.
 Prefer employer nouns such as manufacturers or construction contractors when supported, not "skilled trades employers" or "construction projects".
+Name people by job title, not a process ("welders", not "welding"), and keep plural job titles grammatical.
+Do not combine a role with an employer market unless the evidence supports that placement relationship, not merely separate lists on a site.
+Avoid repeated "and" chains and vague replacements for a validated role, such as "warehouse workers" when only forklift operators were validated.
 The sentence must naturally set up: "We help industrial staffing agencies turn that exact market into qualified employer meetings..."
 Roles + employer market, specific staffing category/market, or roles + explicit service territory are valid. Do not require geography.
 No candidate-sourcing mention, database, invented need, history or explanation of ScaleLab. No quotation marks around the opening.`;
@@ -92,6 +95,10 @@ Return JSON only: {checks:{oneSentence:boolean,noCompliments:boolean,supportedGe
 noRepetitiveWording:boolean,grammar:boolean,noCandidateSourcing:boolean,marketReferent:boolean,reasonableLength:boolean,companyIdentity:boolean,
 staffingBusiness:boolean,naturalEmployerLanguage:boolean,supportedByValidatedFacts:boolean,usedFactIdsComplete:boolean},companySpecific:boolean,rejectedFactIds:string[],reasons:string[]}.
 All factual claims must be supported by the selected facts, not merely plausible. A quote with a term is insufficient without a staffing relationship.
+Audit the role-to-employer-market relationship as a combined claim: separate lists of roles and industries do not prove a given role is placed for that market.
+Every worker type named in the opening must be one of the selected validated role facts; an employer-market fact does not justify inventing a worker type.
+In a market-only sentence such as "Saw you focus on manufacturing staffing for employers", NO worker type is claimed. A validated employer-market fact with a proven staffing relationship is sufficient; supportedRoles and usedFactIdsComplete pass without a role fact. Never require concrete roles for a broad, factual MEDIUM opener.
+Set grammar=false for process nouns used as workers, singular job titles in a plural list, or clumsy repeated conjunctions.
 Absent geography and absent specific roles pass their respective checks. Geography must not expand beyond explicit service territory.
 usedFactIdsComplete is true only if every role/market/geographic claim maps to a selected fact and selected facts are actually used.
 companySpecific is true for concrete placed roles plus a market, or a specific staffing niche; false for broad generic recruiting.
@@ -124,7 +131,7 @@ const KINDS=['role','employer_market','geography','staffing_model'];
 // A role the model marked "specific" can still be a category label rather than a
 // job title. HIGH means the reader recognises an actual placed role, so these
 // broad labels are graded down in code instead of trusting the model's flag.
-const GENERIC_ROLE_LABEL=/^(?:general labou?r|general labou?rers?|general workers?|skilled workers?|skilled trades?|skilled trades? workers?|skilled construction workers?|light industrial workers?|industrial workers?|entry[- ]level positions?|tradespeople|temporary workers?|temp workers?|production staff|staff)$/i;
+const GENERIC_ROLE_LABEL=/^(?:general labou?r|general labou?rers?|general workers?|skilled workers?|skilled trades?|skilled trades? workers?|skilled construction workers?|light industrial workers?|industrial workers?|entry[- ]level positions?|tradespeople|temporary workers?|temp workers?|production staff|production professionals?|warehouse staff|welding|staff)$/i;
 const concreteRole=fact=>fact.kind==='role'&&fact.specificRole===true&&!GENERIC_ROLE_LABEL.test(clean(fact.value));
 function attachEvidence(facts,blocks) {
   const accepted=[],rejected=[],byId=new Map(blocks.map(b=>[b.id,b]));
@@ -154,7 +161,7 @@ function filterFacts(facts,audit) {
     if(!reason&&!KINDS.includes(kind))reason='INVALID_FACT_TYPE';
     if(!reason&&['role','employer_market'].includes(kind)&&a.staffingRelationship!==true)reason='STAFFING_RELATIONSHIP_NOT_PROVEN';
     if(!reason&&kind==='employer_market'&&!/industrial|manufactur|warehouse|warehous|distribution|logistic|construction|contractor|trades|fabrication|energy|oil|gas|maritime|aerospace|production/i.test(f.value))reason='NONINDUSTRIAL_EMPLOYER_MARKET';
-    if(!reason&&kind==='role'&&/administrative|accountant|finance|sales|executive|chef|kitchen manager|office professional|software|nurse|construction management/i.test(f.value))reason='NONINDUSTRIAL_ROLE';
+    if(!reason&&kind==='role'&&/administrative|administrator|bookkeeper|accountant|finance|sales|executive|chef|kitchen manager|office professional|software|nurse|construction management/i.test(f.value))reason='NONINDUSTRIAL_ROLE';
     if(!reason&&kind==='geography'&&(a.explicitServiceTerritory!==true||!/\b(serv(?:e|es|ing|ice)|clients?|employers?|coverage|throughout|across)\b/i.test(f.quote)
       ||/headquarters|local roots/i.test(f.quote)))reason='SERVICE_TERRITORY_NOT_PROVEN';
     if(reason)rejected.push({...f,kind:KINDS.includes(kind)?kind:f.kind,reason});
@@ -194,7 +201,7 @@ function rebuildFromFacts(facts,{variant=0}={}) {
     // Trade acronyms have to survive the lowercasing pass. A variant selection can
     // reach a role the primary never picked, so this covers more than CNC.
     return text.replace(/\b(cnc|hvac|cdl|mig|tig|otr)\b/g,m=>m.toUpperCase())
-      .replace(/\b(welder|machinist|electrician|plumber|carpenter|pipefitter|millwright|assembler|operator|worker|technician|laborer|driver|handler|mechanic|fabricator)$/i,'$1s');
+      .replace(/\b(welder|machinist|electrician|plumber|carpenter|pipefitter|millwright|assembler|operator|worker|technician|laborer|driver|handler|mechanic|fabricator|painter|associate)$/i,'$1s');
   };
   // Employer markets with a concrete industry take priority over a broad trades label.
   const marketRank=value=>/manufactur|construction|contractor|warehouse|warehous|logistic|distribution|oil.*gas|energy/i.test(value)?3
@@ -219,7 +226,13 @@ function rebuildFromFacts(facts,{variant=0}={}) {
   } else if(roles.length&&geography) {
     used=[...roles,geography];opening=`Saw you place ${list(roles.map(f=>roleText(f.value)))} for employers across ${geography.value}.`;
   } else if(markets.length) {
-    const selected=markets.slice(0,1);used=selected;
+    const selected=markets.slice(0,1);
+    // A duplicate alternate may combine a second distinct validated market.
+    if(variant>0) {
+      const second=markets.find(m=>m.id!==selected[0].id&&label(m.value)!==label(selected[0].value));
+      if(second)selected.push(second);
+    }
+    used=selected;
     opening=`Saw you focus on ${list(selected.map(f=>label(f.value)))} staffing for employers.`;
   }
   // Shorten selection, not evidence or claimed territory, if three role names are too long.
@@ -239,6 +252,20 @@ function checkDraft(draft,facts) {
   if(!ids.length||new Set(ids).size!==ids.length||ids.some(id=>!facts.some(f=>f.id===id)))errors.push('UNVALIDATED_FACT_REFERENCE');
   if(!hasMarket(used))errors.push('EMPLOYER_MARKET_NOT_PROVEN');
   return {opening,facts:used,wordCount,errors};
+}
+// Salvage follows the existing fact audit. It never promotes an unproved
+// role/market pairing; only independently validated market facts enter copy.
+function recoverStaffingLead({fitStatus,validatedFacts=[],contactUsable=false,safetyClear=false,variant=0}={}) {
+  const fit=['ICP_CONFIRMED','ICP_REJECT','ICP_UNRESOLVED'].includes(fitStatus)?fitStatus:'ICP_UNRESOLVED';
+  if(fit!=='ICP_CONFIRMED')return {leadFitStatus:fit,personalizationStatus:'FAILED',opening:'',routingReady:false,facts:[]};
+  const markets=validatedFacts.filter(f=>f.kind==='employer_market'&&Array.isArray(f.evidence)
+    &&f.evidence.some(e=>e.sourceUrl&&e.quote));
+  const checked=checkDraft(rebuildFromFacts(markets,{variant}),markets);
+  const supported=markets.length>0&&!checked.errors.length;
+  return {leadFitStatus:fit,personalizationStatus:supported?'SAFE_FALLBACK':'NONE_REQUIRED',
+    opening:supported?checked.opening.replace(/\bwarehousing staffing\b/i,'warehouse staffing'):'',
+    routingReady:Boolean(contactUsable&&safetyClear),
+    facts:supported?checked.facts:[]};
 }
 function retrievalInfo(research,lead) {
   const failures=research.failures||[],pages=research.pages||[];
@@ -421,5 +448,5 @@ async function flagBatchDuplicates(results,{createMessage=null}={}) {
   return results;
 }
 module.exports={CHECKS,OUTCOMES,SYSTEM,FACT_AUDIT_SYSTEM,AUDIT_SYSTEM,evidenceBlocks,attachEvidence,filterFacts,hasMarket,rebuildFromFacts,checkDraft,
-  concreteRole,rolePairs,personalizeStaffingLead,previewStaffingPersonalization,flagBatchDuplicates,
+  concreteRole,rolePairs,recoverStaffingLead,personalizeStaffingLead,previewStaffingPersonalization,flagBatchDuplicates,
   EMAIL_ADMISSION,emailAdmission};
