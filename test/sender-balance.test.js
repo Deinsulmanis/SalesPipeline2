@@ -186,11 +186,135 @@ test('an inbox already at its projected target receives nothing', () => {
   assert.equal(plan.moves.length, 0, 'surplus stays put when nobody is short');
 });
 
-test('only the deficit moves: a donor keeps its own target', () => {
+test('only the deficit moves: a donor keeps its own daily cap', () => {
+  // 80 on primary, everyone else empty: hard capacity comes first, so primary
+  // gives everything above its own 60 and keeps a full day for itself.
   const leads = [...Array.from({ length: 80 }, () => staffing('primary'))];
   const plan = planSenderRebalance(input(leads));
-  assert.equal(row(plan, 'primary').load, 69, 'primary gives only its surplus');
-  assert.equal(plan.moves.length, 11);
+  assert.equal(row(plan, 'primary').load, 60, 'primary keeps exactly its own daily cap');
+  assert.equal(plan.moves.length, 20);
+});
+
+// ── two-phase refill: hard daily capacity before the buffered target ────────
+// Build an inbox's projected workload from pinned follow-ups plus movable
+// first emails, so tests can state it the way the live planner reports it.
+const loaded = (senderId, followUps, firstEmails, niche = 'staffing') => {
+  const owned = Array.from({ length: followUps }, () => followUp(senderId, 4, niche));
+  const fresh = Array.from({ length: firstEmails }, () => (niche === 'dental' ? dental : staffing)(senderId));
+  return { leads: [...owned.map(item => item.lead), ...fresh], activities: owned.map(item => item.activity) };
+};
+const combine = (...parts) => ({ leads: parts.flatMap(p => p.leads), activities: parts.flatMap(p => p.activities) });
+const loads = plan => Object.fromEntries(plan.after.map(r => [r.id, r.load]));
+const CAPS = { primary: 60, tryscalelabai: 60, scalelabaiteam: 40, deniels: 20, deniels_tryscalelabai: 20 };
+// The live Thursday 2026-10-01 projection: 69 / 53 / 46 / 18 / 18 (204 supply).
+const thursday = () => combine(
+  loaded('primary', 54, 15), loaded('tryscalelabai', 0, 53), loaded('scalelabaiteam', 10, 36),
+  loaded('deniels', 0, 18), loaded('deniels_tryscalelabai', 0, 18));
+
+test('A1: with enough compatible supply, the buffer never leaves an inbox below its daily cap', () => {
+  const state = thursday();
+  const plan = planSenderRebalance(input(state.leads, { activities: state.activities }));
+  assert.deepEqual(plan.hardShortages, []);
+  for (const [id, cap] of Object.entries(CAPS)) assert.ok(loads(plan)[id] >= cap, `${id} ${loads(plan)[id]} >= ${cap}`);
+});
+
+test('A2: the Thursday 69/53/46/18/18 state reaches 60/60/40/20/20 and 200 usable workload', () => {
+  const state = thursday();
+  const plan = planSenderRebalance(input(state.leads, { activities: state.activities }));
+  const after = loads(plan);
+  assert.equal(after.tryscalelabai, 60);
+  assert.equal(after.deniels, 20);
+  assert.equal(after.deniels_tryscalelabai, 20);
+  assert.ok(after.primary >= 60 && after.scalelabaiteam >= 40, 'donors stay at or above their caps');
+  assert.equal(after.primary + after.scalelabaiteam, 69 + 46 - 11, 'donors give exactly the 11 needed');
+  const usable = Object.entries(CAPS).reduce((n, [id, cap]) => n + Math.min(cap, after[id]), 0);
+  assert.equal(usable, 200);
+  assert.equal(plan.moves.length, 11, 'only the hard deficits (7 + 2 + 2), from 9 + 6 surplus above cap');
+  assert.ok(plan.moves.every(m => ['primary', 'scalelabaiteam'].includes(m.from)));
+  // The buffer shortfall is still reported honestly: 230 of target against 204 of supply.
+  assert.equal(plan.shortages.reduce((n, s) => n + s.unfilled, 0), 26);
+});
+
+test('A3: phase A never takes a donor below its own daily cap', () => {
+  // Everyone else empty; donors barely above cap.
+  const state = combine(loaded('primary', 55, 10), loaded('scalelabaiteam', 30, 15));
+  const plan = planSenderRebalance(input(state.leads, { activities: state.activities }));
+  assert.equal(loads(plan).primary, 60);
+  assert.equal(loads(plan).scalelabaiteam, 40);
+  assert.equal(plan.moves.filter(m => m.from === 'primary').length, 5);
+  assert.equal(plan.moves.filter(m => m.from === 'scalelabaiteam').length, 5);
+  assert.equal(plan.hardShortages.reduce((n, s) => n + s.unfilled, 0), 100 - 10);
+});
+
+test('A4: once every daily cap is met, the buffered target resumes', () => {
+  // tryscalelabai at exactly its cap; primary has plenty above its target.
+  const state = combine(loaded('primary', 0, 150), loaded('tryscalelabai', 0, 60),
+    loaded('scalelabaiteam', 0, 40), loaded('deniels', 0, 20), loaded('deniels_tryscalelabai', 0, 20));
+  const plan = planSenderRebalance(input(state.leads, { activities: state.activities }));
+  assert.deepEqual(loads(plan), { primary: 129, tryscalelabai: 69, scalelabaiteam: 46, deniels: 23, deniels_tryscalelabai: 23 });
+  assert.deepEqual(plan.shortages, []);
+  // And a donor at its target is not drawn below it in phase B.
+  const tight = combine(loaded('primary', 0, 69), loaded('tryscalelabai', 0, 60),
+    loaded('scalelabaiteam', 0, 40), loaded('deniels', 0, 20), loaded('deniels_tryscalelabai', 0, 20));
+  assert.equal(planSenderRebalance(input(tight.leads, { activities: tight.activities })).moves.length, 0);
+});
+
+test('A5: insufficient aggregate supply still reports a real hard shortage', () => {
+  const state = combine(loaded('primary', 40, 60), loaded('tryscalelabai', 0, 30));  // 130 < 200
+  const plan = planSenderRebalance(input(state.leads, { activities: state.activities }));
+  const idle = plan.hardShortages.reduce((n, s) => n + s.unfilled, 0);
+  assert.equal(idle, 200 - 130);
+  assert.equal(loads(plan).primary, 60, 'donor held at its own cap even when others stay short');
+});
+
+test('A6: incompatible supply cannot hide a shortage', () => {
+  // Plenty of dental surplus, but only scalelabaiteam is short: staffing-only.
+  const state = combine(loaded('primary', 0, 200, 'dental'), loaded('tryscalelabai', 0, 69, 'dental'),
+    loaded('deniels', 0, 23, 'dental'), loaded('deniels_tryscalelabai', 0, 23, 'dental'));
+  const plan = planSenderRebalance(input(state.leads, { activities: state.activities }));
+  assert.equal(plan.moves.some(m => m.to === 'scalelabaiteam'), false);
+  assert.deepEqual(plan.hardShortages, [{ senderInboxId: 'scalelabaiteam', unfilled: 40 }]);
+});
+
+test('A7: protected leads stay put even when phase A needs them', () => {
+  // primary's only surplus above its cap is held, reserved, owned or suppressed.
+  const owned = Array.from({ length: 60 }, () => followUp('primary'));
+  const held = staffing('primary', { notes: '[MANUAL HOLD]' });
+  const reserved = staffing('primary');
+  const locked = staffing('primary');
+  const evidenced = staffing('primary');
+  const suppressed = staffing('primary');
+  const agent = staffing('primary');
+  const leads = [...owned.map(o => o.lead), held, reserved, locked, evidenced, suppressed, agent];
+  const activities = [...owned.map(o => o.activity),
+    { sourceLeadId: reserved.id, eventType: 'ordinary_send_reserved', metadata: '{}' },
+    { sourceLeadId: evidenced.id, eventType: 'sender_evidence_reconciled', metadata: JSON.stringify({ senderInboxId: 'primary' }) },
+    { sourceLeadId: agent.id, eventType: 'reply_decision_pending_execution', metadata: '{}' }];
+  const plan = planSenderRebalance(input(leads, { activities, lockedLeadIds: new Set([locked.id]),
+    suppressedEmails: new Set([suppressed.email]) }));
+  assert.equal(plan.moves.length, 0);
+  assert.equal(plan.hardShortages.reduce((n, s) => n + s.unfilled, 0), 140);
+  assert.ok(owned.every(o => !movedIds(plan).has(o.lead.id)), 'follow-ups never move');
+});
+
+test('A8: the two-phase refill is idempotent and deterministic', () => {
+  for (const state of [thursday(), combine(loaded('primary', 0, 300)), combine(loaded('primary', 20, 90, 'dental'), loaded('primary', 0, 60))]) {
+    const first = planSenderRebalance(input(state.leads, { activities: state.activities }));
+    assert.ok(first.moves.length > 0);
+    const second = planSenderRebalance(input(applyMoves(state.leads, first), { activities: state.activities }));
+    assert.equal(second.moves.length, 0, 're-running against the applied state moves nothing');
+    const again = planSenderRebalance(input(state.leads, { activities: state.activities }));
+    assert.deepEqual(again.moves.map(m => [m.leadId, m.to]), first.moves.map(m => [m.leadId, m.to]));
+  }
+});
+
+test('A8: admission stays deterministic, and a refill after balanced admission moves nothing', () => {
+  const batch = Array.from({ length: 204 }, () => staffing(''));
+  const one = assignNewLeads({ batch, senders: SENDERS }).assignments;
+  const two = assignNewLeads({ batch, senders: SENDERS }).assignments;
+  assert.deepEqual([...one], [...two]);
+  const admitted = batch.map(lead => ({ ...lead, senderInboxId: one.get(lead.id) }));
+  assert.equal(planSenderRebalance(input(admitted)).moves.length, 0);
 });
 
 // 9 ────────────────────────────────────────────────────────────────────────

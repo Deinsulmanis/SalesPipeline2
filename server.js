@@ -5210,8 +5210,8 @@ let senderRebalanceInFlight = false;
 function senderBalanceView(plan) {
   return {
     horizon: new Date(plan.horizon).toISOString(), bufferRatio: plan.bufferRatio,
-    formula: 'target = dailyLimit + ceil(dailyLimit × bufferRatio); load = pinned follow-ups due by horizon + assigned movable step-1; deficit = max(0, target − load)',
-    before: plan.before, after: plan.after, shortages: plan.shortages, excluded: plan.excluded,
+    formula: 'load = pinned follow-ups due by horizon + assigned movable step-1; phase A fills every inbox to dailyLimit (donors keep dailyLimit); phase B fills to target = dailyLimit + ceil(dailyLimit × bufferRatio) (donors keep target)',
+    before: plan.before, after: plan.after, hardShortages: plan.hardShortages, shortages: plan.shortages, excluded: plan.excluded,
     moves: plan.moves.map(({ leadId, from, to, niche }) => ({ leadId, from, to, niche })),
   };
 }
