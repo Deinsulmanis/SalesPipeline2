@@ -7033,7 +7033,7 @@ async function openQueueRouteModal(ids) {
     const inboxSelect = document.getElementById('queue-route-inbox');
     const versionSelect = document.getElementById('queue-route-version');
     const templateSelect = document.getElementById('queue-route-template');
-    inboxSelect.innerHTML = '<option value="">Choose sending inbox…</option>' + options.inboxes.map(inbox => `<option value="${escAttr(inbox.id)}" ${inbox.sendEligible && inbox.deliveryImplemented ? '' : 'disabled'}>${esc(inbox.email)} — ${inbox.currentRoute ? 'Current' : inbox.status}${inbox.sendEligible && inbox.deliveryImplemented ? '' : ' (unavailable)'}</option>`).join('');
+    inboxSelect.innerHTML = '<option value="auto" selected>Automatic — balanced across eligible inboxes by capacity</option>' + options.inboxes.map(inbox => `<option value="${escAttr(inbox.id)}" ${inbox.sendEligible && inbox.deliveryImplemented ? '' : 'disabled'}>${esc(inbox.email)} — ${inbox.currentRoute ? 'Current' : inbox.status}${inbox.sendEligible && inbox.deliveryImplemented ? '' : ' (unavailable)'}</option>`).join('');
     versionSelect.innerHTML = '<option value="">Choose campaign version…</option>' + options.versions.filter(version => version.niche === niche).map(version => `<option value="${escAttr(version.id)}">${esc(version.label)}</option>`).join('');
     templateSelect.innerHTML = '<option value="">Choose a campaign version first…</option>';
     inboxSelect.onchange = updateQueueRouteLine;
@@ -7093,7 +7093,11 @@ async function confirmQueueRoute() {
   if (!response.ok) { error.textContent = result.error || 'Could not queue these leads.'; return; }
   closeQueueRouteModal();
   ceSelected.clear(); updateBulkQueueBtn();
-  showToast(`Queued ${result.queued} lead${result.queued === 1 ? '' : 's'} with a locked sending route.`, 'success');
+  const spread = result.assignedSenders
+    ? ' across ' + Object.entries(Object.values(result.assignedSenders).reduce((acc, id) => ({ ...acc, [id]: (acc[id] || 0) + 1 }), {}))
+      .map(([id, n]) => `${id} ${n}`).join(', ')
+    : ' with a locked sending route';
+  showToast(`Queued ${result.queued} lead${result.queued === 1 ? '' : 's'}${spread}.`, 'success');
   loadCeLeads();
 }
 
