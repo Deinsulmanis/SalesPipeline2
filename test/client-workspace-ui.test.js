@@ -259,6 +259,15 @@ test('app shell: the sidebar nav is the only sidebar scroller and the page is vi
   assert.match(HTML, /<nav class="crm-nav" id="crm-nav" aria-label="Workspaces">/);
 });
 
+test('app shell: the 64px header bar never wraps, so nothing spills over the page on phones', () => {
+  assert.match(HTML, /body\.workspace-ready>header\{flex-wrap:nowrap;gap:12px\}/);
+  assert.match(HTML, /body\.workspace-ready>header \.workspace-heading\{flex:1 1 auto;min-width:0\}/);
+  assert.match(HTML, /body\.workspace-ready>header \.header-right\{flex:0 0 auto;flex-wrap:nowrap\}/);
+  // Board search / Add Lead start hidden and are revealed by routing on ScaleLab's Pipeline only.
+  assert.match(HTML, /querySelectorAll\('header \.search-wrap, header \.btn-add'\)\.forEach\(node => \{ node\.style\.display = 'none'; \}\)/);
+  assert.match(HTML, /const boardTools = name === 'pipeline' && !managed;/);
+});
+
 test('dashboard: navigation comes from client config, not from client-name branches', () => {
   assert.equal(/===\s*'jole'|'jole'\s*===|"jole"/.test(HTML), false, 'no hard-coded Jole branch in the dashboard');
   assert.equal(HTML.includes('MANAGED_CLIENT_WORKSPACES'), false);
