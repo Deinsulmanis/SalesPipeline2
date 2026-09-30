@@ -181,7 +181,7 @@ const prepareFactory = new Function('deps', `
   const { ensureIntentSheet, readRealDemoPlays, loadFiredIntents, readColdCallActivities,
     attributeDemoPlays, demoCompanyKey, demoPlayForLead, hasDemoPairHistory, buildDemoPairActivity,
     DRY_RUN, recordColdCallActivityStrict, hasUndeliveredDemoPair, formatIntentStateLine,
-    INTENT_STATE_SOURCE, TARGET_LEAD_ID, console } = deps;
+    INTENT_STATE_SOURCE, TARGET_LEAD_ID, console, outreachBlockForLead } = deps;
   return (${extract(agent, 'async function prepareDemoIntentCandidates(')});`);
 
 function randomWorld(r) {
@@ -190,6 +190,8 @@ function randomWorld(r) {
     id: `L${i + 1}`, email: `l${i + 1}@x.test`, company: pick(r, companies),
     stage: pick(r, ['', '', 'Contacted', 'Replied', 'Promoted']),
     emailStatus: pick(r, ['', 'emailed', 'emailed', 'replied']), senderInboxId: 'primary', campaign: '',
+    // Some leads are archived: the hint and a real pass must agree they are never due.
+    notes: pick(r, ['', '', '', '', '[ARCHIVED: manual_archive]']),
   }));
   const header = ['timestamp', 'company', 'niche', 'ip', 'ua', 'audio_type', 'lead_token'];
   const rows = [header];
@@ -229,6 +231,7 @@ test('B1. across 3,000 random worlds the hint counts exactly the leads a real pa
       DRY_RUN: false, recordColdCallActivityStrict: async event => { persisted.push(event); },
       hasUndeliveredDemoPair: demoState.hasUndeliveredDemoPair, formatIntentStateLine, INTENT_STATE_SOURCE,
       TARGET_LEAD_ID: '', console: { log: line => logs.push(line), warn() {} },
+      outreachBlockForLead: require('../integrations/lead-archive').outreachBlockForLead,
     });
     const hint = pendingIntentWork({
       leads: world.leads, corpus: world.leads, plays, fired: world.fired,

@@ -37,9 +37,15 @@ const staffing = (senderInboxId = 'primary', extra = {}) => {
 const dental = (senderInboxId = 'primary', extra = {}) => staffing(senderInboxId, {
   leadNiche: 'dental', campaign: 'Ontario List', emailTemplateId: 'dental-guarantee-v1',
   intendedCampaignVersion: 'dental_v3_pay_per_booking', ...extra });
+// Non-staffing supply that can still send: an unrouted legacy row (med spa).
+// It plays the part dental played before the dental offer was retired.
+const legacyCold = (senderInboxId = 'primary', extra = {}) => staffing(senderInboxId, {
+  leadNiche: '', campaign: 'toronto-medspa-jul', emailTemplateId: '', intendedCampaignVersion: '',
+  routingRequired: '', tradeType: 'Medical spa', siteContext: '', ...extra });
+const FIXTURE = { dental, staffing, legacy: legacyCold };
 // A delivered step 1 owned by `owner`, due for step 2 `daysAgo` after sending.
-const followUp = (owner, daysAgo = 4, niche = 'dental') => {
-  const lead = (niche === 'dental' ? dental : staffing)(owner, {
+const followUp = (owner, daysAgo = 4, niche = 'legacy') => {
+  const lead = FIXTURE[niche](owner, {
     stage: 'Contacted', emailStatus: 'emailed', emailStep: '1',
     lastEmailedAt: new Date(NOW - daysAgo * DAY).toISOString() });
   return { lead, activity: { sourceLeadId: lead.id, eventType: 'initial_email_sent',
@@ -70,13 +76,29 @@ test('staffing first-touch fills every eligible inbox to its own capacity target
 });
 
 // 2 ────────────────────────────────────────────────────────────────────────
-test('dental never enters scalelabaiteam, even when it is the only short inbox', () => {
-  const leads = Array.from({ length: 200 }, () => dental('primary'));
+test('non-staffing leads never enter scalelabaiteam, and no unsendable supply hides a shortage', () => {
+  // Retired dental and unrouted legacy rows are not supply for any inbox:
+  // every inbox reports its whole cap as a shortage rather than a false fill.
+  const leads = [...Array.from({ length: 200 }, () => dental('primary')), ...Array.from({ length: 50 }, () => legacyCold('primary'))];
   const plan = planSenderRebalance(input(leads));
-  assert.equal(plan.moves.some(move => move.to === 'scalelabaiteam'), false);
-  assert.deepEqual(plan.shortages.map(item => item.senderInboxId), ['scalelabaiteam']);
+  assert.equal(plan.moves.length, 0);
+  assert.deepEqual(plan.shortages.map(item => item.senderInboxId).sort(),
+    ['deniels', 'deniels_tryscalelabai', 'primary', 'scalelabaiteam', 'tryscalelabai']);
   const admitted = assignNewLeads({ batch: Array.from({ length: 50 }, () => dental('')), senders: SENDERS });
   assert.equal([...admitted.assignments.values()].includes('scalelabaiteam'), false);
+});
+
+test('retired dental is neither refill supply nor workload: never moved, never counted', () => {
+  const queued = Array.from({ length: 200 }, () => dental('primary'));
+  const owned = Array.from({ length: 30 }, () => followUp('deniels', 4, 'dental'));
+  const plan = planSenderRebalance(input([...queued, ...owned.map(item => item.lead)],
+    { activities: owned.map(item => item.activity) }));
+  assert.equal(plan.moves.length, 0, 'no dental lead is ever reassigned');
+  assert.equal(row(plan, 'primary', 'before').load, 0, 'queued dental is not supply');
+  assert.equal(row(plan, 'deniels', 'before').followUps, 0, 'due dental follow-ups are not workload');
+  const archived = staffing('primary', { notes: '[ARCHIVED: manual_archive]', stage: 'Archived' });
+  const withArchived = planSenderRebalance(input([archived, ...Array.from({ length: 100 }, () => staffing('primary'))]));
+  assert.equal(movedIds(withArchived).has(archived.id), false, 'an archived lead is never moved');
 });
 
 test('blank, roofing and lookalike niches are never routed to scalelabaiteam', () => {
@@ -88,12 +110,12 @@ test('blank, roofing and lookalike niches are never routed to scalelabaiteam', (
 });
 
 test('staffing reaches scalelabaiteam before flexible inboxes spend it', () => {
-  // 40 staffing + 100 dental on primary: the staffing-only inbox must receive
-  // the staffing leads; flexible inboxes are filled with dental first.
-  const leads = [...Array.from({ length: 40 }, () => staffing('primary')), ...Array.from({ length: 100 }, () => dental('primary'))];
+  // 140 staffing on primary, and staffing is now the only compatible supply:
+  // the staffing-only inbox reaches its cap before the flexible inboxes take any.
+  const leads = Array.from({ length: 140 }, () => staffing('primary'));
   const plan = planSenderRebalance(input(leads));
   assert.equal(byTo(plan).scalelabaiteam, 40);
-  assert.ok(plan.moves.filter(move => move.to !== 'scalelabaiteam').every(move => move.niche === 'dental'));
+  assert.equal(loads(plan).primary, 60, 'the donor keeps its own cap');
 });
 
 // 3 ────────────────────────────────────────────────────────────────────────
@@ -200,7 +222,7 @@ test('only the deficit moves: a donor keeps its own daily cap', () => {
 // first emails, so tests can state it the way the live planner reports it.
 const loaded = (senderId, followUps, firstEmails, niche = 'staffing') => {
   const owned = Array.from({ length: followUps }, () => followUp(senderId, 4, niche));
-  const fresh = Array.from({ length: firstEmails }, () => (niche === 'dental' ? dental : staffing)(senderId));
+  const fresh = Array.from({ length: firstEmails }, () => FIXTURE[niche](senderId));
   return { leads: [...owned.map(item => item.lead), ...fresh], activities: owned.map(item => item.activity) };
 };
 const combine = (...parts) => ({ leads: parts.flatMap(p => p.leads), activities: parts.flatMap(p => p.activities) });
@@ -268,12 +290,13 @@ test('A5: insufficient aggregate supply still reports a real hard shortage', () 
 });
 
 test('A6: incompatible supply cannot hide a shortage', () => {
-  // Plenty of dental surplus, but only scalelabaiteam is short: staffing-only.
+  // Plenty of retired dental "surplus": none of it is compatible with any
+  // inbox, so it hides nothing — every inbox reports its whole cap unfilled.
   const state = combine(loaded('primary', 0, 200, 'dental'), loaded('tryscalelabai', 0, 69, 'dental'),
     loaded('deniels', 0, 23, 'dental'), loaded('deniels_tryscalelabai', 0, 23, 'dental'));
   const plan = planSenderRebalance(input(state.leads, { activities: state.activities }));
-  assert.equal(plan.moves.some(m => m.to === 'scalelabaiteam'), false);
-  assert.deepEqual(plan.hardShortages, [{ senderInboxId: 'scalelabaiteam', unfilled: 40 }]);
+  assert.equal(plan.moves.length, 0);
+  assert.equal(plan.hardShortages.reduce((n, s) => n + s.unfilled, 0), 200);
 });
 
 test('A7: protected leads stay put even when phase A needs them', () => {
@@ -298,7 +321,7 @@ test('A7: protected leads stay put even when phase A needs them', () => {
 });
 
 test('A8: the two-phase refill is idempotent and deterministic', () => {
-  for (const state of [thursday(), combine(loaded('primary', 0, 300)), combine(loaded('primary', 20, 90, 'dental'), loaded('primary', 0, 60))]) {
+  for (const state of [thursday(), combine(loaded('primary', 0, 300)), combine(loaded('primary', 20, 90, 'legacy'), loaded('primary', 0, 60))]) {
     const first = planSenderRebalance(input(state.leads, { activities: state.activities }));
     assert.ok(first.moves.length > 0);
     const second = planSenderRebalance(input(applyMoves(state.leads, first), { activities: state.activities }));
@@ -335,7 +358,7 @@ test('admission fills the emptiest inbox first, then spreads by capacity', () =>
 
 // 10 ───────────────────────────────────────────────────────────────────────
 test('balancing twice is idempotent', () => {
-  const leads = [...Array.from({ length: 250 }, () => staffing('primary')), ...Array.from({ length: 20 }, () => dental('primary'))];
+  const leads = [...Array.from({ length: 250 }, () => staffing('primary')), ...Array.from({ length: 20 }, () => legacyCold('primary'))];
   const first = planSenderRebalance(input(leads));
   assert.ok(first.moves.length > 0);
   const second = planSenderRebalance(input(applyMoves(leads, first)));

@@ -106,8 +106,8 @@ test('every send loop consults suppressionReason, so one tag covers them all', (
   assert.ok(!/const SUPPRESSION_TAGS\s*=/.test(agentSrc), 'the agent must not redeclare the tag list');
   const { SEND_SUPPRESSION_TAGS } = require('../integrations/pipeline-state');
   assert.deepEqual([...SEND_SUPPRESSION_TAGS],
-    ['[REPLY: Unsubscribed]', '[REPLY: Not Interested]', '[BOUNCED', '[MANUAL HOLD]'],
-    'the permanent opt-out tags must still come before the reversible hold');
+    ['[REPLY: Unsubscribed]', '[REPLY: Not Interested]', '[BOUNCED', '[ARCHIVED', '[MANUAL HOLD]'],
+    'the permanent opt-out tags come first; an archive (released only by restore) outranks the reversible hold');
 });
 
 // ── 2. CRM SIDE: which stages apply the hold ────────────────────────────────

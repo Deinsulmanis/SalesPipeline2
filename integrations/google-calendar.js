@@ -425,7 +425,7 @@ async function runGoogleCalendarSync(options = {}) {
   try {
     for (const item of plans) {
       const eventId = item.classified?.event?.providerEventId || '';
-      if (item.outcome === 'unmatched' || item.outcome === 'conflict') {
+      if (item.outcome === 'unmatched' || item.outcome === 'conflict' || item.outcome === 'archived') {
         review.push({ providerEventId: eventId, outcome: item.outcome, reason: item.reason });
         logger.warn?.(`[Calendar sync] ${eventId || 'unknown event'}: ${item.outcome} — ${item.reason || 'review required'}`);
         handled.push({ providerEventId: eventId, outcome: item.outcome });

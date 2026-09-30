@@ -260,7 +260,8 @@ test('U. staffing attribution is isolated from dental reporting', () => {
 });
 
 test('V. dental and roofing behaviour is unchanged by the staffing integration', () => {
-  assert.equal(templateById('dental-guarantee-v1').ready, true);
+  // Dental copy stays registered (history resolves it) but is retired with the offer.
+  assert.equal(templateById('dental-guarantee-v1').ready, false);
   assert.equal(templateById('roofing-survey-v1').niche, 'roofing');
   const dentalLead = { leadNiche: 'dental', emailTemplateId: 'dental-guarantee-v1' };
   assert.equal(offerForLead(dentalLead).id, 'dental_pay_per_booking_v1');

@@ -27,6 +27,7 @@ const WORKSPACE_CATALOG = Object.freeze([
   Object.freeze({ id: 'inbox', label: 'Inbox', section: 'sales', managedContext: 'Replies, qualification and questions awaiting the client' }),
   Object.freeze({ id: 'bookings', label: 'Bookings', section: 'sales', managedContext: 'Meeting ledger: booked, held, qualified and billable' }),
   Object.freeze({ id: 'outreach', label: 'Outreach', section: 'growth', managedContext: 'Prospect directory' }),
+  Object.freeze({ id: 'archive', label: 'Archive', section: 'growth', managedContext: 'Archived leads and their full history' }),
   Object.freeze({ id: 'campaigns', label: 'Campaigns', section: 'growth', managedContext: 'Campaigns, readiness and performance' }),
   Object.freeze({ id: 'analytics', label: 'Analytics', section: 'growth', managedContext: 'Funnel, campaign, meeting and billing performance' }),
   Object.freeze({ id: 'staffing', label: 'Staffing Funnel', section: 'growth', managedContext: 'Tracked link funnel' }),

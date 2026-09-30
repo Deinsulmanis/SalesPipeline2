@@ -136,6 +136,12 @@ async function stage2TimelineProbe({ leadId, sourceLeadId, email, authoritative,
 }
 const { simulateRouting } = require('./integrations/gmail-routing-simulation');
 const { EMAIL_TEMPLATES, LEAD_TYPES, LEAD_TYPE_IDS, normalizeNiche, leadTypeLabel, isKnownLeadType, campaignVersionsForRoute, validateCampaignVersionRoute, validateRoute, routedLeadReady } = require('./integrations/campaign-routing');
+const {
+  ARCHIVE_MARKER_PREFIX, ARCHIVE_EVENT_TYPE, ARCHIVED_REPLY_EVENT_TYPE, ARCHIVE_REASONS, ARCHIVE_REASON_LABELS,
+  isArchivedLead, archiveReasonFromNotes, retiredOfferBlock, retiredOfferById, currentArchiveRecord,
+  planLeadArchive, planBoardArchive, planLeadRestore, planBoardRestore,
+} = require('./integrations/lead-archive');
+const { planOfferRetirement } = require('./integrations/offer-retirement');
 // Managed clients (internal operator views only; clients never log in).
 const { registerClientRoutes } = require('./integrations/clients/routes');
 const { leadsForClient, leadDefinitelyOtherClient } = require('./integrations/clients/ownership');
@@ -1067,7 +1073,7 @@ async function findRow(id) {
 
 // ── API ROUTES ────────────────────────────────────────────────────────────────
 
-app.get('/api/leads', requireAuth, async (_req, res) => {
+app.get('/api/leads', requireAuth, async (req, res) => {
   try {
     const leads = await withAuth(async () => {
       await ensureHeader();
@@ -1090,7 +1096,9 @@ app.get('/api/leads', requireAuth, async (_req, res) => {
         return lead;
       }).filter(l => l.id);
     });
-    res.json(leads);
+    // Archived cards are not on the board. ?archived=include is for tooling
+    // that needs every card; the Archive workspace reads /api/archive.
+    res.json(req.query.archived === 'include' ? leads : leads.filter(lead => !isArchivedLead(lead)));
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
     console.error('[Leads GET]', e.message);
@@ -1126,7 +1134,7 @@ app.post('/api/leads', requireAuth, async (req, res) => {
   }
 });
 
-app.put('/api/leads/:id', requireAuth, async (req, res) => {
+app.put('/api/leads/:id', requireAuth, rejectArchived('board'), async (req, res) => {
   const lead   = req.body;
   const vals   = [COLUMNS.map(col => lead[col] !== undefined ? String(lead[col]) : '')];
   try {
@@ -1315,7 +1323,7 @@ app.put('/api/leads/:id', requireAuth, async (req, res) => {
   }
 });
 
-app.delete('/api/leads/:id', requireAuth, async (req, res) => {
+app.delete('/api/leads/:id', requireAuth, rejectArchived('board'), async (req, res) => {
   try {
     const rowNum = await withAuth(() => findRow(req.params.id));
     if (!rowNum) return res.status(404).json({ error: 'not found' });
@@ -1682,7 +1690,7 @@ async function loadOutreachDataset() {
   }
 
   const activities = rowObjects(activityResponse.data.values, COLD_CALL_ACTIVITY_HEADER);
-  const boardLeads = (boardResponse.data.values || []).slice(1).map(row => {
+  const allBoardLeads = (boardResponse.data.values || []).slice(1).map(row => {
     const lead = {};
     COLUMNS.forEach((field, index) => { lead[field] = row[index] || ''; });
     // U:W are authoritative call lifecycle fields and sit beyond COLUMNS.
@@ -1691,6 +1699,11 @@ async function loadOutreachDataset() {
     lead.conversationContext = row[22] || '';
     return lead;
   }).filter(lead => lead.id);
+  // Archived cards leave the board: every board-derived view (Pipeline,
+  // Bookings, Next Actions, pipeline presence) sees active cards only. The
+  // archived ones stay readable through Archive.
+  const boardLeads = allBoardLeads.filter(card => !isArchivedLead(card));
+  const archivedBoardLeads = allBoardLeads.filter(card => isArchivedLead(card));
   const pipelineIndex = buildOutreachPipelineIndex(leads, boardLeads);
   const classificationsByLeadId = buildStoredClassificationMap({
     drafts: rowObjects(draftResponse.data.values, ['createdAt','leadId','company','email','topic','confidence','reason','draftBody','status','campaignProfile','classification','reasonCode']),
@@ -1746,26 +1759,33 @@ async function loadOutreachDataset() {
     aggregateDemoPlays(demoResponse.data.values || [], { companyKey: openKey }),
     { companyKey: openKey });
   const realOpenCounts = new Map();
-  const rows = leads.map(lead => {
-    if (lead.stage === 'Queued') counts.queued++;
-    if (lead.emailStatus) counts.emailed++;
-    if (lead.emailStatus === 'done') counts.done++;
+  // Every lead gets the same light row (reply category, sender, attribution),
+  // so an archived lead reads exactly like an active one in Archive. Only
+  // ACTIVE leads count toward the directory's counts, facets and signals.
+  const allRows = leads.map(lead => {
+    const archived = isArchivedLead(lead);
+    const tally = (bucket, key) => { if (!archived) bucket[key] = (bucket[key] || 0) + 1; };
+    if (!archived) {
+      if (lead.stage === 'Queued') counts.queued++;
+      if (lead.emailStatus) counts.emailed++;
+      if (lead.emailStatus === 'done') counts.done++;
+    }
     const stage = lead.stage || 'Import';
-    facets.stages[stage] = (facets.stages[stage] || 0) + 1;
+    tally(facets.stages, stage);
     const niche = normalizedRouteNicheFor(lead);
-    if (niche) facets.niches[niche] = (facets.niches[niche] || 0) + 1;
+    if (niche) tally(facets.niches, niche);
     const campaign = campaignLabelFor(lead);
-    facets.campaigns[campaign] = (facets.campaigns[campaign] || 0) + 1;
+    tally(facets.campaigns, campaign);
     const companyKey = openKey(lead.company);
-    if (companyKey) leadKeys.add(companyKey);
+    if (companyKey && !archived) leadKeys.add(companyKey);
     const attribution = campaignVersionByLeadId.get(lead.id) || { campaignVersion: LEGACY_UNKNOWN };
-    facets.campaignVersions[attribution.campaignVersion] = (facets.campaignVersions[attribution.campaignVersion] || 0) + 1;
+    tally(facets.campaignVersions, attribution.campaignVersion);
     const sender = resolveSenderOwnership({
       lead, activities: activitiesByLeadId.get(lead.id) || [], senders: senderIdentities,
     });
-    facets.senders[sender.state === 'unknown' || sender.state === 'conflict' ? sender.state : sender.senderId]
-      = (facets.senders[sender.state === 'unknown' || sender.state === 'conflict' ? sender.state : sender.senderId] || 0) + 1;
+    tally(facets.senders, sender.state === 'unknown' || sender.state === 'conflict' ? sender.state : sender.senderId);
     const row = toLightRow(lead, categoryByLeadId.get(lead.id), attribution, sender, { bouncedLeadIds: bounceIds });
+    row.archived = archived;
     Object.assign(row, pipelineIndex.byColdEmailId.get(lead.id));
     const attributedPlay = demoPlayForLead(demoAttribution, lead.id);
     row.demoEngaged = Boolean(attributedPlay);
@@ -1781,7 +1801,11 @@ async function loadOutreachDataset() {
     row.automationReason = automation.reason;
     return row;
   });
+  const rows = allRows.filter(row => !row.archived);
+  const archivedRows = allRows.filter(row => row.archived);
   counts.total = rows.length;
+  counts.archived = archivedRows.length + archivedBoardLeads.filter(card => !archivedRows
+    .some(row => `CE-${row.id}` === card.id || normalizeEmail(row.email) === normalizeEmail(card.email))).length;
 
   // Opens remain passive telemetry. Warm is canonical demo engagement only.
   // These headline numbers used to be computed in the browser from the full
@@ -1834,7 +1858,7 @@ async function loadOutreachDataset() {
     signals.hits += n;
   }
   signals.demoPlays = demoRows.filter(row => leadKeys.has(openKey(row.company))).length;
-  for (const row of rows) row.warm = row.demoEngaged;
+  for (const row of allRows) row.warm = row.demoEngaged;
   signals.warm = rows.filter(row => row.warm).length;
   const outside = rows.filter(row => !row.pipelinePresence && row.mappingStatus !== 'conflict');
   const pipelineAudit = {
@@ -1856,9 +1880,12 @@ async function loadOutreachDataset() {
 
   return {
     at: Date.now(),
-    leads,                 // full rows, server-side only
+    leads,                 // full rows, server-side only — ACTIVE AND ARCHIVED (identity, dedupe, evidence)
     leadSource,            // 'sheets' | 'supabase' | 'sheets-fallback' — observability only
-    rows,                  // light rows, safe to serialise
+    rows,                  // light rows of ACTIVE leads, safe to serialise
+    archivedRows,          // light rows of archived leads, for Archive only
+    allRows,               // both, for historical drill-downs that must resolve any lead
+    archivedBoardLeads,    // archived Pipeline cards (boardLeads holds active cards only)
     activities, classificationsByLeadId, replyRecords,
     metrics, counts, facets, signals, sendActivity,
     pipelineAudit, boardLeads,
@@ -1868,6 +1895,11 @@ async function loadOutreachDataset() {
     suppressedEmails: new Set((suppressionResponse.data.values || []).slice(1)
       .map(row => normalizeEmail(row[0])).filter(Boolean)),
   };
+}
+
+// Leads that are not archived: the inventory operational views describe.
+function activeLeadsOf(dataset) {
+  return (dataset.leads || []).filter(lead => !isArchivedLead(lead));
 }
 
 // Concurrent callers share one in-flight load rather than each starting their
@@ -2123,7 +2155,8 @@ app.get('/api/coldemail/funnel', requireAuth, async (req, res) => {
     let stageTotal;
     if (stage && analytics.stageLeadIds[stage]) {
       const ids = analytics.stageLeadIds[stage]; stageTotal = ids.length;
-      const rowById = new Map(dataset.rows.map(row => [row.id, row]));
+      // Historical drill-down: resolves archived leads too (labelled).
+      const rowById = new Map((dataset.allRows || dataset.rows).map(row => [row.id, row]));
       // Project to exactly what the drill-down list renders. Whole ColdEmail
       // rows carry notes/siteContext/campaign_notes blobs, which made a single
       // 100-row page ~194 KB; the five displayed fields are ~10 KB. The lead
@@ -2132,11 +2165,15 @@ app.get('/api/coldemail/funnel', requireAuth, async (req, res) => {
         .map(row => ({
           id: row.id, company: row.company, contactName: row.contactName,
           email: row.email, stage: row.stage, pipelineStage: row.pipelineStage,
+          archived: Boolean(row.archived),
         }));
     }
     delete analytics.stageLeadIds;
     res.json({
       ...analytics,
+      // Historical reporting: the funnel counts every lead ever sent, archived
+      // ones included, so rates stay comparable over time.
+      scope: { historical: true, includesArchived: true, archivedLeads: (dataset.archivedRows || []).length },
       ...(records ? { stage, records, pagination: { total: stageTotal, offset, limit: requested, hasMore: offset + records.length < stageTotal } } : {}),
       generatedMs: Number(process.hrtime.bigint() - startedAt) / 1e6,
       fetchedAt: new Date(dataset.at).toISOString(),
@@ -2173,8 +2210,9 @@ app.get('/api/crm/health', requireAuth, async (req, res) => {
       currentVersion: ACTIVE_CAMPAIGN_VERSION.dental_ai_receptionist,
     }, { version: 'lifetime' });
 
+    // Operational health describes ACTIVE inventory; archived leads are in Archive.
     const health = buildCrmHealth({
-      leads: dataset.leads, boardLeads: dataset.boardLeads, activities: dataset.activities,
+      leads: activeLeadsOf(dataset), boardLeads: dataset.boardLeads, activities: dataset.activities,
       replyRecords: dataset.replyRecords,
       suppressionReason: lead => sendSuppressionReason(lead, { suppressedEmails }),
       sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true',
@@ -3266,7 +3304,7 @@ app.get('/api/leads/:id/reactivation', requireAuth, async (req, res) => {
 
 // Apply a reactivation decision. Every precondition is re-checked here — the
 // browser's view of eligibility is a convenience, never the authority.
-app.post('/api/leads/:id/reactivate', requireAuth, async (req, res) => {
+app.post('/api/leads/:id/reactivate', requireAuth, rejectArchived('board'), async (req, res) => {
   const mode = String(req.body?.mode || '');
   try {
     if (!Object.values(REACTIVATION_MODES).includes(mode)) {
@@ -3514,7 +3552,7 @@ async function restoreResumeHold(twin) {
   if (after.length !== 1 || !hasManualHold(after[0].notes)) throw resumeFailure('rollback_unconfirmed', 'hold restoration could not be confirmed');
 }
 
-app.post('/api/leads/:id/resume-automation', requireAuth, async (req, res) => {
+app.post('/api/leads/:id/resume-automation', requireAuth, rejectArchived('board'), async (req, res) => {
   const leadId = req.params.id;
   const checkOnly = process.env.CHECK_ONLY === 'true' || req.body?.checkOnly === true;
   try {
@@ -3759,7 +3797,7 @@ app.post('/api/coldemail/:id/false-opt-out-correction', requireAuth, async (req,
   }
 });
 
-app.post('/api/leads/:id/contact-change', requireAuth, async (req, res) => {
+app.post('/api/leads/:id/contact-change', requireAuth, rejectArchived('board'), async (req, res) => {
   try {
     const rowNum = await withAuth(() => findRow(req.params.id));
     if (!rowNum) return res.status(404).json({ error: 'not found' });
@@ -4006,6 +4044,14 @@ async function planCalendarBookings(events, { dataset, boardLeads, activities })
     if (identity.status !== 'matched') {
       // Never discarded and never invented into a lead — surfaced for a human.
       plan.push({ classified, outcome: identity.status, reason: identity.reason, identity });
+      continue;
+    }
+    // An archived lead is never reactivated by the calendar, and its booking
+    // must not become a mutation that fails and blocks every automation launch.
+    // It is surfaced for a human exactly like an unmatched booking.
+    if (isArchivedLead(identity.coldEmailLead) || isArchivedLead(identity.boardLead)) {
+      plan.push({ classified, outcome: 'archived', identity,
+        reason: 'this booking belongs to an archived lead; it was not applied and the lead was not reactivated' });
       continue;
     }
     const boardLead = identity.boardLead || null;
@@ -4409,7 +4455,7 @@ app.get('/api/leads/:id/sequence', requireAuth, async (req, res) => {
 
 // Move sequence state. Records an activity row and nothing else — no lead
 // column is written, so enrolment cannot disturb stage, sequence or send state.
-app.post('/api/leads/:id/sequence', requireAuth, async (req, res) => {
+app.post('/api/leads/:id/sequence', requireAuth, rejectArchived('board'), async (req, res) => {
   const action = String(req.body?.action || '').trim();
   try {
     if (!SEQUENCE_ACTIONS.has(action)) {
@@ -4557,7 +4603,7 @@ function planLifecycleAutoEnrollment({ leadId, lead, twin, activities }) {
   };
 }
 
-app.post('/api/leads/:id/call-lifecycle', requireAuth, async (req, res) => {
+app.post('/api/leads/:id/call-lifecycle', requireAuth, rejectArchived('board'), async (req, res) => {
   const action = String(req.body?.action || '').trim();
   try {
     if (!CALL_ACTIONS.has(action)) {
@@ -4803,7 +4849,7 @@ app.post('/api/leads/:id/call-lifecycle', requireAuth, async (req, res) => {
 // over" are different statements and only a person can make the second one.
 const CLOSE_RESULTS = Object.freeze({ won: 'closed_won', lost: 'closed_lost' });
 
-app.post('/api/leads/:id/close', requireAuth, async (req, res) => {
+app.post('/api/leads/:id/close', requireAuth, rejectArchived('board'), async (req, res) => {
   const result = String(req.body?.result || '').trim().toLowerCase();
   try {
     if (!Object.hasOwn(CLOSE_RESULTS, result)) {
@@ -4956,7 +5002,7 @@ app.post('/api/leads/:id/reconcile-timeline', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/leads/:id/mark-ghosted', requireAuth, async (req, res) => {
+app.post('/api/leads/:id/mark-ghosted', requireAuth, rejectArchived('board'), async (req, res) => {
   try {
     const rowNum = await withAuth(() => findRow(req.params.id));
     if (!rowNum) return res.status(404).json({ error: 'not found' });
@@ -5045,7 +5091,7 @@ app.post('/api/leads/:id/mark-ghosted', requireAuth, async (req, res) => {
   }
 });
 
-app.patch('/api/leads/:id/call-details', requireAuth, async (req, res) => {
+app.patch('/api/leads/:id/call-details', requireAuth, rejectArchived('board'), async (req, res) => {
   try {
     const rowNum = await withAuth(() => findRow(req.params.id));
     if (!rowNum) return res.status(404).json({ error: 'not found' });
@@ -5372,6 +5418,464 @@ app.post('/api/ops/sender-balance', requireAuth, async (_req, res) => {
   }
 });
 
+// ── ARCHIVE ──────────────────────────────────────────────────────────────────
+// Soft archival (integrations/lead-archive.js). An archived lead keeps its id,
+// its row, every activity event and every Gmail message and thread id; it
+// leaves every active list and count and every send path refuses it. These
+// routes list, archive and restore. Restore never makes a lead sendable.
+
+const ARCHIVE_BATCH_MAX = 250;
+let archiveRunInFlight = false;
+
+function archivedStateFor(dataset, id, kind) {
+  const raw = String(id || '').trim();
+  const reasonOf = row => archiveReasonFromNotes(row.notes) || 'archived stage';
+  if (kind === 'coldemail') {
+    const lead = (dataset.leads || []).find(row => row.id === raw);
+    return lead && isArchivedLead(lead) ? { reason: reasonOf(lead) } : null;
+  }
+  const card = (dataset.archivedBoardLeads || []).find(row => row.id === raw);
+  if (card) return { reason: reasonOf(card) };
+  const twin = raw.startsWith('CE-') ? (dataset.leads || []).find(row => row.id === raw.slice(3)) : null;
+  return twin && isArchivedLead(twin) ? { reason: reasonOf(twin) } : null;
+}
+
+// Route guard for every mutation that could move, edit, promote, enrol or
+// delete a lead. Archived leads are read-only until restored; an explicit
+// unsubscribe stays possible because protecting never pauses. Fails closed.
+function rejectArchived(kind) {
+  return async (req, res, next) => {
+    try {
+      const dataset = await withAuth(() => getOutreachDataset());
+      const state = archivedStateFor(dataset, req.params.id, kind);
+      if (!state) return next();
+      if (kind === 'coldemail' && req.method === 'PATCH' && String(req.body?.stage || '').trim() === 'Unsubscribed') return next();
+      return res.status(409).json({
+        error: `This lead is archived (${state.reason}). Restore it from Archive before changing it.`,
+        code: 'archived', archiveReason: state.reason,
+      });
+    } catch (error) {
+      if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+      console.error('[archive guard]', error.message);
+      return res.status(503).json({ error: 'Archive state could not be read; nothing was changed', code: 'archive_state_unavailable' });
+    }
+  };
+}
+
+async function unresolvedReservationsByLead() {
+  const listed = await listUnresolvedReservations();
+  if (listed.enabled === false) throw new Error('Durable send lock is disabled; archive state refuses to run without it');
+  const byLead = new Map();
+  for (const key of ['sentUnconfirmed', 'reconciliationRequired', 'staleReserved', 'expiredSending']) {
+    for (const row of listed[key] || []) {
+      const leadId = String(row.leadId || '').replace(/^CE-/, '');
+      if (!leadId) continue;
+      byLead.set(leadId, [...(byLead.get(leadId) || []), {
+        actionId: row.actionId || '', status: row.status || key, provider: row.provider || '',
+        reservedAt: row.reservedAt || '', lastError: row.lastError || '',
+      }]);
+    }
+  }
+  return byLead;
+}
+
+function activitiesByLeadKey(activities = []) {
+  const byLead = new Map();
+  for (const row of activities) {
+    const key = String(row.sourceLeadId || '').trim() || String(row.leadId || '').replace(/^CE-/, '').trim();
+    if (!key) continue;
+    byLead.set(key, [...(byLead.get(key) || []), row]);
+  }
+  return byLead;
+}
+
+function parseArchiveMetadata(value) {
+  try { return JSON.parse(String(value || '{}')); } catch (_) { return {}; }
+}
+
+// One Archive row. A ColdEmail lead carries its light row (reply category,
+// sender, attribution) plus its current archive record; a board-only card is
+// described from the card and its own archive event.
+function archiveListRows(dataset, unresolved) {
+  const byLead = activitiesByLeadKey(dataset.activities || []);
+  const inbound = rows => rows.filter(row => /(reply|meeting_requested)/.test(String(row.eventType || ''))).length;
+  const leadById = new Map((dataset.leads || []).map(lead => [lead.id, lead]));
+  const out = (dataset.archivedRows || []).map(row => {
+    const lead = leadById.get(row.id) || {};
+    const mine = byLead.get(row.id) || [];
+    const record = currentArchiveRecord(mine, row.id) || {};
+    const reason = record.archiveReason || archiveReasonFromNotes(lead.notes) || '';
+    const card = (dataset.archivedBoardLeads || []).find(item => item.id === `CE-${row.id}`
+      || (normalizeEmail(item.email) && normalizeEmail(item.email) === normalizeEmail(row.email))) || null;
+    return {
+      kind: 'coldemail', id: row.id, company: row.company || '', contactName: row.contactName || '', email: row.email || '',
+      city: lead.city || '', tradeType: lead.tradeType || '', campaign: campaignLabelFor(lead), campaignVersion: row.campaignVersion || '',
+      niche: normalizedRouteNicheFor(lead) || String(record.retiredOffer || ''),
+      previousStage: record.previousStage || '', currentStage: lead.stage || '',
+      emailStatus: lead.emailStatus || '', emailStep: lead.emailStep || '', lastEmailedAt: lead.lastEmailedAt || '',
+      senderInboxId: row.senderInboxId || record.senderInboxId || '', senderEmail: row.senderEmail || '',
+      senderState: row.senderState || '', senderStateLabel: row.senderStateLabel || '',
+      archiveReason: reason, archiveReasonLabel: ARCHIVE_REASON_LABELS[reason] || '',
+      archivedAt: record.archivedAt || record.occurredAt || '', archivedBy: record.archivedBy || '',
+      archiveSource: record.archiveSource || '', archiveEventId: record.eventId || '',
+      replyCategory: row.replyCategory || '', inboundMessages: inbound(mine), events: mine.length,
+      replyAfterArchive: mine.some(item => item.eventType === ARCHIVED_REPLY_EVENT_TYPE),
+      offerRetired: Boolean(retiredOfferBlock(lead)),
+      unresolved: unresolved ? (unresolved.get(row.id) || []) : null,
+      unresolvedAtArchive: Array.isArray(record.unresolved) ? record.unresolved : [],
+      boardCardId: card ? card.id : '', previousBoardStage: record.previousBoardStage || '',
+    };
+  });
+  const covered = new Set(out.map(row => row.boardCardId).filter(Boolean));
+  for (const card of dataset.archivedBoardLeads || []) {
+    if (covered.has(card.id)) continue;
+    const mine = (dataset.activities || []).filter(row => row.leadId === card.id);
+    const record = mine.filter(row => row.eventType === ARCHIVE_EVENT_TYPE)
+      .sort((a, b) => String(b.occurredAt || '').localeCompare(String(a.occurredAt || '')))[0];
+    const meta = record ? parseArchiveMetadata(record.metadata) : {};
+    const reason = meta.archiveReason || archiveReasonFromNotes(card.notes) || '';
+    const retired = retiredOfferBlock(card);
+    out.push({
+      kind: 'board', id: card.id, company: card.company || '', contactName: [card.first, card.last].filter(Boolean).join(' '),
+      email: card.email || '', city: card.city || '', tradeType: card.tradeType || '', campaign: 'Sales Pipeline card',
+      campaignVersion: '', niche: retired ? retired.offerId : '',
+      previousStage: meta.previousBoardStage || '', currentStage: card.stage || '',
+      emailStatus: '', emailStep: '', lastEmailedAt: '', senderInboxId: '', senderEmail: '', senderState: '', senderStateLabel: '',
+      archiveReason: reason, archiveReasonLabel: ARCHIVE_REASON_LABELS[reason] || '',
+      archivedAt: meta.archivedAt || (record && record.occurredAt) || '', archivedBy: meta.archivedBy || '',
+      archiveSource: meta.archiveSource || '', archiveEventId: record ? record.eventId : '',
+      replyCategory: '', inboundMessages: inbound(mine), events: mine.length, replyAfterArchive: false,
+      offerRetired: Boolean(retired), unresolved: [], unresolvedAtArchive: [],
+      boardCardId: card.id, previousBoardStage: meta.previousBoardStage || '', meetingAt: card.meetingAt || '', outcome: card.outcome || '',
+    });
+  }
+  return out;
+}
+
+function filterArchiveRows(rows, query = {}) {
+  const search = String(query.search || '').trim().toLowerCase();
+  const pick = name => { const value = String(query[name] || '').trim(); return value && value !== 'all' ? value : ''; };
+  const niche = pick('niche'); const campaign = pick('campaign'); const reason = pick('reason');
+  const previousStage = pick('previousStage'); const sender = pick('sender');
+  const from = Date.parse(String(query.archivedFrom || '')); const to = Date.parse(String(query.archivedTo || ''));
+  return rows.filter(row => {
+    if (niche && row.niche !== niche) return false;
+    if (campaign && row.campaign !== campaign) return false;
+    if (reason && row.archiveReason !== reason) return false;
+    if (previousStage && (row.previousStage || '(unknown)') !== previousStage) return false;
+    if (sender && (row.senderInboxId || 'unknown') !== sender) return false;
+    const at = Date.parse(row.archivedAt || '');
+    if (Number.isFinite(from) && !(at >= from)) return false;
+    if (Number.isFinite(to) && !(at <= to + 24 * 60 * 60 * 1000 - 1)) return false;
+    if (search && ![row.company, row.email, row.contactName, row.city, row.campaign]
+      .some(field => field && String(field).toLowerCase().includes(search))) return false;
+    return true;
+  });
+}
+
+function archiveFacets(rows) {
+  const facets = { niches: {}, campaigns: {}, reasons: {}, previousStages: {}, senders: {} };
+  const add = (bucket, key) => { if (key) bucket[key] = (bucket[key] || 0) + 1; };
+  for (const row of rows) {
+    add(facets.niches, row.niche); add(facets.campaigns, row.campaign); add(facets.reasons, row.archiveReason);
+    add(facets.previousStages, row.previousStage || '(unknown)'); add(facets.senders, row.senderInboxId || 'unknown');
+  }
+  return facets;
+}
+
+app.get('/api/archive', requireAuth, async (req, res) => {
+  try {
+    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    let unresolved = null;
+    let unresolvedError = '';
+    try { unresolved = await unresolvedReservationsByLead(); } catch (error) { unresolvedError = error.message; }
+    const all = archiveListRows(dataset, unresolved)
+      .sort((a, b) => String(b.archivedAt || '').localeCompare(String(a.archivedAt || '')) || String(a.company).localeCompare(String(b.company)));
+    const filtered = filterArchiveRows(all, req.query);
+    const requested = parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(requested) && requested > 0 ? Math.min(requested, 500) : 100;
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+    res.json({
+      rows: filtered.slice(offset, offset + limit), total: filtered.length, totalArchived: all.length,
+      offset, limit, hasMore: offset + limit < filtered.length,
+      facets: archiveFacets(all), reasonLabels: ARCHIVE_REASON_LABELS,
+      unresolvedAvailable: Boolean(unresolved), unresolvedError,
+      unresolvedCount: all.filter(row => (row.unresolved || []).length).length,
+      fetchedAt: new Date(dataset.at).toISOString(),
+    });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Archive GET]', error.message);
+    res.status(500).json({ error: 'Archive could not be loaded' });
+  }
+});
+
+async function resolveColdEmailRows(ids) {
+  const column = await withAuth(() => sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:A` }));
+  const rowsById = new Map();
+  (column.data.values || []).forEach((cells, index) => {
+    if (index > 0 && cells[0]) rowsById.set(cells[0], [...(rowsById.get(cells[0]) || []), index + 1]);
+  });
+  return new Map(ids.map(id => [id, rowsById.get(id) || []]));
+}
+
+// Board cards have no compare-and-set; the row is re-read immediately before
+// the write and refused if its stage or notes moved since the plan.
+async function applyBoardCardChange(plan) {
+  const rowNum = await withAuth(() => findRow(plan.cardId));
+  if (!rowNum) return { cardId: plan.cardId, status: 'failed', reason: 'card row not found' };
+  const current = await withAuth(() => sheets().spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${rowNum}:P${rowNum}`,
+  }));
+  const cells = current.data.values?.[0] || [];
+  if (String(cells[0] || '') !== plan.cardId) return { cardId: plan.cardId, status: 'failed', reason: 'card identity moved' };
+  const stageNow = String(cells[12] || '');
+  const notesNow = String(cells[15] || '');
+  if (stageNow === plan.patch.stage && notesNow === plan.patch.notes) return { cardId: plan.cardId, status: 'unchanged', reason: 'already in this state' };
+  if (stageNow !== plan.expectedState.stage || notesNow !== plan.expectedState.notes) {
+    return { cardId: plan.cardId, status: 'refused', reason: 'card changed since the plan; refresh and review' };
+  }
+  await withAuth(() => sheets().spreadsheets.values.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: { valueInputOption: 'RAW', data: [
+      { range: `${SHEET_NAME}!M${rowNum}`, values: [[plan.patch.stage]] },
+      { range: `${SHEET_NAME}!P${rowNum}`, values: [[plan.patch.notes]] },
+    ] },
+  }));
+  rowMap.clear();
+  return { cardId: plan.cardId, status: 'succeeded', reason: 'ok' };
+}
+
+// Audit events first (stable ids, never duplicated), then the lead writes.
+// A rerun after any failure finds the same event ids already present and the
+// already-archived leads skipped, so nothing is written twice.
+async function appendMissingEvents(events, activities) {
+  const known = new Set((activities || []).map(row => row.eventId));
+  const missing = events.filter(event => !known.has(event.eventId));
+  if (missing.length) await appendColdCallActivities(missing);
+  return missing.length;
+}
+
+async function applyArchivePlans(leadPlans) {
+  if (!leadPlans.length) return [];
+  const rows = await resolveColdEmailRows(leadPlans.map(plan => plan.leadId));
+  const resolvable = leadPlans.filter(plan => rows.get(plan.leadId).length === 1);
+  const results = leadPlans.filter(plan => !resolvable.includes(plan)).map(plan => ({
+    leadId: plan.leadId, status: 'failed', reason: 'lead identity is not exactly one ColdEmail row' }));
+  if (resolvable.length) {
+    const batch = await withAuth(() => applyLeadChanges(resolvable.map(plan => ({
+      leadId: plan.leadId, patch: plan.patch, row: rows.get(plan.leadId)[0],
+      expectedState: plan.expectedState, releaseMarkers: plan.releaseMarkers || [],
+    })), { sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID }));
+    results.push(...batch.results.map(({ leadId, status, reason, revision }) => ({ leadId, status, reason: reason || '', revision })));
+  }
+  return results;
+}
+
+function archiveMutationBlocked({ duringSendWindow = true } = {}) {
+  if (outreachStateMode() !== 'primary' || outreachWriteAuthority() !== 'supabase') {
+    return 'Archive changes require Supabase primary reads and canonical writes';
+  }
+  if (agentState.running || automationLaunchReserved) return 'An agent pass is active or launching; archive changes wait for it to finish';
+  if (duringSendWindow && insideSendWindow()) return 'Bulk archive changes are not made between 06:55 and 12:00 Pacific on weekdays';
+  return '';
+}
+
+async function loadArchiveInputs() {
+  const dataset = await withAuth(() => getOutreachDataset({ force: true }));
+  const corpus = await readOutreachCorpus();
+  if (!corpus.ok) throw new Error('Canonical Outreach state unavailable: ' + corpus.reason);
+  return { dataset, leads: corpus.leads, unresolvedByLead: await unresolvedReservationsByLead() };
+}
+
+function retirementView(plan) {
+  return {
+    offer: plan.offer, summary: plan.summary,
+    toArchive: { leads: plan.leadPlans.length, cards: plan.boardPlans.length },
+    alreadyArchived: { leads: plan.alreadyArchivedLeads, cards: plan.alreadyArchivedCards },
+    cards: plan.cards,
+  };
+}
+
+function planRetirementFrom(inputs, offerId, archivedBy, now = new Date()) {
+  return planOfferRetirement({
+    offerId, leads: inputs.leads, activities: inputs.dataset.activities || [],
+    boardLeads: inputs.dataset.boardLeads || [], archivedBoardLeads: inputs.dataset.archivedBoardLeads || [],
+    suppressedEmails: inputs.dataset.suppressedEmails || new Set(), unresolvedByLead: inputs.unresolvedByLead,
+    archivedBy, source: 'offer_retirement', now, stableId: stableActivityId,
+  });
+}
+
+// Read-only dry run: exactly what the migration would archive now.
+app.get('/api/ops/offer-retirement/:offerId', requireAuth, async (req, res) => {
+  if (!retiredOfferById(req.params.offerId)) return res.status(404).json({ error: 'not a retired offer' });
+  try {
+    const inputs = await loadArchiveInputs();
+    res.json({ dryRun: true, ...retirementView(planRetirementFrom(inputs, req.params.offerId, 'dry_run')) });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[offer-retirement plan]', error.message);
+    res.status(503).json({ error: 'Retirement plan could not be computed: ' + error.message });
+  }
+});
+
+// Apply one bounded batch. Body: { by, expectedLeads, expectedCards, limit }.
+// expected* must equal the dry run's toArchive counts (the plan the operator
+// reviewed); any drift refuses. Repeat until toArchive is zero; a repeat after
+// completion is a no-op.
+app.post('/api/ops/offer-retirement/:offerId', requireAuth, async (req, res) => {
+  const offer = retiredOfferById(req.params.offerId);
+  if (!offer) return res.status(404).json({ error: 'not a retired offer' });
+  const by = String(req.body?.by || '').trim();
+  if (!by) return res.status(422).json({ error: 'by is required (who is archiving)' });
+  const blocked = archiveMutationBlocked();
+  if (blocked) return res.status(409).json({ error: blocked });
+  if (archiveRunInFlight) return res.status(409).json({ error: 'An archive run is already in progress' });
+  archiveRunInFlight = true;
+  // Held for the whole batch: no agent pass may launch beside archive writes.
+  automationLaunchReserved = true;
+  try {
+    const inputs = await loadArchiveInputs();
+    const plan = planRetirementFrom(inputs, offer.id, by);
+    const view = retirementView(plan);
+    if (Number(req.body?.expectedLeads) !== plan.leadPlans.length || Number(req.body?.expectedCards) !== plan.boardPlans.length) {
+      return res.status(409).json({ error: 'The plan changed since it was reviewed; re-run the dry run', ...view });
+    }
+    const limit = Math.min(ARCHIVE_BATCH_MAX, Math.max(1, parseInt(req.body?.limit, 10) || 100));
+    const batch = plan.leadPlans.slice(0, limit);
+    const eventsAppended = await withAuth(() => appendMissingEvents(batch.map(item => item.event), inputs.dataset.activities));
+    const results = await applyArchivePlans(batch);
+    // Pipeline cards go last, once every lead of the offer is archived, so a
+    // card never leaves the board while its lead could still be active.
+    const cardResults = [];
+    const leadsLeft = plan.leadPlans.length - results.filter(item => ['succeeded', 'unchanged'].includes(item.status)).length;
+    if (leadsLeft === 0 && plan.boardPlans.length) {
+      await withAuth(() => appendMissingEvents(plan.boardPlans.map(item => item.event), inputs.dataset.activities));
+      for (const cardPlan of plan.boardPlans) cardResults.push({ ...(await applyBoardCardChange(cardPlan)), matchedBy: cardPlan.matchedBy });
+    }
+    invalidateOutreachCache('offer_retirement');
+    ceRowMap.clear();
+    const count = (list, status) => list.filter(item => item.status === status).length;
+    console.log(`[offer-retirement] ${offer.id}: ${count(results, 'succeeded')}/${batch.length} lead(s) archived `
+      + `(${count(results, 'unchanged')} unchanged, ${count(results, 'refused')} refused, ${count(results, 'conflict')} conflict, `
+      + `${count(results, 'failed')} failed); cards ${count(cardResults, 'succeeded')}/${cardResults.length}; events +${eventsAppended}; by ${by}`);
+    res.json({
+      applied: true, offer: plan.offer, batch: batch.length, eventsAppended,
+      succeeded: count(results, 'succeeded'), unchanged: count(results, 'unchanged'), refused: count(results, 'refused'),
+      conflict: count(results, 'conflict'), failed: count(results, 'failed'),
+      remainingLeads: leadsLeft, cardResults,
+      results: results.filter(item => item.status !== 'succeeded'),
+      summaryBefore: view.summary,
+    });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[offer-retirement apply]', error.message);
+    res.status(503).json({ error: 'Retirement batch failed: ' + error.message });
+  } finally {
+    archiveRunInFlight = false;
+    automationLaunchReserved = false;
+  }
+});
+
+// Archive one lead by hand (the general feature). Body: { by, reason? }.
+app.post('/api/archive/leads/:id', requireAuth, async (req, res) => {
+  const by = String(req.body?.by || '').trim();
+  if (!by) return res.status(422).json({ error: 'by is required' });
+  const reason = String(req.body?.reason || ARCHIVE_REASONS.MANUAL).trim();
+  if (!Object.values(ARCHIVE_REASONS).includes(reason)) return res.status(422).json({ error: 'unknown archive reason' });
+  const blocked = archiveMutationBlocked({ duringSendWindow: false });
+  if (blocked) return res.status(409).json({ error: blocked });
+  try {
+    const inputs = await loadArchiveInputs();
+    const lead = inputs.leads.find(row => row.id === req.params.id);
+    if (!lead) return res.status(404).json({ error: 'not found' });
+    const mine = inputs.dataset.activities.filter(row => activityMatchesLead(row, lead));
+    const card = (inputs.dataset.boardLeads || []).find(item => item.id === `CE-${lead.id}`
+      || (normalizeEmail(item.email) && normalizeEmail(item.email) === normalizeEmail(lead.email))) || null;
+    const plan = planLeadArchive(lead, { reason, archivedBy: by, source: 'manual', activities: mine, stableId: stableActivityId,
+      boardLead: card, unresolved: inputs.unresolvedByLead.get(lead.id) || [] });
+    if (!plan) return res.json({ ok: true, unchanged: true, reason: 'already archived' });
+    await withAuth(() => appendMissingEvents([plan.event], inputs.dataset.activities));
+    const [result] = await applyArchivePlans([plan]);
+    let cardResult = null;
+    if (result.status === 'succeeded' && card) {
+      const cardPlan = planBoardArchive(card, { reason, archivedBy: by, source: 'manual', stableId: stableActivityId,
+        activities: inputs.dataset.activities.filter(row => row.leadId === card.id), sourceLeadId: lead.id });
+      if (cardPlan) {
+        await withAuth(() => appendMissingEvents([cardPlan.event], inputs.dataset.activities));
+        cardResult = await applyBoardCardChange(cardPlan);
+      }
+    }
+    invalidateOutreachCache('lead_archived');
+    res.status(result.status === 'succeeded' ? 200 : 409).json({ ok: result.status === 'succeeded', result, cardResult });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Archive lead]', error.message);
+    res.status(503).json({ error: 'Lead could not be archived: ' + error.message });
+  }
+});
+
+// Restore. Body: { by }. The lead returns to Import (never sent) or Review
+// under [MANUAL HOLD] (sent); its archived Pipeline card returns held. A lead
+// of a retired offer stays unable to send — the offer gate ignores archives.
+app.post('/api/archive/leads/:id/restore', requireAuth, async (req, res) => {
+  const by = String(req.body?.by || '').trim();
+  if (!by) return res.status(422).json({ error: 'by is required' });
+  const blocked = archiveMutationBlocked({ duringSendWindow: false });
+  if (blocked) return res.status(409).json({ error: blocked });
+  try {
+    const inputs = await loadArchiveInputs();
+    const lead = inputs.leads.find(row => row.id === req.params.id);
+    if (!lead) return res.status(404).json({ error: 'not found' });
+    const mine = inputs.dataset.activities.filter(row => activityMatchesLead(row, lead));
+    const plan = planLeadRestore(lead, { restoredBy: by, activities: mine, stableId: stableActivityId });
+    if (!plan) return res.json({ ok: true, unchanged: true, reason: 'not archived' });
+    await withAuth(() => appendMissingEvents([plan.event], inputs.dataset.activities));
+    const [result] = await applyArchivePlans([{ ...plan, releaseMarkers: [ARCHIVE_MARKER_PREFIX] }]);
+    let cardResult = null;
+    const card = (inputs.dataset.archivedBoardLeads || []).find(item => item.id === `CE-${lead.id}`
+      || (normalizeEmail(item.email) && normalizeEmail(item.email) === normalizeEmail(lead.email))) || null;
+    if (result.status === 'succeeded' && card) {
+      const cardPlan = planBoardRestore(card, { restoredBy: by, activities: inputs.dataset.activities, stableId: stableActivityId });
+      if (cardPlan) {
+        await withAuth(() => appendMissingEvents([cardPlan.event], inputs.dataset.activities));
+        cardResult = await applyBoardCardChange(cardPlan);
+      }
+    }
+    invalidateOutreachCache('lead_restored');
+    res.status(result.status === 'succeeded' ? 200 : 409).json({
+      ok: result.status === 'succeeded', result, cardResult, restoredStage: plan.patch.stage,
+      held: plan.metadata.heldOnRestore, offerRetired: plan.metadata.offerRetired, sendable: false,
+    });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Archive restore]', error.message);
+    res.status(503).json({ error: 'Lead could not be restored: ' + error.message });
+  }
+});
+
+// Restore a board-only archived card (no ColdEmail lead). Body: { by }.
+app.post('/api/archive/cards/:id/restore', requireAuth, async (req, res) => {
+  const by = String(req.body?.by || '').trim();
+  if (!by) return res.status(422).json({ error: 'by is required' });
+  const blocked = archiveMutationBlocked({ duringSendWindow: false });
+  if (blocked) return res.status(409).json({ error: blocked });
+  try {
+    const dataset = await withAuth(() => getOutreachDataset({ force: true }));
+    const card = (dataset.archivedBoardLeads || []).find(item => item.id === req.params.id);
+    if (!card) return res.status(404).json({ error: 'archived card not found' });
+    const plan = planBoardRestore(card, { restoredBy: by, activities: dataset.activities, stableId: stableActivityId });
+    await withAuth(() => appendMissingEvents([plan.event], dataset.activities));
+    const cardResult = await applyBoardCardChange(plan);
+    invalidateOutreachCache('card_restored');
+    res.status(cardResult.status === 'succeeded' ? 200 : 409).json({ ok: cardResult.status === 'succeeded', cardResult, restoredStage: plan.patch.stage, held: true });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Archive card restore]', error.message);
+    res.status(503).json({ error: 'Card could not be restored: ' + error.message });
+  }
+});
+
 // The Outreach summary. Lightweight by construction (~200 bytes): it returns
 // counts only, never lead rows, so the metric cards can paint without waiting
 // on the lead list. Now reads the shared snapshot instead of fetching the
@@ -5423,14 +5927,19 @@ app.get('/api/coldemail/replies', requireAuth, async (req, res) => {
     const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
     const category = String(req.query.category || 'all');
     const rowById = new Map(dataset.rows.map(row => [row.id, row]));
+    const archivedIds = new Set((dataset.archivedRows || []).map(row => row.id));
     const campaignVersion = String(req.query.campaignVersion || '').trim();
-    const records = filterReplyRecords(dataset.replyRecords, category).map(record => {
+    // The Inbox is an operational queue: an archived lead's conversation is
+    // read in Archive, not worked here. Analytics keeps it (historical).
+    const activeRecords = dataset.replyRecords.filter(record => !archivedIds.has(record.leadId));
+    const records = filterReplyRecords(activeRecords, category).map(record => {
       const row = rowById.get(record.leadId) || {};
       return { ...record, campaignVersion: row.campaignVersion || LEGACY_UNKNOWN, pipelinePresence: Boolean(row.pipelinePresence), pipelineStage: row.pipelineStage || '', boardLeadId: row.boardLeadId || '', mappingStatus: row.mappingStatus || 'not_in_pipeline' };
     }).filter(record => !campaignVersion || campaignVersion === 'all' || record.campaignVersion === campaignVersion);
     res.json({
       category,
-      total: dataset.replyRecords.length,
+      total: activeRecords.length,
+      archivedExcluded: dataset.replyRecords.length - activeRecords.length,
       records,
       fetchedAt: new Date(dataset.at).toISOString(),
     });
@@ -5536,7 +6045,7 @@ app.get('/api/coldemail/:id/activity', requireAuth, async (req, res) => {
   }
 });
 
-app.patch('/api/coldemail/:id/stage', requireAuth, async (req, res) => {
+app.patch('/api/coldemail/:id/stage', requireAuth, rejectArchived('coldemail'), async (req, res) => {
   const stage = String(req.body?.stage || '').trim();
   if (!COLD_EMAIL_DASHBOARD_STAGES.has(stage)) return res.status(422).json({ error: 'invalid stage' });
   try {
@@ -5592,7 +6101,7 @@ app.patch('/api/coldemail/:id/stage', requireAuth, async (req, res) => {
   }
 });
 
-app.put('/api/coldemail/:id', requireAuth, async (req, res) => {
+app.put('/api/coldemail/:id', requireAuth, rejectArchived('coldemail'), async (req, res) => {
   const lead = req.body;
   // CASL hard-suppression invariant. Setting a lead's stage to Unsubscribed
   // (this dashboard's label) — or Unsub (the agent's label) — must ALSO stamp
@@ -5630,7 +6139,7 @@ app.put('/api/coldemail/:id', requireAuth, async (req, res) => {
   }
 });
 
-app.delete('/api/coldemail/:id', requireAuth, async (req, res) => {
+app.delete('/api/coldemail/:id', requireAuth, rejectArchived('coldemail'), async (req, res) => {
   try {
     const rowNum = await withAuth(() => findCERow(req.params.id));
     if (!rowNum) return res.status(404).json({ error: 'not found' });
@@ -5662,7 +6171,7 @@ app.delete('/api/coldemail/:id', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/coldemail/:id/promote', requireAuth, async (req, res) => {
+app.post('/api/coldemail/:id/promote', requireAuth, rejectArchived('coldemail'), async (req, res) => {
   try {
     const targetStage = String(req.body?.stage || '').trim();
     if (!targetStage) return res.status(422).json({ error: 'Choose a Sales Pipeline stage.' });
@@ -6245,7 +6754,9 @@ app.post('/api/ops/send-recovery', requireAuth, async (req, res) => {
     const eventId = `gmail:${providerMessageId}`;
     const existing = dataset.activities.find(row => row.eventId === eventId);
     if (!existing) {
-      const attribution = coldSendAttribution(lead, step);
+      // Recording a send that already happened: a retired campaign version
+      // still describes it, it just can never be chosen for a new send.
+      const attribution = coldSendAttribution(lead, step, {}, { evidenceOnly: true });
       await appendColdCallActivities([{
         eventId, leadId: `CE-${lead.id}`, sourceLeadId: lead.id,
         email: lead.email, company: lead.company || '',
@@ -6333,7 +6844,7 @@ app.post('/api/ops/send-reconciliation', requireAuth, async (req, res) => {
     const mailbox = operationalMailbox(senderInboxId);
     let attribution = null;
     try {
-      attribution = coldSendAttribution(lead, Number(parseOutboundActionId(actionId).step) || 1);
+      attribution = coldSendAttribution(lead, Number(parseOutboundActionId(actionId).step) || 1, {}, { evidenceOnly: true });
     } catch (_) { attribution = null; }
     const result = await reconcileGmailReservation({
       reservation, mailbox, lead, activities: dataset.activities || [],
@@ -6568,7 +7079,7 @@ app.get('/api/internal/gmail-routing-simulation', async (req, res) => {
     const funnel = buildFunnelAnalytics({ leads:dataset.leads, boardLeads:dataset.boardLeads,
       activities:dataset.activities, replyRecords:dataset.replyRecords,
       currentVersion:ACTIVE_CAMPAIGN_VERSION.dental_ai_receptionist },{version:'lifetime'});
-    const health = buildCrmHealth({ leads:dataset.leads, boardLeads:dataset.boardLeads,
+    const health = buildCrmHealth({ leads:activeLeadsOf(dataset), boardLeads:dataset.boardLeads,
       activities:dataset.activities, replyRecords:dataset.replyRecords,
       suppressionReason:lead=>sendSuppressionReason(lead,{suppressedEmails}),
       sequencesEnabled:process.env.STAGE_SEQUENCES_ENABLED==='true', calendarSyncEnabled:CALENDAR_SYNC_ENABLED,

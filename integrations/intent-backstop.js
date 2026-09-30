@@ -39,6 +39,7 @@
 
 const { attributeDemoPlays, demoPlayForLead } = require('./demo-attribution');
 const { hasDemoPairHistory, hasUndeliveredDemoPair } = require('./demo-intent-state');
+const { outreachBlockForLead } = require('./lead-archive');
 
 const INTENT_STATE_TAG = '[intent-state]';
 const INTENT_STATE_SOURCE = Object.freeze({
@@ -85,6 +86,9 @@ function pendingIntentWork({ leads = [], corpus = leads, plays, fired = new Set(
   let due = 0;
   for (const lead of leads) {
     if (fired.has(`${lead.id}|both-audios`)) continue;
+    // Archived or retired-offer leads can never be owed a booking link, so
+    // they never arm the backstop (prepareDemoIntentCandidates skips them too).
+    if (outreachBlockForLead(lead)) continue;
     const play = demoPlayForLead(attribution, lead.id);
     if (play && play.intro >= 1 && play.demo >= 1 && !hasDemoPairHistory(lead, activities)) { due++; continue; }
     if (hasUndeliveredDemoPair(lead, activities) && !repliedLead(lead)) due++;

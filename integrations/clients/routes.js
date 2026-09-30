@@ -17,6 +17,11 @@ const { listClients, getClient, resolveClientId, publicClient } = require('./reg
 const { clientSendState } = require('./send-policy');
 const { campaignsForClient, campaignSendable } = require('./campaigns');
 const { leadsForClient } = require('./ownership');
+const { isArchivedLead } = require('../lead-archive');
+
+// Operational views describe active leads; archived ones live in Archive.
+// Identity checks (imports) keep every lead, archived included.
+const activeLeads = dataset => (dataset.leads || []).filter(lead => !isArchivedLead(lead));
 const { buildClientOverview } = require('./reporting');
 const { buildClientSuppression } = require('./suppression');
 const ledger = require('./ledger');
@@ -80,7 +85,7 @@ function registerClientRoutes(app, {
     try {
       const dataset = await loadDataset({ force: req.query.refresh === '1' });
       const overview = buildClientOverview({
-        clientId: req.client.id, leads: dataset.leads || [], activities: dataset.activities || [],
+        clientId: req.client.id, leads: activeLeads(dataset), activities: dataset.activities || [],
         senders: senders(), suppressedEmails: dataset.suppressedEmails || new Set(),
         ledger: await ledgerFor(req.client.id), env, routedLeadReady,
       });
@@ -91,7 +96,7 @@ function registerClientRoutes(app, {
   router.get('/:clientId/leads', clientParam, async (req, res) => {
     try {
       const dataset = await loadDataset({ force: req.query.refresh === '1' });
-      const mine = leadsForClient(dataset.leads || [], req.client.id);
+      const mine = leadsForClient(activeLeads(dataset), req.client.id);
       const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 200, 1), 1000);
       res.json({
         clientId: req.client.id, total: mine.length,
@@ -110,7 +115,7 @@ function registerClientRoutes(app, {
     try {
       const dataset = await loadDataset({ force: req.query.refresh === '1' });
       res.json(buildClientPipeline({
-        clientId: req.client.id, leads: leadsForClient(dataset.leads || [], req.client.id),
+        clientId: req.client.id, leads: leadsForClient(activeLeads(dataset), req.client.id),
         ledger: await ledgerFor(req.client.id), routedLeadReady, env,
       }));
     } catch (error) { fail(res, error); }
@@ -120,7 +125,7 @@ function registerClientRoutes(app, {
     try {
       const dataset = await loadDataset({ force: req.query.refresh === '1' });
       res.json(buildClientInbox({
-        clientId: req.client.id, leads: leadsForClient(dataset.leads || [], req.client.id),
+        clientId: req.client.id, leads: leadsForClient(activeLeads(dataset), req.client.id),
         activities: dataset.activities || [], ledger: await ledgerFor(req.client.id),
       }));
     } catch (error) { fail(res, error); }

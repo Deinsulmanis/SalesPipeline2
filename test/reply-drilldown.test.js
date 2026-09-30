@@ -207,7 +207,9 @@ test('the replies endpoint is read-only, authenticated, and category-filtered', 
   const body = handler.slice(0, handler.indexOf('\napp.'));
   // Records are built once in the shared snapshot; the endpoint filters them.
   assert.match(server, /buildReplyRecords\(leads, \{/);
-  assert.match(body, /filterReplyRecords\(dataset\.replyRecords, category\)/);
+  // Archived conversations are read in Archive; the Inbox filters the active records.
+  assert.match(body, /const activeRecords = dataset\.replyRecords\.filter\(record => !archivedIds\.has\(record\.leadId\)\)/);
+  assert.match(body, /filterReplyRecords\(activeRecords, category\)/);
   assert.ok(!/values\.(update|append|batchUpdate|clear)/.test(body), 'endpoint performs no sheet writes');
 });
 
