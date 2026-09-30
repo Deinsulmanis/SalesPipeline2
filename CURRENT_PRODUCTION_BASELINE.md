@@ -1,6 +1,6 @@
 # Current production baseline
 
-**Last verified:** 2026-09-29 Pacific (refs, Railway deployment, logs, read-only endpoints and read-only SQL)
+**Last verified:** 2026-09-30 Pacific (refs, Railway deployment, logs, read-only endpoints and read-only SQL)
 **Start all new work from:** `main`
 
 Read this before starting any code change. Everything under "Snapshot" was true
@@ -40,12 +40,23 @@ additionally carries only documentation (`CURRENT_PRODUCTION_BASELINE.md`,
 Railway project / service: `modest-peace` / `SalesPipeline2`
 (https://receptionist.scalelabai.ca), region us-west2.
 
-**Production SHA:** `f70e24f04b7f45356fdd7dad1c9a7120baa3ab20` (branch
+**Production SHA:** `27255082af988c1a24568098b705cf84491cf211` (branch
 `cursor/staffing-agent-shadow-production-7402`; Railway deployment
-`fd4a305e`, SUCCESS). Deployed 2026-09-29 23:25 Pacific. It is `72f9e285`
-(deployed 18:51, `CLIENT_LEDGER_ENABLED=true` since 18:54) plus the
-client-aware dashboard (`a52cc0f`, `f70e24f`). The two dashboard commits
-change no send, reply, reservation, sender-assignment or lifecycle code.
+`6fec1b85`, SUCCESS). Deployed 2026-09-30 15:51 Pacific: `f70e24f` plus
+`c0863ee` (modern email TLDs), `3f3a110` (staffing role-to-market evidence)
+and `2725508` (dental offer retired + soft Archive, below).
+
+**Dental offer RETIRED (2026-09-30) and archived.** `integrations/lead-archive.js`
+`RETIRED_OFFERS` makes every dental lead unsendable at routing, ownership,
+queue admission, refill, sequences, demo intent and the final provider gate,
+archived or not, restored or not. All 1,327 dental leads and their 10 Pipeline
+cards were archived (`offer_retired_dental`) by the migration endpoint
+`/api/ops/offer-retirement/dental`; a rerun plans 0. Non-dental lead rows were
+byte-identical before and after. Archived leads keep every event and Gmail id,
+leave active lists and counts, and live in the **Archive** workspace. Restore
+(`/api/archive/leads/:id/restore`) returns a lead to Import or held Review,
+never to a sending state. Do not re-enable dental by editing a template or a
+campaign status: the offer gate is separate and fails closed.
 
 **Live (can mutate CRM state or send):**
 - Cold outreach over Gmail: five active senders (`primary`, `tryscalelabai`,

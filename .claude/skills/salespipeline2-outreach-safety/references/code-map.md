@@ -28,6 +28,16 @@ slot synchronously). `/api/agent/status` shows `running`.
 | Threading / sender ownership | `integrations/gmail-threading.js`, `provider-ownership.js`, `gmail-followup-safety.js`, `gmail-sender-routing.js` |
 | Caps / windows | `integrations/gmail-sender-capacity.js`, `sending-window-quota.js`, `gmail-inbox-registry.js` (+ runtime overlay sheet). The boot log's cap summary is computed before the overlay loads — trust the per-window `remaining` line and `[cap] N/<ceiling>`. |
 
+## Archive and retired offers
+
+| Concern | Where |
+|---|---|
+| Archive marker, retired offers, dental recognition, archive/restore plans | `integrations/lead-archive.js` (`outreachBlockForLead` is the one question every send path asks) |
+| Enforcement | `routedLeadReady` / `validateRoute` (campaign-routing), `deriveAutomationOwnership` post-filter + rule 1b, `evaluateFreshSendSafety` (codes `archived`, `offer_retired`), `sequenceAllowedForLead`, `promotionSuppressionReason`, `pendingIntentWork`, sender-balance workload |
+| Sticky state | `[ARCHIVED` is in `SAFETY_NOTE_MARKERS` / `SEND_SUPPRESSION_TAGS`; `applyCanonicalChange` keeps an archived lead's stage (`archivedStageKept`); only restore passes `releaseMarkers: [ARCHIVE_MARKER_PREFIX]` |
+| Offer retirement migration | `integrations/offer-retirement.js`; `GET`/`POST /api/ops/offer-retirement/:offerId` (dry run, bounded CAS batches) |
+| Archive UI / API | `GET /api/archive`, `POST /api/archive/leads/:id[/restore]`, `POST /api/archive/cards/:id/restore`; `rejectArchived` guards mutation routes |
+
 ## Canonical state
 
 | Concern | Where |
