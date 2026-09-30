@@ -329,3 +329,17 @@ test('retirement source is free of control bytes (a regex word boundary once bec
   assert.equal(ARCHIVE_MARKER_PREFIX, '[ARCHIVED');
   assert.deepEqual([ARCHIVE_REASONS.OFFER_RETIRED_ROOFING, ARCHIVE_REASONS.OFFER_RETIRED_MED_SPA], ['offer_retired_roofing', 'offer_retired_med_spa']);
 });
+
+test('a lead with a Pipeline card keeps its own archive record (niche and previous stage), not the card\'s', () => {
+  const { currentArchiveRecord } = require('../integrations/lead-archive');
+  // Production shape: Prestige Medispa — ColdEmail lead promoted, card CE-<id>.
+  const lead = medSpaLead({ id: 'mrb95ojro7q94itxr7o', stage: 'Promoted', emailStatus: 'emailed', emailStep: '1' });
+  const card = { id: 'CE-mrb95ojro7q94itxr7o', company: 'Prestige Medispa', tradeType: 'Other', stage: 'lost', email: lead.email, notes: '' };
+  const leadPlan = planLeadArchive(lead, { reason: 'offer_retired_med_spa', archivedBy: 't', now: NOW, stableId, boardLead: card });
+  const cardPlan = planBoardArchive(card, { reason: 'offer_retired_med_spa', archivedBy: 't', now: new Date(NOW.getTime() + 60000), stableId, sourceLeadId: lead.id });
+  const record = currentArchiveRecord([leadPlan.event, cardPlan.event], lead.id);
+  assert.equal(record.eventId, leadPlan.event.eventId);
+  assert.equal(record.previousStage, 'Promoted');
+  assert.equal(record.retiredOffer, 'med_spa');
+  assert.equal(record.previousBoardStage, 'lost');
+});

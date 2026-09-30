@@ -326,7 +326,8 @@ function eventsForLead(activities = [], leadId) {
 
 /** How many times this lead has been restored — the archive "generation". */
 function restoreCount(activities = [], leadId) {
-  return eventsForLead(activities, leadId).filter(row => row.eventType === RESTORE_EVENT_TYPE).length;
+  return eventsForLead(activities, leadId).filter(row => row.eventType === RESTORE_EVENT_TYPE
+    && parseMetadata(row.metadata).scope !== 'board').length;
 }
 
 /**
@@ -334,8 +335,12 @@ function restoreCount(activities = [], leadId) {
  * newest lead_archived with no lead_restored after it.
  */
 function currentArchiveRecord(activities = [], leadId) {
+  // The lead's own archive record. A linked Pipeline card's archive event
+  // (scope 'board', written moments later, keyed CE-<id>) describes the card —
+  // its previous board stage, not the lead's — and must not stand in for it.
   const mine = eventsForLead(activities, leadId)
     .filter(row => row.eventType === ARCHIVE_EVENT_TYPE || row.eventType === RESTORE_EVENT_TYPE)
+    .filter(row => parseMetadata(row.metadata).scope !== 'board')
     .sort((a, b) => text(a.occurredAt).localeCompare(text(b.occurredAt)));
   const last = mine[mine.length - 1];
   if (!last || last.eventType !== ARCHIVE_EVENT_TYPE) return null;
