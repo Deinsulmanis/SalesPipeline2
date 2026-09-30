@@ -30,7 +30,7 @@ Workflow:
    production branch.
 
 On 2026-09-29 `main` was reconciled this way (merge `e06e8b0` of production
-`72f9e285`). Its code, test and config tree equals production exactly; `main`
+`72f9e285`, then merge `9541c1d` of production `f70e24f0`). Its code, test and config tree equals production exactly; `main`
 additionally carries only documentation (`CURRENT_PRODUCTION_BASELINE.md`,
 `OWNER_OPERATOR_GUIDE.md`, `salespipelineflowaudit.md`) and
 `.claude/skills/salespipeline2-outreach-safety/`.
@@ -40,10 +40,12 @@ additionally carries only documentation (`CURRENT_PRODUCTION_BASELINE.md`,
 Railway project / service: `modest-peace` / `SalesPipeline2`
 (https://receptionist.scalelabai.ca), region us-west2.
 
-**Production SHA:** `72f9e285acdaf5ed4f31a651ae224410a67c8b2d` (branch
+**Production SHA:** `f70e24f04b7f45356fdd7dad1c9a7120baa3ab20` (branch
 `cursor/staffing-agent-shadow-production-7402`; Railway deployment
-`22c40884`, SUCCESS). Deployed 2026-09-29 18:51 Pacific; redeployed 18:54 for
-`CLIENT_LEDGER_ENABLED=true`.
+`fd4a305e`, SUCCESS). Deployed 2026-09-29 23:25 Pacific. It is `72f9e285`
+(deployed 18:51, `CLIENT_LEDGER_ENABLED=true` since 18:54) plus the
+client-aware dashboard (`a52cc0f`, `f70e24f`). The two dashboard commits
+change no send, reply, reservation, sender-assignment or lifecycle code.
 
 **Live (can mutate CRM state or send):**
 - Cold outreach over Gmail: five active senders (`primary`, `tryscalelabai`,
@@ -93,7 +95,16 @@ Railway project / service: `modest-peace` / `SalesPipeline2`
   - Client send capacity (`[client-cap]` log line per pass): ScaleLab has no
     client cap (exactly the global 200/day, 21/window); Jole 0/0.
   - All five senders resolve to `scalelab` (`/api/integrations/gmail-inboxes`
-    shows `clientId`).
+    shows `clientId`; `?client=<id>` returns only that client's inboxes).
+  - **Client-aware dashboard:** the sidebar comes from each client's config
+    (`integrations/clients/navigation.js`; `workspaces` and `defaultWorkspace`
+    in `client-configs.js`). ScaleLab keeps every module. Jole has Client Ops,
+    Pipeline, Inbox, Bookings, Campaigns, Analytics and Settings, served by
+    server-scoped `GET /api/clients/:id/{pipeline,inbox,settings}` plus the
+    existing overview, meetings and opportunities routes. URLs are
+    `#<workspace>` for ScaleLab and `#<client>/<workspace>` for other clients.
+    Hidden navigation is never the boundary; every client route filters on the
+    server.
 
 **Jole Enterprise (managed client) — NOT activated:**
 - `lifecycle_status = onboarding_pending` (agreement not signed, onboarding form
@@ -104,14 +115,15 @@ Railway project / service: `modest-peace` / `SalesPipeline2`
 - Campaign #1 `JOLE_DC_MISSION_CRITICAL`: **draft** (template not ready).
   Campaigns #2 `JOLE_GULF_INDUSTRIAL` and #3 `JOLE_SHIPYARD`: **disabled
   placeholders**.
-- Verify: `GET /api/clients`, `GET /api/clients/jole/overview`.
+- Verify: `GET /api/clients`, `GET /api/clients/jole/overview`,
+  `GET /api/clients/jole/settings` (caps 0, no inboxes).
 
 **Shadow (no send, CRM or queue authority):**
 - Staffing Conversation Agent / Agent v2: `[staffing-shadow] init enabled=true mode=shadow`, every authority flag `false`.
 - Research/ICP Agent V1: manual `POST /api/agents/research/test` only; writes only `research_icp_runs`.
 
 **Pending production validation:**
-- No send window has run on `72f9e285` yet. At the first window (07:00 Pacific,
+- No send window has run on the multi-client code (`72f9e285` and later) yet. At the first window (07:00 Pacific,
   Mon-Fri) watch `[client-cap]` (ScaleLab `allowed` with `remaining` equal to the
   window ceiling; Jole `blockedBy: client_inactive`) and confirm ScaleLab sends,
   reservations confirm and `[cap]` advances normally.
