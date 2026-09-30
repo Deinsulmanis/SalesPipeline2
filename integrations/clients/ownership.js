@@ -112,11 +112,21 @@ function resolveTemplateClient(templateId) {
 }
 
 /**
- * The client a lead belongs to, from its own fields.
- * { ok: true, clientId, legacyDefault, signals } or
- * { ok: false, code: 'client_ownership_conflict', reason, signals }.
+ * The client a lead belongs to.
+ *
+ * PRIMARY: the lead's explicit `clientId` (outreach_leads.client_id, ColdEmail
+ * column Y). It must name a registered client, and the lead's routing fields
+ * must not name a different one — an explicit owner that contradicts its own
+ * niche, template or campaign is a conflict, never silently trusted.
+ *
+ * FALLBACK (legacy rows only): a blank clientId is inferred from the routing
+ * fields, exactly as before explicit ownership existed. That is how rows mirrored
+ * before the backfill resolve; it is not how new rows are owned.
+ *
+ * { ok: true, clientId, source: 'explicit' | 'inferred', legacyDefault, signals }
+ * { ok: false, code, reason, signals }
  */
-function resolveLeadClient(lead = {}) {
+function inferLeadClient(lead = {}) {
   const signals = {};
   const clients = new Set();
   for (const field of LEAD_OWNERSHIP_FIELDS) {
@@ -124,14 +134,40 @@ function resolveLeadClient(lead = {}) {
     if (found.length) signals[field] = found;
     for (const id of found) clients.add(id);
   }
+  return { signals, clients };
+}
+
+function resolveLeadClient(lead = {}) {
+  const { signals, clients } = inferLeadClient(lead);
+  const label = text(lead.id) || '(no id)';
+  const explicitRaw = text(lead.clientId);
+  if (explicitRaw) {
+    const explicit = resolveClientId(explicitRaw);
+    if (!explicit.ok) return { ok: false, code: OWNERSHIP_CONFLICT, signals, reason: `lead ${label} names ${explicit.reason}` };
+    const contradicting = [...clients].filter(id => id !== explicit.clientId);
+    if (contradicting.length) {
+      return {
+        ok: false, code: OWNERSHIP_CONFLICT, signals,
+        reason: `lead ${label} is owned by ${explicit.clientId} but its routing fields name ${contradicting.sort().join(', ')}`,
+      };
+    }
+    return { ok: true, clientId: explicit.clientId, source: 'explicit', legacyDefault: false, signals };
+  }
   if (clients.size > 1) {
     return {
       ok: false, code: OWNERSHIP_CONFLICT, signals,
-      reason: `lead ${text(lead.id) || '(no id)'} names more than one client (${[...clients].sort().join(', ')})`,
+      reason: `lead ${label} names more than one client (${[...clients].sort().join(', ')})`,
     };
   }
-  if (!clients.size) return { ok: true, clientId: DEFAULT_CLIENT_ID, legacyDefault: true, signals };
-  return { ok: true, clientId: [...clients][0], legacyDefault: false, signals };
+  if (!clients.size) return { ok: true, clientId: DEFAULT_CLIENT_ID, source: 'inferred', legacyDefault: true, signals };
+  return { ok: true, clientId: [...clients][0], source: 'inferred', legacyDefault: false, signals };
+}
+
+/** The explicit owner a new or backfilled row should be stored with, or throws. */
+function ownerForWrite(lead = {}) {
+  const resolved = resolveLeadClient(lead);
+  if (!resolved.ok) throw Object.assign(new Error(resolved.reason), { code: resolved.code });
+  return resolved.clientId;
 }
 
 /**
@@ -253,7 +289,7 @@ function leadsForClient(leads = [], clientId) {
 
 module.exports = {
   OWNERSHIP_CONFLICT, LEAD_OWNERSHIP_FIELDS, ClientOwnershipError,
-  resolveLeadClient, resolveSenderClient, resolveCampaignClient, resolveTemplateClient,
+  resolveLeadClient, inferLeadClient, ownerForWrite, resolveSenderClient, resolveCampaignClient, resolveTemplateClient,
   checkClientConsistency, assertClientConsistency, actionOwnership, checkActionOwnership,
   leadDefinitelyOtherClient, leadsForClient,
 };

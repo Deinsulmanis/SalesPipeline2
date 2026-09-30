@@ -39,6 +39,7 @@ const agentSrc = readSource(path.join(root, 'outreach-agent.js'));
 const stateSrc = readSource(path.join(root, 'integrations', 'outreach-state.js'));
 const backfillSrc = readSource(path.join(root, 'scripts', 'supabase-outreach-backfill.js'));
 const migration = readSource(path.join(root, 'supabase', 'migrations', '20260912000000_outreach_leads.sql'));
+const clientIdMigration = readSource(path.join(root, 'supabase', 'migrations', '20260930010000_outreach_leads_client_id.sql'));
 
 const SECRET = 'sb_secret_TESTONLY_not_a_real_key';
 const quiet = { log() {}, warn() {}, error() {} };
@@ -119,14 +120,16 @@ test('A1 — FIELD_MAP matches outreach-agent COLUMNS exactly, in order', () => 
   const block = agentSrc.match(/const COLUMNS = \[([\s\S]*?)\];/);
   assert.ok(block, 'outreach-agent.js must still declare COLUMNS');
   const columns = block[1].match(/'([^']+)'/g).map(s => s.slice(1, -1));
-  assert.equal(columns.length, 24, 'ColdEmail is a 24-column sheet (A:X)');
+  assert.equal(columns.length, 25, 'ColdEmail is a 25-column sheet (A:Y); Y is the explicit client owner');
+  assert.equal(columns[24], 'clientId');
   assert.deepEqual(SHEET_FIELDS, columns,
     'FIELD_MAP must list every ColdEmail column in sheet order — a new column added '
     + 'to COLUMNS without extending FIELD_MAP would silently stop being mirrored');
 });
 
-test('A2 — 21 of 24 fields are behaviour-critical; the 3 UI-only ones are named', () => {
-  assert.equal(CRITICAL_FIELDS.length, 21);
+test('A2 — 22 of 25 fields are behaviour-critical; the 3 UI-only ones are named', () => {
+  assert.equal(CRITICAL_FIELDS.length, 22);
+  assert.ok(CRITICAL_FIELDS.includes('clientId'), 'tenant ownership decides which client may send');
   assert.deepEqual([...NONCRITICAL_FIELDS].sort(),
     ['campaign_notes', 'enrichment_attempted', 'reviewCount'].sort());
   for (const field of ['stage', 'emailStatus', 'notes', 'senderInboxId', 'routingRequired',
@@ -137,6 +140,11 @@ test('A2 — 21 of 24 fields are behaviour-critical; the 3 UI-only ones are name
 
 test('A3 — every field maps to a column the migration actually creates', () => {
   for (const column of Object.values(FIELD_MAP)) {
+    if (column === 'client_id') {
+      // Added later, additively, with the ScaleLab default as the backfill.
+      assert.match(clientIdMigration, /add column if not exists client_id text not null default 'scalelab'/);
+      continue;
+    }
     const declared = new RegExp(`^\\s{2}${column}\\s`, 'm').test(migration);
     assert.ok(declared, `migration must declare column ${column}`);
   }
@@ -162,11 +170,11 @@ test('B2 — the twin is missing exactly the 15 fields findColdEmailTwins omits'
   assert.deepEqual(missing.sort(), [
     'contactName', 'city', 'tradeType', 'website', 'reviewCount', 'rating', 'tier',
     'siteContext', 'campaign', 'campaign_notes', 'enrichment_attempted', 'leadNiche',
-    'emailTemplateId', 'routingRequired', 'intendedCampaignVersion',
+    'emailTemplateId', 'routingRequired', 'intendedCampaignVersion', 'clientId',
   ].sort());
   const criticalLost = missing.filter(f => CRITICAL_FIELDS.includes(f));
-  assert.equal(criticalLost.length, 12,
-    'twelve behaviour-critical columns would be blanked — this is why the guard exists');
+  assert.equal(criticalLost.length, 13,
+    'thirteen behaviour-critical columns (ownership included) would be blanked — this is why the guard exists');
 });
 
 test('B3 — completeness is key PRESENCE, not truthiness ("" is a real value)', () => {
@@ -798,9 +806,9 @@ test('L2 — the six fields named in the Stage 3 brief are provably unblankable'
   // distinction the whole guard rests on.
   const withBlank = twinLead();
   for (const field of named) withBlank[field] = '';
-  assert.equal(missingFields(withBlank).length, 9,
-    'supplying the six named fields as blanks leaves only the other nine absent');
-  assert.equal(isCompleteLead(withBlank), false, 'still partial — nine fields remain absent');
+  assert.equal(missingFields(withBlank).length, 10,
+    'supplying the six named fields as blanks leaves only the other ten absent');
+  assert.equal(isCompleteLead(withBlank), false, 'still partial — ten fields remain absent');
 });
 
 // ── M. shadow-write failure behaviour (§12) ─────────────────────────────────

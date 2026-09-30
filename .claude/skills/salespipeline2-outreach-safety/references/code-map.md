@@ -76,7 +76,10 @@ slot synchronously). `/api/agent/status` shows `running`.
 | Client send switch | `integrations/clients/send-policy.js` (`sending.enabled` + `CLIENT_SENDING_AUTHORIZED`) |
 | Suppression scopes | `integrations/clients/suppression.js` (global → client), `ledger-store.js` `client_suppressions` |
 | Managed replies / clarifications / meetings | `reply-policy.js`, `reply-pipeline.js`, `ledger.js` |
-| Design + launch checklist | `docs/multi-client-architecture.md` |
+| Explicit owner | `outreach_leads.client_id` / ColdEmail column Y (`clientId`); inference only for blank legacy rows |
+| Tenant-scoped email | `integrations/clients/email-scope.js` (`leadsInEmailScope`, `leadsForCalendarMatching`, `OUTREACH_EMAIL_UNIQUENESS`) |
+| Client capacity | `integrations/clients/capacity.js`; `[client-cap]` log line per send pass |
+| Design, migration order + launch checklist | `docs/multi-client-architecture.md` |
 
 ## Read-only production endpoints (Basic auth)
 

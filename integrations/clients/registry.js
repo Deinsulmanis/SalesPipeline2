@@ -31,6 +31,15 @@ function validateClientConfig(config) {
     if (config.sending.clientSuppressionRequired !== true) fail('a managed client must require the client suppression store');
   }
   if (!String(config.timezone || '').trim()) fail('timezone is required');
+  const capacity = config.capacity || {};
+  const capOk = value => value === null || (Number.isInteger(value) && value >= 0);
+  if (!capOk(capacity.dailyCap) || !capOk(capacity.windowCap)) fail('capacity caps must be null or non-negative integers');
+  for (const key of ['reservedDaily', 'reservedWindow']) {
+    if (!Number.isInteger(capacity[key]) || capacity[key] < 0) fail(`capacity.${key} must be a non-negative integer`);
+  }
+  if (capacity.dailyCap !== null && capacity.reservedDaily > capacity.dailyCap) fail('capacity.reservedDaily exceeds dailyCap');
+  if (capacity.windowCap !== null && capacity.reservedWindow > capacity.windowCap) fail('capacity.reservedWindow exceeds windowCap');
+  if (!config.isDefault && (capacity.dailyCap === null || capacity.windowCap === null)) fail('a managed client needs explicit daily and window caps');
   if (!REPLY_MODES.has(config.replyPolicy?.mode)) fail('replyPolicy.mode is invalid');
   if (!SUPPRESSION_SCOPES.has(config.replyPolicy?.negativeReplySuppressionScope)) fail('replyPolicy.negativeReplySuppressionScope is invalid');
   if (!BILLING_MODELS.has(config.billing?.model)) fail('billing.model is invalid');
@@ -124,6 +133,7 @@ function publicClient(config) {
       acceptedUseCases: [...(config.qualification.acceptedUseCases || [])],
     } : null,
     billing: { ...config.billing },
+    capacity: { ...config.capacity },
     replyPolicy: { mode: config.replyPolicy.mode, negativeReplySuppressionScope: config.replyPolicy.negativeReplySuppressionScope },
   };
 }

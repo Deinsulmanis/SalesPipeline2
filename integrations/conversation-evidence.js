@@ -16,6 +16,7 @@
 
 const { headerValue, parseAddr, firstPlainText, decodeBodies } = require('./gmail-mailbox-observer');
 const { stripQuotedReply } = require('./reply-reconciliation');
+const { tenantOf, DEFAULT_CLIENT_ID } = require('./clients/email-scope');
 
 const HUMAN_TEXT_LIMIT = 1500;
 const DEFAULT_HUMAN_FETCH_LIMIT = 10;
@@ -82,18 +83,24 @@ function selectConversationEvidence(index, id) {
   let boardLead = index.boardById.get(key) || null;
   if (lead && !boardLead) boardLead = index.boardById.get(`CE-${lead.id}`) || null;
 
-  const uniqueByEmail = (map, email) => {
-    const bucket = map.get(norm(email)) || [];
+  const uniqueByEmail = (map, email, keep = () => true) => {
+    const bucket = (map.get(norm(email)) || []).filter(keep);
     return bucket.length === 1 ? bucket[0] : null;
   };
+  // Pipeline cards are ScaleLab's; a managed client's lead is never matched to
+  // one by address, and a card is never matched to another client's lead.
+  const boardClient = candidate => [DEFAULT_CLIENT_ID, ''].includes(tenantOf(candidate));
   if (!lead && boardLead) {
-    lead = index.leadsById.get(String(boardLead.id).replace(/^CE-/, '')) || uniqueByEmail(index.leadsByEmail, boardLead.email);
+    lead = index.leadsById.get(String(boardLead.id).replace(/^CE-/, '')) || uniqueByEmail(index.leadsByEmail, boardLead.email, boardClient);
   }
-  if (lead && !boardLead) boardLead = uniqueByEmail(index.boardByEmail, lead.email);
+  if (lead && !boardLead && boardClient(lead)) boardLead = uniqueByEmail(index.boardByEmail, lead.email);
   if (!lead && !boardLead) return { lead: null, boardLead: null, activities: [], selection: null };
 
   const email = norm((lead && lead.email) || (boardLead && boardLead.email));
-  const sharing = (index.leadsByEmail.get(email) || []).filter(other => !lead || other.id !== lead.id);
+  // Only a lead of the SAME client sharing the address is a shared identity.
+  const leadTenant = lead ? tenantOf(lead) : DEFAULT_CLIENT_ID;
+  const sharing = (index.leadsByEmail.get(email) || []).filter(other => (!lead || other.id !== lead.id)
+    && (!leadTenant || !tenantOf(other) || tenantOf(other) === leadTenant));
   if (sharing.length) {
     warnings.push({ code: 'email_shared_with_other_leads', detail: `${sharing.length} other ColdEmail lead(s) use this address; email-only matches were not used`, evidence: sharing.map(other => ({ source: 'coldemail_lead', eventId: null, eventType: null, messageId: null, occurredAt: null, detail: String(other.id) })) });
   }

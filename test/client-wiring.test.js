@@ -42,7 +42,9 @@ test('pin: every reply resolves its client context before any legacy handler run
 });
 
 test('pin: observers match only their own client\'s leads and route negative suppression by scope', () => {
-  assert.match(agent, /const senderLeads = senderClient\.ok\n      \? candidates\.filter\(lead => !leadDefinitelyOtherClient\(lead, senderClient\.clientId\)\)\n      : candidates;/);
+  assert.match(agent, /const senderLeads = senderClient\.ok \? leadsInEmailScope\(candidates, senderClient\.clientId\) : candidates;/);
+  // The legacy human-outbound scan correlates addresses inside the mailbox's client only.
+  assert.match(agent, /if \(mailboxClient\.ok\) leads = leadsInEmailScope\(leads, mailboxClient\.clientId\);/);
   assert.match(agent, /suppress: item => withAuth\(\(\) => routeObserverSuppression\(item, senderLeads\)\)/);
   assert.doesNotMatch(agent, /suppress: item => withAuth\(\(\) => addSuppression\(item\.email, item\.reason, item\.company, 'gmail-observer'\)\)/);
 });
@@ -50,6 +52,23 @@ test('pin: observers match only their own client\'s leads and route negative sup
 test('pin: the directory endpoint scopes rows to a client on the server', () => {
   assert.match(server, /const ids = new Set\(leadsForClient\(dataset\.leads \|\| \[\], client\.clientId\)\.map\(lead => String\(lead\.id\)\)\);/);
   assert.match(server, /registerClientRoutes\(app, \{\n  requireAuth,/);
+});
+
+test('pin: client capacity is checked before every sender choice, and a refused lead never ends the pass', () => {
+  const checks = [...agent.matchAll(/const clientCap = clientCapacityVerdict\(clientCapacity, tenantOf\(lead\)\);\n    if \(!clientCap\.allowed\) \{[^\n]*(return false|continue); \}\n    let senderChoice;/g)];
+  assert.equal(checks.length, 3, 'all three attempt sites check client capacity');
+  // Site 1 is inside attemptFollowUp (a function); sites 2 and 3 are loop bodies
+  // of the send pass, where `return` would stop every other client's sends.
+  assert.deepEqual(checks.map(match => match[1]), ['return false', 'continue', 'continue']);
+  assert.equal((agent.match(/onProviderSuccess: providerSuccessCounter\(selectedSender, lead\),/g) || []).length, 3);
+  assert.match(agent, /recordClientSend\(clientCapacity, tenantOf\(lead\)\);/);
+});
+
+test('pin: ownership is explicit from the first write; legacy imports stamp scalelab', () => {
+  assert.match(server, /clientId: DEFAULT_CLIENT_ID,\n        \};/);
+  assert.match(server, /lead\.clientId = DEFAULT_CLIENT_ID;/);
+  assert.match(server, /const existingEmails = await existingColdEmailAddresses\(DEFAULT_CLIENT_ID\);/);
+  assert.match(server, /coldEmailLeads: leadsForCalendarMatching\(dataset\.leads\), boardLeads,/);
 });
 
 test('legacy: observer scoping is the identity for every production lead shape', () => {
