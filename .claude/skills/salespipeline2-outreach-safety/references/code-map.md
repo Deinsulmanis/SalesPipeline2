@@ -67,6 +67,20 @@ slot synchronously). `/api/agent/status` shows `running`.
 | Launch gate | `server.js` → `observeCalendarBeforeAutomation`, `launchAutomationAfterCalendar` (`[Calendar safety] … blocked` in logs) |
 | Booking → promotion | `server.js` `applyCalendarPlanItem`; `integrations/promotion-policy.js` (`promotionSuppressionReason` blocks automatic promotion of suppressed leads) |
 
+## Managed clients
+
+| Concern | Where |
+|---|---|
+| Client registry / config | `integrations/clients/registry.js`, `client-configs.js` (Jole: `onboarding_pending`, not active, sending disabled, caps 0, no platform access) |
+| Ownership (lead/sender/campaign/template) | `integrations/clients/ownership.js` → `checkClientConsistency`; enforced in `validateRoute`, `routedLeadReady`, `allowedForLead`, `evaluateFreshSendSafety`, `withOutboundReservation`, observers, reply loop |
+| Client send switch | `integrations/clients/send-policy.js`: `lifecycleStatus`/`active` (else `client_inactive`) → `sending.enabled` + `CLIENT_SENDING_AUTHORIZED` (else `client_sending_disabled`); also enforced at `withGmailProviderSend` |
+| Suppression scopes | `integrations/clients/suppression.js` (global → client), `ledger-store.js` `client_suppressions` |
+| Managed replies / clarifications / meetings | `reply-policy.js`, `reply-pipeline.js`, `ledger.js` |
+| Explicit owner | `outreach_leads.client_id` / ColdEmail column Y (`clientId`); inference only for blank legacy rows |
+| Tenant-scoped email | `integrations/clients/email-scope.js` (`leadsInEmailScope`, `leadsForCalendarMatching`, `OUTREACH_EMAIL_UNIQUENESS`) |
+| Client capacity | `integrations/clients/capacity.js`; `[client-cap]` log line per send pass |
+| Design, migration order + launch checklist | `docs/multi-client-architecture.md` |
+
 ## Read-only production endpoints (Basic auth)
 
 `/api/agent/status`, `/api/send-lock/health`, `/api/send-lock/reservations`,
