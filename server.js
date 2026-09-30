@@ -138,7 +138,7 @@ const { simulateRouting } = require('./integrations/gmail-routing-simulation');
 const { EMAIL_TEMPLATES, LEAD_TYPES, LEAD_TYPE_IDS, normalizeNiche, leadTypeLabel, isKnownLeadType, campaignVersionsForRoute, validateCampaignVersionRoute, validateRoute, routedLeadReady } = require('./integrations/campaign-routing');
 const {
   ARCHIVE_MARKER_PREFIX, ARCHIVE_EVENT_TYPE, ARCHIVED_REPLY_EVENT_TYPE, ARCHIVE_REASONS, ARCHIVE_REASON_LABELS,
-  isArchivedLead, archiveReasonFromNotes, retiredOfferBlock, retiredOfferById, currentArchiveRecord,
+  isArchivedLead, archiveReasonFromNotes, retiredOfferBlock, retiredOfferById, currentArchiveRecord, isProtectedRecord,
   planLeadArchive, planBoardArchive, planLeadRestore, planBoardRestore,
 } = require('./integrations/lead-archive');
 const { planOfferRetirement } = require('./integrations/offer-retirement');
@@ -5510,7 +5510,7 @@ function archiveListRows(dataset, unresolved) {
     return {
       kind: 'coldemail', id: row.id, company: row.company || '', contactName: row.contactName || '', email: row.email || '',
       city: lead.city || '', tradeType: lead.tradeType || '', campaign: campaignLabelFor(lead), campaignVersion: row.campaignVersion || '',
-      niche: normalizedRouteNicheFor(lead) || String(record.retiredOffer || ''),
+      niche: String(record.retiredOffer || '') || normalizedRouteNicheFor(lead),
       previousStage: record.previousStage || '', currentStage: lead.stage || '',
       emailStatus: lead.emailStatus || '', emailStep: lead.emailStep || '', lastEmailedAt: lead.lastEmailedAt || '',
       senderInboxId: row.senderInboxId || record.senderInboxId || '', senderEmail: row.senderEmail || '',
@@ -5694,6 +5694,7 @@ function retirementView(plan) {
     toArchive: { leads: plan.leadPlans.length, cards: plan.boardPlans.length },
     alreadyArchived: { leads: plan.alreadyArchivedLeads, cards: plan.alreadyArchivedCards },
     cards: plan.cards,
+    protectedRecords: plan.protectedRecords, spared: plan.spared,
   };
 }
 
@@ -5785,6 +5786,7 @@ app.post('/api/archive/leads/:id', requireAuth, async (req, res) => {
   if (!Object.values(ARCHIVE_REASONS).includes(reason)) return res.status(422).json({ error: 'unknown archive reason' });
   const blocked = archiveMutationBlocked({ duringSendWindow: false });
   if (blocked) return res.status(409).json({ error: blocked });
+  if (isProtectedRecord({ id: req.params.id })) return res.status(409).json({ error: 'This is a protected client record and is never archived', code: 'protected_client' });
   try {
     const inputs = await loadArchiveInputs();
     const lead = inputs.leads.find(row => row.id === req.params.id);

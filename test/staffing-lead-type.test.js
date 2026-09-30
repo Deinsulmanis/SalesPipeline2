@@ -145,9 +145,10 @@ test('M. staffing can never take the legacy pre-routing bypass', () => {
     assert.equal(gate.ok, false, JSON.stringify(lead));
     assert.notEqual(gate.legacy, true, 'staffing must not be treated as a legacy row');
   }
-  // Legitimate legacy roofing rows keep the bypass; legacy dental is retired, never bypassed.
+  // Legacy dental and roofing are retired (2026-09-30): the bypass never reaches them.
   assert.equal(routedLeadReady({ leadNiche: 'dental', routingRequired: '' }).code, 'offer_retired');
-  assert.deepEqual(routedLeadReady({ leadNiche: 'roofing', routingRequired: 'false' }), { ok: true, legacy: true });
+  assert.equal(routedLeadReady({ leadNiche: 'roofing', routingRequired: 'false' }).code, 'offer_retired');
+  assert.deepEqual(routedLeadReady({ tradeType: 'Plumber', routingRequired: 'false' }), { ok: true, legacy: true });
   assert.deepEqual(routedLeadReady({}), { ok: true, legacy: true }, 'unrouted legacy rows are unaffected');
 });
 
@@ -202,5 +203,5 @@ test('Z. dental and roofing behaviour is unchanged by the lead-type work', () =>
   assert.equal(familyForLead({}), 'unrouted', 'blank niche must not inherit dental');
   assert.equal(offerForLead({ leadNiche: 'dental' }).targetCustomer, 'dental practices');
   assert.equal(campaignVersionsForRoute({ niche: 'dental' }).length, 0, 'dental was retired on 2026-09-30: no version is routable');
-  assert.ok(campaignVersionsForRoute({ niche: 'roofing' }).length > 0, 'roofing still has an active version');
+  assert.equal(campaignVersionsForRoute({ niche: 'roofing' }).length, 0, 'roofing was retired on 2026-09-30: no version is routable');
 });

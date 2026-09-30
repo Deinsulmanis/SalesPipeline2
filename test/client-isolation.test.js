@@ -48,12 +48,12 @@ const scalelabDental = (extra = {}) => ({
   campaign: 'Ontario List', senderInboxId: 'primary', routingRequired: 'true', tradeType: 'Dentist', ...extra,
 });
 const legacyBlank = () => ({ id: 'legacy-1', email: 'x@legacy-test.invalid', leadNiche: '', emailTemplateId: '', intendedCampaignVersion: '', campaign: '', senderInboxId: '', tradeType: '' });
-// A live ScaleLab cold lead now that dental is retired: a legacy med-spa row.
+// A live ScaleLab cold lead now that dental, roofing and med spa are retired: a legacy trades row.
 const scalelabLegacy = (extra = {}) => ({
-  id: 'sl-legacy-1', company: 'Glow Med Spa', email: 'hello@glow-test.invalid',
+  id: 'sl-legacy-1', company: 'Glow Plumbing', email: 'hello@glow-test.invalid',
   stage: 'Queued', emailStatus: '', emailStep: '', notes: '', leadNiche: '', emailTemplateId: '',
-  intendedCampaignVersion: '', campaign: 'toronto-medspa-jul', senderInboxId: 'primary', routingRequired: '',
-  tradeType: 'Medical spa', ...extra,
+  intendedCampaignVersion: '', campaign: 'bc-trades-jul', senderInboxId: 'primary', routingRequired: '',
+  tradeType: 'Plumber', ...extra,
 });
 
 // ── CLIENT REGISTRY ────────────────────────────────────────────────────────
@@ -98,7 +98,7 @@ test('ownership: every production lead shape resolves to ScaleLab without a stor
     scalelabDental(), legacyBlank(),
     { leadNiche: 'industrial_staffing', emailTemplateId: 'industrial-staffing-employer-v1', intendedCampaignVersion: 'industrial_staffing_employer_acquisition_v1', campaign: 'Industrial Staffing Agency', senderInboxId: 'scalelabaiteam' },
     { leadNiche: 'roofing', emailTemplateId: 'roofing-survey-v1', campaign: 'BC Roofing Survey' },
-    { campaign: 'toronto-medspa-jul' }, { campaign: 'Campaign #2' },
+    { campaign: 'bc-trades-jul' }, { campaign: 'Campaign #2' },
   ]) {
     const verdict = resolveLeadClient(lead);
     assert.equal(verdict.ok, true, JSON.stringify(lead));

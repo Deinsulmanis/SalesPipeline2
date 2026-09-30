@@ -37,8 +37,8 @@ function outreachOnlyLead(overrides = {}) {
 }
 
 // The ownership mechanics on a live lead: the same shape, a non-retired offer.
-const liveShape = () => outreachOnlyLead({ leadNiche: '', campaign: 'toronto-medspa-jul', emailTemplateId: '',
-  intendedCampaignVersion: '', routingRequired: '', tradeType: 'Medical spa' });
+const liveShape = () => outreachOnlyLead({ leadNiche: '', campaign: 'bc-trades-jul', emailTemplateId: '',
+  intendedCampaignVersion: '', routingRequired: '', tradeType: 'Plumber' });
 const ownershipFor = (boardLead, lead = liveShape()) => deriveAutomationOwnership(lead, {
   boardLead,
   activities: [

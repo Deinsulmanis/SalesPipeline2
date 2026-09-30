@@ -11,7 +11,8 @@
  */
 
 const {
-  retiredOfferFor, retiredOfferById, isArchivedLead, dentalSignals,
+  retiredOfferFor, retiredOfferById, isArchivedLead, dentalSignals, roofingSignals, medSpaSignals,
+  PROTECTED_RECORDS, isProtectedRecord,
   planLeadArchive, planBoardArchive, eventsForLead, archiveReasonFromNotes,
 } = require('./lead-archive');
 const { sendSuppressionReason } = require('./pipeline-state');
@@ -62,6 +63,37 @@ function sendableNow(lead, { suppressedEmails = new Set(), now = new Date(), env
  *   offer, summary, leadPlans, boardPlans, cards, alreadyArchivedLeads, alreadyArchivedCards
  * }
  */
+// An offer's own fields on a record, ignoring the protected-client exemption:
+// used only to report which protected records the retirement would otherwise
+// have reached.
+const RAW_SIGNALS = Object.freeze({ dental: dentalSignals, roofing: roofingSignals, med_spa: medSpaSignals });
+const companyKey = value => norm(value).replace(/[^a-z0-9]/g, '');
+
+/**
+ * Every protected client record must be present exactly once, un-archived, at
+ * its recorded stage and company. Anything else means the identity is no longer
+ * certain, and a migration that cannot be sure it is sparing the right record
+ * must not run at all. Throws; never returns a partial verdict.
+ */
+function verifyProtectedRecords({ leads = [], boardLeads = [], archivedBoardLeads = [] } = {}) {
+  const records = [...leads, ...boardLeads, ...archivedBoardLeads];
+  return PROTECTED_RECORDS.map(record => {
+    const matches = records.filter(item => text(item.id).trim() === record.id);
+    if (matches.length !== 1) {
+      throw new Error(`protected client ${record.client} (${record.id}) resolves to ${matches.length} records; refusing to plan`);
+    }
+    const [found] = matches;
+    if (isArchivedLead(found)) throw new Error(`protected client ${record.client} (${record.id}) is archived; refusing to plan`);
+    if (norm(found.stage) !== record.stage) {
+      throw new Error(`protected client ${record.client} (${record.id}) is at stage "${found.stage}", not ${record.stage}; refusing to plan`);
+    }
+    if (!companyKey(found.company).includes(record.companyKey)) {
+      throw new Error(`protected client ${record.client} (${record.id}) names company "${found.company}"; refusing to plan`);
+    }
+    return { id: record.id, client: record.client, contact: record.contact, company: found.company, stage: found.stage, verified: true };
+  });
+}
+
 function planOfferRetirement({
   offerId, leads = [], activities = [], boardLeads = [], archivedBoardLeads = [],
   suppressedEmails = new Set(), unresolvedByLead = new Map(),
@@ -69,7 +101,10 @@ function planOfferRetirement({
 } = {}) {
   const offer = retiredOfferById(offerId);
   if (!offer) throw new Error(`"${offerId}" is not a retired offer`);
-  const offerLeads = leads.filter(lead => (retiredOfferFor(lead) || {}).offer === offer);
+  // Fail closed before anything else: the protected clients must be exactly
+  // where they were verified to be.
+  const protectedRecords = verifyProtectedRecords({ leads, boardLeads, archivedBoardLeads });
+  const offerLeads = leads.filter(lead => !isProtectedRecord(lead) && (retiredOfferFor(lead) || {}).offer === offer);
   const ids = new Set(offerLeads.map(lead => text(lead.id)));
   const emails = new Set(offerLeads.map(lead => norm(lead.email)).filter(Boolean));
 
@@ -85,15 +120,24 @@ function planOfferRetirement({
   // Pipeline cards that belong to this offer: a card for one of its leads (by
   // foreign key or exact email), or a board-only card whose own fields name the
   // offer. Company names are display text and never decide this.
-  const cardBelongs = card => {
+  const cardLink = card => {
     const id = text(card.id);
     if (id.startsWith('CE-') && ids.has(id.slice(3))) return 'coldemail_id';
     if (norm(card.email) && emails.has(norm(card.email))) return 'coldemail_email';
-    return offer.id === 'dental' && dentalSignals(card).length ? 'card_fields' : '';
+    return '';
   };
-  const cards = [...boardLeads, ...archivedBoardLeads]
+  const cardBelongs = card => {
+    if (isProtectedRecord(card)) return '';           // never planned, whatever it matches
+    return cardLink(card) || ((retiredOfferFor(card) || {}).offer === offer ? 'card_fields' : '');
+  };
+  const allCards = [...boardLeads, ...archivedBoardLeads];
+  const cards = allCards
     .map(card => ({ card, matchedBy: cardBelongs(card) }))
     .filter(item => item.matchedBy);
+  // Protected records this retirement would otherwise have reached.
+  const spared = allCards.filter(card => isProtectedRecord(card)
+    && (cardLink(card) || RAW_SIGNALS[offer.id](card).length))
+    .map(card => protectedRecords.find(record => record.id === card.id));
   const cardFor = lead => cards.find(item => text(item.card.id) === `CE-${lead.id}`)
     || cards.find(item => norm(item.card.email) && norm(item.card.email) === norm(lead.email)) || null;
 
@@ -105,6 +149,9 @@ function planOfferRetirement({
     held: 0, suppressed: 0,
     events: 0, providerMessageIds: 0, providerThreadIds: 0,
     cards: cards.length, cardsArchived: cards.filter(item => isArchivedLead(item.card)).length,
+    protected: spared.length,
+    closedWon: offerLeads.filter(lead => ['closed_won', 'won'].includes(norm(lead.stage))).length
+      + cards.filter(item => ['closed_won', 'won'].includes(norm(item.card.stage))).length,
     byStage: {}, bySender: {}, bySignal: {},
   };
   const messageIds = new Set();
@@ -176,7 +223,8 @@ function planOfferRetirement({
       archived: isArchivedLead(card), archiveReason: archiveReasonFromNotes(card.notes),
     })),
     alreadyArchivedLeads, alreadyArchivedCards,
+    protectedRecords, spared,
   };
 }
 
-module.exports = { planOfferRetirement, sendableNow, followUpDueByTime, neverSent };
+module.exports = { planOfferRetirement, verifyProtectedRecords, sendableNow, followUpDueByTime, neverSent };
