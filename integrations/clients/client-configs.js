@@ -22,6 +22,11 @@ const SCALELAB = Object.freeze({
   activation: null,
   kind: 'operator',
   platformAccess: 'operator',
+  // Dashboard workspaces (integrations/clients/navigation.js catalog).
+  workspaces: Object.freeze(['clients', 'pipeline', 'inbox', 'bookings', 'outreach', 'campaigns',
+    'analytics', 'staffing', 'sequences', 'health', 'settings']),
+  defaultWorkspace: 'pipeline',
+  terminology: Object.freeze({ lead: 'lead', leads: 'leads', prospect: 'prospect' }),
   // The default client owns every record that asserts no other client. Its
   // legacy campaigns are recognised by the same family keywords
   // campaign-versions.js familyFromText() uses, so ownership and the legacy
@@ -83,6 +88,11 @@ const JOLE = Object.freeze({
   }),
   activation: Object.freeze({ activatedBy: '', activatedAt: '' }),
   kind: 'managed_client',
+  // The internal ScaleLab workspace for operating Jole. Navigation only — every
+  // view is still scoped to Jole on the server.
+  workspaces: Object.freeze(['clients', 'pipeline', 'inbox', 'bookings', 'campaigns', 'analytics', 'settings']),
+  defaultWorkspace: 'clients',
+  terminology: Object.freeze({ lead: 'employer lead', leads: 'employer leads', prospect: 'employer' }),
   // Jole never operates SalesPipeline2. There is no login, account or
   // permission for it anywhere in this system.
   platformAccess: 'none',
