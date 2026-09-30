@@ -34,6 +34,7 @@
  */
 
 const { classify: classifyLeadEmail } = require('../check-leads');
+const { tenantOf, groupByTenant, DEFAULT_CLIENT_ID } = require('./clients/email-scope');
 const {
   MANUAL_HOLD_TAG, hasManualHold, manualHoldReleased, stageRequiresHold,
   deriveAutomationState, automationConflict, AUTOMATION_STATES,
@@ -196,7 +197,8 @@ function buildIndex({ leads = [], boardLeads = [], activities = [] }) {
       boardToLead.set(board.id, direct);
       continue;
     }
-    const matches = byEmail.get(norm(board.email)) || [];
+    // Pipeline cards are ScaleLab's: another client's lead is never their twin.
+    const matches = (byEmail.get(norm(board.email)) || []).filter(lead => [DEFAULT_CLIENT_ID, ''].includes(tenantOf(lead)));
     if (matches.length === 1) boardToLead.set(board.id, matches[0].id);
   }
   return { byId, byEmail, activityByLead, boardToLead };
@@ -223,9 +225,11 @@ function identityChecks({ leads, boardLeads }, index) {
     : pass('identity.malformed_email', CATEGORY.IDENTITY, 'Every ColdEmail address passes the sender\'s own validity classifier.'));
 
   // Duplicate normalized identities.
+  // Email identity is unique per client: the same address under two clients is
+  // legitimate; two rows for it inside one client (or an unowned row) is not.
   const duplicates = [...index.byEmail.entries()]
-    .filter(([, bucket]) => bucket.length > 1)
-    .map(([email, bucket]) => ({ email, count: bucket.length, ids: bucket.map(l => l.id) }));
+    .flatMap(([email, bucket]) => groupByTenant(bucket).filter(group => group.length > 1)
+      .map(group => ({ email, count: group.length, ids: group.map(l => l.id) })));
   out.push(duplicates.length
     ? finding({
       id: 'identity.duplicate_coldemail', category: CATEGORY.IDENTITY,

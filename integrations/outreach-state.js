@@ -65,6 +65,8 @@
  */
 
 const { mirrorConfig } = require('./supabase-mirror');
+const { resolveLeadClient } = require('./clients/ownership');
+const { resolveClientId, DEFAULT_CLIENT_ID } = require('./clients/registry');
 
 const TABLE = 'outreach_leads';
 const REQUEST_TIMEOUT_MS = 5000;
@@ -85,6 +87,8 @@ const FIELD_MAP = Object.freeze({
   enrichment_attempted: 'enrichment_attempted', leadNiche: 'lead_niche',
   senderInboxId: 'sender_inbox_id', emailTemplateId: 'email_template_id',
   routingRequired: 'routing_required', intendedCampaignVersion: 'intended_campaign_version',
+  // Y — explicit tenant owner (supabase/migrations/20260930010000_outreach_leads_client_id.sql).
+  clientId: 'client_id',
 });
 const SHEET_FIELDS = Object.freeze(Object.keys(FIELD_MAP));
 
@@ -199,6 +203,15 @@ function toOutreachLeadRow(lead = {}, { sheetRow = null, now = new Date() } = {}
   const stamp = now.toISOString();
   const row = {};
   for (const [field, column] of Object.entries(FIELD_MAP)) row[column] = text(lead[field]);
+  // client_id is NOT NULL DEFAULT 'scalelab' with a foreign key. A full row
+  // writes it only for a MANAGED client: the default client's owner is exactly
+  // what the column default supplies on insert and never changes afterwards,
+  // so ScaleLab writes never depend on the column (a deploy that ran ahead of
+  // its migration cannot break them). A blank owner is never written: an
+  // insert takes the default, an update keeps the stored owner. A row that
+  // reaches here blank but routed to a managed client is stored as the default
+  // and then contradicts its own routing fields — refused everywhere.
+  if (!row.client_id || row.client_id === DEFAULT_CLIENT_ID) delete row.client_id;
   // Derived, for indexing only; the text columns above stay the source of truth.
   row.last_emailed_at_ts = isoOrNull(lead.lastEmailedAt);
   row.email_step_int = intOrNull(lead.emailStep);
@@ -221,6 +234,9 @@ function toOutreachLeadPatch(id, fields = {}, { now = new Date() } = {}) {
   const unknown = names.filter(field => !Object.prototype.hasOwnProperty.call(FIELD_MAP, field));
   if (unknown.length) throw new Error(`unknown ColdEmail field(s): ${unknown.join(', ')}`);
   if (!names.length) throw new Error('toOutreachLeadPatch requires at least one field');
+  if (names.includes('clientId') && !resolveClientId(fields.clientId).ok) {
+    throw new Error('clientId must name a registered client; ownership is never cleared');
+  }
 
   const stamp = now.toISOString();
   const patch = { lead_id: leadId, updated_at: stamp, mirrored_at: stamp };
@@ -441,10 +457,17 @@ async function getOutreachLeadById(id, options = {}) {
   return { ...result, lead: result.ok ? (result.leads[0] || null) : null };
 }
 
+// Email is unique per client, not globally. With a clientId this is one lead
+// or none; without one, two clients' leads for the same address are reported as
+// ambiguous rather than one of them being returned arbitrarily.
 async function getOutreachLeadByEmail(email, options = {}) {
   const normalized = String(email || '').trim().toLowerCase();
   if (!normalized) return { ok: false, lead: null, reason: 'no email supplied' };
-  const result = await selectLeads(`select=*&email_normalized=${eqFilter(normalized)}&limit=1`, options);
+  const client = options.clientId ? resolveClientId(options.clientId) : null;
+  if (client && !client.ok) return { ok: false, lead: null, reason: client.reason };
+  const scope = client ? `&client_id=${eqFilter(client.clientId)}` : '';
+  const result = await selectLeads(`select=*&email_normalized=${eqFilter(normalized)}${scope}&limit=2`, options);
+  if (result.ok && result.leads.length > 1) return { ...result, ok: false, lead: null, ambiguous: true, reason: 'address belongs to more than one client; pass clientId' };
   return { ...result, lead: result.ok ? (result.leads[0] || null) : null };
 }
 
@@ -532,6 +555,15 @@ function compareOutreachLead(sheetLead = {}, mirroredLead = null) {
   const critical = [];
   const noncritical = [];
   for (const field of SHEET_FIELDS) {
+    if (field === 'clientId') {
+      // Ownership parity is on the EFFECTIVE owner: a Sheets cell not yet
+      // backfilled (blank, inferred scalelab) agrees with a stored 'scalelab';
+      // 'jole' in one store and 'scalelab' (or a conflict) in the other does not.
+      const a = resolveLeadClient(sheetLead);
+      const b = resolveLeadClient(mirroredLead);
+      if (!(a.ok && b.ok && a.clientId === b.clientId)) critical.push(field);
+      continue;
+    }
     if (text(sheetLead[field]) === text(mirroredLead[field])) continue;
     (NONCRITICAL_FIELDS.includes(field) ? noncritical : critical).push(field);
   }

@@ -4,6 +4,7 @@ const { classify } = require('../check-leads');
 const { sendSuppressionReason } = require('./pipeline-state');
 const { leadHasReply } = require('./reply-analytics');
 const { deriveAutomationOwnership } = require('./automation-ownership');
+const { resolveLeadClient } = require('./clients/ownership');
 const { isStaffingCampaign, staffingReviewStatus, renderStaffingEmail, validateStaffingEmail } = require('./staffing-campaign');
 
 const normalize = value => String(value || '').trim().toLowerCase();
@@ -15,8 +16,17 @@ function queueEligibility(lead, {
   env, mailingAddress, companyName, website,
 } = {}) {
   if (!lead.id || !lead.email || classify(lead.email) !== 'CLEAN') return { ok: false, reason: 'invalid identity' };
-  if (leads.filter(item => item.id === lead.id).length !== 1
-    || leads.filter(item => normalize(item.email) === normalize(lead.email)).length !== 1) {
+  // Email identity is unique per client: another client's lead for the same
+  // address is not a duplicate, a second row inside this client (or a row whose
+  // owner is unknown) is.
+  const owner = resolveLeadClient(lead);
+  if (!owner.ok) return { ok: false, reason: owner.reason };
+  const sameAddress = leads.filter(item => normalize(item.email) === normalize(lead.email));
+  const sameClientAddress = sameAddress.filter(item => {
+    const other = resolveLeadClient(item);
+    return !other.ok || other.clientId === owner.clientId;
+  });
+  if (leads.filter(item => item.id === lead.id).length !== 1 || sameClientAddress.length !== 1) {
     return { ok: false, reason: 'ambiguous lead identity' };
   }
   if (!['Import', 'Queued'].includes(lead.stage)) return { ok: false, reason: `stage ${lead.stage || '(blank)'} is not eligible to queue` };

@@ -40,9 +40,17 @@ function grabFn(src, name) {
 }
 
 // Evaluate lifted functions inside a sandbox holding only the deps they need.
+// The ColdEmail layout and client-ownership helpers findColdEmailTwins uses,
+// taken from the real source so the sandbox cannot drift from production.
+const CE_COLUMNS_SRC = serverSrc.slice(serverSrc.indexOf('const CE_COLUMNS'), serverSrc.indexOf('const CE_COL_RANGE'));
+const CE_COLUMNS = [...CE_COLUMNS_SRC.matchAll(/'([^']+)'/g)].map(match => match[1]);
+const { leadDefinitelyOtherClient } = require('../integrations/clients/ownership');
+const { DEFAULT_CLIENT_ID } = require('../integrations/clients/registry');
+
 function load(src, names, context) {
   const sandbox = { module: {}, exports: {}, console, JSON, String, Number, Boolean,
-    Object, Array, Date, Math, parseInt, parseFloat, isNaN, RegExp, Error, Promise, ...context };
+    Object, Array, Date, Math, parseInt, parseFloat, isNaN, RegExp, Error, Promise,
+    CE_COLUMNS, CE_COL_RANGE: 'ColdEmail!A:Y', leadDefinitelyOtherClient, DEFAULT_CLIENT_ID, ...context };
   vm.createContext(sandbox);
   const code = names.map(n => grabFn(src, n)).join('\n\n')
     + '\n;(' + JSON.stringify(names) + ').forEach(n => { globalThis[n + "__fn"] = eval(n); });';

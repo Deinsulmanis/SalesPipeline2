@@ -35,6 +35,12 @@ const SCALELAB = Object.freeze({
     // configured store that cannot be read still refuses every client.
     clientSuppressionRequired: false,
   }),
+  // Client-level send capacity, beneath the global system ceilings. null means
+  // "no client cap": ScaleLab keeps exactly the shared global capacity it has
+  // today. reservedDaily / reservedWindow hold back capacity other clients may
+  // not consume; 0 until a managed client launches (set them together with
+  // that client's caps, before its sending is enabled).
+  capacity: Object.freeze({ dailyCap: null, windowCap: null, reservedDaily: 0, reservedWindow: 0 }),
   timezone: 'America/Vancouver',
   representative: null,
   escalation: Object.freeze({ owner: 'scalelab', channel: 'internal' }),
@@ -71,6 +77,9 @@ const JOLE = Object.freeze({
     requiresEnvAuthorization: true,
     clientSuppressionRequired: true,
   }),
+  // Safe until launch: zero capacity. Real numbers are a launch decision and
+  // are set in the same reviewed commit that enables sending.
+  capacity: Object.freeze({ dailyCap: 0, windowCap: 0, reservedDaily: 0, reservedWindow: 0 }),
   // Assumed; confirm with Jorge before launch (send windows are still the
   // shared Pacific windows until per-client windows exist).
   timezone: 'America/Chicago',

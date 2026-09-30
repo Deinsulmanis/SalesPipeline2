@@ -64,34 +64,75 @@ the rules below, with no backfill write.
 | `reporting.js` | Server-side client-scoped metrics. |
 | `reply-pipeline.js` | Handling of replies for clients with a managed (non-legacy) reply policy. |
 | `routes.js` | Internal `/api/clients/*` endpoints (Basic-auth, operator only). |
+| `email-scope.js` | Tenant-scoped email identity and the uniqueness interlock. |
+| `capacity.js` | Client daily / window caps and reservations. |
+| `ownership-backfill.js` | Plans the Sheets column Y backfill and refuses on any split brain. |
 
-### Lead ownership is derived, not stored
+### Lead ownership is explicit
 
-Adding a tenant column to `ColdEmail` would move ~30 A:X read/write sites in
-`server.js` and `outreach-agent.js` (the concurrent session's files) and add a
-column that can drift from the routing fields that actually decide a send.
-Instead a lead's client is a pure function of fields both stores already carry
-verbatim — `leadNiche`, `emailTemplateId`, `intendedCampaignVersion`,
-`campaign`, `tradeType`, `senderInboxId`:
+`lead.clientId` is the canonical owner: `outreach_leads.client_id` (NOT NULL,
+foreign key to `clients`) and ColdEmail column **Y**. It is the 25th canonical
+field, mirrored and parity-checked like the other 24.
 
-- each field yields zero or one client signal (registry lookup, a client's
-  namespace prefix such as `jole_`, or a legacy ScaleLab family keyword such as
-  `dent` / `roof` / `staffing`);
-- no signal ⇒ `scalelab` (the legacy default, backed by the data above);
-- one client ⇒ that client;
-- two clients ⇒ `client_ownership_conflict`, which blocks routing, queueing,
-  reservation and sending. Nothing is repaired or guessed at send time.
+- **Primary:** an explicit `clientId` must name a registered client, and the
+  lead's routing fields (`leadNiche`, `emailTemplateId`,
+  `intendedCampaignVersion`, `campaign`, `tradeType`) must not name a different
+  one. A contradiction is `client_ownership_conflict`.
+- **Fallback (legacy rows only):** a blank `clientId` is inferred from those
+  routing fields; no signal means `scalelab`. This only covers rows mirrored
+  before the backfill; every write path now stamps an explicit owner (legacy
+  ScaleLab imports stamp `scalelab`, managed imports stamp their client).
+- A blank owner is never written to Supabase: inserts take the column default,
+  updates keep the stored owner, and a patch cannot clear it. The legacy
+  full-row PUT writes A:X only and can never change column Y.
+- Parity compares the **effective** owner, so a Sheets cell not yet backfilled
+  agrees with a stored `scalelab`, while `jole` in one store and `scalelab` in
+  the other is a critical mismatch.
 
-Because Sheets and Supabase hold identical strings for those fields, a lead
-cannot be `jole` in one store and `scalelab` in the other: there is no split
-brain to reconcile. `scripts/client-ownership-audit.js` reports the
-distribution and any conflicts read-only.
+At operational boundaries lead ↔ campaign ↔ template ↔ sender must agree, as
+before; the lead side is now its explicit owner.
 
-The legacy default is **one-directional**: absence of ownership resolves to
-`scalelab`; a non-default client must be asserted explicitly by every entity
-(lead signals, registered sender, registered campaign, registered template).
-A Jole lead with an unregistered or ScaleLab sender is therefore a conflict,
-never a fallback.
+### Email identity is tenant-scoped
+
+One lead per `(client_id, normalized email)`. The same address may be a
+prospect of two clients; inside one client it is exactly one lead, so no client
+can mail a person twice. Every email → lead lookup happens inside one client's
+scope (`integrations/clients/email-scope.js`), and an ambiguous match fails
+safe:
+
+| Path | Scope |
+|---|---|
+| Gmail observers, legacy human-outbound scan | the inbox's client (`leadsInEmailScope`). Unscoped, the observer throws on an ambiguous identity and would stall. |
+| Google Calendar booking match | clients whose booking mode is Calendar sync (ScaleLab). Unscoped, a duplicate is a conflict, and a failed Calendar sync blocks all automation. |
+| Pipeline board twins, stage-sequence twins, board ↔ lead joins | ScaleLab only (the board is ScaleLab's) |
+| Queue identity | one lead per address inside the lead's client |
+| CRM Health / analytics duplicate checks | grouped per client |
+| `getOutreachLeadByEmail` | takes `clientId`; refuses to pick one of two clients' leads |
+| Imports | dedupe inside the importing client once tenant-scoped (below) |
+
+Conflicted leads (no single owner) stay visible to every scope for protective
+handling (opt-outs, bounces) unless their address collides with an in-scope
+lead. Global suppression (the Suppression list) still blocks an address for
+every client; client suppression stays client-specific.
+
+**Interlock.** `20260930010000` adds `client_id` and the per-client unique
+index *alongside* the global one. `20260930020000` drops the global index and
+is applied only after this code is live. `OUTREACH_EMAIL_UNIQUENESS=client` is
+then set; until it is, imports refuse an address that exists under any client
+(otherwise the Sheets append would succeed and the Supabase mirror fail).
+
+### Client send capacity
+
+`GLOBAL SYSTEM CAP → CLIENT CAP → CAMPAIGN CAP → SENDER CAP → WINDOW CAP`.
+`integrations/clients/capacity.js` decides the first two; the rest are the
+existing checks, unchanged. Per client: `dailyCap`, `windowCap` (null = none)
+and `reservedDaily`, `reservedWindow` (capacity other clients may not consume).
+Effective remaining = min(global remaining − other *sending* clients' unused
+reservations, the client's cap − its sends). A client that cannot send has
+zero capacity and reserves nothing. ScaleLab: no caps, no reservation (its
+behaviour is exactly the global numbers). Jole: 0 / 0 until launch. The agent
+checks it before every sender choice and records each provider success
+(`[client-cap]` log line per send pass).
 
 ### Where isolation is enforced
 
@@ -139,32 +180,42 @@ qualified, so a later price change never rewrites history.
 
 ## 3. Known limits
 
-- One lead row per email address across all clients (global unique index,
-  email-based reply matching). A cross-client collision is refused at import
-  validation.
-- The global send ceilings (per day / per window) are shared by all senders.
-  A per-client ceiling should be added before Jole launches.
+- The dashboard's Sheets-mode split reads (`A:O` + `Q:X`, used only when
+  Supabase is not canonical) do not read column Y; such rows fall back to
+  inferred ownership.
+- The demo-intent pass (ScaleLab warm sends) is not metered by the client
+  layer within a pass; it is counted from the activity ledger on the next pass,
+  and a managed client can never send through it (final gate).
 - Legacy workspaces (Pipeline, Inbox, Analytics, Staffing Funnel) are ScaleLab
   views. When Jole is selected the dashboard shows the Client Operations
   workspace instead.
 
 ## 4. Enabling in production (in order)
 
-1. Deploy this branch **only after** it has been reconciled onto a `main` that
-   contains the sending-logic repair (see section 6).
-2. Deploy with `CLIENT_LEDGER_ENABLED` unset. Behaviour for ScaleLab is
-   unchanged: every production lead resolves to `scalelab` (audit below), the
-   client suppression list is inert, and Jole refuses with
-   `client_sending_disabled`.
-3. Apply `supabase/migrations/20260930000000_client_ledger.sql` (additive).
-4. Set `CLIENT_LEDGER_ENABLED=true`. From then on each send also reads the
-   client suppression list for that one lead; if that read fails, the send is
-   refused for every client (fail closed).
-5. `node -r dotenv/config scripts/client-ownership-audit.js` must report
-   `conflicts: 0, senderMismatches: 0`.
+**Migrations 1 and 2 go in BEFORE the code deploy.** ScaleLab writes never
+send `client_id` (the column default supplies it), so ScaleLab cannot break if
+the order slips, but a managed client's lead writes `client_id` explicitly and
+needs the column. Both migrations are safe under the current production code:
+it never writes `client_id` (the default fills it) and ignores the extra column
+on read.
 
-Production audit on 2026-09-29 (read-only): 2,349 leads, all `scalelab`,
-0 conflicts, 0 sender mismatches.
+1. Apply `20260930000000_client_ledger.sql` (new tables only).
+2. Apply `20260930010000_outreach_leads_client_id.sql`: adds `client_id` with
+   the `scalelab` default (that default is the backfill of all existing rows)
+   and the per-client unique index; aborts if any row already names a managed
+   client. Verify with `scripts/client-ownership-audit.js`.
+3. Deploy the code (outside send windows) with `CLIENT_LEDGER_ENABLED` and
+   `OUTREACH_EMAIL_UNIQUENESS` unset. ScaleLab behaviour is unchanged: every lead
+   resolves to `scalelab`, client capacity equals the global numbers, Jole
+   refuses with `client_sending_disabled`. On first boot the server extends the
+   ColdEmail header with `clientId` (Y1), its existing header-repair behaviour.
+4. `node scripts/client-id-backfill.js` (dry run) must report
+   `mismatch: 0, conflict: 0, notInStore: 0`; then `--apply` writes column Y in
+   one update. Read-only simulation on 2026-09-29: 2,349 fills, 0 blocking.
+5. Set `CLIENT_LEDGER_ENABLED=true`.
+6. Before any managed client imports an address ScaleLab already has: apply
+   `20260930020000_outreach_leads_tenant_scoped_email.sql`, then set
+   `OUTREACH_EMAIL_UNIQUENESS=client`.
 
 ## 5. Before Jole Campaign #1 can send
 
@@ -172,8 +223,9 @@ Production audit on 2026-09-29 (read-only): 2,349 leads, all `scalelab`,
 2. Inboxes created and warmed.
 3. Gmail OAuth tokens (`GMAIL_JOLE_<NAME>_TOKEN_JSON`) and registry entries in
    `GMAIL_INBOX_REGISTRY_JSON` with `"clientId": "jole"`; identity verified.
-4. A per-client daily ceiling, so Jole senders do not draw on ScaleLab's shared
-   200/day and 21/window ceilings.
+4. Jole capacity (`dailyCap`, `windowCap`) and ScaleLab's reservation
+   (`reservedDaily`, `reservedWindow`) set in the same reviewed commit that
+   enables Jole, so Jole cannot draw on ScaleLab's share of 200/day, 21/window.
 5. Final campaign copy approved, template `jole-dc-mission-critical-v1` built
    and marked `ready`, campaign status moved to `approved`.
 6. Leads researched, validated with
