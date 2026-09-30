@@ -7553,6 +7553,7 @@ async function loadClientOpsWorkspace() {
     const s = o.sending || {};
     const header = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <span class="client-badge">${esc(o.client.displayName)}</span>
+      <span class="client-send" data-on="${o.client.active ? 'true' : 'false'}">${o.client.active ? 'Active' : esc('Not active · ' + String(o.client.lifecycleStatus || '').replace(/_/g, ' '))}</span>
       <span class="client-send" data-on="${s.sendingEnabled ? 'true' : 'false'}">Sending ${s.sendingEnabled ? 'ON' : 'OFF'}</span>
       ${o.client.platformAccess === 'none' ? '<span class="client-badge">No platform access</span>' : ''}
     </div>

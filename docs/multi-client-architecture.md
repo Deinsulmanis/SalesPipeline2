@@ -6,8 +6,34 @@ this system and have no permissions in it. There is no client-facing surface.
 
 - `scalelab` — ScaleLab AI. The default client. Every record that existed
   before this change belongs to it.
-- `jole` — Jole Enterprise. First external managed client. Active, **sending
-  disabled**.
+- `jole` — Jole Enterprise. First external managed client. **Onboarding
+  pending: not active, sending disabled, capacity 0.**
+
+### Client lifecycle
+
+`lifecycleStatus` ∈ `onboarding_pending`, `active`, `paused`, `offboarded`.
+`active` must equal `lifecycleStatus === 'active'`; nothing is inferred from a
+config existing. A managed client can only be `active` when every onboarding
+item is true (`agreementSigned`, `onboardingFormReturned`, `setupBalancePaid`)
+**and** `activation.activatedBy` / `activatedAt` record the operator who
+activated it — the registry refuses anything else at load. `sending.enabled`
+requires `active`; a client that is not active must have zero caps and zero
+reservations.
+
+While not active: every send path refuses with `client_inactive` (final gate,
+capacity layer and the Gmail provider boundary itself), and no fulfillment
+record (opportunity, meeting, clarification, invoice) can be written
+(`client_not_active`). The internal workspace can be read, and client
+suppression entries can be recorded (they only ever block).
+
+Jole on 2026-09-29: agreement not signed, onboarding form not returned, $175
+setup balance unpaid → `onboarding_pending`.
+
+**Activating a client** (after onboarding is complete) is one reviewed commit
+to `client-configs.js`: set the onboarding items true, `activation`
+(`activatedBy`, ISO `activatedAt`), `lifecycleStatus: 'active'`, `active: true`.
+Enabling sending is a separate, later commit (`sending.enabled`, caps,
+reservations) plus `CLIENT_SENDING_AUTHORIZED` on the service.
 
 ## 1. Baseline audit (2026-09-29, before any edit)
 
@@ -152,7 +178,9 @@ checks it before every sender choice and records each provider success
 `sending.enabled` in the client config **and**, for non-default clients,
 `CLIENT_SENDING_AUTHORIZED` (comma list) naming the client. Jole ships with
 `sending.enabled: false` and is not in any env allow-list, so the send engine
-refuses Jole with `client_sending_disabled` even when every other gate passes.
+refuses Jole with `client_inactive` (it is not an active client) even when every
+other gate passes; once activated it would still refuse with
+`client_sending_disabled` until sending is enabled.
 
 ### Suppression order
 
@@ -178,7 +206,33 @@ and a staffing use case (current, upcoming, recurring or project-based). The
 fee is snapshotted from the client's billing config when the meeting is
 qualified, so a later price change never rewrites history.
 
-## 3. Known limits
+## 3. Known limits and pre-launch gaps
+
+### Migration validation (real PostgreSQL)
+
+`scripts/validate-client-migrations.js` runs all three migrations against a
+real PostgreSQL 17.9 server (UTF-8), each in a transaction as Supabase applies
+them, on the production baseline with production-shaped ScaleLab rows.
+2026-09-29: **46/46 checks passed** — clean application; RLS on all ledger
+tables; composite FKs refuse cross-client meetings/clarifications; the billing
+check constraint; `client_id` NOT NULL DEFAULT `scalelab`, FK, per-client
+unique index; every existing row backfilled and byte-for-byte unchanged; all
+three migrations re-run safely; the managed-client guard refuses and rolls back
+completely; wrong order is refused (ledger missing → rollback; tenant migration
+before `client_id` → refused, global index untouched); rolling back the tenant
+migration restores the global index; cross-client duplicates allowed only after
+the tenant migration; same-client duplicates always refused (case and spaces
+normalized); the only destructive change anywhere is the intended drop of
+`outreach_leads_email_normalized_key`.
+
+### Gaps assessed for deployment (Jole inactive, sending off, capacity 0)
+
+| Gap | Can it send or break isolation now? | Status |
+|---|---|---|
+| A. Sheets-mode dashboard reads (`A:O` + `Q:X`) do not read column Y | No. Production reads the dashboard dataset from Supabase (`client_id` present); the queue reads A:Y or Supabase; the final gate reads fresh via the agent (A:Y or Supabase). Only the Supabase-unavailable fallback and non-primary mode infer the owner, and mis-scoping needs a Jole lead whose only Jole signal is column Y — no Jole lead can exist (no managed import path; the legacy import refuses managed owners). | **Not a deployment blocker. Mandatory before the first Jole lead import:** read column Y in the Sheets-mode dashboard reads. |
+| B. Demo-intent pass not metered by client capacity within one pass | No. The intent pass sends only through `deliverHardenedWarmReply` → final gate (`purpose: 'warm'`, which enforces the client switch) → `sendEmail` → `withGmailProviderSend`, which now also refuses a lead whose client may not send. A Jole lead is refused at two layers. | **Not a deployment blocker. Mandatory before Jole sending is enabled:** meter warm/intent sends against client capacity (or restrict the intent pass to ScaleLab leads). |
+
+### Other limits
 
 - The dashboard's Sheets-mode split reads (`A:O` + `Q:X`, used only when
   Supabase is not canonical) do not read column Y; such rows fall back to
@@ -207,7 +261,7 @@ on read.
 3. Deploy the code (outside send windows) with `CLIENT_LEDGER_ENABLED` and
    `OUTREACH_EMAIL_UNIQUENESS` unset. ScaleLab behaviour is unchanged: every lead
    resolves to `scalelab`, client capacity equals the global numbers, Jole
-   refuses with `client_sending_disabled`. On first boot the server extends the
+   refuses with `client_inactive`. On first boot the server extends the
    ColdEmail header with `clientId` (Y1), its existing header-repair behaviour.
 4. `node scripts/client-id-backfill.js` (dry run) must report
    `mismatch: 0, conflict: 0, notInStore: 0`; then `--apply` writes column Y in
@@ -233,7 +287,10 @@ on read.
 7. Leads routed and queued to Jole senders only.
 8. Sender status moved to `active` behind the healthy-observer gate.
 9. Timezone and booking details confirmed with Jorge.
-10. Explicit enablement: `sending.enabled: true` for `jole` in a reviewed commit
+10. Onboarding complete (agreement signed, onboarding form returned, $175 setup
+    balance paid) and the activation commit made (see Client lifecycle).
+11. Gap A and gap B above closed.
+12. Explicit enablement: `sending.enabled: true` for `jole` in a reviewed commit
     **and** `CLIENT_SENDING_AUTHORIZED=jole` on the service.
 
 ## 6. Reconciling with the sending-logic repair

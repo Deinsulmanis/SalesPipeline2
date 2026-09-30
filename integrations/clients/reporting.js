@@ -133,7 +133,10 @@ function buildClientOverview({
   }
 
   return {
-    client: { clientId: client.id, displayName: client.displayName, active: client.active, platformAccess: client.platformAccess },
+    client: {
+      clientId: client.id, displayName: client.displayName, active: client.active, platformAccess: client.platformAccess,
+      lifecycleStatus: client.lifecycleStatus, onboarding: client.onboarding ? { ...client.onboarding } : null,
+    },
     sending: clientSendState(client.id, env),
     leads: leadMetrics(mine, { routedLeadReady, env }),
     deliverability: {

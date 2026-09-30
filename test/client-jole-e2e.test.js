@@ -22,6 +22,7 @@ const { handleManagedClientReply } = require('../integrations/clients/reply-pipe
 const { createMemoryLedgerStore } = require('../integrations/clients/ledger-store');
 const { buildClientOverview } = require('../integrations/clients/reporting');
 const ledger = require('../integrations/clients/ledger');
+const { activateJoleForTest } = require('../test-support/client-lifecycle');
 
 const AUTHORIZED_SENDER_ENV = Object.freeze({
   SENDING_ENABLED: 'true', SEND_AUTHORIZED_ENV: 'production', RAILWAY_ENVIRONMENT: 'production',
@@ -90,7 +91,18 @@ test('SAFE E2E: Jole lead → routing → queue dry run → gate → reply → c
   assert.equal(queued.status, 422);
   assert.equal(applied, 0);
 
-  // 4. Final send gate in a fully authorized send process: Jole sending is OFF.
+  // 4. Final send gate in a fully authorized send process. As shipped Jole is
+  // onboarding_pending (not active); after an explicit activation it is still
+  // refused until sending is enabled.
+  const inactive = await guardProviderSend(lead, {
+    env: AUTHORIZED_SENDER_ENV, senders,
+    loadFreshState: async () => ({ current: lead, suppressedEmails: new Set() }),
+    loadClientSuppression: async () => ({ available: true, entries: [] }),
+  }, { purpose: 'cold', senderInboxId: 'jole_test' });
+  assert.equal(inactive.code, 'client_inactive');
+  // From here on, model Jole after onboarding and an explicit operator
+  // activation (sending still disabled) to exercise fulfillment end to end.
+  t.after(activateJoleForTest());
   const gate = await guardProviderSend(lead, {
     env: AUTHORIZED_SENDER_ENV, senders,
     loadFreshState: async () => ({ current: lead, suppressedEmails: new Set() }),

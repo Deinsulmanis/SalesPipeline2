@@ -130,7 +130,8 @@ function pipelineDeps(overrides = {}) {
 }
 const context = { ok: true, clientId: 'jole', campaignId: 'JOLE_DC_MISSION_CRITICAL', policyMode: 'managed' };
 
-test('managed reply: a clarification question stops the sequence, records evidence and opens a clarification — never sends', async () => {
+test('managed reply: a clarification question stops the sequence, records evidence and opens a clarification — never sends', async t => {
+  t.after(require('../test-support/client-lifecycle').activateJoleForTest());
   const { deps, calls } = pipelineDeps();
   const lead = joleLead();
   const result = await handleManagedClientReply({ lead, replyText: 'What are your bill rates for journeyman electricians?', context,

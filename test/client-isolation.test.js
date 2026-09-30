@@ -61,10 +61,11 @@ test('registry: ScaleLab and Jole resolve; unknown and blank are rejected', () =
   assert.deepEqual(listClients().map(client => client.id).sort(), ['jole', 'scalelab']);
 });
 
-test('registry: Jole is an active managed client with no platform access and sending disabled', () => {
+test('registry: Jole is a managed client, onboarding pending (not active), no platform access, sending disabled', () => {
   const jole = getClient('jole');
   assert.equal(jole.displayName, 'Jole Enterprise');
-  assert.equal(jole.active, true);
+  assert.equal(jole.lifecycleStatus, 'onboarding_pending');
+  assert.equal(jole.active, false);
   assert.equal(jole.sending.enabled, false);
   assert.equal(jole.platformAccess, 'none');
   assert.equal(jole.representative.name, 'Jorge Guerrero');
@@ -251,14 +252,19 @@ test('final gate: JOLE SEND DISABLE — blocked even when every other requiremen
     clientSuppression: { available: true, entries: [] },
   });
   assert.equal(verdict.allowed, false);
-  assert.equal(verdict.code, 'client_sending_disabled');
+  assert.equal(verdict.code, 'client_inactive', 'onboarding pending: not an active client');
   // Naming Jole in the env allow-list does not override the source-controlled switch.
   const envOnly = evaluateFreshSendSafety(lead, lead, new Set(), {
     purpose: 'cold', env: { CLIENT_SENDING_AUTHORIZED: 'jole' }, senderInboxId: 'jole_test', senders: SENDERS,
     clientSuppression: { available: true, entries: [] },
   });
-  assert.equal(envOnly.code, 'client_sending_disabled');
-  assert.equal(clientSendBlock('jole', { CLIENT_SENDING_AUTHORIZED: 'jole' }).code, 'client_sending_disabled');
+  assert.equal(envOnly.code, 'client_inactive');
+  assert.equal(clientSendBlock('jole', { CLIENT_SENDING_AUTHORIZED: 'jole' }).code, 'client_inactive');
+  // Even once activated, the send switch stays off until a reviewed commit enables it.
+  const restore = require('../test-support/client-lifecycle').activateJoleForTest();
+  try {
+    assert.equal(clientSendBlock('jole', { CLIENT_SENDING_AUTHORIZED: 'jole' }).code, 'client_sending_disabled');
+  } finally { restore(); }
   assert.equal(clientSendBlock('scalelab', {}), null);
 });
 
