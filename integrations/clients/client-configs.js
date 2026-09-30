@@ -16,7 +16,10 @@ const SCALELAB = Object.freeze({
   id: 'scalelab',
   displayName: 'ScaleLab AI',
   isDefault: true,
+  lifecycleStatus: 'active',
   active: true,
+  onboarding: null,
+  activation: null,
   kind: 'operator',
   platformAccess: 'operator',
   // The default client owns every record that asserts no other client. Its
@@ -63,7 +66,22 @@ const JOLE = Object.freeze({
   id: 'jole',
   displayName: 'Jole Enterprise',
   isDefault: false,
-  active: true,
+  // NOT an activated fulfillment client. As of 2026-09-29 Jole has not signed
+  // the agreement, returned the onboarding form or paid the remaining setup
+  // balance. The internal workspace exists; production fulfillment does not.
+  // Activation is a later, explicit operator action recorded in `activation`
+  // (who and when), allowed by the registry only once every onboarding item is
+  // true. Nothing is inferred from this config existing.
+  lifecycleStatus: 'onboarding_pending',
+  active: false,
+  onboarding: Object.freeze({
+    agreementSigned: false,
+    onboardingFormReturned: false,
+    setupBalancePaid: false,
+    setupBalanceDueCents: 17500,
+    currency: 'USD',
+  }),
+  activation: Object.freeze({ activatedBy: '', activatedAt: '' }),
   kind: 'managed_client',
   // Jole never operates SalesPipeline2. There is no login, account or
   // permission for it anywhere in this system.

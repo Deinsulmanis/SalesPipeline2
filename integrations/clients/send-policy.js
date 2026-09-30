@@ -28,7 +28,9 @@ function clientSendBlock(clientId, env = process.env) {
   const resolved = resolveClientId(clientId);
   if (!resolved.ok) return { code: resolved.code, reason: resolved.reason };
   const client = getClient(resolved.clientId);
-  if (!client.active) return { code: 'client_inactive', reason: `${client.displayName} is inactive` };
+  if (!client.active) {
+    return { code: 'client_inactive', reason: `${client.displayName} is not an active client (lifecycle: ${client.lifecycleStatus})` };
+  }
   if (!client.sending.enabled) {
     return { code: 'client_sending_disabled', reason: `${client.displayName} sending is disabled` };
   }
@@ -49,6 +51,7 @@ function clientSendState(clientId, env = process.env) {
   return {
     clientId: client.id,
     active: client.active,
+    lifecycleStatus: client.lifecycleStatus,
     configEnabled: client.sending.enabled,
     envAuthorized: client.sending.requiresEnvAuthorization ? authorizedClientIds(env).has(client.id) : null,
     sendingEnabled: !block,

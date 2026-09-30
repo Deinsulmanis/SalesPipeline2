@@ -42,12 +42,12 @@ test('config: a managed client must have explicit caps; a reservation cannot exc
   assert.throws(() => buildRegistry([scalelab, { ...jole, capacity: { dailyCap: 5, windowCap: 2, reservedDaily: 6, reservedWindow: 0 } }]), /reservedDaily exceeds/);
 });
 
-test('JOLE SENDING DISABLED overrides every capacity calculation', () => {
+test('JOLE INACTIVE / SENDING DISABLED overrides every capacity calculation', () => {
   const s = state({ caps: { jole: { dailyCap: 500, windowCap: 50, reservedDaily: 100, reservedWindow: 10 } } });
   const verdict = clientCapacityVerdict(s, 'jole');
   assert.equal(verdict.allowed, false);
-  assert.equal(verdict.code, 'client_sending_disabled');
-  assert.throws(() => consumeClientCapacity(s, 'jole'), error => error.code === 'client_sending_disabled');
+  assert.equal(verdict.code, 'client_inactive');
+  assert.throws(() => consumeClientCapacity(s, 'jole'), error => error.code === 'client_inactive');
   // A disabled client's reservation holds nothing back from ScaleLab.
   assert.equal(clientCapacityVerdict(s, 'scalelab').remaining, 21);
 });
@@ -143,5 +143,5 @@ test('accounting: a delivered send is always recorded, never thrown; unowned sen
     { eventId: 'd', eventType: 'ordinary_send_reserved', occurredAt: '2026-10-01T16:07:00Z', sourceLeadId: 's1' },
   ], { dayKey: '2026-10-01', leadsById: new Map([['j1', { id: 'j1', clientId: 'jole' }], ['s1', { id: 's1', clientId: 'scalelab' }]]) });
   assert.deepEqual(Object.fromEntries(counts), { jole: 1, scalelab: 2 });
-  assert.equal(clientCapacitySnapshot(state({ env: {} })).jole.blockedBy, 'client_sending_disabled');
+  assert.equal(clientCapacitySnapshot(state({ env: {} })).jole.blockedBy, 'client_inactive');
 });

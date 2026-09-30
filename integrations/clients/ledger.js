@@ -69,11 +69,15 @@ const isoOrNull = value => {
   return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
 };
 
-function requireClient(clientId) {
+function requireClient(clientId, { write = true } = {}) {
   const resolved = resolveClientId(clientId);
   if (!resolved.ok) fail(resolved.code, resolved.reason);
   const client = getClient(resolved.clientId);
   if (!client.reporting?.ledger) fail('ledger_not_enabled', `${client.displayName} does not use the meeting ledger`);
+  // Fulfillment records (opportunities, meetings, clarifications, invoices)
+  // exist only for an ACTIVE client. Before activation the workspace can be
+  // read, but nothing fulfillment-shaped is written.
+  if (write && !client.active) fail('client_not_active', `${client.displayName} is not an active client (lifecycle: ${client.lifecycleStatus})`);
   return client;
 }
 

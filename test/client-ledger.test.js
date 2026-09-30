@@ -7,7 +7,13 @@ const ledger = require('../integrations/clients/ledger');
 const { createMemoryLedgerStore, createSupabaseLedgerStore } = require('../integrations/clients/ledger-store');
 const { getClient } = require('../integrations/clients/registry');
 
-const JOLE = getClient('jole');
+const { activateJoleForTest } = require('../test-support/client-lifecycle');
+
+// Everything below models Jole after onboarding and an explicit activation.
+let restoreActivation;
+test.before(() => { restoreActivation = activateJoleForTest(); });
+test.after(() => restoreActivation());
+const JOLE_CFG = () => getClient('jole');
 const joleLead = (id = 'jole-lead-1', extra = {}) => ({
   id, company: 'Voltline Mission Critical LLC', contactName: 'Pat Rivera', email: `${id}@voltline-test.invalid`,
   leadNiche: 'jole_employer', emailTemplateId: 'jole-dc-mission-critical-v1', intendedCampaignVersion: 'JOLE_DC_MISSION_CRITICAL',
@@ -33,7 +39,7 @@ test('meetings: BOOKED ONLY is not billable', async () => {
   assert.equal(meeting.meeting_status, 'BOOKED');
   assert.equal(meeting.billable, false);
   assert.equal(meeting.invoice_status, 'not_billable');
-  assert.equal(ledger.billingSummary(await store.listMeetings('jole'), JOLE).billableMeetings, 0);
+  assert.equal(ledger.billingSummary(await store.listMeetings('jole'), JOLE_CFG()).billableMeetings, 0);
 });
 
 test('meetings: CANCELLED is not billable', async () => {
@@ -60,11 +66,11 @@ test('meetings: RESCHEDULED → HELD → QUALIFIED is billable at the configured
   assert.equal(held.billable, false); assert.equal(held.billable_reason, 'held, qualification not decided');
   const qualified = await ledger.updateMeeting(store, { clientId: 'jole', meetingId: meeting.meeting_id, toStatus: 'QUALIFIED_HELD', patch: qualifiedFacts });
   assert.equal(qualified.billable, true);
-  assert.equal(qualified.performance_fee_cents, JOLE.billing.performanceFeeCents);
+  assert.equal(qualified.performance_fee_cents, JOLE_CFG().billing.performanceFeeCents);
   assert.equal(qualified.currency, 'USD');
   assert.equal(qualified.invoice_status, 'pending');
   assert.equal(qualified.reschedule_count, 1);
-  const summary = ledger.billingSummary(await store.listMeetings('jole'), JOLE);
+  const summary = ledger.billingSummary(await store.listMeetings('jole'), JOLE_CFG());
   assert.equal(summary.billableMeetings, 1);
   assert.equal(summary.accruedCents, 35000);
   const opportunity = (await store.listOpportunities('jole'))[0];
@@ -103,8 +109,8 @@ test('meetings: HELD + correct employer + legitimate decision-maker is billable;
   const q = await ledger.updateMeeting(store, { clientId: 'jole', meetingId: meeting.meeting_id, toStatus: 'QUALIFIED_HELD',
     patch: { ...qualifiedFacts, use_case: 'recurring' } });
   assert.equal(q.billable, true);
-  assert.equal(JOLE.qualification.openRequisitionRequired, false);
-  assert.equal(JOLE.qualification.purchaseRequired, false);
+  assert.equal(JOLE_CFG().qualification.openRequisitionRequired, false);
+  assert.equal(JOLE_CFG().qualification.purchaseRequired, false);
 });
 
 test('meetings: invoicing only for billable meetings, and an invoiced verdict is frozen', async () => {
@@ -116,16 +122,16 @@ test('meetings: invoicing only for billable meetings, and an invoiced verdict is
   const invoiced = await ledger.setInvoiceStatus(store, { clientId: 'jole', meetingId: meeting.meeting_id, invoiceStatus: 'invoiced' });
   assert.equal(invoiced.invoice_status, 'invoiced');
   await assert.rejects(ledger.updateMeeting(store, { clientId: 'jole', meetingId: meeting.meeting_id, toStatus: 'DISQUALIFIED_HELD', patch: { qualification_basis: 'x' } }), error => error.code === 'meeting_invoiced');
-  assert.equal(ledger.billingSummary(await store.listMeetings('jole'), JOLE).invoicedCents, 35000);
+  assert.equal(ledger.billingSummary(await store.listMeetings('jole'), JOLE_CFG()).invoicedCents, 35000);
 });
 
 test('meetings: the fee is configuration, snapshotted at qualification', () => {
-  const repriced = { ...JOLE, billing: { ...JOLE.billing, performanceFeeCents: 50000 } };
+  const repriced = { ...JOLE_CFG(), billing: { ...JOLE_CFG().billing, performanceFeeCents: 50000 } };
   const held = { meeting_status: 'HELD', held_at: '2026-10-01T00:00:00Z', invoice_status: 'not_billable', ...qualifiedFacts };
   const qualified = ledger.transitionMeeting(held, 'QUALIFIED_HELD', {}, { client: repriced, now: '2026-10-01T01:00:00Z' });
   assert.equal(qualified.performance_fee_cents, 50000);
   // Later config changes do not rewrite an already qualified meeting.
-  assert.equal(ledger.deriveMeetingBilling(qualified, JOLE).performance_fee_cents, 50000);
+  assert.equal(ledger.deriveMeetingBilling(qualified, JOLE_CFG()).performance_fee_cents, 50000);
 });
 
 test('MIXED CLIENT MEETING ASSOCIATION is impossible', async () => {

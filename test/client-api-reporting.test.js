@@ -84,7 +84,20 @@ test('API: Jole filters Jole data; ScaleLab filters ScaleLab data — on the ser
   });
 });
 
-test('API: ledger routes are client-scoped and refuse another client\'s lead', async () => {
+test('API: before activation, Jole fulfillment writes are refused (422 client_not_active)', async () => {
+  await withServer(createMemoryLedgerStore(), async ({ get, post }) => {
+    const refused = await post('/api/clients/jole/meetings', { leadId: 'j1', scheduledFor: '2026-10-08T16:00:00Z' });
+    assert.equal(refused.status, 422);
+    assert.equal((await refused.json()).code, 'client_not_active');
+    const overview = await (await get('/api/clients/jole/overview')).json();
+    assert.equal(overview.client.active, false);
+    assert.equal(overview.client.lifecycleStatus, 'onboarding_pending');
+    assert.equal(overview.sending.blockCode, 'client_inactive');
+  });
+});
+
+test('API: ledger routes are client-scoped and refuse another client\'s lead', async t => {
+  t.after(require('../test-support/client-lifecycle').activateJoleForTest());
   const store = createMemoryLedgerStore();
   await withServer(store, async ({ get, post }) => {
     const cross = await post('/api/clients/jole/meetings', { leadId: 's1', scheduledFor: '2026-10-08T16:00:00Z' });
@@ -112,7 +125,8 @@ test('API: ledger routes report 503 when the ledger is disabled; overview still 
   });
 });
 
-test('reporting: pipeline and billing come only from this client\'s ledger rows', async () => {
+test('reporting: pipeline and billing come only from this client\'s ledger rows', async t => {
+  t.after(require('../test-support/client-lifecycle').activateJoleForTest());
   const store = createMemoryLedgerStore();
   const meeting = await ledger.recordMeetingBooked(store, { clientId: 'jole', lead: joleLead('j1'), scheduledFor: '2026-10-08T16:00:00Z' });
   await ledger.updateMeeting(store, { clientId: 'jole', meetingId: meeting.meeting_id, toStatus: 'NO_SHOW' });

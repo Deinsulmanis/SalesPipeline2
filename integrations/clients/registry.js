@@ -16,6 +16,8 @@ const NAMESPACE_PATTERN = /^[a-z][a-z0-9]{1,15}$/;
 const REPLY_MODES = new Set(['legacy', 'managed']);
 const SUPPRESSION_SCOPES = new Set(['global', 'client']);
 const BILLING_MODELS = new Set(['none', 'per_qualified_held_meeting']);
+const LIFECYCLE_STATUSES = new Set(['onboarding_pending', 'active', 'paused', 'offboarded']);
+const ONBOARDING_ITEMS = Object.freeze(['agreementSigned', 'onboardingFormReturned', 'setupBalancePaid']);
 
 function validateClientConfig(config) {
   const id = String(config?.id || '');
@@ -23,6 +25,20 @@ function validateClientConfig(config) {
   if (!CLIENT_ID_PATTERN.test(id)) fail('invalid id');
   if (!String(config.displayName || '').trim()) fail('displayName is required');
   if (typeof config.active !== 'boolean') fail('active must be boolean');
+  // Lifecycle is explicit. `active` is never inferred from a config existing:
+  // it must agree with the lifecycle state, and a managed client reaches
+  // 'active' only with every onboarding item done AND a recorded operator
+  // activation (who and when).
+  if (!LIFECYCLE_STATUSES.has(config.lifecycleStatus)) fail('lifecycleStatus is invalid');
+  if (config.active !== (config.lifecycleStatus === 'active')) fail('active must equal (lifecycleStatus === "active")');
+  if (!config.isDefault && config.lifecycleStatus === 'active') {
+    const missing = ONBOARDING_ITEMS.filter(item => config.onboarding?.[item] !== true);
+    if (missing.length) fail(`cannot be active before onboarding is complete (${missing.join(', ')})`);
+    if (!String(config.activation?.activatedBy || '').trim() || !Number.isFinite(Date.parse(config.activation?.activatedAt || ''))) {
+      fail('activation requires a recorded operator action (activation.activatedBy and activatedAt)');
+    }
+  }
+  if (config.sending?.enabled === true && !config.active) fail('sending cannot be enabled for a client that is not active');
   if (typeof config.sending?.enabled !== 'boolean') fail('sending.enabled must be boolean');
   if (!config.isDefault) {
     if (!NAMESPACE_PATTERN.test(String(config.namespace || ''))) fail('a non-default client needs a namespace');
@@ -40,6 +56,9 @@ function validateClientConfig(config) {
   if (capacity.dailyCap !== null && capacity.reservedDaily > capacity.dailyCap) fail('capacity.reservedDaily exceeds dailyCap');
   if (capacity.windowCap !== null && capacity.reservedWindow > capacity.windowCap) fail('capacity.reservedWindow exceeds windowCap');
   if (!config.isDefault && (capacity.dailyCap === null || capacity.windowCap === null)) fail('a managed client needs explicit daily and window caps');
+  if (!config.active && (capacity.dailyCap !== 0 || capacity.windowCap !== 0 || capacity.reservedDaily !== 0 || capacity.reservedWindow !== 0)) {
+    fail('a client that is not active must have zero capacity and zero reservations');
+  }
   if (!REPLY_MODES.has(config.replyPolicy?.mode)) fail('replyPolicy.mode is invalid');
   if (!SUPPRESSION_SCOPES.has(config.replyPolicy?.negativeReplySuppressionScope)) fail('replyPolicy.negativeReplySuppressionScope is invalid');
   if (!BILLING_MODELS.has(config.billing?.model)) fail('billing.model is invalid');
@@ -105,6 +124,19 @@ function listClients() {
   return [...REGISTRY.byId.values()];
 }
 
+/**
+ * TEST-ONLY seam: replace one client's config for the duration of a test (for
+ * example to model Jole after onboarding and activation). The replacement is
+ * validated like any config, so a test cannot model an impossible state.
+ * Returns a restore function. Production code never calls this.
+ */
+function overrideClientForTests(clientId, patch) {
+  const current = getClient(clientId);
+  const next = validateClientConfig({ ...current, ...patch });
+  REGISTRY.byId.set(current.id, next);
+  return () => REGISTRY.byId.set(current.id, current);
+}
+
 /** The client whose namespace prefixes this identifier (`jole_…`, `JOLE-…`), or ''. */
 function clientForNamespacedValue(value) {
   const match = String(value || '').trim().toLowerCase().match(/^([a-z][a-z0-9]{1,15})[_-]/);
@@ -119,6 +151,9 @@ function publicClient(config) {
     isDefault: Boolean(config.isDefault),
     kind: config.kind,
     active: config.active,
+    lifecycleStatus: config.lifecycleStatus,
+    onboarding: config.onboarding ? { ...config.onboarding } : null,
+    activation: config.activation ? { ...config.activation } : null,
     platformAccess: config.platformAccess,
     sendingEnabledInConfig: config.sending.enabled,
     timezone: config.timezone,
@@ -139,6 +174,6 @@ function publicClient(config) {
 }
 
 module.exports = {
-  DEFAULT_CLIENT_ID, validateClientConfig, buildRegistry, normalizeClientId,
+  DEFAULT_CLIENT_ID, LIFECYCLE_STATUSES, ONBOARDING_ITEMS, validateClientConfig, buildRegistry, normalizeClientId, overrideClientForTests,
   resolveClientId, isKnownClient, getClient, listClients, clientForNamespacedValue, publicClient,
 };

@@ -9,7 +9,8 @@ const {
 const { createPgSendReservationStore } = require('./send-reservation-store');
 const { isDefinitePreDeliveryFailure, providerIdsFromResult } = require('./provider-delivery-error');
 const { STATUS } = require('./send-reservation-rules');
-const { checkActionOwnership } = require('./clients/ownership');
+const { checkActionOwnership, resolveLeadClient } = require('./clients/ownership');
+const { clientSendBlock } = require('./clients/send-policy');
 
 const LEASE_OWNER = `${os.hostname()}:${process.pid}:${crypto.randomUUID()}`;
 
@@ -186,8 +187,26 @@ async function withOutboundReservation(action, run, env = process.env) {
   }
 }
 
+// Defense in depth at the Gmail provider boundary: every final gate already
+// enforces the client switch, but no path — present or future — may reach the
+// provider for a lead whose client is not active, not enabled, or unowned.
+function assertLeadClientMaySend(lead, sendAction, env) {
+  if (!lead) return;
+  const owner = resolveLeadClient(lead);
+  const blocked = owner.ok ? clientSendBlock(owner.clientId, env) : { code: owner.code, reason: owner.reason };
+  if (!blocked) return;
+  logSendLock('reservation_denied', {
+    actionId: sendAction?.actionId, leadId: lead.id, provider: 'gmail', code: blocked.code,
+    clientId: owner.ok ? owner.clientId : undefined,
+  });
+  const error = new Error(blocked.reason);
+  error.code = blocked.code;
+  throw error;
+}
+
 async function withGmailProviderSend({ lead, sendAction, run, env = process.env }) {
   assertActionOwnership(sendAction);
+  assertLeadClientMaySend(lead, sendAction, env);
   if (!sendLockEnabled(env) && !injectedStore) return run();
   const action = sendAction && sendAction.actionId ? sendAction : null;
   if (!action) {
