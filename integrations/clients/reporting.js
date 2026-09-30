@@ -93,13 +93,34 @@ function buildClientOverview({
     dailyLimit: sender.dailyLimit, credentialConfigured: Boolean(sender.credentialConfigured),
   }));
 
+  // Per-campaign performance from the same scoped leads, activities and ledger.
+  const repliedLeads = new Set(myActivities.filter(row => text(row.eventType) === REPLY_EVENT_TYPE || LEGACY_REPLY_SENTIMENT[text(row.eventType)])
+    .map(activityLeadId));
+  const meetingLeads = new Map();
+  for (const row of (ledger.available ? ledger.meetings || [] : []).filter(item => item.client_id === client.id)) {
+    meetingLeads.set(row.lead_id, (meetingLeads.get(row.lead_id) || 0) + 1);
+  }
+  const sendState = clientSendState(client.id, env);
   const campaigns = client.isDefault ? [] : campaignsForClient(client.id).map(campaign => {
     const sendable = campaignSendable(campaign);
+    const inCampaign = mine.filter(lead => text(lead.intendedCampaignVersion).toUpperCase() === campaign.id);
+    const ids = new Set(inCampaign.map(lead => lead.id));
+    const blockers = [
+      ...(sendable.ok ? [] : [sendable.reason]),
+      ...(sendState.sendingEnabled ? [] : [sendState.blockReason]),
+      ...(clientSenders.length ? [] : ['no sending inbox is configured for this client']),
+    ];
     return {
       id: campaign.id, number: campaign.number, label: campaign.label, status: campaign.status,
       emailTemplateId: campaign.emailTemplateId, leadType: campaign.leadType, icp: campaign.icp,
-      leads: mine.filter(lead => text(lead.intendedCampaignVersion).toUpperCase() === campaign.id).length,
+      leads: inCampaign.length,
+      queued: inCampaign.filter(lead => text(lead.stage) === 'Queued' && !text(lead.emailStatus)).length,
+      sent: sends.filter(row => ids.has(activityLeadId(row))).length,
+      replies: [...repliedLeads].filter(id => ids.has(id)).length,
+      meetings: [...meetingLeads].filter(([id]) => ids.has(id)).reduce((sum, [, n]) => sum + n, 0),
+      assignedSenders: new Set(inCampaign.map(lead => text(lead.senderInboxId)).filter(Boolean)).size,
       sendable: sendable.ok, ...(sendable.ok ? {} : { blockedBy: sendable.reason }),
+      ready: blockers.length === 0, readinessBlockers: blockers,
     };
   });
 
