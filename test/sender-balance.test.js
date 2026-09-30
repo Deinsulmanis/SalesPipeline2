@@ -37,11 +37,11 @@ const staffing = (senderInboxId = 'primary', extra = {}) => {
 const dental = (senderInboxId = 'primary', extra = {}) => staffing(senderInboxId, {
   leadNiche: 'dental', campaign: 'Ontario List', emailTemplateId: 'dental-guarantee-v1',
   intendedCampaignVersion: 'dental_v3_pay_per_booking', ...extra });
-// Non-staffing supply that can still send: an unrouted legacy row (med spa).
+// Non-staffing supply that can still send: an unrouted legacy trades row.
 // It plays the part dental played before the dental offer was retired.
 const legacyCold = (senderInboxId = 'primary', extra = {}) => staffing(senderInboxId, {
-  leadNiche: '', campaign: 'toronto-medspa-jul', emailTemplateId: '', intendedCampaignVersion: '',
-  routingRequired: '', tradeType: 'Medical spa', siteContext: '', ...extra });
+  leadNiche: '', campaign: 'bc-trades-jul', emailTemplateId: '', intendedCampaignVersion: '',
+  routingRequired: '', tradeType: 'Plumber', siteContext: '', ...extra });
 const FIXTURE = { dental, staffing, legacy: legacyCold };
 // A delivered step 1 owned by `owner`, due for step 2 `daysAgo` after sending.
 const followUp = (owner, daysAgo = 4, niche = 'legacy') => {

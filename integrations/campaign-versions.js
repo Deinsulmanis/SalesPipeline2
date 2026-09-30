@@ -71,7 +71,7 @@ const CAMPAIGN_VERSIONS = Object.freeze({
     niche: 'roofing', emailTemplateId: 'roofing-survey-v1', family: 'roofing_survey',
     copyVersion: 'roofing_survey_reply_first_v1', subjectStrategy: 'roofing_question_v1',
     personalizationStrategy: 'locked_template_v1', offerVersion: 'none',
-    activatedAt: '2026-08-27T20:31:18.220Z', status: 'active',
+    activatedAt: '2026-08-27T20:31:18.220Z', status: 'retired', retiredAt: '2026-09-30',
     meaning: 'Existing locked roofing survey pilot copy; no sales offer.',
   }),
 });

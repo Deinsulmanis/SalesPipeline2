@@ -8467,7 +8467,7 @@ async function loadArchiveWorkspace({ append = false } = {}) {
     archiveState.facets = data.facets || {};
     archiveState.reasonLabels = data.reasonLabels || {};
     archiveState.loaded = true;
-    fillArchiveSelect('archive-niche', archiveState.facets.niches, 'All niches', key => (key === 'dental' ? 'Dental' : key));
+    fillArchiveSelect('archive-niche', archiveState.facets.niches, 'All niches', key => ({ dental: 'Dental', roofing: 'Roofing', med_spa: 'Med spa' })[key] || key);
     fillArchiveSelect('archive-campaign', archiveState.facets.campaigns, 'All campaigns');
     fillArchiveSelect('archive-reason', archiveState.facets.reasons, 'All reasons', key => archiveState.reasonLabels[key] || key);
     fillArchiveSelect('archive-stage', archiveState.facets.previousStages, 'Any previous stage', archiveStageText);

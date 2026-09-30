@@ -161,7 +161,7 @@ test('H. an automated reply does not leave the Hot lead falsely due, overdue or 
 // ── Recovery eligibility follows, with its timing unchanged ─────────────────
 
 test('I. hot_stale_v1 is offered only once the chase is due after an automated reply', () => {
-  const twin = { ...hotTwin, leadNiche: '', tradeType: 'Medical spa', emailTemplateId: '' };
+  const twin = { ...hotTwin, leadNiche: '', tradeType: 'Plumber', emailTemplateId: '' };
   const offersAt = (now, activities) => evaluateStageSequence({
     boardLead: { stage: 'hot' }, twin, activities, now,
     hotState: deriveHotState({ stage: 'hot' }, { now, activities }), featureEnabled: true,
@@ -184,7 +184,7 @@ test('I. hot_stale_v1 is offered only once the chase is due after an automated r
 // and ownership stay as they are; only the automatic enrollment is gated.
 
 const LATER = new Date('2026-09-10T19:00:00.000Z'); // well past every chase window
-const dentalTwin = { ...hotTwin, leadNiche: '', tradeType: 'Medical spa', emailTemplateId: '' };
+const dentalTwin = { ...hotTwin, leadNiche: '', tradeType: 'Plumber', emailTemplateId: '' };
 function hotEnrollment(activities, now = LATER) {
   const hotState = deriveHotState({ stage: 'hot' }, { now, activities });
   const verdict = evaluateStageSequence({ boardLead: { stage: 'hot' }, twin: dentalTwin, activities, now, hotState, featureEnabled: true });

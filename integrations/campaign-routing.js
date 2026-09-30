@@ -18,10 +18,12 @@ const EMAIL_TEMPLATES = Object.freeze([
   // so historical sends still resolve their copy; never ready again.
   Object.freeze({ id: 'dental-guarantee-v1', name: 'Dental guarantee pitch', niche: 'dental', ready: false, sequenceSteps: 3,
     reason: 'The dental offer is retired; dental email copy can no longer be sent' }),
+  // Retired with the roofing offer (2026-09-30). Registered for history only;
+  // no environment flag can make it ready again.
   Object.freeze({
     id: 'roofing-survey-v1', name: 'Roofing survey — reply first', niche: 'roofing',
-    ready: process.env.ROOFING_SURVEY_REPLY_FLOW_ENABLED === 'true',
-    reason: 'Roofing survey workflow is disabled; set ROOFING_SURVEY_REPLY_FLOW_ENABLED=true only for an approved pilot',
+    ready: false,
+    reason: 'The roofing offer is retired; roofing survey copy can no longer be sent',
     sequenceSteps: 1, profile: 'roofing_survey_reply_first',
   }),
 ]);

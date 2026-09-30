@@ -53,7 +53,7 @@ test('H-M: unsubscribe, bounce/negative, ambiguous, wrong-person and OOO never a
   for (const text of ['unsubscribe me', 'not interested', 'maybe', 'wrong person', 'Automatic reply: out of office']) assert.equal(decision(text).policy.send, false, text);
 });
 test('N/O: Pipeline lead can have reply automation or a sequence, never both executable', () => {
-  const live = { ...lead, company: 'Example Med Spa', tradeType: 'Medical spa', emailTemplateId: '' };
+  const live = { ...lead, company: 'Example Plumbing', tradeType: 'Plumber', emailTemplateId: '' };
   const replyOwner = deriveAutomationOwnership({ ...live, emailStatus: 'replied' }, { boardLead: { stage: 'hot' }, sendingEnabled: true,
     replyResponseDecision: { send: true, action: ACTION.AUTO_BOOKING_RESPONSE } });
   assert.equal(replyOwner.owner, OWNER.REPLY_AUTOMATION);

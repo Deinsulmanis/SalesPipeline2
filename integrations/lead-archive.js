@@ -43,12 +43,39 @@ const ARCHIVED_REPLY_EVENT_TYPE = 'archived_reply_observed';
 
 const ARCHIVE_REASONS = Object.freeze({
   OFFER_RETIRED_DENTAL: 'offer_retired_dental',
+  OFFER_RETIRED_ROOFING: 'offer_retired_roofing',
+  OFFER_RETIRED_MED_SPA: 'offer_retired_med_spa',
   MANUAL: 'manual_archive',
 });
 const ARCHIVE_REASON_LABELS = Object.freeze({
   [ARCHIVE_REASONS.OFFER_RETIRED_DENTAL]: 'Dental offer retired',
+  [ARCHIVE_REASONS.OFFER_RETIRED_ROOFING]: 'Roofing offer retired',
+  [ARCHIVE_REASONS.OFFER_RETIRED_MED_SPA]: 'Med spa offer retired',
   [ARCHIVE_REASONS.MANUAL]: 'Archived by hand',
 });
+
+// ── Protected client records ────────────────────────────────────────────────
+//
+// Closed/Won client relationships that no offer retirement may touch. Matched
+// by exact record id ONLY — never by company, email or free text — so a prospect
+// row that merely mentions the same company is still retired like any other.
+// These records are exempt from the retired-offer gate, and every archive plan
+// refuses them outright. Verified against production on 2026-09-30: each id is
+// the only Pipeline card for its company, stage closed_won, with no ColdEmail
+// row and no activity event linked to it.
+const PROTECTED_RECORDS = Object.freeze([
+  Object.freeze({ id: 'mq4vq4pw2t0w6u6qwmp', client: 'Trade Select', companyKey: 'tradeselect',
+    contact: 'Christopher Cook', stage: 'closed_won' }),
+  // The card records the contact's first name as "marman"; the client is Harman.
+  Object.freeze({ id: 'mq3i7yq86ri0ueadqtl', client: 'SureSky Roofing', companyKey: 'suresky',
+    contact: 'Harman (recorded as "marman")', stage: 'closed_won' }),
+]);
+const PROTECTED_IDS = new Set(PROTECTED_RECORDS.map(record => record.id));
+
+/** Is this exact record a protected client? Id only; CE- prefixes are not stripped. */
+function isProtectedRecord(lead) {
+  return Boolean(lead && typeof lead === 'object' && PROTECTED_IDS.has(String(lead.id || '').trim()));
+}
 
 // Stage a restored lead returns to. Never a sending stage: a lead that was
 // never sent re-enters as an import that must pass the queue's checks again;
@@ -124,7 +151,105 @@ const RETIRED_OFFERS = Object.freeze([
     templateIds: Object.freeze(['dental-guarantee-v1']),
     campaignVersionPattern: /^dental_/i,
   }),
+  Object.freeze({
+    id: 'roofing',
+    label: 'Roofing',
+    family: 'roofing_survey',
+    leadType: 'roofing',
+    archiveReason: ARCHIVE_REASONS.OFFER_RETIRED_ROOFING,
+    retiredAt: '2026-09-30',
+    templateIds: Object.freeze(['roofing-survey-v1']),
+    campaignVersionPattern: /^roofing_/i,
+  }),
+  Object.freeze({
+    id: 'med_spa',
+    label: 'Med spa',
+    family: 'med_spa',
+    leadType: 'med_spa',
+    archiveReason: ARCHIVE_REASONS.OFFER_RETIRED_MED_SPA,
+    retiredAt: '2026-09-30',
+    templateIds: Object.freeze([]),
+    campaignVersionPattern: /^med_?spa_/i,
+  }),
 ]);
+const offerById = id => RETIRED_OFFERS.find(offer => offer.id === id);
+
+// ── canonical precedence for legacy text ────────────────────────────────────
+//
+// Roofing and med spa recognise legacy rows by tradeType and campaign name. That
+// text is only trusted when the lead carries NO canonical identifier (niche,
+// template, campaign version) of a different offer: a staffing lead whose
+// tradeType happens to read "Roofing crews" or "Spa" is staffing, full stop.
+const STAFFING_NICHES = Object.freeze(['industrial_staffing', 'industrial staffing', 'staffing', 'staffing_agency', 'staffing agency']);
+const ROOFING_NICHES = Object.freeze(['roofing', 'roofer', 'roofers', 'roofing company']);
+const MED_SPA_NICHES = Object.freeze(['med_spa', 'medspa', 'med spa', 'medical spa', 'medi spa']);
+
+function canonicalOffersOf(lead = {}) {
+  const found = new Set();
+  const niche = norm(lead.leadNiche);
+  const template = text(lead.emailTemplateId).trim();
+  const version = text(lead.intendedCampaignVersion).trim() || text(lead.campaignVersion).trim();
+  if (niche) {
+    if (DENTAL_NICHES.includes(niche)) found.add('dental');
+    else if (ROOFING_NICHES.includes(niche)) found.add('roofing');
+    else if (MED_SPA_NICHES.includes(niche)) found.add('med_spa');
+    else if (STAFFING_NICHES.includes(niche)) found.add('staffing');
+    else found.add(`other:${niche}`);
+  }
+  if (template) {
+    const owner = RETIRED_OFFERS.find(offer => offer.templateIds.includes(template));
+    found.add(owner ? owner.id : (/staffing/i.test(template) ? 'staffing' : `other:${template}`));
+  }
+  if (version && version !== 'legacy_unknown') {
+    const owner = RETIRED_OFFERS.find(offer => offer.campaignVersionPattern.test(version));
+    found.add(owner ? owner.id : (/staffing/i.test(version) ? 'staffing' : `other:${version}`));
+  }
+  return found;
+}
+
+function legacyTextTrusted(lead, offerId) {
+  return [...canonicalOffersOf(lead)].every(id => id === offerId);
+}
+
+function canonicalSignals(lead, offer) {
+  const signals = [];
+  const niches = { dental: DENTAL_NICHES, roofing: ROOFING_NICHES, med_spa: MED_SPA_NICHES }[offer.id];
+  if (niches.includes(norm(lead.leadNiche))) signals.push('lead_niche');
+  if (offer.templateIds.includes(text(lead.emailTemplateId).trim())) signals.push('email_template_id');
+  if (offer.campaignVersionPattern.test(text(lead.intendedCampaignVersion).trim())
+    || offer.campaignVersionPattern.test(text(lead.campaignVersion).trim())) signals.push('campaign_version');
+  if (norm(lead.campaignFamily) === offer.family) signals.push('campaign_family');
+  return signals;
+}
+
+const ROOFING_TEXT_PATTERN = /\broof(er|ers|ing)?\b/i;
+// The exact trade types of the July 2026 med-spa sweep (every blank-campaign
+// legacy row, "Campaign #2" and toronto-medspa-jul), compared whole, never as
+// substrings. "Sponsored"/optometrist is a scraper artefact of the same sweep.
+const MED_SPA_TRADE_TYPES = Object.freeze([
+  'medical spa', 'med spa', 'medspa', 'medi spa', 'spa', 'day spa', 'massage spa', 'skin care clinic',
+  'laser hair removal service', 'esthetics service', 'beauty salon', 'hair salon', 'wellness center',
+  'massage therapist', 'dermatologist', 'cosmetic surgeon', 'medical clinic', 'medical center', 'optometrist',
+]);
+const MED_SPA_CAMPAIGN_PATTERN = /(\bmed[\s-]?spa|\bmedi[\s-]?spa)/i;
+
+function roofingSignals(lead = {}) {
+  const signals = canonicalSignals(lead, offerById('roofing'));
+  if (legacyTextTrusted(lead, 'roofing')) {
+    if (ROOFING_TEXT_PATTERN.test(text(lead.tradeType))) signals.push('trade_type');
+    if (ROOFING_TEXT_PATTERN.test(text(lead.campaign))) signals.push('campaign');
+  }
+  return signals;
+}
+
+function medSpaSignals(lead = {}) {
+  const signals = canonicalSignals(lead, offerById('med_spa'));
+  if (legacyTextTrusted(lead, 'med_spa')) {
+    if (MED_SPA_TRADE_TYPES.includes(norm(lead.tradeType).replace(/\s+/g, ' '))) signals.push('trade_type');
+    if (MED_SPA_CAMPAIGN_PATTERN.test(text(lead.campaign))) signals.push('campaign');
+  }
+  return signals;
+}
 
 /**
  * Every field that says this lead belongs to the dental offer, strongest first.
@@ -144,11 +269,15 @@ function dentalSignals(lead = {}) {
   return signals;
 }
 
-const SIGNALS_BY_OFFER = Object.freeze({ dental: dentalSignals });
+const SIGNALS_BY_OFFER = Object.freeze({ dental: dentalSignals, roofing: roofingSignals, med_spa: medSpaSignals });
 
-/** The retired offer this lead belongs to, or null. */
+/**
+ * The retired offer this lead belongs to, or null. A protected client record
+ * belongs to no retired offer: it is an active relationship, not a prospect.
+ */
 function retiredOfferFor(lead) {
   if (!lead || typeof lead !== 'object') return null;
+  if (isProtectedRecord(lead)) return null;
   for (const offer of RETIRED_OFFERS) {
     const signals = SIGNALS_BY_OFFER[offer.id](lead);
     if (signals.length) return { offer, signals };
@@ -197,7 +326,8 @@ function eventsForLead(activities = [], leadId) {
 
 /** How many times this lead has been restored — the archive "generation". */
 function restoreCount(activities = [], leadId) {
-  return eventsForLead(activities, leadId).filter(row => row.eventType === RESTORE_EVENT_TYPE).length;
+  return eventsForLead(activities, leadId).filter(row => row.eventType === RESTORE_EVENT_TYPE
+    && parseMetadata(row.metadata).scope !== 'board').length;
 }
 
 /**
@@ -205,8 +335,12 @@ function restoreCount(activities = [], leadId) {
  * newest lead_archived with no lead_restored after it.
  */
 function currentArchiveRecord(activities = [], leadId) {
+  // The lead's own archive record. A linked Pipeline card's archive event
+  // (scope 'board', written moments later, keyed CE-<id>) describes the card —
+  // its previous board stage, not the lead's — and must not stand in for it.
   const mine = eventsForLead(activities, leadId)
     .filter(row => row.eventType === ARCHIVE_EVENT_TYPE || row.eventType === RESTORE_EVENT_TYPE)
+    .filter(row => parseMetadata(row.metadata).scope !== 'board')
     .sort((a, b) => text(a.occurredAt).localeCompare(text(b.occurredAt)));
   const last = mine[mine.length - 1];
   if (!last || last.eventType !== ARCHIVE_EVENT_TYPE) return null;
@@ -232,6 +366,7 @@ function planLeadArchive(lead, {
   boardLead = null, unresolved = [],
 } = {}) {
   if (!lead || !text(lead.id).trim()) throw new Error('planLeadArchive requires a lead with an id');
+  if (isProtectedRecord(lead)) throw new Error(`lead ${lead.id} is a protected client record and is never archived`);
   assertReason(reason);
   if (!text(archivedBy).trim()) throw new Error('planLeadArchive requires archivedBy');
   if (typeof stableId !== 'function') throw new Error('planLeadArchive requires a stableId function');
@@ -292,6 +427,7 @@ function planBoardArchive(card, {
   reason, archivedBy, source, now = new Date(), activities = [], stableId, sourceLeadId = '',
 } = {}) {
   if (!card || !text(card.id).trim()) throw new Error('planBoardArchive requires a card with an id');
+  if (isProtectedRecord(card)) throw new Error(`card ${card.id} is a protected client record and is never archived`);
   assertReason(reason);
   if (typeof stableId !== 'function') throw new Error('planBoardArchive requires a stableId function');
   if (isArchivedLead(card)) return null;
@@ -401,7 +537,8 @@ module.exports = {
   ARCHIVE_MARKER_PREFIX, ARCHIVED_STAGE, BOARD_ARCHIVED_STAGE,
   ARCHIVE_EVENT_TYPE, RESTORE_EVENT_TYPE, ARCHIVED_REPLY_EVENT_TYPE,
   ARCHIVE_REASONS, ARCHIVE_REASON_LABELS, RESTORE_STAGE_UNSENT, RESTORE_STAGE_SENT,
-  RETIRED_OFFERS, DENTAL_TRADE_PATTERN,
+  RETIRED_OFFERS, DENTAL_TRADE_PATTERN, PROTECTED_RECORDS, isProtectedRecord, canonicalOffersOf,
+  MED_SPA_TRADE_TYPES, roofingSignals, medSpaSignals,
   archiveMarker, archiveReasonFromNotes, isArchivedLead, addArchiveMarker, removeArchiveMarker,
   dentalSignals, retiredOfferFor, retiredOfferById, retiredOfferBlock, outreachBlockForLead,
   eventsForLead, restoreCount, currentArchiveRecord, neverSent, parseMetadata,

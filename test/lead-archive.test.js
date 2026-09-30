@@ -82,6 +82,18 @@ const staffingLead = (extra = {}) => {
 const archived = (lead, reason = ARCHIVE_REASONS.OFFER_RETIRED_DENTAL) => ({
   ...lead, stage: ARCHIVED_STAGE, notes: addArchiveMarker(lead.notes, reason),
 });
+// The two protected Closed/Won client cards, exactly as production holds them
+// (2026-09-30). The retirement planner refuses to run unless both are present.
+const PROTECTED_CARDS = Object.freeze([
+  Object.freeze({ id: 'mq4vq4pw2t0w6u6qwmp', type: 'trade', first: 'christopher', last: 'cook', company: 'tradeselect',
+    tradeType: 'Roofer', stage: 'closed_won', email: '360estimates@gmail.com',
+    notes: 'text on the 8th to confirm payment, said check will clear wednesday morning.' }),
+  Object.freeze({ id: 'mq3i7yq86ri0ueadqtl', type: 'trade', first: 'marman', last: 'xxx', company: 'suresky.inc',
+    tradeType: 'Roofer', stage: 'closed_won', email: 'xxx@xx', phone: '587 501 4389',
+    notes: 'called him a week ago, seemed to say yes to everything' }),
+]);
+const withProtected = (cards = []) => [...cards, ...PROTECTED_CARDS.map(card => ({ ...card }))];
+
 const SEND_ENV = Object.freeze({
   SENDING_ENABLED: 'true', SEND_AUTHORIZED_ENV: 'test', RAILWAY_ENVIRONMENT: 'test',
   SEND_AUTHORIZED_TOKEN: 'token', SEND_WORKER_ROLE: 'outreach-sender', SEND_LOCK_ENABLED: 'true',
@@ -102,7 +114,7 @@ test('dental is recognised by canonical ids first and by legacy tradeType / camp
   assert.equal(retiredOfferFor({ campaign: 'Dental Campaign Test' }).offer.id, 'dental');
   // A company name alone is display text, not identity.
   assert.equal(retiredOfferFor({ company: 'Sparkle Dental Spa' }), null);
-  // Staffing, roofing and med spa leads are not dental.
+  // Staffing is not retired; roofing and med spa are their own retired offers, never dental.
   assert.equal(retiredOfferFor(staffingLead()), null);
   // Words that merely contain "dent" never retire a lead.
   for (const tradeType of ['Independent staffing agency', 'Student staffing', 'Resident services', 'Accident & injury recruiting', 'Confident Staffing']) {
@@ -111,8 +123,8 @@ test('dental is recognised by canonical ids first and by legacy tradeType / camp
   for (const campaign of ['Surrey Dentists', 'Tier C Dentists Vancouver', 'BC Dentists — 33 Cities — Aug 2026', 'Dental Campaign Test', 'Smile Dentistry']) {
     assert.ok(retiredOfferFor({ campaign }), campaign);
   }
-  assert.equal(retiredOfferFor({ leadNiche: 'roofing', campaign: 'BC Roofing Survey', tradeType: 'Roofing contractor' }), null);
-  assert.equal(retiredOfferFor({ tradeType: 'Medical spa', campaign: 'toronto-medspa-jul' }), null);
+  assert.equal(retiredOfferFor({ leadNiche: 'roofing', campaign: 'BC Roofing Survey', tradeType: 'Roofing contractor' }).offer.id, 'roofing');
+  assert.equal(retiredOfferFor({ tradeType: 'Medical spa', campaign: 'toronto-medspa-jul' }).offer.id, 'med_spa');
 });
 
 // ── 1. archived dental first-touch cannot send ──────────────────────────────
@@ -266,7 +278,7 @@ test('7. the retirement summary counts every preserved Gmail message and thread 
     { sourceLeadId: 'd7', eventType: 'follow_up_sent', metadata: JSON.stringify({ gmailMessageId: 'b', gmailThreadId: 'T', senderInboxId: 'primary' }) },
     { sourceLeadId: 'd7', eventType: 'positive_reply', metadata: JSON.stringify({ gmailMessageId: 'c', gmailThreadId: 'T' }) },
   ];
-  const plan = planOfferRetirement({ offerId: 'dental', leads: [lead], activities, archivedBy: 'test', now: NOW, stableId });
+  const plan = planOfferRetirement({ offerId: 'dental', leads: [lead], activities, boardLeads: withProtected(), archivedBy: 'test', now: NOW, stableId });
   assert.equal(plan.summary.providerMessageIds, 3);
   assert.equal(plan.summary.providerThreadIds, 1);
   assert.equal(plan.summary.conversations, 1);
@@ -347,7 +359,7 @@ test('12. running the dental migration twice archives nothing new and plans no d
     routedDental({ id: 'd-held', email: 'held@x.test', notes: '[MANUAL HOLD] human owns it', stage: 'Promoted', emailStatus: 'emailed', emailStep: '1' })];
   const board = [{ id: 'CE-d-legacy', email: 'info@fvortho.test', stage: 'follow_up', notes: '' },
     { id: 'board-only', email: 'dr@pediatric.test', tradeType: 'Dentist', stage: 'follow_up', notes: 'opened proposal' },
-    { id: 'CE-staff-1', email: leads[2].email, stage: 'hot', notes: '' }];
+    { id: 'CE-staff-1', email: leads[2].email, stage: 'hot', notes: '' }, ...withProtected()];
   const first = planOfferRetirement({ offerId: 'dental', leads, activities: [], boardLeads: board, archivedBy: 'test', now: NOW, stableId });
   assert.equal(first.summary.total, 3, 'the staffing lead is not dental');
   assert.equal(first.leadPlans.length, 3);
@@ -388,7 +400,7 @@ test('the migration counts the dry-run categories the operator reviews', () => {
     legacyDental({ id: 'r1', email: 'r1@x.test', stage: 'Review', emailStatus: 'replied' }),
     legacyDental({ id: 'u1', email: 'u1@x.test', stage: 'Unsub', emailStatus: 'done', notes: '[REPLY: Unsubscribed]' }),
   ];
-  const plan = planOfferRetirement({ offerId: 'dental', leads, archivedBy: 'dry_run', now: NOW, stableId,
+  const plan = planOfferRetirement({ offerId: 'dental', leads, boardLeads: withProtected(), archivedBy: 'dry_run', now: NOW, stableId,
     unresolvedByLead: new Map([['f1', [{ actionId: 'gmail-cold:f1:step:2', status: 'sent_unconfirmed' }]]]) });
   assert.equal(plan.summary.total, 5);
   assert.equal(plan.summary.queued, 2);
