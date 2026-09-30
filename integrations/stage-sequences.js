@@ -24,6 +24,7 @@ const {
   isResponseEvidence, HUMAN_RESPONSE_EVENT, RECORDED_CONVERSATION_EVENTS, MEETING_RESPONSE_EVENTS,
 } = require('./prospect-response');
 const { CAMPAIGN_FAMILY, resolveLeadFamily } = require('./campaign-versions');
+const { outreachBlockForLead } = require('./lead-archive');
 // Stage comparisons go through the canonical normaliser, never the raw cell.
 // Legacy rows store values like 'lost', 'warm' or 'Hot', and a raw compare
 // would silently skip both the Hot journey AND the closed-lost stop condition.
@@ -146,6 +147,9 @@ function sequenceAllowedForLead(sequenceId, lead = {}) {
   const id = String(sequenceId || '');
   const resolved = resolveLeadFamily(lead);
   if (!id) return { ok: false, reason: 'sequence id is required', family: resolved.family };
+  // No journey may attach to an archived lead or to a retired offer's lead.
+  const blocked = outreachBlockForLead(lead);
+  if (blocked) return { ok: false, reason: blocked.reason, code: blocked.code, family: resolved.family };
   if (id === 'industrial_staffing_cold' && resolved.family !== CAMPAIGN_FAMILY.STAFFING) {
     return { ok: false, reason: 'staffing sequence cannot attach to a non-staffing lead', family: resolved.family };
   }

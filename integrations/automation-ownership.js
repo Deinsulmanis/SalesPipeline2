@@ -34,6 +34,7 @@ const { REPLY_ACTION, ACTION_OWNER: OP_OWNER, WAITING_ON, deriveOperationalActio
 const { malformedEmailReason } = require('./canonical-reply');
 const { leadHasReply } = require('./reply-analytics');
 const { latestResponseAt } = require('./prospect-response');
+const { isArchivedLead, archiveReasonFromNotes, retiredOfferBlock } = require('./lead-archive');
 
 /**
  * Who owns the next executable move. Deliberately small, and mapped onto the
@@ -53,6 +54,8 @@ const OWNER = Object.freeze({
 // operator can see WHICH guard stopped a send.
 const BLOCKED_BY = Object.freeze({
   INVALID_IDENTITY: 'invalid_identity',
+  ARCHIVED: 'archived',
+  OFFER_RETIRED: 'offer_retired',
   TERMINAL_STAGE: 'terminal_stage',
   SUPPRESSION: 'suppression',
   MANUAL_HOLD: 'manual_hold',
@@ -82,6 +85,7 @@ const BLOCKED_BY = Object.freeze({
 const NON_COLD_STAGES = Object.freeze([
   'promoted', 'hot', 'call_booked', 'closed_won', 'closed_lost', 'closed',
   'won', 'lost', 'unsubscribed', 'unsub', 'review', 'replied', 'done',
+  'archived',
 ]);
 
 // Operational actions that mean a PERSON owns the conversation. Taken from the
@@ -228,7 +232,28 @@ function pipelineStageOwnership({ stage, sequenceState, callState, sequencesEnab
  * makes every later judgement meaningless — we would be reasoning about a
  * prospect we cannot actually reach.
  */
-function deriveAutomationOwnership(lead = {}, {
+/**
+ * The single ownership verdict, with one rule applied last: an offer that has
+ * been retired can never be handed to an automation. A person or a meeting
+ * may still own the lead — that is reported truthfully — but any verdict that
+ * would let a machine send, run a sequence or act is replaced by NONE.
+ */
+function deriveAutomationOwnership(lead = {}, context = {}) {
+  const result = deriveOwnershipVerdict(lead, context);
+  if (!result.automationAllowed && !result.sendAllowed && !result.sequenceAllowed
+    && ![OWNER.COLD_AUTOMATION, OWNER.REPLY_AUTOMATION, OWNER.RECOVERY_SEQUENCE].includes(result.owner)) {
+    return result;
+  }
+  const retired = retiredOfferBlock(lead) || (context.boardLead ? retiredOfferBlock(context.boardLead) : null);
+  if (!retired) return result;
+  return verdict({
+    owner: OWNER.NONE, source: 'retired_offer', reason: retired.reason,
+    blockedBy: BLOCKED_BY.OFFER_RETIRED,
+    evidence: { offerId: retired.offerId, supersededOwner: result.owner, supersededReason: result.reason },
+  });
+}
+
+function deriveOwnershipVerdict(lead = {}, {
   boardLead = null, activities = [], callState = null, sequenceState = null,
   suppressionReason = null, manualActionOverride = null, manualOverride = null,
   humanTouchAt, unrecordedHumanTouch = false,
@@ -250,6 +275,19 @@ function deriveAutomationOwnership(lead = {}, {
       owner: OWNER.NONE, source: 'identity',
       reason: `the address cannot be trusted (${identityIssue}), so nothing may be sent to it`,
       blockedBy: BLOCKED_BY.INVALID_IDENTITY, evidence: { identityIssue },
+    });
+  }
+
+  // ── 1b. Archived ─────────────────────────────────────────────────────────
+  // Before everything that could hand the lead to anyone. The board card
+  // counts too: a card moved to 'archived' is off the board.
+  if (isArchivedLead(lead) || (boardLead && isArchivedLead(boardLead))) {
+    return verdict({
+      owner: OWNER.NONE, source: 'archive',
+      reason: 'the lead is archived; no automation may act on it',
+      blockedBy: BLOCKED_BY.ARCHIVED,
+      resumeCondition: 'restore the lead from Archive (sending still needs every normal check)',
+      evidence: { archiveReason: archiveReasonFromNotes(lead.notes) || archiveReasonFromNotes(boardLead && boardLead.notes) || 'archived stage' },
     });
   }
 

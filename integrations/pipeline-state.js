@@ -35,6 +35,7 @@ const { latestResponseAt } = require('./prospect-response');
 // agent asks before it mails anyone, rather than keeping a second opinion.
 const { OWNER, BLOCKED_BY } = require('./automation-ownership');
 const { demoPairEventFor, hasUndeliveredDemoPair } = require('./demo-intent-state');
+const { ARCHIVE_MARKER_PREFIX, archiveReasonFromNotes, retiredOfferBlock } = require('./lead-archive');
 
 // ── AUTOMATION STATE ────────────────────────────────────────────────────────
 // Derived from the ColdEmail twin, because emailStatus — not stage — is what
@@ -45,6 +46,7 @@ const AUTOMATION_STATES = Object.freeze({
   STOPPED: 'stopped',    // terminal; no further automated send
   SCHEDULED: 'scheduled',// held, but a reactivation time is set and still future
   UNKNOWN: 'unknown',    // no ColdEmail twin — board-only lead
+  ARCHIVED: 'archived',  // soft-archived; no automation until restored
 });
 
 // Notes tags that outreach-agent.js treats as hard suppression. Mirrored (not
@@ -63,8 +65,10 @@ const MANUAL_HOLD_TAG = '[MANUAL HOLD]';
 
 // The send-time suppression tags, in priority order. The permanent ones come
 // FIRST so a lead that is both opted out and scheduled to reactivate reports
-// the opt-out and stays blocked.
-const SEND_SUPPRESSION_TAGS = Object.freeze([...SUPPRESSION_NOTE_TAGS, MANUAL_HOLD_TAG]);
+// the opt-out and stays blocked. An archive ('[ARCHIVED: <reason>]', a prefix
+// like '[BOUNCED') comes next: it is reversible only by an explicit restore,
+// never by a scheduled resume, so it outranks the hold.
+const SEND_SUPPRESSION_TAGS = Object.freeze([...SUPPRESSION_NOTE_TAGS, ARCHIVE_MARKER_PREFIX, MANUAL_HOLD_TAG]);
 
 /**
  * Why this lead may not be cold-emailed, or null if it may.
@@ -425,9 +429,13 @@ function deriveAutomationState(twin, now = Date.now()) {
   if (!twin) return { state: AUTOMATION_STATES.UNKNOWN, reason: 'no ColdEmail record linked to this lead' };
 
   const notes = twin.notes || '';
+  const archivedFor = archiveReasonFromNotes(notes);
+  if (archivedFor !== null) return { state: AUTOMATION_STATES.ARCHIVED, reason: 'archived (' + archivedFor + ') — restore it before any automation' };
   for (const tag of SUPPRESSION_NOTE_TAGS) {
     if (noteHas(notes, tag)) return { state: AUTOMATION_STATES.STOPPED, reason: 'suppressed (' + tag + ')' };
   }
+  const retired = retiredOfferBlock(twin);
+  if (retired) return { state: AUTOMATION_STATES.STOPPED, reason: retired.reason };
   if (noteHas(notes, MANUAL_HOLD_TAG)) {
     // Enforced: suppressionReason() in outreach-agent.js reads this tag before
     // every send, so the sequence really is stopped. A scheduled reactivation

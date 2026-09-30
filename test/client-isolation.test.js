@@ -48,6 +48,13 @@ const scalelabDental = (extra = {}) => ({
   campaign: 'Ontario List', senderInboxId: 'primary', routingRequired: 'true', tradeType: 'Dentist', ...extra,
 });
 const legacyBlank = () => ({ id: 'legacy-1', email: 'x@legacy-test.invalid', leadNiche: '', emailTemplateId: '', intendedCampaignVersion: '', campaign: '', senderInboxId: '', tradeType: '' });
+// A live ScaleLab cold lead now that dental is retired: a legacy med-spa row.
+const scalelabLegacy = (extra = {}) => ({
+  id: 'sl-legacy-1', company: 'Glow Med Spa', email: 'hello@glow-test.invalid',
+  stage: 'Queued', emailStatus: '', emailStep: '', notes: '', leadNiche: '', emailTemplateId: '',
+  intendedCampaignVersion: '', campaign: 'toronto-medspa-jul', senderInboxId: 'primary', routingRequired: '',
+  tradeType: 'Medical spa', ...extra,
+});
 
 // ── CLIENT REGISTRY ────────────────────────────────────────────────────────
 test('registry: ScaleLab and Jole resolve; unknown and blank are rejected', () => {
@@ -199,8 +206,8 @@ test('routing: validateRoute refuses cross-client sender, template and campaign'
   // Same client end to end: isolation passes; the draft template's readiness is what refuses.
   const jole = validateRoute({ niche: 'jole_employer', senderInboxId: 'jole_test', emailTemplateId: 'jole-dc-mission-critical-v1', inboxes, campaignVersionId: 'JOLE_DC_MISSION_CRITICAL' });
   assert.equal(jole.ok, false); assert.equal(jole.code, undefined); assert.match(jole.reason, /not final/);
-  // Legacy route unchanged.
-  assert.equal(validateRoute({ niche: 'dental', senderInboxId: 'primary', emailTemplateId: 'dental-guarantee-v1', inboxes }).ok, true);
+  // Same client, retired offer: refused on the offer, not on isolation.
+  assert.equal(validateRoute({ niche: 'dental', senderInboxId: 'primary', emailTemplateId: 'dental-guarantee-v1', inboxes }).code, 'offer_retired');
 });
 
 test('routing: inbox rows without clientId (as sender-balance passes them) still resolve the real sender client', () => {
@@ -237,9 +244,10 @@ test('routing: routedLeadReady refuses Jole leads through their own registry and
   } finally {
     if (original === undefined) delete process.env.GMAIL_INBOX_REGISTRY_JSON; else process.env.GMAIL_INBOX_REGISTRY_JSON = original;
   }
-  // Legacy leads are unchanged.
+  // Legacy leads are unchanged; the retired dental offer is refused.
   assert.deepEqual(routedLeadReady(legacyBlank(), {}), { ok: true, legacy: true });
-  assert.equal(routedLeadReady(scalelabDental(), {}).ok, true);
+  assert.deepEqual(routedLeadReady(scalelabLegacy(), {}), { ok: true, legacy: true });
+  assert.equal(routedLeadReady(scalelabDental(), {}).code, 'offer_retired');
 });
 
 // ── FINAL GATE ─────────────────────────────────────────────────────────────
@@ -279,15 +287,18 @@ test('final gate: cross-client sender or lead is refused before suppression or s
 });
 
 test('final gate: legacy ScaleLab verdicts are unchanged', () => {
-  const dental = scalelabDental();
-  const ok = evaluateFreshSendSafety(dental, dental, new Set(), { env: cleanEnv, senderInboxId: 'primary', senders: SENDERS });
+  const lead = scalelabLegacy();
+  const ok = evaluateFreshSendSafety(lead, lead, new Set(), { env: cleanEnv, senderInboxId: 'primary', senders: SENDERS });
   assert.equal(ok.allowed, true); assert.equal(ok.clientId, 'scalelab');
-  assert.equal(evaluateFreshSendSafety(dental, { ...dental, notes: '[REPLY: Unsubscribed]' }, new Set(), { env: cleanEnv }).code, 'unsubscribed');
-  assert.equal(evaluateFreshSendSafety(dental, dental, new Set([dental.email]), { env: cleanEnv }).code, 'suppressed');
-  assert.equal(evaluateFreshSendSafety(dental, { ...dental, notes: '[MANUAL HOLD]' }, new Set(), { env: cleanEnv }).code, 'manual_hold');
-  assert.equal(evaluateFreshSendSafety(dental, null, new Set(), { env: cleanEnv }).code, 'identity_changed');
+  assert.equal(evaluateFreshSendSafety(lead, { ...lead, notes: '[REPLY: Unsubscribed]' }, new Set(), { env: cleanEnv }).code, 'unsubscribed');
+  assert.equal(evaluateFreshSendSafety(lead, lead, new Set([lead.email]), { env: cleanEnv }).code, 'suppressed');
+  assert.equal(evaluateFreshSendSafety(lead, { ...lead, notes: '[MANUAL HOLD]' }, new Set(), { env: cleanEnv }).code, 'manual_hold');
+  assert.equal(evaluateFreshSendSafety(lead, null, new Set(), { env: cleanEnv }).code, 'identity_changed');
   // Legacy callers that pass no sender and no client suppression still pass.
-  assert.equal(evaluateFreshSendSafety(dental, dental, new Set(), { env: cleanEnv }).allowed, true);
+  assert.equal(evaluateFreshSendSafety(lead, lead, new Set(), { env: cleanEnv }).allowed, true);
+  // The retired dental offer is refused at the final gate even with every other check clean.
+  const dental = scalelabDental();
+  assert.equal(evaluateFreshSendSafety(dental, dental, new Set(), { env: cleanEnv, senderInboxId: 'primary', senders: SENDERS }).code, 'offer_retired');
 });
 
 test('final gate: revalidation loads client suppression for the fresh row\'s client', async () => {

@@ -67,6 +67,7 @@
 const { mirrorConfig } = require('./supabase-mirror');
 const { resolveLeadClient } = require('./clients/ownership');
 const { resolveClientId, DEFAULT_CLIENT_ID } = require('./clients/registry');
+const { ARCHIVE_MARKER_PREFIX, ARCHIVED_STAGE, archiveReasonFromNotes } = require('./lead-archive');
 
 const TABLE = 'outreach_leads';
 const REQUEST_TIMEOUT_MS = 5000;
@@ -722,8 +723,26 @@ function conflictRefusal(current, patch) {
 //
 // Only a hold is a pause a human chose. Resume removes it by passing
 // releaseMarkers: ['[MANUAL HOLD]']; opt-out and bounce cannot be released here.
-const SAFETY_NOTE_MARKERS = Object.freeze(['[REPLY: Unsubscribed]', '[REPLY: Not Interested]', '[BOUNCED', MANUAL_HOLD_MARKER]);
-const RELEASABLE_NOTE_MARKERS = Object.freeze([MANUAL_HOLD_MARKER]);
+// An archive ('[ARCHIVED: <reason>]', matched as a prefix) is released only by
+// the explicit restore, which passes releaseMarkers: ['[ARCHIVED'].
+const SAFETY_NOTE_MARKERS = Object.freeze(['[REPLY: Unsubscribed]', '[REPLY: Not Interested]', '[BOUNCED', ARCHIVE_MARKER_PREFIX, MANUAL_HOLD_MARKER]);
+const RELEASABLE_NOTE_MARKERS = Object.freeze([MANUAL_HOLD_MARKER, ARCHIVE_MARKER_PREFIX]);
+
+// ── the archived stage ──────────────────────────────────────────────────────
+//
+// While the canonical notes carry an archive marker, the lead's stage stays
+// what it is (normally 'Archived'). A bounce, an opt-out or an observer write
+// still lands — its notes tag, its emailStatus — but it cannot move an archived
+// lead back into a cold or pipeline stage. Kept rather than refused, for the
+// same reason safety markers are: refusing would drop protective evidence on
+// the floor. Only the restore, which releases the marker, may change the stage.
+function archivedStageKept(canonicalLead, patch, { releaseMarkers = [] } = {}) {
+  if (!Object.prototype.hasOwnProperty.call(patch || {}, 'stage')) return null;
+  if (releaseMarkers.includes(ARCHIVE_MARKER_PREFIX)) return null;
+  if (archiveReasonFromNotes(canonicalLead && canonicalLead.notes) === null) return null;
+  const current = String((canonicalLead && canonicalLead.stage) || '') || ARCHIVED_STAGE;
+  return String(patch.stage ?? '') === current ? null : current;
+}
 
 // The one exception to "opt-out is permanent": an opt-out our own classifier
 // invented (our quoted footer read as the prospect's words) may be released by
@@ -928,10 +947,15 @@ async function applyCanonicalChange(id, patch, {
       ? preserveSafetyMarkers(current.lead.notes, resume.notes, { releaseMarkers, optOutCorrection })
       : { notes: null, kept: [] };
     const notesAdjusted = writesNotes && (resume.changed || safe.kept.length > 0);
-    const attemptColumns = notesAdjusted ? { ...column, notes: safe.notes } : column;
+    const keptStage = archivedStageKept(current.lead, patch, { releaseMarkers });
+    const attemptColumns = {
+      ...column,
+      ...(notesAdjusted ? { notes: safe.notes } : {}),
+      ...(keptStage !== null ? { stage: keptStage } : {}),
+    };
 
     if (skipIfUnchanged && Object.keys(patch).every(field => String(current.lead[field] ?? '')
-      === (field === 'notes' ? String(safe.notes ?? '') : column[FIELD_MAP[field]]))) {
+      === (field === 'notes' ? String(safe.notes ?? '') : attemptColumns[FIELD_MAP[field]]))) {
       return { ok: true, unchanged: true, conflicts, revision: current.revision, keptMarkers: [], resumeTagKept: false };
     }
 
@@ -967,8 +991,14 @@ async function applyCanonicalChange(id, patch, {
         logger.warn(`[outreach-state] lead ${id}: a notes write without resume intent would have changed the `
           + 'scheduled-resume tag; kept the canonical one. Only reactivation and Resume set or clear it.');
       }
+      if (keptStage !== null) {
+        writeDiagnostics.archivedStagesKept = (writeDiagnostics.archivedStagesKept || 0) + 1;
+        logger.warn(`[outreach-state] lead ${id}: lead is archived; a write asked for stage "${patch.stage}" `
+          + `and the stage was kept "${keptStage}". Only a restore may move an archived lead.`);
+      }
       return { ok: true, conflicts, revision: current.revision + 1,
-        keptMarkers: safe.kept, resumeTagKept: resume.changed, notes: notesAdjusted ? safe.notes : undefined };
+        keptMarkers: safe.kept, resumeTagKept: resume.changed, notes: notesAdjusted ? safe.notes : undefined,
+        stage: keptStage !== null ? keptStage : undefined };
     }
     if (result.reason) return { ok: false, conflicts, reason: result.reason };
     conflicts++;
@@ -1074,9 +1104,12 @@ async function applyLeadChange(leadId, patch, {
     // or the canonical resume tag — must reach the secondary copy too, or Sheets
     // would show a held lead as unheld.
     const notesRange = `${sheetName}!${columnLetterFor('notes')}${parsedRow}`;
-    const mirrorData = canonical.notes !== undefined
-      ? data.map(entry => (entry.range === notesRange ? { ...entry, values: [[canonical.notes]] } : entry))
-      : data;
+    const stageRange = `${sheetName}!${columnLetterFor('stage')}${parsedRow}`;
+    const mirrorData = data.map(entry => {
+      if (canonical.notes !== undefined && entry.range === notesRange) return { ...entry, values: [[canonical.notes]] };
+      if (canonical.stage !== undefined && entry.range === stageRange) return { ...entry, values: [[canonical.stage]] };
+      return entry;
+    });
     let sheetsMirrored = false;
     let sheetsReason = 'ok';
     try {
@@ -1224,7 +1257,8 @@ async function applyLeadChanges(changes, {
         keptMarkers: canonical.keptMarkers || [], resumeTagKept: Boolean(canonical.resumeTagKept),
         mirrored: false, row: change.row,
         committed: status === 'succeeded'
-          ? { ...change.patch, ...(canonical.notes !== undefined ? { notes: canonical.notes } : {}) } : null,
+          ? { ...change.patch, ...(canonical.notes !== undefined ? { notes: canonical.notes } : {}),
+            ...(canonical.stage !== undefined ? { stage: canonical.stage } : {}) } : null,
       });
     }
     const committed = outcomes.filter(outcome => outcome.status === 'succeeded');
@@ -1355,7 +1389,8 @@ module.exports = {
   listOutreachLeads, countOutreachLeads, compareOutreachLead,
   applyLeadChange, applyLeadChanges, columnLetterFor,
   applyCanonicalChange, conflictRefusal, readCanonicalLead, MAX_CAS_ATTEMPTS,
-  preserveSafetyMarkers, SAFETY_NOTE_MARKERS, preserveResumeTag, mergeNotesPatch, BATCH_STATUSES,
+  preserveSafetyMarkers, SAFETY_NOTE_MARKERS, RELEASABLE_NOTE_MARKERS, archivedStageKept,
+  preserveResumeTag, mergeNotesPatch, BATCH_STATUSES,
   CORRECTABLE_OPT_OUT_MARKER, isOptOutCorrection,
   outreachWriteDiagnostics, resetOutreachWriteDiagnostics,
 };

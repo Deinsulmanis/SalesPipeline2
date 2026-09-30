@@ -194,7 +194,8 @@ test('operator queue (validateRoute): dental to scalelabaiteam is refused, staff
   const roofingToTeam = validateRoute({ niche: 'roofing', senderInboxId: 'scalelabaiteam', emailTemplateId: 'roofing-survey-v1', inboxes, requireReady: false });
   assert.equal(roofingToTeam.ok, false);
   assert.equal(validateRoute({ niche: STAFFING, senderInboxId: 'scalelabaiteam', emailTemplateId: STAFFING_CAMPAIGN.emailTemplateId, inboxes, requireReady: false }).ok, true);
-  assert.equal(validateRoute({ niche: 'dental', senderInboxId: 'tryscalelabai', emailTemplateId: 'dental-guarantee-v1', inboxes }).ok, true);
+  // Dental on a flexible inbox is refused too — the offer is retired.
+  assert.equal(validateRoute({ niche: 'dental', senderInboxId: 'tryscalelabai', emailTemplateId: 'dental-guarantee-v1', inboxes }).code, 'offer_retired');
   assert.equal(validateRoute({ niche: STAFFING, senderInboxId: 'tryscalelabai', emailTemplateId: STAFFING_CAMPAIGN.emailTemplateId, inboxes, requireReady: false }).ok, true);
 });
 

@@ -24,8 +24,8 @@ const ENV = {
 
 const makeLead = (i, over = {}) => ({
   id: `lead-${i}`, email: `owner${i}@clinic${i}.test`, company: `Clinic ${i}`, contactName: `Pat ${i}`,
-  stage: 'Queued', emailStatus: '', emailStep: '0', notes: 'enriched', leadNiche: 'dental',
-  emailTemplateId: 'dental-guarantee-v1', senderInboxId: 'tryscalelabai', ...over,
+  stage: 'Queued', emailStatus: '', emailStep: '0', notes: 'enriched', leadNiche: '',
+  tradeType: 'Medical spa', emailTemplateId: '', senderInboxId: 'tryscalelabai', ...over,
 });
 
 // Canonical Supabase stand-in. Counts every read so the tests can prove what is fetched.

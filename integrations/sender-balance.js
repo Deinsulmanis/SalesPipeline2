@@ -43,6 +43,7 @@ const { normalizeNiche, validateRoute, routedLeadReady } = require('./campaign-r
 const { queueEligibility } = require('./outreach-queue');
 const { sendSuppressionReason } = require('./pipeline-state');
 const { NON_COLD_STAGES } = require('./automation-ownership');
+const { outreachBlockForLead } = require('./lead-archive');
 
 const DEFAULT_BUFFER_RATIO = 0.15;
 const FOLLOW_UP_DELAY_DAYS = Object.freeze({ 1: 3, 2: 5 });
@@ -139,6 +140,9 @@ function projectedFollowUps({ leads, activitiesByLead, senders, suppressedEmails
     if (!delay) continue;
     if (NON_COLD_STAGES.includes(text(lead.stage).toLowerCase())) continue;
     if (sendSuppressionReason(lead, { suppressedEmails })) continue;
+    // An archived lead, or one of a retired offer, will never be sent: it is
+    // no inbox's workload and must not crowd out real supply in the refill.
+    if (outreachBlockForLead(lead)) continue;
     const sent = Date.parse(lead.lastEmailedAt || '');
     if (!Number.isFinite(sent) || sent + delay * DAY_MS > horizon) continue;
     // Only a follow-up with ONE delivered-message owner is really sendable;

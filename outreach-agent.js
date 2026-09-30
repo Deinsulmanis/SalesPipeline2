@@ -95,6 +95,7 @@ const {
   ordinaryColdActionId, stageSequenceActionId, smartleadEnqueueActionId,
 } = require('./integrations/outbound-action-id');
 const { routedLeadReady } = require('./integrations/campaign-routing');
+const { outreachBlockForLead, isArchivedLead, archiveReasonFromNotes, ARCHIVED_REPLY_EVENT_TYPE } = require('./integrations/lead-archive');
 // Managed clients: ownership travels with every send action and reply.
 const { actionOwnership, resolveSenderClient, resolveLeadClient } = require('./integrations/clients/ownership');
 const { resolveReplyClientContext } = require('./integrations/clients/reply-policy');
@@ -2753,6 +2754,48 @@ async function handleQuestion(lead, message, replyText, todaySent, activities = 
   }
 }
 
+// Reply from an archived lead. Idempotent: a replayed opt-out writes nothing
+// twice, and the observation event has a stable id per message.
+async function handleArchivedLeadReply(lead, message, replyText, activities = [], { historical = false } = {}) {
+  const verdict = classifyReplyText(replyText, {
+    subject: message.subject || '', currentEmail: lead.email, now: message.occurredAt || null,
+  });
+  const optOut = verdict.reason === 'unsubscribe_request';
+  const rejection = verdict.reason === 'explicit_rejection';
+  if (optOut || rejection) {
+    const tag = optOut ? '[REPLY: Unsubscribed]' : '[REPLY: Not Interested]';
+    const notes = String(lead.notes || '');
+    if (!notes.includes(tag)) {
+      const rowNum = await resolveRow(lead.id);
+      if (rowNum) {
+        // Notes only: the stage stays Archived and nothing re-enters a sequence.
+        await applyLeadChange(lead.id, { notes: prependNote(notes, tag) },
+          { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
+        lead.notes = prependNote(notes, tag);
+      }
+    }
+    await addSuppression(lead.email, optOut ? 'unsubscribe' : 'not_interested', lead.company, 'archived-reply');
+  }
+  // A replayed, already-recorded reply (historical / terminal replay) is not
+  // news: only a message observed fresh gets the after-archive event.
+  const eventId = `archived-reply:${message.messageId || message.rfcMessageId || ''}`;
+  if (!historical && (message.messageId || message.rfcMessageId) && !activities.some(row => row.eventId === eventId)) {
+    const event = {
+      eventId, leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email, company: lead.company || '',
+      eventType: ARCHIVED_REPLY_EVENT_TYPE, occurredAt: message.occurredAt || new Date().toISOString(),
+      subject: 'Reply received after archive — no automation', content: '',
+      metadata: JSON.stringify({
+        gmailMessageId: message.messageId || '', gmailThreadId: message.threadId || '',
+        senderInboxId: message.senderInboxId || '', classification: verdict.reason || '',
+        archiveReason: archiveReasonFromNotes(lead.notes) || '', optOutApplied: optOut || rejection,
+      }),
+    };
+    await recordColdCallActivityStrict(event);
+    activities.push(event);
+  }
+  console.log(`  ↩ archived lead ${lead.email} replied (${verdict.reason || 'unclassified'}) — recorded; no automation`);
+}
+
 async function handleNeedsHuman(lead, fromAddr) {
   const rowNum = await resolveRow(lead.id);
   if (!rowNum) {
@@ -3111,6 +3154,19 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       }));
       const isolatedVerdict = classifyReplyText(replyText, { subject: message.subject || '', currentEmail: lead.email });
       if (isolatedVerdict.reason === 'unsubscribe_request' && !DRY_RUN) await withAuth(() => handleUnsubscribe(lead));
+      continue;
+    }
+    // An ARCHIVED lead's reply is evidence, never a trigger. The observer has
+    // already persisted the inbound message; nothing here may promote, answer,
+    // draft, requeue or move the lead. An explicit opt-out or rejection is still
+    // applied to the notes and the Suppression list — protecting never pauses.
+    if (isArchivedLead(lead)) {
+      if (DRY_RUN) { console.log(`  ↩ archived lead ${lead.email} replied — no writes in dry run`); continue; }
+      try {
+        await withAuth(() => handleArchivedLeadReply(lead, message, replyText, activitiesForCycle || [], { historical }));
+      } catch (error) {
+        console.error(`[archive] reply for archived lead ${lead.id} was not fully recorded: ${error.message}`);
+      }
       continue;
     }
     // A managed client's reply never reaches ScaleLab's answer / promote /
@@ -4285,6 +4341,9 @@ async function prepareDemoIntentCandidates(allLeads, snapshot = null, corpus = a
   // has no body, reservation or quota effect. Its stable event id plus the
   // canonical read check make repeated three-minute and normal passes replay-safe.
   for (const lead of allLeads) {
+    // An archived lead, or one whose offer is retired, gets no new pair: the
+    // raw play stays in DemoPlays as evidence, but nothing may be owed to it.
+    if (outreachBlockForLead(lead)) continue;
     const play = demoPlayForLead(attribution, lead.id);
     // History, not the ACTIVE pair: a retracted pair is a decision that this
     // lead's play belonged to someone else. Asking for the active pair here
@@ -4310,6 +4369,13 @@ async function prepareDemoIntentCandidates(allLeads, snapshot = null, corpus = a
     // missing canonical evidence; the final hardened revalidation checks both.
     if (!hasUndeliveredDemoPair(lead, activities)) continue;
     if (fired.has(`${lead.id}|both-audios`)) continue;     // already fired, ever
+    // Never due: the final gate would refuse it every pass and the backstop
+    // would stay armed forever for work that can no longer happen.
+    const blocked = outreachBlockForLead(lead);
+    if (blocked) {
+      console.log(`  ⏭️  ${lead.email} has an undelivered demo pair but ${blocked.code === 'archived' ? 'is archived' : 'its offer is retired'} — no booking link`);
+      continue;
+    }
     // A lead who has already replied is in a HUMAN conversation — Deins may
     // have answered, booked them, or been told no. An automated "someone
     // listened, here's my calendar" nudge on top of that is at best redundant
@@ -4880,6 +4946,8 @@ function staffingFollowUpBody(lead, step, activities = []) {
 }
 
 function coldFollowUpBlockReason(lead) {
+  const archived = outreachBlockForLead(lead);
+  if (archived) return archived.reason;
   const family = familyForLead(lead);
   if (family === CAMPAIGN_FAMILY.UNROUTED) return 'unknown or ambiguous niche';
   if (family === CAMPAIGN_FAMILY.STAFFING && lead.emailTemplateId !== STAFFING_TEMPLATE) {
@@ -5135,6 +5203,7 @@ async function runStageSequencePass(allLeads, {
     const mine = [...(byKey.get(boardLead.id) || []), ...(email ? byKey.get(email) || [] : [])];
     const twin = target.generic ? target.twin : (twinByEmail.get(email) || null);
     if (staffingSendBlockReason(twin || boardLead)) continue;
+    if (outreachBlockForLead(boardLead) || (twin && outreachBlockForLead(twin))) continue;
     if (!authoritativeProvider({
       lead: twin || boardLead, campaignProviders: CAMPAIGN_PROVIDERS,
       mappings: liveSmartleadMappings(twin || boardLead), activities: mine,

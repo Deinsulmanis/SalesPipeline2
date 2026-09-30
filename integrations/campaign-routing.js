@@ -8,12 +8,16 @@ const { getClient } = require('./clients/registry');
 const { clientCampaign, clientTemplate, clientLeadType, campaignSendable } = require('./clients/campaigns');
 const { checkClientConsistency, resolveLeadClient } = require('./clients/ownership');
 const { clientSendBlock } = require('./clients/send-policy');
+const { outreachBlockForLead, RETIRED_OFFERS } = require('./lead-archive');
 
 const EMAIL_TEMPLATES = Object.freeze([
   Object.freeze({ id: STAFFING_CAMPAIGN.emailTemplateId, name: STAFFING_CAMPAIGN.name,
     niche: STAFFING_CAMPAIGN.niche, ready: STAFFING_CAMPAIGN.ready, sequenceSteps: 3,
     reason: '' }),
-  Object.freeze({ id: 'dental-guarantee-v1', name: 'Dental guarantee pitch', niche: 'dental', ready: true, sequenceSteps: 3 }),
+  // Retired with the dental offer (lead-archive RETIRED_OFFERS). Kept registered
+  // so historical sends still resolve their copy; never ready again.
+  Object.freeze({ id: 'dental-guarantee-v1', name: 'Dental guarantee pitch', niche: 'dental', ready: false, sequenceSteps: 3,
+    reason: 'The dental offer is retired; dental email copy can no longer be sent' }),
   Object.freeze({
     id: 'roofing-survey-v1', name: 'Roofing survey — reply first', niche: 'roofing',
     ready: process.env.ROOFING_SURVEY_REPLY_FLOW_ENABLED === 'true',
@@ -103,6 +107,11 @@ function validateCampaignVersionRoute({ niche, emailTemplateId, campaignVersionI
   return { ok: true, version };
 }
 
+// A lead type whose offer is retired can never be routed, queued or balanced.
+function retiredLeadType(niche) {
+  return RETIRED_OFFERS.find(offer => offer.leadType === niche) || null;
+}
+
 function validateRoute({ niche, senderInboxId, emailTemplateId, inboxes = [], requireReady = true, lead = null, campaignVersionId = '' } = {}) {
   const normalizedNiche = normalizeNiche(niche);
   const template = templateById(emailTemplateId);
@@ -116,6 +125,11 @@ function validateRoute({ niche, senderInboxId, emailTemplateId, inboxes = [], re
   if (isStaffingOnlySender(inbox) && normalizedNiche !== STAFFING_CAMPAIGN.niche) {
     return { ok: false, reason: `${inbox.email} is reserved for staffing agency leads` };
   }
+  // A lead type whose offer is retired, or an archived lead, is never routed.
+  const retired = retiredLeadType(normalizedNiche);
+  if (retired) return { ok: false, code: 'offer_retired', reason: `The ${retired.label} offer is retired; ${normalizedNiche} leads cannot be routed` };
+  const leadBlock = lead ? outreachBlockForLead(lead) : null;
+  if (leadBlock) return { ok: false, code: leadBlock.code, reason: leadBlock.reason };
   if (!template) return { ok: false, reason: 'A registered email template is required' };
   if (template.niche !== normalizedNiche) return { ok: false, reason: `${template.name} cannot be used for ${normalizedNiche} leads` };
   if (requireReady && !template.ready) return { ok: false, reason: template.reason || `${template.name} is not ready` };
@@ -144,6 +158,11 @@ function managedLeadReady(lead, clientId, env) {
 }
 
 function routedLeadReady(lead, env = process.env) {
+  // Archived leads and retired offers first, before ownership and before the
+  // legacy bypass below: a legacy dental row has no routing fields at all, and
+  // "legacy: true" must never mean "sendable" for an offer that no longer exists.
+  const archiveBlock = outreachBlockForLead(lead);
+  if (archiveBlock) return { ok: false, code: archiveBlock.code, reason: archiveBlock.reason };
   // Client ownership first: a lead whose fields name two clients, or that
   // carries another client's sender, is refused before any legacy bypass.
   const ownerOfLead = resolveLeadClient(lead);

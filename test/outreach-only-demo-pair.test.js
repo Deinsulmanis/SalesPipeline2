@@ -36,7 +36,10 @@ function outreachOnlyLead(overrides = {}) {
   };
 }
 
-const ownershipFor = (boardLead) => deriveAutomationOwnership(outreachOnlyLead(), {
+// The ownership mechanics on a live lead: the same shape, a non-retired offer.
+const liveShape = () => outreachOnlyLead({ leadNiche: '', campaign: 'toronto-medspa-jul', emailTemplateId: '',
+  intendedCampaignVersion: '', routingRequired: '', tradeType: 'Medical spa' });
+const ownershipFor = (boardLead, lead = liveShape()) => deriveAutomationOwnership(lead, {
   boardLead,
   activities: [
     { eventType: 'initial_email_sent', occurredAt: '2026-09-11T16:45:17.226Z' },
@@ -54,6 +57,13 @@ test('an Outreach-only lead is owned by cold automation, not refused for a stage
   assert.equal(ownership.blockedBy, null);
   assert.equal(ownership.source, 'cold_cadence',
     'with no Pipeline card, ownership comes from cold cadence — not from a blank stage');
+});
+
+test('Silver 7 itself is dental: since the offer was retired no automation may own it', () => {
+  const ownership = ownershipFor(null, outreachOnlyLead());
+  assert.equal(ownership.owner, OWNER.NONE);
+  assert.equal(ownership.blockedBy, BLOCKED_BY.OFFER_RETIRED);
+  assert.equal(ownership.sendAllowed, false);
 });
 
 test('an EMPTY board object is what produced the false refusal', () => {

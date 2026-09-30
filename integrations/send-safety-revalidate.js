@@ -7,6 +7,7 @@ const { sendAuthorization } = require('./send-authorization');
 const { checkClientConsistency, resolveLeadClient } = require('./clients/ownership');
 const { clientSendBlock } = require('./clients/send-policy');
 const { evaluateScopedSuppression } = require('./clients/suppression');
+const { outreachBlockForLead } = require('./lead-archive');
 
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
@@ -17,6 +18,7 @@ function suppressionCode(reason) {
   if (reason === '[REPLY: Unsubscribed]') return 'unsubscribed';
   if (reason === '[REPLY: Not Interested]') return 'not_interested';
   if (String(reason || '').startsWith('[BOUNCED')) return 'bounced';
+  if (String(reason || '').startsWith('[ARCHIVED')) return 'archived';
   if (reason === 'suppression-list') return 'suppressed';
   return 'suppressed';
 }
@@ -93,6 +95,16 @@ function evaluateFreshSendSafety(lead, current, suppressedEmails, {
 
   const terminal = terminalReason(current, { purpose });
   if (terminal) return { allowed: false, ...terminal };
+
+  // Archived leads and retired offers, for EVERY purpose — cold, sequence and
+  // warm alike — as the last word before an allow. Asked of the row as it is
+  // now and of the selected snapshot, so neither a stale selection nor a
+  // restore that raced this send can pass. (An archive marker is already a
+  // suppression above, coded 'archived'; this also covers the archived stage
+  // on a warm send, which skips the terminal check.) A retired offer stays
+  // blocked after a restore: this never reads the archive to decide the offer.
+  const blocked = outreachBlockForLead(current) || outreachBlockForLead(lead);
+  if (blocked) return { allowed: false, code: blocked.code, reason: blocked.reason };
 
   return { allowed: true, code: '', reason: '', current, clientId: owner.clientId };
 }

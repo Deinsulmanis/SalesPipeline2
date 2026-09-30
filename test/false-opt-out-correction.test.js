@@ -407,6 +407,10 @@ test('only the correction route passes an opt-out authorization; it cannot send,
   for (const forbidden of ["require('./send-lock')", "require('googleapis')", 'messages.send', 'nodemailer', 'withOutboundReservation']) {
     assert.ok(!moduleSrc.includes(forbidden), `the correction module must not reference ${forbidden}`);
   }
+  // Two sanctioned release declarations, both in server.js: Resume releases
+  // only [MANUAL HOLD]; the Archive restore releases only the archive marker.
   const releaseDeclarations = sources.flatMap(([file, src]) => (src.match(/releaseMarkers: \[/g) || []).map(() => file));
-  assert.deepEqual(releaseDeclarations, ['server.js'], 'Resume remains the one releaseMarkers caller');
+  assert.deepEqual(releaseDeclarations, ['server.js', 'server.js'], 'Resume and Archive restore are the only releaseMarkers callers');
+  assert.deepEqual(server.match(/releaseMarkers: \[[^\]]*\]/g).sort(),
+    ['releaseMarkers: [ARCHIVE_MARKER_PREFIX]', 'releaseMarkers: [MANUAL_HOLD_TAG]']);
 });

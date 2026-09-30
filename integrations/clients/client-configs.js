@@ -23,7 +23,7 @@ const SCALELAB = Object.freeze({
   kind: 'operator',
   platformAccess: 'operator',
   // Dashboard workspaces (integrations/clients/navigation.js catalog).
-  workspaces: Object.freeze(['clients', 'pipeline', 'inbox', 'bookings', 'outreach', 'campaigns',
+  workspaces: Object.freeze(['clients', 'pipeline', 'inbox', 'bookings', 'outreach', 'archive', 'campaigns',
     'analytics', 'staffing', 'sequences', 'health', 'settings']),
   defaultWorkspace: 'pipeline',
   terminology: Object.freeze({ lead: 'lead', leads: 'leads', prospect: 'prospect' }),

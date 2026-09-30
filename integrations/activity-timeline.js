@@ -14,6 +14,7 @@ const REPLY_TYPES = new Set([
 
 const SOURCE_BY_TYPE = Object.freeze({
   lead_created: 'CRM', lead_queued: 'CRM', lead_sender_rebalanced: 'CRM', stage_changed: 'CRM',
+  lead_archived: 'CRM', lead_restored: 'CRM', archived_reply_observed: 'Prospect',
   automation_held: 'CRM', automation_hold_released: 'CRM',
   reactivation_scheduled: 'CRM', reactivation_cancelled: 'CRM',
   initial_email_sent: 'Automation', follow_up_sent: 'Automation', booking_link_sent: 'Automation',
@@ -119,6 +120,16 @@ function eventPresentation(row, metadata, context = {}) {
   switch (type) {
     case 'lead_created': return { title: 'Lead created' };
     case 'lead_queued': return { title: 'Lead queued for outreach' };
+    case 'lead_archived': return { title: metadata.scope === 'board' ? 'Removed from Sales Pipeline (archived)' : 'Archived',
+      summary: [metadata.archiveReason === 'offer_retired_dental' ? 'Dental offer retired' : metadata.archiveReason,
+        metadata.previousStage || metadata.previousBoardStage ? `was ${metadata.previousStage || metadata.previousBoardStage}` : '',
+        metadata.archivedBy ? `by ${metadata.archivedBy}` : ''].filter(Boolean).join(' · ') };
+    case 'lead_restored': return { title: 'Restored from Archive',
+      summary: [metadata.restoredStage ? `to ${metadata.restoredStage}` : '', metadata.heldOnRestore ? 'held' : '',
+        metadata.offerRetired ? 'offer still retired — cannot send' : '', metadata.restoredBy ? `by ${metadata.restoredBy}` : '']
+        .filter(Boolean).join(' · ') };
+    case 'archived_reply_observed': return { title: 'Reply received after archive',
+      summary: metadata.optOutApplied ? 'Opt-out recorded; nothing was sent' : 'Recorded only; nothing was sent' };
     case 'lead_sender_rebalanced': return { title: 'Sending inbox reassigned',
       summary: metadata.fromSenderInboxId && metadata.toSenderInboxId ? `${metadata.fromSenderInboxId} → ${metadata.toSenderInboxId} (unsent first email)` : '' };
     case 'initial_email_sent': return { title: 'Initial email sent', summary: row.subject ? `Subject: ${row.subject}` : '' };

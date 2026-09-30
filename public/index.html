@@ -2037,6 +2037,15 @@
   .inbox-list{display:grid;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface)}.inbox-row{display:grid;grid-template-columns:minmax(180px,.8fr) minmax(260px,1.35fr) minmax(210px,.85fr);gap:18px;padding:15px 17px;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--text);text-align:left;cursor:pointer}.inbox-row:last-child{border-bottom:0}.inbox-row:hover{background:var(--tint-faint)}.inbox-row:focus-visible{outline:3px solid var(--primary);outline-offset:-3px}.inbox-person b,.inbox-action b{display:block;font-size:13px}.inbox-person small,.inbox-message small,.inbox-action small{display:block;color:var(--text-muted);font-size:11px;margin-top:4px}.inbox-message p{margin:6px 0 0;font-size:12px;line-height:1.48;color:var(--text-secondary);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.inbox-state{display:inline-flex;padding:3px 7px;border-radius:5px;background:var(--wash-1);font-size:10px;font-weight:750;text-transform:uppercase;letter-spacing:.04em}
   .status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}.status-card{padding:14px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}.status-card-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.status-card b{font-size:13px}.status-card p{font-size:11px;color:var(--text-muted);line-height:1.5;margin:7px 0 0}.state-pill{font-size:10px;font-weight:750;padding:3px 7px;border:1px solid var(--border);border-radius:999px}.state-pill[data-on="true"]{color:var(--success);background:var(--success-bg)}.state-pill[data-on="false"]{color:var(--text-muted);background:var(--tint-faint)}
   #ws-analytics .funnel-analytics,#ws-health .health-panel{margin:0}#ws-analytics #ce-chart-wrap{padding:18px!important;margin:14px 0!important;background:var(--surface);border:1px solid var(--border);border-radius:10px}#ws-campaigns #ce-campaigns-panel,#ws-settings #agent-panel,#ws-analytics #ce-demos-panel,#ws-analytics #ce-opens-panel{display:block!important;margin:0}
+  .archive-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0 0 16px}.archive-kpi{display:flex;flex-direction:column;gap:4px;padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:var(--surface)}.archive-kpi strong{font-size:22px;letter-spacing:-.02em;color:var(--text)}.archive-kpi small{font-size:11px;color:var(--text-muted)}.archive-kpi-label{font-size:10px;font-weight:750;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)}.archive-kpi-warn{border-color:var(--warn)}.archive-kpi-warn strong{color:var(--warn)}
+  .archive-toolbar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 12px;align-items:end;padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:8px}.archive-field{display:flex;flex-direction:column;gap:5px;font-size:11px;font-weight:650;color:var(--text-secondary);min-width:0}.archive-field input,.archive-field select{min-height:40px;padding:8px 10px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font:inherit;font-size:13px;min-width:0}.archive-field input:focus-visible,.archive-field select:focus-visible{outline:2px solid var(--primary);outline-offset:1px}.archive-field-search{grid-column:span 2}.archive-clear{min-height:40px;justify-self:start}
+  .archive-count-note{font-size:12px;color:var(--text-muted);margin:0 0 10px}.archive-table{display:grid;gap:8px}.archive-head,.archive-row{display:grid;grid-template-columns:minmax(200px,1.6fr) minmax(140px,1.1fr) minmax(100px,.8fr) minmax(130px,1fr) minmax(130px,1fr) minmax(100px,.8fr);gap:14px;align-items:start}.archive-head{padding:0 16px;font-size:10px;font-weight:750;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)}
+  .archive-row{width:100%;text-align:left;padding:13px 16px;border:1px solid var(--border);border-left:3px solid var(--text-muted);border-radius:8px;background:var(--surface);color:var(--text-secondary);font:inherit;font-size:12px;cursor:pointer;transition:transform 200ms cubic-bezier(.4,0,.2,1),border-color 200ms cubic-bezier(.4,0,.2,1)}.archive-row:hover{transform:translateY(-2px);border-color:var(--border-hover)}.archive-row:focus-visible{outline:2px solid var(--primary);outline-offset:2px}.archive-cell{min-width:0;overflow-wrap:anywhere}.archive-cell small{display:block;color:var(--text-muted);font-size:11px;margin-top:3px}.archive-contact b{color:var(--text);font-size:13px}
+  .archive-badge{display:inline-block;font-size:10px;font-weight:750;letter-spacing:.06em;text-transform:uppercase;padding:3px 8px;border-radius:999px;border:1px solid var(--text-muted);color:var(--text-secondary);background:var(--tint-faint)}.archive-badge-lg{font-size:11px;padding:4px 10px}.archive-flags{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}.archive-flag{font-size:10px;font-weight:650;padding:2px 7px;border-radius:999px;background:var(--primary-bg);color:var(--primary)}.archive-flag[data-tone="warn"]{background:var(--warn-bg);color:var(--warn)}.archive-flag[data-tone="muted"]{background:var(--tint-faint);color:var(--text-muted)}
+  .archive-more-wrap{display:flex;justify-content:center;margin-top:12px}.archive-banner{padding:14px 16px;border:1px solid var(--border);border-left:3px solid var(--text-muted);border-radius:8px;background:var(--tint-faint)}.archive-banner-head{display:flex;align-items:center;gap:10px;margin-bottom:6px}.archive-banner p{font-size:12px;color:var(--text-secondary);margin:6px 0 0;line-height:1.5}.archive-banner-warn{color:var(--warn)!important;font-size:12px}.archive-notes{font-size:13px;color:var(--text-muted);white-space:pre-wrap;line-height:1.5}.archive-restore-copy{font-size:12px;color:var(--text-secondary);margin:0 0 10px;line-height:1.5}.archive-restore-error{font-size:12px;color:var(--hot);min-height:16px;margin:8px 0}.archive-restore-actions{display:flex;gap:8px;flex-wrap:wrap}.archive-restore .btn-save,.archive-restore .btn-cancel{min-height:44px}
+  @media(max-width:980px){.archive-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.archive-toolbar{grid-template-columns:repeat(2,minmax(0,1fr))}.archive-head{display:none}.archive-row{grid-template-columns:1fr 1fr}.archive-contact{grid-column:1/-1}.archive-cell[data-label]::before{content:attr(data-label);display:block;font-size:10px;font-weight:750;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);margin-bottom:2px}}
+  @media(max-width:560px){.archive-toolbar,.archive-row{grid-template-columns:1fr}.archive-kpi strong{font-size:19px}.archive-field-search{grid-column:auto}}
+  @media(prefers-reduced-motion:reduce){.archive-row{transition:none}.archive-row:hover{transform:none}}
   .booking-list,.sequence-list{display:grid;gap:9px}.operational-row{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:13px 15px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}.operational-row b{font-size:13px}.operational-row small{display:block;color:var(--text-muted);font-size:11px;margin-top:3px}.operational-row-meta{text-align:right;font-size:12px;color:var(--text-secondary)}
   @media(max-width:980px){body.workspace-ready{grid-template-columns:72px minmax(0,1fr)}.crm-sidebar{padding-inline:8px}.crm-brand{padding-inline:8px}.crm-brand-copy,.crm-nav-btn span,.crm-nav-group,.crm-sidebar-foot{display:none}.crm-nav-btn{justify-content:center;padding:9px}.crm-nav-btn svg{width:19px;height:19px}.crm-workspace{padding:18px}.inbox-row{grid-template-columns:minmax(160px,.7fr) minmax(230px,1.3fr)}}
   @media(max-width:700px){html.workspace-ready{height:auto;overflow:visible}body.workspace-ready{display:block;padding-top:64px;height:auto;overflow:visible}#workspace-stage{overflow:visible}.crm-sidebar{position:fixed;left:0;top:0;width:224px;transform:translateX(-100%);transition:transform 180ms;z-index:100}.crm-sidebar.open{transform:translateX(0)}.crm-brand-copy,.crm-nav-btn span,.crm-nav-group,.crm-sidebar-foot{display:block}.crm-nav-btn{justify-content:flex-start}.sidebar-toggle{display:grid;place-items:center}body.workspace-ready>header{position:fixed;left:0;right:0;top:0;height:64px;padding:0 16px}.crm-workspace{padding:14px}.header-right .search-wrap{display:none}.inbox-row{grid-template-columns:1fr;gap:9px}.inbox-action{padding-top:8px;border-top:1px solid var(--border)}.workspace-intro{align-items:flex-start}.operational-row{align-items:flex-start}.operational-row-meta{max-width:45%}}
@@ -2121,6 +2130,7 @@
     <button class="crm-nav-btn" data-workspace="bookings" onclick="setWorkspace('bookings')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg><span>Bookings</span></button>
     <div class="crm-nav-group">Growth</div>
     <button class="crm-nav-btn" data-workspace="outreach" onclick="setWorkspace('outreach')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m3 11 18-8-7 18-3-7-8-3Z"/><path d="m11 14 4-4"/></svg><span>Outreach</span></button>
+    <button class="crm-nav-btn" data-workspace="archive" onclick="setWorkspace('archive')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"/></svg><span>Archive</span></button>
     <button class="crm-nav-btn" data-workspace="campaigns" onclick="setWorkspace('campaigns')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 19V9m6 10V5m6 14v-7m4 7V3"/></svg><span>Campaigns</span></button>
     <button class="crm-nav-btn" data-workspace="analytics" onclick="setWorkspace('analytics')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 19V5m0 14h16"/><path d="m7 15 4-4 3 2 5-7"/></svg><span>Analytics</span></button>
     <button class="crm-nav-btn" data-workspace="staffing" onclick="setWorkspace('staffing')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 4h18l-7 8v6l-4 2v-8L3 4Z"/></svg><span>Staffing Funnel</span></button>
@@ -2842,6 +2852,43 @@
 </div>
 
 <!-- CE DETAIL PANEL -->
+<div class="detail-overlay" id="archive-detail-overlay" onclick="closeArchiveDetail(event)">
+  <div class="detail-panel archive-panel" onclick="event.stopPropagation()" role="dialog" aria-modal="true" aria-labelledby="ar-d-name">
+    <div class="detail-header">
+      <div class="detail-header-left">
+        <div class="detail-name" id="ar-d-name"></div>
+        <div class="detail-sub" id="ar-d-sub"></div>
+      </div>
+      <button class="modal-close" onclick="closeArchiveDetail()" aria-label="Close archived lead">✕</button>
+    </div>
+    <div class="detail-body">
+      <div id="ar-d-banner"></div>
+      <div>
+        <div class="detail-section-title">Activity timeline</div>
+        <div class="activity-timeline" id="ar-d-activity"><div class="activity-empty">Open an archived lead to load its full history.</div></div>
+      </div>
+      <div>
+        <div class="detail-section-title">Lead record</div>
+        <div class="detail-fields" id="ar-d-fields"></div>
+      </div>
+      <div>
+        <div class="detail-section-title">Notes</div>
+        <div id="ar-d-notes" class="archive-notes"></div>
+      </div>
+      <div class="archive-restore">
+        <div class="detail-section-title">Restore</div>
+        <button type="button" class="btn-cancel" id="ar-restore-open" onclick="showArchiveRestore()">Restore this lead…</button>
+        <div id="ar-restore-panel" hidden>
+          <p id="ar-restore-copy" class="archive-restore-copy"></p>
+          <p id="ar-restore-retired" class="archive-banner-warn" hidden>This lead's offer is retired. Restoring it returns it to the active views, but it can never be sent anything while the offer stays retired.</p>
+          <label class="archive-field"><span>Restored by</span><input type="text" id="ar-restore-by" autocomplete="name" maxlength="80"></label>
+          <p id="ar-restore-error" class="archive-restore-error" role="alert"></p>
+          <div class="archive-restore-actions"><button type="button" class="btn-save" id="ar-restore-confirm" onclick="confirmArchiveRestore()">Restore</button><button type="button" class="btn-cancel" onclick="hideArchiveRestore()">Cancel</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 <div class="detail-overlay" id="ce-detail-overlay" onclick="closeCeDetail(event)">
   <div class="detail-panel" onclick="event.stopPropagation()">
     <div class="detail-header">
@@ -4383,6 +4430,9 @@ const ACTIVITY_LABELS = {
   meeting_cancelled: 'Meeting cancelled',
   meeting_outcome: 'Meeting outcome updated',
   late_reply: 'Late reply — needs attention',
+  lead_archived: 'Archived',
+  lead_restored: 'Restored from Archive',
+  archived_reply_observed: 'Reply received after archive',
 };
 
 function renderActivityTimeline(activities, hostId = 'd-activity') {
@@ -7400,6 +7450,7 @@ function splitCSVLine(line) {
 const WORKSPACES = Object.freeze({
   pipeline:  ['Pipeline', 'Active opportunities and what happens next'],
   outreach:  ['Outreach', 'The complete prospect directory and outreach state'],
+  archive:   ['Archive', 'Archived leads with their complete history — nothing here can send'],
   inbox:     ['Inbox', 'Replies and conversations that need a human decision'],
   campaigns: ['Campaigns', 'Measured campaign versions and outbound context'],
   analytics: ['Analytics', 'Funnel performance, engagement, and sending activity'],
@@ -7435,6 +7486,22 @@ function installWorkspaceShell() {
 
   const pipeline = make('pipeline', workspaceIntro('Sales workspace', 'Pipeline', 'Scan stage, urgency, waiting state, and the next action without opening every opportunity.'));
   const outreach = make('outreach', workspaceIntro('Prospect directory', 'Outreach', 'Search and filter the complete dataset while keeping the first render bounded.'));
+  const archiveWs = make('archive', workspaceIntro('Retained history', 'Archive', 'Archived leads keep every message, reply and event. Nothing here can send; restoring returns a lead to review, never to a sending state.'));
+  archiveWs.insertAdjacentHTML('beforeend', `<div class="archive-kpis" id="archive-summary" aria-live="polite"></div>
+    <div class="archive-toolbar" role="search">
+      <label class="archive-field archive-field-search"><span>Search</span><input type="search" id="archive-search" autocomplete="off" oninput="onArchiveFilterChange()" aria-describedby="archive-count-note"></label>
+      <label class="archive-field"><span>Campaign / niche</span><select id="archive-niche" onchange="onArchiveFilterChange(true)"><option value="">All niches</option></select></label>
+      <label class="archive-field"><span>Campaign</span><select id="archive-campaign" onchange="onArchiveFilterChange(true)"><option value="">All campaigns</option></select></label>
+      <label class="archive-field"><span>Archive reason</span><select id="archive-reason" onchange="onArchiveFilterChange(true)"><option value="">All reasons</option></select></label>
+      <label class="archive-field"><span>Previous stage</span><select id="archive-stage" onchange="onArchiveFilterChange(true)"><option value="">Any previous stage</option></select></label>
+      <label class="archive-field"><span>Sender</span><select id="archive-sender" onchange="onArchiveFilterChange(true)"><option value="">All senders</option></select></label>
+      <label class="archive-field"><span>Archived from</span><input type="date" id="archive-from" onchange="onArchiveFilterChange(true)"></label>
+      <label class="archive-field"><span>Archived to</span><input type="date" id="archive-to" onchange="onArchiveFilterChange(true)"></label>
+      <button type="button" class="inbox-filter archive-clear" onclick="clearArchiveFilters()">Clear filters</button>
+    </div>
+    <p class="archive-count-note" id="archive-count-note"></p>
+    <div id="archive-content" class="workspace-empty"><strong>Loading the archive…</strong>Reading archived leads and their history.</div>
+    <div class="archive-more-wrap"><button type="button" class="inbox-filter" id="archive-more" hidden onclick="loadArchiveWorkspace({ append: true })">Show more</button></div>`);
   const inbox = make('inbox', workspaceIntro('Human attention', 'Inbox', 'What prospects said, what should happen next, and who owns the move.'));
   const campaigns = make('campaigns', workspaceIntro('Attribution', 'Campaigns', 'Measured campaign versions remain separate from legacy activity with unknown attribution.'));
   const analytics = make('analytics', workspaceIntro('Performance', 'Analytics', 'Campaign funnel, replies, engagement signals, and daily sending activity.'));
@@ -7539,6 +7606,7 @@ async function loadWorkspace(name) {
   if (name === 'sequences') return loadSequencesWorkspace();
   if (name === 'staffing') return loadStaffingFunnel();
   if (name === 'bookings') return loadBookingsWorkspace();
+  if (name === 'archive') return loadArchiveWorkspace();
   if (name === 'settings') return loadSettingsWorkspace();
   if (name === 'clients') return loadClientOpsWorkspace();
 }
@@ -8274,6 +8342,264 @@ async function loadSequencesWorkspace() {
   const enabled = Boolean(status.stageSequences?.enabled);
   const sequenceRows = [...nextActions.values()].filter(entry => entry.nextAction?.sequenceState);
   document.getElementById('sequences-status').innerHTML = `<div class="status-card-head"><div><div class="workspace-eyebrow">Production gate</div><h3 style="margin:4px 0">Stage sequences are ${enabled ? 'enabled' : 'disabled'}</h3></div><span class="state-pill" data-on="${enabled}">${enabled ? 'Enabled' : 'Off'}</span></div><p style="color:var(--text-muted);font-size:12px">${enabled ? 'Explicitly enrolled sequences may run through the existing sender and safety gates.' : 'No stage-specific sequence can send. Existing cold outreach is controlled separately.'}</p><div class="sequence-list">${sequenceRows.length ? sequenceRows.map(entry => `<div class="operational-row"><span><b>${esc(entry.company || entry.name)}</b><small>${esc(entry.nextAction.sequenceState.sequenceId || 'Stage sequence')} · ${esc(entry.nextAction.sequenceState.status || '')}</small></span><span class="operational-row-meta">${esc(entry.nextAction.label)}<small>${esc(naDueText(entry.nextAction))}</small></span></div>`).join('') : '<div class="workspace-empty"><strong>No sequence state to show</strong>No pipeline lead currently has a visible stage-sequence action.</div>'}</div>`;
+}
+
+// ── ARCHIVE ─────────────────────────────────────────────────────────────────
+// Archived leads with their complete history. Read-only by construction: the
+// drawer has no send, queue, promote, stage or sequence control. The one
+// action is Restore, which the server returns to Import (never sent) or to
+// Review under a MANUAL HOLD (sent) — never to a sending state. A lead whose
+// offer is retired (dental) stays unable to send after a restore.
+
+const ARCHIVE_PAGE = 100;
+const archiveState = { rows: [], total: 0, totalArchived: 0, offset: 0, facets: null, reasonLabels: {}, loaded: false, current: null };
+let archiveSearchTimer = null;
+
+function archiveQuery() {
+  const value = id => (document.getElementById(id)?.value || '').trim();
+  return {
+    search: value('archive-search'), niche: value('archive-niche'), campaign: value('archive-campaign'),
+    reason: value('archive-reason'), previousStage: value('archive-stage'), sender: value('archive-sender'),
+    archivedFrom: value('archive-from'), archivedTo: value('archive-to'),
+  };
+}
+
+function archiveDate(value) {
+  const ms = Date.parse(value || '');
+  return Number.isFinite(ms) ? new Date(ms).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
+}
+
+function archiveReasonText(row) {
+  return row.archiveReasonLabel || archiveState.reasonLabels[row.archiveReason] || row.archiveReason || 'Archived';
+}
+
+function archiveStageText(value) {
+  if (!value) return 'Unknown';
+  const board = (typeof STAGES !== 'undefined' ? STAGES : []).find(stage => stage.id === value);
+  return board ? board.label : value;
+}
+
+function archiveSenderText(row) {
+  if (row.kind === 'board') return 'Pipeline card';
+  if (row.senderEmail) return row.senderEmail;
+  return row.senderInboxId || 'No sender recorded';
+}
+
+function fillArchiveSelect(id, entries, allLabel, labelFor = key => key) {
+  const select = document.getElementById(id);
+  if (!select) return;
+  const current = select.value;
+  const options = Object.entries(entries || {}).sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])));
+  select.innerHTML = `<option value="">${esc(allLabel)}</option>`
+    + options.map(([key, count]) => `<option value="${escAttr(key)}">${esc(labelFor(key))} (${count})</option>`).join('');
+  if (options.some(([key]) => key === current)) select.value = current;
+}
+
+function renderArchiveSummary(data) {
+  const host = document.getElementById('archive-summary');
+  if (!host) return;
+  const rows = archiveState.rows;
+  const facets = data.facets || {};
+  const retired = (facets.reasons || {}).offer_retired_dental || 0;
+  const unresolved = data.unresolvedAvailable ? data.unresolvedCount : null;
+  const cards = [
+    ['Archived', data.totalArchived, 'Leads and Pipeline cards kept with full history'],
+    ['Dental offer retired', retired, 'Archived when the dental offer was retired'],
+    ['Shown', data.total, data.total === data.totalArchived ? 'No filter applied' : 'Matching the current filters'],
+    ['Unresolved send state', unresolved === null ? '—' : unresolved,
+      unresolved === null ? 'Send-lock state could not be read' : (unresolved ? 'Evidence preserved; needs operator review' : 'No uncertain sends')],
+  ];
+  host.innerHTML = cards.map(([label, value, copy], index) => `<div class="archive-kpi${index === 3 && unresolved ? ' archive-kpi-warn' : ''}">
+    <span class="archive-kpi-label">${esc(label)}</span><strong>${esc(typeof value === 'number' ? value.toLocaleString() : value)}</strong><small>${esc(copy)}</small></div>`).join('');
+  document.getElementById('archive-count-note').textContent = rows.length < data.total
+    ? `Showing ${rows.length.toLocaleString()} of ${data.total.toLocaleString()}` : `${data.total.toLocaleString()} shown`;
+}
+
+function renderArchiveRows() {
+  const host = document.getElementById('archive-content');
+  const more = document.getElementById('archive-more');
+  if (!archiveState.rows.length) {
+    host.className = 'workspace-empty';
+    host.innerHTML = archiveState.totalArchived
+      ? '<strong>No archived lead matches these filters</strong>Clear a filter to see more.'
+      : '<strong>The archive is empty</strong>Archived leads appear here with their full history.';
+    if (more) more.hidden = true;
+    return;
+  }
+  host.className = 'archive-table';
+  host.innerHTML = `<div class="archive-head" aria-hidden="true"><span>Contact</span><span>Campaign</span><span>Previous stage</span><span>Sender</span><span>Reason</span><span>Archived</span></div>`
+    + archiveState.rows.map(row => {
+      const unresolved = Array.isArray(row.unresolved) && row.unresolved.length;
+      const flags = [
+        unresolved ? '<span class="archive-flag" data-tone="warn">Unresolved send</span>' : '',
+        row.replyAfterArchive ? '<span class="archive-flag">Replied after archive</span>' : '',
+        row.inboundMessages ? `<span class="archive-flag" data-tone="muted">${row.inboundMessages} repl${row.inboundMessages === 1 ? 'y' : 'ies'}</span>` : '',
+      ].join('');
+      return `<button type="button" class="archive-row" onclick="openArchiveDetail('${escAttr(row.id)}')">
+        <span class="archive-cell archive-contact"><b>${esc(row.company || row.email || row.id)}</b><small>${esc(row.contactName || row.email || '')}</small>${flags ? `<span class="archive-flags">${flags}</span>` : ''}</span>
+        <span class="archive-cell" data-label="Campaign">${esc(row.campaign || '—')}<small>${esc(row.niche || '')}</small></span>
+        <span class="archive-cell" data-label="Previous stage">${esc(archiveStageText(row.previousStage))}</span>
+        <span class="archive-cell" data-label="Sender">${esc(archiveSenderText(row))}</span>
+        <span class="archive-cell" data-label="Reason"><span class="archive-badge">Archived</span><small>${esc(archiveReasonText(row))}</small></span>
+        <span class="archive-cell" data-label="Archived">${esc(archiveDate(row.archivedAt))}<small>${esc(row.archivedBy || '')}</small></span>
+      </button>`;
+    }).join('');
+  if (more) more.hidden = archiveState.rows.length >= archiveState.total;
+}
+
+async function loadArchiveWorkspace({ append = false } = {}) {
+  const host = document.getElementById('archive-content');
+  if (!host) return;
+  if (!append) {
+    archiveState.offset = 0;
+    host.className = 'workspace-empty';
+    host.innerHTML = '<strong>Loading the archive…</strong>Reading archived leads and their history.';
+  }
+  const params = new URLSearchParams({ limit: String(ARCHIVE_PAGE), offset: String(append ? archiveState.rows.length : 0) });
+  for (const [key, value] of Object.entries(archiveQuery())) if (value) params.set(key, value);
+  try {
+    const response = await fetch('/api/archive?' + params.toString());
+    if (!response.ok) throw new Error((await apiError(response, 'Archive could not be loaded')).message);
+    const data = await response.json();
+    archiveState.rows = append ? archiveState.rows.concat(data.rows || []) : (data.rows || []);
+    archiveState.total = data.total || 0;
+    archiveState.totalArchived = data.totalArchived || 0;
+    archiveState.facets = data.facets || {};
+    archiveState.reasonLabels = data.reasonLabels || {};
+    archiveState.loaded = true;
+    fillArchiveSelect('archive-niche', archiveState.facets.niches, 'All niches', key => (key === 'dental' ? 'Dental' : key));
+    fillArchiveSelect('archive-campaign', archiveState.facets.campaigns, 'All campaigns');
+    fillArchiveSelect('archive-reason', archiveState.facets.reasons, 'All reasons', key => archiveState.reasonLabels[key] || key);
+    fillArchiveSelect('archive-stage', archiveState.facets.previousStages, 'Any previous stage', archiveStageText);
+    fillArchiveSelect('archive-sender', archiveState.facets.senders, 'All senders', key => (key === 'unknown' ? 'No sender recorded' : key));
+    renderArchiveSummary(data);
+    renderArchiveRows();
+  } catch (error) {
+    host.className = 'workspace-empty';
+    host.innerHTML = `<strong>Archive unavailable</strong>${esc(error.message || 'The archive could not be loaded.')} Nothing was changed.`;
+  }
+}
+
+function onArchiveFilterChange(immediate = false) {
+  clearTimeout(archiveSearchTimer);
+  archiveSearchTimer = setTimeout(() => loadArchiveWorkspace(), immediate ? 0 : 250);
+}
+
+function clearArchiveFilters() {
+  for (const id of ['archive-search', 'archive-niche', 'archive-campaign', 'archive-reason', 'archive-stage', 'archive-sender', 'archive-from', 'archive-to']) {
+    const node = document.getElementById(id);
+    if (node) node.value = '';
+  }
+  loadArchiveWorkspace();
+}
+
+function archiveField(label, value) {
+  return value ? `<div class="detail-field"><span class="detail-field-label">${esc(label)}</span><span class="detail-field-val">${esc(value)}</span></div>` : '';
+}
+
+async function openArchiveDetail(id) {
+  const row = archiveState.rows.find(item => item.id === id);
+  if (!row) return;
+  archiveState.current = row;
+  document.getElementById('ar-d-name').textContent = row.company || row.email || row.id;
+  document.getElementById('ar-d-sub').textContent = [row.contactName, row.email].filter(Boolean).join(' · ');
+  const unresolved = Array.isArray(row.unresolved) ? row.unresolved : [];
+  const atArchive = Array.isArray(row.unresolvedAtArchive) ? row.unresolvedAtArchive : [];
+  document.getElementById('ar-d-banner').innerHTML = `<div class="archive-banner">
+      <div class="archive-banner-head"><span class="archive-badge archive-badge-lg">Archived</span><b>${esc(archiveReasonText(row))}</b></div>
+      <p>${esc(archiveDate(row.archivedAt))}${row.archivedBy ? ` · by ${esc(row.archivedBy)}` : ''}${row.archiveSource ? ` · ${esc(row.archiveSource.replace(/_/g, ' '))}` : ''}</p>
+      <p>No email can be sent to this lead. Its messages, replies and events are kept exactly as recorded.${row.offerRetired ? ' Its offer is retired, so it stays unable to send even if restored.' : ''}</p>
+      ${unresolved.length ? `<p class="archive-banner-warn">Unresolved send state: ${unresolved.map(item => esc(`${item.status} (${item.actionId})`)).join(', ')}. The evidence is preserved; reconcile it from Settings, never by resending.</p>` : ''}
+      ${!unresolved.length && atArchive.length ? `<p>At archive time ${atArchive.length} reservation(s) were unresolved; they have since been resolved.</p>` : ''}
+      ${row.replyAfterArchive ? '<p class="archive-banner-warn">The prospect replied after this lead was archived. The reply is in the timeline below; nothing was sent automatically.</p>' : ''}
+    </div>`;
+  document.getElementById('ar-d-fields').innerHTML = [
+    archiveField('Company', row.company), archiveField('Contact', row.contactName), archiveField('Email', row.email),
+    archiveField('City', row.city), archiveField('Niche', row.tradeType || row.niche), archiveField('Campaign', row.campaign),
+    archiveField('Campaign version', row.campaignVersion),
+    archiveField('Previous stage', archiveStageText(row.previousStage)),
+    archiveField('Previous Pipeline stage', row.previousBoardStage ? archiveStageText(row.previousBoardStage) : ''),
+    archiveField('Email status', row.emailStatus), archiveField('Sequence step', row.emailStep),
+    archiveField('Last emailed', row.lastEmailedAt ? archiveDate(row.lastEmailedAt) : ''),
+    archiveField('Sending inbox', archiveSenderText(row)), archiveField('Meeting', row.meetingAt ? archiveDate(row.meetingAt) : ''),
+    archiveField('Recorded events', String(row.events || 0)),
+  ].join('');
+  document.getElementById('ar-d-notes').textContent = 'Loading…';
+  document.getElementById('ar-d-activity').innerHTML = '<div class="activity-empty">Loading full history…</div>';
+  hideArchiveRestore();
+  document.getElementById('archive-detail-overlay').classList.add('open');
+  const url = row.kind === 'board'
+    ? `/api/leads/${encodeURIComponent(row.id)}/activity`
+    : `/api/coldemail/${encodeURIComponent(row.id)}/activity`;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (archiveState.current !== row) return;
+    const notes = (data.lead && data.lead.notes) || '';
+    document.getElementById('ar-d-notes').textContent = notes || 'No notes';
+    renderActivityTimeline(data.activities, 'ar-d-activity');
+  } catch (_) {
+    if (archiveState.current !== row) return;
+    document.getElementById('ar-d-notes').textContent = 'Notes could not be loaded.';
+    document.getElementById('ar-d-activity').innerHTML = '<div class="activity-empty">History could not be loaded. Nothing was changed.</div>';
+  }
+}
+
+function closeArchiveDetail(event) {
+  if (event && event.target !== document.getElementById('archive-detail-overlay')) return;
+  document.getElementById('archive-detail-overlay').classList.remove('open');
+  archiveState.current = null;
+}
+
+function showArchiveRestore() {
+  const row = archiveState.current;
+  if (!row) return;
+  const sent = row.kind !== 'board' && (row.emailStatus && row.emailStatus !== 'draft' || Number(row.emailStep) > 0);
+  document.getElementById('ar-restore-copy').textContent = row.kind === 'board'
+    ? `The Pipeline card returns to ${archiveStageText(row.previousStage || 'follow_up')} under a MANUAL HOLD.`
+    : sent
+      ? 'The lead returns to Review under a MANUAL HOLD. No follow-up can send until a person resumes it through the normal checks.'
+      : 'The lead returns to Import. It can only send after it is queued again and passes every queue check.';
+  document.getElementById('ar-restore-retired').hidden = !row.offerRetired;
+  try { document.getElementById('ar-restore-by').value = localStorage.getItem('archiveRestoreBy') || ''; } catch (_) { /* storage blocked */ }
+  document.getElementById('ar-restore-error').textContent = '';
+  document.getElementById('ar-restore-panel').hidden = false;
+  document.getElementById('ar-restore-open').hidden = true;
+}
+
+function hideArchiveRestore() {
+  document.getElementById('ar-restore-panel').hidden = true;
+  document.getElementById('ar-restore-open').hidden = false;
+}
+
+async function confirmArchiveRestore() {
+  const row = archiveState.current;
+  if (!row) return;
+  const by = document.getElementById('ar-restore-by').value.trim();
+  const error = document.getElementById('ar-restore-error');
+  if (!by) { error.textContent = 'Enter who is restoring this lead; the restore is recorded in its history.'; document.getElementById('ar-restore-by').focus(); return; }
+  try { localStorage.setItem('archiveRestoreBy', by); } catch (_) { /* storage blocked */ }
+  const button = document.getElementById('ar-restore-confirm');
+  button.disabled = true;
+  error.textContent = '';
+  const url = row.kind === 'board'
+    ? `/api/archive/cards/${encodeURIComponent(row.id)}/restore`
+    : `/api/archive/leads/${encodeURIComponent(row.id)}/restore`;
+  try {
+    const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ by }) });
+    if (!response.ok) throw new Error((await apiError(response, 'The lead could not be restored')).message);
+    const data = await response.json();
+    showToast(`Restored to ${data.restoredStage || 'review'}${data.held ? ' under a manual hold' : ''}${data.offerRetired ? ' — offer retired, it still cannot send' : ''}.`, 'success');
+    document.getElementById('archive-detail-overlay').classList.remove('open');
+    archiveState.current = null;
+    workspaceLoaded.outreach = false;
+    await loadArchiveWorkspace();
+  } catch (failure) {
+    error.textContent = failure.message || 'The lead could not be restored. Nothing was changed.';
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function loadBookingsWorkspace() {
