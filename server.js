@@ -135,7 +135,13 @@ async function stage2TimelineProbe({ leadId, sourceLeadId, email, authoritative,
   }
 }
 const { simulateRouting } = require('./integrations/gmail-routing-simulation');
-const { EMAIL_TEMPLATES, LEAD_TYPES, LEAD_TYPE_IDS, normalizeNiche, leadTypeLabel, isKnownLeadType, campaignVersionsForRoute, validateCampaignVersionRoute, validateRoute } = require('./integrations/campaign-routing');
+const { EMAIL_TEMPLATES, LEAD_TYPES, LEAD_TYPE_IDS, normalizeNiche, leadTypeLabel, isKnownLeadType, campaignVersionsForRoute, validateCampaignVersionRoute, validateRoute, routedLeadReady } = require('./integrations/campaign-routing');
+// Managed clients (internal operator views only; clients never log in).
+const { registerClientRoutes } = require('./integrations/clients/routes');
+const { leadsForClient, leadDefinitelyOtherClient } = require('./integrations/clients/ownership');
+const { resolveClientId, DEFAULT_CLIENT_ID } = require('./integrations/clients/registry');
+const { getLedgerStore } = require('./integrations/clients/ledger-store');
+const { emailUniquenessMode, leadsInEmailScope, leadsForCalendarMatching } = require('./integrations/clients/email-scope');
 const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE, qualifyLead: qualifyRoofingLead } = require('./integrations/roofing-survey-profile');
 const {
   COLD_CALL_ACTIVITY_SHEET,
@@ -559,8 +565,11 @@ const CE_COLUMNS    = [
   'enrichment_attempted',                                             // S
   'leadNiche','senderInboxId','emailTemplateId','routingRequired',     // T U V W
   'intendedCampaignVersion',                                          // X
+  'clientId',                                                         // Y — explicit tenant owner
 ];
-const CE_COL_RANGE  = `${CE_SHEET_NAME}!A:X`;
+const CE_COL_RANGE  = `${CE_SHEET_NAME}!A:Y`;
+// The legacy full-row PUT rewrites A:X only. Ownership (Y) never changes there.
+const CE_EDITABLE_COLUMNS = CE_COLUMNS.filter(col => col !== 'clientId');
 
 // ── GLOBAL SUPPRESSION LIST ───────────────────────────────────────────────────
 // Durable, email-keyed opt-out record shared with outreach-agent.js. Checked at
@@ -1367,7 +1376,7 @@ async function ensureColdEmailSheet() {
     ceSheetChecked = true;
     const hResp = await s.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range:         `${CE_SHEET_NAME}!A1:X1`,
+      range:         `${CE_SHEET_NAME}!A1:Y1`,
     });
     const existingHdr = hResp.data.values?.[0] || [];
     // Repair if header is missing, wrong, or shorter than CE_COLUMNS (new columns added)
@@ -1525,11 +1534,21 @@ function buildOutreachPipelineIndex(coldEmailLeads, boardLeads) {
     map.set(key, values);
   };
 
-  for (const lead of coldEmailLeads || []) push(coldEmailByEmail, normalizeEmail(lead.email), lead);
+  // The Pipeline board is ScaleLab's. Only leads in ScaleLab's email scope may
+  // map to it; a managed client's lead with the same address never does.
+  const boardScope = new Set(leadsInEmailScope(coldEmailLeads || [], DEFAULT_CLIENT_ID));
+  for (const lead of boardScope) push(coldEmailByEmail, normalizeEmail(lead.email), lead);
 
   const byColdEmailId = new Map();
   let ambiguousMappings = 0;
   for (const lead of coldEmailLeads || []) {
+    if (!boardScope.has(lead)) {
+      byColdEmailId.set(lead.id, {
+        pipelinePresence: false, pipelineStage: '', boardLeadId: '', mappingStatus: 'not_in_pipeline',
+        mappingReason: 'managed-client lead; the Pipeline board belongs to ScaleLab', matchedBy: '',
+      });
+      continue;
+    }
     const email = normalizeEmail(lead.email);
     const coldEmailTwins = email ? (coldEmailByEmail.get(email) || []) : [];
     const identity = resolvePromotionIdentity(lead, boardLeads, { coldEmailTwinCount: coldEmailTwins.length });
@@ -1927,7 +1946,17 @@ function filterOutreachRows(rows, query) {
 app.get('/api/coldemail', requireAuth, async (req, res) => {
   try {
     const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
-    const filtered = filterOutreachRows(dataset.rows, req.query);
+    // Optional client scope, applied here on the server: the browser never
+    // receives another client's rows to hide. Absent means the legacy
+    // behaviour (every row).
+    let scopedRows = dataset.rows;
+    if (req.query.client !== undefined) {
+      const client = resolveClientId(req.query.client);
+      if (!client.ok) return res.status(400).json({ error: client.reason, code: client.code });
+      const ids = new Set(leadsForClient(dataset.leads || [], client.clientId).map(lead => String(lead.id)));
+      scopedRows = dataset.rows.filter(row => ids.has(String(row.id)));
+    }
+    const filtered = filterOutreachRows(scopedRows, req.query);
     const requested = req.query.limit === undefined ? DEFAULT_CE_PAGE : parseInt(req.query.limit, 10);
     const limit = Number.isFinite(requested) && requested > 0 ? Math.min(requested, MAX_CE_PAGE) : 0;
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
@@ -1935,7 +1964,7 @@ app.get('/api/coldemail', requireAuth, async (req, res) => {
     res.json({
       leads: page,
       total: filtered.length,
-      totalUnfiltered: dataset.rows.length,
+      totalUnfiltered: scopedRows.length,
       offset, limit,
       hasMore: limit ? offset + page.length < filtered.length : false,
       counts: dataset.counts,
@@ -1955,6 +1984,14 @@ app.get('/api/coldemail', requireAuth, async (req, res) => {
     console.error('[ColdEmail GET]', e.message);
     res.status(500).json({ error: e.message });
   }
+});
+
+registerClientRoutes(app, {
+  requireAuth,
+  loadDataset: options => withAuth(() => getOutreachDataset(options)),
+  getStore: () => getLedgerStore(),
+  senders: () => configuredSenders(),
+  routedLeadReady,
 });
 
 app.get('/api/campaign-versions', requireAuth, (req, res) => {
@@ -2518,6 +2555,20 @@ async function addSuppression(email, reason, company, source, known) {
   if (known) known.add(e);
 }
 
+// Addresses the importing client already has. While global email uniqueness is
+// in force (the database still has the global index) that is every address, as
+// before; once it is tenant-scoped, only this client's (a conflicted row counts
+// for everyone).
+async function existingColdEmailAddresses(clientId) {
+  if (emailUniquenessMode() !== 'client') {
+    const existing = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!D:D` });
+    return new Set((existing.data.values || []).slice(1).map(r => (r[0] || '').toLowerCase().trim()).filter(Boolean));
+  }
+  const response = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE });
+  const rows = (response.data.values || []).slice(1).map(row => Object.fromEntries(CE_COLUMNS.map((field, i) => [field, row[i] || ''])));
+  return new Set(leadsInEmailScope(rows, clientId).map(lead => normalizeEmail(lead.email)).filter(Boolean));
+}
+
 app.post('/api/coldemail/import', requireAuth, async (req, res) => {
   const { rows, campaign, campaign_notes, lead_niche } = req.body || {};
   if (!Array.isArray(rows)) return res.status(400).json({ error: 'body.rows must be an array' });
@@ -2534,14 +2585,7 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
   try {
     const result = await withAuth(async () => {
       await ensureColdEmailSheet();
-      const existing = await sheets().spreadsheets.values.get({
-        spreadsheetId: SPREADSHEET_ID,
-        range:         `${CE_SHEET_NAME}!D:D`,   // email column
-      });
-      const existingEmails = new Set(
-        (existing.data.values || []).slice(1)
-          .map(r => (r[0] || '').toLowerCase().trim()).filter(Boolean)
-      );
+      const existingEmails = await existingColdEmailAddresses(DEFAULT_CLIENT_ID);
       // Durable opt-out check: a suppressed address must never re-enter ColdEmail,
       // even if its original row was deleted (so existingEmails no longer has it).
       const suppressedEmails = await loadSuppressedEmails();
@@ -2584,6 +2628,9 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
           campaign: campaignName, campaign_notes: campaignNotes,
           enrichment_attempted: '',   // never attempted — enrich-names.js will pick these up
           leadNiche, senderInboxId: '', emailTemplateId: '', routingRequired: 'true', intendedCampaignVersion: '',
+          // This import is ScaleLab's. Managed clients import through their own
+          // validated path; ownership is explicit from the first write.
+          clientId: DEFAULT_CLIENT_ID,
         };
         toAdd.push(CE_COLUMNS.map(col => String(lead[col] ?? '')));
         toMirror.push(lead);
@@ -2632,11 +2679,15 @@ async function findColdEmailTwins(boardLeadId, boardEmail) {
   const wanted = String(boardLeadId || '').replace(/^CE-/, '');
   const email = normalizeEmail(boardEmail || '');
   const response = await sheets().spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:U`,
+    spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE,
   });
   const rows = (response.data.values || []).slice(1);
   const matches = [];
   rows.forEach((row, index) => {
+    // Board rows are ScaleLab's: an email-only hit on a row definitively owned
+    // by another client is not a twin. An id hit always is.
+    const full = Object.fromEntries(CE_COLUMNS.map((field, i) => [field, row[i] || '']));
+    const otherClient = leadDefinitelyOtherClient(full, DEFAULT_CLIENT_ID);
     const twin = {
       id: row[0] || '', company: row[1] || '', email: row[3] || '',
       stage: row[7] || '', emailStatus: row[8] || '', lastEmailedAt: row[9] || '',
@@ -2644,7 +2695,7 @@ async function findColdEmailTwins(boardLeadId, boardEmail) {
       _row: index + 2, // +1 for the header, +1 for 1-based rows
     };
     const idHit = Boolean(wanted) && twin.id === wanted;
-    const emailHit = Boolean(email) && normalizeEmail(twin.email) === email;
+    const emailHit = Boolean(email) && normalizeEmail(twin.email) === email && !otherClient;
     if (idHit || emailHit) matches.push({ ...twin, _matchedBy: idHit ? 'id' : 'email' });
   });
   // An id match is the authoritative one, so it sorts first.
@@ -3081,7 +3132,7 @@ app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
 app.get('/api/leads/next-actions', requireAuth, async (_req, res) => {
   try {
     const snapshot = await sheets().spreadsheets.values.batchGet({ spreadsheetId: SPREADSHEET_ID,
-      ranges: [AGENT_READ_RANGE, `${CE_SHEET_NAME}!A:X`, `${COLD_CALL_ACTIVITY_SHEET}!A:J`,
+      ranges: [AGENT_READ_RANGE, CE_COL_RANGE, `${COLD_CALL_ACTIVITY_SHEET}!A:J`,
         `${GMAIL_OBSERVATION_STATE_SHEET}!A:I`, 'Suppression!A:A'] });
     const [boardResponse, ceResponse, activityResponse, observerResponse, suppressionResponse] =
       snapshot.data.valueRanges.map(data => ({ data }));
@@ -3105,7 +3156,9 @@ app.get('/api/leads/next-actions', requireAuth, async (_req, res) => {
         emailStep: row[10] || '', notes: row[11] || '', senderInboxId: row[20] || '',
       };
       if (twin.id && !twinsById.has(twin.id)) twinsById.set(twin.id, twin);
-      const key = normalizeEmail(twin.email);
+      // Board cards are ScaleLab's; another client's row is never an email twin.
+      const full = Object.fromEntries(CE_COLUMNS.map((field, i) => [field, row[i] || '']));
+      const key = leadDefinitelyOtherClient(full, DEFAULT_CLIENT_ID) ? '' : normalizeEmail(twin.email);
       if (key && !twinsByEmail.has(key)) twinsByEmail.set(key, twin);
     }
 
@@ -3707,7 +3760,7 @@ app.post('/api/leads/:id/contact-change', requireAuth, async (req, res) => {
     const [leadResponse, activityRows, ceResponse, boardResponse, suppressedEmails] = await Promise.all([
       sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A${rowNum}:W${rowNum}` }),
       readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER),
-      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:X` }),
+      sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE }),
       sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: AGENT_READ_RANGE }),
       loadSuppressionEmails(),
     ]);
@@ -3937,8 +3990,11 @@ async function planCalendarBookings(events, { dataset, boardLeads, activities })
         ? { status: 'matched', matchedBy: 'prior_provider_event', boardLead, coldEmailLead: coldEmailLead || null }
         : { status: 'unmatched', reason: 'this CRM never booked this provider event' };
     } else {
+      // Only leads of clients whose meetings arrive through this Google
+      // Calendar can match a booking; another client's lead with the same
+      // address must never turn a ScaleLab booking into a blocking conflict.
       identity = matchBookingIdentity(classified.attendeeEmail, {
-        coldEmailLeads: dataset.leads, boardLeads,
+        coldEmailLeads: leadsForCalendarMatching(dataset.leads), boardLeads,
       });
     }
     if (identity.status !== 'matched') {
@@ -5121,7 +5177,7 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
           && (outreachStateMode() !== 'primary' || outreachWriteAuthority() !== 'supabase')) {
           return { ok: false, reason: 'Staffing queue requires Supabase primary reads and canonical writes; current production authority must be reconciled first' };
         }
-        const route = validateRoute({ niche: lead.leadNiche || lead.tradeType, senderInboxId: leadSender, emailTemplateId, inboxes: gmailInboxOptions() });
+        const route = validateRoute({ niche: lead.leadNiche || lead.tradeType, senderInboxId: leadSender, emailTemplateId, inboxes: gmailInboxOptions(), lead, campaignVersionId });
         if (!route.ok) return route;
         const versionRoute = validateCampaignVersionRoute({ niche: lead.leadNiche || lead.tradeType, emailTemplateId, campaignVersionId });
         if (!versionRoute.ok) return versionRoute;
@@ -5381,6 +5437,11 @@ app.get('/api/coldemail/replies', requireAuth, async (req, res) => {
 
 app.post('/api/coldemail', requireAuth, async (req, res) => {
   const lead = req.body;
+  // The legacy add is ScaleLab's; a managed client's lead never enters here.
+  if (lead.clientId !== undefined && String(lead.clientId).trim() && String(lead.clientId).trim().toLowerCase() !== DEFAULT_CLIENT_ID) {
+    return res.status(422).json({ error: 'managed-client leads use their own import', code: 'client_ownership_conflict' });
+  }
+  lead.clientId = DEFAULT_CLIENT_ID;
   // Same choke point as the CSV import: validate format and reject junk,
   // then dedupe against the sheet — this path previously had neither, so a
   // manual add could create a second sendable row for an existing address.
@@ -5393,12 +5454,7 @@ app.post('/api/coldemail', requireAuth, async (req, res) => {
   const vals = [CE_COLUMNS.map(col => lead[col] !== undefined ? String(lead[col]) : '')];
   try {
     await withAuth(async () => {
-      const existing = await sheets().spreadsheets.values.get({
-        spreadsheetId: SPREADSHEET_ID,
-        range:         `${CE_SHEET_NAME}!D:D`,   // email column
-      });
-      const dupe = (existing.data.values || []).slice(1)
-        .some(r => (r[0] || '').toLowerCase().trim() === email);
+      const dupe = (await existingColdEmailAddresses(DEFAULT_CLIENT_ID)).has(email);
       if (dupe) {
         const err = new Error('a lead with this email already exists');
         err.isDuplicate = true;
@@ -5545,7 +5601,7 @@ app.put('/api/coldemail/:id', requireAuth, async (req, res) => {
     lead.emailStatus = 'done';
     lead.notes = ensureNote(lead.notes, '[REPLY: Unsubscribed]');
   }
-  const vals = [CE_COLUMNS.map(col => lead[col] !== undefined ? String(lead[col]) : '')];
+  const vals = [CE_EDITABLE_COLUMNS.map(col => lead[col] !== undefined ? String(lead[col]) : '')];
   try {
     const rowNum = await withAuth(() => findCERow(req.params.id));
     if (!rowNum) return res.status(404).json({ error: 'not found' });
@@ -5793,6 +5849,7 @@ function gmailInboxOptions() {
     perRunLimit: sender.perRunLimit || DEFAULT_INBOX_PER_RUN_LIMIT,
     observerEnabled: sender.observerEnabled !== false,
     staffingOnly: isStaffingOnlySender(sender),
+    clientId: sender.clientId || DEFAULT_CLIENT_ID,
     credentialConfigured: sender.credentialConfigured,
     identityVerified: sender.id === 'primary' ? Boolean(process.env.GMAIL_TOKEN_JSON) : sender.credentialConfigured,
     sendEligible: sender.sendEligible,

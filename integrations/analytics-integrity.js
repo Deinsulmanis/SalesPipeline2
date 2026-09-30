@@ -130,17 +130,21 @@ function latestEvidenceTime(activities = []) {
   return latest || null;
 }
 
+// Duplicates are judged per client: one address under two clients is allowed.
 function duplicateEmailLeads(leads = []) {
+  const { groupByTenant } = require('./clients/email-scope');
   const byEmail = new Map();
   for (const lead of leads) {
     const email = String(lead.email || '').trim().toLowerCase();
     if (!email) continue;
-    const ids = byEmail.get(email) || [];
-    ids.push(String(lead.id || ''));
-    byEmail.set(email, ids);
+    const bucket = byEmail.get(email) || [];
+    bucket.push(lead);
+    byEmail.set(email, bucket);
   }
-  return [...byEmail.entries()].filter(([, ids]) => new Set(ids.filter(Boolean)).size > 1)
-    .map(([email, ids]) => ({ email, leadIds: [...new Set(ids)] }));
+  return [...byEmail.entries()].flatMap(([email, bucket]) => groupByTenant(bucket)
+    .map(group => [...new Set(group.map(lead => String(lead.id || '')).filter(Boolean))])
+    .filter(ids => ids.length > 1)
+    .map(ids => ({ email, leadIds: ids })));
 }
 
 function bounceMismatch({ leads = [], activities = [] }) {

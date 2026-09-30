@@ -4,6 +4,9 @@ const { sendSuppressionReason } = require('./pipeline-state');
 const { staffingSendBlockReason } = require('./staffing-launch-gate');
 const { NON_COLD_STAGES } = require('./automation-ownership');
 const { sendAuthorization } = require('./send-authorization');
+const { checkClientConsistency, resolveLeadClient } = require('./clients/ownership');
+const { clientSendBlock } = require('./clients/send-policy');
+const { evaluateScopedSuppression } = require('./clients/suppression');
 
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
@@ -46,7 +49,9 @@ function terminalReason(current, { purpose = 'cold' } = {}) {
  *   sequence — stage-sequence follow-up (pipeline stages may be non-cold)
  *   warm     — identity + suppression + staffing only (caller keeps extra hold/booking checks)
  */
-function evaluateFreshSendSafety(lead, current, suppressedEmails, { purpose = 'cold', env = process.env } = {}) {
+function evaluateFreshSendSafety(lead, current, suppressedEmails, {
+  purpose = 'cold', env = process.env, senderInboxId = '', senders, clientSuppression,
+} = {}) {
   if (!lead || !lead.id) {
     return { allowed: false, code: 'invalid_identity', reason: 'lead identity is missing' };
   }
@@ -63,17 +68,33 @@ function evaluateFreshSendSafety(lead, current, suppressedEmails, { purpose = 'c
   const staffingNow = staffingSendBlockReason(current, env);
   if (staffingNow) return { allowed: false, code: 'staffing_launch_paused', reason: staffingNow };
 
+  // Client isolation on the row as it is NOW, plus the sender about to send:
+  // lead == campaign == template == sender, or no send. Never repaired here.
+  let owner;
+  try {
+    owner = checkClientConsistency({ lead: current, senderInboxId, senders });
+  } catch (error) {
+    return { allowed: false, code: 'client_ownership_unavailable', reason: error.message || 'client ownership could not be resolved' };
+  }
+  if (!owner.ok) return { allowed: false, code: owner.code, reason: owner.reason };
+  const clientBlocked = clientSendBlock(owner.clientId, env);
+  if (clientBlocked) return { allowed: false, code: clientBlocked.code, reason: clientBlocked.reason, clientId: owner.clientId };
+
+  // Global suppression first — the existing verdict, codes unchanged — then
+  // the client's own exclusions.
   const suppressed = sendSuppressionReason(current, {
     suppressedEmails: suppressedEmails instanceof Set ? suppressedEmails : new Set(),
   });
   if (suppressed) {
     return { allowed: false, code: suppressionCode(suppressed), reason: suppressed };
   }
+  const scoped = evaluateScopedSuppression(current, { clientId: owner.clientId, suppressedEmails: new Set(), clientEntries: clientSuppression });
+  if (scoped) return { allowed: false, code: scoped.code, reason: scoped.reason, clientId: owner.clientId };
 
   const terminal = terminalReason(current, { purpose });
   if (terminal) return { allowed: false, ...terminal };
 
-  return { allowed: true, code: '', reason: '', current };
+  return { allowed: true, code: '', reason: '', current, clientId: owner.clientId };
 }
 
 async function loadFreshSendState(lead, deps) {
@@ -102,7 +123,16 @@ async function revalidateFreshSendSafety(lead, deps = {}, options = {}) {
   const env = deps.env || options.env || process.env;
   try {
     const { current, suppressedEmails } = await loadFreshSendState(lead, deps);
-    return evaluateFreshSendSafety(lead, current, suppressedEmails, { ...options, env });
+    // The client's exclusions for the fresh row. A loader that fails reports
+    // { available: false, error }, which refuses the send.
+    let clientSuppression;
+    const owner = current ? resolveLeadClient(current) : null;
+    if (owner?.ok && typeof deps.loadClientSuppression === 'function') {
+      clientSuppression = await deps.loadClientSuppression(owner.clientId, current);
+    }
+    return evaluateFreshSendSafety(lead, current, suppressedEmails, {
+      ...options, env, senders: deps.senders || options.senders, clientSuppression,
+    });
   } catch (error) {
     return {
       allowed: false,

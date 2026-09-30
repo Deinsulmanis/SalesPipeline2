@@ -21,7 +21,7 @@ test('dashboard lead list skips siteContext without changing the sheet or sendin
   // outreach snapshot rather than per request.
   assert.match(server, /readColdEmailDashboardRows\(\),/);
   assert.doesNotMatch(browser, /siteContext[^\n]+renderCeTable/);
-  assert.match(fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8'), /const READ_RANGE\s*=\s*`\$\{SHEET_NAME\}!A:X`/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8'), /const READ_RANGE\s*=\s*`\$\{SHEET_NAME\}!A:Y`/);
 });
 
 test('engagement lookup no longer costs a second ColdEmail read', () => {
@@ -63,16 +63,19 @@ test('stage changes use a narrow endpoint and never write the hidden site contex
     'no direct sheet mutation may bypass the abstraction in this route');
 });
 
-test('legacy ColdEmail PUT covers the full A:X row of 24 columns', () => {
+test('legacy ColdEmail PUT covers all 24 editable columns A:X and never writes ownership (Y)', () => {
   const route = server.slice(
     server.indexOf("app.put('/api/coldemail/:id'"),
     server.indexOf("app.delete('/api/coldemail/:id'"));
   const columns = [...server.slice(server.indexOf('const CE_COLUMNS'), server.indexOf('const CE_COL_RANGE'))
     .matchAll(/'([^']+)'/g)].map(match => match[1]);
-  const lastColumn = sheetColumn(columns.length);
-  assert.equal(columns.length, 24);
-  assert.equal(lastColumn, 'X', '24 ColdEmail fields are A:X');
-  assert.match(route, /CE_COLUMNS\.map\(col => lead\[col\] !== undefined \? String\(lead\[col\]\) : ''\)/);
+  assert.equal(columns.length, 25);
+  assert.equal(columns[24], 'clientId', 'Y is the explicit client owner');
+  const editable = columns.filter(col => col !== 'clientId');
+  const lastColumn = sheetColumn(editable.length);
+  assert.equal(lastColumn, 'X', '24 editable ColdEmail fields are A:X');
+  assert.match(server, /const CE_EDITABLE_COLUMNS = CE_COLUMNS\.filter\(col => col !== 'clientId'\);/);
+  assert.match(route, /CE_EDITABLE_COLUMNS\.map\(col => lead\[col\] !== undefined \? String\(lead\[col\]\) : ''\)/);
   assert.match(route, new RegExp(String.raw`\$\{CE_SHEET_NAME\}!A\$\{rowNum\}:${lastColumn}\$\{rowNum\}`));
   assert.doesNotMatch(route, /:S\$\{rowNum\}/);
 });

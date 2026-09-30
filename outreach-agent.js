@@ -95,6 +95,18 @@ const {
   ordinaryColdActionId, stageSequenceActionId, smartleadEnqueueActionId,
 } = require('./integrations/outbound-action-id');
 const { routedLeadReady } = require('./integrations/campaign-routing');
+// Managed clients: ownership travels with every send action and reply.
+const { actionOwnership, resolveSenderClient, resolveLeadClient } = require('./integrations/clients/ownership');
+const { resolveReplyClientContext } = require('./integrations/clients/reply-policy');
+const { handleManagedClientReply } = require('./integrations/clients/reply-pipeline');
+const { buildClientSuppression } = require('./integrations/clients/suppression');
+const { getClient: getManagedClient } = require('./integrations/clients/registry');
+const { getLedgerStore } = require('./integrations/clients/ledger-store');
+const { leadsInEmailScope, tenantOf } = require('./integrations/clients/email-scope');
+const {
+  createClientCapacityState, clientSendCountsToday, clientCapacityVerdict, recordClientSend, clientCapacitySnapshot,
+} = require('./integrations/clients/capacity');
+const { DEFAULT_CLIENT_ID } = require('./integrations/clients/registry');
 // Staffing supplies its own locked copy only. Sender selection, thread pinning,
 // quota, observer, suppression and ownership all stay on the shared path.
 const { STAFFING_CAMPAIGN, renderStaffingEmail, validateStaffingEmail, isStaffingCampaign } = require('./integrations/staffing-campaign');
@@ -298,18 +310,20 @@ const PROPOSAL_BASE    = (/^https?:\/\//i.test(_rawProposalBase) ? _rawProposalB
 const MIN_DELAY = 30 * 1000;
 const MAX_DELAY = 90 * 1000;
 
-// ColdEmail columns A:X — must stay in sync with CE_COLUMNS in server.js
+// ColdEmail columns A:Y — must stay in sync with CE_COLUMNS in server.js
 //   A=id  B=company  C=contactName  D=email  E=city  F=tradeType  G=website
 //   H=stage  I=emailStatus  J=lastEmailedAt  K=emailStep  L=notes
-//   M=reviewCount  N=rating  O=tier  P=siteContext
+//   M=reviewCount  N=rating  O=tier  P=siteContext … X=intendedCampaignVersion
+//   Y=clientId (explicit tenant owner; blank only on rows not yet backfilled)
 const COLUMNS = [
   'id','company','contactName','email','city','tradeType','website',
   'stage','emailStatus','lastEmailedAt','emailStep','notes',
   'reviewCount','rating','tier','siteContext','campaign','campaign_notes','enrichment_attempted',
   'leadNiche','senderInboxId','emailTemplateId','routingRequired','intendedCampaignVersion',
+  'clientId',
 ];
 const AGENT_COLS  = []; // integrated into COLUMNS for ColdEmail
-const READ_RANGE  = `${SHEET_NAME}!A:X`;
+const READ_RANGE  = `${SHEET_NAME}!A:Y`;
 const CAMPAIGN_INTEGRATIONS_SHEET = 'CampaignIntegrations';
 const PROVIDER_LEADS_SHEET = 'ProviderLeadMappings';
 const GMAIL_OBSERVATION_STATE_SHEET = 'GmailObservationState';
@@ -1821,6 +1835,12 @@ function freshSendSafetyDeps() {
       getLeadById: id => getOutreachLeadById(id),
       suppressedFrom: snapshot => new Set((snapshot.suppression || []).slice(1).map(row => normEmail(row[0])).filter(Boolean)),
     }),
+    // Client isolation at the final gate: the configured senders resolve the
+    // sending inbox's client, and the client's own exclusions are read for the
+    // one lead being sent (never the corpus). The store never throws; an
+    // unreadable list comes back { available: false, error } and refuses.
+    senders: GMAIL_SENDERS,
+    loadClientSuppression: (clientId, lead) => getLedgerStore().clientSuppressionsFor(clientId, lead),
   };
 }
 
@@ -2141,7 +2161,7 @@ async function deliverOrdinaryColdStep({
     return { delivered: false, reason: `delivery reservation could not be persisted: ${error.message}` };
   }
 
-  const gate = await guardProviderSend(lead, freshSendSafetyDeps(), { purpose: 'cold' });
+  const gate = await guardProviderSend(lead, freshSendSafetyDeps(), { purpose: 'cold', senderInboxId: sender.id });
   if (!gate.allowed) {
     return { delivered: false, reason: gate.reason || gate.code };
   }
@@ -2151,6 +2171,7 @@ async function deliverOrdinaryColdStep({
     leadId: lead.id,
     actionType: 'gmail_cold_step',
     provider: 'gmail',
+    ownership: actionOwnership(lead, sender, { senders: GMAIL_SENDERS }),
   };
   let result;
   try {
@@ -2884,7 +2905,11 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     !senderIds || senderIds.has(item.id))) {
     // Include every CRM identity: an already-replied lead can write again, and
     // an unknown legacy sender is evidence to observe, never a default inbox.
-    const senderLeads = candidates;
+    // Client isolation: an inbox never matches a lead that definitively belongs
+    // to another client. A lead whose own fields conflict stays visible to
+    // every inbox, so an opt-out or bounce from it is still applied.
+    const senderClient = resolveSenderClient(sender);
+    const senderLeads = senderClient.ok ? leadsInEmailScope(candidates, senderClient.clientId) : candidates;
     const log = (state, details) => console.log(`[GmailObserver:${sender.id}] ${state} ${JSON.stringify(details)}`);
     const backoff = getMailboxBackoff(sender.id);
     if (backoff) {
@@ -2911,7 +2936,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       if (!DRY_RUN) {
         await commitObservation({ observation: observed, plan, activities: activitiesForCycle,
           appendEvents: events => withAuth(() => recordMailboxActivities(events)),
-          suppress: item => withAuth(() => addSuppression(item.email, item.reason, item.company, 'gmail-observer')),
+          suppress: item => withAuth(() => routeObserverSuppression(item, senderLeads)),
           checkpoint: state => advanceCheckpoint
             ? withAuth(() => persistGmailObservationState(
               sender.id,
@@ -3075,6 +3100,48 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     const replyText      = stripQuotedReply(message.body || message.snippet || '');
     const historical     = Boolean(rawMessage.historical || rawMessage.terminalReplay);
     const maySend        = !CHECK_ONLY && !historical;
+    // Client isolation: the receiving inbox, the lead and its campaign must
+    // belong to one client, or this reply is not applied to this lead. An
+    // explicit opt-out is still honoured — refusing to protect is never safe.
+    const replyContext = resolveReplyClientContext({ senderInboxId: sender.id, lead, senders: GMAIL_SENDERS });
+    if (!replyContext.ok) {
+      console.error(JSON.stringify({
+        event: 'client_reply_isolation_blocked', lead_id: lead.id, sender_inbox_id: sender.id,
+        message_id: message.messageId || '', code: replyContext.code, reason: replyContext.reason,
+      }));
+      const isolatedVerdict = classifyReplyText(replyText, { subject: message.subject || '', currentEmail: lead.email });
+      if (isolatedVerdict.reason === 'unsubscribe_request' && !DRY_RUN) await withAuth(() => handleUnsubscribe(lead));
+      continue;
+    }
+    // A managed client's reply never reaches ScaleLab's answer / promote /
+    // book handlers. It is classified under the client's policy and recorded;
+    // ScaleLab continues the conversation by hand. Nothing here sends.
+    if (replyContext.policyMode === 'managed') {
+      if (DRY_RUN) {
+        console.log(`  ↩ [${replyContext.clientId}] reply from ${lead.email} (${company}) — managed client, no writes in dry run`);
+        continue;
+      }
+      try {
+        await withAuth(() => handleManagedClientReply({ lead, message, replyText, context: replyContext }, {
+          recordActivity: async row => { await recordColdCallActivityStrict(row); activitiesForCycle?.push(row); },
+          applyLeadChange: async (target, patch) => {
+            const rowNum = await resolveRow(target.id);
+            if (!rowNum) throw new Error(`lead ${target.id} row is missing`);
+            await applyLeadChange(target.id, patch, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
+          },
+          applyGlobalUnsubscribe: target => handleUnsubscribe(target),
+          addGlobalSuppression: (target, reason) => addSuppression(target.email, reason, target.company, 'client-reply-auto'),
+          store: getLedgerStore(),
+          activities: activitiesForCycle || [],
+        }));
+      } catch (error) {
+        console.error(JSON.stringify({
+          event: 'client_reply_failed', client_id: replyContext.clientId, lead_id: lead.id,
+          message_id: message.messageId || '', error: error.message,
+        }));
+      }
+      continue;
+    }
     if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE) {
       lead.emailStatus = 'replied';
       if (!DRY_RUN) {
@@ -4539,6 +4606,33 @@ async function addSuppression(email, reason, company, source) {
   console.log(`[Suppression] + ${e} (${reason})`);
 }
 
+// Observer-planned suppression, routed by scope. Unsubscribe and bounce are
+// global for every client. A negative reply is global for the default client
+// (unchanged) and client-scoped for a managed client whose policy says so —
+// it is never widened to global. If the client entry cannot be written the
+// lead row still carries its sticky reply tag; the failure is logged for an
+// operator rather than thrown, so the mailbox cursor is not held back.
+async function routeObserverSuppression(item, leads = []) {
+  if (item.reason === 'not_interested') {
+    const lead = leads.find(candidate => normEmail(candidate.email) === normEmail(item.email));
+    const owner = lead ? resolveLeadClient(lead) : null;
+    if (owner?.ok && getManagedClient(owner.clientId).replyPolicy.negativeReplySuppressionScope === 'client') {
+      const store = getLedgerStore();
+      try {
+        if (!store.enabled) throw new Error('client ledger store is not enabled');
+        await store.addClientSuppression(buildClientSuppression({
+          clientId: owner.clientId, matchType: 'email', value: item.email, reason: 'not_interested', source: 'gmail-observer',
+        }));
+        console.log(JSON.stringify({ event: 'client_suppression_added', client_id: owner.clientId, lead_id: lead.id, source: 'gmail-observer' }));
+      } catch (error) {
+        console.error(JSON.stringify({ event: 'client_suppression_write_failed', client_id: owner.clientId, lead_id: lead.id, source: 'gmail-observer', error: error.message }));
+      }
+      return;
+    }
+  }
+  return addSuppression(item.email, item.reason, item.company, 'gmail-observer');
+}
+
 // A lead must not be emailed if EITHER its notes carry a suppression tag OR its
 // address is on the global suppression list (survives row deletion / re-import).
 // Delegates to the canonical definition in pipeline-state. The rule itself is
@@ -4603,6 +4697,9 @@ async function runHumanOutboundPass(leads, activitiesForCycle, sender = null, { 
     return { ok: true, written: 0, inspected: 0, skipped };
   }
   const mailbox = gmailForSender(sender, { feature: 'human_outbound' });
+  // An inbox only ever correlates its own client's leads by address.
+  const mailboxClient = resolveSenderClient(sender);
+  if (mailboxClient.ok) leads = leadsInEmailScope(leads, mailboxClient.clientId);
   const leadsByEmail = new Map();
   for (const lead of leads) {
     const email = String(lead.email || '').trim().toLowerCase();
@@ -4930,7 +5027,9 @@ async function runStageSequencePass(allLeads, {
     }
   }
   const twinByEmail = new Map();
-  for (const lead of allLeads) {
+  // Stage sequences run off ScaleLab's Pipeline board: only ScaleLab-scope
+  // leads may be a board card's email twin.
+  for (const lead of leadsInEmailScope(allLeads, DEFAULT_CLIENT_ID)) {
     const key = normEmail(lead.email);
     if (key && !twinByEmail.has(key)) twinByEmail.set(key, lead);
   }
@@ -5230,7 +5329,7 @@ async function runStageSequencePass(allLeads, {
       leadNiche: twin && twin.leadNiche, tradeType: twin && twin.tradeType,
       emailTemplateId: twin && twin.emailTemplateId, campaign: twin && twin.campaign,
     };
-    const gate = await guardProviderSend(safetyLead, freshSendSafetyDeps(), { purpose: 'sequence' });
+    const gate = await guardProviderSend(safetyLead, freshSendSafetyDeps(), { purpose: 'sequence', senderInboxId: sender.id });
     if (!gate.allowed) {
       console.warn(`[StageSeq] ${boardLead.email} blocked: ${gate.reason || gate.code}`);
       continue;
@@ -5250,6 +5349,7 @@ async function runStageSequencePass(allLeads, {
       leadId: twin ? twin.id : String(boardLead.id || '').replace(/^CE-/, ''),
       actionType: 'gmail_sequence_step',
       provider: 'gmail',
+      ownership: actionOwnership(safetyLead, sender, { senders: GMAIL_SENDERS }),
     };
     let result;
     try {
@@ -5502,6 +5602,16 @@ async function run() {
   activeQuotaState = quotaState;
   activeWindowQuota = windowQuota;
   activeSenderCounts = sendsBySender;
+  // Client-level capacity: GLOBAL → CLIENT here, then the campaign, sender and
+  // window limits the send path already enforces. Same global numbers as
+  // above, so this layer can only narrow what a client may send.
+  const clientCapacity = createClientCapacityState({
+    globalDailyLimit: DAILY_SEND_LIMIT, globalWindowLimit: DAILY_CAP,
+    sentTodayByClient: clientSendCountsToday(ownershipActivities, {
+      dayKey: senderDayKey, leadsById: new Map(all.map(lead => [lead.id, lead])),
+    }),
+  });
+  console.log(`[client-cap] ${JSON.stringify(clientCapacitySnapshot(clientCapacity))}`);
 
   // Reply-check pass — unconditional; runs even when cap is reached.
   // Mutates emailStatus on replied leads so selectFollowUps excludes them below.
@@ -5635,10 +5745,11 @@ async function run() {
   const followUpIndexBySender = new Map(GMAIL_SENDERS.map(sender => [sender.id, 0]));
   const followUpSentBySender = new Map(GMAIL_SENDERS.map(sender => [sender.id, 0]));
 
-  function providerSuccessCounter(sender) {
+  function providerSuccessCounter(sender, lead) {
     let counted = false;
     return () => {
       if (counted) return;
+      recordClientSend(clientCapacity, tenantOf(lead));
       consumeSendingWindowSuccess(windowQuota, sender.id);
       sendsBySender.set(sender.id, (sendsBySender.get(sender.id) || 0) + 1);
       quotaState.globalCount = Number(quotaState.globalCount || 0) + 1;
@@ -5682,6 +5793,10 @@ async function run() {
       body = template.body(lead);
     }
     const preview = body.split('\n')[2] || '';
+    // Client capacity before any sender is considered: a client at its cap (or
+    // with sending disabled) never borrows another client's capacity.
+    const clientCap = clientCapacityVerdict(clientCapacity, tenantOf(lead));
+    if (!clientCap.allowed) { console.warn(`⏸️  deferred → ${lead.email} (client capacity: ${clientCap.reason})`); return false; }
     let senderChoice;
     try { senderChoice = chooseSender({
       lead, activities: ownershipActivities, senders: GMAIL_SENDERS, sendsToday: sendsBySender,
@@ -5727,7 +5842,7 @@ async function run() {
       const delivery = await deliverOrdinaryColdStep({
         lead, step: nextStepNum, sender: selectedSender, subject, body, attribution,
         activitiesForCycle: ownershipActivities, thread,
-        onProviderSuccess: providerSuccessCounter(selectedSender),
+        onProviderSuccess: providerSuccessCounter(selectedSender, lead),
       });
       if (!delivery.delivered) {
         console.warn(`⏸️  follow-up deferred → ${lead.email} (${delivery.reason})`);
@@ -5783,6 +5898,10 @@ async function run() {
       continue;
     }
 
+    // Client capacity before any sender is considered: a client at its cap (or
+    // with sending disabled) never borrows another client's capacity.
+    const clientCap = clientCapacityVerdict(clientCapacity, tenantOf(lead));
+    if (!clientCap.allowed) { console.warn(`⏸️  deferred → ${lead.email} (client capacity: ${clientCap.reason})`); continue; }
     let senderChoice;
     try { senderChoice = chooseSender({
       lead, activities: ownershipActivities, senders: GMAIL_SENDERS, sendsToday: sendsBySender,
@@ -5913,7 +6032,7 @@ async function run() {
         lead, step: 1, sender: selectedSender, subject, body, attribution,
         personalizationMetadata: validatedPersonalizationMetadata,
         activitiesForCycle: ownershipActivities,
-        onProviderSuccess: providerSuccessCounter(selectedSender),
+        onProviderSuccess: providerSuccessCounter(selectedSender, lead),
       });
       if (!delivery.delivered) {
         console.warn(`⏸️  step-1 deferred → ${lead.email} (${delivery.reason})`);
@@ -5974,6 +6093,10 @@ async function run() {
       body = template.body(lead);
     }
     const preview     = body.split('\n')[2] || '';
+    // Client capacity before any sender is considered: a client at its cap (or
+    // with sending disabled) never borrows another client's capacity.
+    const clientCap = clientCapacityVerdict(clientCapacity, tenantOf(lead));
+    if (!clientCap.allowed) { console.warn(`⏸️  deferred → ${lead.email} (client capacity: ${clientCap.reason})`); continue; }
     let senderChoice;
     try { senderChoice = chooseSender({
       lead, activities: ownershipActivities, senders: GMAIL_SENDERS, sendsToday: sendsBySender,
@@ -6019,7 +6142,7 @@ async function run() {
       const delivery = await deliverOrdinaryColdStep({
         lead, step: nextStepNum, sender: selectedSender, subject, body, attribution,
         activitiesForCycle: ownershipActivities, thread,
-        onProviderSuccess: providerSuccessCounter(selectedSender),
+        onProviderSuccess: providerSuccessCounter(selectedSender, lead),
       });
       if (!delivery.delivered) {
         console.warn(`⏸️  follow-up deferred → ${lead.email} (${delivery.reason})`);

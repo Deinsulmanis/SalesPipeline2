@@ -31,13 +31,14 @@ const filterOutreachRows = new Function(`
   return filterOutreachRows;
 `)();
 
-const buildOutreachPipelineIndex = new Function(`
+const { leadsInEmailScope } = require('../integrations/clients/email-scope');
+const buildOutreachPipelineIndex = new Function('leadsInEmailScope', 'DEFAULT_CLIENT_ID', `
   const normalizeEmail = value => String(value || '').trim().toLowerCase();
   const displayStageFor = value => String(value || '').trim().toLowerCase();
   const resolvePromotionIdentity = ${resolvePromotionIdentity.toString()};
   ${sourceFunction('buildOutreachPipelineIndex')}
   return buildOutreachPipelineIndex;
-`)();
+`)(leadsInEmailScope, 'scalelab');
 
 const row = (id, extra = {}) => ({
   id, company: `${id} Dental`, contactName: `Dr ${id}`, email: `${id}@example.com`, website: `${id}.example.com`,
