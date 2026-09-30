@@ -40,11 +40,23 @@ additionally carries only documentation (`CURRENT_PRODUCTION_BASELINE.md`,
 Railway project / service: `modest-peace` / `SalesPipeline2`
 (https://receptionist.scalelabai.ca), region us-west2.
 
-**Production SHA:** `27255082af988c1a24568098b705cf84491cf211` (branch
+**Production SHA:** `e9a7a01f8c4b7b7a5f14d869d1c7e004bb4e3ed8` (branch
 `cursor/staffing-agent-shadow-production-7402`; Railway deployment
-`6fec1b85`, SUCCESS). Deployed 2026-09-30 15:51 Pacific: `f70e24f` plus
-`c0863ee` (modern email TLDs), `3f3a110` (staffing role-to-market evidence)
-and `2725508` (dental offer retired + soft Archive, below).
+`cfab6c73`, SUCCESS). Deployed 2026-09-30 16:46 Pacific: `f70e24f` plus
+`c0863ee` (modern email TLDs), `3f3a110` (staffing role-to-market evidence),
+`2725508` (dental retired + soft Archive), `6065245` (roofing and med spa
+retired) and `e9a7a01` (Archive row record scope).
+
+**Roofing and med spa RETIRED (2026-09-30) and archived** with the dental
+machinery: 174 roofing leads + 1 card (`offer_retired_roofing`), 348 med spa
+leads + 3 cards (`offer_retired_med_spa`). The only live outreach offer is
+staffing (547 leads). **Protected clients** (`lead-archive.js`
+`PROTECTED_RECORDS`, exact card ids): Trade Select `mq4vq4pw2t0w6u6qwmp` and
+SureSky Roofing `mq3i7yq86ri0ueadqtl` (contact recorded as "marman"), both
+Closed/Won, never retired or archived; every retirement plan refuses to run
+unless both are present exactly once, closed_won, un-archived. Moving either
+card to another stage will therefore block all retirement dry runs until
+`PROTECTED_RECORDS` is updated in a reviewed commit.
 
 **Dental offer RETIRED (2026-09-30) and archived.** `integrations/lead-archive.js`
 `RETIRED_OFFERS` makes every dental lead unsendable at routing, ownership,
