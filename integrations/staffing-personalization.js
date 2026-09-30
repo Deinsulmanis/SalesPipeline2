@@ -6,7 +6,7 @@ const { clean, domain, researchStaffingCompany } = require('./staffing-research'
 const CHECKS = ['oneSentence','noCompliments','supportedGeography','supportedRoles','supportedIndustries',
   'noRepetitiveWording','grammar','noCandidateSourcing','marketReferent','reasonableLength','companyIdentity',
   'staffingBusiness','naturalEmployerLanguage','supportedByValidatedFacts','usedFactIdsComplete'];
-const OUTCOMES = ['HIGH','MEDIUM','RETRY_REQUIRED','REVIEW_REQUIRED','ICP_MISMATCH'];
+const OUTCOMES = ['HIGH','MEDIUM','SAFE_FALLBACK','RETRY_REQUIRED','REVIEW_REQUIRED','ICP_MISMATCH'];
 /**
  * STAFFING EMAIL ADMISSION POLICY.
  *
@@ -172,6 +172,36 @@ function filterFacts(facts,audit) {
 function hasMarket(facts) {
   return facts.some(f=>f.kind==='employer_market')||facts.some(f=>f.kind==='role')&&facts.some(f=>f.kind==='geography'&&f.explicitServiceTerritory===true);
 }
+// A role and a market being valid facts does not prove that this agency places
+// that role FOR that market. Keep SPECIFIC_HIGH fail-closed unless a short,
+// first-party evidence block states the joined placement relationship itself.
+function directRoleMarketLink(role,market) {
+  const roleText=clean(role?.value).toLowerCase().replace(/\b(?:and|or)\b/g,' ').replace(/[^a-z0-9]+/g,' ').trim();
+  const roleStem=roleText.replace(/s\b/,'');
+  const rolePattern=new RegExp(`\\b${roleStem.split(/\s+/).map(x=>x.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('\\s+')}s?\\b`,'i');
+  const marketText=clean(market?.value).toLowerCase();
+  const marketPattern=/manufactur/.test(marketText)?/manufactur/i
+    :/warehous|warehouse/.test(marketText)?/warehous/i
+    :/construct|contractor/.test(marketText)?/construct|contractor/i
+    :/logistic|distribution/.test(marketText)?/logistic|distribut/i
+    :/energy|power/.test(marketText)?/energy|power/i
+    :/industrial/.test(marketText)?/industrial/i
+    :/fabrication/.test(marketText)?/fabricat/i
+    :new RegExp(`\\b${marketText.split(/\W+/).find(x=>x.length>3)||'__no_market__'}\\b`,'i');
+  const roleBlocks=new Map((role?.evidence||[]).map(e=>[e.blockId,e]));
+  for(const evidence of market?.evidence||[]) {
+    const shared=roleBlocks.get(evidence.blockId);
+    if(!shared||shared.sourceUrl!==evidence.sourceUrl)continue;
+    for(const sentence of String(shared.quote||'').split(/[.!?;\n]+/)) {
+      if(sentence.length>500||!rolePattern.test(sentence)||!marketPattern.test(sentence))continue;
+      const verb=/\b(?:staff|staffs|staffing|staffed|place|places|placing|placed|supply|supplies|supplying|supplied|provide|provides|providing|provided|recruit|recruits|recruiting|recruited|fill|fills|filling|filled|connect|connects|connecting|connected|match|matches|matching|matched)\b/i.exec(sentence);
+      const roleAt=sentence.search(rolePattern),marketAt=sentence.search(marketPattern);
+      if(!verb||verb.index>roleAt)continue;
+      if(roleAt<marketAt&&/\b(?:for|to|with|into|in|at|across)\b/i.test(sentence.slice(roleAt,marketAt)))return true;
+    }
+  }
+  return false;
+}
 // Deterministic role pairings, widest-first by index so variant 0 reproduces the
 // original selection exactly and later variants reach further into the pool.
 function rolePairs(count) {
@@ -185,7 +215,8 @@ function rebuildFromFacts(facts,{variant=0}={}) {
     const text=clean(value).toLowerCase();
     // Select an explicitly named market from a bundled extraction without inventing an industry.
     const match=text.match(/\b(?:commercial and industrial contractors|commercial construction|industrial construction|construction contractors|manufacturers|manufacturing|light[- ]industrial|warehousing|warehouse|distribution|logistics|construction|skilled[- ]trades|oil\s*(?:&|and)\s*gas|renewable energy|energy|aerospace|maritime|fabrication|industrial)\b/);
-    return match?match[0]:text.replace(/\s+(?:industry|industries|staffing|sector|market|labor supply)$/i,'');
+    return match?match[0].replace(/^construction contractors$/,'construction')
+      :text.replace(/\s+(?:industry|industries|staffing|sector|market|labor supply)$/i,'');
   };
   const employer=value=>{
     const text=label(value);
@@ -211,13 +242,15 @@ function rebuildFromFacts(facts,{variant=0}={}) {
   // Vary WHICH validated roles are named, never whether they are supported. Two
   // agencies with overlapping trades can then each describe themselves truthfully
   // instead of colliding on the same first two roles.
-  const pairs=rolePairs(pool.length);
-  const roles=(pairs[variant%pairs.length]||[0]).map(i=>pool[i]).filter(Boolean);
   const geography=facts.find(f=>f.kind==='geography'&&f.explicitServiceTerritory);
   // Prefer concrete roles plus a market over generic market-only copy: search the
   // ranked markets for one that yields a real employer noun rather than giving up
   // when only the highest-ranked market is a bare trades label.
-  const pairable=markets.find(m=>!/^skilled[- ]trades(?: staffing| labor supply| recruitment| services)?$/i.test(clean(m.value)));
+  const pairable=markets.find(m=>!/^skilled[- ]trades(?: staffing| labor supply| recruitment| services)?$/i.test(clean(m.value))
+    &&pool.some(r=>directRoleMarketLink(r,m)));
+  const linkedRoles=pairable?pool.filter(r=>directRoleMarketLink(r,pairable)):[];
+  const pairs=rolePairs(linkedRoles.length);
+  const roles=(pairs[variant%pairs.length]||[0]).map(i=>linkedRoles[i]).filter(Boolean);
   let used=[],opening='';
   if(roles.length&&pairable) {
     const selected=[pairable];used=[...roles,...selected];
@@ -227,7 +260,9 @@ function rebuildFromFacts(facts,{variant=0}={}) {
     used=[...roles,geography];opening=`Saw you place ${list(roles.map(f=>roleText(f.value)))} for employers across ${geography.value}.`;
   } else if(markets.length) {
     const selected=markets.slice(0,1);
-    // A duplicate alternate may combine a second distinct validated market.
+    // The bounded duplicate alternate may combine a second DISTINCT validated
+    // market. Repeating the first market verbatim made market-only leads with
+    // ample evidence fail duplicate resolution without ever testing an alternate.
     if(variant>0) {
       const second=markets.find(m=>m.id!==selected[0].id&&label(m.value)!==label(selected[0].value));
       if(second)selected.push(second);
@@ -248,13 +283,17 @@ function checkDraft(draft,facts) {
   if(wordCount<8||wordCount>22)errors.push('LENGTH_OUTSIDE_8_22');
   if(/["“”]|{{|}}|https?:|<|>/.test(opening))errors.push('INVALID_OPENING_CHARACTERS');
   if(/\b(impressed|amazing|excellent|innovative|leading|best|outstanding|struggling|candidate|database|scalelab|qualified employer meetings|staffing solutions)\b/i.test(opening))errors.push('PROHIBITED_LANGUAGE');
-  if(/Saw your team places|Saw you placing|skilled.trades employers|construction projects|\binto\b.*\b(?:employers|companies|contractors|manufacturers)\b/i.test(opening))errors.push('UNNATURAL_EMPLOYER_LANGUAGE');
+  if(/Saw your team places|Saw you placing|skilled.trades employers|construction projects|\binto\b.*\b(?:employers|companies|contractors|manufacturers)\b|\b(?:contractors|manufacturers|companies|employers) staffing\b/i.test(opening))errors.push('UNNATURAL_EMPLOYER_LANGUAGE');
   if(!ids.length||new Set(ids).size!==ids.length||ids.some(id=>!facts.some(f=>f.id===id)))errors.push('UNVALIDATED_FACT_REFERENCE');
   if(!hasMarket(used))errors.push('EMPLOYER_MARKET_NOT_PROVEN');
+  const roles=used.filter(f=>f.kind==='role'),markets=used.filter(f=>f.kind==='employer_market');
+  if(roles.length&&markets.length&&roles.some(role=>markets.some(market=>!directRoleMarketLink(role,market))))
+    errors.push('ROLE_MARKET_RELATIONSHIP_NOT_PROVEN');
   return {opening,facts:used,wordCount,errors};
 }
-// Salvage follows the existing fact audit. It never promotes an unproved
-// role/market pairing; only independently validated market facts enter copy.
+// Salvage is a separate admission decision after the existing fact audit. A
+// failed or duplicate role-based opener cannot promote an unproved role/market
+// pairing. Only independently validated market facts enter this fallback.
 function recoverStaffingLead({fitStatus,validatedFacts=[],contactUsable=false,safetyClear=false,variant=0}={}) {
   const fit=['ICP_CONFIRMED','ICP_REJECT','ICP_UNRESOLVED'].includes(fitStatus)?fitStatus:'ICP_UNRESOLVED';
   if(fit!=='ICP_CONFIRMED')return {leadFitStatus:fit,personalizationStatus:'FAILED',opening:'',routingReady:false,facts:[]};
@@ -353,10 +392,10 @@ async function personalizeStaffingLead(lead,{researchCompany=researchStaffingCom
       const failed=CHECKS.filter(k=>openingAudit.checks?.[k]!==true);
       if(!failed.length) {
         const high=openingAudit.companySpecific===true&&checked.facts.some(concreteRole)
-          &&(checked.facts.some(f=>f.kind==='employer_market')||checked.facts.some(f=>f.kind==='geography'));
-        const confidence=high?'HIGH':'MEDIUM';
+          &&checked.facts.some(f=>f.kind==='employer_market');
+        const confidence=high?'HIGH':checked.facts.some(f=>f.kind==='role')?'MEDIUM':'SAFE_FALLBACK';
         return {campaignId:STAFFING_CAMPAIGN.id,strategy:STAFFING_CAMPAIGN.personalizationStrategy,...meta(),hyperPersonalizedOpening:checked.opening,
-          confidence,classification:confidence,safeToSend:true,reviewFlag:false,primaryReason:high?'VERIFIED_SPECIFIC_EMPLOYER_MARKET':'VERIFIED_EMPLOYER_MARKET',
+          confidence,classification:confidence,safeToSend:true,reviewFlag:false,primaryReason:high?'VERIFIED_SPECIFIC_EMPLOYER_MARKET':confidence==='SAFE_FALLBACK'?'ROLE_MARKET_RELATIONSHIP_NOT_PROVEN_SAFE_FALLBACK':'VERIFIED_EMPLOYER_MARKET',
           supportingReasons:dropReasons(rejectedFacts),reviewReasons:[],rejectedOpening:'',facts:checked.facts,wordCount:checked.wordCount,research,
           sourceURL_or_sourceDescription:[...new Set(checked.facts.flatMap(f=>f.evidence.map(e=>e.sourceUrl)))].join(' | '),model:STAFFING_CAMPAIGN.model,generatedAt:new Date().toISOString()};
       }
@@ -425,10 +464,11 @@ async function flagBatchDuplicates(results,{createMessage=null}={}) {
         audit.checks={...audit.checks,oneSentence:true,reasonableLength:true};
         if(!CHECKS.filter(k=>audit.checks?.[k]!==true).length) {
           const high=audit.companySpecific===true&&checked.facts.some(concreteRole)
-            &&(checked.facts.some(f=>f.kind==='employer_market')||checked.facts.some(f=>f.kind==='geography'));
+            &&checked.facts.some(f=>f.kind==='employer_market');
+          const classification=high?'HIGH':checked.facts.some(f=>f.kind==='role')?'MEDIUM':'SAFE_FALLBACK';
           Object.assign(r,{hyperPersonalizedOpening:checked.opening,facts:checked.facts,wordCount:checked.wordCount,
-            confidence:high?'HIGH':'MEDIUM',classification:high?'HIGH':'MEDIUM',safeToSend:true,reviewFlag:false,
-            primaryReason:high?'VERIFIED_SPECIFIC_EMPLOYER_MARKET':'VERIFIED_EMPLOYER_MARKET',
+            confidence:classification,classification,safeToSend:true,reviewFlag:false,
+            primaryReason:high?'VERIFIED_SPECIFIC_EMPLOYER_MARKET':classification==='SAFE_FALLBACK'?'ROLE_MARKET_RELATIONSHIP_NOT_PROVEN_SAFE_FALLBACK':'VERIFIED_EMPLOYER_MARKET',
             qaChecks:audit.checks,duplicateAlternateUsed:true,modelCalls:(r.modelCalls||0)+1,
             supportingReasons:[...new Set([...(r.supportingReasons||[]),'DUPLICATE_ALTERNATE_COMPOSITION'])],
             sourceURL_or_sourceDescription:[...new Set(checked.facts.flatMap(f=>f.evidence.map(e=>e.sourceUrl)))].join(' | ')});
@@ -448,5 +488,5 @@ async function flagBatchDuplicates(results,{createMessage=null}={}) {
   return results;
 }
 module.exports={CHECKS,OUTCOMES,SYSTEM,FACT_AUDIT_SYSTEM,AUDIT_SYSTEM,evidenceBlocks,attachEvidence,filterFacts,hasMarket,rebuildFromFacts,checkDraft,
-  concreteRole,rolePairs,recoverStaffingLead,personalizeStaffingLead,previewStaffingPersonalization,flagBatchDuplicates,
+  concreteRole,directRoleMarketLink,rolePairs,recoverStaffingLead,personalizeStaffingLead,previewStaffingPersonalization,flagBatchDuplicates,
   EMAIL_ADMISSION,emailAdmission};
