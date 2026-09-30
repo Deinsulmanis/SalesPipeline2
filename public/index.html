@@ -2016,18 +2016,18 @@
   /* CRM workspace shell — compact, operational, and deliberately quieter
      than the data it contains. The indigo rail is the single visual signature;
      content surfaces stay neutral so urgency colors retain meaning. */
-  body.workspace-ready{display:grid;grid-template-columns:224px minmax(0,1fr);grid-template-rows:64px minmax(0,1fr);min-height:100vh;background:var(--bg)}
-  .crm-sidebar{grid-column:1;grid-row:1 / -1;position:sticky;top:0;height:100vh;background:#080c2b;color:#eef0ff;display:flex;flex-direction:column;padding:18px 12px;z-index:80;border-right:1px solid rgba(124,92,255,.22)}
+  html.workspace-ready{height:100%;overflow:hidden}body.workspace-ready{display:grid;grid-template-columns:224px minmax(0,1fr);grid-template-rows:64px minmax(0,1fr);height:100vh;height:100dvh;overflow:hidden;background:var(--bg)}
+  .crm-sidebar{grid-column:1;grid-row:1 / -1;position:relative;height:100vh;height:100dvh;min-height:0;overflow:hidden;background:#080c2b;color:#eef0ff;display:flex;flex-direction:column;padding:18px 12px;z-index:80;border-right:1px solid rgba(124,92,255,.22)}
   .crm-brand{display:flex;align-items:center;gap:10px;padding:0 10px 20px;font-weight:750;letter-spacing:-.02em}.crm-brand-mark{width:27px;height:27px;border-radius:8px;background:#8b7cff;display:grid;place-items:center;color:#171a3a;font-weight:900;box-shadow:0 0 0 5px rgba(139,124,255,.12)}
   .crm-brand small{display:block;color:#9fa5d2;font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin-top:2px}
-  .crm-nav{display:grid;gap:3px}.crm-nav-group{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:#7f86b8;padding:17px 11px 7px}
+  .crm-brand,.client-switch,.crm-sidebar-foot{flex:0 0 auto}.crm-nav{display:grid;gap:3px;align-content:start;flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;margin:0 -6px;padding:2px 6px 12px;scrollbar-width:thin;scrollbar-color:rgba(166,153,255,.32) transparent}.crm-nav::-webkit-scrollbar{width:6px}.crm-nav::-webkit-scrollbar-track{background:transparent}.crm-nav::-webkit-scrollbar-thumb{background:rgba(166,153,255,.28);border-radius:6px}.crm-nav:hover::-webkit-scrollbar-thumb{background:rgba(166,153,255,.45)}.crm-nav[data-fade~="top"]{-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 16px);mask-image:linear-gradient(to bottom,transparent 0,#000 16px)}.crm-nav[data-fade~="bottom"]{-webkit-mask-image:linear-gradient(to top,transparent 0,#000 16px);mask-image:linear-gradient(to top,transparent 0,#000 16px)}.crm-nav[data-fade="top bottom"]{-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 16px,#000 calc(100% - 16px),transparent 100%);mask-image:linear-gradient(to bottom,transparent 0,#000 16px,#000 calc(100% - 16px),transparent 100%)}.crm-nav-group{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:#7f86b8;padding:17px 11px 7px}
   .crm-nav-btn{width:100%;min-height:42px;display:flex;align-items:center;gap:11px;padding:9px 11px;border:1px solid transparent;border-radius:8px;background:transparent;color:#bfc4e6;text-align:left;font:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:background 160ms,color 160ms,border-color 160ms}
   .crm-nav-btn svg{width:17px;height:17px;flex:0 0 auto}.crm-nav-btn:hover{background:rgba(255,255,255,.06);color:#fff}.crm-nav-btn.active{background:rgba(139,124,255,.17);border-color:rgba(166,153,255,.3);color:#fff}.crm-nav-btn:focus-visible{outline:3px solid #b8afff;outline-offset:2px}
   .crm-sidebar-foot{margin-top:auto;padding:14px 10px 2px;color:#8f95c2;font-size:11px;line-height:1.5;border-top:1px solid rgba(255,255,255,.08)}
   body.workspace-ready>header{grid-column:2;grid-row:1;position:sticky;top:0;z-index:70;height:64px;padding:0 24px;background:rgba(2,13,24,.94);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);box-shadow:none}
   body.workspace-ready>header .logo{display:none}.workspace-heading{min-width:0}.workspace-heading h1{font-size:18px;line-height:1.2;margin:0;color:var(--text);letter-spacing:-.02em}.workspace-heading p{font-size:11px;color:var(--text-muted);margin:3px 0 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .sidebar-toggle{display:none;width:44px;height:44px;border:0;background:transparent;color:var(--text);border-radius:8px;cursor:pointer}
-  #workspace-stage{grid-column:2;grid-row:2;min-width:0;overflow:auto}.crm-workspace{display:none;min-height:calc(100vh - 64px);padding:22px 24px 40px}.crm-workspace.active{display:block}.workspace-intro{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:0 0 16px}.workspace-intro h2{font-size:20px;letter-spacing:-.025em;margin:0;color:var(--text)}.workspace-intro p{font-size:12px;color:var(--text-muted);margin:4px 0 0;max-width:720px}.workspace-eyebrow{font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--primary);font-weight:750}
+  #workspace-stage{grid-column:2;grid-row:2;position:relative;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--border-hover) transparent}.crm-workspace{display:none;min-height:100%;padding:22px 24px 40px}.crm-workspace.active{display:block}.workspace-intro{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:0 0 16px}.workspace-intro h2{font-size:20px;letter-spacing:-.025em;margin:0;color:var(--text)}.workspace-intro p{font-size:12px;color:var(--text-muted);margin:4px 0 0;max-width:720px}.workspace-eyebrow{font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--primary);font-weight:750}
   body.workspace-ready .motion-nav{display:none!important}body.workspace-ready .stats-bar,body.workspace-ready .filter-bar,body.workspace-ready .main,body.workspace-ready #ce-section{margin-left:0;margin-right:0}
   #ws-pipeline>.stats-bar,#ws-pipeline>.filter-bar,#ws-pipeline>.main{width:100%}#ws-pipeline>.stats-bar{border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden}#ws-pipeline>.filter-bar{padding-left:0;padding-right:0;background:transparent;border:0}#ws-pipeline>.main{padding:0}
   #ws-outreach #ce-section{display:block!important}#ws-outreach .ce-filter-bar{border:1px solid var(--border);border-radius:9px;background:var(--surface);margin-bottom:12px}#ws-outreach .stats-bar{margin:14px 0}#ws-outreach .ce-master-filters,#ws-outreach .ce-quick-views,#ws-outreach #ce-current-campaign,#ws-outreach #ce-result-info{padding-left:0!important;padding-right:0!important}
@@ -2038,14 +2038,13 @@
   #ws-analytics .funnel-analytics,#ws-health .health-panel{margin:0}#ws-analytics #ce-chart-wrap{padding:18px!important;margin:14px 0!important;background:var(--surface);border:1px solid var(--border);border-radius:10px}#ws-campaigns #ce-campaigns-panel,#ws-settings #agent-panel,#ws-analytics #ce-demos-panel,#ws-analytics #ce-opens-panel{display:block!important;margin:0}
   .booking-list,.sequence-list{display:grid;gap:9px}.operational-row{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:13px 15px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}.operational-row b{font-size:13px}.operational-row small{display:block;color:var(--text-muted);font-size:11px;margin-top:3px}.operational-row-meta{text-align:right;font-size:12px;color:var(--text-secondary)}
   @media(max-width:980px){body.workspace-ready{grid-template-columns:72px minmax(0,1fr)}.crm-sidebar{padding-inline:8px}.crm-brand{padding-inline:8px}.crm-brand-copy,.crm-nav-btn span,.crm-nav-group,.crm-sidebar-foot{display:none}.crm-nav-btn{justify-content:center;padding:9px}.crm-nav-btn svg{width:19px;height:19px}.crm-workspace{padding:18px}.inbox-row{grid-template-columns:minmax(160px,.7fr) minmax(230px,1.3fr)}}
-  @media(max-width:700px){body.workspace-ready{display:block;padding-top:64px}.crm-sidebar{position:fixed;left:0;top:0;width:224px;transform:translateX(-100%);transition:transform 180ms;z-index:100}.crm-sidebar.open{transform:translateX(0)}.crm-brand-copy,.crm-nav-btn span,.crm-nav-group,.crm-sidebar-foot{display:block}.crm-nav-btn{justify-content:flex-start}.sidebar-toggle{display:grid;place-items:center}body.workspace-ready>header{position:fixed;left:0;right:0;top:0;height:64px}.crm-workspace{padding:14px}.header-right .search-wrap{display:none}.inbox-row{grid-template-columns:1fr;gap:9px}.inbox-action{padding-top:8px;border-top:1px solid var(--border)}.workspace-intro{align-items:flex-start}.operational-row{align-items:flex-start}.operational-row-meta{max-width:45%}}
+  @media(max-width:700px){html.workspace-ready{height:auto;overflow:visible}body.workspace-ready{display:block;padding-top:64px;height:auto;overflow:visible}#workspace-stage{overflow:visible}.crm-sidebar{position:fixed;left:0;top:0;width:224px;transform:translateX(-100%);transition:transform 180ms;z-index:100}.crm-sidebar.open{transform:translateX(0)}.crm-brand-copy,.crm-nav-btn span,.crm-nav-group,.crm-sidebar-foot{display:block}.crm-nav-btn{justify-content:flex-start}.sidebar-toggle{display:grid;place-items:center}body.workspace-ready>header{position:fixed;left:0;right:0;top:0;height:64px}.crm-workspace{padding:14px}.header-right .search-wrap{display:none}.inbox-row{grid-template-columns:1fr;gap:9px}.inbox-action{padding-top:8px;border-top:1px solid var(--border)}.workspace-intro{align-items:flex-start}.operational-row{align-items:flex-start}.operational-row-meta{max-width:45%}}
   @media(prefers-reduced-motion:reduce){.crm-sidebar,.crm-nav-btn{transition-duration:.01ms!important}}
   /* Managed clients — internal operator views. A client never sees this UI. */
   .client-switch{margin:0 6px 6px;padding:10px;border:1px solid var(--border);border-radius:9px;background:var(--tint-faint)}
   .client-switch label{display:block;font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--text-muted);font-weight:750;margin-bottom:6px}
   .client-switch select{width:100%;min-height:44px;padding:8px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface);color:var(--text);font:inherit;font-size:13px}
   .client-switch select:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
-  body[data-client-mode="managed"] .crm-nav-btn:not([data-client-scope="all"]),body[data-client-mode="managed"] .crm-nav-group:not([data-client-scope="all"]){display:none}
   .client-badge{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:750;padding:3px 9px;border-radius:999px;border:1px solid var(--border);background:var(--tint-soft);color:var(--text)}
   .client-send{font-size:11px;font-weight:750;padding:3px 9px;border-radius:999px}
   .client-send[data-on="false"]{color:var(--warn);background:var(--warn-bg)}.client-send[data-on="true"]{color:var(--success);background:var(--success-bg)}
@@ -2061,7 +2060,46 @@
   .client-btn{min-height:44px;padding:0 16px;border-radius:8px;border:1px solid var(--border-hover);background:var(--tint-soft);color:var(--text);font-weight:700;cursor:pointer;transition:transform 200ms cubic-bezier(.4,0,.2,1),background 200ms}
   .client-btn:hover{transform:translateY(-2px);background:var(--tint-faint)}.client-btn:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
   .client-table-wrap{overflow-x:auto}
-  @media(max-width:700px){.client-grid{grid-template-columns:1fr}}
+
+  /* Client switcher status line */
+  .client-switch-status{display:block;margin-top:7px;font-size:11px;font-weight:650;color:var(--text-muted)}.client-switch-status[data-on="false"]{color:var(--warn)}.client-switch-status[data-on="true"]{color:var(--success)}
+  @media(max-width:980px) and (min-width:701px){.client-switch{display:none}}
+  /* Client-scoped views: in a managed client's workspace only the client view shows. */
+  body[data-client-mode="managed"] .crm-workspace:not(#ws-clients)>:not(.workspace-intro):not(.client-view){display:none!important}
+  body:not([data-client-mode="managed"]) .client-view{display:none!important}
+  /* These ScaleLab panels carry ID-level !important display rules of their own; outrank them explicitly. */
+  body[data-client-mode="managed"] #ws-campaigns #ce-campaigns-panel,body[data-client-mode="managed"] #ws-settings #agent-panel,body[data-client-mode="managed"] #ws-analytics #ce-demos-panel,body[data-client-mode="managed"] #ws-analytics #ce-opens-panel,body[data-client-mode="managed"] #ws-analytics #ce-chart-wrap,body[data-client-mode="managed"] #ws-analytics #ce-funnel-analytics{display:none!important}
+  .client-badges{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 16px}
+  .client-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(136px,1fr));gap:12px;margin:0 0 16px}
+  .metric-card{padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:var(--surface);min-width:0}
+  .metric-card span{display:block;font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--text-muted);font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .metric-card b{display:block;font-size:22px;line-height:1.2;margin-top:6px;font-variant-numeric:tabular-nums;color:var(--text)}
+  .metric-card small{display:block;font-size:11px;color:var(--text-muted);margin-top:4px;line-height:1.4}
+  .client-empty{display:flex;gap:16px;align-items:flex-start;padding:22px 24px;border:1px dashed var(--border-hover);border-radius:12px;background:var(--tint-faint);margin:0 0 16px}
+  .client-empty-icon{flex:0 0 40px;height:40px;border-radius:10px;display:grid;place-items:center;background:var(--tint-soft);color:var(--primary)}
+  .client-empty strong{display:block;font-size:15px;color:var(--text);margin-bottom:4px}
+  .client-empty p{margin:0;font-size:13px;color:var(--text-secondary);line-height:1.55;max-width:680px}
+  .client-board{padding:0!important;margin-top:4px}.client-board .board{padding-bottom:8px}.client-board .col{width:240px}.client-board .card{cursor:default}
+  .campaign-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+  .campaign-card{display:flex;flex-direction:column;gap:12px}.campaign-card h4{margin:4px 0 0;font-size:15px;line-height:1.35;color:var(--text)}
+  .campaign-card-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+  .status-pill{flex:0 0 auto;font-size:10px;font-weight:750;letter-spacing:.06em;text-transform:uppercase;padding:4px 9px;border-radius:999px;border:1px solid var(--border);color:var(--text-secondary);background:var(--tint-faint);white-space:nowrap}
+  .status-pill[data-status="draft"]{color:var(--warn);background:var(--warn-bg)}.status-pill[data-status="active"],.status-pill[data-status="approved"]{color:var(--success);background:var(--success-bg)}
+  .campaign-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.campaign-stats>div{padding:9px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2)}
+  .campaign-stats span{display:block;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);font-weight:700}.campaign-stats b{display:block;font-size:17px;margin-top:3px;font-variant-numeric:tabular-nums}
+  .campaign-readiness{margin-top:auto;padding:10px 12px;border-radius:8px;border:1px solid var(--border);font-size:12px}.campaign-readiness[data-ready="false"] b{color:var(--warn)}.campaign-readiness[data-ready="true"] b{color:var(--success)}
+  .campaign-readiness ul{margin:6px 0 0;padding-left:18px;color:var(--text-secondary);line-height:1.5}
+  .analytics-grid{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(260px,1fr);gap:16px;margin-bottom:16px;align-items:start}.analytics-side{display:grid;gap:16px}
+  .funnel{display:grid;gap:10px}.funnel-row{display:grid;grid-template-columns:140px minmax(0,1fr) 48px;gap:12px;align-items:center;font-size:13px;color:var(--text-secondary)}
+  .funnel-track{position:relative;height:10px;border-radius:4px;background:var(--tint-faint);overflow:hidden}.funnel-bar{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--primary)}
+  .funnel-value{text-align:right;font-variant-numeric:tabular-nums;color:var(--text)}
+  .checklist{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:6px;font-size:13px}.checklist li{display:flex;gap:8px;align-items:baseline}.checklist li>span:first-child{width:14px;flex:0 0 14px;text-align:center}
+  .checklist li[data-done="true"]>span:first-child{color:var(--success)}.checklist li[data-done="false"]>span:first-child{color:var(--warn)}.checklist small{color:var(--text-muted);font-size:11px}
+  .settings-grid{margin-top:0}.settings-inboxes{display:grid;gap:12px}
+  .visually-hidden{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  #client-ops-content .client-grid{margin-top:0}
+  @media(max-width:1100px){.analytics-grid{grid-template-columns:1fr}}
+  @media(max-width:700px){.client-grid{grid-template-columns:1fr}.funnel-row{grid-template-columns:104px minmax(0,1fr) 36px;gap:8px}.campaign-grid{grid-template-columns:1fr}.client-empty{padding:18px}}
 </style>
 </head>
 <body>
@@ -2071,8 +2109,9 @@
   <div class="client-switch">
     <label for="client-select">Client workspace</label>
     <select id="client-select" onchange="setActiveClient(this.value)"><option value="scalelab">ScaleLab AI</option></select>
+    <span class="client-switch-status" id="client-switch-status" aria-live="polite"></span>
   </div>
-  <nav class="crm-nav">
+  <nav class="crm-nav" id="crm-nav" aria-label="Workspaces">
     <div class="crm-nav-group" data-client-scope="all">Clients</div>
     <button class="crm-nav-btn" data-workspace="clients" data-client-scope="all" onclick="setWorkspace('clients')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13h18"/></svg><span>Client Ops</span></button>
     <div class="crm-nav-group">Sales</div>
@@ -7370,9 +7409,6 @@ const WORKSPACES = Object.freeze({
   settings:  ['Settings', 'Read-only production configuration and provider status'],
   clients:   ['Client Ops', 'Managed-client outreach, conversations, meetings and billing'],
 });
-// Workspaces that show a managed client's own data. Everything else is a
-// ScaleLab operational view and is hidden while a managed client is selected.
-const MANAGED_CLIENT_WORKSPACES = Object.freeze(['clients']);
 
 let activeWorkspace = 'pipeline';
 let workspaceLoaded = Object.create(null);
@@ -7436,6 +7472,12 @@ function installWorkspaceShell() {
   move('ce-opens-panel', 'ws-analytics');
   move('ce-campaigns-panel', 'ws-campaigns');
   move('agent-panel', 'ws-settings');
+  // A managed client's workspaces render into these; ScaleLab's content stays untouched.
+  for (const id of ['pipeline', 'inbox', 'bookings', 'campaigns', 'analytics', 'settings']) {
+    document.getElementById(`ws-${id}`).insertAdjacentHTML('beforeend', `<div class="client-view" id="client-view-${id}" aria-live="polite"></div>`);
+  }
+  captureStaticNavigation();
+  document.documentElement.classList.add('workspace-ready');
   document.body.classList.add('workspace-ready');
   document.querySelectorAll('.ce-tab[data-ce="campaigns"],.ce-tab[data-ce="demos"],.ce-tab[data-ce="opens"],.ce-tab[data-ce="agent"]').forEach(button => button.remove());
   // Verified obsolete presentation only. Generic lead type data remains in the
@@ -7445,21 +7487,28 @@ function installWorkspaceShell() {
 function toggleSidebar() { document.getElementById('crm-sidebar')?.classList.toggle('open'); }
 
 async function setWorkspace(name, { replace = false } = {}) {
-  if (!WORKSPACES[name]) name = 'pipeline';
-  if (activeClientIsManaged() && !MANAGED_CLIENT_WORKSPACES.includes(name)) name = 'clients';
+  const client = activeClient();
+  const nav = clientNavigation(client);
+  // Only a workspace this client has; anything else lands on its default.
+  if (!WORKSPACES[name] || !nav.workspaces.includes(name)) name = nav.defaultWorkspace;
   activeWorkspace = name;
   document.querySelectorAll('.crm-workspace').forEach(node => node.classList.toggle('active', node.id === `ws-${name}`));
-  document.querySelectorAll('.crm-nav-btn').forEach(node => node.classList.toggle('active', node.dataset.workspace === name));
+  markActiveNav();
+  const managed = activeClientIsManaged();
+  const item = navItem(name);
   const [title, context] = WORKSPACES[name];
-  document.getElementById('workspace-title').textContent = title;
-  document.getElementById('workspace-context').textContent = context;
+  document.getElementById('workspace-title').textContent = managed && item ? item.label : title;
+  document.getElementById('workspace-context').textContent = managed && item ? `${client.displayName} · ${item.managedContext}` : context;
+  applyWorkspaceIntro(name);
   document.getElementById('crm-sidebar')?.classList.remove('open');
   const search = document.querySelector('header .search-wrap');
   const add = document.querySelector('header .btn-add');
-  if (search) search.style.display = name === 'pipeline' ? '' : 'none';
-  if (add) add.style.display = name === 'pipeline' ? '' : 'none';
-  const nextHash = `#${name}`;
+  const boardTools = name === 'pipeline' && !managed;   // search/add act on ScaleLab's board only
+  if (search) search.style.display = boardTools ? '' : 'none';
+  if (add) add.style.display = boardTools ? '' : 'none';
+  const nextHash = hashForWorkspace(client.clientId, name);
   if (location.hash !== nextHash) history[replace ? 'replaceState' : 'pushState'](null, '', nextHash);
+  document.getElementById('workspace-stage')?.scrollTo?.({ top: 0 });
   await loadWorkspace(name);
 }
 
@@ -7472,6 +7521,8 @@ async function ensureOutreachReadModel() {
 }
 
 async function loadWorkspace(name) {
+  // A managed client's workspaces are client-scoped views; Client Ops is shared.
+  if (activeClientIsManaged() && name !== 'clients') return loadManagedWorkspace(name);
   if (name === 'pipeline') return;
   if (['outreach','campaigns','analytics','inbox'].includes(name)) await ensureOutreachReadModel();
   if (name === 'inbox') return loadInboxWorkspace();
@@ -7491,17 +7542,128 @@ async function loadWorkspace(name) {
 
 // ============================================================
 // MANAGED CLIENTS — internal ScaleLab operator workspace.
-// The selected client scopes the Outreach directory and Client Ops on the
-// server. A client never logs in; nothing here is client-facing.
+// A client never logs in; nothing here is client-facing.
+//
+// Navigation comes from each client's config (/api/clients → navigation):
+// one shared workspace catalog, filtered by the workspaces the client has.
+// The URL names the client and the workspace, so they can never disagree:
+//   #pipeline        ScaleLab (default client), Pipeline
+//   #jole/pipeline   Jole Enterprise, Pipeline
+// Hiding a nav item is never the security boundary: every client view below
+// reads a client-scoped endpoint that filters on the server.
 // ============================================================
 let managedClients = [{ clientId: 'scalelab', displayName: 'ScaleLab AI', isDefault: true }];
 let activeClientId = 'scalelab';
-try { activeClientId = localStorage.getItem('sp2.activeClient') || 'scalelab'; } catch (_) { activeClientId = 'scalelab'; }
+let storedClientId = '';
+try { storedClientId = localStorage.getItem('sp2.activeClient') || ''; } catch (_) { storedClientId = ''; }
+let STATIC_NAVIGATION = null;   // the sidebar as shipped in HTML: the fallback if /api/clients is unavailable
+const NAV_ICONS = Object.create(null);
+let clientViewToken = 0;        // guards against a slow response rendering into another client's view
 
 // esc() leaves quotes alone; attribute values need them escaped too.
 function escAttr(value) { return esc(value).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 function activeClient() { return managedClients.find(item => item.clientId === activeClientId) || managedClients[0]; }
 function activeClientIsManaged() { const client = activeClient(); return Boolean(client && !client.isDefault); }
+function defaultClientId() { return (managedClients.find(item => item.isDefault) || managedClients[0]).clientId; }
+function knownClient(clientId) { return managedClients.some(item => item.clientId === clientId); }
+function clientNavigation(client = activeClient()) { return (client && client.navigation) || STATIC_NAVIGATION; }
+function navItem(name) {
+  for (const section of clientNavigation().sections) for (const item of section.items) if (item.id === name) return item;
+  return null;
+}
+function clientTerms(client = activeClient()) { return (client && client.terminology) || { lead: 'lead', leads: 'leads', prospect: 'prospect' }; }
+
+/** Reads the sidebar shipped in HTML once: icons per workspace, and a fallback navigation. */
+function captureStaticNavigation() {
+  const host = document.getElementById('crm-nav');
+  if (!host || STATIC_NAVIGATION) return;
+  const sections = [];
+  let current = null;
+  for (const node of host.children) {
+    if (node.classList.contains('crm-nav-group')) { current = { id: node.textContent.trim().toLowerCase(), label: node.textContent.trim(), items: [] }; sections.push(current); continue; }
+    if (!node.classList.contains('crm-nav-btn')) continue;
+    const id = node.dataset.workspace;
+    const svg = node.querySelector('svg');
+    if (svg) NAV_ICONS[id] = svg.outerHTML;
+    if (current) current.items.push({ id, label: node.textContent.trim(), managedContext: '' });
+  }
+  STATIC_NAVIGATION = { defaultWorkspace: 'pipeline', workspaces: sections.flatMap(section => section.items.map(item => item.id)), sections };
+  host.addEventListener('click', event => {
+    const button = event.target.closest('.crm-nav-btn');
+    if (button && host.contains(button)) setWorkspace(button.dataset.workspace);
+  });
+  host.addEventListener('scroll', updateNavFade, { passive: true });
+  window.addEventListener('resize', updateNavFade);
+}
+
+/** Fades the nav edge only where more items are hidden, so scrollability is visible. */
+function updateNavFade() {
+  const host = document.getElementById('crm-nav');
+  if (!host) return;
+  const fade = [];
+  if (host.scrollTop > 1) fade.push('top');
+  if (host.scrollTop + host.clientHeight < host.scrollHeight - 1) fade.push('bottom');
+  if (fade.length) host.dataset.fade = fade.join(' '); else delete host.dataset.fade;
+}
+
+/** Renders the active client's sidebar from its navigation config. */
+function renderNavigation() {
+  const host = document.getElementById('crm-nav');
+  if (!host) return;
+  const fallbackIcon = '<svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/></svg>';
+  host.innerHTML = clientNavigation().sections.map(section => `<div class="crm-nav-group">${esc(section.label)}</div>`
+    + section.items.map(item => `<button type="button" class="crm-nav-btn" data-workspace="${escAttr(item.id)}" title="${escAttr(item.label)}">${NAV_ICONS[item.id] || fallbackIcon}<span>${esc(item.label)}</span></button>`).join('')).join('');
+  markActiveNav();
+  updateNavFade();
+}
+
+function markActiveNav() {
+  document.querySelectorAll('#crm-nav .crm-nav-btn').forEach(node => {
+    const on = node.dataset.workspace === activeWorkspace;
+    node.classList.toggle('active', on);
+    if (on) node.setAttribute('aria-current', 'page'); else node.removeAttribute('aria-current');
+  });
+}
+
+function parseWorkspaceHash(hash = location.hash) {
+  const raw = decodeURIComponent(String(hash || '').replace(/^#/, ''));
+  if (!raw) return { clientId: null, workspace: null };
+  const slash = raw.indexOf('/');
+  if (slash >= 0) return { clientId: raw.slice(0, slash), workspace: raw.slice(slash + 1) || null };
+  return { clientId: defaultClientId(), workspace: raw };
+}
+
+function hashForWorkspace(clientId, workspace) {
+  return clientId === defaultClientId() ? `#${workspace}` : `#${encodeURIComponent(clientId)}/${workspace}`;
+}
+
+/** Workspace intro: the ScaleLab copy by default, client-named copy for a managed client. */
+function applyWorkspaceIntro(name) {
+  const intro = document.querySelector(`#ws-${name} .workspace-intro`);
+  if (!intro) return;
+  if (!intro.dataset.defaultHtml) intro.dataset.defaultHtml = intro.innerHTML;
+  if (activeClientIsManaged() && name !== 'clients') {
+    const item = navItem(name);
+    intro.innerHTML = `<div><div class="workspace-eyebrow">${esc(activeClient().displayName)}</div><h2>${esc(item ? item.label : name)}</h2><p>${esc(item ? item.managedContext : '')}</p></div>`;
+  } else {
+    intro.innerHTML = intro.dataset.defaultHtml;
+  }
+}
+
+function renderClientSwitcher() {
+  const select = document.getElementById('client-select');
+  if (select) {
+    select.innerHTML = managedClients.map(item => `<option value="${escAttr(item.clientId)}">${esc(item.displayName)}</option>`).join('');
+    select.value = activeClientId;
+  }
+  const status = document.getElementById('client-switch-status');
+  if (status) {
+    const client = activeClient();
+    const active = client.active !== false;
+    status.dataset.on = active ? 'true' : 'false';
+    status.textContent = active ? 'Active client' : `Not active · ${String(client.lifecycleStatus || 'inactive').replace(/_/g, ' ')}`;
+  }
+}
 
 async function loadManagedClients() {
   try {
@@ -7512,52 +7674,309 @@ async function loadManagedClients() {
   } catch (error) {
     showToast('Could not load clients: ' + error.message, 'error');
   }
-  if (!managedClients.some(item => item.clientId === activeClientId)) activeClientId = 'scalelab';
-  const select = document.getElementById('client-select');
-  if (select) {
-    select.innerHTML = managedClients.map(item => `<option value="${escAttr(item.clientId)}">${esc(item.displayName)}</option>`).join('');
-    select.value = activeClientId;
-  }
-  applyClientMode();
 }
 
 function applyClientMode() {
   document.body.dataset.clientMode = activeClientIsManaged() ? 'managed' : 'default';
 }
 
-async function setActiveClient(clientId) {
-  if (!managedClients.some(item => item.clientId === clientId)) return;
+/**
+ * Switch the whole workspace to a client. The requested workspace is used if
+ * the client has it; otherwise the current one if it has that; otherwise the
+ * client's default. Never leaves the operator on a page the client lacks.
+ */
+async function switchClient(clientId, { workspace = null, replace = false } = {}) {
+  if (!knownClient(clientId)) clientId = defaultClientId();
   activeClientId = clientId;
   try { localStorage.setItem('sp2.activeClient', clientId); } catch (_) { /* per-viewer convenience only */ }
+  clientViewToken += 1;
   applyClientMode();
+  renderClientSwitcher();
+  renderNavigation();
   // Client-scoped read models reload from the server for the new client.
   workspaceLoaded.outreach = false;
-  await setWorkspace(activeClientIsManaged() ? 'clients' : activeWorkspace, { replace: true });
+  document.querySelectorAll('.client-view').forEach(node => { node.innerHTML = ''; });
+  const nav = clientNavigation();
+  const target = workspace
+    ? (nav.workspaces.includes(workspace) ? workspace : nav.defaultWorkspace)
+    : (nav.workspaces.includes(activeWorkspace) ? activeWorkspace : nav.defaultWorkspace);
+  await setWorkspace(target, { replace });
 }
 
+async function setActiveClient(clientId) {
+  await switchClient(clientId, { replace: false });
+}
+
+async function routeFromHash({ replace = true } = {}) {
+  const { clientId, workspace } = parseWorkspaceHash();
+  const target = clientId && knownClient(clientId) ? clientId : defaultClientId();
+  if (target !== activeClientId) return switchClient(target, { workspace, replace });
+  return setWorkspace(workspace || clientNavigation().defaultWorkspace, { replace });
+}
+
+// ── Shared view pieces ─────────────────────────────────────────────────
 function clientMoney(cents, currency) {
   return currency ? new Intl.NumberFormat('en-US', { style: 'currency', currency }).format((cents || 0) / 100) : '—';
 }
 function clientKv(label, value) { return `<div class="client-kv"><span>${esc(label)}</span><b>${esc(value ?? '—')}</b></div>`; }
 function clientCard(title, rows) { return `<div class="client-card"><h3>${esc(title)}</h3>${rows.join('')}</div>`; }
+function metricCard(label, value, hint = '') {
+  return `<div class="metric-card"><span>${esc(label)}</span><b>${esc(value)}</b>${hint ? `<small>${esc(hint)}</small>` : ''}</div>`;
+}
+const EMPTY_ICONS = {
+  leads: '<path d="M4 5h16M4 12h10M4 19h7"/>',
+  inbox: '<path d="M4 4h16v14H4z"/><path d="M4 13h4l2 3h4l2-3h4"/>',
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/>',
+  send: '<path d="m3 11 18-8-7 18-3-7-8-3Z"/>',
+  chart: '<path d="M4 19V5m0 14h16"/><path d="m7 15 4-4 3 2 5-7"/>',
+};
+function emptyState(title, body, icon = 'leads') {
+  return `<div class="client-empty" role="status"><span class="client-empty-icon" aria-hidden="true"><svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">${EMPTY_ICONS[icon] || EMPTY_ICONS.leads}</svg></span><div><strong>${esc(title)}</strong><p>${esc(body)}</p></div></div>`;
+}
+function onboardingPending(client = activeClient()) { return client.lifecycleStatus === 'onboarding_pending'; }
+function clientStatusBadges(client, sending) {
+  const active = client.active !== false;
+  return `<div class="client-badges">
+    <span class="client-badge">${esc(client.displayName)}</span>
+    <span class="client-send" data-on="${active ? 'true' : 'false'}">${active ? 'Active' : esc('Not active · ' + String(client.lifecycleStatus || '').replace(/_/g, ' '))}</span>
+    <span class="client-send" data-on="${sending && sending.sendingEnabled ? 'true' : 'false'}">Sending ${sending && sending.sendingEnabled ? 'ON' : 'OFF'}</span>
+    ${client.platformAccess === 'none' ? '<span class="client-badge">No platform access</span>' : ''}
+  </div>`;
+}
+async function clientApi(path) {
+  const response = await fetch(`/api/clients/${encodeURIComponent(activeClientId)}${path}`);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw Object.assign(new Error(data.error || `HTTP ${response.status}`), { status: response.status, code: data.code });
+  return data;
+}
+function pct(numerator, denominator) {
+  return denominator > 0 ? `${Math.round((numerator / denominator) * 1000) / 10}%` : '—';
+}
+
+/** Dispatch for a managed client's workspaces. Each renders into its own .client-view. */
+async function loadManagedWorkspace(name) {
+  const host = document.getElementById(`client-view-${name}`);
+  if (!host) return;
+  const token = clientViewToken;
+  const client = activeClient();
+  const render = html => { if (token === clientViewToken && client.clientId === activeClientId) host.innerHTML = html; };
+  render('<div class="workspace-empty"><strong>Loading…</strong>Reading this client\'s data from the server.</div>');
+  try {
+    if (name === 'pipeline') return render(await renderManagedPipeline(client));
+    if (name === 'inbox') return render(await renderManagedInbox(client));
+    if (name === 'bookings') return render(await renderManagedBookings(client));
+    if (name === 'campaigns') return render(await renderManagedCampaigns(client));
+    if (name === 'analytics') return render(await renderManagedAnalytics(client));
+    if (name === 'settings') return render(await renderManagedSettings(client));
+  } catch (error) {
+    render(`<div class="workspace-empty"><strong>Unavailable</strong>${esc(error.message)}</div>`);
+  }
+}
+
+async function renderManagedPipeline(client) {
+  const data = await clientApi('/pipeline');
+  const terms = clientTerms(client);
+  const count = id => (data.stages.find(stage => stage.id === id) || { count: 0 }).count;
+  const sum = ids => ids.reduce((total, id) => total + count(id), 0);
+  const metrics = `<div class="client-metrics">
+    ${metricCard(`Total ${terms.leads}`, data.total)}
+    ${metricCard('In outreach', sum(['queued', 'contacted']))}
+    ${metricCard('In conversation', sum(['replied', 'qualifying', 'awaiting_clarification']))}
+    ${metricCard('Meetings', sum(['meeting_booked', 'meeting_held', 'qualified_held']))}
+    ${metricCard('Qualified held', count('qualified_held'))}
+  </div>`;
+  const empty = data.total === 0
+    ? emptyState(`No ${client.displayName} ${terms.leads} yet`, onboardingPending(client)
+      ? `${client.displayName} is still onboarding. ${terms.leads[0].toUpperCase() + terms.leads.slice(1)} will appear here after activation and import.`
+      : `${terms.leads[0].toUpperCase() + terms.leads.slice(1)} appear here as soon as they are imported.`, 'leads')
+    : '';
+  const columns = data.stages.map(stage => `<div class="col">
+      <div class="col-header">
+        <div class="col-title-block"><div class="col-title"><div class="col-dot" style="background:${escAttr(stage.color)}"></div>${esc(stage.label)}</div><div class="col-rule">${esc(stage.rule)}</div></div>
+        <div class="col-count">${esc(stage.count)}</div>
+      </div>
+      <div class="col-body" role="list" aria-label="${escAttr(stage.label)}">
+        ${stage.leads.length ? stage.leads.map(lead => `<div class="card" role="listitem"><div class="card-top"><div><div class="card-name">${esc(lead.company || lead.email || lead.id)}</div><div class="card-sub">${esc([lead.contactName, lead.campaign].filter(Boolean).join(' · '))}</div></div></div></div>`).join('') : '<div class="empty-col">No leads</div>'}
+        ${stage.count > stage.leads.length ? `<div class="empty-col">+${esc(stage.count - stage.leads.length)} more</div>` : ''}
+      </div>
+    </div>`).join('');
+  return `${clientStatusBadges(client, client.sending)}${metrics}${empty}<div class="main client-board"><div class="board">${columns}</div></div>`;
+}
+
+async function renderManagedInbox(client) {
+  const data = await clientApi('/inbox');
+  const rows = data.conversations || [];
+  const badges = clientStatusBadges(client, client.sending);
+  const summary = `<div class="client-metrics">
+    ${metricCard('Conversations', data.total)}
+    ${metricCard('Awaiting clarification', data.awaitingClarification, 'Questions only the client can answer')}
+    ${metricCard('Positive', rows.filter(row => row.sentiment === 'positive').length)}
+    ${metricCard('Needs review', rows.filter(row => ['needs_review', 'wrong_contact'].includes(row.workflowState)).length)}
+  </div>`;
+  if (!rows.length) {
+    return badges + summary + emptyState(`No ${client.displayName} conversations yet`, onboardingPending(client)
+      ? `Replies to ${client.displayName} campaigns will appear here, classified under ${client.displayName}'s reply policy. Nothing is sent while onboarding is pending.`
+      : `Replies to ${client.displayName} campaigns appear here as they arrive.`, 'inbox');
+  }
+  const stateLabel = value => String(value || 'unclassified').replace(/_/g, ' ');
+  // A clarification usually quotes the reply verbatim; only show questions that add something.
+  const extraQuestions = row => row.openClarifications.map(item => item.question).filter(question => question && question.trim() !== String(row.excerpt || '').trim());
+  return badges + summary + `<div class="inbox-list">${rows.map(row => `<div class="inbox-row">
+      <div class="inbox-person"><b>${esc(row.company || row.email)}</b><small>${esc([row.contactName, row.email].filter(Boolean).join(' · '))}</small></div>
+      <div class="inbox-message"><span class="client-badge">${esc(stateLabel(row.workflowState))}</span><p class="client-note">${esc(row.excerpt || row.subject || '')}</p>
+        ${extraQuestions(row).length ? `<p class="client-note"><b>Awaiting client:</b> ${esc(extraQuestions(row).join(' · '))}</p>` : ''}</div>
+      <div class="inbox-action"><b>${esc(stateLabel(row.conversationStatus))}</b><small>${esc(row.campaign || '')}${row.receivedAt ? ' · ' + esc(new Date(row.receivedAt).toLocaleString()) : ''}</small></div>
+    </div>`).join('')}</div>`;
+}
+
+async function renderManagedBookings(client) {
+  const badges = clientStatusBadges(client, client.sending);
+  let meetings; let billing; let opportunities;
+  try {
+    const [meetingData, opportunityData] = await Promise.all([clientApi('/meetings'), clientApi('/opportunities')]);
+    meetings = meetingData.meetings || []; billing = meetingData.billing || {}; opportunities = opportunityData.opportunities || [];
+  } catch (error) {
+    if (error.code === 'ledger_unavailable') return badges + emptyState('Meeting ledger unavailable', error.message, 'calendar');
+    throw error;
+  }
+  const employerByLead = new Map(opportunities.map(row => [row.lead_id, row.employer]));
+  const status = value => meetings.filter(row => row.meeting_status === value).length;
+  const summary = `<div class="client-metrics">
+    ${metricCard('Booked', meetings.length)}
+    ${metricCard('Upcoming', status('BOOKED') + status('RESCHEDULED'))}
+    ${metricCard('Held', status('HELD') + status('QUALIFIED_HELD') + status('DISQUALIFIED_HELD'))}
+    ${metricCard('Qualified held', status('QUALIFIED_HELD'), 'Billable')}
+    ${metricCard('No-show', status('NO_SHOW'))}
+    ${metricCard('Cancelled', status('CANCELLED'))}
+    ${metricCard('Accrued', clientMoney(billing.accruedCents, billing.currency))}
+  </div>`;
+  if (!meetings.length) {
+    return badges + summary + emptyState(`No ${client.displayName} meetings yet`, onboardingPending(client)
+      ? `Meetings are recorded here after ${client.displayName} is activated and employers book. A meeting bills only when it is held and qualified.`
+      : 'Meetings appear here when they are booked. A meeting bills only when it is held and qualified.', 'calendar');
+  }
+  return badges + summary + `<div class="booking-list">${meetings.map(meeting => `<div class="operational-row">
+      <span><b>${esc(employerByLead.get(meeting.lead_id) || meeting.lead_id)}</b><small>${esc([meeting.attendee_name, meeting.attendee_title].filter(Boolean).join(' · ') || 'Attendee not recorded')} · ${esc(meeting.campaign_id || '')}</small></span>
+      <span class="operational-row-meta"><b>${esc(meeting.meeting_status.replace(/_/g, ' '))}</b><small>${esc(meeting.scheduled_for ? new Date(meeting.scheduled_for).toLocaleString() : 'Not scheduled')} · ${meeting.billable ? esc('Billable ' + clientMoney(meeting.performance_fee_cents, meeting.currency)) : esc('Not billable')}</small></span>
+    </div>`).join('')}</div>`;
+}
+
+async function renderManagedCampaigns(client) {
+  const overview = await clientApi('/overview');
+  const campaigns = overview.campaigns || [];
+  const badges = clientStatusBadges(overview.client ? { ...client, ...overview.client } : client, overview.sending);
+  if (!campaigns.length) return badges + emptyState(`No ${client.displayName} campaigns configured`, 'Campaigns are defined in the client campaign registry.', 'send');
+  const cards = campaigns.map(campaign => `<article class="client-card campaign-card">
+      <div class="campaign-card-head"><div><div class="workspace-eyebrow">Campaign #${esc(campaign.number)} · ${esc(campaign.id)}</div><h4>${esc(campaign.label)}</h4></div>
+        <span class="status-pill" data-status="${escAttr(campaign.status)}">${esc(campaign.status === 'disabled' ? 'Disabled · placeholder' : campaign.status)}</span></div>
+      <p class="client-note">${esc(campaign.icp && campaign.icp.summary || '')}</p>
+      <div class="campaign-stats">
+        ${[['Leads', campaign.leads], ['Queued', campaign.queued], ['Sent', campaign.sent], ['Replies', campaign.replies], ['Meetings', campaign.meetings], ['Senders', campaign.assignedSenders]]
+          .map(([label, value]) => `<div><span>${esc(label)}</span><b>${esc(value ?? 0)}</b></div>`).join('')}
+      </div>
+      <div class="campaign-readiness" data-ready="${campaign.ready ? 'true' : 'false'}">
+        <b>${campaign.ready ? '✓ Ready to send' : '○ Not ready to send'}</b>
+        ${campaign.ready ? '' : `<ul>${(campaign.readinessBlockers || []).map(item => `<li>${esc(item)}</li>`).join('')}</ul>`}
+      </div>
+    </article>`).join('');
+  return badges + `<p class="client-note" style="margin:0 0 14px">Campaign status and sending change only through reviewed configuration and the client's send authorization. Nothing on this page can start sending.</p><div class="campaign-grid">${cards}</div>`;
+}
+
+async function renderManagedAnalytics(client) {
+  const o = await clientApi('/overview');
+  const pipeline = o.pipeline && o.pipeline.available ? o.pipeline : {};
+  const billing = o.billing || {};
+  const funnel = [
+    ['Imported', o.leads.imported], ['Approved', o.leads.approved], ['Queued', o.leads.queued],
+    ['Contacted', o.leads.sent], ['Replies', o.replies.total], ['Positive replies', o.replies.positive],
+    ['Meetings booked', pipeline.meetingsBooked || 0], ['Meetings held', pipeline.meetingsHeld || 0], ['Qualified held', pipeline.qualifiedHeld || 0],
+  ];
+  const max = Math.max(1, ...funnel.map(([, value]) => Number(value) || 0));
+  const funnelHtml = `<div class="client-card"><h3>Funnel</h3><div class="funnel" role="list">${funnel.map(([label, value]) => {
+      const width = Math.round(((Number(value) || 0) / max) * 100);
+      return `<div class="funnel-row" role="listitem" title="${escAttr(`${label}: ${value}`)}"><span>${esc(label)}</span><span class="funnel-track"><span class="funnel-bar" style="width:${width}%"></span></span><b class="funnel-value">${esc(value)}</b></div>`;
+    }).join('')}</div></div>`;
+  const campaignRows = (o.campaigns || []).map(campaign => `<tr><td><b>${esc(campaign.label)}</b><div class="client-note">${esc(campaign.status)}</div></td><td>${esc(campaign.sent)}</td><td>${esc(pct(campaign.replies, campaign.sent))}</td><td>${esc(pct(campaign.meetings, campaign.sent))}</td></tr>`).join('');
+  const campaignHtml = `<div class="client-card"><h3>Campaign performance</h3><div class="client-table-wrap"><table class="client-table"><thead><tr><th>Campaign</th><th>Sends</th><th>Reply rate</th><th>Meeting rate</th></tr></thead><tbody>${campaignRows || '<tr><td colspan="4">No campaigns.</td></tr>'}</tbody></table></div>
+    <p class="client-note">Client-wide: ${esc(o.deliverability.sends)} sends · reply rate ${esc(pct(o.replies.total, o.deliverability.sends))} · positive reply rate ${esc(pct(o.replies.positive, o.deliverability.sends))}. Rates show — until there are sends.</p></div>`;
+  const meetingHtml = clientCard('Meeting performance', [
+    clientKv('Booked', pipeline.meetingsBooked || 0), clientKv('Held', pipeline.meetingsHeld || 0), clientKv('No-show', pipeline.noShow || 0),
+    clientKv('Qualified held', pipeline.qualifiedHeld || 0), clientKv('Show rate', pct(pipeline.meetingsHeld || 0, (pipeline.meetingsHeld || 0) + (pipeline.noShow || 0))),
+  ]);
+  const billingHtml = clientCard('Billing', [
+    clientKv('Qualified held meetings', billing.available ? billing.billableMeetings : 0),
+    clientKv('Performance fee', clientMoney(billing.configuredFeeCents, billing.currency)),
+    clientKv('Accrued', clientMoney(billing.accruedCents || 0, billing.currency)),
+    clientKv('Invoiced', clientMoney(billing.invoicedCents || 0, billing.currency)),
+  ]);
+  const note = o.leads.imported === 0 ? emptyState(`No ${client.displayName} activity yet`, 'Every metric below starts at zero and fills in as leads are imported, sent, answered and met.', 'chart') : '';
+  return clientStatusBadges({ ...client, ...o.client }, o.sending) + note + `<div class="analytics-grid">${funnelHtml}<div class="analytics-side">${meetingHtml}${billingHtml}</div></div>${campaignHtml}`;
+}
+
+async function renderManagedSettings(client) {
+  const s = await clientApi('/settings');
+  const status = s.status;
+  const onboardingItems = [
+    ['Agreement signed', status.onboarding && status.onboarding.agreementSigned],
+    ['Onboarding form returned', status.onboarding && status.onboarding.onboardingFormReturned],
+    ['Setup balance paid', status.onboarding && status.onboarding.setupBalancePaid,
+      status.onboarding && !status.onboarding.setupBalancePaid && status.onboarding.setupBalanceDueCents ? `${clientMoney(status.onboarding.setupBalanceDueCents, status.onboarding.currency)} outstanding` : ''],
+  ];
+  const statusCard = `<div class="client-card"><h3>Client status</h3>
+      ${clientKv('Lifecycle', String(status.lifecycleStatus).replace(/_/g, ' '))}
+      ${clientKv('Active', status.active ? 'Yes' : 'No')}
+      ${clientKv('Platform access', status.platformAccess === 'none' ? 'None (managed by ScaleLab)' : status.platformAccess)}
+      ${clientKv('Activation', status.activation && status.activation.activatedBy ? `${status.activation.activatedBy} · ${new Date(status.activation.activatedAt).toLocaleDateString()}` : 'Not activated')}
+      ${status.onboarding ? `<ul class="checklist">${onboardingItems.map(([label, done, note]) => `<li data-done="${done ? 'true' : 'false'}"><span aria-hidden="true">${done ? '✓' : '○'}</span>${esc(label)}${note ? ` <small>${esc(note)}</small>` : ''}<span class="visually-hidden">${done ? 'done' : 'not done'}</span></li>`).join('')}</ul>` : ''}
+    </div>`;
+  const sending = s.sending || {};
+  const sendingCard = clientCard('Sending authorization', [
+    clientKv('Effective', sending.sendingEnabled ? 'Sending allowed' : 'Sending blocked'),
+    clientKv('Reason', sending.blockReason || '—'),
+    clientKv('Enabled in config', sending.configEnabled ? 'Yes' : 'No'),
+    clientKv('Authorized on service', sending.envAuthorized === null ? 'Not required' : (sending.envAuthorized ? 'Yes' : 'No')),
+  ]);
+  const cap = s.capacity || {};
+  const capLabel = value => (value === null || value === undefined ? 'No client cap (global limits)' : String(value));
+  const capacityCard = clientCard('Send capacity', [
+    clientKv('Client daily cap', capLabel(cap.dailyCap)), clientKv('Client window cap', capLabel(cap.windowCap)),
+    clientKv('Sent today', cap.sentToday ?? 0),
+    clientKv('Remaining today', cap.blockedBy ? `0 (${String(cap.blockedBy).replace(/_/g, ' ')})` : (cap.remainingToday === null ? 'Global limits' : cap.remainingToday)),
+    clientKv('Service ceilings', `${cap.globalDailyLimit}/day · ${cap.globalWindowLimit}/window`),
+  ]);
+  const inboxes = s.inboxes || [];
+  const inboxHtml = inboxes.length ? `<div class="settings-inboxes">${inboxes.map(inbox => `<div class="inbox-sender-card ${inbox.sendEligible ? '' : 'warming'}">
+      <div class="inbox-route-email">${esc(inbox.email)}</div>
+      <div class="inbox-sender-grid">
+        <div>Domain: <b>${esc(inbox.domain)}</b></div><div>Owner: <b>${esc(client.displayName)}</b></div>
+        <div>Status: <b>${esc(inbox.status)}</b></div><div>Cold sending: <b>${inbox.sendEligible ? 'Active' : 'Inactive'}</b></div>
+        <div>Gmail authorized: <b>${inbox.credentialConfigured ? 'Yes' : 'No'}</b></div><div>Observer: <b>${esc(inbox.observerHealth)}</b></div>
+        <div>Daily cap: <b>${esc(inbox.dailyLimit)}</b></div><div>Per-run cap: <b>${esc(inbox.perRunLimit)}</b></div>
+        <div>Sent today: <b>${esc(inbox.sentToday)}</b></div><div>Remaining today: <b>${esc(inbox.remainingToday ?? '—')}</b></div>
+        <div>Last observer check: <b>${esc(inbox.lastObserverSuccessAt ? new Date(inbox.lastObserverSuccessAt).toLocaleString() : '—')}</b></div><div>Errors: <b>${esc(inbox.observerError || 'None')}</b></div>
+      </div></div>`).join('')}</div>`
+    : emptyState(`No ${client.displayName} sending inboxes configured`, onboardingPending(client)
+      ? 'Sending remains disabled while onboarding is pending. Inboxes appear here once they are registered for this client.'
+      : 'Inboxes appear here once they are registered for this client.', 'send');
+  const domainCard = `<div class="client-card"><h3>Domain authentication</h3><p class="client-note" style="margin:0">SPF, DKIM and DMARC are not checked by SalesPipeline2. Verify them with the domain provider before any inbox is activated.</p></div>`;
+  return clientStatusBadges(client, sending) + `<div class="client-grid settings-grid">${statusCard}${sendingCard}${capacityCard}${domainCard}</div>
+    <div class="client-section"><h3>Sending inboxes</h3>${inboxHtml}</div>`;
+}
 
 async function loadClientOpsWorkspace() {
   const host = document.getElementById('client-ops-content');
   if (!host) return;
   const client = activeClient();
+  const token = clientViewToken;
+  const current = () => token === clientViewToken && client.clientId === activeClientId;
   host.innerHTML = `<div class="workspace-empty"><strong>Loading ${esc(client.displayName)}…</strong>Scoped on the server to this client only.</div>`;
   try {
     const response = await fetch(`/api/clients/${encodeURIComponent(client.clientId)}/overview`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const o = await response.json();
     const s = o.sending || {};
-    const header = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <span class="client-badge">${esc(o.client.displayName)}</span>
-      <span class="client-send" data-on="${o.client.active ? 'true' : 'false'}">${o.client.active ? 'Active' : esc('Not active · ' + String(o.client.lifecycleStatus || '').replace(/_/g, ' '))}</span>
-      <span class="client-send" data-on="${s.sendingEnabled ? 'true' : 'false'}">Sending ${s.sendingEnabled ? 'ON' : 'OFF'}</span>
-      ${o.client.platformAccess === 'none' ? '<span class="client-badge">No platform access</span>' : ''}
-    </div>
-    ${s.sendingEnabled ? '' : `<p class="client-note">${esc(s.blockReason || 'Sending is disabled for this client')}. Turning it on is a separate, explicit decision.</p>`}`;
+    const header = clientStatusBadges({ ...client, ...o.client }, s) + `
+    ${s.sendingEnabled ? '' : `<p class="client-note" style="margin:-4px 0 16px">${esc(s.blockReason || 'Sending is disabled for this client')}. Turning it on is a separate, explicit decision.</p>`}`;
     const pipelineRows = !o.pipeline ? null : o.pipeline.available ? [
       clientKv('Qualifying', o.pipeline.qualifyingConversations), clientKv('Awaiting clarification', o.pipeline.awaitingClarification),
       clientKv('Meetings booked', o.pipeline.meetingsBooked), clientKv('Meetings held', o.pipeline.meetingsHeld),
@@ -7582,9 +8001,11 @@ async function loadClientOpsWorkspace() {
     </tbody></table></div></div>` : '';
     const ledgerNote = o.pipeline && !o.pipeline.available ? `<p class="client-note">Meeting ledger unavailable: ${esc(o.pipeline.reason || '')}</p>` : '';
     const leadsSlot = activeClientIsManaged() ? '<div id="client-leads"></div>' : '';
+    // A slower response for a client the operator has since switched away from is dropped.
+    if (!current()) return;
     host.innerHTML = header + grid + campaigns + leadsSlot + (o.pipeline?.available ? '<div id="client-ledger"></div>' : ledgerNote);
     if (activeClientIsManaged()) await renderClientLeads(client.clientId);
-    if (o.pipeline?.available) await renderClientLedger(client.clientId);
+    if (o.pipeline?.available && current()) await renderClientLedger(client.clientId);
   } catch (error) {
     host.innerHTML = `<div class="workspace-empty"><strong>Client operations unavailable</strong>${esc(error.message)}</div>`;
   }
@@ -7864,7 +8285,7 @@ async function loadBookingsWorkspace() {
 async function loadSettingsWorkspace() {
   const [response, inboxResponse] = await Promise.all([
     fetch('/api/crm/ui-status'),
-    fetch('/api/integrations/gmail-inboxes'),
+    fetch(`/api/integrations/gmail-inboxes?client=${encodeURIComponent(activeClientId)}`),
   ]);
   const data = response.ok ? await response.json() : null;
   const inboxData = inboxResponse.ok ? await inboxResponse.json() : null;
@@ -7999,7 +8420,7 @@ function renderSettingsInboxRouting(payload) {
     }).join('') : '<div class="inbox-route-row"><div></div><div class="inbox-route-meta">No Gmail inboxes are configured.</div></div>'}`;
 }
 
-window.addEventListener('hashchange', () => setWorkspace(location.hash.slice(1) || 'pipeline', { replace: true }));
+window.addEventListener('hashchange', () => routeFromHash({ replace: true }));
 
 document.getElementById('search').addEventListener('input', function() {
   searchQuery = this.value;
@@ -8009,6 +8430,7 @@ document.getElementById('search').addEventListener('input', function() {
 async function init() {
   installWorkspaceShell();
   await loadManagedClients();
+  renderClientSwitcher();
   showLoadingOverlay('Loading your leads…');
   try {
     await loadLeads();
@@ -8017,7 +8439,10 @@ async function init() {
   }
   hideLoadingOverlay();
   renderBoard();
-  await setWorkspace(location.hash.slice(1) || 'pipeline', { replace: true });
+  // The URL decides the client when it names one; otherwise the last client used.
+  const { clientId, workspace } = parseWorkspaceHash();
+  const initial = location.hash ? clientId : (knownClient(storedClientId) ? storedClientId : defaultClientId());
+  await switchClient(initial, { workspace, replace: true });
 }
 init();
 </script>

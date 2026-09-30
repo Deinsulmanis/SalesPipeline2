@@ -10,6 +10,7 @@
  */
 
 const { CLIENT_CONFIGS } = require('./client-configs');
+const { validateWorkspaces, navigationFor } = require('./navigation');
 
 const CLIENT_ID_PATTERN = /^[a-z][a-z0-9_]{1,31}$/;
 const NAMESPACE_PATTERN = /^[a-z][a-z0-9]{1,15}$/;
@@ -47,6 +48,7 @@ function validateClientConfig(config) {
     if (config.sending.clientSuppressionRequired !== true) fail('a managed client must require the client suppression store');
   }
   if (!String(config.timezone || '').trim()) fail('timezone is required');
+  validateWorkspaces(config);
   const capacity = config.capacity || {};
   const capOk = value => value === null || (Number.isInteger(value) && value >= 0);
   if (!capOk(capacity.dailyCap) || !capOk(capacity.windowCap)) fail('capacity caps must be null or non-negative integers');
@@ -170,6 +172,8 @@ function publicClient(config) {
     billing: { ...config.billing },
     capacity: { ...config.capacity },
     replyPolicy: { mode: config.replyPolicy.mode, negativeReplySuppressionScope: config.replyPolicy.negativeReplySuppressionScope },
+    navigation: navigationFor(config),
+    terminology: { lead: 'lead', leads: 'leads', prospect: 'prospect', ...(config.terminology || {}) },
   };
 }
 

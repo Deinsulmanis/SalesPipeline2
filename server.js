@@ -142,6 +142,7 @@ const { leadsForClient, leadDefinitelyOtherClient } = require('./integrations/cl
 const { resolveClientId, DEFAULT_CLIENT_ID } = require('./integrations/clients/registry');
 const { getLedgerStore } = require('./integrations/clients/ledger-store');
 const { emailUniquenessMode, leadsInEmailScope, leadsForCalendarMatching } = require('./integrations/clients/email-scope');
+const { filterInboxesForClient } = require('./integrations/clients/workspace-views');
 const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE, qualifyLead: qualifyRoofingLead } = require('./integrations/roofing-survey-profile');
 const {
   COLD_CALL_ACTIVITY_SHEET,
@@ -1992,6 +1993,11 @@ registerClientRoutes(app, {
   getStore: () => getLedgerStore(),
   senders: () => configuredSenders(),
   routedLeadReady,
+  senderStatus: async () => (await gmailInboxStatus()).inboxes,
+  globalCapacity: () => {
+    const capacity = capacityFromEnv(configuredSenders());
+    return { dailyLimit: capacity.globalDailyLimit, windowLimit: capacity.globalPerRunLimit };
+  },
 });
 
 app.get('/api/campaign-versions', requireAuth, (req, res) => {
@@ -5881,62 +5887,76 @@ app.get('/api/integrations/supabase/stage3-parity', requireAuth, (_req, res) => 
   });
 });
 
-app.get('/api/integrations/gmail-inboxes', requireAuth, async (_req, res) => {
+// Inbox status for every configured sender (all clients). Shared by the
+// Settings route below and the managed-client Settings view, which scopes it
+// to one client on the server.
+async function gmailInboxStatus() {
+  const inboxes = gmailInboxOptions();
+  const senders = configuredSenders();
+  const capacity = capacityFromEnv(senders);
+  let observers = [];
+  let sentToday = new Map();
   try {
-    const inboxes = gmailInboxOptions();
-    const senders = configuredSenders();
-    const capacity = capacityFromEnv(senders);
-    let observers = [];
-    let sentToday = new Map();
-    try {
-      const dataset = await getOutreachDataset();
-      const dayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
-      sentToday = senderCountsToday(dataset.activities || [], dayKey);
-      observers = observerHealth(dataset.mailboxObservationState || [], {
-        senderIds: observableSenders(senders).map(item => item.id),
-      });
-    } catch (_) { /* status-only fallback: registry remains visible */ }
-    res.json({
-      inboxes: inboxes.map(inbox => {
-        const observer = observers.find(item => item.senderInboxId === inbox.id) || null;
-        const sent = sentToday.get(inbox.id) || 0;
-        const remaining = Math.max(0, Number(inbox.dailyLimit || 0) - sent);
-        const auth = {
-          authenticated: inbox.credentialConfigured,
-          identityVerified: inbox.identityVerified,
-        };
-        const blockers = activationBlockers(
-          senders.find(item => item.id === inbox.id) || inbox,
-          { auth, observer, senders },
-        );
-        const observerLabel = !inbox.credentialConfigured ? 'unavailable'
-          : !observer ? 'unavailable'
-          : observer.health === 'healthy' ? 'healthy'
-          : observer.health === 'backoff' || observer.quotaBackoff ? 'warning'
-          : observer.health === 'recovering' ? 'warning'
-          : 'unavailable';
-        return {
-          ...inbox,
-          observerHealth: observerLabel,
-          observer,
-          sentToday: sent,
-          remainingToday: remaining,
-          controls: {
-            canMarkReady: inbox.status === 'warming',
-            canActivate: inbox.status === 'ready' && blockers.length === 0,
-            canPause: inbox.status === 'active',
-            activationBlockers: blockers,
-          },
-        };
-      }),
-      capacity: {
-        activeSenders: capacity.activeCount,
-        globalDailyLimit: capacity.globalDailyLimit,
-        globalPerRunLimit: capacity.globalPerRunLimit,
-        dailyCeiling: capacity.dailyCeiling,
-        perRunCeiling: capacity.perRunCeiling,
-      },
+    const dataset = await getOutreachDataset();
+    const dayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+    sentToday = senderCountsToday(dataset.activities || [], dayKey);
+    observers = observerHealth(dataset.mailboxObservationState || [], {
+      senderIds: observableSenders(senders).map(item => item.id),
     });
+  } catch (_) { /* status-only fallback: registry remains visible */ }
+  return {
+    inboxes: inboxes.map(inbox => {
+      const observer = observers.find(item => item.senderInboxId === inbox.id) || null;
+      const sent = sentToday.get(inbox.id) || 0;
+      const remaining = Math.max(0, Number(inbox.dailyLimit || 0) - sent);
+      const auth = {
+        authenticated: inbox.credentialConfigured,
+        identityVerified: inbox.identityVerified,
+      };
+      const blockers = activationBlockers(
+        senders.find(item => item.id === inbox.id) || inbox,
+        { auth, observer, senders },
+      );
+      const observerLabel = !inbox.credentialConfigured ? 'unavailable'
+        : !observer ? 'unavailable'
+        : observer.health === 'healthy' ? 'healthy'
+        : observer.health === 'backoff' || observer.quotaBackoff ? 'warning'
+        : observer.health === 'recovering' ? 'warning'
+        : 'unavailable';
+      return {
+        ...inbox,
+        observerHealth: observerLabel,
+        observer,
+        sentToday: sent,
+        remainingToday: remaining,
+        controls: {
+          canMarkReady: inbox.status === 'warming',
+          canActivate: inbox.status === 'ready' && blockers.length === 0,
+          canPause: inbox.status === 'active',
+          activationBlockers: blockers,
+        },
+      };
+    }),
+    capacity: {
+      activeSenders: capacity.activeCount,
+      globalDailyLimit: capacity.globalDailyLimit,
+      globalPerRunLimit: capacity.globalPerRunLimit,
+      dailyCeiling: capacity.dailyCeiling,
+      perRunCeiling: capacity.perRunCeiling,
+    },
+  };
+}
+
+app.get('/api/integrations/gmail-inboxes', requireAuth, async (req, res) => {
+  try {
+    const status = await gmailInboxStatus();
+    // Optional client scope, applied on the server. Absent = every inbox (legacy).
+    if (req.query.client !== undefined) {
+      const client = resolveClientId(req.query.client);
+      if (!client.ok) return res.status(400).json({ error: client.reason, code: client.code });
+      return res.json({ ...status, inboxes: filterInboxesForClient(status.inboxes, client.clientId) });
+    }
+    res.json(status);
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 

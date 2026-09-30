@@ -21,9 +21,14 @@ const { buildClientOverview } = require('./reporting');
 const { buildClientSuppression } = require('./suppression');
 const ledger = require('./ledger');
 const { validateClientLeadImport } = require('./lead-import');
+const { buildClientPipeline } = require('./pipeline');
+const { buildClientInbox, buildClientSettings } = require('./workspace-views');
 
 function registerClientRoutes(app, {
   requireAuth, loadDataset, getStore, senders, routedLeadReady, env = process.env, log = console,
+  // Server inbox status rows (all clients; scoped per client here) and the
+  // service send ceilings. Both optional: Settings degrades to config only.
+  senderStatus = async () => [], globalCapacity = () => ({ dailyLimit: 0, windowLimit: 0 }),
 }) {
   const router = express.Router();
   router.use(requireAuth);
@@ -97,6 +102,39 @@ function registerClientRoutes(app, {
           routingReady: routedLeadReady(lead, env).ok,
         })),
       });
+    } catch (error) { fail(res, error); }
+  });
+
+  // ── Workspace views (Pipeline, Inbox, Settings) ────────────────────────
+  router.get('/:clientId/pipeline', clientParam, async (req, res) => {
+    try {
+      const dataset = await loadDataset({ force: req.query.refresh === '1' });
+      res.json(buildClientPipeline({
+        clientId: req.client.id, leads: leadsForClient(dataset.leads || [], req.client.id),
+        ledger: await ledgerFor(req.client.id), routedLeadReady, env,
+      }));
+    } catch (error) { fail(res, error); }
+  });
+
+  router.get('/:clientId/inbox', clientParam, async (req, res) => {
+    try {
+      const dataset = await loadDataset({ force: req.query.refresh === '1' });
+      res.json(buildClientInbox({
+        clientId: req.client.id, leads: leadsForClient(dataset.leads || [], req.client.id),
+        activities: dataset.activities || [], ledger: await ledgerFor(req.client.id),
+      }));
+    } catch (error) { fail(res, error); }
+  });
+
+  router.get('/:clientId/settings', clientParam, async (req, res) => {
+    try {
+      const dataset = await loadDataset({ force: false });
+      let inboxes = [];
+      try { inboxes = await senderStatus(); } catch (error) { log.error(`[clients] sender status unavailable: ${error.message}`); }
+      res.json(buildClientSettings({
+        clientId: req.client.id, leads: dataset.leads || [], activities: dataset.activities || [],
+        inboxes, global: globalCapacity(), env,
+      }));
     } catch (error) { fail(res, error); }
   });
 
