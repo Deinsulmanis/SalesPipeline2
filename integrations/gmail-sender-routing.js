@@ -1,9 +1,13 @@
 'use strict';
 
 const {
-  parseRegistry, withDefaultInboxes, parseRuntimeOverlay, applySenderRuntime,
+  parseRegistry, withDefaultInboxes, parseRuntimeOverlay, applySenderRuntime, isStaffingOnlySender,
 } = require('./gmail-inbox-registry');
 const { DEFAULT_INBOX_DAILY_LIMIT, DEFAULT_INBOX_PER_RUN_LIMIT } = require('./gmail-sender-capacity');
+const { normalizeNiche } = require('./campaign-routing');
+const { STAFFING_CAMPAIGN } = require('./staffing-campaign');
+const { getClient } = require('./clients/registry');
+const { checkClientConsistency } = require('./clients/ownership');
 
 function parseMetadata(value) {
   try { return value && typeof value === 'object' ? value : JSON.parse(String(value || '{}')); }
@@ -39,6 +43,22 @@ function observableSenders(senders = []) {
 }
 
 function allowedForLead(sender, lead = {}) {
+  // Client isolation before anything else, for pinned, assigned and dynamic
+  // choices alike: a sender serves only its own client's leads, and there is
+  // no cross-client fallback. The lead's stored senderInboxId is set aside
+  // here because THIS sender is the one being judged.
+  const owner = checkClientConsistency({ lead: { ...lead, senderInboxId: '' }, sender });
+  if (!owner.ok) return false;
+  // A managed client's lead is routed by its campaign registry
+  // (routedLeadReady / validateRoute); the legacy niche rules below are
+  // ScaleLab's and never admit or refuse it.
+  if (!getClient(owner.clientId).isDefault) return sender.sendEligible === true;
+  // A staffing-only mailbox serves the staffing campaign's canonical niche and
+  // nothing else: not dental, roofing, blank, or a lookalike "*staffing" niche.
+  // This one check covers dynamic balancing, assigned and pinned leads alike.
+  if (isStaffingOnlySender(sender)) {
+    return normalizeNiche(lead.leadNiche || lead.tradeType) === STAFFING_CAMPAIGN.niche && sender.sendEligible;
+  }
   const niche = String(lead.leadNiche || lead.tradeType || '').toLowerCase();
   // An explicit operator choice is available to staffing as well as dental.
   // Unassigned legacy non-dental traffic retains its existing primary route.

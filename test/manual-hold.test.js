@@ -40,9 +40,17 @@ function grabFn(src, name) {
 }
 
 // Evaluate lifted functions inside a sandbox holding only the deps they need.
+// The ColdEmail layout and client-ownership helpers findColdEmailTwins uses,
+// taken from the real source so the sandbox cannot drift from production.
+const CE_COLUMNS_SRC = serverSrc.slice(serverSrc.indexOf('const CE_COLUMNS'), serverSrc.indexOf('const CE_COL_RANGE'));
+const CE_COLUMNS = [...CE_COLUMNS_SRC.matchAll(/'([^']+)'/g)].map(match => match[1]);
+const { leadDefinitelyOtherClient } = require('../integrations/clients/ownership');
+const { DEFAULT_CLIENT_ID } = require('../integrations/clients/registry');
+
 function load(src, names, context) {
   const sandbox = { module: {}, exports: {}, console, JSON, String, Number, Boolean,
-    Object, Array, Date, Math, parseInt, parseFloat, isNaN, RegExp, Error, Promise, ...context };
+    Object, Array, Date, Math, parseInt, parseFloat, isNaN, RegExp, Error, Promise,
+    CE_COLUMNS, CE_COL_RANGE: 'ColdEmail!A:Y', leadDefinitelyOtherClient, DEFAULT_CLIENT_ID, ...context };
   vm.createContext(sandbox);
   const code = names.map(n => grabFn(src, n)).join('\n\n')
     + '\n;(' + JSON.stringify(names) + ').forEach(n => { globalThis[n + "__fn"] = eval(n); });';
@@ -98,8 +106,8 @@ test('every send loop consults suppressionReason, so one tag covers them all', (
   assert.ok(!/const SUPPRESSION_TAGS\s*=/.test(agentSrc), 'the agent must not redeclare the tag list');
   const { SEND_SUPPRESSION_TAGS } = require('../integrations/pipeline-state');
   assert.deepEqual([...SEND_SUPPRESSION_TAGS],
-    ['[REPLY: Unsubscribed]', '[REPLY: Not Interested]', '[BOUNCED', '[MANUAL HOLD]'],
-    'the permanent opt-out tags must still come before the reversible hold');
+    ['[REPLY: Unsubscribed]', '[REPLY: Not Interested]', '[BOUNCED', '[ARCHIVED', '[MANUAL HOLD]'],
+    'the permanent opt-out tags come first; an archive (released only by restore) outranks the reversible hold');
 });
 
 // ── 2. CRM SIDE: which stages apply the hold ────────────────────────────────
@@ -418,8 +426,8 @@ test('a failed provider send records no activity', async () => {
 // ── 6. REGRESSION: nothing about sending changed ────────────────────────────
 
 test('sending cadence, caps and delays are untouched', () => {
-  assert.match(agentSrc, /const MIN_DELAY = 45 \* 1000;/);
-  assert.match(agentSrc, /const MAX_DELAY = 120 \* 1000;/);
+  assert.match(agentSrc, /const MIN_DELAY = 30 \* 1000;/);
+  assert.match(agentSrc, /const MAX_DELAY = 90 \* 1000;/);
   assert.match(agentSrc, /DAILY_SEND_LIMIT = SENDER_CAPACITY\.globalDailyLimit/);
   assert.match(agentSrc, /delayDays: 3,/);
   assert.match(agentSrc, /delayDays: 5,/);

@@ -208,9 +208,10 @@ test('the funnel module contains no write or send path whatsoever', () => {
   // must exclude a RETRACTED pair, and it reads that rule from the same pure
   // module the send path uses rather than keeping a second copy that could
   // drift. Both dependencies are pure rule modules with no IO of their own, and
-  // every IO name above still fails this test.
+  // every IO name above still fails this test. reply-decision supplies the
+  // final production state of a decided reply; it too is pure.
   const requires = [...src.matchAll(/require\('([^']+)'\)/g)].map(match => match[1]).sort();
-  assert.deepEqual(requires, ['./campaign-versions', './demo-intent-state'],
+  assert.deepEqual(requires, ['./campaign-versions', './demo-intent-state', './reply-decision'],
     'funnel analytics may depend only on pure local rule modules');
 });
 

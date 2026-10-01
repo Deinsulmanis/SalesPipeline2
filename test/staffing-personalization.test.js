@@ -5,7 +5,7 @@ const {STAFFING_CAMPAIGN,isStaffingCampaign,renderStaffingPreview,LOCKED_EMAILS}
 const {appendStaffingComplianceFooter}=require('../integrations/staffing-compliance');
 const {STAFFING_RENDER_OPTIONS}=require('../test-support/staffing-mail');
 const {CHECKS,SYSTEM,FACT_AUDIT_SYSTEM,AUDIT_SYSTEM,evidenceBlocks,attachEvidence,filterFacts,checkDraft,rebuildFromFacts,
-  personalizeStaffingLead,previewStaffingPersonalization,flagBatchDuplicates,EMAIL_ADMISSION,emailAdmission}=require('../integrations/staffing-personalization');
+  recoverStaffingLead,directRoleMarketLink,personalizeStaffingLead,previewStaffingPersonalization,flagBatchDuplicates,EMAIL_ADMISSION,emailAdmission}=require('../integrations/staffing-personalization');
 const {researchStaffingCompany,safeUrl,publicIp}=require('../integrations/staffing-research');
 const {registerStaffingPreviewRoutes}=require('../integrations/staffing-preview-route');
 const {CAMPAIGN_VERSIONS}=require('../integrations/campaign-versions');
@@ -37,6 +37,46 @@ function opts({extract=draft,fit='FIT',identity=true,factChanges={},rebuilt=noGe
   }};
 }
 function acceptedFacts(){return attachEvidence(facts,evidenceBlocks(research)).accepted.map(f=>({...f,specificRole:f.kind==='role',explicitServiceTerritory:f.kind==='geography'}));}
+test('SPECIFIC_HIGH requires the role-to-employer relationship itself, not independently true facts',()=>{
+  const fact=(kind,value,quote)=>({id:kind,kind,value,specificRole:kind==='role',
+    evidence:[{blockId:'p0b0',sourceUrl:'https://example.com/services',quote}]});
+  const role=fact('role','forklift operators','We train forklift operators. We provide manufacturing staffing.');
+  const market=fact('employer_market','manufacturing','We train forklift operators. We provide manufacturing staffing.');
+  assert.equal(directRoleMarketLink(role,market),false);
+  const separate=fact('role','construction crews','We staff construction crews and serve warehouse employers.');
+  const warehouse=fact('employer_market','warehouse','We staff construction crews and serve warehouse employers.');
+  assert.equal(directRoleMarketLink(separate,warehouse),false);
+  const direct=fact('role','welders','We place welders and machinists for manufacturers.');
+  const manufacturers=fact('employer_market','manufacturing','We place welders and machinists for manufacturers.');
+  assert.equal(directRoleMarketLink(direct,manufacturers),true);
+  assert.ok(checkDraft({hyperPersonalizedOpening:'Saw you place forklift operators for manufacturers.',usedFactIds:['role','employer_market']},[role,market]).errors.includes('ROLE_MARKET_RELATIONSHIP_NOT_PROVEN'));
+  assert.equal(rebuildFromFacts([role,market]).hyperPersonalizedOpening,'Saw you focus on manufacturing staffing for employers.');
+});
+test('recovery falls back to a verified market without claiming an unsupported role pairing',()=>{
+  const reviewed=recoverStaffingLead({fitStatus:'ICP_CONFIRMED',validatedFacts:acceptedFacts(),contactUsable:true,safetyClear:true});
+  assert.equal(reviewed.personalizationStatus,'SAFE_FALLBACK');
+  assert.equal(reviewed.routingReady,true);
+  assert.equal(reviewed.opening,'Saw you focus on manufacturing staffing for employers.');
+  assert.ok(reviewed.facts.every(f=>f.kind==='employer_market'));
+  assert.doesNotMatch(reviewed.opening,/welders|machinists|electricians/);
+});
+test('duplicate copy and imperfect copy do not discard an ICP-confirmed contact',()=>{
+  const reviewed=recoverStaffingLead({fitStatus:'ICP_CONFIRMED',validatedFacts:acceptedFacts(),contactUsable:true,safetyClear:true});
+  const again=recoverStaffingLead({fitStatus:'ICP_CONFIRMED',validatedFacts:acceptedFacts(),contactUsable:true,safetyClear:true});
+  assert.equal(reviewed.opening,again.opening);
+  assert.equal(again.routingReady,true);
+  const withoutMarket=recoverStaffingLead({fitStatus:'ICP_CONFIRMED',validatedFacts:acceptedFacts().filter(f=>f.kind==='role'),contactUsable:true,safetyClear:true});
+  assert.equal(withoutMarket.personalizationStatus,'NONE_REQUIRED');
+  assert.equal(withoutMarket.opening,'');
+  assert.equal(withoutMarket.routingReady,true);
+});
+test('true nonindustrial and unresolved agencies stay held regardless of copy',()=>{
+  for(const fitStatus of ['ICP_REJECT','ICP_UNRESOLVED']) {
+    const result=recoverStaffingLead({fitStatus,validatedFacts:acceptedFacts(),contactUsable:true,safetyClear:true});
+    assert.equal(result.routingReady,false);
+    assert.equal(result.opening,'');
+  }
+});
 test('exact staffing dispatch rejects dental and conflicting assignments before research',async()=>{
   assert.equal(isStaffingCampaign(lead),true);assert.equal(isStaffingCampaign({campaign:STAFFING_CAMPAIGN.id}),true);
   for(const x of [{campaign:'Some other staffing campaign'},{...lead,leadNiche:'dental'},{...lead,intendedCampaignVersion:'dental_v3_pay_per_booking'},{...lead,emailTemplateId:'dental-guarantee-v1'}]) {
@@ -44,9 +84,9 @@ test('exact staffing dispatch rejects dental and conflicting assignments before 
     await assert.rejects(()=>personalizeStaffingLead(x,{researchCompany:()=>{throw new Error('must not research');}}),/exact staffing campaign/);
   }
 });
-test('staffing remains a non-sendable approved campaign and dental ready routing is preserved',()=>{
+test('staffing remains a non-sendable approved campaign and dental copy is retired',()=>{
   assert.equal(CAMPAIGN_VERSIONS[STAFFING_CAMPAIGN.id].status,'approved');assert.equal(templateById(STAFFING_CAMPAIGN.emailTemplateId).ready,true);
-  assert.equal(templateById('dental-guarantee-v1').ready,true);
+  assert.equal(templateById('dental-guarantee-v1').ready,false);
   assert.equal(validateCampaignVersionRoute({niche:STAFFING_CAMPAIGN.niche,emailTemplateId:STAFFING_CAMPAIGN.emailTemplateId,campaignVersionId:STAFFING_CAMPAIGN.id}).ok,true);
 });
 test('strong industrial roles and market remain HIGH with locked copy and exactly one bold phrase',async()=>{
@@ -103,11 +143,11 @@ test('light-industrial fact misclassified as a role is recognized as an employer
   const extract={...draft,facts:[{id:'m',kind:'role',value:'light industrial staffing',evidenceIds:['p0b0']}],
     hyperPersonalizedOpening:'Saw you specialize in light industrial staffing for employers.',usedFactIds:['m']};
   const r=await personalizeStaffingLead(lead,opts({extract,factChanges:{m:{kind:'employer_market',specificRole:false}}}));
-  assert.equal(r.confidence,'MEDIUM');assert.equal(r.facts[0].kind,'employer_market');
+  assert.equal(r.confidence,'SAFE_FALLBACK');assert.equal(r.facts[0].kind,'employer_market');
 });
 test('roles plus explicit service territory satisfy minimum without requiring industry',async()=>{
   const r=await personalizeStaffingLead(lead,opts({extract:{...draft,hyperPersonalizedOpening:'Saw you place welders and machinists for employers across Northeast Ohio.',usedFactIds:['r','r2','g']}}));
-  assert.equal(r.confidence,'HIGH');assert.ok(!r.facts.some(f=>f.kind==='employer_market'));
+  assert.equal(r.confidence,'MEDIUM');assert.ok(!r.facts.some(f=>f.kind==='employer_market'));
 });
 test('true but irrelevant history and staffing-model facts cannot qualify; no fallback fluff',async()=>{
   const o=opts({extract:{...draft,facts:[{id:'history',kind:'history',value:'Founded 1990',evidenceIds:['p0b0']},{id:'temp',kind:'staffing_model',value:'temporary',evidenceIds:['p0b0']}],hyperPersonalizedOpening:'',usedFactIds:[]}});
@@ -132,7 +172,8 @@ test('Skillforce-style project destination is rebuilt with supported employer no
   const extract={...draft,facts:[{...facts[0],value:'electricians'},{...facts[1],value:'carpenters'},{...facts[3],value:'construction'}],
     hyperPersonalizedOpening:'Saw you place electricians and carpenters into construction projects.',usedFactIds:['r','r2','m']};
   const rebuilt={...noGeo,hyperPersonalizedOpening:'Saw you place electricians and carpenters for construction contractors.'};
-  const r=await personalizeStaffingLead(lead,opts({extract,rebuilt}));assert.equal(r.regenerationCount,1);assert.match(r.hyperPersonalizedOpening,/construction contractors/);
+  const linkedSite={pages:[{url:'https://example.com/services',title:'Example Staffing',text:'We place electricians and carpenters for construction contractors.'}],failures:[],reviewRequired:false};
+  const r=await personalizeStaffingLead(lead,opts({extract,rebuilt,site:linkedSite}));assert.equal(r.regenerationCount,1);assert.match(r.hyperPersonalizedOpening,/construction contractors/);
 });
 test('Saw your team places is corrected once rather than accepted',async()=>{
   const r=await personalizeStaffingLead(lead,opts({extract:{...draft,hyperPersonalizedOpening:'Saw your team places welders and machinists for manufacturing employers.'}}));
@@ -205,8 +246,10 @@ test('unverified and unstated-catch-all statuses, and malformed model responses,
   assert.equal(r.confidence,'REVIEW_REQUIRED');assert.equal(r.primaryReason,'MODEL_OR_RESPONSE_ERROR');
 });
 // ── duplicate diversity and role preference ─────────────────────────────────
-const dRole=(id,v)=>({id,kind:'role',value:v,specificRole:true,evidence:[{sourceUrl:'https://example.com',quote:'q'}]});
-const dMarket=(id,v)=>({id,kind:'employer_market',value:v,evidence:[{sourceUrl:'https://example.com',quote:'q'}]});
+const linkedQuote='We place carpenters, electricians, welders, millwrights, forklift operators, machine operators and industrial painters for construction contractors and manufacturers.';
+const dEvidence=[{blockId:'p0b0',sourceUrl:'https://example.com',quote:linkedQuote}];
+const dRole=(id,v)=>({id,kind:'role',value:v,specificRole:true,evidence:dEvidence});
+const dMarket=(id,v)=>({id,kind:'employer_market',value:v,evidence:dEvidence});
 const dPool=p=>[dRole(p+'1','carpenters'),dRole(p+'2','electricians'),dRole(p+'3','welders'),dMarket(p+'4','construction')];
 const COLLIDE='Saw you place carpenters and electricians for construction contractors.';
 const dRow=(company,pool)=>({company,companyDomain:'example.com',companyWebsite:'https://example.com',firstName:'Ada',
@@ -274,6 +317,23 @@ test('a lead with no alternate material is held rather than differentiated by in
   assert.equal(rows[1].hyperPersonalizedOpening,'');
 });
 
+test('a market-only duplicate can use a second validated market after an independent audit',async()=>{
+  const pool=prefix=>[dMarket(prefix+'1','manufacturing'),dMarket(prefix+'2','warehouse')];
+  const first=dRow('First Co',pool('a')),second=dRow('Second Co',pool('b'));
+  for(const row of [first,second]) {
+    row.hyperPersonalizedOpening='Saw you focus on manufacturing staffing for employers.';
+    row.confidence='MEDIUM';row.classification='MEDIUM';
+  }
+  const audit=auditStub(true);
+  await flagBatchDuplicates([first,second],{createMessage:audit});
+  assert.equal(first.hyperPersonalizedOpening,'Saw you focus on manufacturing staffing for employers.');
+  assert.equal(second.hyperPersonalizedOpening,'Saw you focus on manufacturing and warehouse staffing for employers.');
+  assert.equal(second.classification,'SAFE_FALLBACK');
+  assert.equal(second.duplicateAlternateUsed,true);
+  assert.deepEqual(second.facts.map(f=>f.id),['b1','b2']);
+  assert.equal(audit.count(),1);
+});
+
 test('concrete validated roles are preferred over generic market-only copy',()=>{
   const withRoles=[dRole('p1','forklift operators'),dRole('p2','machine operators'),dMarket('p3','manufacturing')];
   assert.equal(rebuildFromFacts(withRoles).hyperPersonalizedOpening,
@@ -294,6 +354,14 @@ test('market-only copy survives only when no usable concrete role exists',()=>{
   assert.equal(rebuildFromFacts(vague).hyperPersonalizedOpening,'Saw you focus on manufacturing staffing for employers.');
 });
 
+test('generic process and staff labels cannot become specific placed roles',()=>{
+  const { concreteRole } = require('../integrations/staffing-personalization');
+  assert.equal(concreteRole(dRole('p','Welding')),false);
+  assert.equal(concreteRole(dRole('q','warehouse staff')),false);
+  assert.equal(rebuildFromFacts([dRole('r','industrial painter'),dMarket('m','manufacturing')]).hyperPersonalizedOpening,
+    'Saw your team placing industrial painters for manufacturers.');
+});
+
 test('HIGH needs a concrete placed role, not a broad label that is merely true',async()=>{
   const {concreteRole}=require('../integrations/staffing-personalization');
   for(const v of ['general labor','skilled construction workers','skilled trades','light industrial workers','entry level positions'])
@@ -303,7 +371,8 @@ test('HIGH needs a concrete placed role, not a broad label that is merely true',
   // End to end: a broad-label role yields MEDIUM, a concrete one yields HIGH.
   const broad=[['b1','role','general labor'],['b2','employer_market','construction']].map(([id,kind,value])=>({id,kind,value,evidenceIds:['p0b0']}));
   const graded=async factSet=>{
-    const o=opts({extract:{companyIdentityConfirmed:true,icpFit:'FIT',fitEvidenceIds:['p0b0'],researchNotes:'n',facts:factSet,
+    const site={pages:[{url:'https://example.com/services',title:'Example Staffing',text:'We place welders and general labor for construction contractors.'}],failures:[],reviewRequired:false};
+    const o=opts({site,extract:{companyIdentityConfirmed:true,icpFit:'FIT',fitEvidenceIds:['p0b0'],researchNotes:'n',facts:factSet,
       hyperPersonalizedOpening:'',usedFactIds:[]}});
     return (await personalizeStaffingLead(lead,o)).classification;
   };

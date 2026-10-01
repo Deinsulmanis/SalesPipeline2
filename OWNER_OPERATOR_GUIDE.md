@@ -193,6 +193,8 @@ This separation is why an answered positive reply stays historically Positive bu
 
 **What appears:** cold outreach sending and daily cap, stage-sequence state, Calendar sync state, Smartlead integration mode, roofing reply-flow state, and the agent status/log panel.
 
+**Staffing landing page:** "Mark this browser internal" opens the staffing page with a five-minute, single-use code so this browser's visits are left out of analytics and prospect attribution (including opening a prospect's link from Gmail Sent). Mark every browser and device you use. See `LANDING_LINK_ATTRIBUTION.md`.
+
 **Do not:** expect credentials or secrets here; they are intentionally not displayed. Settings status is not an invitation to change production flags casually.
 
 ## 4. Replies and Next Actions

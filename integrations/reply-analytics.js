@@ -2,8 +2,9 @@
 
 const { deterministicReplyCategory } = require('./reply-classifier');
 const { resolveReplyState, EVIDENCE_SOURCE } = require('./canonical-reply');
+const { applyReplyDecisionsToReplyEvidence } = require('./reply-decision');
 const {
-  canonicalSendRows, uniqueCanonicalBounces, flattenActivitiesByLeadId,
+  canonicalSendRows, uniqueCanonicalBounces, flattenActivitiesByLeadId, deliveredLeadIds,
 } = require('./canonical-sends');
 
 const ANALYTICS_CATEGORY = Object.freeze({
@@ -90,7 +91,10 @@ function leadHasCanonicalInbound(activities = []) {
  * canonical-reply documents, and the tag remains the fallback beneath it.
  */
 function categoryFromEvidence(lead = {}, activities = [], storedClassifications = []) {
-  const resolved = resolveReplyState(lead, { activities });
+  // A reply production decided is counted as production decided it: the final
+  // classification's state, not the rule classifier's first reading. Replies
+  // from before decision records existed keep their stored evidence.
+  const resolved = resolveReplyState(lead, { activities: applyReplyDecisionsToReplyEvidence(activities || []) });
   if (resolved.source === EVIDENCE_SOURCE.CANONICAL_ACTIVITY) {
     return CANONICAL_STATE_CATEGORY[resolved.state] || ANALYTICS_CATEGORY.UNKNOWN;
   }
@@ -129,7 +133,7 @@ const REPLY_EVIDENCE_TYPES = new Set([
 
 function buildReplyEvidenceMap(activities = []) {
   const byLead = new Map();
-  for (const row of activities || []) {
+  for (const row of applyReplyDecisionsToReplyEvidence(activities || [])) {
     const eventType = String(row.eventType || '');
     if (!REPLY_EVIDENCE_TYPES.has(eventType)) continue;
     const id = String(row.sourceLeadId || row.leadId || '').replace(/^CE-/, '').trim();
@@ -237,9 +241,14 @@ function buildReplyMetrics(leads = [], { classificationsByLeadId = new Map(), ev
       metrics.delivered++;
     }
   }
-  // When send activity is present, delivered is confirmed sends minus unique
-  // canonical bounces (activity, [BOUNCED] note, and suppression collapse to one).
-  if (confirmedSends > 0) metrics.delivered = Math.max(0, confirmedSends - uniqueBounces.length);
+  // When send activity is present, delivered is LEADS: distinct leads with a
+  // provider-confirmed send, minus leads that bounced. It used to be confirmed
+  // MESSAGES minus bounces, which divided replying leads by every first email
+  // AND every follow-up — a lead-grain numerator over a message-grain
+  // denominator, understating every rate that uses it. The message count is
+  // still reported, under its own name.
+  if (confirmedSends > 0) metrics.delivered = deliveredLeadIds({ leads, activities }).size;
+  metrics.deliveredMessages = Math.max(0, confirmedSends - uniqueBounces.length);
   metrics.confirmedSends = confirmedSends;
   metrics.canonicalBounces = uniqueBounces.length;
   // The SAME records the drill-down returns, so a card and its list can never

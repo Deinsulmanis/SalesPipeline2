@@ -445,7 +445,7 @@ test('every application-owned live automation launch observes Calendar first and
 
   const manual = server.slice(server.indexOf("app.post('/api/agent/run'"), server.indexOf("app.post('/api/agent/stop'"));
   assert.ok(manual.indexOf("launchAutomationAfterCalendar('manual live outreach run'") < manual.indexOf('spawnAgent(false)'));
-  const scheduled = server.slice(server.indexOf("cron.schedule('0,30 8-11"), server.indexOf("cron.schedule('15,45"));
+  const scheduled = server.slice(server.indexOf("cron.schedule('0,30 7-11"), server.indexOf("cron.schedule('15,45"));
   assert.ok(scheduled.indexOf("launchAutomationAfterCalendar('scheduled outreach run'") < scheduled.indexOf('spawnAgent(false'));
   const intent = server.slice(server.indexOf('function spawnAgentIntentOnly'), server.indexOf('function spawnAgentCheckOnly'));
   assert.ok(intent.indexOf('launchAutomationAfterCalendar') < intent.indexOf('startAgentProcess'));

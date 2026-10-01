@@ -1,6 +1,6 @@
 'use strict';
 
-const { STAFFING_CAMPAIGN, staffingOpeningFor, renderStaffingEmail, validateStaffingEmail } = require('./staffing-campaign');
+const { STAFFING_CAMPAIGN, staffingOpeningFor, staffingNoPersonalizationAllowed, renderStaffingEmail, validateStaffingEmail } = require('./staffing-campaign');
 const { staffingLaunchState, isStaffingLead } = require('./staffing-launch-gate');
 const { CAMPAIGN_FAMILY, resolveLeadFamily, familyForLead } = require('./campaign-versions');
 const { routedLeadReady } = require('./campaign-routing');
@@ -17,7 +17,7 @@ function hasManualHold(lead = {}) {
 }
 
 function missingPersonalization(lead) {
-  return !staffingOpeningFor(lead);
+  return !staffingOpeningFor(lead) && !staffingNoPersonalizationAllowed(lead);
 }
 
 function missingIdentity(lead) {

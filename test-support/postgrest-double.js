@@ -49,7 +49,7 @@ const TEXT_COLUMNS = Object.freeze([
   'stage', 'email_status', 'last_emailed_at', 'email_step', 'notes', 'review_count',
   'rating', 'tier', 'site_context', 'campaign', 'campaign_notes', 'enrichment_attempted',
   'lead_niche', 'sender_inbox_id', 'email_template_id', 'routing_required',
-  'intended_campaign_version',
+  'intended_campaign_version', 'client_id',
 ]);
 const INTEGER_COLUMNS = Object.freeze(['email_step_int', 'sheet_row', 'revision']);
 const TIMESTAMP_COLUMNS = Object.freeze(['last_emailed_at_ts', 'created_at', 'updated_at', 'mirrored_at']);
@@ -262,7 +262,10 @@ function storeValue(column, value) {
   return String(value);
 }
 
-function createPostgrestDouble({ rows = [], secret = DEFAULT_SECRET } = {}) {
+// emailUniqueness: 'global' — the global email index still exists (both
+// indexes enforced); 'client' — 20260930020000 has dropped it, so only
+// (client_id, email_normalized) is unique.
+function createPostgrestDouble({ rows = [], secret = DEFAULT_SECRET, emailUniqueness = 'global' } = {}) {
   const table = new Map();
   const requests = [];
   const hooks = {
@@ -275,7 +278,8 @@ function createPostgrestDouble({ rows = [], secret = DEFAULT_SECRET } = {}) {
 
   function newRow(object, now) {
     const row = Object.fromEntries(COLUMNS.map(column => [column, null]));
-    Object.assign(row, { revision: 1, created_at: now, updated_at: now, mirrored_at: now });
+    // client_id is NOT NULL DEFAULT 'scalelab' (20260930010000).
+    Object.assign(row, { revision: 1, created_at: now, updated_at: now, mirrored_at: now, client_id: 'scalelab' });
     for (const [column, value] of Object.entries(object)) row[column] = storeValue(column, value);
     row[IDENTITY] = ++identities;
     return row;
@@ -290,12 +294,20 @@ function createPostgrestDouble({ rows = [], secret = DEFAULT_SECRET } = {}) {
     }
     const ids = new Set();
     const emails = new Set();
+    const clientEmails = new Set();
     for (const row of staged) {
       if (isNull(row.lead_id)) fail(400, '23502', 'null value in column "lead_id" violates not-null constraint');
+      if (isNull(row.client_id) || row.client_id === '') fail(400, '23502', 'null value in column "client_id" violates not-null constraint');
+      if (!['scalelab', 'jole'].includes(row.client_id)) fail(409, '23503', 'insert or update on table "outreach_leads" violates foreign key constraint "outreach_leads_client_id_fkey"');
+      if (row.email_normalized) {
+        const key = `${row.client_id}|${row.email_normalized}`;
+        if (clientEmails.has(key)) fail(409, '23505', 'duplicate key value violates unique constraint "outreach_leads_client_email_key"');
+        clientEmails.add(key);
+      }
       if (ids.has(row.lead_id)) fail(409, '23505', 'duplicate key value violates unique constraint "outreach_leads_pkey"');
       ids.add(row.lead_id);
       // Partial index: WHERE email_normalized <> ''
-      if (row.email_normalized) {
+      if (row.email_normalized && emailUniqueness === 'global') {
         if (emails.has(row.email_normalized)) {
           fail(409, '23505', 'duplicate key value violates unique constraint "outreach_leads_email_normalized_key"');
         }

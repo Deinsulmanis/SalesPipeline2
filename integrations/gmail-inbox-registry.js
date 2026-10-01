@@ -2,8 +2,21 @@
 
 const { google } = require('googleapis');
 const { DEFAULT_INBOX_DAILY_LIMIT, DEFAULT_INBOX_PER_RUN_LIMIT } = require('./gmail-sender-capacity');
+const { DEFAULT_CLIENT_ID, resolveClientId } = require('./clients/registry');
 
 const STATUSES = new Set(['warming', 'ready', 'active', 'paused', 'error']);
+
+// scalelabaiteam.com exists only for US staffing-agency outreach. It is
+// staffing-only by identity, not just by flag, so a GMAIL_INBOX_REGISTRY_JSON
+// override that omits staffingOnly can never widen it to other niches.
+const STAFFING_ONLY_SENDER_IDS = Object.freeze(['scalelabaiteam']);
+const STAFFING_ONLY_SENDER_EMAILS = Object.freeze(['deins@scalelabaiteam.com']);
+
+function isStaffingOnlySender(sender = {}) {
+  return sender?.staffingOnly === true
+    || STAFFING_ONLY_SENDER_IDS.includes(String(sender?.id || '').trim())
+    || STAFFING_ONLY_SENDER_EMAILS.includes(String(sender?.email || '').trim().toLowerCase());
+}
 
 const DEFAULT_SECONDARY_INBOXES = Object.freeze([
   Object.freeze({
@@ -13,6 +26,32 @@ const DEFAULT_SECONDARY_INBOXES = Object.freeze([
     tokenEnv: 'GMAIL_SCALELABAITEAM_TOKEN_JSON',
     dailyLimit: DEFAULT_INBOX_DAILY_LIMIT,
     perRunLimit: DEFAULT_INBOX_PER_RUN_LIMIT,
+    observerEnabled: true,
+    staffingOnly: true,
+  }),
+  // New mailbox on the established scalelabai.ca domain. Smartlead warms it
+  // independently; campaign sends use this Gmail sender only after the
+  // operator activates it behind the healthy-observer gate. Conservative
+  // caps: 20/day (raised from 10 on 2026-09-24) spread at 2 per window, so the
+  // ten weekday windows are its whole day. Raise them by hand.
+  Object.freeze({
+    id: 'deniels',
+    email: 'deniels@scalelabai.ca',
+    status: 'warming',
+    tokenEnv: 'GMAIL_DENIELS_TOKEN_JSON',
+    dailyLimit: 20,
+    perRunLimit: 2,
+    observerEnabled: true,
+  }),
+  // Second mailbox on tryscalelabai.ca, same pattern and caps as deniels:
+  // 20/day (raised from 10 on 2026-09-24) at 2 per window.
+  Object.freeze({
+    id: 'deniels_tryscalelabai',
+    email: 'deniels@tryscalelabai.ca',
+    status: 'warming',
+    tokenEnv: 'GMAIL_DENIELS_TRYSCALELABAI_TOKEN_JSON',
+    dailyLimit: 20,
+    perRunLimit: 2,
     observerEnabled: true,
   }),
 ]);
@@ -25,6 +64,11 @@ function parseEntry(entry, index, seenIds, seenEmails) {
   const dailyLimit = Number(entry?.dailyLimit ?? 0);
   const perRunLimit = Number(entry?.perRunLimit ?? DEFAULT_INBOX_PER_RUN_LIMIT);
   const observerEnabled = entry?.observerEnabled !== false;
+  const staffingOnly = entry?.staffingOnly === true;
+  // The managed client this inbox serves. Omitted means the default client,
+  // which is every inbox that existed before clients did. An unknown client is
+  // a configuration error, never a silent default.
+  const rawClientId = String(entry?.clientId ?? '').trim();
   if (!id || !/^[a-z0-9_-]+$/i.test(id)) throw new Error(`Gmail inbox entry ${index + 1} has an invalid id`);
   if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error(`Gmail inbox ${id} has an invalid email`);
   if (!STATUSES.has(status)) throw new Error(`Gmail inbox ${id} has an invalid status`);
@@ -32,10 +76,19 @@ function parseEntry(entry, index, seenIds, seenEmails) {
   if (!/^GMAIL_[A-Z0-9_]+_TOKEN_JSON$/.test(tokenEnv)) throw new Error(`Gmail inbox ${id} has an invalid tokenEnv`);
   if (!Number.isInteger(dailyLimit) || dailyLimit < 0) throw new Error(`Gmail inbox ${id} has an invalid dailyLimit`);
   if (!Number.isInteger(perRunLimit) || perRunLimit < 0) throw new Error(`Gmail inbox ${id} has an invalid perRunLimit`);
+  let clientId = '';
+  if (rawClientId) {
+    const resolved = resolveClientId(rawClientId);
+    if (!resolved.ok) throw new Error(`Gmail inbox ${id} names an unknown client`);
+    clientId = resolved.clientId;
+  }
+  if (staffingOnly && clientId && clientId !== DEFAULT_CLIENT_ID) throw new Error(`Gmail inbox ${id} cannot be staffing-only for another client`);
   if (seenIds.has(id) || seenEmails.has(email)) throw new Error(`Duplicate Gmail inbox entry: ${id}`);
   seenIds.add(id); seenEmails.add(email);
   return Object.freeze({
     id, email, status, tokenEnv, dailyLimit, perRunLimit, observerEnabled, provider: 'gmail',
+    ...(staffingOnly ? { staffingOnly } : {}),
+    ...(clientId ? { clientId } : {}),
   });
 }
 
@@ -73,6 +126,7 @@ function publicRegistry(entries, env = process.env) {
     observerEnabled: entry.observerEnabled !== false, provider: 'gmail',
     credentialConfigured: Boolean(env[entry.tokenEnv]),
     sendEligible: sendEligibleFor(entry, env),
+    clientId: entry.clientId || DEFAULT_CLIENT_ID,
   }));
 }
 
@@ -154,7 +208,7 @@ function applySenderRuntime(senders = [], overlay = []) {
 }
 
 module.exports = {
-  STATUSES, DEFAULT_SECONDARY_INBOXES,
+  STATUSES, DEFAULT_SECONDARY_INBOXES, STAFFING_ONLY_SENDER_IDS, isStaffingOnlySender,
   parseRegistry, withDefaultInboxes, publicRegistry, assertDormant,
   credentialsFor, verifyInbox, verifyMailboxAccess, sendEligibleFor,
   parseRuntimeOverlay, applySenderRuntime,

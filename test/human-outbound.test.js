@@ -277,5 +277,12 @@ test('the observation is bounded: one list, no per-lead Gmail call', () => {
 test('the cycle-fresh human touch reaches the send gate', () => {
   const agent = readSource(path.join(root, 'outreach-agent.js'));
   const gate = agent.slice(agent.indexOf('function coldSendGate'), agent.indexOf('function selectQueued'));
-  assert.match(gate, /humanTouchAt: latestHumanOutboundAt\(activities\)/);
+  // The gate reads the ONE shared "we answered" definition, which includes the
+  // manual Gmail reply observed moments ago in this cycle.
+  assert.match(gate, /humanTouchAt: latestResponseAt\(activities\)/);
+  const { latestResponseAt } = require('../integrations/prospect-response');
+  assert.equal(latestResponseAt([
+    { eventType: 'positive_reply', occurredAt: '2026-08-27T16:00:00.000Z' },
+    { eventType: 'human_response_sent', occurredAt: '2026-08-27T16:05:00.000Z' },
+  ]), '2026-08-27T16:05:00.000Z');
 });

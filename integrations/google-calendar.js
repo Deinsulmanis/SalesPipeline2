@@ -398,15 +398,34 @@ async function runGoogleCalendarSync(options = {}) {
     }
   }
 
+  // Nothing changed on the calendar: planning zero events yields zero plans
+  // whatever the context holds, so the context is not loaded. It is the whole
+  // CRM snapshot — in primary mode a full outreach corpus download — and this
+  // runs before every automation launch and on every five-minute tick. The
+  // checkpoint still advances through the same completed-sync path below.
+  //
+  // This removes no safety: the context never gated a launch on its own merits,
+  // and a sender whose authoritative store is unreadable still refuses to run in
+  // its own readLeads().
+  const events = fetched.events || [];
+  if (!events.length) {
+    const next = nextSyncState(previous, { ...fetched, ok: true, complete: true });
+    await writeState(next);
+    return {
+      ok: true, mutations: 0, review: [], handled: [], checkpointAdvanced: true,
+      syncToken: next.syncToken || null, events: 0, contextLoaded: false,
+    };
+  }
+
   const context = await loadContext();
-  const plans = await planBookings(fetched.events || [], context);
+  const plans = await planBookings(events, context);
   let mutations = 0;
   const review = [];
   const handled = [];
   try {
     for (const item of plans) {
       const eventId = item.classified?.event?.providerEventId || '';
-      if (item.outcome === 'unmatched' || item.outcome === 'conflict') {
+      if (item.outcome === 'unmatched' || item.outcome === 'conflict' || item.outcome === 'archived') {
         review.push({ providerEventId: eventId, outcome: item.outcome, reason: item.reason });
         logger.warn?.(`[Calendar sync] ${eventId || 'unknown event'}: ${item.outcome} — ${item.reason || 'review required'}`);
         handled.push({ providerEventId: eventId, outcome: item.outcome });
@@ -432,7 +451,10 @@ async function runGoogleCalendarSync(options = {}) {
   const completed = { ...fetched, ok: true, complete: true };
   const next = nextSyncState(previous, completed);
   await writeState(next);
-  return { ok: true, mutations, review, handled, checkpointAdvanced: true, syncToken: next.syncToken || null };
+  return {
+    ok: true, mutations, review, handled, checkpointAdvanced: true, syncToken: next.syncToken || null,
+    events: events.length, contextLoaded: true,
+  };
 }
 
 module.exports = {

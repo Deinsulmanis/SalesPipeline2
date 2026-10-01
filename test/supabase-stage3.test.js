@@ -39,6 +39,7 @@ const agentSrc = readSource(path.join(root, 'outreach-agent.js'));
 const stateSrc = readSource(path.join(root, 'integrations', 'outreach-state.js'));
 const backfillSrc = readSource(path.join(root, 'scripts', 'supabase-outreach-backfill.js'));
 const migration = readSource(path.join(root, 'supabase', 'migrations', '20260912000000_outreach_leads.sql'));
+const clientIdMigration = readSource(path.join(root, 'supabase', 'migrations', '20260930010000_outreach_leads_client_id.sql'));
 
 const SECRET = 'sb_secret_TESTONLY_not_a_real_key';
 const quiet = { log() {}, warn() {}, error() {} };
@@ -119,14 +120,16 @@ test('A1 — FIELD_MAP matches outreach-agent COLUMNS exactly, in order', () => 
   const block = agentSrc.match(/const COLUMNS = \[([\s\S]*?)\];/);
   assert.ok(block, 'outreach-agent.js must still declare COLUMNS');
   const columns = block[1].match(/'([^']+)'/g).map(s => s.slice(1, -1));
-  assert.equal(columns.length, 24, 'ColdEmail is a 24-column sheet (A:X)');
+  assert.equal(columns.length, 25, 'ColdEmail is a 25-column sheet (A:Y); Y is the explicit client owner');
+  assert.equal(columns[24], 'clientId');
   assert.deepEqual(SHEET_FIELDS, columns,
     'FIELD_MAP must list every ColdEmail column in sheet order — a new column added '
     + 'to COLUMNS without extending FIELD_MAP would silently stop being mirrored');
 });
 
-test('A2 — 21 of 24 fields are behaviour-critical; the 3 UI-only ones are named', () => {
-  assert.equal(CRITICAL_FIELDS.length, 21);
+test('A2 — 22 of 25 fields are behaviour-critical; the 3 UI-only ones are named', () => {
+  assert.equal(CRITICAL_FIELDS.length, 22);
+  assert.ok(CRITICAL_FIELDS.includes('clientId'), 'tenant ownership decides which client may send');
   assert.deepEqual([...NONCRITICAL_FIELDS].sort(),
     ['campaign_notes', 'enrichment_attempted', 'reviewCount'].sort());
   for (const field of ['stage', 'emailStatus', 'notes', 'senderInboxId', 'routingRequired',
@@ -137,6 +140,11 @@ test('A2 — 21 of 24 fields are behaviour-critical; the 3 UI-only ones are name
 
 test('A3 — every field maps to a column the migration actually creates', () => {
   for (const column of Object.values(FIELD_MAP)) {
+    if (column === 'client_id') {
+      // Added later, additively, with the ScaleLab default as the backfill.
+      assert.match(clientIdMigration, /add column if not exists client_id text not null default 'scalelab'/);
+      continue;
+    }
     const declared = new RegExp(`^\\s{2}${column}\\s`, 'm').test(migration);
     assert.ok(declared, `migration must declare column ${column}`);
   }
@@ -162,11 +170,11 @@ test('B2 — the twin is missing exactly the 15 fields findColdEmailTwins omits'
   assert.deepEqual(missing.sort(), [
     'contactName', 'city', 'tradeType', 'website', 'reviewCount', 'rating', 'tier',
     'siteContext', 'campaign', 'campaign_notes', 'enrichment_attempted', 'leadNiche',
-    'emailTemplateId', 'routingRequired', 'intendedCampaignVersion',
+    'emailTemplateId', 'routingRequired', 'intendedCampaignVersion', 'clientId',
   ].sort());
   const criticalLost = missing.filter(f => CRITICAL_FIELDS.includes(f));
-  assert.equal(criticalLost.length, 12,
-    'twelve behaviour-critical columns would be blanked — this is why the guard exists');
+  assert.equal(criticalLost.length, 13,
+    'thirteen behaviour-critical columns (ownership included) would be blanked — this is why the guard exists');
 });
 
 test('B3 — completeness is key PRESENCE, not truthiness ("" is a real value)', () => {
@@ -488,9 +496,22 @@ test('H4 — NO production read path consults Supabase for an operational decisi
   for (const reader of readers) {
     assert.ok(!serverSrc.includes(reader),
       `server.js must not call ${reader} — Sheets is authoritative for operational state in Stage 3`);
+    // F3 (2026-09-26) sanctions exactly ONE per-lead reader in the sender: the
+    // last-moment send revalidation reads the one lead being sent to, instead of
+    // re-downloading the corpus per send. It is reached only when the snapshot
+    // carries no Sheets ColdEmail rows — primary mode with Supabase write
+    // authority, the configuration in which the corpus read already decides from
+    // Supabase — so it adds no decision path that another mode could reach.
+    if (reader === 'getOutreachLeadById') continue;
     assert.ok(!agentSrc.includes(reader),
       `outreach-agent.js must not call ${reader} — the sender must never read from the mirror`);
   }
+  const uses = agentSrc.split('\n').filter(line => line.includes('getOutreachLeadById')).map(line => line.trim());
+  assert.deepEqual(uses, [
+    'readOutreachCorpus, sheetsFallbackAllowed, outreachWriteAuthority, getOutreachLeadById } = require(\'./integrations/outreach-state\');',
+    'getLeadById: id => getOutreachLeadById(id),',
+    'readSheetLeads: rows => readLeads(rows), getLeadById: id => getOutreachLeadById(id) });',
+  ], 'the only per-lead canonical read in the sender is the send-time revalidation (per-send gate + warm final gate)');
 });
 
 test('H5 — primary mode is honoured by the two corpus reads, and only those', () => {
@@ -785,9 +806,9 @@ test('L2 — the six fields named in the Stage 3 brief are provably unblankable'
   // distinction the whole guard rests on.
   const withBlank = twinLead();
   for (const field of named) withBlank[field] = '';
-  assert.equal(missingFields(withBlank).length, 9,
-    'supplying the six named fields as blanks leaves only the other nine absent');
-  assert.equal(isCompleteLead(withBlank), false, 'still partial — nine fields remain absent');
+  assert.equal(missingFields(withBlank).length, 10,
+    'supplying the six named fields as blanks leaves only the other ten absent');
+  assert.equal(isCompleteLead(withBlank), false, 'still partial — ten fields remain absent');
 });
 
 // ── M. shadow-write failure behaviour (§12) ─────────────────────────────────
@@ -907,6 +928,9 @@ test('N2 — no DECISION path reads the mirror; only measurement may', () => {
   for (const file of appFiles) {
     const src = readSource(file);
     for (const reader of readers) {
+      // F3: the sender's send-time revalidation of the one lead being emailed is
+      // the single sanctioned per-lead read; H4 pins its exact call sites.
+      if (path.basename(file) === 'outreach-agent.js' && reader === 'getOutreachLeadById') continue;
       assert.ok(!src.includes(reader),
         `${path.basename(file)} must not call ${reader} — Sheets is authoritative in Stage 3`);
     }

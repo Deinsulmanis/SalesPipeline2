@@ -34,6 +34,7 @@
  */
 
 const { classify: classifyLeadEmail } = require('../check-leads');
+const { tenantOf, groupByTenant, DEFAULT_CLIENT_ID } = require('./clients/email-scope');
 const {
   MANUAL_HOLD_TAG, hasManualHold, manualHoldReleased, stageRequiresHold,
   deriveAutomationState, automationConflict, AUTOMATION_STATES,
@@ -56,6 +57,8 @@ const SEVERITY = Object.freeze({
 });
 const { observerHealth } = require('./gmail-observer-health');
 const { provenSequenceSenderId } = require('./stage-sequences');
+const { latestResponseAt } = require('./prospect-response');
+const { parseReplyDecision } = require('./reply-decision');
 
 function observerChecks(context, index) {
   if (!context.mailboxObservationState) return [];
@@ -194,7 +197,8 @@ function buildIndex({ leads = [], boardLeads = [], activities = [] }) {
       boardToLead.set(board.id, direct);
       continue;
     }
-    const matches = byEmail.get(norm(board.email)) || [];
+    // Pipeline cards are ScaleLab's: another client's lead is never their twin.
+    const matches = (byEmail.get(norm(board.email)) || []).filter(lead => [DEFAULT_CLIENT_ID, ''].includes(tenantOf(lead)));
     if (matches.length === 1) boardToLead.set(board.id, matches[0].id);
   }
   return { byId, byEmail, activityByLead, boardToLead };
@@ -221,9 +225,11 @@ function identityChecks({ leads, boardLeads }, index) {
     : pass('identity.malformed_email', CATEGORY.IDENTITY, 'Every ColdEmail address passes the sender\'s own validity classifier.'));
 
   // Duplicate normalized identities.
+  // Email identity is unique per client: the same address under two clients is
+  // legitimate; two rows for it inside one client (or an unowned row) is not.
   const duplicates = [...index.byEmail.entries()]
-    .filter(([, bucket]) => bucket.length > 1)
-    .map(([email, bucket]) => ({ email, count: bucket.length, ids: bucket.map(l => l.id) }));
+    .flatMap(([email, bucket]) => groupByTenant(bucket).filter(group => group.length > 1)
+      .map(group => ({ email, count: group.length, ids: group.map(l => l.id) })));
   out.push(duplicates.length
     ? finding({
       id: 'identity.duplicate_coldemail', category: CATEGORY.IDENTITY,
@@ -341,6 +347,34 @@ function replyChecks({ leads, replyRecords = [], canonicalReplyBoundary = null, 
       affected: overdueHuman.length, sample: overdueHuman,
       classification: 'operational', requiresHumanReview: true })
     : pass('reply.overdue_human_action', CATEGORY.REPLY, 'No dated human reply operation is overdue.'));
+
+  // Production decided to answer automatically and the send did not happen (a
+  // gate refused it or the provider failed), and nobody has answered since.
+  // Read from the reply decision; "answered" is the response taxonomy's call.
+  const undelivered = [];
+  for (const [leadId, rows] of index.activityByLead) {
+    for (const row of rows) {
+      const decision = parseReplyDecision(row);
+      if (!decision || decision.policySend !== true || decision.executedAction) continue;
+      const repliedAt = Date.parse(decision.receivedAt || decision.decidedAt || '');
+      const answeredAt = Date.parse(latestResponseAt(rows) || '');
+      if (Number.isFinite(answeredAt) && Number.isFinite(repliedAt) && answeredAt > repliedAt) continue;
+      const lead = index.byId.get(String(leadId));
+      undelivered.push({
+        id: leadId, company: lead ? lead.company : '', policyAction: decision.policyAction,
+        executionStatus: decision.executionStatus, executionCode: decision.executionCode || null,
+        finalClassification: decision.finalClassification,
+      });
+    }
+  }
+  out.push(undelivered.length
+    ? finding({ id: 'reply.auto_reply_not_delivered', category: CATEGORY.REPLY,
+      severity: SEVERITY.WARNING, status: STATUS.FAIL,
+      summary: `${undelivered.length} reply(ies) were meant to get an automatic answer that was not sent, and nobody has answered since.`,
+      affected: undelivered.length, sample: undelivered,
+      classification: 'operational', requiresHumanReview: true })
+    : pass('reply.auto_reply_not_delivered', CATEGORY.REPLY,
+      'Every automatic answer production decided to send was sent, or someone answered since.'));
 
   const invalidOverrides = [];
   for (const [leadId, rows] of index.activityByLead) {
@@ -1134,8 +1168,10 @@ function ownershipChecks({ leads, boardLeads, suppressionReason = null, sendingE
     const lastInbound = activities.filter(row => /_reply$/.test(String(row.eventType || '')))
       .map(row => Date.parse(row.occurredAt || '')).filter(Number.isFinite).sort().pop();
     if (!lastInbound) return false;
-    const lastOutbound = activities.filter(row => String(row.eventType || '') === 'human_response_sent')
-      .map(row => Date.parse(row.occurredAt || '')).filter(Number.isFinite).sort().pop();
+    // "Answered" is the one shared definition: a human or automated reply, a
+    // recorded conversation or a meeting. The observer check above stays on
+    // human_response_sent alone, because it measures Gmail observation itself.
+    const lastOutbound = Date.parse(latestResponseAt(activities) || '') || null;
     // Answered more than 14 days ago and still nothing recorded back.
     return (!lastOutbound || lastOutbound < lastInbound)
       && (new Date(now).getTime() - lastInbound) > 14 * 86400000;

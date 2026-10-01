@@ -16,17 +16,28 @@ test('niche normalization keeps dental and roofing separated', () => {
 });
 
 test('route validation requires compatible ready copy and delivery-capable inbox', () => {
-  assert.equal(validateRoute({ niche: 'dental', senderInboxId: 'primary', emailTemplateId: 'dental-guarantee-v1', inboxes: [primary] }).ok, true);
-  assert.match(validateRoute({ niche: 'roofing', senderInboxId: 'primary', emailTemplateId: 'dental-guarantee-v1', inboxes: [primary] }).reason, /cannot be used/);
-  assert.match(validateRoute({ niche: 'roofing', senderInboxId: 'primary', emailTemplateId: 'roofing-survey-v1', inboxes: [primary] }).reason, /workflow is disabled/);
-  assert.equal(validateRoute({ niche: 'roofing', senderInboxId: 'primary', emailTemplateId: 'roofing-survey-v1', inboxes: [primary], requireReady: false }).ok, true);
-  assert.match(validateRoute({ niche: 'dental', senderInboxId: 'warm', emailTemplateId: 'dental-guarantee-v1', inboxes: [warming] }).reason, /not eligible/);
+  // The dental offer is retired (2026-09-30): no dental route validates, whatever the inbox or copy.
+  const dental = validateRoute({ niche: 'dental', senderInboxId: 'primary', emailTemplateId: 'dental-guarantee-v1', inboxes: [primary] });
+  assert.equal(dental.ok, false);
+  assert.equal(dental.code, 'offer_retired');
+  // Roofing was retired the same day: no roofing route validates either, even with readiness waived.
+  for (const requireReady of [true, false]) {
+    assert.equal(validateRoute({ niche: 'roofing', senderInboxId: 'primary', emailTemplateId: 'roofing-survey-v1', inboxes: [primary], requireReady }).code, 'offer_retired');
+  }
+  // The mechanics, on the one live routed offer (staffing).
+  const staffingTemplate = 'industrial-staffing-employer-v1';
+  assert.match(validateRoute({ niche: 'industrial_staffing', senderInboxId: 'primary', emailTemplateId: 'dental-guarantee-v1', inboxes: [primary] }).reason, /cannot be used/);
+  assert.equal(validateRoute({ niche: 'industrial_staffing', senderInboxId: 'primary', emailTemplateId: staffingTemplate, inboxes: [primary], requireReady: false }).ok, true);
+  assert.match(validateRoute({ niche: 'industrial_staffing', senderInboxId: 'warm', emailTemplateId: staffingTemplate, inboxes: [warming], requireReady: false }).reason, /not eligible/);
 });
 
 test('legacy leads retain behavior while newly routed leads fail closed', () => {
   assert.deepEqual(routedLeadReady({}), { ok: true, legacy: true });
-  assert.match(routedLeadReady({ routingRequired: 'true', leadNiche: 'dental' }).reason, /incomplete/);
-  assert.equal(routedLeadReady({ routingRequired: 'true', leadNiche: 'dental', senderInboxId: 'primary', emailTemplateId: 'dental-guarantee-v1' }).ok, true);
+  assert.match(routedLeadReady({ routingRequired: 'true', leadNiche: 'industrial_staffing' }).reason, /incomplete/);
+  assert.equal(routedLeadReady({ routingRequired: 'true', leadNiche: 'roofing' }).code, 'offer_retired');
+  // Retired dental fails closed routed or legacy — the legacy bypass never reaches it.
+  assert.equal(routedLeadReady({ routingRequired: 'true', leadNiche: 'dental', senderInboxId: 'primary', emailTemplateId: 'dental-guarantee-v1' }).code, 'offer_retired');
+  assert.equal(routedLeadReady({ routingRequired: '', tradeType: 'Dentist', campaign: 'Surrey Dentists' }).code, 'offer_retired');
 });
 
 test('agent guards initial and follow-up selection through canonical sender routing', () => {
@@ -53,11 +64,13 @@ test('campaign import and queue UI require durable routing choices', () => {
 });
 
 test('campaign versions are derived from the canonical registry and reject incompatible copy', () => {
-  const dental = campaignVersionsForRoute({ niche: 'dental' });
-  assert.deepEqual(dental.map(version => version.id), ['dental_v3_pay_per_booking']);
-  assert.equal(validateCampaignVersionRoute({ niche: 'dental', emailTemplateId: 'dental-guarantee-v1', campaignVersionId: 'dental_v3_pay_per_booking' }).ok, true);
-  assert.match(validateCampaignVersionRoute({ niche: 'dental', emailTemplateId: 'roofing-survey-v1', campaignVersionId: 'dental_v3_pay_per_booking' }).reason, /does not use/);
-  assert.match(validateCampaignVersionRoute({ niche: 'dental', emailTemplateId: 'dental-guarantee-v1', campaignVersionId: 'roofing_survey_v1_measured' }).reason, /cannot be used/);
+  // Every dental version is retired, so none is offered and none validates.
+  assert.deepEqual(campaignVersionsForRoute({ niche: 'dental' }).map(version => version.id), []);
+  assert.match(validateCampaignVersionRoute({ niche: 'dental', emailTemplateId: 'dental-guarantee-v1', campaignVersionId: 'dental_v3_pay_per_booking' }).reason, /approved registered campaign version/);
+  assert.deepEqual(campaignVersionsForRoute({ niche: 'roofing' }).map(version => version.id), [], 'roofing retired 2026-09-30');
+  assert.deepEqual(campaignVersionsForRoute({ niche: 'industrial_staffing' }).map(version => version.id), ['industrial_staffing_employer_acquisition_v1']);
+  assert.match(validateCampaignVersionRoute({ niche: 'industrial_staffing', emailTemplateId: 'dental-guarantee-v1', campaignVersionId: 'industrial_staffing_employer_acquisition_v1' }).reason, /does not use/);
+  assert.match(validateCampaignVersionRoute({ niche: 'dental', emailTemplateId: 'industrial-staffing-employer-v1', campaignVersionId: 'industrial_staffing_employer_acquisition_v1' }).reason, /cannot be used/);
 });
 
 test('queue preview and submitted payload use the same explicit campaign route', () => {

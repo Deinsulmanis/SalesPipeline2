@@ -65,6 +65,9 @@
  */
 
 const { mirrorConfig } = require('./supabase-mirror');
+const { resolveLeadClient } = require('./clients/ownership');
+const { resolveClientId, DEFAULT_CLIENT_ID } = require('./clients/registry');
+const { ARCHIVE_MARKER_PREFIX, ARCHIVED_STAGE, archiveReasonFromNotes } = require('./lead-archive');
 
 const TABLE = 'outreach_leads';
 const REQUEST_TIMEOUT_MS = 5000;
@@ -85,6 +88,8 @@ const FIELD_MAP = Object.freeze({
   enrichment_attempted: 'enrichment_attempted', leadNiche: 'lead_niche',
   senderInboxId: 'sender_inbox_id', emailTemplateId: 'email_template_id',
   routingRequired: 'routing_required', intendedCampaignVersion: 'intended_campaign_version',
+  // Y — explicit tenant owner (supabase/migrations/20260930010000_outreach_leads_client_id.sql).
+  clientId: 'client_id',
 });
 const SHEET_FIELDS = Object.freeze(Object.keys(FIELD_MAP));
 
@@ -199,6 +204,15 @@ function toOutreachLeadRow(lead = {}, { sheetRow = null, now = new Date() } = {}
   const stamp = now.toISOString();
   const row = {};
   for (const [field, column] of Object.entries(FIELD_MAP)) row[column] = text(lead[field]);
+  // client_id is NOT NULL DEFAULT 'scalelab' with a foreign key. A full row
+  // writes it only for a MANAGED client: the default client's owner is exactly
+  // what the column default supplies on insert and never changes afterwards,
+  // so ScaleLab writes never depend on the column (a deploy that ran ahead of
+  // its migration cannot break them). A blank owner is never written: an
+  // insert takes the default, an update keeps the stored owner. A row that
+  // reaches here blank but routed to a managed client is stored as the default
+  // and then contradicts its own routing fields — refused everywhere.
+  if (!row.client_id || row.client_id === DEFAULT_CLIENT_ID) delete row.client_id;
   // Derived, for indexing only; the text columns above stay the source of truth.
   row.last_emailed_at_ts = isoOrNull(lead.lastEmailedAt);
   row.email_step_int = intOrNull(lead.emailStep);
@@ -221,6 +235,9 @@ function toOutreachLeadPatch(id, fields = {}, { now = new Date() } = {}) {
   const unknown = names.filter(field => !Object.prototype.hasOwnProperty.call(FIELD_MAP, field));
   if (unknown.length) throw new Error(`unknown ColdEmail field(s): ${unknown.join(', ')}`);
   if (!names.length) throw new Error('toOutreachLeadPatch requires at least one field');
+  if (names.includes('clientId') && !resolveClientId(fields.clientId).ok) {
+    throw new Error('clientId must name a registered client; ownership is never cleared');
+  }
 
   const stamp = now.toISOString();
   const patch = { lead_id: leadId, updated_at: stamp, mirrored_at: stamp };
@@ -441,10 +458,17 @@ async function getOutreachLeadById(id, options = {}) {
   return { ...result, lead: result.ok ? (result.leads[0] || null) : null };
 }
 
+// Email is unique per client, not globally. With a clientId this is one lead
+// or none; without one, two clients' leads for the same address are reported as
+// ambiguous rather than one of them being returned arbitrarily.
 async function getOutreachLeadByEmail(email, options = {}) {
   const normalized = String(email || '').trim().toLowerCase();
   if (!normalized) return { ok: false, lead: null, reason: 'no email supplied' };
-  const result = await selectLeads(`select=*&email_normalized=${eqFilter(normalized)}&limit=1`, options);
+  const client = options.clientId ? resolveClientId(options.clientId) : null;
+  if (client && !client.ok) return { ok: false, lead: null, reason: client.reason };
+  const scope = client ? `&client_id=${eqFilter(client.clientId)}` : '';
+  const result = await selectLeads(`select=*&email_normalized=${eqFilter(normalized)}${scope}&limit=2`, options);
+  if (result.ok && result.leads.length > 1) return { ...result, ok: false, lead: null, ambiguous: true, reason: 'address belongs to more than one client; pass clientId' };
   return { ...result, lead: result.ok ? (result.leads[0] || null) : null };
 }
 
@@ -481,6 +505,12 @@ async function countOutreachLeads({ env = process.env } = {}) {
   }
 }
 
+// Per-process count of whole-corpus reads. Each one is the single largest
+// Supabase egress unit this application spends, so it is metered by the
+// process that pays it rather than inferred from logs.
+const corpusReadStats = { reads: 0, failures: 0 };
+function outreachCorpusReadStats() { return { ...corpusReadStats }; }
+
 /**
  * The WHOLE operational corpus as complete ColdEmail rows, ordered by lead id.
  *
@@ -494,6 +524,13 @@ async function countOutreachLeads({ env = process.env } = {}) {
  * and findCERow() already do.
  */
 async function readOutreachCorpus({ env = process.env, pageSize = 1000 } = {}) {
+  corpusReadStats.reads += 1;
+  const result = await readOutreachCorpusPages({ env, pageSize });
+  if (!result.ok) corpusReadStats.failures += 1;
+  return result;
+}
+
+async function readOutreachCorpusPages({ env, pageSize }) {
   const leads = [];
   for (let offset = 0; ; offset += pageSize) {
     const page = await listOutreachLeads({ limit: pageSize, offset, env });
@@ -519,6 +556,15 @@ function compareOutreachLead(sheetLead = {}, mirroredLead = null) {
   const critical = [];
   const noncritical = [];
   for (const field of SHEET_FIELDS) {
+    if (field === 'clientId') {
+      // Ownership parity is on the EFFECTIVE owner: a Sheets cell not yet
+      // backfilled (blank, inferred scalelab) agrees with a stored 'scalelab';
+      // 'jole' in one store and 'scalelab' (or a conflict) in the other does not.
+      const a = resolveLeadClient(sheetLead);
+      const b = resolveLeadClient(mirroredLead);
+      if (!(a.ok && b.ok && a.clientId === b.clientId)) critical.push(field);
+      continue;
+    }
     if (text(sheetLead[field]) === text(mirroredLead[field])) continue;
     (NONCRITICAL_FIELDS.includes(field) ? noncritical : critical).push(field);
   }
@@ -677,8 +723,41 @@ function conflictRefusal(current, patch) {
 //
 // Only a hold is a pause a human chose. Resume removes it by passing
 // releaseMarkers: ['[MANUAL HOLD]']; opt-out and bounce cannot be released here.
-const SAFETY_NOTE_MARKERS = Object.freeze(['[REPLY: Unsubscribed]', '[REPLY: Not Interested]', '[BOUNCED', MANUAL_HOLD_MARKER]);
-const RELEASABLE_NOTE_MARKERS = Object.freeze([MANUAL_HOLD_MARKER]);
+// An archive ('[ARCHIVED: <reason>]', matched as a prefix) is released only by
+// the explicit restore, which passes releaseMarkers: ['[ARCHIVED'].
+const SAFETY_NOTE_MARKERS = Object.freeze(['[REPLY: Unsubscribed]', '[REPLY: Not Interested]', '[BOUNCED', ARCHIVE_MARKER_PREFIX, MANUAL_HOLD_MARKER]);
+const RELEASABLE_NOTE_MARKERS = Object.freeze([MANUAL_HOLD_MARKER, ARCHIVE_MARKER_PREFIX]);
+
+// ── the archived stage ──────────────────────────────────────────────────────
+//
+// While the canonical notes carry an archive marker, the lead's stage stays
+// what it is (normally 'Archived'). A bounce, an opt-out or an observer write
+// still lands — its notes tag, its emailStatus — but it cannot move an archived
+// lead back into a cold or pipeline stage. Kept rather than refused, for the
+// same reason safety markers are: refusing would drop protective evidence on
+// the floor. Only the restore, which releases the marker, may change the stage.
+function archivedStageKept(canonicalLead, patch, { releaseMarkers = [] } = {}) {
+  if (!Object.prototype.hasOwnProperty.call(patch || {}, 'stage')) return null;
+  if (releaseMarkers.includes(ARCHIVE_MARKER_PREFIX)) return null;
+  if (archiveReasonFromNotes(canonicalLead && canonicalLead.notes) === null) return null;
+  const current = String((canonicalLead && canonicalLead.stage) || '') || ARCHIVED_STAGE;
+  return String(patch.stage ?? '') === current ? null : current;
+}
+
+// The one exception to "opt-out is permanent": an opt-out our own classifier
+// invented (our quoted footer read as the prospect's words) may be released by
+// the audited false-opt-out correction, and by nothing else. It is not a
+// releaseMarkers entry — no ordinary writer can ask for it — but a separate,
+// fully-specified authorization naming the lead, the inbound message, the human
+// override that disproved the opt-out, and the correction's audit event. A
+// genuine opt-out has no such override, and the correction refuses to build one.
+const CORRECTABLE_OPT_OUT_MARKER = '[REPLY: Unsubscribed]';
+const OPT_OUT_CORRECTION_FIELDS = Object.freeze(['leadId', 'providerMessageId', 'overrideId', 'correctionEventId']);
+
+function isOptOutCorrection(correction) {
+  return Boolean(correction) && typeof correction === 'object'
+    && OPT_OUT_CORRECTION_FIELDS.every(field => typeof correction[field] === 'string' && correction[field].trim());
+}
 
 /** The marker exactly as it appears in `notes`, or null. Detection ignores case. */
 function markerIn(notes, marker) {
@@ -698,13 +777,15 @@ function markerIn(notes, marker) {
  * exact form the send-time check looks for — never a case variant that check
  * would not recognise.
  */
-function preserveSafetyMarkers(canonicalNotes, nextNotes, { releaseMarkers = [] } = {}) {
+function preserveSafetyMarkers(canonicalNotes, nextNotes, { releaseMarkers = [], optOutCorrection = null } = {}) {
   const next = nextNotes === null || nextNotes === undefined ? '' : String(nextNotes);
   const kept = [];
   for (const marker of SAFETY_NOTE_MARKERS) {
     const present = markerIn(canonicalNotes, marker);
     if (!present || next.includes(marker) || next.includes(present)) continue;
     if (RELEASABLE_NOTE_MARKERS.includes(marker) && releaseMarkers.includes(marker)) continue;
+    // Exact form only: a case variant is not the marker the classifier wrote.
+    if (marker === CORRECTABLE_OPT_OUT_MARKER && present === marker && isOptOutCorrection(optOutCorrection)) continue;
     kept.push(present);
   }
   return { notes: kept.length ? [...kept, next].filter(Boolean).join(' ') : next, kept };
@@ -737,11 +818,11 @@ function preserveResumeTag(canonicalNotes, nextNotes) {
  * Sheets-canonical notes merge. Same order as applyCanonicalChange: resume tag
  * first (unless resumeIntent), then send-safety markers. PURE.
  */
-function mergeNotesPatch(canonicalNotes, patchNotes, { releaseMarkers = [], resumeIntent = false } = {}) {
+function mergeNotesPatch(canonicalNotes, patchNotes, { releaseMarkers = [], resumeIntent = false, optOutCorrection = null } = {}) {
   const resume = !resumeIntent
     ? preserveResumeTag(canonicalNotes, patchNotes)
     : { notes: patchNotes === null || patchNotes === undefined ? '' : String(patchNotes), changed: false };
-  const safe = preserveSafetyMarkers(canonicalNotes, resume.notes, { releaseMarkers });
+  const safe = preserveSafetyMarkers(canonicalNotes, resume.notes, { releaseMarkers, optOutCorrection });
   return { notes: safe.notes, kept: safe.kept, resumeTagKept: resume.changed };
 }
 
@@ -838,8 +919,11 @@ async function casAttempt(id, patch, revision, { env = process.env }) {
  */
 async function applyCanonicalChange(id, patch, {
   env = process.env, logger = console, expectedState = null,
-  releaseMarkers = [], resumeIntent = false, skipIfUnchanged = false,
+  releaseMarkers = [], resumeIntent = false, skipIfUnchanged = false, optOutCorrection = null,
 } = {}) {
+  if (optOutCorrection && (!isOptOutCorrection(optOutCorrection) || optOutCorrection.leadId !== id)) {
+    return { ok: false, refused: true, conflicts: 0, reason: 'opt-out correction authorization is incomplete or names a different lead' };
+  }
   const column = {};
   for (const [field, value] of Object.entries(patch)) {
     column[FIELD_MAP[field]] = value === null || value === undefined ? '' : String(value);
@@ -860,13 +944,18 @@ async function applyCanonicalChange(id, patch, {
       ? preserveResumeTag(current.lead.notes, patch.notes)
       : { notes: writesNotes ? patch.notes : null, changed: false };
     const safe = writesNotes
-      ? preserveSafetyMarkers(current.lead.notes, resume.notes, { releaseMarkers })
+      ? preserveSafetyMarkers(current.lead.notes, resume.notes, { releaseMarkers, optOutCorrection })
       : { notes: null, kept: [] };
     const notesAdjusted = writesNotes && (resume.changed || safe.kept.length > 0);
-    const attemptColumns = notesAdjusted ? { ...column, notes: safe.notes } : column;
+    const keptStage = archivedStageKept(current.lead, patch, { releaseMarkers });
+    const attemptColumns = {
+      ...column,
+      ...(notesAdjusted ? { notes: safe.notes } : {}),
+      ...(keptStage !== null ? { stage: keptStage } : {}),
+    };
 
     if (skipIfUnchanged && Object.keys(patch).every(field => String(current.lead[field] ?? '')
-      === (field === 'notes' ? String(safe.notes ?? '') : column[FIELD_MAP[field]]))) {
+      === (field === 'notes' ? String(safe.notes ?? '') : attemptColumns[FIELD_MAP[field]]))) {
       return { ok: true, unchanged: true, conflicts, revision: current.revision, keptMarkers: [], resumeTagKept: false };
     }
 
@@ -902,8 +991,14 @@ async function applyCanonicalChange(id, patch, {
         logger.warn(`[outreach-state] lead ${id}: a notes write without resume intent would have changed the `
           + 'scheduled-resume tag; kept the canonical one. Only reactivation and Resume set or clear it.');
       }
+      if (keptStage !== null) {
+        writeDiagnostics.archivedStagesKept = (writeDiagnostics.archivedStagesKept || 0) + 1;
+        logger.warn(`[outreach-state] lead ${id}: lead is archived; a write asked for stage "${patch.stage}" `
+          + `and the stage was kept "${keptStage}". Only a restore may move an archived lead.`);
+      }
       return { ok: true, conflicts, revision: current.revision + 1,
-        keptMarkers: safe.kept, resumeTagKept: resume.changed, notes: notesAdjusted ? safe.notes : undefined };
+        keptMarkers: safe.kept, resumeTagKept: resume.changed, notes: notesAdjusted ? safe.notes : undefined,
+        stage: keptStage !== null ? keptStage : undefined };
     }
     if (result.reason) return { ok: false, conflicts, reason: result.reason };
     conflicts++;
@@ -937,9 +1032,13 @@ async function applyLeadChange(leadId, patch, {
   expectedState = null,
   releaseMarkers = [],
   resumeIntent = false,
+  optOutCorrection = null,
 } = {}) {
   const id = String(leadId || '').trim();
   if (!id) throw new Error('applyLeadChange requires a lead id');
+  if (optOutCorrection && (!isOptOutCorrection(optOutCorrection) || optOutCorrection.leadId !== id)) {
+    throw new Error(`opt-out correction authorization is incomplete or names a different lead than ${id}`);
+  }
   if (!sheetsClient || !spreadsheetId) throw new Error('applyLeadChange requires a Sheets client and spreadsheetId');
   const fields = Object.keys(patch || {});
   if (!fields.length && !extraData.length) throw new Error('applyLeadChange requires at least one field');
@@ -964,7 +1063,7 @@ async function applyLeadChange(leadId, patch, {
   if (writesNotes && outreachWriteAuthority(env) === 'sheets') {
     const canonicalNotes = await readCanonicalSheetNotes(
       sheetsClient, spreadsheetId, notesCellRange(sheetName, parsedRow), id);
-    const merged = mergeNotesPatch(canonicalNotes, patch.notes, { releaseMarkers, resumeIntent });
+    const merged = mergeNotesPatch(canonicalNotes, patch.notes, { releaseMarkers, resumeIntent, optOutCorrection });
     keptMarkers = merged.kept;
     resumeTagKept = merged.resumeTagKept;
     notesPatch = { ...patch, notes: merged.notes };
@@ -982,7 +1081,7 @@ async function applyLeadChange(leadId, patch, {
   // ── Stage 3F: Supabase canonical ──────────────────────────────────────────
   // The authority flip lives here and nowhere else. No call site changes.
   if (outreachWriteAuthority(env) === 'supabase') {
-    const canonical = await applyCanonicalChange(id, patch, { env, logger, expectedState, releaseMarkers, resumeIntent });
+    const canonical = await applyCanonicalChange(id, patch, { env, logger, expectedState, releaseMarkers, resumeIntent, optOutCorrection });
     if (!canonical.ok) {
       // A refusal is a CORRECT outcome, not a transport failure: the lead moved
       // to state that outranks this mutation. Either way the caller asked for a
@@ -1005,9 +1104,12 @@ async function applyLeadChange(leadId, patch, {
     // or the canonical resume tag — must reach the secondary copy too, or Sheets
     // would show a held lead as unheld.
     const notesRange = `${sheetName}!${columnLetterFor('notes')}${parsedRow}`;
-    const mirrorData = canonical.notes !== undefined
-      ? data.map(entry => (entry.range === notesRange ? { ...entry, values: [[canonical.notes]] } : entry))
-      : data;
+    const stageRange = `${sheetName}!${columnLetterFor('stage')}${parsedRow}`;
+    const mirrorData = data.map(entry => {
+      if (canonical.notes !== undefined && entry.range === notesRange) return { ...entry, values: [[canonical.notes]] };
+      if (canonical.stage !== undefined && entry.range === stageRange) return { ...entry, values: [[canonical.stage]] };
+      return entry;
+    });
     let sheetsMirrored = false;
     let sheetsReason = 'ok';
     try {
@@ -1155,7 +1257,8 @@ async function applyLeadChanges(changes, {
         keptMarkers: canonical.keptMarkers || [], resumeTagKept: Boolean(canonical.resumeTagKept),
         mirrored: false, row: change.row,
         committed: status === 'succeeded'
-          ? { ...change.patch, ...(canonical.notes !== undefined ? { notes: canonical.notes } : {}) } : null,
+          ? { ...change.patch, ...(canonical.notes !== undefined ? { notes: canonical.notes } : {}),
+            ...(canonical.stage !== undefined ? { stage: canonical.stage } : {}) } : null,
       });
     }
     const committed = outcomes.filter(outcome => outcome.status === 'succeeded');
@@ -1277,7 +1380,7 @@ async function applyLeadChanges(changes, {
 module.exports = {
   TABLE, FIELD_MAP, SHEET_FIELDS, CRITICAL_FIELDS, NONCRITICAL_FIELDS,
   outreachStateMode, outreachWriteAuthority, sheetsFallbackAllowed,
-  readOutreachCorpus, isCompleteLead, missingFields, describeUnmirrorable,
+  readOutreachCorpus, outreachCorpusReadStats, isCompleteLead, missingFields, describeUnmirrorable,
   toOutreachLeadRow, toOutreachLeadPatch, fromOutreachLeadRow,
   mirrorOutreachLeads, mirrorOutreachLeadFields,
   mirrorOutreachLeadsInBackground, mirrorOutreachLeadFieldsInBackground,
@@ -1286,6 +1389,8 @@ module.exports = {
   listOutreachLeads, countOutreachLeads, compareOutreachLead,
   applyLeadChange, applyLeadChanges, columnLetterFor,
   applyCanonicalChange, conflictRefusal, readCanonicalLead, MAX_CAS_ATTEMPTS,
-  preserveSafetyMarkers, SAFETY_NOTE_MARKERS, preserveResumeTag, mergeNotesPatch, BATCH_STATUSES,
+  preserveSafetyMarkers, SAFETY_NOTE_MARKERS, RELEASABLE_NOTE_MARKERS, archivedStageKept,
+  preserveResumeTag, mergeNotesPatch, BATCH_STATUSES,
+  CORRECTABLE_OPT_OUT_MARKER, isOptOutCorrection,
   outreachWriteDiagnostics, resetOutreachWriteDiagnostics,
 };

@@ -60,7 +60,10 @@ const CAMPAIGN_VERSIONS = Object.freeze({
     personalizationStrategy: 'dental_hyper_personalization_v1',
     offerVersion: 'pay_per_booked_appointment_v1',
     activatedAt: '2026-08-28T23:13:22.640Z',
-    status: 'active',
+    // The dental offer was retired on 2026-09-30 (lead-archive RETIRED_OFFERS).
+    // Its meaning is unchanged; it can no longer be selected for a send.
+    status: 'retired',
+    retiredAt: '2026-09-30',
     meaning: 'Dental V3 uses only verified service-curiosity subjects and charges only for appointments booked through the system, with no volume or timeframe promise.',
   }),
   roofing_survey_v1_measured: Object.freeze({
@@ -68,7 +71,7 @@ const CAMPAIGN_VERSIONS = Object.freeze({
     niche: 'roofing', emailTemplateId: 'roofing-survey-v1', family: 'roofing_survey',
     copyVersion: 'roofing_survey_reply_first_v1', subjectStrategy: 'roofing_question_v1',
     personalizationStrategy: 'locked_template_v1', offerVersion: 'none',
-    activatedAt: '2026-08-27T20:31:18.220Z', status: 'active',
+    activatedAt: '2026-08-27T20:31:18.220Z', status: 'retired', retiredAt: '2026-09-30',
     meaning: 'Existing locked roofing survey pilot copy; no sales offer.',
   }),
 });
@@ -143,7 +146,10 @@ function campaignVersion(id) {
   return version;
 }
 
-function activeVersionForLead(lead = {}) {
+// evidenceOnly: attribute a send that ALREADY happened (Gmail SENT evidence
+// being recorded or reconciled). A retired version still describes what it
+// sent; it just can never be chosen for a new send.
+function activeVersionForLead(lead = {}, { evidenceOnly = false } = {}) {
   const resolved = resolveLeadFamily(lead);
   const family = resolved.family;
   if (family === CAMPAIGN_FAMILY.UNROUTED) {
@@ -158,7 +164,9 @@ function activeVersionForLead(lead = {}) {
   const id = String(lead.intendedCampaignVersion || '').trim() || ACTIVE_CAMPAIGN_VERSION[family];
   if (!id) throw new Error(`No active campaign version for ${family}`);
   const version = campaignVersion(id);
-  if (version.status !== 'active') throw new Error(`Campaign version ${id} is not active`);
+  if (version.status !== 'active' && !(evidenceOnly && version.status === 'retired')) {
+    throw new Error(`Campaign version ${id} is not active`);
+  }
   if (version.family !== family) throw new Error(`Campaign version ${id} is incompatible with ${family}`);
   if (version.emailTemplateId && lead.emailTemplateId && version.emailTemplateId !== lead.emailTemplateId) {
     throw new Error(`Campaign version ${id} is incompatible with template ${lead.emailTemplateId}`);
@@ -166,8 +174,8 @@ function activeVersionForLead(lead = {}) {
   return version;
 }
 
-function coldSendAttribution(lead = {}, step = 1, sendMeta = {}) {
-  const version = activeVersionForLead(lead);
+function coldSendAttribution(lead = {}, step = 1, sendMeta = {}, { evidenceOnly = false } = {}) {
+  const version = activeVersionForLead(lead, { evidenceOnly });
   const personalization = sendMeta.personalizationMetadata || {};
   const initial = Number(step) === 1;
   return {

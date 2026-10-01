@@ -175,8 +175,8 @@ test('M/N. staffing reuses the shared sender, thread and follow-up machinery', (
   assert.ok(!/staffingSendEmail|sendStaffingEmail|staffingQuota|staffingReservation/.test(agent),
     'staffing must not fork the sending infrastructure');
   // Follow-up bodies branch on the template; sender/thread selection does not.
-  assert.match(agent, /if \(lead\.emailTemplateId === STAFFING_TEMPLATE\) \{\n\s*try \{ body = staffingFollowUpBody\(lead, nextStepNum\); \}/);
-  assert.equal(agent.split('staffingFollowUpBody(lead, nextStepNum)').length - 1, 2, 'both follow-up sites are covered');
+  assert.match(agent, /if \(lead\.emailTemplateId === STAFFING_TEMPLATE\) \{\n\s*try \{ body = staffingFollowUpBody\(lead, nextStepNum, ownershipActivities\); \}/);
+  assert.equal(agent.split('staffingFollowUpBody(lead, nextStepNum, ownershipActivities)').length - 1, 2, 'both follow-up sites are covered');
   // Dental and roofing keep the original unguarded call, so their behaviour is
   // provably unchanged by the staffing branch.
   assert.equal(agent.split('      body = template.body(lead);').length - 1, 2, 'both non-staffing paths are untouched');
@@ -189,7 +189,7 @@ test('M/N. staffing reuses the shared sender, thread and follow-up machinery', (
 test('N. an unrenderable staffing follow-up defers instead of using other copy', () => {
   assert.match(agent, /follow-up deferred[\s\S]{0,160}\$\{error\.message\}/);
   // Both staffing follow-up sites catch and bail; one returns, one continues.
-  const guarded = agent.split('try { body = staffingFollowUpBody(lead, nextStepNum); }');
+  const guarded = agent.split('try { body = staffingFollowUpBody(lead, nextStepNum, ownershipActivities); }');
   assert.equal(guarded.length - 1, 2);
   assert.ok(/catch \(error\)/.test(guarded[1]) && /catch \(error\)/.test(guarded[2]));
   assert.ok(/return false;/.test(guarded[1].slice(0, 300)));
@@ -260,7 +260,8 @@ test('U. staffing attribution is isolated from dental reporting', () => {
 });
 
 test('V. dental and roofing behaviour is unchanged by the staffing integration', () => {
-  assert.equal(templateById('dental-guarantee-v1').ready, true);
+  // Dental copy stays registered (history resolves it) but is retired with the offer.
+  assert.equal(templateById('dental-guarantee-v1').ready, false);
   assert.equal(templateById('roofing-survey-v1').niche, 'roofing');
   const dentalLead = { leadNiche: 'dental', emailTemplateId: 'dental-guarantee-v1' };
   assert.equal(offerForLead(dentalLead).id, 'dental_pay_per_booking_v1');
