@@ -40,12 +40,27 @@ additionally carries only documentation (`CURRENT_PRODUCTION_BASELINE.md`,
 Railway project / service: `modest-peace` / `SalesPipeline2`
 (https://receptionist.scalelabai.ca), region us-west2.
 
-**Production SHA:** `e9a7a01f8c4b7b7a5f14d869d1c7e004bb4e3ed8` (branch
+**Production SHA:** `4ca54466fd0853653c9bd7b0a73fffa3140eea87` (branch
 `cursor/staffing-agent-shadow-production-7402`; Railway deployment
-`cfab6c73`, SUCCESS). Deployed 2026-09-30 16:46 Pacific: `f70e24f` plus
+`29e46857`, SUCCESS). Deployed 2026-09-30 20:47 Pacific: `f70e24f` plus
 `c0863ee` (modern email TLDs), `3f3a110` (staffing role-to-market evidence),
 `2725508` (dental retired + soft Archive), `6065245` (roofing and med spa
-retired) and `e9a7a01` (Archive row record scope).
+retired), `e9a7a01` (Archive row record scope) and `4ca5446` (analytics scope).
+
+**Analytics scope (2026-09-30, `integrations/analytics-scope.js`).** Every
+analytics surface defaults to ACTIVE: leads that are not archived and whose
+offer is not retired (`isActiveOutreachLead` = `!outreachBlockForLead`, the
+same predicate as the send gates), with their own activity only. HISTORICAL
+(all time, archived and retired offers included) is opt-in
+(`/api/coldemail/funnel?scope=historical`, `historical` block on
+`/api/coldemail/stats`) and always labelled. "Current campaign" resolves to the
+live version (`industrial_staffing_employer_acquisition_v1`), never a retired
+one. Reply rates are lead grain: `delivered` = leads with a provider-confirmed
+send minus bounced leads; message counts are `deliveredMessages` /
+`confirmedSends`. Zero denominators give null ("—"). Sender performance
+(`senderAnalytics`) counts confirmed sends per inbox on the Vancouver day.
+Retiring another offer removes it from active analytics with no analytics
+change.
 
 **Roofing and med spa RETIRED (2026-09-30) and archived** with the dental
 machinery: 174 roofing leads + 1 card (`offer_retired_roofing`), 348 med spa
