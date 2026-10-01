@@ -1,5 +1,47 @@
 # Agent v2: structured shadow decisions
 
+## Live production shadow (2026-10-01)
+
+`AGENT_V2_SHADOW_ENABLED=true` now runs Agent v2 on real traffic with zero
+authority, independently of `AGENT_V2_EXECUTION_ENABLED` (which stays false).
+
+- **Hook.** `runReplyCheckPass` collects a candidate only after a message's
+  authoritative `reply_decision_recorded` and `gmail_reply_evaluated` writes,
+  then calls `observeAgentV2Shadows` once, after routing and after the v1
+  staffing shadow, outside `DRY_RUN` (CHECK_ONLY passes included). Routing never
+  reads the result. `integrations/agent-v2-shadow-hook.js` imports no send,
+  draft, CRM, stage, queue, Sheets or Gmail code; its only write is
+  `public.agent_v2_shadow_decisions`.
+- **Eligibility.** ScaleLab client (`clientId` resolves to `scalelab`),
+  Industrial Staffing Agency campaign, not archived, not a test/synthetic lead,
+  not from an internal sender domain, not automated/OOO; then, on the lead's
+  fresh Phase 1 state, the target must be a genuine human inbound.
+- **Exactly once.** `decisionId = agent-v2:sha256(lead, message)` + advisory
+  lock + durable claim. Duplicate observers, cron retries, restarts and history
+  replays reuse the completed row without a model call.
+- **Transient retry** (`integrations/agent-v2-retry.js`). A completed row whose
+  record says `retryable: true` (credits, rate limit, overload, 5xx, timeout,
+  network, auth/missing key, or a crash mid-call) is claimable again after
+  30 min, 60 min, 120 min; at most 4 attempts. The failure record stays in the
+  row until the retry completes; `retryHistory` keeps each failed attempt. Each
+  pass retries at most 3 due rows. Valid decisions, deterministic guards,
+  invalid model output, model mismatch and provider 400s are final. A due retry
+  whose Phase 1 input can no longer be built is closed (`retryAbandoned`).
+- **Evidence per record.** Lead, message, thread, sender inbox, campaign,
+  client scope, production decision, model id, status, error category/code,
+  attempt, latency, tokens, cost estimate, risk flags, state and input digests,
+  the validated structured decision (action, confidence, slots, facts,
+  handoff), and what Phase 3 permission and Phase 4 wording WOULD have said.
+- **Client scope.** Phase 1 identity carries `clientId`/`clientSource`; the
+  Agent v2 input carries `client`. A missing, conflicting, inactive or other
+  client is guarded (`CLIENT_NOT_AUTHORIZED`, no model call) and denied by
+  Phase 3; Phase 6 additionally requires an explicit `client_id`.
+- **Observability.** Boot: `[agent-v2] init AGENT_V2_SHADOW_ENABLED=…
+  AGENT_V2_EXECUTION_ENABLED=… model=… effectiveSendAuthority=…`. Per message:
+  `[agent-v2-shadow] {"event":"agent_v2_shadow",…}` (no prospect text).
+  `GET /api/ops/agent-v2` (ops auth) returns flags, ledger counts, last shadow /
+  success / error timestamps and Phase 6 execution evidence.
+
 ## Production pilot preparation
 
 The production application is Railway `modest-peace / production / SalesPipeline2`.
@@ -194,7 +236,8 @@ lock and spends no model tokens. Completion updates that row only while the
 same session holds the lock. A crash releases the lock; the next worker can
 take over the incomplete claim. If the model-start marker exists, recovery
 saves a coded, empty `MODEL_ERROR` handoff without another API request. A
-completed record is immutable and returned on replay.
+completed record is returned on replay; only a record marked `retryable` (a
+transient provider failure) may be replaced, by a bounded, backed-off retry.
 The model request receives an abort signal if the database session fails.
 Model and validation errors produce a saved coded, empty `MODEL_ERROR` handoff.
 Database failures surface as errors and never count as completed decisions.
@@ -209,8 +252,8 @@ The estimate uses the published standard Haiku 4.5 API rates of $1 per million
 input tokens and $5 per million output tokens; actual billing may differ.
 
 This design gives one durable shadow record for each selected processable
-inbound while the worker is run. An unscheduled worker does not evaluate new
-messages automatically. It does not rewrite historical evidence. An incomplete
+inbound. Since 2026-10-01 the production reply pass runs the worker for every
+eligible inbound (see "Live production shadow"). It does not rewrite historical evidence. An incomplete
 claim may be evaluated after a crash only if no model attempt was marked. The
 marker can precede an API request that never actually reached the provider; in
 that case recovery deliberately records an unresolved model attempt rather

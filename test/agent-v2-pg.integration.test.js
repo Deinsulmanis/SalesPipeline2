@@ -22,7 +22,7 @@ async function workerDuplicate(connectionString, decisionId, leadId, messageId) 
 function state(leadId, messageId) {
   return {
     version: 'conversation_state_v1', asOf: '2026-09-23T18:00:00Z', evidenceDigest: 'test',
-    identity: { leadId, family: 'industrial_staffing' },
+    identity: { leadId, family: 'industrial_staffing', clientId: 'scalelab', clientSource: 'explicit' },
     turns: [{ turnId: `turn:${messageId}`, index: 0, direction: 'inbound', actor: 'prospect',
       messageId, threadId: 't1', content: 'Please send information.', contentAvailable: true,
       decision: { status: 'recorded', finalClassification: 'SEND_INFO', policyAction: 'HUMAN_REVIEW' } }],
@@ -226,5 +226,122 @@ test('Postgres shadow store: durable claim, concurrent exclusion, crash recovery
       assert.equal(racingCalls, 1);
       unblock();
       await running;
+
+      // ── transient failure → bounded, backed-off retry on the same row ──
+      const aged = async id => {
+        const ager = new Client({ connectionString: migrationUrl });
+        await ager.connect();
+        try {
+          await ager.query(`UPDATE public.agent_v2_shadow_decisions
+            SET completed_at = now() - interval '6 hours', model_started_at = LEAST(model_started_at, now() - interval '6 hours')
+            WHERE decision_id = $1`, [id]);
+        } finally { await ager.end(); }
+      };
+      const retryMessageId = `retry:${suffix}`;
+      const retryId = decisionIdFor(leadId, retryMessageId);
+      let retryCalls = 0;
+      const outage = async () => { retryCalls++; return { raw: null, status: 'model_error',
+        errorCategory: 'credits', errorCode: '400', usage: { inputTokens: 0, outputTokens: 0 } }; };
+      const failed = await evaluateAgentV2Shadow({ state: state(leadId, retryMessageId),
+        messageId: retryMessageId, store: a, model: outage });
+      assert.equal(failed.record.retryable, true);
+      assert.equal(failed.record.errorCategory, 'credits');
+      assert.equal(failed.record.attempt, 1);
+      // Within the backoff: reused, no model call, not listed.
+      const early = await evaluateAgentV2Shadow({ state: state(leadId, retryMessageId),
+        messageId: retryMessageId, store: b, model: outage });
+      assert.equal(early.reused, true);
+      assert.equal(early.retryPending, true);
+      assert.equal(retryCalls, 1);
+      assert.ok(!(await a.listRetryable({ limit: 50 })).some(row => row.decision_id === retryId));
+      await aged(retryId);
+      assert.ok((await a.listRetryable({ limit: 50 })).some(row => row.decision_id === retryId));
+      const recovered2 = await evaluateAgentV2Shadow({ state: state(leadId, retryMessageId),
+        messageId: retryMessageId, store: b, model: async actual => { retryCalls++; return {
+          status: 'ok', raw: { version: 'agent_v2_decision_v1', actionId: 'SUGGEST_INFO', handoffCode: 'NONE',
+            factIds: ['F_TARGET_AGENCIES'], slotIds: [], objectionType: 'NONE', evidenceRefs: [actual.targetRef],
+            templateId: 'INFO_OVERVIEW', reasonCode: 'INFO_REQUEST', confidence: 0.9 },
+          usage: { inputTokens: 10, outputTokens: 5 }, latencyMs: 7 }; } });
+      assert.equal(recovered2.calledModel, true);
+      assert.equal(recovered2.record.modelStatus, 'ok');
+      assert.equal(recovered2.record.decision.status, 'valid');
+      assert.equal(recovered2.record.retryable, false);
+      assert.equal(recovered2.record.attempt, 2);
+      assert.deepEqual(recovered2.record.retryHistory.map(item => item.errorCategory), ['credits']);
+      assert.equal(retryCalls, 2);
+      // A success is final even long after.
+      await aged(retryId);
+      const final = await evaluateAgentV2Shadow({ state: state(leadId, retryMessageId),
+        messageId: retryMessageId, store: a, model: outage });
+      assert.equal(final.reused, true);
+      assert.equal(retryCalls, 2);
+      const row = await a.getDecisionRow(retryId);
+      assert.ok(row.model_started_at <= row.completed_at);
+      assert.equal(row.claim_attempts, 2);
+
+      // A crash during a retry is recorded (no second call in that claim) and
+      // the row stays within the same bounded budget.
+      const crashMessageId = `retry-crash:${suffix}`;
+      const crashId = decisionIdFor(leadId, crashMessageId);
+      await evaluateAgentV2Shadow({ state: state(leadId, crashMessageId), messageId: crashMessageId, store: a, model: outage });
+      await aged(crashId);
+      const midRetry = await a.claim({ decisionId: crashId, leadId, messageId: crashMessageId });
+      assert.equal(midRetry.status, 'claimed');
+      assert.equal(midRetry.attempt, 2);
+      assert.equal(midRetry.priorModelAttempt, false);
+      await midRetry.markModelStarted();
+      await midRetry.release();
+      const callsBefore = retryCalls;
+      // The interrupted call is recorded on the next claim, without calling
+      // the model again in that claim; it spends one attempt of the budget.
+      const afterRetryCrash = await evaluateAgentV2Shadow({ state: state(leadId, crashMessageId),
+        messageId: crashMessageId, store: b, model: outage });
+      assert.equal(afterRetryCrash.calledModel, false);
+      assert.equal(afterRetryCrash.record.modelStatus, 'previous_model_attempt_unresolved');
+      assert.equal(afterRetryCrash.record.retryable, true);
+      assert.equal(afterRetryCrash.record.attempt, 3);
+      assert.equal(retryCalls, callsBefore);
+
+      // The budget is finite: after MAX attempts the failure is final.
+      const exhaustMessageId = `retry-exhaust:${suffix}`;
+      const exhaustId = decisionIdFor(leadId, exhaustMessageId);
+      let exhaustCalls = 0;
+      const down = async () => { exhaustCalls++; return { raw: null, status: 'model_error',
+        errorCategory: 'server_error', usage: { inputTokens: 0, outputTokens: 0 } }; };
+      for (let i = 0; i < 6; i++) {
+        await evaluateAgentV2Shadow({ state: state(leadId, exhaustMessageId), messageId: exhaustMessageId, store: a, model: down });
+        await aged(exhaustId);
+      }
+      assert.equal(exhaustCalls, 4);
+      assert.ok(!(await a.listRetryable({ limit: 50 })).some(item => item.decision_id === exhaustId));
+
+      // A deterministic failure is never retried.
+      const invalidMessageId = `retry-invalid:${suffix}`;
+      const invalidId = decisionIdFor(leadId, invalidMessageId);
+      const invalidRun = await evaluateAgentV2Shadow({ state: state(leadId, invalidMessageId),
+        messageId: invalidMessageId, store: a, model });
+      assert.equal(invalidRun.record.retryable, false);
+      await aged(invalidId);
+      assert.ok(!(await a.listRetryable({ limit: 50 })).some(item => item.decision_id === invalidId));
+
+      // A retry whose input can no longer be built is closed, keeping its record.
+      const abandonMessageId = `retry-abandon:${suffix}`;
+      const abandonId = decisionIdFor(leadId, abandonMessageId);
+      await evaluateAgentV2Shadow({ state: state(leadId, abandonMessageId), messageId: abandonMessageId, store: a, model: outage });
+      assert.equal(await b.abandonRetry(abandonId, 'input_unbuildable'), true);
+      assert.equal(await b.abandonRetry(abandonId, 'input_unbuildable'), false);
+      const abandonedRecord = await a.get(abandonId);
+      assert.equal(abandonedRecord.retryable, false);
+      assert.equal(abandonedRecord.retryAbandoned, 'input_unbuildable');
+      assert.equal(abandonedRecord.errorCategory, 'credits');
+
+      const totals = await b.summary();
+      assert.equal(typeof totals.total, 'number');
+      assert.ok(totals.successful >= 1);
+      assert.ok(totals.failed >= 1);
+      assert.ok(totals.retry_exhausted >= 1);
+      assert.ok(totals.retryable >= 1);
+      assert.equal(typeof totals.actions, 'object');
+      assert.ok(totals.last_success_at);
     } finally { await Promise.all([aPool.end(), bPool.end(), migratorPool.end()]); }
   });

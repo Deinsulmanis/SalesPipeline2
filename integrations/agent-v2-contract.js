@@ -21,7 +21,7 @@ const HANDOFF_CODES = Object.freeze([
   'PRICING_UNSUPPORTED', 'PROOF_UNSUPPORTED', 'RESULTS_UNSUPPORTED',
   'COMMERCIAL_UNSUPPORTED', 'COMPLAINT', 'CONFLICTING_EVIDENCE',
   'MULTIPLE_THREADS', 'UNCLEAR_INTENT', 'MODEL_ERROR',
-  'STATE_UNAVAILABLE', 'PRODUCTION_DECISION_MISSING',
+  'STATE_UNAVAILABLE', 'PRODUCTION_DECISION_MISSING', 'CLIENT_NOT_AUTHORIZED',
 ]);
 const SLOT_IDS = Object.freeze(['roles', 'industries', 'employerTypes', 'geography', 'employerAcquisitionPriority']);
 const OBJECTION_TYPES = Object.freeze(['NONE', 'EXISTING_PROVIDER', 'TIMING', 'CANDIDATE_SIDE_CONFUSION', 'OTHER']);
@@ -62,8 +62,8 @@ const TOOL_SCHEMA = Object.freeze({
     actionId: { type: 'string', enum: ACTION_IDS },
     handoffCode: { type: 'string', enum: HANDOFF_CODES },
     factIds: { type: 'array', items: { type: 'string', enum: FACT_IDS }, maxItems: FACT_IDS.length, uniqueItems: true },
-    slotIds: { type: 'array', items: { type: 'string', enum: SLOT_IDS }, maxItems: SLOT_IDS.length,
-      uniqueItems: true, description: 'Nonempty only for SUGGEST_QUALIFICATION, using currently unfilled slots. For every other action use [].' },
+    slotIds: { type: 'array', items: { type: 'string', enum: SLOT_IDS }, maxItems: 2,
+      uniqueItems: true, description: 'Nonempty only for SUGGEST_QUALIFICATION: one or two currently unfilled slots, the most useful first. For every other action use [].' },
     objectionType: { type: 'string', enum: OBJECTION_TYPES },
     evidenceRefs: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 12, uniqueItems: true },
     templateId: { type: 'string', enum: TEMPLATE_IDS },

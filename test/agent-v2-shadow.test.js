@@ -24,7 +24,7 @@ function stateFor(text, overrides = {}) {
       policyAction: 'HUMAN_REVIEW', executionStatus: 'recorded' } };
   const base = {
     version: 'conversation_state_v1', asOf: NOW, evidenceDigest: 'phase1-evidence-digest',
-    identity: { leadId: 'S1', family: 'industrial_staffing' },
+    identity: { leadId: 'S1', family: 'industrial_staffing', clientId: 'scalelab', clientSource: 'explicit' },
     turns: [turn], thread: { threadIds: ['t1'] },
     terminalState: { blockedBy: null },
     ownership: { owner: 'human_review', humanTakeover: { value: false },
@@ -379,7 +379,7 @@ test('configured SDK path pins model version and passes claim abort signal', asy
   assert.equal(mismatched.raw, null);
 });
 
-test('real Phase 1 builder feeds the replay harness; no production module imports Agent v2', async () => {
+test('real Phase 1 builder feeds the replay harness; production reaches Agent v2 only through the shadow hook', async () => {
   const lead = { id: 'S1', email: 'owner@example.test', company: 'Test Staffing',
     campaign: 'Industrial Staffing', leadNiche: 'industrial_staffing', stage: 'Replied',
     emailStatus: 'replied', emailStep: '1', notes: '', senderInboxId: 'primary' };
@@ -432,9 +432,14 @@ test('real Phase 1 builder feeds the replay harness; no production module import
   await assert.rejects(replay({ snapshot, now: new Date(NOW), leadId: 'S1', messageId: 'unknown',
     persist: true, store, callModel }), /latest inbound/);
   assert.throws(() => optionsFrom(['--live', '--persist']), /requires --live or --synthetic-pilot, --model/);
-  for (const file of ['outreach-agent.js', 'server.js', 'integrations/reply-response-policy.js']) {
-    assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), /agent-v2-(?:shadow|model|validation)/);
+  // The production shadow enters only through the zero-authority hook; the
+  // worker, model and validator are never imported by production directly, and
+  // the authoritative reply policy knows nothing of Agent v2.
+  for (const file of ['outreach-agent.js', 'server.js']) {
+    assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'),
+      /require\(['"][^'"]*agent-v2-(?:shadow|model|validation)['"]\)/);
   }
+  assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '..', 'integrations/reply-response-policy.js'), 'utf8'), /agent-v2/);
 });
 
 test('fixed synthetic pilot fixture builds one eligible Phase 1 staffing inbound', () => {

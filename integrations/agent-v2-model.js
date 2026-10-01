@@ -27,6 +27,26 @@ function usage(message) {
   };
 }
 
+// Coarse, non-secret category of a provider failure. The shadow ledger stores
+// only this and the status code, never the provider's message text.
+function providerErrorCategory(error) {
+  const status = Number(error?.status || error?.statusCode || 0) || 0;
+  const code = String(error?.code || '').toUpperCase();
+  const message = String(error?.message || '').toLowerCase();
+  const name = String(error?.name || '');
+  if (/credit balance|insufficient (?:credit|fund|balance)|billing/.test(message)) return 'credits';
+  if (name === 'AbortError' || code === 'ABORT_ERR') return 'aborted';
+  if (/timeout/i.test(name) || /timed? ?out|timeout/.test(message) || code === 'ETIMEDOUT') return 'timeout';
+  if (status === 429 || /rate.?limit/.test(message)) return 'rate_limited';
+  if (status === 529 || /overloaded/.test(message)) return 'overloaded';
+  if (status >= 500) return 'server_error';
+  if (status === 401 || status === 403) return 'auth';
+  if (status >= 400) return 'bad_request';
+  if (/ECONN|ENOTFOUND|EAI_AGAIN|EPIPE|ENETUNREACH|socket hang up/i.test(code || message)
+    || /connection/i.test(name) || /network|fetch failed|socket/.test(message)) return 'network';
+  return 'unknown';
+}
+
 // First-party standard API price for pinned Haiku 4.5, USD per million tokens.
 // This is an estimate; the API response does not normally include a charge.
 function estimatedCostUsd(tokens) {
@@ -68,10 +88,11 @@ async function runAgentV2Model(input, { createMessage, apiKey = '', AnthropicImp
     return { raw: calls[0].input, providerMessageId: message?.id || null, status: 'ok', ...metrics };
   } catch (error) {
     return { raw: null, status: 'model_error', errorCode: String(error?.code || error?.status || 'unknown').slice(0, 60),
+      errorCategory: providerErrorCategory(error),
       model: MODEL, usage: { inputTokens: 0, outputTokens: 0 },
       latencyMs: Number(process.hrtime.bigint() - started) / 1e6,
       estimatedCostUsd: null, apiCostUsd: null };
   }
 }
 
-module.exports = { SYSTEM_PROMPT, runAgentV2Model, estimatedCostUsd };
+module.exports = { SYSTEM_PROMPT, runAgentV2Model, estimatedCostUsd, providerErrorCategory };

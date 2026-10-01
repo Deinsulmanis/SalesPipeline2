@@ -66,7 +66,7 @@ test('qualification copy asks only the permitted unknown slot', () => {
     slotIds: ['roles'], templateId: 'QUALIFY', reasonCode: 'QUALIFICATION_GAP' });
   assert.equal(context.permission.verdict, 'ALLOW');
   const rendered = renderAgentV2Wording(context);
-  assert.equal(rendered.wording, 'Which roles are you focused on filling?');
+  assert.equal(rendered.wording, "Got it. To make sure we'd target the right employer accounts for you, what roles or trades do you place most often?");
   assert.equal(renderAgentV2Wording({ ...context,
     candidate: { wording: 'Which roles and salaries are you focused on?' } }).status, 'HANDOFF');
 });

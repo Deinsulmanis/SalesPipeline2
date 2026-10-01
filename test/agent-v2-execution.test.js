@@ -91,7 +91,7 @@ function scenario(proposal = 'SUGGEST_QUALIFICATION') {
     reservationLookup: async id => { calls.reservations++; assert.equal(id, SEND_ID); return reservation; },
     deliver: async inputDelivery => { calls.deliver++;
       assert.equal(inputDelivery.actionId, SEND_ID);
-      assert.equal(inputDelivery.body, 'Which roles are you focused on filling?');
+      assert.equal(inputDelivery.body, "Got it. To make sure we'd target the right employer accounts for you, what roles or trades do you place most often?");
       reservation = { ...RESERVATION, status: STATUS.CONFIRMED,
         providerMessageId: 'synthetic-provider-message' };
       return { delivered: true, actionId: SEND_ID, result: { data: { id: 'synthetic-provider-message' } } }; },

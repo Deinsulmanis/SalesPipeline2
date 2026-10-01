@@ -5,6 +5,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const tls = require('node:tls');
 
+const { MAX_SHADOW_ATTEMPTS, RETRY_BASE_SECONDS } = require('./agent-v2-retry');
+
 const PROJECT_REF = 'lasyefxhuwysjebasdbf';
 
 const MIGRATION = path.join(__dirname, '..', 'supabase', 'migrations',
@@ -272,6 +274,10 @@ function createPgAgentV2Store({ connectionString, expectedSupabaseUrl, caCert, p
       backendPid = lock.rows[0].pid;
       await assertClaimSession();
       const token = crypto.randomUUID();
+      // A row is claimable while it has no record, or while its record is a
+      // transient failure whose retry budget and backoff allow another try
+      // (agent-v2-retry.js). A completed success or final failure never is.
+      // The failure record stays in place until the retry completes.
       const result = await client.query(`INSERT INTO public.agent_v2_shadow_decisions
         (decision_id, lead_id, message_id, claimed_at, claim_token, claim_attempts)
         VALUES ($1, $2, $3, now(), $4, 1)
@@ -280,8 +286,12 @@ function createPgAgentV2Store({ connectionString, expectedSupabaseUrl, caCert, p
           claim_token = excluded.claim_token,
           claim_attempts = agent_v2_shadow_decisions.claim_attempts + 1
         WHERE agent_v2_shadow_decisions.record IS NULL
-        RETURNING decision_id, lead_id, message_id, model_started_at, record`,
-      [decisionId, leadId, messageId, token]);
+          OR (agent_v2_shadow_decisions.record->>'retryable' = 'true'
+            AND agent_v2_shadow_decisions.claim_attempts < $5
+            AND agent_v2_shadow_decisions.completed_at <= now() - make_interval(
+              secs => $6::double precision * power(2, agent_v2_shadow_decisions.claim_attempts - 1)))
+        RETURNING decision_id, lead_id, message_id, model_started_at, completed_at, claim_attempts, record`,
+      [decisionId, leadId, messageId, token, MAX_SHADOW_ATTEMPTS, RETRY_BASE_SECONDS]);
       if (!result.rows.length) {
         const prior = await client.query(`SELECT decision_id, lead_id, message_id, record
           FROM public.agent_v2_shadow_decisions WHERE decision_id = $1`, [decisionId]);
@@ -289,21 +299,29 @@ function createPgAgentV2Store({ connectionString, expectedSupabaseUrl, caCert, p
         if (!row || row.lead_id !== leadId || row.message_id !== messageId || !row.record)
           throw new Error('shadow decision identity conflict');
         await release();
-        return { status: 'complete', record: row.record };
+        return { status: 'complete', record: row.record, retryPending: row.record.retryable === true };
       }
       const row = result.rows[0];
       if (row.lead_id !== leadId || row.message_id !== messageId)
         throw new Error('shadow decision identity conflict');
+      const startedAt = row.model_started_at ? new Date(row.model_started_at).getTime() : null;
+      const completedAt = row.completed_at ? new Date(row.completed_at).getTime() : null;
       return {
         status: 'claimed', backendPid, signal: controller.signal, release,
-        priorModelAttempt: Boolean(row.model_started_at),
+        attempt: Number(row.claim_attempts) || 1,
+        priorRecord: row.record || null,
+        // A model call started after the last completion never finished: the
+        // process died mid-call. It is recorded, never silently re-run.
+        priorModelAttempt: startedAt !== null && (completedAt === null || startedAt > completedAt),
         async markModelStarted() {
           if (released || controller.signal.aborted) throw new Error('shadow claim lost');
           await assertClaimSession();
           const marked = await client.query(`UPDATE public.agent_v2_shadow_decisions
             SET model_started_at = now()
             WHERE decision_id = $1 AND claim_token = $2
-              AND record IS NULL AND model_started_at IS NULL
+              AND (record IS NULL OR record->>'retryable' = 'true')
+              AND (model_started_at IS NULL
+                OR (completed_at IS NOT NULL AND model_started_at <= completed_at))
             RETURNING model_started_at`, [decisionId, token]);
           if (marked.rows.length !== 1) throw new Error('shadow model attempt not confirmed');
         },
@@ -313,7 +331,8 @@ function createPgAgentV2Store({ connectionString, expectedSupabaseUrl, caCert, p
           const saved = await client.query(`UPDATE public.agent_v2_shadow_decisions
             SET record = $3::jsonb, action_id = $4, created_at = $5,
                 completed_at = now()
-            WHERE decision_id = $1 AND claim_token = $2 AND record IS NULL
+            WHERE decision_id = $1 AND claim_token = $2
+              AND (record IS NULL OR record->>'retryable' = 'true')
             RETURNING record`,
           [decisionId, token, JSON.stringify(record), record.decision.actionId, record.createdAt]);
           if (saved.rows.length !== 1) throw new Error('shadow claim completion not confirmed');
@@ -325,8 +344,60 @@ function createPgAgentV2Store({ connectionString, expectedSupabaseUrl, caCert, p
       throw error;
     }
   }
+  // Transient failures whose backoff has elapsed, oldest first. Read-only.
+  async function listRetryable({ limit = 5 } = {}) {
+    await ensureSchema();
+    const rows = await pool.query(`SELECT decision_id, lead_id, message_id, claim_attempts, completed_at
+      FROM public.agent_v2_shadow_decisions
+      WHERE record->>'retryable' = 'true' AND claim_attempts < $1
+        AND completed_at <= now() - make_interval(
+          secs => $2::double precision * power(2, claim_attempts - 1))
+      ORDER BY completed_at ASC LIMIT $3`,
+    [MAX_SHADOW_ATTEMPTS, RETRY_BASE_SECONDS, Math.max(1, Math.min(50, Number(limit) || 5))]);
+    return rows.rows;
+  }
+  // A retryable failure whose message can no longer be evaluated at all (its
+  // Phase 1 input cannot be built) is closed so it stops being listed. The
+  // failure record is kept; only `retryable` flips. A claim in progress keeps
+  // its advisory lock and is unaffected unless it later tries to complete.
+  async function abandonRetry(decisionId, reason) {
+    await ensureSchema();
+    const rows = await pool.query(`UPDATE public.agent_v2_shadow_decisions
+      SET record = jsonb_set(jsonb_set(record, '{retryable}', 'false'::jsonb),
+        '{retryAbandoned}', to_jsonb($2::text))
+      WHERE decision_id = $1 AND record->>'retryable' = 'true'
+      RETURNING decision_id`, [decisionId, String(reason || 'abandoned').slice(0, 80)]);
+    return rows.rows.length === 1;
+  }
+  // Aggregate counts for the ops endpoint. No prospect text leaves the table.
+  async function summary() {
+    await ensureSchema();
+    const totals = await pool.query(`SELECT count(*)::int AS total,
+        count(*) FILTER (WHERE record IS NULL)::int AS in_flight,
+        count(*) FILTER (WHERE record->>'modelStatus' = 'ok'
+          AND record->'decision'->>'status' = 'valid')::int AS successful,
+        count(*) FILTER (WHERE record->>'modelStatus' = 'ok'
+          AND record->'decision'->>'status' <> 'valid')::int AS invalid_output,
+        count(*) FILTER (WHERE record->>'modelStatus' = 'guarded')::int AS guarded,
+        count(*) FILTER (WHERE record IS NOT NULL
+          AND record->>'modelStatus' NOT IN ('ok', 'guarded'))::int AS failed,
+        count(*) FILTER (WHERE record->>'retryable' = 'true' AND claim_attempts < $1)::int AS retryable,
+        count(*) FILTER (WHERE record->>'retryable' = 'true' AND claim_attempts >= $1)::int AS retry_exhausted,
+        max(completed_at) AS last_completed_at,
+        max(completed_at) FILTER (WHERE record->>'modelStatus' = 'ok') AS last_success_at
+      FROM public.agent_v2_shadow_decisions`, [MAX_SHADOW_ATTEMPTS]);
+    const actions = await pool.query(`SELECT coalesce(action_id, '(none)') AS action_id, count(*)::int AS n
+      FROM public.agent_v2_shadow_decisions WHERE record IS NOT NULL GROUP BY 1 ORDER BY 2 DESC`);
+    const lastError = await pool.query(`SELECT record->>'errorCategory' AS category, completed_at
+      FROM public.agent_v2_shadow_decisions
+      WHERE record->>'errorCategory' IS NOT NULL ORDER BY completed_at DESC LIMIT 1`);
+    return { ...totals.rows[0],
+      actions: Object.fromEntries(actions.rows.map(row => [row.action_id, row.n])),
+      last_error_category: lastError.rows[0]?.category || null,
+      last_error_at: lastError.rows[0]?.completed_at || null };
+  }
   return { applyMigration, ensureSchema, verifySessionLock, verifyRoleRestrictions, verifyPrivileges,
-    get, getDecisionRow, claim,
+    get, getDecisionRow, claim, listRetryable, abandonRetry, summary,
     close: () => existingPool ? Promise.resolve() : pool.end() };
 }
 

@@ -4,6 +4,7 @@ const {
   SCHEMA_VERSION, ACTION_IDS, HANDOFF_CODES, SLOT_IDS, OBJECTION_TYPES,
   TEMPLATE_IDS, REASON_CODES, FACT_IDS, OFFER_FACTS, OUTPUT_FIELDS,
 } = require('./agent-v2-contract');
+const { clientScopeBlock } = require('./agent-v2-input');
 
 const ACTION_TEMPLATE = Object.freeze({
   NO_ACTION: 'NONE', HANDOFF: 'NONE', SUGGEST_QUALIFICATION: 'QUALIFY',
@@ -15,18 +16,31 @@ const ACTION_TEMPLATE = Object.freeze({
 const PRICING_FACTS = new Set([
   'F_PERFORMANCE_BASED', 'F_PAYMENT_TIED_MEETINGS', 'F_NO_MEETINGS_NO_FEES',
 ]);
-const SLOT_QUESTIONS = Object.freeze({
-  roles: 'Which roles are you focused on filling?',
-  industries: 'Which industries do you serve?',
-  employerTypes: 'What types of employers are you targeting?',
-  geography: 'Which locations do you cover?',
-  employerAcquisitionPriority: 'What is your main employer acquisition priority right now?',
+// Approved qualification catalog (industrial_staffing_offer_v1). Every clause
+// asks about the agency's EMPLOYER market — what it places and where — so the
+// reply cannot read as ScaleLab sourcing candidates. Clauses render in this
+// fixed order whatever order the model chose, at most two per reply.
+const SLOT_CLAUSES = Object.freeze({
+  roles: 'what roles or trades do you place most often',
+  industries: 'which industries are your employer clients in',
+  employerTypes: 'what types of employers do you most want as new accounts',
+  geography: 'which locations do you cover',
+  employerAcquisitionPriority: 'which kind of employer account matters most to win right now',
 });
+const SLOT_ORDER = Object.freeze(['roles', 'industries', 'employerTypes', 'geography', 'employerAcquisitionPriority']);
+const MAX_QUALIFICATION_SLOTS = 2;
+const QUALIFY_LEAD_IN = 'Got it. To make sure we\'d target the right employer accounts for you,';
+
+function qualificationWording(slotIds = []) {
+  const clauses = SLOT_ORDER.filter(id => slotIds.includes(id)).map(id => SLOT_CLAUSES[id]);
+  if (!clauses.length) return '';
+  return `${QUALIFY_LEAD_IN} ${clauses.join(', and ')}?`;
+}
 
 function guarded(input, code, status = 'guarded') {
   return Object.freeze({
     version: SCHEMA_VERSION, actionId: code === 'UNSUBSCRIBE' || code === 'NOT_INTERESTED'
-      || code === 'OUT_OF_OFFICE' ? 'NO_ACTION' : 'HANDOFF',
+      || code === 'OUT_OF_OFFICE' || code === 'CLIENT_NOT_AUTHORIZED' ? 'NO_ACTION' : 'HANDOFF',
     handoffCode: code, factIds: [], slotIds: [], objectionType: 'NONE',
     evidenceRefs: [input.targetRef], templateId: 'NONE',
     reasonCode: 'GUARD', confidence: 0,
@@ -36,6 +50,9 @@ function guarded(input, code, status = 'guarded') {
 
 function guardCode(input) {
   if (input.historical || !input.currentState) return 'STATE_UNAVAILABLE';
+  // Only ScaleLab's active staffing offer is in scope; anything else is never
+  // sent to the model and never proposes an action.
+  if (clientScopeBlock(input.client)) return 'CLIENT_NOT_AUTHORIZED';
   const state = input.currentState;
   const classification = state.productionDecision?.classification;
   if (classification === 'UNSUBSCRIBE') return 'UNSUBSCRIBE';
@@ -65,7 +82,7 @@ function guardCode(input) {
 
 function suggestedWording(output) {
   if (output.templateId === 'NONE') return '';
-  if (output.templateId === 'QUALIFY') return output.slotIds.map(id => SLOT_QUESTIONS[id]).join(' ');
+  if (output.templateId === 'QUALIFY') return qualificationWording(output.slotIds);
   if (output.templateId === 'REFERRAL_ACK') return 'Thank you for pointing us in the right direction. A person on our team can review the referral.';
   if (output.templateId === 'BOOKING_COORDINATION') return 'A person on our team can help coordinate the next step.';
   if (output.templateId === 'OBJECTION_ACK') {
@@ -110,6 +127,7 @@ function validateModelDecision(raw, input) {
   if (raw.actionId === 'SUGGEST_QUALIFICATION' && (!raw.slotIds.length
     || raw.slotIds.some(id => input.currentState.qualification.slots[id]?.status === 'filled')))
     return invalid(input, 'no open qualification slot');
+  if (raw.slotIds.length > MAX_QUALIFICATION_SLOTS) return invalid(input, 'too many qualification slots');
   if (!['SUGGEST_INFO', 'SUGGEST_FACT_ANSWER', 'SUGGEST_OBJECTION_RESPONSE'].includes(raw.actionId)
     && raw.factIds.length) return invalid(input, 'unexpected fact IDs');
   if (['SUGGEST_INFO', 'SUGGEST_FACT_ANSWER'].includes(raw.actionId) && !raw.factIds.length)
@@ -133,4 +151,5 @@ function validateModelDecision(raw, input) {
     suggestedWording: suggestedWording(raw), status: 'valid' });
 }
 
-module.exports = { guardCode, guarded, validateModelDecision, suggestedWording };
+module.exports = { guardCode, guarded, validateModelDecision, suggestedWording,
+  qualificationWording, SLOT_CLAUSES, MAX_QUALIFICATION_SLOTS };

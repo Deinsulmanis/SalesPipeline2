@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 const { CONVERSATION_STATE_VERSION, stableStringify } = require('./conversation-state');
 const { INPUT_VERSION, CATALOG_VERSION, OFFER_FACTS, SLOT_IDS } = require('./agent-v2-contract');
+const { DEFAULT_CLIENT_ID, getClient } = require('./clients/registry');
 
 const MAX_CONTEXT_TURNS = 8;
 const MAX_TURN_TEXT = 500;
@@ -17,7 +18,9 @@ function riskFlags(state, target) {
   const flags = [];
   if (/\b(?:case stud(?:y|ies)|testimonial|reference(?:s)?|proof|track record)\b/i.test(text)) flags.push('proof_request');
   if (/\b(?:results?|conversion rate|success rate|meetings? (?:per|in) (?:week|month)|how many meetings|employer demand)\b/i.test(text)) flags.push('results_request');
-  if (/\b(?:how much|what(?:\'s| is) the (?:price|cost|rate)|price(?:s|d)?|pricing|costs?|fees?|commission|retainer|percentage|percent)\b/i.test(text)) flags.push('pricing_request');
+  // Payment terms are pricing too ("how do you get paid?", "when do I pay?",
+  // "is payment per meeting?"); a pricing flag only narrows what may be proposed.
+  if (/\b(?:how much|what(?:\'s| is) the (?:price|cost|rate)|price(?:s|d)?|pricing|costs?|fees?|commission|retainer|percentage|percent|pa(?:y|id|ying|yment|yments|yable)|billing|billed|invoic(?:e|es|ed|ing)|charge(?:s|d)?)\b/i.test(text)) flags.push('pricing_request');
   if (/\b(?:how much|what(?:\'s| is) the (?:price|cost|rate)|exact (?:price|cost|rate)|quote)\b/i.test(text)) flags.push('amount_request');
   if (/\b(?:exact (?:price|cost|rate)|quote|per meeting|\$|discount|refund|guarantee|guaranteed|minimum|volume|contract terms|exclusiv(?:e|ity))\b/i.test(text)) flags.push('unsupported_commercial_request');
   if (/\b(?:complaint|unacceptable|misleading|spam complaint|report you|legal action)\b/i.test(text)) flags.push('complaint');
@@ -37,6 +40,31 @@ function compactTurn(turn) {
     classification: turn.classification?.value || null,
     decisionStatus: turn.decision?.status || null,
   };
+}
+
+// Agent v2 covers exactly one client and one offer today. The block is derived
+// from Phase 1 identity and the source-controlled client registry only, so it
+// is deterministic and part of the input digest.
+const AUTHORIZED_SCOPE = Object.freeze({ clientId: DEFAULT_CLIENT_ID, family: 'industrial_staffing' });
+
+function clientScope(state) {
+  const clientId = state.identity?.clientId || null;
+  let active = null;
+  if (clientId) { try { active = getClient(clientId).active === true; } catch (_) { active = null; } }
+  return {
+    clientId, clientSource: state.identity?.clientSource || null, active,
+    campaign: state.identity?.campaign || null,
+    campaignAuthorized: clientId === AUTHORIZED_SCOPE.clientId
+      && state.identity?.family === AUTHORIZED_SCOPE.family,
+  };
+}
+
+/** '' when the client scope allows Agent v2 to propose; otherwise a reason code. */
+function clientScopeBlock(client) {
+  if (!client?.clientId) return 'CLIENT_UNRESOLVED';
+  if (client.active !== true) return 'CLIENT_INACTIVE';
+  if (client.clientId !== AUTHORIZED_SCOPE.clientId || !client.campaignAuthorized) return 'CLIENT_NOT_AUTHORIZED';
+  return '';
 }
 
 function buildAgentV2Input(state, messageId) {
@@ -89,7 +117,7 @@ function buildAgentV2Input(state, messageId) {
   };
   const input = {
     version: INPUT_VERSION, stateVersion: state.version, catalogVersion: CATALOG_VERSION,
-    leadId, messageId: id, targetRef: target.turnId, historical,
+    leadId, messageId: id, targetRef: target.turnId, historical, client: clientScope(state),
     stateDigest: state.evidenceDigest, asOf: state.asOf,
     turns: context.map(compactTurn), currentState,
     riskFlags: historical ? [] : riskFlags(state, target),
@@ -100,4 +128,5 @@ function buildAgentV2Input(state, messageId) {
   return Object.freeze(input);
 }
 
-module.exports = { buildAgentV2Input, riskFlags, MAX_CONTEXT_TURNS, MAX_TURN_TEXT };
+module.exports = { buildAgentV2Input, riskFlags, clientScope, clientScopeBlock, AUTHORIZED_SCOPE,
+  MAX_CONTEXT_TURNS, MAX_TURN_TEXT };

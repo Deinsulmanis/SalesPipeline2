@@ -44,16 +44,26 @@ const {
   STAFFING_NOTE, STAFFING_MARKET_MARKERS, STAFFING_SEND_INFO_MARKERS, CANDIDATE_SIDE_MARKERS,
   NOT_QUALIFIED_MARKERS, EMPLOYER_SIDE_MARKERS, isPricingQuestion, staffingHumanTouchBlock,
 } = require('./staffing-reply-policy');
-const { storedResearch } = require('./staffing-agent-context');
+const { researchFromConversation } = require('./staffing-agent-context');
 const { ACTION } = require('./reply-response-policy');
 const {
   NOTE_UNSUBSCRIBED, NOTE_NOT_INTERESTED, NOTE_OOO, NOTE_TIMING, NOTE_WRONG_PERSON,
   NOTE_ALREADY_HANDLED, NOTE_NEEDS_HUMAN,
 } = require('./inbound-reply-guard');
 const { BOOKING_URL } = require('../booking');
+const { resolveLeadClient } = require('./clients/ownership');
 const { bookingUrlForFamily } = require('./offer-config');
 
 const CONVERSATION_STATE_VERSION = 'conversation_state_v1';
+
+function clientIdentity(lead) {
+  if (!lead) return { clientId: null, clientSource: null };
+  let owner;
+  try { owner = resolveLeadClient(lead); } catch (_) { owner = { ok: false }; }
+  return owner.ok
+    ? { clientId: owner.clientId, clientSource: owner.source || null }
+    : { clientId: null, clientSource: 'conflict' };
+}
 
 /**
  * How conflicting evidence is resolved. Stated once so the builder, the tests
@@ -1044,7 +1054,7 @@ function buildLegacyTags(notes) {
 
 function buildResearch({ lead, ledgerRows, turns, family }) {
   if (!lead) return { provenance: null, family: family || null, openingLine: null, openingLineSource: null, icpFit: null, confidenceTag: null, facts: [] };
-  const stored = storedResearch(lead, ledgerRows);
+  const stored = researchFromConversation(lead, ledgerRows);
   let openingLine = stored.opening || null;
   let openingLineSource = openingLine ? 'lead_record' : null;
   if (!openingLine && family === CAMPAIGN_FAMILY.STAFFING) {
@@ -1311,6 +1321,9 @@ function buildConversationState({
       company: String((lead && lead.company) || (boardLead && boardLead.company) || '') || null,
       contactName: String((lead && lead.contactName) || [boardLead && boardLead.first, boardLead && boardLead.last].filter(Boolean).join(' ') || '') || null,
       family: family || null,
+      // Tenant owner of the lead: its explicit client_id, else the registry's
+      // inference. null when ownership conflicts or there is no lead.
+      ...clientIdentity(lead),
       campaign: lead ? String(lead.campaign || '') || null : null,
       coldStage: lead ? String(lead.stage || '') || null : null,
       boardStage: boardLead ? displayStageFor(boardLead.stage) : null,

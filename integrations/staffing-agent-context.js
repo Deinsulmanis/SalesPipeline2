@@ -15,6 +15,7 @@ const {
 const {
   hasManualHold, resumeAtFromNotes, manualHoldReleased, MANUAL_HOLD_TAG,
 } = require('./pipeline-state');
+const { indexConversationEvidence, selectConversationEvidence } = require('./conversation-evidence');
 
 const LANDING_PAGE = 'https://scalelabai.ca/staffing/';
 const THREAD_SNIPPET = 240;
@@ -25,6 +26,20 @@ const OUTBOUND_EVENT_SET = new Set(['initial_email_sent', 'follow_up_sent', 'boo
 function parseMetadata(value) {
   if (value && typeof value === 'object') return value;
   try { return JSON.parse(String(value || '{}')); } catch (_) { return {}; }
+}
+
+// Callers hand this module the cycle's whole activity ledger. Every piece of
+// prompt context must come from THIS lead's conversation only, so rows are
+// selected exactly as Phase 1 conversation state selects them: by ColdEmail id,
+// by its Pipeline id (CE-<id>), and by email only when no other lead of the
+// same client shares the address. A row that names a different lead is never
+// borrowed. Selecting an already-selected set returns it unchanged.
+function leadScopedActivities(lead = {}, activities = [], leads = []) {
+  const id = String((lead && lead.id) || '').trim();
+  if (!id || !Array.isArray(activities) || !activities.length) return [];
+  const known = (Array.isArray(leads) ? leads : []).filter(Boolean);
+  const pool = known.some(item => String(item.id || '').trim() === id) ? known : [lead, ...known];
+  return selectConversationEvidence(indexConversationEvidence({ leads: pool, activities }), id).activities;
 }
 
 function clip(value, max) {
@@ -40,7 +55,13 @@ function noteMarkers(notes) {
   return [...String(notes || '').matchAll(/\[([^\]]+)\]/g)].map(match => match[1].trim()).slice(0, 16);
 }
 
-function storedResearch(lead = {}, activities = []) {
+function storedResearch(lead = {}, allActivities = [], leads = []) {
+  return researchFromConversation(lead, leadScopedActivities(lead, allActivities, leads));
+}
+
+// For callers that already hold exactly one conversation's rows (Phase 1
+// conversation state selects them with the same rules as leadScopedActivities).
+function researchFromConversation(lead = {}, activities = []) {
   const facts = [];
   const opening = String(lead.hyperPersonalizedOpening || lead.siteContext || '').trim().slice(0, 240);
   let icpFit = '';
@@ -89,7 +110,8 @@ function recentThread(activities = []) {
     }));
 }
 
-function conversationState(lead = {}, activities = [], message = {}) {
+function conversationState(lead = {}, allActivities = [], message = {}, leads = []) {
+  const activities = leadScopedActivities(lead, allActivities, leads);
   const notes = String(lead.notes || '');
   const staffing = staffingConversationState(notes);
   const resumeAtMs = resumeAtFromNotes(notes);
@@ -137,7 +159,8 @@ function conversationState(lead = {}, activities = [], message = {}) {
   };
 }
 
-function buildStaffingAgentContext({ lead = {}, message = {}, replyText = '', activities = [] } = {}) {
+function buildStaffingAgentContext({ lead = {}, message = {}, replyText = '', activities: allActivities = [], leads = [] } = {}) {
+  const activities = leadScopedActivities(lead, allActivities, leads);
   const inboundMessageId = String(message.messageId || message.id || '').trim();
   const threadId = String(message.threadId || parseMetadata(message.metadata).gmailThreadId || '').trim();
   const latestInboundReply = clip(replyText || message.body || message.snippet || '', REPLY_SNIPPET);
@@ -223,4 +246,5 @@ function compactAgentUserPayload(context) {
 
 module.exports = {
   LANDING_PAGE, buildStaffingAgentContext, compactAgentUserPayload, conversationState, storedResearch,
+  leadScopedActivities, researchFromConversation,
 };

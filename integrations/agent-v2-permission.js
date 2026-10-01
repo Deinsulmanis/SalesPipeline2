@@ -1,7 +1,7 @@
 'use strict';
 
 const { isDeepStrictEqual } = require('node:util');
-const { buildAgentV2Input } = require('./agent-v2-input');
+const { buildAgentV2Input, clientScopeBlock } = require('./agent-v2-input');
 const { guardCode, validateModelDecision } = require('./agent-v2-validation');
 const { decisionIdFor } = require('./agent-v2-store');
 const { PENDING_STATUS, pendingProofMatches } = require('./agent-v2-pending-decision');
@@ -59,6 +59,10 @@ function evaluateAgentV2Permission(state, record) {
     || record.decisionId !== decisionIdFor(input.leadId, input.messageId)
     || !isDeepStrictEqual(record.authority, AUTHORITY))
     return result(VERDICT.DENY, 'DECISION_IDENTITY_MISMATCH', record);
+  // Client scope fails closed before anything else: a missing, inactive or
+  // other client, or a campaign outside ScaleLab staffing, is never advised on.
+  const clientBlock = clientScopeBlock(input.client);
+  if (clientBlock) return result(VERDICT.DENY, clientBlock, record);
   if (input.historical) return result(VERDICT.DENY, 'STALE_INBOUND', record);
   const target = state.turns.find(turn => turn.direction === 'inbound'
     && turn.messageId === input.messageId);

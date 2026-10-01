@@ -51,3 +51,23 @@ With the flag off, the existing warm-reply call remains the selected branch.
 There is no Agent v2 model call, pending event, or Phase 6 reservation lookup
 on that branch. Existing send authorization and the global send lock still
 govern the legacy handler.
+
+## Final freshness (2026-10-01)
+
+Inside the hardened warm-reply final revalidation, Phase 6 rebuilds Phase 1 from
+a snapshot read at that moment and runs `agentV2FinalFreshness`
+(`integrations/agent-v2-freshness.js`). It refuses unless the inbound is still
+the newest inbound; no human outbound and no answer to it exist; there is no
+human takeover, automation hold or terminal state; no call is scheduled, live
+or requested; the lead, email, thread, sender inbox and explicit ScaleLab client
+are unchanged; there is no evidence conflict; and the lead is not suppressed.
+`deliverProspectReply` then runs `verifyThread` (Gmail: the thread's newest
+message is still this inbound, which also catches a manual reply the ledger has
+not observed) immediately before the reservation and the provider call.
+
+Qualification wording (`SLOT_CLAUSES`, at most two) renders as, for example:
+"Got it. To make sure we'd target the right employer accounts for you, what
+roles or trades do you place most often, and which locations do you cover?"
+It is sent exactly like the legacy staffing warm replies (same delivery
+primitive, no added signature or footer).
+

@@ -21,16 +21,57 @@ const {
 
 const REPLY_EVENT_SET = new Set(LEGACY_REPLY_EVENT_TYPES);
 
+// A provider or configuration failure says nothing about the message, so it
+// must not stand as the message's permanent evaluation. Each retry appends a
+// NEW ledger row (attempt N has its own event id); nothing is overwritten.
+// Validation failures (`agent_error`, `invalid_response`) and real answers are
+// final. Attempts and spacing are bounded so an outage cannot loop.
+const RETRYABLE_STATUSES = new Set(['credits', 'rate_limited', 'timeout', 'api_error', 'unavailable']);
+const MAX_SHADOW_ATTEMPTS = 3;
+const RETRY_BASE_MS = 30 * 60 * 1000;
+
 function parseMetadata(value) {
   if (value && typeof value === 'object') return value;
   try { return JSON.parse(String(value || '{}')); } catch (_) { return {}; }
 }
 
+function attemptEventId(messageId, attempt) {
+  const base = shadowEventId(messageId);
+  return !base || attempt <= 1 ? base : `${base}:attempt-${attempt}`;
+}
+
+/** Every recorded attempt for one inbound message, oldest first. */
+function shadowAttempts(activities = [], messageId) {
+  const base = shadowEventId(messageId);
+  if (!base) return [];
+  return activities.filter(row => {
+    const eventId = String(row.eventId || '');
+    return eventId === base || eventId.startsWith(`${base}:attempt-`)
+      || (row.eventType === EVENT_TYPE && parseMetadata(row.metadata).gmailMessageId === String(messageId));
+  }).sort((a, b) => String(a.occurredAt || '').localeCompare(String(b.occurredAt || '')));
+}
+
+/**
+ * { latest, attempts, retryDue, final } for one message. `final` means the
+ * recorded evaluation stands: it succeeded, failed deterministically, or the
+ * retry budget is spent. A transient failure is retried only once its backoff
+ * (30 min, then 60 min) has passed.
+ */
+function shadowRetryState(activities = [], messageId, now = new Date()) {
+  const attempts = shadowAttempts(activities, messageId);
+  const latest = attempts[attempts.length - 1] || null;
+  if (!latest) return { latest: null, attempts: 0, retryDue: false, final: false };
+  const status = String(parseMetadata(latest.metadata).status || '');
+  if (!RETRYABLE_STATUSES.has(status) || attempts.length >= MAX_SHADOW_ATTEMPTS)
+    return { latest, attempts: attempts.length, retryDue: false, final: true };
+  const at = Date.parse(latest.occurredAt || '');
+  const wait = RETRY_BASE_MS * (2 ** (attempts.length - 1));
+  const retryDue = !Number.isFinite(at) || new Date(now).getTime() - at >= wait;
+  return { latest, attempts: attempts.length, retryDue, final: false };
+}
+
 function existingShadow(activities = [], messageId) {
-  const eventId = shadowEventId(messageId);
-  if (!eventId) return null;
-  return activities.find(row => String(row.eventId || '') === eventId
-    || (row.eventType === EVENT_TYPE && parseMetadata(row.metadata).gmailMessageId === String(messageId))) || null;
+  return shadowAttempts(activities, messageId).at(-1) || null;
 }
 
 /**
@@ -55,13 +96,13 @@ function productionFacts({ lead, messageId, activities, productionDecision, prod
   };
 }
 
-function shadowActivity({ lead, message, context, result, production, checkOnly, now }) {
+function shadowActivity({ lead, message, context, result, production, checkOnly, now, attempt = 1 }) {
   const messageId = String(message.messageId || message.id || '');
   const productionClassification = production.classification;
   const productionAction = production.policyAction;
   const agree = broadlyAgree(productionClassification, result.recommendedAction);
   return {
-    eventId: shadowEventId(messageId),
+    eventId: attemptEventId(messageId, attempt),
     leadId: `CE-${lead.id}`,
     sourceLeadId: String(lead.id || ''),
     email: String(lead.email || ''),
@@ -102,6 +143,10 @@ function shadowActivity({ lead, message, context, result, production, checkOnly,
       inputTokens: result.usage?.inputTokens || 0,
       outputTokens: result.usage?.outputTokens || 0,
       contextHash: context.contextHash,
+      // Audit only: the model's proposed wording is never sent or drafted.
+      replyDraft: String(result.replyDraft || '').slice(0, 600),
+      attempt,
+      retryable: RETRYABLE_STATUSES.has(result.status),
       status: result.status,
       checkOnly: Boolean(checkOnly),
       authority: ZERO_AUTHORITY,
@@ -112,7 +157,7 @@ function shadowActivity({ lead, message, context, result, production, checkOnly,
 }
 
 async function evaluateStaffingConversationShadow({
-  lead, message = {}, replyText = '', activities = [],
+  lead, message = {}, replyText = '', activities = [], leads = [],
   productionClassification = '', productionAction = '', productionDecision = null,
   checkOnly = false, now,
   persistEvent, env = process.env, createMessage, AnthropicImpl,
@@ -128,15 +173,17 @@ async function evaluateStaffingConversationShadow({
   if (!isStaffingCampaign(lead)) return skipped('not_staffing', 'not a staffing lead');
   if (!messageId) return skipped('missing_message_id', 'inbound message id required for idempotency');
 
-  const prior = existingShadow(activities, messageId);
-  if (prior) {
+  const retry = shadowRetryState(activities, messageId, now || new Date());
+  if (retry.latest && !retry.retryDue) {
     return {
-      skipped: true, status: 'already_evaluated', reason: 'existing shadow evaluation reused',
-      authority: ZERO_AUTHORITY, result: null, event: prior, reused: true,
+      skipped: true, status: 'already_evaluated',
+      reason: retry.final ? 'existing shadow evaluation reused' : 'transient shadow failure awaiting retry backoff',
+      authority: ZERO_AUTHORITY, result: null, event: retry.latest, reused: true,
     };
   }
+  const attempt = retry.attempts + 1;
 
-  const context = buildStaffingAgentContext({ lead, message, replyText, activities });
+  const context = buildStaffingAgentContext({ lead, message, replyText, activities, leads });
   const production = productionFacts({
     lead, messageId, activities, productionDecision, productionClassification, productionAction,
   });
@@ -150,7 +197,7 @@ async function evaluateStaffingConversationShadow({
 
   const event = shadowActivity({
     lead, message, context, result, production,
-    checkOnly, now,
+    checkOnly, now, attempt,
   });
 
   if (typeof persistEvent === 'function') {
@@ -174,12 +221,15 @@ async function evaluateStaffingConversationShadow({
   }
 }
 
-function pendingStaffingShadowItems({ leads = [], activities = [], productionByMessageId = new Map() } = {}) {
+function pendingStaffingShadowItems({ leads = [], activities = [], productionByMessageId = new Map(), now = new Date() } = {}) {
   const staffing = new Map(leads.filter(isStaffingCampaign).map(lead => [String(lead.id), lead]));
-  const evaluated = new Set(
+  const shadowed = new Set(
     activities.filter(row => row.eventType === EVENT_TYPE || String(row.eventId || '').startsWith(`${EVENT_TYPE}:`))
-      .map(row => String(parseMetadata(row.metadata).gmailMessageId || String(row.eventId || '').replace(`${EVENT_TYPE}:`, ''))),
+      .map(row => String(parseMetadata(row.metadata).gmailMessageId
+        || String(row.eventId || '').replace(`${EVENT_TYPE}:`, '').replace(/:attempt-\d+$/, ''))),
   );
+  // A message whose transient failure is due for retry is pending again.
+  const evaluated = new Set([...shadowed].filter(id => !shadowRetryState(activities, id, now).retryDue));
   const replyByMessageId = new Map();
   for (const row of activities) {
     if (!REPLY_EVENT_SET.has(String(row.eventType || ''))) continue;
@@ -239,7 +289,7 @@ async function observeStaffingConversationShadows({
   const config = staffingConversationAgentConfig(env);
   if (!config.enabled) return { skipped: true, status: 'disabled', evaluated: 0, reused: 0, calledModel: 0 };
 
-  const pending = pendingStaffingShadowItems({ leads, activities, productionByMessageId });
+  const pending = pendingStaffingShadowItems({ leads, activities, productionByMessageId, now: now || new Date() });
   let evaluated = 0, reused = 0, calledModel = 0;
   const results = [];
   for (const item of pending) {
@@ -251,6 +301,7 @@ async function observeStaffingConversationShadows({
         message: item.message,
         replyText: item.replyText,
         activities,
+        leads,
         productionClassification: production.classification || item.productionClassification,
         productionAction: production.action || '',
         productionDecision: production.decision || null,
@@ -276,4 +327,8 @@ module.exports = {
   observeStaffingConversationShadows,
   pendingStaffingShadowItems,
   existingShadow,
+  shadowAttempts,
+  shadowRetryState,
+  RETRYABLE_STATUSES,
+  MAX_SHADOW_ATTEMPTS,
 };

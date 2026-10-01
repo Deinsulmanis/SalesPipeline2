@@ -6607,6 +6607,54 @@ function operationalMailbox(senderInboxId) {
 // warm cache costs no Sheets read; ?refresh=1 forces the usual one batchGet.
 // ?humanText=1 also reads up to ten recorded human replies from Gmail (read
 // only, verified against the recorded mailbox and thread) to show their text.
+// Read-only Agent v2 status: configuration flags, shadow-ledger aggregates and
+// Phase 6 execution evidence from the activity ledger. Counts and timestamps
+// only — no credential, raw model output or prospect text is returned.
+app.get('/api/ops/agent-v2', requireAuth, async (_req, res) => {
+  const { agentV2ShadowConfig } = require('./integrations/agent-v2-shadow-hook');
+  const config = agentV2ShadowConfig(process.env);
+  const out = {
+    deployment: { sha: String(process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT_SHA || '').trim() || null },
+    shadowEnabled: config.shadowEnabled, executionEnabled: config.executionEnabled,
+    effectiveSendAuthority: config.effectiveSendAuthority, shadowActive: config.shadowActive,
+    model: config.model, keyConfigured: config.keyConfigured, ledgerConfigured: config.ledgerConfigured,
+    scope: config.scope, shadowAuthority: config.shadowAuthority, ledger: null, execution: null,
+  };
+  if (config.ledgerConfigured) {
+    let store;
+    try {
+      store = require('./integrations/agent-v2-store').createPgAgentV2Store({
+        connectionString: process.env.AGENT_V2_SUPABASE_DATABASE_URL,
+        expectedSupabaseUrl: process.env.SUPABASE_URL, caCert: process.env.AGENT_V2_SUPABASE_CA_CERT });
+      const row = await store.summary();
+      out.ledger = { available: true, totalDecisions: row.total, inFlight: row.in_flight,
+        successful: row.successful, invalidOutput: row.invalid_output, guarded: row.guarded,
+        failed: row.failed, retryable: row.retryable, retryExhausted: row.retry_exhausted,
+        actions: row.actions, lastShadowAt: row.last_completed_at, lastSuccessAt: row.last_success_at,
+        lastErrorCategory: row.last_error_category, lastErrorAt: row.last_error_at };
+    } catch (error) {
+      // Our own configuration-validation messages name no credential; a driver
+      // error is reported by its code only.
+      const ours = /^(?:Agent v2|SUPABASE_URL|shadow database)/.test(String(error.message || ''));
+      out.ledger = { available: false, error: String(error.code || 'ledger_unavailable').slice(0, 60),
+        ...(ours ? { reason: String(error.message).slice(0, 160) } : {}) };
+    } finally {
+      if (store) await store.close().catch(() => {});
+    }
+  }
+  try {
+    const dataset = await withAuth(() => getOutreachDataset({}));
+    const executions = (dataset.activities || []).filter(row => row.eventType === 'reply_decision_pending_execution')
+      .map(row => String(row.occurredAt || '')).sort();
+    out.execution = { count: executions.length, lastAt: executions.at(-1) || null,
+      source: 'reply_decision_pending_execution activity events' };
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    out.execution = { available: false };
+  }
+  res.json(out);
+});
+
 app.get('/api/ops/conversation-state/:leadId', requireAuth, async (req, res) => {
   try {
     const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
@@ -7629,5 +7677,14 @@ app.listen(PORT, () => {
     console.log(`[staffing-shadow] init enabled=${shadow.enabled} mode=${shadow.mode} keyConfigured=${shadow.keyConfigured} requestedMode=${shadow.requestedMode || 'none'} authority=${JSON.stringify(ZERO_AUTHORITY)}`);
   } catch (error) {
     console.warn(`[staffing-shadow] init failed closed: ${error.message}`);
+  }
+  try {
+    // Booleans and the model id only; no credential value is ever read here.
+    const v2 = require('./integrations/agent-v2-shadow-hook').agentV2ShadowConfig(process.env);
+    console.log(`[agent-v2] init AGENT_V2_SHADOW_ENABLED=${v2.shadowEnabled} AGENT_V2_EXECUTION_ENABLED=${v2.executionEnabled}`
+      + ` model=${v2.model} keyConfigured=${v2.keyConfigured} ledgerConfigured=${v2.ledgerConfigured}`
+      + ` shadowActive=${v2.shadowActive} effectiveSendAuthority=${v2.effectiveSendAuthority} scope=${v2.scope}`);
+  } catch (error) {
+    console.warn(`[agent-v2] init failed closed: ${error.message}`);
   }
 });
