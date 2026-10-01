@@ -674,7 +674,7 @@ test('operational views count active leads; historical funnels say they include 
   const healthCalls = serverSrc.match(/buildCrmHealth\(\{\s*leads:\s*activeLeadsOf\(dataset\)/g) || [];
   assert.equal(healthCalls.length, 2, 'both CRM Health builders use active leads');
   assert.ok(!/buildCrmHealth\(\{\s*leads:\s*dataset\.leads/.test(serverSrc));
-  assert.match(serverSrc, /scope: \{ historical: true, includesArchived: true, archivedLeads: /);
+  assert.match(serverSrc, /scope: \{ scope, historical: scope === ANALYTICS_SCOPE\.HISTORICAL, includesArchived: scope === ANALYTICS_SCOPE\.HISTORICAL,/);
   const routes = readSource(path.join('integrations', 'clients', 'routes.js'));
   assert.match(routes, /const activeLeads = dataset => \(dataset\.leads \|\| \[\]\)\.filter\(lead => !isArchivedLead\(lead\)\);/);
   for (const view of ["'/:clientId/overview'", "'/:clientId/leads'", "'/:clientId/pipeline'", "'/:clientId/inbox'"]) {

@@ -142,6 +142,9 @@ const {
   planLeadArchive, planBoardArchive, planLeadRestore, planBoardRestore,
 } = require('./integrations/lead-archive');
 const { planOfferRetirement } = require('./integrations/offer-retirement');
+const {
+  ANALYTICS_SCOPE, parseAnalyticsScope, scopeLeads, activitiesForLeads, currentLiveCampaignVersion, buildSenderAnalytics,
+} = require('./integrations/analytics-scope');
 // Managed clients (internal operator views only; clients never log in).
 const { registerClientRoutes } = require('./integrations/clients/routes');
 const { leadsForClient, leadDefinitelyOtherClient } = require('./integrations/clients/ownership');
@@ -1729,7 +1732,17 @@ async function loadOutreachDataset() {
   // with 4 positive, while the funnel read canonical provider evidence and
   // reported 16 genuine replies with 3 positive. Same question, two answers,
   // because only one of them was handed the activity index.
-  const metrics = buildReplyMetrics(leads, {
+  // ACTIVE metrics describe the live outreach operation: leads that are not
+  // archived and whose offer is not retired (analytics-scope.js), with only
+  // their own activity. HISTORICAL keeps all-time performance, retired offers
+  // included, for views that say so. Every operational KPI reads `metrics`.
+  const activeLeads = scopeLeads(leads, ANALYTICS_SCOPE.ACTIVE);
+  const activeLeadIds = new Set(activeLeads.map(lead => lead.id));
+  const activeActivitiesByLeadId = new Map([...activitiesByLeadId].filter(([id]) => activeLeadIds.has(id)));
+  const metrics = buildReplyMetrics(activeLeads, {
+    classificationsByLeadId, evidenceByLeadId: replyEvidenceByLeadId, activitiesByLeadId: activeActivitiesByLeadId,
+  });
+  const historicalMetrics = buildReplyMetrics(leads, {
     classificationsByLeadId, evidenceByLeadId: replyEvidenceByLeadId, activitiesByLeadId,
   });
   const replyRecords = buildReplyRecords(leads, {
@@ -1876,7 +1889,8 @@ async function loadOutreachDataset() {
   // Daily send activity belongs to the full shared snapshot, never the
   // paginated browser page. Only provider-confirmed successful sends count:
   // unconfirmed send-typed rows, reservations, and failures are zero.
-  const sendActivity = buildConfirmedSendActivity(activities);
+  const sendActivity = buildConfirmedSendActivity(activitiesForLeads(activities, activeLeads));
+  const historicalSendActivity = buildConfirmedSendActivity(activities);
 
   return {
     at: Date.now(),
@@ -1888,6 +1902,8 @@ async function loadOutreachDataset() {
     archivedBoardLeads,    // archived Pipeline cards (boardLeads holds active cards only)
     activities, classificationsByLeadId, replyRecords,
     metrics, counts, facets, signals, sendActivity,
+    activeLeads,           // the ACTIVE scope (analytics-scope.js); server-side only
+    historicalMetrics, historicalSendActivity,
     pipelineAudit, boardLeads,
     demoPlays, demoRows, proposalOpens, proposalEngaged,
     annotatedOpens,        // computed once; the Opens panel reuses it
@@ -1897,9 +1913,30 @@ async function loadOutreachDataset() {
   };
 }
 
-// Leads that are not archived: the inventory operational views describe.
+// The active scope (analytics-scope.js): not archived, offer not retired.
 function activeLeadsOf(dataset) {
-  return (dataset.leads || []).filter(lead => !isArchivedLead(lead));
+  return dataset.activeLeads || scopeLeads(dataset.leads || [], ANALYTICS_SCOPE.ACTIVE);
+}
+
+// Every summary names its scope. The top-level numbers are ACTIVE; the
+// historical block is all-time and says that it includes retired offers.
+function analyticsScopeBlocks(dataset) {
+  const active = activeLeadsOf(dataset);
+  const categoryByLead = new Map((dataset.replyRecords || []).map(record => [String(record.leadId), record.category]));
+  return {
+    scope: { scope: ANALYTICS_SCOPE.ACTIVE, activeLeads: active.length, liveCampaignVersion: currentLiveCampaignVersion(),
+      definition: 'Leads that are not archived and whose offer is not retired, with their own activity only.' },
+    senderAnalytics: buildSenderAnalytics({
+      leads: active, activities: activitiesForLeads(dataset.activities || [], active),
+      senders: configuredSenders().map(sender => ({ ...sender, staffingOnly: isStaffingOnlySender(sender) })),
+      replyCategoryByLead: categoryByLead,
+    }),
+    historical: {
+      scope: ANALYTICS_SCOPE.HISTORICAL, includesArchived: true, archivedLeads: (dataset.archivedRows || []).length,
+      replyMetrics: dataset.historicalMetrics, sendActivity: dataset.historicalSendActivity,
+      definition: 'All time, every lead ever contacted, including archived leads of retired offers.',
+    },
+  };
 }
 
 // Concurrent callers share one in-flight load rather than each starting their
@@ -2137,10 +2174,14 @@ app.get('/api/coldemail/funnel', requireAuth, async (req, res) => {
   try {
     const startedAt = process.hrtime.bigint();
     const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    // Active by default: the live offers only. ?scope=historical is all time,
+    // retired offers included, and the response says which one it is.
+    const scope = parseAnalyticsScope(req.query.scope);
+    const scopedLeads = scope === ANALYTICS_SCOPE.HISTORICAL ? dataset.leads : activeLeadsOf(dataset);
     const analytics = buildFunnelAnalytics({
-      leads: dataset.leads, boardLeads: dataset.boardLeads, activities: dataset.activities,
+      leads: scopedLeads, boardLeads: dataset.boardLeads, activities: dataset.activities,
       replyRecords: dataset.replyRecords,
-      currentVersion: ACTIVE_CAMPAIGN_VERSION.dental_ai_receptionist,
+      currentVersion: currentLiveCampaignVersion(),
     }, req.query);
     // The re-engagement journey is judged on its own terms — replies, positive
     // replies, booked calls, closed clients — not folded into cold-campaign
@@ -2173,7 +2214,8 @@ app.get('/api/coldemail/funnel', requireAuth, async (req, res) => {
       ...analytics,
       // Historical reporting: the funnel counts every lead ever sent, archived
       // ones included, so rates stay comparable over time.
-      scope: { historical: true, includesArchived: true, archivedLeads: (dataset.archivedRows || []).length },
+      scope: { scope, historical: scope === ANALYTICS_SCOPE.HISTORICAL, includesArchived: scope === ANALYTICS_SCOPE.HISTORICAL,
+        leads: scopedLeads.length, archivedLeads: (dataset.archivedRows || []).length, currentVersion: currentLiveCampaignVersion() },
       ...(records ? { stage, records, pagination: { total: stageTotal, offset, limit: requested, hasMore: offset + records.length < stageTotal } } : {}),
       generatedMs: Number(process.hrtime.bigint() - startedAt) / 1e6,
       fetchedAt: new Date(dataset.at).toISOString(),
@@ -2205,9 +2247,9 @@ app.get('/api/crm/health', requireAuth, async (req, res) => {
       : null;
     // The funnel is CONSUMED, never rebuilt: reconciliation has one owner.
     const funnel = buildFunnelAnalytics({
-      leads: dataset.leads, boardLeads: dataset.boardLeads, activities: dataset.activities,
+      leads: activeLeadsOf(dataset), boardLeads: dataset.boardLeads, activities: dataset.activities,
       replyRecords: dataset.replyRecords,
-      currentVersion: ACTIVE_CAMPAIGN_VERSION.dental_ai_receptionist,
+      currentVersion: currentLiveCampaignVersion(),
     }, { version: 'lifetime' });
 
     // Operational health describes ACTIVE inventory; archived leads are in Archive.
@@ -2404,7 +2446,8 @@ async function computeDigest(day) {
   const activities = (actR.data.values || []).slice(1).map(row => Object.fromEntries(
     COLD_CALL_ACTIVITY_HEADER.map((field, i) => [field, row[i] || '']),
   ));
-  const canonical = buildCanonicalDigest({ day, activities, leads });
+  const canonical = buildCanonicalDigest({ day, activities, leads,
+    activeLeadIds: new Set(scopeLeads(leads, ANALYTICS_SCOPE.ACTIVE).map(lead => lead.id)) });
   const isToday  = ts => { try { return ts && vanDay(new Date(ts)) === day; } catch (_e) { return false; } };
 
   // ── real opens today: the shared scanner filter, not raw rows ──
@@ -5893,6 +5936,7 @@ app.get('/api/coldemail/stats', requireAuth, async (req, res) => {
       sendActivity: dataset.sendActivity,
       pipelineAudit: dataset.pipelineAudit,
       totalLeads: dataset.rows.length,
+      ...analyticsScopeBlocks(dataset),
       fetchedAt: new Date(dataset.at).toISOString(),
     });
   } catch (e) {
@@ -5912,6 +5956,7 @@ app.get('/api/coldemail/summary', requireAuth, async (req, res) => {
       replyMetrics: dataset.metrics,
       signals: dataset.signals,
       sendActivity: dataset.sendActivity,
+      ...analyticsScopeBlocks(dataset),
       fetchedAt: new Date(dataset.at).toISOString(),
     });
   } catch (e) {
@@ -6505,7 +6550,7 @@ app.get('/api/ops/analytics-integrity', requireAuth, async (req, res) => {
     const funnelInput = {
       leads: dataset.leads, boardLeads: dataset.boardLeads, activities: dataset.activities,
       replyRecords: dataset.replyRecords,
-      currentVersion: ACTIVE_CAMPAIGN_VERSION.dental_ai_receptionist,
+      currentVersion: currentLiveCampaignVersion(),
     };
     const funnelLifetime = buildFunnelAnalytics(funnelInput, { version: 'lifetime' });
     const dentalFunnel = buildFunnelAnalytics(funnelInput, { version: ACTIVE_CAMPAIGN_VERSION.dental_ai_receptionist });
@@ -7078,9 +7123,9 @@ app.get('/api/internal/gmail-routing-simulation', async (req, res) => {
       senders:proposedSenders, sendsToday:senderCountsToday(activities,dayKey) });
     const dataset = await getOutreachDataset({ force:true });
     const suppressedEmails = await loadSuppressedEmails();
-    const funnel = buildFunnelAnalytics({ leads:dataset.leads, boardLeads:dataset.boardLeads,
+    const funnel = buildFunnelAnalytics({ leads:activeLeadsOf(dataset), boardLeads:dataset.boardLeads,
       activities:dataset.activities, replyRecords:dataset.replyRecords,
-      currentVersion:ACTIVE_CAMPAIGN_VERSION.dental_ai_receptionist },{version:'lifetime'});
+      currentVersion:currentLiveCampaignVersion() },{version:'lifetime'});
     const health = buildCrmHealth({ leads:activeLeadsOf(dataset), boardLeads:dataset.boardLeads,
       activities:dataset.activities, replyRecords:dataset.replyRecords,
       suppressionReason:lead=>sendSuppressionReason(lead,{suppressedEmails}),

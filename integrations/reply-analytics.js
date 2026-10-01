@@ -4,7 +4,7 @@ const { deterministicReplyCategory } = require('./reply-classifier');
 const { resolveReplyState, EVIDENCE_SOURCE } = require('./canonical-reply');
 const { applyReplyDecisionsToReplyEvidence } = require('./reply-decision');
 const {
-  canonicalSendRows, uniqueCanonicalBounces, flattenActivitiesByLeadId,
+  canonicalSendRows, uniqueCanonicalBounces, flattenActivitiesByLeadId, deliveredLeadIds,
 } = require('./canonical-sends');
 
 const ANALYTICS_CATEGORY = Object.freeze({
@@ -241,9 +241,14 @@ function buildReplyMetrics(leads = [], { classificationsByLeadId = new Map(), ev
       metrics.delivered++;
     }
   }
-  // When send activity is present, delivered is confirmed sends minus unique
-  // canonical bounces (activity, [BOUNCED] note, and suppression collapse to one).
-  if (confirmedSends > 0) metrics.delivered = Math.max(0, confirmedSends - uniqueBounces.length);
+  // When send activity is present, delivered is LEADS: distinct leads with a
+  // provider-confirmed send, minus leads that bounced. It used to be confirmed
+  // MESSAGES minus bounces, which divided replying leads by every first email
+  // AND every follow-up — a lead-grain numerator over a message-grain
+  // denominator, understating every rate that uses it. The message count is
+  // still reported, under its own name.
+  if (confirmedSends > 0) metrics.delivered = deliveredLeadIds({ leads, activities }).size;
+  metrics.deliveredMessages = Math.max(0, confirmedSends - uniqueBounces.length);
   metrics.confirmedSends = confirmedSends;
   metrics.canonicalBounces = uniqueBounces.length;
   // The SAME records the drill-down returns, so a card and its list can never

@@ -190,7 +190,9 @@ test('loader: explicit columns, test and internal traffic filtered in the query,
   }
   assert.match(byTable.landing_link_issuances, /is_test=is\.false/);
   assert.match(byTable.landing_session_facts, /issuance_id=in\.\("I1","I2","I3","I4"\)&is_internal=is\.false&is_debug=is\.false/);
-  assert.match(byTable.outreach_leads, /select=lead_id,company,contact_name,email&lead_id=in\./);
+  // The lead columns carry what the active-scope test needs (archive marker,
+  // canonical offer fields), so retired-offer bookings stay off the page.
+  assert.match(byTable.outreach_leads, /select=lead_id,company,contact_name,email,stage,notes,lead_niche,email_template_id,intended_campaign_version,campaign,trade_type&lead_id=in\./);
   assert.deepEqual(result.data.monitor, { internalSessions: 2, debugSessions: 1, unresolvedSessions: 1 });
   assert.equal(result.data.summary.linksSent, 4);
 
