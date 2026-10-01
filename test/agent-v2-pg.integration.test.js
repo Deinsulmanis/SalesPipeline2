@@ -345,3 +345,50 @@ test('Postgres shadow store: durable claim, concurrent exclusion, crash recovery
       assert.ok(totals.last_success_at);
     } finally { await Promise.all([aPool.end(), bPool.end(), migratorPool.end()]); }
   });
+
+test('Postgres runtime kill switch: disarmed by default, audited, expiring, versioned; invisible to the shadow worker',
+  { skip: !url || !migrationUrl || process.env.AGENT_V2_TEST_TEMPORARY_DATABASE !== 'true'
+      || process.env.AGENT_V2_TEST_WORKER_ROLE !== 'agent_v2_shadow_worker' }, async () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const admin = new Client({ connectionString: migrationUrl });
+    await admin.connect();
+    const workerPool = new Pool({ connectionString: url, max: 2 });
+    const worker = createPgAgentV2Store({ pool: workerPool });
+    try {
+      await admin.query(fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations',
+        '20261001000000_agent_v2_runtime_control.sql'), 'utf8'));
+      const initial = (await admin.query('SELECT * FROM public.agent_v2_runtime_control')).rows;
+      assert.equal(initial.length, 1);
+      assert.equal(initial[0].armed, false);
+      // Armed without expiry is refused by the table itself.
+      await assert.rejects(admin.query(`UPDATE public.agent_v2_runtime_control SET armed = true`), /armed_is_deliberate/);
+      const set = (armed, until, reason, by, version) => admin.query(
+        'SELECT * FROM public.agent_v2_set_runtime_control($1, $2, $3, $4, $5)', [armed, until, reason, by, version]);
+      await assert.rejects(set(true, null, 'go', 'Deins', null), /expiry within 15 days/);
+      await assert.rejects(set(true, new Date(Date.now() + 20 * 86400000), 'go', 'Deins', null), /expiry within 15 days/);
+      await assert.rejects(set(true, new Date(Date.now() + 86400000), '', 'Deins', null), /reason is required/);
+      await assert.rejects(set(false, null, 'stop', ' ', null), /changed_by is required/);
+      const armed = (await set(true, new Date(Date.now() + 86400000), 'canary', 'Deins', 1)).rows[0];
+      assert.equal(armed.armed, true);
+      assert.equal(Number(armed.version), 2);
+      await assert.rejects(set(false, null, 'stop', 'Deins', 1), /version conflict/);
+      const disarmed = (await set(false, null, 'stop', 'Deins', 2)).rows[0];
+      assert.equal(disarmed.armed, false);
+      assert.equal(disarmed.armed_until, null);
+      const events = (await admin.query('SELECT armed, previous_armed, changed_by, version FROM public.agent_v2_runtime_control_events ORDER BY event_id')).rows;
+      assert.deepEqual(events.map(e => [e.armed, e.previous_armed, Number(e.version)]), [[true, false, 2], [false, true, 3]]);
+      // service_role may read and call the function only; no direct writes.
+      const grants = (await admin.query(`SELECT
+        has_table_privilege('service_role', 'public.agent_v2_runtime_control', 'SELECT') AS read,
+        has_table_privilege('service_role', 'public.agent_v2_runtime_control', 'UPDATE') AS update,
+        has_table_privilege('service_role', 'public.agent_v2_runtime_control_events', 'DELETE') AS delete_events,
+        has_table_privilege('anon', 'public.agent_v2_runtime_control', 'SELECT') AS anon_read,
+        has_function_privilege('service_role', 'public.agent_v2_set_runtime_control(boolean, timestamptz, text, text, bigint)', 'EXECUTE') AS rpc,
+        has_function_privilege('anon', 'public.agent_v2_set_runtime_control(boolean, timestamptz, text, text, bigint)', 'EXECUTE') AS anon_rpc`)).rows[0];
+      assert.deepEqual(grants, { read: true, update: false, delete_events: false, anon_read: false, rpc: true, anon_rpc: false });
+      // The restricted shadow worker still passes its own privilege audit.
+      assert.equal((await worker.verifyRoleRestrictions()).ok, true);
+      assert.equal((await worker.verifyPrivileges()).ok, true);
+    } finally { await admin.end(); await workerPool.end(); }
+  });

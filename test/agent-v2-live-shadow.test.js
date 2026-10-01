@@ -135,7 +135,8 @@ test('boot log and ops endpoint report flags and counts only, behind ops auth', 
   const boot = server.slice(server.indexOf('[agent-v2] init'), server.indexOf('[agent-v2] init') + 500);
   assert.match(boot, /AGENT_V2_SHADOW_ENABLED=\$\{v2\.shadowEnabled\}/);
   assert.match(boot, /AGENT_V2_EXECUTION_ENABLED=\$\{v2\.executionEnabled\}/);
-  assert.match(boot, /effectiveSendAuthority=\$\{v2\.effectiveSendAuthority\}/);
+  assert.match(boot, /configuredSendAuthority=\$\{v2\.effectiveSendAuthority\}/);
+  assert.match(server, /\[agent-v2\] kill switch readable=\$\{runtime\.readable\} armed=\$\{runtime\.armed\}/);
   assert.doesNotMatch(boot, /process\.env\.ANTHROPIC|DATABASE_URL\}|CA_CERT\}/);
   const route = server.slice(server.indexOf("app.get('/api/ops/agent-v2'"), server.indexOf("app.get('/api/ops/conversation-state"));
   assert.match(route, /app\.get\('\/api\/ops\/agent-v2', requireAuth,/);

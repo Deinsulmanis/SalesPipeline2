@@ -52,6 +52,7 @@ const {
 } = require('./inbound-reply-guard');
 const { BOOKING_URL } = require('../booking');
 const { resolveLeadClient } = require('./clients/ownership');
+const { correctedOptOutMessageIds } = require('./false-opt-out-correction');
 const { bookingUrlForFamily } = require('./offer-config');
 
 const CONVERSATION_STATE_VERSION = 'conversation_state_v1';
@@ -503,16 +504,26 @@ function buildTerminalState({ lead, boardLead, rows, turns, suppressedEmails, no
   const decisions = turns.filter(turn => turn.decision && turn.decision.exists);
 
   const unsubscribed = [];
+  // An opt-out our classifier invented and a human released through the
+  // audited correction (false-opt-out-correction.js) is not current state. Its
+  // evidence stays visible as `corrected`; every other opt-out still counts,
+  // including any later one on another message. Notes and stage are read as
+  // they are: the correction itself releases the tag, so a tag still present
+  // means the opt-out still stands.
+  const leadIdForCorrections = text(lead && lead.id).trim();
+  const correctedMessages = correctedOptOutMessageIds(rows.map(row => row.raw || row), leadIdForCorrections);
+  const corrected = [];
   if (notes.includes(NOTE_UNSUBSCRIBED)) unsubscribed.push(noteRef(NOTE_UNSUBSCRIBED));
   if (lead && norm(lead.stage) === 'unsub') unsubscribed.push({ source: 'lead_stage', eventId: null, eventType: null, messageId: null, occurredAt: null, detail: 'ColdEmail stage Unsub' });
   for (const row of rows) {
     if (row.eventType === 'unsubscribe_reply' || row.metadata.reason === 'unsubscribe_request') {
-      if (INBOUND_EVENT_TYPES.has(row.eventType)) unsubscribed.push(evidenceRef(row, { source: 'reply_event' }));
+      if (!INBOUND_EVENT_TYPES.has(row.eventType)) continue;
+      (correctedMessages.has(row.messageId) ? corrected : unsubscribed).push(evidenceRef(row, { source: 'reply_event' }));
     }
   }
   for (const turn of decisions) {
     if (turn.decision.finalClassification === 'UNSUBSCRIBE') {
-      unsubscribed.push({ source: 'reply_decision', eventId: turn.decision.decisionId, eventType: 'reply_decision_recorded', messageId: turn.messageId, occurredAt: turn.occurredAt, detail: turn.decision.executionStatus });
+      (correctedMessages.has(turn.messageId) ? corrected : unsubscribed).push({ source: 'reply_decision', eventId: turn.decision.decisionId, eventType: 'reply_decision_recorded', messageId: turn.messageId, occurredAt: turn.occurredAt, detail: turn.decision.executionStatus });
     }
   }
 
@@ -575,7 +586,7 @@ function buildTerminalState({ lead, boardLead, rows, turns, suppressedEmails, no
     ? [noteRef(NOTE_TIMING, (notes.match(/\[REPLY:\s*Timing[^\]]*\]/i) || [NOTE_TIMING])[0])] : [];
 
   const flags = {
-    unsubscribed: { value: unsubscribed.length > 0, evidence: unsubscribed },
+    unsubscribed: { value: unsubscribed.length > 0, evidence: unsubscribed, corrected },
     notInterested: { value: notInterested.length > 0, evidence: notInterested },
     bounced: { value: bounced.length > 0, evidence: bounced },
     suppressed: {

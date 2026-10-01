@@ -11,9 +11,12 @@ Use only approved fact IDs in the supplied catalog. Never infer prices, guarante
 results, employer demand, campaign volume or meeting availability. A pricing amount or unsupported
 commercial request, proof/results request, complaint, conflicting evidence, human takeover,
 unsubscribe, rejection, OOO, or booking/reschedule ambiguity must be handed off or left alone.
-Use evidence refs from allowedEvidenceRefs, including targetRef. Set slotIds to a nonempty list
-of currently unfilled slots from ${SLOT_IDS.join(', ')} only for SUGGEST_QUALIFICATION.
-Set slotIds to [] for every other action. Objection types: ${OBJECTION_TYPES.join(', ')}.
+Use evidence refs from allowedEvidenceRefs, including targetRef. Set slotIds to one or two
+currently unfilled slots from ${SLOT_IDS.join(', ')} only for SUGGEST_QUALIFICATION.
+Set slotIds to [] for every other action. Set factIds only for SUGGEST_INFO, SUGGEST_FACT_ANSWER
+and SUGGEST_OBJECTION_RESPONSE; for SUGGEST_QUALIFICATION, SUGGEST_REFERRAL_ACK,
+SUGGEST_BOOKING_COORDINATION, HANDOFF and NO_ACTION set factIds to [].
+A plain expression of interest with no question asks qualification. Objection types: ${OBJECTION_TYPES.join(', ')}.
 Handoff codes: ${HANDOFF_CODES.join(', ')}. Templates: ${TEMPLATE_IDS.join(', ')}.
 Reason codes: ${REASON_CODES.join(', ')}.
 The application renders suggested wording from templates and approved fact IDs; do not write prose

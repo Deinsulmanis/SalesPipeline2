@@ -90,6 +90,7 @@ const { evaluateFreshSendSafety, guardProviderSend } = require('./integrations/s
 const {
   withGmailProviderSend, withOutboundReservation, confirmOutboundReservation,
   isDefinitePreDeliveryFailure, getOutboundReservation, STATUS: SEND_RESERVATION_STATUS,
+  confirmReconciledReservation, markReservationReconciliationRequired,
 } = require('./integrations/send-lock');
 const {
   ordinaryColdActionId, stageSequenceActionId, smartleadEnqueueActionId,
@@ -179,6 +180,9 @@ const { indexConversationEvidence, selectConversationEvidence } = require('./int
 const { createPgAgentV2Store } = require('./integrations/agent-v2-store');
 const { agentV2ShadowConfig, shadowCandidate, runAgentV2ShadowPass } = require('./integrations/agent-v2-shadow-hook');
 const { agentV2FinalFreshness } = require('./integrations/agent-v2-freshness');
+const { readAgentV2KillSwitch } = require('./integrations/agent-v2-kill-switch');
+const { CANARY: AGENT_V2_CANARY, canaryPreScope, canaryCapVerdict } = require('./integrations/agent-v2-canary');
+const { ACTION_HEADER: AGENT_V2_ACTION_HEADER, locateAgentV2Send, reconcileAgentV2Send } = require('./integrations/agent-v2-send-recovery');
 const { runAgentV2OneShotReadiness } = require('./integrations/agent-v2-orchestration');
 const { executeAgentV2Qualification, FLAG: AGENT_V2_EXECUTION_FLAG } = require('./integrations/agent-v2-execution');
 const { QUALIFY_ACTION: AGENT_V2_QUALIFY_ACTION, pendingDecisionActivity,
@@ -3453,7 +3457,8 @@ async function commitMailboxObservationCheckpoints(observation = {}) {
 }
 
 async function deliverHardenedWarmReply({ lead, message, action, body, subject, activities, classification,
-  ownerMode = 'reply', sequenceId = 'prospect_reply_v1', validateFresh = null, replyDecisionId = '', landingPlan = null }) {
+  ownerMode = 'reply', sequenceId = 'prospect_reply_v1', validateFresh = null, replyDecisionId = '', landingPlan = null,
+  agentV2Send = false }) {
   const sender = senderForPersistedLead(lead);
   const metadataOf = row => { try { return JSON.parse(row.metadata || '{}'); } catch (_) { return {}; } };
   // Staffing positive-reply landing link (automated delivery only; null for
@@ -3472,7 +3477,21 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
     action, subject, body, checkOnly: CHECK_ONLY,
     classification,
   }, {
-    findDelivered: rfcMessageId => findSuccessfulSequenceSend({ gmail: gmailForSender(sender), rfcMessageId }),
+    // Agent v2 proves an earlier send from Gmail's own thread state and its
+    // action header, never from the Message-ID Gmail rewrites. Proven: reuse.
+    // Nothing of ours after the inbound: send. Anything else: reconcile first.
+    findDelivered: agentV2Send ? async rfcMessageId => {
+      const located = await locateAgentV2Send({ gmail: gmailForSender(sender),
+        actionId: responseActionId(lead.id, message.messageId, action), threadId: message.threadId,
+        senderEmail: sender.email, recipientEmail: lead.email,
+        afterInternalDate: Date.parse(message.occurredAt || '') || 0 });
+      if (located.status === 'SENT') return { providerMessageId: located.providerMessageId,
+        threadId: located.threadId, rfcMessageId, occurredAt: null };
+      if (located.reason === 'no_send_found') return null;
+      const error = new Error(`Agent v2 send state is inconclusive (${located.reason}); reconciliation required`);
+      error.code = 'reconciliation_required';
+      throw error;
+    } : rfcMessageId => findSuccessfulSequenceSend({ gmail: gmailForSender(sender), rfcMessageId }),
     existingDelivery: async actionId => activities.some(row => row.eventId === actionId),
     existingReservation: async actionId => {
       const reservations = activities.filter(row => row.eventType === 'prospect_reply_reserved' && metadataOf(row).actionId === actionId);
@@ -3582,6 +3601,7 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
       });
       return sendEmail({
       ...payload, lead,
+      ...(agentV2Send ? { extraHeaders: [`${AGENT_V2_ACTION_HEADER}: ${String(payload.actionId || '').replace(/[^A-Za-z0-9:._-]/g, '')}`] } : {}),
       sendAction: {
         actionId: payload.sendAction?.actionId || payload.actionId,
         leadId: lead.id,
@@ -3724,7 +3744,11 @@ async function liveSafetyForAgentV2Reply({ leadId, messageId, decisionId, stateD
     && observerAutomationReadyBySender.get(senderInboxId) === true);
   const noConflictingEvidence = !state.evidenceWarnings.length && !state.ambiguities.length
     && state.thread.threadIds.length === 1;
+  const killSwitch = await readAgentV2KillSwitch();
+  const canaryCap = canaryCapVerdict(fresh.allActivities, { day, messageId });
   const safety = { leadId, messageId, decisionId, stateDigest,
+    killSwitchArmed: killSwitch.readable === true && killSwitch.armed === true,
+    canaryCapAvailable: canaryCap.allowed === true && senderInboxId === AGENT_V2_CANARY.senderInboxId,
     senderInboxId, providerThreadLatest, humanClear, repeatClear,
     suppressionClear, senderOwnershipProven: pinned === senderInboxId
       && state.thread.ownershipStatus === 'proven',
@@ -3740,12 +3764,20 @@ async function liveSafetyForAgentV2Reply({ leadId, messageId, decisionId, stateD
     && Object.entries(safety).every(([key, value]) =>
       !['providerThreadLatest', 'humanClear', 'repeatClear', 'suppressionClear',
         'senderOwnershipProven', 'senderEligible', 'quotaAvailable', 'windowAvailable',
-        'currentSendAuthorized', 'noNewerInbound', 'noConflictingEvidence'].includes(key) || value === true);
+        'currentSendAuthorized', 'noNewerInbound', 'noConflictingEvidence',
+        'killSwitchArmed', 'canaryCapAvailable'].includes(key) || value === true);
   return safety;
 }
 
 async function deliverAgentV2Qualification({ lead, message, activities, decision,
   outboundObservationOk, subject }) {
+  // Configured flags and the live runtime kill switch, before anything is
+  // recorded: a disarmed canary leaves no pending record and spends no cap.
+  if (process.env[AGENT_V2_EXECUTION_FLAG] !== 'true' || process.env.AGENT_V2_SHADOW_ENABLED !== 'true'
+    || !process.env.ANTHROPIC_AGENT_V2_KEY)
+    return { delivered: false, code: 'agent_v2_execution_unavailable' };
+  const runtime = await readAgentV2KillSwitch();
+  if (!runtime.readable || !runtime.armed) return { delivered: false, code: `agent_v2_${runtime.code}` };
   const sources = activities.filter(row => row.eventId === `gmail-reply:${message.messageId}`);
   if (sources.length !== 1) return { delivered: false, code: 'provider_proof_unavailable' };
   const pending = pendingDecisionActivity({ lead, message, decision, sourceRow: sources[0] });
@@ -3784,13 +3816,25 @@ async function deliverAgentV2Qualification({ lead, message, activities, decision
     const execution = await executeAgentV2Qualification({ leadId: lead.id,
       messageId: message.messageId, store, loadCurrentState, checkPhase0,
       liveSafety: args => liveSafetyForAgentV2Reply(args, lead, message, outboundObservationOk),
+      killSwitch: () => readAgentV2KillSwitch(),
+      recoverSend: ({ reservation, actionId }) => recoverAgentV2Send({ lead, message, reservation, actionId, activities, subject }),
       deliver: async ({ body, action, decisionId, stateDigest, stateAsOf }) =>
         deliverHardenedWarmReply({ lead, message, action, body, subject, activities,
           classification: decision.finalClassification, replyDecisionId: decision.decisionId,
+          agentV2Send: true,
           validateFresh: async ({ fresh, current, mine }) => {
             if (process.env[AGENT_V2_EXECUTION_FLAG] !== 'true'
               || !sendAuthorization().allowed || !isStaffingCampaign(current))
               return { allowed: false, code: 'agent_v2_kill_switch_or_campaign_changed' };
+            // Last moment: the live switch, today's canary cap and the primary inbox.
+            const lastRuntime = await readAgentV2KillSwitch();
+            if (!lastRuntime.readable || !lastRuntime.armed) return { allowed: false, code: `agent_v2_${lastRuntime.code}` };
+            const freshRows = await readColdCallActivities(fresh.activityRows);
+            if (!canaryCapVerdict(freshRows, { messageId: message.messageId }).allowed)
+              return { allowed: false, code: 'agent_v2_canary_daily_cap' };
+            if (message.senderInboxId !== AGENT_V2_CANARY.senderInboxId
+              || senderForPersistedLead(current).id !== AGENT_V2_CANARY.senderInboxId)
+              return { allowed: false, code: 'agent_v2_canary_sender' };
             const checked = await loadAgentV2ReplyEvidence(lead.id, stateAsOf, fresh);
             const inbound = checked.state.turns.find(turn => turn.direction === 'inbound'
               && turn.messageId === message.messageId);
@@ -3829,6 +3873,30 @@ async function deliverAgentV2Qualification({ lead, message, activities, decision
       reason: execution.executionReasonCode || null, reconciliationRequired };
   } catch (_) { return { delivered: false, code: 'agent_v2_execution_unavailable' }; }
   finally { await store?.close().catch(() => {}); }
+}
+
+// Reconcile an Agent v2 send whose durable reservation is unresolved, from
+// Gmail's own identifiers (agent-v2-send-recovery.js). Never sends.
+async function recoverAgentV2Send({ lead, message, reservation, actionId, activities, subject }) {
+  const sender = senderForPersistedLead(lead);
+  return reconcileAgentV2Send({ reservation, deps: {
+    locate: () => locateAgentV2Send({ gmail: gmailForSender(sender), actionId, reservation,
+      threadId: message.threadId, senderEmail: sender.email, recipientEmail: lead.email,
+      afterInternalDate: Date.parse(message.occurredAt || '') || 0 }),
+    hasDelivered: async () => activities.some(row => row.eventId === actionId),
+    writeDelivered: async ({ providerMessageId, threadId }) => {
+      const row = { eventId: actionId, leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email,
+        company: cleanCompanyName(lead.company) || lead.company || '', eventType: 'booking_link_sent',
+        occurredAt: new Date().toISOString(), subject, content: '',
+        metadata: JSON.stringify({ actionId, action: AGENT_V2_QUALIFY_ACTION, senderInboxId: sender.id,
+          gmailMessageId: providerMessageId, gmailThreadId: threadId || message.threadId,
+          inboundMessageId: message.messageId, recoveredAfterCheckpointFailure: true,
+          recoveredBy: 'agent_v2_provider_reconciliation' }) };
+      await recordColdCallActivityStrict(row); activities.push(row);
+    },
+    confirm: () => confirmReconciledReservation(actionId),
+    markReconciliation: reason => markReservationReconciliationRequired(actionId, reason),
+  } });
 }
 
 async function handlePositiveAutomation(lead, message, classification, activities, canonical = {},
@@ -3964,12 +4032,23 @@ async function handlePositiveAutomation(lead, message, classification, activitie
     });
     return { delivered: false, code: humanHold.code, reason: humanHold.reason };
   }
-  const agentV2Cutover = isStaffingCampaign(lead)
-    && process.env[AGENT_V2_EXECUTION_FLAG] === 'true';
-  if (agentV2Cutover && policy.action !== AGENT_V2_QUALIFY_ACTION) {
-    await queueDraft(lead, { mode: 'draft', body,
-      reason: 'Agent v2 initial authority permits qualification only', confidence: policy.confidence || 0 });
-    return routeToHuman({ effects: [REPLY_EFFECT.DRAFT_QUEUED] });
+  // Agent v2 executes ONLY inside the canary (agent-v2-canary.js): configured
+  // flag, live kill switch armed, today's cap open, and a first, fresh,
+  // genuine-human ScaleLab staffing reply on primary that the deterministic
+  // policy would answer with the qualification question. Every other message
+  // takes the legacy path exactly as when execution is disabled.
+  let agentV2Cutover = false;
+  if (process.env[AGENT_V2_EXECUTION_FLAG] === 'true' && process.env.AGENT_V2_SHADOW_ENABLED === 'true') {
+    const scope = canaryPreScope({ lead, message, policy, activities });
+    let gate = scope.inScope ? null : scope.code;
+    if (!gate) {
+      const runtime = await readAgentV2KillSwitch();
+      if (!runtime.readable || !runtime.armed) gate = runtime.code;
+      else if (!canaryCapVerdict(activities, { messageId: message.messageId }).allowed) gate = 'canary_daily_cap';
+    }
+    agentV2Cutover = !gate;
+    console.log(JSON.stringify({ event: 'agent_v2_canary_route', lead_id: lead.id, message_id: message.messageId,
+      canary: agentV2Cutover, reason: gate || 'in_scope' }));
   }
   // Tracked staffing landing link for AUTOMATED delivery only. Every draft
   // (above, and on an Agent v2 hold below) keeps the plain URL in `body`, and
