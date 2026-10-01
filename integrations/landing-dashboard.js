@@ -23,6 +23,16 @@ const { FLAG, flagEnabled, testEmailDomains } = require('./landing-attribution-c
 const RANGE_DAYS = Object.freeze({ '7d': 7, '30d': 30, '90d': 90 });
 const SOURCES = Object.freeze(['followup_2', 'positive_reply']);
 const ASSIST_LABELS = Object.freeze(['page_assisted', 'visited_before_booking', 'link_sent_no_visit', 'no_link_issued']);
+const { isActiveOutreachLead } = require('./analytics-scope');
+
+// outreach_leads row (snake_case) -> the active analytics scope.
+function isLiveOutreachLead(row) {
+  if (!row) return false;
+  return isActiveOutreachLead({
+    id: row.lead_id, stage: row.stage, notes: row.notes, leadNiche: row.lead_niche, emailTemplateId: row.email_template_id,
+    intendedCampaignVersion: row.intended_campaign_version, campaign: row.campaign, tradeType: row.trade_type,
+  });
+}
 const ASSISTED = new Set(['page_assisted', 'visited_before_booking']);
 const TIERS = Object.freeze(['intent', 'interacted', 'engaged', 'visible', 'raw']);
 const MAX_CUSTOM_DAYS = 400;
@@ -36,7 +46,7 @@ const TIMEOUT_MS = 8000;
 const ISSUANCE_COLUMNS = 'issuance_id,lead_id,source,trigger_action,campaign_id,campaign_version,template_id,template_version,sender_inbox_id,is_test,status,sent_at';
 const SESSION_COLUMNS = 'issuance_id,started_at,last_seen_at,visible_at,engaged_at,interacted_at,intent_at,is_internal,is_debug,webdriver,ua_headless,ua_declared_bot,seconds_after_send,visible_ms,video_playing,video_25,video_50,video_75,video_complete,meeting_section_visible,booking_cta_click,booking_dialog_open,scroll_jump';
 const BOOKING_COLUMNS = 'lead_id,booked_at,meeting_at,attributed_issuance_id,attributed_source,assist_label';
-const LEAD_COLUMNS = 'lead_id,company,contact_name,email';
+const LEAD_COLUMNS = 'lead_id,company,contact_name,email,stage,notes,lead_niche,email_template_id,intended_campaign_version,campaign,trade_type';
 const MONITOR_COLUMNS = 'is_internal,is_debug,resolution';
 
 const DIMENSION = /^[A-Za-z0-9._:@ -]{1,160}$/;
@@ -240,8 +250,12 @@ function buildStaffingFunnel({ filters, issuances = [], sessions = [], bookings 
     };
   }).sort((a, b) => String(b.latestVisitAt || b.linkSentAt).localeCompare(String(a.latestVisitAt || a.linkSentAt)));
 
+  // The staffing page reports staffing bookings: one attributed to a staffing
+  // link, or one whose lead is a live outreach lead (not archived, offer not
+  // retired). Meetings of retired offers stay in the ledger, not on this page.
+  const staffingBooking = row => Boolean(row.attributed_issuance_id) || isLiveOutreachLead(leadInfo.get(row.lead_id));
   const periodBookings = bookings.filter(row => row.booked_at >= filters.from && row.booked_at < filters.to
-    && (filters.includeTest || !isTestLead(row.lead_id)));
+    && (filters.includeTest || !isTestLead(row.lead_id)) && staffingBooking(row));
   const bookingPanel = {
     byLabel: Object.fromEntries(ASSIST_LABELS.map(label => [label, periodBookings.filter(row => row.assist_label === label).length])),
     total: periodBookings.length,

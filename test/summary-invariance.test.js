@@ -47,6 +47,7 @@ function runUpdateCeStats({ ceLeads, stats }) {
     ceCompanyKey: c => String(c || '').toLowerCase().replace(/[^a-z0-9]/g, ''),
     ceHasReplied: () => false,
     ceLeadCompanyKeys: () => new Set(),
+    esc: value => String(value), renderSenderAnalytics: () => {},
   };
   new Function(...Object.keys(ctx), `${body}; updateCeStats();`)(...Object.values(ctx));
   return {
