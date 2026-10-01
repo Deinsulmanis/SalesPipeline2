@@ -6607,6 +6607,95 @@ function operationalMailbox(senderInboxId) {
 // warm cache costs no Sheets read; ?refresh=1 forces the usual one batchGet.
 // ?humanText=1 also reads up to ten recorded human replies from Gmail (read
 // only, verified against the recorded mailbox and thread) to show their text.
+// Read-only Agent v2 status: configuration flags, shadow-ledger aggregates and
+// Phase 6 execution evidence from the activity ledger. Counts and timestamps
+// only — no credential, raw model output or prospect text is returned.
+app.get('/api/ops/agent-v2', requireAuth, async (_req, res) => {
+  const { agentV2ShadowConfig } = require('./integrations/agent-v2-shadow-hook');
+  const config = agentV2ShadowConfig(process.env);
+  const out = {
+    deployment: { sha: String(process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT_SHA || '').trim() || null },
+    shadowEnabled: config.shadowEnabled, executionEnabled: config.executionEnabled,
+    effectiveSendAuthority: config.effectiveSendAuthority, shadowActive: config.shadowActive,
+    model: config.model, keyConfigured: config.keyConfigured, ledgerConfigured: config.ledgerConfigured,
+    scope: config.scope, shadowAuthority: config.shadowAuthority, ledger: null, execution: null,
+  };
+  if (config.ledgerConfigured) {
+    let store;
+    try {
+      store = require('./integrations/agent-v2-store').createPgAgentV2Store({
+        connectionString: process.env.AGENT_V2_SUPABASE_DATABASE_URL,
+        expectedSupabaseUrl: process.env.SUPABASE_URL, caCert: process.env.AGENT_V2_SUPABASE_CA_CERT });
+      const row = await store.summary();
+      out.ledger = { available: true, totalDecisions: row.total, inFlight: row.in_flight,
+        successful: row.successful, invalidOutput: row.invalid_output, guarded: row.guarded,
+        failed: row.failed, retryable: row.retryable, retryExhausted: row.retry_exhausted,
+        actions: row.actions, lastShadowAt: row.last_completed_at, lastSuccessAt: row.last_success_at,
+        lastErrorCategory: row.last_error_category, lastErrorAt: row.last_error_at };
+    } catch (error) {
+      // Our own configuration-validation messages name no credential; a driver
+      // error is reported by its code only.
+      const ours = /^(?:Agent v2|SUPABASE_URL|shadow database)/.test(String(error.message || ''));
+      out.ledger = { available: false, error: String(error.code || 'ledger_unavailable').slice(0, 60),
+        ...(ours ? { reason: String(error.message).slice(0, 160) } : {}) };
+    } finally {
+      if (store) await store.close().catch(() => {});
+    }
+  }
+  try {
+    const dataset = await withAuth(() => getOutreachDataset({}));
+    const { agentV2ExecutionEvidence } = require('./integrations/agent-v2-ops');
+    const evidence = agentV2ExecutionEvidence(dataset.activities || []);
+    out.execution = { ...evidence, count: evidence.attemptsTotal, lastAt: evidence.lastAttemptAt,
+      source: 'activity ledger (reply_decision_pending_execution, reply_decision_recorded, booking_link_sent)' };
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    out.execution = { available: false };
+  }
+  // Runtime kill switch, read live (no cache). Send authority needs BOTH the
+  // configured flag and the armed switch.
+  const { readAgentV2KillSwitch } = require('./integrations/agent-v2-kill-switch');
+  const { CANARY } = require('./integrations/agent-v2-canary');
+  const runtime = await readAgentV2KillSwitch();
+  out.killSwitch = { readable: runtime.readable, armed: runtime.armed, code: runtime.code,
+    armedUntil: runtime.armedUntil, updatedBy: runtime.updatedBy, updatedAt: runtime.updatedAt,
+    reason: runtime.reason, version: runtime.version };
+  out.configuredSendAuthority = config.effectiveSendAuthority;
+  out.effectiveSendAuthority = Boolean(config.effectiveSendAuthority && runtime.readable && runtime.armed);
+  out.canary = { enabled: out.effectiveSendAuthority, version: CANARY.version,
+    scope: { campaign: CANARY.campaignName, campaignId: CANARY.campaignId, clientId: CANARY.clientId,
+      senderInboxId: CANARY.senderInboxId, policyAction: CANARY.policyAction, agentAction: CANARY.agentAction,
+      message: 'first fresh genuine-human reply, no prior human or warm outbound' },
+    confidenceFloor: CANARY.confidenceFloor, maxQualificationQuestions: CANARY.maxSlots,
+    dailyCap: CANARY.dailyCap, observationDays: CANARY.observationDays,
+    attemptsToday: out.execution?.attemptsToday ?? null, sendsToday: out.execution?.sendsToday ?? null };
+  res.json(out);
+});
+
+// Arm or disarm the Agent v2 runtime kill switch (ops auth). Disarming is
+// always accepted; arming needs a reason, a named person and an expiry within
+// 15 days, and is refused unless the configured execution flag is already on.
+// The change and its audit record commit together in the database.
+app.post('/api/ops/agent-v2/kill-switch', requireAuth, async (req, res) => {
+  const { setAgentV2KillSwitch } = require('./integrations/agent-v2-kill-switch');
+  const { agentV2ShadowConfig } = require('./integrations/agent-v2-shadow-hook');
+  const body = req.body || {};
+  const armed = body.armed === true;
+  if (body.armed !== true && body.armed !== false) return res.status(400).json({ error: 'armed must be true or false' });
+  if (armed && !agentV2ShadowConfig(process.env).effectiveSendAuthority)
+    return res.status(409).json({ error: 'AGENT_V2_EXECUTION_ENABLED and the shadow prerequisites must be configured before arming' });
+  try {
+    const changed = await setAgentV2KillSwitch({ armed, armedUntil: body.armedUntil || null,
+      reason: body.reason, by: body.by, expectedVersion: Number.isInteger(body.expectedVersion) ? body.expectedVersion : null });
+    if (!changed.ok) return res.status(changed.code === 'kill_switch_change_invalid' ? 400 : 503).json(changed);
+    console.log(`[agent-v2] kill switch ${armed ? 'ARMED' : 'DISARMED'} by=${String(body.by || '').slice(0, 60)} until=${changed.state.armedUntil || '-'}`);
+    res.json(changed);
+  } catch (error) {
+    console.error('[agent-v2 kill switch]', error.message);
+    res.status(503).json({ ok: false, code: 'kill_switch_unavailable' });
+  }
+});
+
 app.get('/api/ops/conversation-state/:leadId', requireAuth, async (req, res) => {
   try {
     const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
@@ -7629,5 +7718,18 @@ app.listen(PORT, () => {
     console.log(`[staffing-shadow] init enabled=${shadow.enabled} mode=${shadow.mode} keyConfigured=${shadow.keyConfigured} requestedMode=${shadow.requestedMode || 'none'} authority=${JSON.stringify(ZERO_AUTHORITY)}`);
   } catch (error) {
     console.warn(`[staffing-shadow] init failed closed: ${error.message}`);
+  }
+  try {
+    // Booleans and the model id only; no credential value is ever read here.
+    const v2 = require('./integrations/agent-v2-shadow-hook').agentV2ShadowConfig(process.env);
+    console.log(`[agent-v2] init AGENT_V2_SHADOW_ENABLED=${v2.shadowEnabled} AGENT_V2_EXECUTION_ENABLED=${v2.executionEnabled}`
+      + ` model=${v2.model} keyConfigured=${v2.keyConfigured} ledgerConfigured=${v2.ledgerConfigured}`
+      + ` shadowActive=${v2.shadowActive} configuredSendAuthority=${v2.effectiveSendAuthority} scope=${v2.scope}`);
+    require('./integrations/agent-v2-kill-switch').readAgentV2KillSwitch().then(runtime => {
+      console.log(`[agent-v2] kill switch readable=${runtime.readable} armed=${runtime.armed} code=${runtime.code}`
+        + ` armedUntil=${runtime.armedUntil || '-'} effectiveSendAuthority=${Boolean(v2.effectiveSendAuthority && runtime.armed)}`);
+    }).catch(() => console.log('[agent-v2] kill switch unreadable — execution denied'));
+  } catch (error) {
+    console.warn(`[agent-v2] init failed closed: ${error.message}`);
   }
 });

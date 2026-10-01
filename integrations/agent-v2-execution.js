@@ -6,6 +6,8 @@ const { responseActionId } = require('./prospect-reply-delivery');
 const { sendAuthorization } = require('./send-authorization');
 const { sendLockEnabled, getOutboundReservation, STATUS } = require('./send-lock');
 const { decisionIdFor } = require('./agent-v2-store');
+const { buildAgentV2Input } = require('./agent-v2-input');
+const { canaryDecisionGate } = require('./agent-v2-canary');
 
 const EXECUTION_VERSION = 'agent_v2_execution_v1';
 const FLAG = 'AGENT_V2_EXECUTION_ENABLED';
@@ -28,7 +30,8 @@ function liveSafetyPasses(safety, { leadId, messageId, decisionId, stateDigest, 
     && safety.senderOwnershipProven === true && safety.senderEligible === true
     && safety.quotaAvailable === true && safety.windowAvailable === true
     && safety.currentSendAuthorized === true && safety.noNewerInbound === true
-    && safety.noConflictingEvidence === true);
+    && safety.noConflictingEvidence === true
+    && safety.killSwitchArmed === true && safety.canaryCapAvailable === true);
 }
 
 // This module never calls Gmail itself. The sole delivery callback is the
@@ -36,7 +39,8 @@ function liveSafetyPasses(safety, { leadId, messageId, decisionId, stateDigest, 
 // reservation run again immediately before its provider call.
 async function executeAgentV2Qualification({ leadId, messageId, store, loadCurrentState,
   checkPhase0, liveSafety, deliver, env = process.env,
-  reservationLookup = getOutboundReservation } = {}) {
+  reservationLookup = getOutboundReservation, killSwitch, canaryGate = canaryDecisionGate,
+  recoverSend = null } = {}) {
   const id = String(leadId || '').trim();
   const message = String(messageId || '').trim();
   const decisionId = id && message ? decisionIdFor(id, message) : null;
@@ -44,8 +48,30 @@ async function executeAgentV2Qualification({ leadId, messageId, store, loadCurre
   if (env[FLAG] !== 'true') return result({ ...base, executionReasonCode: 'EXECUTION_DISABLED' });
   if (!decisionId || typeof store?.getDecisionRow !== 'function'
     || typeof loadCurrentState !== 'function' || typeof checkPhase0 !== 'function'
-    || typeof liveSafety !== 'function' || typeof deliver !== 'function')
+    || typeof liveSafety !== 'function' || typeof deliver !== 'function'
+    || typeof killSwitch !== 'function' || typeof canaryGate !== 'function')
     return result({ ...base, executionReasonCode: 'EXECUTION_INPUT_UNAVAILABLE' });
+  // Runtime kill switch: read live, fail closed. Recovery and reuse reporting
+  // below still run while disarmed; only a NEW send needs it armed.
+  const runtimeArmed = async () => {
+    try { const state = await killSwitch(); return state?.readable === true && state.armed === true
+      ? null : (state?.readable ? 'KILL_SWITCH_DISARMED' : 'KILL_SWITCH_UNREADABLE'); }
+    catch { return 'KILL_SWITCH_UNREADABLE'; }
+  };
+  // An unresolved reservation is reconciled from Gmail before anything else;
+  // a lost acknowledgment is never resent.
+  const reconcile = async (reservation, scoped) => {
+    if (typeof recoverSend !== 'function') return null;
+    let recovered;
+    try { recovered = await recoverSend({ reservation, actionId: sendId }); } catch { recovered = null; }
+    if (recovered?.recovered === true && recovered.providerMessageId)
+      return result({ ...scoped, providerMessageId: recovered.providerMessageId,
+        executionVerdict: 'REUSED', executionReasonCode: 'PRIOR_PROVIDER_SEND_RECOVERED',
+        executionStatus: 'ALREADY_SENT' });
+    return result({ ...scoped, executionVerdict: 'HANDOFF',
+      executionReasonCode: `RECONCILIATION_${String(recovered?.code || 'UNAVAILABLE').toUpperCase()}`,
+      executionStatus: 'RECONCILIATION_REQUIRED' });
+  };
 
   // A confirmed response is an immutable idempotency result. Check it before
   // Phase 5: after a real send, fresh Phase 1 will correctly say "answered"
@@ -81,10 +107,15 @@ async function executeAgentV2Qualification({ leadId, messageId, store, loadCurre
       providerMessageId: priorReservation.providerMessageId || null,
       executionVerdict: 'REUSED', executionReasonCode: 'PRIOR_SEND_CONFIRMED',
       executionStatus: 'ALREADY_SENT' });
-  if (priorReservation && priorReservation.status !== STATUS.FAILED_PRE_DELIVERY)
+  if (priorReservation && priorReservation.status !== STATUS.FAILED_PRE_DELIVERY) {
+    const reconciled = await reconcile(priorReservation, { ...base, actionId: priorAction });
+    if (reconciled) return reconciled;
     return result({ ...base, actionId: priorAction,
       executionReasonCode: `RESERVATION_${String(priorReservation.status || 'UNKNOWN').toUpperCase()}`,
       executionStatus: 'RECONCILIATION_REQUIRED' });
+  }
+  const disarmedBeforeReadiness = await runtimeArmed();
+  if (disarmedBeforeReadiness) return result({ ...base, actionId: priorAction, executionReasonCode: disarmedBeforeReadiness });
 
   const readiness = await evaluateAgentV2Readiness({ leadId: id, messageId: message,
     store, loadCurrentState, checkPhase0 });
@@ -108,6 +139,11 @@ async function executeAgentV2Qualification({ leadId, messageId, store, loadCurre
   const scoped = { ...base, actionId };
   if (actionId !== 'SUGGEST_QUALIFICATION')
     return result({ ...scoped, executionReasonCode: 'ACTION_NOT_ALLOWLISTED' });
+  let canary;
+  try { canary = canaryGate({ record: row.record, state, input: buildAgentV2Input(state, message) }); }
+  catch { canary = { allowed: false, code: 'canary_policy_unavailable' }; }
+  if (canary?.allowed !== true)
+    return result({ ...scoped, executionReasonCode: `CANARY_${String(canary?.code || 'DENIED').toUpperCase()}` });
   const target = state.turns?.find(turn => turn.direction === 'inbound' && turn.messageId === message);
   if (!pendingProofMatches(state, target) || state.latest?.inbound?.messageId !== message)
     return result({ ...scoped, executionReasonCode: 'PENDING_PROOF_OR_LATEST_INBOUND_INVALID' });
@@ -139,10 +175,16 @@ async function executeAgentV2Qualification({ leadId, messageId, store, loadCurre
     return result({ ...scoped, senderInboxId, providerMessageId: reservation.providerMessageId,
       executionVerdict: 'REUSED', executionReasonCode: 'PRIOR_SEND_CONFIRMED',
       executionStatus: 'ALREADY_SENT' });
-  if (reservation && reservation.status !== STATUS.FAILED_PRE_DELIVERY)
+  if (reservation && reservation.status !== STATUS.FAILED_PRE_DELIVERY) {
+    const reconciled = await reconcile(reservation, { ...scoped, senderInboxId });
+    if (reconciled) return reconciled;
     return result({ ...scoped, senderInboxId,
       executionReasonCode: `RESERVATION_${String(reservation.status || 'UNKNOWN').toUpperCase()}`,
       executionStatus: 'RECONCILIATION_REQUIRED' });
+  }
+  // Immediately before the delivery primitive: the switch is read again.
+  const disarmedBeforeSend = await runtimeArmed();
+  if (disarmedBeforeSend) return result({ ...scoped, senderInboxId, executionReasonCode: disarmedBeforeSend });
 
   // The approved Phase 4 wording is the only prospect-facing proposal passed
   // to the existing delivery primitive. Its own final gate and reservation

@@ -112,6 +112,36 @@ function authorisingOverride(activities, { leadId, messageId, overrideId }) {
   return { ok: true, record, data };
 }
 
+/**
+ * Inbound message ids whose opt-out classification an AUDITED correction has
+ * released, for readers that derive current state (conversation-state.js). PURE.
+ *
+ * A message counts only when its false_opt_out_corrected record has the exact
+ * stable id for (lead, message), the release decision and source this module
+ * writes, a named human, and an authorising reply_classification_override that
+ * is still active, unreversed and names the same message as an unsubscribe
+ * re-read. Nothing is inferred: no record, or any field off, and the opt-out
+ * stands. Only that one message is released; any other opt-out — earlier or
+ * later — is untouched.
+ */
+function correctedOptOutMessageIds(activities = [], leadId = '') {
+  const id = String(leadId || '').trim();
+  const released = new Set();
+  if (!id) return released;
+  for (const row of activities || []) {
+    if (!row || row.eventType !== CORRECTION_EVENT || !belongsToLead(row, id)) continue;
+    const data = meta(row);
+    const messageId = String(data.gmailMessageId || '').trim();
+    if (!messageId || row.eventId !== correctionEventId(id, messageId)) continue;
+    if (data.decision !== 'release_false_opt_out' || data.source !== CORRECTION_SOURCE) continue;
+    if (!String(data.correctedBy || '').trim() || !String(data.authorizedByOverrideId || '').trim()) continue;
+    const authority = authorisingOverride(activities, { leadId: id, messageId,
+      overrideId: String(data.authorizedByOverrideId).trim() });
+    if (authority.ok) released.add(messageId);
+  }
+  return released;
+}
+
 /** Automated actions that could still act on this lead, from the ledger. */
 function pendingAutomation(activities, leadId) {
   const mine = activities.filter(row => belongsToLead(row, leadId));
@@ -360,5 +390,5 @@ async function correctOnce({ leadId, messageId, overrideId, by }, deps) {
 module.exports = {
   FALSE_OPT_OUT_TAG, CORRECTION_EVENT, CORRECTION_SOURCE, REFUSAL,
   correctionEventId, removeFalseOptOutTag, evaluateFalseOptOutCorrection, correctionActivity,
-  applyFalseOptOutCorrection, pendingAutomation,
+  applyFalseOptOutCorrection, pendingAutomation, correctedOptOutMessageIds,
 };

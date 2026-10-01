@@ -90,6 +90,7 @@ const { evaluateFreshSendSafety, guardProviderSend } = require('./integrations/s
 const {
   withGmailProviderSend, withOutboundReservation, confirmOutboundReservation,
   isDefinitePreDeliveryFailure, getOutboundReservation, STATUS: SEND_RESERVATION_STATUS,
+  confirmReconciledReservation, markReservationReconciliationRequired,
 } = require('./integrations/send-lock');
 const {
   ordinaryColdActionId, stageSequenceActionId, smartleadEnqueueActionId,
@@ -145,6 +146,7 @@ const { findOriginalSentThread, resolveColdFollowUpThread } = require('./integra
 const { appendLeadsRow } = require('./integrations/leads-sheet-append');
 const gmailMailboxObserver = require('./integrations/gmail-mailbox-observer');
 const { planMailboxEvents, commitObservation, ownReplyText } = require('./integrations/mailbox-observation-events');
+const { inboxMayRoute, preferNextReply } = require('./integrations/reply-candidate-selection');
 const { stripQuotedReply } = require('./integrations/reply-reconciliation');
 const {
   wrapGmail, runWithGmailFeature, gmailUsageSnapshot, recordGmailRequest,
@@ -176,6 +178,11 @@ const { deliverProspectReply, responseActionId } = require('./integrations/prosp
 const { buildConversationState } = require('./integrations/conversation-state');
 const { indexConversationEvidence, selectConversationEvidence } = require('./integrations/conversation-evidence');
 const { createPgAgentV2Store } = require('./integrations/agent-v2-store');
+const { agentV2ShadowConfig, shadowCandidate, runAgentV2ShadowPass } = require('./integrations/agent-v2-shadow-hook');
+const { agentV2FinalFreshness } = require('./integrations/agent-v2-freshness');
+const { readAgentV2KillSwitch } = require('./integrations/agent-v2-kill-switch');
+const { CANARY: AGENT_V2_CANARY, canaryPreScope, canaryCapVerdict } = require('./integrations/agent-v2-canary');
+const { ACTION_HEADER: AGENT_V2_ACTION_HEADER, locateAgentV2Send, reconcileAgentV2Send } = require('./integrations/agent-v2-send-recovery');
 const { runAgentV2OneShotReadiness } = require('./integrations/agent-v2-orchestration');
 const { executeAgentV2Qualification, FLAG: AGENT_V2_EXECUTION_FLAG } = require('./integrations/agent-v2-execution');
 const { QUALIFY_ACTION: AGENT_V2_QUALIFY_ACTION, pendingDecisionActivity,
@@ -2926,6 +2933,7 @@ async function handleRoofingSurveyReply(lead, message, replyText, todaySent, act
 async function runReplyCheckPass(leads, todaySentOverride = null, outboundObservationOk = true,
   activitiesForCycle = null, senderIds = null, { advanceCheckpoint = true } = {}) {
   const candidates = leads.filter(l => isValidEmail(l.email) && (l.lastEmailedAt || Number(l.emailStep) > 0));
+  const candidatesById = new Map(candidates.map(item => [item.id, item]));
   activitiesForCycle = activitiesForCycle || await withAuth(() => readColdCallActivities());
   console.log(`[ReplyCheck] Checking ${candidates.length} emailed lead${candidates.length === 1 ? '' : 's'} for replies...`);
 
@@ -2938,6 +2946,9 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
   const failedSenderIds = new Set();
   const repliesByLead = new Map();
   const staffingShadowProduction = new Map();
+  // Genuine-human staffing replies decided in THIS pass, for the Agent v2
+  // shadow. Collected only after the authoritative decision is persisted.
+  const agentV2ShadowCandidates = [];
   const bouncesByLead = new Map();
   const pendingHistory = new Map();
   const observedStateBySender = new Map();
@@ -3025,10 +3036,15 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       // Classification always runs, including CHECK_ONLY and recovery. Send
       // handlers stay gated separately so a recovered opt-out still suppresses.
       for (const item of plan.replies) {
-        repliesByLead.set(item.leadId, {
+        const next = {
           ...item.message, observedSenderId: sender.id,
           historical: Boolean(item.historical), canonical: item.canonical,
-        });
+        };
+        // Inboxes are read in turn; a message from an inbox that may not route
+        // this lead never displaces one that may (reply-candidate-selection.js).
+        if (preferNextReply(repliesByLead.get(item.leadId), next, candidatesById.get(item.leadId))) {
+          repliesByLead.set(item.leadId, next);
+        }
       }
       // A mailbox mid-recovery has NOT proven that no newer prospect or manual
       // activity exists, so it stays observation-unavailable for every send
@@ -3126,7 +3142,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     const sender = GMAIL_SENDERS.find(item => item.id === (rawMessage.observedSenderId || lead.senderInboxId || 'primary'))
       || GMAIL_SENDERS[0];
     if (!sender) continue;
-    if (!rawMessage.terminalReplay && lead.senderInboxId && lead.senderInboxId !== sender.id) continue;
+    if (!inboxMayRoute(lead, sender.id, rawMessage)) continue;
     const message = {
       messageId: rawMessage.id, rfcMessageId: gmailMailboxObserver.headerValue(rawMessage.payload, 'Message-ID'),
       threadId: rawMessage.threadId || '', snippet: rawMessage.snippet || '',
@@ -3351,6 +3367,13 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
           classification,
           replyDecisionId: replyDecision.decisionId || undefined,
         }) });
+      try {
+        const v2Candidate = shadowCandidate({ lead, message, decision: replyDecision,
+          internalDomains: GMAIL_SENDERS.map(item => String(item.email || '').split('@')[1]).filter(Boolean) });
+        if (v2Candidate.eligible) agentV2ShadowCandidates.push(v2Candidate.item);
+      } catch (error) {
+        console.warn(`[agent-v2-shadow] candidate check failed closed: ${error.message}`);
+      }
     }
     if (message.messageId) {
       staffingShadowProduction.set(message.messageId, {
@@ -3389,12 +3412,39 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     } catch (error) {
       console.warn(`[staffing-shadow] failed closed: ${error.message}`);
     }
+    // Agent v2 production shadow: zero authority, never read by routing, and
+    // independent of AGENT_V2_EXECUTION_ENABLED. Its only write is the shadow ledger.
+    try {
+      await observeAgentV2Shadows(agentV2ShadowCandidates);
+    } catch (error) {
+      console.warn(`[agent-v2-shadow] failed closed: ${error.message}`);
+    }
   }
   // The caller advances checkpoints only AFTER bounce writes and durable
   // suppression have also succeeded. Returning the pending cursors here keeps
   // a crash between reply and bounce processing replayable and idempotent.
   return { ok: failedSenderIds.size === 0, failedSenderIds, bouncesByLead,
     pendingHistory, observedStateBySender };
+}
+
+async function observeAgentV2Shadows(candidates = []) {
+  if (!agentV2ShadowConfig(process.env).shadowEnabled) return null;
+  let snapshot = null;
+  const result = await runAgentV2ShadowPass({
+    candidates, env: process.env,
+    createStore: () => createPgAgentV2Store({ connectionString: process.env.AGENT_V2_SUPABASE_DATABASE_URL,
+      expectedSupabaseUrl: process.env.SUPABASE_URL, caCert: process.env.AGENT_V2_SUPABASE_CA_CERT }),
+    // One fresh snapshot per pass, read after this pass's decisions were written.
+    loadEvidence: async leadId => {
+      snapshot = snapshot || await withAuth(() => loadAgentSnapshot({
+        forceColdEmail: outreachWriteAuthority() === 'sheets',
+      }));
+      return loadAgentV2ReplyEvidence(leadId, null, snapshot);
+    },
+    log: entry => console.log(`[agent-v2-shadow] ${JSON.stringify(entry)}`),
+  });
+  if (result.status !== 'ok' || result.considered) console.log(`[agent-v2-shadow] pass ${JSON.stringify(result)}`);
+  return result;
 }
 
 async function commitMailboxObservationCheckpoints(observation = {}) {
@@ -3407,7 +3457,8 @@ async function commitMailboxObservationCheckpoints(observation = {}) {
 }
 
 async function deliverHardenedWarmReply({ lead, message, action, body, subject, activities, classification,
-  ownerMode = 'reply', sequenceId = 'prospect_reply_v1', validateFresh = null, replyDecisionId = '', landingPlan = null }) {
+  ownerMode = 'reply', sequenceId = 'prospect_reply_v1', validateFresh = null, replyDecisionId = '', landingPlan = null,
+  agentV2Send = false }) {
   const sender = senderForPersistedLead(lead);
   const metadataOf = row => { try { return JSON.parse(row.metadata || '{}'); } catch (_) { return {}; } };
   // Staffing positive-reply landing link (automated delivery only; null for
@@ -3426,7 +3477,21 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
     action, subject, body, checkOnly: CHECK_ONLY,
     classification,
   }, {
-    findDelivered: rfcMessageId => findSuccessfulSequenceSend({ gmail: gmailForSender(sender), rfcMessageId }),
+    // Agent v2 proves an earlier send from Gmail's own thread state and its
+    // action header, never from the Message-ID Gmail rewrites. Proven: reuse.
+    // Nothing of ours after the inbound: send. Anything else: reconcile first.
+    findDelivered: agentV2Send ? async rfcMessageId => {
+      const located = await locateAgentV2Send({ gmail: gmailForSender(sender),
+        actionId: responseActionId(lead.id, message.messageId, action), threadId: message.threadId,
+        senderEmail: sender.email, recipientEmail: lead.email,
+        afterInternalDate: Date.parse(message.occurredAt || '') || 0 });
+      if (located.status === 'SENT') return { providerMessageId: located.providerMessageId,
+        threadId: located.threadId, rfcMessageId, occurredAt: null };
+      if (located.reason === 'no_send_found') return null;
+      const error = new Error(`Agent v2 send state is inconclusive (${located.reason}); reconciliation required`);
+      error.code = 'reconciliation_required';
+      throw error;
+    } : rfcMessageId => findSuccessfulSequenceSend({ gmail: gmailForSender(sender), rfcMessageId }),
     existingDelivery: async actionId => activities.some(row => row.eventId === actionId),
     existingReservation: async actionId => {
       const reservations = activities.filter(row => row.eventType === 'prospect_reply_reserved' && metadataOf(row).actionId === actionId);
@@ -3536,6 +3601,7 @@ async function deliverHardenedWarmReply({ lead, message, action, body, subject, 
       });
       return sendEmail({
       ...payload, lead,
+      ...(agentV2Send ? { extraHeaders: [`${AGENT_V2_ACTION_HEADER}: ${String(payload.actionId || '').replace(/[^A-Za-z0-9:._-]/g, '')}`] } : {}),
       sendAction: {
         actionId: payload.sendAction?.actionId || payload.actionId,
         leadId: lead.id,
@@ -3678,7 +3744,11 @@ async function liveSafetyForAgentV2Reply({ leadId, messageId, decisionId, stateD
     && observerAutomationReadyBySender.get(senderInboxId) === true);
   const noConflictingEvidence = !state.evidenceWarnings.length && !state.ambiguities.length
     && state.thread.threadIds.length === 1;
+  const killSwitch = await readAgentV2KillSwitch();
+  const canaryCap = canaryCapVerdict(fresh.allActivities, { day, messageId });
   const safety = { leadId, messageId, decisionId, stateDigest,
+    killSwitchArmed: killSwitch.readable === true && killSwitch.armed === true,
+    canaryCapAvailable: canaryCap.allowed === true && senderInboxId === AGENT_V2_CANARY.senderInboxId,
     senderInboxId, providerThreadLatest, humanClear, repeatClear,
     suppressionClear, senderOwnershipProven: pinned === senderInboxId
       && state.thread.ownershipStatus === 'proven',
@@ -3694,12 +3764,20 @@ async function liveSafetyForAgentV2Reply({ leadId, messageId, decisionId, stateD
     && Object.entries(safety).every(([key, value]) =>
       !['providerThreadLatest', 'humanClear', 'repeatClear', 'suppressionClear',
         'senderOwnershipProven', 'senderEligible', 'quotaAvailable', 'windowAvailable',
-        'currentSendAuthorized', 'noNewerInbound', 'noConflictingEvidence'].includes(key) || value === true);
+        'currentSendAuthorized', 'noNewerInbound', 'noConflictingEvidence',
+        'killSwitchArmed', 'canaryCapAvailable'].includes(key) || value === true);
   return safety;
 }
 
 async function deliverAgentV2Qualification({ lead, message, activities, decision,
   outboundObservationOk, subject }) {
+  // Configured flags and the live runtime kill switch, before anything is
+  // recorded: a disarmed canary leaves no pending record and spends no cap.
+  if (process.env[AGENT_V2_EXECUTION_FLAG] !== 'true' || process.env.AGENT_V2_SHADOW_ENABLED !== 'true'
+    || !process.env.ANTHROPIC_AGENT_V2_KEY)
+    return { delivered: false, code: 'agent_v2_execution_unavailable' };
+  const runtime = await readAgentV2KillSwitch();
+  if (!runtime.readable || !runtime.armed) return { delivered: false, code: `agent_v2_${runtime.code}` };
   const sources = activities.filter(row => row.eventId === `gmail-reply:${message.messageId}`);
   if (sources.length !== 1) return { delivered: false, code: 'provider_proof_unavailable' };
   const pending = pendingDecisionActivity({ lead, message, decision, sourceRow: sources[0] });
@@ -3738,25 +3816,43 @@ async function deliverAgentV2Qualification({ lead, message, activities, decision
     const execution = await executeAgentV2Qualification({ leadId: lead.id,
       messageId: message.messageId, store, loadCurrentState, checkPhase0,
       liveSafety: args => liveSafetyForAgentV2Reply(args, lead, message, outboundObservationOk),
+      killSwitch: () => readAgentV2KillSwitch(),
+      recoverSend: ({ reservation, actionId }) => recoverAgentV2Send({ lead, message, reservation, actionId, activities, subject }),
       deliver: async ({ body, action, decisionId, stateDigest, stateAsOf }) =>
         deliverHardenedWarmReply({ lead, message, action, body, subject, activities,
           classification: decision.finalClassification, replyDecisionId: decision.decisionId,
+          agentV2Send: true,
           validateFresh: async ({ fresh, current, mine }) => {
             if (process.env[AGENT_V2_EXECUTION_FLAG] !== 'true'
               || !sendAuthorization().allowed || !isStaffingCampaign(current))
               return { allowed: false, code: 'agent_v2_kill_switch_or_campaign_changed' };
+            // Last moment: the live switch, today's canary cap and the primary inbox.
+            const lastRuntime = await readAgentV2KillSwitch();
+            if (!lastRuntime.readable || !lastRuntime.armed) return { allowed: false, code: `agent_v2_${lastRuntime.code}` };
+            const freshRows = await readColdCallActivities(fresh.activityRows);
+            if (!canaryCapVerdict(freshRows, { messageId: message.messageId }).allowed)
+              return { allowed: false, code: 'agent_v2_canary_daily_cap' };
+            if (message.senderInboxId !== AGENT_V2_CANARY.senderInboxId
+              || senderForPersistedLead(current).id !== AGENT_V2_CANARY.senderInboxId)
+              return { allowed: false, code: 'agent_v2_canary_sender' };
             const checked = await loadAgentV2ReplyEvidence(lead.id, stateAsOf, fresh);
             const inbound = checked.state.turns.find(turn => turn.direction === 'inbound'
               && turn.messageId === message.messageId);
-            if (checked.state.evidenceDigest !== stateDigest
-              || checked.state.latest?.inbound?.messageId !== message.messageId
-              || !pendingProofMatches(checked.state, inbound)
-              || checked.state.responseState.answered !== 'no'
-              || checked.state.evidenceWarnings.length || checked.state.ambiguities.length
-              || inboundWarmReplyAlreadySent(mine, message.messageId)
-              || staffingHumanTouchBlock({ lead: current, activities: mine, outboundObservationOk })
-              || staffingRepeatReason(action, staffingReplyHistory({ lead: current, activities: mine })))
+            if (!pendingProofMatches(checked.state, inbound))
               return { allowed: false, code: 'agent_v2_state_changed_before_send' };
+            // Final freshness on state read at this moment: newest inbound, no
+            // human reply or answer since, no takeover/hold, same lead, thread,
+            // sender and client, no booking, no suppression. The Gmail thread
+            // check (verifyThread) then runs after this, right before the send.
+            const freshness = agentV2FinalFreshness({ leadId: lead.id, messageId: message.messageId,
+              senderInboxId: message.senderInboxId, threadId: message.threadId, stateDigest,
+              original: lead, current, state: checked.state, guards: {
+                suppressed: Boolean(sendSuppressionReason(current, { suppressedEmails: checked.suppressedEmails })),
+                alreadySent: inboundWarmReplyAlreadySent(mine, message.messageId),
+                humanTouch: Boolean(staffingHumanTouchBlock({ lead: current, activities: mine, outboundObservationOk })),
+                repeat: Boolean(staffingRepeatReason(action, staffingReplyHistory({ lead: current, activities: mine }))),
+              } });
+            if (!freshness.allowed) return { allowed: false, code: `agent_v2_${freshness.code}` };
             const row = await store.getDecisionRow(decisionId);
             return row?.completed_at && row.record?.stateDigest === stateDigest
               && row.record?.decision?.actionId === 'SUGGEST_QUALIFICATION'
@@ -3777,6 +3873,30 @@ async function deliverAgentV2Qualification({ lead, message, activities, decision
       reason: execution.executionReasonCode || null, reconciliationRequired };
   } catch (_) { return { delivered: false, code: 'agent_v2_execution_unavailable' }; }
   finally { await store?.close().catch(() => {}); }
+}
+
+// Reconcile an Agent v2 send whose durable reservation is unresolved, from
+// Gmail's own identifiers (agent-v2-send-recovery.js). Never sends.
+async function recoverAgentV2Send({ lead, message, reservation, actionId, activities, subject }) {
+  const sender = senderForPersistedLead(lead);
+  return reconcileAgentV2Send({ reservation, deps: {
+    locate: () => locateAgentV2Send({ gmail: gmailForSender(sender), actionId, reservation,
+      threadId: message.threadId, senderEmail: sender.email, recipientEmail: lead.email,
+      afterInternalDate: Date.parse(message.occurredAt || '') || 0 }),
+    hasDelivered: async () => activities.some(row => row.eventId === actionId),
+    writeDelivered: async ({ providerMessageId, threadId }) => {
+      const row = { eventId: actionId, leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email,
+        company: cleanCompanyName(lead.company) || lead.company || '', eventType: 'booking_link_sent',
+        occurredAt: new Date().toISOString(), subject, content: '',
+        metadata: JSON.stringify({ actionId, action: AGENT_V2_QUALIFY_ACTION, senderInboxId: sender.id,
+          gmailMessageId: providerMessageId, gmailThreadId: threadId || message.threadId,
+          inboundMessageId: message.messageId, recoveredAfterCheckpointFailure: true,
+          recoveredBy: 'agent_v2_provider_reconciliation' }) };
+      await recordColdCallActivityStrict(row); activities.push(row);
+    },
+    confirm: () => confirmReconciledReservation(actionId),
+    markReconciliation: reason => markReservationReconciliationRequired(actionId, reason),
+  } });
 }
 
 async function handlePositiveAutomation(lead, message, classification, activities, canonical = {},
@@ -3912,12 +4032,23 @@ async function handlePositiveAutomation(lead, message, classification, activitie
     });
     return { delivered: false, code: humanHold.code, reason: humanHold.reason };
   }
-  const agentV2Cutover = isStaffingCampaign(lead)
-    && process.env[AGENT_V2_EXECUTION_FLAG] === 'true';
-  if (agentV2Cutover && policy.action !== AGENT_V2_QUALIFY_ACTION) {
-    await queueDraft(lead, { mode: 'draft', body,
-      reason: 'Agent v2 initial authority permits qualification only', confidence: policy.confidence || 0 });
-    return routeToHuman({ effects: [REPLY_EFFECT.DRAFT_QUEUED] });
+  // Agent v2 executes ONLY inside the canary (agent-v2-canary.js): configured
+  // flag, live kill switch armed, today's cap open, and a first, fresh,
+  // genuine-human ScaleLab staffing reply on primary that the deterministic
+  // policy would answer with the qualification question. Every other message
+  // takes the legacy path exactly as when execution is disabled.
+  let agentV2Cutover = false;
+  if (process.env[AGENT_V2_EXECUTION_FLAG] === 'true' && process.env.AGENT_V2_SHADOW_ENABLED === 'true') {
+    const scope = canaryPreScope({ lead, message, policy, activities });
+    let gate = scope.inScope ? null : scope.code;
+    if (!gate) {
+      const runtime = await readAgentV2KillSwitch();
+      if (!runtime.readable || !runtime.armed) gate = runtime.code;
+      else if (!canaryCapVerdict(activities, { messageId: message.messageId }).allowed) gate = 'canary_daily_cap';
+    }
+    agentV2Cutover = !gate;
+    console.log(JSON.stringify({ event: 'agent_v2_canary_route', lead_id: lead.id, message_id: message.messageId,
+      canary: agentV2Cutover, reason: gate || 'in_scope' }));
   }
   // Tracked staffing landing link for AUTOMATED delivery only. Every draft
   // (above, and on an Agent v2 hold below) keeps the plain URL in `body`, and
@@ -4058,7 +4189,7 @@ async function runLateReplyCheckPass(leads, activitiesForCycle = null) {
       try {
         await evaluateStaffingConversationShadow({
           lead, message, replyText: message.body || message.snippet || '',
-          activities,
+          activities, leads,
           productionClassification: result.classification,
           persistEvent: event => withAuth(() => recordMailboxActivity(event)),
         });

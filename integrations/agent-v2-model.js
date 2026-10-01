@@ -11,9 +11,12 @@ Use only approved fact IDs in the supplied catalog. Never infer prices, guarante
 results, employer demand, campaign volume or meeting availability. A pricing amount or unsupported
 commercial request, proof/results request, complaint, conflicting evidence, human takeover,
 unsubscribe, rejection, OOO, or booking/reschedule ambiguity must be handed off or left alone.
-Use evidence refs from allowedEvidenceRefs, including targetRef. Set slotIds to a nonempty list
-of currently unfilled slots from ${SLOT_IDS.join(', ')} only for SUGGEST_QUALIFICATION.
-Set slotIds to [] for every other action. Objection types: ${OBJECTION_TYPES.join(', ')}.
+Use evidence refs from allowedEvidenceRefs, including targetRef. Set slotIds to one or two
+currently unfilled slots from ${SLOT_IDS.join(', ')} only for SUGGEST_QUALIFICATION.
+Set slotIds to [] for every other action. Set factIds only for SUGGEST_INFO, SUGGEST_FACT_ANSWER
+and SUGGEST_OBJECTION_RESPONSE; for SUGGEST_QUALIFICATION, SUGGEST_REFERRAL_ACK,
+SUGGEST_BOOKING_COORDINATION, HANDOFF and NO_ACTION set factIds to [].
+A plain expression of interest with no question asks qualification. Objection types: ${OBJECTION_TYPES.join(', ')}.
 Handoff codes: ${HANDOFF_CODES.join(', ')}. Templates: ${TEMPLATE_IDS.join(', ')}.
 Reason codes: ${REASON_CODES.join(', ')}.
 The application renders suggested wording from templates and approved fact IDs; do not write prose
@@ -25,6 +28,26 @@ function usage(message) {
     inputTokens: Number(message?.usage?.input_tokens || 0) || 0,
     outputTokens: Number(message?.usage?.output_tokens || 0) || 0,
   };
+}
+
+// Coarse, non-secret category of a provider failure. The shadow ledger stores
+// only this and the status code, never the provider's message text.
+function providerErrorCategory(error) {
+  const status = Number(error?.status || error?.statusCode || 0) || 0;
+  const code = String(error?.code || '').toUpperCase();
+  const message = String(error?.message || '').toLowerCase();
+  const name = String(error?.name || '');
+  if (/credit balance|insufficient (?:credit|fund|balance)|billing/.test(message)) return 'credits';
+  if (name === 'AbortError' || code === 'ABORT_ERR') return 'aborted';
+  if (/timeout/i.test(name) || /timed? ?out|timeout/.test(message) || code === 'ETIMEDOUT') return 'timeout';
+  if (status === 429 || /rate.?limit/.test(message)) return 'rate_limited';
+  if (status === 529 || /overloaded/.test(message)) return 'overloaded';
+  if (status >= 500) return 'server_error';
+  if (status === 401 || status === 403) return 'auth';
+  if (status >= 400) return 'bad_request';
+  if (/ECONN|ENOTFOUND|EAI_AGAIN|EPIPE|ENETUNREACH|socket hang up/i.test(code || message)
+    || /connection/i.test(name) || /network|fetch failed|socket/.test(message)) return 'network';
+  return 'unknown';
 }
 
 // First-party standard API price for pinned Haiku 4.5, USD per million tokens.
@@ -68,10 +91,11 @@ async function runAgentV2Model(input, { createMessage, apiKey = '', AnthropicImp
     return { raw: calls[0].input, providerMessageId: message?.id || null, status: 'ok', ...metrics };
   } catch (error) {
     return { raw: null, status: 'model_error', errorCode: String(error?.code || error?.status || 'unknown').slice(0, 60),
+      errorCategory: providerErrorCategory(error),
       model: MODEL, usage: { inputTokens: 0, outputTokens: 0 },
       latencyMs: Number(process.hrtime.bigint() - started) / 1e6,
       estimatedCostUsd: null, apiCostUsd: null };
   }
 }
 
-module.exports = { SYSTEM_PROMPT, runAgentV2Model, estimatedCostUsd };
+module.exports = { SYSTEM_PROMPT, runAgentV2Model, estimatedCostUsd, providerErrorCategory };
