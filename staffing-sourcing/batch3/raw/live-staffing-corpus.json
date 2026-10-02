@@ -1,0 +1,16 @@
+{
+  "fetchedAt": "2026-09-18T01:17:28.702Z",
+  "total": 327,
+  "queued": 319,
+  "sent": 8,
+  "dentalTotal": 1316,
+  "totalUnfiltered": 2176,
+  "counts": {
+    "queued": 713,
+    "emailed": 1289,
+    "replied": 28,
+    "done": 455,
+    "total": 2176
+  },
+  "leadCount": 327
+}

@@ -1,0 +1,434 @@
+[
+  {
+    "company": "11th Hour Staffing, Inc",
+    "class": "generic_staffing",
+    "person_id": "66fb8f64cdf51100011f7942",
+    "title": "Co-Founder/President/CEO",
+    "title_rank": 0,
+    "n": 1
+  },
+  {
+    "company": "Applied Staffing Group, LLC",
+    "class": "generic_staffing",
+    "person_id": "66f45e6f0313d40001408358",
+    "title": "Owner and Managing Partner",
+    "title_rank": 0,
+    "n": 2
+  },
+  {
+    "company": "Coronado Staffing Group",
+    "class": "generic_staffing",
+    "person_id": "5aaa79e7a6da9893614b3662",
+    "title": "Co-Founder & Managing Partner",
+    "title_rank": 0,
+    "n": 1
+  },
+  {
+    "company": "Delta Construction Partners, Inc.",
+    "class": "keep_name",
+    "person_id": "5fb9fc1b3c588a0001f71af5",
+    "title": "CEO Founder",
+    "title_rank": 0,
+    "n": 2
+  },
+  {
+    "company": "Innovative Staffing",
+    "class": "generic_staffing",
+    "person_id": "61aa6f49d76ebf0001640530",
+    "title": "Founder & President",
+    "title_rank": 0,
+    "n": 1
+  },
+  {
+    "company": "Josephine's Professional Staffing, Inc.",
+    "class": "generic_staffing",
+    "person_id": "66fca4100cbf9000016826db",
+    "title": "CEO/Founder",
+    "title_rank": 0,
+    "n": 1
+  },
+  {
+    "company": "SmartTalent Staffing and Recruiting",
+    "class": "generic_staffing",
+    "person_id": "68c950b3049de80001d30db2",
+    "title": "Founder & CEO",
+    "title_rank": 0,
+    "n": 1
+  },
+  {
+    "company": "Spotlight Staffing",
+    "class": "generic_staffing",
+    "person_id": "66f5a05e0d978b00012f842d",
+    "title": "Owner/CEO",
+    "title_rank": 0,
+    "n": 1
+  },
+  {
+    "company": "Tru Staffing",
+    "class": "generic_staffing",
+    "person_id": "66f55a6460d35e0001f21791",
+    "title": "Founder & CEO",
+    "title_rank": 0,
+    "n": 1
+  },
+  {
+    "company": "Virtual Construction Assistants",
+    "class": "keep_name",
+    "person_id": "66fbc3a9b7896f000194c518",
+    "title": "Founder / CEO",
+    "title_rank": 0,
+    "n": 1
+  },
+  {
+    "company": "ACME Staffing",
+    "class": "generic_staffing",
+    "person_id": "66f6687d1e7c2e00011cff1e",
+    "title": "President CEO",
+    "title_rank": 1,
+    "n": 1
+  },
+  {
+    "company": "Anchor Employment Services, Inc.",
+    "class": "generic_staffing",
+    "person_id": "66f8720d8dcef000014db553",
+    "title": "Chief Executive Officer",
+    "title_rank": 1,
+    "n": 1
+  },
+  {
+    "company": "Captivate Staffing Group",
+    "class": "generic_staffing",
+    "person_id": "54a5f95874686932093b15b8",
+    "title": "CEO",
+    "title_rank": 1,
+    "n": 1
+  },
+  {
+    "company": "Elite Staffing Solutions",
+    "class": "generic_staffing",
+    "person_id": "54c20281746869163974206b",
+    "title": "Chief Executive Officer",
+    "title_rank": 1,
+    "n": 1
+  },
+  {
+    "company": "Employment Service Connection, Inc.",
+    "class": "generic_staffing",
+    "person_id": "66ffc00eb358ea0001076456",
+    "title": "President/CEO",
+    "title_rank": 1,
+    "n": 1
+  },
+  {
+    "company": "Excelsior Staffing",
+    "class": "generic_staffing",
+    "person_id": "66fb8e25cdf51100011f25f8",
+    "title": "President and CEO",
+    "title_rank": 1,
+    "n": 1
+  },
+  {
+    "company": "Modern Machining Solutions",
+    "class": "keep_name",
+    "person_id": "66f483bfed41c30001716117",
+    "title": "President & CEO",
+    "title_rank": 1,
+    "n": 1
+  },
+  {
+    "company": "On Site Personnel",
+    "class": "generic_staffing",
+    "person_id": "6700e77daec44900018708f4",
+    "title": "CEO/President",
+    "title_rank": 1,
+    "n": 2
+  },
+  {
+    "company": "Prime Time Personnel",
+    "class": "generic_staffing",
+    "person_id": "57e03c99a6da980e1b86f981",
+    "title": "Past President & CEO",
+    "title_rank": 1,
+    "n": 1
+  },
+  {
+    "company": "Principle Personnel Group",
+    "class": "generic_staffing",
+    "person_id": "66f8c28e8dcef0000160bc77",
+    "title": "Chief Executive Officer",
+    "title_rank": 1,
+    "n": 1
+  },
+  {
+    "company": "ProStaffing",
+    "class": "generic_staffing",
+    "person_id": "66faa615bd0c94000155329d",
+    "title": "Chief Executive Officer",
+    "title_rank": 1,
+    "n": 2
+  },
+  {
+    "company": "RMG STAFFING",
+    "class": "generic_staffing",
+    "person_id": "66a53acadfa2e8000146ac1b",
+    "title": "President & CEO",
+    "title_rank": 1,
+    "n": 1
+  },
+  {
+    "company": "Superior Staffing Solutions, LLC",
+    "class": "generic_staffing",
+    "person_id": "66f8dac28dcef00001657f23",
+    "title": "CEO - Vice President Sales & Recruiting",
+    "title_rank": 1,
+    "n": 2
+  },
+  {
+    "company": "Visions Staffing Solutions LLC",
+    "class": "generic_staffing",
+    "person_id": "6937bdca3b0fe400017ddd5c",
+    "title": "Chief Executive Officer",
+    "title_rank": 1,
+    "n": 1
+  },
+  {
+    "company": "William W. Professional Staffing LLC",
+    "class": "generic_staffing",
+    "person_id": "66f5a4d615081b00013e79ea",
+    "title": "Chief Executive Officer",
+    "title_rank": 1,
+    "n": 1
+  },
+  {
+    "company": "Choice Staffing,Inc",
+    "class": "generic_staffing",
+    "person_id": "6759d37a8ba0cc0001c79b40",
+    "title": "Executive Vice President of Sales",
+    "title_rank": 2,
+    "n": 1
+  },
+  {
+    "company": "DXE Staffing and Quality Inspection",
+    "class": "generic_staffing",
+    "person_id": "63d4f897bf74ec000198f085",
+    "title": "Vice President of Sales",
+    "title_rank": 2,
+    "n": 1
+  },
+  {
+    "company": "Elite Manufacturing & Professional Services",
+    "class": "keep_name",
+    "person_id": "6384ddf9c46e5f00010a8448",
+    "title": "Vice President of Sales",
+    "title_rank": 2,
+    "n": 3
+  },
+  {
+    "company": "Elite Staffing Solutions Wichita",
+    "class": "generic_staffing",
+    "person_id": "5d5cbe6880f93e11de688162",
+    "title": "Vice President Operations",
+    "title_rank": 2,
+    "n": 1
+  },
+  {
+    "company": "Enterprise Staffing Solutions",
+    "class": "generic_staffing",
+    "person_id": "54a54b6274686932096f7f8c",
+    "title": "Vice President Operations",
+    "title_rank": 2,
+    "n": 1
+  },
+  {
+    "company": "First Choice Personnel",
+    "class": "generic_staffing",
+    "person_id": "54a5b3517468693b8c3084a1",
+    "title": "Vice President Operations",
+    "title_rank": 2,
+    "n": 1
+  },
+  {
+    "company": "Framework - Construction Recruiting",
+    "class": "keep_name",
+    "person_id": "66f133d51392cf0001dae2fa",
+    "title": "Vice President of Business Development",
+    "title_rank": 2,
+    "n": 1
+  },
+  {
+    "company": "GTRJOBS - Staffing + Recruiting",
+    "class": "generic_staffing",
+    "person_id": "54ab6402746869084bb36005",
+    "title": "Vice President Operations",
+    "title_rank": 2,
+    "n": 2
+  },
+  {
+    "company": "Integrity Staffing Group",
+    "class": "generic_staffing",
+    "person_id": "5ac5ff68a6da98924c73861c",
+    "title": "Vice President of Sales",
+    "title_rank": 2,
+    "n": 3
+  },
+  {
+    "company": "Latin Electric Workforce",
+    "class": "generic_staffing",
+    "person_id": "54a4d3ee7468692abf3f8866",
+    "title": "Vice President Operations",
+    "title_rank": 2,
+    "n": 1
+  },
+  {
+    "company": "Professional Staffing Services Group Inc.",
+    "class": "generic_staffing",
+    "person_id": "66f693767da72c00017254c4",
+    "title": "Vice President Operations",
+    "title_rank": 2,
+    "n": 1
+  },
+  {
+    "company": "QuickPro Staffing",
+    "class": "generic_staffing",
+    "person_id": "54a631977468692abfba08ca",
+    "title": "Vice President of Operations",
+    "title_rank": 2,
+    "n": 1
+  },
+  {
+    "company": "RPM Staffing Professionals, Inc.",
+    "class": "generic_staffing",
+    "person_id": "66f1a5bb9412bf0001b7150f",
+    "title": "Vice President of Operations",
+    "title_rank": 2,
+    "n": 2
+  },
+  {
+    "company": "See Us Now Staffing, Inc.",
+    "class": "generic_staffing",
+    "person_id": "5ff89eb954ebc10001fb0ca0",
+    "title": "Vice President of Operations",
+    "title_rank": 2,
+    "n": 1
+  },
+  {
+    "company": "Seymour Staffing Professionals, Inc.",
+    "class": "generic_staffing",
+    "person_id": "67f4f89c78f5680001c16233",
+    "title": "Vice President Operations",
+    "title_rank": 2,
+    "n": 1
+  },
+  {
+    "company": "TA Staffing",
+    "class": "generic_staffing",
+    "person_id": "67e3930583136a00012b8f56",
+    "title": "Vice President Operations",
+    "title_rank": 2,
+    "n": 6
+  },
+  {
+    "company": "Temp Staffing Inc.",
+    "class": "generic_staffing",
+    "person_id": "68181e3adda1da00014a3a30",
+    "title": "Vice President Operations",
+    "title_rank": 2,
+    "n": 1
+  },
+  {
+    "company": "Turner Staffing Group",
+    "class": "generic_staffing",
+    "person_id": "60585b74004fe20001145f26",
+    "title": "Vice President of Sales",
+    "title_rank": 2,
+    "n": 1
+  },
+  {
+    "company": "Alura Workforce Solutions",
+    "class": "generic_staffing",
+    "person_id": "5e0955177c0c62000176e632",
+    "title": "VP of Sales & Managing Partner",
+    "title_rank": 3,
+    "n": 2
+  },
+  {
+    "company": "Express Employment Omaha",
+    "class": "generic_staffing",
+    "person_id": "54a9367f746869334a53620f",
+    "title": "Managing Partner",
+    "title_rank": 3,
+    "n": 1
+  },
+  {
+    "company": "Kaye/Bassman Architecture | Engineering | Construction | Real Estate",
+    "class": "keep_name",
+    "person_id": "670024b648009d0001b3792e",
+    "title": "Managing Partner",
+    "title_rank": 3,
+    "n": 1
+  },
+  {
+    "company": "Keen Search & Staffing, LLC",
+    "class": "generic_staffing",
+    "person_id": "54a3c6e97468693442e90112",
+    "title": "Managing Partner",
+    "title_rank": 3,
+    "n": 1
+  },
+  {
+    "company": "Construction Staffing & Recruiting",
+    "class": "keep_name",
+    "person_id": "670e991ee84e460001c9a658",
+    "title": "Senior Director SLED, Human Capital Leader, VP of Recruiting, VP of Sales, VP of Talent Acquisition",
+    "title_rank": 4,
+    "n": 1
+  },
+  {
+    "company": "Elective Staffing",
+    "class": "generic_staffing",
+    "person_id": "670e9a16e84e460001ca4730",
+    "title": "VP of Sales",
+    "title_rank": 4,
+    "n": 2
+  },
+  {
+    "company": "Key Personnel",
+    "class": "generic_staffing",
+    "person_id": "54a7df8974686962205b8a55",
+    "title": "VP of Business Development",
+    "title_rank": 4,
+    "n": 1
+  },
+  {
+    "company": "The Staffing Alliance",
+    "class": "generic_staffing",
+    "person_id": "66f83b0beee1360001c03c1a",
+    "title": "VP of Business Development",
+    "title_rank": 4,
+    "n": 1
+  },
+  {
+    "company": "1 Resource Group Staffing",
+    "class": "generic_staffing",
+    "person_id": "670e9a7be84e460001ca9665",
+    "title": "VP of Operations",
+    "title_rank": 5,
+    "n": 1
+  },
+  {
+    "company": "KeyStone Staffing Group",
+    "class": "generic_staffing",
+    "person_id": "54a3b0ed7468692cf0b3190b",
+    "title": "VP of Operations",
+    "title_rank": 5,
+    "n": 1
+  },
+  {
+    "company": "Quality Staffing USA",
+    "class": "generic_staffing",
+    "person_id": "668efc0b88adbf0001f78be8",
+    "title": "VP Operations",
+    "title_rank": 5,
+    "n": 1
+  }
+]

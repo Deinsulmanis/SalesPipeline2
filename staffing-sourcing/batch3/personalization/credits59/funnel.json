@@ -1,0 +1,46 @@
+{
+  "attempted": 59,
+  "liveCommit": "732e215",
+  "stoppedForCredits": false,
+  "cachedResearchReused": 7,
+  "freshResearchRequired": 52,
+  "priorClaimants": 64,
+  "counts": {
+    "HIGH": 17,
+    "MEDIUM": 4,
+    "RETRY_REQUIRED": 11,
+    "REVIEW_REQUIRED": 23,
+    "ICP_MISMATCH": 4
+  },
+  "acceptedHigh": 17,
+  "acceptedMedium": 4,
+  "accepted": 21,
+  "retrievalBlocked": 11,
+  "icpRefusals": 14,
+  "auditFailures": 6,
+  "duplicateOpeningDemotions": 7,
+  "remainingRetryRequired": 11,
+  "catchAllAccepted": 4,
+  "nonCatchAllAccepted": 17,
+  "usage": {
+    "anthropicCalls": 133,
+    "anthropicErrors": 0,
+    "inputTokens": 946819,
+    "outputTokens": 88442,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0
+  },
+  "byReason": {
+    "HIGH:VERIFIED_SPECIFIC_EMPLOYER_MARKET": 17,
+    "ICP_MISMATCH:PROFESSIONAL_OR_NONINDUSTRIAL_STAFFING": 4,
+    "REVIEW_REQUIRED:INDUSTRIAL_STAFFING_NOT_CONFIRMED": 8,
+    "REVIEW_REQUIRED:ICP_ASSESSMENT_CONFLICT": 2,
+    "REVIEW_REQUIRED:OPENING_AUDIT_FAILED": 6,
+    "MEDIUM:VERIFIED_EMPLOYER_MARKET": 4,
+    "RETRY_REQUIRED:RETRIEVAL_PAGE_NOT_FOUND": 3,
+    "REVIEW_REQUIRED:DUPLICATE_OPENING_IN_BATCH": 7,
+    "RETRY_REQUIRED:RETRIEVAL_BLOCKED_403": 1,
+    "RETRY_REQUIRED:RETRIEVAL_UNUSABLE": 5,
+    "RETRY_REQUIRED:DOMAIN_IDENTITY_UNRESOLVED": 2
+  }
+}

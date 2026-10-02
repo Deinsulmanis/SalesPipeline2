@@ -1,0 +1,33 @@
+{
+  "attempted": 73,
+  "liveCommit": "732e215",
+  "codeDigest": "0caa20fc47f4e8a1de14eb6ec20905530f960d9e7c89aac76bf051fdcbb19bb8",
+  "stoppedForCredits": true,
+  "priorBatch3Claimants": 58,
+  "counts": {
+    "HIGH": 5,
+    "MEDIUM": 1,
+    "RETRY_REQUIRED": 61,
+    "REVIEW_REQUIRED": 5,
+    "ICP_MISMATCH": 1
+  },
+  "acceptedHigh": 5,
+  "acceptedMedium": 1,
+  "accepted": 6,
+  "retrievalBlocked": 2,
+  "icpRefusals": 1,
+  "auditFailures": 2,
+  "duplicateOpeningDemotions": 3,
+  "infrastructureRetryRequired": 61,
+  "catchAllAccepted": 5,
+  "nonCatchAllAccepted": 1,
+  "byReason": {
+    "HIGH:VERIFIED_SPECIFIC_EMPLOYER_MARKET": 5,
+    "MEDIUM:VERIFIED_EMPLOYER_MARKET": 1,
+    "RETRY_REQUIRED:RETRIEVAL_UNUSABLE": 2,
+    "ICP_MISMATCH:PROFESSIONAL_OR_NONINDUSTRIAL_STAFFING": 1,
+    "REVIEW_REQUIRED:DUPLICATE_OPENING_IN_BATCH": 3,
+    "REVIEW_REQUIRED:OPENING_AUDIT_FAILED": 2,
+    "RETRY_REQUIRED:MODEL_CREDITS_EXHAUSTED": 59
+  }
+}

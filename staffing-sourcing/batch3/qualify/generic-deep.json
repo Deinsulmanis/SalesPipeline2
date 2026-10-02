@@ -1,0 +1,85 @@
+[
+  {
+    "company": "RPM Staffing Professionals, Inc.",
+    "domain": "rpmstaffing.net",
+    "person_id": "66f1a60cae78890001413469",
+    "first_name": "Hunter",
+    "site_fit": false,
+    "site_mismatch": false,
+    "hits": []
+  },
+  {
+    "company": "American Staffing, Inc.",
+    "domain": "americanstaffinginc.net",
+    "person_id": "5b98f2a2324d4474ae564b3e",
+    "first_name": "Craig",
+    "site_fit": false,
+    "site_mismatch": false,
+    "hits": []
+  },
+  {
+    "company": "Carolinas Staffing Solutions, Inc.",
+    "domain": "carostaff.com",
+    "person_id": "606e1a24ad89ca000160274c",
+    "first_name": "Estalene",
+    "site_fit": false,
+    "site_mismatch": false,
+    "hits": []
+  },
+  {
+    "company": "Summit Staffing, Inc",
+    "domain": "summitstaffing.com",
+    "person_id": "66fc80db0cbf9000016012e3",
+    "first_name": "Fiorella",
+    "site_fit": false,
+    "site_mismatch": false,
+    "hits": []
+  },
+  {
+    "company": "Tru Staffing",
+    "domain": "trustaffing.com",
+    "person_id": "66f55a6460d35e0001f21791",
+    "first_name": "Jared",
+    "site_fit": false,
+    "site_mismatch": false,
+    "hits": []
+  },
+  {
+    "company": "Excel Personnel Services",
+    "domain": "excelpersonnelservices.com",
+    "person_id": "66fc5ee790a46700013b48eb",
+    "first_name": "Michelle",
+    "site_fit": false,
+    "site_mismatch": false,
+    "hits": []
+  },
+  {
+    "company": "Personnel Staffing, Inc.",
+    "domain": "personnelstaffing.com",
+    "person_id": "66fc51a18a003a0001dbafe3",
+    "first_name": "Brigitte",
+    "site_fit": false,
+    "site_mismatch": false,
+    "hits": []
+  },
+  {
+    "company": "Gill Staffing",
+    "domain": "gillstaffing.com",
+    "person_id": "5aba16f2a6da9840bba9f360",
+    "first_name": "Jennifer",
+    "site_fit": true,
+    "site_mismatch": false,
+    "hits": [
+      "/services"
+    ]
+  },
+  {
+    "company": "Citywide Staffing",
+    "domain": "citywidestaffing.com",
+    "person_id": "66f8ab928dcef000015bffe4",
+    "first_name": "Crissy",
+    "site_fit": false,
+    "site_mismatch": false,
+    "hits": []
+  }
+]
