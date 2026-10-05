@@ -26,7 +26,10 @@ const lead = {
 const BASELINE_54AD855 = Object.freeze({
   step1: { body: '31bb33d9de2ff5baa884ab1cf77ca979e6b9dcefc3e38b4d45b5717d865b1aac', html: 'ed843d3527dadd783cdfa4f74e65c52b139528871987b5affdf58542ee8f3a00' },
   step2: { body: '6153c78b47f450a39fb10605b57121f3de646e0a1166066085d8578e44717464', html: 'd942d8dc898515b96400d85b5901051870f1a85586601c4db146a8b4d2ce052b' },
-  step3: { body: '58ce0634aca0fa76be75d445141a3487724c0814a9a8cde5e69fb88ec37de4c0', html: '61dfe39315e3e31662a8f86cb48c22a96a5462ff7b8c896d4fc42c562ea1ed5a' },
+  // Step 3 was normalized on 2026-10-03 to the approved wording ("Is bringing…
+  // right now?" + "Deins"). Production 54ad855 rendered body 58ce0634…,
+  // html 61dfe393…. Steps 1 and 2 are deliberately still the 54ad855 bytes.
+  step3: { body: '0413441a72c50c29556bf2ddde4f0a0e359e537d12de85d634be91acf59b37b9', html: '933f07b3501990ed18430e57c3b55a9de36c1e177b400ce3431db9729c985812' },
   AUTO_STAFFING_QUALIFY_QUESTION: 'a3e5d182ed39f749fe32d41659567a161323de38d08c20506bda1d6fe3c959e7',
   AUTO_STAFFING_SEND_INFO: '2a318f8fc183270ad973f81ed038387d11d25ba8d0806c393c2fb6781b9a5ef2',
   AUTO_STAFFING_QUALIFIED: 'a932aaabd4b36b83a744c07fb52b5f7f8153f0947b1e64420aaa0755d89f9266',

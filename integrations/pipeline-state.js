@@ -28,6 +28,7 @@ const { displayStageFor } = require('./cold-call-pipeline');
 const { ANALYTICS_CATEGORY, categoriesFromNotes, classificationFromLead } = require('./reply-analytics');
 const { deriveOperationalAction, REPLY_ACTION, DUE_SOURCE } = require('./reply-operations');
 const { activeOverrides, OVERRIDE_KIND } = require('./reply-overrides');
+const { FOLLOW_UP_STEP_COUNT, nextFollowUp, DUE_BASIS } = require('./sequence-timing');
 // ONE definition of "we answered the prospect" (human, automated warm reply,
 // recorded conversation, or meeting). Never re-list those events here.
 const { latestResponseAt } = require('./prospect-response');
@@ -121,7 +122,7 @@ function applyHoldToNotes(notes) {
 
 // ── SCHEDULED REACTIVATION ──────────────────────────────────────────────────
 // Removing [MANUAL HOLD] by hand is dangerous: selectFollowUps() in the agent
-// asks only "has delayDays elapsed since lastEmailedAt?", so a lead held for 14
+// asks only "has the next step's due time passed?", so a lead held for 14
 // days with a 3-day step-2 delay is ALREADY overdue the instant the tag goes.
 // It would send on the very next pass.
 //
@@ -178,7 +179,7 @@ function clearResumeFromNotes(notes) {
  *
  * The comment above explains why reactivation never does this: removing the tag
  * from a COLD lead hands it straight back to selectFollowUps(), which asks only
- * whether delayDays have elapsed since lastEmailedAt. A lead held for two weeks
+ * whether the next step's due time has passed. A lead held for two weeks
  * is already overdue the instant the tag goes, so it would send on the next
  * pass. That hazard is real and unchanged.
  *
@@ -216,7 +217,7 @@ function reactivationEligibility(twin, opts = {}) {
   const row = twin || {};
   const notes = String(row.notes || '');
   const now = opts.now ? new Date(opts.now).getTime() : Date.now();
-  const stepCount = Number.isFinite(opts.stepCount) ? opts.stepCount : FOLLOW_UP_DELAY_DAYS.length;
+  const stepCount = Number.isFinite(opts.stepCount) ? opts.stepCount : FOLLOW_UP_STEP_COUNT;
   const suppressedEmails = opts.suppressedEmails || new Set();
 
   const deny = (blocked, reason) => ({
@@ -456,7 +457,7 @@ function deriveAutomationState(twin, now = Date.now()) {
   if (status === 'done')    return { state: AUTOMATION_STATES.STOPPED, reason: 'sequence complete or terminal reply' };
   if (status === 'emailed') {
     const step = parseInt(twin.emailStep || '0', 10);
-    return step >= 1 && step <= FOLLOW_UP_DELAY_DAYS.length
+    return step >= 1 && step <= FOLLOW_UP_STEP_COUNT
       ? { state: AUTOMATION_STATES.ACTIVE, reason: 'cold sequence live at step ' + step }
       : { state: AUTOMATION_STATES.STOPPED, reason: 'sequence exhausted' };
   }
@@ -578,15 +579,9 @@ function deriveActionStatus(dueAt, now = new Date()) {
   return ACTION_STATUS.UPCOMING;
 }
 
-// Sequence cadence. Mirrors FOLLOW_UP_SEQUENCE in outreach-agent.js rather
-// than importing it, because requiring the agent would execute its run().
-const FOLLOW_UP_DELAY_DAYS = Object.freeze([3, 5]);
-
-function addDays(iso, days) {
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return null;
-  return new Date(t + days * 86400000).toISOString();
-}
+// Sequence cadence lives in integrations/sequence-timing.js — the same module
+// the sending selector uses, so the board cannot advertise a due date the agent
+// would not honour.
 
 // Activity event types that represent an inbound reply, and the ones that
 // represent us having already answered. Mirrors the recorded event vocabulary.
@@ -636,8 +631,7 @@ function replyEvidence(twin, activities) {
 // It answers one question: whose move is it, and by when.
 
 // Every threshold in one place. These are CRM action deadlines for a human,
-// deliberately NOT reusing FOLLOW_UP_DELAY_DAYS — that is cold-email cadence
-// mirroring FOLLOW_UP_SEQUENCE, and conflating the two would tie a sales
+// deliberately NOT reusing the cold-email cadence in sequence-timing.js, and conflating the two would tie a sales
 // conversation timer to the sending schedule.
 const HOT_FOLLOW_UP = Object.freeze({
   WAITING_ON_PROSPECT_BUSINESS_DAYS: 2, // they owe us a reply; chase after 2
@@ -1362,7 +1356,7 @@ function deriveNextAction(boardLead, twin, context = {}) {
   if (hasManualHold((twin && twin.notes) || '') && !manualHoldReleased((twin && twin.notes) || '', now)) {
     const step = parseInt((twin && twin.emailStep) || '0', 10);
     const wouldSend = String((twin && twin.emailStatus) || '').trim().toLowerCase() === 'emailed'
-      && step >= 1 && step <= FOLLOW_UP_DELAY_DAYS.length;
+      && step >= 1 && step <= FOLLOW_UP_STEP_COUNT;
     // A scheduled reactivation is a real, dated, automation-owned next action —
     // not a gap and never overdue, because the hold is doing its job until the
     // resume instant arrives.
@@ -1434,18 +1428,18 @@ function deriveNextAction(boardLead, twin, context = {}) {
   }
 
   if (derived.state === AUTOMATION_STATES.ACTIVE && twin) {
-    const step = parseInt(twin.emailStep || '0', 10);
-    const delay = FOLLOW_UP_DELAY_DAYS[step - 1];
-    if (delay && twin.lastEmailedAt) {
-      const dueAt = addDays(twin.lastEmailedAt, delay);
-      if (dueAt) {
-        return buildAction({
-          type: ACTION_TYPE.AUTOMATED_FOLLOW_UP, label: 'Automated follow-up #' + (step + 1),
-          dueAt, owner: ACTION_OWNER.AUTOMATION, source: 'derived',
-          reason: 'cold sequence step ' + step + ' sent ' + businessDay(twin.lastEmailedAt)
-            + '; next step fires ' + delay + ' days later', now,
-        });
-      }
+    const next = nextFollowUp(twin, { activities });
+    if (next && !next.alreadySent) {
+      const anchor = next.basis === DUE_BASIS.TOUCH1_PLUS_7D ? '7 days after Email 1 (' + businessDay(new Date(next.touch1At).toISOString()) + ')'
+        : next.basis === DUE_BASIS.TOUCH2_PLUS_3D ? '3 days after Email 2'
+          : next.basis === DUE_BASIS.TOUCH2_PLUS_4D_UNPROVEN_TOUCH1 ? '4 days after Email 2 (Email 1 has no ledger record)'
+            : '3 days after Email 1';
+      return buildAction({
+        type: ACTION_TYPE.AUTOMATED_FOLLOW_UP, label: 'Automated follow-up #' + next.nextStep,
+        dueAt: next.dueAtIso, owner: ACTION_OWNER.AUTOMATION, source: 'derived',
+        reason: 'cold sequence step ' + next.currentStep + ' sent ' + businessDay(twin.lastEmailedAt)
+          + '; next step fires ' + anchor, now,
+      });
     }
     if (String(twin.stage || '').toLowerCase() === 'queued') {
       return buildAction({
@@ -1611,7 +1605,7 @@ module.exports = {
   REACTIVATABLE_BLOCKERS, REACTIVATION_REFUSAL,
   hasManualHold, applyHoldToNotes, releaseHoldFromNotes, stageRequiresHold,
   OUTCOMES, OUTCOME_IDS, LOSS_OUTCOME_IDS, RECOVERABLE_OUTCOME_IDS,
-  FOLLOW_UP_DELAY_DAYS,
+  FOLLOW_UP_STEP_COUNT,
   deriveAutomationState, automationConflict, deriveNextAction,
   ACTION_OWNER, ACTION_STATUS, ACTION_TYPE, BUSINESS_TIMEZONE,
   businessDay, deriveActionStatus, compareNextActions, summarizeNextActions,

@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { STAFFING_CAMPAIGN, isStaffingCampaign, renderStaffingEmail, validateStaffingEmail,
-  staffingOpeningFor, STAFFING_FOLLOW_UP_DELAY_DAYS, BOLD_PHRASES } = require('../integrations/staffing-campaign');
+  staffingOpeningFor, STAFFING_SEQUENCE_TIMING, BOLD_PHRASES } = require('../integrations/staffing-campaign');
 const { appendStaffingComplianceFooter } = require('../integrations/staffing-compliance');
 const { STAFFING_RENDER_OPTIONS } = require('../test-support/staffing-mail');
 const { templateById, routedLeadReady, validateRoute, normalizeNiche,
@@ -85,9 +85,13 @@ test('D. Email #2 renders the locked clarification copy with its own bold', () =
 
 test('E. Email #3 renders the locked close with its bolded question', () => {
   const email = render(routed(), 3);
-  assert.equal(email.body, withFooter('Hi Ada,\n\nQuick question —\n\nis bringing in more employer accounts something Acme Staffing is focused on right now?'));
+  // Normalized 2026-10-03 to the approved wording, with a single sign-off: the
+  // footer carries no personal name, so "Deins" appears exactly once.
+  assert.equal(email.body, withFooter('Hi Ada,\n\nIs bringing in more employer accounts something Acme Staffing is focused on right now?\n\nDeins'));
+  assert.equal(email.body.split('Deins').length - 1, 1, 'one sign-off, never duplicated by the footer');
+  assert.equal(email.subject, null, 'Email 3 keeps the original thread subject');
   assert.equal((email.html.match(/<strong>/g) || []).length, 1);
-  assert.match(email.html, /<strong>is bringing in more employer accounts something Acme Staffing is focused on right now\?<\/strong>/);
+  assert.match(email.html, /<strong>Is bringing in more employer accounts something Acme Staffing is focused on right now\?<\/strong>/);
   assert.equal(validateStaffingEmail(email, 3), null);
   assert.equal(BOLD_PHRASES.length, 3);
 });
@@ -182,8 +186,8 @@ test('M/N. staffing reuses the shared sender, thread and follow-up machinery', (
   assert.equal(agent.split('      body = template.body(lead);').length - 1, 2, 'both non-staffing paths are untouched');
   // chooseSender / resolveColdFollowUpThread stay on the shared path.
   assert.match(agent, /thread = await resolveColdFollowUpThread\(/);
-  assert.equal(STAFFING_FOLLOW_UP_DELAY_DAYS.length, 2);
-  assert.deepEqual([...STAFFING_FOLLOW_UP_DELAY_DAYS], [3, 5], 'same spacing as the ordinary cadence');
+  // Same cadence as the ordinary sequence, by reference — not a copy.
+  assert.equal(STAFFING_SEQUENCE_TIMING, require('../integrations/sequence-timing').SEQUENCE_TIMING);
 });
 
 test('N. an unrenderable staffing follow-up defers instead of using other copy', () => {

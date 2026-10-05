@@ -640,7 +640,9 @@ function buildQualification({ lead, turns, notes, family }) {
   const rolesAsks = automated.filter(turn => STAFFING_ASKS_ROLES.has(turn.actionType));
   const qualifiedSends = automated.filter(turn => turn.actionType === ACTION.AUTO_STAFFING_QUALIFIED);
   const priorityAsks = automated.filter(turn => turn.actionType === 'cold_step_3'
-    && PRIORITY_QUESTION_ANCHOR && turn.content.includes(PRIORITY_QUESTION_ANCHOR));
+    // Case-insensitive: Touch 3s sent before 2026-10-03 read "…is bringing…",
+    // later ones "Is bringing…". Both asked the same question.
+    && PRIORITY_QUESTION_ANCHOR && turn.content.toLowerCase().includes(PRIORITY_QUESTION_ANCHOR.toLowerCase()));
   const firstRolesAskAt = rolesAsks.length ? rolesAsks[0].occurredAt : null;
   const prospectMessages = turns.filter(isProspectMessage);
 

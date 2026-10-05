@@ -44,10 +44,9 @@ const { queueEligibility } = require('./outreach-queue');
 const { sendSuppressionReason } = require('./pipeline-state');
 const { NON_COLD_STAGES } = require('./automation-ownership');
 const { outreachBlockForLead } = require('./lead-archive');
+const { isFollowUpDue } = require('./sequence-timing');
 
 const DEFAULT_BUFFER_RATIO = 0.15;
-const FOLLOW_UP_DELAY_DAYS = Object.freeze({ 1: 3, 2: 5 });
-const DAY_MS = 24 * 60 * 60 * 1000;
 const QUEUE_STAGE = 'Queued';
 
 // Any of these on a lead means a human, a reply, a model decision or an
@@ -135,19 +134,18 @@ function projectedFollowUps({ leads, activitiesByLead, senders, suppressedEmails
   const ids = new Set(senders.map(sender => sender.id));
   for (const lead of leads) {
     if (lead.emailStatus !== 'emailed') continue;
-    const step = Number(lead.emailStep || 0);
-    const delay = FOLLOW_UP_DELAY_DAYS[step];
-    if (!delay) continue;
     if (NON_COLD_STAGES.includes(text(lead.stage).toLowerCase())) continue;
     if (sendSuppressionReason(lead, { suppressedEmails })) continue;
     // An archived lead, or one of a retired offer, will never be sent: it is
     // no inbox's workload and must not crowd out real supply in the refill.
     if (outreachBlockForLead(lead)) continue;
-    const sent = Date.parse(lead.lastEmailedAt || '');
-    if (!Number.isFinite(sent) || sent + delay * DAY_MS > horizon) continue;
+    // The sending selector's own timing gate (integrations/sequence-timing.js),
+    // asked "will this be due by the horizon?".
+    const mine = activitiesByLead.get(lead.id) || [];
+    if (!isFollowUpDue(lead, horizon, { activities: mine })) continue;
     // Only a follow-up with ONE delivered-message owner is really sendable;
     // unproven legacy ownership is refused at send time, so it is no workload.
-    const owners = sentSenderEvidence(lead, activitiesByLead.get(lead.id) || []);
+    const owners = sentSenderEvidence(lead, mine);
     if (owners.length !== 1 || !ids.has(owners[0])) continue;
     counts.set(owners[0], counts.get(owners[0]) + 1);
   }

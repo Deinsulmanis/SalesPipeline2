@@ -59,7 +59,10 @@ function withStaffingLandingUrl(text, landingPageUrl) {
 const LOCKED_EMAILS = Object.freeze([
   `Hi {{firstName}},\n\n{{hyperPersonalizedOpening}}\n\nWe help industrial staffing agencies turn that exact market into qualified employer meetings — and we get paid based on the meetings we generate.\n\nWorth seeing how we'd do this for {{company}}?\n\n— Deins`,
   `Hi {{firstName}},\n\nJust to clarify — we're not talking about candidate sourcing.\n\nWe run a 30-day employer acquisition pilot built around the roles {{company}} already places.\n\nWe handle the prospecting, outreach and qualification, then put interested employers directly on your calendar.\n\nIf we don't generate qualified employer meetings, there are no meeting fees.\n\nYou can see how it works here:\n${STAFFING_LANDING_PAGE_URL}\n\nOpen to seeing what this could look like for {{company}}?`,
-  `Hi {{firstName}},\n\nQuick question —\n\nis bringing in more employer accounts something {{company}} is focused on right now?`,
+  // Touch 3, normalized 2026-10-03 to the approved wording. The sign-off is
+  // part of the copy: the compliance footer carries no personal name and Gmail
+  // API sends never append the mailbox signature, so it cannot duplicate.
+  `Hi {{firstName}},\n\nIs bringing in more employer accounts something {{company}} is focused on right now?\n\nDeins`,
 ]);
 // A reviewed ICP fit can use the core offer without an unsupported company fact.
 // This variant applies only to an explicit NONE_REQUIRED staffing review.
@@ -79,12 +82,13 @@ function staffingNoPersonalizationAllowed(lead = {}) {
 const BOLD_PHRASES = Object.freeze([
   'we get paid based on the meetings we generate.',
   'We handle the prospecting, outreach and qualification, then put interested employers directly on your calendar.',
-  'is bringing in more employer accounts something {{company}} is focused on right now?',
+  'Is bringing in more employer accounts something {{company}} is focused on right now?',
 ]);
 const BOLD_PHRASE = BOLD_PHRASES[0];
-// Cadence is deliberately the same calendar spacing as the ordinary cold
-// sequence; staffing does not get its own scheduler, only its own copy.
-const STAFFING_FOLLOW_UP_DELAY_DAYS = Object.freeze([3, 5]);
+// Cadence: staffing does not get its own scheduler, only its own copy. Its
+// timing is THE sequence timing (integrations/sequence-timing.js), re-exported
+// here by reference so nothing can hold a second copy of the delays.
+const { SEQUENCE_TIMING: STAFFING_SEQUENCE_TIMING } = require('./sequence-timing');
 const escapeHtml = text => String(text).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const {
   appendStaffingComplianceFooter, staffingSenderIdentity, staffingComplianceError,
@@ -161,6 +165,6 @@ function validateStaffingEmail({ subject, body, leadId } = {}, step = 1) {
 }
 
 module.exports = { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_LABELS, isStaffingCampaign, STAFFING_LANDING_PAGE_URL, LOCKED_EMAILS, BOLD_PHRASE, BOLD_PHRASES,
-  STAFFING_FOLLOW_UP_DELAY_DAYS, renderStaffingPreview, staffingOpeningFor, staffingReviewStatus,
+  STAFFING_SEQUENCE_TIMING, renderStaffingPreview, staffingOpeningFor, staffingReviewStatus,
   staffingNoPersonalizationAllowed, renderStaffingEmail, validateStaffingEmail,
   isTrackedStaffingLandingUrl, withStaffingLandingUrl };
