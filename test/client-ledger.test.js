@@ -16,8 +16,8 @@ test.after(() => restoreActivation());
 const JOLE_CFG = () => getClient('jole');
 const joleLead = (id = 'jole-lead-1', extra = {}) => ({
   id, company: 'Voltline Mission Critical LLC', contactName: 'Pat Rivera', email: `${id}@voltline-test.invalid`,
-  leadNiche: 'jole_employer', emailTemplateId: 'jole-dc-mission-critical-v1', intendedCampaignVersion: 'JOLE_DC_MISSION_CRITICAL',
-  campaign: 'JOLE_DC_MISSION_CRITICAL', senderInboxId: '', tradeType: '', ...extra,
+  leadNiche: 'jole_employer', emailTemplateId: 'jole-industrial-employer-v1', intendedCampaignVersion: 'jole-btx-employer-acquisition',
+  campaign: 'jole-btx-employer-acquisition', senderInboxId: '', tradeType: '', ...extra,
 });
 const scalelabLead = { id: 'sl-1', email: 'a@b-test.invalid', leadNiche: 'dental', emailTemplateId: 'dental-guarantee-v1' };
 const qualifiedFacts = {

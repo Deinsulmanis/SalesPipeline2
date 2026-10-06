@@ -55,7 +55,20 @@ function activationBlockers(sender = {}, {
     && (String(item.id || '') === id || String(item.email || '').trim().toLowerCase() === email)
     && String(item.tokenEnv || '') !== String(sender.tokenEnv || ''));
   if (conflict) blockers.push('sender ownership/config conflict');
-  return blockers;
+  // A managed client's inbox: its client sender policy (domain, campaign
+  // allowlist) and the client's own send authority. While the client may not
+  // send, none of its inboxes can be activated; they stay paused/warming.
+  for (const reason of sender.policyBlockers || []) blockers.push(reason);
+  const clientId = String(sender.clientId || '').trim();
+  if (clientId) {
+    const { getClient, isKnownClient } = require('./clients/registry');
+    if (!isKnownClient(clientId)) blockers.push('sender names an unknown client');
+    else if (!getClient(clientId).isDefault) {
+      const block = require('./clients/send-policy').clientSendBlock(clientId);
+      if (block) blockers.push(`client sending is not authorized: ${block.reason}`);
+    }
+  }
+  return [...new Set(blockers)];
 }
 
 function activateSender(sender = {}, context = {}) {

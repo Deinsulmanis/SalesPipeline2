@@ -13,7 +13,7 @@
 const { getClient } = require('./registry');
 const { leadsForClient, resolveSenderClient, resolveLeadClient } = require('./ownership');
 const { clientSendState } = require('./send-policy');
-const { campaignsForClient, campaignSendable } = require('./campaigns');
+const { campaignsForClient, campaignSendable, clientCampaign } = require('./campaigns');
 const { MEETING_STATUS, billingSummary, withBilling, CLARIFICATION_STATUS } = require('./ledger');
 const { REPLY_EVENT_TYPE } = require('./reply-pipeline');
 const { sendSuppressionReason } = require('../pipeline-state');
@@ -103,7 +103,8 @@ function buildClientOverview({
   const sendState = clientSendState(client.id, env);
   const campaigns = client.isDefault ? [] : campaignsForClient(client.id).map(campaign => {
     const sendable = campaignSendable(campaign);
-    const inCampaign = mine.filter(lead => text(lead.intendedCampaignVersion).toUpperCase() === campaign.id);
+    // By id or campaign version, case-insensitively (the catalog resolver).
+    const inCampaign = mine.filter(lead => clientCampaign(text(lead.intendedCampaignVersion) || text(lead.campaign))?.id === campaign.id);
     const ids = new Set(inCampaign.map(lead => lead.id));
     const blockers = [
       ...(sendable.ok ? [] : [sendable.reason]),

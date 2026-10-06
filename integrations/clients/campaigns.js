@@ -30,7 +30,8 @@ const CAMPAIGN_STATUS = Object.freeze({
 const CLIENT_LEAD_TYPES = Object.freeze([
   Object.freeze({
     id: 'jole_employer', clientId: 'jole', label: 'Jole · Employer (contractor)',
-    aliases: Object.freeze(['jole_employer', 'jole employer']),
+    // jole_industrial_employer is the niche the employer-acquisition copy uses.
+    aliases: Object.freeze(['jole_employer', 'jole employer', 'jole_industrial_employer']),
   }),
 ]);
 
@@ -50,6 +51,13 @@ const CLIENT_TEMPLATES = Object.freeze([
     id: 'jole-shipyard-v1', clientId: 'jole', niche: 'jole_employer',
     name: 'Jole · Shipbuilding / ship-repair contractors', sequenceSteps: 3,
     ready: false, reason: 'Jole Campaign #3 is a placeholder',
+  }),
+  Object.freeze({
+    id: 'jole-industrial-employer-v1', clientId: 'jole', niche: 'jole_employer',
+    name: 'Jole BTX · Industrial employer acquisition', sequenceSteps: 3,
+    // The renderer and copy are not in production, and launch needs its own
+    // approval (landing page, mailing address, warmed and approved senders).
+    ready: false, reason: 'Jole employer-acquisition copy is not deployed or approved for sending',
   }),
 ]);
 
@@ -102,6 +110,24 @@ const CLIENT_CAMPAIGNS = Object.freeze([
       contractorTypes: Object.freeze([]), workerCategories: Object.freeze([]), requiredEvidence: Object.freeze([]),
     }),
   }),
+  // The Jole campaign every Jole sender is scoped to (client senderPolicy).
+  // Configured, never sendable while DRAFT: its template is not ready, Jole
+  // sending is disabled and Jole senders are paused.
+  Object.freeze({
+    id: 'jole-btx-employer-acquisition', clientId: 'jole', number: 4,
+    label: 'Jole BTX — Employer Acquisition',
+    campaignVersion: 'jole_industrial_employer_acquisition_v1',
+    status: CAMPAIGN_STATUS.DRAFT,
+    leadType: 'jole_employer', emailTemplateId: 'jole-industrial-employer-v1',
+    audience: 'employers',
+    icp: Object.freeze({
+      geography: 'United States',
+      summary: 'Industrial end employers with verified, current skilled-trade hiring. Never staffing agencies.',
+      contractorTypes: Object.freeze([]),
+      workerCategories: Object.freeze(['skilled trades']),
+      requiredEvidence: Object.freeze(['verified active hiring for the role and location, or a reviewed employer record']),
+    }),
+  }),
 ]);
 
 function assertNamespaced(kind, id, clientId) {
@@ -129,6 +155,9 @@ function validateCatalog() {
   }
   for (const campaign of CLIENT_CAMPAIGNS) {
     unique('campaign', campaign.id); assertNamespaced('Campaign', campaign.id, campaign.clientId);
+    // A campaign version is a second name for the same campaign: same namespace
+    // rules, and it may not collide with any campaign id or other version.
+    if (campaign.campaignVersion) { unique('campaign', campaign.campaignVersion); assertNamespaced('Campaign version', campaign.campaignVersion, campaign.clientId); }
     if (!Object.values(CAMPAIGN_STATUS).includes(campaign.status)) throw new Error(`Campaign ${campaign.id} has an invalid status`);
     const template = CLIENT_TEMPLATES.find(item => item.id === campaign.emailTemplateId);
     if (!template || template.clientId !== campaign.clientId) throw new Error(`Campaign ${campaign.id} template belongs to another client`);
@@ -139,7 +168,9 @@ function validateCatalog() {
 validateCatalog();
 
 const byId = (list, id) => list.find(item => item.id.toLowerCase() === String(id || '').trim().toLowerCase()) || null;
-const clientCampaign = id => byId(CLIENT_CAMPAIGNS, id);
+// By id, or by the campaign version a lead stores in intendedCampaignVersion.
+const clientCampaign = id => byId(CLIENT_CAMPAIGNS, id)
+  || CLIENT_CAMPAIGNS.find(item => item.campaignVersion && item.campaignVersion.toLowerCase() === String(id || '').trim().toLowerCase()) || null;
 const clientTemplate = id => byId(CLIENT_TEMPLATES, id);
 const clientLeadType = id => {
   const value = String(id || '').trim().toLowerCase();

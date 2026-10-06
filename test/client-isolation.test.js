@@ -1,6 +1,6 @@
 'use strict';
 
-// Multi-client isolation: ScaleLab AI (default) and Jole Enterprise (managed).
+// Multi-client isolation: ScaleLab AI (default) and Jole BTX LLC (managed).
 // Every cross-client combination must be an execution-blocking refusal.
 
 const test = require('node:test');
@@ -36,8 +36,8 @@ const SENDERS = [SCALELAB_SENDER, JOLE_SENDER];
 const joleLead = (extra = {}) => ({
   id: 'jole-lead-1', company: 'Voltline Mission Critical LLC', contactName: 'Pat Rivera',
   email: 'pat.rivera@voltline-test.invalid', stage: 'Queued', emailStatus: '', emailStep: '', notes: '',
-  leadNiche: 'jole_employer', emailTemplateId: 'jole-dc-mission-critical-v1',
-  intendedCampaignVersion: 'JOLE_DC_MISSION_CRITICAL', campaign: 'JOLE_DC_MISSION_CRITICAL',
+  leadNiche: 'jole_employer', emailTemplateId: 'jole-industrial-employer-v1',
+  intendedCampaignVersion: 'jole-btx-employer-acquisition', campaign: 'jole-btx-employer-acquisition',
   senderInboxId: 'jole_test', routingRequired: 'true', tradeType: '', ...extra,
 });
 // Shapes taken from production rows (2026-09-29 read-only audit).
@@ -68,11 +68,11 @@ test('registry: ScaleLab and Jole resolve; unknown and blank are rejected', () =
   assert.deepEqual(listClients().map(client => client.id).sort(), ['jole', 'scalelab']);
 });
 
-test('registry: Jole is a managed client, onboarding pending (not active), no platform access, sending disabled', () => {
+test('registry: Jole is a managed client, active, no platform access, sending disabled', () => {
   const jole = getClient('jole');
-  assert.equal(jole.displayName, 'Jole Enterprise');
-  assert.equal(jole.lifecycleStatus, 'onboarding_pending');
-  assert.equal(jole.active, false);
+  assert.equal(jole.displayName, 'Jole BTX LLC');
+  assert.equal(jole.lifecycleStatus, 'active');
+  assert.equal(jole.active, true);
   assert.equal(jole.sending.enabled, false);
   assert.equal(jole.platformAccess, 'none');
   assert.equal(jole.representative.name, 'Jorge Guerrero');
@@ -112,7 +112,7 @@ test('ownership: a lead whose fields name two clients is a conflict, never a gue
     joleLead({ emailTemplateId: 'dental-guarantee-v1' }),
     joleLead({ tradeType: 'Staffing agency' }),
     joleLead({ campaign: 'BC Dentists' }),
-    scalelabDental({ intendedCampaignVersion: 'JOLE_DC_MISSION_CRITICAL' }),
+    scalelabDental({ intendedCampaignVersion: 'jole-btx-employer-acquisition' }),
   ]) {
     const verdict = resolveLeadClient(conflict);
     assert.equal(verdict.ok, false);
@@ -139,7 +139,7 @@ test('ownership: JOLE LEAD + SCALELAB SENDER is blocked', () => {
 });
 
 test('ownership: SCALELAB LEAD + JOLE CAMPAIGN is blocked', () => {
-  assert.equal(checkClientConsistency({ lead: scalelabDental(), campaignId: 'JOLE_DC_MISSION_CRITICAL', senders: SENDERS }).code, 'client_ownership_conflict');
+  assert.equal(checkClientConsistency({ lead: scalelabDental(), campaignId: 'jole-btx-employer-acquisition', senders: SENDERS }).code, 'client_ownership_conflict');
 });
 
 test('ownership: SCALELAB LEAD + JOLE SENDER is blocked', () => {
@@ -147,7 +147,7 @@ test('ownership: SCALELAB LEAD + JOLE SENDER is blocked', () => {
 });
 
 test('ownership: cross-client template is blocked, and an unregistered Jole id is not ScaleLab', () => {
-  assert.equal(checkClientConsistency({ lead: scalelabDental(), templateId: 'jole-dc-mission-critical-v1', senders: SENDERS }).code, 'client_ownership_conflict');
+  assert.equal(checkClientConsistency({ lead: scalelabDental(), templateId: 'jole-industrial-employer-v1', senders: SENDERS }).code, 'client_ownership_conflict');
   assert.equal(checkClientConsistency({ lead: joleLead(), templateId: 'jole-unregistered-v9', senders: SENDERS }).code, 'template_unknown');
   assert.equal(checkClientConsistency({ lead: joleLead(), campaignId: 'JOLE_NOT_REAL', senders: SENDERS }).code, 'campaign_unknown');
 });
@@ -199,13 +199,13 @@ test('routing: validateRoute refuses cross-client sender, template and campaign'
   const inboxes = [{ ...SCALELAB_SENDER, deliveryImplemented: true }, { ...JOLE_SENDER, deliveryImplemented: true }];
   const scalelabOnJole = validateRoute({ niche: 'dental', senderInboxId: 'jole_test', emailTemplateId: 'dental-guarantee-v1', inboxes });
   assert.equal(scalelabOnJole.ok, false); assert.equal(scalelabOnJole.code, 'client_ownership_conflict');
-  const joleOnScalelab = validateRoute({ niche: 'jole_employer', senderInboxId: 'primary', emailTemplateId: 'jole-dc-mission-critical-v1', inboxes });
+  const joleOnScalelab = validateRoute({ niche: 'jole_employer', senderInboxId: 'primary', emailTemplateId: 'jole-industrial-employer-v1', inboxes });
   assert.equal(joleOnScalelab.code, 'client_ownership_conflict');
-  const campaignMismatch = validateRoute({ niche: 'dental', senderInboxId: 'primary', emailTemplateId: 'dental-guarantee-v1', inboxes, campaignVersionId: 'JOLE_DC_MISSION_CRITICAL' });
+  const campaignMismatch = validateRoute({ niche: 'dental', senderInboxId: 'primary', emailTemplateId: 'dental-guarantee-v1', inboxes, campaignVersionId: 'jole-btx-employer-acquisition' });
   assert.equal(campaignMismatch.code, 'client_ownership_conflict');
   // Same client end to end: isolation passes; the draft template's readiness is what refuses.
-  const jole = validateRoute({ niche: 'jole_employer', senderInboxId: 'jole_test', emailTemplateId: 'jole-dc-mission-critical-v1', inboxes, campaignVersionId: 'JOLE_DC_MISSION_CRITICAL' });
-  assert.equal(jole.ok, false); assert.equal(jole.code, undefined); assert.match(jole.reason, /not final/);
+  const jole = validateRoute({ niche: 'jole_employer', senderInboxId: 'jole_test', emailTemplateId: 'jole-industrial-employer-v1', inboxes, campaignVersionId: 'jole-btx-employer-acquisition' });
+  assert.equal(jole.ok, false); assert.equal(jole.code, undefined); assert.match(jole.reason, /not deployed or approved/);
   // Same client, retired offer: refused on the offer, not on isolation.
   assert.equal(validateRoute({ niche: 'dental', senderInboxId: 'primary', emailTemplateId: 'dental-guarantee-v1', inboxes }).code, 'offer_retired');
 });
@@ -223,7 +223,7 @@ test('routing: inbox rows without clientId (as sender-balance passes them) still
 });
 
 test('routing: Jole campaigns are not queueable while draft/placeholder', () => {
-  assert.match(validateCampaignVersionRoute({ niche: 'jole_employer', emailTemplateId: 'jole-dc-mission-critical-v1', campaignVersionId: 'JOLE_DC_MISSION_CRITICAL' }).reason, /draft/);
+  assert.match(validateCampaignVersionRoute({ niche: 'jole_employer', emailTemplateId: 'jole-industrial-employer-v1', campaignVersionId: 'jole-btx-employer-acquisition' }).reason, /draft/);
   assert.match(validateCampaignVersionRoute({ niche: 'jole_employer', emailTemplateId: 'jole-gulf-industrial-v1', campaignVersionId: 'JOLE_GULF_INDUSTRIAL' }).reason, /disabled/);
   assert.match(validateCampaignVersionRoute({ niche: 'jole_employer', emailTemplateId: 'jole-shipyard-v1', campaignVersionId: 'JOLE_SHIPYARD' }).reason, /disabled/);
 });
@@ -260,14 +260,18 @@ test('final gate: JOLE SEND DISABLE — blocked even when every other requiremen
     clientSuppression: { available: true, entries: [] },
   });
   assert.equal(verdict.allowed, false);
-  assert.equal(verdict.code, 'client_inactive', 'onboarding pending: not an active client');
+  assert.equal(verdict.code, 'client_sending_disabled', 'active client, sending switch off');
   // Naming Jole in the env allow-list does not override the source-controlled switch.
   const envOnly = evaluateFreshSendSafety(lead, lead, new Set(), {
     purpose: 'cold', env: { CLIENT_SENDING_AUTHORIZED: 'jole' }, senderInboxId: 'jole_test', senders: SENDERS,
     clientSuppression: { available: true, entries: [] },
   });
-  assert.equal(envOnly.code, 'client_inactive');
-  assert.equal(clientSendBlock('jole', { CLIENT_SENDING_AUTHORIZED: 'jole' }).code, 'client_inactive');
+  assert.equal(envOnly.code, 'client_sending_disabled');
+  assert.equal(clientSendBlock('jole', { CLIENT_SENDING_AUTHORIZED: 'jole' }).code, 'client_sending_disabled');
+  const pending = require('../test-support/client-lifecycle').pendingJoleForTest();
+  try {
+    assert.equal(clientSendBlock('jole', { CLIENT_SENDING_AUTHORIZED: 'jole' }).code, 'client_inactive');
+  } finally { pending(); }
   // Even once activated, the send switch stays off until a reviewed commit enables it.
   const restore = require('../test-support/client-lifecycle').activateJoleForTest();
   try {
@@ -282,7 +286,7 @@ test('final gate: cross-client sender or lead is refused before suppression or s
   const dental = scalelabDental();
   assert.equal(evaluateFreshSendSafety(dental, dental, new Set(), { env: cleanEnv, senderInboxId: 'jole_test', senders: SENDERS }).code, 'client_ownership_conflict');
   // The row changed ownership since selection: the fresh row decides.
-  const drifted = { ...dental, intendedCampaignVersion: 'JOLE_DC_MISSION_CRITICAL' };
+  const drifted = { ...dental, intendedCampaignVersion: 'jole-btx-employer-acquisition' };
   assert.equal(evaluateFreshSendSafety(dental, drifted, new Set(), { env: cleanEnv, senderInboxId: 'primary', senders: SENDERS }).code, 'client_ownership_conflict');
 });
 
@@ -358,7 +362,7 @@ test('reservation: consistent single-client ownership reserves normally; legacy 
 test('replies: a Jole reply resolves Jole context; a ScaleLab reply resolves ScaleLab legacy context', () => {
   const jole = resolveReplyClientContext({ senderInboxId: 'jole_test', lead: joleLead(), senders: SENDERS });
   assert.deepEqual({ ok: jole.ok, clientId: jole.clientId, policyMode: jole.policyMode, campaignId: jole.campaignId },
-    { ok: true, clientId: 'jole', policyMode: 'managed', campaignId: 'JOLE_DC_MISSION_CRITICAL' });
+    { ok: true, clientId: 'jole', policyMode: 'managed', campaignId: 'jole-btx-employer-acquisition' });
   const scalelab = resolveReplyClientContext({ senderInboxId: 'primary', lead: scalelabDental(), senders: SENDERS });
   assert.equal(scalelab.clientId, 'scalelab'); assert.equal(scalelab.policyMode, 'legacy');
 });

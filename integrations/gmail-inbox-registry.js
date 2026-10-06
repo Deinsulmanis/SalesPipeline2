@@ -3,6 +3,7 @@
 const { google } = require('googleapis');
 const { DEFAULT_INBOX_DAILY_LIMIT, DEFAULT_INBOX_PER_RUN_LIMIT } = require('./gmail-sender-capacity');
 const { DEFAULT_CLIENT_ID, resolveClientId } = require('./clients/registry');
+const { senderPolicyBlockers, cappedDailyLimit } = require('./clients/sender-policy');
 
 const STATUSES = new Set(['warming', 'ready', 'active', 'paused', 'error']);
 
@@ -56,7 +57,7 @@ const DEFAULT_SECONDARY_INBOXES = Object.freeze([
   }),
 ]);
 
-function parseEntry(entry, index, seenIds, seenEmails) {
+function parseEntry(entry, index, seenIds, seenEmails, env = process.env) {
   const id = String(entry?.id || '').trim();
   const email = String(entry?.email || '').trim().toLowerCase();
   const status = String(entry?.status || 'warming').trim().toLowerCase();
@@ -85,29 +86,42 @@ function parseEntry(entry, index, seenIds, seenEmails) {
   if (staffingOnly && clientId && clientId !== DEFAULT_CLIENT_ID) throw new Error(`Gmail inbox ${id} cannot be staffing-only for another client`);
   if (seenIds.has(id) || seenEmails.has(email)) throw new Error(`Duplicate Gmail inbox entry: ${id}`);
   seenIds.add(id); seenEmails.add(email);
+  // A managed client's sender: campaign allowlist, per-inbox hard ceiling and
+  // domain rules from its client's senderPolicy (clients/sender-policy.js).
+  // Violations block the sender instead of throwing, so one bad managed-client
+  // row cannot invalidate the ScaleLab inboxes beside it.
+  const managed = Boolean(clientId && clientId !== DEFAULT_CLIENT_ID);
+  const allowedCampaignIds = managed && Array.isArray(entry?.allowedCampaignIds)
+    ? Object.freeze(entry.allowedCampaignIds.map(value => String(value || '').trim()).filter(Boolean)) : null;
+  const draft = { id, email, clientId, ...(allowedCampaignIds ? { allowedCampaignIds } : {}) };
+  const policyBlockers = senderPolicyBlockers(draft, env);
+  const effectiveDailyLimit = cappedDailyLimit(draft, dailyLimit);
   return Object.freeze({
-    id, email, status, tokenEnv, dailyLimit, perRunLimit, observerEnabled, provider: 'gmail',
+    id, email, status, tokenEnv, dailyLimit: effectiveDailyLimit, perRunLimit, observerEnabled, provider: 'gmail',
     ...(staffingOnly ? { staffingOnly } : {}),
     ...(clientId ? { clientId } : {}),
+    ...(allowedCampaignIds ? { allowedCampaignIds } : {}),
+    ...(effectiveDailyLimit !== dailyLimit ? { configuredDailyLimit: dailyLimit } : {}),
+    ...(policyBlockers.length ? { policyBlockers: Object.freeze(policyBlockers) } : {}),
   });
 }
 
-function parseRegistry(raw = process.env.GMAIL_INBOX_REGISTRY_JSON || '[]') {
+function parseRegistry(raw = process.env.GMAIL_INBOX_REGISTRY_JSON || '[]', env = process.env) {
   let entries;
   try { entries = JSON.parse(raw || '[]'); } catch (_) { throw new Error('GMAIL_INBOX_REGISTRY_JSON must be valid JSON'); }
   if (!Array.isArray(entries)) throw new Error('GMAIL_INBOX_REGISTRY_JSON must be a JSON array');
   const seenIds = new Set();
   const seenEmails = new Set();
-  return entries.map((entry, index) => parseEntry(entry, index, seenIds, seenEmails));
+  return entries.map((entry, index) => parseEntry(entry, index, seenIds, seenEmails, env));
 }
 
-function withDefaultInboxes(entries = []) {
+function withDefaultInboxes(entries = [], env = process.env) {
   const seenIds = new Set(entries.map(entry => entry.id));
   const seenEmails = new Set(entries.map(entry => entry.email));
   const extras = [];
   for (const def of DEFAULT_SECONDARY_INBOXES) {
     if (seenIds.has(def.id) || seenEmails.has(def.email)) continue;
-    extras.push(parseEntry(def, entries.length + extras.length, seenIds, seenEmails));
+    extras.push(parseEntry(def, entries.length + extras.length, seenIds, seenEmails, env));
   }
   return [...entries, ...extras];
 }
@@ -116,7 +130,7 @@ function sendEligibleFor(entry, env = process.env) {
   const credentialConfigured = entry.id === 'primary'
     ? Boolean(env.GMAIL_TOKEN_JSON || entry.credentialConfigured)
     : Boolean(env[entry.tokenEnv] || entry.credentialConfigured);
-  return entry.status === 'active' && entry.dailyLimit > 0 && credentialConfigured;
+  return entry.status === 'active' && entry.dailyLimit > 0 && credentialConfigured && !entry.policyBlockers?.length;
 }
 
 function publicRegistry(entries, env = process.env) {
@@ -127,6 +141,9 @@ function publicRegistry(entries, env = process.env) {
     credentialConfigured: Boolean(env[entry.tokenEnv]),
     sendEligible: sendEligibleFor(entry, env),
     clientId: entry.clientId || DEFAULT_CLIENT_ID,
+    ...(entry.allowedCampaignIds ? { allowedCampaignIds: [...entry.allowedCampaignIds] } : {}),
+    ...(entry.configuredDailyLimit !== undefined ? { configuredDailyLimit: entry.configuredDailyLimit } : {}),
+    ...(entry.policyBlockers?.length ? { policyBlockers: [...entry.policyBlockers] } : {}),
   }));
 }
 
@@ -202,7 +219,7 @@ function applySenderRuntime(senders = [], overlay = []) {
     return {
       ...sender,
       status,
-      sendEligible: status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured,
+      sendEligible: status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured && !sender.policyBlockers?.length,
     };
   });
 }

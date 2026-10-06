@@ -53,7 +53,7 @@ test('SAFE E2E: Jole lead → routing → queue dry run → gate → reply → c
 
   // 1. Import validation (dry run). A cross-client collision is refused.
   const imported = validateClientLeadImport({
-    clientId: 'jole', campaignId: 'JOLE_DC_MISSION_CRITICAL', existingLeads: corpus, suppressedEmails: new Set(),
+    clientId: 'jole', campaignId: 'jole-btx-employer-acquisition', existingLeads: corpus, suppressedEmails: new Set(),
     rows: [
       { company: 'Voltline Mission Critical LLC', contactName: 'Pat Rivera', email: 'Pat.Rivera@voltline.example.com', evidence: 'Hyperscale DC electrical, 400 direct electricians' },
       { company: 'Bright Smiles Dental', email: 'office@brightsmiles.example.com' },
@@ -91,14 +91,16 @@ test('SAFE E2E: Jole lead → routing → queue dry run → gate → reply → c
   assert.equal(queued.status, 422);
   assert.equal(applied, 0);
 
-  // 4. Final send gate in a fully authorized send process. As shipped Jole is
-  // onboarding_pending (not active); after an explicit activation it is still
-  // refused until sending is enabled.
+  // 4. Final send gate in a fully authorized send process. Before activation
+  // Jole is refused as inactive; as shipped (active since 2026-10-05) it is
+  // still refused until sending is enabled.
+  const restorePending = require('../test-support/client-lifecycle').pendingJoleForTest();
   const inactive = await guardProviderSend(lead, {
     env: AUTHORIZED_SENDER_ENV, senders,
     loadFreshState: async () => ({ current: lead, suppressedEmails: new Set() }),
     loadClientSuppression: async () => ({ available: true, entries: [] }),
   }, { purpose: 'cold', senderInboxId: 'jole_test' });
+  restorePending();
   assert.equal(inactive.code, 'client_inactive');
   // From here on, model Jole after onboarding and an explicit operator
   // activation (sending still disabled) to exercise fulfillment end to end.

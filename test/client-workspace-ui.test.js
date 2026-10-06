@@ -26,8 +26,8 @@ const HTML = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'),
 const joleLead = (id, extra = {}) => ({
   id, clientId: 'jole', company: `Jole Employer ${id}`, contactName: 'Pat', email: `${id}@jole-employer.example.com`,
   stage: 'Import', emailStatus: '', emailStep: '', notes: '', leadNiche: 'jole_employer',
-  emailTemplateId: 'jole-dc-mission-critical-v1', intendedCampaignVersion: 'JOLE_DC_MISSION_CRITICAL',
-  campaign: 'JOLE_DC_MISSION_CRITICAL', senderInboxId: '', routingRequired: 'true', tradeType: '', ...extra,
+  emailTemplateId: 'jole-industrial-employer-v1', intendedCampaignVersion: 'jole-btx-employer-acquisition',
+  campaign: 'jole-btx-employer-acquisition', senderInboxId: '', routingRequired: 'true', tradeType: '', ...extra,
 });
 const scalelabLead = (id, extra = {}) => ({
   id, clientId: 'scalelab', company: `Dental ${id}`, contactName: 'Sam', email: `${id}@dental.example.com`,
@@ -89,8 +89,10 @@ test('registry: the public client carries navigation and terminology, and no act
   const jole = publicClient(getClient('jole'));
   assert.deepEqual(jole.navigation.workspaces, ['clients', 'pipeline', 'inbox', 'bookings', 'campaigns', 'analytics', 'settings']);
   assert.equal(jole.terminology.leads, 'employer leads');
-  assert.equal(jole.lifecycleStatus, 'onboarding_pending');
-  assert.equal(jole.active, false);
+  assert.equal(jole.lifecycleStatus, 'active');
+  assert.equal(jole.active, true);
+  assert.equal(jole.sendingEnabledInConfig, false);
+  assert.deepEqual(jole.senderPolicy.allowedCampaignIds, ['jole-btx-employer-acquisition']);
   assert.equal(jole.platformAccess, 'none');
 });
 
@@ -146,7 +148,7 @@ test('inbox: only this client\'s classified replies, with its open clarification
   assert.equal(JSON.stringify(view).includes('dental'), false);
 });
 
-test('settings: client inboxes only; Jole capacity is zero and blocked while onboarding; DNS never invented', () => {
+test('settings: client inboxes only; Jole capacity is zero and sending blocked; DNS never invented', () => {
   const settings = buildClientSettings({ clientId: 'jole', inboxes: INBOXES, global: { dailyLimit: 200, windowLimit: 21 }, env: {}, now: new Date('2026-10-01T18:00:00Z') });
   assert.deepEqual(settings.inboxes.map(inbox => inbox.id), ['jole_a']);
   assert.equal(settings.inboxes[0].domain, 'jole.example.com');
@@ -154,8 +156,9 @@ test('settings: client inboxes only; Jole capacity is zero and blocked while onb
   assert.equal(settings.capacity.remainingToday, 0);
   assert.ok(settings.capacity.blockedBy);
   assert.equal(settings.sending.sendingEnabled, false);
-  assert.equal(settings.status.lifecycleStatus, 'onboarding_pending');
-  assert.equal(settings.status.onboarding.setupBalanceDueCents, 17500);
+  assert.equal(settings.status.lifecycleStatus, 'active');
+  assert.equal(settings.senderPolicy.maxDailyPerInbox, 20);
+  assert.equal(settings.status.onboarding.setupBalanceDueCents, 0);
   assert.deepEqual(settings.domainAuthentication, { checked: false });
   assert.equal(/spf|dkim|dmarc/i.test(JSON.stringify(settings)), false, 'no DNS verdicts in the payload');
 });
@@ -200,12 +203,12 @@ test('routes: pipeline, inbox and settings are operator-only and 404 for an unkn
 
 test('routes: each workspace view returns only that client\'s records', async () => {
   const store = createMemoryLedgerStore();
-  // Ledger writes need an active client; seed as activated Jole, then read back as it ships (onboarding_pending).
+  // Ledger writes need an active client (Jole has been active since 2026-10-05).
   const restore = activateJoleForTest();
   try {
     await ledger.openClarification(store, { clientId: 'jole', lead: joleLead('j1'), question: 'Rates?', topics: ['rates'], sourceMessageId: 'r1' });
   } finally { restore(); }
-  assert.equal(getClient('jole').lifecycleStatus, 'onboarding_pending');
+  assert.equal(getClient('jole').lifecycleStatus, 'active');
   await withServer(store, async ({ get }) => {
     const pipeline = await (await get('/api/clients/jole/pipeline')).json();
     assert.equal(pipeline.total, 2);

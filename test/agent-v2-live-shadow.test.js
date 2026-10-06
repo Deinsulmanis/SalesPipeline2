@@ -470,7 +470,9 @@ test('final freshness refuses any change since the decision and allows only an u
     [{ state: freshState({ thread: { threadIds: ['t1', 't2'] } }) }, 'thread_or_sender_changed'],
     [{ stateDigest: 'digest-0' }, 'state_changed'],
     [{ state: freshState({ identity: { ...freshState().identity, clientSource: 'inferred' } }) }, 'client_id_missing'],
-    [{ state: freshState({ identity: { ...freshState().identity, clientId: 'jole' } }) }, 'client_inactive'],
+    // Jole is an active client since 2026-10-05, but Agent v2 is authorized for
+    // ScaleLab staffing only, so a Jole conversation is still refused.
+    [{ state: freshState({ identity: { ...freshState().identity, clientId: 'jole' } }) }, 'client_not_authorized'],
     [{ state: freshState({ evidenceWarnings: [{ code: 'sender_mismatch' }] }) }, 'evidence_conflict'],
     [{ state: null }, 'freshness_input_unavailable'],
   ];

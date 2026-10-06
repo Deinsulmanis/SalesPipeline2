@@ -89,6 +89,10 @@ function buildClientSettings({ clientId, leads = [], activities = [], inboxes = 
     identityVerified: Boolean(inbox.identityVerified), observerHealth: inbox.observerHealth || 'unavailable',
     lastObserverSuccessAt: inbox.observer?.lastSuccessfulAt || null, observerError: inbox.observer?.lastError || null,
     activationBlockers: inbox.controls?.activationBlockers || [],
+    allowedCampaignIds: inbox.allowedCampaignIds || (client.senderPolicy ? [...client.senderPolicy.allowedCampaignIds] : null),
+    hardDailyCap: client.senderPolicy?.maxDailyPerInbox ?? null,
+    configuredDailyLimit: inbox.configuredDailyLimit ?? null,
+    policyBlockers: inbox.policyBlockers || [],
   }));
   const view = publicClient(client);
   return {
@@ -106,6 +110,7 @@ function buildClientSettings({ clientId, leads = [], activities = [], inboxes = 
       blockedBy: verdict.allowed ? null : verdict.code,
       globalDailyLimit: capacityState.globalDailyLimit, globalWindowLimit: capacityState.globalWindowLimit,
     },
+    senderPolicy: view.senderPolicy,
     // This server does not verify DNS; SPF/DKIM/DMARC are shown as unknown, never invented.
     domainAuthentication: { checked: false },
     inboxes: clientInboxes,

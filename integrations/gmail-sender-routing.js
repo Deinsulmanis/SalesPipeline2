@@ -8,6 +8,7 @@ const { normalizeNiche } = require('./campaign-routing');
 const { STAFFING_CAMPAIGN } = require('./staffing-campaign');
 const { getClient } = require('./clients/registry');
 const { checkClientConsistency } = require('./clients/ownership');
+const { senderServesCampaign } = require('./clients/sender-policy');
 const { activityBelongsToLead } = require('./lead-activity');
 
 function parseMetadata(value) {
@@ -24,7 +25,7 @@ function configuredSenders(env = process.env) {
     perRunLimit: Number(env.GMAIL_PRIMARY_PER_RUN_LIMIT || DEFAULT_INBOX_PER_RUN_LIMIT),
     credentialConfigured: Boolean(env.GMAIL_TOKEN_JSON),
   };
-  const secondary = withDefaultInboxes(parseRegistry(env.GMAIL_INBOX_REGISTRY_JSON || '[]')).map(entry => ({
+  const secondary = withDefaultInboxes(parseRegistry(env.GMAIL_INBOX_REGISTRY_JSON || '[]', env), env).map(entry => ({
     ...entry, oauthClient: 'secondary', provider: 'gmail',
     perRunLimit: Number(entry.perRunLimit || DEFAULT_INBOX_PER_RUN_LIMIT),
     observerEnabled: entry.observerEnabled !== false,
@@ -32,7 +33,7 @@ function configuredSenders(env = process.env) {
   }));
   const senders = [primary, ...secondary].map(sender => ({
     ...sender,
-    sendEligible: sender.status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured,
+    sendEligible: sender.status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured && !sender.policyBlockers?.length,
   }));
   return applySenderRuntime(senders, parseRuntimeOverlay(env.GMAIL_SENDER_RUNTIME_JSON || '[]'));
 }
@@ -53,7 +54,11 @@ function allowedForLead(sender, lead = {}) {
   // A managed client's lead is routed by its campaign registry
   // (routedLeadReady / validateRoute); the legacy niche rules below are
   // ScaleLab's and never admit or refuse it.
-  if (!getClient(owner.clientId).isDefault) return sender.sendEligible === true;
+  // A managed client's sender also serves only the campaigns its client's
+  // senderPolicy allows it; a lead on any other campaign gets no sender.
+  if (!getClient(owner.clientId).isDefault) {
+    return sender.sendEligible === true && senderServesCampaign(sender, lead.intendedCampaignVersion || lead.campaign);
+  }
   // A staffing-only mailbox serves the staffing campaign's canonical niche and
   // nothing else: not dental, roofing, blank, or a lookalike "*staffing" niche.
   // This one check covers dynamic balancing, assigned and pinned leads alike.

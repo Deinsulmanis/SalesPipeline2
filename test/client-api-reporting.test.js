@@ -13,8 +13,8 @@ const ledger = require('../integrations/clients/ledger');
 const joleLead = (id, extra = {}) => ({
   id, company: `Jole Employer ${id}`, contactName: 'Pat', email: `${id}@jole-employer-test.invalid`,
   stage: 'Import', emailStatus: '', emailStep: '', notes: '', leadNiche: 'jole_employer',
-  emailTemplateId: 'jole-dc-mission-critical-v1', intendedCampaignVersion: 'JOLE_DC_MISSION_CRITICAL',
-  campaign: 'JOLE_DC_MISSION_CRITICAL', senderInboxId: '', routingRequired: 'true', tradeType: '', ...extra,
+  emailTemplateId: 'jole-industrial-employer-v1', intendedCampaignVersion: 'jole-btx-employer-acquisition',
+  campaign: 'jole-btx-employer-acquisition', senderInboxId: '', routingRequired: 'true', tradeType: '', ...extra,
 });
 const scalelabLead = (id, extra = {}) => ({
   id, company: `Dental ${id}`, email: `${id}@dental-test.invalid`, stage: 'Contacted', emailStatus: 'emailed',
@@ -71,9 +71,9 @@ test('API: Jole filters Jole data; ScaleLab filters ScaleLab data — on the ser
     assert.equal(overview.deliverability.sends, 0);
     assert.equal(overview.replies.positive, 1);
     assert.equal(overview.sending.sendingEnabled, false);
-    assert.equal(overview.campaigns.length, 3);
-    assert.equal(overview.campaigns.find(c => c.id === 'JOLE_DC_MISSION_CRITICAL').leads, 2);
-    assert.equal(overview.campaigns.find(c => c.id === 'JOLE_DC_MISSION_CRITICAL').sendable, false);
+    assert.equal(overview.campaigns.length, 4);
+    assert.equal(overview.campaigns.find(c => c.id === 'jole-btx-employer-acquisition').leads, 2);
+    assert.equal(overview.campaigns.find(c => c.id === 'jole-btx-employer-acquisition').sendable, false);
     assert.equal(JSON.stringify(overview).includes('dental-test.invalid'), false, 'no ScaleLab record leaks into the Jole view');
     const sl = await (await get('/api/clients/scalelab/overview')).json();
     assert.equal(sl.leads.imported, 3);
@@ -84,7 +84,8 @@ test('API: Jole filters Jole data; ScaleLab filters ScaleLab data — on the ser
   });
 });
 
-test('API: before activation, Jole fulfillment writes are refused (422 client_not_active)', async () => {
+test('API: before activation, Jole fulfillment writes are refused (422 client_not_active)', async t => {
+  t.after(require('../test-support/client-lifecycle').pendingJoleForTest());
   await withServer(createMemoryLedgerStore(), async ({ get, post }) => {
     const refused = await post('/api/clients/jole/meetings', { leadId: 'j1', scheduledFor: '2026-10-08T16:00:00Z' });
     assert.equal(refused.status, 422);

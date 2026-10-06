@@ -14,8 +14,8 @@ const { createMemoryLedgerStore } = require('../integrations/clients/ledger-stor
 const joleLead = (extra = {}) => ({
   id: 'jole-lead-1', company: 'Voltline Mission Critical LLC', contactName: 'Pat Rivera',
   email: 'pat.rivera@voltline-test.invalid', stage: 'Contacted', emailStatus: 'emailed', emailStep: '1', notes: '',
-  leadNiche: 'jole_employer', emailTemplateId: 'jole-dc-mission-critical-v1',
-  intendedCampaignVersion: 'JOLE_DC_MISSION_CRITICAL', campaign: 'JOLE_DC_MISSION_CRITICAL',
+  leadNiche: 'jole_employer', emailTemplateId: 'jole-industrial-employer-v1',
+  intendedCampaignVersion: 'jole-btx-employer-acquisition', campaign: 'jole-btx-employer-acquisition',
   senderInboxId: 'jole_test', routingRequired: 'true', tradeType: '', ...extra,
 });
 const scalelabLead = (extra = {}) => ({
@@ -71,7 +71,7 @@ test('suppression: entries validate client and match type', () => {
 });
 
 // ── REPLY CLASSIFICATION ───────────────────────────────────────────────────
-const joleReply = text => classifyClientReply({ clientId: 'jole', campaignId: 'JOLE_DC_MISSION_CRITICAL', text });
+const joleReply = text => classifyClientReply({ clientId: 'jole', campaignId: 'jole-btx-employer-acquisition', text });
 
 test('replies: ScaleLab replies are left to the legacy pipeline untouched', () => {
   assert.deepEqual(classifyClientReply({ clientId: 'scalelab', text: 'What are your rates?' }), { mode: 'legacy', clientId: 'scalelab' });
@@ -128,7 +128,7 @@ function pipelineDeps(overrides = {}) {
   };
   return { deps, calls };
 }
-const context = { ok: true, clientId: 'jole', campaignId: 'JOLE_DC_MISSION_CRITICAL', policyMode: 'managed' };
+const context = { ok: true, clientId: 'jole', campaignId: 'jole-btx-employer-acquisition', policyMode: 'managed' };
 
 test('managed reply: a clarification question stops the sequence, records evidence and opens a clarification — never sends', async t => {
   t.after(require('../test-support/client-lifecycle').activateJoleForTest());
