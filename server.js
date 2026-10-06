@@ -59,6 +59,7 @@ const {
   readCanonicalLead,
 } = require('./integrations/outreach-state');
 const { applyFalseOptOutCorrection, FALSE_OPT_OUT_TAG } = require('./integrations/false-opt-out-correction');
+const { planOooHoldRelease } = require('./integrations/ooo-hold-repair');
 const { createIntentBackstop, BACKSTOP_REASON } = require('./integrations/intent-backstop');
 // Stage 3D: dual-read measurement only. Nothing branches on its output.
 const {
@@ -206,7 +207,7 @@ const {
   compareNextActions, summarizeNextActions,
   stageTransitionCheck, reopenEligibility, OUTCOMES, OUTCOME_IDS, LOSS_OUTCOME_IDS,
   MANUAL_HOLD_TAG, HUMAN_OWNED_STAGES,
-  REACTIVATION_MODES, reactivationEligibility, FOLLOW_UP_DELAY_DAYS,
+  REACTIVATION_MODES, reactivationEligibility,
   coldReactivationVerdict, coldReactivationSuppressionReader,
   CALL_STATUS, deriveCallLifecycle, callLifecycleActions, deriveHotState,
   CALL_EVENTS, CALL_BOOKING_EVENTS, parseCreatedMs,
@@ -2796,10 +2797,10 @@ async function findColdEmailTwin(boardLeadId, boardEmail) {
   return matches.length ? matches[0] : null;
 }
 
-// How many follow-up steps the sequence actually has. Mirrors FOLLOW_UP_SEQUENCE
-// in outreach-agent.js via the shared cadence constant, so "is there a next
-// step?" can never disagree with what the agent would really send.
-const FOLLOW_UP_STEP_COUNT = FOLLOW_UP_DELAY_DAYS.length;
+// How many follow-up steps the sequence actually has, from the same cadence
+// module the agent's selector uses (integrations/sequence-timing.js), so "is
+// there a next step?" can never disagree with what the agent would really send.
+const { FOLLOW_UP_STEP_COUNT, describeSequence } = require('./integrations/sequence-timing');
 // The canonical 'ghosted' loss outcome, asserted against the shared taxonomy so
 // a rename there fails loudly here instead of silently writing a dead value.
 const GHOSTED_OUTCOME = 'ghosted';
@@ -2855,7 +2856,7 @@ async function recordReactivationEvent(boardLeadId, twin, { eventType, email, co
 // ── REACTIVATION ────────────────────────────────────────────────────────────
 // Turning cold-email automation back on for a held lead. The dangerous version
 // of this is "delete the [MANUAL HOLD] tag": selectFollowUps() only asks whether
-// delayDays have elapsed since lastEmailedAt, so a lead held two weeks past a
+// the next step's due time has passed, so a lead held two weeks past a
 // three-day delay is already overdue and fires on the next pass.
 //
 // So nothing here removes the hold. Scheduling writes a [RESUME: <iso>] tag
@@ -5233,7 +5234,8 @@ app.get('/api/staffing/launch-readiness', requireAuth, async (_req, res) => {
   });
   res.json({
     campaign: STAFFING_CAMPAIGN, ...report, ...staffingLaunchState(),
-    sequence: LOCKED_EMAILS.map((body, i) => ({ step: i + 1, subject: i ? 'Same thread' : 'employer accounts', delayDays: [0, 3, 5][i], body, bold: BOLD_PHRASES[i] })),
+    sequence: LOCKED_EMAILS.map((body, i) => ({ step: i + 1, subject: i ? 'Same thread' : 'employer accounts',
+      day: describeSequence()[i].day, timing: describeSequence()[i].rule, body, bold: BOLD_PHRASES[i] })),
     sequenceDiff: staffingSequenceDiff(),
   });
 });
@@ -6610,6 +6612,82 @@ function operationalMailbox(senderInboxId) {
 // Read-only Agent v2 status: configuration flags, shadow-ledger aggregates and
 // Phase 6 execution evidence from the activity ledger. Counts and timestamps
 // only — no credential, raw model output or prospect text is returned.
+// ── OOO hold release (one-off repair for the pre-2026-10-03 OOO handler) ────
+// The old handler made an autoresponder a [MANUAL HOLD]. Resume cannot release
+// these (ColdEmail-only leads have no Pipeline card), so this narrow route can,
+// and ONLY when integrations/ooo-hold-repair.js proves the hold was the OOO
+// handler's and nothing since (reply, answer, booking, suppression, a person's
+// hold) makes automation wrong. GET plans; POST applies the plan the operator
+// reviewed, identified by its fingerprint. Nothing here sends: the lead gains
+// a dated OOO pause and the agent's ordinary gates decide after that instant.
+async function planOooHoldReleaseFor(leadId, { resumeAt, by }) {
+  const state = await loadFalseOptOutState(leadId);
+  if (!state.lead || state.leadMatches !== 1) {
+    return { state, status: 404, error: 'exactly one ColdEmail row is required for this lead' };
+  }
+  if (state.boardLeads.length) {
+    return { state, status: 409, error: 'this lead has a Pipeline card; release its hold through Resume' };
+  }
+  const plan = planOooHoldRelease({
+    lead: state.lead, activities: state.activities, suppressedEmails: state.suppressedEmails, resumeAt, by,
+  });
+  return { state, plan };
+}
+
+app.get('/api/ops/ooo-hold-release/:id', requireAuth, async (req, res) => {
+  try {
+    const { plan, status, error } = await withAuth(() => planOooHoldReleaseFor(String(req.params.id || '').trim(), {
+      resumeAt: String(req.query.resumeAt || ''), by: String(req.query.by || ''),
+    }));
+    if (error) return res.status(status).json({ error });
+    res.json({ dryRun: true, ...plan });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ooo-hold-release plan]', error.message);
+    res.status(503).json({ error: 'OOO hold release could not be planned: ' + error.message });
+  }
+});
+
+app.post('/api/ops/ooo-hold-release/:id', requireAuth, async (req, res) => {
+  const leadId = String(req.params.id || '').trim();
+  if (agentState.running || automationLaunchReserved) {
+    return res.status(409).json({ error: 'an agent pass or another reserved operation is running; retry outside it' });
+  }
+  automationLaunchReserved = true;
+  try {
+    const { state, plan, status, error } = await withAuth(() => planOooHoldReleaseFor(leadId, {
+      resumeAt: String(req.body?.resumeAt || ''), by: String(req.body?.by || ''),
+    }));
+    if (error) return res.status(status).json({ error });
+    if (!plan.ok) return res.status(409).json({ ok: false, refusals: plan.refusals, checks: plan.checks });
+    if (String(req.body?.fingerprint || '') !== plan.fingerprint) {
+      return res.status(409).json({ error: 'The plan changed since it was reviewed; re-run the GET dry run', checks: plan.checks });
+    }
+    // The pause lands first. If the notes write then fails, the lead is still
+    // held — the event alone changes nothing while the hold remains.
+    const eventsAppended = await withAuth(() => appendMissingEvents([plan.event], state.activities));
+    await withAuth(() => applyLeadChange(leadId, { notes: plan.nextNotes }, {
+      row: state.row, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID,
+      expectedState: { notes: state.lead.notes }, releaseMarkers: [MANUAL_HOLD_TAG],
+    }));
+    invalidateOutreachCache('ooo_hold_release');
+    ceRowMap.clear();
+    const after = await withAuth(() => loadFalseOptOutState(leadId));
+    console.log(`[ooo-hold-release] ${leadId}: hold released, OOO pause until ${JSON.parse(plan.event.metadata).resumeAt}; by ${req.body?.by}`);
+    res.json({ ok: true, eventsAppended, event: plan.event, verified: {
+      manualHold: String(after.lead?.notes || '').includes(MANUAL_HOLD_TAG),
+      resumeEventPresent: after.activities.some(row => row.eventId === plan.event.eventId),
+      notes: after.lead?.notes || '', emailStatus: after.lead?.emailStatus || '', emailStep: after.lead?.emailStep || '',
+    }, automationSent: false });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ooo-hold-release apply]', error.message);
+    res.status(500).json({ error: error.message });
+  } finally {
+    automationLaunchReserved = false;
+  }
+});
+
 app.get('/api/ops/agent-v2', requireAuth, async (_req, res) => {
   const { agentV2ShadowConfig } = require('./integrations/agent-v2-shadow-hook');
   const config = agentV2ShadowConfig(process.env);

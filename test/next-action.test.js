@@ -44,8 +44,7 @@ test('2. blocked cold cadence contributes no misleading due date', () => {
   assert.equal(deriveNextAction({ stage: 'follow_up' }, twin, ctx()).dueAt, null);
   const step2 = { emailStatus: 'emailed', emailStep: '2', lastEmailedAt: '2026-08-25T00:00:00.000Z' };
   assert.equal(deriveNextAction({ stage: 'follow_up' }, step2, ctx()).dueAt, null);
-  assert.match(agent, /delayDays: 3/);
-  assert.match(agent, /delayDays: 5/);
+  assert.match(agent, /return isFollowUpDue\(l, now, \{ activities \}\);/);
 });
 
 test('a queued ColdEmail twin cannot override Pipeline ownership', () => {
@@ -353,7 +352,7 @@ test('27/28/29/30. the engine reuses the canonical modules rather than forking t
   assert.ok(!/INTERESTED|MEETING_REQUEST|NOT_INTERESTED/.test(source), 'no second reply mapping');
   // Manual hold and cadence stay single-sourced.
   assert.match(source, /MANUAL_HOLD_TAG/);
-  assert.match(source, /mirrors FOLLOW_UP_SEQUENCE/i);
-  // The cadence still matches the agent's real sequence.
-  assert.match(source, /FOLLOW_UP_DELAY_DAYS = Object\.freeze\(\[3, 5\]\)/);
+  // The cadence is the agent's own: both read integrations/sequence-timing.js.
+  assert.match(source, /require\('\.\/sequence-timing'\)/);
+  assert.doesNotMatch(source, /FOLLOW_UP_DELAY_DAYS|delayDays\s*[:=]\s*\d/);
 });

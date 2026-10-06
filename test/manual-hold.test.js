@@ -429,8 +429,10 @@ test('sending cadence, caps and delays are untouched', () => {
   assert.match(agentSrc, /const MIN_DELAY = 30 \* 1000;/);
   assert.match(agentSrc, /const MAX_DELAY = 90 \* 1000;/);
   assert.match(agentSrc, /DAILY_SEND_LIMIT = SENDER_CAPACITY\.globalDailyLimit/);
-  assert.match(agentSrc, /delayDays: 3,/);
-  assert.match(agentSrc, /delayDays: 5,/);
+  // Cadence lives in integrations/sequence-timing.js (2026-10-03: Touch 3 is
+  // MAX(Touch 1 + 7d, Touch 2 + 3d)); the selector delegates to it.
+  assert.match(agentSrc, /return isFollowUpDue\(l, now, \{ activities \}\);/);
+  assert.deepEqual(require('../integrations/sequence-timing').NOMINAL_TOUCH_DAYS, [0, 3, 7]);
 });
 
 test('every send path is accounted for and gated', () => {

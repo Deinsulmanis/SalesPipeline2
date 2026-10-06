@@ -40,7 +40,7 @@ const GENERIC_CONFIG = genericConfig();
 // ── TIMING ──────────────────────────────────────────────────────────────────
 // Every delay in one place. Business days, matching the Hot conversation clock —
 // a recovery email landing on a Sunday helps nobody. These are NOT the cold
-// cadence (FOLLOW_UP_DELAY_DAYS); conflating the two would tie a recovery
+// cadence (integrations/sequence-timing.js); conflating the two would tie a recovery
 // journey to the cold sending schedule.
 const SEQUENCE_TIMING = Object.freeze({
   DEMO_STEP_1_BUSINESS_DAYS: 3,   // after the booking-link email already sent

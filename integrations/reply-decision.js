@@ -92,6 +92,9 @@ const EFFECT = Object.freeze({
   SUPPRESSION_ADDED: 'suppression_added',
   DRAFT_QUEUED: 'draft_queued',
   HOLD_APPLIED: 'hold_applied',
+  // An OOO reply recorded a dated resume (integrations/ooo-pause.js) instead
+  // of a manual hold. Decisions before 2026-10-03 recorded hold_applied.
+  OOO_PAUSE_SCHEDULED: 'ooo_pause_scheduled',
 });
 
 // The category production acts on, in canonical-state terms.
@@ -386,7 +389,7 @@ function executionForRoute(route, handlerResult) {
         ? { executedAction: ACTION.AUTO_TIMING_RECONTACT, status: EXECUTION_STATUS.RECONTACT_SCHEDULED, effects: [EFFECT.HOLD_APPLIED] }
         : { executedAction: ACTION.HUMAN_REVIEW, status: EXECUTION_STATUS.ROUTED_TO_HUMAN, effects: [EFFECT.HOLD_APPLIED] };
     case ROUTE.OUT_OF_OFFICE:
-      return { executedAction: ACTION.WAIT_OUT_OF_OFFICE, status: EXECUTION_STATUS.WAITING, effects: [EFFECT.HOLD_APPLIED] };
+      return { executedAction: ACTION.WAIT_OUT_OF_OFFICE, status: EXECUTION_STATUS.WAITING, effects: [EFFECT.OOO_PAUSE_SCHEDULED] };
     case ROUTE.HISTORICAL_NO_ACTION:
       return { executedAction: ACTION.NO_ACTION, status: EXECUTION_STATUS.SKIPPED, code: HISTORICAL_SKIP_CODE };
     default:

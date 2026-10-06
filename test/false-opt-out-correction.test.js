@@ -407,10 +407,16 @@ test('only the correction route passes an opt-out authorization; it cannot send,
   for (const forbidden of ["require('./send-lock')", "require('googleapis')", 'messages.send', 'nodemailer', 'withOutboundReservation']) {
     assert.ok(!moduleSrc.includes(forbidden), `the correction module must not reference ${forbidden}`);
   }
-  // Two sanctioned release declarations, both in server.js: Resume releases
-  // only [MANUAL HOLD]; the Archive restore releases only the archive marker.
+  // Three sanctioned release declarations, all in server.js: Resume releases
+  // only [MANUAL HOLD]; the Archive restore releases only the archive marker;
+  // the OOO hold release (2026-10-03 repair) releases only [MANUAL HOLD], and
+  // only for a hold the ledger proves the old OOO handler applied.
   const releaseDeclarations = sources.flatMap(([file, src]) => (src.match(/releaseMarkers: \[/g) || []).map(() => file));
-  assert.deepEqual(releaseDeclarations, ['server.js', 'server.js'], 'Resume and Archive restore are the only releaseMarkers callers');
+  assert.deepEqual(releaseDeclarations, ['server.js', 'server.js', 'server.js'], 'Resume, Archive restore and the OOO hold release are the only releaseMarkers callers');
   assert.deepEqual(server.match(/releaseMarkers: \[[^\]]*\]/g).sort(),
-    ['releaseMarkers: [ARCHIVE_MARKER_PREFIX]', 'releaseMarkers: [MANUAL_HOLD_TAG]']);
+    ['releaseMarkers: [ARCHIVE_MARKER_PREFIX]', 'releaseMarkers: [MANUAL_HOLD_TAG]', 'releaseMarkers: [MANUAL_HOLD_TAG]']);
+  const oooRoute = server.slice(server.indexOf("app.post('/api/ops/ooo-hold-release/:id'"),
+    server.indexOf("app.get('/api/ops/agent-v2'"));
+  assert.match(oooRoute, /releaseMarkers: \[MANUAL_HOLD_TAG\]/);
+  assert.match(oooRoute, /if \(!plan\.ok\) return res\.status\(409\)/, 'the release is refused unless the plan proves OOO provenance');
 });

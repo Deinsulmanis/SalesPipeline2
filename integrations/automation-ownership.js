@@ -420,9 +420,14 @@ function deriveOwnershipVerdict(lead = {}, {
     const resumeAt = isoOrNull(operation.dueAt);
     const reached = resumeAt && new Date(now).getTime() >= Date.parse(resumeAt);
     if (!reached) {
+      const why = operation.dueAtSource === 'ooo_policy_default'
+        ? 'an out-of-office reply gave no return date, so the 7-day OOO policy applies'
+        : operation.dueAtSource === 'ooo_operator_repair'
+          ? 'an out-of-office pause was confirmed by an operator'
+          : 'the prospect stated a return/revisit date';
       return verdict({
         owner: OWNER.WAITING, source: 'waiting_until_date',
-        reason: `the prospect stated a return/revisit date; nothing sends before ${resumeAt}`,
+        reason: `${why}; nothing sends before ${resumeAt}`,
         blockedBy: BLOCKED_BY.WAITING_UNTIL_DATE,
         resumeCondition: 'the stated date is reached', resumeAt,
         evidence: { action: operation.action, dueAtSource: operation.dueAtSource },

@@ -11,6 +11,7 @@ const { senderEvidence, SENDER_ATTRIBUTED_EVENTS } = require('../integrations/gm
 const { NON_COLD_STAGES } = require('../integrations/automation-ownership');
 const { routedLeadReady } = require('../integrations/campaign-routing');
 const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE } = require('../integrations/roofing-survey-profile');
+const { isFollowUpDue } = require('../integrations/sequence-timing');
 
 const DATE = (process.argv.find(arg => arg.startsWith('--date=')) || '').slice(7)
   || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
@@ -124,17 +125,14 @@ function nextDate(day) {
   return date.toISOString().slice(0, 10);
 }
 
-function ordinaryFollowUpsDue(leads, now = Date.now()) {
-  const delayDays = new Map([[1, 3], [2, 5]]);
+// The sending selector's own timing gate (integrations/sequence-timing.js).
+function ordinaryFollowUpsDue(leads, now = Date.now(), activities = []) {
   return leads.filter(lead => {
     if (lead.emailStatus !== 'emailed') return false;
     if (NON_COLD_STAGES.includes(String(lead.stage || '').trim().toLowerCase())) return false;
     if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE) return false;
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(lead.email) || !routedLeadReady(lead).ok) return false;
-    const step = Number(lead.emailStep || 0);
-    const requiredDays = delayDays.get(step);
-    const lastSent = Date.parse(lead.lastEmailedAt || '');
-    return requiredDays && Number.isFinite(lastSent) && (now - lastSent) >= requiredDays * 86400000;
+    return isFollowUpDue(lead, now, { activities });
   });
 }
 
@@ -223,7 +221,7 @@ async function main() {
     else if (proof.length > 1) item.reason = `Gmail evidence exists in multiple inboxes: ${proof.map(row => row.senderInboxId).join(', ')}`;
   }
 
-  const dueFollowUps = ordinaryFollowUpsDue(cold);
+  const dueFollowUps = ordinaryFollowUpsDue(cold, Date.now(), activities);
   const senderUnknownFollowUps = dueFollowUps.filter(lead => senderEvidence(lead, activities).length !== 1);
   const attributedEvents = activities.filter(row => SENDER_ATTRIBUTED_EVENTS.includes(row.eventType));
   const firstMultiInboxEvidenceAt = attributedEvents
@@ -251,4 +249,8 @@ async function main() {
   }, null, 2));
 }
 
-main().catch(error => { console.error(`[audit] ${error.message}`); process.exitCode = 1; });
+if (require.main === module) {
+  main().catch(error => { console.error(`[audit] ${error.message}`); process.exitCode = 1; });
+}
+
+module.exports = { ordinaryFollowUpsDue };

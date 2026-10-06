@@ -196,6 +196,8 @@ const {
 const { aggregateDemoPlays, attributeDemoPlays, demoPlayForLead } = require('./integrations/demo-attribution');
 const { INTENT_STATE_SOURCE, formatIntentStateLine, pendingIntentWork } = require('./integrations/intent-backstop');
 const { oldestDueFirst, followUpSuccessTarget } = require('./integrations/scheduler-fairness');
+const { isFollowUpDue, FOLLOW_UP_STEP_COUNT } = require('./integrations/sequence-timing');
+const { planOooResume, buildOooResumeEvent } = require('./integrations/ooo-pause');
 const { fairShareQueuedOrder } = require('./integrations/scheduled-slot-allocator');
 const {
   credentialsFor: gmailCredentialsFor, parseRegistry: parseGmailRegistry, withDefaultInboxes: withDefaultGmailInboxes,
@@ -274,6 +276,9 @@ const GMAIL_LATE_REPLY_THREAD_SCAN = process.env.GMAIL_LATE_REPLY_THREAD_SCAN ==
 // mid-run config change can never race past it. Reply/bounce detection is
 // unaffected: those passes only ever PREVENT mail.
 const SENDING_ENABLED  = process.env.SENDING_ENABLED === 'true';
+// Temporary backlog lever: follow-ups may use each sender's whole window bucket
+// and initials only fill what is left. No cap, window or limit changes.
+const FOLLOW_UP_DRAIN_MODE = process.env.FOLLOW_UP_DRAIN_MODE === 'true';
 // Stage-specific recovery journeys (Hot follow-up, no-show, cancelled call,
 // demo, timing). SEPARATE from SENDING_ENABLED on purpose: the original cold
 // campaign keeps running on its own switch, and this one defaults OFF so the
@@ -577,15 +582,15 @@ function senderForPersistedLead(lead) {
 }
 
 // ── FOLLOW-UP SEQUENCE (Phase 3) ──────────────────────────────────────────────
-// Index 0 = step-2 template (3 days after initial send)
-// Index 1 = step-3 template (5 days after step 2)   Max 3 steps total.
+// Index 0 = step-2 body, index 1 = step-3 body. Max 3 steps total. WHEN each
+// step is due lives only in integrations/sequence-timing.js; these entries
+// carry copy, never timing. Staffing renders its own locked copy instead.
 // Same invitation/sample-demo thread as step 1 (buildPitch) and the same
 // single-CTA-reply rule — no longer tier-branched, since the old busy/medium
 // split existed to continue the old "after-hours calls" angle that step 1 no
 // longer opens with.
 const FOLLOW_UP_SEQUENCE = [
   {
-    delayDays: 3,
     body: (lead) => {
       const link    = buildProposalLink(lead);
       const name    = salutationName(lead);
@@ -606,7 +611,6 @@ ${casl}`;
     },
   },
   {
-    delayDays: 5,
     body: (lead) => {
       const link    = buildProposalLink(lead);
       const name    = salutationName(lead);
@@ -627,6 +631,9 @@ ${casl}`;
     },
   },
 ];
+if (FOLLOW_UP_SEQUENCE.length !== FOLLOW_UP_STEP_COUNT) {
+  throw new Error('FOLLOW_UP_SEQUENCE must have one body per follow-up step in integrations/sequence-timing.js');
+}
 
 // ── EMAIL TEMPLATE ────────────────────────────────────────────────────────────
 
@@ -2458,33 +2465,45 @@ async function handleUnsubscribe(lead) {
   console.log(`  ⊘ ${lead.company} — ${already ? 'already Unsub; suppression confirmed' : 'marked Unsub (unsubscribe request)'}`);
 }
 
-async function handleOutOfOffice(lead, { returnDate = '', occurredAt = '' } = {}) {
+// An autoresponder pauses cold automation; it never becomes a [MANUAL HOLD].
+// A manual hold is absolute and only Resume releases it, which is how OOO
+// leads used to stay stopped forever. The pause is one append-only
+// ooo_resume_scheduled activity (integrations/ooo-pause.js): reply-operations
+// turns it into WAIT_UNTIL_RETURN, and ownership keeps cold sends off until the
+// resume instant. A later human reply, booking, opt-out or suppression — or a
+// hold a PERSON applies — still outranks it. The notes marker is history only.
+async function handleOutOfOffice(lead, { returnDate = '', occurredAt = '', messageId = '', activities = [] } = {}) {
   const rowNum = await resolveRow(lead.id);
   if (!rowNum) {
     console.warn(`[handleOutOfOffice] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
     return { skipped: 'lead_row_missing' };
   }
-  const notes = String(lead.notes || '');
-  if (/\[REPLY:\s*OOO/i.test(notes) && String(lead.notes || '').includes('[MANUAL HOLD]')) {
-    console.log(`  ⏸ ${lead.company} — already on OOO hold`);
-    return;
+  const plan = planOooResume({ returnDate, occurredAt, now: Date.now() });
+  const event = buildOooResumeEvent({
+    lead, oooMessageId: messageId, oooOccurredAt: occurredAt, ...plan,
+    company: cleanCompanyName(lead.company) || lead.company || '',
+  });
+  // The same autoresponder is handled once; re-processing it records nothing new.
+  if (!(activities || []).some(row => row.eventId === event.eventId)) {
+    // Recorded BEFORE the notes marker: if this append fails the handler throws
+    // and the lead stays exactly as it was, still protected by the OOO reply
+    // itself (a stated date waits for it; no date waits indefinitely).
+    await recordColdCallActivityStrict(event);
+    if (Array.isArray(activities)) activities.push(event);
   }
+  const notes = String(lead.notes || '');
   const stated = Date.parse(returnDate || '');
-  const conservative = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-  const resumeAt = Number.isFinite(stated) && stated > Date.now()
-    ? new Date(stated).toISOString()
-    : conservative;
   const marker = Number.isFinite(stated)
     ? `[REPLY: OOO until ${String(returnDate).slice(0, 10)}]`
     : '[REPLY: OOO — retry in 7d]';
-  let nextNotes = /\[REPLY:\s*OOO/i.test(notes) ? notes : prependNote(notes, marker);
-  nextNotes = applyHoldToNotes(nextNotes);
-  nextNotes = applyResumeToNotes(nextNotes, resumeAt);
-  await applyLeadChange(lead.id, {
-    notes: nextNotes,
-  }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
-  lead.notes = nextNotes;
-  console.log(`  ⏸ ${lead.company} — OOO hold until ${resumeAt}`);
+  if (!/\[REPLY:\s*OOO/i.test(notes)) {
+    const nextNotes = prependNote(notes, marker);
+    await applyLeadChange(lead.id, {
+      notes: nextNotes,
+    }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
+    lead.notes = nextNotes;
+  }
+  console.log(`  ⏸ ${lead.company} — OOO pause until ${plan.resumeAt} (${plan.resumeSource}); no manual hold`);
 }
 
 async function handleWrongPerson(lead, { replyText = '', suppliedContact = '', proposedEmail = '' } = {}) {
@@ -3298,7 +3317,10 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
             });
             break;
           case REPLY_ROUTE.OUT_OF_OFFICE:
-            result = await handleOutOfOffice(lead, { returnDate: canonicalReply.returnDate || '', occurredAt: message.occurredAt });
+            result = await handleOutOfOffice(lead, {
+              returnDate: canonicalReply.returnDate || '', occurredAt: message.occurredAt,
+              messageId: message.messageId || '', activities: attributionActivities,
+            });
             break;
           // Historical or CHECK_ONLY: no send-capable handler may run.
           case REPLY_ROUTE.HISTORICAL_REVIEW: result = await handleNeedsHuman(lead, message.fromAddr); break;
@@ -5133,8 +5155,9 @@ function routedLeadCanUseCurrentSender(lead) {
 }
 
 // Phase 3: find leads that are due for a follow-up step.
-// currentStep 1 → send step 2 (FOLLOW_UP_SEQUENCE[0], 3 days)
-// currentStep 2 → send step 3 (FOLLOW_UP_SEQUENCE[1], 5 days)
+// currentStep 1 → send step 2, currentStep 2 → send step 3. WHEN is decided
+// only by isFollowUpDue (integrations/sequence-timing.js): Touch 2 at Touch 1
+// + 3 days, Touch 3 at MAX(Touch 1 + 7 days, Touch 2 + 3 days).
 function selectFollowUps(leads, activities = []) {
   const now = Date.now();
   const due = leads.filter(l => {
@@ -5157,15 +5180,11 @@ function selectFollowUps(leads, activities = []) {
     if (!ownership.gmailAllowed) return false;
     if (!isValidEmail(l.email)) return false;
     if (!routedLeadCanUseCurrentSender(l)) return false;
-    const currentStep = parseInt(l.emailStep || '0', 10);
-    // currentStep must be 1..FOLLOW_UP_SEQUENCE.length (i.e. 1 or 2)
-    if (currentStep < 1 || currentStep > FOLLOW_UP_SEQUENCE.length) return false;
-    const template  = FOLLOW_UP_SEQUENCE[currentStep - 1];
-    const lastSent  = new Date(l.lastEmailedAt).getTime();
-    if (isNaN(lastSent)) return false;
-    return (now - lastSent) / (1000 * 60 * 60 * 24) >= template.delayDays;
+    // Steps outside 1..FOLLOW_UP_STEP_COUNT, an unparseable lastEmailedAt and
+    // a next step the ledger already shows delivered are all "not due".
+    return isFollowUpDue(l, now, { activities });
   });
-  return oldestDueFirst(due, FOLLOW_UP_SEQUENCE);
+  return oldestDueFirst(due, activities);
 }
 
 function countTodaySends(allLeads) {
@@ -6079,9 +6098,10 @@ async function run() {
   // Apply the established 4-follow-up/1-initial policy independently to each
   // sender's remaining five-success bucket. Stage and intent sends may already
   // have consumed part of a bucket, so fairness uses what remains right now.
+  if (FOLLOW_UP_DRAIN_MODE) console.log('[follow-up drain] FOLLOW_UP_DRAIN_MODE on — follow-ups may use each sender\'s whole window; initials fill only what is left');
   for (const sender of GMAIL_SENDERS.filter(item => item.sendEligible)) {
     const senderRemaining = sendingWindowRemainingBySender(windowQuota).get(sender.id) || 0;
-    await fillSenderFollowUps(sender.id, followUpSuccessTarget(senderRemaining));
+    await fillSenderFollowUps(sender.id, followUpSuccessTarget(senderRemaining, { drain: FOLLOW_UP_DRAIN_MODE }));
   }
 
   // ── New sends (step 1) ────────────────────────────────────────────────────

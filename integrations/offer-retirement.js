@@ -18,9 +18,8 @@ const {
 const { sendSuppressionReason } = require('./pipeline-state');
 const { routedLeadReady } = require('./campaign-routing');
 const { NON_COLD_STAGES } = require('./automation-ownership');
+const { isFollowUpDue } = require('./sequence-timing');
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-const FOLLOW_UP_DELAY_DAYS = Object.freeze({ 1: 3, 2: 5 });
 const SENT_EVENTS = new Set(['initial_email_sent', 'follow_up_sent', 'sequence_step_sent', 'booking_link_sent', 'human_response_sent']);
 const INBOUND_EVENT = /(reply|meeting_requested)/;
 
@@ -35,13 +34,11 @@ function neverSent(lead) {
   return ['', 'draft'].includes(norm(lead.emailStatus)) && !(Number(lead.emailStep) > 0) && !text(lead.lastEmailedAt).trim();
 }
 
-function followUpDueByTime(lead, now) {
+// The sending selector's own timing gate (integrations/sequence-timing.js).
+function followUpDueByTime(lead, now, activities = []) {
   if (norm(lead.emailStatus) !== 'emailed') return false;
   if (NON_COLD_STAGES.includes(norm(lead.stage))) return false;
-  const delay = FOLLOW_UP_DELAY_DAYS[Number(lead.emailStep)];
-  if (!delay) return false;
-  const sent = Date.parse(text(lead.lastEmailedAt));
-  return Number.isFinite(sent) && now.getTime() - sent >= delay * DAY_MS;
+  return isFollowUpDue(lead, now, { activities });
 }
 
 /**
@@ -49,11 +46,11 @@ function followUpDueByTime(lead, now) {
  * applies before any provider call is considered: routing (which carries the
  * archive and retired-offer refusal), suppression, stage and cadence.
  */
-function sendableNow(lead, { suppressedEmails = new Set(), now = new Date(), env = process.env } = {}) {
+function sendableNow(lead, { suppressedEmails = new Set(), now = new Date(), env = process.env, activities = [] } = {}) {
   if (!routedLeadReady(lead, env).ok) return false;
   if (sendSuppressionReason(lead, { suppressedEmails })) return false;
   if (text(lead.stage) === 'Queued' && text(lead.emailStatus) === '') return true;
-  return followUpDueByTime(lead, now);
+  return followUpDueByTime(lead, now, activities);
 }
 
 /**
@@ -168,10 +165,10 @@ function planOfferRetirement({
       summary.bySignal[signal] = (summary.bySignal[signal] || 0) + 1;
     }
     if (archived) { summary.archived++; alreadyArchivedLeads++; } else summary.active++;
-    if (!archived && sendableNow(lead, { suppressedEmails, now, env })) summary.sendable++;
+    if (!archived && sendableNow(lead, { suppressedEmails, now, env, activities: mine })) summary.sendable++;
     if (!archived && text(lead.stage) === 'Queued') summary.queued++;
     if (neverSent(lead)) summary.draftOrImport++; else summary.alreadySent++;
-    if (!archived && followUpDueByTime(lead, now)) summary.followUpsDue++;
+    if (!archived && followUpDueByTime(lead, now, mine)) summary.followUpsDue++;
     if (norm(lead.emailStatus) === 'replied' || mine.some(row => INBOUND_EVENT.test(text(row.eventType)))) summary.conversations++;
     const senders = new Set([text(lead.senderInboxId).trim(),
       ...mine.filter(row => SENT_EVENTS.has(text(row.eventType)))

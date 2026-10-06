@@ -8,6 +8,7 @@ const { normalizeNiche } = require('./campaign-routing');
 const { STAFFING_CAMPAIGN } = require('./staffing-campaign');
 const { getClient } = require('./clients/registry');
 const { checkClientConsistency } = require('./clients/ownership');
+const { activityBelongsToLead } = require('./lead-activity');
 
 function parseMetadata(value) {
   try { return value && typeof value === 'object' ? value : JSON.parse(String(value || '{}')); }
@@ -75,12 +76,6 @@ const SENDER_ATTRIBUTED_EVENTS = Object.freeze([
   'initial_email_sent', 'follow_up_sent', 'sequence_step_sent',
   'booking_link_sent', 'human_response_sent',
 ]);
-
-function activityBelongsToLead(row, lead) {
-  if (!String(lead.id || '').trim()) return false;
-  if (row.sourceLeadId) return String(row.sourceLeadId) === String(lead.id);
-  return String(row.leadId || '') === `CE-${lead.id}`;
-}
 
 function senderEvidence(lead = {}, activities = []) {
   const ids = new Set();

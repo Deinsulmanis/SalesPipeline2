@@ -6941,7 +6941,8 @@ function openCeDetail(id) {
 
   // ── Sequence progress ────────────────────────────────────────
   const currentStep = parseInt(lead.emailStep || '0');
-  const stepLabels  = [null, 'Initial outreach', 'Follow-up (3 days)', 'Final (5 days)'];
+  // Nominal days from integrations/sequence-timing.js (test/sequence-timing.test.js keeps them equal).
+  const stepLabels  = [null, 'Initial outreach', 'Follow-up (Day 3)', 'Final (Day 7)'];
   let seqHtml = '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px">';
   for (let s = 1; s <= 3; s++) {
     let dot, labelStyle;
@@ -7160,7 +7161,7 @@ async function loadStaffingLaunchPanel() {
     host.innerHTML = '<div class="status-card-head"><b>Industrial Staffing Agency</b><span class="state-pill" data-on="' + data.sendable + '">' + (data.sendable ? 'Active / sending' : 'Ready / sending paused') + '</span></div>'
       + '<p style="color:var(--text-secondary)">Import: ' + data.counts.Import + ' · Queued: ' + data.counts.Queued + '. ' + (data.sendable ? 'The normal schedule and all lead safety checks apply.' : 'You can queue approved leads. They cannot send until the separate launch approval is applied.') + '</p>'
       + '<details><summary style="cursor:pointer;padding:8px 0">View approved three-email sequence</summary>'
-      + data.sequence.map(step => '<article style="max-width:72ch;margin:16px 0;padding-top:16px;border-top:1px solid var(--border)"><b>Email ' + step.step + ' · ' + (step.delayDays ? step.delayDays + ' days after the previous email' : step.subject) + '</b><div style="line-height:1.65;margin-top:12px;white-space:pre-wrap">' + esc(step.body).split(esc(step.bold)).join('<strong>' + esc(step.bold) + '</strong>') + '</div></article>').join('') + '</details>';
+      + data.sequence.map(step => '<article style="max-width:72ch;margin:16px 0;padding-top:16px;border-top:1px solid var(--border)"><b>Email ' + step.step + ' · ' + (step.step > 1 && step.timing ? esc(step.timing) : step.subject) + '</b><div style="line-height:1.65;margin-top:12px;white-space:pre-wrap">' + esc(step.body).split(esc(step.bold)).join('<strong>' + esc(step.bold) + '</strong>') + '</div></article>').join('') + '</details>';
   } catch (error) { host.textContent = error.message; }
 }
 

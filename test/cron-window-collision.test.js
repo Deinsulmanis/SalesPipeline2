@@ -92,8 +92,11 @@ test('6. no production send limit changed', () => {
   const routing = fs.readFileSync(path.join(__dirname, '..', 'integrations', 'gmail-sender-routing.js'), 'utf8');
   assert.match(routing, /dailyLimit: Number\(env\.GMAIL_PRIMARY_DAILY_LIMIT \|\| DEFAULT_INBOX_DAILY_LIMIT\)/);
   const fairness = fs.readFileSync(path.join(__dirname, '..', 'integrations', 'scheduler-fairness.js'), 'utf8');
-  assert.match(fairness, /return Math\.min\(4, Math\.max\(0, Number\(cap\) - 1\)\);/,
+  assert.match(fairness, /return Math\.min\(4, Math\.max\(0, remaining - 1\)\);/,
     'the 4-follow-up/1-initial policy is untouched');
+  const { followUpSuccessTarget } = require('../integrations/scheduler-fairness');
+  assert.deepEqual([0, 1, 2, 5, 6].map(cap => followUpSuccessTarget(cap)), [0, 0, 1, 4, 4],
+    'default (non-drain) follow-up share per bucket is unchanged');
 });
 
 test('the skip-without-catch-up behaviour itself is unchanged', () => {

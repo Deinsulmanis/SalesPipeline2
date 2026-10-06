@@ -27,6 +27,7 @@ const {
 } = require('./canonical-reply');
 const { latestResponseAt } = require('./prospect-response');
 const { operationalReplyEvidence } = require('./reply-decision');
+const { scheduledOooResume, OOO_RESUME_SOURCE } = require('./ooo-pause');
 
 /**
  * Operational actions. These EXTEND the existing ACTION_TYPE vocabulary in
@@ -79,6 +80,10 @@ const DUE_SOURCE = Object.freeze({
   MANUAL_FOLLOW_UP: 'manual_follow_up_date',
   MEETING: 'scheduled_meeting',
   REPLY_RECEIVED: 'reply_received_at',
+  // The 7-day OOO policy when the autoresponder stated no return date.
+  OOO_POLICY: 'ooo_policy_default',
+  // An operator-confirmed resume for a lead the old OOO handler held.
+  OPERATOR_REPAIR: 'ooo_operator_repair',
   NONE: 'none',
 });
 
@@ -159,6 +164,23 @@ function deriveReplyOperation(lead = {}, {
 
   // ── A machine answered ───────────────────────────────────────────────────
   if (resolved.state === REPLY_STATE.AUTOMATED_REPLY) {
+    // The OOO handler records when automation may resume (integrations/
+    // ooo-pause.js): the stated return date or the 7-day policy. That record,
+    // made at or after THIS autoresponder, is the date cold automation waits for.
+    const scheduled = scheduledOooResume(activities, { since: resolved.occurredAt });
+    if (scheduled) {
+      const dueAtSource = scheduled.resumeSource === OOO_RESUME_SOURCE.PROSPECT_STATED ? DUE_SOURCE.PROSPECT_STATED
+        : scheduled.resumeSource === OOO_RESUME_SOURCE.OPERATOR_REPAIR ? DUE_SOURCE.OPERATOR_REPAIR
+          : DUE_SOURCE.OOO_POLICY;
+      return operation({
+        action: REPLY_ACTION.WAIT_UNTIL_RETURN,
+        reason: `${resolved.subtype || 'automated reply'}; cold automation resumes at the scheduled OOO return`,
+        owner: ACTION_OWNER.NONE, waitingOn: WAITING_ON.DATE,
+        priority: PRIORITY.LOW,
+        dueAt: scheduled.resumeAt, dueAtSource,
+        evidence: { ...evidence, oooResumeEventId: scheduled.eventId || null, oooResumeSource: scheduled.resumeSource },
+      });
+    }
     const returnDate = isoOrNull(resolved.returnDate);
     if (returnDate) {
       return operation({
@@ -170,8 +192,9 @@ function deriveReplyOperation(lead = {}, {
         evidence,
       });
     }
-    // No date was stated, so none is invented. There is simply nothing to do
-    // yet, and pretending otherwise would create fake human work.
+    // No date was stated and no OOO resume was recorded (an autoresponder
+    // handled before 2026-10-03), so none is invented. Nothing to do yet, and
+    // pretending otherwise would create fake human work or a surprise send.
     return operation({
       action: REPLY_ACTION.WAIT,
       reason: `${resolved.subtype || 'automated reply'} with no stated return date`,
