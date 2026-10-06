@@ -11,6 +11,7 @@ const { providerMessageId } = require('./canonical-sends');
 const norm = value => String(value || '').trim().toLowerCase();
 
 const HUMAN_REPLY_TEXT_LIMIT = 1500;
+const SENDER_AUTH_FAILURE_EVENT = 'sender_auth_delivery_failure';
 
 // The words the sender actually wrote, and the ONLY text a reply classifier may
 // read. text/plain when the client sent it; otherwise the text/html part, cut
@@ -114,7 +115,20 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
       continue;
     }
     const matched = matchMailboxMessages([message], { leads: matchLeads, activities, senderInboxId, senderEmail });
-    if (!matched.replies.size && !matched.bounces.size) { ignored.push({ id: message.id, reason: 'unmatched_or_irrelevant' }); continue; }
+    const authFailures = matched.senderAuthFailures || new Map();
+    if (!matched.replies.size && !matched.bounces.size && !authFailures.size) { ignored.push({ id: message.id, reason: 'unmatched_or_irrelevant' }); continue; }
+    // Our domain failed SPF/DKIM/DMARC: an infrastructure fact about the sender.
+    // No suppression — the recipient is not disproven and stays recoverable.
+    for (const [leadId, { verdict }] of authFailures) {
+      const lead = byId.get(String(leadId));
+      add({ eventId: `gmail-sender-auth:${senderInboxId}:${message.id}:${leadId}`, leadId: `CE-${lead.id}`, sourceLeadId: lead.id,
+        email: lead.email, company: lead.company, eventType: SENDER_AUTH_FAILURE_EVENT, occurredAt, content: '',
+        subject: headerValue(message.payload, 'Subject'),
+        metadata: JSON.stringify({ provider: 'gmail', gmailMessageId: message.id, gmailThreadId: message.threadId,
+          senderInboxId, rfcMessageId, deliveryClass: verdict.category, dsnAction: verdict.action || null,
+          dsnStatus: verdict.status || null, finalFailure: verdict.final, recipientSuppressed: false,
+          recoveredDuringOutage: observation.recovered, autoSendAllowed: false, requiresHumanAttention: true }) });
+    }
     for (const [leadId] of matched.bounces) {
       const lead = byId.get(String(leadId));
       const eventId = `gmail-bounce:${senderInboxId}:${message.id}:${leadId}`;
@@ -194,4 +208,4 @@ async function commitObservation({ observation, plan, appendEvent, appendEvents,
   return { persisted: plan.events.length, suppressed: plan.suppressions.length };
 }
 
-module.exports = { planMailboxEvents, commitObservation, humanReplyText, ownReplyText, HUMAN_REPLY_TEXT_LIMIT };
+module.exports = { planMailboxEvents, commitObservation, humanReplyText, ownReplyText, HUMAN_REPLY_TEXT_LIMIT, SENDER_AUTH_FAILURE_EVENT };

@@ -9,6 +9,7 @@
  */
 
 const { parseMetadata, attributionFromActivity, LEGACY_UNKNOWN } = require('./campaign-versions');
+const { retractedBounceEventIds } = require('./delivery-status');
 
 const REPORTING_TIMEZONE = 'America/Vancouver';
 
@@ -188,8 +189,12 @@ function uniqueCanonicalBounces({ leads = [], activities = [], suppressedEmails 
     byKey.set(key, { key, leadId: extra.leadId || '', providerMessageId: extra.providerMessageId || '', sources: extra.sources || [] });
   };
   const leadHasEvent = new Set();
+  // A bounce our classifier invented (a delay or sender-auth notice) and an
+  // audited retraction withdrew is not a bounce.
+  const retracted = retractedBounceEventIds(activities);
   for (const row of activities) {
     if (String(row.eventType || row.event_type || '') !== 'email_bounced') continue;
+    if (retracted.has(String(row.eventId || ''))) continue;
     const leadId = sourceLeadId(row);
     const pid = providerMessageId(row);
     if (leadId) leadHasEvent.add(leadId);

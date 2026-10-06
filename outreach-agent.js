@@ -145,6 +145,7 @@ const {
 const { findOriginalSentThread, resolveColdFollowUpThread } = require('./integrations/gmail-threading');
 const { appendLeadsRow } = require('./integrations/leads-sheet-append');
 const gmailMailboxObserver = require('./integrations/gmail-mailbox-observer');
+const { DELIVERY_CLASS, classifyDeliveryStatus } = require('./integrations/delivery-status');
 const { planMailboxEvents, commitObservation, ownReplyText } = require('./integrations/mailbox-observation-events');
 const { inboxMayRoute, preferNextReply } = require('./integrations/reply-candidate-selection');
 const { stripQuotedReply } = require('./integrations/reply-reconciliation');
@@ -4274,12 +4275,9 @@ const BOUNCE_SUBJECTS = [
   'Address not found',
 ];
 
-// Permanent failure: the address is dead — safe to stop the sequence.
-// Enhanced status 5.x.x and SMTP 55x are permanent by SMTP convention.
-const PERMANENT_FAILURE = /permanent|address not found|no such (?:user|mailbox|address|recipient)|user unknown|does(?: not|n['’]?t) exist|mailbox (?:full|unavailable|is full)|recipient (?:rejected|not found|address rejected)|account (?:has been )?(?:disabled|closed|suspended)|\b55[013456]\b|\b5\.\d\.\d\b/i;
-
-// Transient failure: a delay that will retry — must NOT close the lead.
-const TRANSIENT_FAILURE = /delivery (?:is )?incomplete|will (?:retry|keep trying|try again)|temporar(?:y|ily)|being delayed|greylist|\b4\.\d\.\d\b/i;
+// Recipient-invalid vs delay vs sender-authentication: integrations/delivery-status.js.
+// Only recipient_invalid closes the lead; a delay notice or an SPF/DKIM/DMARC
+// rejection of our own domain never does.
 
 // Detects a PERMANENT bounce for this lead from any provider.
 // Returns true (permanent bounce), false (no bounce / transient delay only),
@@ -4331,12 +4329,12 @@ async function checkForBounce(lead) {
       // Broad matches can hit unrelated NDRs — require the lead's own
       // address in the body before trusting it.
       if (!gmailMailboxObserver.bounceMentionsRecipient(body, lowerEmail)) continue;
-      // A retry/delay notice is not a dead address — skip it.
-      if (TRANSIENT_FAILURE.test(body) && !PERMANENT_FAILURE.test(body)) {
-        console.log(`  ⏳ ${lead.email} — transient delivery delay, not marking bounced`);
-        continue;
+      const verdict = classifyDeliveryStatus(full.data.payload, { recipient: lowerEmail,
+        subject: gmailMailboxObserver.headerValue(full.data.payload, 'Subject') });
+      if (verdict.category === DELIVERY_CLASS.RECIPIENT_INVALID) return true;
+      if (verdict.category !== DELIVERY_CLASS.UNKNOWN) {
+        console.log(`  ⏳ ${lead.email} — ${verdict.category}, not marking bounced`);
       }
-      if (PERMANENT_FAILURE.test(body)) return true;
     }
     return false;
   } catch (e) {

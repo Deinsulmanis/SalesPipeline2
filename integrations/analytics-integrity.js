@@ -20,6 +20,7 @@ const { inspectActivityIntegrity } = require('./activity-timeline');
 const { buildReplyMetrics } = require('./reply-analytics');
 const { STAFFING_CAMPAIGN } = require('./staffing-campaign');
 const { ACTIVE_CAMPAIGN_VERSION } = require('./campaign-versions');
+const { retractedBounceEventIds } = require('./delivery-status');
 const {
   REPORTING_TIMEZONE,
   CONFIRMED_SEND_TYPES,
@@ -149,8 +150,10 @@ function duplicateEmailLeads(leads = []) {
 
 function bounceMismatch({ leads = [], activities = [] }) {
   const bouncedEvents = new Set();
+  const retracted = retractedBounceEventIds(activities);
   for (const row of activities) {
     if (String(row.eventType || '') !== 'email_bounced') continue;
+    if (retracted.has(String(row.eventId || ''))) continue;
     const id = sourceLeadId(row);
     if (id) bouncedEvents.add(id);
   }
