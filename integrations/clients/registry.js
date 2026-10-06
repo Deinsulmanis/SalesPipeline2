@@ -20,6 +20,32 @@ const BILLING_MODELS = new Set(['none', 'per_qualified_held_meeting']);
 const LIFECYCLE_STATUSES = new Set(['onboarding_pending', 'active', 'paused', 'offboarded']);
 const ONBOARDING_ITEMS = Object.freeze(['agreementSigned', 'onboardingFormReturned', 'setupBalancePaid']);
 
+const DOMAIN_PATTERN = /^(?=.{3,253}$)[a-z0-9-]+(\.[a-z0-9-]+)+$/;
+
+// A managed client's sender policy (clients/sender-policy.js enforces it). The
+// default client has none: its inboxes keep their existing registry rules.
+function validateSenderPolicy(config, fail) {
+  const policy = config.senderPolicy;
+  if (policy === undefined || policy === null) {
+    if (!config.isDefault) fail('a managed client needs a senderPolicy');
+    return;
+  }
+  const domains = key => {
+    const list = policy[key];
+    if (!Array.isArray(list)) fail(`senderPolicy.${key} must be a list`);
+    for (const domain of list) if (!DOMAIN_PATTERN.test(String(domain)) || domain !== String(domain).toLowerCase()) fail(`senderPolicy.${key} has an invalid domain ${domain}`);
+    return list;
+  };
+  const outbound = domains('outboundDomains');
+  const protectedDomains = domains('protectedDomains');
+  if (!outbound.length) fail('senderPolicy.outboundDomains must name at least one domain');
+  const overlap = outbound.filter(domain => protectedDomains.includes(domain));
+  if (overlap.length) fail(`senderPolicy domain ${overlap[0]} cannot be both outbound and protected`);
+  if (!Array.isArray(policy.allowedCampaignIds) || !policy.allowedCampaignIds.length
+    || policy.allowedCampaignIds.some(id => !String(id || '').trim())) fail('senderPolicy.allowedCampaignIds must name at least one campaign');
+  if (!Number.isInteger(policy.maxDailyPerInbox) || policy.maxDailyPerInbox <= 0) fail('senderPolicy.maxDailyPerInbox must be a positive integer');
+}
+
 function validateClientConfig(config) {
   const id = String(config?.id || '');
   const fail = message => { throw new Error(`Client config ${id || '(blank)'}: ${message}`); };
@@ -49,6 +75,7 @@ function validateClientConfig(config) {
   }
   if (!String(config.timezone || '').trim()) fail('timezone is required');
   validateWorkspaces(config);
+  validateSenderPolicy(config, fail);
   const capacity = config.capacity || {};
   const capOk = value => value === null || (Number.isInteger(value) && value >= 0);
   if (!capOk(capacity.dailyCap) || !capOk(capacity.windowCap)) fail('capacity caps must be null or non-negative integers');
@@ -171,6 +198,12 @@ function publicClient(config) {
     } : null,
     billing: { ...config.billing },
     capacity: { ...config.capacity },
+    senderPolicy: config.senderPolicy ? {
+      outboundDomains: [...config.senderPolicy.outboundDomains],
+      protectedDomains: [...config.senderPolicy.protectedDomains],
+      allowedCampaignIds: [...config.senderPolicy.allowedCampaignIds],
+      maxDailyPerInbox: config.senderPolicy.maxDailyPerInbox,
+    } : null,
     replyPolicy: { mode: config.replyPolicy.mode, negativeReplySuppressionScope: config.replyPolicy.negativeReplySuppressionScope },
     navigation: navigationFor(config),
     terminology: { lead: 'lead', leads: 'leads', prospect: 'prospect', ...(config.terminology || {}) },

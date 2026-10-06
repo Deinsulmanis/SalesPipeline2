@@ -8057,12 +8057,21 @@ async function renderManagedSettings(client) {
         <div>Daily cap: <b>${esc(inbox.dailyLimit)}</b></div><div>Per-run cap: <b>${esc(inbox.perRunLimit)}</b></div>
         <div>Sent today: <b>${esc(inbox.sentToday)}</b></div><div>Remaining today: <b>${esc(inbox.remainingToday ?? '—')}</b></div>
         <div>Last observer check: <b>${esc(inbox.lastObserverSuccessAt ? new Date(inbox.lastObserverSuccessAt).toLocaleString() : '—')}</b></div><div>Errors: <b>${esc(inbox.observerError || 'None')}</b></div>
-      </div></div>`).join('')}</div>`
-    : emptyState(`No ${client.displayName} sending inboxes configured`, onboardingPending(client)
+        ${inbox.allowedCampaignIds ? `<div>Campaign: <b>${esc(inbox.allowedCampaignIds.join(', '))}</b></div><div>Hard cap: <b>${esc(inbox.hardDailyCap)}/day${inbox.configuredDailyLimit !== null && inbox.configuredDailyLimit !== undefined ? ` (configured ${esc(inbox.configuredDailyLimit)})` : ''}</b></div>` : ''}
+      </div>${(inbox.policyBlockers || []).length ? `<p class="client-note"><b>Held:</b> ${esc(inbox.policyBlockers.join('; '))}</p>` : ''}</div>`).join('')}</div>`
+    : emptyState(`No ${client.displayName} sending inboxes registered`, onboardingPending(client)
       ? 'Sending remains disabled while onboarding is pending. Inboxes appear here once they are registered for this client.'
-      : 'Inboxes appear here once they are registered for this client.', 'send');
+      : 'Inboxes appear here once a mailbox with working credentials is registered for this client. New inboxes start paused; none can send until warmup, authentication and placement checks are approved.', 'send');
+  const policy = s.senderPolicy;
+  const policyCard = policy ? clientCard('Sender policy', [
+    clientKv('Outbound domains', policy.outboundDomains.join(', ')),
+    clientKv('Never a cold sender', policy.protectedDomains.join(', ') || '—'),
+    clientKv('Campaign', policy.allowedCampaignIds.join(', ')),
+    clientKv('Hard cap per inbox', `${policy.maxDailyPerInbox}/day`),
+    clientKv('Fallback to other senders', 'Never'),
+  ]) : '';
   const domainCard = `<div class="client-card"><h3>Domain authentication</h3><p class="client-note" style="margin:0">SPF, DKIM and DMARC are not checked by SalesPipeline2. Verify them with the domain provider before any inbox is activated.</p></div>`;
-  return clientStatusBadges(client, sending) + `<div class="client-grid settings-grid">${statusCard}${sendingCard}${capacityCard}${domainCard}</div>
+  return clientStatusBadges(client, sending) + `<div class="client-grid settings-grid">${statusCard}${sendingCard}${capacityCard}${policyCard}${domainCard}</div>
     <div class="client-section"><h3>Sending inboxes</h3>${inboxHtml}</div>`;
 }
 

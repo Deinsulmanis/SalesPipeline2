@@ -69,24 +69,25 @@ const SCALELAB = Object.freeze({
 // Jole Enterprise — employer outreach for skilled-trades staffing.
 const JOLE = Object.freeze({
   id: 'jole',
-  displayName: 'Jole Enterprise',
+  displayName: 'Jole BTX LLC',
   isDefault: false,
-  // NOT an activated fulfillment client. As of 2026-09-29 Jole has not signed
-  // the agreement, returned the onboarding form or paid the remaining setup
-  // balance. The internal workspace exists; production fulfillment does not.
-  // Activation is a later, explicit operator action recorded in `activation`
-  // (who and when), allowed by the registry only once every onboarding item is
-  // true. Nothing is inferred from this config existing.
-  lifecycleStatus: 'onboarding_pending',
-  active: false,
+  // ACTIVE CLIENT, NOT SENDING. Taken out of onboarding on 2026-10-05 by
+  // explicit ScaleLab operator instruction. The three onboarding items are
+  // recorded as attested by that instruction; they were not independently
+  // verified inside SalesPipeline2. Client-active means the workspace, ledger,
+  // campaign configuration and sender management are live. It grants NO send
+  // authority: sending.enabled stays false, CLIENT_SENDING_AUTHORIZED does not
+  // name Jole, client capacity stays 0 and every Jole sender starts paused.
+  lifecycleStatus: 'active',
+  active: true,
   onboarding: Object.freeze({
-    agreementSigned: false,
-    onboardingFormReturned: false,
-    setupBalancePaid: false,
-    setupBalanceDueCents: 17500,
+    agreementSigned: true,
+    onboardingFormReturned: true,
+    setupBalancePaid: true,
+    setupBalanceDueCents: 0,
     currency: 'USD',
   }),
-  activation: Object.freeze({ activatedBy: '', activatedAt: '' }),
+  activation: Object.freeze({ activatedBy: 'scalelab-operator (instruction 2026-10-05)', activatedAt: '2026-10-06T04:30:00.000Z' }),
   kind: 'managed_client',
   // The internal ScaleLab workspace for operating Jole. Navigation only — every
   // view is still scoped to Jole on the server.
@@ -108,6 +109,23 @@ const JOLE = Object.freeze({
   // Safe until launch: zero capacity. Real numbers are a launch decision and
   // are set in the same reviewed commit that enables sending.
   capacity: Object.freeze({ dailyCap: 0, windowCap: 0, reservedDaily: 0, reservedWindow: 0 }),
+  // Who may send for Jole, and how much. Enforced by clients/sender-policy.js
+  // at registry load and at every client-consistency check, so a mis-entered
+  // registry row can never widen it.
+  //  - Only mailboxes on the dedicated outbound domains. The corporate domain
+  //    jolebtx.com is protected: never a cold sender, and no other client may
+  //    use any of these domains either.
+  //  - A Jole sender serves exactly the employer-acquisition campaign.
+  //  - 20 cold emails per inbox per day is a HARD ceiling (higher configured
+  //    values are clamped). Smartlead warmup mail is not counted here.
+  //  - The launch ramp (8-10, then 12-15, then up to 20 per inbox per day after
+  //    healthy placement) is an operator decision; nothing ramps automatically.
+  senderPolicy: Object.freeze({
+    outboundDomains: Object.freeze(['jolebtxteam.com', 'jolebtxgroup.com', 'joleindustrial.com']),
+    protectedDomains: Object.freeze(['jolebtx.com']),
+    allowedCampaignIds: Object.freeze(['jole-btx-employer-acquisition']),
+    maxDailyPerInbox: 20,
+  }),
   // Assumed; confirm with Jorge before launch (send windows are still the
   // shared Pacific windows until per-client windows exist).
   timezone: 'America/Chicago',

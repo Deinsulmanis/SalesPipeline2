@@ -29,6 +29,7 @@ const { DEFAULT_CLIENT_ID, getClient, clientForNamespacedValue, resolveClientId 
 const { clientCampaign, clientTemplate, clientLeadType } = require('./campaigns');
 
 const OWNERSHIP_CONFLICT = 'client_ownership_conflict';
+const SENDER_CAMPAIGN_NOT_ALLOWED = 'sender_campaign_not_allowed';
 
 const text = value => String(value == null ? '' : value).trim();
 
@@ -222,6 +223,22 @@ function checkClientConsistency({
   if (distinct.length > 1) {
     const described = Object.entries(parts).map(([key, id]) => `${key}=${id}`).join(', ');
     return refuse(OWNERSHIP_CONFLICT, `client ownership mismatch (${described})`);
+  }
+  // Same client is necessary, not sufficient: a managed client's sender also
+  // serves only the campaigns its senderPolicy allows. Checked wherever a
+  // campaign is known, for the sender being judged and the lead's own sender.
+  // ScaleLab's own senders are not campaign-scoped, so a default-client verdict
+  // is returned exactly as before.
+  const campaignRef = text(campaignId) || text(lead?.intendedCampaignVersion) || text(lead?.campaign);
+  if (campaignRef && !getClient(distinct[0]).isDefault) {
+    const { senderServesCampaign } = require('./sender-policy');
+    for (const ref of [senderRef, lead && text(lead.senderInboxId)]) {
+      if (!ref) continue;
+      const record = findSender(ref, senders) || { id: text(ref) };
+      if (!senderServesCampaign(record, campaignRef)) {
+        return refuse(SENDER_CAMPAIGN_NOT_ALLOWED, `sender ${record.id || text(ref)} may not send campaign ${campaignRef}`);
+      }
+    }
   }
   return { ok: true, clientId: distinct[0], parts };
 }

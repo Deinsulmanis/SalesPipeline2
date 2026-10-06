@@ -32,8 +32,8 @@ const scalelab = (id, extra = {}) => full({
 });
 const jole = (id, extra = {}) => full({
   id, company: 'Voltline Mission Critical', email: SHARED, stage: 'Queued', leadNiche: 'jole_employer',
-  emailTemplateId: 'jole-dc-mission-critical-v1', intendedCampaignVersion: 'JOLE_DC_MISSION_CRITICAL',
-  campaign: 'JOLE_DC_MISSION_CRITICAL', clientId: 'jole', ...extra,
+  emailTemplateId: 'jole-industrial-employer-v1', intendedCampaignVersion: 'jole-btx-employer-acquisition',
+  campaign: 'jole-btx-employer-acquisition', clientId: 'jole', ...extra,
 });
 
 // ── EXPLICIT OWNERSHIP ─────────────────────────────────────────────────────
@@ -45,7 +45,7 @@ test('ownership: explicit clientId is primary', () => {
 
 test('ownership: an explicit owner contradicted by its own routing fields fails closed', () => {
   assert.equal(resolveLeadClient({ clientId: 'jole', leadNiche: 'dental' }).code, 'client_ownership_conflict');
-  assert.equal(resolveLeadClient({ clientId: 'scalelab', intendedCampaignVersion: 'JOLE_DC_MISSION_CRITICAL' }).code, 'client_ownership_conflict');
+  assert.equal(resolveLeadClient({ clientId: 'scalelab', intendedCampaignVersion: 'jole-btx-employer-acquisition' }).code, 'client_ownership_conflict');
   assert.equal(resolveLeadClient({ clientId: 'acme' }).code, 'client_ownership_conflict');
   assert.throws(() => ownerForWrite({ clientId: 'jole', emailTemplateId: 'dental-guarantee-v1' }), error => error.code === 'client_ownership_conflict');
 });
@@ -60,7 +60,7 @@ test('ownership: operational boundaries compare the explicit lead owner with cam
   const senders = [{ id: 'jole_test', email: 'o@jole.example.com', clientId: 'jole' }, { id: 'primary', email: 'p@x.example.com' }];
   assert.equal(checkClientConsistency({ lead: jole('j'), senderInboxId: 'jole_test', senders }).ok, true);
   assert.equal(checkClientConsistency({ lead: jole('j'), senderInboxId: 'primary', senders }).code, 'client_ownership_conflict');
-  assert.equal(checkClientConsistency({ lead: scalelab('s'), campaignId: 'JOLE_DC_MISSION_CRITICAL', senders }).code, 'client_ownership_conflict');
+  assert.equal(checkClientConsistency({ lead: scalelab('s'), campaignId: 'jole-btx-employer-acquisition', senders }).code, 'client_ownership_conflict');
 });
 
 // ── CANONICAL STORE ────────────────────────────────────────────────────────
@@ -178,18 +178,18 @@ test('CRM health: duplicates are judged per client', () => {
 test('import: explicit owner on every proposed row; cross-client allowed only once uniqueness is tenant-scoped', () => {
   const existing = [scalelab('s1')];
   const row = { company: 'Voltline Mission Critical', email: SHARED };
-  const global = validateClientLeadImport({ clientId: 'jole', campaignId: 'JOLE_DC_MISSION_CRITICAL', rows: [row], existingLeads: existing, env: {} });
+  const global = validateClientLeadImport({ clientId: 'jole', campaignId: 'jole-btx-employer-acquisition', rows: [row], existingLeads: existing, env: {} });
   assert.deepEqual(global.refusals.map(r => r.code), ['cross_client_collision']);
-  const scoped = validateClientLeadImport({ clientId: 'jole', campaignId: 'JOLE_DC_MISSION_CRITICAL', rows: [row], existingLeads: existing, env: { OUTREACH_EMAIL_UNIQUENESS: 'client' } });
+  const scoped = validateClientLeadImport({ clientId: 'jole', campaignId: 'jole-btx-employer-acquisition', rows: [row], existingLeads: existing, env: { OUTREACH_EMAIL_UNIQUENESS: 'client' } });
   assert.equal(scoped.accepted, 1);
   assert.equal(scoped.leads[0].clientId, 'jole');
   assert.equal(scoped.emailUniqueness, 'client');
-  const again = validateClientLeadImport({ clientId: 'jole', campaignId: 'JOLE_DC_MISSION_CRITICAL', rows: [row], existingLeads: [...existing, jole('j1')], env: { OUTREACH_EMAIL_UNIQUENESS: 'client' } });
+  const again = validateClientLeadImport({ clientId: 'jole', campaignId: 'jole-btx-employer-acquisition', rows: [row], existingLeads: [...existing, jole('j1')], env: { OUTREACH_EMAIL_UNIQUENESS: 'client' } });
   assert.deepEqual(again.refusals.map(r => r.code), ['duplicate'], 'never a second row inside the same client');
 });
 
 test('import: tenant mode still honours the global suppression list', () => {
-  const verdict = validateClientLeadImport({ clientId: 'jole', campaignId: 'JOLE_DC_MISSION_CRITICAL', rows: [{ company: 'X', email: SHARED }],
+  const verdict = validateClientLeadImport({ clientId: 'jole', campaignId: 'jole-btx-employer-acquisition', rows: [{ company: 'X', email: SHARED }],
     existingLeads: [], suppressedEmails: new Set([SHARED]), env: { OUTREACH_EMAIL_UNIQUENESS: 'client' } });
   assert.deepEqual(verdict.refusals.map(r => r.code), ['globally_suppressed']);
   assert.equal(emailTakenFor({ email: SHARED, clientId: 'jole', leads: [scalelab('s1')], env: { OUTREACH_EMAIL_UNIQUENESS: 'client' } }).taken, false);

@@ -82,7 +82,7 @@ test('legacy: observer scoping is the identity for every production lead shape',
   assert.equal(leadDefinitelyOtherClient({ leadNiche: 'jole_employer' }, 'scalelab'), true);
 });
 
-test('catalog: Jole campaign #1 is configured; #2 and #3 are disabled placeholders', () => {
+test('catalog: Jole campaign #1 is configured; #2 and #3 are disabled placeholders; employer acquisition is the draft sender campaign', () => {
   const byId = Object.fromEntries(CLIENT_CAMPAIGNS.map(campaign => [campaign.id, campaign]));
   assert.equal(byId.JOLE_DC_MISSION_CRITICAL.clientId, 'jole');
   assert.equal(byId.JOLE_DC_MISSION_CRITICAL.audience, 'employers');
@@ -90,6 +90,10 @@ test('catalog: Jole campaign #1 is configured; #2 and #3 are disabled placeholde
   assert.ok(byId.JOLE_DC_MISSION_CRITICAL.icp.workerCategories.includes('pipefitters'));
   assert.equal(byId.JOLE_GULF_INDUSTRIAL.status, 'disabled');
   assert.equal(byId.JOLE_SHIPYARD.status, 'disabled');
+  const acquisition = byId['jole-btx-employer-acquisition'];
+  assert.equal(acquisition.status, 'draft');
+  assert.equal(acquisition.emailTemplateId, 'jole-industrial-employer-v1');
+  assert.equal(acquisition.campaignVersion, 'jole_industrial_employer_acquisition_v1');
   assert.ok(CLIENT_CAMPAIGNS.every(campaign => campaign.clientId === 'jole'));
   assert.ok(CLIENT_TEMPLATES.every(template => template.ready === false));
 });
