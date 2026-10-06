@@ -1,6 +1,6 @@
 # Current production baseline
 
-**Last verified:** 2026-09-30 Pacific (refs, Railway deployment, logs, read-only endpoints and read-only SQL)
+**Last verified:** 2026-09-30 Pacific (refs, Railway deployment, logs, read-only endpoints and read-only SQL); production SHA and the Jole section re-verified 2026-10-05
 **Start all new work from:** `main`
 
 Read this before starting any code change. Everything under "Snapshot" was true
@@ -40,9 +40,16 @@ additionally carries only documentation (`CURRENT_PRODUCTION_BASELINE.md`,
 Railway project / service: `modest-peace` / `SalesPipeline2`
 (https://receptionist.scalelabai.ca), region us-west2.
 
-**Production SHA:** `4ca54466fd0853653c9bd7b0a73fffa3140eea87` (branch
-`cursor/staffing-agent-shadow-production-7402`; Railway deployment
-`29e46857`, SUCCESS). Deployed 2026-09-30 20:47 Pacific: `f70e24f` plus
+**Production SHA (re-verified 2026-10-05 21:25 Pacific):** `25831dc6de9408139d23bb2073fef7c3642749a5`
+(Railway deployment `40deeac0`, SUCCESS): Jole BTX LLC taken out of onboarding
+with a fail-closed sender policy, on top of `a6685fa` (Touch 3 Day-7 cadence +
+OOO pause), `04ef9f0` and `874faf9` (Agent v2 shadow/canary, execution off).
+`main` = merge `0876fb4` + this doc; code identical to production. Observed at
+the same time: `primary` active, the other four ScaleLab inboxes paused
+(operator state, untouched by the Jole deploy).
+
+Earlier: `4ca54466fd0853653c9bd7b0a73fffa3140eea87` (Railway deployment
+`29e46857`), deployed 2026-09-30 20:47 Pacific: `f70e24f` plus
 `c0863ee` (modern email TLDs), `3f3a110` (staffing role-to-market evidence),
 `2725508` (dental retired + soft Archive), `6065245` (roofing and med spa
 retired), `e9a7a01` (Archive row record scope) and `4ca5446` (analytics scope).
@@ -144,17 +151,42 @@ campaign status: the offer gate is separate and fails closed.
     Hidden navigation is never the boundary; every client route filters on the
     server.
 
-**Jole Enterprise (managed client) — NOT activated:**
-- `lifecycle_status = onboarding_pending` (agreement not signed, onboarding form
-  not returned, remaining $175 setup balance unpaid).
-- `active = false`; `sending = false` (every send path refuses with
-  `client_inactive`); daily capacity **0**, window capacity **0**.
-- Jole leads **0**; Jole senders **0**; Jole sends **0**; ledger rows 0.
-- Campaign #1 `JOLE_DC_MISSION_CRITICAL`: **draft** (template not ready).
-  Campaigns #2 `JOLE_GULF_INDUSTRIAL` and #3 `JOLE_SHIPYARD`: **disabled
-  placeholders**.
+**Jole BTX LLC (managed client, id `jole`) — ACTIVE, NOT SENDING (since 2026-10-05):**
+- `lifecycleStatus = active`, `active = true`; activation recorded as
+  `scalelab-operator (instruction 2026-10-05)`. The onboarding items (agreement,
+  form, $175 balance) are recorded as attested by that instruction, not
+  verified inside SalesPipeline2.
+- **No send authority:** `sending.enabled = false`, `CLIENT_SENDING_AUTHORIZED`
+  unset, client capacity **0/0**. Every send path refuses with
+  `client_sending_disabled`; Agent v2 refuses with `client_not_authorized`.
+- **Sender policy** (`senderPolicy` in `client-configs.js`, enforced by
+  `integrations/clients/sender-policy.js`): outbound domains `jolebtxteam.com`,
+  `jolebtxgroup.com`, `joleindustrial.com`; `jolebtx.com` protected (never a cold
+  sender); no other client may use any of them; every Jole sender serves only
+  `jole-btx-employer-acquisition`; hard cap **20/day per inbox** (clamped).
+  While Jole may not send, every Jole inbox is non-send-eligible whatever its
+  status and Activate Sender is refused. No automatic ramp exists; the intended
+  launch ramp (8–10, then 12–15, then up to 20 per inbox per day after healthy
+  placement) is an operator decision.
+- **Jole mailboxes registered: 0.** None exists with credentials in production
+  (no Jole row in `GMAIL_INBOX_REGISTRY_JSON`, no Jole token variable).
+  2026-10-05 DNS: `jolebtxteam.com` and `jolebtxgroup.com` are on Google
+  Workspace (Google SPF, DKIM `google` selector, DMARC `p=none`);
+  `joleindustrial.com` is email forwarding only (no mailboxes, no DKIM, no DMARC).
+  To register one: add a row with `clientId: "jole"`, `status: "paused"`,
+  `dailyLimit` ≤ 20 and its own `GMAIL_<ID>_TOKEN_JSON`.
+- Campaign `jole-btx-employer-acquisition` (template
+  `jole-industrial-employer-v1`, version `jole_industrial_employer_acquisition_v1`):
+  **draft**, template not ready (copy not deployed). Legacy `JOLE_DC_MISSION_CRITICAL`
+  (draft) and `JOLE_GULF_INDUSTRIAL` / `JOLE_SHIPYARD` (disabled) are unchanged
+  and no Jole sender may serve them.
+- An uncommitted Jole copy implementation (`integrations/jole-campaign.js`)
+  exists only in the main checkout's working tree. It assumes client id
+  `jole-btx` and no tenant column; it must be reconciled to client `jole` and
+  this catalog before it can ship.
+- Jole leads **0**; Jole senders **0**; Jole sends **0**.
 - Verify: `GET /api/clients`, `GET /api/clients/jole/overview`,
-  `GET /api/clients/jole/settings` (caps 0, no inboxes).
+  `GET /api/clients/jole/settings` (caps 0, no inboxes, `senderPolicy`).
 
 **Shadow (no send, CRM or queue authority):**
 - Staffing Conversation Agent / Agent v2: `[staffing-shadow] init enabled=true mode=shadow`, every authority flag `false`.
@@ -163,7 +195,7 @@ campaign status: the offer gate is separate and fails closed.
 **Pending production validation:**
 - No send window has run on the multi-client code (`72f9e285` and later) yet. At the first window (07:00 Pacific,
   Mon-Fri) watch `[client-cap]` (ScaleLab `allowed` with `remaining` equal to the
-  window ceiling; Jole `blockedBy: client_inactive`) and confirm ScaleLab sends,
+  window ceiling; Jole `blockedBy: client_sending_disabled`) and confirm ScaleLab sends,
   reservations confirm and `[cap]` advances normally.
 
 **Failing:**
