@@ -5226,23 +5226,6 @@ const {
 } = require('./integrations/cold-delivery-policy');
 // Temporary recipient-provider gate: one domain-level MX cache for the server.
 const recipientProviderClassifier = createProviderClassifier();
-require('./integrations/staffing-preview-route').registerStaffingAdmitRoute(app, requireAuth, {
-  loadLead: async id => {
-    const corpus = await readOutreachCorpus();
-    if (!corpus.ok) throw new Error('Canonical Outreach state unavailable: ' + corpus.reason);
-    const matches = (corpus.leads || []).filter(lead => lead.id === id);
-    if (matches.length !== 1) throw new Error(`expected one lead ${id}, found ${matches.length}`);
-    return matches[0];
-  },
-  applyPatch: async (lead, patch) => {
-    const rowNum = await withAuth(() => findCERow(lead.id));
-    if (!rowNum) throw new Error('lead identity is not exactly one ColdEmail row');
-    return applyLeadChange(lead.id, patch, {
-      row: rowNum, expectedState: lead, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID,
-    });
-  },
-  classifyEmail: email => recipientProviderClassifier.classify(email),
-});
 const {
   assignBatch, planSenderRebalance, nextSendDayHorizon,
 } = require('./integrations/sender-balance');
@@ -5955,6 +5938,25 @@ app.post('/api/archive/cards/:id/restore', requireAuth, async (req, res) => {
 // counts only, never lead rows, so the metric cards can paint without waiting
 // on the lead list. Now reads the shared snapshot instead of fetching the
 // ColdEmail sheet a second time.
+
+require('./integrations/staffing-preview-route').registerStaffingAdmitRoute(app, requireAuth, {
+  loadLead: async id => {
+    const corpus = await readOutreachCorpus();
+    if (!corpus.ok) throw new Error('Canonical Outreach state unavailable: ' + corpus.reason);
+    const matches = (corpus.leads || []).filter(lead => lead.id === id);
+    if (matches.length !== 1) throw new Error(`expected one lead ${id}, found ${matches.length}`);
+    return matches[0];
+  },
+  applyPatch: async (lead, patch) => {
+    const rowNum = await withAuth(() => findCERow(lead.id));
+    if (!rowNum) throw new Error('lead identity is not exactly one canonical row');
+    return applyLeadChange(lead.id, patch, {
+      row: rowNum, expectedState: lead, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID,
+    });
+  },
+  classifyEmail: email => recipientProviderClassifier.classify(email),
+});
+
 app.get('/api/coldemail/stats', requireAuth, async (req, res) => {
   try {
     const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
