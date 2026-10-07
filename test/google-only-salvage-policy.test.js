@@ -14,6 +14,7 @@ const { planSameTouchRecovery, unrecoveredTouchBlock, recoveryActionId } = requi
 const { sendSuppressionReason, releaseHoldFromNotes } = require('../integrations/pipeline-state');
 const { createMemorySendReservationStore } = require('../integrations/send-reservation-memory');
 const { ordinaryColdActionId } = require('../integrations/outbound-action-id');
+const { activationBlockers, activateSender } = require('../integrations/gmail-sender-lifecycle');
 
 const SEND_ENV = Object.freeze({
   SENDING_ENABLED: 'true', SEND_AUTHORIZED_ENV: 'test', RAILWAY_ENVIRONMENT: 'test',
@@ -43,6 +44,24 @@ test('34/35. SURBL-listed and Gmail-Spam senders cannot cold-send to a Google re
     assert.equal(verdict.allowed, false, id);
     assert.equal(verdict.code, 'sender_cold_hold', id);
   }
+});
+
+test('held senders cannot be activated even when paused and otherwise healthy', () => {
+  const healthy = {
+    auth: { authenticated: true, identityVerified: true },
+    observer: { senderInboxId: 'tryscalelabai', health: 'healthy', cursorState: 'present', quotaBackoff: false },
+    senders: [],
+  };
+  for (const id of ['tryscalelabai', 'deniels_tryscalelabai', 'deniels']) {
+    const sender = { id, email: `${id}@x.test`, status: 'paused', sendEligible: false, provider: 'gmail',
+      dailyLimit: 20, perRunLimit: 2, credentialConfigured: true };
+    const blockers = activationBlockers(sender, healthy);
+    assert.ok(blockers.some(item => /cold hold/.test(item)), id);
+    assert.throws(() => activateSender(sender, healthy), /cold hold/);
+  }
+  const com = { id: 'scalelabaiteam', email: 'deins@scalelabaiteam.com', status: 'paused', sendEligible: false,
+    provider: 'gmail', dailyLimit: 30, perRunLimit: 5, credentialConfigured: true };
+  assert.deepEqual(activationBlockers(com, { ...healthy, observer: { ...healthy.observer, senderInboxId: 'scalelabaiteam' } }).filter(item => /cold hold/.test(item)), []);
 });
 
 test('36. a .com Google recipient passes every gate when the sender is active and authorized', async () => {

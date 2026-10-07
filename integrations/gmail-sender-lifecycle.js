@@ -24,7 +24,7 @@ function markWarmupReady(sender = {}) {
 }
 
 function activationBlockers(sender = {}, {
-  auth = null, observer = null, senders = [],
+  auth = null, observer = null, senders = [], env = process.env,
 } = {}) {
   const blockers = [];
   const status = String(sender.status || '');
@@ -64,6 +64,8 @@ function activationBlockers(sender = {}, {
   // allowlist) and the client's own send authority. While the client may not
   // send, none of its inboxes can be activated; they stay paused/warming.
   for (const reason of sender.policyBlockers || []) blockers.push(reason);
+  const hold = require('./cold-delivery-policy').coldSenderHolds(env).get(String(sender.id || '').trim());
+  if (hold) blockers.push(`sender cold hold: ${hold}`);
   const clientId = String(sender.clientId || '').trim();
   if (clientId) {
     const { getClient, isKnownClient } = require('./clients/registry');

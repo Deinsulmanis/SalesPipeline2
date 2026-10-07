@@ -377,14 +377,15 @@ test('G. an unhealthy, stale or missing deniels observer blocks its sends and do
 test('G. Activate Sender refuses deniels until auth, observer and history cursor are healthy, and accepts its 10/day cap', () => {
   const senders = configuredSenders(DEPLOYED);
   const ready = markWarmupReady(byId(senders, 'deniels'));
-  const blockers = context => activationBlockers(ready, { senders, ...context });
+  const noHold = { COLD_SENDER_HOLDS: 'none' };
+  const blockers = context => activationBlockers(ready, { senders, env: noHold, ...context });
   assert.ok(blockers({ auth: healthyAuth, observer: null }).includes('gmail observer unhealthy'));
   assert.ok(blockers({ auth: healthyAuth, observer: { ...healthyObserver, health: 'unavailable' } }).includes('gmail observer unhealthy'));
   assert.ok(blockers({ auth: healthyAuth, observer: { ...healthyObserver, cursorState: 'missing' } }).includes('history cursor missing'));
   assert.ok(blockers({ auth: healthyAuth, observer: { ...healthyObserver, health: 'backoff', quotaBackoff: true } }).includes('gmail backoff'));
   assert.ok(blockers({ auth: { authenticated: false }, observer: healthyObserver }).includes('gmail auth unhealthy'));
   assert.deepEqual(blockers({ auth: healthyAuth, observer: healthyObserver }), []);
-  const active = activateSender(ready, { auth: healthyAuth, observer: healthyObserver, senders });
+  const active = activateSender(ready, { auth: healthyAuth, observer: healthyObserver, senders, env: noHold });
   assert.equal(active.status, 'active');
   assert.equal(active.dailyLimit, 10);
   // Lower caps pass the gate; caps above the supported maximum still do not.

@@ -166,14 +166,15 @@ test('observer and credential are isolated to this mailbox', () => {
 
 test('Activate Sender refuses until warmup is marked ready and auth, observer and cursor are healthy', () => {
   const senders = configuredSenders(PRODUCTION);
-  assert.ok(activationBlockers(sender(), { auth: healthyAuth, observer: healthyObserver, senders }).includes('warmup is not ready'));
+  const noHold = { COLD_SENDER_HOLDS: 'none' };
+  assert.ok(activationBlockers(sender(), { auth: healthyAuth, observer: healthyObserver, senders, env: noHold }).includes('warmup is not ready'));
   const ready = markWarmupReady(sender());
-  const blockers = context => activationBlockers(ready, { senders, ...context });
+  const blockers = context => activationBlockers(ready, { senders, env: noHold, ...context });
   assert.ok(blockers({ auth: healthyAuth, observer: null }).includes('gmail observer unhealthy'));
   assert.ok(blockers({ auth: healthyAuth, observer: { ...healthyObserver, cursorState: 'missing' } }).includes('history cursor missing'));
   assert.ok(blockers({ auth: { authenticated: false }, observer: healthyObserver }).includes('gmail auth unhealthy'));
   assert.deepEqual(blockers({ auth: healthyAuth, observer: healthyObserver }), []);
-  assert.equal(activateSender(ready, { auth: healthyAuth, observer: healthyObserver, senders }).dailyLimit, 20);
+  assert.equal(activateSender(ready, { auth: healthyAuth, observer: healthyObserver, senders, env: noHold }).dailyLimit, 20);
 });
 
 test('existing conversations stay with their mailbox; its sends are charged to it alone', () => {
