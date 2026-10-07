@@ -10,6 +10,7 @@ const { getClient } = require('./clients/registry');
 const { checkClientConsistency } = require('./clients/ownership');
 const { senderServesCampaign } = require('./clients/sender-policy');
 const { activityBelongsToLead } = require('./lead-activity');
+const { applyColdInboxCap } = require('./cold-delivery-policy');
 
 function parseMetadata(value) {
   try { return value && typeof value === 'object' ? value : JSON.parse(String(value || '{}')); }
@@ -35,7 +36,8 @@ function configuredSenders(env = process.env) {
     ...sender,
     sendEligible: sender.status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured && !sender.policyBlockers?.length,
   }));
-  return applySenderRuntime(senders, parseRuntimeOverlay(env.GMAIL_SENDER_RUNTIME_JSON || '[]'));
+  // Temporary per-inbox ceiling (cold-delivery-policy.js): lowers, never raises.
+  return applyColdInboxCap(applySenderRuntime(senders, parseRuntimeOverlay(env.GMAIL_SENDER_RUNTIME_JSON || '[]')), env);
 }
 
 function observableSenders(senders = []) {

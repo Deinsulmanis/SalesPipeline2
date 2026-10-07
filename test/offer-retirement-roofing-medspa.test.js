@@ -19,6 +19,7 @@ const {
 const { planOfferRetirement, verifyProtectedRecords, sendableNow } = require('../integrations/offer-retirement');
 const { routedLeadReady, validateRoute, templateById } = require('../integrations/campaign-routing');
 const { guardProviderSend } = require('../integrations/send-safety-revalidate');
+const { googleRecipient } = require('../test-support/google-recipient');
 const { deriveAutomationOwnership, OWNER, BLOCKED_BY } = require('../integrations/automation-ownership');
 const { planSenderRebalance } = require('../integrations/sender-balance');
 const { sequenceAllowedForLead } = require('../integrations/stage-sequences');
@@ -43,7 +44,7 @@ const SEND_ENV = Object.freeze({
   SEND_AUTHORIZED_TOKEN: 'token', SEND_WORKER_ROLE: 'outreach-sender', SEND_LOCK_ENABLED: 'true', ...STAFFING_ENV,
 });
 const gate = (snapshot, current = snapshot, purpose = 'cold') => guardProviderSend(snapshot,
-  { env: SEND_ENV, loadFreshState: async () => ({ current, suppressedEmails: new Set() }) }, { purpose });
+  { env: SEND_ENV, classifyRecipient: googleRecipient, loadFreshState: async () => ({ current, suppressedEmails: new Set() }) }, { purpose });
 
 // ── production shapes ───────────────────────────────────────────────────────
 const TRADE_SELECT = Object.freeze({ id: 'mq4vq4pw2t0w6u6qwmp', type: 'trade', first: 'christopher', last: 'cook',

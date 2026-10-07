@@ -76,6 +76,7 @@ const AUTO_SENDER = 'auto';
 
 async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaignVersionId }, {
   loadState, validateSelection, applyChanges, appendActivity, appendActivities, assignSenders,
+  admitRecipients, coldSenderAllowed,
   now = () => new Date().toISOString(),
 }) {
   const state = await loadState();
@@ -91,6 +92,17 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
     assignments = assigned.assignments;
   }
   const senderFor = lead => (assignments ? assignments.get(lead.id) : senderInboxId);
+  // Temporary recipient-provider admission (cold-delivery-policy.js): a lead
+  // whose mailbox is not positively Google-hosted is not admitted. It is a
+  // hold, not a verdict on the lead — nothing about it is written.
+  if (admitRecipients) {
+    const admission = await admitRecipients(selected);
+    if (admission.held.length) {
+      const first = admission.held[0];
+      return { status: 409, holdReason: first.holdReason, held: admission.held,
+        error: `${first.leadId}: ${first.holdReason} (${first.domain || 'no domain'}); ${admission.held.length} of ${selected.length} selected leads are held by the recipient-provider policy` };
+    }
+  }
   // Validate the entire selection before any mutation. A repeated request with
   // exactly the same route is a no-op, not another enrollment/audit event.
   for (const lead of selected) {
@@ -98,6 +110,9 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
     if (!eligible.ok) return { status: 409, error: `${lead.company || lead.id}: ${eligible.reason}` };
     const route = validateSelection(lead, senderFor(lead));
     if (!route.ok) return { status: 422, error: route.reason };
+    if (coldSenderAllowed && !coldSenderAllowed(senderFor(lead))) {
+      return { status: 422, error: `${senderFor(lead)} is not in the Gmail-healthy cold sender pool` };
+    }
   }
   const patchFor = lead => ({ stage: 'Queued', senderInboxId: senderFor(lead), emailTemplateId, routingRequired: 'true', intendedCampaignVersion: campaignVersionId });
 

@@ -163,9 +163,11 @@ test('Smartlead enqueue and ordinary/sequence sends keep the authorization gate 
   assert.match(agent, /withGmailProviderSend\(/);
   assert.match(agent, /withOutboundReservation\(sendAction/);
   assert.match(agent, /async function enqueueSmartleadLead\(lead, mapping\) \{\n  assertSendAuthorized\(\);/);
-  assert.match(agent, /const gate = await guardProviderSend\(lead, freshSendSafetyDeps\(\), \{ purpose: 'cold' \}\);/);
-  // Gmail sends pass the sending inbox so the final gate enforces client isolation.
-  assert.match(agent, /const gate = await guardProviderSend\(lead, freshSendSafetyDeps\(\), \{ purpose: 'cold', senderInboxId: sender\.id \}\);/);
+  // Smartlead enqueue: fresh-state deps plus the recipient-provider classifier.
+  assert.match(agent, /const gate = await guardProviderSend\(lead, \{ \.\.\.freshSendSafetyDeps\(\),\n    classifyRecipient: email => recipientProviderClassifier\.classify\(email\) \}, \{ purpose: 'cold' \}\);/);
+  // Gmail sends pass the sending inbox so the final gate enforces client isolation,
+  // and the sender itself so the cold-delivery policy judges sender AND recipient.
+  assert.match(agent, /const gate = await guardProviderSend\(lead, \{ \.\.\.freshSendSafetyDeps\(\),\n    classifyRecipient: email => recipientProviderClassifier\.peek\(email\) \},\n  \{ purpose: 'cold', senderInboxId: sender\.id, coldSender: sender \}\);/);
   assert.match(agent, /const gate = await guardProviderSend\(safetyLead, freshSendSafetyDeps\(\), \{ purpose: 'sequence', senderInboxId: sender\.id \}\);/);
   assert.match(server, /assertSendAuthorized\(\);\n    const safety = await guardProviderSend\(found\.lead/);
 });

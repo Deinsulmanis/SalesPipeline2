@@ -5218,6 +5218,12 @@ app.patch('/api/leads/:id/call-details', requireAuth, rejectArchived('board'), a
 
 const { queueSelectedLeads, AUTO_SENDER } = require('./integrations/outreach-queue');
 const {
+  createProviderClassifier, admitByRecipientProvider, coldSenderPool, coldDeliveryVerdict,
+  recipientProviderPolicy, coldInboxDailyCap,
+} = require('./integrations/cold-delivery-policy');
+// Temporary recipient-provider gate: one domain-level MX cache for the server.
+const recipientProviderClassifier = createProviderClassifier();
+const {
   assignBatch, planSenderRebalance, nextSendDayHorizon,
 } = require('./integrations/sender-balance');
 const { staffingLaunchState } = require('./integrations/staffing-launch-gate');
@@ -5269,6 +5275,8 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
         : { assignments: new Map(), refused: [{ leadId: batch[0]?.id || '',
           reason: 'automatic sender assignment requires Supabase canonical state and the durable send lock' }] })
         : undefined,
+      admitRecipients: leads => admitByRecipientProvider(leads, recipientProviderClassifier),
+      coldSenderAllowed: senderId => { const pool = coldSenderPool(); return !pool || pool.has(senderId); },
       validateSelection: (lead, leadSender) => {
         if (normalizeNiche(lead.leadNiche || lead.tradeType) === 'industrial_staffing'
           && (outreachStateMode() !== 'primary' || outreachWriteAuthority() !== 'supabase')) {
@@ -6861,6 +6869,54 @@ app.get('/api/ops/gmail-usage', requireAuth, async (_req, res) => {
   }
 });
 
+// Read-only view of the temporary cold deliverability gate. Never sends, never
+// writes. ?leadId= gives one lead's provider classification and the final
+// verdict for its assigned sender; ?summary=1 classifies every pending cold
+// lead (queued first touches and emailed step 1–2 follow-ups) by provider.
+app.get('/api/ops/cold-delivery-gate', requireAuth, async (req, res) => {
+  try {
+    const senders = configuredSenders();
+    const pool = coldSenderPool();
+    const out = {
+      policy: recipientProviderPolicy(), coldSenderPool: pool ? [...pool] : 'all', coldInboxDailyCap: coldInboxDailyCap(),
+      senders: senders.map(sender => ({ id: sender.id, email: sender.email, status: sender.status, sendEligible: sender.sendEligible,
+        dailyLimit: sender.dailyLimit, configuredDailyLimit: sender.configuredDailyLimit ?? sender.dailyLimit,
+        perRunLimit: sender.perRunLimit, inColdPool: !pool || pool.has(sender.id) })),
+      sends: 0, writes: 0,
+    };
+    const leadId = String(req.query.leadId || '').trim();
+    if (leadId || req.query.summary === '1') {
+      const corpus = await readOutreachCorpus();
+      if (!corpus.ok) return res.status(503).json({ error: 'Canonical Outreach state unavailable' });
+      if (leadId) {
+        const matches = corpus.leads.filter(lead => lead.id === leadId);
+        if (matches.length !== 1) return res.status(404).json({ error: `expected one lead ${leadId}, found ${matches.length}` });
+        const lead = matches[0];
+        const classification = await recipientProviderClassifier.classify(lead.email);
+        const sender = senders.find(item => item.id === lead.senderInboxId) || null;
+        out.lead = { id: lead.id, stage: lead.stage, emailStatus: lead.emailStatus, emailStep: lead.emailStep, senderInboxId: lead.senderInboxId,
+          domain: classification.domain, provider: classification.provider, classification: classification.reason,
+          source: classification.source, cache: classification.cache, classifiedAt: classification.classifiedAt || null,
+          verdict: coldDeliveryVerdict({ sender, classification }) };
+      }
+      if (req.query.summary === '1') {
+        const pending = corpus.leads.filter(lead => {
+          const status = String(lead.emailStatus || '').trim().toLowerCase();
+          if (lead.stage === 'Queued' && !status) return true;
+          return status === 'emailed' && [1, 2].includes(Number(lead.emailStep));
+        });
+        // Counted under google_only semantics so the breakdown is true providers
+        // even when the policy is switched off.
+        const admission = await admitByRecipientProvider(pending, recipientProviderClassifier, { RECIPIENT_PROVIDER_POLICY: 'google_only' });
+        const byProvider = { GOOGLE: admission.allowed.size, MICROSOFT: 0, OTHER: 0, UNKNOWN: 0 };
+        for (const item of admission.held) byProvider[item.provider] = (byProvider[item.provider] || 0) + 1;
+        out.summary = { pending: pending.length, byProvider, classifier: recipientProviderClassifier.stats() };
+      }
+    }
+    res.json(out);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
 app.get('/api/ops/mailbox-diagnostic', requireAuth, async (req, res) => {
   try {
     const dataset = await getOutreachDataset({ force: true });
@@ -7355,6 +7411,7 @@ app.post('/api/integrations/smartlead/campaigns/:internalCampaignId/leads/:leadI
     if (!eligibility.ok) return res.status(409).json({ error: eligibility.reason });
     assertSendAuthorized();
     const safety = await guardProviderSend(found.lead, {
+      classifyRecipient: email => recipientProviderClassifier.classify(email),
       loadFreshLead: async () => {
         const again = await findColdEmailLead({ id: found.lead.id });
         return again ? again.lead : null;

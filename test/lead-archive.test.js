@@ -24,6 +24,7 @@ const {
 const { planOfferRetirement, sendableNow } = require('../integrations/offer-retirement');
 const { routedLeadReady, validateRoute, templateById } = require('../integrations/campaign-routing');
 const { evaluateFreshSendSafety, guardProviderSend } = require('../integrations/send-safety-revalidate');
+const { googleRecipient } = require('../test-support/google-recipient');
 const { deriveAutomationOwnership, OWNER, BLOCKED_BY, NON_COLD_STAGES } = require('../integrations/automation-ownership');
 const { sendSuppressionReason, deriveAutomationState, AUTOMATION_STATES } = require('../integrations/pipeline-state');
 const { planSenderRebalance } = require('../integrations/sender-balance');
@@ -100,7 +101,7 @@ const SEND_ENV = Object.freeze({
   ...STAFFING_ENV,
 });
 const freshGate = (snapshot, current, purpose = 'cold') => guardProviderSend(snapshot,
-  { env: SEND_ENV, loadFreshState: async () => ({ current, suppressedEmails: new Set() }) }, { purpose });
+  { env: SEND_ENV, classifyRecipient: googleRecipient, loadFreshState: async () => ({ current, suppressedEmails: new Set() }) }, { purpose });
 
 // ── Dental recognition ──────────────────────────────────────────────────────
 

@@ -16,6 +16,7 @@ const path = require('node:path');
 
 const { freshLeadFromSnapshot, createFreshSendStateLoader } = require('../integrations/fresh-send-state');
 const { guardProviderSend, evaluateFreshSendSafety } = require('../integrations/send-safety-revalidate');
+const { googleRecipient } = require('../test-support/google-recipient');
 
 const ENV = {
   SENDING_ENABLED: 'true', SEND_AUTHORIZED_ENV: 'test', RAILWAY_ENVIRONMENT: 'test',
@@ -61,7 +62,7 @@ function loaderFor(store, { suppression = [], sheetRows = null } = {}) {
 test('a 21-send window reads each lead once and never re-fetches the corpus', async () => {
   const leads = Array.from({ length: 21 }, (_, i) => makeLead(i));
   const store = canonicalStore(leads);
-  const deps = { env: ENV, loadFreshState: loaderFor(store) };
+  const deps = { env: ENV, classifyRecipient: googleRecipient, loadFreshState: loaderFor(store) };
   const verdicts = [];
   for (const lead of leads) verdicts.push(await guardProviderSend(lead, deps, { purpose: 'cold' }));
   assert.equal(verdicts.filter(v => v.allowed).length, 21, 'send totals unchanged');
@@ -74,7 +75,7 @@ test('state changed between sends is seen at send time: no stale state authorize
   const leads = Array.from({ length: 8 }, (_, i) => makeLead(i));
   const store = canonicalStore(leads);
   const suppression = [];
-  const deps = { env: ENV, loadFreshState: loaderFor(store, { suppression }) };
+  const deps = { env: ENV, classifyRecipient: googleRecipient, loadFreshState: loaderFor(store, { suppression }) };
   // Each change lands after the run selected its leads and before that lead's send.
   const changes = {
     'lead-1': () => { store.rows.get('lead-1').notes = '[MANUAL HOLD] enriched'; },
@@ -100,7 +101,7 @@ test('state changed between sends is seen at send time: no stale state authorize
 test('an unreadable Supabase fails closed and never falls back to Sheets', async () => {
   const store = canonicalStore([makeLead(1)]);
   store.breakWith('HTTP 402');
-  const verdict = await guardProviderSend(makeLead(1), { env: ENV, loadFreshState: loaderFor(store) }, { purpose: 'cold' });
+  const verdict = await guardProviderSend(makeLead(1), { env: ENV, classifyRecipient: googleRecipient, loadFreshState: loaderFor(store) }, { purpose: 'cold' });
   assert.equal(verdict.allowed, false);
   assert.equal(verdict.code, 'revalidation_unavailable');
   assert.match(verdict.reason, /Supabase is canonical and unreadable \(HTTP 402\)/);
@@ -121,7 +122,7 @@ test('a board-style CE- id resolves to its outreach lead, exactly as the corpus 
 test('when Sheets supplies the rows (Sheets authority / non-primary mode) the Sheets path is unchanged', async () => {
   const store = canonicalStore([makeLead(2)]);
   const sheetRows = [makeLead(2, { notes: '[MANUAL HOLD] from sheets' })];
-  const verdict = await guardProviderSend(makeLead(2), { env: ENV, loadFreshState: loaderFor(store, { sheetRows }) }, { purpose: 'cold' });
+  const verdict = await guardProviderSend(makeLead(2), { env: ENV, classifyRecipient: googleRecipient, loadFreshState: loaderFor(store, { sheetRows }) }, { purpose: 'cold' });
   assert.equal(verdict.code, 'manual_hold', 'decided from the Sheets rows');
   assert.equal(store.calls.byId.length, 0, 'no Supabase read on the Sheets path');
   assert.equal(store.calls.sheets, 1);

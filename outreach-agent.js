@@ -88,6 +88,11 @@ const { staffingSendBlockReason, assertStaffingSendAllowed } = require('./integr
 const { assertSendAuthorized, sendAuthorization } = require('./integrations/send-authorization');
 const { evaluateFreshSendSafety, guardProviderSend } = require('./integrations/send-safety-revalidate');
 const {
+  createProviderClassifier, coldDeliveryVerdict, admitByRecipientProvider, recipientProviderPolicy,
+} = require('./integrations/cold-delivery-policy');
+// Temporary recipient-provider gate: one domain-level MX cache per worker run.
+const recipientProviderClassifier = createProviderClassifier();
+const {
   withGmailProviderSend, withOutboundReservation, confirmOutboundReservation,
   isDefinitePreDeliveryFailure, getOutboundReservation, STATUS: SEND_RESERVATION_STATUS,
   confirmReconciledReservation, markReservationReconciliationRequired,
@@ -1323,7 +1328,8 @@ async function enqueueSmartleadLead(lead, mapping) {
     if (!values.includes('mappingKey')) await sheets().spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${PROVIDER_LEADS_SHEET}!A1`, valueInputOption: 'RAW', requestBody: { values: [['internalLeadId','provider','externalLeadId','externalCampaignId','mappingId','normalizedStatus','rawStatus','lastProviderEventAt','lastSynchronizedAt','unsubscribedAt','complianceNote','metadata','mappingKey','normalizedEmail']] } });
   }
   const names = String(lead.contactName || '').trim().split(/\s+/);
-  const gate = await guardProviderSend(lead, freshSendSafetyDeps(), { purpose: 'cold' });
+  const gate = await guardProviderSend(lead, { ...freshSendSafetyDeps(),
+    classifyRecipient: email => recipientProviderClassifier.classify(email) }, { purpose: 'cold' });
   if (!gate.allowed) throw new Error(gate.reason || gate.code);
   const sendAction = {
     actionId: smartleadEnqueueActionId(lead.id, mapping.externalCampaignId),
@@ -2141,6 +2147,20 @@ async function deliverOrdinaryColdStep({
     }
   }
 
+  // Temporary deliverability gate (cold-delivery-policy.js), BEFORE any
+  // reservation is written so a hold never leaves an unresolved reservation:
+  // the sender must be send-eligible and in the Gmail-healthy pool, and the
+  // recipient must be positively Google-hosted. Nothing about the lead changes.
+  const recipientProvider = await recipientProviderClassifier.classify(lead.email);
+  const coldVerdict = coldDeliveryVerdict({ sender, classification: recipientProvider });
+  if (!coldVerdict.allowed) {
+    console.log(JSON.stringify({ event: 'cold_send_blocked_by_provider_gate', leadId: lead.id, step: Number(step),
+      senderInboxId: sender.id, domain: recipientProvider.domain, provider: recipientProvider.provider,
+      classification: recipientProvider.reason, cache: recipientProvider.cache, layer: coldVerdict.layer,
+      holdReason: coldVerdict.code }));
+    return { delivered: false, holdReason: coldVerdict.code, reason: `${coldVerdict.code}: ${coldVerdict.reason}` };
+  }
+
   const reservations = (activitiesForCycle || []).filter(row =>
     row.eventType === 'ordinary_send_reserved'
     && metadataOf(row).leadId === lead.id && Number(metadataOf(row).step) === Number(step));
@@ -2177,7 +2197,9 @@ async function deliverOrdinaryColdStep({
     return { delivered: false, reason: `delivery reservation could not be persisted: ${error.message}` };
   }
 
-  const gate = await guardProviderSend(lead, freshSendSafetyDeps(), { purpose: 'cold', senderInboxId: sender.id });
+  const gate = await guardProviderSend(lead, { ...freshSendSafetyDeps(),
+    classifyRecipient: email => recipientProviderClassifier.peek(email) },
+  { purpose: 'cold', senderInboxId: sender.id, coldSender: sender });
   if (!gate.allowed) {
     return { delivered: false, reason: gate.reason || gate.code };
   }
@@ -5913,6 +5935,23 @@ async function run() {
 
   // Phase 3 — follow-ups (replied leads already excluded by runReplyCheckPass)
   const followUps = selectFollowUps(all, ownershipActivities);
+
+  // Temporary recipient-provider admission (cold-delivery-policy.js): only
+  // positively Google-hosted recipients enter this run's cold batches. Held
+  // leads are untouched — no stage, step, history or suppression change — and
+  // become eligible again when the policy is turned off. The pre-send gate in
+  // deliverOrdinaryColdStep re-checks every candidate regardless.
+  const providerAdmission = await admitByRecipientProvider([...queued, ...followUps], recipientProviderClassifier);
+  for (const pool of [queued, followUps]) {
+    for (let i = pool.length - 1; i >= 0; i--) if (!providerAdmission.allowed.has(pool[i].id)) pool.splice(i, 1);
+  }
+  if (providerAdmission.held.length) {
+    const byReason = {};
+    for (const item of providerAdmission.held) byReason[item.holdReason] = (byReason[item.holdReason] || 0) + 1;
+    console.log(JSON.stringify({ event: 'recipient_provider_admission', policy: recipientProviderPolicy(),
+      admitted: providerAdmission.allowed.size, held: providerAdmission.held.length, byReason,
+      classifier: recipientProviderClassifier.stats() }));
+  }
 
   const effectiveCap = Math.min(sendingWindowSnapshot(windowQuota).globalRemaining, dailyRemaining);
   const windowSummary = [...sendingWindowRemainingBySender(windowQuota)]
