@@ -72,6 +72,15 @@ function staffingReviewStatus(lead = {}) {
   const match = REVIEW_TAG.exec(String(lead.campaign_notes || lead.campaignNotes || ''));
   return match ? { fit: match[1], personalization: match[2], routingReady: match[3] === 'true' } : null;
 }
+const REVIEW_PERSONALIZATION = Object.freeze(['SPECIFIC_HIGH', 'BROAD_MEDIUM', 'SAFE_FALLBACK', 'NONE_REQUIRED', 'FAILED']);
+function replaceStaffingReviewTag(campaignNotes, { fit, personalization, routingReady }) {
+  if (!['ICP_CONFIRMED', 'ICP_REJECT', 'ICP_UNRESOLVED'].includes(fit)) throw new Error('invalid staffing review fit');
+  if (!REVIEW_PERSONALIZATION.includes(personalization)) throw new Error('invalid staffing review personalization');
+  const tag = `[STAFFING_REVIEW_V1 fit=${fit};personalization=${personalization};routing_ready=${routingReady ? 'true' : 'false'}]`;
+  const current = String(campaignNotes || '');
+  if (REVIEW_TAG.test(current)) return current.replace(REVIEW_TAG, tag);
+  return current ? `${current.replace(/\s*$/, '')}; ${tag}` : tag;
+}
 function staffingNoPersonalizationAllowed(lead = {}) {
   const review = staffingReviewStatus(lead);
   return Boolean(review && review.fit === 'ICP_CONFIRMED'
@@ -165,6 +174,6 @@ function validateStaffingEmail({ subject, body, leadId } = {}, step = 1) {
 }
 
 module.exports = { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_LABELS, isStaffingCampaign, STAFFING_LANDING_PAGE_URL, LOCKED_EMAILS, BOLD_PHRASE, BOLD_PHRASES,
-  STAFFING_SEQUENCE_TIMING, renderStaffingPreview, staffingOpeningFor, staffingReviewStatus,
+  STAFFING_SEQUENCE_TIMING, renderStaffingPreview, staffingOpeningFor, staffingReviewStatus, replaceStaffingReviewTag,
   staffingNoPersonalizationAllowed, renderStaffingEmail, validateStaffingEmail,
   isTrackedStaffingLandingUrl, withStaffingLandingUrl };

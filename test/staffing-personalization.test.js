@@ -1,13 +1,14 @@
 'use strict';
 const test=require('node:test');
 const assert=require('node:assert/strict');
-const {STAFFING_CAMPAIGN,isStaffingCampaign,renderStaffingPreview,LOCKED_EMAILS}=require('../integrations/staffing-campaign');
+const {STAFFING_CAMPAIGN,isStaffingCampaign,renderStaffingPreview,renderStaffingEmail,LOCKED_EMAILS,replaceStaffingReviewTag,staffingReviewStatus}=require('../integrations/staffing-campaign');
 const {appendStaffingComplianceFooter}=require('../integrations/staffing-compliance');
 const {STAFFING_RENDER_OPTIONS}=require('../test-support/staffing-mail');
 const {CHECKS,SYSTEM,FACT_AUDIT_SYSTEM,AUDIT_SYSTEM,evidenceBlocks,attachEvidence,filterFacts,checkDraft,rebuildFromFacts,
-  recoverStaffingLead,directRoleMarketLink,personalizeStaffingLead,previewStaffingPersonalization,flagBatchDuplicates,EMAIL_ADMISSION,emailAdmission}=require('../integrations/staffing-personalization');
+  recoverStaffingLead,directRoleMarketLink,personalizeStaffingLead,previewStaffingPersonalization,flagBatchDuplicates,EMAIL_ADMISSION,emailAdmission,
+  emailStatusFromStaffingNotes,buildStaffingPersonalizationLead}=require('../integrations/staffing-personalization');
 const {researchStaffingCompany,safeUrl,publicIp}=require('../integrations/staffing-research');
-const {registerStaffingPreviewRoutes}=require('../integrations/staffing-preview-route');
+const {registerStaffingPreviewRoutes,registerStaffingAdmitRoute,admitStaffingPersonalization,unsentImportEligible}=require('../integrations/staffing-preview-route');
 const {CAMPAIGN_VERSIONS}=require('../integrations/campaign-versions');
 const {templateById,validateCampaignVersionRoute}=require('../integrations/campaign-routing');
 const {parseCsv,csv}=require('../scripts/staffing-personalization-qa');
@@ -403,6 +404,76 @@ test('authenticated preview API remains isolated from storage and sending',async
   const res={json:x=>output=x,status:s=>{status=s;return res;}};
   await handlers['/api/staffing/personalization/preview']({body:{lead}},res);assert.equal(output.previewOnly,true);
   await handlers['/api/staffing/personalization/preview']({body:{lead:{campaign:'Dental'}}},res);assert.equal(status,422);
+});
+test('imported notes verifier status maps to emailAdmission without using CRM emailStatus',()=>{
+  assert.equal(emailAdmission(emailStatusFromStaffingNotes('Apollo work email verified; catch-all=no')),EMAIL_ADMISSION.NON_CATCH_ALL);
+  assert.equal(emailAdmission(emailStatusFromStaffingNotes('Apollo work email: verified; catch-all: yes')),EMAIL_ADMISSION.CATCH_ALL);
+  assert.equal(emailStatusFromStaffingNotes('catch-all=no'),'');
+  assert.equal(emailAdmission(''),null);
+});
+test('review tag replace keeps surrounding notes and never invents an opening',()=>{
+  const next=replaceStaffingReviewTag('ScaleLab staged staffing source 2026-10-01; [STAFFING_REVIEW_V1 fit=ICP_CONFIRMED;personalization=NONE_REQUIRED;routing_ready=true]',
+    {fit:'ICP_CONFIRMED',personalization:'SPECIFIC_HIGH',routingReady:true});
+  assert.equal(staffingReviewStatus({campaign_notes:next}).personalization,'SPECIFIC_HIGH');
+  assert.match(next,/ScaleLab staged staffing source 2026-10-01/);
+  assert.equal((next.match(/STAFFING_REVIEW_V1/g)||[]).length,1);
+});
+const importLead={
+  id:'imp1', stage:'Import', email:'ada@example.com', company:'Example Staffing', contactName:'Ada Lovelace',
+  website:'https://example.com', campaign:STAFFING_CAMPAIGN.name, leadNiche:'industrial_staffing',
+  emailStatus:'', emailStep:'', lastEmailedAt:'', senderInboxId:'', emailTemplateId:STAFFING_CAMPAIGN.emailTemplateId,
+  intendedCampaignVersion:STAFFING_CAMPAIGN.id, routingRequired:'true',
+  notes:'Apollo work email verified; catch-all=no; evidence=https://example.com/',
+  campaign_notes:'[STAFFING_REVIEW_V1 fit=ICP_CONFIRMED;personalization=NONE_REQUIRED;routing_ready=true]',
+};
+test('unsent Import staffing leads are eligible; contacted, held or lifecycle emailStatus are not',()=>{
+  assert.equal(unsentImportEligible(importLead).ok,true);
+  assert.equal(unsentImportEligible({...importLead,stage:'Contacted'}).ok,false);
+  assert.equal(unsentImportEligible({...importLead,emailStatus:'emailed'}).ok,false);
+  assert.equal(unsentImportEligible({...importLead,notes:'[MANUAL HOLD] '+importLead.notes}).ok,false);
+  assert.equal(buildStaffingPersonalizationLead(importLead).emailStatus,'verified / not catch-all');
+  assert.equal(buildStaffingPersonalizationLead(importLead).firstName,'Ada');
+});
+test('admit writes a validated opening for Google Import leads and never sends or queues',async()=>{
+  const patches=[];
+  const result=await admitStaffingPersonalization({id:'imp1'},{
+    loadLead:async()=>importLead,
+    applyPatch:async(lead,patch)=>{patches.push(patch);return {status:'succeeded'};},
+    classifyEmail:async()=>({provider:'GOOGLE',reason:'google_mx',domain:'example.com'}),
+    personalize:async()=>({safeToSend:true,confidence:'HIGH',hyperPersonalizedOpening:'Saw you place welders and machinists for manufacturing employers.',
+      primaryReason:'VERIFIED_SPECIFIC_EMPLOYER_MARKET',facts:[{kind:'role',value:'welders'}],catchAllAdmitted:false}),
+    env:{COMMERCIAL_MAILING_ADDRESS:'100 Example Ave, City, ST 00000',MAILING_ADDRESS:'100 Example Ave, City, ST 00000',
+      FROM_EMAIL:'deins@scalelabai.ca',FROM_NAME:'Deins'},
+  });
+  assert.equal(result.ok,true);assert.equal(result.sent,false);assert.equal(result.queued,false);
+  assert.equal(result.personalization,'SPECIFIC_HIGH');
+  assert.equal(patches.length,1);assert.equal(patches[0].siteContext,'Saw you place welders and machinists for manufacturing employers.');
+  assert.equal(staffingReviewStatus({campaign_notes:patches[0].campaign_notes}).personalization,'SPECIFIC_HIGH');
+  assert.match(result.body,/Saw you place welders/);
+  assert.doesNotMatch(result.body,/\{\{|undefined|null/);
+  assert.equal(renderStaffingEmail({...importLead,...patches[0]},1,{env:{COMMERCIAL_MAILING_ADDRESS:'100 Example Ave, City, ST 00000',FROM_EMAIL:'deins@scalelabai.ca',FROM_NAME:'Deins'}}).subject,'employer accounts');
+});
+test('admit holds Microsoft Import leads without writing and holds failed personalization without queueing',async()=>{
+  const microsoft=await admitStaffingPersonalization({id:'imp1'},{
+    loadLead:async()=>importLead,applyPatch:async()=>{throw new Error('must not write');},
+    classifyEmail:async()=>({provider:'MICROSOFT',reason:'microsoft_mx',domain:'example.com'}),
+    personalize:async()=>{throw new Error('must not personalize');},
+  });
+  assert.equal(microsoft.ok,false);assert.equal(microsoft.held,true);assert.equal(microsoft.reason,'recipient_provider_microsoft');assert.equal(microsoft.writes,0);
+  const patches=[];
+  const failed=await admitStaffingPersonalization({id:'imp1'},{
+    loadLead:async()=>importLead,applyPatch:async(_lead,patch)=>patches.push(patch),
+    classifyEmail:async()=>({provider:'GOOGLE',reason:'google_mx',domain:'example.com'}),
+    personalize:async()=>({safeToSend:false,confidence:'REVIEW_REQUIRED',hyperPersonalizedOpening:'',primaryReason:'VALID_FACTS_INSUFFICIENT'}),
+  });
+  assert.equal(failed.ok,false);assert.equal(failed.held,true);assert.equal(failed.queued,false);assert.equal(failed.sent,false);
+  assert.equal(staffingReviewStatus({campaign_notes:patches[0].campaign_notes}).routingReady,false);
+  assert.equal(patches[0].siteContext,undefined);
+});
+test('admit route shares the preview lock and never claims a send',async()=>{
+  const handlers={},auth=()=>{},app={post:(url,middleware,fn)=>{assert.equal(middleware,auth);handlers[url]=fn;}};
+  registerStaffingAdmitRoute(app,auth,{loadLead:async()=>importLead,applyPatch:async()=>({}),classifyEmail:async()=>({provider:'GOOGLE'})});
+  assert.equal(typeof handlers['/api/staffing/personalization/admit'],'function');
 });
 test('locked follow-ups, HTML escaping and review preview suppression are preserved',()=>{
   const r=renderStaffingPreview({...lead,company:'A & B <Partners>'},null,2,STAFFING_RENDER_OPTIONS);
