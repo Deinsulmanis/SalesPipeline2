@@ -203,6 +203,7 @@ const { aggregateDemoPlays, attributeDemoPlays, demoPlayForLead } = require('./i
 const { INTENT_STATE_SOURCE, formatIntentStateLine, pendingIntentWork } = require('./integrations/intent-backstop');
 const { oldestDueFirst, followUpSuccessTarget } = require('./integrations/scheduler-fairness');
 const { isFollowUpDue, FOLLOW_UP_STEP_COUNT } = require('./integrations/sequence-timing');
+const { unrecoveredTouchBlock } = require('./integrations/same-touch-recovery');
 const { planOooResume, buildOooResumeEvent } = require('./integrations/ooo-pause');
 const { fairShareQueuedOrder } = require('./integrations/scheduled-slot-allocator');
 const {
@@ -2088,6 +2089,10 @@ async function deliverOrdinaryColdStep({
   lead, step, sender, subject, body, attribution, activitiesForCycle,
   personalizationMetadata = null, thread = null, onProviderSuccess = null,
 }) {
+  // A proven, unrecovered delivery failure of an earlier touch blocks every
+  // later one at send time too, not only in selection (same-touch-recovery.js).
+  const failedTouch = unrecoveredTouchBlock(lead, activitiesForCycle || [], step);
+  if (failedTouch) return { delivered: false, reason: failedTouch.reason };
   // Staffing Follow-up #2 landing link. Pure and pinned: re-derived here from
   // the same action id and earlier attempts the caller rendered from, so the
   // locked-copy comparison below also proves the URL is unchanged. Null for
