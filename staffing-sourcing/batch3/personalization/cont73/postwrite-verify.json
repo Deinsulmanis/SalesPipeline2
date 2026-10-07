@@ -1,0 +1,149 @@
+{
+  "verified": 6,
+  "problems": [],
+  "before": { "total": 327, "queued": 319, "sent": 8, "dentalTotal": 1316 },
+  "after": { "total": 333, "queued": 325, "sent": 8, "dentalTotal": 1316, "corpusDelta": 6, "dentalDelta": 0 },
+  "import": { "imported": 6, "duplicates": 0, "invalid": 0, "junk": 0, "suppressed": 0 },
+  "queue": {
+    "requested": 6,
+    "succeeded": 6,
+    "unchanged": 0,
+    "failed": 0,
+    "conflict": 0,
+    "activityFailures": 0,
+    "mirroredTrue": 6,
+    "casConflicts": 0,
+    "senderInboxId": "primary",
+    "emailTemplateId": "industrial-staffing-employer-v1",
+    "campaignVersionId": "industrial_staffing_employer_acquisition_v1"
+  },
+  "parity": {
+    "canonicalCount": 6,
+    "uniqueIds": 6,
+    "uniqueEmails": 6,
+    "exactlyOneLeadQueuedEach": true,
+    "duplicateQueueEvents": 0,
+    "mirrorFailures": 0,
+    "missingPersonalizationOnLaunchReadiness": 0
+  },
+  "catchAll": [
+    "hvale@superior-staffing.com",
+    "sean@rampuplabor.com",
+    "auburn@tradeslabor.com",
+    "mdiaz@arrowstaffing.com",
+    "nblount@excelsiorstaffing.com"
+  ],
+  "nonCatchAll": [
+    "snardello@alliancewf.com"
+  ],
+  "held6StillAbsent": [
+    "blopez@leadstaff.com",
+    "jmarotta@actionlabor.com",
+    "avargas@laboronsite.com",
+    "bflores@st-staffing.com",
+    "larry@staffingauthority.com",
+    "dawnt@capitalareastaffing.com"
+  ],
+  "leads": [
+    {
+      "id": "mu6d9r21rilapqvdhki",
+      "email": "snardello@alliancewf.com",
+      "company": "Alliance Workforce Solutions",
+      "contactName": "Sal Nardello",
+      "stage": "Queued",
+      "notes": "[STAFFING HIGH] Saw you place welders and warehouse unloaders for light industrial manufacturers across Florida. [B3]",
+      "catchAllTag": false,
+      "senderInboxId": "primary",
+      "emailTemplateId": "industrial-staffing-employer-v1",
+      "intendedCampaignVersion": "industrial_staffing_employer_acquisition_v1",
+      "leadQueuedCount": 1,
+      "lastEmailedAt": "",
+      "mirrored": true
+    },
+    {
+      "id": "mu6d9r212dmaf63zcoi",
+      "email": "hvale@superior-staffing.com",
+      "company": "Superior Staffing",
+      "contactName": "Heriberto Vale",
+      "stage": "Queued",
+      "notes": "[STAFFING MEDIUM] Saw you focus on manufacturing staffing for employers. [B3] [B3 CATCH-ALL]",
+      "catchAllTag": true,
+      "senderInboxId": "primary",
+      "emailTemplateId": "industrial-staffing-employer-v1",
+      "intendedCampaignVersion": "industrial_staffing_employer_acquisition_v1",
+      "leadQueuedCount": 1,
+      "lastEmailedAt": "",
+      "mirrored": true
+    },
+    {
+      "id": "mu6d9r21mi1pcxm0v3f",
+      "email": "sean@rampuplabor.com",
+      "company": "RampUp Labor",
+      "contactName": "Sean Switzer",
+      "stage": "Queued",
+      "notes": "[STAFFING HIGH] Saw you place electricians and welders and pipefitters for construction contractors. [B3] [B3 CATCH-ALL]",
+      "catchAllTag": true,
+      "senderInboxId": "primary",
+      "emailTemplateId": "industrial-staffing-employer-v1",
+      "intendedCampaignVersion": "industrial_staffing_employer_acquisition_v1",
+      "leadQueuedCount": 1,
+      "lastEmailedAt": "",
+      "mirrored": true
+    },
+    {
+      "id": "mu6d9r21c5utt23w6y",
+      "email": "auburn@tradeslabor.com",
+      "company": "Trades Labor Corporation",
+      "contactName": "Tradeslabor Auburn",
+      "stage": "Queued",
+      "notes": "[STAFFING HIGH] Saw you place carpenters and welders for construction contractors. [B3] [B3 CATCH-ALL]",
+      "catchAllTag": true,
+      "senderInboxId": "primary",
+      "emailTemplateId": "industrial-staffing-employer-v1",
+      "intendedCampaignVersion": "industrial_staffing_employer_acquisition_v1",
+      "leadQueuedCount": 1,
+      "lastEmailedAt": "",
+      "mirrored": true
+    },
+    {
+      "id": "mu6d9r21lu1xks3unk",
+      "email": "mdiaz@arrowstaffing.com",
+      "company": "Arrow Staffing",
+      "contactName": "Meggie Diaz",
+      "stage": "Queued",
+      "notes": "[STAFFING HIGH] Saw you place machine operators and quality control technicians for manufacturers. [B3] [B3 CATCH-ALL]",
+      "catchAllTag": true,
+      "senderInboxId": "primary",
+      "emailTemplateId": "industrial-staffing-employer-v1",
+      "intendedCampaignVersion": "industrial_staffing_employer_acquisition_v1",
+      "leadQueuedCount": 1,
+      "lastEmailedAt": "",
+      "mirrored": true
+    },
+    {
+      "id": "mu6d9r21zaf8m99bped",
+      "email": "nblount@excelsiorstaffing.com",
+      "company": "Excelsior Staffing",
+      "contactName": "Norris Blount",
+      "stage": "Queued",
+      "notes": "[STAFFING HIGH] Saw you place warehouse, assembly, and manufacturing workers across light industrial roles. [B3] [B3 CATCH-ALL]",
+      "catchAllTag": true,
+      "senderInboxId": "primary",
+      "emailTemplateId": "industrial-staffing-employer-v1",
+      "intendedCampaignVersion": "industrial_staffing_employer_acquisition_v1",
+      "leadQueuedCount": 1,
+      "lastEmailedAt": "",
+      "mirrored": true
+    }
+  ],
+  "safety": {
+    "manualSend": false,
+    "agentTriggered": false,
+    "sentUnchangedAt": 8,
+    "campaignSendingState": "Active / sending",
+    "campaignCopyVersion": "staffing_locked_v1",
+    "dentalUntouched": true,
+    "gmailWorktreeUntouched": true,
+    "apolloCreditsSpentThisTask": 0
+  }
+}

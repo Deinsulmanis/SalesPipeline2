@@ -1,0 +1,211 @@
+{
+  "before": {
+    "total": 327,
+    "queued": 319,
+    "sent": 8,
+    "dentalTotal": 1316,
+    "unfiltered": 2176
+  },
+  "csvRows": 6,
+  "preflightAccepted": 6,
+  "preflightBlocked": [],
+  "import": {
+    "imported": 6,
+    "duplicates": 0,
+    "invalid": 0,
+    "junk": 0,
+    "suppressed": 0
+  },
+  "queue": {
+    "requested": 6,
+    "succeeded": 6,
+    "unchanged": 0,
+    "refused": 0,
+    "conflict": 0,
+    "failed": 0,
+    "activityFailures": 0,
+    "queued": 6,
+    "alreadyQueued": 0,
+    "queuedIds": [
+      "mu6d9r212dmaf63zcoi",
+      "mu6d9r21c5utt23w6y",
+      "mu6d9r21lu1xks3unk",
+      "mu6d9r21mi1pcxm0v3f",
+      "mu6d9r21rilapqvdhki",
+      "mu6d9r21zaf8m99bped"
+    ],
+    "results": [
+      {
+        "leadId": "mu6d9r212dmaf63zcoi",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6d9r21c5utt23w6y",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6d9r21lu1xks3unk",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6d9r21mi1pcxm0v3f",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6d9r21rilapqvdhki",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      },
+      {
+        "leadId": "mu6d9r21zaf8m99bped",
+        "status": "succeeded",
+        "reason": "ok",
+        "revision": 2,
+        "conflicts": 0,
+        "keptMarkers": [],
+        "resumeTagKept": false,
+        "mirrored": true
+      }
+    ],
+    "senderInboxId": "primary",
+    "campaignVersionId": "industrial_staffing_employer_acquisition_v1",
+    "emailTemplateId": "industrial-staffing-employer-v1"
+  },
+  "after": {
+    "total": 333,
+    "queued": 325,
+    "sent": 8,
+    "dentalTotal": 1316,
+    "unfiltered": 2182,
+    "corpusDelta": 6,
+    "dentalDelta": 0
+  },
+  "verification": {
+    "importedCount": 6,
+    "newCanonical": 6,
+    "queue": {
+      "requested": 6,
+      "succeeded": 6,
+      "unchanged": 0,
+      "failed": 0,
+      "conflict": 0,
+      "queuedIds": [
+        "mu6d9r212dmaf63zcoi",
+        "mu6d9r21c5utt23w6y",
+        "mu6d9r21lu1xks3unk",
+        "mu6d9r21mi1pcxm0v3f",
+        "mu6d9r21rilapqvdhki",
+        "mu6d9r21zaf8m99bped"
+      ]
+    },
+    "notesCatchAll": [],
+    "notesB3": 0,
+    "sender": [
+      "primary"
+    ],
+    "template": [
+      ""
+    ],
+    "version": [
+      ""
+    ],
+    "stages": [
+      "Queued"
+    ],
+    "activities": [
+      {
+        "id": "mu6d9r212dmaf63zcoi",
+        "email": "hvale@superior-staffing.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6d9r21c5utt23w6y",
+        "email": "auburn@tradeslabor.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6d9r21lu1xks3unk",
+        "email": "mdiaz@arrowstaffing.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6d9r21mi1pcxm0v3f",
+        "email": "sean@rampuplabor.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6d9r21rilapqvdhki",
+        "email": "snardello@alliancewf.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      },
+      {
+        "id": "mu6d9r21zaf8m99bped",
+        "email": "nblount@excelsiorstaffing.com",
+        "leadQueuedCount": 1,
+        "eventTypes": [
+          "lead_queued"
+        ],
+        "notesHasCatchAll": false
+      }
+    ],
+    "dentalUntouched": true
+  },
+  "afterImport": {
+    "total": 333,
+    "queued": 319,
+    "sent": 8,
+    "dentalTotal": 1316,
+    "newLeadCount": 6,
+    "missing": [],
+    "extra": []
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "fetchedAt": "2026-09-18T01:40:35.709Z",
+  "staffingTotal": 327,
+  "queued": 319,
+  "sent": 8,
+  "dentalTotal": 1316,
+  "leadCount": 327,
+  "approvedIntersectLiveEmails": 58,
+  "phase2Imported": 0,
+  "note": "Phase 2 sourcing only; no import/queue/send. 58 overlap is previously imported Batch 3 pass-1 leads."
+}

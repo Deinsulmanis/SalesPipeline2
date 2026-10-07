@@ -1,0 +1,622 @@
+{
+  "ready": [
+    {
+      "company": "Alliance Workforce Solutions",
+      "class": "generic_staffing",
+      "person_id": "66fe985b5e305500011b5adf",
+      "first_name": "Sal",
+      "title": "Owner",
+      "title_rank": 0,
+      "n_people": 3,
+      "domain": "allianceworkforcesolutions.net",
+      "website": "http://www.allianceworkforcesolutions.net",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "industrial-p6.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "Allied Staffing",
+      "class": "generic_staffing",
+      "person_id": "66fb878acdf51100011d74e0",
+      "first_name": "Debbie",
+      "title": "Owner",
+      "title_rank": 0,
+      "n_people": 2,
+      "domain": "alliedonesource.com",
+      "website": "https://www.alliedonesource.com/",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "welding-strict-p1.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "Applied Staffing Group, LLC",
+      "class": "generic_staffing",
+      "person_id": "66f58567133e14000140e00f",
+      "first_name": "Joey",
+      "title": "Owner",
+      "title_rank": 0,
+      "n_people": 8,
+      "domain": "theappliedcompanies.com",
+      "website": "https://theappliedcompanies.com/",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "construction-p6.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "KBC Staffing",
+      "class": "generic_staffing",
+      "person_id": "66f871f08dcef000014dae9a",
+      "first_name": "Rich",
+      "title": "Founder/President",
+      "title_rank": 0,
+      "n_people": 3,
+      "domain": "kbcstaffing.com",
+      "website": "https://kbcstaffing.com",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "warehouse-p2.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "PEAR Staffing",
+      "class": "generic_staffing",
+      "person_id": "66f1d3fe3f6de300010d481e",
+      "first_name": "Michael",
+      "title": "Founder, CEO",
+      "title_rank": 0,
+      "n_people": 1,
+      "domain": "pearstaffing.com",
+      "website": "https://pearstaffing.com",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "warehouse-strict-p2.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "Scion Staffing",
+      "class": "generic_staffing",
+      "person_id": "66f8dbd28dcef0000165cb93",
+      "first_name": "Isaac",
+      "title": "Founder & CEO",
+      "title_rank": 0,
+      "n_people": 2,
+      "domain": "scionstaffing.com",
+      "website": "https://scionstaffing.com",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "manufacturing-p1.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "Superior Staffing",
+      "class": "generic_staffing",
+      "person_id": "66fc629ede6cae00017edcd6",
+      "first_name": "Heriberto",
+      "title": "CEO- President- Founder- Owner",
+      "title_rank": 0,
+      "n_people": 12,
+      "domain": "superiorstaffing.net",
+      "website": "http://www.superiorstaffing.net",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "distribution-strict-p1.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "West End Workforce",
+      "class": "generic_staffing",
+      "person_id": "66f1809fe756a3000199c045",
+      "first_name": "Tracy",
+      "title": "Founder + CEO",
+      "title_rank": 0,
+      "n_people": 2,
+      "domain": "westendworkforce.com",
+      "website": "https://westendworkforce.com",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "manufacturing-p1.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "WorkForce Unlimited",
+      "class": "generic_staffing",
+      "person_id": "679cf25f4403750001682144",
+      "first_name": "Michelle",
+      "title": "Executive Administrator to CEO/Co-Founder",
+      "title_rank": 0,
+      "n_people": 8,
+      "domain": "workforceunlimited.com",
+      "website": "https://www.workforceunlimited.com/",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "industrial-p3.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "One Source Staffing Corporation",
+      "class": "generic_staffing",
+      "person_id": "670e978912e7a00001ac6a4c",
+      "first_name": "Jane",
+      "title": "CEO",
+      "title_rank": 1,
+      "n_people": 1,
+      "domain": "onesourcestaffing.com",
+      "website": "https://www.onesourcestaffing.com/",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "industrial-p2.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "Staffingine LLC",
+      "class": "generic_staffing",
+      "person_id": "68bada397b03cd00013cd3e6",
+      "first_name": "Shashwat",
+      "title": "Chief Executive Officer",
+      "title_rank": 1,
+      "n_people": 1,
+      "domain": "staffingine.com",
+      "website": "https://staffingine.com",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "manufacturing-p2.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "The Personnel Store, Inc.",
+      "class": "generic_staffing",
+      "person_id": "66ff9cdfad0d090001bb0ef6",
+      "first_name": "Scott",
+      "title": "President & CEO",
+      "title_rank": 1,
+      "n_people": 3,
+      "domain": "personnelstore.com",
+      "website": "http://www.personnelstore.com",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "industrial-p1.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "Upendo Staffing",
+      "class": "generic_staffing",
+      "person_id": "57d38f41f651252c6149109f",
+      "first_name": "David",
+      "title": "CEO",
+      "title_rank": 1,
+      "n_people": 1,
+      "domain": "upendostaffing.com",
+      "website": "https://upendostaffing.com",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "manufacturing-p2.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "APS Employment Services, Inc.",
+      "class": "generic_staffing",
+      "person_id": "64eec1c47a9eae00012b09cd",
+      "first_name": "Lisa",
+      "title": "President",
+      "title_rank": 2,
+      "n_people": 3,
+      "domain": "apsemploymentservices.com",
+      "website": "http://www.apsemploymentservices.com",
+      "qual_decision": "pass",
+      "qual_reason": "site_fit",
+      "site_fit": true,
+      "src": "industrial-p13.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "Ameripro Staffing LLC",
+      "class": "generic_staffing",
+      "person_id": "5ac4aea4a6da9801e52ad800",
+      "first_name": "Maria",
+      "title": "President",
+      "title_rank": 2,
+      "n_people": 1,
+      "domain": "ameriprostaffing.com",
+      "website": "https://www.ameriprostaffing.com/",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "construction-p6.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "Best Personnel",
+      "class": "generic_staffing",
+      "person_id": "57db1213a6da9853e9fd2d10",
+      "first_name": "Brian",
+      "title": "President",
+      "title_rank": 2,
+      "n_people": 2,
+      "domain": "best-personnel.com",
+      "website": "https://www.best-personnel.com/",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "industrial-p12.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "Fusco Personnel, Inc.",
+      "class": "generic_staffing",
+      "person_id": "60e85e1e2fc719000105df1d",
+      "first_name": "Alexis",
+      "title": "Vice President, Operations",
+      "title_rank": 2,
+      "n_people": 1,
+      "domain": "fuscopersonnel.net",
+      "website": "https://fuscopersonnel.net/",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "manufacturing-strict-p2.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "MDS Staffing",
+      "class": "generic_staffing",
+      "person_id": "54a2f4107468693318222a49",
+      "first_name": "Ron",
+      "title": "President",
+      "title_rank": 2,
+      "n_people": 1,
+      "domain": "mdsstaffing.com",
+      "website": "https://www.mdsstaffing.com/",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "construction-p7.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "United Employment Group, Inc.",
+      "class": "generic_staffing",
+      "person_id": "54a70d647468696220cad810",
+      "first_name": "Michael",
+      "title": "President",
+      "title_rank": 2,
+      "n_people": 3,
+      "domain": "unitedemployment.com",
+      "website": "https://unitedemployment.com",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "construction-p7.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "Arch Staffing Group, Inc.",
+      "class": "generic_staffing",
+      "person_id": "670697c8f3f939000194d2dc",
+      "first_name": "Joe",
+      "title": "Managing Partner",
+      "title_rank": 3,
+      "n_people": 7,
+      "domain": "archstaffinggroup.com",
+      "website": "http://www.archstaffinggroup.com/",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "logistics-strict-p1.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "Regal Staffing Services",
+      "class": "generic_staffing",
+      "person_id": "67000421b8ea050001da2b0d",
+      "first_name": "Tom",
+      "title": "VP Sales & Marketing",
+      "title_rank": 4,
+      "n_people": 1,
+      "domain": "regalstaffing.com",
+      "website": "https://www.regalstaffing.com/",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "logistics-strict-p3.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "Arrow Staffing",
+      "class": "generic_staffing",
+      "person_id": "54c1aea27468691639530b35",
+      "first_name": "Meggie",
+      "title": "Branch Manager",
+      "title_rank": 7,
+      "n_people": 3,
+      "domain": "arrowstaffing.com",
+      "website": "https://www.arrowstaffing.com/",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "lightind-p3.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "TRUE Staffing",
+      "class": "generic_staffing",
+      "person_id": "66fe5a747cd3310001a9a1ab",
+      "first_name": "Myesha",
+      "title": "Safety VP",
+      "title_rank": 8,
+      "n_people": 2,
+      "domain": "truestaffing.net",
+      "website": "https://www.truestaffing.net/",
+      "qual_decision": "pass",
+      "qual_reason": "guessed_domain_site_fit",
+      "site_fit": true,
+      "src": "industrial-p17.json",
+      "source_bucket": "generic_pass"
+    },
+    {
+      "company": "RampUp Labor",
+      "class": "keep_name",
+      "person_id": "54a80d4774686975f88c715e",
+      "first_name": "Sean",
+      "title": "Co-Owner",
+      "title_rank": 0,
+      "n_people": 1,
+      "domain": "",
+      "website": "",
+      "qual_decision": "reject",
+      "qual_reason": "no_guessed_domain_fit",
+      "site_fit": false,
+      "src": "construction-p8.json",
+      "source_bucket": "keep_name"
+    },
+    {
+      "company": "All Staffing Warehousing Logistics, Inc",
+      "class": "keep_name",
+      "person_id": "54a62ede74686936762974c8",
+      "first_name": "Phil",
+      "title": "Chief Executive Officer",
+      "title_rank": 1,
+      "n_people": 1,
+      "domain": "",
+      "website": "",
+      "qual_decision": "reject",
+      "qual_reason": "no_guessed_domain_fit",
+      "site_fit": false,
+      "src": "logistics-strict-p3.json",
+      "source_bucket": "keep_name"
+    },
+    {
+      "company": "LoneStar Labor Management",
+      "class": "keep_name",
+      "person_id": "66f4e55a150b4f0001faece1",
+      "first_name": "Christopher",
+      "title": "Chief Executive Officer",
+      "title_rank": 1,
+      "n_people": 1,
+      "domain": "",
+      "website": "",
+      "qual_decision": "reject",
+      "qual_reason": "no_guessed_domain_fit",
+      "site_fit": false,
+      "src": "industrial-p18.json",
+      "source_bucket": "keep_name"
+    },
+    {
+      "company": "Fundamental Labor Strategies, Inc.",
+      "class": "keep_name",
+      "person_id": "54a43c197468693676dc3137",
+      "first_name": "Jeffrey",
+      "title": "Vice President Operations",
+      "title_rank": 2,
+      "n_people": 3,
+      "domain": "",
+      "website": "",
+      "qual_decision": "reject",
+      "qual_reason": "no_guessed_domain_fit",
+      "site_fit": false,
+      "src": "distribution-strict-p1.json",
+      "source_bucket": "keep_name"
+    },
+    {
+      "company": "Construction Staffing & Recruiting",
+      "class": "keep_name",
+      "person_id": "670e991ee84e460001c9a658",
+      "first_name": "Casey",
+      "title": "Senior Director SLED, Human Capital Leader, VP of Recruiting, VP of Sales, VP of Talent Acquisition",
+      "title_rank": 4,
+      "n_people": 3,
+      "domain": "",
+      "website": "",
+      "qual_decision": "reject",
+      "qual_reason": "no_guessed_domain_fit",
+      "site_fit": false,
+      "src": "construction-p1.json",
+      "source_bucket": "keep_name"
+    },
+    {
+      "company": "Trades Labor Corporation",
+      "class": "keep_name",
+      "person_id": "6364f1ca568a0b00012596dd",
+      "first_name": "Tradeslabor",
+      "title": "Branch Manager",
+      "title_rank": 7,
+      "n_people": 1,
+      "domain": "tradeslabor.com",
+      "website": "http://www.tradeslabor.com",
+      "qual_decision": "pass",
+      "qual_reason": "site_fit",
+      "site_fit": true,
+      "src": "construction-p4.json",
+      "source_bucket": "keep_name"
+    }
+  ],
+  "skipped": [
+    {
+      "company": "Food Staffing Services LLC",
+      "reason": "dup_or_ban_domain"
+    },
+    {
+      "company": "Integrity Staffing Group",
+      "reason": "dup_or_ban_domain"
+    },
+    {
+      "company": "Select Technical Staffing, Inc.",
+      "reason": "dup_or_ban_domain"
+    },
+    {
+      "company": "Summit Staffing, Inc",
+      "reason": "name_reject"
+    },
+    {
+      "company": "Workforce Management",
+      "reason": "dup_or_ban_domain"
+    },
+    {
+      "company": "Superior Staffing Inc.",
+      "reason": "dup_name"
+    },
+    {
+      "company": "Superior Staffing Solutions, LLC",
+      "reason": "dup_or_ban_domain"
+    },
+    {
+      "company": "Integrity Staffing, Inc",
+      "reason": "dup_or_ban_domain"
+    },
+    {
+      "company": "LIVIT Staffing",
+      "reason": "name_reject"
+    },
+    {
+      "company": "Integrity Staffing Group, Inc",
+      "reason": "dup_or_ban_domain"
+    },
+    {
+      "company": "Core Industrial Maintenance",
+      "reason": "keep_name_no_staffing_word_no_site_fit"
+    },
+    {
+      "company": "Elite Manufacturing & Professional Services",
+      "reason": "keep_name_no_staffing_word_no_site_fit"
+    },
+    {
+      "company": "Guardian Production Services Inc",
+      "reason": "keep_name_no_staffing_word_no_site_fit"
+    },
+    {
+      "company": "Peak Distribution Solutions, LLC",
+      "reason": "keep_name_no_staffing_word_no_site_fit"
+    },
+    {
+      "company": "Productions.com",
+      "reason": "dup_or_ban_domain"
+    },
+    {
+      "company": "Purple Tally Productions",
+      "reason": "dup_or_ban_domain"
+    },
+    {
+      "company": "Belmar Integrated Logistics, Inc.",
+      "reason": "keep_name_no_staffing_word_no_site_fit"
+    },
+    {
+      "company": "Bill Kenney Productions, Inc.",
+      "reason": "keep_name_no_staffing_word_no_site_fit"
+    },
+    {
+      "company": "HYCO Logistics",
+      "reason": "dup_or_ban_domain"
+    },
+    {
+      "company": "Modern Machining Solutions",
+      "reason": "keep_name_no_staffing_word_no_site_fit"
+    },
+    {
+      "company": "Premier Construction Recruiting LLC",
+      "reason": "keep_name_no_staffing_word_no_site_fit"
+    },
+    {
+      "company": "TeamOne Logistics, LLC",
+      "reason": "dup_or_ban_domain"
+    },
+    {
+      "company": "Two Dots Productions",
+      "reason": "dup_or_ban_domain"
+    },
+    {
+      "company": "Construction Recruiting Solutions Inc.",
+      "reason": "keep_name_no_staffing_word_no_site_fit"
+    },
+    {
+      "company": "Framework - Construction Recruiting",
+      "reason": "keep_name_no_staffing_word_no_site_fit"
+    },
+    {
+      "company": "HCC Construction Consultants & Recruiting Services Inc.",
+      "reason": "keep_name_no_staffing_word_no_site_fit"
+    },
+    {
+      "company": "Pioneer Production Services, Inc",
+      "reason": "keep_name_no_staffing_word_no_site_fit"
+    },
+    {
+      "company": "ConstructionExecs",
+      "reason": "keep_name_no_staffing_word_no_site_fit"
+    },
+    {
+      "company": "American Trades Contracting",
+      "reason": "keep_name_no_staffing_word_no_site_fit"
+    },
+    {
+      "company": "Trade Team",
+      "reason": "keep_name_no_staffing_word_no_site_fit"
+    },
+    {
+      "company": "SONS Marine Industrial Inc",
+      "reason": "keep_name_no_staffing_word_no_site_fit"
+    },
+    {
+      "company": "1st Priority Staffing",
+      "reason": "generic_no_pass"
+    },
+    {
+      "company": "Noll Staffing and Assessment",
+      "reason": "generic_no_pass"
+    },
+    {
+      "company": "Consolidated Staffing, Inc.",
+      "reason": "generic_no_pass"
+    },
+    {
+      "company": "Long Island Temps",
+      "reason": "generic_no_pass"
+    },
+    {
+      "company": "Phoenix Staffing and Management Systems",
+      "reason": "generic_no_pass"
+    },
+    {
+      "company": "See Us Now Staffing, Inc.",
+      "reason": "generic_no_pass"
+    },
+    {
+      "company": "Structure Personnel Inc",
+      "reason": "generic_no_pass"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+company,email,domain,person_id,category,reason,notes
+"Construction Personnel Group, Inc.",john@sqrft.net,cpgbuffalo.net,6052d7602dc85d00011c8934,held,email_domain_mismatch,email_domain=sqrft.net company_domain=cpgbuffalo.net
+CACH Labor,christy@cachgroup.com,cachlabor.com,5c4f817f3b0b510c26ea2ea8,held,email_domain_mismatch,email_domain=cachgroup.com company_domain=cachlabor.com
+Elite Logistics Recruiting,terry@elitelogisticsrecruiting.com,elitelsi.com,662671f0a979cf0007114d76,held,email_domain_mismatch,email_domain=elitelogisticsrecruiting.com company_domain=elitelsi.com
+Full Steam Staffing NJ LLC,jfrawley@fss-nj.com,fullsteamstaffingnj.com,54ec4f047468694311088e7c,held,email_domain_mismatch,email_domain=fss-nj.com company_domain=fullsteamstaffingnj.com
+Sterling Personnel,belinda@sterling-apartments.com,sterling-personnel.com,66f263f416d93f0001719fda,held,email_domain_mismatch,email_domain=sterling-apartments.com company_domain=sterling-personnel.com
+Edgestone Staffing,bjenkins@edgestonestaffing.com,edgestonestaffing.com,54c1e45e7468697af7521359,held,held_medical_mix,"Apollo keywords emphasize medical/admin staffing, not industrial"
+Green Arrow Staffing,wayne@greenarrowstaffing.com,greenarrowstaffing.com,66f83aa2f3aaa20001206e5e,held,held_weak_industrial_evidence,Post-reveal keywords are generic recruiting with no industrial/trades evidence
+UCP Staffing,carrie.v@psucp.com,ucpstaffing.com,60726322a2b28500017982f4,held,email_domain_mismatch,email_domain=psucp.com company_domain=ucpstaffing.com
+MAC Staffing Group,jeff@macrecruiters.com,macstaffinggroup.com,66f8dc718dcef0000165fa54,held,email_domain_mismatch,email_domain=macrecruiters.com company_domain=macstaffinggroup.com
+One Source Staffing,robin.pickering@ossistaff.com,milwaukeestaffing.com,66f295d862bbc9000190c36c,held,email_domain_mismatch,email_domain=ossistaff.com company_domain=milwaukeestaffing.com
+"Cornerstone Staffing, Inc",brooke@cornerstonestaffinginc.com,cornerstonestaffinginc.com,54a1d8537468695c8279b614,held,held_white_collar_mix,"Apollo keywords are admin/finance/IT/executive placement, not industrial staffing"
+Arrow Staffing Inc.,lcallari@arrowstaffinginc.com,arrowstaffinginc.com,609ebf63b0d8aa0001687d78,held,held_domain_or_entity_mismatch,Guessed CA inland-empire site; revealed contact is Matawan NJ with generic keywords
+"MCM Staffing, LLC",cwilson@mcmstaffing.com,,5d51e3dcf651255ca2503596,held,email_domain_mismatch,email_domain=mcmstaffing.com company_domain=
+Kings Staffing LLC.,carlos@kingsstaffing.com,kingsstaffing.com,60b70fae3c497d00015d5135,held,held_white_collar_mix,"Apollo keywords emphasize professional/executive staffing, not industrial"
+LC Staffing,kristenheck@lcstaffing.com,lcstaffing.com,66fa78d971e7d600015287f7,held,held_white_collar_mix,Apollo keywords are engineering/accounting/healthcare/professional with only incidental manufacturing
+Opti Staffing Group,aodonnell@optistaffing.com,optistaffing.com,60eaf0c4ca618100012b89f6,held,held_professional_mix,Apollo keywords are accounting/finance/admin/engineers/PMs; skilled trades is not the core buyer fit
+Delta Staffing,stan.lyskowski@delta-staffing.com,delta-staffing.com,62dc4decfe277d000136b270,held,held_professional_engineering,"Apollo keywords are engineering/professional/automotive recruiting, not industrial labor staffing"
+Primary Staffing Inc.,maria.correa@primary-staffing.net,primary-staffing.net,68a6e8058e554600017355ce,held,held_admin_mix,Apollo keywords are administrative/HR consulting without industrial evidence
+Reliable Temps Inc.,ja@reliabletemps.com,reliabletemps.com,5c63c95a80f93e530ae8a133,held,held_weak_industrial_evidence,Post-reveal keywords are generic staffing with no industrial/trades evidence
+1st State Staffing Solutions,gcarter@1ststatestaffingsolutions.com,1ststatestaffingsolutions.com,685f9b1e2aed710001688425,held,held_exec_search_mix,Apollo keywords include C-level executive search and substitute teachers
+"RMPersonnel, Inc.",edgarr@rmpersonnel.com,rmpersonnel.com,66e43717b77b810001db805c,held,held_hro_peo_mix,Apollo keywords include human resources outsourcing rather than employer industrial staffing
+Equity Staffing Group,trav@equitysg.com,equitystaffing.com,54a220f2746869331860f00e,held,email_domain_mismatch,email_domain=equitysg.com company_domain=equitystaffing.com
+STAFFING SPECIFIX,jpadron@staffingspecifix.com,staffingspecifix.com,5cd3a666f3e5bb1841af5c76,held,held_event_legal_exec_mix,"Apollo keywords include executive search, event staffing, and law-firm staffing"
+Pinpoint Personnel,cindy@pinpointpersonnel.com,pinpointpersonnel.com,5adbf30ba6da98622d49a678,held,held_weak_industrial_evidence,Post-reveal keywords are generic staffing with no industrial/trades evidence
+Career Personnel,arainer@careerpersonnel.org,careerpersonnel.com,63c961cfe030490001174f3e,held,held_weak_industrial_evidence,Post-reveal keywords are generic staffing with no industrial/trades evidence
+Interfuse Staffing,vincentp@interfuse-staffing.org,interfuse-staffing.com,60252ef04d187e0001dd3b14,held,held_it_mix,Apollo keywords lead with information technology plus manufacturing/logistics
+PROSTAR Staffing,jheaton@prostarstaffing.com,prostarstaffing.com,66ec4dee8d0db800019b2507,rejected,national_exclusion,
