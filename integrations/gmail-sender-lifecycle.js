@@ -28,7 +28,12 @@ function activationBlockers(sender = {}, {
 } = {}) {
   const blockers = [];
   const status = String(sender.status || '');
-  if (status !== WARMUP_STATUS.READY) blockers.push('warmup is not ready');
+  // Warming (and error) inboxes must be marked ready first. A paused inbox
+  // already completed warmup — it may return to active when the remaining
+  // health checks pass. Active is idempotent.
+  if (status !== WARMUP_STATUS.READY && status !== WARMUP_STATUS.PAUSED && status !== WARMUP_STATUS.ACTIVE) {
+    blockers.push('warmup is not ready');
+  }
   if (String(sender.provider || 'gmail') !== 'gmail') blockers.push('provider must be gmail');
   // The defaults are ceilings for a newly activated inbox, not exact values:
   // a more conservative cap is always acceptable, a larger one never is.

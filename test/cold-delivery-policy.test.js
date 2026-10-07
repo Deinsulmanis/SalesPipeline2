@@ -4,8 +4,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
-  PROVIDER, HOLD_REASON, createProviderClassifier, classifyMxHosts, providerVerdict, coldSenderVerdict,
-  coldDeliveryVerdict, admitByRecipientProvider, recipientProviderPolicy, coldInboxDailyCap, applyColdInboxCap,
+  PROVIDER, HOLD_REASON, createProviderClassifier, classifyMxHosts, isProspectingSend, providerVerdict, coldSenderVerdict,
+  coldDeliveryVerdict, describeColdDeliveryPolicy, admitByRecipientProvider, recipientProviderPolicy, coldInboxDailyCap, applyColdInboxCap,
   recipientDomain, coldSenderPool,
 } = require('../integrations/cold-delivery-policy');
 const { guardProviderSend } = require('../integrations/send-safety-revalidate');
@@ -260,6 +260,17 @@ test('15. the gate runs before any reservation and every existing send protectio
   assert.match(server, /classifyRecipient: email => recipientProviderClassifier\.classify\(email\),\n      loadFreshLead/);
   const view = server.slice(server.indexOf("app.get('/api/ops/cold-delivery-gate'"), server.indexOf("app.get('/api/ops/mailbox-diagnostic'"));
   assert.doesNotMatch(view, /applyLeadChange|appendColdCallActivities|sendEmail|values\.(?:append|update)/);
+  // Stage sequences use the same pre-reserve + final-gate shape as ordinary cold.
+  const seq = agent.slice(agent.indexOf('async function runStageSequencePass'), agent.indexOf('async function run()'));
+  const seqAt = needle => { const i = seq.indexOf(needle); assert.ok(i >= 0, needle); return i; };
+  assert.ok(seqAt('recipientProviderClassifier.classify(boardLead.email)') < seqAt('eventType: SEQUENCE_EVENTS.SEND_RESERVED'));
+  assert.ok(seqAt('coldDeliveryVerdict({ sender, classification: recipientProvider })') < seqAt('const reservationEventId'));
+  assert.ok(seqAt('if (!coldVerdict.allowed)') < seqAt('await recordColdCallActivityStrict(reservation)'));
+  assert.ok(seqAt('await recordColdCallActivityStrict(reservation)') < seqAt('guardProviderSend(safetyLead'));
+  assert.ok(seqAt('guardProviderSend(safetyLead') < seqAt('result = await sendEmail('));
+  assert.match(seq, /purpose: 'sequence'/);
+  assert.match(agent, /describeColdDeliveryPolicy\(GMAIL_SENDERS\)/);
+  assert.match(server, /describeColdDeliveryPolicy\(configuredSenders\(\)\)/);
 });
 
 // ── cache ────────────────────────────────────────────────────────────────────
@@ -312,6 +323,32 @@ test('18. a transient lookup failure never becomes GOOGLE, and recovers after it
 });
 
 // ── configuration and caps ───────────────────────────────────────────────────
+
+test('describeColdDeliveryPolicy reports the live pool and holds without secrets', () => {
+  const snapshot = describeColdDeliveryPolicy([
+    { id: 'primary', email: 'deins@scalelabai.ca', status: 'active', sendEligible: true, dailyLimit: 30, perRunLimit: 6 },
+    { id: 'tryscalelabai', email: 'deins@tryscalelabai.ca', status: 'paused', sendEligible: false, dailyLimit: 30, perRunLimit: 6 },
+  ], { COLD_SENDER_POOL: 'primary,scalelabaiteam', COLD_INBOX_DAILY_CAP: '30' });
+  assert.equal(snapshot.event, 'cold_delivery_policy');
+  assert.equal(snapshot.policy, 'google_only');
+  assert.deepEqual(snapshot.coldSenderPool, ['primary', 'scalelabaiteam']);
+  assert.equal(snapshot.coldInboxDailyCap, 30);
+  assert.equal(snapshot.senders[0].inColdPool, true);
+  assert.equal(snapshot.senders[1].inColdPool, false);
+  assert.equal(snapshot.senders[1].coldHold, 'sender_domain_surbl_listed');
+  assert.doesNotMatch(JSON.stringify(snapshot), /token|secret|password|refresh/i);
+});
+
+test('prospecting intent: cold and sequence are gated; warm conversational traffic is not', () => {
+  assert.equal(isProspectingSend('cold'), true);
+  assert.equal(isProspectingSend('sequence'), true);
+  assert.equal(isProspectingSend('SEQUENCE'), true);
+  assert.equal(isProspectingSend(''), true, 'missing purpose fails closed as prospecting');
+  assert.equal(isProspectingSend(undefined), true);
+  assert.equal(isProspectingSend('enqueue'), true, 'unknown purpose fails closed');
+  assert.equal(isProspectingSend('warm'), false);
+  assert.equal(isProspectingSend('WARM'), false);
+});
 
 test('policy flag: default and unrecognised values fail closed to google_only; off disables', () => {
   assert.equal(recipientProviderPolicy({}), 'google_only');

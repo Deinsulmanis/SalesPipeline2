@@ -89,6 +89,7 @@ const { assertSendAuthorized, sendAuthorization } = require('./integrations/send
 const { evaluateFreshSendSafety, guardProviderSend } = require('./integrations/send-safety-revalidate');
 const {
   createProviderClassifier, coldDeliveryVerdict, admitByRecipientProvider, recipientProviderPolicy,
+  describeColdDeliveryPolicy,
 } = require('./integrations/cold-delivery-policy');
 // Temporary recipient-provider gate: one domain-level MX cache per worker run.
 const recipientProviderClassifier = createProviderClassifier();
@@ -5544,6 +5545,20 @@ async function runStageSequencePass(allLeads, {
       console.warn(`[StageSeq] ${boardLead.email} blocked: a durable delivery reservation exists and Gmail has not confirmed it yet`);
       continue;
     }
+
+    // Same deliverability gate as ordinary cold, BEFORE any reservation is
+    // written so a provider/sender hold never leaves an unresolved reservation.
+    const recipientProvider = await recipientProviderClassifier.classify(boardLead.email);
+    const coldVerdict = coldDeliveryVerdict({ sender, classification: recipientProvider });
+    if (!coldVerdict.allowed) {
+      console.log(JSON.stringify({ event: 'sequence_send_blocked_by_provider_gate', leadId: boardLead.id, step,
+        senderInboxId: sender.id, domain: recipientProvider.domain, provider: recipientProvider.provider,
+        classification: recipientProvider.reason, cache: recipientProvider.cache, layer: coldVerdict.layer,
+        holdReason: coldVerdict.code }));
+      console.warn(`[StageSeq] ${boardLead.email} blocked: ${coldVerdict.code}: ${coldVerdict.reason}`);
+      continue;
+    }
+
     const reservationEventId = `${eventId}:attempt:${reservations.length + 1}`;
     const reservation = {
       eventId: reservationEventId, leadId: boardLead.id, sourceLeadId: twin ? twin.id : '',
@@ -5573,7 +5588,9 @@ async function runStageSequencePass(allLeads, {
       leadNiche: twin && twin.leadNiche, tradeType: twin && twin.tradeType,
       emailTemplateId: twin && twin.emailTemplateId, campaign: twin && twin.campaign,
     };
-    const gate = await guardProviderSend(safetyLead, freshSendSafetyDeps(), { purpose: 'sequence', senderInboxId: sender.id });
+    const gate = await guardProviderSend(safetyLead, { ...freshSendSafetyDeps(),
+      classifyRecipient: email => recipientProviderClassifier.peek(email) },
+    { purpose: 'sequence', senderInboxId: sender.id, coldSender: sender });
     if (!gate.allowed) {
       console.warn(`[StageSeq] ${boardLead.email} blocked: ${gate.reason || gate.code}`);
       continue;
@@ -5824,6 +5841,7 @@ async function run() {
 
   let todaySent      = countTodaySends(allLeadsForDailyCap);
   console.log(`[cap] ${todaySent}/${DAILY_SEND_LIMIT} emails sent today (Vancouver time)`);
+  console.log(JSON.stringify(describeColdDeliveryPolicy(GMAIL_SENDERS)));
   let dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
 
   // Observe manual Gmail replies before ANY pass that could auto-respond.

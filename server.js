@@ -757,7 +757,10 @@ async function persistSenderRuntimeStatus(senderId, status, updatedBy = 'operato
   publishSenderRuntime(overlay);
 }
 
-loadSenderRuntimeOverlay().catch(error => {
+loadSenderRuntimeOverlay().then(() => {
+  const { describeColdDeliveryPolicy } = require('./integrations/cold-delivery-policy');
+  console.log(JSON.stringify({ ...describeColdDeliveryPolicy(configuredSenders()), label: 'runtime_overlay' }));
+}).catch(error => {
   console.warn(`[gmail-sender-runtime] boot load failed (${error.message})`);
 });
 
@@ -5219,7 +5222,7 @@ app.patch('/api/leads/:id/call-details', requireAuth, rejectArchived('board'), a
 const { queueSelectedLeads, AUTO_SENDER } = require('./integrations/outreach-queue');
 const {
   createProviderClassifier, admitByRecipientProvider, coldSenderPool, coldSenderHolds, coldDeliveryVerdict,
-  recipientProviderPolicy, coldInboxDailyCap,
+  recipientProviderPolicy, coldInboxDailyCap, describeColdDeliveryPolicy,
 } = require('./integrations/cold-delivery-policy');
 // Temporary recipient-provider gate: one domain-level MX cache for the server.
 const recipientProviderClassifier = createProviderClassifier();
@@ -7715,6 +7718,7 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   });
   const bootCaps = scheduledSendCaps();
   console.log(`[cron] Outreach agent scheduled: :00 and :30, 7–11:30am Pacific, Mon–Fri (${bootCaps.perInbox}/inbox, ${bootCaps.total}/run, ${bootCaps.daily}/day, ${bootCaps.activeCount} active)`);
+  console.log(JSON.stringify({ ...describeColdDeliveryPolicy(configuredSenders()), label: 'cron_boot' }));
 
   // :15/:45, never :00/:30 — the send cron above fires on :00 and :30, so the
   // check-only pass is offset by 15 min to avoid racing it for the

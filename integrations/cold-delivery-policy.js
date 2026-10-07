@@ -267,6 +267,18 @@ function createProviderClassifier({ resolveMx, now = () => Date.now(), ttlMs, lo
   return { classify, peek, stats: () => ({ ...stats, byProvider: { ...stats.byProvider }, cached: cache.size }) };
 }
 
+/**
+ * Prospecting / unsolicited outreach vs conversational warm traffic.
+ *
+ * Stage-sequence follow-ups are prospecting even though their purpose string
+ * is 'sequence'. A reply to an existing conversation (purpose === 'warm') is
+ * not. Unknown or missing purpose fails closed as prospecting so a new call
+ * site cannot silently skip the recipient-provider gate.
+ */
+function isProspectingSend(purpose) {
+  return norm(purpose) !== 'warm';
+}
+
 /** Recipient side of the policy. PURE. */
 function providerVerdict(classification, env = process.env) {
   if (recipientProviderPolicy(env) === POLICY.OFF) return { allowed: true, code: '', policy: POLICY.OFF, provider: classification?.provider || PROVIDER.UNKNOWN };
@@ -302,6 +314,30 @@ function coldDeliveryVerdict({ sender, classification, env = process.env }) {
  * Admission for a batch of candidates: one classification per domain, then the
  * recipient verdict per lead. Returns allowed ids and held leads with reasons.
  */
+/** Read-only description of the live policy. IDs and statuses only — no secrets. */
+function describeColdDeliveryPolicy(senders = [], env = process.env) {
+  const pool = coldSenderPool(env);
+  const holds = coldSenderHolds(env);
+  return {
+    event: 'cold_delivery_policy',
+    policy: recipientProviderPolicy(env),
+    coldSenderPool: pool ? [...pool] : 'all',
+    coldSenderHolds: Object.fromEntries(holds),
+    coldInboxDailyCap: coldInboxDailyCap(env),
+    coldInboxDailyCaps: Object.fromEntries(coldInboxDailyCaps(env)),
+    senders: (senders || []).map(sender => ({
+      id: sender.id,
+      email: sender.email || '',
+      status: sender.status,
+      sendEligible: sender.sendEligible === true,
+      dailyLimit: sender.dailyLimit,
+      perRunLimit: sender.perRunLimit,
+      inColdPool: !pool || pool.has(sender.id),
+      coldHold: holds.get(sender.id) || null,
+    })),
+  };
+}
+
 async function admitByRecipientProvider(leads, classifier, env = process.env) {
   const allowed = new Set();
   const held = [];
@@ -330,6 +366,6 @@ module.exports = {
   PROVIDER, HOLD_REASON, POLICY, DEFAULT_COLD_SENDER_POOL, DEFAULT_COLD_SENDER_HOLDS,
   DEFAULT_COLD_INBOX_DAILY_CAP, recipientProviderPolicy, coldSenderPool, coldSenderHolds, coldInboxDailyCap,
   coldInboxDailyCaps, senderDailyCeiling, applyColdInboxCap,
-  recipientDomain, classifyMxHosts, createProviderClassifier, providerVerdict,
-  coldSenderVerdict, coldDeliveryVerdict, admitByRecipientProvider,
+  recipientDomain, classifyMxHosts, createProviderClassifier, isProspectingSend, providerVerdict,
+  coldSenderVerdict, coldDeliveryVerdict, describeColdDeliveryPolicy, admitByRecipientProvider,
 };

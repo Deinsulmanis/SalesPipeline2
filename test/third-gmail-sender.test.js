@@ -88,6 +88,23 @@ test('4. warmup ready alone does not activate sender', () => {
   assert.equal(senderCapacity(senders(env)).activeCount, 2);
 });
 
+test('paused sender can return to active when auth and observer are healthy', () => {
+  const paused = pauseSender(activateSender(markWarmupReady(third()), { auth: healthyAuth, observer: healthyObserver, senders: senders() }));
+  assert.equal(paused.status, 'paused');
+  assert.equal(paused.sendEligible, false);
+  const again = activateSender(paused, { auth: healthyAuth, observer: healthyObserver, senders: senders() });
+  assert.equal(again.status, 'active');
+  assert.equal(again.sendEligible, true);
+  assert.throws(
+    () => activateSender(paused, { auth: healthyAuth, observer: { ...healthyObserver, health: 'unavailable' }, senders: senders() }),
+    /observer/,
+  );
+  assert.throws(
+    () => activateSender(third(), { auth: healthyAuth, observer: healthyObserver, senders: senders() }),
+    /warmup is not ready/,
+  );
+});
+
 test('5. Activate Sender requires healthy auth/observer', () => {
   const ready = markWarmupReady(third());
   assert.deepEqual(activationBlockers(ready, { auth: { authenticated: false }, observer: healthyObserver, senders: senders() }).some(item => /auth/i.test(item)), true);
