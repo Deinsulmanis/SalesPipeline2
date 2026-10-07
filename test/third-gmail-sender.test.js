@@ -281,6 +281,7 @@ test('activation and pause endpoints exist and do not trigger outreach', () => {
   assert.match(html, /Mark Warmup Ready/);
   assert.match(html, /Pause Sender/);
   assert.match(html, /deins@scalelabaiteam.com|warmupLabel|Cold sending/);
+  assert.match(server, /canActivate: \(inbox\.status === 'ready' \|\| inbox\.status === 'paused'\) && blockers\.length === 0/);
 });
 
 test('scheduled caps are derived from active inboxes rather than hardcoded 2-inbox totals', () => {

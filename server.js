@@ -6503,7 +6503,7 @@ async function gmailInboxStatus() {
         remainingToday: remaining,
         controls: {
           canMarkReady: inbox.status === 'warming',
-          canActivate: inbox.status === 'ready' && blockers.length === 0,
+          canActivate: (inbox.status === 'ready' || inbox.status === 'paused') && blockers.length === 0,
           canPause: inbox.status === 'active',
           activationBlockers: blockers,
         },
