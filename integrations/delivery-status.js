@@ -48,7 +48,10 @@ const DELAY_SUBJECT = /\(delay\)|^delivery delayed|^delayed mail|^warning: (?:me
 const DELAY_TEXT = /delivery (?:is )?incomplete|will (?:retry|keep trying|try again)|has been delayed|being delayed/i;
 
 // Where an MTA inlines the returned message into its human text part.
-const RETURNED_COPY = /^[ \t>-]*(?:-{2,}[^\n]*)?(?:this is a copy of the message|original message headers:|original message follows|the header of the original message|-+ ?original message ?-+|-+ ?forwarded message ?-+)/im;
+// Microsoft NDRs title it "Original Message Headers" with no colon, and the
+// relay Authentication-Results lines below it (spf=softfail, dmarc=fail) once
+// turned a 550 5.1.10 RecipientNotFound into a sender-auth failure.
+const RETURNED_COPY = /^[ \t>-]*(?:-{2,}[^\n]*)?(?:this is a copy of the message|original message headers:?|original message follows|the header of the original message|-+ ?original message ?-+|-+ ?forwarded message ?-+)/im;
 
 const decode = data => Buffer.from(String(data || ''), 'base64url').toString('utf8');
 const stripHtml = html => String(html || '').replace(/<style[\s\S]*?<\/style>/gi, ' ')
@@ -59,19 +62,22 @@ const norm = value => String(value || '').trim().toLowerCase();
 /** The notice's own parts — never the returned message. */
 function noticeParts(payload) {
   const status = []; const plain = []; const html = [];
-  const walk = (part, returned) => {
+  // Gmail can expose a report's fields as a text/plain CHILD of the
+  // message/delivery-status part (Microsoft NDRs do); those are still fields.
+  const walk = (part, returned, inStatus) => {
     if (!part) return;
     const type = norm(part.mimeType);
     const inReturned = returned || type === 'message/rfc822' || type === 'text/rfc822-headers' || type === 'message/rfc822-headers';
+    const isStatus = inStatus || type === 'message/delivery-status' || type === 'message/global-delivery-status';
     if (!inReturned && part.body?.data) {
       const text = decode(part.body.data);
-      if (type === 'message/delivery-status' || type === 'message/global-delivery-status') status.push(text);
+      if (isStatus) status.push(text);
       else if (type === 'text/html') html.push(stripHtml(text));
       else if (!type || type.startsWith('text/')) plain.push(text);
     }
-    for (const child of part.parts || []) walk(child, inReturned);
+    for (const child of part.parts || []) walk(child, inReturned, isStatus);
   };
-  walk(payload, false);
+  walk(payload, false, false);
   const human = (plain.length ? plain : html).join('\n');
   const cut = human.search(RETURNED_COPY);
   return { status: status.join('\n'), human: cut >= 0 ? human.slice(0, cut) : human };

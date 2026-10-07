@@ -130,3 +130,33 @@ test('3. a genuine recipient-not-found hard bounce still suppresses', async () =
   assert.equal(classifyDeliveryStatus('550 5.1.1 no such user c@corp.com', { recipient: 'c@corp.com' }).category, DELIVERY_CLASS.RECIPIENT_INVALID);
   assert.equal(classifyDeliveryStatus('4.2.0 delivery incomplete, will retry c@corp.com').category, DELIVERY_CLASS.TEMPORARY_PROVIDER_DELAY);
 });
+
+test('a Microsoft NDR for a missing mailbox is recipient-invalid even when its returned headers report SPF/DMARC failures', async () => {
+  // Shape of the 2026-10-01 deniels notice: the fields sit in a text/plain child
+  // of message/delivery-status, and the human text inlines "Original Message
+  // Headers" (no colon) carrying the recipient relay's Authentication-Results.
+  const recipient = 'cw@corp-staffing.com';
+  const human = `Your message to ${recipient} couldn't be delivered.\n\ncw wasn't found at corp-staffing.com.\n\n`
+    + `Remote server returned '550 5.1.10 RESOLVER.ADR.RecipientNotFound; Recipient not found by SMTP address lookup'\n\n`
+    + 'Original Message Headers\n\nARC-Authentication-Results: i=1; mx.microsoft.com 1; spf=softfail (sender ip\n is 192.0.2.1) '
+    + 'smtp.mailfrom=scalelabai.ca; dmarc=fail (p=none sp=none pct=100) action=none\n header.from=scalelabai.ca; dkim=fail (body hash did not verify)\n';
+  const payload = { mimeType: 'multipart/report', headers: [{ name: 'From', value: 'Microsoft Outlook <postmaster@outlook.com>' },
+    { name: 'Subject', value: 'Undeliverable: employer accounts' }], parts: [
+    { mimeType: 'multipart/alternative', headers: [], parts: [part('text/plain', human)] },
+    { mimeType: 'message/delivery-status', headers: [], parts: [part('text/plain',
+      `Reporting-MTA: dns;CH3PR10MB7212.namprd10.prod.outlook.com\n\nFinal-Recipient: rfc822;${recipient}\nAction: failed\nStatus: 5.1.10\n`
+      + `Diagnostic-Code: smtp;550 5.1.10 RESOLVER.ADR.RecipientNotFound; Recipient ${recipient} not found by SMTP address lookup\n`)] },
+    { mimeType: 'message/rfc822', headers: [], parts: [part('text/plain', 'original body')] },
+  ] };
+  const verdict = classifyDeliveryStatus(payload, { recipient, subject: 'Undeliverable: employer accounts' });
+  assert.equal(verdict.category, DELIVERY_CLASS.RECIPIENT_INVALID);
+  assert.equal(verdict.senderAuth, false);
+  assert.equal(verdict.status, '5.1.10');
+  const leads = [{ id: 'L10', email: recipient, company: 'Corp', lastEmailedAt: '2026-10-01T15:00:00Z' }];
+  const plan = await planMailboxEvents({ observation: { messages: [asMessage('m10', payload, '2026-10-01T15:20:43Z')], recovered: false },
+    gmail: {}, leads, activities: [], senderInboxId: 'deniels', senderEmail: 'deniels@scalelabai.ca' });
+  assert.equal(plan.suppressions.length, 1);
+  assert.deepEqual(plan.events.map(e => e.eventType), ['email_bounced']);
+  // A sender-auth rejection in the notice's own text is still sender-auth.
+  assert.equal(classifyDeliveryStatus(dmarcRejectDsn('d@corp.com'), { recipient: 'd@corp.com' }).category, DELIVERY_CLASS.SENDER_AUTH_FAILURE);
+});
