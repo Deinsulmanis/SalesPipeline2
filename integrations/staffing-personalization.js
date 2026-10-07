@@ -300,6 +300,12 @@ function rebuildFromFacts(facts,{variant=0}={}) {
   }
   // Shorten selection, not evidence or claimed territory, if three role names are too long.
   if(opening.split(/\s+/).length>22&&roles.length>1)return rebuildFromFacts(facts.filter(f=>f.id!==roles.at(-1).id),{variant});
+  // Validated service territory is company-specific evidence. Attach it when the
+  // sentence still fits; never invent a region and never bust the 8–22 bound.
+  if(geography&&opening&&!used.some(f=>f.id===geography.id)) {
+    const next=opening.replace(/\.$/,` across ${geography.value}.`);
+    if(next.split(/\s+/).filter(Boolean).length<=22){opening=next;used=[...used,geography];}
+  }
   if(opening&&opening.split(/\s+/).length<8)opening=opening.replace(/^Saw you place /,'Saw your team placing ');
   return {hyperPersonalizedOpening:opening,usedFactIds:used.map(f=>f.id)};
 }
@@ -347,6 +353,14 @@ function retrievalReason(research) {
   if(/404/.test(text))return 'RETRIEVAL_PAGE_NOT_FOUND';
   return 'RETRIEVAL_UNUSABLE';
 }
+function openingSpecificity(checked) {
+  const used=checked?.facts||[];
+  return (used.some(f=>f.kind==='role')?4:0)+(used.some(f=>f.kind==='geography')?2:0)
+    +Math.min(used.filter(f=>f.kind==='employer_market').length,2);
+}
+function takenOpeningSet(avoidOpenings) {
+  return new Set((Array.isArray(avoidOpenings)?avoidOpenings:[]).map(value=>clean(value).toLowerCase()).filter(Boolean));
+}
 function held(status,primaryReason,research,meta={}) {
   return {campaignId:STAFFING_CAMPAIGN.id,strategy:STAFFING_CAMPAIGN.personalizationStrategy,
     model:STAFFING_CAMPAIGN.model,generatedAt:new Date().toISOString(),research,...meta,
@@ -357,7 +371,7 @@ function held(status,primaryReason,research,meta={}) {
 function dropReasons(rejected) {
   return [...new Set(rejected.map(f=>f.kind==='geography'?'OPTIONAL_GEOGRAPHY_DROPPED':f.kind==='role'?'OPTIONAL_ROLE_DROPPED':f.kind==='employer_market'?'OPTIONAL_EMPLOYER_MARKET_DROPPED':'OPTIONAL_FACT_DROPPED'))];
 }
-async function personalizeStaffingLead(lead,{researchCompany=researchStaffingCompany,createMessage}={}) {
+async function personalizeStaffingLead(lead,{researchCompany=researchStaffingCompany,createMessage,avoidOpenings=[]}={}) {
   if(!isStaffingCampaign(lead))throw new Error('This personalization path requires the exact staffing campaign');
   // Admission decides only whether the ADDRESS may enter the pipeline. Every
   // downstream gate — ICP, fact audit, copy audit, confidence, duplicate
@@ -411,7 +425,26 @@ async function personalizeStaffingLead(lead,{researchCompany=researchStaffingCom
     const rebuild=async()=>{regenerationCount++;return rebuildFromFacts(validatedFacts);};
     checked=checkDraft(proposal,validatedFacts);
     if(rejectedFacts.length||checked.errors.length){proposal=await rebuild(checked.errors);checked=checkDraft(proposal,validatedFacts);}
+    // A generic market-only draft must not bury roles or territory the fact
+    // audit already accepted. Prefer the stronger fact-composed sentence when
+    // it still cites only validated evidence.
+    const stronger=checkDraft(rebuildFromFacts(validatedFacts),validatedFacts);
+    if(!stronger.errors.length&&openingSpecificity(stronger)>openingSpecificity(checked)) {
+      proposal=rebuildFromFacts(validatedFacts);checked=stronger;
+    }
     if(checked.errors.length)return held('REVIEW_REQUIRED','OPENING_VALIDATION_FAILED',research,{...meta(),supportingReasons:[...dropReasons(rejectedFacts),...checked.errors]});
+    const taken=takenOpeningSet(avoidOpenings);
+    const accept=(audit,draft,extra={})=>{
+      const high=audit.companySpecific===true&&draft.facts.some(concreteRole)
+        &&draft.facts.some(f=>f.kind==='employer_market');
+      const confidence=high?'HIGH':draft.facts.some(f=>f.kind==='role')?'MEDIUM':'SAFE_FALLBACK';
+      return {campaignId:STAFFING_CAMPAIGN.id,strategy:STAFFING_CAMPAIGN.personalizationStrategy,...meta(),hyperPersonalizedOpening:draft.opening,
+        confidence,classification:confidence,safeToSend:true,reviewFlag:false,primaryReason:high?'VERIFIED_SPECIFIC_EMPLOYER_MARKET':confidence==='SAFE_FALLBACK'?'ROLE_MARKET_RELATIONSHIP_NOT_PROVEN_SAFE_FALLBACK':'VERIFIED_EMPLOYER_MARKET',
+        supportingReasons:[...new Set([...dropReasons(rejectedFacts),...(extra.supportingReasons||[])])],reviewReasons:[],rejectedOpening:'',
+        facts:draft.facts,wordCount:draft.wordCount,research,
+        sourceURL_or_sourceDescription:[...new Set(draft.facts.flatMap(f=>f.evidence.map(e=>e.sourceUrl)))].join(' | '),
+        model:STAFFING_CAMPAIGN.model,generatedAt:new Date().toISOString(),...extra};
+    };
     for(let pass=0;pass<2;pass++) {
       openingAudit=await ask(AUDIT_SYSTEM,{company:lead.company,expectedDomain:evidence.expectedDomain,icpFit:'FIT',
         opening:checked.opening,wordCount:checked.wordCount,usedFactIds:checked.facts.map(f=>f.id),validatedFacts:checked.facts},1100,'opening_audit');
@@ -419,13 +452,25 @@ async function personalizeStaffingLead(lead,{researchCompany=researchStaffingCom
       openingAudit.checks={...openingAudit.checks,oneSentence:true,reasonableLength:true};
       const failed=CHECKS.filter(k=>openingAudit.checks?.[k]!==true);
       if(!failed.length) {
-        const high=openingAudit.companySpecific===true&&checked.facts.some(concreteRole)
-          &&checked.facts.some(f=>f.kind==='employer_market');
-        const confidence=high?'HIGH':checked.facts.some(f=>f.kind==='role')?'MEDIUM':'SAFE_FALLBACK';
-        return {campaignId:STAFFING_CAMPAIGN.id,strategy:STAFFING_CAMPAIGN.personalizationStrategy,...meta(),hyperPersonalizedOpening:checked.opening,
-          confidence,classification:confidence,safeToSend:true,reviewFlag:false,primaryReason:high?'VERIFIED_SPECIFIC_EMPLOYER_MARKET':confidence==='SAFE_FALLBACK'?'ROLE_MARKET_RELATIONSHIP_NOT_PROVEN_SAFE_FALLBACK':'VERIFIED_EMPLOYER_MARKET',
-          supportingReasons:dropReasons(rejectedFacts),reviewReasons:[],rejectedOpening:'',facts:checked.facts,wordCount:checked.wordCount,research,
-          sourceURL_or_sourceDescription:[...new Set(checked.facts.flatMap(f=>f.evidence.map(e=>e.sourceUrl)))].join(' | '),model:STAFFING_CAMPAIGN.model,generatedAt:new Date().toISOString()};
+        const key=clean(checked.opening).toLowerCase();
+        if(!key||!taken.has(key))return accept(openingAudit,checked);
+        // Sequential admit cannot see the rest of the batch, so the caller
+        // supplies already-claimed openings. One bounded variant pass uses the
+        // same rebuild+audit path as flagBatchDuplicates; no invented uniqueness.
+        for(let variant=1;variant<=8;variant++) {
+          const alternate=checkDraft(rebuildFromFacts(validatedFacts,{variant}),validatedFacts);
+          const altKey=clean(alternate.opening).toLowerCase();
+          if(alternate.errors.length||!altKey||altKey===key||taken.has(altKey))continue;
+          const altAudit=await ask(AUDIT_SYSTEM,{company:lead.company,expectedDomain:evidence.expectedDomain,icpFit:'FIT',
+            opening:alternate.opening,wordCount:alternate.wordCount,usedFactIds:alternate.facts.map(f=>f.id),
+            validatedFacts:alternate.facts},1100,'duplicate_audit');
+          altAudit.checks={...altAudit.checks,oneSentence:true,reasonableLength:true};
+          if(CHECKS.filter(k=>altAudit.checks?.[k]!==true).length)continue;
+          checked=alternate;openingAudit=altAudit;regenerationCount++;
+          return accept(altAudit,alternate,{duplicateAlternateUsed:true,supportingReasons:['DUPLICATE_ALTERNATE_COMPOSITION']});
+        }
+        return held('REVIEW_REQUIRED','DUPLICATE_OPENING_IN_BATCH',research,
+          {...meta(),rejectedOpening:checked.opening,supportingReasons:[...dropReasons(rejectedFacts),'DUPLICATE_OPENING_IN_BATCH']});
       }
       if(regenerationCount===1||failed.includes('companyIdentity')||failed.includes('staffingBusiness'))return held('REVIEW_REQUIRED','OPENING_AUDIT_FAILED',research,
         {...meta(),supportingReasons:[...dropReasons(rejectedFacts),...failed,...(openingAudit.reasons||[])]});

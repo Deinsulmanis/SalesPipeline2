@@ -147,7 +147,8 @@ test('light-industrial fact misclassified as a role is recognized as an employer
   assert.equal(r.confidence,'SAFE_FALLBACK');assert.equal(r.facts[0].kind,'employer_market');
 });
 test('roles plus explicit service territory satisfy minimum without requiring industry',async()=>{
-  const r=await personalizeStaffingLead(lead,opts({extract:{...draft,hyperPersonalizedOpening:'Saw you place welders and machinists for employers across Northeast Ohio.',usedFactIds:['r','r2','g']}}));
+  const r=await personalizeStaffingLead(lead,opts({extract:{...draft,facts:facts.filter(f=>f.kind!=='employer_market'),
+    hyperPersonalizedOpening:'Saw you place welders and machinists for employers across Northeast Ohio.',usedFactIds:['r','r2','g']}}));
   assert.equal(r.confidence,'MEDIUM');assert.ok(!r.facts.some(f=>f.kind==='employer_market'));
 });
 test('true but irrelevant history and staffing-model facts cannot qualify; no fallback fluff',async()=>{
@@ -261,6 +262,26 @@ const auditStub=(verdict=true)=>{let n=0;const fn=async()=>{n++;return {content:
   {checks:Object.fromEntries(CHECKS.map(k=>[k,verdict])),companySpecific:verdict,rejectedFactIds:[],reasons:[]})}]};};
   fn.count=()=>n;return fn;};
 
+test('generic market-only drafts are upgraded to validated territory without inventing roles',async()=>{
+  const extract={...draft,facts:facts.filter(f=>f.kind!=='role'),hyperPersonalizedOpening:'Saw you focus on manufacturing staffing for employers.',usedFactIds:['m']};
+  const r=await personalizeStaffingLead(lead,opts({extract}));
+  assert.equal(r.safeToSend,true);
+  assert.match(r.hyperPersonalizedOpening,/manufacturing staffing for employers across Northeast Ohio/);
+  assert.doesNotMatch(r.hyperPersonalizedOpening,/welders|machinists|electricians/);
+  assert.ok(r.facts.some(f=>f.kind==='geography'));
+});
+
+test('avoidOpenings uses a bounded fact-composed alternate instead of reusing a claimed generic',async()=>{
+  const extract={...draft,facts:[{...facts[3]},{id:'m2',kind:'employer_market',value:'warehouse',evidenceIds:['p0b0']}],
+    hyperPersonalizedOpening:'Saw you focus on manufacturing staffing for employers.',usedFactIds:['m']};
+  const o=opts({extract,factChanges:{m2:{kind:'employer_market',specificRole:false,explicitServiceTerritory:false}}});
+  const r=await personalizeStaffingLead(lead,{...o,avoidOpenings:['Saw you focus on manufacturing staffing for employers.']});
+  assert.equal(r.safeToSend,true);
+  assert.equal(r.duplicateAlternateUsed,true);
+  assert.equal(r.hyperPersonalizedOpening,'Saw you focus on manufacturing and warehouse staffing for employers.');
+  assert.notEqual(r.hyperPersonalizedOpening,'Saw you focus on manufacturing staffing for employers.');
+});
+
 test('a later duplicate gets one bounded alternate; the first accepted lead is never invalidated',async()=>{
   const rows=[dRow('First Co',dPool('a')),dRow('Second Co',dPool('b'))];
   const audit=auditStub(true);
@@ -343,6 +364,16 @@ test('concrete validated roles are preferred over generic market-only copy',()=>
   const tradesFirst=[dRole('q1','welders'),dRole('q2','millwrights'),dMarket('q3','skilled trades staffing'),dMarket('q4','construction')];
   assert.equal(rebuildFromFacts(tradesFirst).hyperPersonalizedOpening,
     'Saw you place welders and millwrights for construction contractors.');
+});
+
+test('validated service territory is attached to market-only copy when the sentence still fits',()=>{
+  const geo={id:'g1',kind:'geography',value:'Alabama and Georgia',explicitServiceTerritory:true,evidence:dEvidence};
+  assert.equal(rebuildFromFacts([dMarket('m1','manufacturing'),geo]).hyperPersonalizedOpening,
+    'Saw you focus on manufacturing staffing for employers across Alabama and Georgia.');
+  assert.equal(rebuildFromFacts([dMarket('m1','manufacturing'),geo],{variant:0}).usedFactIds.includes('g1'),true);
+  // A second distinct market remains the bounded duplicate alternate.
+  assert.equal(rebuildFromFacts([dMarket('m1','manufacturing'),dMarket('m2','warehouse'),geo],{variant:1}).hyperPersonalizedOpening,
+    'Saw you focus on manufacturing and warehouse staffing for employers across Alabama and Georgia.');
 });
 
 test('market-only copy survives only when no usable concrete role exists',()=>{
@@ -447,6 +478,7 @@ test('admit writes a validated opening for Google Import leads and never sends o
   });
   assert.equal(result.ok,true);assert.equal(result.sent,false);assert.equal(result.queued,false);
   assert.equal(result.personalization,'SPECIFIC_HIGH');
+  assert.equal(result.duplicateAlternateUsed,false);
   assert.equal(patches.length,1);assert.equal(patches[0].siteContext,'Saw you place welders and machinists for manufacturing employers.');
   assert.equal(staffingReviewStatus({campaign_notes:patches[0].campaign_notes}).personalization,'SPECIFIC_HIGH');
   assert.match(result.body,/Saw you place welders/);

@@ -40,7 +40,7 @@ function passReviewTag(lead, confidence) {
   });
 }
 
-async function admitStaffingPersonalization({ id, dryRun = false }, {
+async function admitStaffingPersonalization({ id, dryRun = false, avoidOpenings = [] }, {
   loadLead, applyPatch, classifyEmail, personalize = personalizeStaffingLead, env = process.env,
 } = {}) {
   if (!loadLead || !applyPatch || !classifyEmail) throw new Error('staffing personalization admit requires canonical load/apply/classify');
@@ -58,7 +58,7 @@ async function admitStaffingPersonalization({ id, dryRun = false }, {
     };
   }
 
-  const result = await personalize(eligible.input);
+  const result = await personalize(eligible.input, { avoidOpenings });
   const reviewPersonalization = CONFIDENCE_TO_REVIEW[result.confidence];
   if (!result.safeToSend || !reviewPersonalization || !String(result.hyperPersonalizedOpening || '').trim()) {
     const patch = { campaign_notes: holdReviewTag(lead) };
@@ -98,6 +98,7 @@ async function admitStaffingPersonalization({ id, dryRun = false }, {
     opening: result.hyperPersonalizedOpening, subject: preview.subject,
     body: preview.body, facts: (result.facts || []).map(f => ({ kind: f.kind, value: f.value })),
     catchAllAdmitted: result.catchAllAdmitted === true,
+    duplicateAlternateUsed: result.duplicateAlternateUsed === true,
   };
 }
 
@@ -120,12 +121,14 @@ function registerStaffingAdmitRoute(app, requireAuth, persist) {
   app.post('/api/staffing/personalization/admit', requireAuth, async (req, res) => {
     const id = String(req.body?.id || '').trim();
     const dryRun = req.body?.dryRun === true;
+    const avoidOpenings = [...new Set((Array.isArray(req.body?.avoidOpenings) ? req.body.avoidOpenings : [])
+      .map(value => String(value || '').trim()).filter(Boolean))].slice(0, 200);
     if (!id) return res.status(422).json({ error: 'Lead id is required' });
     if (!persist) return res.status(503).json({ error: 'Staffing personalization admit is not wired' });
     if (running) return res.status(409).json({ error: 'A staffing personalization run is already in progress' });
     running = true;
     try {
-      const result = await admitStaffingPersonalization({ id, dryRun }, persist);
+      const result = await admitStaffingPersonalization({ id, dryRun, avoidOpenings }, persist);
       res.status(result.ok || result.held ? 200 : 409).json({ ...result, previewOnly: dryRun, sent: false, queued: false });
     } catch (error) {
       res.status(422).json({ error: 'Staffing personalization admit failed; no send was attempted', detail: error.message, sent: false, queued: false });
