@@ -111,7 +111,7 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
     const route = validateSelection(lead, senderFor(lead));
     if (!route.ok) return { status: 422, error: route.reason };
     if (coldSenderAllowed && !coldSenderAllowed(senderFor(lead))) {
-      return { status: 422, error: `${senderFor(lead)} is not in the Gmail-healthy cold sender pool` };
+      return { status: 422, error: `${senderFor(lead)} is not in the Gmail-healthy cold sender pool or is on the cold sender hold list` };
     }
   }
   const patchFor = lead => ({ stage: 'Queued', senderInboxId: senderFor(lead), emailTemplateId, routingRequired: 'true', intendedCampaignVersion: campaignVersionId });

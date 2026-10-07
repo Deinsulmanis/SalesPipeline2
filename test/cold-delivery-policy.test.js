@@ -163,7 +163,7 @@ test('9. an existing queued UNKNOWN lead is blocked, including when no classifie
 test('10. an existing queued Google lead passes the provider gate with a healthy pooled sender', async () => {
   const { classifier } = classifierWith({ 'acme.com': mx('aspmx.l.google.com.') });
   await classifier.classify('owner@acme.com');
-  const verdict = await finalGate(lead({ email: 'owner@acme.com' }), { classifyRecipient: email => classifier.peek(email), coldSender: healthy('tryscalelabai') });
+  const verdict = await finalGate(lead({ email: 'owner@acme.com' }), { classifyRecipient: email => classifier.peek(email), coldSender: healthy('scalelabaiteam') });
   assert.equal(verdict.allowed, true);
 });
 
@@ -178,17 +178,22 @@ test('11. a paused sender still cannot send, even to a Google recipient', async 
   assert.equal(coldDeliveryVerdict({ sender: null, classification: google, env: {} }).allowed, false);
 });
 
-test('12. Gmail-bad senders are refused even to a Google recipient, while eligible', async () => {
+test('12. SURBL-listed and Gmail-bad senders are refused even to a Google recipient, while eligible', async () => {
   const google = { provider: PROVIDER.GOOGLE, domain: 'gmail.com' };
-  for (const id of ['deniels', 'scalelabaiteam']) {
-    const verdict = coldDeliveryVerdict({ sender: healthy(id), classification: google, env: {} });
-    assert.equal(verdict.allowed, false, id);
-    assert.equal(verdict.code, 'sender_not_in_cold_pool', id);
+  // 2026-10-07 policy: tryscalelabai.ca is on SURBL ABUSE; deniels@scalelabai.ca
+  // lands in Gmail Spam. Held whatever the pool says, while send-eligible.
+  for (const [id, hold] of [['tryscalelabai', 'sender_domain_surbl_listed'], ['deniels_tryscalelabai', 'sender_domain_surbl_listed'], ['deniels', 'sender_gmail_placement_spam']]) {
+    for (const env of [{}, { COLD_SENDER_POOL: 'all' }, { COLD_SENDER_POOL: id }]) {
+      const verdict = coldDeliveryVerdict({ sender: healthy(id), classification: google, env });
+      assert.equal(verdict.allowed, false, id);
+      assert.equal(verdict.code, 'sender_cold_hold', id);
+      assert.equal(verdict.holdReason, hold, id);
+    }
   }
-  for (const id of ['primary', 'tryscalelabai', 'deniels_tryscalelabai']) {
+  for (const id of ['primary', 'scalelabaiteam']) {
     assert.equal(coldDeliveryVerdict({ sender: healthy(id), classification: google, env: {} }).allowed, true, id);
   }
-  assert.deepEqual([...coldSenderPool({})].sort(), ['deniels_tryscalelabai', 'primary', 'tryscalelabai']);
+  assert.deepEqual([...coldSenderPool({})].sort(), ['primary', 'scalelabaiteam']);
   assert.equal(coldSenderPool({ COLD_SENDER_POOL: 'all' }), null);
   assert.deepEqual([...coldSenderPool({ COLD_SENDER_POOL: ' primary ' })], ['primary']);
 });

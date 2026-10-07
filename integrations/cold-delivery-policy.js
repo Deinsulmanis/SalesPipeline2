@@ -9,8 +9,11 @@
  *   to   a recipient whose mailbox is POSITIVELY Google-hosted (MX evidence or
  *        gmail.com/googlemail.com), and
  *   from a sender in the Gmail-healthy pool, which must ALSO already be
- *        send-eligible (this never activates or un-pauses anything), and
- *   at   no more than COLD_INBOX_DAILY_CAP per inbox (a ceiling: never raises).
+ *        send-eligible (this never activates or un-pauses anything) and not
+ *        on the sender hold list (SURBL-listed domain, Gmail Spam placement), and
+ *   at   no more than COLD_INBOX_DAILY_CAP per inbox (a ceiling: never raises),
+ *        and no more than its own static ceiling in COLD_INBOX_DAILY_CAPS
+ *        (production: scalelabaiteam:30 — a maximum, not a target; no ramp).
  *
  * Everything else is HELD — derived on every evaluation, never written to the
  * lead. A held lead keeps its stage, step, history, reply and suppression state
@@ -23,8 +26,18 @@
  *   RECIPIENT_PROVIDER_POLICY   google_only (default) | off
  *                               any other value → google_only (fails closed)
  *   COLD_SENDER_POOL            comma-separated inbox ids
- *                               default primary,tryscalelabai,deniels_tryscalelabai
+ *                               default primary,scalelabaiteam
  *                               "all" → no pool restriction
+ *   COLD_SENDER_HOLDS           id:reason pairs that may never cold-send, even
+ *                               when pooled and send-eligible. Default:
+ *                               tryscalelabai and deniels_tryscalelabai
+ *                               (tryscalelabai.ca on SURBL ABUSE) and deniels
+ *                               (Gmail Spam placement). "none" lifts them;
+ *                               anything unparseable keeps the defaults.
+ *   COLD_INBOX_DAILY_CAPS       id:n pairs, a static ceiling for just those
+ *                               inboxes (production: scalelabaiteam:30). Unset
+ *                               or "none" → none; a malformed pair is ignored.
+ *                               Never raises, never ramps, touches no other inbox.
  *   COLD_INBOX_DAILY_CAP        integer ceiling per inbox (production: 30)
  *                               unset or "off" → configured caps unchanged;
  *                               set but unparseable → 30
@@ -46,7 +59,15 @@ const HOLD_REASON = Object.freeze({
   UNKNOWN: 'recipient_provider_unknown',
 });
 const POLICY = Object.freeze({ GOOGLE_ONLY: 'google_only', OFF: 'off' });
-const DEFAULT_COLD_SENDER_POOL = Object.freeze(['primary', 'tryscalelabai', 'deniels_tryscalelabai']);
+const DEFAULT_COLD_SENDER_POOL = Object.freeze(['primary', 'scalelabaiteam']);
+// Senders that may not cold-send at all, whatever the pool or their status says.
+// Lifting one needs the listing removed AND a fresh placement test, then an
+// explicit COLD_SENDER_HOLDS change or a deploy — never an automatic expiry.
+const DEFAULT_COLD_SENDER_HOLDS = Object.freeze({
+  tryscalelabai: 'sender_domain_surbl_listed',
+  deniels_tryscalelabai: 'sender_domain_surbl_listed',
+  deniels: 'sender_gmail_placement_spam',
+});
 const DEFAULT_COLD_INBOX_DAILY_CAP = 30;
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
 const NO_MX_TTL_MS = 60 * 60 * 1000;
@@ -92,6 +113,16 @@ function coldSenderPool(env = process.env) {
   return new Set(ids);
 }
 
+function coldSenderHolds(env = process.env) {
+  const raw = norm(env.COLD_SENDER_HOLDS);
+  if (raw === 'none') return new Map();
+  const defaults = new Map(Object.entries(DEFAULT_COLD_SENDER_HOLDS));
+  if (!raw) return defaults;
+  const pairs = raw.split(',').map(item => item.trim()).filter(Boolean).map(item => item.split(':').map(part => part.trim()));
+  if (!pairs.length || pairs.some(([id, reason, extra]) => !id || !reason || extra !== undefined)) return defaults;
+  return new Map(pairs);
+}
+
 // Explicit setting: unset (or "off") leaves every configured cap exactly as it
 // is. A set but unparseable value fails safe to the 30/day temporary ceiling.
 function coldInboxDailyCap(env = process.env) {
@@ -101,13 +132,32 @@ function coldInboxDailyCap(env = process.env) {
   return Number.isInteger(value) && value >= 0 ? value : DEFAULT_COLD_INBOX_DAILY_CAP;
 }
 
-/** Apply the per-inbox ceiling. Never raises a limit. PURE. */
+// Static per-inbox maximums beside COLD_INBOX_DAILY_CAP. No ramp: the value is
+// the maximum from the moment it is set and never changes on its own.
+function coldInboxDailyCaps(env = process.env) {
+  const caps = new Map();
+  const raw = norm(env.COLD_INBOX_DAILY_CAPS);
+  if (!raw || raw === 'none') return caps;
+  for (const pair of raw.split(',').map(item => item.trim()).filter(Boolean)) {
+    const [id, value, extra] = pair.split(':').map(part => part.trim());
+    const cap = Number(value);
+    if (id && extra === undefined && /^\d+$/.test(value || '') && Number.isInteger(cap)) caps.set(id, cap);
+  }
+  return caps;
+}
+
+/** The lowest ceiling that applies to one inbox, or null. PURE. */
+function senderDailyCeiling(senderId, env = process.env) {
+  const ceilings = [coldInboxDailyCap(env), coldInboxDailyCaps(env).get(senderId)].filter(value => Number.isInteger(value));
+  return ceilings.length ? Math.min(...ceilings) : null;
+}
+
+/** Apply the per-inbox ceilings. Never raises a limit. PURE. */
 function applyColdInboxCap(senders = [], env = process.env) {
-  const cap = coldInboxDailyCap(env);
-  if (cap === null) return senders;
   return senders.map(sender => {
+    const cap = senderDailyCeiling(sender.id, env);
     const configured = Number(sender.dailyLimit);
-    if (!Number.isFinite(configured) || configured <= cap) return sender;
+    if (cap === null || !Number.isFinite(configured) || configured <= cap) return sender;
     return { ...sender, dailyLimit: cap, configuredDailyLimit: configured };
   });
 }
@@ -232,6 +282,8 @@ function providerVerdict(classification, env = process.env) {
 function coldSenderVerdict(sender, env = process.env) {
   if (!sender || !sender.id) return { allowed: false, code: 'sender_unavailable', reason: 'no sender' };
   if (sender.sendEligible !== true) return { allowed: false, code: 'sender_not_send_eligible', reason: `${sender.id} is not send-eligible (${sender.status || 'unknown'})` };
+  const hold = coldSenderHolds(env).get(sender.id);
+  if (hold) return { allowed: false, code: 'sender_cold_hold', holdReason: hold, reason: `${sender.id} may not cold-send (${hold})` };
   const pool = coldSenderPool(env);
   if (pool && !pool.has(sender.id)) return { allowed: false, code: 'sender_not_in_cold_pool', reason: `${sender.id} is not in the Gmail-healthy cold sender pool` };
   return { allowed: true, code: '' };
@@ -275,8 +327,9 @@ async function admitByRecipientProvider(leads, classifier, env = process.env) {
 }
 
 module.exports = {
-  PROVIDER, HOLD_REASON, POLICY, DEFAULT_COLD_SENDER_POOL, DEFAULT_COLD_INBOX_DAILY_CAP,
-  recipientProviderPolicy, coldSenderPool, coldInboxDailyCap, applyColdInboxCap,
+  PROVIDER, HOLD_REASON, POLICY, DEFAULT_COLD_SENDER_POOL, DEFAULT_COLD_SENDER_HOLDS,
+  DEFAULT_COLD_INBOX_DAILY_CAP, recipientProviderPolicy, coldSenderPool, coldSenderHolds, coldInboxDailyCap,
+  coldInboxDailyCaps, senderDailyCeiling, applyColdInboxCap,
   recipientDomain, classifyMxHosts, createProviderClassifier, providerVerdict,
   coldSenderVerdict, coldDeliveryVerdict, admitByRecipientProvider,
 };

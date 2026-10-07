@@ -5218,7 +5218,7 @@ app.patch('/api/leads/:id/call-details', requireAuth, rejectArchived('board'), a
 
 const { queueSelectedLeads, AUTO_SENDER } = require('./integrations/outreach-queue');
 const {
-  createProviderClassifier, admitByRecipientProvider, coldSenderPool, coldDeliveryVerdict,
+  createProviderClassifier, admitByRecipientProvider, coldSenderPool, coldSenderHolds, coldDeliveryVerdict,
   recipientProviderPolicy, coldInboxDailyCap,
 } = require('./integrations/cold-delivery-policy');
 // Temporary recipient-provider gate: one domain-level MX cache for the server.
@@ -5276,7 +5276,7 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
           reason: 'automatic sender assignment requires Supabase canonical state and the durable send lock' }] })
         : undefined,
       admitRecipients: leads => admitByRecipientProvider(leads, recipientProviderClassifier),
-      coldSenderAllowed: senderId => { const pool = coldSenderPool(); return !pool || pool.has(senderId); },
+      coldSenderAllowed: senderId => { const pool = coldSenderPool(); return (!pool || pool.has(senderId)) && !coldSenderHolds().has(senderId); },
       validateSelection: (lead, leadSender) => {
         if (normalizeNiche(lead.leadNiche || lead.tradeType) === 'industrial_staffing'
           && (outreachStateMode() !== 'primary' || outreachWriteAuthority() !== 'supabase')) {
@@ -6881,7 +6881,7 @@ app.get('/api/ops/cold-delivery-gate', requireAuth, async (req, res) => {
       policy: recipientProviderPolicy(), coldSenderPool: pool ? [...pool] : 'all', coldInboxDailyCap: coldInboxDailyCap(),
       senders: senders.map(sender => ({ id: sender.id, email: sender.email, status: sender.status, sendEligible: sender.sendEligible,
         dailyLimit: sender.dailyLimit, configuredDailyLimit: sender.configuredDailyLimit ?? sender.dailyLimit,
-        perRunLimit: sender.perRunLimit, inColdPool: !pool || pool.has(sender.id) })),
+        perRunLimit: sender.perRunLimit, inColdPool: !pool || pool.has(sender.id), coldHold: coldSenderHolds().get(sender.id) || null })),
       sends: 0, writes: 0,
     };
     const leadId = String(req.query.leadId || '').trim();
