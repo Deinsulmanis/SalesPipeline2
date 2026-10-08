@@ -4265,6 +4265,8 @@ let ceAllLeadsClient = '';
 let ceStatusLeads = [];     // client-scoped light rows for status cards
 let ceStatusClient = '';
 let clientLeadExtras = new Map();
+let clientCatalog = null;   // GET /api/clients/:id for the managed client in view
+let clientCatalogFor = '';
 let ceSearchTimer = null;
 let ceRequestSeq = 0;       // guards against an older response landing last
 let ceSelected     = new Set();
@@ -5762,6 +5764,29 @@ async function ensureAllCeLeads() {
   return ceAllLeads;
 }
 
+// Campaign display names come from the selected client's catalog. The default
+// client has none, so its campaign names render exactly as stored.
+async function loadClientCatalog() {
+  if (clientCatalogFor === activeClientId) return clientCatalog;
+  const clientId = activeClientId;
+  let catalog = null;
+  if (activeClientIsManaged()) {
+    try {
+      const resp = await fetch(`/api/clients/${encodeURIComponent(clientId)}`);
+      catalog = resp.ok ? await resp.json() : null;
+    } catch (_) { /* names fall back to the stored id */ }
+  }
+  if (clientId !== activeClientId) return null;   // switched client mid-request
+  clientCatalog = catalog;
+  clientCatalogFor = clientId;
+  return catalog;
+}
+
+function campaignName(value) {
+  const catalog = clientCatalogFor === activeClientId ? clientCatalog : null;
+  return typeof WorkspaceShared !== 'undefined' ? WorkspaceShared.campaignDisplayName(value, catalog) : String(value || '');
+}
+
 async function loadClientStatusLeads() {
   if (ceStatusClient === activeClientId && ceStatusLeads.length) return ceStatusLeads;
   const resp = await fetch('/api/coldemail?limit=0&client=' + encodeURIComponent(activeClientId));
@@ -5841,12 +5866,23 @@ async function loadCeLeads() {
     ceTotal     = cePage.total || 0;
     ceHasMore   = Boolean(cePage.hasMore);
     ceFacets    = cePage.facets || ceFacets;
-    if (versionsResp.ok) {
+    if (activeClientIsManaged()) {
+      // A managed client's header and version filter come from its own catalog:
+      // live campaigns only, by display name. ScaleLab's registry never shows here.
+      const catalog = await loadClientCatalog();
+      const live = (catalog && catalog.campaigns || []).filter(item => !item.archivedAt);
+      document.getElementById('ce-current-campaign').textContent = live.length
+        ? `${activeClient().displayName} · Active campaign${live.length === 1 ? '' : 's'}: ${live.map(item => item.label).join(' · ')}`
+        : `${activeClient().displayName} · campaign counts are on the Campaigns workspace`;
+      const select = document.getElementById('ce-version-filter');
+      select.innerHTML = '<option value="">All campaigns</option>' + live.filter(item => item.campaignVersion)
+        .map(item => `<option value="${escAttr(item.campaignVersion)}">${esc(item.label)}</option>`).join('')
+        + '<option value="legacy_unknown">Not sent yet / unattributed</option>';
+      select.value = ceCampaignVersionFilter;
+    } else if (versionsResp.ok) {
       const registry = await versionsResp.json();
       const current = registry.active?.dental_ai_receptionist || '—';
-      document.getElementById('ce-current-campaign').textContent = activeClientIsManaged()
-        ? `${activeClient().displayName} · campaign counts are on the Campaigns workspace`
-        : `Current campaign: ${current}`;
+      document.getElementById('ce-current-campaign').textContent = `Current campaign: ${current}`;
       const select = document.getElementById('ce-version-filter');
       select.innerHTML = '<option value="">All campaign versions</option>' + Object.keys(registry.versions || {}).concat(['legacy_unknown'])
         .map(id => `<option value="${escAttr(id)}">${esc(id)}</option>`).join('');
@@ -6693,7 +6729,17 @@ async function renderCampaignsPanel() {
     return;
   }
 
-  const rows = buildCampaignStats();
+  // A managed client's lead rows on an archived campaign leave the working view
+  // and are counted on that campaign's Archived card instead. Nothing is
+  // re-attributed: the stored campaign id stays on every lead.
+  const catalog = activeClientIsManaged() ? await loadClientCatalog() : null;
+  const archivedRowTotals = new Map();
+  const rows = buildCampaignStats().filter(row => {
+    if (!catalog || typeof WorkspaceShared === 'undefined' || !WorkspaceShared.isArchivedCampaign(row.name, catalog)) return true;
+    const label = WorkspaceShared.campaignDisplayName(row.name, catalog);
+    archivedRowTotals.set(label, (archivedRowTotals.get(label) || 0) + row.total);
+    return false;
+  });
   if (!smartleadIntegration && !smartleadIntegrationLoading) loadSmartleadIntegration();
   const health = document.getElementById('smartlead-health');
   if (health && smartleadIntegration) {
@@ -6717,7 +6763,7 @@ async function renderCampaignsPanel() {
              onclick="filterByCampaign(this.dataset.campaign)"
              role="button" tabindex="0"
              onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();filterByCampaign(this.dataset.campaign);}">
-          <div class="campaign-card-name">${esc(r.name)}${r.statsSource === 'smartlead' ? ' <span title="Counts reported by Smartlead using its own reply classification, not the CRM canonical one." style="font-weight:400;opacity:.7">· Smartlead counts</span>' : ''}</div>
+          <div class="campaign-card-name">${esc(campaignName(r.name))}${r.statsSource === 'smartlead' ? ' <span title="Counts reported by Smartlead using its own reply classification, not the CRM canonical one." style="font-weight:400;opacity:.7">· Smartlead counts</span>' : ''}</div>
           <dl class="campaign-card-metrics">
             <dt>Total</dt><dd>${r.total}</dd>
             <dt>Delivered</dt><dd>${r.delivered}</dd>
@@ -6731,18 +6777,16 @@ async function renderCampaignsPanel() {
     </div>`;
 
   let archivedHtml = '';
-  if (activeClientIsManaged()) {
-    try {
-      const catalog = await fetch(`/api/clients/${encodeURIComponent(activeClientId)}`).then(r => r.ok ? r.json() : null);
-      const parts = typeof WorkspaceShared !== 'undefined'
-        ? WorkspaceShared.partitionCampaigns(catalog && catalog.campaigns, catalog && catalog.archivedCampaigns)
-        : { active: [], archived: (catalog && catalog.archivedCampaigns) || [] };
-      if (parts.archived.length) {
-        archivedHtml = `<div class="campaign-archived"><h3>Archived / inactive</h3>
-          <p class="client-note">These campaigns stay out of the working view. Counts stay on the live campaign above.</p>
-          <div class="campaign-grid">${parts.archived.map(item => `<article class="client-card campaign-card"><div class="campaign-card-head"><h4>${esc(item.label || item.id)}</h4><span class="status-pill">Archived</span></div><p class="client-note">${esc(item.id)}${item.archivedAt ? ' · ' + esc(item.archivedAt) : ''}</p></article>`).join('')}</div></div>`;
-      }
-    } catch (_) { /* catalog is optional; lead-derived cards still render */ }
+  if (catalog) {
+    const parts = typeof WorkspaceShared !== 'undefined'
+      ? WorkspaceShared.partitionCampaigns(catalog.campaigns, catalog.archivedCampaigns)
+      : { active: [], archived: catalog.archivedCampaigns || [] };
+    if (parts.archived.length) {
+      const leadCount = item => archivedRowTotals.get(item.label || item.id) || 0;
+      archivedHtml = `<div class="campaign-archived"><h3>Archived / inactive</h3>
+        <p class="client-note">These campaigns stay out of the working view. Their history is kept; leads stay attributed to them.</p>
+        <div class="campaign-grid">${parts.archived.map(item => `<article class="client-card campaign-card"><div class="campaign-card-head"><h4>${esc(item.label || item.id)}</h4><span class="status-pill">Archived</span></div><p class="client-note">${esc(item.id)}${item.archivedAt ? ' · ' + esc(item.archivedAt) : ''} · ${esc(leadCount(item))} lead${leadCount(item) === 1 ? '' : 's'}</p></article>`).join('')}</div></div>`;
+    }
   }
   wrap.innerHTML = cardsHtml + `
     <table class="ce-campaigns-table">
@@ -6764,7 +6808,7 @@ async function renderCampaignsPanel() {
       <tbody>
         ${rows.map(r => `
           <tr data-campaign="${escAttr(r.name)}" onclick="filterByCampaign(this.dataset.campaign)" title="Click to filter leads by this campaign">
-            <td class="ce-campaign-name-cell">${esc(r.name)}${r.statsSource === 'smartlead' ? ' <span title="Counts reported by Smartlead using its own reply classification, not the CRM canonical one." style="opacity:.7">· Smartlead counts</span>' : ''}</td>
+            <td class="ce-campaign-name-cell">${esc(campaignName(r.name))}${r.statsSource === 'smartlead' ? ' <span title="Counts reported by Smartlead using its own reply classification, not the CRM canonical one." style="opacity:.7">· Smartlead counts</span>' : ''}</td>
             <td>${r.total}</td>
             <td>${r.delivered}</td>
             <td>${r.bounced || '—'}</td>
@@ -6862,7 +6906,7 @@ function updateCampaignFilterChip() {
   const name = document.getElementById('ce-campaign-filter-name');
   if (!bar || !name) return;
   if (ceCampaignFilter) {
-    name.textContent = ceCampaignFilter;
+    name.textContent = campaignName(ceCampaignFilter);
     bar.style.display = 'flex';
   } else {
     bar.style.display = 'none';
@@ -7210,7 +7254,7 @@ function openCeDetail(id) {
     lead.tradeType   && { label: 'Niche',        val: esc(lead.tradeType) },
     lead.rating        && { label: 'Rating',       val: `${esc(lead.rating)} ★` },
     lead.reviewCount   && { label: 'Reviews',      val: esc(lead.reviewCount) },
-    lead.campaign      && { label: 'Campaign',     val: esc(lead.campaign) },
+    lead.campaign      && { label: 'Campaign',     val: esc(campaignName(lead.campaign)) + (campaignName(lead.campaign) !== String(lead.campaign).trim() ? ` <small style="color:var(--text-muted)">${esc(lead.campaign)}</small>` : '') },
     lead.campaignVersion && { label: 'Campaign Version', val: esc(lead.campaignVersion) },
     (lead.leadNiche || lead.tradeType) && { label: 'Lead Type', val: esc(normalizedRouteNiche(lead) || lead.tradeType) },
     lead.senderInboxId && { label: 'Sending Inbox', val: esc(lead.senderInboxId === 'primary' ? 'Current Gmail inbox' : lead.senderInboxId) },
@@ -8062,12 +8106,12 @@ function renderRevenuePanel(client, meetings, billing) {
     ? money(rev.feePerMeetingCents)
     : 'Not in client config — add billing.performanceFeeCents';
   const campaignLine = Object.entries(rev.meetingsByCampaign)
-    .map(([id, n]) => `${n} · ${id}`).join(' · ') || 'None yet';
+    .map(([id, n]) => `${n} · ${id === 'unassigned' ? id : campaignName(id)}`).join(' · ') || 'None yet';
   const rows = (meetings || []).map(m => `<tr>
       <td>${esc(m.scheduled_for ? new Date(m.scheduled_for).toLocaleString() : '—')}</td>
       <td>${esc(m.employer || m.company || m.lead_id || '—')}</td>
       <td>${esc(m.attendee_name || m.contactName || '—')}</td>
-      <td>${esc(m.campaign_id || '—')}</td>
+      <td>${esc(m.campaign_id ? campaignName(m.campaign_id) : '—')}</td>
       <td>${m.billable || m.meeting_status === 'QUALIFIED_HELD' ? 'Qualified' : esc(m.qualification_status || m.meeting_status || '—')}</td>
       <td>${m.performance_fee_cents && rev.currency ? esc(clientMoney(m.performance_fee_cents, m.currency || rev.currency)) : (rev.feeConfigured ? esc(money(rev.feePerMeetingCents)) : '—')}</td>
       <td>${esc(m.invoice_status || '—')}</td>
@@ -8128,6 +8172,7 @@ async function loadManagedWorkspace(name) {
   const render = html => { if (token === clientViewToken && client.clientId === activeClientId) host.innerHTML = html; };
   render('<div class="workspace-empty"><strong>Loading…</strong>Reading this client\'s data from the server.</div>');
   try {
+    await loadClientCatalog();
     if (name === 'pipeline') return render(await renderManagedPipeline(client));
     if (name === 'inbox') return render(await renderManagedInbox(client));
     if (name === 'bookings') return render(await renderManagedBookings(client));
@@ -8162,7 +8207,7 @@ async function renderManagedPipeline(client) {
         <div class="col-count">${esc(stage.count)}</div>
       </div>
       <div class="col-body" role="list" aria-label="${escAttr(stage.label)}">
-        ${stage.leads.length ? stage.leads.map(lead => `<div class="card" role="listitem"><div class="card-top"><div><div class="card-name">${esc(lead.company || lead.email || lead.id)}</div><div class="card-sub">${esc([lead.contactName, lead.campaign].filter(Boolean).join(' · '))}</div></div></div></div>`).join('') : '<div class="empty-col">No leads</div>'}
+        ${stage.leads.length ? stage.leads.map(lead => `<div class="card" role="listitem"><div class="card-top"><div><div class="card-name">${esc(lead.company || lead.email || lead.id)}</div><div class="card-sub">${esc([lead.contactName, lead.campaign && campaignName(lead.campaign)].filter(Boolean).join(' · '))}</div></div></div></div>`).join('') : '<div class="empty-col">No leads</div>'}
         ${stage.count > stage.leads.length ? `<div class="empty-col">+${esc(stage.count - stage.leads.length)} more</div>` : ''}
       </div>
     </div>`).join('');
@@ -8191,7 +8236,7 @@ async function renderManagedInbox(client) {
       <div class="inbox-person"><b>${esc(row.company || row.email)}</b><small>${esc([row.contactName, row.email].filter(Boolean).join(' · '))}</small></div>
       <div class="inbox-message"><span class="client-badge">${esc(stateLabel(row.workflowState))}</span><p class="client-note">${esc(row.excerpt || row.subject || '')}</p>
         ${extraQuestions(row).length ? `<p class="client-note"><b>Awaiting client:</b> ${esc(extraQuestions(row).join(' · '))}</p>` : ''}</div>
-      <div class="inbox-action"><b>${esc(stateLabel(row.conversationStatus))}</b><small>${esc(row.campaign || '')}${row.receivedAt ? ' · ' + esc(new Date(row.receivedAt).toLocaleString()) : ''}</small></div>
+      <div class="inbox-action"><b>${esc(stateLabel(row.conversationStatus))}</b><small>${esc(row.campaign ? campaignName(row.campaign) : '')}${row.receivedAt ? ' · ' + esc(new Date(row.receivedAt).toLocaleString()) : ''}</small></div>
     </div>`).join('')}</div>`;
 }
 
@@ -8223,7 +8268,7 @@ async function renderManagedBookings(client) {
   }
   const revenue = renderRevenuePanel(client, meetings, billing);
   return badges + summary + revenue + `<div class="booking-list">${meetings.map(meeting => `<div class="operational-row">
-      <span><b>${esc(employerByLead.get(meeting.lead_id) || meeting.lead_id)}</b><small>${esc([meeting.attendee_name, meeting.attendee_title].filter(Boolean).join(' · ') || 'Attendee not recorded')} · ${esc(meeting.campaign_id || '')}</small></span>
+      <span><b>${esc(employerByLead.get(meeting.lead_id) || meeting.lead_id)}</b><small>${esc([meeting.attendee_name, meeting.attendee_title].filter(Boolean).join(' · ') || 'Attendee not recorded')} · ${esc(meeting.campaign_id ? campaignName(meeting.campaign_id) : '')}</small></span>
       <span class="operational-row-meta"><b>${esc(meeting.meeting_status.replace(/_/g, ' '))}</b><small>${esc(meeting.scheduled_for ? new Date(meeting.scheduled_for).toLocaleString() : 'Not scheduled')} · ${meeting.billable ? esc('Billable ' + clientMoney(meeting.performance_fee_cents, meeting.currency)) : esc('Not billable')}</small></span>
     </div>`).join('')}</div>`;
 }

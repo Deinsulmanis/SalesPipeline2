@@ -278,7 +278,7 @@ test('import does not enable anything: copy approved, but Jole sending disabled 
   assert.equal(campaign.id, CAMPAIGN);
   assert.equal(campaign.clientId, 'jole');
   assert.equal(campaign.status, 'approved');
-  assert.equal(campaign.label, 'Jole BTX — Industrial Employers | MFG + Heavy Industry');
+  assert.equal(campaign.label, 'Jole BTX — Manufacturing & Heavy Industry Employers');
   assert.equal(campaignSendable(campaign).ok, true);
   assert.equal(clientTemplate(campaign.emailTemplateId).ready, true);
   assert.equal(require('../integrations/clients/send-policy').clientSendBlock('jole', {}).code, 'client_sending_disabled');

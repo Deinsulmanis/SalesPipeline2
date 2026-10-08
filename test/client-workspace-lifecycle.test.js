@@ -141,7 +141,7 @@ test('family: a Jole lead resolves through Jole\'s registry with full attributio
 
 test('campaigns: Jole\'s working view is one campaign; archived contractor campaigns are kept but never routable', () => {
   assert.deepEqual(campaignsForClient('jole').map(campaign => [campaign.id, campaign.label, campaign.status]),
-    [[CAMPAIGN, 'Jole BTX — Industrial Employers | MFG + Heavy Industry', 'approved']]);
+    [[CAMPAIGN, 'Jole BTX — Manufacturing & Heavy Industry Employers', 'approved']]);
   assert.equal(campaignsForClient('jole', { includeArchived: true }).length, 4);
   assert.match(String(clientCampaign(CAMPAIGN).icp.summary), /not staffing agencies/);
 });

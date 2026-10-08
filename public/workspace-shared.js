@@ -149,11 +149,36 @@
       archived: Array.isArray(archived) ? archived : [],
     };
   }
+  // The client catalog (GET /api/clients/:id) is the one source of campaign
+  // display names. Leads, meetings and replies store the internal id (or the
+  // campaign version), never the label, so a rename is one catalog edit.
+  // Without a catalog (the default client) every value passes through as-is.
+  function campaignEntry(value, catalog) {
+    const key = text(value).toLowerCase();
+    if (!key || !catalog) return null;
+    const live = Array.isArray(catalog.campaigns) ? catalog.campaigns : [];
+    const archived = Array.isArray(catalog.archivedCampaigns) ? catalog.archivedCampaigns : [];
+    for (const item of live.concat(archived.map(entry => Object.assign({}, entry, { archivedAt: entry.archivedAt || true })))) {
+      if (text(item.id).toLowerCase() === key || (item.campaignVersion && text(item.campaignVersion).toLowerCase() === key)) {
+        return { id: item.id, label: text(item.label) || item.id, archived: Boolean(item.archivedAt) };
+      }
+    }
+    return null;
+  }
+  function campaignDisplayName(value, catalog) {
+    const entry = campaignEntry(value, catalog);
+    return entry ? entry.label : text(value);
+  }
+  function isArchivedCampaign(value, catalog) {
+    const entry = campaignEntry(value, catalog);
+    return Boolean(entry && entry.archived);
+  }
 
   return {
     STATUS_FILTERS, SHARED_WORKSPACES, GENUINE_REPLY,
     text, stageOf, isUnsubscribed, everSent, matchesStatusFilter, leadStatusCounts,
     usesSharedWorkspace, shouldShowRevenuePanel, serverStageForFilter,
     importVisibility, queuedVisibility, revenueFromMeetings, partitionCampaigns,
+    campaignDisplayName, isArchivedCampaign,
   };
 }));

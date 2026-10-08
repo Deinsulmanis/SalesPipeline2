@@ -130,7 +130,7 @@ const CLIENT_CAMPAIGNS = Object.freeze([
   // and the only one in Jole's working views.
   Object.freeze({
     id: 'jole-btx-employer-acquisition', clientId: 'jole', number: 4,
-    label: 'Jole BTX — Industrial Employers | MFG + Heavy Industry',
+    label: 'Jole BTX — Manufacturing & Heavy Industry Employers',
     campaignVersion: 'jole_industrial_employer_acquisition_v1',
     // Copy approved: leads may be personalised, routed and queued like
     // ScaleLab's. Sending stays off at the client (sending.enabled false, not

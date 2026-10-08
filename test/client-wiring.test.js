@@ -93,7 +93,7 @@ test('catalog: Jole contractor campaigns #1-#3 are archived; employer acquisitio
   for (const id of ['JOLE_DC_MISSION_CRITICAL', 'JOLE_GULF_INDUSTRIAL', 'JOLE_SHIPYARD']) assert.ok(byId[id].archivedAt, id);
   const acquisition = byId['jole-btx-employer-acquisition'];
   assert.equal(acquisition.status, 'approved');
-  assert.equal(acquisition.label, 'Jole BTX — Industrial Employers | MFG + Heavy Industry');
+  assert.equal(acquisition.label, 'Jole BTX — Manufacturing & Heavy Industry Employers');
   assert.equal(acquisition.emailTemplateId, 'jole-industrial-employer-v1');
   assert.equal(acquisition.campaignVersion, 'jole_industrial_employer_acquisition_v1');
   assert.ok(CLIENT_CAMPAIGNS.every(campaign => campaign.clientId === 'jole'));

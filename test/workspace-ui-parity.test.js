@@ -110,6 +110,43 @@ test('archived campaigns are partitioned away from active ones', () => {
   assert.equal(parts.archived.length, 1);
 });
 
+test('campaign display names come from the client catalog; the stored id never changes', () => {
+  const { campaignsForClient, campaignSendable } = require('../integrations/clients/campaigns');
+  // The exact shape GET /api/clients/:id returns.
+  const catalog = {
+    campaigns: campaignsForClient('jole').map(campaign => ({ ...campaign, sendable: campaignSendable(campaign) })),
+    archivedCampaigns: campaignsForClient('jole', { includeArchived: true }).filter(campaign => campaign.archivedAt)
+      .map(campaign => ({ id: campaign.id, label: campaign.label, archivedAt: campaign.archivedAt })),
+  };
+  const NAME = 'Jole BTX — Manufacturing & Heavy Industry Employers';
+  assert.deepEqual(catalog.campaigns.map(campaign => [campaign.id, campaign.label]), [['jole-btx-employer-acquisition', NAME]]);
+  assert.deepEqual(catalog.archivedCampaigns.map(campaign => campaign.id).sort(), ['JOLE_DC_MISSION_CRITICAL', 'JOLE_GULF_INDUSTRIAL', 'JOLE_SHIPYARD']);
+
+  assert.equal(shared.campaignDisplayName('jole-btx-employer-acquisition', catalog), NAME);
+  assert.equal(shared.campaignDisplayName('JOLE-BTX-EMPLOYER-ACQUISITION', catalog), NAME);
+  assert.equal(shared.campaignDisplayName('jole_industrial_employer_acquisition_v1', catalog), NAME, 'by campaign version');
+  assert.equal(shared.isArchivedCampaign('jole-btx-employer-acquisition', catalog), false);
+  for (const id of ['JOLE_DC_MISSION_CRITICAL', 'JOLE_GULF_INDUSTRIAL', 'JOLE_SHIPYARD']) {
+    assert.equal(shared.isArchivedCampaign(id, catalog), true, id);
+  }
+  // ScaleLab has no catalog: its campaign names pass through untouched.
+  assert.equal(shared.campaignDisplayName('Industrial Staffing Agency', null), 'Industrial Staffing Agency');
+  assert.equal(shared.campaignDisplayName('Industrial Staffing Agency', catalog), 'Industrial Staffing Agency');
+  assert.equal(shared.isArchivedCampaign('Industrial Staffing Agency', null), false);
+  // Display only: the lead keeps its internal campaign id.
+  const lead = joleLead('j1');
+  shared.campaignDisplayName(lead.campaign, catalog);
+  assert.equal(lead.campaign, 'jole-btx-employer-acquisition');
+});
+
+test('dashboard HTML: Jole surfaces print the display name, filters keep the raw id', () => {
+  assert.match(HTML, /campaign-card-name">\$\{esc\(campaignName\(r\.name\)\)\}/);
+  assert.match(HTML, /data-campaign="\$\{escAttr\(r\.name\)\}"/, 'filtering still sends the stored id');
+  assert.match(HTML, /name\.textContent = campaignName\(ceCampaignFilter\)/);
+  assert.match(HTML, /isArchivedCampaign\(row\.name, catalog\)/);
+  assert.equal(HTML.includes('Manufacturing & Heavy Industry'), false, 'the name lives in the catalog only');
+});
+
 test('import visibility distinguishes never-sent Import from queued', () => {
   const imported = shared.importVisibility(joleLead('j1'), { personalization: { status: 'needs_review', reason: 'review' }, routingReady: false });
   assert.equal(imported.sent, false);
