@@ -9,7 +9,8 @@
  * Every client-scoped route resolves :clientId through the registry first
  * (unknown ids are 404), scopes the corpus to that client server side, and
  * reads ledger rows with a client_id filter in the database query. Nothing
- * here sends, queues or reserves.
+ * here sends, queues or reserves. The one lead write (leads/import) adds
+ * Import-stage leads with no sender.
  */
 
 const express = require('express');
@@ -34,6 +35,9 @@ function registerClientRoutes(app, {
   // Server inbox status rows (all clients; scoped per client here) and the
   // service send ceilings. Both optional: Settings degrades to config only.
   senderStatus = async () => [], globalCapacity = () => ({ dailyLimit: 0, windowLimit: 0 }),
+  // Managed-client lead import (lead-import.js importClientLeads, bound to
+  // server storage). Absent, the import route answers 503.
+  importLeads = null,
 }) {
   const router = express.Router();
   router.use(requireAuth);
@@ -151,6 +155,32 @@ function registerClientRoutes(app, {
         existingLeads: dataset.leads || [], suppressedEmails: dataset.suppressedEmails || new Set(),
       }));
     } catch (error) { fail(res, error); }
+  });
+
+  // The write. The body names the client a second time (confirmClientId), so a
+  // mistyped URL cannot land leads in another client. One import per client at
+  // a time; a retry after a timeout is safe because already-written rows come
+  // back as duplicates. dryRun:true runs every check against the same fresh
+  // corpus and writes nothing.
+  const importsInFlight = new Set();
+  router.post('/:clientId/leads/import', clientParam, async (req, res) => {
+    if (typeof importLeads !== 'function') return res.status(503).json({ error: 'client lead import is not configured', code: 'import_unavailable' });
+    if (req.client.isDefault) return res.status(422).json({ error: 'ScaleLab leads use the existing import', code: 'use_legacy_import' });
+    if (String(req.body?.confirmClientId || '') !== req.client.id) {
+      return res.status(422).json({ error: `confirmClientId must be exactly "${req.client.id}"`, code: 'client_scope_required' });
+    }
+    if (importsInFlight.has(req.client.id)) return res.status(409).json({ error: 'an import for this client is already running', code: 'import_in_progress' });
+    importsInFlight.add(req.client.id);
+    try {
+      const result = await importLeads({
+        clientId: req.client.id, campaignId: req.body?.campaignId, rows: req.body?.rows, dryRun: req.body?.dryRun === true,
+      });
+      log.log(JSON.stringify({
+        event: 'client_leads_imported', client_id: result.clientId, campaign_id: result.campaignId, dry_run: result.dryRun,
+        received: result.received, accepted: result.accepted, rejected: result.rejected, written: result.written, by: operator(req),
+      }));
+      res.json(result);
+    } catch (error) { fail(res, error); } finally { importsInFlight.delete(req.client.id); }
   });
 
   // ── Ledger ────────────────────────────────────────────────────────────────

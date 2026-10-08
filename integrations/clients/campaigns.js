@@ -19,6 +19,7 @@
  */
 
 const { DEFAULT_CLIENT_ID, getClient, clientForNamespacedValue } = require('./registry');
+const { JOLE_INDUSTRIAL_EMPLOYER_COPY } = require('./jole-copy');
 
 const CAMPAIGN_STATUS = Object.freeze({
   DRAFT: 'draft',         // configured; copy, senders or leads not final — never sendable
@@ -55,9 +56,11 @@ const CLIENT_TEMPLATES = Object.freeze([
   Object.freeze({
     id: 'jole-industrial-employer-v1', clientId: 'jole', niche: 'jole_employer',
     name: 'Jole BTX · Industrial employer acquisition', sequenceSteps: 3,
-    // The renderer and copy are not in production, and launch needs its own
-    // approval (landing page, mailing address, warmed and approved senders).
-    ready: false, reason: 'Jole employer-acquisition copy is not deployed or approved for sending',
+    // Final approved copy (jole-copy.js). Still not ready: no send path renders
+    // it, and launch needs its own approval (landing page, Jole mailing
+    // address, warmed and approved senders, client send authorization).
+    copyVersion: JOLE_INDUSTRIAL_EMPLOYER_COPY.copyVersion, copy: JOLE_INDUSTRIAL_EMPLOYER_COPY,
+    ready: false, reason: 'Jole employer-acquisition copy is final but not deployed or approved for sending (no send path renders it; launch needs the landing page, Jole mailing address, approved senders and send authorization)',
   }),
 ]);
 
@@ -115,17 +118,35 @@ const CLIENT_CAMPAIGNS = Object.freeze([
   // sending is disabled and Jole senders are paused.
   Object.freeze({
     id: 'jole-btx-employer-acquisition', clientId: 'jole', number: 4,
-    label: 'Jole BTX — Employer Acquisition',
+    label: 'Jole BTX — Industrial Employer Acquisition',
     campaignVersion: 'jole_industrial_employer_acquisition_v1',
     status: CAMPAIGN_STATUS.DRAFT,
     leadType: 'jole_employer', emailTemplateId: 'jole-industrial-employer-v1',
     audience: 'employers',
+    // Jole sells skilled-trade labor TO these employers. Not ScaleLab's
+    // staffing-agency campaign: no shared copy, offer or audience.
     icp: Object.freeze({
       geography: 'United States',
-      summary: 'Industrial end employers with verified, current skilled-trade hiring. Never staffing agencies.',
+      summary: 'Industrial end employers (not contractors-for-hire, not staffing agencies) with verified skilled-trade hiring in the last 30 days at a named site.',
       contractorTypes: Object.freeze([]),
-      workerCategories: Object.freeze(['skilled trades']),
+      workerCategories: Object.freeze([
+        'skilled trades', 'welders', 'maintenance technicians', 'machinists / CNC', 'electricians', 'mechanics',
+        'instrument technicians', 'fabricators / fitters', 'millwrights', 'pipefitters',
+      ]),
       requiredEvidence: Object.freeze(['verified active hiring for the role and location, or a reviewed employer record']),
+      sectors: Object.freeze([
+        'Industrial fabrication / machinery', 'Metals / mining / paper / heavy industrial',
+        'Refining / petrochemical / LNG / chemical', 'Power / utilities', 'Shipyard / marine',
+        'Pipeline / midstream', 'Oil & gas producers / operators',
+      ]),
+      buyerRoles: Object.freeze([
+        'Plant / operations / production leadership', 'HR / talent acquisition', 'Maintenance / reliability',
+        'Owner / executive (small and mid companies, or site executives)', 'Superintendent / site leadership',
+      ]),
+      excluded: Object.freeze([
+        'staffing, recruiting and labor-service firms', 'SpaceX family', 'Kiewit family / KOS', 'Karpower', 'current Jole clients',
+      ]),
+      sendOrder: 'Tier A before Tier B; within a tier, non-catch-all contacts at the exact hiring site first',
     }),
   }),
 ]);

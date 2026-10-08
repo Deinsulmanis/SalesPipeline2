@@ -1,6 +1,9 @@
 'use strict';
 
 /**
+ * A managed client's lead import: validateClientLeadImport is the dry run and
+ * writes nothing; importClientLeads (below) is the write that reuses it.
+ *
  * Dry-run validation of a managed client's lead import. Writes nothing.
  *
  * It proposes the exact routing fields a lead would be stored with, then
@@ -27,9 +30,10 @@
 
 const { classify } = require('../../check-leads');
 const { getClient } = require('./registry');
-const { clientCampaign } = require('./campaigns');
+const { clientCampaign, CAMPAIGN_STATUS } = require('./campaigns');
 const { checkClientConsistency, resolveLeadClient } = require('./ownership');
 const { emailTakenFor, emailUniquenessMode } = require('./email-scope');
+const { evaluateScopedSuppression } = require('./suppression');
 
 const norm = value => String(value || '').trim().toLowerCase();
 
@@ -80,4 +84,95 @@ function validateClientLeadImport({ clientId, campaignId, rows = [], existingLea
   };
 }
 
-module.exports = { validateClientLeadImport };
+const MAX_IMPORT_ROWS = 5000;
+
+/**
+ * The write half of a managed client's import. Writes only Import-stage leads
+ * that have no sender; it never queues, routes, reserves or sends.
+ *
+ * It re-runs validateClientLeadImport against a FRESH read of the
+ * authoritative corpus (never a cache), then applies the client's own
+ * suppression list on top of the global one, and appends only what both
+ * accepted. Retrying is safe: a row an earlier attempt wrote is now this
+ * client's lead and is refused as a duplicate, so it is never written twice.
+ *
+ * Storage is the caller's (server.js owns Sheets and the Supabase mirror):
+ *   readCorpus()                  → { leads, suppressedEmails }, fresh; throws when unreadable
+ *   readClientSuppressions(id)    → { available, entries } (or { error })
+ *   appendLeads(leads)            → the authoritative write of full ColdEmail rows
+ *   mirrorLeads(leads)            → optional, after the append; reported, never trusted for dedupe
+ */
+async function importClientLeads({
+  clientId, campaignId, rows, dryRun = false, readCorpus, readClientSuppressions, appendLeads,
+  mirrorLeads = null, newId, env = process.env,
+} = {}) {
+  const client = getClient(clientId);
+  if (client.isDefault) throw Object.assign(new Error('ScaleLab leads use the existing import'), { code: 'use_legacy_import' });
+  if (!Array.isArray(rows) || !rows.length) throw Object.assign(new Error('rows must be a non-empty array'), { code: 'invalid_rows' });
+  // The validator considers only the first 5000 rows; a write must not drop the rest silently.
+  if (rows.length > MAX_IMPORT_ROWS) throw Object.assign(new Error(`at most ${MAX_IMPORT_ROWS} rows per import`), { code: 'too_many_rows' });
+  // Leads land only where the client's senders may one day send them: a
+  // disabled campaign, or one outside the client's sender allowlist, would
+  // strand them (and invite repurposing a campaign written for another ICP).
+  const campaign = clientCampaign(campaignId);
+  const allowed = client.senderPolicy?.allowedCampaignIds;
+  if (campaign && campaign.clientId === client.id
+    && (campaign.status === CAMPAIGN_STATUS.DISABLED || (Array.isArray(allowed) && allowed.length && !allowed.includes(campaign.id)))) {
+    throw Object.assign(new Error(`${campaign.id} does not accept ${client.displayName} imports`), { code: 'campaign_not_importable' });
+  }
+
+  const corpus = await readCorpus();
+  const suppressedEmails = corpus.suppressedEmails || new Set();
+  const clientEntries = await readClientSuppressions(client.id);
+  if (client.sending.clientSuppressionRequired && clientEntries?.available !== true) {
+    throw Object.assign(new Error(`${client.displayName} requires its suppression list, which is not available${clientEntries?.error ? `: ${clientEntries.error}` : ''}`),
+      { code: 'client_suppression_unavailable' });
+  }
+
+  const validation = validateClientLeadImport({
+    clientId: client.id, campaignId, rows, existingLeads: corpus.leads || [], suppressedEmails, env,
+  });
+  const firstIndex = new Map();
+  rows.forEach((row, index) => { const email = norm(row?.email); if (email && !firstIndex.has(email)) firstIndex.set(email, index); });
+  const refusals = [...validation.refusals];
+  const leads = [];
+  for (const proposed of validation.leads) {
+    const verdict = evaluateScopedSuppression(proposed, { clientId: client.id, suppressedEmails, clientEntries });
+    if (verdict) {
+      refusals.push({ index: firstIndex.get(proposed.email), email: proposed.email, company: proposed.company,
+        code: verdict.code === 'global' ? 'globally_suppressed' : verdict.code, reason: verdict.reason });
+      continue;
+    }
+    // Every ColdEmail column, explicitly: nothing sent, nothing scheduled, no sender.
+    leads.push({
+      ...proposed, id: newId(), lastEmailedAt: '', reviewCount: '', rating: '', tier: '',
+      campaign_notes: '', enrichment_attempted: '',
+    });
+  }
+  // Last line of defence before the write: each lead must be this client's,
+  // in this campaign, at Import, with no send state at all.
+  for (const lead of leads) {
+    const unsafe = lead.clientId !== client.id || lead.campaign !== validation.campaignId || lead.stage !== 'Import'
+      || lead.senderInboxId || lead.emailStatus || lead.emailStep || lead.lastEmailedAt || !lead.id;
+    if (unsafe) throw Object.assign(new Error(`refusing to write ${lead.email}: not a clean Import lead of ${client.id}`), { code: 'client_isolation_violation' });
+  }
+
+  const byCode = {};
+  for (const refusal of refusals) byCode[refusal.code] = (byCode[refusal.code] || 0) + 1;
+  const result = {
+    dryRun: Boolean(dryRun), clientId: client.id, campaignId: validation.campaignId, emailUniqueness: validation.emailUniqueness,
+    received: rows.length, accepted: leads.length, rejected: refusals.length, duplicates: byCode.duplicate || 0,
+    refusalsByCode: byCode, written: 0, mirror: null, refusals,
+  };
+  if (dryRun || !leads.length) return result;
+
+  await appendLeads(leads);
+  result.written = leads.length;
+  result.leads = leads.map(lead => ({ id: lead.id, email: lead.email }));
+  if (mirrorLeads) {
+    try { result.mirror = await mirrorLeads(leads); } catch (error) { result.mirror = { failed: leads.length, reason: error.message }; }
+  }
+  return result;
+}
+
+module.exports = { validateClientLeadImport, importClientLeads, MAX_IMPORT_ROWS };

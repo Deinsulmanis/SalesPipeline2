@@ -148,6 +148,7 @@ const {
 } = require('./integrations/analytics-scope');
 // Managed clients (internal operator views only; clients never log in).
 const { registerClientRoutes } = require('./integrations/clients/routes');
+const { importClientLeads } = require('./integrations/clients/lead-import');
 const { leadsForClient, leadDefinitelyOtherClient } = require('./integrations/clients/ownership');
 const { resolveClientId, DEFAULT_CLIENT_ID } = require('./integrations/clients/registry');
 const { getLedgerStore } = require('./integrations/clients/ledger-store');
@@ -2071,6 +2072,7 @@ registerClientRoutes(app, {
     const capacity = capacityFromEnv(configuredSenders());
     return { dailyLimit: capacity.globalDailyLimit, windowLimit: capacity.globalPerRunLimit };
   },
+  importLeads: options => importManagedClientLeads(options),
 });
 
 app.get('/api/campaign-versions', requireAuth, (req, res) => {
@@ -2658,6 +2660,62 @@ async function existingColdEmailAddresses(clientId) {
   const response = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE });
   const rows = (response.data.values || []).slice(1).map(row => Object.fromEntries(CE_COLUMNS.map((field, i) => [field, row[i] || ''])));
   return new Set(leadsInEmailScope(rows, clientId).map(lead => normalizeEmail(lead.email)).filter(Boolean));
+}
+
+// ── MANAGED-CLIENT LEAD IMPORT (storage for lead-import.js importClientLeads) ──
+// Same primitives as the legacy import below: one ColdEmail append, then the
+// outreach_leads mirror. The differences are deliberate: every read is fresh
+// and fails closed (an unreadable Suppression tab refuses the import rather
+// than reading as empty), and the corpus is BOTH stores (Sheets is written
+// first; Supabase may be the read authority).
+async function readClientImportCorpus() {
+  await ensureColdEmailSheet();
+  const [coldEmail, suppression] = await Promise.all([
+    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE }),
+    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${SUPPRESSION_SHEET}!A:A` }),
+  ]);
+  const leads = (coldEmail.data.values || []).slice(1)
+    .map(row => Object.fromEntries(CE_COLUMNS.map((field, i) => [field, row[i] || ''])));
+  if (outreachStateMode() !== 'off') {
+    const mirrored = await readOutreachCorpus();
+    if (!mirrored.ok) throw Object.assign(new Error(`outreach corpus unreadable: ${mirrored.reason}`), { code: 'corpus_unavailable' });
+    leads.push(...mirrored.leads);
+  }
+  const suppressedEmails = new Set((suppression.data.values || []).slice(1).map(row => normalizeEmail(row[0])).filter(Boolean));
+  return { leads, suppressedEmails };
+}
+
+async function readClientImportSuppressions(clientId) {
+  const store = getLedgerStore();
+  if (!store?.enabled) return { available: false, reason: store?.reason || 'client ledger is disabled' };
+  try {
+    return { available: true, entries: await store.listClientSuppressions(clientId) };
+  } catch (error) {
+    return { available: false, error: error.message || 'client suppression read failed' };
+  }
+}
+
+function importManagedClientLeads({ clientId, campaignId, rows, dryRun }) {
+  return withAuth(() => importClientLeads({
+    clientId, campaignId, rows, dryRun,
+    readCorpus: readClientImportCorpus,
+    readClientSuppressions: readClientImportSuppressions,
+    appendLeads: async leads => {
+      await sheets().spreadsheets.values.append({
+        spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+        requestBody: { values: leads.map(lead => CE_COLUMNS.map(col => String(lead[col] ?? ''))) },
+      });
+      ceRowMap.clear();
+    },
+    // Background, as every ColdEmail write path: the mirror sits after the
+    // authoritative append and must never fail it. Dedupe reads Sheets too, so
+    // a retry before the mirror lands still sees these rows.
+    mirrorLeads: async leads => {
+      if (outreachStateMode() !== 'off') mirrorOutreachLeadsInBackground(leads);
+      return { scheduled: outreachStateMode() !== 'off', leads: leads.length };
+    },
+    newId: () => Date.now().toString(36) + crypto.randomBytes(6).toString('hex'),
+  }));
 }
 
 app.post('/api/coldemail/import', requireAuth, async (req, res) => {
