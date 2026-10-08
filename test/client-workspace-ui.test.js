@@ -53,24 +53,25 @@ test('navigation: ScaleLab keeps every current module, in catalog order', () => 
   assert.deepEqual(nav.sections.map(section => section.id), ['clients', 'sales', 'growth', 'system']);
 });
 
-test('navigation: Jole gets exactly Client Ops, Pipeline, Inbox, Bookings, Campaigns, Analytics, Settings', () => {
+test('navigation: Jole gets the shared Outreach directory plus Client Ops, Pipeline, Inbox, Bookings, Campaigns, Analytics, Settings', () => {
   const nav = navigationFor(getClient('jole'));
   assert.deepEqual(nav.sections.map(section => [section.label, section.items.map(item => item.label)]), [
     ['Clients', ['Client Ops']],
     ['Sales', ['Pipeline', 'Inbox', 'Bookings']],
-    ['Growth', ['Campaigns', 'Analytics']],
+    ['Growth', ['Outreach', 'Campaigns', 'Analytics']],
     ['System', ['Settings']],
   ]);
-  assert.equal(nav.defaultWorkspace, 'clients');
-  for (const hidden of ['outreach', 'staffing', 'sequences', 'health']) assert.equal(nav.workspaces.includes(hidden), false, hidden);
+  assert.equal(nav.defaultWorkspace, 'outreach');
+  for (const hidden of ['staffing', 'sequences', 'health', 'archive']) assert.equal(nav.workspaces.includes(hidden), false, hidden);
+  assert.ok(nav.workspaces.includes('outreach'));
   assert.ok(nav.sections.every(section => section.items.every(item => item.managedContext)), 'every item has header copy');
 });
 
 test('navigation: a workspace the client lacks resolves to its default, never to an invalid route', () => {
   const jole = getClient('jole');
-  assert.equal(resolveWorkspace(jole, 'staffing'), 'clients');
-  assert.equal(resolveWorkspace(jole, 'nonsense'), 'clients');
-  assert.equal(resolveWorkspace(jole, undefined), 'clients');
+  assert.equal(resolveWorkspace(jole, 'staffing'), 'outreach');
+  assert.equal(resolveWorkspace(jole, 'nonsense'), 'outreach');
+  assert.equal(resolveWorkspace(jole, undefined), 'outreach');
   assert.equal(resolveWorkspace(jole, 'pipeline'), 'pipeline');
   assert.equal(resolveWorkspace(getClient('scalelab'), 'staffing'), 'staffing');
 });
@@ -87,7 +88,7 @@ test('navigation: config validation rejects unknown, duplicate, empty or default
 
 test('registry: the public client carries navigation and terminology, and no activation shortcut', () => {
   const jole = publicClient(getClient('jole'));
-  assert.deepEqual(jole.navigation.workspaces, ['clients', 'pipeline', 'inbox', 'bookings', 'campaigns', 'analytics', 'settings']);
+  assert.deepEqual(jole.navigation.workspaces, ['clients', 'pipeline', 'inbox', 'bookings', 'outreach', 'campaigns', 'analytics', 'settings']);
   assert.equal(jole.terminology.leads, 'employer leads');
   assert.equal(jole.lifecycleStatus, 'active');
   assert.equal(jole.active, true);
@@ -278,11 +279,13 @@ test('dashboard: navigation comes from client config, not from client-name branc
   assert.match(HTML, /function renderNavigation\(/);
 });
 
-test('dashboard: managed views read client-scoped APIs and hide ScaleLab panels', () => {
+test('dashboard: managed views read client-scoped APIs and reuse shared Growth workspaces', () => {
   assert.match(HTML, /\/api\/clients\/\$\{encodeURIComponent\(activeClientId\)\}/);
   assert.match(HTML, /\/api\/integrations\/gmail-inboxes\?client=\$\{/);
-  assert.match(HTML, /body\[data-client-mode="managed"\] \.crm-workspace:not\(#ws-clients\)>:not\(\.workspace-intro\):not\(\.client-view\)\{display:none!important\}/);
+  assert.match(HTML, /body\[data-client-mode="managed"\] #ws-pipeline>:not\(\.workspace-intro\):not\(\.client-view\)/);
   assert.match(HTML, /body:not\(\[data-client-mode="managed"\]\) \.client-view\{display:none!important\}/);
+  assert.match(HTML, /WorkspaceShared\.usesSharedWorkspace\(name\)/);
+  assert.match(HTML, /limit=0&client=' \+ encodeURIComponent\(activeClientId\)/);
 });
 
 test('dashboard: empty states say why there is no data, without fake records', () => {

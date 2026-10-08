@@ -63,7 +63,7 @@ test('1-2. Jole is out of onboarding: an active, configured client with no platf
   assert.equal(jole.active, true);
   assert.equal(jole.displayName, 'Jole BTX LLC');
   assert.equal(jole.platformAccess, 'none');
-  assert.deepEqual([...jole.workspaces], ['clients', 'pipeline', 'inbox', 'bookings', 'campaigns', 'analytics', 'settings']);
+  assert.deepEqual([...jole.workspaces], ['clients', 'pipeline', 'inbox', 'bookings', 'outreach', 'campaigns', 'analytics', 'settings']);
 });
 
 test('3. the Jole campaign exists with its exact identifiers: copy approved, never sendable while the client switch is off', () => {

@@ -91,8 +91,10 @@ const JOLE = Object.freeze({
   kind: 'managed_client',
   // The internal ScaleLab workspace for operating Jole. Navigation only — every
   // view is still scoped to Jole on the server.
-  workspaces: Object.freeze(['clients', 'pipeline', 'inbox', 'bookings', 'campaigns', 'analytics', 'settings']),
-  defaultWorkspace: 'clients',
+  // Outreach is the shared lead directory ScaleLab already uses. Jole lands
+  // there so Import / Queued sit in the same table, filters and cards.
+  workspaces: Object.freeze(['clients', 'pipeline', 'inbox', 'bookings', 'outreach', 'campaigns', 'analytics', 'settings']),
+  defaultWorkspace: 'outreach',
   terminology: Object.freeze({ lead: 'employer lead', leads: 'employer leads', prospect: 'employer' }),
   // Jole never operates SalesPipeline2. There is no login, account or
   // permission for it anywhere in this system.
