@@ -111,7 +111,34 @@ function familyFromCampaignVersionId(id) {
   return version ? version.family : null;
 }
 
+// A managed client's lead belongs to its client's campaign registry, not to
+// ScaleLab's keyword families (Jole's copy says "staffing"; it is not
+// ScaleLab's staffing offer). Its family is that campaign's lead type. Lazy
+// require: clients/ modules load routing helpers that load this file.
+function managedCampaignForLead(lead = {}) {
+  const { clientCampaign } = require('./clients/campaigns');
+  return clientCampaign(lead.intendedCampaignVersion) || clientCampaign(lead.campaign) || null;
+}
+
+function isManagedFamily(family) {
+  const { CLIENT_LEAD_TYPES } = require('./clients/campaigns');
+  return CLIENT_LEAD_TYPES.some(type => type.id === family);
+}
+
 function resolveLeadFamily(lead = {}) {
+  const managed = managedCampaignForLead(lead);
+  if (managed) {
+    const owner = String(lead.clientId || '').trim();
+    if (owner && owner !== managed.clientId) {
+      return { family: CAMPAIGN_FAMILY.UNROUTED, confident: false, reason: `campaign ${managed.id} belongs to ${managed.clientId}, the lead to ${owner}` };
+    }
+    // A ScaleLab family named on the lead's niche or template is a conflict, never a tie-break.
+    const legacy = [familyFromText(lead.leadNiche), familyFromText(lead.emailTemplateId)].filter(Boolean);
+    if (legacy.length) {
+      return { family: CAMPAIGN_FAMILY.UNROUTED, confident: false, candidates: [managed.leadType, ...legacy], reason: 'campaign mapping is ambiguous' };
+    }
+    return { family: managed.leadType, confident: true, reason: '', managed: true, clientId: managed.clientId, campaignId: managed.id };
+  }
   const signals = [
     familyFromText(lead.leadNiche),
     familyFromText(lead.tradeType),
@@ -161,6 +188,7 @@ function activeVersionForLead(lead = {}, { evidenceOnly = false } = {}) {
     }
     throw new Error(resolved.reason || 'Campaign family is unrouted');
   }
+  if (resolved.managed) return managedCampaignVersion(managedCampaignForLead(lead), lead, { evidenceOnly });
   const id = String(lead.intendedCampaignVersion || '').trim() || ACTIVE_CAMPAIGN_VERSION[family];
   if (!id) throw new Error(`No active campaign version for ${family}`);
   const version = campaignVersion(id);
@@ -172,6 +200,24 @@ function activeVersionForLead(lead = {}, { evidenceOnly = false } = {}) {
     throw new Error(`Campaign version ${id} is incompatible with template ${lead.emailTemplateId}`);
   }
   return version;
+}
+
+// A managed campaign's version, in the shape ScaleLab versions have, so the
+// one attribution and delivery path serves both. Approved (or active) only.
+function managedCampaignVersion(campaign, lead = {}, { evidenceOnly = false } = {}) {
+  const { CAMPAIGN_STATUS } = require('./clients/campaigns');
+  const live = [CAMPAIGN_STATUS.APPROVED, CAMPAIGN_STATUS.ACTIVE].includes(campaign.status) && !campaign.archivedAt;
+  if (!live && !evidenceOnly) throw new Error(`Campaign ${campaign.id} is not approved`);
+  if (lead.emailTemplateId && campaign.emailTemplateId !== lead.emailTemplateId) {
+    throw new Error(`Campaign ${campaign.id} is incompatible with template ${lead.emailTemplateId}`);
+  }
+  return Object.freeze({
+    id: campaign.campaignVersion || campaign.id, label: campaign.label, niche: campaign.leadType,
+    emailTemplateId: campaign.emailTemplateId, family: campaign.leadType, clientId: campaign.clientId,
+    copyVersion: campaign.copyVersion || '', followUpCopyVersion: campaign.copyVersion || '',
+    subjectStrategy: campaign.subjectStrategy || '', personalizationStrategy: campaign.personalizationStrategy || '',
+    offerVersion: campaign.offerVersion || '', status: live ? 'active' : 'retired',
+  });
 }
 
 function coldSendAttribution(lead = {}, step = 1, sendMeta = {}, { evidenceOnly = false } = {}) {
@@ -291,7 +337,7 @@ function buildCampaignVersionIndex(leads = [], activities = []) {
 
 module.exports = {
   LEGACY_UNKNOWN, CAMPAIGN_FAMILY, CAMPAIGN_VERSIONS, ACTIVE_CAMPAIGN_VERSION,
-  familyForLead, resolveLeadFamily, campaignVersion, activeVersionForLead, coldSendAttribution,
+  familyForLead, resolveLeadFamily, campaignVersion, activeVersionForLead, coldSendAttribution, isManagedFamily,
   stageSequenceAttribution, attributionFromActivity, replyTouchAttribution,
   acquisitionAttribution, latestSendAttribution, promotionAttribution, parseMetadata,
   buildCampaignVersionIndex,

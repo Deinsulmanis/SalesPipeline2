@@ -6,6 +6,7 @@ const { leadHasReply } = require('./reply-analytics');
 const { deriveAutomationOwnership } = require('./automation-ownership');
 const { resolveLeadClient } = require('./clients/ownership');
 const { isStaffingCampaign, staffingReviewStatus, renderStaffingEmail, validateStaffingEmail } = require('./staffing-campaign');
+const { isClientTemplateId, renderClientLeadEmail, validateClientLeadEmail } = require('./clients/client-email');
 
 const normalize = value => String(value || '').trim().toLowerCase();
 
@@ -48,6 +49,17 @@ function queueEligibility(lead, {
     sendingEnabled: true, suppressionReason: item => sendSuppressionReason(item, { suppressedEmails }),
   });
   if (!ownership.sendAllowed || ownership.owner !== 'cold_automation') return { ok: false, reason: ownership.reason, ownership };
+  // A managed client's lead is admitted only when every touch of its client's
+  // copy renders from its stored, reviewed, current personalization.
+  if (isClientTemplateId(lead.emailTemplateId)) {
+    try {
+      for (const step of [1, 2, 3]) {
+        const email = renderClientLeadEmail(lead, step, { env: env || process.env });
+        const error = validateClientLeadEmail(lead, email, step);
+        if (error) return { ok: false, reason: error };
+      }
+    } catch (error) { return { ok: false, reason: error.message }; }
+  }
   if (normalize(lead.leadNiche).includes('staffing')) {
     if (!isStaffingCampaign(lead)) return { ok: false, reason: 'staffing campaign attribution conflicts' };
     const review = staffingReviewStatus(lead);

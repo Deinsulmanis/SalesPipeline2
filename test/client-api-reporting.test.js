@@ -71,9 +71,17 @@ test('API: Jole filters Jole data; ScaleLab filters ScaleLab data — on the ser
     assert.equal(overview.deliverability.sends, 0);
     assert.equal(overview.replies.positive, 1);
     assert.equal(overview.sending.sendingEnabled, false);
-    assert.equal(overview.campaigns.length, 4);
+    // The working view lists the live campaign; the three archived contractor
+    // placeholders are hidden (GET /:clientId lists them as archivedCampaigns).
+    assert.equal(overview.campaigns.length, 1);
     assert.equal(overview.campaigns.find(c => c.id === 'jole-btx-employer-acquisition').leads, 2);
-    assert.equal(overview.campaigns.find(c => c.id === 'jole-btx-employer-acquisition').sendable, false);
+    // The copy is approved; the campaign is still not ready to send: Jole's
+    // client switch is off and it has no sending inbox.
+    const acquisition = overview.campaigns.find(c => c.id === 'jole-btx-employer-acquisition');
+    assert.equal(acquisition.sendable, true);
+    assert.equal(acquisition.ready, false);
+    assert.ok(acquisition.readinessBlockers.some(reason => /sending is disabled|CLIENT_SENDING_AUTHORIZED/.test(reason)));
+    assert.ok(acquisition.readinessBlockers.includes('no sending inbox is configured for this client'));
     assert.equal(JSON.stringify(overview).includes('dental-test.invalid'), false, 'no ScaleLab record leaks into the Jole view');
     const sl = await (await get('/api/clients/scalelab/overview')).json();
     assert.equal(sl.leads.imported, 3);

@@ -17,6 +17,7 @@ const { campaignsForClient, campaignSendable, clientCampaign } = require('./camp
 const { MEETING_STATUS, billingSummary, withBilling, CLARIFICATION_STATUS } = require('./ledger');
 const { REPLY_EVENT_TYPE } = require('./reply-pipeline');
 const { sendSuppressionReason } = require('../pipeline-state');
+const { clientPersonalizationState } = require('./client-email');
 
 const SEND_EVENTS = new Set(['initial_email_sent', 'follow_up_sent', 'sequence_step_sent']);
 const LEGACY_REPLY_SENTIMENT = Object.freeze({
@@ -36,7 +37,7 @@ function activityLeadId(row) {
   return id.startsWith('CE-') ? id.slice(3) : id;
 }
 
-function leadMetrics(leads, { routedLeadReady, env }) {
+function leadMetrics(leads, { routedLeadReady, env, managed = false }) {
   const sent = lead => Number(lead.emailStep || 0) > 0 || ['emailed', 'done', 'replied'].includes(text(lead.emailStatus).toLowerCase());
   return {
     imported: leads.length,
@@ -44,6 +45,13 @@ function leadMetrics(leads, { routedLeadReady, env }) {
     routingReady: leads.filter(lead => routedLeadReady(lead, env).ok).length,
     queued: leads.filter(lead => text(lead.stage) === 'Queued' && !text(lead.emailStatus)).length,
     sent: leads.filter(sent).length,
+    // Personalization readiness of unsent leads (client-email.js): ready to
+    // queue, held for review, evidence too old, or the client's copy config missing.
+    ...(managed ? { personalization: leads.filter(lead => !sent(lead)).reduce((counts, lead) => {
+      const status = clientPersonalizationState(lead, { env }).status;
+      counts[status] = (counts[status] || 0) + 1;
+      return counts;
+    }, {}) } : {}),
   };
 }
 
@@ -160,7 +168,7 @@ function buildClientOverview({
       lifecycleStatus: client.lifecycleStatus, onboarding: client.onboarding ? { ...client.onboarding } : null,
     },
     sending: clientSendState(client.id, env),
-    leads: leadMetrics(mine, { routedLeadReady, env }),
+    leads: leadMetrics(mine, { routedLeadReady, env, managed: !client.isDefault }),
     deliverability: {
       sends: sends.length,
       bounced: bounces.length,

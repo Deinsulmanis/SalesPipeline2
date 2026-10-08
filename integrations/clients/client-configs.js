@@ -135,6 +135,12 @@ const JOLE = Object.freeze({
     role: 'Primary representative',
     operatesPlatform: false,
   }),
+  // Who Jole's cold email is from. Every Jole sender uses this display name;
+  // it never falls back to ScaleLab's FROM_NAME.
+  senderIdentity: Object.freeze({ fromName: 'Jorge Guerrero', title: 'CEO', company: 'Jole BTX LLC' }),
+  // Where Jole's copy reads its landing page and CAN-SPAM postal address.
+  // Jole-only variables: neither falls back to ScaleLab's values.
+  copyEnv: Object.freeze({ landingPageUrl: 'JOLE_LANDING_PAGE_URL', mailingAddress: 'JOLE_COMMERCIAL_MAILING_ADDRESS' }),
   escalation: Object.freeze({
     owner: 'scalelab',
     contactName: 'Jorge Guerrero',

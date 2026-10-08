@@ -56,11 +56,12 @@ const CLIENT_TEMPLATES = Object.freeze([
   Object.freeze({
     id: 'jole-industrial-employer-v1', clientId: 'jole', niche: 'jole_employer',
     name: 'Jole BTX · Industrial employer acquisition', sequenceSteps: 3,
-    // Final approved copy (jole-copy.js). Still not ready: no send path renders
-    // it, and launch needs its own approval (landing page, Jole mailing
-    // address, warmed and approved senders, client send authorization).
+    // Final approved copy (jole-copy.js), rendered for sending by
+    // client-email.js. Ready is about the COPY only: sending still needs the
+    // client switch, CLIENT_SENDING_AUTHORIZED, capacity and an eligible Jole
+    // sender, none of which this grants.
     copyVersion: JOLE_INDUSTRIAL_EMPLOYER_COPY.copyVersion, copy: JOLE_INDUSTRIAL_EMPLOYER_COPY,
-    ready: false, reason: 'Jole employer-acquisition copy is final but not deployed or approved for sending (no send path renders it; launch needs the landing page, Jole mailing address, approved senders and send authorization)',
+    ready: true, reason: '',
   }),
 ]);
 
@@ -68,7 +69,11 @@ const CLIENT_CAMPAIGNS = Object.freeze([
   Object.freeze({
     id: 'JOLE_DC_MISSION_CRITICAL', clientId: 'jole', number: 1,
     label: 'Jole #1 — Data-center / mission-critical contractors',
-    status: CAMPAIGN_STATUS.DRAFT,
+    status: CAMPAIGN_STATUS.DISABLED,
+    // Archived 2026-10-08: contractor ICP superseded by the industrial-employer
+    // campaign; no leads, sends or replies ever. Kept for the record, hidden
+    // from Jole's working views, never routable or importable.
+    archivedAt: '2026-10-08',
     leadType: 'jole_employer', emailTemplateId: 'jole-dc-mission-critical-v1',
     audience: 'employers',
     icp: Object.freeze({
@@ -93,6 +98,10 @@ const CLIENT_CAMPAIGNS = Object.freeze([
     id: 'JOLE_GULF_INDUSTRIAL', clientId: 'jole', number: 2,
     label: 'Jole #2 — Gulf Coast refinery / petrochemical / pipeline contractors',
     status: CAMPAIGN_STATUS.DISABLED,
+    // Archived 2026-10-08: contractor ICP superseded by the industrial-employer
+    // campaign; no leads, sends or replies ever. Kept for the record, hidden
+    // from Jole's working views, never routable or importable.
+    archivedAt: '2026-10-08',
     leadType: 'jole_employer', emailTemplateId: 'jole-gulf-industrial-v1',
     audience: 'employers',
     icp: Object.freeze({
@@ -105,6 +114,10 @@ const CLIENT_CAMPAIGNS = Object.freeze([
     id: 'JOLE_SHIPYARD', clientId: 'jole', number: 3,
     label: 'Jole #3 — Shipbuilding / ship-repair contractors',
     status: CAMPAIGN_STATUS.DISABLED,
+    // Archived 2026-10-08: contractor ICP superseded by the industrial-employer
+    // campaign; no leads, sends or replies ever. Kept for the record, hidden
+    // from Jole's working views, never routable or importable.
+    archivedAt: '2026-10-08',
     leadType: 'jole_employer', emailTemplateId: 'jole-shipyard-v1',
     audience: 'employers',
     icp: Object.freeze({
@@ -113,16 +126,25 @@ const CLIENT_CAMPAIGNS = Object.freeze([
       contractorTypes: Object.freeze([]), workerCategories: Object.freeze([]), requiredEvidence: Object.freeze([]),
     }),
   }),
-  // The Jole campaign every Jole sender is scoped to (client senderPolicy).
-  // Configured, never sendable while DRAFT: its template is not ready, Jole
-  // sending is disabled and Jole senders are paused.
+  // The Jole campaign every Jole sender is scoped to (client senderPolicy),
+  // and the only one in Jole's working views.
   Object.freeze({
     id: 'jole-btx-employer-acquisition', clientId: 'jole', number: 4,
-    label: 'Jole BTX — Industrial Employer Acquisition',
+    label: 'Jole BTX — Industrial Employers | MFG + Heavy Industry',
     campaignVersion: 'jole_industrial_employer_acquisition_v1',
-    status: CAMPAIGN_STATUS.DRAFT,
+    // Copy approved: leads may be personalised, routed and queued like
+    // ScaleLab's. Sending stays off at the client (sending.enabled false, not
+    // in CLIENT_SENDING_AUTHORIZED, capacity 0).
+    status: CAMPAIGN_STATUS.APPROVED,
     leadType: 'jole_employer', emailTemplateId: 'jole-industrial-employer-v1',
     audience: 'employers',
+    // Attribution, as ScaleLab's campaign versions carry it.
+    copyVersion: JOLE_INDUSTRIAL_EMPLOYER_COPY.copyVersion,
+    subjectStrategy: 'jole_hiring_role_v1',
+    personalizationStrategy: 'jole_verified_hiring_v1',
+    offerVersion: 'jole_skilled_trade_labor_v1',
+    // "Saw X is hiring Y" must still be true when it is sent.
+    personalization: Object.freeze({ maxEvidenceAgeDays: 45 }),
     // Jole sells skilled-trade labor TO these employers. Not ScaleLab's
     // staffing-agency campaign: no shared copy, offer or audience.
     icp: Object.freeze({
@@ -198,13 +220,15 @@ const clientLeadType = id => {
   return CLIENT_LEAD_TYPES.find(type => type.id === value || type.aliases.includes(value)) || null;
 };
 
-function campaignsForClient(clientId) {
-  return CLIENT_CAMPAIGNS.filter(campaign => campaign.clientId === clientId);
+// Working views list live campaigns only; history views pass includeArchived.
+function campaignsForClient(clientId, { includeArchived = false } = {}) {
+  return CLIENT_CAMPAIGNS.filter(campaign => campaign.clientId === clientId && (includeArchived || !campaign.archivedAt));
 }
 
 /** May leads be queued/sent under this campaign as far as the campaign itself is concerned? */
 function campaignSendable(campaign) {
   if (!campaign) return { ok: false, code: 'campaign_unknown', reason: 'campaign is not registered' };
+  if (campaign.archivedAt) return { ok: false, code: 'campaign_disabled', reason: `${campaign.id} is archived` };
   if (campaign.status === CAMPAIGN_STATUS.DISABLED) return { ok: false, code: 'campaign_disabled', reason: `${campaign.id} is disabled` };
   if (campaign.status === CAMPAIGN_STATUS.DRAFT) return { ok: false, code: 'campaign_draft', reason: `${campaign.id} is a draft` };
   const template = clientTemplate(campaign.emailTemplateId);

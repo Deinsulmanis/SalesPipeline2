@@ -203,9 +203,11 @@ test('routing: validateRoute refuses cross-client sender, template and campaign'
   assert.equal(joleOnScalelab.code, 'client_ownership_conflict');
   const campaignMismatch = validateRoute({ niche: 'dental', senderInboxId: 'primary', emailTemplateId: 'dental-guarantee-v1', inboxes, campaignVersionId: 'jole-btx-employer-acquisition' });
   assert.equal(campaignMismatch.code, 'client_ownership_conflict');
-  // Same client end to end: isolation passes; the draft template's readiness is what refuses.
+  // Same client end to end: isolation passes and the approved campaign routes.
+  // Routing is not sending: routedLeadReady (below) and the send gate still
+  // refuse while Jole's client switch is off.
   const jole = validateRoute({ niche: 'jole_employer', senderInboxId: 'jole_test', emailTemplateId: 'jole-industrial-employer-v1', inboxes, campaignVersionId: 'jole-btx-employer-acquisition' });
-  assert.equal(jole.ok, false); assert.equal(jole.code, undefined); assert.match(jole.reason, /not deployed or approved/);
+  assert.equal(jole.ok, true); assert.equal(jole.clientId, 'jole');
   // Same client, retired offer: refused on the offer, not on isolation.
   assert.equal(validateRoute({ niche: 'dental', senderInboxId: 'primary', emailTemplateId: 'dental-guarantee-v1', inboxes }).code, 'offer_retired');
 });
@@ -222,10 +224,11 @@ test('routing: inbox rows without clientId (as sender-balance passes them) still
   }
 });
 
-test('routing: Jole campaigns are not queueable while draft/placeholder', () => {
-  assert.match(validateCampaignVersionRoute({ niche: 'jole_employer', emailTemplateId: 'jole-industrial-employer-v1', campaignVersionId: 'jole-btx-employer-acquisition' }).reason, /draft/);
-  assert.match(validateCampaignVersionRoute({ niche: 'jole_employer', emailTemplateId: 'jole-gulf-industrial-v1', campaignVersionId: 'JOLE_GULF_INDUSTRIAL' }).reason, /disabled/);
-  assert.match(validateCampaignVersionRoute({ niche: 'jole_employer', emailTemplateId: 'jole-shipyard-v1', campaignVersionId: 'JOLE_SHIPYARD' }).reason, /disabled/);
+test('routing: only the approved Jole campaign is queueable; archived placeholders never are', () => {
+  assert.equal(validateCampaignVersionRoute({ niche: 'jole_employer', emailTemplateId: 'jole-industrial-employer-v1', campaignVersionId: 'jole-btx-employer-acquisition' }).ok, true);
+  assert.match(validateCampaignVersionRoute({ niche: 'jole_employer', emailTemplateId: 'jole-gulf-industrial-v1', campaignVersionId: 'JOLE_GULF_INDUSTRIAL' }).reason, /archived/);
+  assert.match(validateCampaignVersionRoute({ niche: 'jole_employer', emailTemplateId: 'jole-shipyard-v1', campaignVersionId: 'JOLE_SHIPYARD' }).reason, /archived/);
+  assert.match(validateCampaignVersionRoute({ niche: 'jole_employer', emailTemplateId: 'jole-dc-mission-critical-v1', campaignVersionId: 'JOLE_DC_MISSION_CRITICAL' }).reason, /archived/);
 });
 
 test('routing: routedLeadReady refuses Jole leads through their own registry and never the legacy bypass', () => {
@@ -234,10 +237,11 @@ test('routing: routedLeadReady refuses Jole leads through their own registry and
   const original = process.env.GMAIL_INBOX_REGISTRY_JSON;
   process.env.GMAIL_INBOX_REGISTRY_JSON = JSON.stringify([{ id: 'jole_test', email: 'outreach@jole-test.invalid', status: 'warming', tokenEnv: 'GMAIL_JOLE_TEST_TOKEN_JSON', dailyLimit: 0, clientId: 'jole' }]);
   try {
-    // Registered Jole sender: ownership passes; the draft campaign refuses.
+    // Registered Jole sender: ownership and the approved campaign pass; Jole's
+    // client sending switch refuses.
     const verdict = routedLeadReady(joleLead({ routingRequired: '' }), {});
     assert.equal(verdict.ok, false);
-    assert.equal(verdict.code, 'campaign_draft');
+    assert.equal(verdict.code, 'client_sending_disabled');
     assert.equal(routedLeadReady(joleLead({ tradeType: 'staffing' }), {}).code, 'client_ownership_conflict');
     // A legacy lead holding a Jole sender id is refused before the legacy bypass.
     assert.equal(routedLeadReady({ ...legacyBlank(), senderInboxId: 'jole_test' }, {}).code, 'client_ownership_conflict');

@@ -66,14 +66,15 @@ test('1-2. Jole is out of onboarding: an active, configured client with no platf
   assert.deepEqual([...jole.workspaces], ['clients', 'pipeline', 'inbox', 'bookings', 'campaigns', 'analytics', 'settings']);
 });
 
-test('3. the Jole campaign exists with its exact identifiers, configured as a never-sendable draft', () => {
+test('3. the Jole campaign exists with its exact identifiers: copy approved, never sendable while the client switch is off', () => {
   const campaign = clientCampaign(CAMPAIGN);
   assert.equal(campaign.clientId, 'jole');
   assert.equal(campaign.emailTemplateId, 'jole-industrial-employer-v1');
   assert.equal(campaign.campaignVersion, VERSION);
   assert.equal(clientCampaign(VERSION), campaign, 'the stored campaign version resolves to the same campaign');
-  assert.equal(clientTemplate('jole-industrial-employer-v1').ready, false);
-  assert.equal(campaignSendable(campaign).ok, false);
+  assert.equal(clientTemplate('jole-industrial-employer-v1').ready, true);
+  assert.equal(campaignSendable(campaign).ok, true, 'the campaign itself is approved');
+  assert.equal(require('../integrations/clients/send-policy').clientSendBlock('jole', {}).code, 'client_sending_disabled', 'the client switch still refuses');
   assert.deepEqual([...getClient('jole').senderPolicy.allowedCampaignIds], [CAMPAIGN]);
 });
 

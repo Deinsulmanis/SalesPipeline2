@@ -7361,6 +7361,54 @@ async function deleteCeLead(id) {
 
 // ── CSV IMPORT ───────────────────────────────────────────────────────────────
 
+// A managed client's import: every research column travels with the row and
+// the client's own server-side import builds the profile. Same endpoint and
+// checks as any client import; never ScaleLab's /api/coldemail/import.
+function parseCsvRecords(text) {
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim());
+  if (lines.length < 2) return [];
+  const headers = splitCSVLine(lines[0]).map(h => h.trim().toLowerCase().replace(/[\s-]+/g, '_'));
+  return lines.slice(1).map(line => {
+    const cells = splitCSVLine(line);
+    return Object.fromEntries(headers.map((h, i) => [h, (cells[i] || '').trim()]));
+  });
+}
+
+function handleClientCsvImport(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  event.target.value = '';
+  const clientId = activeClientId;
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    try {
+      const records = parseCsvRecords(e.target.result);
+      if (!records.length) return showToast('No data rows found in CSV.', 'warning');
+      const info = await (await fetch(`/api/clients/${encodeURIComponent(clientId)}`)).json();
+      const campaign = (info.campaigns || [])[0];
+      if (!campaign) return showToast('This client has no campaign to import into.', 'warning');
+      const rows = records.map(r => ({
+        company: r.company || r.company_name || '', email: r.email || '',
+        contactName: r.contact_name || [r.first_name, r.last_name].filter(Boolean).join(' '),
+        city: r.hiring_site || r.city || '', website: r.website || '', tradeType: r.sector || r.trade_type || '',
+        evidence: r.why_contact_is_relevant || r.evidence || '', research: r,
+      }));
+      showToast(`Importing ${rows.length} row(s) into ${campaign.label}…`, 'info');
+      const resp = await fetch(`/api/clients/${encodeURIComponent(clientId)}/leads/import`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmClientId: clientId, campaignId: campaign.id, rows }),
+      });
+      const result = await resp.json().catch(() => ({}));
+      if (!resp.ok) return showToast(`Import failed: ${result.error || resp.status}`, 'error');
+      const reasons = Object.entries(result.refusalsByCode || {}).map(([code, n]) => `${n} ${code}`).join(', ') || 'none';
+      showToast(`Imported ${result.written} lead(s); ${result.rejected} not imported (${reasons})`, result.written ? 'success' : 'warning');
+      if (activeClientId === clientId) renderClientLeads(clientId);
+    } catch (err) { showToast('Import error: ' + err.message, 'error'); }
+  };
+  reader.readAsText(file);
+}
+
+
 function handleCsvImport(event) {
   const file = event.target.files[0];
   if (!file) return;
@@ -8102,14 +8150,15 @@ async function loadClientOpsWorkspace() {
       clientKv('Invoiced', b.available ? clientMoney(b.invoicedCents, b.currency) : '—'),
     ];
     const grid = `<div class="client-grid">
-      ${clientCard('Leads', [clientKv('Imported', o.leads.imported), clientKv('Approved', o.leads.approved), clientKv('Routing-ready', o.leads.routingReady), clientKv('Queued', o.leads.queued), clientKv('Sent', o.leads.sent)])}
+      ${clientCard('Leads', [clientKv('Imported', o.leads.imported), clientKv('Approved', o.leads.approved), clientKv('Routing-ready', o.leads.routingReady), clientKv('Queued', o.leads.queued), clientKv('Sent', o.leads.sent),
+        ...(o.leads.personalization ? [clientKv('Personalization ready', o.leads.personalization.ready || 0), clientKv('Needs review', (o.leads.personalization.needs_review || 0) + (o.leads.personalization.not_ready || 0)), clientKv('Evidence stale', o.leads.personalization.stale || 0)] : [])])}
       ${clientCard('Sending', [clientKv('Sends', o.deliverability.sends), clientKv('Delivered (est.)', o.deliverability.deliveredEstimate), clientKv('Bounced', o.deliverability.bounced), clientKv('Suppressed', o.deliverability.suppressed), clientKv('Senders', o.deliverability.senders.length)])}
       ${clientCard('Replies', [clientKv('Replies', o.replies.total), clientKv('Positive', o.replies.positive), clientKv('Neutral', o.replies.neutral), clientKv('Negative', o.replies.negative), clientKv('Unsubscribe', o.replies.unsubscribe)])}
       ${pipelineRows ? clientCard('Pipeline', pipelineRows) : ''}
       ${billingRows ? clientCard('Billing', billingRows) : ''}
     </div>`;
-    const campaigns = o.campaigns.length ? `<div class="client-section"><h3>Campaigns</h3><div class="client-table-wrap"><table class="client-table"><thead><tr><th>#</th><th>Campaign</th><th>Status</th><th>Leads</th><th>Sendable</th></tr></thead><tbody>
-      ${o.campaigns.map(c => `<tr><td>${esc(c.number)}</td><td><b>${esc(c.label)}</b><div class="client-note">${esc(c.icp?.summary || '')}</div></td><td>${esc(c.status)}</td><td>${esc(c.leads)}</td><td>${c.sendable ? 'Yes' : esc('No — ' + (c.blockedBy || ''))}</td></tr>`).join('')}
+    const campaigns = o.campaigns.length ? `<div class="client-section"><h3>Campaigns</h3><div class="client-table-wrap"><table class="client-table"><thead><tr><th>#</th><th>Campaign</th><th>Status</th><th>Leads</th><th>Queued</th><th>Sent</th><th>Ready to send</th></tr></thead><tbody>
+      ${o.campaigns.map(c => `<tr><td>${esc(c.number)}</td><td><b>${esc(c.label)}</b><div class="client-note">${esc(c.icp?.summary || '')}</div><div class="client-note">Template ${esc(c.emailTemplateId || '')}</div></td><td>${esc(c.status)}</td><td>${esc(c.leads)}</td><td>${esc(c.queued ?? 0)}</td><td>${esc(c.sent ?? 0)}</td><td>${c.ready ? 'Yes' : esc('No — ' + ((c.readinessBlockers || [])[0] || c.blockedBy || ''))}</td></tr>`).join('')}
     </tbody></table></div></div>` : '';
     const ledgerNote = o.pipeline && !o.pipeline.available ? `<p class="client-note">Meeting ledger unavailable: ${esc(o.pipeline.reason || '')}</p>` : '';
     const leadsSlot = activeClientIsManaged() ? '<div id="client-leads"></div>' : '';
@@ -8130,11 +8179,14 @@ async function renderClientLeads(clientId) {
     const response = await fetch(`/api/clients/${encodeURIComponent(clientId)}/leads?limit=200`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
-    const rows = (data.leads || []).map(lead => `<tr><td><b>${esc(lead.company || '—')}</b><div class="client-note">${esc(lead.contactName || '')}</div></td><td>${esc(lead.email)}</td><td>${esc(lead.campaign || '—')}</td><td>${esc(lead.stage || '—')}${lead.emailStatus ? ' · ' + esc(lead.emailStatus) : ''}</td><td>${esc(lead.senderInboxId || 'unassigned')}</td><td>${lead.routingReady ? 'Yes' : 'No'}</td></tr>`).join('');
+    const roleCell = lead => (lead.roles || []).map(role => `<span title="Posting: ${escAttr(role.raw)}">${esc(role.clean || '— review')}</span>`).join('<br>') || '—';
+    const personalization = lead => { const p = lead.personalization || {}; return `${esc(p.status || '—')}${p.reason ? `<div class="client-note">${esc(p.reason)}</div>` : ''}`; };
+    const rows = (data.leads || []).map(lead => `<tr><td><b>${esc(lead.company || '—')}</b><div class="client-note">${esc(lead.contactName || '')}${lead.title ? ' · ' + esc(lead.title) : ''}</div></td><td>${esc(lead.email)}</td><td>${roleCell(lead)}</td><td>${esc(lead.hiringSite || '—')}${lead.tier ? `<div class="client-note">${esc(lead.tier)}${lead.siteTie ? ' · ' + esc(lead.siteTie) : ''}</div>` : ''}</td><td>${personalization(lead)}</td><td>${esc(lead.stage || '—')}${lead.emailStatus ? ' · ' + esc(lead.emailStatus) : ''}</td><td>${esc(lead.senderInboxId || 'unassigned')}</td><td>${lead.routingReady ? 'Yes' : 'No'}</td></tr>`).join('');
     host.innerHTML = `<div class="client-section"><h3>Leads (${esc(data.total)})</h3>
       <p class="client-note">Only this client's leads, selected on the server.${data.total > (data.leads || []).length ? ` Showing the first ${esc((data.leads || []).length)}.` : ''}</p>
-      <div class="client-table-wrap"><table class="client-table"><thead><tr><th>Employer</th><th>Email</th><th>Campaign</th><th>State</th><th>Sender</th><th>Routing-ready</th></tr></thead><tbody>
-      ${rows || '<tr><td colspan="6">No leads imported for this client yet.</td></tr>'}
+      <label class="btn-import-csv" title="Import this client's leads from a research CSV"><input type="file" accept=".csv" style="display:none" onchange="handleClientCsvImport(event)">Import CSV</label>
+      <div class="client-table-wrap"><table class="client-table"><thead><tr><th>Employer</th><th>Email</th><th>Hiring role</th><th>Hiring site</th><th>Personalization</th><th>State</th><th>Sender</th><th>Routing-ready</th></tr></thead><tbody>
+      ${rows || '<tr><td colspan="8">No leads imported for this client yet.</td></tr>'}
       </tbody></table></div></div>`;
   } catch (error) {
     host.innerHTML = `<p class="client-note">Leads unavailable: ${esc(error.message)}</p>`;

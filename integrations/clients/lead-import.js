@@ -34,6 +34,7 @@ const { clientCampaign, CAMPAIGN_STATUS } = require('./campaigns');
 const { checkClientConsistency, resolveLeadClient } = require('./ownership');
 const { emailTakenFor, emailUniquenessMode } = require('./email-scope');
 const { evaluateScopedSuppression } = require('./suppression');
+const { buildLeadProfile, profileFromResearchRow, serializeLeadProfile } = require('./lead-profile');
 
 const norm = value => String(value || '').trim().toLowerCase();
 
@@ -74,6 +75,14 @@ function validateClientLeadImport({ clientId, campaignId, rows = [], existingLea
       // Explicit owner from the first write.
       clientId: client.id,
     };
+    // Research the campaign personalises from (roles raw + clean, site,
+    // sector, tier, buyer, evidence) travels in campaign_notes, which no
+    // ownership resolver reads.
+    const profile = (row.profile && typeof row.profile === 'object') ? row.profile : profileFromResearchRow(row.research);
+    if (profile) {
+      try { proposed.campaign_notes = serializeLeadProfile(buildLeadProfile({ clientId: client.id, profile })); }
+      catch (error) { return refuse('invalid', `profile: ${error.message}`); }
+    }
     const verdict = checkClientConsistency({ lead: proposed, expectedClientId: client.id });
     if (!verdict.ok) return refuse('ownership_conflict', verdict.reason);
     accepted.push(proposed);
@@ -146,7 +155,7 @@ async function importClientLeads({
     // Every ColdEmail column, explicitly: nothing sent, nothing scheduled, no sender.
     leads.push({
       ...proposed, id: newId(), lastEmailedAt: '', reviewCount: '', rating: '', tier: '',
-      campaign_notes: '', enrichment_attempted: '',
+      campaign_notes: proposed.campaign_notes || '', enrichment_attempted: '',
     });
   }
   // Last line of defence before the write: each lead must be this client's,

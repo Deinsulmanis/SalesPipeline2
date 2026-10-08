@@ -149,8 +149,10 @@ const {
 // Managed clients (internal operator views only; clients never log in).
 const { registerClientRoutes } = require('./integrations/clients/routes');
 const { importClientLeads } = require('./integrations/clients/lead-import');
+const { createImportBatchStore, processPendingImportBatches } = require('./integrations/clients/import-batches');
 const { leadsForClient, leadDefinitelyOtherClient } = require('./integrations/clients/ownership');
-const { resolveClientId, DEFAULT_CLIENT_ID } = require('./integrations/clients/registry');
+const { resolveClientId, DEFAULT_CLIENT_ID, listClients } = require('./integrations/clients/registry');
+const { clientSendState } = require('./integrations/clients/send-policy');
 const { getLedgerStore } = require('./integrations/clients/ledger-store');
 const { emailUniquenessMode, leadsInEmailScope, leadsForCalendarMatching } = require('./integrations/clients/email-scope');
 const { filterInboxesForClient } = require('./integrations/clients/workspace-views');
@@ -2073,7 +2075,37 @@ registerClientRoutes(app, {
     return { dailyLimit: capacity.globalDailyLimit, windowLimit: capacity.globalPerRunLimit };
   },
   importLeads: options => importManagedClientLeads(options),
+  importBatches: () => clientImportBatchStore,
 });
+
+// ── MANAGED-CLIENT IMPORT BATCHES + READINESS ───────────────────────────────
+// A batch (public.client_lead_import_batches) is imported by THIS process
+// through importManagedClientLeads — the dashboard import's own path. Only
+// operator-promoted `pending` batches run; claiming is atomic.
+const clientImportBatchStore = createImportBatchStore();
+async function runClientImportBatches(trigger) {
+  const outcomes = await processPendingImportBatches({ store: clientImportBatchStore, importLeads: importManagedClientLeads });
+  if (outcomes.length) console.log(`[import-batches] ${trigger}: ${outcomes.map(o => `${o.id}=${o.status}${o.written !== undefined ? ` written ${o.written}` : ''}`).join(', ')}`);
+}
+
+// One line per managed client at boot: what is configured and what is not.
+// Booleans and counts only; no value of any variable is logged.
+function logManagedClientReadiness() {
+  const store = getLedgerStore();
+  const senders = configuredSenders();
+  for (const client of listClients().filter(item => !item.isDefault)) {
+    const mine = senders.filter(sender => sender.clientId === client.id);
+    const copyEnv = client.copyEnv || {};
+    console.log(JSON.stringify({
+      event: 'client_readiness', client_id: client.id, sending: clientSendState(client.id).sendingEnabled,
+      ledger_available: Boolean(store?.enabled), capacity_daily: client.capacity.dailyCap,
+      senders: mine.length, senders_eligible: mine.filter(sender => sender.sendEligible).length,
+      landing_page_configured: Boolean(copyEnv.landingPageUrl && process.env[copyEnv.landingPageUrl]),
+      mailing_address_configured: Boolean(copyEnv.mailingAddress && process.env[copyEnv.mailingAddress]),
+      import_batches_available: clientImportBatchStore.enabled,
+    }));
+  }
+}
 
 app.get('/api/campaign-versions', requireAuth, (req, res) => {
   res.json({ active: ACTIVE_CAMPAIGN_VERSION, versions: CAMPAIGN_VERSIONS });
@@ -7922,6 +7954,13 @@ app.listen(PORT, () => {
   console.log(mirrorEnabled()
     ? '[supabase-mirror] enabled — canonical activity is shadow-mirrored after each Google Sheets write'
     : '[supabase-mirror] disabled — Google Sheets only (set SUPABASE_URL and SUPABASE_SECRET_KEY to enable)');
+  try { logManagedClientReadiness(); } catch (error) { console.warn(`[clients] readiness log failed: ${error.message}`); }
+  // Operator-promoted import batches: shortly after boot, then every 10 minutes.
+  if (process.env.RAILWAY_ENVIRONMENT && clientImportBatchStore.enabled) {
+    const run = trigger => runClientImportBatches(trigger).catch(error => console.error(`[import-batches] ${error.message}`));
+    setTimeout(() => run('boot'), 45 * 1000).unref();
+    setInterval(() => run('interval'), 10 * 60 * 1000).unref();
+  }
   sendLockHealth().then(health => {
     console.log(health.enabled === false
       ? '[send-lock] disabled — dedicated outbound reservation database is not active'

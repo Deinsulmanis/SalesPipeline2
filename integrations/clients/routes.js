@@ -29,6 +29,8 @@ const ledger = require('./ledger');
 const { validateClientLeadImport } = require('./lead-import');
 const { buildClientPipeline } = require('./pipeline');
 const { buildClientInbox, buildClientSettings } = require('./workspace-views');
+const { clientPersonalizationState } = require('./client-email');
+const { readLeadProfile } = require('./lead-profile');
 
 function registerClientRoutes(app, {
   requireAuth, loadDataset, getStore, senders, routedLeadReady, env = process.env, log = console,
@@ -38,6 +40,8 @@ function registerClientRoutes(app, {
   // Managed-client lead import (lead-import.js importClientLeads, bound to
   // server storage). Absent, the import route answers 503.
   importLeads = null,
+  // Import batches store (import-batches.js); absent, the imports view is empty.
+  importBatches = () => null,
 }) {
   const router = express.Router();
   router.use(requireAuth);
@@ -82,6 +86,8 @@ function registerClientRoutes(app, {
       client: publicClient(req.client),
       sending: clientSendState(req.client.id, env),
       campaigns: campaignsForClient(req.client.id).map(campaign => ({ ...campaign, sendable: campaignSendable(campaign) })),
+      archivedCampaigns: campaignsForClient(req.client.id, { includeArchived: true }).filter(campaign => campaign.archivedAt)
+        .map(campaign => ({ id: campaign.id, label: campaign.label, archivedAt: campaign.archivedAt })),
     });
   });
 
@@ -97,6 +103,18 @@ function registerClientRoutes(app, {
     } catch (error) { fail(res, error); }
   });
 
+  // What an operator needs to see of a lead's research and personalization.
+  const leadResearchView = lead => {
+    const profile = readLeadProfile(lead);
+    if (!profile) return { personalization: { status: 'no_profile' } };
+    return {
+      title: profile.contact?.title || '', sector: profile.company?.sector || '', tier: profile.company?.tier || '',
+      hiringSite: profile.hiring?.site || '', siteTie: profile.hiring?.siteTie || '', catchAll: profile.email?.domainCatchAll ?? null,
+      roles: (profile.hiring?.roles || []).map(role => ({ raw: role.raw, clean: role.clean, status: role.status })),
+      personalization: clientPersonalizationState(lead, { env }),
+    };
+  };
+
   router.get('/:clientId/leads', clientParam, async (req, res) => {
     try {
       const dataset = await loadDataset({ force: req.query.refresh === '1' });
@@ -109,6 +127,7 @@ function registerClientRoutes(app, {
           stage: lead.stage, emailStatus: lead.emailStatus, emailStep: lead.emailStep,
           campaign: lead.intendedCampaignVersion || lead.campaign, senderInboxId: lead.senderInboxId,
           routingReady: routedLeadReady(lead, env).ok,
+          ...leadResearchView(lead),
         })),
       });
     } catch (error) { fail(res, error); }
@@ -181,6 +200,13 @@ function registerClientRoutes(app, {
       }));
       res.json(result);
     } catch (error) { fail(res, error); } finally { importsInFlight.delete(req.client.id); }
+  });
+
+  router.get('/:clientId/imports', clientParam, async (req, res) => {
+    const store = importBatches();
+    if (!store?.enabled) return res.json({ clientId: req.client.id, available: false, batches: [] });
+    try { res.json({ clientId: req.client.id, available: true, batches: await store.listForClient(req.client.id) }); }
+    catch (error) { fail(res, error); }
   });
 
   // ── Ledger ────────────────────────────────────────────────────────────────

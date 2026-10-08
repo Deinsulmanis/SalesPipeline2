@@ -124,6 +124,9 @@ const {
   buildIssuanceRecord, ensureLandingIssuance, recordLandingLinkSent,
 } = require('./integrations/landing-link-issuance');
 const STAFFING_TEMPLATE = STAFFING_CAMPAIGN.emailTemplateId;
+// Managed clients' cold copy (clients/client-email.js): same delivery, cadence
+// and safety gates as ScaleLab's; only the copy and its personalization differ.
+const { isClientTemplateId, renderClientLeadEmail, validateClientLeadEmail } = require('./integrations/clients/client-email');
 // The reactivation gate is defined once, in the shared pipeline-state model.
 const { manualHoldReleased, applyHoldToNotes, applyResumeToNotes, stageRequiresHold,
   deriveCallLifecycle, deriveHotState, sendSuppressionReason } = require('./integrations/pipeline-state');
@@ -146,7 +149,7 @@ const { PROMOTION_TRIGGER, resolvePromotionIdentity, promotionDecision } = requi
 const {
   coldSendAttribution, stageSequenceAttribution, acquisitionAttribution,
   attributionFromActivity, replyTouchAttribution, latestSendAttribution, promotionAttribution,
-  LEGACY_UNKNOWN, familyForLead, CAMPAIGN_FAMILY, resolveLeadFamily,
+  LEGACY_UNKNOWN, familyForLead, CAMPAIGN_FAMILY, resolveLeadFamily, isManagedFamily,
 } = require('./integrations/campaign-versions');
 const { findOriginalSentThread, resolveColdFollowUpThread } = require('./integrations/gmail-threading');
 const { appendLeadsRow } = require('./integrations/leads-sheet-append');
@@ -1236,10 +1239,29 @@ function encodeHeaderValue(value) {
 }
 
 // RFC-822 message → base64url for the Gmail API
-function toRawMessage({ to, subject, body, html, inReplyTo, references, messageId, fromEmail = FROM_EMAIL, extraHeaders = [] }) {
+// The From display name for a sender: a managed client's own sender identity
+// (Jole mail is from Jorge, never "ScaleLab AI"); ScaleLab's inboxes keep FROM_NAME.
+// Same proof the staffing branch makes, for a managed client: what is about to
+// be delivered is exactly its approved copy for this step. '' when it is (or
+// the lead is not a managed client's).
+function clientDeliveryCopyProblem(lead, step, body) {
+  if (!isClientTemplateId(lead.emailTemplateId)) return '';
+  let clientEmail = null;
+  try { clientEmail = renderClientLeadEmail(lead, step); } catch (error) { return `client copy could not be rendered: ${error.message}`; }
+  return clientEmail.body === body ? '' : 'client delivery body differs from its approved copy';
+}
+
+function fromNameForSender(sender) {
+  const clientId = String(sender?.clientId || '').trim();
+  if (!clientId) return FROM_NAME;
+  const client = getManagedClient(clientId);
+  return client.isDefault ? FROM_NAME : (client.senderIdentity?.fromName || client.displayName);
+}
+
+function toRawMessage({ to, subject, body, html, inReplyTo, references, messageId, fromEmail = FROM_EMAIL, fromName = FROM_NAME, extraHeaders = [] }) {
   const alternative = html ? require('./integrations/email-alternative').buildMultipartAlternative(body, html) : null;
   const headers = [
-    `From: ${FROM_NAME} <${fromEmail}>`,
+    `From: ${fromName} <${fromEmail}>`,
     `To: ${to}`,
     `Subject: ${encodeHeaderValue(subject)}`,
     'MIME-Version: 1.0',
@@ -1266,7 +1288,7 @@ async function sendEmail({ lead, to, subject, body, html, threadId, inReplyTo, r
     run: async () => {
       const provider = new GmailOutreachProvider({ send: message => runWithGmailFeature('send_provider', () => gmailForSender(sender, { feature: 'send_provider' }).users.messages.send({
         userId: 'me',
-        requestBody: { raw: toRawMessage({ ...message, fromEmail: sender.email, extraHeaders }), ...(message.threadId ? { threadId: message.threadId } : {}) },
+        requestBody: { raw: toRawMessage({ ...message, fromEmail: sender.email, fromName: fromNameForSender(sender), extraHeaders }), ...(message.threadId ? { threadId: message.threadId } : {}) },
       })) });
       return provider.sendEmail({ to, subject, body, html, threadId, inReplyTo, references, messageId });
     },
@@ -2112,6 +2134,8 @@ async function deliverOrdinaryColdStep({
   const staffingEmail = lead.emailTemplateId === STAFFING_TEMPLATE
     ? renderStaffingEmail(lead, step, landingPlan?.tracked ? { landingPageUrl: landingPlan.url } : {}) : null;
   if (staffingEmail && staffingEmail.body !== body) return { delivered: false, reason: 'staffing delivery body differs from locked copy' };
+  const clientCopyProblem = clientDeliveryCopyProblem(lead, step, body);
+  if (clientCopyProblem) return { delivered: false, reason: clientCopyProblem };
   const mailbox = gmailForSender(sender);
   const rfcMessageId = coldStepRfcMessageId(lead.id, step, sender.email);
   const metadataOf = row => { try { return JSON.parse(row.metadata || '{}'); } catch (_) { return {}; } };
@@ -4632,7 +4656,8 @@ async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot 
     if (todaySent >= DAILY_SEND_LIMIT) { console.warn(`  ⏸️  daily cap reached (${todaySent}/${DAILY_SEND_LIMIT}) — deferring to next pass`); break; }
 
     const family = familyForLead(lead);
-    if (family === CAMPAIGN_FAMILY.STAFFING || family === CAMPAIGN_FAMILY.UNROUTED) continue;
+    // Intent emails are ScaleLab's demo follow-up; a managed client never gets one.
+    if (family === CAMPAIGN_FAMILY.STAFFING || family === CAMPAIGN_FAMILY.UNROUTED || isManagedFamily(family)) continue;
     if (lead.emailTemplateId === STAFFING_TEMPLATE) continue;
     const { subject, body } = buildIntentEmail(lead);
     if (DRY_RUN)          { console.log(`— WOULD SEND (intent) → ${lead.email}\n   ${subject}`); continue; }
@@ -5129,6 +5154,7 @@ function coldFollowUpBlockReason(lead) {
   if (archived) return archived.reason;
   const family = familyForLead(lead);
   if (family === CAMPAIGN_FAMILY.UNROUTED) return 'unknown or ambiguous niche';
+  if (isManagedFamily(family) !== isClientTemplateId(lead.emailTemplateId)) return 'client template and campaign family disagree';
   if (family === CAMPAIGN_FAMILY.STAFFING && lead.emailTemplateId !== STAFFING_TEMPLATE) {
     return 'staffing lead missing staffing template';
   }
@@ -6062,7 +6088,19 @@ async function run() {
     // Only the staffing branch is guarded: dental and roofing keep their exact
     // previous behaviour, including how a copy failure propagates.
     let body;
-    if (lead.emailTemplateId === STAFFING_TEMPLATE) {
+    if (isClientTemplateId(lead.emailTemplateId)) {
+      // A managed client's follow-up: its own copy, or a deferral — never the
+      // dental follow-up sequence.
+      try {
+        const email = renderClientLeadEmail(lead, nextStepNum);
+        const bad = validateClientLeadEmail(lead, email, nextStepNum);
+        if (bad) throw new Error(bad);
+        body = email.body;
+      } catch (error) {
+        console.warn(`⏸️  follow-up deferred → ${lead.email} (${error.message})`);
+        return false;
+      }
+    } else if (lead.emailTemplateId === STAFFING_TEMPLATE) {
       try { body = staffingFollowUpBody(lead, nextStepNum, ownershipActivities); }
       catch (error) {
         console.warn(`⏸️  follow-up deferred → ${lead.email} (${error.message})`);
@@ -6208,7 +6246,15 @@ async function run() {
     // error or a "send failed" log line — the lead is fine, the data isn't.
     let built;
     try {
-      if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE) {
+      if (isManagedFamily(familyForLead(lead))) {
+        // A managed client's lead sends its client's copy or nothing: never
+        // ScaleLab's dental/staffing copy. The opener was researched and
+        // stored at import; the renderer only merges it, and throws (draft
+        // for review) when it is missing, unreviewed or stale.
+        if (!isClientTemplateId(lead.emailTemplateId)) throw new Error('managed client lead has no client template');
+        const email = renderClientLeadEmail(lead, 1);
+        built = { subject: email.subject, body: email.body, link: '', opener: 'stored client personalization', openerTier: 'LOCKED', pitchTier: familyForLead(lead) };
+      } else if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE) {
         const qualification = qualifyRoofingLead(lead);
         if (!qualification.ok) throw new Error(`roofing lead qualification failed (${qualification.reasonCode})`);
         const email = renderRoofingSurveyInitial(lead, { mailingAddress: MAILING_ADDRESS, reference: `SL-${refCode(lead)}` });
@@ -6248,7 +6294,9 @@ async function run() {
 
     // Validate the exact assembled body in every mode. Dry runs preview this
     // same normalized value; live runs fail closed and preserve the lead.
-    const invalid = lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE
+    const invalid = isClientTemplateId(lead.emailTemplateId)
+      ? validateClientLeadEmail(lead, { subject, body }, 1)
+      : lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE
       ? validateRoofingSurveyInitial({ subject, body })
       : lead.emailTemplateId === STAFFING_TEMPLATE
       ? validateStaffingEmail({ subject, body }, 1)
