@@ -172,7 +172,8 @@ test('agent: managed leads render client copy before any ScaleLab branch, defer 
   const dental = agent.indexOf('built = await buildEmail(lead);');
   assert.ok(managed > 0 && managed < roofing && roofing < dental, 'managed branch comes first; buildEmail is unreachable for a managed lead');
   assert.match(agent, /if \(isClientTemplateId\(lead\.emailTemplateId\)\) \{\s*\/\/ A managed client's follow-up/);
-  assert.match(agent, /CAMPAIGN_FAMILY\.UNROUTED \|\| isManagedFamily\(family\)\) continue;/);
+  // Intent mail is skipped for every lead now: the demo-intent pass is retired.
+  assert.doesNotMatch(agent, /runIntentTriggerPass/);
   assert.match(agent, /client delivery body differs from its approved copy/);
   assert.match(agent, /fromName: fromNameForSender\(sender\)/);
   assert.match(agent, /return client\.isDefault \? FROM_NAME : \(client\.senderIdentity\?\.fromName \|\| client\.displayName\)/);

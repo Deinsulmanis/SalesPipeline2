@@ -86,7 +86,7 @@ test('scheduler passes a strict 6-per-inbox ceiling with derived totals', () => 
 test('ordinary and stage sends consume the same window quota after provider success', () => {
   const setup = agent.slice(agent.indexOf('const windowQuota = createSendingWindowQuota'), agent.indexOf('// Phase 1 — new sends'));
   assert.match(setup, /runStageSequencePass[\s\S]*windowQuota/);
-  assert.match(setup, /runIntentTriggerPass[\s\S]*windowQuota/);
+  assert.doesNotMatch(agent, /runIntentTriggerPass/, 'the retired demo-intent pass no longer sends');
   const ordinary = agent.slice(agent.indexOf('async function deliverOrdinaryColdStep'), agent.indexOf('// Phase 4: mark a lead'));
   assert.ok(ordinary.lastIndexOf('await sendEmail') < ordinary.lastIndexOf('onProviderSuccess'));
   assert.ok(ordinary.lastIndexOf('onProviderSuccess') < ordinary.lastIndexOf('markSent'));

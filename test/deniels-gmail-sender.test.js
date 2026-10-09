@@ -218,7 +218,7 @@ test('E. existing quota callers and default-cap senders keep the uniform bucket'
   const raised = createSendingWindowQuota({ senderIds: ['primary'], perSenderLimit: 5, globalLimit: 10, perSenderLimits: { primary: 9 } });
   assert.equal(sendingWindowRemainingBySender(raised).get('primary'), 5);
   const agent = read('outreach-agent.js');
-  assert.equal((agent.match(/perSenderLimits: SENDER_PER_RUN_LIMITS/g) || []).length, 2, 'main and intent passes both use sender caps');
+  assert.equal((agent.match(/perSenderLimits: SENDER_PER_RUN_LIMITS/g) || []).length, 1, 'the main pass uses sender caps (the intent pass is retired)');
   assert.match(agent, /const SENDER_PER_RUN_LIMITS = new Map\(GMAIL_SENDERS/);
 });
 

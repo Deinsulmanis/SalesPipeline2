@@ -215,6 +215,11 @@ const BUYING_INTENT_MARKERS = [
   ['next_steps', /\b(?:next steps?|what(?:'?s| is) the next step|how do we (?:start|proceed)|where do we go from here)\b/i],
   ['meeting', /\b(?:book a (?:call|demo|meeting)|schedule (?:a )?(?:call|demo|meeting|something)|set up a (?:call|demo|meeting)|happy to (?:chat|talk|meet)|(?:can|could) we (?:chat|talk|meet)|(?:are you|when are you) (?:free|available)|what times? (?:are )?available|send (?:me )?(?:your )?calendar|let['’]?s (?:chat|talk|meet)|video call|zoom)\b/i],
   ['willing_to_evaluate', /\b(?:willing to (?:try|test|look|evaluate)|open to (?:trying|testing|seeing)|would consider|interested in seeing)\b/i],
+  // A request for a proposal is the same evaluation step as asking for pricing.
+  ['proposal', /\b(?:send (?:me |us |over )?(?:a |the |your )?proposal|(?:request|need|want|like) (?:a |the |your )?proposal)\b/i],
+  // The prospect accepted the meeting invitation (Google / Outlook calendar
+  // replies). Accepting a call is the strongest interest a reply can carry.
+  ['meeting_accepted', /\bhas accepted (?:this|your|the) invitation\b|^accepted:\s.+@/im],
   // Plain expressed interest. The subject pattern is required so this can never
   // fire on "we are NOT interested" — the negation sits exactly where the
   // optional intensifier would be, so the match simply fails.

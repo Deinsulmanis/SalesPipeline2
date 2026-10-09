@@ -28,7 +28,6 @@ const { googleRecipient } = require('../test-support/google-recipient');
 const { deriveAutomationOwnership, OWNER, BLOCKED_BY, NON_COLD_STAGES } = require('../integrations/automation-ownership');
 const { sendSuppressionReason, deriveAutomationState, AUTOMATION_STATES } = require('../integrations/pipeline-state');
 const { planSenderRebalance } = require('../integrations/sender-balance');
-const { pendingIntentWork } = require('../integrations/intent-backstop');
 const { runGoogleCalendarSync } = require('../integrations/google-calendar');
 const { coldSendAttribution } = require('../integrations/campaign-versions');
 const { STAFFING_CAMPAIGN } = require('../integrations/staffing-campaign');
@@ -517,16 +516,9 @@ test('a reply from an archived lead is recorded but never promotes, answers, dra
   assert.ok(agentSrc.indexOf('if (isArchivedLead(lead)) {') < agentSrc.indexOf('case REPLY_ROUTE.INTERESTED:'));
 });
 
-test('archived and retired leads never arm the demo-intent backstop or get a booking link', () => {
-  const plays = [];
-  const lead = archived(staffingLead({ id: 'arch' }), ARCHIVE_REASONS.MANUAL);
-  const activities = [{ sourceLeadId: 'arch', leadId: 'CE-arch', eventType: 'demo_pair_played', occurredAt: '2026-09-29T10:00:00Z',
-    metadata: JSON.stringify({ introPlays: 1, demoPlays: 1 }) }];
-  assert.equal(pendingIntentWork({ leads: [lead, legacyDental({ id: 'dd' })], plays, activities, companyKey: v => v }), 0);
-  const prepare = agentSrc.slice(agentSrc.indexOf('async function prepareDemoIntentCandidates'), agentSrc.indexOf('async function reportIntentWorkHint'));
-  assert.equal((prepare.match(/outreachBlockForLead\(lead\)/g) || []).length, 2, 'both pair creation and due selection skip them');
+test('archived and retired leads cannot get a demo booking link: the path is retired', () => {
+  assert.doesNotMatch(agentSrc, /prepareDemoIntentCandidates|runIntentTriggerPass|both-audios/);
 });
-
 test('a booking by an archived lead is surfaced for review and never blocks automation', async () => {
   const applied = [];
   const result = await runGoogleCalendarSync({

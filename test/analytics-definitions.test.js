@@ -312,7 +312,9 @@ test('20. unique contacted is labelled lead-based, so it cannot be read as a sen
 
 test('21. every funnel rate KPI names its denominator', () => {
   const body = sliceFn(browser, 'renderFunnelAnalytics');
-  for (const label of ['Reply Rate / Sent', 'Positive Rate / Sent', 'Demo Rate / Sent']) {
+  // The retired Demo stage no longer has a rate.
+  assert.ok(!body.includes('Demo Rate / Sent'));
+  for (const label of ['Reply Rate / Sent', 'Positive Rate / Sent']) {
     assert.ok(body.includes(label), `${label} must state its denominator`);
   }
   // The funnel divides by the sent cohort, the Outreach cards by delivered.

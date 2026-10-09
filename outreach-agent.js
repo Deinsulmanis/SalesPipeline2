@@ -44,11 +44,8 @@ const crypto = require('crypto');
 // Junk classifier shared with check-leads.js (CLI) and server.js import —
 // legacy junk rows predate the import choke point, so selection re-checks.
 const { classify: classifyLeadEmail } = require('./check-leads');
-// Scanner-detonation filtering for ProposalOpens, shared verbatim with
-// server.js's dashboard stats — one definition, no drift.
-const { isDatacenterIp } = require('./open-filter');
-// WARM-ONLY booking asset — see booking.js. Imported here for the two intent
-// triggers (question replies, both-audios-played) and NOT by any cold template.
+// WARM-ONLY booking asset — see booking.js. Imported here for reply-driven
+// booking links (question replies) and NOT by any cold template.
 const { bookingSnippet, pricingDeflection, BOOKING_URL, containsBookingLink } = require('./booking');
 // The only source of truth the reply-answering model may state as fact.
 const { factsForLead } = require('./product-facts');
@@ -199,12 +196,9 @@ const { QUALIFY_ACTION: AGENT_V2_QUALIFY_ACTION, pendingDecisionActivity,
   pendingDecisionFor, pendingProofMatches,
   confirmedQualificationActivity } = require('./integrations/agent-v2-pending-decision');
 const { findLiveBooking } = require('./integrations/live-booking-gate');
-const {
-  BOOKING_LINK_EVENT, buildDemoPairActivity,
-  demoPairEventFor, hasDemoPairHistory, hasUndeliveredDemoPair, planIntentObservation,
-} = require('./integrations/demo-intent-state');
-const { aggregateDemoPlays, attributeDemoPlays, demoPlayForLead } = require('./integrations/demo-attribution');
-const { INTENT_STATE_SOURCE, formatIntentStateLine, pendingIntentWork } = require('./integrations/intent-backstop');
+// Historical demo pairs (the retired voice-receptionist demo) still keep a lead
+// out of ordinary cold follow-ups; nothing creates or delivers new ones.
+const { hasUndeliveredDemoPair } = require('./integrations/demo-intent-state');
 const { oldestDueFirst, followUpSuccessTarget } = require('./integrations/scheduler-fairness');
 const { isFollowUpDue, FOLLOW_UP_STEP_COUNT } = require('./integrations/sequence-timing');
 const { unrecoveredTouchBlock } = require('./integrations/same-touch-recovery');
@@ -267,10 +261,6 @@ const DRY_RUN          = process.env.DRY_RUN !== 'false';          // default TR
 // every email send. Distinct from DRY_RUN, which also
 // skips the writes. Used by the 30-minute cron for near-real-time detection.
 const CHECK_ONLY       = process.env.CHECK_ONLY === 'true';
-// INTENT_ONLY runs ONLY the both-audios intent pass and exits. Kept separate
-// from CHECK_ONLY so the /demo-played route can fire a fast, narrow pass within
-// minutes of a play without triggering reply/bounce detection or any outreach.
-const INTENT_ONLY      = process.env.INTENT_ONLY === 'true';
 // Terminal leads are checked only when the existing check-only scheduler
 // explicitly enables this flag for its once-daily window.
 const LATE_REPLY_CHECK = process.env.LATE_REPLY_CHECK === 'true';
@@ -1851,8 +1841,6 @@ async function loadAgentSnapshot({ forceColdEmail = false } = {}) {
     ['suppression', `${SUPPRESSION_SHEET}!A:E`],
     ['campaigns', `${CAMPAIGN_INTEGRATIONS_SHEET}!A:I`],
     ['providerMappings', `${PROVIDER_LEADS_SHEET}!A:N`],
-    ['demoPlays', 'DemoPlays!A:G'],
-    ['intentFired', `${INTENT_SHEET}!A:E`],
     ['gmailObservationState', `${GMAIL_OBSERVATION_STATE_SHEET}!A:O`],
   ];
   const response = await sheets().spreadsheets.values.batchGet({
@@ -4435,360 +4423,6 @@ async function runBounceCheckPass(leads, observedBounces = null) {
   console.log(`[BounceCheck] ${bounced} bounce${bounced !== 1 ? 's' : ''} found / ${candidates.length} checked\n`);
 }
 
-// ── INTENT TRIGGER: BOTH AUDIOS PLAYED ────────────────────────────────────────
-// Playing the spoken intro AND the receptionist demo is the strongest signal
-// short of a reply: someone sat through both. This fires ONE email per lead,
-// within minutes, offering the call.
-//
-// "Real" plays only. A play is discarded if it came from Deins's own IP (the
-// same BLOCKED_IPS list the tracking pixels use), a bot UA, or a datacenter IP
-// via the shared open-filter. Multiple plays of the same clip collapse.
-//
-// Fired state lives in its own tab so a repeat play — or a server restart —
-// can never re-fire it.
-const INTENT_SHEET  = 'IntentFired';
-const INTENT_HEADER = ['firedAt','leadId','company','email','trigger'];
-const INTENT_BLOCKED_IPS = ['75.155.151.158'];   // keep in sync with server.js pixels
-let intentSheetReady = false;
-
-async function ensureIntentSheet() {
-  if (intentSheetReady) return;
-  const s  = sheets();
-  const ss = await s.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
-  if (ss.data.sheets.find(sh => sh.properties.title === INTENT_SHEET)) {
-    intentSheetReady = true;
-    return;
-  }
-  await s.spreadsheets.batchUpdate({
-    spreadsheetId: SPREADSHEET_ID,
-    requestBody: { requests: [{ addSheet: { properties: { title: INTENT_SHEET } } }] },
-  });
-  await s.spreadsheets.values.update({
-    spreadsheetId: SPREADSHEET_ID, range: `${INTENT_SHEET}!A1`,
-    valueInputOption: 'RAW', requestBody: { values: [INTENT_HEADER] },
-  });
-  intentSheetReady = true;
-  console.log(`[Intent] ${INTENT_SHEET} tab created`);
-}
-
-async function loadFiredIntents(rowsOverride = null) {
-  try {
-    const rows = rowsOverride || (await sheets().spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID, range: `${INTENT_SHEET}!A:E`,
-    })).data.values || [];
-    // key on leadId + trigger so a future second trigger type is independent
-    return new Set(rows.slice(1)
-      .filter(row => row[1]).map(row => `${row[1]}|${row[4] || 'both-audios'}`));
-  } catch (_e) {
-    return new Set();   // missing tab = nothing fired yet
-  }
-}
-
-// A legacy DemoPlays row (no lead token) is keyed by the cleaned company name.
-// That key is only ever a FALLBACK, and only for a key one lead owns — see
-// integrations/demo-attribution.js.
-const demoCompanyKey = company => normalizeName(cleanCompanyName(company));
-
-// Own IP, bot user agents and cloud egress are not prospects listening.
-const excludedDemoPlay = ({ ip, userAgent }) =>
-  INTENT_BLOCKED_IPS.includes(ip) || BOT_UA_PATTERN.test(userAgent) || isDatacenterIp(ip);
-
-// Reads DemoPlays and returns { byToken, byCompany } of REAL plays. Which lead a
-// play belongs to is decided by attributeDemoPlays(), over the whole corpus.
-async function readRealDemoPlays(rowsOverride = null) {
-  const rows = rowsOverride || (await sheets().spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A:G',
-  })).data.values || [];
-  return aggregateDemoPlays(rows, { companyKey: demoCompanyKey, isExcluded: excludedDemoPlay });
-}
-
-// Mirrors the pixel routes' bot check so a UA rejected there is rejected here.
-const BOT_UA_PATTERN = /curl|wget|python|java|go-http|axios|node-fetch|spider|crawler|bot|preview|scan|mimecast|barracuda|proofpoint|cloudmark|symantec/i;
-
-function buildIntentEmail(lead) {
-  const company = cleanCompanyName(lead.company) || 'your clinic';
-  const casl = `---\n${MAILING_ADDRESS}\nReply "unsubscribe" and I'll remove you immediately.`;
-  // Opens by naming the demo play directly and asking for a reaction, so the
-  // easiest response is a reply rather than a booking — the calendar link below
-  // is the second option, not the only one.
-  //
-  // Note this addresses "you" even though the listener may have been a staff
-  // member; that is a deliberate call, chosen over the vaguer "someone at your
-  // office" phrasing. The trigger itself still requires BOTH clips to have been
-  // played — the copy just refers to "the demo" rather than itemising them.
-  const lead_in = `I noticed you listened to the demo — I'm interested to hear your thoughts.`;
-  return {
-    subject: `Re: a quick demo I built for ${company}`,
-    body: `Hi ${salutationName(lead)},\n\n${bookingSnippet(company, { lead: lead_in })}\n\n${EMAIL_SIGNATURE}\n\n${casl}`,
-  };
-}
-
-// `corpus` is every lead, never a targeted subset: attribution counts how many
-// leads share a legacy company key, and one location on its own looks unique.
-async function prepareDemoIntentCandidates(allLeads, snapshot = null, corpus = allLeads) {
-  await ensureIntentSheet();
-  const plays = await readRealDemoPlays(snapshot?.demoPlays);
-  const fired = await loadFiredIntents(snapshot?.intentFired);
-  const activities = snapshot?.activities || await readColdCallActivities();
-
-  // A play belongs to the lead whose token it carries or, for a token-less
-  // legacy row, to the ONE lead that owns its company key. A key several leads
-  // share creates no pair: one listener is never several prospects.
-  const attribution = attributeDemoPlays(corpus, plays, { companyKey: demoCompanyKey });
-  for (const item of attribution.ambiguous) {
-    console.warn(`  ⚠️  [Intent] demo plays for ${item.via === 'lead_token' ? 'token' : 'company key'} `
-      + `"${item.key}" match ${item.leadIds.length} leads — ambiguous, no pair created`);
-  }
-
-  // Persist the prospect fact before evaluating any delivery gate. This write
-  // has no body, reservation or quota effect. Its stable event id plus the
-  // canonical read check make repeated three-minute and normal passes replay-safe.
-  for (const lead of allLeads) {
-    // An archived lead, or one whose offer is retired, gets no new pair: the
-    // raw play stays in DemoPlays as evidence, but nothing may be owed to it.
-    if (outreachBlockForLead(lead)) continue;
-    const play = demoPlayForLead(attribution, lead.id);
-    // History, not the ACTIVE pair: a retracted pair is a decision that this
-    // lead's play belonged to someone else. Asking for the active pair here
-    // would read that decision as "no pair yet" and write the false one again.
-    if (!play || play.intro < 1 || play.demo < 1 || hasDemoPairHistory(lead, activities)) continue;
-    // Legacy IntentFired rows were written only after provider delivery. They
-    // need an explicit historical delivery bridge, not a new undelivered pair
-    // that would make an already-contacted lead look pending.
-    if (fired.has(`${lead.id}|both-audios`)) continue;
-    const event = buildDemoPairActivity(lead, play, {
-      campaign: lead.campaign,
-      campaignVersion: lead.campaignVersion,
-    });
-    if (!DRY_RUN) await recordColdCallActivityStrict(event);
-    activities.push(event);
-    console.log(`  🎧 [Intent] canonical demo pair ${DRY_RUN ? 'would be persisted' : 'persisted'} → ${lead.email}`);
-  }
-
-  const due = [];
-  for (const lead of allLeads) {
-    // Candidate discovery is canonical and no longer depends on re-deriving
-    // delivery state from raw telemetry. Raw plays above are used only to add
-    // missing canonical evidence; the final hardened revalidation checks both.
-    if (!hasUndeliveredDemoPair(lead, activities)) continue;
-    if (fired.has(`${lead.id}|both-audios`)) continue;     // already fired, ever
-    // Never due: the final gate would refuse it every pass and the backstop
-    // would stay armed forever for work that can no longer happen.
-    const blocked = outreachBlockForLead(lead);
-    if (blocked) {
-      console.log(`  ⏭️  ${lead.email} has an undelivered demo pair but ${blocked.code === 'archived' ? 'is archived' : 'its offer is retired'} — no booking link`);
-      continue;
-    }
-    // A lead who has already replied is in a HUMAN conversation — Deins may
-    // have answered, booked them, or been told no. An automated "someone
-    // listened, here's my calendar" nudge on top of that is at best redundant
-    // and at worst contradicts what was already agreed. Verified against live
-    // data: without this, an INTERESTED lead already promoted to the call
-    // pipeline would have been mailed again.
-    if (lead.emailStatus === 'replied' || lead.stage === 'Replied' || lead.stage === 'Promoted') {
-      console.log(`  ⏭️  ${lead.email} played both but has already replied (${lead.stage}) — human has it`);
-      continue;
-    }
-    due.push(lead);
-  }
-
-  // Read back by the server, which launches the three-minute intent backstop
-  // only while work may be pending. Reported before any delivery is attempted;
-  // when a pass then delivers, runIntentTriggerPass() reports what is left, and
-  // the server judges a process by its LAST report.
-  console.log(formatIntentStateLine({
-    due: due.length, source: INTENT_STATE_SOURCE.PREPARE, scope: TARGET_LEAD_ID ? 'target' : 'all',
-  }));
-  return { due, plays, fired, activities };
-}
-
-// Check-only's contribution to the intent backstop: the same predicates over the
-// snapshot this pass already holds, with no write and no extra read. It is the
-// one observer that notices intent work created OUTSIDE the demo-play flow — a
-// corpus change that makes a legacy company key unique, a repair script — so it
-// can arm the backstop, never disarm it.
-async function reportIntentWorkHint(allLeads, snapshot, corpus) {
-  const scope = TARGET_LEAD_ID ? 'target' : 'all';
-  try {
-    const due = pendingIntentWork({
-      leads: allLeads, corpus,
-      plays: await readRealDemoPlays(snapshot.demoPlays),
-      fired: await loadFiredIntents(snapshot.intentFired),
-      activities: snapshot.activities || [],
-      companyKey: demoCompanyKey,
-    });
-    console.log(formatIntentStateLine({ due, source: INTENT_STATE_SOURCE.CHECK_ONLY_HINT, scope }));
-  } catch (error) {
-    console.warn(`[intent-state] check-only hint unavailable: ${(error && error.message) || 'unknown'}`);
-    console.log(formatIntentStateLine({ due: null, source: INTENT_STATE_SOURCE.CHECK_ONLY_HINT, scope }));
-  }
-}
-
-async function runIntentTriggerPass(allLeads, ownershipContext = null, snapshot = null, sendQuota = null, prepared = null, corpus = allLeads) {
-  const state = prepared || await prepareDemoIntentCandidates(allLeads, snapshot, corpus);
-  const { due, activities } = state;
-
-  if (!due.length) { console.log('[Intent] no leads with both audios pending.'); return 0; }
-  console.log(`[Intent] ${due.length} lead(s) played BOTH audios and have not been contacted.`);
-
-  let sent = 0;
-  const senderDayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
-  const intentSenderCounts = sendQuota?.sendsBySender || senderCountsToday(activities, senderDayKey);
-  const intentQuotaState = sendQuota?.quotaState || { globalCount: Math.max(
-    countTodaySends(allLeads), successfulSendCountToday(activities, senderDayKey),
-  ) };
-  const intentWindowQuota = sendQuota?.windowQuota || null;
-  let todaySent = Number(intentQuotaState.globalCount || 0);
-  for (const lead of due) {
-    // ── same gates as every other send path ──
-    const suppressed = suppressionReason(lead);
-    if (suppressed) { console.warn(`  🚫 [SUPPRESSED] skipping intent email → ${lead.email} (${suppressed})`); continue; }
-    if (!isValidEmail(lead.email)) { console.warn(`  ⏭️  invalid address ${lead.email}`); continue; }
-    if (!String(lead.senderInboxId || '').trim()) {
-      console.warn(`  intent email deferred -> ${lead.email} (established sender proof is missing)`);
-      continue;
-    }
-    const gate = coldSendGate(lead, ownershipContext);
-    if (!gate.verdict.allowed) {
-      console.warn(`  🚫 [OWNERSHIP] skipping intent email → ${lead.email} — ${gate.verdict.reason}`);
-      continue;
-    }
-    if (todaySent >= DAILY_SEND_LIMIT) { console.warn(`  ⏸️  daily cap reached (${todaySent}/${DAILY_SEND_LIMIT}) — deferring to next pass`); break; }
-
-    const family = familyForLead(lead);
-    // Intent emails are ScaleLab's demo follow-up; a managed client never gets one.
-    if (family === CAMPAIGN_FAMILY.STAFFING || family === CAMPAIGN_FAMILY.UNROUTED || isManagedFamily(family)) continue;
-    if (lead.emailTemplateId === STAFFING_TEMPLATE) continue;
-    const { subject, body } = buildIntentEmail(lead);
-    if (DRY_RUN)          { console.log(`— WOULD SEND (intent) → ${lead.email}\n   ${subject}`); continue; }
-    if (!SENDING_ENABLED) { console.log(`⛔ [kill-switch] would send intent email → ${lead.email}`); continue; }
-
-    try {
-      const company = cleanCompanyName(lead.company) || 'your business';
-      const sender = senderForPersistedLead(lead);
-      if ((intentSenderCounts.get(sender.id) || 0) >= sender.dailyLimit) {
-        console.warn(`  ⏸️  intent email deferred → ${lead.email} (sender daily limit reached)`);
-        continue;
-      }
-      const intentWindowGate = intentWindowQuota
-        ? sendingWindowVerdict(intentWindowQuota, sender.id) : { allowed: true };
-      if (!intentWindowGate.allowed) {
-        console.warn(`  ⏸️  intent email deferred → ${lead.email} (${intentWindowGate.reason})`);
-        continue;
-      }
-      const personalization = buildDentalPersonalization({ ...lead, company }, { siteText: lead.siteContext || '' });
-      const currentSubject = buildDentalSubject({ lead, company, personalization }).subject;
-      const legacySubject = coldSubjectFor(lead, company);
-      const thread = await findOriginalSentThread({
-        gmail: gmailForSender(sender), email: lead.email.trim(), expectedSubjects: [currentSubject, legacySubject],
-      });
-      if (!thread) {
-        console.warn(`  ⏸️  intent email deferred → ${lead.email} (original Gmail thread could not be verified)`);
-        continue;
-      }
-      const delivered = await deliverHardenedWarmReply({
-        lead,
-        message: { messageId: thread.messageId, rfcMessageId: thread.inReplyTo,
-          threadId: thread.threadId, subject: thread.subject, senderInboxId: sender.id },
-        action: 'AUTO_DEMO_ENGAGEMENT_RESPONSE', body, subject: thread.subject,
-        activities, classification: 'DEMO_ENGAGEMENT', ownerMode: 'cold',
-        sequenceId: 'demo_booking_link_v1',
-        validateFresh: async ({ fresh, current, mine, currentRows }) => {
-          // Re-attributed against the fresh FULL corpus, so a company key that
-          // became shared after the pair was recorded fails closed here too.
-          const currentPlays = await readRealDemoPlays(fresh.demoPlays);
-          const played = demoPlayForLead(
-            attributeDemoPlays(currentRows, currentPlays, { companyKey: demoCompanyKey }), current.id);
-          if (!played || played.intro < 1 || played.demo < 1) {
-            return { allowed: false, code: 'demo_evidence_missing' };
-          }
-          // Retraction-aware: a superseded pair is not evidence, and a raw
-          // event-type scan cannot tell the difference.
-          if (!demoPairEventFor(current, mine)) {
-            return { allowed: false, code: 'canonical_demo_pair_missing' };
-          }
-          if (mine.some(row => row.eventType === BOOKING_LINK_EVENT)) {
-            return { allowed: false, code: 'booking_link_already_sent' };
-          }
-          const currentFired = await loadFiredIntents(fresh.intentFired);
-          if (currentFired.has(`${current.id}|both-audios`)) return { allowed: false, code: 'intent_already_fired' };
-          return { allowed: true };
-        },
-      });
-      if (!delivered.delivered) {
-        console.warn(`  ⏸️  intent email deferred → ${lead.email} (hardened delivery: ${delivered.code})`);
-        continue;
-      }
-      const intentSentAt = new Date().toISOString();
-      // The canonical warm-delivery primitive has already consumed every
-      // applicable success ledger before this secondary trigger checkpoint.
-      todaySent = Number(intentQuotaState.globalCount || todaySent);
-      const relatedActivities = activities.filter(row => row.sourceLeadId === lead.id || row.leadId === `CE-${lead.id}`);
-      const influence = replyTouchAttribution({ occurredAt: intentSentAt, threadId: thread.threadId }, relatedActivities);
-      // Record the fire BEFORE anything else can fail, so a crash after send
-      // can never produce a duplicate on the next pass.
-      await sheets().spreadsheets.values.append({
-        spreadsheetId: SPREADSHEET_ID, range: `${INTENT_SHEET}!A:E`,
-        valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
-        requestBody: { values: [[intentSentAt, lead.id,
-          cleanCompanyName(lead.company) || '', lead.email, 'both-audios']] },
-      });
-      const rowNum = await resolveRow(lead.id);
-      if (rowNum) {
-        await applyLeadChange(lead.id, {
-          lastEmailedAt: intentSentAt,
-          notes: prependNote(lead.notes, '[INTENT: both audios played — booking link sent]'),
-        }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
-      }
-      const coldCallLeadId = await upsertColdCallLeadFromEvent(
-        lead, 'follow_up',
-        'Demo pair played. Booking-link follow-up sent automatically.',
-        { trigger: PROMOTION_TRIGGER.VERIFIED_DEMO_PAIR, verifiedDemoPair: true, bookingLinkSent: true,
-          coldEmailTwinCount: coldEmailTwinCount(allLeads, lead.email) },
-      );
-      // The selectors below operate on this in-memory snapshot. Keep it in
-      // sync so a booking-link send cannot be followed by an ordinary cold
-      // follow-up later in the same agent pass. The durable ownership record
-      // is the canonical Pipeline card above; later passes read that board
-      // rather than writing the legacy ColdEmail Promoted stage.
-      lead.stage = 'Promoted';
-      lead.lastEmailedAt = intentSentAt;
-      const timelineLeadId = coldCallLeadId || `CE-${lead.id}`;
-      await recordColdCallActivity({
-        leadId: timelineLeadId, sourceLeadId: lead.id, email: lead.email,
-        company: cleanCompanyName(lead.company) || lead.company || '',
-        eventType: 'initial_email_sent',
-        occurredAt: thread.internalDate ? new Date(thread.internalDate).toISOString() : '',
-        subject: thread.subject, content: thread.content || '',
-        metadata: JSON.stringify({ gmailThreadId: thread.threadId, senderInboxId: sender.id, provider: 'gmail', campaignVersion: LEGACY_UNKNOWN }),
-      });
-      await recordColdCallActivity({
-        eventId: `promotion:${lead.id}:both-audios:follow_up`,
-        leadId: timelineLeadId, sourceLeadId: lead.id, email: lead.email,
-        company: cleanCompanyName(lead.company) || lead.company || '',
-        eventType: 'pipeline_promoted', occurredAt: intentSentAt,
-        subject: 'Promoted to Follow Up — verified demo engagement', content: '',
-        metadata: JSON.stringify({
-          fromStage: '', toStage: 'follow_up', trigger: 'verified_demo_pair', sourceEventId: `${lead.id}|both-audios`,
-          ...promotionAttribution(influence),
-        }),
-      });
-      sent++;
-      console.log(`  🎧 Intent email sent → ${lead.email} (${cleanCompanyName(lead.company)})`);
-    } catch (e) {
-      console.error(`  ❌ intent send failed → ${lead.email}: ${e.message}`);
-    }
-  }
-  console.log(`[Intent] ${sent} intent email(s) sent.`);
-  // What is still undelivered after this pass: every due lead that was not
-  // delivered AND recorded, whatever stopped it. Zero lets the server leave the
-  // backstop idle; anything else keeps it polling.
-  console.log(formatIntentStateLine({
-    due: due.length - sent, source: INTENT_STATE_SOURCE.INTENT_PASS, scope: TARGET_LEAD_ID ? 'target' : 'all',
-  }));
-  return sent;
-}
-
 // ── SELECTION ─────────────────────────────────────────────────────────────────
 
 function isValidEmail(e) {
@@ -5214,8 +4848,8 @@ function selectFollowUps(leads, activities = []) {
   const now = Date.now();
   const due = leads.filter(l => {
     if (l.emailStatus !== 'emailed') return false;
-    // Verified demo intent owns the next automated touch until its distinct
-    // delivery event exists. Never let Email #2/#3 race or replace it.
+    // A lead with a recorded, never-delivered demo pair (retired voice demo)
+    // stays out of ordinary cold cadence, as it always has.
     if (hasUndeliveredDemoPair(l, activities)) return false;
     // A lead that has left cold stages is no longer ordinary cold cadence,
     // whatever emailStatus still says. This filter used to read emailStatus and
@@ -5246,10 +4880,6 @@ function countTodaySends(allLeads) {
     const sentDay = new Date(l.lastEmailedAt).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
     return sentDay === today;
   }).length;
-}
-
-function normalizeName(str) {
-  return (str || '').toLowerCase().trim().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -5713,8 +5343,7 @@ async function run() {
   if (!SPREADSHEET_ID) throw new Error('SPREADSHEET_ID missing from .env');
   if (!DRY_RUN && !CHECK_ONLY && !FROM_EMAIL) throw new Error('FROM_EMAIL missing from .env (required to send)');
 
-  const modeLabel = INTENT_ONLY ? 'INTENT-ONLY (both-audios trigger only)'
-                  : CHECK_ONLY ? 'CHECK-ONLY (reply/bounce detection, no sends)'
+  const modeLabel = CHECK_ONLY ? 'CHECK-ONLY (reply/bounce detection, no sends)'
                   : DRY_RUN     ? 'DRY RUN (nothing sent)'
                   :               '🔴 LIVE — sending real emails';
 
@@ -5791,78 +5420,6 @@ async function run() {
     if (!target) throw new Error(`TARGET_LEAD_ID ${TARGET_LEAD_ID} was not found`);
     all.splice(0, all.length, target);
     console.log(`[target] Controlled run restricted to lead ${TARGET_LEAD_ID}`);
-  }
-
-  // Before any Gmail work, so an observer failure later in the pass cannot
-  // suppress the report. Pure computation over the snapshot already loaded.
-  if (CHECK_ONLY) await reportIntentWorkHint(all, snapshot, allLeadsForDailyCap);
-
-  // INTENT_ONLY still observes inbound replies, bounces and manual Gmail
-  // responses before deriving canonical ownership. It skips cold/stage send
-  // selection, but is not an escape hatch around mailbox freshness or gates.
-  if (INTENT_ONLY && !CHECK_ONLY) {
-    const intentBoard = snapshot.boardLeads;
-    const intentActivities = snapshot.activities;
-    // First persist/derive candidates using the already-loaded CRM snapshot.
-    // No Gmail call is made when there is no pending intent.
-    const preparedIntent = await withAuth(() => prepareDemoIntentCandidates(all, snapshot, allLeadsForDailyCap));
-    if (!preparedIntent.due.length) {
-      console.log('[Intent] no pending candidates; zero Gmail provider work required.');
-      return;
-    }
-
-    const intentObservationPlan = planIntentObservation(preparedIntent.due, GMAIL_SENDERS);
-    for (const item of intentObservationPlan.blocked) {
-      console.warn(`[Intent] ${item.lead.email} remains pending - established sender proof is missing or unavailable`);
-    }
-    const intentCandidatesBySender = intentObservationPlan.groups;
-    if (!intentObservationPlan.providerWorkRequired) {
-      console.log('[Intent] pending state persisted; no sender-scoped provider work is safe.');
-      return;
-    }
-
-    // The 3-minute intent backstop must not perform mailbox-wide Gmail work.
-    // Reply and human-outbound evidence is owned by the incremental observer on
-    // the check-only / send cadence. This pass only consumes persisted health.
-    const intentObservationBySender = new Map();
-    const observersBySender = new Map();
-    for (const sender of GMAIL_SENDERS.filter(item => item.sendEligible)) {
-      const details = gmailObservationDetailsBySender.get(sender.id) || {};
-      const backoff = getMailboxBackoff(sender.id);
-      const ageMs = Date.parse(details.lastSuccessfulObservationAt || '');
-      const ageMinutes = Number.isFinite(ageMs) ? Math.max(0, (Date.now() - ageMs) / 60000) : null;
-      const ready = !backoff && details.previousHealth === 'healthy' && ageMinutes !== null
-        && ageMinutes <= GMAIL_OBSERVER_FOLLOWUP_MAX_AGE_MINUTES;
-      intentObservationBySender.set(sender.id, ready);
-      observersBySender.set(sender.id, {
-        health: backoff ? 'backoff' : (ready ? 'healthy' : 'unavailable'),
-        checkpointAgeMinutes: ageMinutes === null ? null : Math.round(ageMinutes),
-      });
-    }
-    console.log('[Intent] using persisted observer health; zero incremental Gmail mailbox scans this pass.');
-    const intentDayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
-    const intentSenderCounts = senderCountsToday(intentActivities, intentDayKey);
-    const intentQuotaState = { globalCount: Math.max(
-      countTodaySends(allLeadsForDailyCap), successfulSendCountToday(intentActivities, intentDayKey),
-    ) };
-    const intentWindowQuota = createSendingWindowQuota({
-      senderIds: [...intentCandidatesBySender.keys()],
-      perSenderLimit: PER_INBOX_RUN_CAP, globalLimit: DAILY_CAP,
-      perSenderLimits: SENDER_PER_RUN_LIMITS,
-    });
-    activeQuotaState = intentQuotaState;
-    activeWindowQuota = intentWindowQuota;
-    activeSenderCounts = intentSenderCounts;
-    const intentSenderIds = new Set(intentCandidatesBySender.keys());
-    const intentOwnershipContext = buildOwnershipContext({
-      boardLeads: intentBoard, activities: intentActivities,
-      outboundObservationOk: true, observationBySender: intentObservationBySender,
-      observersBySender,
-    });
-    await withAuth(() => runIntentTriggerPass(all, intentOwnershipContext, snapshot, {
-      sendsBySender: intentSenderCounts, quotaState: intentQuotaState, windowQuota: intentWindowQuota,
-    }, preparedIntent));
-    return;
   }
 
   let todaySent      = countTodaySends(allLeadsForDailyCap);
@@ -5968,14 +5525,6 @@ async function run() {
     observationBySender, activitiesForCycle: ownershipActivities,
     boardLeadsForCycle: ownershipBoard, sendsBySender, quotaState, windowQuota,
   });
-  todaySent = quotaState.globalCount;
-  dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
-
-  // Intent trigger — both-audios. Runs in every normal pass as a backstop to
-  // the event-driven spawn, so a missed webhook still gets picked up.
-  await withAuth(() => runIntentTriggerPass(all, ownershipContext, snapshot, {
-    sendsBySender, quotaState, windowQuota,
-  }, null, allLeadsForDailyCap));
   todaySent = quotaState.globalCount;
   dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
 

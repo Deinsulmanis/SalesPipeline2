@@ -959,7 +959,7 @@
      ══════════════════════════════════════════════════════════════════════════ */
 
   /* NOTE: deliberately NO `overflow-x: hidden` on html/body. It was tried and it
-     silently HID ten genuinely-overflowing views (the demos/opens tables, the
+     silently HID ten genuinely-overflowing views (the opens table, the
      agent stat grid, the campaigns table) — the page measured clean while
      content was still clipped off-screen. Every overflow below is fixed at its
      source instead; a container only scrolls when it opts in. */
@@ -969,10 +969,9 @@
     .header-right { gap: 8px; flex-wrap: wrap; }
     .stats-bar, .ce-stats { padding-left: 0; padding-right: 0; }
     .ce-table-wrap, .table-wrap { padding-left: 16px; padding-right: 16px; }
-    /* The demos/opens panels wrap their table in a bare padded div, so the
-       720px min-width had nothing to scroll inside. Make those panels the
-       scroll container. */
-    #ce-demos-panel > div, #ce-opens-panel > div {
+    /* The opens panel wraps its table in a bare padded div, so the 720px
+       min-width had nothing to scroll inside. Make it the scroll container. */
+    #ce-opens-panel > div {
       overflow-x: auto;
       -webkit-overflow-scrolling: touch;
       padding-left: 16px;
@@ -2036,7 +2035,7 @@
   .inbox-toolbar{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:13px}.inbox-filter{min-height:36px;padding:7px 11px;border:1px solid var(--border);background:var(--surface);color:var(--text-secondary);border-radius:7px;font:inherit;font-size:12px;font-weight:650;cursor:pointer}.inbox-filter.active{border-color:var(--primary);color:var(--primary);background:var(--primary-bg)}
   .inbox-list{display:grid;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface)}.inbox-row{display:grid;grid-template-columns:minmax(180px,.8fr) minmax(260px,1.35fr) minmax(210px,.85fr);gap:18px;padding:15px 17px;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--text);text-align:left;cursor:pointer}.inbox-row:last-child{border-bottom:0}.inbox-row:hover{background:var(--tint-faint)}.inbox-row:focus-visible{outline:3px solid var(--primary);outline-offset:-3px}.inbox-person b,.inbox-action b{display:block;font-size:13px}.inbox-person small,.inbox-message small,.inbox-action small{display:block;color:var(--text-muted);font-size:11px;margin-top:4px}.inbox-message p{margin:6px 0 0;font-size:12px;line-height:1.48;color:var(--text-secondary);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.inbox-state{display:inline-flex;padding:3px 7px;border-radius:5px;background:var(--wash-1);font-size:10px;font-weight:750;text-transform:uppercase;letter-spacing:.04em}
   .status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}.status-card{padding:14px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}.status-card-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.status-card b{font-size:13px}.status-card p{font-size:11px;color:var(--text-muted);line-height:1.5;margin:7px 0 0}.state-pill{font-size:10px;font-weight:750;padding:3px 7px;border:1px solid var(--border);border-radius:999px}.state-pill[data-on="true"]{color:var(--success);background:var(--success-bg)}.state-pill[data-on="false"]{color:var(--text-muted);background:var(--tint-faint)}
-  #ws-analytics .funnel-analytics,#ws-health .health-panel{margin:0}#ws-analytics #ce-chart-wrap{padding:18px!important;margin:14px 0!important;background:var(--surface);border:1px solid var(--border);border-radius:10px}#ws-campaigns #ce-campaigns-panel,#ws-settings #agent-panel,#ws-analytics #ce-demos-panel,#ws-analytics #ce-opens-panel{display:block!important;margin:0}
+  #ws-analytics .funnel-analytics,#ws-health .health-panel{margin:0}#ws-analytics #ce-chart-wrap{padding:18px!important;margin:14px 0!important;background:var(--surface);border:1px solid var(--border);border-radius:10px}#ws-campaigns #ce-campaigns-panel,#ws-settings #agent-panel,#ws-analytics #ce-opens-panel{display:block!important;margin:0}
   .archive-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:0 0 16px}.archive-kpi{display:flex;flex-direction:column;gap:4px;padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:var(--surface)}.archive-kpi strong{font-size:22px;letter-spacing:-.02em;color:var(--text)}.archive-kpi small{font-size:11px;color:var(--text-muted)}.archive-kpi-label{font-size:10px;font-weight:750;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)}.archive-kpi-warn{border-color:var(--warn)}.archive-kpi-warn strong{color:var(--warn)}
   .archive-toolbar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 12px;align-items:end;padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:8px}.archive-field{display:flex;flex-direction:column;gap:5px;font-size:11px;font-weight:650;color:var(--text-secondary);min-width:0}.archive-field input,.archive-field select{min-height:40px;padding:8px 10px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font:inherit;font-size:13px;min-width:0}.archive-field input:focus-visible,.archive-field select:focus-visible{outline:2px solid var(--primary);outline-offset:1px}.archive-field-search{grid-column:span 2}.archive-clear{min-height:40px;justify-self:start}
   .archive-count-note{font-size:12px;color:var(--text-muted);margin:0 0 10px}.archive-table{display:grid;gap:8px}.archive-head,.archive-row{display:grid;grid-template-columns:minmax(200px,1.6fr) minmax(140px,1.1fr) minmax(100px,.8fr) minmax(130px,1fr) minmax(130px,1fr) minmax(100px,.8fr);gap:14px;align-items:start}.archive-head{padding:0 16px;font-size:10px;font-weight:750;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)}
@@ -2330,7 +2329,6 @@
         Queue Selected (<span id="bulk-count">0</span>)
       </button>
       <button class="ce-tab" data-ce="campaigns" onclick="setCeFilter('campaigns')">📊 Campaigns</button>
-      <button class="ce-tab" data-ce="demos" onclick="setCeFilter('demos')">▶️ Demo Plays</button>
       <button class="ce-tab" data-ce="opens" onclick="setCeFilter('opens')">📬 Opens</button>
       <button class="ce-tab" data-ce="agent" onclick="setCeFilter('agent')" style="margin-left:6px">
         <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.45 2 2 0 0 1 3.59 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.49a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21.73 16z"/></svg>
@@ -2346,7 +2344,6 @@
       <select id="ce-reply-filter" aria-label="Reply category" onchange="setCeMasterFilter('reply',this.value)"><option value="">All replies</option><option value="positive">Positive</option><option value="negative">Negative</option><option value="needs_human">Needs Human</option><option value="unclassified">Unclassified</option><option value="none">No Reply</option></select>
       <select id="ce-pipeline-filter" aria-label="Sales Pipeline presence" onchange="setCeMasterFilter('presence',this.value)"><option value="">All pipeline relationships</option><option value="in">In Sales Pipeline</option><option value="out">Not in Sales Pipeline</option><option value="conflict">Mapping conflict</option></select>
       <select id="ce-pipeline-stage-filter" aria-label="Sales Pipeline stage" onchange="setCeMasterFilter('pipelineStage',this.value)"><option value="">All pipeline stages</option><option value="follow_up">Follow Up</option><option value="hot">Hot</option><option value="call_booked">Call Booked</option><option value="closed_won">Closed / Won</option><option value="closed_lost">Closed / Lost</option></select>
-      <select id="ce-engagement-filter" aria-label="Engagement" onchange="setCeMasterFilter('engagement',this.value)"><option value="">All engagement</option><option value="demo">Demo played</option><option value="warm">Warm</option><option value="none">No demo activity</option></select>
       <select id="ce-sequence-filter" aria-label="Sequence state" onchange="setCeMasterFilter('sequence',this.value)"><option value="">All sequence states</option><option value="active">Active sequence</option><option value="complete">Sequence complete</option><option value="queued">Queued</option><option value="not_started">Not started</option></select>
       <select id="ce-version-filter" aria-label="Campaign version" onchange="setCeMasterFilter('campaignVersion',this.value)"><option value="">All campaign versions</option></select>
       <select id="ce-sender-filter" aria-label="Sending inbox" onchange="setCeMasterFilter('senderInbox',this.value)"><option value="">All inboxes</option></select>
@@ -2356,7 +2353,6 @@
     <div class="ce-quick-views" aria-label="Quick views">
       <button class="ce-quick-view" onclick="applyCeQuickView('attention')">Needs Attention</button>
       <button class="ce-quick-view" onclick="applyCeQuickView('positive')">Positive Replies</button>
-      <button class="ce-quick-view" onclick="applyCeQuickView('demo')">Demo Engaged</button>
       <button class="ce-quick-view" onclick="applyCeQuickView('not-in-pipeline')">Not in Pipeline</button>
       <button class="ce-quick-view" onclick="applyCeQuickView('complete')">Sequence Complete</button>
       <button class="ce-quick-view" onclick="applyCeQuickView('suppressed')">Suppressed</button>
@@ -2368,8 +2364,6 @@
       <div class="stat stat-secondary" title="Every ColdEmail row with a valid id, contacted or not."><div><div class="stat-val" id="ce-stat-total">0</div><div class="stat-label">Total Leads</div></div></div>
       <div class="stat"><div><div class="stat-val" id="ce-stat-queued">0</div><div class="stat-label">Queued</div></div></div>
       <div class="stat stat-secondary" title="Unique leads that have been contacted at least once. Lead-based — a lead mailed three times counts once. Not the same as All Outbound Sends, which counts messages."><div><div class="stat-val" id="ce-stat-emailed">0</div><div class="stat-label">Unique Contacted</div></div></div>
-      <div class="stat"><div><div class="stat-val" id="ce-stat-demo-plays">0</div><div class="stat-label">Demo Plays</div></div></div>
-      <div class="stat"><div><div class="stat-val" id="ce-stat-warm">0</div><div class="stat-label">Demo-engaged Leads</div></div></div>
     </div>
     <div class="reply-metrics-bar" id="ce-reply-metrics" aria-label="Reply outcomes">
       <button type="button" class="stat stat-clickable" onclick="openReplyDrill('all')" aria-label="Inbound Messages — open reply list" title="Unique leads that sent us anything at all: human replies, autoresponders, mailbox-change notices, and leads whose reply evidence we cannot trust."><div><div class="stat-val" id="ce-stat-replied">0</div><div class="stat-label">Inbound Messages</div></div></button>
@@ -2479,30 +2473,10 @@
     <div id="digest-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px"></div>
   </div>
 
-  <!-- Demo plays panel — placed ABOVE the opens panel: pressing play is a
-       stronger buying signal than loading the proposal page. -->
-  <div id="ce-demos-panel" style="display:none">
-    <div style="padding:20px 28px">
-      <div class="analytics-scope-note" data-scope="historical"><b>Retired offers · historical</b> Demo and proposal telemetry from the dental and med spa receptionist offers, kept for history. Nothing here describes the active staffing campaign.</div>
-      <table class="ce-table">
-        <thead>
-          <tr>
-            <th>Company</th>
-            <th>Played</th>
-            <th>Plays</th>
-            <th>Most recent</th>
-          </tr>
-        </thead>
-        <tbody id="ce-demos-tbody"></tbody>
-      </table>
-      <div class="ce-empty" id="ce-demos-empty" style="display:none">No demo plays recorded yet.</div>
-    </div>
-  </div>
-
   <!-- Opens panel (proposal opens log) -->
   <div id="ce-opens-panel" style="display:none">
     <div style="padding:20px 28px">
-      <div class="analytics-scope-note" data-scope="historical"><b>Retired offers · historical</b> Demo and proposal telemetry from the dental and med spa receptionist offers, kept for history. Nothing here describes the active staffing campaign.</div>
+      <div class="analytics-scope-note" data-scope="historical"><b>Retired offers · historical</b> Proposal telemetry from the dental and med spa receptionist offers, kept for history. Nothing here describes the active staffing campaign.</div>
       <table class="ce-table">
         <thead>
           <tr>
@@ -2961,10 +2935,6 @@
         <div id="ce-d-pipeline"></div>
       </div>
       <div>
-        <div class="detail-section-title">Demo Plays</div>
-        <div id="ce-d-demos"></div>
-      </div>
-      <div>
         <div class="detail-section-title">Proposal Opens</div>
         <div id="ce-d-opens"></div>
       </div>
@@ -3010,7 +2980,7 @@ const COLUMNS = [
 const COL_RANGE = `${GOOGLE_CONFIG.SHEET_NAME}!A:Q`;
 
 const STAGES = [
-  { id: 'follow_up',   label: 'Follow Up',     color: 'var(--primary)', rule: 'Auto: both demo clips played' },
+  { id: 'follow_up',   label: 'Follow Up',     color: 'var(--primary)', rule: 'Manual, or a dated recontact reply' },
   { id: 'hot',         label: 'Hot',           color: 'var(--danger)',  rule: 'Auto: positive email reply' },
   { id: 'call_booked', label: 'Call Booked',   color: 'var(--violet)',  rule: 'Meeting time required' },
   { id: 'closed_won',  label: 'Closed / Won',  color: 'var(--success)', rule: 'Won — set by hand' },
@@ -4276,7 +4246,6 @@ let ceReplyCategoryFilter = '';   // set by a reply stat card drill-down
 let ceNicheFilter = 'all';
 let cePipelinePresenceFilter = '';
 let cePipelineStageFilter = '';
-let ceEngagementFilter = '';
 let ceSequenceFilter = '';
 let ceAutomationFilter = '';
 let ceCampaignVersionFilter = '';
@@ -4287,10 +4256,6 @@ let queueRouteIds = [];
 let outreachRoutingOptions = null;
 let ceOpensMap       = new Map();
 let ceOpensData    = [];
-// Demo plays — a stronger buying signal than an open (they pressed play), so
-// these rank above opens everywhere the two appear together.
-let ceDemoMap      = new Map();   // companyKey → { count, demo, intro, last }
-let ceDemoData     = [];
 let ceOutreachStats = null;
 let ceDetailId = '';
 let funnelAnalytics = null;
@@ -4306,7 +4271,6 @@ function setCeMasterFilter(kind, value) {
   if (kind === 'reply') ceReplyCategoryFilter = value;
   if (kind === 'presence') cePipelinePresenceFilter = value;
   if (kind === 'pipelineStage') cePipelineStageFilter = value;
-  if (kind === 'engagement') ceEngagementFilter = value;
   if (kind === 'sequence') ceSequenceFilter = value;
   if (kind === 'campaignVersion') ceCampaignVersionFilter = value;
   if (kind === 'senderInbox') ceSenderFilter = value;
@@ -4316,7 +4280,7 @@ function setCeMasterFilter(kind, value) {
 function syncCeMasterFilters() {
   const values = {
     'ce-reply-filter': ceReplyCategoryFilter, 'ce-pipeline-filter': cePipelinePresenceFilter,
-    'ce-pipeline-stage-filter': cePipelineStageFilter, 'ce-engagement-filter': ceEngagementFilter,
+    'ce-pipeline-stage-filter': cePipelineStageFilter,
     'ce-sequence-filter': ceSequenceFilter, 'ce-version-filter': ceCampaignVersionFilter,
     'ce-sender-filter': ceSenderFilter,
   };
@@ -4325,7 +4289,7 @@ function syncCeMasterFilters() {
 
 function clearCeMasterFilters(shouldReload = true) {
   ceReplyCategoryFilter = cePipelinePresenceFilter = cePipelineStageFilter = '';
-  ceEngagementFilter = ceSequenceFilter = ceAutomationFilter = '';
+  ceSequenceFilter = ceAutomationFilter = '';
   ceCampaignVersionFilter = ceSenderFilter = '';
   syncCeMasterFilters(); if (shouldReload) reloadCePage();
 }
@@ -4334,7 +4298,6 @@ function applyCeQuickView(view) {
   clearCeMasterFilters(false);
   if (view === 'attention') { ceReplyCategoryFilter = 'needs_human'; cePipelinePresenceFilter = 'out'; }
   if (view === 'positive') ceReplyCategoryFilter = 'positive';
-  if (view === 'demo') ceEngagementFilter = 'demo';
   if (view === 'not-in-pipeline') cePipelinePresenceFilter = 'out';
   if (view === 'complete') ceSequenceFilter = 'complete';
   if (view === 'suppressed') ceAutomationFilter = 'suppressed';
@@ -5660,14 +5623,12 @@ function setCeFilter(f) {
   persistWorkspaceHash();
   const isAgent     = f === 'agent';
   const isOpens     = f === 'opens';
-  const isDemos     = f === 'demos';
   const isCampaigns = f === 'campaigns';
-  const isLeadsView = (!isAgent && !isOpens && !isDemos && !isCampaigns);
+  const isLeadsView = (!isAgent && !isOpens && !isCampaigns);
   document.getElementById('ce-leads-panel').style.display      = isLeadsView ? 'block' : 'none';
   const digestCard = document.getElementById('ce-digest-card');
   if (digestCard && digestCard.dataset.loaded === '1') digestCard.style.display = isLeadsView ? 'block' : 'none';
   document.getElementById('agent-panel').style.display         = isAgent     ? 'block' : 'none';
-  document.getElementById('ce-demos-panel').style.display      = isDemos     ? 'block' : 'none';
   document.getElementById('ce-opens-panel').style.display      = isOpens     ? 'block' : 'none';
   document.getElementById('ce-campaigns-panel').style.display  = isCampaigns ? 'block' : 'none';
   document.querySelectorAll('.ce-tab').forEach(t =>
@@ -5675,8 +5636,6 @@ function setCeFilter(f) {
   );
   if (isAgent) {
     showAgentTab();
-  } else if (isDemos) {
-    renderDemosPanel();
   } else if (isOpens) {
     renderOpensPanel();
   } else if (isCampaigns) {
@@ -5694,7 +5653,7 @@ function ceQuery(extra = {}) {
   const params = new URLSearchParams();
   const shared = typeof WorkspaceShared !== 'undefined' ? WorkspaceShared : null;
   const special = shared ? shared.serverStageForFilter(ceActiveFilter) : ceActiveFilter;
-  const stage = ['all', 'agent', 'opens', 'demos', 'campaigns'].includes(ceActiveFilter) || special === null
+  const stage = ['all', 'agent', 'opens', 'campaigns'].includes(ceActiveFilter) || special === null
     ? 'all' : (special || 'all');
   params.set('stage', stage);
   // The server scopes the directory to the selected client.
@@ -5705,7 +5664,6 @@ function ceQuery(extra = {}) {
   if (ceReplyCategoryFilter) params.set('replyCategory', ceReplyCategoryFilter);
   if (cePipelinePresenceFilter) params.set('pipelinePresence', cePipelinePresenceFilter);
   if (cePipelineStageFilter) params.set('pipelineStage', cePipelineStageFilter);
-  if (ceEngagementFilter) params.set('engagement', ceEngagementFilter);
   if (ceSequenceFilter) params.set('sequenceState', ceSequenceFilter);
   if (ceAutomationFilter) params.set('automationState', ceAutomationFilter);
   if (ceCampaignVersionFilter) params.set('campaignVersion', ceCampaignVersionFilter);
@@ -5853,10 +5811,9 @@ async function loadCeLeads() {
   try {
     ceLoading = true;
     renderCeTable();
-    const [ceResp, opensResp, demoResp, statsResp, versionsResp] = await Promise.all([
+    const [ceResp, opensResp, statsResp, versionsResp] = await Promise.all([
       fetch('/api/coldemail?' + ceQuery()),
       fetch('/api/proposalOpens'),
-      fetch('/api/demoPlays'),
       fetch('/api/coldemail/stats'),
       fetch('/api/campaign-versions'),
     ]);
@@ -5913,22 +5870,8 @@ async function loadCeLeads() {
       if (key) ceOpensMap.set(key, (ceOpensMap.get(key) || 0) + 1);
     }
 
-    // Demo plays — aggregated per company the same way opens are (one entry per
-    // ceCompanyKey), but carrying which clips were played and the most recent
-    // timestamp. No scanner filter: see /api/demoPlays in server.js for why.
-    ceDemoData = demoResp.ok ? await demoResp.json() : [];
     ceOutreachStats = statsResp.ok ? await statsResp.json() : null;
     rdRecords = [];  // refetched on next drill-down open so rows track the counters
-    ceDemoMap  = new Map();
-    for (const d of ceDemoData) {
-      const key = ceCompanyKey(d.company);
-      if (!key) continue;
-      const e = ceDemoMap.get(key) || { count: 0, demo: 0, intro: 0, last: '' };
-      e.count++;
-      if (d.audioType === 'intro') e.intro++; else e.demo++;
-      if ((d.timestamp || '') > e.last) e.last = d.timestamp || '';
-      ceDemoMap.set(key, e);
-    }
     ceLoading = false;
     updateCeStats();
     loadDigest();          // additive — failure never blocks the rest of the view
@@ -6083,13 +6026,12 @@ function renderFunnelAnalytics(data) {
     ['Sent', c.sent, 'Unique leads with at least one qualifying send in this campaign version. Lead-based, not message-based.'],
     ['Reply Rate / Sent', funnelRate(r.sentToReply), 'Genuine human replies ÷ sent cohort. Automated replies, contact-change notices and unknowns are excluded from the numerator.'],
     ['Positive Rate / Sent', funnelRate(r.sentToPositive), 'Positive replies ÷ sent cohort.'],
-    ['Demo Rate / Sent', funnelRate(r.sentToDemo), 'Leads that reached Demo ÷ sent cohort.'],
     ['Calls Booked', c.callBooked, 'Leads with a booked call in this cohort.'],
     ['Show Rate', funnelRate(r.showRate), 'Calls held ÷ (held + no-show). Shows “—” until at least one call has resolved — it is never 0% by default.'],
     ['Closed Won', c.won, 'Leads with a won outcome in this cohort.'],
   ];
   document.getElementById('funnel-kpis').innerHTML = kpis.map(([label,value,help]) => `<div class="funnel-kpi" title="${escAttr(help)}"><strong>${esc(value)}</strong><span>${esc(label)}</span></div>`).join('');
-  const labels = { sent:'Sent',replied:'Replies',positive:'Positive',demo:'Demo',hot:'Hot',callBooked:'Calls Booked',callHeld:'Calls Held',won:'Won' };
+  const labels = { sent:'Sent',replied:'Replies',positive:'Positive',hot:'Hot',callBooked:'Calls Booked',callHeld:'Calls Held',won:'Won' };
   document.getElementById('funnel-flow').innerHTML = (data.funnel || []).map(step => `<button type="button" class="funnel-step" onclick="openFunnelStage('${escAttr(step.key)}')"><span>${esc(labels[step.key] || step.key)}</span><b>${step.count}</b><small>${step.key === 'sent' ? 'Cohort' : `${funnelRate(step.fromPrevious)} from prior`}</small><small>${step.key === 'sent' ? 'unique leads' : `${funnelRate(step.fromSent)} of sent cohort`}</small></button>`).join('');
   const replies = [['Positive',c.positive],['Negative',c.negative],['Needs Human',c.needsHuman],['Unclassified',c.unclassified]];
   document.getElementById('funnel-replies').innerHTML = replies.map(([label,value]) => `<div class="funnel-mini"><b>${value || 0}</b>${label}</div>`).join('');
@@ -6143,36 +6085,6 @@ function ceLeadCompanyKeys() {
     if (k) keys.add(k);
   }
   return keys;
-}
-
-// Engagement signal tiers, strongest first. Pressing play beats loading the
-// page, and hearing the receptionist beats the 14-second hello:
-//   played receptionist demo > played intro > opened proposal > nothing
-// One definition, used by the lead table, the detail panel and any sort, so the
-// ranking cannot drift between them.
-const CE_SIGNAL = { DEMO: 3, INTRO: 2, OPEN: 1, NONE: 0 };
-
-function ceSignalFor(company) {
-  const k = ceCompanyKey(company);
-  if (!k) return { tier: CE_SIGNAL.NONE, label: '—', plays: 0, opens: 0 };
-  const d = ceDemoMap.get(k);
-  const opens = ceOpensMap.get(k) || 0;
-  if (d && d.demo > 0)  return { tier: CE_SIGNAL.DEMO,  label: 'Receptionist demo', plays: d.count, opens, last: d.last };
-  if (d && d.intro > 0) return { tier: CE_SIGNAL.INTRO, label: 'Intro (14s hello)', plays: d.count, opens, last: d.last };
-  if (opens > 0)        return { tier: CE_SIGNAL.OPEN,  label: 'Opened proposal',   plays: 0, opens };
-  return { tier: CE_SIGNAL.NONE, label: '—', plays: 0, opens: 0 };
-}
-
-// Badge for which clip a company played. A company that played both is shown as
-// the stronger one (the receptionist demo), per the tiers above.
-function ceDemoBadge(entry) {
-  if (!entry || !entry.count) return '';
-  const isDemo = entry.demo > 0;
-  const text   = isDemo ? 'Receptionist demo' : 'Intro (14s hello)';
-  const color  = isDemo ? 'var(--success)' : 'var(--info)';
-  const bg     = isDemo ? 'var(--success-bg)' : 'var(--info-bg)';
-  const both   = (entry.demo > 0 && entry.intro > 0) ? ' + intro' : '';
-  return `<span style="background:${bg};color:${color};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap">${text}${both}</span>`;
 }
 
 // A lead counts as "replied" if a human actually responded. emailStatus alone is
@@ -6233,8 +6145,6 @@ function updateCeStats() {
   document.getElementById('ce-stat-positive-of-replies').textContent = replyMetrics ? pct(replyMetrics.positiveOfReplies) : '–';
   document.getElementById('ce-stat-positive-rate').textContent = replyMetrics ? pct(replyMetrics.positiveReplyRate) : '–';
 
-  document.getElementById('ce-stat-demo-plays').textContent = num(signals.demoPlays, '–');
-  document.getElementById('ce-stat-warm').textContent  = num(signals.warm, '–');
   const scopeNote = document.getElementById('ce-stat-scope');
   if (scopeNote && counts.scope) scopeNote.innerHTML = `<b>Active outreach</b> ${esc(String(counts.scope.activeLeads))} live-offer leads · archived and retired offers excluded (${esc(String(counts.archived ?? 0))} archived). Historical totals are in Analytics.`;
   renderSenderAnalytics(counts.senderAnalytics);
@@ -6364,18 +6274,13 @@ function renderCeTable() {
     const emailSafe = (l.email || '').replace(/"/g, '&quot;');
     const openKey   = ceCompanyKey(l.company);
     const opens     = ceOpensMap.get(openKey) || 0;
-    // Lead-scoped, from the server's attribution. Never ceDemoMap, which is
-    // keyed by company and would credit every location of a shared brand.
-    const demoEntry = l.demoPlays && l.demoPlays.count ? l.demoPlays : null;
     const hasLateReply = l.lateReply === true || /\[LATE REPLY:/i.test(l.notes || '');
     const pipelineLabel = l.mappingStatus === 'conflict' ? 'Mapping conflict'
       : l.pipelinePresence ? ((STAGES.find(stage => stage.id === l.pipelineStage) || {}).label || l.pipelineStage)
       : 'Not in Pipeline';
     const pipelineState = l.mappingStatus === 'conflict' ? 'conflict' : (l.pipelinePresence ? 'in' : 'out');
-    // Opens are passive telemetry. Demo plays remain the engagement signal.
-    const opensTd   = demoEntry
-      ? `<td style="color:var(--success);font-weight:600" title="${demoEntry.demo > 0 ? 'Played the receptionist demo' : 'Played the intro'}">▶ ${demoEntry.count}${opens ? ` · ${opens} open${opens > 1 ? 's' : ''}` : ''}</td>`
-      : opens > 0
+    // Opens are passive telemetry.
+    const opensTd   = opens > 0
         ? `<td style="color:var(--text-muted)" title="Informational open telemetry only">${opens} open${opens > 1 ? 's' : ''}</td>`
           : `<td style="color:var(--text-muted)">—</td>`;
     const extra = clientLeadExtras.get(String(l.id)) || {};
@@ -6394,7 +6299,7 @@ function renderCeTable() {
     const extraCols = `<td class="ce-extra-col">${esc(extra.title || '—')}</td><td class="ce-extra-col">${esc(roles || '—')}</td><td class="ce-extra-col">${esc(extra.hiringSite || l.city || '—')}${extra.tier ? `<div class="ce-row-badges"><span class="ce-row-chip">${esc(extra.tier)}${extra.siteTie ? ' · ' + esc(extra.siteTie) : ''}${extra.catchAll ? ' · catch-all' : ''}</span></div>` : ''}</td><td class="ce-extra-col">${esc(extra.sector || '—')}</td>`;
     return `<tr data-id="${l.id}" onclick="openCeDetail('${l.id}')" style="cursor:pointer">
       <td onclick="event.stopPropagation()"><label class="check-hit"><input type="checkbox" class="ce-row-check" data-id="${l.id}" ${checked} onchange="toggleCeRow(this)"></label></td>
-      <td class="ce-td-company">${esc(l.company) || '<span style="color:var(--text-muted)">—</span>'}<div class="ce-row-badges">${l.replyCategory ? `<span class="ce-row-badge">${esc((RD_CATEGORY_LABEL[l.replyCategory] || l.replyCategory))}</span>` : ''}${l.demoEngaged ? '<span class="ce-row-badge">Demo played</span>' : ''}${l.manualHold ? '<span class="ce-row-badge">Manual hold</span>' : ''}${chips.join('')}</div></td>
+      <td class="ce-td-company">${esc(l.company) || '<span style="color:var(--text-muted)">—</span>'}<div class="ce-row-badges">${l.replyCategory ? `<span class="ce-row-badge">${esc((RD_CATEGORY_LABEL[l.replyCategory] || l.replyCategory))}</span>` : ''}${l.manualHold ? '<span class="ce-row-badge">Manual hold</span>' : ''}${chips.join('')}</div></td>
       <td>${cell(l.contactName)}</td>
       <td class="ce-td-email">${l.email ? `<a href="mailto:${emailSafe}">${esc(l.email)}</a>` : '—'}</td>
       <td>${cell(l.city)}</td>
@@ -6517,55 +6422,10 @@ function renderDigest(d) {
   document.getElementById('digest-grid').innerHTML = [
     digestTile('emails sent', d.emailsSent ?? 0),
     digestTile('real opens', d.realOpens?.rows ?? 0, { sub: `${d.realOpens?.companies ?? 0} companies · bots filtered` }),
-    digestTile('demo plays', d.demoPlays?.total ?? 0, {
-      color: 'var(--success)',
-      sub: `${d.demoPlays?.intro ?? 0} intro · ${d.demoPlays?.demo ?? 0} demo`,
-    }),
-    digestTile('both-audio pairs', d.demoPlays?.companiesWithBothPairs ?? 0, { color: 'var(--success)', sub: 'companies, all time' }),
     digestTile('replies', d.replies?.total ?? 0, { sub: replySub || '—' }),
     digestTile('auto-answered', d.answers?.autoSent ?? 0, { sub: `${d.answers?.draftsCreated ?? 0} drafted instead` }),
     digestTile('booking links sent', d.bookingLinksSent?.total ?? 0, { color: 'var(--primary)', sub: bookingSub || '—' }),
   ].join('');
-}
-
-// Demo plays, aggregated one row per company (ceDemoMap is already keyed that
-// way), newest activity first. Mirrors renderOpensPanel's shape; the difference
-// is that opens are logged as a flat event stream while a play is a strong
-// enough signal to be worth collapsing per company at a glance.
-function renderDemosPanel() {
-  const tbody = document.getElementById('ce-demos-tbody');
-  const empty = document.getElementById('ce-demos-empty');
-  if (!tbody || !empty) return;
-
-  // One display row per company. The company label comes from the most recent
-  // raw row so it reads the way it was logged.
-  const latestName = new Map();
-  [...ceDemoData]
-    .sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''))
-    .forEach(d => { const k = ceCompanyKey(d.company); if (k) latestName.set(k, d.company); });
-
-  const rows = [...ceDemoMap.entries()]
-    .map(([k, e]) => ({ key: k, company: latestName.get(k) || '—', ...e }))
-    .sort((a, b) => (b.last || '').localeCompare(a.last || ''));
-
-  if (rows.length === 0) {
-    tbody.innerHTML = '';
-    empty.style.display = 'block';
-    return;
-  }
-  empty.style.display = 'none';
-  tbody.innerHTML = rows.map(r => {
-    const timeStr = r.last ? new Date(r.last).toLocaleString() : '—';
-    const playsTd = r.count >= 2
-      ? `<td style="color:var(--success);font-weight:600">▶ ${r.count}</td>`
-      : `<td style="color:var(--text-secondary)">${r.count}</td>`;
-    return `<tr>
-      <td class="ce-td-company">${esc(r.company) || '—'}</td>
-      <td>${ceDemoBadge(r)}</td>
-      ${playsTd}
-      <td style="white-space:nowrap;color:var(--text-secondary)">${esc(timeStr)}</td>
-    </tr>`;
-  }).join('');
 }
 
 function renderOpensPanel() {
@@ -7184,7 +7044,7 @@ function openCeDetail(id) {
 
   // ── Next action ──────────────────────────────────────────────
   // Decision logic lives on the server in deriveNextAction(). The browser only
-  // formats that canonical result, including demo-intent safety blockers.
+  // formats that canonical result.
   const next = lead.canonicalNextAction;
   const nextTone = next && next.status === 'blocked' ? 'var(--warn)'
     : next && next.owner === 'automation' ? 'var(--blue)' : 'var(--text)';
@@ -7194,34 +7054,6 @@ function openCeDetail(id) {
        ${next.reason ? `<p style="font-size:12px;color:var(--text-muted);margin-top:5px">${esc(next.reason)}</p>` : ''}`
     : `<p style="font-size:13px;color:var(--text-muted)">${options.skipActivity ? 'Canonical Next Action unavailable.' : 'Loading canonical Next Action…'}</p>`;
   document.getElementById('ce-d-next').innerHTML = nextHtml;
-
-  // ── Demo plays ───────────────────────────────────────────────
-  // Rendered above opens: pressing play is the stronger signal.
-  const demoKey   = ceCompanyKey(lead.company);
-  // Lead-scoped like the row cell: a location that never played anything shows
-  // nothing here, even when a sibling location of the same brand did.
-  const demoEntry = lead.demoPlays && lead.demoPlays.count ? lead.demoPlays : null;
-  let demosHtml;
-  if (!demoEntry) {
-    demosHtml = `<p style="font-size:13px;color:var(--text-muted)">No demo plays recorded.</p>`;
-  } else {
-    const matches = ceDemoData
-      .filter(d => ceCompanyKey(d.company) === demoKey)
-      .sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
-    const capped = matches.slice(0, 5);
-    const extra  = matches.length - capped.length;
-    demosHtml  = `<p style="font-size:13px;font-weight:600;color:var(--success);margin-bottom:8px">▶ ${demoEntry.count} play${demoEntry.count > 1 ? 's' : ''} ${ceDemoBadge(demoEntry)}</p>`;
-    demosHtml += '<div style="display:flex;flex-direction:column;gap:4px">';
-    for (const d of capped) {
-      const ts = d.timestamp ? new Date(d.timestamp).toLocaleString() : '—';
-      const what = d.audioType === 'intro' ? 'intro' : 'demo';
-      demosHtml += `<div style="font-size:12px;color:var(--text-secondary)">${esc(ts)} · <span style="color:var(--text-muted)">${what}</span></div>`;
-    }
-    if (extra > 0) demosHtml += `<div style="font-size:12px;color:var(--text-muted)">+ ${extra} more</div>`;
-    demosHtml += '</div>';
-  }
-  const demosEl = document.getElementById('ce-d-demos');
-  if (demosEl) demosEl.innerHTML = demosHtml;
 
   // ── Proposal opens ───────────────────────────────────────────
   const openKey = ceCompanyKey(lead.company);
@@ -7818,7 +7650,6 @@ function installWorkspaceShell() {
   move('ce-funnel-analytics', 'ws-analytics');
   move('ce-sender-analytics', 'ws-analytics');
   move('ce-chart-wrap', 'ws-analytics');
-  move('ce-demos-panel', 'ws-analytics');
   move('ce-opens-panel', 'ws-analytics');
   move('ce-campaigns-panel', 'ws-campaigns');
   move('agent-panel', 'ws-settings');
@@ -7831,7 +7662,7 @@ function installWorkspaceShell() {
   document.querySelectorAll('header .search-wrap, header .btn-add').forEach(node => { node.style.display = 'none'; });
   document.documentElement.classList.add('workspace-ready');
   document.body.classList.add('workspace-ready');
-  document.querySelectorAll('.ce-tab[data-ce="campaigns"],.ce-tab[data-ce="demos"],.ce-tab[data-ce="opens"],.ce-tab[data-ce="agent"]').forEach(button => button.remove());
+  document.querySelectorAll('.ce-tab[data-ce="campaigns"],.ce-tab[data-ce="opens"],.ce-tab[data-ce="agent"]').forEach(button => button.remove());
   // Verified obsolete presentation only. Generic lead type data remains in the
   // backend and historical rows remain readable in the drawer.
 }
@@ -7886,9 +7717,8 @@ async function loadWorkspace(name) {
   if (name === 'inbox') return loadInboxWorkspace();
   if (name === 'campaigns') { document.getElementById('ce-campaigns-panel').style.display = 'block'; return renderCampaignsPanel(); }
   if (name === 'analytics') {
-    document.getElementById('ce-demos-panel').style.display = 'block';
     document.getElementById('ce-opens-panel').style.display = 'block';
-    renderDemosPanel(); renderOpensPanel(); buildSendChart(); return loadFunnelAnalytics();
+    renderOpensPanel(); buildSendChart(); return loadFunnelAnalytics();
   }
   if (name === 'health') { await loadCrmHealth(); document.getElementById('crm-health-body').hidden = false; document.getElementById('crm-health-toggle').setAttribute('aria-expanded','true'); return; }
   if (name === 'sequences') return loadSequencesWorkspace();

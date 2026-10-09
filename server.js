@@ -60,7 +60,6 @@ const {
 } = require('./integrations/outreach-state');
 const { applyFalseOptOutCorrection, FALSE_OPT_OUT_TAG } = require('./integrations/false-opt-out-correction');
 const { planOooHoldRelease } = require('./integrations/ooo-hold-repair');
-const { createIntentBackstop, BACKSTOP_REASON } = require('./integrations/intent-backstop');
 // Stage 3D: dual-read measurement only. Nothing branches on its output.
 const {
   probeOutreachParityInBackground, stage3ParitySnapshot, DASHBOARD_OMITTED_FIELDS,
@@ -176,10 +175,6 @@ const { buildConfirmedSendActivity, buildCanonicalDigest, bouncedLeadIds } = req
 const { buildCrmHealth } = require('./integrations/crm-health');
 const { observerHealth } = require('./integrations/gmail-observer-health');
 const { gmailUsageSnapshot } = require('./integrations/gmail-api-guard');
-const { hasUndeliveredDemoPair } = require('./integrations/demo-intent-state');
-const {
-  normalizeLeadToken, aggregateDemoPlays, attributeDemoPlays, demoPlayForLead,
-} = require('./integrations/demo-attribution');
 const { observeMailbox } = require('./integrations/gmail-mailbox-observer');
 const { planMailboxEvents } = require('./integrations/mailbox-observation-events');
 const { proveLegacyEvidence, applyProvenEvidence, legacyEvidenceInputs } = require('./integrations/gmail-evidence-reconciliation');
@@ -320,16 +315,6 @@ function cleanCompanyName(raw) {
   return raw.slice(0, cutAt).trim() || raw.trim();
 }
 
-// Which clip a DemoPlays row represents. Mirrors the /demo-played write-side
-// whitelist exactly — lowercase, only 'intro' or 'demo' accepted, anything else
-// (including a BLANK column F on rows written before the intro shipped, which
-// were all receptionist-demo plays) resolves to 'demo'. Kept here rather than
-// inlined so read and write can never disagree about what a row means.
-function normalizeAudioType(raw) {
-  const t = String(raw == null ? '' : raw).trim().toLowerCase();
-  return (t === 'intro' || t === 'demo') ? t : 'demo';
-}
-
 // Canonical company key for matching a ProposalOpens row to its lead. Mirrors
 // ceCompanyKey() in public/index.html: clean the name, lowercase, strip
 // non-alphanumerics. Used only for the open-filter lookups below.
@@ -345,8 +330,7 @@ const proposalToken = id => crypto.createHash('sha1').update(String(id)).digest(
 // above keeps serving links already in circulation). Resolves the token to the
 // lead by hashing column A, logs the open with the SAME cleaned company the
 // old links carried (attribution preserved), then 302s to the Netlify page
-// with the same query params plus `lt`, the lead token. The page sends `lt`
-// back on every demo-play pixel, which is what attributes a play to ONE lead.
+// with the same query params plus `lt`, the lead token.
 //
 // FALLBACK: an unresolvable token (unknown, sheet error, lead deleted) must
 // never show the prospect an error page — it degrades to the bare proposal
@@ -375,8 +359,8 @@ app.get('/p/:token', async (req, res) => {
       if (lead.company)     fwd.set('company', lead.company);
       if (lead.contactName) fwd.set('contact', lead.contactName);
       if (lead.tradeType)   fwd.set('niche',   lead.tradeType);
-      // The token this link was resolved from, so a demo play on the page names
-      // this lead and no other location that shares its company name.
+      // The token this link was resolved from, so page telemetry names this
+      // lead and no other location that shares its company name.
       fwd.set('lt', token);
       url.search = fwd.toString();
       dest = url.toString();
@@ -410,87 +394,17 @@ app.get('/p/:token', async (req, res) => {
   res.redirect(302, dest);
 });
 
-// ── DEMO PLAY TRACKING (public — no auth) ──────────────────────────────────────
-// Fired as a tracking pixel from the proposal page when the demo audio actually
-// plays — a stronger intent signal than an open. Deliberately writes to its OWN
-// tab (DemoPlays), NOT ProposalOpens. Opens are retained as passive telemetry;
-// demo plays are the verified engagement signal. Same guard shape as /p (IP
-// block, bot UA, empty/Unknown company) —
-// bot/self-traffic matters even more here since this is meant to be high-intent.
-app.get('/demo-played', (req, res) => {
-  const companyParam = String(req.query.company ?? '').trim();
-  const company = companyParam || 'Unknown';
-  const niche   = req.query.niche || 'Unknown';
-  const ua      = req.headers['user-agent'] || '';
-  const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.ip;
-
-  // Which clip was played. The proposal page now renders a short spoken intro
-  // next to the receptionist demo on dental pages, and both fire this pixel —
-  // without this column the sheet cannot tell "heard the 14s hello" from "heard
-  // the receptionist", which is the signal that actually drives follow-up.
-  //
-  // Whitelisted, not passed through: this lands in a spreadsheet cell, so an
-  // arbitrary query string must never reach it. Anything unrecognised — and
-  // notably any pixel from an older cached page that sends no audio_type at
-  // all — falls back to 'demo', which is exactly what those pixels meant.
-  const rawType   = String(req.query.audio_type ?? '').trim().toLowerCase();
-  const audioType = (rawType === 'intro' || rawType === 'demo') ? rawType : 'demo';
-
-  // The lead token /p/:token forwarded to the page. It attributes this play to
-  // exactly one lead. Whitelisted like audio_type: anything but a well-formed
-  // token is stored blank, which reads as a legacy company-only row.
-  const leadToken = normalizeLeadToken(req.query.lt);
-
-  // Always a no-op pixel response — nothing renders, nothing for the page to
-  // read, so there's no failure mode visible to the visitor either way.
-  const sendPixel = () => res.status(204).end();
-
-  const BLOCKED_IPS = ['75.155.151.158'];
-  if (BLOCKED_IPS.includes(clientIp)) {
-    console.log(`[/demo-played] Skipping own IP: ${clientIp} — ${company}`);
-    return sendPixel();
-  }
-
-  if (BOT_PATTERNS.test(ua)) {
-    console.warn(`[/demo-played] Bot skipped — company: ${company}, ua: ${ua}`);
-    return sendPixel();
-  }
-
-  if (!companyParam || companyParam.toLowerCase() === 'unknown') {
-    console.warn(`[/demo-played] No resolvable company — not logging. url: ${req.originalUrl} ip: ${clientIp}`);
-    return sendPixel();
-  }
-
-  // audio_type is APPENDED as column F, never inserted mid-row: existing rows
-  // already have clientIp in D and ua in E, and shifting them would silently
-  // re-label historical data. Rows written before this change have F blank and
-  // were all receptionist-demo plays, so treat blank as 'demo' when filtering.
-  // lead_token is appended the same way, as column G; blank means a legacy row.
-  const row = [new Date().toISOString(), company, niche, clientIp, ua, audioType, leadToken];
-
-  sheets().spreadsheets.values.append({
-    spreadsheetId:   SPREADSHEET_ID,
-    range:           'DemoPlays!A:G',
-    valueInputOption:'RAW',
-    insertDataOption:'INSERT_ROWS',
-    requestBody:     { values: [row] },
-  })
-    // Event-driven intent trigger: if THIS play just completed an intro+demo
-    // pair for this company, fire the follow-up now rather than waiting for the
-    // cron. Chained after the append so the pass sees the row it is reacting to.
-    .then(() => maybeFireIntent(company, leadToken))
-    .catch(e => console.error('[/demo-played] Sheet write failed:', e.message));
-
-  sendPixel();
-});
+// The abandoned voice-receptionist demo had a /demo-played tracking pixel that
+// logged audio plays and spawned an intent pass. Both are gone; the route now
+// 404s like any unknown path, and historical DemoPlays rows stay in the sheet.
 
 // ── HOT-LEAD ENGAGEMENT TRACKING (public — no auth) ────────────────────────────
 // Fired as a tracking pixel from the proposal page when a visitor hits 100%
 // scroll OR 120s of active time — whichever comes first, and only once (the
 // page enforces the once-per-view rule; this route just records what it's told).
-// Writes to its OWN tab (ProposalEngaged), NOT ProposalOpens or DemoPlays: those
+// Writes to its OWN tab (ProposalEngaged), NOT ProposalOpens: those
 // have separate meanings and must remain independently auditable. Same guard
-// shape as /p and /demo-played (IP block, bot UA, empty/Unknown company).
+// shape as /p (IP block, bot UA, empty/Unknown company).
 app.get('/engaged', (req, res) => {
   const companyParam = String(req.query.company ?? '').trim();
   const company = companyParam || 'Unknown';
@@ -648,7 +562,7 @@ function sheets() {
       const ranges = rangesTouched(params);
       if (ranges.some(range => range.includes(CE_SHEET_NAME) || range.includes(`${SHEET_NAME}!`)
         || range.includes(COLD_CALL_ACTIVITY_SHEET))) invalidateOutreachCache(`write:${method}`);
-      if (ranges.some(range => /DemoPlays|ProposalOpens|ProposalEngaged/.test(range))) invalidateOutreachCache(`write:${method}`);
+      if (ranges.some(range => /ProposalOpens|ProposalEngaged/.test(range))) invalidateOutreachCache(`write:${method}`);
       return original(params);
     };
   }
@@ -801,36 +715,23 @@ function agentPushLine(line) {
   if (agentState.log.length > LOG_CAP) agentState.log.shift();
 }
 
-// Whether a three-minute backstop tick should launch an intent-only pass. It
-// starts armed (boot) and is disarmed only by a clean intent pass that saw no
-// pending work — see integrations/intent-backstop.js.
-const intentBackstop = createIntentBackstop();
-
 // Hourly egress meter: one summary line, never per-row. Server-side corpus
 // reads come from outreach-state's own counter; agent-process reads are
 // counted from the line every agent corpus read already prints.
 const AGENT_CORPUS_READ_LINE = '[outreach-read] automation corpus from Supabase';
 const egressMeter = {
   calendarChecks: 0, calendarZeroEvent: 0, calendarContextLoads: 0,
-  intentDemoLaunches: 0, intentBackstopLaunches: 0, agentCorpusReads: 0,
-  serverCorpusReadsAtLastReport: 0, backstopTicksAtLastReport: 0, backstopIdleAtLastReport: 0,
+  agentCorpusReads: 0, serverCorpusReadsAtLastReport: 0,
 };
 function reportEgressMeter() {
   const corpus = outreachCorpusReadStats();
-  const backstop = intentBackstop.snapshot();
   console.log(`[egress-meter] last hour: corpusReads server=${corpus.reads - egressMeter.serverCorpusReadsAtLastReport}`
     + ` agent=${egressMeter.agentCorpusReads}`
     + ` | calendar checks=${egressMeter.calendarChecks} zeroEvent=${egressMeter.calendarZeroEvent}`
-    + ` contextLoads=${egressMeter.calendarContextLoads}`
-    + ` | intent launches demo=${egressMeter.intentDemoLaunches} backstop=${egressMeter.intentBackstopLaunches}`
-    + ` | backstop ticks=${backstop.ticks - egressMeter.backstopTicksAtLastReport}`
-    + ` idle=${backstop.idleTicks - egressMeter.backstopIdleAtLastReport}`
-    + ` armed=${backstop.armed ? backstop.reasons.join(',') : 'no'}`);
+    + ` contextLoads=${egressMeter.calendarContextLoads}`);
   Object.assign(egressMeter, {
     calendarChecks: 0, calendarZeroEvent: 0, calendarContextLoads: 0,
-    intentDemoLaunches: 0, intentBackstopLaunches: 0, agentCorpusReads: 0,
-    serverCorpusReadsAtLastReport: corpus.reads,
-    backstopTicksAtLastReport: backstop.ticks, backstopIdleAtLastReport: backstop.idleTicks,
+    agentCorpusReads: 0, serverCorpusReadsAtLastReport: corpus.reads,
   });
 }
 
@@ -839,18 +740,12 @@ function reportEgressMeter() {
 // triggers — UI, the morning send cron and the :15/:45 check-only cron — funnel
 // through here and share agentState, so agentState.running is a single
 // mutual-exclusion flag across all.
-function startAgentProcess(extraEnv, dryRun, { intentTrigger = null } = {}) {
+function startAgentProcess(extraEnv, dryRun) {
   agentState.running   = true;
   agentState.dryRun    = dryRun;
   agentState.startedAt = new Date().toISOString();
   agentState.log       = [];
   agentState.exitCode  = null;
-  // Every process reports its intent state; only an intent-only pass's report
-  // may disarm the backstop. Every other mode's reports can only arm it.
-  const intentRun = intentBackstop.onAgentStarted({
-    intent: extraEnv.INTENT_ONLY === 'true' && extraEnv.CHECK_ONLY !== 'true',
-    trigger: intentTrigger || '',
-  });
 
   const child = spawn('node', ['outreach-agent.js'], {
     cwd: __dirname,
@@ -862,10 +757,8 @@ function startAgentProcess(extraEnv, dryRun, { intentTrigger = null } = {}) {
   child.stderr.pipe(process.stderr);
 
   let outBuf = '', errBuf = '';
-  // Intent-state reports (which arm or disarm the backstop) and corpus reads
-  // (metered). Read alongside the parity probe, never instead of it.
+  // Corpus reads (metered). Read alongside the parity probe, never instead of it.
   const readAgentLine = l => {
-    intentBackstop.onAgentLine(l, intentRun);
     if (l.includes(AGENT_CORPUS_READ_LINE)) egressMeter.agentCorpusReads += 1;
   };
 
@@ -897,20 +790,9 @@ function startAgentProcess(extraEnv, dryRun, { intentTrigger = null } = {}) {
     agentChild = null;
   });
 
-  // 'close', not 'exit': it fires only after stdout has been fully drained, so
-  // a process's last intent-state report cannot arrive after its verdict. For an
-  // intent-only pass, a non-zero or signal exit or a missing report leaves the
-  // backstop armed.
-  child.on('close', code => {
+  // 'close', not 'exit': it fires only after stdout has been fully drained.
+  child.on('close', () => {
     if (outBuf) { readAgentLine(outBuf); agentPushLine(outBuf); outBuf = ''; }
-    const wasArmed = intentBackstop.snapshot().armed;
-    const verdict = intentBackstop.onAgentClosed(intentRun, code);
-    const armed = intentBackstop.snapshot().armed;
-    if (intentRun.intent || armed !== wasArmed) {
-      console.log(`[intent-backstop] ${intentRun.intent ? `${intentRun.trigger} intent pass` : 'agent run'} `
-        + `closed (exit ${code}) — ${armed ? `armed: ${intentBackstop.snapshot().reasons.join(',')}` : 'disarmed'}`
-        + ` (${verdict.reason})`);
-    }
   });
 }
 
@@ -928,76 +810,6 @@ function spawnAgent(dryRun, extraEnv = {}) {
 // Check-only pass: real sheet writes (reply/bounce detection), no sends.
 // Guards on agentState.running so it never spawns a second concurrent process
 // while a full run is already going.
-// Fires the both-audios intent pass. Spawned on demand when a demo play
-// completes a pair, and by a safety cron. Cheap: the agent's INTENT_ONLY mode
-// skips reply/bounce detection and all outreach.
-// Does this company now have BOTH a real intro play and a real demo play?
-// Cheap read of DemoPlays only — the agent re-derives everything authoritatively
-// and owns the fired-state check, so a false positive here costs one no-op
-// spawn, never a duplicate email.
-async function companyHasBothAudios(company, leadToken = '') {
-  const key = openKey(company);
-  if (!key && !leadToken) return false;
-  const r = await sheets().spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A:G',
-  });
-  let intro = false, demo = false;
-  for (const row of (r.data.values || []).slice(1)) {
-    // A tokened play counts only toward its own lead, a legacy play only toward
-    // its company. Attribution itself is the agent's; this only saves a spawn.
-    const rowToken = normalizeLeadToken(row[6]);
-    if (leadToken ? rowToken !== leadToken : (rowToken || openKey(row[1] || '') !== key)) continue;
-    const ip = (row[3] || '').trim();
-    if (['75.155.151.158'].includes(ip)) continue;      // own IP
-    if (BOT_PATTERNS.test(row[4] || '')) continue;      // bot UA
-    if (normalizeAudioType(row[5]) === 'intro') intro = true; else demo = true;
-  }
-  return intro && demo;
-}
-
-// A false negative here would strand a pair until some other pass noticed it,
-// because the backstop no longer polls blindly. It cannot produce one: the
-// agent pairs a token row only with rows of the same token (checked exactly
-// here), and a legacy row only with rows whose normalizeName(cleanCompanyName)
-// key matches — equal keys under that normaliser are equal under openKey too,
-// and the bot and own-IP exclusions are identical (the agent additionally drops
-// datacenter IPs). test/intent-backstop.test.js pins all three.
-async function maybeFireIntent(company, leadToken = '') {
-  try {
-    if (await companyHasBothAudios(company, leadToken)) {
-      spawnAgentIntentOnly(`both audios played — ${company}`, { trigger: 'demo' });
-    }
-  } catch (e) {
-    // Never let intent detection break the tracking pixel. The backstop is
-    // armed, so the next tick runs the pass this check could not confirm.
-    intentBackstop.markNeeded(BACKSTOP_REASON.DEMO_LAUNCH_SKIPPED);
-    console.warn('[intent] pair check failed:', e.message);
-  }
-}
-
-// trigger 'demo' is the immediate path; 'backstop' is the three-minute tick.
-// A demo launch that does not start arms the backstop; a backstop launch that
-// does not start was armed already and stays armed.
-function spawnAgentIntentOnly(why, { trigger = 'backstop' } = {}) {
-  const skipped = () => { if (trigger === 'demo') intentBackstop.markNeeded(BACKSTOP_REASON.DEMO_LAUNCH_SKIPPED); };
-  if (agentState.running || automationLaunchReserved) {
-    skipped();
-    console.log(`[intent] agent busy — skipping intent spawn (${why}); the cron backstop will retry`);
-    return;
-  }
-  launchAutomationAfterCalendar(`intent-only pass: ${why}`, () => {
-    if (agentState.running) return false;
-    console.log(`[intent] spawning intent-only pass (${why})`);
-    if (trigger === 'demo') egressMeter.intentDemoLaunches += 1; else egressMeter.intentBackstopLaunches += 1;
-    startAgentProcess({ DRY_RUN: 'false', INTENT_ONLY: 'true' }, false, { intentTrigger: trigger });
-    return true;
-  }).then(result => { if (!result || !result.launched) skipped(); })
-    .catch(error => {
-      skipped();
-      console.error('[Calendar safety] intent pass blocked:', error.message);
-    });
-}
-
 function spawnAgentCheckOnly(extraEnv = {}) {
   if (agentState.running || automationLaunchReserved) {
     console.log('[cron] Agent already running — skipping check-only pass this tick');
@@ -1369,8 +1181,8 @@ app.delete('/api/leads/:id', requireAuth, rejectArchived('board'), async (req, r
 
 // Verifying the sheet exists and its header is intact costs a spreadsheets.get
 // plus a header read — measured at ~780ms, paid on EVERY dashboard load for a
-// check whose answer cannot change while the process runs. Guarded the same way
-// ensureDemoPlaysHeader is: at most once per process.
+// check whose answer cannot change while the process runs. Guarded by a module
+// flag: at most once per process.
 let ceSheetChecked = false;
 async function ensureColdEmailSheet() {
   if (ceSheetChecked) return;
@@ -1466,11 +1278,11 @@ async function readColdEmailDashboardRows() {
 
 // ── SHARED OUTREACH DATASET ─────────────────────────────────────────────────
 // The Outreach page used to read the ColdEmail sheet three times per load (the
-// lead list, the stats card, and the reply drill-down each fetched it), plus
-// DemoPlays twice. All of them now derive from this one cached snapshot.
+// lead list, the stats card, and the reply drill-down each fetched it). All of
+// them now derive from this one cached snapshot.
 //
 // Freshness: a short TTL bounds staleness, and any write this process makes to
-// ColdEmail or DemoPlays busts the cache synchronously (see sheets()), so a
+// ColdEmail or the proposal telemetry tabs busts the cache synchronously (see sheets()), so a
 // stage change or an import is visible on the very next read. The TTL only ever
 // hides changes made OUTSIDE this process — e.g. someone editing the sheet by
 // hand or the agent writing from its own process.
@@ -1614,9 +1426,7 @@ async function loadOutreachDataset() {
     ...(ceFromSupabase ? [] : [`${CE_SHEET_NAME}!A:O`, `${CE_SHEET_NAME}!Q:X`]),
     'ReplyDrafts!A:L',
     `${COLD_CALL_ACTIVITY_SHEET}!A:J`, `${PROVIDER_LEADS_SHEET}!A:N`,
-    // A:G, not A:F — column G carries the lead token, and without it the
-    // dashboard can only fall back to matching plays by company name.
-    'DemoPlays!A:G', 'ProposalOpens!A:F', 'ProposalEngaged!A:F', AGENT_READ_RANGE,
+    'ProposalOpens!A:F', 'ProposalEngaged!A:F', AGENT_READ_RANGE,
     mailboxCheckpointRange(), 'Suppression!A:A',
   ];
   const snapshot = await sheets().spreadsheets.values.batchGet({
@@ -1636,12 +1446,11 @@ async function loadOutreachDataset() {
   const draftResponse = responseAt(2);
   const activityResponse = responseAt(3);
   const providerResponse = responseAt(4);
-  const demoResponse = responseAt(5);
-  const openResponse = responseAt(6);
-  const engagedResponse = responseAt(7);
-  const boardResponse = responseAt(8);
-  const mailboxObservationResponse = responseAt(9);
-  const suppressionResponse = responseAt(10);
+  const openResponse = responseAt(5);
+  const engagedResponse = responseAt(6);
+  const boardResponse = responseAt(7);
+  const mailboxObservationResponse = responseAt(8);
+  const suppressionResponse = responseAt(9);
 
   ceRowMap.clear();
   let leads = ceRows.slice(1).map((row, index) => {
@@ -1767,17 +1576,6 @@ async function loadOutreachDataset() {
   const senderIdentities = visibleSenderIdentities();
   const leadKeys = new Set();
   const bounceIds = bouncedLeadIds({ leads, activities });
-  // Demo engagement is LEAD-scoped, by the same rule the agent sends on: a play
-  // belongs to the lead whose token it carries, or — for a token-less legacy row
-  // — to the ONE lead that owns its company key. A key several locations of one
-  // brand share is ambiguous and credits none of them.
-  //
-  // This was keyed by company name, which is not an identity: one visitor's
-  // session on one Smili Dental location's proposal page lit up the "Demo
-  // played" badge on all four locations, and made each of them read as engaged.
-  const demoAttribution = attributeDemoPlays(leads,
-    aggregateDemoPlays(demoResponse.data.values || [], { companyKey: openKey }),
-    { companyKey: openKey });
   const realOpenCounts = new Map();
   // Every lead gets the same light row (reply category, sender, attribution),
   // so an archived lead reads exactly like an active one in Archive. Only
@@ -1807,14 +1605,6 @@ async function loadOutreachDataset() {
     const row = toLightRow(lead, categoryByLeadId.get(lead.id), attribution, sender, { bouncedLeadIds: bounceIds });
     row.archived = archived;
     Object.assign(row, pipelineIndex.byColdEmailId.get(lead.id));
-    const attributedPlay = demoPlayForLead(demoAttribution, lead.id);
-    row.demoEngaged = Boolean(attributedPlay);
-    // The counts the row cell and the detail drawer render, so neither has to
-    // aggregate telemetry by company name in the browser.
-    row.demoPlays = attributedPlay ? {
-      count: attributedPlay.intro + attributedPlay.demo,
-      intro: attributedPlay.intro, demo: attributedPlay.demo, last: attributedPlay.last,
-    } : null;
     row.sequenceState = outreachSequenceState(lead);
     const automation = deriveAutomationState(lead);
     row.automationState = automation.state;
@@ -1827,7 +1617,7 @@ async function loadOutreachDataset() {
   counts.archived = archivedRows.length + archivedBoardLeads.filter(card => !archivedRows
     .some(row => `CE-${row.id}` === card.id || normalizeEmail(row.email) === normalizeEmail(card.email))).length;
 
-  // Opens remain passive telemetry. Warm is canonical demo engagement only.
+  // Opens remain passive telemetry.
   // These headline numbers used to be computed in the browser from the full
   // lead array. Once the list was paginated that array became one page, so the
   // cards silently started describing 100 rows instead of 1,849. They are
@@ -1838,15 +1628,9 @@ async function loadOutreachDataset() {
   //   opens = DISTINCT companies with >= 1 real open, that match a lead
   //   hits  = sum of those companies' real opens (a prospect reloading counts once
   //           in `opens`, but every real hit shows in the label)
-  //   warm  = leads with verified demo engagement; opens never contribute
   // `real` excludes scanner detonations via the shared open-filter module.
   const proposalOpens = openResponse.data.values || [];
   const proposalEngaged = engagedResponse.data.values || [];
-  const demoPlays = demoResponse.data.values || [];
-  const demoRows = demoPlays.slice(1).map(row => ({
-    timestamp: row[0] || '', company: row[1] || '', niche: row[2] || '',
-    ip: row[3] || '', userAgent: row[4] || '', audioType: normalizeAudioType(row[5]),
-  }));
   const openRows = proposalOpens.slice(1).map(row => ({
     timestamp: row[0] || '', company: row[1] || '', niche: row[2] || '',
     id: row[3] || '', ip: row[4] || '', userAgent: row[5] || '',
@@ -1862,7 +1646,6 @@ async function loadOutreachDataset() {
     keyOf: row => openKey(row.company),
     leadFor: row => (row.id && leadById.get(row.id)) || leadByKey.get(openKey(row.company)) || null,
     engagedRows: proposalEngaged.slice(1).map(row => ({ company: row[1] || '' })),
-    demoRows: demoRows.map(row => ({ company: row.company })),
   });
   const realOpensByCompany = realOpenCounts;
   for (const open of annotatedOpens) {
@@ -1871,15 +1654,12 @@ async function loadOutreachDataset() {
     if (!k) continue;
     realOpensByCompany.set(k, (realOpensByCompany.get(k) || 0) + 1);
   }
-  const signals = { opens: 0, hits: 0, warm: 0, demoPlays: 0 };
+  const signals = { opens: 0, hits: 0 };
   for (const [k, n] of realOpensByCompany) {
     if (!leadKeys.has(k)) continue;      // orphaned open rows are not lead opens
     signals.opens++;
     signals.hits += n;
   }
-  signals.demoPlays = demoRows.filter(row => leadKeys.has(openKey(row.company))).length;
-  for (const row of allRows) row.warm = row.demoEngaged;
-  signals.warm = rows.filter(row => row.warm).length;
   const outside = rows.filter(row => !row.pipelinePresence && row.mappingStatus !== 'conflict');
   const pipelineAudit = {
     total: rows.length,
@@ -1887,7 +1667,6 @@ async function loadOutreachDataset() {
     notInPipeline: outside.length,
     positiveNotInPipeline: outside.filter(row => row.replyCategory === 'positive').length,
     needsHumanNotInPipeline: outside.filter(row => row.replyCategory === 'needs_human').length,
-    demoEngagedNotInPipeline: outside.filter(row => row.demoEngaged).length,
     sequenceCompleteNotInPipeline: outside.filter(row => row.sequenceState === 'complete').length,
     activeSequenceNotInPipeline: outside.filter(row => row.sequenceState === 'active' || row.sequenceState === 'queued').length,
     ambiguousMappings: pipelineIndex.ambiguousMappings,
@@ -1912,7 +1691,7 @@ async function loadOutreachDataset() {
     activeLeads,           // the ACTIVE scope (analytics-scope.js); server-side only
     historicalMetrics, historicalSendActivity,
     pipelineAudit, boardLeads,
-    demoPlays, demoRows, proposalOpens, proposalEngaged,
+    proposalOpens, proposalEngaged,
     annotatedOpens,        // computed once; the Opens panel reuses it
     mailboxObservationState: mailboxObservationResponse.data.values || [],
     suppressedEmails: new Set((suppressionResponse.data.values || []).slice(1)
@@ -1965,7 +1744,6 @@ function filterOutreachRows(rows, query) {
   const category = String(query.replyCategory || '').trim().toLowerCase();
   const pipelinePresence = String(query.pipelinePresence || '').trim().toLowerCase();
   const pipelineStage = String(query.pipelineStage || '').trim().toLowerCase();
-  const engagement = String(query.engagement || '').trim().toLowerCase();
   const sequenceState = String(query.sequenceState || '').trim().toLowerCase();
   const automationState = String(query.automationState || '').trim().toLowerCase();
   // Which sending inbox owns the conversation. Matched against the ownership
@@ -2001,9 +1779,6 @@ function filterOutreachRows(rows, query) {
     if (pipelinePresence === 'out' && (row.pipelinePresence || row.mappingStatus === 'conflict')) return false;
     if (pipelinePresence === 'conflict' && row.mappingStatus !== 'conflict') return false;
     if (pipelineStage && pipelineStage !== 'all' && row.pipelineStage !== pipelineStage) return false;
-    if (engagement === 'demo' && !row.demoEngaged) return false;
-    if (engagement === 'warm' && !row.warm) return false;
-    if (engagement === 'none' && (row.demoEngaged || row.warm)) return false;
     if (sequenceState && sequenceState !== 'all' && row.sequenceState !== sequenceState) return false;
     if (automationState === 'suppressed' && !row.suppressed) return false;
     else if (automationState === 'held' && !row.manualHold) return false;
@@ -2414,32 +2189,6 @@ app.get('/api/crm/health', requireAuth, async (req, res) => {
   }
 });
 
-// The DemoPlays header was written before audio_type and lead_token existed, so
-// it can read fewer columns than rows write. Positional data is already correct —
-// this only labels columns F and G. Writes A1:G1 exclusively, so no row data can
-// shift. Guarded by a module flag: repaired at most once per process, never on
-// every request.
-let demoPlaysHeaderChecked = false;
-async function ensureDemoPlaysHeader() {
-  if (demoPlaysHeaderChecked) return;
-  demoPlaysHeaderChecked = true;   // set first: a failure must not retry-loop
-  try {
-    const hdr = await sheets().spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A1:G1',
-    });
-    const row = (hdr.data.values || [])[0] || [];
-    if (row.length >= 7 && String(row[6]).trim()) return;   // already labelled
-    await sheets().spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A1:G1',
-      valueInputOption: 'RAW',
-      requestBody: { values: [['timestamp', 'company', 'niche', 'ip', 'ua', 'audio_type', 'lead_token']] },
-    });
-    console.log('[DemoPlays] header extended to include lead_token (column G)');
-  } catch (e) {
-    console.warn('[DemoPlays] header check failed:', e.message);
-  }
-}
-
 // ── DAILY DIGEST ──────────────────────────────────────────────────────────────
 // One summary card per day, rendered on the dashboard (not SMS, not email).
 // Generated at 18:00 America/Vancouver and cached in its own tab so it is
@@ -2468,12 +2217,10 @@ async function ensureDigestSheet() {
 
 // Computes today's numbers from the source tabs. Read-only.
 async function computeDigest(day) {
-  const [ceR, opR, dpR, drR, inR, actR] = await Promise.all([
+  const [ceR, opR, drR, actR] = await Promise.all([
     sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE }),
     sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ProposalOpens!A:F' }),
-    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A:F' }),
     sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ReplyDrafts!A:I' }).catch(() => ({ data: {} })),
-    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'IntentFired!A:E' }).catch(() => ({ data: {} })),
     sheets().spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID, range: `${COLD_CALL_ACTIVITY_SHEET}!A:J`,
     }).catch(() => ({ data: {} })),
@@ -2502,19 +2249,6 @@ async function computeDigest(day) {
   const todaysRealOpens = annotatedOpens.filter(o => o.real && isToday(o.timestamp));
   const realOpens = { rows: todaysRealOpens.length, companies: new Set(todaysRealOpens.map(o => o.key).filter(Boolean)).size };
 
-  // ── demo plays today, split by clip, plus how many companies now hold a pair ──
-  const playsToday = (dpR.data.values || []).slice(1).filter(r => isToday(r[0]));
-  const introToday = playsToday.filter(r => normalizeAudioType(r[5]) === 'intro').length;
-  const demoToday  = playsToday.filter(r => normalizeAudioType(r[5]) !== 'intro').length;
-  const pairKeys = new Map();
-  for (const r of (dpR.data.values || []).slice(1)) {
-    const k = openKey(r[1] || ''); if (!k) continue;
-    const e = pairKeys.get(k) || { intro: false, demo: false };
-    if (normalizeAudioType(r[5]) === 'intro') e.intro = true; else e.demo = true;
-    pairKeys.set(k, e);
-  }
-  const bothPairs = [...pairKeys.values()].filter(v => v.intro && v.demo).length;
-
   // ── auto-answers vs drafts ──
   const autoAnswered = leadRows.filter(r => isToday(r[9]) && /auto-answered/.test(r[11] || '')).length;
   const draftRows = (drR.data.values || []).slice(1);
@@ -2522,18 +2256,13 @@ async function computeDigest(day) {
   const draftsPending = draftRows.filter(r => (r[8] || 'pending').toLowerCase() === 'pending').length;
 
   // ── booking links sent, by trigger ──
-  const intentRows = (inR.data.values || []).slice(1);
-  const bookingByTrigger = {
-    'question reply': autoAnswered,
-    'both audios':    intentRows.filter(r => isToday(r[0])).length,
-  };
+  const bookingByTrigger = { 'question reply': autoAnswered };
 
   return {
     date: day,
     generatedAt: new Date().toISOString(),
     emailsSent: canonical.emailsSent,
     realOpens,
-    demoPlays: { intro: introToday, demo: demoToday, total: playsToday.length, companiesWithBothPairs: bothPairs },
     replies: canonical.replies,
     bookings: canonical.bookings,
     answers: { autoSent: autoAnswered, draftsCreated: draftsToday, draftsPending },
@@ -2588,37 +2317,6 @@ app.get('/api/digest', requireAuth, async (req, res) => {
   } catch (e) {
     console.error('[Digest GET]', e.message);
     res.status(500).json({ error: e.message });
-  }
-});
-
-// Serves the DemoPlays log, same shape as /api/proposalOpens plus the
-// normalized audioType per row.
-//
-// NOTE: the opens scanner filter is deliberately NOT applied here. A play event
-// requires someone to press play on an audio element — mail scanners fetch
-// links, they don't do that — and the live log confirms it: 0 of 20 demo plays
-// came from a datacenter IP. Running the opens filter over this data could only
-// discard real signal. The write-side guards (blocked IP / bot UA / empty
-// company) already ran in /demo-played, so a logged row is trustworthy.
-app.get('/api/demoPlays', requireAuth, async (_req, res) => {
-  try {
-    await ensureDemoPlaysHeader();
-    // Served from the shared snapshot rather than its own read.
-    const rows = (await getOutreachDataset()).demoPlays;
-    res.json(rows.slice(1).map(row => ({
-      timestamp: row[0] || '',
-      company:   row[1] || '',
-      niche:     row[2] || '',
-      ip:        row[3] || '',
-      userAgent: row[4] || '',
-      audioType: normalizeAudioType(row[5]),
-      // The lead this play names. Blank on rows written before the page
-      // forwarded the token, which are legacy company-keyed evidence.
-      leadToken: normalizeLeadToken(row[6]),
-    })));
-  } catch (e) {
-    console.error('[DemoPlays GET]', e.message);
-    res.json([]);
   }
 });
 
@@ -3109,52 +2807,6 @@ function activityMatchesLead(row, lead) {
   return rowIds.includes(id) || (email && normalizeEmail(row.email) === email);
 }
 
-function bookingLinkBlockerFor(lead, activities, dataset, now = new Date()) {
-  if (!hasUndeliveredDemoPair(lead, activities)) return null;
-  if (!SENDING_ENABLED()) return {
-    code: 'sending_disabled',
-    label: 'Booking link pending — automation is paused',
-    reason: 'the global sending switch is disabled; pending intent remains durable',
-  };
-
-  const senders = configuredSenders();
-  const ownership = resolveSenderOwnership({ lead, activities, senders: visibleSenderIdentities() });
-  const sender = ownership.senderId && senders.find(item => item.id === ownership.senderId);
-  if (!sender || !sender.sendEligible || ['unknown', 'conflict'].includes(ownership.state)) return {
-    code: 'sender_proof',
-    label: 'Booking link pending — sender proof unavailable',
-    reason: ownership.detail || 'the established sending inbox cannot be proven',
-  };
-
-  const observers = observerHealth(dataset.mailboxObservationState || [], {
-    now, senderIds: observableSenders(senders).map(item => item.id),
-  });
-  const observer = observers.find(item => item.senderInboxId === sender.id);
-  if (!observer || observer.health !== 'healthy') return {
-    code: 'mailbox_observation',
-    label: 'Booking link pending — waiting for mailbox health',
-    reason: observer?.quotaBackoff
-      ? 'the owning Gmail observer is quota-limited; delivery fails closed until it recovers'
-      : 'the owning Gmail observer is unavailable; delivery fails closed until it is healthy',
-  };
-
-  const dayKey = now.toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
-  const senderCount = senderCountsToday(dataset.activities || [], dayKey).get(sender.id) || 0;
-  const globalCount = successfulSendCountToday(dataset.activities || [], dayKey);
-  const globalLimit = capacityFromEnv(senders).globalDailyLimit;
-  if (globalCount >= globalLimit) return {
-    code: 'global_quota',
-    label: 'Booking link pending — daily send capacity reached',
-    reason: `global daily quota reached (${globalCount}/${globalLimit}); delivery will retry on a later pass`,
-  };
-  if (senderCount >= sender.dailyLimit) return {
-    code: 'sender_quota',
-    label: 'Booking link pending — sender capacity reached',
-    reason: `owning sender daily quota reached (${senderCount}/${sender.dailyLimit}); delivery will retry later`,
-  };
-  return null;
-}
-
 function signalMatchesLead(row, lead) {
   const id = String(lead.id || '').replace(/^CE-/, '');
   if (row.id) return String(row.id).replace(/^CE-/, '') === id;
@@ -3163,9 +2815,8 @@ function signalMatchesLead(row, lead) {
 
 function timelineForLead(lead, dataset, activities, signalLead = lead) {
   const opens = (dataset?.annotatedOpens || []).filter(row => row.real !== false && signalMatchesLead(row, signalLead));
-  const demos = (dataset?.demoRows || []).filter(row => signalMatchesLead(row, signalLead));
   return buildActivityTimeline({
-    lead, activities, opens, demos,
+    lead, activities, opens,
     // Identity only: the timeline needs to turn a sender id into an address.
     senders: visibleSenderIdentities(),
   });
@@ -6187,7 +5838,6 @@ app.get('/api/coldemail/:id/activity', requireAuth, async (req, res) => {
       || dataset.boardLeads.find(item => normalizeEmail(item.email) === normalizeEmail(lead.email))
       || null;
     const now = new Date();
-    const bookingLinkBlocker = bookingLinkBlockerFor(lead, activities, dataset, now);
     const nextAction = deriveNextAction(boardLead || {
       id: `CE-${lead.id}`, email: lead.email, company: lead.company, stage: '',
     }, lead, {
@@ -6197,7 +5847,6 @@ app.get('/api/coldemail/:id/activity', requireAuth, async (req, res) => {
       suppressedEmails: dataset.suppressedEmails || new Set(),
       sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true',
       outreachOnly: !boardLead,
-      bookingLinkBlocker,
     });
     res.json({
       lead: { ...lead, ...row }, activities: timeline,
@@ -7842,34 +7491,6 @@ if (process.env.RAILWAY_ENVIRONMENT) {
     timezone: 'America/Vancouver',
   });
 
-  // Safety net for the both-audios trigger. The /demo-played route fires it
-  // event-driven, so this only picks up plays whose spawn was skipped because
-  // the agent was busy, or that arrived while the process was restarting.
-  // Every 3 minutes keeps the worst case inside the ~5-minute target.
-  //
-  // OFFSET BY ONE MINUTE, DELIBERATELY. This backstop and the scheduled send
-  // window above share agentState.running. Under '*/3' it fired at 0,3,…,57 —
-  // which includes :00 and :30, exactly when the send cron fires. An intent
-  // pass that was still holding the mutex at that instant made the send window
-  // log "Agent already running — skipping this send window" and that window's
-  // ten sends were dropped with no catch-up, costing whole windows a day and
-  // holding production at ~50 sends against an 80 ceiling.
-  // '1-59/3' keeps twenty opportunities an hour and the same uniform 3-minute
-  // spacing, on 1,4,…,58 — so it can never land on a send window again.
-  //
-  // CONDITIONAL. A tick launches only while the backstop is armed — at boot, after
-  // a demo launch that did not start, after a failed or unreported pass, or while
-  // a pass or the check-only hint reports pending intent work. A tick with
-  // nothing pending launches nothing, so it downloads nothing.
-  cron.schedule('1-59/3 * * * *', () => {
-    const tick = intentBackstop.onTick();
-    if (!tick.run) return;
-    spawnAgentIntentOnly(`cron backstop: ${tick.reasons.join(',')}`, { trigger: 'backstop' });
-  }, {
-    timezone: 'America/Vancouver',
-  });
-  console.log('[cron] Intent backstop scheduled: every 3 minutes while armed, offset off :00/:30');
-
   // Calendar incremental sync is independently gated. With the flag OFF the
   // first line of the orchestrator returns before reading Calendar, Sheets, or
   // checkpoint state. Registering the cadence now therefore cannot activate it.
@@ -7909,8 +7530,8 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   console.log('[cron] Landing attribution reconciler scheduled every 15 minutes (feature-gated)');
 
   // Pre-window sender refill, 06:40 Pacific on weekdays, twenty minutes before
-  // the first send tick. 06:50 retries a run that found a pass active (an armed
-  // intent backstop can also fire at :40); on a balanced queue it moves nothing,
+  // the first send tick. 06:50 retries a run that found a pass active; on a
+  // balanced queue it moves nothing,
   // and the 06:55 send-window guard refuses anything later. Admission already
   // balances new work; this catches what admission cannot see coming — an
   // inbox activated after its peers were loaded, follow-up waves that fill one
@@ -7940,7 +7561,7 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   }, { timezone: 'America/Vancouver' });
   console.log('[cron] Smartlead reconciliation scheduled: hourly at :12');
   console.log('[cron] Daily digest scheduled: 18:00 Pacific');
-  // One line an hour: corpus reads, Calendar checks and intent launches.
+  // One line an hour: corpus reads and Calendar checks.
   cron.schedule('59 * * * *', reportEgressMeter, { timezone: 'America/Vancouver' });
   console.log('[cron] Check-only pass scheduled: :15 and :45 every hour');
   console.log('[cron] Late-reply terminal watcher hosted by check-only: daily at 12:15 Pacific');

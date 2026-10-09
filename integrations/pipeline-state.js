@@ -35,7 +35,7 @@ const { latestResponseAt } = require('./prospect-response');
 // The sender's OWN ownership verdict. Reactivation asks the same question the
 // agent asks before it mails anyone, rather than keeping a second opinion.
 const { OWNER, BLOCKED_BY } = require('./automation-ownership');
-const { demoPairEventFor, hasUndeliveredDemoPair } = require('./demo-intent-state');
+const { hasUndeliveredDemoPair } = require('./demo-intent-state');
 const { ARCHIVE_MARKER_PREFIX, archiveReasonFromNotes, retiredOfferBlock } = require('./lead-archive');
 
 // ── AUTOMATION STATE ────────────────────────────────────────────────────────
@@ -1380,38 +1380,9 @@ function deriveNextAction(boardLead, twin, context = {}) {
     }
   }
 
-  // A qualifying demo is a durable prospect action, distinct from delivery.
-  // Once recorded it owns the automation slot until the canonical
-  // booking_link_sent event exists. Reply/meeting/hold/suppression/terminal
-  // branches above still win; ordinary cold cadence below never does.
-  if (hasUndeliveredDemoPair(twin || lead, activities)) {
-    if (permanentSuppression && permanentSuppression !== MANUAL_HOLD_TAG) {
-      return nothing(ACTION_TYPE.NONE_LOST, 'None — suppressed',
-        `suppressed (${permanentSuppression}); booking-link delivery is blocked`);
-    }
-    if (hasManualHold((twin && twin.notes) || '') && !manualHoldReleased((twin && twin.notes) || '', now)) {
-      return buildAction({
-        type: ACTION_TYPE.BLOCKED_BY_HOLD,
-        label: 'Booking link pending — blocked by manual hold',
-        dueAt: null, owner: ACTION_OWNER.HUMAN, status: ACTION_STATUS.BLOCKED,
-        source: 'canonical-demo-pair', reason: 'MANUAL HOLD supersedes pending demo intent',
-        needsAttention: true, now,
-      });
-    }
-    const blocker = context.bookingLinkBlocker || null;
-    const pair = demoPairEventFor(twin || lead, activities);
-    return buildAction({
-      type: ACTION_TYPE.BOOKING_LINK_PENDING,
-      label: blocker?.label || 'Booking-link follow-up pending',
-      dueAt: null, owner: ACTION_OWNER.AUTOMATION,
-      status: blocker ? ACTION_STATUS.BLOCKED : ACTION_STATUS.DUE_TODAY,
-      source: 'canonical-demo-pair',
-      reason: blocker?.reason || 'verified demo pair recorded; hardened booking-link delivery is pending',
-      needsAttention: Boolean(blocker), now,
-      intentOccurredAt: pair?.occurredAt || null,
-      blockedBy: blocker?.code || null,
-    });
-  }
+  // A recorded demo pair (the retired voice-receptionist demo) no longer owns
+  // an automation slot: the booking-link deliverer is gone, so advertising a
+  // pending automated send would be false. Its history stays on the timeline.
 
   // A board card in Follow Up is Pipeline-owned. Ordinary cold Email 2/3 is
   // structurally blocked by the sender even when the stale ColdEmail twin still

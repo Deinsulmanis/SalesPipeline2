@@ -64,8 +64,12 @@ function deterministicReplyCategory(text, options = {}) {
   // opportunity. So the action path keeps routing these to a human via QUESTION
   // while the analytics path records the intent. Anything stronger — a trial
   // request, a meeting, an explicit statement of interest — still promotes.
-  const INFORMATIONAL = ['pricing', 'how_it_works', 'send_info'];
+  const INFORMATIONAL = ['pricing', 'how_it_works', 'send_info', 'proposal'];
   const signals = resolved.signals || [];
+  // An accepted calendar invitation is positive canonically, but it is a
+  // calendar notification, not a message to answer: a human takes it from here.
+  if (resolved.state === REPLY_STATE.POSITIVE
+    && signals.length && signals.every(signal => signal === 'meeting_accepted')) return 'NEEDS_HUMAN';
   if (resolved.state === REPLY_STATE.POSITIVE
     && signals.length && signals.every(signal => INFORMATIONAL.includes(signal))) return 'QUESTION';
   return CANONICAL_TO_LEGACY[resolved.state] || 'NEEDS_HUMAN';

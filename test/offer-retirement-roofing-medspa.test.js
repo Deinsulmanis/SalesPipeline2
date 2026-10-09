@@ -24,7 +24,6 @@ const { deriveAutomationOwnership, OWNER, BLOCKED_BY } = require('../integration
 const { planSenderRebalance } = require('../integrations/sender-balance');
 const { sequenceAllowedForLead } = require('../integrations/stage-sequences');
 const { promotionDecision, PROMOTION_TRIGGER, resolvePromotionIdentity } = require('../integrations/promotion-policy');
-const { pendingIntentWork } = require('../integrations/intent-backstop');
 const { CAMPAIGN_VERSIONS } = require('../integrations/campaign-versions');
 const { STAFFING_CAMPAIGN } = require('../integrations/staffing-campaign');
 const { STAFFING_RENDER_OPTIONS } = require('../test-support/staffing-mail');
@@ -197,7 +196,6 @@ test('6. an archived roofing or med spa lead cannot be reactivated by an observe
       identity: resolvePromotionIdentity(archived, [], { coldEmailTwinCount: 1 }), meetingAt: '2026-10-05T17:00:00.000Z', suppressedEmails: new Set() });
     assert.equal(decision.shouldPromote, false, trigger);
   }
-  assert.equal(pendingIntentWork({ leads: [archived, roofingLead()], plays: [], activities: [], companyKey: v => v }), 0);
 });
 
 // ── 7–10: the protected clients ────────────────────────────────────────────

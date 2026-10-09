@@ -459,8 +459,7 @@ test('recipient selection is unchanged apart from suppression', () => {
   assert.match(agentSrc, /function selectFollowUps[\s\S]{0,200}emailStatus !== 'emailed'/);
 });
 
-test('demo-play dedupe and reply handling still stop the sequence', () => {
-  assert.match(agentSrc, /if \(fired\.has\(`\$\{lead\.id\}\|both-audios`\)\) continue;/);
+test('reply handling still stops the sequence', () => {
   assert.match(agentSrc, /lead\.emailStatus = 'replied';/);
   assert.match(agentSrc, /addSuppression\(lead\.email, 'unsubscribe'/);
 });

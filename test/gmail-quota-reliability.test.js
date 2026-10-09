@@ -396,14 +396,9 @@ test('usage snapshot and ops endpoint expose per-mailbox counters without tokens
   assert.doesNotMatch(serverSrc, /oauth.*gmail-usage|token.*gmail-usage/i);
 });
 
-test('intent backstop no longer runs mailbox-wide Gmail scans', () => {
-  const branch = agentSrc.slice(agentSrc.indexOf('if (INTENT_ONLY && !CHECK_ONLY)'),
-    agentSrc.indexOf('let todaySent', agentSrc.indexOf('if (INTENT_ONLY && !CHECK_ONLY)')));
-  assert.match(branch, /using persisted observer health/);
-  assert.doesNotMatch(branch, /runReplyCheckPass\(preparedIntent\.due/);
-  assert.doesNotMatch(branch, /runHumanOutboundPass\(\s*candidates/);
+test('no intent-only pass exists to run Gmail work every three minutes', () => {
+  assert.doesNotMatch(agentSrc, /INTENT_ONLY|prepareDemoIntentCandidates/);
 });
-
 test('HumanOutbound and LateReply Gmail scans are off the high-frequency path', () => {
   assert.match(agentSrc, /GMAIL_HUMAN_OUTBOUND_SCAN === 'true'/);
   assert.match(agentSrc, /GMAIL_LATE_REPLY_THREAD_SCAN === 'true'/);

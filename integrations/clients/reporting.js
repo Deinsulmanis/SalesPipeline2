@@ -19,7 +19,14 @@ const { REPLY_EVENT_TYPE } = require('./reply-pipeline');
 const { sendSuppressionReason } = require('../pipeline-state');
 const { clientPersonalizationState } = require('./client-email');
 
+const { replyOutcomeFromEvidence, leadHasReply } = require('../reply-analytics');
+
 const SEND_EVENTS = new Set(['initial_email_sent', 'follow_up_sent', 'sequence_step_sent']);
+// Shared analytics category -> this overview's reply buckets.
+const CLIENT_REPLY_BUCKET = Object.freeze({
+  positive: 'positive', negative: 'negative', needs_human: 'neutral', unclassified: 'neutral',
+  automated_reply: 'automated',
+});
 const LEGACY_REPLY_SENTIMENT = Object.freeze({
   positive_reply: 'positive', question_reply: 'positive', meeting_requested: 'positive',
   negative_reply: 'negative', unsubscribe_reply: 'unsubscribe', wrong_person_reply: 'neutral',
@@ -76,21 +83,29 @@ function buildClientOverview({
 
   const sends = myActivities.filter(row => SEND_EVENTS.has(text(row.eventType)));
   const bounces = myActivities.filter(row => text(row.eventType) === 'email_bounced');
+  // Replying LEADS, categorised by the same helper the Outreach dashboard, the
+  // funnel and the reply table use (reply-analytics), so a lead is positive on
+  // every screen or on none. This used to count messages by raw event type,
+  // ignoring reply decisions and human overrides.
   const replies = { total: 0, positive: 0, neutral: 0, negative: 0, unsubscribe: 0, automated: 0 };
-  const seenMessages = new Set();
+  const activitiesByLead = new Map();
   for (const row of myActivities) {
-    const type = text(row.eventType);
-    const data = meta(row);
-    let sentiment = null;
-    if (type === REPLY_EVENT_TYPE) sentiment = data.sentiment || 'neutral';
-    else if (LEGACY_REPLY_SENTIMENT[type]) sentiment = LEGACY_REPLY_SENTIMENT[type];
-    if (!sentiment) continue;
-    const key = data.gmailMessageId || row.eventId;
-    if (seenMessages.has(key)) continue;
-    seenMessages.add(key);
-    if (sentiment === 'automated') { replies.automated += 1; continue; }
+    const id = activityLeadId(row);
+    activitiesByLead.set(id, [...(activitiesByLead.get(id) || []), row]);
+  }
+  for (const lead of mine) {
+    const rows = activitiesByLead.get(lead.id) || [];
+    const replied = leadHasReply(lead) || rows.some(row => {
+      const type = text(row.eventType);
+      return type === REPLY_EVENT_TYPE || Boolean(LEGACY_REPLY_SENTIMENT[type]) || type === 'out_of_office_reply';
+    });
+    if (!replied) continue;
+    const { category, unsubscribe } = replyOutcomeFromEvidence(lead, rows);
+    const bucket = CLIENT_REPLY_BUCKET[category];
+    if (!bucket) continue;   // unknown or contact-change review: not a reply a person wrote
+    if (bucket === 'automated') { replies.automated += 1; continue; }
     replies.total += 1;
-    replies[sentiment] = (replies[sentiment] || 0) + 1;
+    replies[bucket === 'negative' && unsubscribe ? 'unsubscribe' : bucket] += 1;
   }
 
   const clientSenders = senders.filter(sender => {

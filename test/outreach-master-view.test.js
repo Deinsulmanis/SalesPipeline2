@@ -82,23 +82,22 @@ test('pipeline mapping prefers CE id, falls back to unique exact email, and neve
   assert.equal(conflict.boardLeadId, '');
 });
 
-test('pipeline, reply, engagement, and sequence filters compose before pagination', () => {
+test('pipeline, reply and sequence filters compose before pagination', () => {
   const rows = [
     row('positive-out', { replyCategory: 'positive' }),
     row('human-out', { replyCategory: 'needs_human' }),
-    row('demo-out', { demoEngaged: true }),
+    row('plain-out'),
     row('hot', { pipelinePresence: true, pipelineStage: 'hot', mappingStatus: 'matched', replyCategory: 'positive' }),
     row('complete', { sequenceState: 'complete' }),
     row('active', { sequenceState: 'active', automationState: 'active' }),
   ];
-  assert.deepEqual(filterOutreachRows(rows, { pipelinePresence: 'out' }).map(x => x.id), ['positive-out','human-out','demo-out','complete','active']);
+  assert.deepEqual(filterOutreachRows(rows, { pipelinePresence: 'out' }).map(x => x.id), ['positive-out','human-out','plain-out','complete','active']);
   assert.deepEqual(filterOutreachRows(rows, { pipelinePresence: 'in', pipelineStage: 'hot' }).map(x => x.id), ['hot']);
   assert.deepEqual(filterOutreachRows(rows, { replyCategory: 'positive', pipelinePresence: 'out' }).map(x => x.id), ['positive-out']);
   assert.deepEqual(filterOutreachRows(rows, { replyCategory: 'needs_human', pipelinePresence: 'out' }).map(x => x.id), ['human-out']);
-  assert.deepEqual(filterOutreachRows(rows, { engagement: 'demo', pipelinePresence: 'out' }).map(x => x.id), ['demo-out']);
   assert.deepEqual(filterOutreachRows(rows, { sequenceState: 'complete' }).map(x => x.id), ['complete']);
   assert.deepEqual(filterOutreachRows(rows, { sequenceState: 'active' }).map(x => x.id), ['active']);
-  assert.deepEqual(filterOutreachRows(rows, { replyCategory: 'none' }).map(x => x.id), ['demo-out','complete','active']);
+  assert.deepEqual(filterOutreachRows(rows, { replyCategory: 'none' }).map(x => x.id), ['plain-out','complete','active']);
 });
 
 test('the row and lazy drawer expose canonical pipeline state for non-board leads', () => {
@@ -112,9 +111,11 @@ test('the row and lazy drawer expose canonical pipeline state for non-board lead
 });
 
 test('master filters are server-side, debounced, responsive, and keep the initial DOM bounded', () => {
-  for (const name of ['pipelinePresence','pipelineStage','engagement','sequenceState','automationState']) {
+  for (const name of ['pipelinePresence','pipelineStage','sequenceState','automationState']) {
     assert.match(browser, new RegExp(`params\\.set\\('${name}'`));
   }
+  // The demo-only engagement filter is retired with the demo it filtered on.
+  assert.doesNotMatch(browser, /params\.set\('engagement'|id="ce-engagement-filter"/);
   assert.match(browser, /setTimeout\(\(\) => reloadCePage\(\), 250\)/);
   assert.match(browser, /const CE_PAGE_SIZE = 100;/);
   assert.match(browser, /@media \(max-width: 700px\)[\s\S]*?\.ce-master-filters/);

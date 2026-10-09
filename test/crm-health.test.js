@@ -347,7 +347,7 @@ test('25. the aggregate health payload stays small', () => {
 
 test('26. the drill-down enforces a hard upper bound', () => {
   const server = readSource(path.join(root, 'server.js'));
-  const block = server.slice(server.indexOf("app.get('/api/crm/health'"), server.indexOf('// The DemoPlays header'));
+  const block = server.slice(server.indexOf("app.get('/api/crm/health'"), server.indexOf('// ── DAILY DIGEST'));
   assert.match(block, /Math\.min\(200,/, 'hard cap of 200');
   assert.match(block, /parseInt\(req\.query\.limit, 10\) \|\| 100/, 'defaults to 100');
   assert.match(block, /slice\(offset, offset \+ requested\)/);
@@ -355,7 +355,7 @@ test('26. the drill-down enforces a hard upper bound', () => {
 
 test('27. the endpoint uses the shared snapshot and adds no per-lead reads', () => {
   const server = readSource(path.join(root, 'server.js'));
-  const block = server.slice(server.indexOf("app.get('/api/crm/health'"), server.indexOf('// The DemoPlays header'));
+  const block = server.slice(server.indexOf("app.get('/api/crm/health'"), server.indexOf('// ── DAILY DIGEST'));
   assert.match(block, /getOutreachDataset/, 'reuses the shared Outreach snapshot');
   // The only permitted extra reads are two whole-tab helpers, never per-lead.
   const reads = block.match(/spreadsheets\.values\.get/g) || [];

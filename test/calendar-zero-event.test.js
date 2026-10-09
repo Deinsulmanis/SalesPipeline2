@@ -193,7 +193,7 @@ test('F1 fail-closed: with Supabase authoritative, an unreadable corpus refuses 
   const run = agent.slice(agent.indexOf('async function run()'));
   const read = run.indexOf('const all = await readLeads(snapshot.coldEmail)');
   assert.ok(read > 0);
-  for (const pass of ['runIntentTriggerPass(', 'runHumanOutboundPass(', 'runReplyCheckPass(', 'prepareDemoIntentCandidates(']) {
+  for (const pass of ['runHumanOutboundPass(', 'runReplyCheckPass(']) {
     assert.ok(run.indexOf(pass) > read, `${pass} runs only after the authoritative corpus was read`);
   }
   assert.match(agent, /run\(\)\.catch\(e => \{\s*console\.error\('\\n\[FATAL\]', e\.message\);\s*process\.exit\(1\);/);

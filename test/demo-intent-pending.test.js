@@ -17,7 +17,6 @@ const source = file => fs.readFileSync(path.join(root, file), 'utf8').replace(/\
 const agent = source('outreach-agent.js');
 const server = source('server.js');
 const browser = source('public/index.html');
-const repair = source('scripts/demo-intent-audit-repair.js');
 
 const lead = {
   id: 'L1', company: 'Example Dental', email: 'hello@example.test',
@@ -61,33 +60,18 @@ test('pending is derived from pair present and booking-link delivery absent', ()
   }]), false);
 });
 
-test('canonical Next Action makes blocked pending intent explicit', () => {
-  const next = deriveNextAction({ id: 'CE-L1', stage: 'follow_up', email: lead.email }, lead, {
-    activities: [pair], now,
-    bookingLinkBlocker: {
-      code: 'mailbox_observation',
-      label: 'Booking link pending — waiting for mailbox health',
-      reason: 'owning observer unavailable',
-    },
-  });
-  assert.equal(next.type, ACTION_TYPE.BOOKING_LINK_PENDING);
-  assert.equal(next.owner, ACTION_OWNER.AUTOMATION);
-  assert.equal(next.status, ACTION_STATUS.BLOCKED);
-  assert.equal(next.blockedBy, 'mailbox_observation');
-  assert.match(next.label, /waiting for mailbox health/);
-  assert.equal(next.intentOccurredAt, pair.occurredAt);
-});
-
-test('Outreach-only and Pipeline leads use the same pending action', () => {
+test('a recorded demo pair no longer advertises a pending automated booking link', () => {
+  // The demo-intent deliverer is retired, so a historical undelivered pair must
+  // not claim that automation will send anything.
   const pipeline = deriveNextAction({ id: 'CE-L1', stage: 'follow_up', email: lead.email }, lead,
     { activities: [pair], now });
   const outreachOnly = deriveNextAction({ id: 'CE-L1', stage: '', email: lead.email }, lead,
     { activities: [pair], now, outreachOnly: true });
-  assert.equal(pipeline.type, ACTION_TYPE.BOOKING_LINK_PENDING);
-  assert.equal(outreachOnly.type, ACTION_TYPE.BOOKING_LINK_PENDING);
-  assert.equal(outreachOnly.status, ACTION_STATUS.DUE_TODAY);
+  for (const next of [pipeline, outreachOnly]) {
+    assert.notEqual(next.type, ACTION_TYPE.BOOKING_LINK_PENDING);
+    assert.notEqual(next.source, 'canonical-demo-pair');
+  }
 });
-
 test('reply, meeting, hold, suppression and terminal state outrank demo pending', () => {
   const replyTwin = { ...lead, emailStatus: 'replied', notes: '[REPLY: Interested]' };
   const replied = deriveNextAction({ stage: 'follow_up', email: lead.email }, replyTwin, {
@@ -104,10 +88,17 @@ test('reply, meeting, hold, suppression and terminal state outrank demo pending'
     { activities: [pair], now });
   assert.equal(held.type, ACTION_TYPE.BLOCKED_BY_HOLD);
 
+  // A suppressed lead with a historical pair gets exactly what any suppressed
+  // Follow Up lead gets; the pair adds no automated action of its own.
   const suppressed = deriveNextAction({ stage: 'follow_up' }, lead, {
     activities: [pair], now, suppressedEmails: new Set([lead.email]),
   });
-  assert.equal(suppressed.status, ACTION_STATUS.NONE);
+  const suppressedNoPair = deriveNextAction({ stage: 'follow_up' }, lead, {
+    activities: [], now, suppressedEmails: new Set([lead.email]),
+  });
+  assert.notEqual(suppressed.type, ACTION_TYPE.BOOKING_LINK_PENDING);
+  assert.equal(suppressed.type, suppressedNoPair.type);
+  assert.equal(suppressed.status, suppressedNoPair.status);
 
   const terminal = deriveNextAction({ stage: 'closed_won' }, lead, { activities: [pair], now });
   assert.equal(terminal.type, ACTION_TYPE.NONE_WON);
@@ -146,30 +137,10 @@ test('multiple candidates are grouped by established sender and missing proof st
   assert.equal(plan.blocked[0].reason, 'sender_proof_missing');
 });
 
-test('runtime persists pair before delivery and cold cadence excludes pending intent', () => {
-  const prepare = agent.slice(agent.indexOf('async function prepareDemoIntentCandidates'),
-    agent.indexOf('async function runIntentTriggerPass'));
-  const intent = agent.slice(agent.indexOf('async function runIntentTriggerPass'), agent.indexOf('// ── SELECTION'));
-  const selector = agent.slice(agent.indexOf('function selectFollowUps'), agent.indexOf('function countTodaySends'));
-  assert.match(prepare, /buildDemoPairActivity/);
-  assert.match(prepare, /recordColdCallActivityStrict\(event\)/);
-  assert.ok(agent.indexOf('prepareDemoIntentCandidates(all, snapshot, allLeadsForDailyCap)')
-    < agent.indexOf('runIntentTriggerPass(all, intentOwnershipContext, snapshot,'));
-  assert.match(intent, /deliverHardenedWarmReply/);
-  assert.match(intent, /BOOKING_LINK_EVENT/);
-  assert.match(selector, /hasUndeliveredDemoPair\(l, activities\)/);
+test('cold cadence still excludes a lead with an undelivered historical pair; nothing delivers it', () => {
+  assert.match(agent, /if \(hasUndeliveredDemoPair\(l, activities\)\) return false;/);
+  assert.doesNotMatch(agent, /runIntentTriggerPass|prepareDemoIntentCandidates|buildDemoPairActivity/);
 });
-
-test('three-minute worker exits before Gmail with zero candidates and does not scan mailboxes', () => {
-  const branch = agent.slice(agent.indexOf('if (INTENT_ONLY && !CHECK_ONLY)'),
-    agent.indexOf('let todaySent', agent.indexOf('if (INTENT_ONLY && !CHECK_ONLY)')));
-  assert.ok(branch.indexOf('if (!preparedIntent.due.length)') > 0);
-  assert.match(branch, /planIntentObservation\(preparedIntent\.due, GMAIL_SENDERS\)/);
-  assert.match(branch, /using persisted observer health; zero incremental Gmail mailbox scans this pass/);
-  assert.doesNotMatch(branch, /runReplyCheckPass\(preparedIntent\.due/);
-  assert.doesNotMatch(branch, /advanceCheckpoint: false/);
-});
-
 test('Outreach detail returns canonical Next Action and drawer contains no cold-date decision fork', () => {
   const endpoint = server.slice(server.indexOf("app.get('/api/coldemail/:id/activity'"),
     server.indexOf("app.patch('/api/coldemail/:id/stage'"));
@@ -182,11 +153,3 @@ test('Outreach detail returns canonical Next Action and drawer contains no cold-
   assert.doesNotMatch(drawer, /delayDays = stepNum|nextDate\.setDate|Follow-up sends in/);
 });
 
-test('historical repair is targeted, confirmed, evidence-based and has no send path', () => {
-  assert.match(repair, /--repair-lead=/);
-  assert.match(repair, /--confirm-no-send/);
-  assert.match(repair, /--backfill-fired-deliveries/);
-  assert.match(repair, /buildDemoPairActivity/);
-  assert.match(repair, /booking link was delivered after audit; refusing/);
-  assert.doesNotMatch(repair, /sendEmail|gmail\.users|messages\.send|deliverProspectReply/);
-});

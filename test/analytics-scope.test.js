@@ -307,7 +307,7 @@ test('17. a rate with a zero denominator is unknown, never NaN, Infinity or 0%',
 test('every operational summary names its scope; retired telemetry panels are labelled historical', () => {
   assert.match(serverSrc, /scope: \{ scope: ANALYTICS_SCOPE\.ACTIVE, activeLeads: active\.length,/);
   assert.equal((serverSrc.match(/\.\.\.analyticsScopeBlocks\(dataset\),/g) || []).length, 2, 'stats and summary');
-  assert.equal((browserSrc.match(/<b>Retired offers · historical<\/b>/g) || []).length, 2, 'demo plays and proposal opens');
+  assert.equal((browserSrc.match(/<b>Retired offers · historical<\/b>/g) || []).length, 1, 'proposal opens (the demo plays panel is retired)');
   assert.match(browserSrc, /<select id="funnel-scope" aria-label="Analytics scope"/);
   assert.match(browserSrc, /scope: document\.getElementById\('funnel-scope'\)\?\.value \|\| 'active'/);
 });
