@@ -59,6 +59,7 @@ const { observerHealth } = require('./gmail-observer-health');
 const { provenSequenceSenderId } = require('./stage-sequences');
 const { latestResponseAt } = require('./prospect-response');
 const { parseReplyDecision } = require('./reply-decision');
+const { orphanedHumanReplies } = require('./reply-watchdog');
 
 function observerChecks(context, index) {
   if (!context.mailboxObservationState) return [];
@@ -289,6 +290,17 @@ function identityChecks({ leads, boardLeads }, index) {
  */
 function replyChecks({ leads, replyRecords = [], canonicalReplyBoundary = null, now = new Date() }, index) {
   const out = [];
+  const orphans = orphanedHumanReplies({ leads, activities: [...index.activityByLead.values()].flat(), now });
+  out.push(orphans.length
+    ? finding({ id: 'reply.orphaned_human_inbound', category: CATEGORY.REPLY,
+      severity: SEVERITY.CRITICAL, status: STATUS.FAIL, affected: orphans.length,
+      sample: orphans.map(item => ({ id: item.leadId, company: item.company,
+        clientId: item.clientId, senderInboxId: item.senderInboxId,
+        messageId: item.messageId, receivedAt: item.receivedAt })),
+      summary: `${orphans.length} genuine inbound reply(s) have no recorded response or human review after 10 minutes. Urgent operator review required.`,
+      classification: 'operational', requiresHumanReview: true })
+    : pass('reply.orphaned_human_inbound', CATEGORY.REPLY,
+      'No recent genuine inbound reply lacks a response or human review.'));
   const resolvedBoundary = resolveCanonicalReplyBoundary(canonicalReplyBoundary);
   const boundary = resolvedBoundary.at;
   // A boundary that silently stopped working would disable the very detection

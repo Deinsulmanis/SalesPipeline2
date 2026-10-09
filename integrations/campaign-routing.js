@@ -3,6 +3,7 @@
 const { CAMPAIGN_VERSIONS, CAMPAIGN_FAMILY, resolveLeadFamily } = require('./campaign-versions');
 const { staffingSendBlockReason, isStaffingLead } = require('./staffing-launch-gate');
 const { STAFFING_CAMPAIGN } = require('./staffing-campaign');
+const { hasStaffingHoldMarker } = require('./staffing-hold');
 const { isStaffingOnlySender } = require('./gmail-inbox-registry');
 const { getClient } = require('./clients/registry');
 const { clientCampaign, clientTemplate, clientLeadType, campaignSendable } = require('./clients/campaigns');
@@ -178,6 +179,7 @@ function routedLeadReady(lead, env = process.env) {
   // rows, so it may not use the legacy bypass that exists for old dental and
   // roofing records. A staffing row without explicit routing is refused.
   const staffing = isStaffingLead(lead);
+  if (staffing && hasStaffingHoldMarker(lead)) return { ok: false, reason: 'staffing hold requires explicit reviewed release' };
   if (!staffing && String(lead.routingRequired || '').toLowerCase() !== 'true') return { ok: true, legacy: true };
   if (!lead.leadNiche || !lead.senderInboxId || !lead.emailTemplateId) return { ok: false, reason: 'routing assignment is incomplete' };
   const resolved = resolveLeadFamily(lead);

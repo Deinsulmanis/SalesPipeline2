@@ -6295,6 +6295,7 @@ function renderCeTable() {
       const qv = typeof WorkspaceShared !== 'undefined' ? WorkspaceShared.queuedVisibility(l, extra) : null;
       if (qv && qv.blocker) chips.push(`<span class="ce-row-chip" data-tone="warn">${esc(qv.blocker)}</span>`);
     }
+    if (l.staffingHoldReason) chips.push(`<span class="ce-row-chip" data-tone="warn" title="${escAttr(l.staffingHoldExplanation || l.staffingHoldReason)}">Hold: ${esc(l.staffingHoldReason.replaceAll('_', ' ').toLowerCase())}</span>`);
     const roles = (extra.roles || []).map(role => role.clean || role.raw).filter(Boolean).join(', ');
     const extraCols = `<td class="ce-extra-col">${esc(extra.title || '—')}</td><td class="ce-extra-col">${esc(roles || '—')}</td><td class="ce-extra-col">${esc(extra.hiringSite || l.city || '—')}${extra.tier ? `<div class="ce-row-badges"><span class="ce-row-chip">${esc(extra.tier)}${extra.siteTie ? ' · ' + esc(extra.siteTie) : ''}${extra.catchAll ? ' · catch-all' : ''}</span></div>` : ''}</td><td class="ce-extra-col">${esc(extra.sector || '—')}</td>`;
     return `<tr data-id="${l.id}" onclick="openCeDetail('${l.id}')" style="cursor:pointer">
@@ -7080,6 +7081,12 @@ function openCeDetail(id) {
 
   // ── Contact fields ───────────────────────────────────────────
   const fieldRows = [
+    lead.staffingHold && { label: 'Hold reason', val: esc(lead.staffingHold.reason.replaceAll('_', ' ').toLowerCase()) },
+    lead.staffingHold && { label: 'Why held', val: esc(lead.staffingHold.explanation) },
+    lead.staffingHold && { label: 'Fit', val: esc(lead.staffingFit || 'Review required') },
+    lead.staffingHold && { label: 'Personalization', val: esc(lead.staffingPersonalization || 'Review required') },
+    lead.staffingHold && { label: 'Routing ready', val: lead.staffingRoutingReady ? 'Yes' : 'No' },
+    lead.staffingHold && { label: 'Manual hold', val: lead.manualHold ? 'Yes' : 'No' },
     lead.email       && { label: 'Email',        val: `<a href="mailto:${esc(lead.email)}">${esc(lead.email)}</a>` },
     lead.website     && { label: 'Website',      val: `<a href="${/^https?:\/\//i.test(lead.website) ? '' : 'https://'}${esc(lead.website)}" target="_blank">${esc(lead.website)}</a>` },
     lead.city        && { label: 'City',         val: esc(lead.city) },

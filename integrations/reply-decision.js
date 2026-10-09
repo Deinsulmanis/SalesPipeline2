@@ -124,7 +124,32 @@ function ruleSummary(canonical = {}) {
     revisitDate: canonical.revisitDate || null,
     returnDate: canonical.returnDate || null,
     classifierVersion: canonical.classifierVersion || null,
+    genuineHuman: canonical.genuineHuman ?? null,
   };
+}
+
+function responseNeed({ classification = '', replyText = '', rule = {} } = {}) {
+  const kind = upper(classification);
+  const body = String(replyText || '');
+  const automated = kind === 'OUT_OF_OFFICE' || rule.genuineHuman === false;
+  const isHumanMessage = !automated;
+  const acceptedInvite = /\b(?:accepted|acceptance)\b.{0,80}\b(?:invitation|invite|calendar|meeting)\b|\b(?:invitation|invite|calendar|meeting)\b.{0,80}\baccepted\b/i.test(body);
+  let intent = 'unclear';
+  if (kind === 'UNSUBSCRIBE') intent = 'unsubscribe';
+  else if (kind === 'NOT_INTERESTED') intent = 'not_interested';
+  else if (automated) intent = 'out_of_office';
+  else if (rule.revisitDate) intent = 'timing';
+  else if (acceptedInvite || kind === 'MEETING_REQUEST' || /\b(?:call me|meet(?:ing)? next week|book a (?:call|time))\b/i.test(body)) intent = 'meeting_request';
+  else if (/\b(?:pric(?:e|ing)|cost|fees?|how much|per meeting|rates?)\b/i.test(body)) intent = 'pricing';
+  else if (kind === 'WRONG_PERSON' || /\b(?:talk to|speak to|speak with|contact)\s+[A-Z][a-z]+\b/.test(body)) intent = 'referral';
+  else if (kind === 'ALREADY_HANDLED') intent = 'objection';
+  else if (kind === 'SEND_INFO' || kind === 'QUESTION' || /\b(?:what (?:exactly )?do you do|how does this work|who have you worked with|send me (?:more )?info|what does qualified mean)\b/i.test(body)) intent = 'information_request';
+  else if (kind === 'INTERESTED') intent = 'interested';
+  const requiresResponse = isHumanMessage && !rule.revisitDate
+    && !['UNSUBSCRIBE', 'NOT_INTERESTED'].includes(kind);
+  const confidence = ({ high: 0.9, medium: 0.7, low: 0.4, none: 0 })[rule.confidence] ?? 0;
+  return { isHumanMessage, requiresResponse, commercialIntent: requiresResponse,
+    intent, confidence, acceptedInvite };
 }
 
 /**
@@ -162,7 +187,7 @@ function replyDecisionEventId(leadId, messageId) {
  */
 function createReplyDecision({
   lead = {}, message = {}, ruleCanonical = {}, ruleClassification = '',
-  terminal = null, classifier = null, overlay = null, now = new Date(),
+  terminal = null, classifier = null, overlay = null, replyText = '', now = new Date(),
 } = {}) {
   let classification = '';
   let source = null;
@@ -180,6 +205,7 @@ function createReplyDecision({
     source = CLASSIFICATION_SOURCE.STAFFING_OVERLAY;
   }
   const rule = ruleSummary(ruleCanonical);
+  const need = responseNeed({ classification, replyText, rule });
   const leadId = String(lead.id || '').trim();
   const messageId = String(message.messageId || message.id || '').trim();
   return {
@@ -218,6 +244,15 @@ function createReplyDecision({
     classificationConfidence: source === CLASSIFICATION_SOURCE.RULE ? rule.confidence : null,
     classificationConfidenceSource: source === CLASSIFICATION_SOURCE.RULE ? 'rule_canonical' : null,
     qualificationState: overlayApplied && overlay.fit ? overlay.fit : null,
+    isHumanMessage: need.isHumanMessage,
+    requiresResponse: need.requiresResponse,
+    commercialIntent: need.commercialIntent,
+    intent: need.intent,
+    intentConfidence: need.confidence,
+    acceptedInvite: need.acceptedInvite,
+    safeToAutoReply: false,
+    responseDisposition: null,
+    escalationPriority: null,
 
     // ── B. policy ────────────────────────────────────────────────────────
     route: null,
@@ -253,6 +288,8 @@ function recordPolicy(decision, {
   if (!decision) return decision;
   decision.policyAction = action || null;
   decision.policySend = Boolean(send);
+  decision.safeToAutoReply = Boolean(send && decision.isHumanMessage
+    && decision.requiresResponse && !decision.acceptedInvite);
   decision.policyReason = text(reason);
   decision.policySource = source;
   decision.policyDeferredTo = null;
@@ -273,7 +310,7 @@ function recordPolicy(decision, {
  * category. QUESTION and the positive categories are decided later by the
  * question answerer and decideReplyResponse, which record their own policy.
  */
-function planReplyRoute(decision, { maySend = true } = {}) {
+function planReplyRoute(decision, { maySend = true, reviewIfNoSend = false } = {}) {
   const kind = decision.finalClassification || '';
   const rule = decision.ruleCanonical || {};
   const set = (route, action, reason) => {
@@ -299,7 +336,8 @@ function planReplyRoute(decision, { maySend = true } = {}) {
   if (kind === 'WRONG_PERSON') return set(ROUTE.WRONG_PERSON, ACTION.HUMAN_REVIEW, 'wrong person or referral requires review');
   if (kind === 'OUT_OF_OFFICE') return set(ROUTE.OUT_OF_OFFICE, ACTION.WAIT_OUT_OF_OFFICE, 'automated reply');
   if (!maySend) {
-    return kind === 'QUESTION' || kind === 'NEEDS_HUMAN'
+    return reviewIfNoSend && decision.requiresResponse
+      || kind === 'QUESTION' || kind === 'NEEDS_HUMAN'
       ? set(ROUTE.HISTORICAL_REVIEW, ACTION.HUMAN_REVIEW, 'historical or check-only reply routed to review')
       : set(ROUTE.HISTORICAL_NO_ACTION, ACTION.NO_ACTION, 'historical or check-only reply: send-capable handling skipped');
   }
@@ -325,6 +363,7 @@ function planReplyRoute(decision, { maySend = true } = {}) {
  */
 async function interpretInboundReply({
   lead = {}, message = {}, replyText = '', ruleCanonical = {}, maySend = true,
+  reviewIfNoSend = false,
   classify, ruleCategory, now = new Date(),
 } = {}) {
   const subject = message.subject || '';
@@ -349,9 +388,9 @@ async function interpretInboundReply({
     ruleClassification: classifier
       ? classifier.ruleClassification
       : (typeof ruleCategory === 'function' ? ruleCategory(replyText, { subject, currentEmail: lead.email }) : ''),
-    terminal, classifier, overlay, now,
+    terminal, classifier, overlay, replyText, now,
   });
-  planReplyRoute(decision, { maySend });
+  planReplyRoute(decision, { maySend, reviewIfNoSend });
   return { decision, overlay };
 }
 
@@ -429,6 +468,15 @@ function finalizeReplyDecision(decision) {
     || [EXECUTION_STATUS.ROUTED_TO_HUMAN, EXECUTION_STATUS.BLOCKED, EXECUTION_STATUS.FAILED,
       EXECUTION_STATUS.UNREPORTED].includes(status)
     || (status === EXECUTION_STATUS.SKIPPED && decision.executionCode !== HISTORICAL_SKIP_CODE);
+  decision.escalationPriority = decision.requiresResponse && decision.requiresHumanAttention ? 'high' : null;
+  const routed = status === EXECUTION_STATUS.ROUTED_TO_HUMAN
+    || ([EXECUTION_STATUS.BLOCKED, EXECUTION_STATUS.FAILED].includes(status)
+      && decision.fallbackAction === ACTION.HUMAN_REVIEW);
+  decision.responseDisposition = [EXECUTION_STATUS.SENT, EXECUTION_STATUS.ALREADY_SENT].includes(status)
+    ? 'auto-replied'
+    : decision.requiresResponse
+      ? (routed ? 'waiting-for-human' : null)
+      : 'intentionally-no-response-needed';
   return decision;
 }
 
@@ -657,7 +705,7 @@ function productionFactsFromDecision(decision) {
 module.exports = {
   REPLY_DECISION_EVENT, REPLY_DECISION_VERSION, CLASSIFICATION_SOURCE, POLICY_SOURCE, ROUTE,
   EXECUTION_STATUS, EFFECT, CATEGORY_STATE, POSITIVE_AUTOSEND_FLOOR,
-  createReplyDecision, interpretInboundReply, planReplyRoute, recordPolicy, recordExecution, addEffect,
+  createReplyDecision, interpretInboundReply, planReplyRoute, responseNeed, recordPolicy, recordExecution, addEffect,
   executionForRoute, executionForDelivery, finalizeReplyDecision, finalCanonicalState,
   replyDecisionEventId, replyDecisionActivity, parseReplyDecision, replyDecisionsByKey,
   replyDecisionFor, applyReplyDecisionsToReplyEvidence, productionFactsFromDecision,

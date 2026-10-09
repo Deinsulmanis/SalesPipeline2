@@ -135,6 +135,8 @@ async function stage2TimelineProbe({ leadId, sourceLeadId, email, authoritative,
   }
 }
 const { simulateRouting } = require('./integrations/gmail-routing-simulation');
+const { staffingReviewStatus } = require('./integrations/staffing-campaign');
+const { staffingHoldStatus } = require('./integrations/staffing-hold');
 const { EMAIL_TEMPLATES, LEAD_TYPES, LEAD_TYPE_IDS, normalizeNiche, leadTypeLabel, isKnownLeadType, campaignVersionsForRoute, validateCampaignVersionRoute, validateRoute, routedLeadReady } = require('./integrations/campaign-routing');
 const {
   ARCHIVE_MARKER_PREFIX, ARCHIVE_EVENT_TYPE, ARCHIVED_REPLY_EVENT_TYPE, ARCHIVE_REASONS, ARCHIVE_REASON_LABELS,
@@ -1347,6 +1349,16 @@ function toLightRow(lead, category, attribution = {}, sender = null, extras = {}
   row.bounced = Boolean(extras.bouncedLeadIds && extras.bouncedLeadIds.has(lead.id))
     || /\[BOUNCED/i.test(lead.notes || '');
   row.manualHold = /\[MANUAL HOLD\]/i.test(lead.notes || '');
+  if (String(lead.leadNiche || '').toLowerCase().includes('staffing')
+    && resolveLeadClient(lead).clientId === DEFAULT_CLIENT_ID) {
+    const review = staffingReviewStatus(lead);
+    const hold = staffingHoldStatus(lead);
+    row.staffingHoldReason = hold?.reason || '';
+    row.staffingHoldExplanation = hold?.explanation || '';
+    row.staffingFit = review?.fit || '';
+    row.staffingPersonalization = review?.personalization || '';
+    row.staffingRoutingReady = review?.routingReady ?? false;
+  }
   row.suppressed = row.bounced || /\[(?:UNSUBSCRIBED|SUPPRESSED|BOUNCED)/i.test(lead.notes || '') || /^(?:Unsub|Unsubscribed)$/i.test(lead.stage || '');
   row.campaignVersion = attribution.campaignVersion || LEGACY_UNKNOWN;
   row.campaignFamily = attribution.campaignFamily || '';
@@ -5849,7 +5861,10 @@ app.get('/api/coldemail/:id/activity', requireAuth, async (req, res) => {
       outreachOnly: !boardLead,
     });
     res.json({
-      lead: { ...lead, ...row }, activities: timeline,
+      lead: { ...lead, ...row,
+        staffingHold: String(lead.leadNiche || '').toLowerCase().includes('staffing')
+          && resolveLeadClient(lead).clientId === DEFAULT_CLIENT_ID ? staffingHoldStatus(lead) : null },
+      activities: timeline,
       pipeline: {
         presence: Boolean(row.pipelinePresence), stage: row.pipelineStage || '',
         boardLeadId: row.boardLeadId || '', mappingStatus: row.mappingStatus || 'not_in_pipeline',

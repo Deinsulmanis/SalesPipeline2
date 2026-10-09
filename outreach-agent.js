@@ -64,6 +64,7 @@ const {
   ROUTE: REPLY_ROUTE, EXECUTION_STATUS: REPLY_EXECUTION_STATUS, EFFECT: REPLY_EFFECT,
   POLICY_SOURCE: REPLY_POLICY_SOURCE,
 } = require('./integrations/reply-decision');
+const { orphanedHumanReplies, watchdogAlertEvent } = require('./integrations/reply-watchdog');
 const { classifyReplyText, isUsableReplyIdentity, REPLY_STATE,
   NEEDS_HUMAN_REASON } = require('./integrations/canonical-reply');
 // ONE ownership model, shared with the CRM. The sender asks it rather than
@@ -2793,8 +2794,11 @@ async function handleQuestion(lead, message, replyText, todaySent, activities = 
 
   if (!SENDING_ENABLED) {
     console.log(`⛔ [kill-switch] would auto-answer → ${lead.email}`);
+    await queueDraft(lead, { ...answer, reason: `${answer.reason} — sending disabled; urgent human reply required` });
+    await handleNeedsHuman(lead, message.fromAddr);
     recordReplyExecution(decision, {
       executedAction: null, status: REPLY_EXECUTION_STATUS.BLOCKED, code: 'sending_disabled',
+      fallbackAction: REPLY_RESPONSE_ACTION.HUMAN_REVIEW, effects: [REPLY_EFFECT.DRAFT_QUEUED],
     });
     return;
   }
@@ -2808,6 +2812,7 @@ async function handleQuestion(lead, message, replyText, todaySent, activities = 
   if (!delivered.delivered) {
     await queueDraft(lead, { ...answer, reason: `${answer.reason} — hardened delivery blocked: ${delivered.code}` });
     addReplyEffect(decision, REPLY_EFFECT.DRAFT_QUEUED);
+    await handleNeedsHuman(lead, message.fromAddr);
     return;
   }
   const sentAt = new Date().toISOString();
@@ -2873,12 +2878,14 @@ async function handleNeedsHuman(lead, fromAddr) {
   const from        = (fromAddr || '').trim().toLowerCase();
   const differs     = from && from !== emailedAddr;
   const note        = differs ? `[REPLY: Needs human] (replied from ${from})` : '[REPLY: Needs human]';
-  if (String(lead.notes || '').includes(note) && String(lead.stage) === 'Review') {
+  const priority = '[REPLY PRIORITY: HIGH]';
+  if (String(lead.notes || '').includes(note) && String(lead.notes || '').includes(priority)
+    && String(lead.stage) === 'Review') {
     console.log(`  ⚑ ${lead.company} — already queued for human review`);
     return;
   }
   await applyLeadChange(lead.id, {
-    stage: 'Review', emailStatus: 'replied', notes: prependNote(lead.notes, note),
+    stage: 'Review', emailStatus: 'replied', notes: prependNote(prependNote(lead.notes, note), priority),
   }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
   console.log(`  ⚑ ${lead.company} — needs human review${differs ? ` (replied from ${from})` : ''}`);
 }
@@ -3310,6 +3317,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     // Explicit opt-out and rejection are decided before any classifier call.
     const { decision: replyDecision, overlay: staffingOverlay } = await interpretInboundReply({
       lead, message, replyText, ruleCanonical: canonicalReply, maySend,
+      reviewIfNoSend: CHECK_ONLY && !historical,
       ruleCategory: deterministicReplyCategory,
       classify: () => classifyReplyWithProvenance(lead.company, replyText, {
         subject: message.subject, email: lead.email, leadId: lead.id,
@@ -5461,6 +5469,23 @@ async function run() {
   // Reply-check pass — unconditional; runs even when cap is reached.
   // Mutates emailStatus on replied leads so selectFollowUps excludes them below.
   const replyObservation = await runReplyCheckPass(all, todaySent, outbound.ok, ownershipActivities);
+  // The observer's persisted ledger is the input: no second Gmail scan. An
+  // older human message with no response/review gets one stable urgent alert.
+  if (!DRY_RUN) {
+    try {
+      // Re-read the ledger after this pass persisted decisions and human-review
+      // markers. The earlier ownership snapshot would falsely alert for a reply
+      // that this same pass just resolved.
+      const replyLedger = await withAuth(() => readColdCallActivities());
+      const orphans = orphanedHumanReplies({ leads: all, activities: replyLedger });
+      for (const orphan of orphans) {
+        if (!orphan.alreadyAlerted) await withAuth(() => recordMailboxActivity(watchdogAlertEvent(orphan)));
+      }
+      if (orphans.length) console.error(`[ReplyWatchdog] URGENT: ${orphans.length} human reply(s) lack a disposition`);
+    } catch (error) {
+      console.error(`[ReplyWatchdog] operational check failed: ${error.message}`);
+    }
+  }
 
   // Terminal replies are hosted by the same process only during the existing
   // scheduler's once-daily flag. Active polling above keeps its old cadence.

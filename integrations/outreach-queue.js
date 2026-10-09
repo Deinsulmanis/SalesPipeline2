@@ -6,6 +6,7 @@ const { leadHasReply } = require('./reply-analytics');
 const { deriveAutomationOwnership } = require('./automation-ownership');
 const { resolveLeadClient } = require('./clients/ownership');
 const { isStaffingCampaign, staffingReviewStatus, renderStaffingEmail, validateStaffingEmail } = require('./staffing-campaign');
+const { hasStaffingHoldMarker } = require('./staffing-hold');
 const { isClientTemplateId, renderClientLeadEmail, validateClientLeadEmail } = require('./clients/client-email');
 
 const normalize = value => String(value || '').trim().toLowerCase();
@@ -61,6 +62,7 @@ function queueEligibility(lead, {
     } catch (error) { return { ok: false, reason: error.message }; }
   }
   if (normalize(lead.leadNiche).includes('staffing')) {
+    if (hasStaffingHoldMarker(lead)) return { ok: false, reason: 'staffing hold requires explicit reviewed release' };
     if (!isStaffingCampaign(lead)) return { ok: false, reason: 'staffing campaign attribution conflicts' };
     const review = staffingReviewStatus(lead);
     if (review && (review.fit !== 'ICP_CONFIRMED' || !review.routingReady
