@@ -49,6 +49,7 @@ test('website failure does not reject and a hold never admits queueing', () => {
 test('ScaleLab read model and drawer show hold detail without Jole hold data', () => {
   const server = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
   const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
+  assert.match(server, /const \{[^}]*resolveLeadClient[^}]*\} = require\('\.\/integrations\/clients\/ownership'\)/);
   assert.match(server, /resolveLeadClient\(lead\)\.clientId === DEFAULT_CLIENT_ID[\s\S]*?row\.staffingHoldReason = hold\?\.reason/);
   assert.match(server, /staffingHold: String\(lead\.leadNiche[\s\S]*?DEFAULT_CLIENT_ID \? staffingHoldStatus\(lead\) : null/);
   for (const label of ['Hold reason', 'Why held', 'Fit', 'Personalization', 'Routing ready', 'Manual hold']) {

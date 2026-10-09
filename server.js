@@ -151,7 +151,7 @@ const {
 const { registerClientRoutes } = require('./integrations/clients/routes');
 const { importClientLeads } = require('./integrations/clients/lead-import');
 const { createImportBatchStore, processPendingImportBatches } = require('./integrations/clients/import-batches');
-const { leadsForClient, leadDefinitelyOtherClient } = require('./integrations/clients/ownership');
+const { leadsForClient, leadDefinitelyOtherClient, resolveLeadClient } = require('./integrations/clients/ownership');
 const { resolveClientId, DEFAULT_CLIENT_ID, listClients } = require('./integrations/clients/registry');
 const { clientSendState } = require('./integrations/clients/send-policy');
 const { getLedgerStore } = require('./integrations/clients/ledger-store');
