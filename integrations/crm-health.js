@@ -395,7 +395,7 @@ function replyChecks({ leads, replyRecords = [], canonicalReplyBoundary = null, 
       let meta;
       try { meta = JSON.parse(row.metadata || '{}'); } catch (_) { meta = null; }
       if (!meta || ![OVERRIDE_STATUS.ACTIVE, OVERRIDE_STATUS.REVERSED].includes(meta.status)
-        || String(meta.leadId || '') !== String(leadId)) {
+        || String(meta.leadId || '').replace(/^CE-/, '') !== String(leadId)) {
         invalidOverrides.push({ id: leadId, eventId: row.eventId, reason: 'invalid override metadata' });
       }
       if (meta && row.eventType === OVERRIDE_KIND.CONTACT_CHANGE && meta.decision === 'approved'

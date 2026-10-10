@@ -148,6 +148,21 @@ test('9. a reply AFTER the canonical boundary with no canonical activity is Crit
   assert.equal(found.classification, 'automation_risk');
 });
 
+test('a valid CE-prefixed reply override does not raise a false critical finding', () => {
+  const input = healthyCrm();
+  const override = act('a', 'reply_classification_override', '2026-08-02T00:00:00Z', {
+    kind: 'reply_classification_override', status: 'active', leadId: 'CE-a',
+    providerMessageId: 'gm-a', previous: { state: 'negative' }, next: { state: 'positive' },
+  });
+  input.activities.push(override);
+  assert.ok(buildCrmHealth(input).healthy.includes('reply.invalid_override_state'));
+  input.activities[input.activities.length - 1] = { ...override,
+    metadata: JSON.stringify({ ...JSON.parse(override.metadata), leadId: 'CE-b' }) };
+  const invalid = byId(buildCrmHealth(input), 'reply.invalid_override_state');
+  assert.equal(invalid.affected, 1);
+  assert.equal(invalid.severity, SEVERITY.CRITICAL);
+});
+
 // ── 10–12. Send-state and MANUAL HOLD ───────────────────────────────────────
 
 test('10. a suppressed lead that is still send-eligible is Critical', () => {
