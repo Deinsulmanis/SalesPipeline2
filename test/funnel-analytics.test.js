@@ -43,7 +43,15 @@ test('reply categories partition the canonical replied leads', () => {
   const c = buildFunnelAnalytics(fixture(), {version:VERSION}).counts;
   assert.deepEqual({positive:c.positive,negative:c.negative,needsHuman:c.needsHuman,unclassified:c.unclassified},{positive:1,negative:1,needsHuman:1,unclassified:0});
 });
-test('meaningful demo is unique and ordinary opens are absent from the model', () => assert.equal(buildFunnelAnalytics(fixture(), {version:VERSION}).counts.demo,1));
+test('the retired Demo stage is gone and Hot is measured from Positive', () => {
+  const result = buildFunnelAnalytics(fixture(), {version:VERSION});
+  assert.deepEqual(result.funnel.map(step => step.key), ['sent','replied','positive','hot','callBooked','callHeld','won']);
+  assert.equal(result.counts.demo, undefined);
+  const positive = result.funnel.find(step => step.key === 'positive');
+  const hot = result.funnel.find(step => step.key === 'hot');
+  assert.ok(positive.count > 0);
+  assert.notEqual(hot.fromPrevious, null, 'Hot from prior divides by Positive, never by an unreachable Demo stage');
+});
 test('Hot and downstream stages require matching immutable acquisition attribution', () => {
   const c = buildFunnelAnalytics(fixture(), {version:VERSION}).counts;
   assert.equal(c.hot,4); assert.equal(c.callBooked,4); assert.equal(c.callHeld,1);
@@ -96,7 +104,7 @@ test('clickable stage IDs exactly reconcile with their counts', () => {
 });
 test('server endpoint uses the shared snapshot and returns bounded drill-downs', () => {
   const server=fs.readFileSync(path.join(__dirname,'..','server.js'),'utf8');
-  const body=server.slice(server.indexOf("app.get('/api/coldemail/funnel'"),server.indexOf('// The DemoPlays header'));
+  const body=server.slice(server.indexOf("app.get('/api/coldemail/funnel'"),server.indexOf('// ── DAILY DIGEST'));
   assert.match(body,/getOutreachDataset/); assert.match(body,/slice\(offset, offset \+ requested\)/); assert.doesNotMatch(body,/spreadsheets\.values\.get|sendEmail/);
 });
 test('Outreach keeps operational cards and renders a responsive campaign funnel', () => {
@@ -208,15 +216,16 @@ test('the funnel module contains no write or send path whatsoever', () => {
   // must exclude a RETRACTED pair, and it reads that rule from the same pure
   // module the send path uses rather than keeping a second copy that could
   // drift. Both dependencies are pure rule modules with no IO of their own, and
-  // every IO name above still fails this test.
+  // every IO name above still fails this test. reply-decision supplies the
+  // final production state of a decided reply; it too is pure.
   const requires = [...src.matchAll(/require\('([^']+)'\)/g)].map(match => match[1]).sort();
-  assert.deepEqual(requires, ['./campaign-versions', './demo-intent-state'],
+  assert.deepEqual(requires, ['./campaign-versions', './reply-decision'],
     'funnel analytics may depend only on pure local rule modules');
 });
 
 test('the drill-down ships only displayed fields, never whole ColdEmail rows', () => {
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  const body = server.slice(server.indexOf("app.get('/api/coldemail/funnel'"), server.indexOf('// The DemoPlays header'));
+  const body = server.slice(server.indexOf("app.get('/api/coldemail/funnel'"), server.indexOf('// ── DAILY DIGEST'));
   // Bounded page.
   assert.match(body, /Math\.min\(200,/);
   assert.match(body, /slice\(offset, offset \+ requested\)/);

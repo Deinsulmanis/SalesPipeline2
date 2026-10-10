@@ -4,7 +4,10 @@ const { classify } = require('../check-leads');
 const { sendSuppressionReason } = require('./pipeline-state');
 const { leadHasReply } = require('./reply-analytics');
 const { deriveAutomationOwnership } = require('./automation-ownership');
-const { isStaffingCampaign, renderStaffingEmail, validateStaffingEmail } = require('./staffing-campaign');
+const { resolveLeadClient } = require('./clients/ownership');
+const { isStaffingCampaign, staffingReviewStatus, renderStaffingEmail, validateStaffingEmail } = require('./staffing-campaign');
+const { hasStaffingHoldMarker } = require('./staffing-hold');
+const { isClientTemplateId, renderClientLeadEmail, validateClientLeadEmail } = require('./clients/client-email');
 
 const normalize = value => String(value || '').trim().toLowerCase();
 
@@ -15,8 +18,17 @@ function queueEligibility(lead, {
   env, mailingAddress, companyName, website,
 } = {}) {
   if (!lead.id || !lead.email || classify(lead.email) !== 'CLEAN') return { ok: false, reason: 'invalid identity' };
-  if (leads.filter(item => item.id === lead.id).length !== 1
-    || leads.filter(item => normalize(item.email) === normalize(lead.email)).length !== 1) {
+  // Email identity is unique per client: another client's lead for the same
+  // address is not a duplicate, a second row inside this client (or a row whose
+  // owner is unknown) is.
+  const owner = resolveLeadClient(lead);
+  if (!owner.ok) return { ok: false, reason: owner.reason };
+  const sameAddress = leads.filter(item => normalize(item.email) === normalize(lead.email));
+  const sameClientAddress = sameAddress.filter(item => {
+    const other = resolveLeadClient(item);
+    return !other.ok || other.clientId === owner.clientId;
+  });
+  if (leads.filter(item => item.id === lead.id).length !== 1 || sameClientAddress.length !== 1) {
     return { ok: false, reason: 'ambiguous lead identity' };
   }
   if (!['Import', 'Queued'].includes(lead.stage)) return { ok: false, reason: `stage ${lead.stage || '(blank)'} is not eligible to queue` };
@@ -38,8 +50,24 @@ function queueEligibility(lead, {
     sendingEnabled: true, suppressionReason: item => sendSuppressionReason(item, { suppressedEmails }),
   });
   if (!ownership.sendAllowed || ownership.owner !== 'cold_automation') return { ok: false, reason: ownership.reason, ownership };
+  // A managed client's lead is admitted only when every touch of its client's
+  // copy renders from its stored, reviewed, current personalization.
+  if (isClientTemplateId(lead.emailTemplateId)) {
+    try {
+      for (const step of [1, 2, 3]) {
+        const email = renderClientLeadEmail(lead, step, { env: env || process.env });
+        const error = validateClientLeadEmail(lead, email, step);
+        if (error) return { ok: false, reason: error };
+      }
+    } catch (error) { return { ok: false, reason: error.message }; }
+  }
   if (normalize(lead.leadNiche).includes('staffing')) {
+    if (hasStaffingHoldMarker(lead)) return { ok: false, reason: 'staffing hold requires explicit reviewed release' };
     if (!isStaffingCampaign(lead)) return { ok: false, reason: 'staffing campaign attribution conflicts' };
+    const review = staffingReviewStatus(lead);
+    if (review && (review.fit !== 'ICP_CONFIRMED' || !review.routingReady
+      || !['SPECIFIC_HIGH', 'BROAD_MEDIUM', 'SAFE_FALLBACK', 'NONE_REQUIRED'].includes(review.personalization)))
+      return { ok: false, reason: 'staffing fit or routing review is held' };
     try {
       for (const step of [1, 2, 3]) {
         const error = validateStaffingEmail(renderStaffingEmail(lead, step, {
@@ -54,22 +82,53 @@ function queueEligibility(lead, {
 
 const QUEUE_STATUSES = Object.freeze(['succeeded', 'unchanged', 'refused', 'conflict', 'failed']);
 
+// senderInboxId === AUTO_SENDER asks for capacity-weighted assignment: each lead
+// gets its own inbox from assignSenders(), decided against the same canonical
+// state the rest of the selection is validated in. A named inbox still means
+// exactly that inbox for every selected lead.
+const AUTO_SENDER = 'auto';
+
 async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaignVersionId }, {
-  loadState, validateSelection, applyChanges, appendActivity, appendActivities, now = () => new Date().toISOString(),
+  loadState, validateSelection, applyChanges, appendActivity, appendActivities, assignSenders,
+  admitRecipients, coldSenderAllowed,
+  now = () => new Date().toISOString(),
 }) {
   const state = await loadState();
   const selected = state.leads.filter(lead => ids.includes(lead.id));
   if (selected.length !== ids.length) return { status: 409, error: 'One or more selected leads no longer exist or have duplicate identities' };
   if (new Set(selected.map(lead => String(lead.campaign || '').trim())).size !== 1) return { status: 422, error: 'Queue leads from one campaign at a time' };
+  let assignments = null;
+  if (senderInboxId === AUTO_SENDER) {
+    if (!assignSenders) return { status: 422, error: 'Automatic sender assignment is unavailable' };
+    const assigned = assignSenders(selected.map(lead => ({ ...lead, emailTemplateId, intendedCampaignVersion: campaignVersionId })), state);
+    const refused = assigned.refused || [];
+    if (refused.length) return { status: 422, error: `${refused[0].leadId}: ${refused[0].reason}` };
+    assignments = assigned.assignments;
+  }
+  const senderFor = lead => (assignments ? assignments.get(lead.id) : senderInboxId);
+  // Temporary recipient-provider admission (cold-delivery-policy.js): a lead
+  // whose mailbox is not positively Google-hosted is not admitted. It is a
+  // hold, not a verdict on the lead — nothing about it is written.
+  if (admitRecipients) {
+    const admission = await admitRecipients(selected);
+    if (admission.held.length) {
+      const first = admission.held[0];
+      return { status: 409, holdReason: first.holdReason, held: admission.held,
+        error: `${first.leadId}: ${first.holdReason} (${first.domain || 'no domain'}); ${admission.held.length} of ${selected.length} selected leads are held by the recipient-provider policy` };
+    }
+  }
   // Validate the entire selection before any mutation. A repeated request with
   // exactly the same route is a no-op, not another enrollment/audit event.
   for (const lead of selected) {
     const eligible = queueEligibility(lead, state);
     if (!eligible.ok) return { status: 409, error: `${lead.company || lead.id}: ${eligible.reason}` };
-    const route = validateSelection(lead);
+    const route = validateSelection(lead, senderFor(lead));
     if (!route.ok) return { status: 422, error: route.reason };
+    if (coldSenderAllowed && !coldSenderAllowed(senderFor(lead))) {
+      return { status: 422, error: `${senderFor(lead)} is not in the Gmail-healthy cold sender pool or is on the cold sender hold list` };
+    }
   }
-  const patch = { stage: 'Queued', senderInboxId, emailTemplateId, routingRequired: 'true', intendedCampaignVersion: campaignVersionId };
+  const patchFor = lead => ({ stage: 'Queued', senderInboxId: senderFor(lead), emailTemplateId, routingRequired: 'true', intendedCampaignVersion: campaignVersionId });
 
   // Leads are independent: nothing is all-or-nothing across them, so each gets
   // its own verdict from the canonical mutation path. A refused or failed lead
@@ -79,7 +138,7 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
   const auditBatch = [];
   const pending = [];
   for (const lead of selected) {
-    if (Object.entries(patch).every(([key, value]) => lead[key] === value)) {
+    if (Object.entries(patchFor(lead)).every(([key, value]) => lead[key] === value)) {
       results.push({ leadId: lead.id, status: 'unchanged', reason: 'already queued with this route' });
     } else {
       pending.push(lead);
@@ -88,7 +147,7 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
   if (pending.length) {
     let applied;
     try {
-      applied = await applyChanges(pending.map(lead => ({ lead, patch })));
+      applied = await applyChanges(pending.map(lead => ({ lead, patch: patchFor(lead) })));
     } catch (error) {
       applied = pending.map(lead => ({ leadId: lead.id, status: 'failed', reason: error.message }));
     }
@@ -97,7 +156,7 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
       const result = { ...(byId.get(lead.id) || { leadId: lead.id, status: 'failed', reason: 'no verdict was returned for this lead' }) };
       if (!QUEUE_STATUSES.includes(result.status)) Object.assign(result, { status: 'failed', reason: `unrecognised verdict ${result.status}` });
       if (result.status === 'succeeded') {
-        const event = { lead, occurredAt: now(), patch };
+        const event = { lead, occurredAt: now(), patch: patchFor(lead) };
         if (appendActivities) auditBatch.push({ result, event });
         else {
           try { await appendActivity(event); }
@@ -125,6 +184,7 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
     ...summary, queued: summary.succeeded, alreadyQueued: summary.unchanged,
     queuedIds: results.filter(result => result.status === 'succeeded').map(result => result.leadId),
     results, senderInboxId, campaignVersionId, emailTemplateId,
+    ...(assignments ? { assignedSenders: Object.fromEntries(assignments) } : {}),
   };
   const notQueued = summary.refused + summary.conflict + summary.failed;
   if (!notQueued && !summary.activityFailures) return response;
@@ -135,4 +195,4 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
       + 'Review each lead; retrying does not re-enroll committed leads.' };
 }
 
-module.exports = { queueEligibility, queueSelectedLeads };
+module.exports = { AUTO_SENDER, queueEligibility, queueSelectedLeads };

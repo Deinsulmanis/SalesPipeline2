@@ -2,6 +2,7 @@
 
 const { COLD_CALL_STAGE_IDS, displayStageFor } = require('./cold-call-pipeline');
 const { stageTransitionCheck, SUPPRESSION_NOTE_TAGS } = require('./pipeline-state');
+const { isArchivedLead } = require('./lead-archive');
 
 const PROMOTION_TRIGGER = Object.freeze({
   POSITIVE_REPLY: 'positive_reply',
@@ -22,6 +23,9 @@ const PROMOTION_TRIGGER = Object.freeze({
 const AUTO_STAGE_RANK = Object.freeze({ follow_up: 1, hot: 2, call_booked: 3, closed_won: 4, closed_lost: 4 });
 
 function promotionSuppressionReason(lead = {}, suppressedEmails = new Set()) {
+  // An archived lead is never promoted back onto the board by a reply or a
+  // booking; restoring it is a deliberate human action in Archive.
+  if (isArchivedLead(lead)) return 'archived';
   const notes = String(lead.notes || '');
   for (const tag of SUPPRESSION_NOTE_TAGS) if (notes.toLowerCase().includes(tag.toLowerCase())) return tag;
   if (/\[(?:SUPPRESSED|INVALID RECIPIENT)/i.test(notes)) return 'hard suppression tag';

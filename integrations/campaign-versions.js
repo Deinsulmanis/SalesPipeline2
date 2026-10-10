@@ -60,7 +60,10 @@ const CAMPAIGN_VERSIONS = Object.freeze({
     personalizationStrategy: 'dental_hyper_personalization_v1',
     offerVersion: 'pay_per_booked_appointment_v1',
     activatedAt: '2026-08-28T23:13:22.640Z',
-    status: 'active',
+    // The dental offer was retired on 2026-09-30 (lead-archive RETIRED_OFFERS).
+    // Its meaning is unchanged; it can no longer be selected for a send.
+    status: 'retired',
+    retiredAt: '2026-09-30',
     meaning: 'Dental V3 uses only verified service-curiosity subjects and charges only for appointments booked through the system, with no volume or timeframe promise.',
   }),
   roofing_survey_v1_measured: Object.freeze({
@@ -68,7 +71,7 @@ const CAMPAIGN_VERSIONS = Object.freeze({
     niche: 'roofing', emailTemplateId: 'roofing-survey-v1', family: 'roofing_survey',
     copyVersion: 'roofing_survey_reply_first_v1', subjectStrategy: 'roofing_question_v1',
     personalizationStrategy: 'locked_template_v1', offerVersion: 'none',
-    activatedAt: '2026-08-27T20:31:18.220Z', status: 'active',
+    activatedAt: '2026-08-27T20:31:18.220Z', status: 'retired', retiredAt: '2026-09-30',
     meaning: 'Existing locked roofing survey pilot copy; no sales offer.',
   }),
 });
@@ -108,7 +111,34 @@ function familyFromCampaignVersionId(id) {
   return version ? version.family : null;
 }
 
+// A managed client's lead belongs to its client's campaign registry, not to
+// ScaleLab's keyword families (Jole's copy says "staffing"; it is not
+// ScaleLab's staffing offer). Its family is that campaign's lead type. Lazy
+// require: clients/ modules load routing helpers that load this file.
+function managedCampaignForLead(lead = {}) {
+  const { clientCampaign } = require('./clients/campaigns');
+  return clientCampaign(lead.intendedCampaignVersion) || clientCampaign(lead.campaign) || null;
+}
+
+function isManagedFamily(family) {
+  const { CLIENT_LEAD_TYPES } = require('./clients/campaigns');
+  return CLIENT_LEAD_TYPES.some(type => type.id === family);
+}
+
 function resolveLeadFamily(lead = {}) {
+  const managed = managedCampaignForLead(lead);
+  if (managed) {
+    const owner = String(lead.clientId || '').trim();
+    if (owner && owner !== managed.clientId) {
+      return { family: CAMPAIGN_FAMILY.UNROUTED, confident: false, reason: `campaign ${managed.id} belongs to ${managed.clientId}, the lead to ${owner}` };
+    }
+    // A ScaleLab family named on the lead's niche or template is a conflict, never a tie-break.
+    const legacy = [familyFromText(lead.leadNiche), familyFromText(lead.emailTemplateId)].filter(Boolean);
+    if (legacy.length) {
+      return { family: CAMPAIGN_FAMILY.UNROUTED, confident: false, candidates: [managed.leadType, ...legacy], reason: 'campaign mapping is ambiguous' };
+    }
+    return { family: managed.leadType, confident: true, reason: '', managed: true, clientId: managed.clientId, campaignId: managed.id };
+  }
   const signals = [
     familyFromText(lead.leadNiche),
     familyFromText(lead.tradeType),
@@ -143,7 +173,10 @@ function campaignVersion(id) {
   return version;
 }
 
-function activeVersionForLead(lead = {}) {
+// evidenceOnly: attribute a send that ALREADY happened (Gmail SENT evidence
+// being recorded or reconciled). A retired version still describes what it
+// sent; it just can never be chosen for a new send.
+function activeVersionForLead(lead = {}, { evidenceOnly = false } = {}) {
   const resolved = resolveLeadFamily(lead);
   const family = resolved.family;
   if (family === CAMPAIGN_FAMILY.UNROUTED) {
@@ -155,10 +188,13 @@ function activeVersionForLead(lead = {}) {
     }
     throw new Error(resolved.reason || 'Campaign family is unrouted');
   }
+  if (resolved.managed) return managedCampaignVersion(managedCampaignForLead(lead), lead, { evidenceOnly });
   const id = String(lead.intendedCampaignVersion || '').trim() || ACTIVE_CAMPAIGN_VERSION[family];
   if (!id) throw new Error(`No active campaign version for ${family}`);
   const version = campaignVersion(id);
-  if (version.status !== 'active') throw new Error(`Campaign version ${id} is not active`);
+  if (version.status !== 'active' && !(evidenceOnly && version.status === 'retired')) {
+    throw new Error(`Campaign version ${id} is not active`);
+  }
   if (version.family !== family) throw new Error(`Campaign version ${id} is incompatible with ${family}`);
   if (version.emailTemplateId && lead.emailTemplateId && version.emailTemplateId !== lead.emailTemplateId) {
     throw new Error(`Campaign version ${id} is incompatible with template ${lead.emailTemplateId}`);
@@ -166,8 +202,26 @@ function activeVersionForLead(lead = {}) {
   return version;
 }
 
-function coldSendAttribution(lead = {}, step = 1, sendMeta = {}) {
-  const version = activeVersionForLead(lead);
+// A managed campaign's version, in the shape ScaleLab versions have, so the
+// one attribution and delivery path serves both. Approved (or active) only.
+function managedCampaignVersion(campaign, lead = {}, { evidenceOnly = false } = {}) {
+  const { CAMPAIGN_STATUS } = require('./clients/campaigns');
+  const live = [CAMPAIGN_STATUS.APPROVED, CAMPAIGN_STATUS.ACTIVE].includes(campaign.status) && !campaign.archivedAt;
+  if (!live && !evidenceOnly) throw new Error(`Campaign ${campaign.id} is not approved`);
+  if (lead.emailTemplateId && campaign.emailTemplateId !== lead.emailTemplateId) {
+    throw new Error(`Campaign ${campaign.id} is incompatible with template ${lead.emailTemplateId}`);
+  }
+  return Object.freeze({
+    id: campaign.campaignVersion || campaign.id, label: campaign.label, niche: campaign.leadType,
+    emailTemplateId: campaign.emailTemplateId, family: campaign.leadType, clientId: campaign.clientId,
+    copyVersion: campaign.copyVersion || '', followUpCopyVersion: campaign.copyVersion || '',
+    subjectStrategy: campaign.subjectStrategy || '', personalizationStrategy: campaign.personalizationStrategy || '',
+    offerVersion: campaign.offerVersion || '', status: live ? 'active' : 'retired',
+  });
+}
+
+function coldSendAttribution(lead = {}, step = 1, sendMeta = {}, { evidenceOnly = false } = {}) {
+  const version = activeVersionForLead(lead, { evidenceOnly });
   const personalization = sendMeta.personalizationMetadata || {};
   const initial = Number(step) === 1;
   return {
@@ -283,7 +337,7 @@ function buildCampaignVersionIndex(leads = [], activities = []) {
 
 module.exports = {
   LEGACY_UNKNOWN, CAMPAIGN_FAMILY, CAMPAIGN_VERSIONS, ACTIVE_CAMPAIGN_VERSION,
-  familyForLead, resolveLeadFamily, campaignVersion, activeVersionForLead, coldSendAttribution,
+  familyForLead, resolveLeadFamily, campaignVersion, activeVersionForLead, coldSendAttribution, isManagedFamily,
   stageSequenceAttribution, attributionFromActivity, replyTouchAttribution,
   acquisitionAttribution, latestSendAttribution, promotionAttribution, parseMetadata,
   buildCampaignVersionIndex,

@@ -5,6 +5,7 @@ const { CAMPAIGN_FAMILY, resolveLeadFamily } = require('./campaign-versions');
 const {
   staffingQualifyQuestionReply, staffingSendInfoReply, staffingQualifiedReply,
 } = require('./staffing-reply-policy');
+const { isTrackedStaffingLandingUrl } = require('./staffing-campaign');
 
 const OFFERS = Object.freeze({
   dental_ai_receptionist: Object.freeze({
@@ -109,19 +110,26 @@ function offerForLead(lead, env = process.env) {
   return Object.freeze({ ...base, pricing, bookingUrl: bookingUrlForFamily(family, env) });
 }
 
-function warmResponse({ action, lead, offer, answer = '' }) {
+// landingPageUrl is a tracked staffing landing link, passed only for automated
+// delivery of the two staffing replies that carry the landing page. Omitted,
+// every response is exactly what it was.
+function warmResponse({ action, lead, offer, answer = '', landingPageUrl = '' }) {
   // Fallback wording is offer-scoped: a blank company must not describe a
   // staffing agency as a clinic. Dental keeps its existing wording exactly.
   const company = String(lead.company || '').trim() || offer.companyFallback || 'your clinic';
   const booking = offer.bookingUrl
     ? `Grab a quick 15 min here and I’ll show you how it would work for ${company}:\n${offer.bookingUrl}` : '';
+  if (landingPageUrl && !['AUTO_STAFFING_SEND_INFO', 'AUTO_STAFFING_QUALIFIED'].includes(action)) {
+    throw new Error(`${action} does not carry the staffing landing page`);
+  }
   if (action === 'AUTO_BOOKING_RESPONSE') return `Absolutely — happy to show you.\n\n${booking}`;
   if (action === 'AUTO_MEETING_RESPONSE') return `Yes — the easiest way to pick a time that works is here:\n${offer.bookingUrl}`;
   if (action === 'AUTO_STAFFING_QUALIFY_QUESTION') return staffingQualifyQuestionReply();
-  if (action === 'AUTO_STAFFING_SEND_INFO') return staffingSendInfoReply();
+  if (action === 'AUTO_STAFFING_SEND_INFO') return staffingSendInfoReply({ landingPageUrl });
   if (action === 'AUTO_STAFFING_QUALIFIED') {
+    if (landingPageUrl && !isTrackedStaffingLandingUrl(landingPageUrl)) throw new Error('staffing landing-page URL is not a tracked landing link');
     return staffingQualifiedReply({
-      company, bookingUrl: offer.bookingUrl, landingPageUrl: offer.landingPageUrl,
+      company, bookingUrl: offer.bookingUrl, landingPageUrl: landingPageUrl || offer.landingPageUrl,
     });
   }
   if (action === 'AUTO_PRICING_RESPONSE') {

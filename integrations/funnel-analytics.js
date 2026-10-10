@@ -1,12 +1,14 @@
 'use strict';
 
 const { LEGACY_UNKNOWN, parseMetadata, attributionFromActivity } = require('./campaign-versions');
-const { activeDemoPairEvents } = require('./demo-intent-state');
+const { applyReplyDecisionsToReplyEvidence } = require('./reply-decision');
 
 const SEND_TYPES = new Set(['initial_email_sent', 'follow_up_sent', 'booking_link_sent', 'sequence_step_sent']);
 const REPLY_TYPES = new Set(['positive_reply', 'meeting_requested', 'late_reply', 'question_reply', 'negative_reply', 'unsubscribe_reply', 'wrong_person_reply', 'needs_human_reply']);
 const STAGE_SEQUENCE_TYPES = new Set(['sequence_enrolled', 'sequence_step_sent', 'sequence_completed', 'sequence_stopped']);
-const FUNNEL_STAGES = Object.freeze(['sent', 'replied', 'positive', 'demo', 'hot', 'callBooked', 'callHeld', 'won']);
+// The retired voice-receptionist Demo step is gone: it sat between Positive and
+// Hot, so Hot's "from prior" divided by a stage nothing can reach any more.
+const FUNNEL_STAGES = Object.freeze(['sent', 'replied', 'positive', 'hot', 'callBooked', 'callHeld', 'won']);
 
 const normalizeEmail = value => String(value || '').trim().toLowerCase();
 const cleanId = value => String(value || '').replace(/^CE-/, '').trim();
@@ -75,6 +77,9 @@ function withinCohort(row, filters) {
 function categoryForReply(row, fallback = '') {
   const type = String(row.eventType || '');
   const metadata = parseMetadata(row.metadata);
+  // A reply production decided carries its final state (reply-decision).
+  if (metadata.canonicalStateSource === 'reply_decision'
+    && ['positive', 'negative', 'needs_human'].includes(metadata.canonicalState)) return metadata.canonicalState;
   const classification = String(metadata.classification || fallback || '').toUpperCase();
   if (['positive_reply', 'meeting_requested'].includes(type) || /INTERESTED|MEETING_REQUEST|POSITIVE/.test(classification)) return 'positive';
   if (['negative_reply', 'unsubscribe_reply'].includes(type) || /NOT_INTERESTED|NEGATIVE|UNSUBSCRIBE/.test(classification)) return 'negative';
@@ -99,7 +104,7 @@ function acquisitionFor(rows) {
 function buildFunnelAnalytics(input = {}, query = {}) {
   const leads = input.leads || [];
   const boardLeads = input.boardLeads || [];
-  const activities = input.activities || [];
+  const activities = applyReplyDecisionsToReplyEvidence(input.activities || []);
   const replyRecords = input.replyRecords || [];
   const currentVersion = input.currentVersion || '';
   const version = selectedVersion(query.version, currentVersion);
@@ -234,14 +239,6 @@ function buildFunnelAnalytics(input = {}, query = {}) {
       if (GENUINE_REPLY_CATEGORIES.includes(category)) stageSets.replied.add(id);
     }
 
-    // Active pairs only: a retracted one was attributed to the wrong lead and is
-    // not demo engagement for this one.
-    const demoEvents = activeDemoPairEvents(rows);
-    if (demoEvents.some(demo => {
-      const demoAt = validTime(demo.occurredAt) || Infinity;
-      return sends.some(send => (validTime(send.row.occurredAt) || 0) <= demoAt);
-    })) stageSets.demo.add(id);
-
     const acquisition = acquisitionFor(rows);
     acquisitionByLead.set(id, acquisition);
     const acquisitionMatches = version === 'lifetime' || versionMatches(acquisition.version, version);
@@ -279,7 +276,6 @@ function buildFunnelAnalytics(input = {}, query = {}) {
   const eventCounts = {
     emailsSent: [...qualifyingSends.values()].flat().filter(item => SEND_TYPES.has(String(item.row.eventType || ''))).length,
     replyMessages: replyMessages.length,
-    demoPlays: [...stageSets.demo].length,
     meetingsBooked: [...qualifyingSends.keys()].reduce((sum, id) => sum + (activitiesByLead.get(id) || []).filter(row => row.eventType === 'call_booked').length, 0),
     meetingsRescheduled: [...qualifyingSends.keys()].reduce((sum, id) => sum + (activitiesByLead.get(id) || []).filter(row => row.eventType === 'meeting_rescheduled').length, 0),
     stageSequenceSends: [...qualifyingSends.values()].flat().filter(item => item.row.eventType === 'sequence_step_sent').length,
@@ -287,7 +283,7 @@ function buildFunnelAnalytics(input = {}, query = {}) {
   };
   const conversions = {
     sentToReply: rate(counts.replied, counts.sent), sentToPositive: rate(counts.positive, counts.sent),
-    replyToPositive: rate(counts.positive, counts.replied), sentToDemo: rate(counts.demo, counts.sent),
+    replyToPositive: rate(counts.positive, counts.replied),
     positiveToHot: rate(counts.hot, counts.positive), hotToCallBooked: rate(counts.callBooked, counts.hot),
     callBookedToHeld: rate(counts.callHeld, counts.callBooked), callHeldToWon: rate(counts.won, counts.callHeld),
     sentToWon: rate(counts.won, counts.sent), showRate: rate(counts.callHeld, counts.callHeld + counts.noShow),
@@ -298,13 +294,13 @@ function buildFunnelAnalytics(input = {}, query = {}) {
     const groups = new Map();
     for (const [id, sends] of qualifyingSends) {
       const value = String(sends[0]?.attribution?.[key] ?? ''); if (!value) continue;
-      const group = groups.get(value) || { value, sent: new Set(), replied: new Set(), positive: new Set(), demo: new Set(), callBooked: new Set(), won: new Set() };
+      const group = groups.get(value) || { value, sent: new Set(), replied: new Set(), positive: new Set(), callBooked: new Set(), won: new Set() };
       group.sent.add(id);
-      for (const metric of ['replied', 'positive', 'demo', 'callBooked', 'won']) if (stageSets[metric].has(id)) group[metric].add(id);
+      for (const metric of ['replied', 'positive', 'callBooked', 'won']) if (stageSets[metric].has(id)) group[metric].add(id);
       groups.set(value, group);
     }
     return [...groups.values()].map(group => ({ value: group.value, sent: group.sent.size, replied: group.replied.size,
-      positive: group.positive.size, positiveRate: rate(group.positive.size, group.sent.size), demo: group.demo.size,
+      positive: group.positive.size, positiveRate: rate(group.positive.size, group.sent.size),
       callsBooked: group.callBooked.size, won: group.won.size })).sort((a, b) => b.sent - a.sent || a.value.localeCompare(b.value));
   };
 

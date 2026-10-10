@@ -54,10 +54,16 @@ function containsBookingLink(text) {
  *                        server.js and copying it here would make a third copy
  *                        to keep in sync. Callers already have it in scope.
  * @param opts.lead       Optional lead-in sentence placed above the framing.
+ * @param opts.family     'industrial_staffing' uses the staffing framing; the
+ *                        missed-call framing belongs to the dental offer only.
  */
 function bookingSnippet(cleanedCompany, opts = {}) {
-  const who = (cleanedCompany || '').trim() || opts.companyFallback || 'your clinic';
   const leadIn = opts.lead ? `${opts.lead}\n\n` : '';
+  if (opts.family === 'industrial_staffing') {
+    const agency = (cleanedCompany || '').trim() || opts.companyFallback || 'your agency';
+    return `${leadIn}If it's useful, you can grab 15 minutes here and I'll walk you through how the employer acquisition pilot would work for ${agency}:\n${BOOKING_URL}`;
+  }
+  const who = (cleanedCompany || '').trim() || opts.companyFallback || 'your clinic';
   return `${leadIn}Grab a quick 15 min here and I'll show you exactly what it'd catch for ${who} — and get it set up for you:\n${BOOKING_URL}`;
 }
 

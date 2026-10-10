@@ -4,11 +4,10 @@ const {
   providerRead, isRateLimited, statusOf, persistedGmailMessageIds,
   getMailboxBackoff, signalMailboxBackoff, QUOTA_RETRY_DELAYS_MS,
 } = require('./gmail-api-guard');
+const { DELIVERY_CLASS, classifyDeliveryStatus } = require('./delivery-status');
 
 const DAEMON_FROM = /mailer-daemon|postmaster/i;
 const AUTOMATED_FROM = /mailer-daemon|postmaster|no-?reply|do-?not-?reply/i;
-const PERMANENT_FAILURE = /permanent|address not found|no such (?:user|mailbox|address|recipient)|user unknown|does(?: not|n['’]?t) exist|mailbox (?:full|unavailable|is full)|recipient (?:rejected|not found|address rejected)|account (?:has been )?(?:disabled|closed|suspended)|\b55[013456]\b|\b5\.\d\.\d\b/i;
-const TRANSIENT_FAILURE = /delivery (?:is )?incomplete|will (?:retry|keep trying|try again)|temporar(?:y|ily)|being delayed|greylist|\b4\.\d\.\d\b/i;
 
 const norm = value => String(value || '').trim().toLowerCase();
 const OVERLAP_MS = 5 * 60 * 1000;
@@ -67,6 +66,20 @@ function firstPlainText(payload) {
   return '';
 }
 
+// The first text/html leaf. Read only when a message has no text/plain part:
+// iPhone Mail sends multipart/alternative with HTML alone.
+function firstHtmlText(payload) {
+  if (!payload) return '';
+  if (payload.mimeType === 'text/html' && payload.body?.data) {
+    return Buffer.from(payload.body.data, 'base64url').toString('utf8');
+  }
+  for (const child of payload.parts || []) {
+    const html = firstHtmlText(child);
+    if (html) return html;
+  }
+  return '';
+}
+
 function candidateIndexes(leads, activities, senderInboxId) {
   const byEmail = new Map();
   const byThread = new Map();
@@ -99,6 +112,8 @@ function matchMailboxMessages(messages, { leads = [], activities = [], senderInb
   const { byEmail, byThread } = candidateIndexes(leads, activities, senderInboxId);
   const replies = new Map();
   const bounces = new Map();
+  // Sender-side authentication failures: recorded, never a recipient bounce.
+  const senderAuthFailures = new Map();
   for (const message of messages || []) {
     if ((message.labelIds || []).includes('SENT')) continue;
     const fromAddr = parseAddr(headerValue(message.payload, 'From'));
@@ -110,8 +125,11 @@ function matchMailboxMessages(messages, { leads = [], activities = [], senderInb
         const email = norm(lead.email);
         const afterMs = Date.parse(lead.lastEmailedAt || '');
         if (!email || !Number.isFinite(afterMs) || occurredMs <= afterMs || !bounceMentionsRecipient(allText, email)) continue;
-        if (TRANSIENT_FAILURE.test(allText) && !PERMANENT_FAILURE.test(allText)) continue;
-        if (PERMANENT_FAILURE.test(allText)) bounces.set(lead.id, message);
+        // Only positive recipient-side evidence is a bounce. A delay notice or
+        // an SPF/DKIM/DMARC rejection of OUR domain never suppresses a prospect.
+        const verdict = classifyDeliveryStatus(message.payload, { recipient: email, subject: headerValue(message.payload, 'Subject') });
+        if (verdict.category === DELIVERY_CLASS.RECIPIENT_INVALID) bounces.set(lead.id, message);
+        else if (verdict.category === DELIVERY_CLASS.SENDER_AUTH_FAILURE) senderAuthFailures.set(lead.id, { message, verdict });
       }
       continue;
     }
@@ -128,7 +146,7 @@ function matchMailboxMessages(messages, { leads = [], activities = [], senderInb
     const prior = replies.get(lead.id);
     if (!prior || Number(prior.internalDate || 0) < occurredMs) replies.set(lead.id, message);
   }
-  return { replies, bounces };
+  return { replies, bounces, senderAuthFailures };
 }
 
 async function listChangedIds(gmail, { historyId, maxPages = 20, readOpts } = {}) {
@@ -290,6 +308,11 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
   let quotaBackoff = null;
   let messagesFetched = 0;
   let messagesDeduplicated = 0;
+  // One thread recovery per thread per pass. Every vanished message in a thread
+  // recovers the same thread, and refetching it per message turned a handful of
+  // deleted messages into a full-thread read storm that exhausted the per-user
+  // Gmail quota on every pass, so the mailbox could never advance its cursor.
+  const recoveredThreads = new Map();
   for (const id of slice) {
     if (knownIds.has(id)) {
       messagesDeduplicated += 1;
@@ -319,11 +342,14 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
       // A vanished resource is NOT an expired cursor. Preserve the provider
       // tombstone and attempt thread recovery; never report it as zero events.
       let threadRecovered = false;
-      if (threadId) {
+      if (threadId && recoveredThreads.has(threadId)) {
+        threadRecovered = recoveredThreads.get(threadId);
+      } else if (threadId) {
         try {
           const thread = await providerRead('users.threads.get', { userId: 'me', id: threadId, format: 'full' }, params => gmail.users.threads.get(params), readOpts);
           messages.push(...thread.data.messages || []); threadRecovered = true;
         } catch (threadError) { if (statusOf(threadError) !== 404) throw threadError; }
+        recoveredThreads.set(threadId, threadRecovered);
       }
       unavailable.push({ id, threadId: threadId || '', status: 404, threadRecovered,
         classification: 'provider_resource_unavailable', contentRecoverable: false });
@@ -371,6 +397,6 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
     ...matchMailboxMessages(unique, { leads, activities, senderInboxId, senderEmail }) };
 }
 
-module.exports = { headerValue, parseAddr, decodeBodies, firstPlainText, matchMailboxMessages,
+module.exports = { headerValue, parseAddr, decodeBodies, firstPlainText, firstHtmlText, matchMailboxMessages,
   bounceMentionsRecipient, extractedEmails, listChangedIds, listCatchup, observeMailbox, providerRead, isRateLimited,
   OVERLAP_MS, STALE_MS, RECOVERY_READ_BUDGET, byIdAscending, persistedGmailMessageIds };

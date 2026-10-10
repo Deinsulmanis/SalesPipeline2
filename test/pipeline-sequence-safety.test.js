@@ -121,11 +121,11 @@ test('MANUAL HOLD blocks auto-enrollment including explicit lifecycle recovery',
     callState: { status: 'no_show' }, activities: [ev('meeting_no_show', '2026-09-01T18:00:00Z')] }).enroll, false);
 });
 
-test('CHECK_ONLY returns before every stage, intent, or cold send path', () => {
+test('CHECK_ONLY returns before every stage or cold send path', () => {
   const run = agentSource.slice(agentSource.indexOf('async function run()'));
   const exit = run.indexOf("if (CHECK_ONLY) {");
   assert.ok(exit >= 0);
-  assert.match(run, /if \(INTENT_ONLY && !CHECK_ONLY\)/, 'check-only also disables the early intent send branch');
+  assert.doesNotMatch(agentSource, /INTENT_ONLY/, 'the retired intent-only send branch is gone');
   for (const sendPath of ['await runStageSequencePass(', 'const queued = selectQueued(all)']) {
     assert.ok(exit < run.indexOf(sendPath), `${sendPath} must be after the check-only exit`);
   }

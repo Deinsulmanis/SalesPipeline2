@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { STAFFING_CAMPAIGN, isStaffingCampaign, renderStaffingEmail, validateStaffingEmail,
-  staffingOpeningFor, STAFFING_FOLLOW_UP_DELAY_DAYS, BOLD_PHRASES } = require('../integrations/staffing-campaign');
+  staffingOpeningFor, STAFFING_SEQUENCE_TIMING, BOLD_PHRASES } = require('../integrations/staffing-campaign');
 const { appendStaffingComplianceFooter } = require('../integrations/staffing-compliance');
 const { STAFFING_RENDER_OPTIONS } = require('../test-support/staffing-mail');
 const { templateById, routedLeadReady, validateRoute, normalizeNiche,
@@ -85,9 +85,13 @@ test('D. Email #2 renders the locked clarification copy with its own bold', () =
 
 test('E. Email #3 renders the locked close with its bolded question', () => {
   const email = render(routed(), 3);
-  assert.equal(email.body, withFooter('Hi Ada,\n\nQuick question —\n\nis bringing in more employer accounts something Acme Staffing is focused on right now?'));
+  // Normalized 2026-10-03 to the approved wording, with a single sign-off: the
+  // footer carries no personal name, so "Deins" appears exactly once.
+  assert.equal(email.body, withFooter('Hi Ada,\n\nIs bringing in more employer accounts something Acme Staffing is focused on right now?\n\nDeins'));
+  assert.equal(email.body.split('Deins').length - 1, 1, 'one sign-off, never duplicated by the footer');
+  assert.equal(email.subject, null, 'Email 3 keeps the original thread subject');
   assert.equal((email.html.match(/<strong>/g) || []).length, 1);
-  assert.match(email.html, /<strong>is bringing in more employer accounts something Acme Staffing is focused on right now\?<\/strong>/);
+  assert.match(email.html, /<strong>Is bringing in more employer accounts something Acme Staffing is focused on right now\?<\/strong>/);
   assert.equal(validateStaffingEmail(email, 3), null);
   assert.equal(BOLD_PHRASES.length, 3);
 });
@@ -175,21 +179,21 @@ test('M/N. staffing reuses the shared sender, thread and follow-up machinery', (
   assert.ok(!/staffingSendEmail|sendStaffingEmail|staffingQuota|staffingReservation/.test(agent),
     'staffing must not fork the sending infrastructure');
   // Follow-up bodies branch on the template; sender/thread selection does not.
-  assert.match(agent, /if \(lead\.emailTemplateId === STAFFING_TEMPLATE\) \{\n\s*try \{ body = staffingFollowUpBody\(lead, nextStepNum\); \}/);
-  assert.equal(agent.split('staffingFollowUpBody(lead, nextStepNum)').length - 1, 2, 'both follow-up sites are covered');
+  assert.match(agent, /if \(lead\.emailTemplateId === STAFFING_TEMPLATE\) \{\n\s*try \{ body = staffingFollowUpBody\(lead, nextStepNum, ownershipActivities\); \}/);
+  assert.equal(agent.split('staffingFollowUpBody(lead, nextStepNum, ownershipActivities)').length - 1, 2, 'both follow-up sites are covered');
   // Dental and roofing keep the original unguarded call, so their behaviour is
   // provably unchanged by the staffing branch.
   assert.equal(agent.split('      body = template.body(lead);').length - 1, 2, 'both non-staffing paths are untouched');
   // chooseSender / resolveColdFollowUpThread stay on the shared path.
   assert.match(agent, /thread = await resolveColdFollowUpThread\(/);
-  assert.equal(STAFFING_FOLLOW_UP_DELAY_DAYS.length, 2);
-  assert.deepEqual([...STAFFING_FOLLOW_UP_DELAY_DAYS], [3, 5], 'same spacing as the ordinary cadence');
+  // Same cadence as the ordinary sequence, by reference — not a copy.
+  assert.equal(STAFFING_SEQUENCE_TIMING, require('../integrations/sequence-timing').SEQUENCE_TIMING);
 });
 
 test('N. an unrenderable staffing follow-up defers instead of using other copy', () => {
   assert.match(agent, /follow-up deferred[\s\S]{0,160}\$\{error\.message\}/);
   // Both staffing follow-up sites catch and bail; one returns, one continues.
-  const guarded = agent.split('try { body = staffingFollowUpBody(lead, nextStepNum); }');
+  const guarded = agent.split('try { body = staffingFollowUpBody(lead, nextStepNum, ownershipActivities); }');
   assert.equal(guarded.length - 1, 2);
   assert.ok(/catch \(error\)/.test(guarded[1]) && /catch \(error\)/.test(guarded[2]));
   assert.ok(/return false;/.test(guarded[1].slice(0, 300)));
@@ -260,7 +264,8 @@ test('U. staffing attribution is isolated from dental reporting', () => {
 });
 
 test('V. dental and roofing behaviour is unchanged by the staffing integration', () => {
-  assert.equal(templateById('dental-guarantee-v1').ready, true);
+  // Dental copy stays registered (history resolves it) but is retired with the offer.
+  assert.equal(templateById('dental-guarantee-v1').ready, false);
   assert.equal(templateById('roofing-survey-v1').niche, 'roofing');
   const dentalLead = { leadNiche: 'dental', emailTemplateId: 'dental-guarantee-v1' };
   assert.equal(offerForLead(dentalLead).id, 'dental_pay_per_booking_v1');

@@ -238,20 +238,10 @@ test('outbound observation runs before stage sequences and protects both send sy
     'sender-scoped mailbox freshness is part of the final send gate');
 });
 
-test('the demo-intent booking-link path also requires fresh canonical ownership', () => {
+test('the retired demo-intent booking-link path no longer exists', () => {
   const agent = readSource(path.join(root, 'outreach-agent.js'));
-  const pass = agent.slice(agent.indexOf('async function runIntentTriggerPass'), agent.indexOf('// ── SELECTION'));
-  assert.match(pass, /const gate = coldSendGate\(lead, ownershipContext\)/);
-  assert.ok(pass.indexOf('coldSendGate(lead, ownershipContext)') < pass.indexOf('deliverHardenedWarmReply('));
-  assert.doesNotMatch(pass, /await sendEmail\(/);
-
-  const intentOnly = agent.slice(agent.indexOf('if (INTENT_ONLY && !CHECK_ONLY)'));
-  assert.match(intentOnly, /using persisted observer health/);
-  assert.ok(intentOnly.indexOf('using persisted observer health')
-    < intentOnly.indexOf('runIntentTriggerPass(all, intentOwnershipContext, snapshot,'),
-  'intent-only uses persisted observer health before evaluating its send trigger');
+  assert.doesNotMatch(agent, /runIntentTriggerPass|prepareDemoIntentCandidates|INTENT_ONLY|AUTO_DEMO_ENGAGEMENT_RESPONSE/);
 });
-
 test('a failed Gmail observation fails closed for sends only', () => {
   const agent = readSource(path.join(root, 'outreach-agent.js'));
   assert.match(agent, /return \{ ok: false, written: 0, error: error\.message \}/);
@@ -277,5 +267,12 @@ test('the observation is bounded: one list, no per-lead Gmail call', () => {
 test('the cycle-fresh human touch reaches the send gate', () => {
   const agent = readSource(path.join(root, 'outreach-agent.js'));
   const gate = agent.slice(agent.indexOf('function coldSendGate'), agent.indexOf('function selectQueued'));
-  assert.match(gate, /humanTouchAt: latestHumanOutboundAt\(activities\)/);
+  // The gate reads the ONE shared "we answered" definition, which includes the
+  // manual Gmail reply observed moments ago in this cycle.
+  assert.match(gate, /humanTouchAt: latestResponseAt\(activities\)/);
+  const { latestResponseAt } = require('../integrations/prospect-response');
+  assert.equal(latestResponseAt([
+    { eventType: 'positive_reply', occurredAt: '2026-08-27T16:00:00.000Z' },
+    { eventType: 'human_response_sent', occurredAt: '2026-08-27T16:05:00.000Z' },
+  ]), '2026-08-27T16:05:00.000Z');
 });

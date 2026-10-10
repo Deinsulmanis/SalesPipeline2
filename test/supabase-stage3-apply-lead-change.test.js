@@ -100,7 +100,7 @@ test('writes exactly the cells the patch names, and nothing else', async () => {
 });
 
 test('every ColdEmail field maps to its real sheet column', () => {
-  // A:X in CE_COLUMNS order. If this drifts, a mutation silently lands in the
+  // A:Y in CE_COLUMNS order. If this drifts, a mutation silently lands in the
   // wrong column — the single most dangerous failure this abstraction could have.
   const expected = {
     id: 'A', company: 'B', contactName: 'C', email: 'D', city: 'E', tradeType: 'F',
@@ -108,7 +108,7 @@ test('every ColdEmail field maps to its real sheet column', () => {
     notes: 'L', reviewCount: 'M', rating: 'N', tier: 'O', siteContext: 'P',
     campaign: 'Q', campaign_notes: 'R', enrichment_attempted: 'S', leadNiche: 'T',
     senderInboxId: 'U', emailTemplateId: 'V', routingRequired: 'W',
-    intendedCampaignVersion: 'X',
+    intendedCampaignVersion: 'X', clientId: 'Y',
   };
   assert.equal(Object.keys(expected).length, SHEET_FIELDS.length);
   for (const [field, letter] of Object.entries(expected)) {

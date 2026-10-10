@@ -167,7 +167,7 @@ test('11. drill-down records and card counts come from the same snapshot', () =>
 // ── 12. No N+1 ──────────────────────────────────────────────────────────────
 
 test('12. no endpoint on the Outreach load path performs a per-lead read', () => {
-  for (const route of ['/api/coldemail', '/api/coldemail/stats', '/api/coldemail/replies', '/api/demoPlays', '/api/proposalOpens']) {
+  for (const route of ['/api/coldemail', '/api/coldemail/stats', '/api/coldemail/replies', '/api/proposalOpens']) {
     const body = handler(route);
     assert.ok(!/for\s*\([^)]*\)\s*\{[^}]*await[^}]*spreadsheets/.test(body), `${route} has no per-lead await`);
     assert.ok(!/\.map\(async/.test(body), `${route} has no per-row async map`);
@@ -187,8 +187,8 @@ test('12. no endpoint on the Outreach load path performs a per-lead read', () =>
   assert.ok(!/for\s*\(/.test(loader.slice(0, leadsAt)), 'no loop before the fetch');
 });
 
-test('the four Outreach endpoints share one snapshot instead of re-reading', () => {
-  for (const route of ['/api/coldemail', '/api/coldemail/stats', '/api/coldemail/replies', '/api/demoPlays']) {
+test('the Outreach endpoints share one snapshot instead of re-reading', () => {
+  for (const route of ['/api/coldemail', '/api/coldemail/stats', '/api/coldemail/replies']) {
     assert.match(handler(route), /getOutreachDataset\(/, `${route} uses the shared snapshot`);
   }
   // ColdEmail is fetched in exactly one place now.

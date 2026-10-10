@@ -148,6 +148,21 @@ test('9. a reply AFTER the canonical boundary with no canonical activity is Crit
   assert.equal(found.classification, 'automation_risk');
 });
 
+test('a valid CE-prefixed reply override does not raise a false critical finding', () => {
+  const input = healthyCrm();
+  const override = act('a', 'reply_classification_override', '2026-08-02T00:00:00Z', {
+    kind: 'reply_classification_override', status: 'active', leadId: 'CE-a',
+    providerMessageId: 'gm-a', previous: { state: 'negative' }, next: { state: 'positive' },
+  });
+  input.activities.push(override);
+  assert.ok(buildCrmHealth(input).healthy.includes('reply.invalid_override_state'));
+  input.activities[input.activities.length - 1] = { ...override,
+    metadata: JSON.stringify({ ...JSON.parse(override.metadata), leadId: 'CE-b' }) };
+  const invalid = byId(buildCrmHealth(input), 'reply.invalid_override_state');
+  assert.equal(invalid.affected, 1);
+  assert.equal(invalid.severity, SEVERITY.CRITICAL);
+});
+
 // ── 10–12. Send-state and MANUAL HOLD ───────────────────────────────────────
 
 test('10. a suppressed lead that is still send-eligible is Critical', () => {
@@ -347,7 +362,7 @@ test('25. the aggregate health payload stays small', () => {
 
 test('26. the drill-down enforces a hard upper bound', () => {
   const server = readSource(path.join(root, 'server.js'));
-  const block = server.slice(server.indexOf("app.get('/api/crm/health'"), server.indexOf('// The DemoPlays header'));
+  const block = server.slice(server.indexOf("app.get('/api/crm/health'"), server.indexOf('// ── DAILY DIGEST'));
   assert.match(block, /Math\.min\(200,/, 'hard cap of 200');
   assert.match(block, /parseInt\(req\.query\.limit, 10\) \|\| 100/, 'defaults to 100');
   assert.match(block, /slice\(offset, offset \+ requested\)/);
@@ -355,7 +370,7 @@ test('26. the drill-down enforces a hard upper bound', () => {
 
 test('27. the endpoint uses the shared snapshot and adds no per-lead reads', () => {
   const server = readSource(path.join(root, 'server.js'));
-  const block = server.slice(server.indexOf("app.get('/api/crm/health'"), server.indexOf('// The DemoPlays header'));
+  const block = server.slice(server.indexOf("app.get('/api/crm/health'"), server.indexOf('// ── DAILY DIGEST'));
   assert.match(block, /getOutreachDataset/, 'reuses the shared Outreach snapshot');
   // The only permitted extra reads are two whole-tab helpers, never per-lead.
   const reads = block.match(/spreadsheets\.values\.get/g) || [];

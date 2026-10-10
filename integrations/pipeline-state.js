@@ -28,10 +28,15 @@ const { displayStageFor } = require('./cold-call-pipeline');
 const { ANALYTICS_CATEGORY, categoriesFromNotes, classificationFromLead } = require('./reply-analytics');
 const { deriveOperationalAction, REPLY_ACTION, DUE_SOURCE } = require('./reply-operations');
 const { activeOverrides, OVERRIDE_KIND } = require('./reply-overrides');
+const { FOLLOW_UP_STEP_COUNT, nextFollowUp, DUE_BASIS } = require('./sequence-timing');
+// ONE definition of "we answered the prospect" (human, automated warm reply,
+// recorded conversation, or meeting). Never re-list those events here.
+const { latestResponseAt } = require('./prospect-response');
 // The sender's OWN ownership verdict. Reactivation asks the same question the
 // agent asks before it mails anyone, rather than keeping a second opinion.
 const { OWNER, BLOCKED_BY } = require('./automation-ownership');
-const { demoPairEventFor, hasUndeliveredDemoPair } = require('./demo-intent-state');
+const { hasUndeliveredDemoPair } = require('./demo-intent-state');
+const { ARCHIVE_MARKER_PREFIX, archiveReasonFromNotes, retiredOfferBlock } = require('./lead-archive');
 
 // ── AUTOMATION STATE ────────────────────────────────────────────────────────
 // Derived from the ColdEmail twin, because emailStatus — not stage — is what
@@ -42,6 +47,7 @@ const AUTOMATION_STATES = Object.freeze({
   STOPPED: 'stopped',    // terminal; no further automated send
   SCHEDULED: 'scheduled',// held, but a reactivation time is set and still future
   UNKNOWN: 'unknown',    // no ColdEmail twin — board-only lead
+  ARCHIVED: 'archived',  // soft-archived; no automation until restored
 });
 
 // Notes tags that outreach-agent.js treats as hard suppression. Mirrored (not
@@ -60,8 +66,10 @@ const MANUAL_HOLD_TAG = '[MANUAL HOLD]';
 
 // The send-time suppression tags, in priority order. The permanent ones come
 // FIRST so a lead that is both opted out and scheduled to reactivate reports
-// the opt-out and stays blocked.
-const SEND_SUPPRESSION_TAGS = Object.freeze([...SUPPRESSION_NOTE_TAGS, MANUAL_HOLD_TAG]);
+// the opt-out and stays blocked. An archive ('[ARCHIVED: <reason>]', a prefix
+// like '[BOUNCED') comes next: it is reversible only by an explicit restore,
+// never by a scheduled resume, so it outranks the hold.
+const SEND_SUPPRESSION_TAGS = Object.freeze([...SUPPRESSION_NOTE_TAGS, ARCHIVE_MARKER_PREFIX, MANUAL_HOLD_TAG]);
 
 /**
  * Why this lead may not be cold-emailed, or null if it may.
@@ -114,7 +122,7 @@ function applyHoldToNotes(notes) {
 
 // ── SCHEDULED REACTIVATION ──────────────────────────────────────────────────
 // Removing [MANUAL HOLD] by hand is dangerous: selectFollowUps() in the agent
-// asks only "has delayDays elapsed since lastEmailedAt?", so a lead held for 14
+// asks only "has the next step's due time passed?", so a lead held for 14
 // days with a 3-day step-2 delay is ALREADY overdue the instant the tag goes.
 // It would send on the very next pass.
 //
@@ -171,7 +179,7 @@ function clearResumeFromNotes(notes) {
  *
  * The comment above explains why reactivation never does this: removing the tag
  * from a COLD lead hands it straight back to selectFollowUps(), which asks only
- * whether delayDays have elapsed since lastEmailedAt. A lead held for two weeks
+ * whether the next step's due time has passed. A lead held for two weeks
  * is already overdue the instant the tag goes, so it would send on the next
  * pass. That hazard is real and unchanged.
  *
@@ -209,7 +217,7 @@ function reactivationEligibility(twin, opts = {}) {
   const row = twin || {};
   const notes = String(row.notes || '');
   const now = opts.now ? new Date(opts.now).getTime() : Date.now();
-  const stepCount = Number.isFinite(opts.stepCount) ? opts.stepCount : FOLLOW_UP_DELAY_DAYS.length;
+  const stepCount = Number.isFinite(opts.stepCount) ? opts.stepCount : FOLLOW_UP_STEP_COUNT;
   const suppressedEmails = opts.suppressedEmails || new Set();
 
   const deny = (blocked, reason) => ({
@@ -422,9 +430,13 @@ function deriveAutomationState(twin, now = Date.now()) {
   if (!twin) return { state: AUTOMATION_STATES.UNKNOWN, reason: 'no ColdEmail record linked to this lead' };
 
   const notes = twin.notes || '';
+  const archivedFor = archiveReasonFromNotes(notes);
+  if (archivedFor !== null) return { state: AUTOMATION_STATES.ARCHIVED, reason: 'archived (' + archivedFor + ') — restore it before any automation' };
   for (const tag of SUPPRESSION_NOTE_TAGS) {
     if (noteHas(notes, tag)) return { state: AUTOMATION_STATES.STOPPED, reason: 'suppressed (' + tag + ')' };
   }
+  const retired = retiredOfferBlock(twin);
+  if (retired) return { state: AUTOMATION_STATES.STOPPED, reason: retired.reason };
   if (noteHas(notes, MANUAL_HOLD_TAG)) {
     // Enforced: suppressionReason() in outreach-agent.js reads this tag before
     // every send, so the sequence really is stopped. A scheduled reactivation
@@ -445,7 +457,7 @@ function deriveAutomationState(twin, now = Date.now()) {
   if (status === 'done')    return { state: AUTOMATION_STATES.STOPPED, reason: 'sequence complete or terminal reply' };
   if (status === 'emailed') {
     const step = parseInt(twin.emailStep || '0', 10);
-    return step >= 1 && step <= FOLLOW_UP_DELAY_DAYS.length
+    return step >= 1 && step <= FOLLOW_UP_STEP_COUNT
       ? { state: AUTOMATION_STATES.ACTIVE, reason: 'cold sequence live at step ' + step }
       : { state: AUTOMATION_STATES.STOPPED, reason: 'sequence exhausted' };
   }
@@ -567,15 +579,9 @@ function deriveActionStatus(dueAt, now = new Date()) {
   return ACTION_STATUS.UPCOMING;
 }
 
-// Sequence cadence. Mirrors FOLLOW_UP_SEQUENCE in outreach-agent.js rather
-// than importing it, because requiring the agent would execute its run().
-const FOLLOW_UP_DELAY_DAYS = Object.freeze([3, 5]);
-
-function addDays(iso, days) {
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return null;
-  return new Date(t + days * 86400000).toISOString();
-}
+// Sequence cadence lives in integrations/sequence-timing.js — the same module
+// the sending selector uses, so the board cannot advertise a due date the agent
+// would not honour.
 
 // Activity event types that represent an inbound reply, and the ones that
 // represent us having already answered. Mirrors the recorded event vocabulary.
@@ -583,7 +589,6 @@ const REPLY_EVENTS = Object.freeze([
   'positive_reply', 'meeting_requested', 'late_reply', 'question_reply',
   'negative_reply', 'unsubscribe_reply', 'wrong_person_reply', 'needs_human_reply',
 ]);
-const HUMAN_TOUCH_EVENTS = Object.freeze(['human_response_sent', 'conversation_note', 'call_booked']);
 
 function latestEventAt(activities, types) {
   let latest = '';
@@ -611,7 +616,7 @@ function replyEvidence(twin, activities) {
     category: classificationFromLead(twin || {}, []),
     occurredAt: replyAt,
     late,
-    answeredAt: latestEventAt(activities, HUMAN_TOUCH_EVENTS),
+    answeredAt: latestResponseAt(activities),
   };
 }
 
@@ -626,8 +631,7 @@ function replyEvidence(twin, activities) {
 // It answers one question: whose move is it, and by when.
 
 // Every threshold in one place. These are CRM action deadlines for a human,
-// deliberately NOT reusing FOLLOW_UP_DELAY_DAYS — that is cold-email cadence
-// mirroring FOLLOW_UP_SEQUENCE, and conflating the two would tie a sales
+// deliberately NOT reusing the cold-email cadence in sequence-timing.js, and conflating the two would tie a sales
 // conversation timer to the sending schedule.
 const HOT_FOLLOW_UP = Object.freeze({
   WAITING_ON_PROSPECT_BUSINESS_DAYS: 2, // they owe us a reply; chase after 2
@@ -660,12 +664,6 @@ const HOT_STALENESS = Object.freeze({
 // them appear here and none of them reset the timer.
 const MEANINGFUL_INBOUND_EVENTS = Object.freeze(
   REPLY_EVENTS.filter(type => type !== 'unsubscribe_reply'));
-const MEANINGFUL_HUMAN_EVENTS = Object.freeze([
-  'human_response_sent',   // we answered them — recorded, never sent from here
-  'conversation_note',     // a human wrote up the conversation
-  'call_booked',
-  'meeting_rescheduled',
-]);
 
 // A bare YYYY-MM-DD (what the follow-up field holds) is ALREADY a calendar day.
 // Running it through businessDay() would parse it as UTC midnight and then shift
@@ -699,7 +697,9 @@ function addBusinessDays(iso, days) {
  */
 function lastMeaningfulInteraction(activities = []) {
   const inboundAt = latestEventAt(activities, MEANINGFUL_INBOUND_EVENTS);
-  const humanAt = latestEventAt(activities, MEANINGFUL_HUMAN_EVENTS);
+  // Our side of the conversation: prospect-facing replies (human or automated),
+  // a recorded conversation, or a meeting. Cold steps and nudges never count.
+  const humanAt = latestResponseAt(activities);
   const candidates = [inboundAt, humanAt].filter(Boolean).sort();
   return {
     inboundAt,
@@ -1232,7 +1232,7 @@ function deriveNextAction(boardLead, twin, context = {}) {
   const ownership = twin?.email ? deriveAutomationOwnership(twin, { boardLead: lead, activities, callState, sequenceState,
     now, sequencesEnabled: context.sequencesEnabled === true || sequenceState.featureEnabled,
     suppressionReason: item => sendSuppressionReason(item, { suppressedEmails: context.suppressedEmails || new Set() }),
-    humanTouchAt: latestEventAt(activities, HUMAN_TOUCH_EVENTS) }) : null;
+    humanTouchAt: latestResponseAt(activities) }) : null;
   // A live booked call is human work the hold does not block. Every lead
   // entering Call Booked is held on purpose, so letting a stale sequence's hold
   // outrank the call hid the Reschedule / Complete / No Show controls for exactly
@@ -1297,7 +1297,7 @@ function deriveNextAction(boardLead, twin, context = {}) {
     manualOverride: overrides.classification,
     manualActionOverride: overrides.action,
     manualFollowUpDate: manualDate,
-    humanTouchAt: latestEventAt(activities, HUMAN_TOUCH_EVENTS),
+    humanTouchAt: latestResponseAt(activities),
   });
   if (operational.action !== REPLY_ACTION.INVESTIGATE || reply) {
     if (reply && reply.late && operational.source !== 'already_answered') {
@@ -1356,7 +1356,7 @@ function deriveNextAction(boardLead, twin, context = {}) {
   if (hasManualHold((twin && twin.notes) || '') && !manualHoldReleased((twin && twin.notes) || '', now)) {
     const step = parseInt((twin && twin.emailStep) || '0', 10);
     const wouldSend = String((twin && twin.emailStatus) || '').trim().toLowerCase() === 'emailed'
-      && step >= 1 && step <= FOLLOW_UP_DELAY_DAYS.length;
+      && step >= 1 && step <= FOLLOW_UP_STEP_COUNT;
     // A scheduled reactivation is a real, dated, automation-owned next action —
     // not a gap and never overdue, because the hold is doing its job until the
     // resume instant arrives.
@@ -1380,38 +1380,9 @@ function deriveNextAction(boardLead, twin, context = {}) {
     }
   }
 
-  // A qualifying demo is a durable prospect action, distinct from delivery.
-  // Once recorded it owns the automation slot until the canonical
-  // booking_link_sent event exists. Reply/meeting/hold/suppression/terminal
-  // branches above still win; ordinary cold cadence below never does.
-  if (hasUndeliveredDemoPair(twin || lead, activities)) {
-    if (permanentSuppression && permanentSuppression !== MANUAL_HOLD_TAG) {
-      return nothing(ACTION_TYPE.NONE_LOST, 'None — suppressed',
-        `suppressed (${permanentSuppression}); booking-link delivery is blocked`);
-    }
-    if (hasManualHold((twin && twin.notes) || '') && !manualHoldReleased((twin && twin.notes) || '', now)) {
-      return buildAction({
-        type: ACTION_TYPE.BLOCKED_BY_HOLD,
-        label: 'Booking link pending — blocked by manual hold',
-        dueAt: null, owner: ACTION_OWNER.HUMAN, status: ACTION_STATUS.BLOCKED,
-        source: 'canonical-demo-pair', reason: 'MANUAL HOLD supersedes pending demo intent',
-        needsAttention: true, now,
-      });
-    }
-    const blocker = context.bookingLinkBlocker || null;
-    const pair = demoPairEventFor(twin || lead, activities);
-    return buildAction({
-      type: ACTION_TYPE.BOOKING_LINK_PENDING,
-      label: blocker?.label || 'Booking-link follow-up pending',
-      dueAt: null, owner: ACTION_OWNER.AUTOMATION,
-      status: blocker ? ACTION_STATUS.BLOCKED : ACTION_STATUS.DUE_TODAY,
-      source: 'canonical-demo-pair',
-      reason: blocker?.reason || 'verified demo pair recorded; hardened booking-link delivery is pending',
-      needsAttention: Boolean(blocker), now,
-      intentOccurredAt: pair?.occurredAt || null,
-      blockedBy: blocker?.code || null,
-    });
-  }
+  // A recorded demo pair (the retired voice-receptionist demo) no longer owns
+  // an automation slot: the booking-link deliverer is gone, so advertising a
+  // pending automated send would be false. Its history stays on the timeline.
 
   // A board card in Follow Up is Pipeline-owned. Ordinary cold Email 2/3 is
   // structurally blocked by the sender even when the stale ColdEmail twin still
@@ -1428,18 +1399,18 @@ function deriveNextAction(boardLead, twin, context = {}) {
   }
 
   if (derived.state === AUTOMATION_STATES.ACTIVE && twin) {
-    const step = parseInt(twin.emailStep || '0', 10);
-    const delay = FOLLOW_UP_DELAY_DAYS[step - 1];
-    if (delay && twin.lastEmailedAt) {
-      const dueAt = addDays(twin.lastEmailedAt, delay);
-      if (dueAt) {
-        return buildAction({
-          type: ACTION_TYPE.AUTOMATED_FOLLOW_UP, label: 'Automated follow-up #' + (step + 1),
-          dueAt, owner: ACTION_OWNER.AUTOMATION, source: 'derived',
-          reason: 'cold sequence step ' + step + ' sent ' + businessDay(twin.lastEmailedAt)
-            + '; next step fires ' + delay + ' days later', now,
-        });
-      }
+    const next = nextFollowUp(twin, { activities });
+    if (next && !next.alreadySent) {
+      const anchor = next.basis === DUE_BASIS.TOUCH1_PLUS_7D ? '7 days after Email 1 (' + businessDay(new Date(next.touch1At).toISOString()) + ')'
+        : next.basis === DUE_BASIS.TOUCH2_PLUS_3D ? '3 days after Email 2'
+          : next.basis === DUE_BASIS.TOUCH2_PLUS_4D_UNPROVEN_TOUCH1 ? '4 days after Email 2 (Email 1 has no ledger record)'
+            : '3 days after Email 1';
+      return buildAction({
+        type: ACTION_TYPE.AUTOMATED_FOLLOW_UP, label: 'Automated follow-up #' + next.nextStep,
+        dueAt: next.dueAtIso, owner: ACTION_OWNER.AUTOMATION, source: 'derived',
+        reason: 'cold sequence step ' + next.currentStep + ' sent ' + businessDay(twin.lastEmailedAt)
+          + '; next step fires ' + anchor, now,
+      });
     }
     if (String(twin.stage || '').toLowerCase() === 'queued') {
       return buildAction({
@@ -1596,7 +1567,7 @@ module.exports = {
   AUTOMATION_STATES, SUPPRESSION_NOTE_TAGS, MANUAL_HOLD_TAG,
   SEND_SUPPRESSION_TAGS, sendSuppressionReason, HUMAN_OWNED_STAGES,
   REACTIVATION_MODES, resumeAtFromNotes, manualHoldReleased,
-  HOT_FOLLOW_UP, WAITING_ON, HOT_STALENESS, MEANINGFUL_INBOUND_EVENTS, MEANINGFUL_HUMAN_EVENTS,
+  HOT_FOLLOW_UP, WAITING_ON, HOT_STALENESS, MEANINGFUL_INBOUND_EVENTS,
   CALL_STATUS, CALL_EVENTS, CALL_BOOKING_EVENTS, CALL_RESOLUTION_EVENTS,
   deriveCallLifecycle, callLifecycleActions,
   addBusinessDays, calendarDayOf, lastMeaningfulInteraction, deriveHotState,
@@ -1605,7 +1576,7 @@ module.exports = {
   REACTIVATABLE_BLOCKERS, REACTIVATION_REFUSAL,
   hasManualHold, applyHoldToNotes, releaseHoldFromNotes, stageRequiresHold,
   OUTCOMES, OUTCOME_IDS, LOSS_OUTCOME_IDS, RECOVERABLE_OUTCOME_IDS,
-  FOLLOW_UP_DELAY_DAYS,
+  FOLLOW_UP_STEP_COUNT,
   deriveAutomationState, automationConflict, deriveNextAction,
   ACTION_OWNER, ACTION_STATUS, ACTION_TYPE, BUSINESS_TIMEZONE,
   businessDay, deriveActionStatus, compareNextActions, summarizeNextActions,

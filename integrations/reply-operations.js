@@ -25,6 +25,9 @@ const {
   REPLY_STATE, NEEDS_HUMAN_REASON, AUTOMATED_SUBTYPE, EVIDENCE_SOURCE,
   GENUINE_HUMAN_STATES, resolveReplyState, classifyReplyText,
 } = require('./canonical-reply');
+const { latestResponseAt } = require('./prospect-response');
+const { operationalReplyEvidence } = require('./reply-decision');
+const { scheduledOooResume, OOO_RESUME_SOURCE } = require('./ooo-pause');
 
 /**
  * Operational actions. These EXTEND the existing ACTION_TYPE vocabulary in
@@ -77,6 +80,10 @@ const DUE_SOURCE = Object.freeze({
   MANUAL_FOLLOW_UP: 'manual_follow_up_date',
   MEETING: 'scheduled_meeting',
   REPLY_RECEIVED: 'reply_received_at',
+  // The 7-day OOO policy when the autoresponder stated no return date.
+  OOO_POLICY: 'ooo_policy_default',
+  // An operator-confirmed resume for a lead the old OOO handler held.
+  OPERATOR_REPAIR: 'ooo_operator_repair',
   NONE: 'none',
 });
 
@@ -113,9 +120,16 @@ const isoOrNull = value => {
 function deriveReplyOperation(lead = {}, {
   activities = [], manualOverride = null, manualFollowUpDate = '',
 } = {}) {
-  const resolved = resolveReplyState(lead, { activities, manualOverride });
+  // What production decided the message meant, where a reply decision exists
+  // and may be used operationally; the rule reading otherwise, which is also
+  // every reply from before decision records existed. A manual override still
+  // outranks both.
+  const resolved = resolveReplyState(lead, { activities: operationalReplyEvidence(activities), manualOverride });
   const evidence = {
     canonicalState: resolved.state,
+    canonicalStateSource: resolved.canonicalStateSource || null,
+    ruleCanonicalState: resolved.ruleCanonicalState || null,
+    replyDecision: resolved.replyDecision || null,
     canonicalReason: resolved.reason || null,
     subtype: resolved.subtype || null,
     evidenceSource: resolved.source,
@@ -150,6 +164,23 @@ function deriveReplyOperation(lead = {}, {
 
   // ── A machine answered ───────────────────────────────────────────────────
   if (resolved.state === REPLY_STATE.AUTOMATED_REPLY) {
+    // The OOO handler records when automation may resume (integrations/
+    // ooo-pause.js): the stated return date or the 7-day policy. That record,
+    // made at or after THIS autoresponder, is the date cold automation waits for.
+    const scheduled = scheduledOooResume(activities, { since: resolved.occurredAt });
+    if (scheduled) {
+      const dueAtSource = scheduled.resumeSource === OOO_RESUME_SOURCE.PROSPECT_STATED ? DUE_SOURCE.PROSPECT_STATED
+        : scheduled.resumeSource === OOO_RESUME_SOURCE.OPERATOR_REPAIR ? DUE_SOURCE.OPERATOR_REPAIR
+          : DUE_SOURCE.OOO_POLICY;
+      return operation({
+        action: REPLY_ACTION.WAIT_UNTIL_RETURN,
+        reason: `${resolved.subtype || 'automated reply'}; cold automation resumes at the scheduled OOO return`,
+        owner: ACTION_OWNER.NONE, waitingOn: WAITING_ON.DATE,
+        priority: PRIORITY.LOW,
+        dueAt: scheduled.resumeAt, dueAtSource,
+        evidence: { ...evidence, oooResumeEventId: scheduled.eventId || null, oooResumeSource: scheduled.resumeSource },
+      });
+    }
     const returnDate = isoOrNull(resolved.returnDate);
     if (returnDate) {
       return operation({
@@ -161,8 +192,9 @@ function deriveReplyOperation(lead = {}, {
         evidence,
       });
     }
-    // No date was stated, so none is invented. There is simply nothing to do
-    // yet, and pretending otherwise would create fake human work.
+    // No date was stated and no OOO resume was recorded (an autoresponder
+    // handled before 2026-10-03), so none is invented. Nothing to do yet, and
+    // pretending otherwise would create fake human work or a surprise send.
     return operation({
       action: REPLY_ACTION.WAIT,
       reason: `${resolved.subtype || 'automated reply'} with no stated return date`,
@@ -314,7 +346,7 @@ module.exports = {
 function deriveOperationalAction(lead = {}, {
   activities = [], boardLead = null,
   manualOverride = null, manualActionOverride = null, manualFollowUpDate = '',
-  humanTouchAt = null,
+  humanTouchAt,
 } = {}) {
   // A human decision about what to DO outranks everything derived — but it is
   // stored separately from the reply classification, so acting on a lead later
@@ -359,32 +391,56 @@ function deriveOperationalAction(lead = {}, {
           revisitDate: interpreted.revisitDate || null,
           suppliedContact: interpreted.suppliedContact || null,
         }, manualFollowUpDate });
-        return { ...contextual, source: 'crm_context_interpretation', evidence: {
+        return withUndeliveredAutoReply({ ...contextual, source: 'crm_context_interpretation', evidence: {
           ...contextual.evidence, canonicalState: derived.evidence.canonicalState,
           canonicalReason: derived.evidence.canonicalReason,
+          canonicalStateSource: derived.evidence.canonicalStateSource,
+          ruleCanonicalState: derived.evidence.ruleCanonicalState,
+          replyDecision: derived.evidence.replyDecision,
           operationalReason: interpreted.reason,
           evidenceSource: derived.evidence.evidenceSource,
           contextSource: boardLead.conversationContext ? 'conversation_context' : 'crm_notes',
-        } };
+        } });
       }
     }
   }
 
-  // Unless we already answered it. Checked here rather than earlier
-  // because it only makes sense against a reply we actually found.
+  // Unless we already answered it: a human reply, an automated warm reply, a
+  // recorded conversation or a meeting, per the one shared definition. Callers
+  // may pass the instant; otherwise it is read from the same activities.
+  // Checked here rather than earlier because it only makes sense against a
+  // reply we actually found.
+  const answeredAt = humanTouchAt === undefined ? latestResponseAt(activities) : humanTouchAt;
   const repliedAt = derived.evidence.occurredAt;
-  if (repliedAt && answeredAfter(repliedAt, humanTouchAt)
+  if (repliedAt && answeredAfter(repliedAt, answeredAt)
     && derived.owner === ACTION_OWNER.HUMAN
     && derived.action !== REPLY_ACTION.CONTACT_CHANGE_REVIEW) {
     return { ...operation({
       action: REPLY_ACTION.WAIT,
       reason: 'we replied after their last message; the ball is with the prospect',
       owner: ACTION_OWNER.PROSPECT, waitingOn: WAITING_ON.PROSPECT, priority: PRIORITY.LOW,
-      evidence: { ...derived.evidence, answeredAt: humanTouchAt },
+      evidence: { ...derived.evidence, answeredAt },
     }), source: 'already_answered' };
   }
 
-  return { ...derived, source: 'reply_evidence' };
+  return { ...withUndeliveredAutoReply(derived), source: 'reply_evidence' };
+}
+
+/**
+ * Production meant to answer automatically and did not (a gate refused it, or
+ * the provider failed). The job stays with a human, and says why. Whether we
+ * answered at all is still decided by the response taxonomy above, never by
+ * the decision record.
+ */
+function withUndeliveredAutoReply(op) {
+  const decision = op.evidence && op.evidence.replyDecision;
+  if (!decision || !decision.policySend || decision.executedAction || op.owner !== ACTION_OWNER.HUMAN) return op;
+  const code = decision.executionCode ? `: ${decision.executionCode}` : '';
+  return {
+    ...op,
+    reason: `${op.reason}; the automated ${decision.policyAction} was not sent (${decision.executionStatus}${code})`,
+    requiresHumanReview: true,
+  };
 }
 
 module.exports.deriveOperationalAction = deriveOperationalAction;

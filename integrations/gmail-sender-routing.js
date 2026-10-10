@@ -1,9 +1,16 @@
 'use strict';
 
 const {
-  parseRegistry, withDefaultInboxes, parseRuntimeOverlay, applySenderRuntime,
+  parseRegistry, withDefaultInboxes, parseRuntimeOverlay, applySenderRuntime, isStaffingOnlySender,
 } = require('./gmail-inbox-registry');
 const { DEFAULT_INBOX_DAILY_LIMIT, DEFAULT_INBOX_PER_RUN_LIMIT } = require('./gmail-sender-capacity');
+const { normalizeNiche } = require('./campaign-routing');
+const { STAFFING_CAMPAIGN } = require('./staffing-campaign');
+const { getClient } = require('./clients/registry');
+const { checkClientConsistency } = require('./clients/ownership');
+const { senderServesCampaign } = require('./clients/sender-policy');
+const { activityBelongsToLead } = require('./lead-activity');
+const { applyColdInboxCap } = require('./cold-delivery-policy');
 
 function parseMetadata(value) {
   try { return value && typeof value === 'object' ? value : JSON.parse(String(value || '{}')); }
@@ -19,7 +26,7 @@ function configuredSenders(env = process.env) {
     perRunLimit: Number(env.GMAIL_PRIMARY_PER_RUN_LIMIT || DEFAULT_INBOX_PER_RUN_LIMIT),
     credentialConfigured: Boolean(env.GMAIL_TOKEN_JSON),
   };
-  const secondary = withDefaultInboxes(parseRegistry(env.GMAIL_INBOX_REGISTRY_JSON || '[]')).map(entry => ({
+  const secondary = withDefaultInboxes(parseRegistry(env.GMAIL_INBOX_REGISTRY_JSON || '[]', env), env).map(entry => ({
     ...entry, oauthClient: 'secondary', provider: 'gmail',
     perRunLimit: Number(entry.perRunLimit || DEFAULT_INBOX_PER_RUN_LIMIT),
     observerEnabled: entry.observerEnabled !== false,
@@ -27,9 +34,10 @@ function configuredSenders(env = process.env) {
   }));
   const senders = [primary, ...secondary].map(sender => ({
     ...sender,
-    sendEligible: sender.status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured,
+    sendEligible: sender.status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured && !sender.policyBlockers?.length,
   }));
-  return applySenderRuntime(senders, parseRuntimeOverlay(env.GMAIL_SENDER_RUNTIME_JSON || '[]'));
+  // Temporary per-inbox ceiling (cold-delivery-policy.js): lowers, never raises.
+  return applyColdInboxCap(applySenderRuntime(senders, parseRuntimeOverlay(env.GMAIL_SENDER_RUNTIME_JSON || '[]')), env);
 }
 
 function observableSenders(senders = []) {
@@ -39,6 +47,26 @@ function observableSenders(senders = []) {
 }
 
 function allowedForLead(sender, lead = {}) {
+  // Client isolation before anything else, for pinned, assigned and dynamic
+  // choices alike: a sender serves only its own client's leads, and there is
+  // no cross-client fallback. The lead's stored senderInboxId is set aside
+  // here because THIS sender is the one being judged.
+  const owner = checkClientConsistency({ lead: { ...lead, senderInboxId: '' }, sender });
+  if (!owner.ok) return false;
+  // A managed client's lead is routed by its campaign registry
+  // (routedLeadReady / validateRoute); the legacy niche rules below are
+  // ScaleLab's and never admit or refuse it.
+  // A managed client's sender also serves only the campaigns its client's
+  // senderPolicy allows it; a lead on any other campaign gets no sender.
+  if (!getClient(owner.clientId).isDefault) {
+    return sender.sendEligible === true && senderServesCampaign(sender, lead.intendedCampaignVersion || lead.campaign);
+  }
+  // A staffing-only mailbox serves the staffing campaign's canonical niche and
+  // nothing else: not dental, roofing, blank, or a lookalike "*staffing" niche.
+  // This one check covers dynamic balancing, assigned and pinned leads alike.
+  if (isStaffingOnlySender(sender)) {
+    return normalizeNiche(lead.leadNiche || lead.tradeType) === STAFFING_CAMPAIGN.niche && sender.sendEligible;
+  }
   const niche = String(lead.leadNiche || lead.tradeType || '').toLowerCase();
   // An explicit operator choice is available to staffing as well as dental.
   // Unassigned legacy non-dental traffic retains its existing primary route.
@@ -55,12 +83,6 @@ const SENDER_ATTRIBUTED_EVENTS = Object.freeze([
   'initial_email_sent', 'follow_up_sent', 'sequence_step_sent',
   'booking_link_sent', 'human_response_sent',
 ]);
-
-function activityBelongsToLead(row, lead) {
-  if (!String(lead.id || '').trim()) return false;
-  if (row.sourceLeadId) return String(row.sourceLeadId) === String(lead.id);
-  return String(row.leadId || '') === `CE-${lead.id}`;
-}
 
 function senderEvidence(lead = {}, activities = []) {
   const ids = new Set();

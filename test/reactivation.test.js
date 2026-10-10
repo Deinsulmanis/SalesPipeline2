@@ -406,8 +406,11 @@ test('nothing reactivates existing leads automatically', () => {
     agentSrc.indexOf('async function handleWrongPerson'));
   const timing = agentSrc.slice(agentSrc.indexOf('async function handleTimingReply'),
     agentSrc.indexOf('async function writeLateReplyNotes'));
-  assert.match(ooo, /applyResumeToNotes/, 'OOO holds reuse the existing resume tag');
+  // Since 2026-10-03 an OOO reply is an event-sourced pause (integrations/
+  // ooo-pause.js), never a manual hold or a resume tag.
+  assert.doesNotMatch(ooo, /applyResumeToNotes|applyHoldToNotes|MANUAL HOLD\]'/, 'OOO never holds or tags');
+  assert.match(ooo, /recordColdCallActivityStrict\(event\)/);
   assert.match(timing, /applyResumeToNotes/, 'dated timing holds reuse the existing resume tag');
   const writes = agentSrc.match(/applyResumeToNotes\(/g) || [];
-  assert.equal(writes.length, 2, 'resume tags are written only from inbound OOO/timing handlers');
+  assert.equal(writes.length, 1, 'resume tags are written only from the inbound timing handler');
 });

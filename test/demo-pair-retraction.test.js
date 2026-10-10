@@ -108,36 +108,13 @@ test('a retracted pair scores no demo engagement on the pipeline card', () => {
   assert.equal(scoreColdCallLead({}, [sent, pair, retraction]), 20); // demo no longer counts
 });
 
-test('the agent guards CREATION on pair history, not on the active pair', () => {
-  // Otherwise a retraction is an instruction to write the same event again.
+test('nothing creates, delivers or counts a demo pair any more', () => {
+  // The demo-intent pass that created pairs and sent booking links is retired;
+  // the funnel no longer has a Demo stage. Historical pairs stay readable.
   const agent = source('outreach-agent.js');
-  const creation = agent.slice(agent.indexOf('Persist the prospect fact before evaluating any delivery gate'),
-    agent.indexOf('const due = []'));
-  assert.ok(creation.includes('hasDemoPairHistory(lead, activities)'),
-    'the creation guard must treat a retracted pair as already handled');
-  assert.ok(!creation.includes('demoPairEventFor(lead, activities)'),
-    'the creation guard must not ask for the ACTIVE pair, which a retraction empties');
-  assert.ok(agent.includes('hasDemoPairHistory'), 'the agent must import the history check');
+  assert.doesNotMatch(agent, /buildDemoPairActivity|validateFresh: async \(\{ fresh, current, mine, currentRows \}\)/);
+  assert.ok(!source('integrations/funnel-analytics.js').includes('demo_pair_played'));
 });
-
-test('the last-moment send check refuses a retracted pair', () => {
-  const agent = source('outreach-agent.js');
-  const validate = agent.slice(agent.indexOf('validateFresh: async ({ fresh, current, mine, currentRows })'),
-    agent.indexOf('canonical_demo_pair_missing') + 200);
-  assert.ok(validate.includes('demoPairEventFor(current, mine)'),
-    'revalidation must use the retraction-aware reader');
-  assert.ok(!validate.includes("mine.some(row => row.eventType === DEMO_PAIR_EVENT)"),
-    'a raw event-type scan cannot see a retraction and would send on false evidence');
-});
-
-test('funnel analytics counts only active pairs', () => {
-  const funnel = source('integrations/funnel-analytics.js');
-  assert.ok(funnel.includes('activeDemoPairEvents('),
-    'the demo funnel stage must exclude retracted pairs');
-  assert.ok(!funnel.includes("rows.filter(row => row.eventType === 'demo_pair_played')"),
-    'a raw event-type filter would keep counting a retracted pair as demo engagement');
-});
-
 test('the retraction is a first-class timeline event, not an unlabelled row', () => {
   const timeline = source('integrations/activity-timeline.js');
   assert.ok(timeline.includes("case 'demo_pair_retracted'"), 'the timeline must label the retraction');

@@ -134,7 +134,9 @@ test('double-click calls share one transaction and a preview cannot mutate', asy
   const h = harness();
   const blocker = new Promise(resolve => { release = resolve; });
   let runs = 0;
-  const sandbox = { app: { post: (_path, _auth, fn) => { handler = fn; } }, requireAuth: () => {},
+  // The route is (path, requireAuth, rejectArchived(...), handler): the handler is last.
+  const sandbox = { app: { post: (...args) => { handler = args[args.length - 1]; } }, requireAuth: () => {},
+    rejectArchived: () => () => {},
     resumeRequests: new Map(), automationLaunchReserved: false, agentState: { running: false },
     outreachCache: null, ceRowMap: new Map(), process: { env: {} },
     invalidateOutreachCache() {},

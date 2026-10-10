@@ -35,23 +35,69 @@ function isStaffingCampaign(lead = {}) {
 }
 
 const STAFFING_LANDING_PAGE_URL = 'https://scalelabai.ca/staffing/';
+// A tracked link is the plain URL plus one opaque token (see landing-link-token.js).
+const TRACKED_STAFFING_LANDING_URL = /^https:\/\/scalelabai\.ca\/staffing\/\?t=[A-Za-z0-9_-]{22}$/;
+
+function isTrackedStaffingLandingUrl(url) {
+  return typeof url === 'string' && TRACKED_STAFFING_LANDING_URL.test(url);
+}
+
+/**
+ * The locked copy with its landing-page URL swapped for a tracked one. Without a
+ * tracked URL the text is returned untouched, so untracked renders stay
+ * byte-identical. The swap happens on the template, before merge, so only the
+ * locked occurrence can change.
+ */
+function withStaffingLandingUrl(text, landingPageUrl) {
+  if (!landingPageUrl) return text;
+  if (!isTrackedStaffingLandingUrl(landingPageUrl)) throw new Error('staffing landing-page URL is not a tracked landing link');
+  const parts = String(text).split(STAFFING_LANDING_PAGE_URL);
+  if (parts.length !== 2) throw new Error('staffing copy must contain the landing-page URL exactly once');
+  return parts.join(landingPageUrl);
+}
 
 const LOCKED_EMAILS = Object.freeze([
   `Hi {{firstName}},\n\n{{hyperPersonalizedOpening}}\n\nWe help industrial staffing agencies turn that exact market into qualified employer meetings — and we get paid based on the meetings we generate.\n\nWorth seeing how we'd do this for {{company}}?\n\n— Deins`,
   `Hi {{firstName}},\n\nJust to clarify — we're not talking about candidate sourcing.\n\nWe run a 30-day employer acquisition pilot built around the roles {{company}} already places.\n\nWe handle the prospecting, outreach and qualification, then put interested employers directly on your calendar.\n\nIf we don't generate qualified employer meetings, there are no meeting fees.\n\nYou can see how it works here:\n${STAFFING_LANDING_PAGE_URL}\n\nOpen to seeing what this could look like for {{company}}?`,
-  `Hi {{firstName}},\n\nQuick question —\n\nis bringing in more employer accounts something {{company}} is focused on right now?`,
+  // Touch 3, normalized 2026-10-03 to the approved wording. The sign-off is
+  // part of the copy: the compliance footer carries no personal name and Gmail
+  // API sends never append the mailbox signature, so it cannot duplicate.
+  `Hi {{firstName}},\n\nIs bringing in more employer accounts something {{company}} is focused on right now?\n\nDeins`,
 ]);
+// A reviewed ICP fit can use the core offer without an unsupported company fact.
+// This variant applies only to an explicit NONE_REQUIRED staffing review.
+const NO_PERSONALIZATION_EMAIL = `Hi {{firstName}},\n\nWe help industrial staffing agencies generate qualified employer meetings — and we get paid based on the meetings we generate.\n\nWorth seeing how we'd do this for {{company}}?\n\n— Deins`;
+const REVIEW_TAG = /\[STAFFING_REVIEW_V1 fit=(ICP_CONFIRMED|ICP_REJECT|ICP_UNRESOLVED);personalization=(SPECIFIC_HIGH|BROAD_MEDIUM|SAFE_FALLBACK|NONE_REQUIRED|FAILED);routing_ready=(true|false)\]/;
+function staffingReviewStatus(lead = {}) {
+  const match = REVIEW_TAG.exec(String(lead.campaign_notes || lead.campaignNotes || ''));
+  return match ? { fit: match[1], personalization: match[2], routingReady: match[3] === 'true' } : null;
+}
+const REVIEW_PERSONALIZATION = Object.freeze(['SPECIFIC_HIGH', 'BROAD_MEDIUM', 'SAFE_FALLBACK', 'NONE_REQUIRED', 'FAILED']);
+function replaceStaffingReviewTag(campaignNotes, { fit, personalization, routingReady }) {
+  if (!['ICP_CONFIRMED', 'ICP_REJECT', 'ICP_UNRESOLVED'].includes(fit)) throw new Error('invalid staffing review fit');
+  if (!REVIEW_PERSONALIZATION.includes(personalization)) throw new Error('invalid staffing review personalization');
+  const tag = `[STAFFING_REVIEW_V1 fit=${fit};personalization=${personalization};routing_ready=${routingReady ? 'true' : 'false'}]`;
+  const current = String(campaignNotes || '');
+  if (REVIEW_TAG.test(current)) return current.replace(REVIEW_TAG, tag);
+  return current ? `${current.replace(/\s*$/, '')}; ${tag}` : tag;
+}
+function staffingNoPersonalizationAllowed(lead = {}) {
+  const review = staffingReviewStatus(lead);
+  return Boolean(review && review.fit === 'ICP_CONFIRMED'
+    && review.personalization === 'NONE_REQUIRED' && review.routingReady);
+}
 // One bold phrase per step, exactly as locked. Step 3's bold contains a
 // placeholder, so bolding happens on the RENDERED text rather than the template.
 const BOLD_PHRASES = Object.freeze([
   'we get paid based on the meetings we generate.',
   'We handle the prospecting, outreach and qualification, then put interested employers directly on your calendar.',
-  'is bringing in more employer accounts something {{company}} is focused on right now?',
+  'Is bringing in more employer accounts something {{company}} is focused on right now?',
 ]);
 const BOLD_PHRASE = BOLD_PHRASES[0];
-// Cadence is deliberately the same calendar spacing as the ordinary cold
-// sequence; staffing does not get its own scheduler, only its own copy.
-const STAFFING_FOLLOW_UP_DELAY_DAYS = Object.freeze([3, 5]);
+// Cadence: staffing does not get its own scheduler, only its own copy. Its
+// timing is THE sequence timing (integrations/sequence-timing.js), re-exported
+// here by reference so nothing can hold a second copy of the delays.
+const { SEQUENCE_TIMING: STAFFING_SEQUENCE_TIMING } = require('./sequence-timing');
 const escapeHtml = text => String(text).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const {
   appendStaffingComplianceFooter, staffingSenderIdentity, staffingComplianceError,
@@ -61,7 +107,8 @@ const {
 function renderStaffingPreview(lead, result, step = 1, options = {}) {
   if (!isStaffingCampaign(lead)) throw new Error('Staffing campaign assignment required');
   if (![1, 2, 3].includes(step)) throw new Error('Invalid staffing sequence step');
-  if (step === 1 && (!result || result.reviewFlag || !result.hyperPersonalizedOpening)) return null;
+  const noPersonalization = step === 1 && !result?.hyperPersonalizedOpening && staffingNoPersonalizationAllowed(lead);
+  if (step === 1 && (result?.reviewFlag || (!result?.hyperPersonalizedOpening && !noPersonalization))) return null;
   const vars = {
     firstName: String(lead.firstName || lead.first || lead.contactName?.split(/\s+/)[0] || 'there').trim(),
     company: String(lead.company || '').trim(),
@@ -70,7 +117,10 @@ function renderStaffingPreview(lead, result, step = 1, options = {}) {
   if (!vars.company || Object.values(vars).some(v => /[\r\n]|{{|}}/.test(v))) throw new Error('Invalid template variable');
   const merge = text => text.replace(/{{(\w+)}}/g, (_, key) => vars[key]);
   const identity = staffingSenderIdentity(options.env || process.env, options);
-  const body = appendStaffingComplianceFooter(merge(LOCKED_EMAILS[step - 1]), identity);
+  // Only step 2 carries the landing page; a tracked URL anywhere else is a caller bug.
+  if (options.landingPageUrl && step !== 2) throw new Error('only staffing step 2 carries the landing-page URL');
+  const template = withStaffingLandingUrl(noPersonalization ? NO_PERSONALIZATION_EMAIL : LOCKED_EMAILS[step - 1], options.landingPageUrl);
+  const body = appendStaffingComplianceFooter(merge(template), identity);
   // Bold only the locked offer phrase, never a model-authored opener or footer.
   const phrase = merge(BOLD_PHRASES[step - 1]);
   let html = body.split(phrase).map(part => escapeHtml(part)).join(`<strong>${escapeHtml(phrase)}</strong>`);
@@ -99,7 +149,7 @@ function renderStaffingEmail(lead = {}, step = 1, options = {}) {
   if (!isStaffingCampaign(lead)) throw new Error('Staffing campaign assignment required');
   if (![1, 2, 3].includes(step)) throw new Error('Invalid staffing sequence step');
   const opening = staffingOpeningFor(lead);
-  if (step === 1 && !opening) throw new Error('staffing lead has no stored personalized opening');
+  if (step === 1 && !opening && !staffingNoPersonalizationAllowed(lead)) throw new Error('staffing lead has no stored personalized opening');
   const rendered = renderStaffingPreview(lead, { hyperPersonalizedOpening: opening, reviewFlag: false }, step, options);
   if (!rendered) throw new Error('staffing copy could not be rendered');
   return { subject: rendered.subject, body: rendered.body, html: rendered.html, step };
@@ -124,4 +174,6 @@ function validateStaffingEmail({ subject, body, leadId } = {}, step = 1) {
 }
 
 module.exports = { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_LABELS, isStaffingCampaign, STAFFING_LANDING_PAGE_URL, LOCKED_EMAILS, BOLD_PHRASE, BOLD_PHRASES,
-  STAFFING_FOLLOW_UP_DELAY_DAYS, renderStaffingPreview, staffingOpeningFor, renderStaffingEmail, validateStaffingEmail };
+  STAFFING_SEQUENCE_TIMING, renderStaffingPreview, staffingOpeningFor, staffingReviewStatus, replaceStaffingReviewTag,
+  staffingNoPersonalizationAllowed, renderStaffingEmail, validateStaffingEmail,
+  isTrackedStaffingLandingUrl, withStaffingLandingUrl };

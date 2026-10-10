@@ -1,6 +1,8 @@
 'use strict';
 
-const { DEFAULT_INBOX_DAILY_LIMIT, DEFAULT_INBOX_PER_RUN_LIMIT } = require('./gmail-sender-capacity');
+const {
+  DEFAULT_INBOX_DAILY_LIMIT, DEFAULT_INBOX_PER_RUN_LIMIT, MAX_INBOX_PER_RUN_LIMIT,
+} = require('./gmail-sender-capacity');
 
 const WARMUP_STATUS = Object.freeze({
   WARMING: 'warming',
@@ -22,17 +24,26 @@ function markWarmupReady(sender = {}) {
 }
 
 function activationBlockers(sender = {}, {
-  auth = null, observer = null, senders = [],
+  auth = null, observer = null, senders = [], env = process.env,
 } = {}) {
   const blockers = [];
   const status = String(sender.status || '');
-  if (status !== WARMUP_STATUS.READY) blockers.push('warmup is not ready');
-  if (String(sender.provider || 'gmail') !== 'gmail') blockers.push('provider must be gmail');
-  if (Number(sender.dailyLimit) !== DEFAULT_INBOX_DAILY_LIMIT) {
-    blockers.push(`dailyLimit must be ${DEFAULT_INBOX_DAILY_LIMIT}`);
+  // Warming (and error) inboxes must be marked ready first. A paused inbox
+  // already completed warmup — it may return to active when the remaining
+  // health checks pass. Active is idempotent.
+  if (status !== WARMUP_STATUS.READY && status !== WARMUP_STATUS.PAUSED && status !== WARMUP_STATUS.ACTIVE) {
+    blockers.push('warmup is not ready');
   }
-  if (Number(sender.perRunLimit || DEFAULT_INBOX_PER_RUN_LIMIT) !== DEFAULT_INBOX_PER_RUN_LIMIT) {
-    blockers.push(`perRunLimit must be ${DEFAULT_INBOX_PER_RUN_LIMIT}`);
+  if (String(sender.provider || 'gmail') !== 'gmail') blockers.push('provider must be gmail');
+  // The defaults are ceilings for a newly activated inbox, not exact values:
+  // a more conservative cap is always acceptable, a larger one never is.
+  const dailyLimit = Number(sender.dailyLimit);
+  if (!Number.isInteger(dailyLimit) || dailyLimit < 1 || dailyLimit > DEFAULT_INBOX_DAILY_LIMIT) {
+    blockers.push(`dailyLimit must be between 1 and ${DEFAULT_INBOX_DAILY_LIMIT}`);
+  }
+  const perRunLimit = Number(sender.perRunLimit || DEFAULT_INBOX_PER_RUN_LIMIT);
+  if (!Number.isInteger(perRunLimit) || perRunLimit < 1 || perRunLimit > MAX_INBOX_PER_RUN_LIMIT) {
+    blockers.push(`perRunLimit must be between 1 and ${MAX_INBOX_PER_RUN_LIMIT}`);
   }
   if (!sender.credentialConfigured) blockers.push('gmail auth is not configured');
   if (auth) {
@@ -49,7 +60,22 @@ function activationBlockers(sender = {}, {
     && (String(item.id || '') === id || String(item.email || '').trim().toLowerCase() === email)
     && String(item.tokenEnv || '') !== String(sender.tokenEnv || ''));
   if (conflict) blockers.push('sender ownership/config conflict');
-  return blockers;
+  // A managed client's inbox: its client sender policy (domain, campaign
+  // allowlist) and the client's own send authority. While the client may not
+  // send, none of its inboxes can be activated; they stay paused/warming.
+  for (const reason of sender.policyBlockers || []) blockers.push(reason);
+  const hold = require('./cold-delivery-policy').coldSenderHolds(env).get(String(sender.id || '').trim());
+  if (hold) blockers.push(`sender cold hold: ${hold}`);
+  const clientId = String(sender.clientId || '').trim();
+  if (clientId) {
+    const { getClient, isKnownClient } = require('./clients/registry');
+    if (!isKnownClient(clientId)) blockers.push('sender names an unknown client');
+    else if (!getClient(clientId).isDefault) {
+      const block = require('./clients/send-policy').clientSendBlock(clientId);
+      if (block) blockers.push(`client sending is not authorized: ${block.reason}`);
+    }
+  }
+  return [...new Set(blockers)];
 }
 
 function activateSender(sender = {}, context = {}) {

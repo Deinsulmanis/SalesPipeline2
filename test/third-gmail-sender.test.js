@@ -88,6 +88,23 @@ test('4. warmup ready alone does not activate sender', () => {
   assert.equal(senderCapacity(senders(env)).activeCount, 2);
 });
 
+test('paused sender can return to active when auth and observer are healthy', () => {
+  const paused = pauseSender(activateSender(markWarmupReady(third()), { auth: healthyAuth, observer: healthyObserver, senders: senders() }));
+  assert.equal(paused.status, 'paused');
+  assert.equal(paused.sendEligible, false);
+  const again = activateSender(paused, { auth: healthyAuth, observer: healthyObserver, senders: senders() });
+  assert.equal(again.status, 'active');
+  assert.equal(again.sendEligible, true);
+  assert.throws(
+    () => activateSender(paused, { auth: healthyAuth, observer: { ...healthyObserver, health: 'unavailable' }, senders: senders() }),
+    /observer/,
+  );
+  assert.throws(
+    () => activateSender(third(), { auth: healthyAuth, observer: healthyObserver, senders: senders() }),
+    /warmup is not ready/,
+  );
+});
+
 test('5. Activate Sender requires healthy auth/observer', () => {
   const ready = markWarmupReady(third());
   assert.deepEqual(activationBlockers(ready, { auth: { authenticated: false }, observer: healthyObserver, senders: senders() }).some(item => /auth/i.test(item)), true);
@@ -96,7 +113,7 @@ test('5. Activate Sender requires healthy auth/observer', () => {
   assert.throws(() => activateSender(third(), { auth: healthyAuth, observer: healthyObserver, senders: senders() }), /warmup is not ready/);
 });
 
-test('6. active sender joins allocation', () => {
+test('6. active sender joins allocation for staffing leads only', () => {
   const ready = markWarmupReady(third());
   const active = activateSender(ready, { auth: healthyAuth, observer: healthyObserver, senders: senders() });
   assert.equal(active.status, 'active');
@@ -104,11 +121,14 @@ test('6. active sender joins allocation', () => {
   const env = { ...TWO_ACTIVE, GMAIL_SENDER_RUNTIME_JSON: JSON.stringify([{ id: 'scalelabaiteam', status: 'active' }]) };
   const roster = senders(env);
   assert.equal(roster.find(item => item.id === 'scalelabaiteam').sendEligible, true);
-  const choice = chooseSender({
-    lead: { id: 'L', tradeType: 'Dental' }, senders: roster,
-    sendsToday: new Map([['primary', 10], ['tryscalelabai', 10], ['scalelabaiteam', 0]]),
+  const sendsToday = new Map([['primary', 10], ['tryscalelabai', 10], ['scalelabaiteam', 0]]);
+  const staffing = chooseSender({
+    lead: { id: 'S', leadNiche: 'industrial_staffing', senderInboxId: 'scalelabaiteam' }, senders: roster, sendsToday,
   });
-  assert.equal(choice.sender.id, 'scalelabaiteam');
+  assert.equal(staffing.sender.id, 'scalelabaiteam');
+  // Least-used would otherwise pick the idle inbox; scalelabaiteam is staffing-only.
+  const dental = chooseSender({ lead: { id: 'L', tradeType: 'Dental' }, senders: roster, sendsToday });
+  assert.notEqual(dental.sender.id, 'scalelabaiteam');
 });
 
 test('7. 2 active inboxes = 80/day', () => {
@@ -135,8 +155,9 @@ test('11. each inbox remains capped at 40/day', () => {
   const roster = senders(env);
   for (const sender of roster.filter(item => item.sendEligible)) {
     assert.equal(sender.dailyLimit, 40);
+    const niche = sender.id === 'scalelabaiteam' ? { leadNiche: 'industrial_staffing' } : { tradeType: 'Dental' };
     assert.equal(chooseSender({
-      lead: { id: 'L', tradeType: 'Dental', senderInboxId: sender.id },
+      lead: { id: 'L', ...niche, senderInboxId: sender.id },
       senders: roster, sendsToday: new Map([[sender.id, 40]]),
     }).sender, null);
   }
@@ -260,11 +281,12 @@ test('activation and pause endpoints exist and do not trigger outreach', () => {
   assert.match(html, /Mark Warmup Ready/);
   assert.match(html, /Pause Sender/);
   assert.match(html, /deins@scalelabaiteam.com|warmupLabel|Cold sending/);
+  assert.match(server, /canActivate: \(inbox\.status === 'ready' \|\| inbox\.status === 'paused'\) && blockers\.length === 0/);
 });
 
 test('scheduled caps are derived from active inboxes rather than hardcoded 2-inbox totals', () => {
   const server = read('server.js');
-  assert.match(server, /const SCHEDULED_SEND_PER_INBOX_CAP = 5;/);
+  assert.match(server, /const SCHEDULED_SEND_PER_INBOX_CAP = MAX_INBOX_PER_RUN_LIMIT;/);
   assert.match(server, /function scheduledSendCaps/);
   assert.match(server, /DAILY_CAP: String\(caps\.total\)/);
   assert.doesNotMatch(server, /const SCHEDULED_SEND_TOTAL_CAP = 10;/);

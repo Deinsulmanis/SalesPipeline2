@@ -173,8 +173,7 @@ test('existing Outreach counts remain in the compact stats response', () => {
   assert.match(browser, /ce-stat-total/);
   assert.match(browser, /ce-stat-queued/);
   assert.match(browser, /ce-stat-emailed/);
-  assert.match(browser, /ce-stat-demo-plays/);
-  assert.match(browser, /ce-stat-warm/);
+  assert.doesNotMatch(browser, /ce-stat-demo-plays|ce-stat-warm/, 'the retired demo cards are gone');
   assert.doesNotMatch(browser, /id="ce-stat-opens"/);
 });
 

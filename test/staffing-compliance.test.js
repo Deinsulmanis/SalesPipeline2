@@ -50,7 +50,7 @@ test('1-3. Emails 1-3 contain the unsubscribe footer beneath the locked copy', (
   const cores = [
     `Hi Ada,\n\n${OPENING}\n\nWe help industrial staffing agencies turn that exact market into qualified employer meetings — and we get paid based on the meetings we generate.\n\nWorth seeing how we'd do this for Acme Staffing?\n\n— Deins`,
     `Hi Ada,\n\nJust to clarify — we're not talking about candidate sourcing.\n\nWe run a 30-day employer acquisition pilot built around the roles Acme Staffing already places.\n\nWe handle the prospecting, outreach and qualification, then put interested employers directly on your calendar.\n\nIf we don't generate qualified employer meetings, there are no meeting fees.\n\nYou can see how it works here:\nhttps://scalelabai.ca/staffing/\n\nOpen to seeing what this could look like for Acme Staffing?`,
-    'Hi Ada,\n\nQuick question —\n\nis bringing in more employer accounts something Acme Staffing is focused on right now?',
+    'Hi Ada,\n\nIs bringing in more employer accounts something Acme Staffing is focused on right now?\n\nDeins',
   ];
   for (const step of [1, 2, 3]) {
     const email = render(step);
@@ -143,7 +143,7 @@ test('9-11. unsubscribe creates/preserves global suppression and is idempotent',
   const handler = agent.slice(agent.indexOf('async function handleUnsubscribe'), agent.indexOf('async function handleOutOfOffice'));
   assert.match(handler, /already Unsub; suppression confirmed/);
   assert.match(handler, /await addSuppression\(lead\.email, 'unsubscribe', lead\.company, 'reply-auto'\)/);
-  assert.match(agent, /if \(classification === 'UNSUBSCRIBE'\) return handleUnsubscribe\(lead\);/);
+  assert.match(agent, /case REPLY_ROUTE\.UNSUBSCRIBE: result = await handleUnsubscribe\(lead\);/);
   assert.ok(!/auto.?unsuppress|suppressedAt \+|expires?At/.test(agent), 'unsubscribe must not auto-expire');
 });
 
@@ -154,7 +154,7 @@ test('12. compliance footer does not affect subject or thread identity', () => {
   assert.doesNotMatch(render(1).subject, /SA-48271/);
   assert.match(validateStaffingEmail({ subject: 'employer accounts SA-48271', body: render(1).body }, 1) || '', /must not contain the campaign reference/);
   const agent = read('outreach-agent.js');
-  assert.match(agent, /if \(lead\.emailTemplateId === STAFFING_TEMPLATE\) \{\n\s*try \{ body = staffingFollowUpBody\(lead, nextStepNum\); \}/);
+  assert.match(agent, /if \(lead\.emailTemplateId === STAFFING_TEMPLATE\) \{\n\s*try \{ body = staffingFollowUpBody\(lead, nextStepNum, ownershipActivities\); \}/);
 });
 
 test('13. dental campaign templates are not modified', () => {
