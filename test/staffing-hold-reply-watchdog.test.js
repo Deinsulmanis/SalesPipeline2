@@ -143,3 +143,23 @@ test('watchdog respects manual response, human review, automated reply and unsub
     inboundMessageId: 'gm-1', finalClassification: 'NEEDS_HUMAN', executionStatus: 'failed' }) };
   assert.equal(orphanedHumanReplies({ ...options, leads: [reviewLead], activities: [row, failed] }).length, 1);
 });
+
+test('later same-thread human review covers an earlier inbound only with matching sender evidence', () => {
+  const first = inbound('gm-1', 'scale-1');
+  const second = { ...inbound('gm-2', 'scale-1', '2026-10-09T04:02:00.000Z'),
+    metadata: JSON.stringify({ gmailMessageId: 'gm-2', gmailThreadId: 'thread-gm-1',
+      senderInboxId: 'primary', genuineHuman: true, canonicalState: 'needs_human' }) };
+  const review = { eventId: 'reply-decision:scale-1:gm-2', sourceLeadId: 'scale-1',
+    eventType: 'reply_decision_recorded', occurredAt: '2026-10-09T04:03:00.000Z',
+    metadata: JSON.stringify({ leadId: 'scale-1', inboundMessageId: 'gm-2',
+      inboundThreadId: 'thread-gm-1', receivedAt: second.occurredAt,
+      executionStatus: 'routed_to_human', responseDisposition: 'waiting-for-human' }) };
+  const options = { leads: [lead('scale-1')], now: '2026-10-09T04:20:00.000Z' };
+  assert.equal(orphanedHumanReplies({ ...options, activities: [first, second, review] }).length, 0);
+  assert.equal(orphanedHumanReplies({ ...options, activities: [first, review] }).length, 1);
+  const otherSender = { ...second, metadata: JSON.stringify({ ...JSON.parse(second.metadata), senderInboxId: 'secondary' }) };
+  assert.equal(orphanedHumanReplies({ ...options, activities: [first, otherSender, review] }).length, 1);
+  const noReview = { ...review, metadata: JSON.stringify({ ...JSON.parse(review.metadata),
+    responseDisposition: null }) };
+  assert.equal(orphanedHumanReplies({ ...options, activities: [first, second, noReview] }).length, 1);
+});

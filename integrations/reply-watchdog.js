@@ -24,6 +24,15 @@ function orphanedHumanReplies({ leads = [], activities = [], now = new Date(),
   if (!Number.isFinite(current) || !Number.isFinite(start)) throw new Error('Invalid reply watchdog time');
   const byId = new Map(leads.map(lead => [String(lead.id), lead]));
   const decisions = replyDecisionsByKey(activities);
+  const reviewsByLeadThread = new Map();
+  for (const decision of decisions.values()) {
+    if (decision.executionStatus !== 'routed_to_human'
+      || decision.responseDisposition !== 'waiting-for-human'
+      || !decision.inboundThreadId || !Date.parse(decision.receivedAt || '')) continue;
+    const key = `${decision.leadId}:${decision.inboundThreadId}`;
+    if (!reviewsByLeadThread.has(key)) reviewsByLeadThread.set(key, []);
+    reviewsByLeadThread.get(key).push(decision);
+  }
   const eventIds = new Set(activities.map(row => String(row.eventId || '')));
   const activityByLead = new Map();
   for (const item of activities) {
@@ -55,6 +64,19 @@ function orphanedHumanReplies({ leads = [], activities = [], now = new Date(),
     const threadId = String(meta.gmailThreadId || row.providerThreadId || '');
     const responses = (activityByLead.get(leadId) || []).filter(item =>
       timeOf(item) >= receivedAt && item !== row);
+    const senderInboxId = String(meta.senderInboxId || row.senderInboxId || lead.senderInboxId || '');
+    // A later inbound on this same sender/thread can put the whole conversation
+    // into human review. Require both its own inbound event and its durable
+    // waiting-for-human decision; an alert or a lead-level Review stage alone
+    // cannot dispose of an earlier message.
+    const laterThreadReview = Boolean(threadId && (reviewsByLeadThread.get(`${leadId}:${threadId}`) || [])
+      .some(review => Date.parse(review.receivedAt) > receivedAt && responses.some(item => {
+        if (!LEGACY_REPLY_EVENT_TYPES.includes(String(item.eventType || ''))) return false;
+        const replyMeta = metadataOf(item);
+        return String(replyMeta.gmailMessageId || item.providerMessageId || '') === review.inboundMessageId
+          && String(replyMeta.gmailThreadId || item.providerThreadId || '') === threadId
+          && String(replyMeta.senderInboxId || item.senderInboxId || lead.senderInboxId || '') === senderInboxId;
+      })));
     const manual = responses.some(item => item.eventType === 'human_response_sent'
       && (!threadId || !String(metadataOf(item).gmailThreadId || item.providerThreadId || '')
         || String(metadataOf(item).gmailThreadId || item.providerThreadId) === threadId));
@@ -68,8 +90,7 @@ function orphanedHumanReplies({ leads = [], activities = [], now = new Date(),
     const waiting = Boolean(decision && (decision.executionStatus === 'routed_to_human'
       || (['blocked', 'failed'].includes(decision.executionStatus)
         && decision.fallbackAction === 'HUMAN_REVIEW')));
-    if (manual || sent || waiting) continue;
-    const senderInboxId = String(meta.senderInboxId || row.senderInboxId || lead.senderInboxId || '');
+    if (manual || sent || waiting || laterThreadReview) continue;
     const alertId = `reply-orphan:${clientId}:${senderInboxId || 'unknown'}:${leadId}:${messageId}`;
     orphans.push({ leadId, company: lead.company, clientId, senderInboxId,
       messageId, receivedAt: new Date(receivedAt).toISOString(), alertId,
