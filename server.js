@@ -6194,7 +6194,7 @@ function gmailInboxOptions() {
     warmupStatus: sender.status,
     provider: 'gmail',
     dailyLimit: sender.dailyLimit,
-    perRunLimit: sender.perRunLimit || DEFAULT_INBOX_PER_RUN_LIMIT,
+    perRunLimit: sender.perRunLimit ?? DEFAULT_INBOX_PER_RUN_LIMIT,
     observerEnabled: sender.observerEnabled !== false,
     staffingOnly: isStaffingOnlySender(sender),
     clientId: sender.clientId || DEFAULT_CLIENT_ID,

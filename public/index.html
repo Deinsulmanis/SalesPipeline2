@@ -6499,7 +6499,7 @@ function renderGmailInboxSelector() {
   status.innerHTML = `<div class="inbox-route-head"><span class="inbox-route-kicker">Gmail sending rail</span><span class="inbox-route-readonly">View only</span></div><div class="inbox-route-list">${inboxes.map(inbox => {
     const warming = inbox.status === 'warming' || inbox.status === 'ready' || !inbox.sendEligible;
     const label = inbox.sendEligible ? 'Current' : (inbox.status === 'warming' ? 'Warming · locked' : inbox.status === 'ready' ? 'Ready · inactive' : `${inbox.status} · inactive`);
-    const meta = `${inbox.dailyLimit}/day · ${inbox.perRunLimit || 5}/run · ${inbox.sendEligible ? 'Cold sending active' : 'Cold sending inactive'}`;
+    const meta = `${inbox.dailyLimit}/day · ${inbox.perRunLimit ?? 5}/run · ${inbox.sendEligible ? 'Cold sending active' : 'Cold sending inactive'}`;
     return `<div class="inbox-route-row ${warming ? 'warming' : ''}"><span class="inbox-route-dot" aria-hidden="true"></span><div><div class="inbox-route-email">${esc(inbox.email)}</div><div class="inbox-route-meta">${esc(meta)}</div></div><span class="inbox-route-badge">${esc(label)}</span></div>`;
   }).join('')}</div>`;
 }
@@ -8970,7 +8970,7 @@ function renderSettingsInboxRouting(payload) {
           <div>Cold sending: <b>${inbox.sendingActive || inbox.sendEligible ? 'Active' : 'Inactive'}</b></div>
           <div>Observer: <b>${esc(observerLabel(inbox))}</b></div>
           <div>Daily cap: <b>${esc(String(inbox.dailyLimit))}</b></div>
-          <div>Per-run cap: <b>${esc(String(inbox.perRunLimit || 5))}</b></div>
+          <div>Per-run cap: <b>${esc(String(inbox.perRunLimit ?? 5))}</b></div>
           <div>Sent today: <b>${esc(String(inbox.sentToday ?? 0))}</b></div>
           <div>Remaining today: <b>${esc(String(inbox.remainingToday ?? inbox.dailyLimit))}</b></div>
         </div>

@@ -367,3 +367,15 @@ test('ScaleLab is unaffected: same roster, caps, capacity and provider verdicts'
     assert.deepEqual(verdict, { delivered: true, code: 'sent' }, sender.id);
   }
 });
+
+test('the sender UI and status API show a dormant inbox as 0/day and 0/run, not a default', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const browser = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const options = server.slice(server.indexOf('function gmailInboxOptions()'), server.indexOf('function gmailInboxOptions()') + 900);
+  assert.match(options, /perRunLimit: sender\.perRunLimit \?\? DEFAULT_INBOX_PER_RUN_LIMIT/);
+  assert.match(browser, /\$\{inbox\.perRunLimit \?\? 5\}\/run/);
+  assert.match(browser, /Per-run cap: <b>\$\{esc\(String\(inbox\.perRunLimit \?\? 5\)\)\}<\/b>/);
+  for (const sender of configuredSenders(PROD_ENV).filter(s => s.clientId === 'jole')) assert.equal(sender.perRunLimit, 0, sender.id);
+});
