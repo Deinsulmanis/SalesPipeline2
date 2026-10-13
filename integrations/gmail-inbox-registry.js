@@ -55,6 +55,26 @@ const DEFAULT_SECONDARY_INBOXES = Object.freeze([
     perRunLimit: 2,
     observerEnabled: true,
   }),
+  // Jole BTX LLC's six cold-sending mailboxes (client `jole`), registered
+  // connected-but-dormant while they warm up: warming, 0/day and 0/run, scoped
+  // to Jole's one campaign. Jole's sender policy (clients/sender-policy.js)
+  // also holds every Jole inbox non-sending until the client itself may send,
+  // so none of these can deliver cold mail even if a row is marked active.
+  // Capacity is raised by hand, within Jole's 20/day per-inbox ceiling, only
+  // after warmup is approved. Jorge's corporate jolebtx.com is never a sender.
+  ...[
+    ['jole_group_jorge', 'jorge@jolebtxgroup.com'],
+    ['jole_group_jguerrero', 'j.guerrero@jolebtxgroup.com'],
+    ['jole_team_jorge', 'jorge@jolebtxteam.com'],
+    ['jole_team_jguerrero', 'j.guerrero@jolebtxteam.com'],
+    ['jole_industrial_jorge', 'jorge@joleindustrial.com'],
+    ['jole_industrial_jguerrero', 'j.guerrero@joleindustrial.com'],
+  ].map(([id, email]) => Object.freeze({
+    id, email, clientId: 'jole', status: 'warming',
+    tokenEnv: `GMAIL_${id.toUpperCase()}_TOKEN_JSON`,
+    dailyLimit: 0, perRunLimit: 0, observerEnabled: true,
+    allowedCampaignIds: Object.freeze(['jole-btx-employer-acquisition']),
+  })),
 ]);
 
 function parseEntry(entry, index, seenIds, seenEmails, env = process.env) {
@@ -123,7 +143,22 @@ function withDefaultInboxes(entries = [], env = process.env) {
     if (seenIds.has(def.id) || seenEmails.has(def.email)) continue;
     extras.push(parseEntry(def, entries.length + extras.length, seenIds, seenEmails, env));
   }
-  return [...entries, ...extras];
+  return isolateManagedCredentials([...entries, ...extras]);
+}
+
+// One mailbox, one credential. A managed client's inbox whose token variable
+// is shared with any other inbox could send as the wrong account, so it is
+// blocked (not thrown: a bad managed-client row never takes ScaleLab's
+// registry down). ScaleLab's own rows keep exactly their existing rules.
+function isolateManagedCredentials(entries) {
+  const uses = new Map();
+  for (const entry of entries) uses.set(entry.tokenEnv, (uses.get(entry.tokenEnv) || 0) + 1);
+  return entries.map(entry => {
+    const managed = entry.clientId && entry.clientId !== DEFAULT_CLIENT_ID;
+    if (!managed || uses.get(entry.tokenEnv) < 2) return entry;
+    return Object.freeze({ ...entry, policyBlockers: Object.freeze([...(entry.policyBlockers || []),
+      `${entry.tokenEnv} is shared with another inbox; each mailbox needs its own credential`]) });
+  });
 }
 
 function sendEligibleFor(entry, env = process.env) {

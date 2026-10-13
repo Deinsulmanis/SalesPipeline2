@@ -23,7 +23,8 @@ const { DEFAULT_SECONDARY_INBOXES } = require('../integrations/gmail-inbox-regis
 const CAMPAIGN = 'jole-btx-employer-acquisition';
 const VERSION = 'jole_industrial_employer_acquisition_v1';
 
-// Production's registry as configured today: five ScaleLab inboxes, no Jole row.
+// Production's registry override as configured: ScaleLab rows only. Jole's six
+// inboxes come from the source-controlled defaults (gmail-inbox-registry.js).
 const PROD_ENV = {
   FROM_EMAIL: 'deins@scalelabai.ca', GMAIL_TOKEN_JSON: '{}', GMAIL_PRIMARY_DAILY_LIMIT: '60', GMAIL_PRIMARY_PER_RUN_LIMIT: '6',
   GMAIL_INBOX_REGISTRY_JSON: JSON.stringify([
@@ -78,11 +79,17 @@ test('3. the Jole campaign exists with its exact identifiers: copy approved, nev
   assert.deepEqual([...getClient('jole').senderPolicy.allowedCampaignIds], [CAMPAIGN]);
 });
 
-test('4. production today has no Jole sender; any registered Jole sender belongs to Jole and only its campaign', () => {
-  assert.equal(configuredSenders(PROD_ENV).filter(sender => sender.clientId === 'jole').length, 0);
+test('4. production registers six dormant Jole senders; every Jole sender belongs to Jole and only its campaign', () => {
+  const registered = configuredSenders(PROD_ENV).filter(sender => sender.clientId === 'jole');
+  assert.equal(registered.length, 6);
+  for (const sender of registered) {
+    assert.equal(sender.status, 'warming');
+    assert.equal(sender.dailyLimit, 0);
+    assert.equal(sender.sendEligible, false);
+  }
   const senders = configuredSenders(withJole([joleRow('jole_team1', 'a@jolebtxteam.com'), joleRow('jole_group1', 'b@jolebtxgroup.com')]));
   const jole = senders.filter(sender => sender.clientId === 'jole');
-  assert.deepEqual(jole.map(sender => sender.id), ['jole_team1', 'jole_group1']);
+  assert.deepEqual(jole.map(sender => sender.id).slice(0, 2), ['jole_team1', 'jole_group1']);
   for (const sender of jole) {
     assert.equal(senderServesCampaign(sender, CAMPAIGN), true);
     assert.equal(senderServesCampaign(sender, VERSION), true);
@@ -100,7 +107,7 @@ test('5. a Jole sender can never serve ScaleLab', () => {
 });
 
 test('6. a ScaleLab sender can never serve Jole', () => {
-  for (const sender of configuredSenders(PROD_ENV)) {
+  for (const sender of configuredSenders(PROD_ENV).filter(item => (item.clientId || 'scalelab') === 'scalelab')) {
     assert.equal(allowedForLead(sender, joleLead()), false, sender.id);
     assert.equal(checkClientConsistency({ lead: joleLead(), sender }).ok, false, sender.id);
   }
@@ -183,7 +190,7 @@ test('a Jole sender on another Jole campaign is refused at the shared consistenc
 });
 
 test('15. ScaleLab senders are byte-for-byte unchanged: same caps, statuses, eligibility, no new fields', () => {
-  const senders = configuredSenders(PROD_ENV);
+  const senders = configuredSenders(PROD_ENV).filter(sender => (sender.clientId || 'scalelab') === 'scalelab');
   assert.deepEqual(senders.map(sender => [sender.id, sender.email, sender.status, sender.dailyLimit, sender.perRunLimit, sender.sendEligible, sender.clientId || 'scalelab']), [
     ['primary', 'deins@scalelabai.ca', 'active', 60, 6, true, 'scalelab'],
     ['tryscalelabai', 'deins@tryscalelabai.ca', 'active', 60, 6, true, 'scalelab'],
@@ -195,9 +202,11 @@ test('15. ScaleLab senders are byte-for-byte unchanged: same caps, statuses, eli
     for (const key of ['policyBlockers', 'allowedCampaignIds', 'configuredDailyLimit']) assert.equal(sender[key], undefined, `${sender.id}.${key}`);
     assert.equal(senderServesCampaign(sender, 'industrial_staffing_employer_acquisition_v1'), true);
   }
-  assert.deepEqual(DEFAULT_SECONDARY_INBOXES.map(row => [row.id, row.status, row.dailyLimit, row.perRunLimit]), [
+  assert.deepEqual(DEFAULT_SECONDARY_INBOXES.filter(row => !row.clientId).map(row => [row.id, row.status, row.dailyLimit, row.perRunLimit]), [
     ['scalelabaiteam', 'warming', 40, 5], ['deniels', 'warming', 20, 2], ['deniels_tryscalelabai', 'warming', 20, 2],
   ]);
+  assert.deepEqual(DEFAULT_SECONDARY_INBOXES.filter(row => row.clientId).map(row => [row.clientId, row.status, row.dailyLimit, row.perRunLimit]),
+    Array(6).fill(['jole', 'warming', 0, 0]));
   // A malformed Jole row never takes the ScaleLab registry down with it.
   const mixed = configuredSenders(withJole([joleRow('jole_bad', 'x@jolebtx.com', { status: 'active', dailyLimit: 999 })]));
   assert.equal(mixed.find(item => item.id === 'tryscalelabai').sendEligible, true);

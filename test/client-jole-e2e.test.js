@@ -169,7 +169,9 @@ test('SAFE E2E: Jole lead → routing → queue dry run → gate → reply → c
   assert.equal(overview.billing.billableMeetings, 1);
   assert.equal(overview.billing.accruedCents, 35000);
   assert.equal(overview.sending.sendingEnabled, false);
-  assert.deepEqual(overview.deliverability.senders.map(s => s.id), ['jole_test']);
+  // Jole's own inboxes only: the fixture sender plus the six registered (dormant) Jole inboxes.
+  assert.deepEqual(overview.deliverability.senders.map(s => s.id), ['jole_test', 'jole_group_jorge', 'jole_group_jguerrero',
+    'jole_team_jorge', 'jole_team_jguerrero', 'jole_industrial_jorge', 'jole_industrial_jguerrero']);
 
   const scalelabOverview = buildClientOverview({ clientId: 'scalelab', leads: [...corpus, lead], activities, senders, routedLeadReady, env: {} });
   assert.equal(scalelabOverview.leads.imported, 2);

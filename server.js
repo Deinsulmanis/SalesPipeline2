@@ -6702,11 +6702,15 @@ app.get('/api/ops/mailbox-diagnostic', requireAuth, async (req, res) => {
       const row = (dataset.mailboxObservationState || []).find(row => row[0] === sender.id) || [];
       const trace = [];
       try {
+        // Same client scope as the agent's observer: an inbox never matches
+        // another client's leads.
+        const owner = require('./integrations/clients/ownership').resolveSenderClient(sender);
+        const scopedLeads = owner.ok ? leadsInEmailScope(dataset.leads, owner.clientId) : dataset.leads;
         const observation = await observeMailbox({ ...mailbox, senderInboxId: sender.id, senderEmail: mailbox.email,
-          leads: dataset.leads, activities: dataset.activities, historyId: row[1] || null,
+          leads: scopedLeads, activities: dataset.activities, historyId: row[1] || null,
           lastSuccessfulObservationAt: row[2] || null, previousHealth: row[5] || null,
           log: (state, details) => trace.push({ state, ...details }) });
-        const plan = await planMailboxEvents({ observation, gmail: mailbox.gmail, leads: dataset.leads,
+        const plan = await planMailboxEvents({ observation, gmail: mailbox.gmail, leads: scopedLeads,
           activities: dataset.activities, senderInboxId: sender.id, senderEmail: mailbox.email });
         results.push({ senderInboxId: sender.id, before: row, mode: observation.mode, trace,
           from: observation.from, nextHistoryId: observation.nextHistoryId,

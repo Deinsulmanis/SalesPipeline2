@@ -106,7 +106,7 @@ test('after activation: 120/day and 14/run with the ceiling at 120; the 110 ceil
 });
 
 test('existing sender caps are unchanged by the new registration', () => {
-  const shape = env => configuredSenders(env).filter(item => item.id !== ID)
+  const shape = env => configuredSenders(env).filter(item => item.id !== ID && (item.clientId || 'scalelab') === 'scalelab')
     .map(({ id, status, dailyLimit, perRunLimit, sendEligible }) => ({ id, status, dailyLimit, perRunLimit, sendEligible }));
   assert.deepEqual(shape(activated(120)), shape(PRODUCTION));
   assert.deepEqual(shape(PRODUCTION).map(({ id, dailyLimit, perRunLimit }) => [id, dailyLimit, perRunLimit]), [

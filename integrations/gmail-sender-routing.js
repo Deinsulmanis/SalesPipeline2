@@ -28,7 +28,11 @@ function configuredSenders(env = process.env) {
   };
   const secondary = withDefaultInboxes(parseRegistry(env.GMAIL_INBOX_REGISTRY_JSON || '[]', env), env).map(entry => ({
     ...entry, oauthClient: 'secondary', provider: 'gmail',
-    perRunLimit: Number(entry.perRunLimit || DEFAULT_INBOX_PER_RUN_LIMIT),
+    // A managed client's 0/run is a real zero (a dormant inbox); ScaleLab rows
+    // keep the existing "0 or blank means the default" reading.
+    perRunLimit: entry.clientId && !getClient(entry.clientId).isDefault
+      ? Number(entry.perRunLimit ?? DEFAULT_INBOX_PER_RUN_LIMIT)
+      : Number(entry.perRunLimit || DEFAULT_INBOX_PER_RUN_LIMIT),
     observerEnabled: entry.observerEnabled !== false,
     credentialConfigured: Boolean(env[entry.tokenEnv]),
   }));

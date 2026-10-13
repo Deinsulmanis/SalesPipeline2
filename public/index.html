@@ -6455,6 +6455,7 @@ function renderOpensPanel() {
 let smartleadIntegration = null;
 let smartleadIntegrationLoading = false;
 let gmailInboxIntegration = null;
+let gmailInboxIntegrationClient = '';
 let gmailInboxIntegrationLoading = false;
 
 async function loadSmartleadIntegration() {
@@ -6473,8 +6474,11 @@ async function loadGmailInboxIntegration() {
   if (gmailInboxIntegrationLoading) return;
   gmailInboxIntegrationLoading = true;
   try {
-    const response = await fetch('/api/integrations/gmail-inboxes');
+    // Scoped to the client in view: a client's sending rail lists its own inboxes only.
+    const clientId = activeClientId;
+    const response = await fetch(`/api/integrations/gmail-inboxes?client=${encodeURIComponent(clientId)}`);
     gmailInboxIntegration = response.ok ? await response.json() : { inboxes: [] };
+    gmailInboxIntegrationClient = clientId;
   } finally {
     gmailInboxIntegrationLoading = false;
     renderGmailInboxSelector();
@@ -6693,7 +6697,7 @@ function openProviderModal(campaignName) {
   document.getElementById('smartlead-sending-pool').value = mapping.sendingPool || '';
   document.getElementById('provider-test-result').textContent = mapping.syncStatus ? `Status: ${mapping.syncStatus}${mapping.lastSynchronizedAt ? ' · ' + new Date(mapping.lastSynchronizedAt).toLocaleString() : ''}` : '';
   toggleSmartleadFields();
-  if (!gmailInboxIntegration && !gmailInboxIntegrationLoading) loadGmailInboxIntegration();
+  if ((!gmailInboxIntegration || gmailInboxIntegrationClient !== activeClientId) && !gmailInboxIntegrationLoading) loadGmailInboxIntegration();
   else renderGmailInboxSelector();
   document.getElementById('provider-modal-overlay').classList.add('open');
 }

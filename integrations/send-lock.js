@@ -204,9 +204,39 @@ function assertLeadClientMaySend(lead, sendAction, env) {
   throw error;
 }
 
-async function withGmailProviderSend({ lead, sendAction, run, env = process.env }) {
+// The last tenant check before Gmail, whatever routing, queue row or runtime
+// overlay produced this pairing: the sending inbox must belong to the lead's
+// client, a managed client's inbox must serve the lead's campaign, and the
+// inbox must be delivery eligible with no policy blocker. Only the client of
+// each side is compared, so ScaleLab's own sends are judged exactly as before.
+function assertSenderServesLead(lead, sender, sendAction) {
+  if (!lead || !sender) return;
+  const refuse = (code, reason) => {
+    logSendLock('reservation_denied', { actionId: sendAction?.actionId, leadId: lead.id, provider: 'gmail', code, senderInboxId: sender.id });
+    const error = new Error(reason);
+    error.code = code;
+    throw error;
+  };
+  const { resolveSenderClient } = require('./clients/ownership');
+  const { getClient } = require('./clients/registry');
+  const { senderServesCampaign } = require('./clients/sender-policy');
+  const leadOwner = resolveLeadClient(lead);
+  const senderOwner = resolveSenderClient(sender);
+  if (!leadOwner.ok || !senderOwner.ok) refuse('client_unresolved', (leadOwner.ok ? senderOwner : leadOwner).reason);
+  if (leadOwner.clientId !== senderOwner.clientId) {
+    refuse('client_ownership_conflict', `sender ${sender.id} belongs to ${senderOwner.clientId}, lead ${lead.id} to ${leadOwner.clientId}`);
+  }
+  if (sender.policyBlockers?.length) refuse('sender_policy_blocked', `sender ${sender.id}: ${sender.policyBlockers[0]}`);
+  if (sender.sendEligible !== true) refuse('sender_not_eligible', `sender ${sender.id} is not delivery eligible`);
+  if (!getClient(senderOwner.clientId).isDefault && !senderServesCampaign(sender, lead.intendedCampaignVersion || lead.campaign)) {
+    refuse('sender_campaign_not_allowed', `sender ${sender.id} does not serve campaign ${lead.intendedCampaignVersion || lead.campaign || '(blank)'}`);
+  }
+}
+
+async function withGmailProviderSend({ lead, sendAction, run, sender = null, env = process.env }) {
   assertActionOwnership(sendAction);
   assertLeadClientMaySend(lead, sendAction, env);
+  assertSenderServesLead(lead, sender, sendAction);
   if (!sendLockEnabled(env) && !injectedStore) return run();
   const action = sendAction && sendAction.actionId ? sendAction : null;
   if (!action) {
