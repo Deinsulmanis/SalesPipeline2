@@ -20,9 +20,10 @@ operator approves a dry-run report. Production import/queue stay disabled.
    recruiting / labor-service firms incl. national-brand branches and
    franchises, SpaceX family, Kiewit family / KOS, Karpower, current Jole
    clients — the client list is mandatory) + approved sector and buyer role.
-5. Company / website validation — company site reachable over verified TLS and
-   a public hiring posting for a listed craft role at a named site, posted in
-   the last 30 days (evidence must still be ≤45 days old when sent).
+5. Company / website validation — `sectorScreen` on name, domain and the
+   company site (reachable over verified TLS), then `evaluateHiringEvidence`:
+   a public posting by the same employer for an approved craft role at a US
+   site, with an https URL, posted ≤30 days ago. Otherwise HOLD.
 6. Paid email reveal — `apollo_people_bulk_match` standard match only. No
    waterfall, no phone. One credit per person, operator-approved count first.
 
@@ -53,35 +54,56 @@ refining / chemical 44, power / utilities 29, shipyard / marine 18, pipeline 8,
 oil & gas producers 6. Densest states: TX, WI, OH, LA, MN, IN. Exclude these
 org ids, person ids and domains before any reveal.
 
-## Free search plan (approved ICP only)
+## Free search filters (`integrations/sourcing/jole-search.js`)
 
-Common filters on every query:
+Apollo industry codes only find candidates; they are never proof of ICP fit.
 
-- `person_locations: ["United States"]`, `organization_locations: ["United States"]`
-- `person_titles` (exact, `include_similar_titles: false`) mapped from the
-  approved buyer roles: plant manager, operations manager, production manager,
-  director of operations, general manager, maintenance manager, reliability
-  manager, human resources manager, hr manager, talent acquisition manager,
-  superintendent, site manager, owner, president
-- `q_organization_job_titles` from the approved worker categories: welder,
-  maintenance technician, machinist, cnc machinist, electrician, industrial
-  electrician, maintenance mechanic, diesel mechanic, instrument technician,
-  fabricator, fitter, millwright, pipefitter
-- `organization_job_posted_at_range`: the trailing 30 days
-- `not_organization_sic_codes: ["7361","7363"]`, `not_organization_naics_codes: ["5613"]`
+| Sector (ICP label) | NAICS used for discovery |
+|---|---|
+| Industrial fabrication / machinery | 332, 333 |
+| Metals / mining / paper / heavy industrial | 331, 212, 322, 327 |
+| Refining / petrochemical / LNG / chemical | 324, 3251, 3252, 3253, 3255, 3259 (never 325, 3254 pharma, 3256 consumer care) |
+| Power / utilities | 2211, 2212, 2213 (never the 221 umbrella) |
+| Shipyard / marine | 33661 (4883 port/stevedoring not used) |
+| Pipeline / midstream | 486 |
+| Oil & gas producers / operators | 211 (213 oilfield-service contractors not used) |
 
-Slices (one query each; page with `per_page: 100`, each stays under Apollo's
-50,000-record display limit). Counts are from 2026-10-15:
+- Search-time exclusions are staffing only: SIC 7361/7363, NAICS 5613.
+  Excluding 23, 2131, 3254, 3256 or 92 at search time removed 12 of the 339
+  organizations behind the approved 689, so those are screened after the search.
+- Geography is the hiring site: `organization_job_locations: ["United States"]`
+  and `organization_job_posted_at_range` = trailing 30 days. Headquarters and
+  contact location do not define the ICP; contact location only orders contacts.
+  The earlier under-covered-state slice is removed.
+- Buyer families: five approved roles, exact titles, `include_similar_titles: false`.
 
-| Slice | `organization_naics_codes` (approved sectors) | Buyer contacts |
-|---|---|---:|
-| A | 332, 333 (fabrication / machinery) | 26,311 |
-| B | 331, 212, 322, 327 (metals / mining / paper / heavy industrial) | 17,125 |
-| C | 324, 325, 221, 486, 211, 213, 33661, 4883 (refining / chemical, power / utilities, pipeline, oil & gas, shipyard / marine) | 34,570 |
-| D | all of the above, `person_locations` limited to states absent or thin in Phase 5 (CT, MA, NH, VT, ME, RI, DE, NE, SD, MT, ID, NV, WA, NJ, MD, NM, WV) | 7,067 |
+## Post-search screens
 
-Run D first (least overlap with Phase 5), then C and B, then A from page 1.
-Variants allowed later, still inside the ICP: equivalent title spellings
-(e.g. "plant mgr", "hr business partner", "maintenance supervisor"), single
-craft titles per query to surface different employers, and the employee-range
-filter for owner/executive titles at small and mid companies.
+- `joleExclusionReason`: staffing/national brands, SpaceX, Kiewit/KOS, Karpower,
+  Jorge's named competitors (Brock Group, Austin Industrial/Industries, Zachry,
+  Turner Industries; full names/domains only), and the current-client list
+  (onboarding form 2026-10-01: Karpower, Kiewit Offshore Services, SpaceX —
+  operator must confirm it is current before a paid run).
+- `sectorScreen`: rejects pharma/biotech/consumer care and governments; holds
+  solar, contractor names/sites, unchecked sites and sites without industrial
+  evidence.
+- `evaluateHiringEvidence`: Apollo's "has postings" signal and its paid
+  job-postings endpoint are never used. Search public postings with both
+  `evidenceSearchKeywords` queries (name only, then name + craft words; the
+  name-only query misses craft roles at large employers).
+
+## Open decisions (not changed in production)
+
+- Evidence age: ICP admission is ≤30 days; production `maxEvidenceAgeDays` is 45
+  (age of `verifiedAt` at send). Recommendation: one 30-day rule — posting ≤30
+  days at verification, re-verify once `verifiedAt` is older than 30 days.
+- Buyer priority: no written Tier A/B buyer definition exists (Phase 5 A/B is a
+  hiring-volume grade). Proposed order for approval: plant/operations at the
+  hiring site → HR/talent acquisition → maintenance/reliability →
+  superintendent/site → owner/executive (small/mid only); within a family,
+  exact site → region → state, non-catch-all before catch-all.
+- Delivery: production currently runs with the recipient-provider rule off,
+  all senders pooled and sender holds lifted (set by Railway variables, not
+  recorded). Recommended before Jole sends: placement tests from Jole inboxes
+  to Microsoft/Gmail/gateway seeds, 8–10/inbox/day start, restore holds on
+  SURBL-listed domains, and a per-client provider policy.

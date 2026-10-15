@@ -123,6 +123,33 @@ const JOLE_FAMILIES = Object.freeze([
 
 const withoutLegalSuffix = normalized => normalized.replace(LEGAL_SUFFIX, ' ').replace(/\s+/g, ' ').trim();
 
+// Companies Jorge named on 2026-10-02 (reply to "Jole BTX Employer Target Sample
+// for Approval") as doing what Jole does — "Brock also Austin Zachary turner" —
+// which ScaleLab agreed to exclude as business-model overlaps. Matched by their
+// full names and domains only: "Austin Dynamics" or "Turner Machine" are not them.
+const JOLE_COMPETITORS = Object.freeze([
+  { family: 'Brock Group', phrases: ['brock group', 'brock industrial services', 'brock services'], tokens: [], domains: ['brockgroup.com'] },
+  { family: 'Austin Industrial / Austin Industries', phrases: ['austin industrial', 'austin industries'], tokens: [], domains: ['austinindustrial.com', 'austin-ind.com'] },
+  { family: 'Zachry', phrases: [], tokens: ['zachry'], domains: ['zachrygroup.com', 'zachry.com'] },
+  { family: 'Turner Industries', phrases: ['turner industries'], tokens: [], domains: ['turner-industries.com'] },
+]);
+
+// Jorge's own current-client (do-not-contact) list from the Jole BTX onboarding
+// form submitted 2026-10-01 ("Current clients (do not contact): Karpower;
+// Kiewit Of shore service; Spacex"; former clients and protected relationships
+// left blank). Callers still pass currentClients explicitly so a run states
+// which list it used.
+const JOLE_CURRENT_CLIENTS_ONBOARDING_2026_10_01 = Object.freeze(['Karpower', 'Kiewit Offshore Services', 'SpaceX']);
+
+function competitorMatch(normalized, host) {
+  for (const f of JOLE_COMPETITORS) {
+    if (f.phrases.some(phrase => hasPhrase(normalized, phrase))
+      || f.tokens.some(token => hasToken(normalized, token))
+      || (host && f.domains.some(owned => domainIs(host, owned)))) return f.family;
+  }
+  return null;
+}
+
 function familyMatch(normalized, host) {
   const bare = withoutLegalSuffix(normalized);
   for (const f of JOLE_FAMILIES) {
@@ -152,6 +179,8 @@ function joleExclusionReason({ name = '', domain = '', sicCodes = [], naicsCodes
   if (STAFFING_FIRM_NAME.test(normalized)) return 'staffing_firm_name';
   const family = familyMatch(normalized, host);
   if (family) return `excluded_family:${family}`;
+  const competitor = competitorMatch(normalized, host);
+  if (competitor) return `competitor_overlap:${competitor}`;
   const bare = withoutLegalSuffix(normalized);
   for (const client of currentClients) {
     const isObject = client && typeof client === 'object';
@@ -164,6 +193,6 @@ function joleExclusionReason({ name = '', domain = '', sicCodes = [], naicsCodes
 }
 
 module.exports = {
-  LEGACY_NATIONAL, BRANCH_FORMS, JOLE_FAMILIES,
+  LEGACY_NATIONAL, BRANCH_FORMS, JOLE_FAMILIES, JOLE_COMPETITORS, JOLE_CURRENT_CLIENTS_ONBOARDING_2026_10_01,
   normalizeName, registrableDomain, nationalBrandMatch, joleExclusionReason,
 };
