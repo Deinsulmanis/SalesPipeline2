@@ -25,7 +25,11 @@ const key = value => String(value || '').toLowerCase().replace(/\bsaint\b/g, 'st
 /** The gazetteer place for "City, ST", or null. */
 function findPlace(places, { city, state }) {
   const wanted = key(city);
-  return places.find(place => place.state === state && key(placeName(place.name)) === wanted) || null;
+  const inState = places.filter(place => place.state === state);
+  return inState.find(place => key(placeName(place.name)) === wanted)
+    // Consolidated city-counties: "Macon-Bibb County", "Louisville/Jefferson County metro government".
+    || inState.find(place => /^[^-/]+[-/]/.test(place.name) && key(place.name.split(/[-/]/)[0]) === wanted)
+    || null;
 }
 
 /** Other places within the radius of `site`, nearest first, as { name, state, miles }. */

@@ -252,4 +252,7 @@ test('commuting region: places within 50 miles, nearest first', () => {
   assert.ok(peoria);
   assert.deepEqual(nearbyPlaces(peoria, places).map(p => p.name), ['East Peoria', 'Manito']);
   assert.ok(haversineMiles(peoria, places[3]) > 120);
+  const macon = { state: 'GA', name: 'Macon-Bibb County consolidated government (balance)', lat: 32.8, lon: -83.7 };
+  assert.equal(findPlace([macon], { city: 'Macon', state: 'GA' }), macon);
+  assert.equal(findPlace([macon], { city: 'Bibb', state: 'GA' }), null);
 });
