@@ -115,7 +115,11 @@ const STAFFING_NAICS_PREFIX = '5613';
 // "employment", "personnel" alone are not enough).
 const STAFFING_FIRM_NAME = /\b(staffing|recruiting|recruiters|recruitment|headhunters?|temp agency|temporary (help|staffing|services)|employment (agency|services|solutions)|personnel (services|solutions)|labor (services?|solutions|source|pool|staffing))\b/;
 
-const JOLE_FAMILIES = Object.freeze([
+// Jole CURRENT CLIENTS (do not contact), per Jorge's onboarding form of
+// 2026-10-01 — the authoritative list for this run. Matched as families:
+// Kiewit covers Kiewit Offshore Services / Kiewit Offshore Services Ltd / KOS.
+// Merge any later list from Jorge here before a send campaign launches.
+const JOLE_CURRENT_CLIENT_FAMILIES = Object.freeze([
   { family: 'SpaceX', phrases: ['space exploration technologies'], tokens: ['spacex', 'starlink'], domains: ['spacex.com', 'starlink.com'] },
   { family: 'Kiewit / KOS', phrases: ['kiewit offshore services'], tokens: ['kiewit'], domains: ['kiewit.com'], exactNames: ['kos'] },
   { family: 'Karpower', phrases: [], tokens: ['karpower', 'karpowership'], domains: ['karpowership.com', 'karpower.com'] },
@@ -123,7 +127,7 @@ const JOLE_FAMILIES = Object.freeze([
 
 const withoutLegalSuffix = normalized => normalized.replace(LEGAL_SUFFIX, ' ').replace(/\s+/g, ' ').trim();
 
-// Companies Jorge named on 2026-10-02 (reply to "Jole BTX Employer Target Sample
+// COMPETITORS / SERVICE PROVIDERS (not clients): companies Jorge named on 2026-10-02 (reply to "Jole BTX Employer Target Sample
 // for Approval") as doing what Jole does — "Brock also Austin Zachary turner" —
 // which ScaleLab agreed to exclude as business-model overlaps. Matched by their
 // full names and domains only: "Austin Dynamics" or "Turner Machine" are not them.
@@ -134,11 +138,10 @@ const JOLE_COMPETITORS = Object.freeze([
   { family: 'Turner Industries', phrases: ['turner industries'], tokens: [], domains: ['turner-industries.com'] },
 ]);
 
-// Jorge's own current-client (do-not-contact) list from the Jole BTX onboarding
-// form submitted 2026-10-01 ("Current clients (do not contact): Karpower;
-// Kiewit Of shore service; Spacex"; former clients and protected relationships
-// left blank). Callers still pass currentClients explicitly so a run states
-// which list it used.
+// The onboarding form's current-client list as written ("Current clients (do
+// not contact): Karpower; Kiewit Of shore service; Spacex"; former clients and
+// protected relationships left blank). Callers still pass currentClients
+// explicitly so a run states which list it used; later additions go there too.
 const JOLE_CURRENT_CLIENTS_ONBOARDING_2026_10_01 = Object.freeze(['Karpower', 'Kiewit Offshore Services', 'SpaceX']);
 
 function competitorMatch(normalized, host) {
@@ -152,7 +155,7 @@ function competitorMatch(normalized, host) {
 
 function familyMatch(normalized, host) {
   const bare = withoutLegalSuffix(normalized);
-  for (const f of JOLE_FAMILIES) {
+  for (const f of JOLE_CURRENT_CLIENT_FAMILIES) {
     if (f.phrases.some(phrase => hasPhrase(normalized, phrase))
       || f.tokens.some(token => hasToken(normalized, token))
       || (f.exactNames || []).includes(bare)
@@ -178,21 +181,29 @@ function joleExclusionReason({ name = '', domain = '', sicCodes = [], naicsCodes
   if (brand) return `staffing_firm_national_brand:${brand.brand}`;
   if (STAFFING_FIRM_NAME.test(normalized)) return 'staffing_firm_name';
   const family = familyMatch(normalized, host);
-  if (family) return `excluded_family:${family}`;
+  if (family) return `current_client:${family}`;
   const competitor = competitorMatch(normalized, host);
-  if (competitor) return `competitor_overlap:${competitor}`;
+  if (competitor) return `competitor_service_provider:${competitor}`;
   const bare = withoutLegalSuffix(normalized);
   for (const client of currentClients) {
     const isObject = client && typeof client === 'object';
     const clientName = withoutLegalSuffix(normalizeName(isObject ? client.name : client));
     const clientDomain = registrableDomain(isObject ? client.domain : (String(client).includes('.') ? client : ''));
-    if (clientDomain && host && domainIs(host, clientDomain)) return 'current_jole_client';
-    if (clientName && bare && clientName === bare) return 'current_jole_client';
+    if (clientDomain && host && domainIs(host, clientDomain)) return 'current_client:supplied_list';
+    if (clientName && bare && clientName === bare) return 'current_client:supplied_list';
   }
   return null;
 }
 
+/** Reporting category of a joleExclusionReason: clients and competitors are never merged. */
+function joleExclusionCategory(reason) {
+  if (!reason) return null;
+  if (reason.startsWith('current_client:')) return 'current_client';
+  if (reason.startsWith('competitor_service_provider:')) return 'competitor_service_provider';
+  return 'staffing_firm';
+}
+
 module.exports = {
-  LEGACY_NATIONAL, BRANCH_FORMS, JOLE_FAMILIES, JOLE_COMPETITORS, JOLE_CURRENT_CLIENTS_ONBOARDING_2026_10_01,
-  normalizeName, registrableDomain, nationalBrandMatch, joleExclusionReason,
+  LEGACY_NATIONAL, BRANCH_FORMS, JOLE_CURRENT_CLIENT_FAMILIES, JOLE_COMPETITORS, JOLE_CURRENT_CLIENTS_ONBOARDING_2026_10_01,
+  normalizeName, registrableDomain, nationalBrandMatch, joleExclusionReason, joleExclusionCategory,
 };

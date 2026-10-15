@@ -1,0 +1,38 @@
+diff -ru a/integrations/clients/campaigns.js b/integrations/clients/campaigns.js
+--- a/integrations/clients/campaigns.js	2026-10-15 21:40:27.105949468 +0000
++++ b/integrations/clients/campaigns.js	2026-10-15 21:40:27.134831872 +0000
+@@ -143,8 +143,10 @@
+     subjectStrategy: 'jole_hiring_role_v1',
+     personalizationStrategy: 'jole_verified_hiring_v1',
+     offerVersion: 'jole_skilled_trade_labor_v1',
+-    // "Saw X is hiring Y" must still be true when it is sent.
+-    personalization: Object.freeze({ maxEvidenceAgeDays: 45 }),
++    // "Saw X is hiring Y" must still be true when it is sent. One Jole rule
++    // (approved 2026-10-15): the posting is ≤30 days old when verified, the
++    // verification is valid for 30 days, then it is re-verified before sending.
++    personalization: Object.freeze({ maxEvidenceAgeDays: 30 }),
+     // Jole sells skilled-trade labor TO these employers. Not ScaleLab's
+     // staffing-agency campaign: no shared copy, offer or audience.
+     icp: Object.freeze({
+@@ -168,7 +170,8 @@
+       excluded: Object.freeze([
+         'staffing, recruiting and labor-service firms', 'SpaceX family', 'Kiewit family / KOS', 'Karpower', 'current Jole clients',
+       ]),
+-      sendOrder: 'Tier A before Tier B; within a tier, non-catch-all contacts at the exact hiring site first',
++      // Approved 2026-10-15. Phase 5 "Tier A/B" is a company hiring-volume grade, not a buyer order.
++      sendOrder: 'Buyer family: plant / operations / production leadership at the hiring site, then HR / talent acquisition, then maintenance / reliability, then superintendent / site leadership, then owner / executive (small and mid companies, or site executives only); within a family, exact hiring site, then region, then state, non-catch-all before catch-all',
+     }),
+   }),
+ ]);
+diff -ru a/test/client-workspace-lifecycle.test.js b/test/client-workspace-lifecycle.test.js
+--- a/test/client-workspace-lifecycle.test.js	2026-10-15 21:40:27.105949468 +0000
++++ b/test/client-workspace-lifecycle.test.js	2026-10-15 21:40:27.135102351 +0000
+@@ -117,7 +117,7 @@
+   assert.throws(() => renderClientLeadEmail(joleLead({ campaign_notes: '' }), 1, { env: ENV, now: NOW }), /research profile/);
+   assert.throws(() => renderClientLeadEmail(joleLead({}, { verified_role: 'Shop Helper', secondary_role: '' }), 1, { env: ENV, now: NOW }), /needs review/);
+   const stale = Date.parse('2026-12-01T15:00:00Z');
+-  assert.throws(() => renderClientLeadEmail(joleLead(), 1, { env: ENV, now: stale }), /older than 45 days/);
++  assert.throws(() => renderClientLeadEmail(joleLead(), 1, { env: ENV, now: stale }), /older than 30 days/);
+   assert.equal(clientPersonalizationState(joleLead(), { env: ENV, now: stale }).status, 'stale');
+   // Only Jole's variables: ScaleLab's COMMERCIAL_MAILING_ADDRESS never substitutes.
+   assert.throws(() => renderClientLeadEmail(joleLead(), 1, { env: { COMMERCIAL_MAILING_ADDRESS: ENV.COMMERCIAL_MAILING_ADDRESS }, now: NOW }), /mailing address/);

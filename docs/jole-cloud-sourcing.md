@@ -3,7 +3,9 @@
 Client: Jole BTX LLC (`clientId: jole`, representative Jorge Guerrero).
 Campaign: `jole-btx-employer-acquisition` — approved ICP on the production
 branch (`integrations/clients/campaigns.js`). This document does not change
-that ICP; it only says how to source against it from a cloud session.
+that ICP; it says how to source against it from a cloud session, and records
+the rules the operator approved on 2026-10-15 (current clients, competitors,
+evidence age, buyer order, geography).
 
 Paid email reveal, import and queue are **not** part of this workflow until the
 operator approves a dry-run report. Production import/queue stay disabled.
@@ -16,16 +18,20 @@ operator approves a dry-run report. Production import/queue stay disabled.
    `jole-phase5-689-20261008`).
 3. Global suppression — Sheets `Suppression` tab (read-only export) merged with
    Supabase sticky tags; snapshot kept outside git.
-4. ICP — `integrations/sourcing/exclusions.js` `joleExclusionReason` (staffing /
-   recruiting / labor-service firms incl. national-brand branches and
-   franchises, SpaceX family, Kiewit family / KOS, Karpower, current Jole
-   clients — the client list is mandatory) + approved sector and buyer role.
+4. ICP — `integrations/sourcing/exclusions.js` `joleExclusionReason`, reported
+   by `joleExclusionCategory` in three separate categories:
+   - `staffing_firm` — staffing / recruiting / labor-service firms, incl.
+     national-brand branches and franchises;
+   - `current_client` — Jole's current clients (below);
+   - `competitor_service_provider` — companies that do what Jole does (below).
+   Then the approved sector (`sectorScreen`) and buyer role.
 5. Company / website validation — `sectorScreen` on name, domain and the
    company site (reachable over verified TLS), then `evaluateHiringEvidence`:
    a public posting by the same employer for an approved craft role at a US
    site, with an https URL, posted ≤30 days ago. Otherwise HOLD.
 6. Paid email reveal — `apollo_people_bulk_match` standard match only. No
-   waterfall, no phone. One credit per person, operator-approved count first.
+   waterfall, no phone. One credit per person, operator-approved count first,
+   contacts chosen in the approved buyer order (`rankJoleContacts`).
 
 Any read failure in steps 2–3 stops the run before step 6.
 
@@ -77,33 +83,72 @@ Apollo industry codes only find candidates; they are never proof of ICP fit.
   The earlier under-covered-state slice is removed.
 - Buyer families: five approved roles, exact titles, `include_similar_titles: false`.
 
-## Post-search screens
+## Current clients and competitors (separate lists)
 
-- `joleExclusionReason`: staffing/national brands, SpaceX, Kiewit/KOS, Karpower,
-  Jorge's named competitors (Brock Group, Austin Industrial/Industries, Zachry,
-  Turner Industries; full names/domains only), and the current-client list
-  (onboarding form 2026-10-01: Karpower, Kiewit Offshore Services, SpaceX —
-  operator must confirm it is current before a paid run).
-- `sectorScreen`: rejects pharma/biotech/consumer care and governments; holds
-  solar, contractor names/sites, unchecked sites and sites without industrial
-  evidence.
-- `evaluateHiringEvidence`: Apollo's "has postings" signal and its paid
-  job-postings endpoint are never used. Search public postings with both
-  `evidenceSearchKeywords` queries (name only, then name + craft words; the
-  name-only query misses craft roles at large employers).
+- **Current clients** (`JOLE_CURRENT_CLIENT_FAMILIES`, reason
+  `current_client:<family>`): the 2026-10-01 onboarding form is authoritative
+  for this run — Karpower; Kiewit Offshore Services / Kiewit Offshore Services
+  Ltd / KOS (the Kiewit family); SpaceX family. Callers also pass a
+  `currentClients` list (required; reason `current_client:supplied_list`). Merge
+  any later list from Jorge before a send campaign launches.
+- **Competitors / service providers** (`JOLE_COMPETITORS`, reason
+  `competitor_service_provider:<name>`): companies Jorge said do what Jole does
+  (2026-10-02) — Brock Group, Austin Industrial / Austin Industries, Zachry,
+  Turner Industries. Full names and domains only (not Austin Dynamics, Turner
+  Machine, Brockway Mould).
 
-## Open decisions (not changed in production)
+## Hiring evidence (approved 2026-10-15)
 
-- Evidence age: ICP admission is ≤30 days; production `maxEvidenceAgeDays` is 45
-  (age of `verifiedAt` at send). Recommendation: one 30-day rule — posting ≤30
-  days at verification, re-verify once `verifiedAt` is older than 30 days.
-- Buyer priority: no written Tier A/B buyer definition exists (Phase 5 A/B is a
-  hiring-volume grade). Proposed order for approval: plant/operations at the
-  hiring site → HR/talent acquisition → maintenance/reliability →
-  superintendent/site → owner/executive (small/mid only); within a family,
-  exact site → region → state, non-catch-all before catch-all.
-- Delivery: production currently runs with the recipient-provider rule off,
-  all senders pooled and sender holds lifted (set by Railway variables, not
-  recorded). Recommended before Jole sends: placement tests from Jole inboxes
-  to Microsoft/Gmail/gateway seeds, 8–10/inbox/day start, restore holds on
-  SURBL-listed domains, and a per-client provider policy.
+`integrations/sourcing/hiring-evidence.js` `evaluateHiringEvidence`. A company
+passes only with a public posting that has all of: the same employer (name, or
+the employer's own domain hosts it); an approved craft role (not helper,
+apprentice, supervisor, engineer, inspector or office roles); a US site; an
+https URL; a posting date ≤30 days before verification and not in the future.
+Otherwise HOLD before any reveal. Apollo's "has job postings" filter is only a
+discovery signal; Apollo's paid job-postings endpoint is never used.
+
+Search public postings (LinkedIn's public job search, location "United States",
+past 30 days) with both `evidenceSearchKeywords` queries: the employer name with
+the approved craft words, then the name alone. The name-only query returns
+mostly office roles at large employers.
+
+**Evidence age — one Jole rule:** the posting is ≤30 days old when verified;
+the verification is valid for 30 days; after that the posting is re-verified
+before sending. In production this is `maxEvidenceAgeDays: 30` on
+`jole-btx-employer-acquisition` (currently 45). That change is prepared, not
+applied: `docs/patches/production-jole-evidence-age-and-send-order.patch`
+(production branch only; Jole campaign only; no other campaign changes). With
+it, Phase 5 leads verified 2026-10-07 need re-verification after 2026-11-06.
+
+## Buyer order (approved 2026-10-15)
+
+`integrations/sourcing/jole-search.js` `rankJoleContacts`:
+
+1. Plant / operations / production leadership at the hiring site
+2. HR / talent acquisition
+3. Maintenance / reliability
+4. Superintendent / site leadership
+5. Owner / executive — only at employers of ≤1,000 employees (small and mid),
+   or a true site executive (title names the plant, site, mill, refinery, …)
+
+Within a family: EXACT hiring site → REGION → STATE → no tie, then
+non-catch-all before catch-all. EXACT/STATE are computed from city and state;
+REGION (commuting area, may cross a state line) has no recorded rule and is
+only used when supplied. No other buyer family exists. Phase 5's "Tier A/B" is
+a company hiring-volume grade (A = 3+ relevant roles in 30 days), not a buyer
+order; the production `sendOrder` text is updated by the same patch.
+
+## Sender / delivery
+
+Not part of sourcing. Jole's inboxes are blocked from sending, so sourcing
+cannot cause a send. Sourcing is never restricted to Google-hosted recipients.
+Jole deliverability is audited separately before launch.
+
+## Sector screen
+
+`sectorScreen` (after the search, never replaced by industry codes): rejects
+pharma / biotech / consumer care and governments by name or domain; holds
+solar (rejects residential installers), contractor names or contractor
+websites (contractors-for-hire are outside the ICP), unchecked sites and sites
+with no industrial evidence. Only a reachable site that shows industrial
+operations passes.

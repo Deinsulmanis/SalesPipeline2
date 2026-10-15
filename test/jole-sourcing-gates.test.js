@@ -3,10 +3,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   JOLE_SECTORS, SEARCH_EXCLUDED_NAICS, SEARCH_EXCLUDED_SIC, BUYER_FAMILIES,
-  joleCompanyDiscoveryParams, joleBuyerSearchParams, sectorScreen,
+  joleCompanyDiscoveryParams, joleBuyerSearchParams, sectorScreen, buyerFamilyOf, rankJoleContacts,
 } = require('../integrations/sourcing/jole-search');
 const { approvedCraftRole, usState, evaluateHiringEvidence, evidenceSearchKeywords } = require('../integrations/sourcing/hiring-evidence');
-const { joleExclusionReason, JOLE_CURRENT_CLIENTS_ONBOARDING_2026_10_01 } = require('../integrations/sourcing/exclusions');
+const { joleExclusionReason, joleExclusionCategory, JOLE_CURRENT_CLIENTS_ONBOARDING_2026_10_01 } = require('../integrations/sourcing/exclusions');
 
 const NOW = Date.parse('2026-10-15T20:00:00Z');
 const days = n => new Date(NOW - n * 86400000).toISOString();
@@ -39,8 +39,8 @@ test('discovery parameters: hiring-site geography, trailing 30 days, staffing ex
   assert.throws(() => joleCompanyDiscoveryParams({ sectorId: 'pharma' }), /unknown Jole sector/);
 });
 
-test('buyer families are the five approved roles, exact titles only', () => {
-  assert.equal(BUYER_FAMILIES.length, 5);
+test('buyer families are the five approved roles, exact titles only, in the approved order', () => {
+  assert.deepEqual(BUYER_FAMILIES.map(f => f.id), ['plant_operations', 'hr_talent', 'maintenance_reliability', 'superintendent_site', 'owner_executive']);
   const p = joleBuyerSearchParams({ organizationIds: ['a'], familyId: 'hr_talent' });
   assert.equal(p.include_similar_titles, false);
   assert.ok(p.person_titles.includes('human resources manager'));
@@ -129,13 +129,23 @@ test('identity: the employer’s own careers domain counts; a name collision doe
 
 test('Jole competitors named by Jorge are excluded by full name or domain only', () => {
   const r = company => joleExclusionReason(company, { currentClients: JOLE_CURRENT_CLIENTS_ONBOARDING_2026_10_01 });
-  assert.equal(r({ name: 'Brock Group' }), 'competitor_overlap:Brock Group');
-  assert.equal(r({ name: 'Austin Industrial, Inc.' }), 'competitor_overlap:Austin Industrial / Austin Industries');
-  assert.equal(r({ name: 'Zachry Group' }), 'competitor_overlap:Zachry');
-  assert.equal(r({ name: 'Turner Industries Group' }), 'competitor_overlap:Turner Industries');
-  assert.equal(r({ name: 'Plant Services', domain: 'turner-industries.com' }), 'competitor_overlap:Turner Industries');
+  assert.equal(r({ name: 'Brock Group' }), 'competitor_service_provider:Brock Group');
+  assert.equal(r({ name: 'Austin Industrial, Inc.' }), 'competitor_service_provider:Austin Industrial / Austin Industries');
+  assert.equal(r({ name: 'Zachry Group' }), 'competitor_service_provider:Zachry');
+  assert.equal(r({ name: 'Turner Industries Group' }), 'competitor_service_provider:Turner Industries');
+  assert.equal(r({ name: 'Plant Services', domain: 'turner-industries.com' }), 'competitor_service_provider:Turner Industries');
   for (const name of ['Austin Dynamics Inc.', 'Turner Machine Co', 'Brockway Mould', 'Zachary Steel Works'])
     assert.equal(r({ name }), null, name);
+});
+
+test('current clients and competitors are separate categories', () => {
+  const r = name => joleExclusionReason({ name }, { currentClients: JOLE_CURRENT_CLIENTS_ONBOARDING_2026_10_01 });
+  for (const name of ['Kiewit Offshore Services', 'Kiewit Offshore Services Ltd', 'KOS', 'SpaceX', 'Space Exploration Technologies Corp', 'Karpower'])
+    assert.equal(joleExclusionCategory(r(name)), 'current_client', name);
+  for (const name of ['Brock Group', 'Austin Industrial', 'Zachry Group', 'Turner Industries'])
+    assert.equal(joleExclusionCategory(r(name)), 'competitor_service_provider', name);
+  assert.equal(joleExclusionCategory(r('Acme Staffing Services')), 'staffing_firm');
+  assert.equal(joleExclusionCategory(null), null);
 });
 
 test('the onboarding current-client list is exactly Karpower, Kiewit Offshore Services and SpaceX, and each is excluded', () => {
@@ -149,4 +159,41 @@ test('evidence search: name-only query, then the same name with the approved cra
     '"Lennox International"',
     '"Lennox International" welder OR millwright OR machinist OR electrician OR mechanic OR technician OR pipefitter OR fabricator OR fitter',
   ]);
+});
+
+test('buyer family of a title: approved families only', () => {
+  for (const [title, family] of [
+    ['Plant Manager', 'plant_operations'], ['Vice President of Operations', 'plant_operations'], ['General Manager', 'plant_operations'],
+    ['Senior Human Resources Manager', 'hr_talent'], ['HR Operations Manager', 'hr_talent'], ['Talent Acquisition Manager', 'hr_talent'],
+    ['Maintenance Superintendent', 'maintenance_reliability'], ['Reliability Manager', 'maintenance_reliability'],
+    ['Site Manager', 'superintendent_site'], ['Superintendent', 'superintendent_site'], ['President', 'owner_executive'], ['Owner', 'owner_executive'],
+  ]) assert.equal(buyerFamilyOf(title), family, title);
+  for (const title of ['HR Coordinator', 'Maintenance Technician', 'Recruiter', 'Sales Manager', 'Process Engineer', 'Executive Assistant to the President'])
+    assert.equal(buyerFamilyOf(title), null, title);
+});
+
+test('contact order: family, then exact site, region, state, then non-catch-all', () => {
+  const site = { city: 'Tulsa', state: 'OK' };
+  const c = (id, title, city, state, catchAll, extra = {}) => ({ id, title, city, state, catchAll, ...extra });
+  const { ranked, ineligible } = rankJoleContacts([
+    c('hr-exact', 'HR Manager', 'Tulsa', 'OK', false),
+    c('plant-state-catchall', 'Plant Manager', 'Okmulgee', 'OK', true),
+    c('plant-exact-catchall', 'Operations Manager', 'Tulsa', 'OK', true),
+    c('plant-exact', 'Plant Manager', 'Tulsa', 'OK', false),
+    c('plant-region', 'Production Manager', 'Broken Arrow', 'OK', false, { siteTie: 'REGION' }),
+    c('maint-exact', 'Maintenance Manager', 'Tulsa', 'OK', false),
+    c('super-exact', 'Superintendent', 'Tulsa', 'OK', false),
+    c('owner', 'President', 'Tulsa', 'OK', false),
+    c('analyst', 'HR Analyst', 'Tulsa', 'OK', false),
+  ], { site, employeeCount: 450 });
+  assert.deepEqual(ranked.map(r => r.contact.id), ['plant-exact', 'plant-exact-catchall', 'plant-region', 'plant-state-catchall', 'hr-exact', 'maint-exact', 'super-exact', 'owner']);
+  assert.deepEqual(ineligible.map(i => i.reason), ['not_an_approved_buyer']);
+});
+
+test('owner / executive only at small and mid companies, or as a true site executive', () => {
+  const owner = { id: 'o', title: 'President', city: 'Tulsa', state: 'OK' };
+  assert.equal(rankJoleContacts([owner], { employeeCount: 5000 }).ineligible[0].reason, 'owner_executive_large_company');
+  assert.equal(rankJoleContacts([owner], {}).ineligible[0].reason, 'owner_executive_size_unknown');
+  assert.equal(rankJoleContacts([owner], { employeeCount: 1000 }).ranked.length, 1);
+  assert.equal(rankJoleContacts([{ id: 's', title: 'President, Port Arthur Refinery' }], { employeeCount: 20000 }).ranked.length, 1);
 });

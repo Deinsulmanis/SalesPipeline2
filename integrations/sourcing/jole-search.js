@@ -50,7 +50,8 @@ const CRAFT_JOB_TITLES = Object.freeze([
   'millwright', 'pipefitter',
 ]);
 
-// Approved buyer roles (campaign ICP buyerRoles), as exact Apollo titles.
+// Approved buyer roles (campaign ICP buyerRoles), as exact Apollo titles, in
+// the APPROVED PRIORITY ORDER (operator decision 2026-10-15). No other family.
 const BUYER_FAMILIES = Object.freeze([
   { id: 'plant_operations', label: 'Plant / operations / production leadership',
     titles: ['plant manager', 'operations manager', 'production manager', 'director of operations', 'general manager', 'manufacturing manager', 'vice president of operations'] },
@@ -58,11 +59,81 @@ const BUYER_FAMILIES = Object.freeze([
     titles: ['human resources manager', 'hr manager', 'talent acquisition manager', 'human resources business partner', 'hr business partner', 'human resources director'] },
   { id: 'maintenance_reliability', label: 'Maintenance / reliability',
     titles: ['maintenance manager', 'reliability manager', 'maintenance superintendent'] },
-  { id: 'owner_executive', label: 'Owner / executive (small and mid companies, or site executives)',
-    titles: ['owner', 'president', 'ceo', 'founder'] },
   { id: 'superintendent_site', label: 'Superintendent / site leadership',
     titles: ['superintendent', 'site manager', 'site director', 'plant superintendent'] },
+  { id: 'owner_executive', label: 'Owner / executive (small and mid companies, or site executives)',
+    titles: ['owner', 'president', 'ceo', 'founder'] },
 ]);
+
+// Title → approved family. Checked in this order so "Maintenance
+// Superintendent" is maintenance, "HR Operations Manager" is HR and "Vice
+// President of Operations" is operations, not owner/executive.
+const FAMILY_PATTERNS = Object.freeze([
+  ['maintenance_reliability', /\b(maintenance|reliability)\b/],
+  ['hr_talent', /\b(human resources?|hr|talent acquisition|people operations)\b/],
+  ['plant_operations', /\b(plant manager|operations|production|manufacturing|general manager)\b/],
+  ['superintendent_site', /\b(superintendent|site (manager|director|leader|lead))\b/],
+  ['owner_executive', /\b(owner|president|ceo|chief executive|founder)\b/],
+]);
+const NOT_A_BUYER = /\b(assistant|intern|coordinator|specialist|generalist|recruiter|analyst|clerk|technician|engineer)\b/;
+// Small and mid-sized employers: up to 1,000 employees (the Phase 5 size bands
+// 1-200 and 201-1000).
+const SMALL_MID_MAX_EMPLOYEES = 1000;
+const SITE_EXECUTIVE = /\b(plant|site|mill|facility|refinery|shipyard|terminal|works)\b/;
+const SITE_TIE_ORDER = Object.freeze(['EXACT', 'REGION', 'STATE']);
+
+/** The approved buyer family of a title, or null (never a new family). */
+function buyerFamilyOf(title) {
+  const t = String(title || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').trim();
+  if (!t || NOT_A_BUYER.test(t)) return null;
+  const hit = FAMILY_PATTERNS.find(([, pattern]) => pattern.test(t));
+  return hit ? hit[0] : null;
+}
+
+/**
+ * EXACT (same city and state as the hiring site) or STATE (same state). REGION
+ * — a nearby town in the site's commuting area, possibly across a state line —
+ * has no recorded rule, so it is only used when the caller supplies it.
+ */
+function siteTieOf(contact = {}, site = {}) {
+  if (contact.siteTie && SITE_TIE_ORDER.includes(contact.siteTie)) return contact.siteTie;
+  const city = value => String(value || '').toLowerCase().replace(/[^a-z]+/g, ' ').replace(/\bsaint\b/g, 'st').trim();
+  if (contact.state && site.state && contact.state === site.state) {
+    return city(contact.city) && city(contact.city) === city(site.city) ? 'EXACT' : 'STATE';
+  }
+  return null;
+}
+
+/**
+ * Approved deterministic contact order for one company (operator decision
+ * 2026-10-15): family order above; within a family EXACT → REGION → STATE →
+ * no tie, then non-catch-all before catch-all (unknown last), then a stable
+ * key. Owner / executive is eligible only at companies of ≤1,000 employees or
+ * for a true site executive; otherwise the contact is returned as ineligible.
+ * Returns { ranked, ineligible }.
+ */
+function rankJoleContacts(contacts = [], { site = {}, employeeCount = null } = {}) {
+  const smallMid = Number.isFinite(employeeCount) && employeeCount <= SMALL_MID_MAX_EMPLOYEES;
+  const ranked = [];
+  const ineligible = [];
+  for (const contact of contacts) {
+    const family = buyerFamilyOf(contact.title);
+    if (!family) { ineligible.push({ contact, reason: 'not_an_approved_buyer' }); continue; }
+    if (family === 'owner_executive' && !smallMid && !SITE_EXECUTIVE.test(String(contact.title || '').toLowerCase())) {
+      ineligible.push({ contact, reason: Number.isFinite(employeeCount) ? 'owner_executive_large_company' : 'owner_executive_size_unknown' });
+      continue;
+    }
+    const tie = siteTieOf(contact, site);
+    ranked.push({ contact, family, siteTie: tie,
+      key: [BUYER_FAMILIES.findIndex(f => f.id === family), tie ? SITE_TIE_ORDER.indexOf(tie) : 3,
+        contact.catchAll === false ? 0 : contact.catchAll === true ? 1 : 2, String(contact.id || contact.title || '')] });
+  }
+  ranked.sort((a, b) => {
+    for (let i = 0; i < 3; i++) if (a.key[i] !== b.key[i]) return a.key[i] - b.key[i];
+    return a.key[3] < b.key[3] ? -1 : a.key[3] > b.key[3] ? 1 : 0;
+  });
+  return { ranked: ranked.map(({ key, ...item }) => item), ineligible };
+}
 
 const ymd = date => new Date(date).toISOString().slice(0, 10);
 
@@ -128,6 +199,6 @@ function sectorScreen({ name = '', domain = '', siteText = null } = {}) {
 }
 
 module.exports = {
-  JOLE_SECTORS, SEARCH_EXCLUDED_SIC, SEARCH_EXCLUDED_NAICS, CRAFT_JOB_TITLES, BUYER_FAMILIES,
-  joleCompanyDiscoveryParams, joleBuyerSearchParams, sectorScreen,
+  JOLE_SECTORS, SEARCH_EXCLUDED_SIC, SEARCH_EXCLUDED_NAICS, CRAFT_JOB_TITLES, BUYER_FAMILIES, SMALL_MID_MAX_EMPLOYEES,
+  joleCompanyDiscoveryParams, joleBuyerSearchParams, sectorScreen, buyerFamilyOf, siteTieOf, rankJoleContacts,
 };

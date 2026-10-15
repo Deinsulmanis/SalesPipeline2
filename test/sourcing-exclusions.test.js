@@ -64,22 +64,22 @@ test('Jole: staffing, recruiting and labor-service firms are excluded (code, bra
 });
 
 test('Jole: SpaceX family, Kiewit family / KOS and Karpower are excluded, look-alikes are not', () => {
-  assert.equal(jole({ name: 'Space Exploration Technologies Corp' }), 'excluded_family:SpaceX');
-  assert.equal(jole({ name: 'SpaceX Starbase', domain: 'spacex.com' }), 'excluded_family:SpaceX');
-  assert.equal(jole({ name: 'Kiewit Power Constructors' }), 'excluded_family:Kiewit / KOS');
-  assert.equal(jole({ name: 'Kiewit Offshore Services' }), 'excluded_family:Kiewit / KOS');
-  assert.equal(jole({ name: 'KOS', domain: 'kiewit.com' }), 'excluded_family:Kiewit / KOS');
-  assert.equal(jole({ name: 'KOS LLC' }), 'excluded_family:Kiewit / KOS');
-  assert.equal(jole({ name: 'Karpowership US' }), 'excluded_family:Karpower');
+  assert.equal(jole({ name: 'Space Exploration Technologies Corp' }), 'current_client:SpaceX');
+  assert.equal(jole({ name: 'SpaceX Starbase', domain: 'spacex.com' }), 'current_client:SpaceX');
+  assert.equal(jole({ name: 'Kiewit Power Constructors' }), 'current_client:Kiewit / KOS');
+  assert.equal(jole({ name: 'Kiewit Offshore Services' }), 'current_client:Kiewit / KOS');
+  assert.equal(jole({ name: 'KOS', domain: 'kiewit.com' }), 'current_client:Kiewit / KOS');
+  assert.equal(jole({ name: 'KOS LLC' }), 'current_client:Kiewit / KOS');
+  assert.equal(jole({ name: 'Karpowership US' }), 'current_client:Karpower');
   for (const name of ['Space Coast Fabrication', 'Kos Manufacturing Partners', 'Kiew Machine', 'Karpenter Steel'])
     assert.equal(jole({ name }), null, name);
 });
 
 test('Jole: current clients are excluded by name or domain, and the list is mandatory', () => {
   const clients = [{ name: 'Acme Steel', domain: 'acmesteel.com' }, 'gulfmetals.com'];
-  assert.equal(jole({ name: 'Acme Steel LLC' }, clients), 'current_jole_client');
-  assert.equal(jole({ name: 'Other', domain: 'careers.acmesteel.com' }, clients), 'current_jole_client');
-  assert.equal(jole({ name: 'Gulf Metals', domain: 'gulfmetals.com' }, clients), 'current_jole_client');
+  assert.equal(jole({ name: 'Acme Steel LLC' }, clients), 'current_client:supplied_list');
+  assert.equal(jole({ name: 'Other', domain: 'careers.acmesteel.com' }, clients), 'current_client:supplied_list');
+  assert.equal(jole({ name: 'Gulf Metals', domain: 'gulfmetals.com' }, clients), 'current_client:supplied_list');
   assert.equal(jole({ name: 'Acme Steel Fabricators', domain: 'acmefab.com' }, clients), null);
   assert.throws(() => joleExclusionReason({ name: 'Acme' }), /current-client exclusion list is required/);
   assert.throws(() => joleExclusionReason({ name: 'Acme' }, {}), /required/);
