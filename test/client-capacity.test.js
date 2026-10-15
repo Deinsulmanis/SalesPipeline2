@@ -30,9 +30,12 @@ function state({ sent = {}, caps = {}, globalDaily = 200, globalWindow = 21, env
   });
 }
 
-test('config: ScaleLab has no client cap (shared global capacity unchanged); Jole ships at zero', () => {
+test('config: ScaleLab has no client cap (its env ceiling applies); Jole is configured at 120/day, 12/window', () => {
   assert.deepEqual(getClient('scalelab').capacity, { dailyCap: null, windowCap: null, reservedDaily: 0, reservedWindow: 0 });
-  assert.deepEqual(getClient('jole').capacity, { dailyCap: 0, windowCap: 0, reservedDaily: 0, reservedWindow: 0 });
+  assert.deepEqual(getClient('jole').capacity, { dailyCap: 120, windowCap: 12, reservedDaily: 0, reservedWindow: 0 });
+  // Configured is not usable: while CLIENT_SENDING_AUTHORIZED does not name Jole its capacity verdict is 0.
+  const state = createClientCapacityState({ globalDailyLimit: 290, globalWindowLimit: 34, env: {} });
+  assert.deepEqual([clientCapacityVerdict(state, 'jole').allowed, clientCapacityVerdict(state, 'jole').remaining], [false, 0]);
 });
 
 test('config: a managed client must have explicit caps; a reservation cannot exceed its cap', () => {

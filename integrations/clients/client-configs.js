@@ -75,9 +75,12 @@ const JOLE = Object.freeze({
   // explicit ScaleLab operator instruction. The three onboarding items are
   // recorded as attested by that instruction; they were not independently
   // verified inside SalesPipeline2. Client-active means the workspace, ledger,
-  // campaign configuration and sender management are live. It grants NO send
-  // authority: sending.enabled stays false, CLIENT_SENDING_AUTHORIZED does not
-  // name Jole, client capacity stays 0 and every Jole sender starts paused.
+  // campaign configuration and sender management are live.
+  // 2026-10-15 launch preparation: the reviewed key (sending.enabled) is on, so
+  // Jole's inboxes, leads and queue can be fully prepared. The final key,
+  // CLIENT_SENDING_AUTHORIZED, does not name Jole: until it does, no Jole
+  // email can send (client capacity, sender eligibility and the provider gate
+  // all refuse). Launch is setting CLIENT_SENDING_AUTHORIZED=jole.
   lifecycleStatus: 'active',
   active: true,
   onboarding: Object.freeze({
@@ -102,15 +105,16 @@ const JOLE = Object.freeze({
   namespace: 'jole',
   legacyFamilyKeywords: Object.freeze([]),
   sending: Object.freeze({
-    // DISABLED. Activation is a later, explicit instruction: flip this in a
-    // reviewed commit AND name the client in CLIENT_SENDING_AUTHORIZED.
-    enabled: false,
+    // Reviewed key ON (2026-10-15) for launch preparation. Sending still needs
+    // the second, independent key: CLIENT_SENDING_AUTHORIZED naming jole.
+    enabled: true,
     requiresEnvAuthorization: true,
     clientSuppressionRequired: true,
   }),
-  // Safe until launch: zero capacity. Real numbers are a launch decision and
-  // are set in the same reviewed commit that enables sending.
-  capacity: Object.freeze({ dailyCap: 0, windowCap: 0, reservedDaily: 0, reservedWindow: 0 }),
+  // Launch capacity: six inboxes × 20/day = 120/day, × 2 per window = 12 per
+  // window. Jole's own allocation (gmail-sender-capacity.js), never taken from
+  // ScaleLab's; 0 in effect while CLIENT_SENDING_AUTHORIZED does not name Jole.
+  capacity: Object.freeze({ dailyCap: 120, windowCap: 12, reservedDaily: 0, reservedWindow: 0 }),
   // Who may send for Jole, and how much. Enforced by clients/sender-policy.js
   // at registry load and at every client-consistency check, so a mis-entered
   // registry row can never widen it.

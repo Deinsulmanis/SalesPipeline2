@@ -26,14 +26,16 @@ const joleLead = () => ({
   senderInboxId: '', clientId: 'jole', routingRequired: 'true',
 });
 
-test('Jole BTX LLC is an active client with no send authority: sending disabled, zero capacity, activation recorded', () => {
+test('Jole BTX LLC is an active client prepared for launch: reviewed key on, 120/12 capacity, NOT authorized to send', () => {
   const jole = getClient('jole');
   assert.equal(jole.displayName, 'Jole BTX LLC');
   assert.equal(jole.lifecycleStatus, 'active');
   assert.equal(jole.active, true);
-  assert.equal(jole.sending.enabled, false);
+  assert.equal(jole.sending.enabled, true);
   assert.equal(jole.sending.requiresEnvAuthorization, true);
-  assert.deepEqual({ daily: jole.capacity.dailyCap, window: jole.capacity.windowCap }, { daily: 0, window: 0 });
+  assert.deepEqual({ daily: jole.capacity.dailyCap, window: jole.capacity.windowCap }, { daily: 120, window: 12 });
+  assert.equal(clientSendState('jole', {}).sendingEnabled, false, 'no send authority without CLIENT_SENDING_AUTHORIZED');
+  assert.equal(clientSendState('jole', {}).launchHold, true);
   assert.deepEqual({ ...jole.onboarding }, {
     agreementSigned: true, onboardingFormReturned: true, setupBalancePaid: true,
     setupBalanceDueCents: 0, currency: 'USD',
@@ -44,7 +46,7 @@ test('Jole BTX LLC is an active client with no send authority: sending disabled,
   const view = publicClient(jole);
   assert.equal(view.lifecycleStatus, 'active');
   assert.equal(view.active, true);
-  assert.equal(view.sendingEnabledInConfig, false);
+  assert.equal(view.sendingEnabledInConfig, true);
 });
 
 test('activation is never inferred: active must match lifecycle, onboarding must be complete, the operator action recorded', () => {
@@ -85,9 +87,9 @@ test('an inactive (onboarding) client refuses every send path, whatever else is 
   } finally { restore(); }
 });
 
-test('the ACTIVE client still refuses every send path: sending disabled, capacity 0, draft campaign', () => {
+test('the prepared client refuses every send path until CLIENT_SENDING_AUTHORIZED names it', () => {
   const lead = joleLead();
-  for (const env of [{}, { CLIENT_SENDING_AUTHORIZED: 'jole' }]) {
+  for (const env of [{}, { CLIENT_SENDING_AUTHORIZED: 'scalelab' }, { CLIENT_SENDING_AUTHORIZED: '' }]) {
     assert.equal(clientSendBlock('jole', env).code, 'client_sending_disabled');
     assert.equal(clientSendState('jole', env).sendingEnabled, false);
     const senders = [{ id: 'jole_test', email: 'o@jolebtxteam.com', clientId: 'jole', status: 'active', sendEligible: true, dailyLimit: 10 }];
@@ -132,7 +134,10 @@ test('the Gmail provider boundary refuses a Jole lead in every lifecycle state (
   try {
     for (const env of [{}, { SEND_LOCK_ENABLED: 'true' }, { CLIENT_SENDING_AUTHORIZED: 'jole' }]) await attempt(env, 'client_inactive');
   } finally { restore(); }
-  for (const env of [{}, { SEND_LOCK_ENABLED: 'true' }, { CLIENT_SENDING_AUTHORIZED: 'jole' }]) await attempt(env, 'client_sending_disabled');
+  // Prepared but not authorized: the client gate refuses.
+  for (const env of [{}, { SEND_LOCK_ENABLED: 'true' }, { CLIENT_SENDING_AUTHORIZED: 'scalelab' }]) await attempt(env, 'client_sending_disabled');
+  // Authorized, but no sending inbox to judge: still refused before Gmail.
+  await attempt({ CLIENT_SENDING_AUTHORIZED: 'jole' }, 'sender_required');
   assert.equal(providerCalled, false);
   // A ScaleLab lead passes the boundary exactly as before (lock disabled → run directly).
   const result = await withGmailProviderSend({ lead: { id: 's1', leadNiche: 'dental', email: 'a@b.example.com' },

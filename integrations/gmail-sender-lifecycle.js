@@ -61,9 +61,13 @@ function activationBlockers(sender = {}, {
     && String(item.tokenEnv || '') !== String(sender.tokenEnv || ''));
   if (conflict) blockers.push('sender ownership/config conflict');
   // A managed client's inbox: its client sender policy (domain, campaign
-  // allowlist) and the client's own send authority. While the client may not
-  // send, none of its inboxes can be activated; they stay paused/warming.
-  for (const reason of sender.policyBlockers || []) blockers.push(reason);
+  // allowlist) and the client's PREPARATION authority (active, enabled in
+  // config). Activation is operational readiness, not send authority: an inbox
+  // may be activated while the client's final CLIENT_SENDING_AUTHORIZED switch
+  // is off, and its sendEligible stays false until that switch is on. A client
+  // that may not even be prepared still blocks activation outright.
+  const policy = sender.preparationBlockers !== undefined ? sender.preparationBlockers : sender.policyBlockers;
+  for (const reason of policy || []) blockers.push(reason);
   const hold = require('./cold-delivery-policy').coldSenderHolds(env).get(String(sender.id || '').trim());
   if (hold) blockers.push(`sender cold hold: ${hold}`);
   const clientId = String(sender.clientId || '').trim();
@@ -71,8 +75,8 @@ function activationBlockers(sender = {}, {
     const { getClient, isKnownClient } = require('./clients/registry');
     if (!isKnownClient(clientId)) blockers.push('sender names an unknown client');
     else if (!getClient(clientId).isDefault) {
-      const block = require('./clients/send-policy').clientSendBlock(clientId);
-      if (block) blockers.push(`client sending is not authorized: ${block.reason}`);
+      const block = require('./clients/send-policy').clientPreparationBlock(clientId);
+      if (block) blockers.push(`client cannot be prepared for sending: ${block.reason}`);
     }
   }
   return [...new Set(blockers)];
@@ -88,7 +92,9 @@ function activateSender(sender = {}, context = {}) {
   return {
     ...sender,
     status: WARMUP_STATUS.ACTIVE,
-    sendEligible: sender.credentialConfigured && Number(sender.dailyLimit) > 0,
+    // Active is not authorized: a managed inbox held by its client's final send
+    // switch reports sendEligible false here exactly as the registry does.
+    sendEligible: Boolean(sender.credentialConfigured) && Number(sender.dailyLimit) > 0 && !sender.policyBlockers?.length,
   };
 }
 

@@ -1,7 +1,9 @@
 'use strict';
 
 // Jole's lifecycle states for tests. Production Jole is ACTIVE (taken out of
-// onboarding 2026-10-05) with sending disabled and capacity 0.
+// onboarding 2026-10-05), prepared for launch since 2026-10-15 (sending key on
+// in config, capacity 120/12), and NOT authorized to send until
+// CLIENT_SENDING_AUTHORIZED names it.
 //  - ACTIVATED_JOLE: onboarding complete and an operator activation recorded
 //    (the production shape; kept for tests that pin it explicitly).
 //  - PENDING_JOLE: Jole before onboarding, for tests of inactive-client
@@ -29,6 +31,10 @@ const PENDING_JOLE = Object.freeze({
     setupBalanceDueCents: 17500, currency: 'USD',
   }),
   activation: Object.freeze({ activatedBy: '', activatedAt: '' }),
+  // A client in onboarding can never have its sending key on or any capacity
+  // (registry rules).
+  sending: Object.freeze({ enabled: false, requiresEnvAuthorization: true, clientSuppressionRequired: true }),
+  capacity: Object.freeze({ dailyCap: 0, windowCap: 0, reservedDaily: 0, reservedWindow: 0 }),
 });
 
 /** Activate Jole for the duration of a test; returns restore(). */

@@ -6498,8 +6498,11 @@ function renderGmailInboxSelector() {
   select.innerHTML = inboxes.map(inbox => `<option value="${escAttr(inbox.id)}" ${inbox.currentRoute ? 'selected' : ''} ${inbox.currentRoute ? '' : 'disabled'}>${esc(inbox.email)}${inbox.currentRoute ? ' — Current sender' : ` — ${inbox.status}`}</option>`).join('');
   status.innerHTML = `<div class="inbox-route-head"><span class="inbox-route-kicker">Gmail sending rail</span><span class="inbox-route-readonly">View only</span></div><div class="inbox-route-list">${inboxes.map(inbox => {
     const warming = inbox.status === 'warming' || inbox.status === 'ready' || !inbox.sendEligible;
-    const label = inbox.sendEligible ? 'Current' : (inbox.status === 'warming' ? 'Warming · locked' : inbox.status === 'ready' ? 'Ready · inactive' : `${inbox.status} · inactive`);
-    const meta = `${inbox.dailyLimit}/day · ${inbox.perRunLimit ?? 5}/run · ${inbox.sendEligible ? 'Cold sending active' : 'Cold sending inactive'}`;
+    // A managed inbox that is fully prepared but held by its client's final
+    // send authorization says so, instead of reading as merely inactive.
+    const held = !inbox.sendEligible && inbox.preparationReady === true && inbox.clientAuthorized === false;
+    const label = inbox.sendEligible ? 'Current' : held ? 'Active · client launch hold' : (inbox.status === 'warming' ? 'Warming · locked' : inbox.status === 'ready' ? 'Ready · inactive' : `${inbox.status} · inactive`);
+    const meta = `${inbox.dailyLimit}/day · ${inbox.perRunLimit ?? 5}/run · ${inbox.sendEligible ? 'Cold sending active' : held ? 'Prepared · sending not authorized (CLIENT_SENDING_AUTHORIZED)' : 'Cold sending inactive'}`;
     return `<div class="inbox-route-row ${warming ? 'warming' : ''}"><span class="inbox-route-dot" aria-hidden="true"></span><div><div class="inbox-route-email">${esc(inbox.email)}</div><div class="inbox-route-meta">${esc(meta)}</div></div><span class="inbox-route-badge">${esc(label)}</span></div>`;
   }).join('')}</div>`;
 }
@@ -8981,6 +8984,7 @@ function renderSettingsInboxRouting(payload) {
           <div>Provider: <b>Gmail</b></div>
           <div>Warmup: <b>${esc(warmupLabel(inbox.warmupStatus || inbox.status))}</b></div>
           <div>Cold sending: <b>${inbox.sendingActive || inbox.sendEligible ? 'Active' : 'Inactive'}</b></div>
+          ${inbox.clientAuthorized === undefined ? '' : `<div>Client send authorization: <b>${inbox.clientAuthorized ? 'Authorized' : 'Off (launch hold)'}</b> · Prepared: <b>${inbox.preparationReady ? 'Yes' : 'No'}</b></div>`}
           <div>Observer: <b>${esc(observerLabel(inbox))}</b></div>
           <div>Daily cap: <b>${esc(String(inbox.dailyLimit))}</b></div>
           <div>Per-run cap: <b>${esc(String(inbox.perRunLimit ?? 5))}</b></div>

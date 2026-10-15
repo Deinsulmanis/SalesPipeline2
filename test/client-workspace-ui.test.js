@@ -92,7 +92,7 @@ test('registry: the public client carries navigation and terminology, and no act
   assert.equal(jole.terminology.leads, 'employer leads');
   assert.equal(jole.lifecycleStatus, 'active');
   assert.equal(jole.active, true);
-  assert.equal(jole.sendingEnabledInConfig, false);
+  assert.equal(jole.sendingEnabledInConfig, true, 'reviewed key on; CLIENT_SENDING_AUTHORIZED is the final switch');
   assert.deepEqual(jole.senderPolicy.allowedCampaignIds, ['jole-btx-employer-acquisition']);
   assert.equal(jole.platformAccess, 'none');
 });
@@ -149,12 +149,12 @@ test('inbox: only this client\'s classified replies, with its open clarification
   assert.equal(JSON.stringify(view).includes('dental'), false);
 });
 
-test('settings: client inboxes only; Jole capacity is zero and sending blocked; DNS never invented', () => {
+test('settings: client inboxes only; Jole configured 120/day but 0 usable while not authorized; DNS never invented', () => {
   const settings = buildClientSettings({ clientId: 'jole', inboxes: INBOXES, global: { dailyLimit: 200, windowLimit: 21 }, env: {}, now: new Date('2026-10-01T18:00:00Z') });
   assert.deepEqual(settings.inboxes.map(inbox => inbox.id), ['jole_a']);
   assert.equal(settings.inboxes[0].domain, 'jole.example.com');
-  assert.equal(settings.capacity.dailyCap, 0);
-  assert.equal(settings.capacity.remainingToday, 0);
+  assert.equal(settings.capacity.dailyCap, 120);
+  assert.equal(settings.capacity.remainingToday, 0, 'usable capacity is 0 until authorized');
   assert.ok(settings.capacity.blockedBy);
   assert.equal(settings.sending.sendingEnabled, false);
   assert.equal(settings.status.lifecycleStatus, 'active');

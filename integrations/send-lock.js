@@ -210,9 +210,9 @@ function assertLeadClientMaySend(lead, sendAction, env) {
 // inbox must be delivery eligible with no policy blocker. Only the client of
 // each side is compared, so ScaleLab's own sends are judged exactly as before.
 function assertSenderServesLead(lead, sender, sendAction) {
-  if (!lead || !sender) return;
+  if (!lead) return;
   const refuse = (code, reason) => {
-    logSendLock('reservation_denied', { actionId: sendAction?.actionId, leadId: lead.id, provider: 'gmail', code, senderInboxId: sender.id });
+    logSendLock('reservation_denied', { actionId: sendAction?.actionId, leadId: lead.id, provider: 'gmail', code, senderInboxId: sender?.id });
     const error = new Error(reason);
     error.code = code;
     throw error;
@@ -221,6 +221,12 @@ function assertSenderServesLead(lead, sender, sendAction) {
   const { getClient } = require('./clients/registry');
   const { senderServesCampaign } = require('./clients/sender-policy');
   const leadOwner = resolveLeadClient(lead);
+  // A managed client's lead never reaches Gmail without the sending inbox
+  // being judged here. ScaleLab callers keep their existing behaviour.
+  if (!sender) {
+    if (leadOwner.ok && !getClient(leadOwner.clientId).isDefault) refuse('sender_required', `lead ${lead.id} needs its sending inbox judged before delivery`);
+    return;
+  }
   const senderOwner = resolveSenderClient(sender);
   if (!leadOwner.ok || !senderOwner.ok) refuse('client_unresolved', (leadOwner.ok ? senderOwner : leadOwner).reason);
   if (leadOwner.clientId !== senderOwner.clientId) {

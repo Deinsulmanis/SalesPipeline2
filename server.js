@@ -5040,7 +5040,9 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
           && (outreachStateMode() !== 'primary' || outreachWriteAuthority() !== 'supabase')) {
           return { ok: false, reason: 'Staffing queue requires Supabase primary reads and canonical writes; current production authority must be reconciled first' };
         }
-        const route = validateRoute({ niche: lead.leadNiche || lead.tradeType, senderInboxId: leadSender, emailTemplateId, inboxes: gmailInboxOptions(), lead, campaignVersionId });
+        // Queueing is preparation: a managed inbox held only by its client's
+        // final send authorization may take the route; delivery re-checks.
+        const route = validateRoute({ niche: lead.leadNiche || lead.tradeType, senderInboxId: leadSender, emailTemplateId, inboxes: gmailInboxOptions(), lead, campaignVersionId, preparation: true });
         if (!route.ok) return route;
         const versionRoute = validateCampaignVersionRoute({ niche: lead.leadNiche || lead.tradeType, emailTemplateId, campaignVersionId });
         if (!versionRoute.ok) return versionRoute;
@@ -6217,6 +6219,13 @@ function gmailInboxOptions() {
     ...(sender.allowedCampaignIds ? { allowedCampaignIds: [...sender.allowedCampaignIds] } : {}),
     ...(sender.configuredDailyLimit !== undefined ? { configuredDailyLimit: sender.configuredDailyLimit } : {}),
     ...(sender.policyBlockers?.length ? { policyBlockers: [...sender.policyBlockers] } : {}),
+    // Managed inboxes: operational readiness and send authority, kept apart.
+    ...(sender.preparationBlockers ? {
+      preparationBlockers: [...sender.preparationBlockers],
+      preparationReady: sender.preparationReady === true,
+      clientAuthorized: sender.clientAuthorized === true,
+      capacityConfigured: Number(sender.dailyLimit) > 0 && Number(sender.perRunLimit) > 0,
+    } : {}),
     credentialConfigured: sender.credentialConfigured,
     identityVerified: sender.id === 'primary' ? Boolean(process.env.GMAIL_TOKEN_JSON) : sender.credentialConfigured,
     sendEligible: sender.sendEligible,
@@ -6287,6 +6296,7 @@ async function gmailInboxStatus() {
       return {
         ...inbox,
         observerHealth: observerLabel,
+        ...(inbox.preparationBlockers ? { observerHealthy: observerLabel === 'healthy' } : {}),
         observer,
         sentToday: sent,
         remainingToday: remaining,
@@ -6304,6 +6314,8 @@ async function gmailInboxStatus() {
       globalPerRunLimit: capacity.globalPerRunLimit,
       dailyCeiling: capacity.dailyCeiling,
       perRunCeiling: capacity.perRunCeiling,
+      // Per-client allocation; the global limits above are their sum.
+      clientLimits: capacity.clientLimits,
     },
   };
 }
@@ -7155,6 +7167,7 @@ app.get('/api/ops/send-quota', requireAuth, async (_req, res) => {
       globalPerRunLimit: capacity.globalPerRunLimit,
       dailyCeiling: capacity.dailyCeiling,
       perRunCeiling: capacity.perRunCeiling,
+      clientLimits: capacity.clientLimits,
       inboxes: senders.map(sender => ({
         id: sender.id, email: sender.email, status: sender.status,
         sendEligible: sender.sendEligible, dailyLimit: sender.dailyLimit,

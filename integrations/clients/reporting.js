@@ -50,6 +50,8 @@ function leadMetrics(leads, { routedLeadReady, env, managed = false }) {
     imported: leads.length,
     approved: leads.filter(lead => text(lead.intendedCampaignVersion) && text(lead.emailTemplateId) && text(lead.senderInboxId)).length,
     routingReady: leads.filter(lead => routedLeadReady(lead, env).ok).length,
+    // Fully prepared, held only by the client's final send authorization.
+    ...(managed ? { preparedForLaunch: leads.filter(lead => routedLeadReady(lead, env, { preparation: true }).ok).length } : {}),
     queued: leads.filter(lead => text(lead.stage) === 'Queued' && !text(lead.emailStatus)).length,
     sent: leads.filter(sent).length,
     // Personalization readiness of unsent leads (client-email.js): ready to

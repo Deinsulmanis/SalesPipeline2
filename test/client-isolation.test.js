@@ -68,12 +68,14 @@ test('registry: ScaleLab and Jole resolve; unknown and blank are rejected', () =
   assert.deepEqual(listClients().map(client => client.id).sort(), ['jole', 'scalelab']);
 });
 
-test('registry: Jole is a managed client, active, no platform access, sending disabled', () => {
+test('registry: Jole is a managed client, active, no platform access, sending key on but not authorized', () => {
   const jole = getClient('jole');
   assert.equal(jole.displayName, 'Jole BTX LLC');
   assert.equal(jole.lifecycleStatus, 'active');
   assert.equal(jole.active, true);
-  assert.equal(jole.sending.enabled, false);
+  assert.equal(jole.sending.enabled, true, 'reviewed key on for launch preparation');
+  assert.equal(jole.sending.requiresEnvAuthorization, true, 'the env key stays required');
+  assert.equal(clientSendBlock('jole', {}).code, 'client_sending_disabled', 'not authorized without CLIENT_SENDING_AUTHORIZED');
   assert.equal(jole.platformAccess, 'none');
   assert.equal(jole.representative.name, 'Jorge Guerrero');
   assert.equal(jole.representative.operatesPlatform, false);
@@ -264,20 +266,19 @@ test('final gate: JOLE SEND DISABLE — blocked even when every other requiremen
     clientSuppression: { available: true, entries: [] },
   });
   assert.equal(verdict.allowed, false);
-  assert.equal(verdict.code, 'client_sending_disabled', 'active client, sending switch off');
-  // Naming Jole in the env allow-list does not override the source-controlled switch.
-  const envOnly = evaluateFreshSendSafety(lead, lead, new Set(), {
-    purpose: 'cold', env: { CLIENT_SENDING_AUTHORIZED: 'jole' }, senderInboxId: 'jole_test', senders: SENDERS,
-    clientSuppression: { available: true, entries: [] },
-  });
-  assert.equal(envOnly.code, 'client_sending_disabled');
-  assert.equal(clientSendBlock('jole', { CLIENT_SENDING_AUTHORIZED: 'jole' }).code, 'client_sending_disabled');
+  assert.equal(verdict.code, 'client_sending_disabled', 'active client, final env authorization off');
+  // CLIENT_SENDING_AUTHORIZED is the final launch switch: with the reviewed
+  // config key already on, naming Jole is what authorizes it.
+  assert.equal(clientSendBlock('jole', { CLIENT_SENDING_AUTHORIZED: 'jole' }), null);
+  assert.equal(clientSendBlock('jole', { CLIENT_SENDING_AUTHORIZED: 'scalelab' }).code, 'client_sending_disabled', 'only naming jole counts');
   const pending = require('../test-support/client-lifecycle').pendingJoleForTest();
   try {
     assert.equal(clientSendBlock('jole', { CLIENT_SENDING_AUTHORIZED: 'jole' }).code, 'client_inactive');
   } finally { pending(); }
-  // Even once activated, the send switch stays off until a reviewed commit enables it.
-  const restore = require('../test-support/client-lifecycle').activateJoleForTest();
+  // Two independent keys: with the reviewed config key off, the env key alone authorizes nothing.
+  const restore = require('../test-support/client-lifecycle').activateJoleForTest({
+    sending: Object.freeze({ enabled: false, requiresEnvAuthorization: true, clientSuppressionRequired: true }),
+  });
   try {
     assert.equal(clientSendBlock('jole', { CLIENT_SENDING_AUTHORIZED: 'jole' }).code, 'client_sending_disabled');
   } finally { restore(); }

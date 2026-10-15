@@ -8,7 +8,7 @@ const { isStaffingOnlySender } = require('./gmail-inbox-registry');
 const { getClient } = require('./clients/registry');
 const { clientCampaign, clientTemplate, clientLeadType, campaignSendable } = require('./clients/campaigns');
 const { checkClientConsistency, resolveLeadClient } = require('./clients/ownership');
-const { clientSendBlock } = require('./clients/send-policy');
+const { clientSendBlock, clientPreparationBlock } = require('./clients/send-policy');
 const { outreachBlockForLead, RETIRED_OFFERS } = require('./lead-archive');
 
 const EMAIL_TEMPLATES = Object.freeze([
@@ -115,13 +115,17 @@ function retiredLeadType(niche) {
   return RETIRED_OFFERS.find(offer => offer.leadType === niche) || null;
 }
 
-function validateRoute({ niche, senderInboxId, emailTemplateId, inboxes = [], requireReady = true, lead = null, campaignVersionId = '' } = {}) {
+// validateRoute serves queueing and sender balancing, never delivery.
+// `preparation` lets a managed client's operationally ready inbox take a route
+// while the client's final send authorization is off; delivery re-checks
+// sendEligible and the client send gate at send time.
+function validateRoute({ niche, senderInboxId, emailTemplateId, inboxes = [], requireReady = true, lead = null, campaignVersionId = '', preparation = false } = {}) {
   const normalizedNiche = normalizeNiche(niche);
   const template = templateById(emailTemplateId);
   const inbox = inboxes.find(item => item.id === senderInboxId);
   if (!normalizedNiche) return { ok: false, reason: 'Lead niche is required' };
   if (!inbox) return { ok: false, reason: 'A registered sending inbox is required' };
-  if (!inbox.sendEligible) return { ok: false, reason: `${inbox.email} is not eligible to send` };
+  if (!inbox.sendEligible && !(preparation && inbox.preparationReady === true)) return { ok: false, reason: `${inbox.email} is not eligible to send` };
   if (!inbox.deliveryImplemented) return { ok: false, reason: `${inbox.email} is connected but sender routing is not active yet` };
   const owner = routeClientVerdict({ lead, niche: normalizedNiche, inbox, emailTemplateId, campaignVersionId });
   if (!owner.ok) return { ok: false, code: owner.code, reason: owner.reason };
@@ -141,7 +145,10 @@ function validateRoute({ niche, senderInboxId, emailTemplateId, inboxes = [], re
 
 // A managed client's lead is ready only through its own campaign registry;
 // the legacy family resolver knows nothing about it and must not decide it.
-function managedLeadReady(lead, clientId, env) {
+// `preparation` judges launch readiness: every check except the client's
+// final send authorization (CLIENT_SENDING_AUTHORIZED). Send selection never
+// passes it.
+function managedLeadReady(lead, clientId, env, { preparation = false } = {}) {
   const client = getClient(clientId);
   if (!lead.leadNiche || !lead.senderInboxId || !lead.emailTemplateId || !lead.intendedCampaignVersion) {
     return { ok: false, reason: 'routing assignment is incomplete' };
@@ -155,12 +162,12 @@ function managedLeadReady(lead, clientId, env) {
   const template = clientTemplate(lead.emailTemplateId);
   if (!template || template.id !== campaign.emailTemplateId) return { ok: false, reason: 'email template does not match the campaign' };
   if (template.niche !== normalizeNiche(lead.leadNiche)) return { ok: false, reason: 'email template does not match lead niche' };
-  const blocked = clientSendBlock(client.id, env);
+  const blocked = preparation ? clientPreparationBlock(client.id) : clientSendBlock(client.id, env);
   if (blocked) return { ok: false, code: blocked.code, reason: blocked.reason };
   return { ok: true, legacy: false, template, clientId: client.id };
 }
 
-function routedLeadReady(lead, env = process.env) {
+function routedLeadReady(lead, env = process.env, { preparation = false } = {}) {
   // Archived leads and retired offers first, before ownership and before the
   // legacy bypass below: a legacy dental row has no routing fields at all, and
   // "legacy: true" must never mean "sendable" for an offer that no longer exists.
@@ -170,7 +177,7 @@ function routedLeadReady(lead, env = process.env) {
   // carries another client's sender, is refused before any legacy bypass.
   const ownerOfLead = resolveLeadClient(lead);
   if (!ownerOfLead.ok) return { ok: false, code: ownerOfLead.code, reason: ownerOfLead.reason };
-  if (!getClient(ownerOfLead.clientId).isDefault) return managedLeadReady(lead, ownerOfLead.clientId, env);
+  if (!getClient(ownerOfLead.clientId).isDefault) return managedLeadReady(lead, ownerOfLead.clientId, env, { preparation });
   if (String(lead.senderInboxId || '').trim()) {
     const senderOwner = checkClientConsistency({ lead });
     if (!senderOwner.ok) return { ok: false, code: senderOwner.code, reason: senderOwner.reason };

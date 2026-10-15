@@ -40,6 +40,33 @@ function clientSendBlock(clientId, env = process.env) {
   return null;
 }
 
+/**
+ * PREPARATION authority, deliberately separate from send authority: may this
+ * client's inboxes be readied and activated, and its leads assigned, balanced
+ * and queued? Requires the client to be active with sending.enabled in its
+ * source-controlled config. It ignores ONLY the env authorization
+ * (CLIENT_SENDING_AUTHORIZED), which stays the final launch switch: a client
+ * that passes this but not clientSendBlock is fully prepared and still cannot
+ * send, because every send-time check calls clientSendBlock.
+ */
+function clientPreparationBlock(clientId) {
+  const resolved = resolveClientId(clientId);
+  if (!resolved.ok) return { code: resolved.code, reason: resolved.reason };
+  const client = getClient(resolved.clientId);
+  if (!client.active) {
+    return { code: 'client_inactive', reason: `${client.displayName} is not an active client (lifecycle: ${client.lifecycleStatus})` };
+  }
+  if (!client.sending.enabled) {
+    return { code: 'client_sending_disabled', reason: `${client.displayName} sending is disabled` };
+  }
+  return null;
+}
+
+/** Prepared for launch, held only by the final env authorization. */
+function clientLaunchHeld(clientId, env = process.env) {
+  return !clientPreparationBlock(clientId) && Boolean(clientSendBlock(clientId, env));
+}
+
 function clientSendingEnabled(clientId, env = process.env) {
   return clientSendBlock(clientId, env) === null;
 }
@@ -55,8 +82,14 @@ function clientSendState(clientId, env = process.env) {
     configEnabled: client.sending.enabled,
     envAuthorized: client.sending.requiresEnvAuthorization ? authorizedClientIds(env).has(client.id) : null,
     sendingEnabled: !block,
+    // Prepared but held: everything may be readied, nothing may send.
+    preparationAllowed: !clientPreparationBlock(client.id),
+    launchHold: clientLaunchHeld(client.id, env),
     ...(block ? { blockCode: block.code, blockReason: block.reason } : {}),
   };
 }
 
-module.exports = { AUTHORIZED_CLIENTS_VAR, authorizedClientIds, clientSendBlock, clientSendingEnabled, clientSendState };
+module.exports = {
+  AUTHORIZED_CLIENTS_VAR, authorizedClientIds, clientSendBlock, clientSendingEnabled, clientSendState,
+  clientPreparationBlock, clientLaunchHeld,
+};

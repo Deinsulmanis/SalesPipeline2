@@ -157,10 +157,10 @@ test('queue: a Jole lead is admissible only when all three touches render from i
   assert.match(queueEligibility(lead, { ...base, env: ENV, suppressedEmails: new Set([lead.email]) }).reason || '', /suppress|unsubscrib|opt/i);
 });
 
-test('send: a fully personalised, approved Jole lead with a sender is still refused while Jole sending is off', () => {
+test('send: a fully personalised, approved Jole lead with a sender is still refused until Jole is authorized', () => {
   assert.equal(clientSendBlock('jole', ENV).code, 'client_sending_disabled');
-  assert.equal(clientSendBlock('jole', { ...ENV, CLIENT_SENDING_AUTHORIZED: 'jole' }).code, 'client_sending_disabled', 'sending.enabled is false in code');
-  assert.equal(getClient('jole').capacity.dailyCap, 0);
+  assert.equal(clientSendBlock('jole', { ...ENV, CLIENT_SENDING_AUTHORIZED: 'jole' }), null, 'the final switch authorizes');
+  assert.equal(getClient('jole').capacity.dailyCap, 120);
   assert.equal(routedLeadReady(joleLead({ senderInboxId: 'jole_team1' }), ENV).ok, false);
 });
 

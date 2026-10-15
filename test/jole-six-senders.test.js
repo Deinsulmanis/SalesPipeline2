@@ -95,17 +95,19 @@ async function providerVerdict({ lead, sender, env = AUTHORIZED_ENV, actionId = 
 
 // ── Registration ────────────────────────────────────────────────────────────
 
-test('six Jole senders are registered with exact ids, mailboxes, credentials and dormant limits', () => {
+test('six Jole senders are registered with exact ids, mailboxes, credentials and launch caps, none send eligible', () => {
   const defaults = DEFAULT_SECONDARY_INBOXES.filter(row => row.clientId === 'jole');
   assert.deepEqual(defaults.map(row => [row.id, row.email, row.tokenEnv]), SIX);
   const senders = configuredSenders(PROD_ENV).filter(sender => sender.clientId === 'jole');
   assert.deepEqual(senders.map(sender => sender.id), SIX_IDS);
   for (const sender of senders) {
     assert.equal(sender.provider, 'gmail');
-    assert.equal(sender.status, 'warming', 'not ready, not active');
-    assert.equal(sender.dailyLimit, 0, 'zero daily cold capacity');
-    assert.equal(sender.perRunLimit, 0, 'zero window capacity');
+    assert.equal(sender.status, 'warming', 'registry default; readiness comes from the runtime lifecycle');
+    assert.equal(sender.dailyLimit, 20, 'Jole hard ceiling');
+    assert.equal(sender.perRunLimit, 2, '2 per window');
     assert.equal(sender.sendEligible, false);
+    assert.equal(sender.clientAuthorized, false);
+    assert.deepEqual([...sender.preparationBlockers], [], 'nothing blocks preparation');
     assert.deepEqual([...sender.allowedCampaignIds], [CAMPAIGN]);
     assert.equal(sender.observerEnabled, true, 'observer may run independently of cold sending');
     assert.match(sender.policyBlockers.join(' '), /client sending is not authorized/);
@@ -119,7 +121,7 @@ test('the six appear in the Jole sender list only, with a dormant public state',
   const rows = publicRegistry(withDefaultInboxes(parseRegistry(env.GMAIL_INBOX_REGISTRY_JSON, env), env), env);
   const jole = rows.filter(row => row.clientId === 'jole');
   assert.deepEqual(jole.map(row => [row.id, row.status, row.dailyLimit, row.sendEligible, row.credentialConfigured]),
-    SIX_IDS.map(id => [id, 'warming', 0, false, true]));
+    SIX_IDS.map(id => [id, 'warming', 20, false, true]));
   assert.equal(rows.filter(row => row.clientId === 'scalelab').some(row => SIX_IDS.includes(row.id)), false);
 });
 
@@ -235,13 +237,15 @@ test('inactive, not-ready, zero-capacity and blocked senders are denied at the b
   }
 });
 
-test('production state: Jole sending is off, so no Jole send reaches Gmail from any of the six', async () => {
+test('production state: CLIENT_SENDING_AUTHORIZED does not name Jole, so no Jole send reaches Gmail from any of the six', async () => {
   assert.equal(clientSendState('jole', {}).sendingEnabled, false);
-  assert.equal(clientSendState('jole', AUTHORIZED_ENV).sendingEnabled, false, 'the env alone cannot authorize Jole');
+  assert.equal(clientSendState('jole', {}).launchHold, true);
   for (const id of SIX_IDS) {
-    const verdict = await providerVerdict({ lead: joleLead(), sender: activatedJoleSender(id), env: AUTHORIZED_ENV });
+    const verdict = await providerVerdict({ lead: joleLead(), sender: activatedJoleSender(id), env: {} });
     assert.deepEqual(verdict, { delivered: false, code: 'client_sending_disabled' }, id);
   }
+  // CLIENT_SENDING_AUTHORIZED is the final switch: naming jole is the launch.
+  assert.equal(clientSendState('jole', AUTHORIZED_ENV).sendingEnabled, true);
 });
 
 // ── Routing after activation ────────────────────────────────────────────────
@@ -377,5 +381,9 @@ test('the sender UI and status API show a dormant inbox as 0/day and 0/run, not 
   assert.match(options, /perRunLimit: sender\.perRunLimit \?\? DEFAULT_INBOX_PER_RUN_LIMIT/);
   assert.match(browser, /\$\{inbox\.perRunLimit \?\? 5\}\/run/);
   assert.match(browser, /Per-run cap: <b>\$\{esc\(String\(inbox\.perRunLimit \?\? 5\)\)\}<\/b>/);
-  for (const sender of configuredSenders(PROD_ENV).filter(s => s.clientId === 'jole')) assert.equal(sender.perRunLimit, 0, sender.id);
+  for (const sender of configuredSenders(PROD_ENV).filter(s => s.clientId === 'jole')) assert.equal(sender.perRunLimit, 2, sender.id);
+  // A managed 0/run stays a real zero rather than the default.
+  const zero = configuredSenders({ ...PROD_ENV, GMAIL_INBOX_REGISTRY_JSON: JSON.stringify([...JSON.parse(PROD_ENV.GMAIL_INBOX_REGISTRY_JSON),
+    { id: 'jole_group_jorge', email: 'jorge@jolebtxgroup.com', clientId: 'jole', status: 'warming', tokenEnv: 'GMAIL_JOLE_GROUP_JORGE_TOKEN_JSON', dailyLimit: 0, perRunLimit: 0 }]) });
+  assert.equal(zero.find(s => s.id === 'jole_group_jorge').perRunLimit, 0);
 });

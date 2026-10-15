@@ -113,6 +113,7 @@ const {
   createClientCapacityState, clientSendCountsToday, clientCapacityVerdict, recordClientSend, clientCapacitySnapshot,
 } = require('./integrations/clients/capacity');
 const { DEFAULT_CLIENT_ID } = require('./integrations/clients/registry');
+const { clientSendBlock } = require('./integrations/clients/send-policy');
 // Staffing supplies its own locked copy only. Sender selection, thread pinning,
 // quota, observer, suppression and ownership all stay on the shared path.
 const { STAFFING_CAMPAIGN, renderStaffingEmail, validateStaffingEmail, isStaffingCampaign } = require('./integrations/staffing-campaign');
@@ -2101,6 +2102,13 @@ async function deliverOrdinaryColdStep({
   lead, step, sender, subject, body, attribution, activitiesForCycle,
   personalizationMetadata = null, thread = null, onProviderSuccess = null,
 }) {
+  // Client send authority first: before any Gmail probe and before the ledger
+  // reservation below, so a managed client not named in
+  // CLIENT_SENDING_AUTHORIZED leaves no reservation behind. guardProviderSend
+  // and the provider boundary re-check it. ScaleLab is never blocked here.
+  const leadOwner = resolveLeadClient(lead);
+  const clientBlocked = leadOwner.ok ? clientSendBlock(leadOwner.clientId) : null;
+  if (clientBlocked) return { delivered: false, reason: `client send authority: ${clientBlocked.reason}` };
   // A proven, unrecovered delivery failure of an earlier touch blocks every
   // later one at send time too, not only in selection (same-touch-recovery.js).
   const failedTouch = unrecoveredTouchBlock(lead, activitiesForCycle || [], step);
@@ -4836,7 +4844,11 @@ function coldFollowUpBlockReason(lead) {
 }
 
 function selectQueued(leads) {
-  return leads.filter(l => {
+  // A managed client prepared for launch but not yet authorized to send has
+  // queued leads by design; they are held as a group, one line per run, not
+  // one warning per lead per window.
+  const clientHeld = new Map();
+  const selected = leads.filter(l => {
     if (l.stage !== QUEUE_STAGE) return false;   // you queued it
     if (!isValidEmail(l.email)) return false;    // sendable address
     // Only never-touched leads may enter step 1. The previous check
@@ -4847,6 +4859,11 @@ function selectQueued(leads) {
     if (l.emailStatus !== '') return false;
     const routing = routedLeadReady(l);
     if (!routing.ok) {
+      const client = tenantOf(l);
+      if (routing.code === 'client_sending_disabled' && client && client !== DEFAULT_CLIENT_ID) {
+        clientHeld.set(client, (clientHeld.get(client) || 0) + 1);
+        return false;
+      }
       console.warn(`🧭 [routing] skipping queued lead ${l.email} (${l.company || l.id}) — ${routing.reason}`);
       return false;
     }
@@ -4867,6 +4884,10 @@ function selectQueued(leads) {
     }
     return true;
   });
+  for (const [client, count] of clientHeld) {
+    console.log(`[client-hold] ${count} queued ${client} lead(s) held: client sending is not authorized (CLIENT_SENDING_AUTHORIZED)`);
+  }
+  return selected;
 }
 
 function routedLeadCanUseCurrentSender(lead) {
@@ -5484,8 +5505,12 @@ async function run() {
   // Client-level capacity: GLOBAL → CLIENT here, then the campaign, sender and
   // window limits the send path already enforces. Same global numbers as
   // above, so this layer can only narrow what a client may send.
+  // Each client is capped at its own allocation (gmail-sender-capacity.js), so
+  // one client can never spend another's share of the combined ceiling.
   const clientCapacity = createClientCapacityState({
     globalDailyLimit: DAILY_SEND_LIMIT, globalWindowLimit: DAILY_CAP,
+    configs: new Map(Object.entries(SENDER_CAPACITY.clientLimits || {})
+      .map(([id, limit]) => [id, { dailyCap: limit.daily, windowCap: limit.perRun }])),
     sentTodayByClient: clientSendCountsToday(ownershipActivities, {
       dayKey: senderDayKey, leadsById: new Map(all.map(lead => [lead.id, lead])),
     }),

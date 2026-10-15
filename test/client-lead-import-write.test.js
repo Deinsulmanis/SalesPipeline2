@@ -273,7 +273,7 @@ test('import: without a bound importer the route is unavailable, not a silent no
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
 
-test('import does not enable anything: copy approved, but Jole sending disabled and capacity 0', () => {
+test('import does not authorize anything: copy approved, Jole prepared but not authorized to send', () => {
   const campaign = clientCampaign(CAMPAIGN);
   assert.equal(campaign.id, CAMPAIGN);
   assert.equal(campaign.clientId, 'jole');
@@ -283,7 +283,7 @@ test('import does not enable anything: copy approved, but Jole sending disabled 
   assert.equal(clientTemplate(campaign.emailTemplateId).ready, true);
   assert.equal(require('../integrations/clients/send-policy').clientSendBlock('jole', {}).code, 'client_sending_disabled');
   assert.equal(clientSendState('jole', {}).sendingEnabled, false);
-  assert.deepEqual(getClient('jole').capacity, { dailyCap: 0, windowCap: 0, reservedDaily: 0, reservedWindow: 0 });
+  assert.deepEqual(getClient('jole').capacity, { dailyCap: 120, windowCap: 12, reservedDaily: 0, reservedWindow: 0 });
   assert.deepEqual(getClient('jole').senderPolicy.allowedCampaignIds, [CAMPAIGN]);
 });
 
