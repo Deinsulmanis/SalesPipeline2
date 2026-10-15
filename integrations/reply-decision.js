@@ -95,6 +95,9 @@ const EFFECT = Object.freeze({
   // An OOO reply recorded a dated resume (integrations/ooo-pause.js) instead
   // of a manual hold. Decisions before 2026-10-03 recorded hold_applied.
   OOO_PAUSE_SCHEDULED: 'ooo_pause_scheduled',
+  // An OOO reply stated no reliable return date: nothing was scheduled and a
+  // person must set the resume date. Never an invented date.
+  OOO_REVIEW_REQUIRED: 'ooo_review_required',
 });
 
 // The category production acts on, in canonical-state terms.
@@ -428,7 +431,8 @@ function executionForRoute(route, handlerResult) {
         ? { executedAction: ACTION.AUTO_TIMING_RECONTACT, status: EXECUTION_STATUS.RECONTACT_SCHEDULED, effects: [EFFECT.HOLD_APPLIED] }
         : { executedAction: ACTION.HUMAN_REVIEW, status: EXECUTION_STATUS.ROUTED_TO_HUMAN, effects: [EFFECT.HOLD_APPLIED] };
     case ROUTE.OUT_OF_OFFICE:
-      return { executedAction: ACTION.WAIT_OUT_OF_OFFICE, status: EXECUTION_STATUS.WAITING, effects: [EFFECT.OOO_PAUSE_SCHEDULED] };
+      return { executedAction: ACTION.WAIT_OUT_OF_OFFICE, status: EXECUTION_STATUS.WAITING,
+        effects: [handlerResult && handlerResult.oooReviewRequired ? EFFECT.OOO_REVIEW_REQUIRED : EFFECT.OOO_PAUSE_SCHEDULED] };
     case ROUTE.HISTORICAL_NO_ACTION:
       return { executedAction: ACTION.NO_ACTION, status: EXECUTION_STATUS.SKIPPED, code: HISTORICAL_SKIP_CODE };
     default:

@@ -64,6 +64,15 @@ const LOCKED_EMAILS = Object.freeze([
   // API sends never append the mailbox signature, so it cannot duplicate.
   `Hi {{firstName}},\n\nIs bringing in more employer accounts something {{company}} is focused on right now?\n\nDeins`,
 ]);
+// The first follow-up after an out-of-office return opens with this one line,
+// then continues with the normal next touch exactly as locked. It claims only
+// what the autoresponder said (they were away), never why or where.
+const OOO_RESUME_CONTEXT_LINE = "Circling back now that you're back in the office.";
+const STAFFING_GREETING = 'Hi {{firstName}},\n\n';
+function withOooResumeContext(template) {
+  if (!template.startsWith(STAFFING_GREETING)) throw new Error('staffing copy must open with its greeting');
+  return `${STAFFING_GREETING}${OOO_RESUME_CONTEXT_LINE}\n\n${template.slice(STAFFING_GREETING.length)}`;
+}
 // A reviewed ICP fit can use the core offer without an unsupported company fact.
 // This variant applies only to an explicit NONE_REQUIRED staffing review.
 const NO_PERSONALIZATION_EMAIL = `Hi {{firstName}},\n\nWe help industrial staffing agencies generate qualified employer meetings — and we get paid based on the meetings we generate.\n\nWorth seeing how we'd do this for {{company}}?\n\n— Deins`;
@@ -119,7 +128,10 @@ function renderStaffingPreview(lead, result, step = 1, options = {}) {
   const identity = staffingSenderIdentity(options.env || process.env, options);
   // Only step 2 carries the landing page; a tracked URL anywhere else is a caller bug.
   if (options.landingPageUrl && step !== 2) throw new Error('only staffing step 2 carries the landing-page URL');
-  const template = withStaffingLandingUrl(noPersonalization ? NO_PERSONALIZATION_EMAIL : LOCKED_EMAILS[step - 1], options.landingPageUrl);
+  // Touch 1 is never a resume: an OOO can only answer an email already sent.
+  if (options.oooResumeContext && step === 1) throw new Error('only a staffing follow-up can resume after an out-of-office reply');
+  const locked = withStaffingLandingUrl(noPersonalization ? NO_PERSONALIZATION_EMAIL : LOCKED_EMAILS[step - 1], options.landingPageUrl);
+  const template = options.oooResumeContext ? withOooResumeContext(locked) : locked;
   const body = appendStaffingComplianceFooter(merge(template), identity);
   // Bold only the locked offer phrase, never a model-authored opener or footer.
   const phrase = merge(BOLD_PHRASES[step - 1]);
@@ -174,6 +186,7 @@ function validateStaffingEmail({ subject, body, leadId } = {}, step = 1) {
 }
 
 module.exports = { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_LABELS, isStaffingCampaign, STAFFING_LANDING_PAGE_URL, LOCKED_EMAILS, BOLD_PHRASE, BOLD_PHRASES,
+  OOO_RESUME_CONTEXT_LINE,
   STAFFING_SEQUENCE_TIMING, renderStaffingPreview, staffingOpeningFor, staffingReviewStatus, replaceStaffingReviewTag,
   staffingNoPersonalizationAllowed, renderStaffingEmail, validateStaffingEmail,
   isTrackedStaffingLandingUrl, withStaffingLandingUrl };

@@ -548,6 +548,7 @@ const ACTION_TYPE = Object.freeze({
   CONTACT_SUPPLIED:      'contact_supplied',
   CONTACT_CHANGE_REVIEW: 'contact_change_review',
   WAIT_UNTIL_RETURN:     'wait_until_return',
+  REVIEW_OOO_RETURN:     'review_ooo_return',
   INVESTIGATE_REPLY:     'investigate',
   BOOKING_LINK_PENDING:  'booking_link_pending',
   SEQUENCE_STEP:         'sequence_step',
@@ -1320,6 +1321,7 @@ function deriveNextAction(boardLead, twin, context = {}) {
       [REPLY_ACTION.CONTACT_SUPPLIED]: ACTION_TYPE.CONTACT_SUPPLIED,
       [REPLY_ACTION.CONTACT_CHANGE_REVIEW]: ACTION_TYPE.CONTACT_CHANGE_REVIEW,
       [REPLY_ACTION.WAIT_UNTIL_RETURN]: ACTION_TYPE.WAIT_UNTIL_RETURN,
+      [REPLY_ACTION.OOO_REVIEW]: ACTION_TYPE.REVIEW_OOO_RETURN,
       [REPLY_ACTION.WAIT]: ACTION_TYPE.WAITING_PROSPECT,
       [REPLY_ACTION.INVESTIGATE]: ACTION_TYPE.INVESTIGATE_REPLY,
       [REPLY_ACTION.NO_ACTION_SUPPRESSED]: ACTION_TYPE.NONE_LOST,
@@ -1329,6 +1331,7 @@ function deriveNextAction(boardLead, twin, context = {}) {
       [REPLY_ACTION.REVISIT_LATER]: 'Revisit later', [REPLY_ACTION.DECISION_MAKER_FOLLOW_UP]: 'Follow up with decision maker',
       [REPLY_ACTION.CONTACT_SUPPLIED]: 'Review supplied contact', [REPLY_ACTION.CONTACT_CHANGE_REVIEW]: 'Review contact change',
       [REPLY_ACTION.WAIT_UNTIL_RETURN]: 'Wait until return', [REPLY_ACTION.WAIT]: 'Waiting — no human response required',
+      [REPLY_ACTION.OOO_REVIEW]: 'Review out-of-office return date',
       [REPLY_ACTION.RESPOND]: 'Respond to prospect', [REPLY_ACTION.INVESTIGATE]: 'Investigate reply evidence',
       [REPLY_ACTION.NO_ACTION_SUPPRESSED]: 'None — reply closed the conversation',
     };

@@ -59,7 +59,9 @@ const {
   readCanonicalLead,
 } = require('./integrations/outreach-state');
 const { applyFalseOptOutCorrection, FALSE_OPT_OUT_TAG } = require('./integrations/false-opt-out-correction');
-const { planOooHoldRelease } = require('./integrations/ooo-hold-repair');
+const { planOooHoldRelease, planOooResumeSchedule } = require('./integrations/ooo-hold-repair');
+const { oooPauseState } = require('./integrations/ooo-pause');
+const { activityLeadKey } = require('./integrations/lead-activity');
 // Stage 3D: dual-read measurement only. Nothing branches on its output.
 const {
   probeOutreachParityInBackground, stage3ParitySnapshot, DASHBOARD_OMITTED_FIELDS,
@@ -5764,9 +5766,23 @@ app.get('/api/coldemail/replies', requireAuth, async (req, res) => {
     // The Inbox is an operational queue: an archived lead's conversation is
     // read in Archive, not worked here. Analytics keeps it (historical).
     const activeRecords = dataset.replyRecords.filter(record => !archivedIds.has(record.leadId));
+    // An automated reply carries its OOO state (ooo-pause.js), so a lead that
+    // needs a person to set its return date is visible, never silently parked.
+    const automatedIds = new Set(activeRecords.filter(record => record.category === 'automated_reply').map(record => record.leadId));
+    const leadById = new Map((dataset.leads || []).filter(lead => automatedIds.has(lead.id)).map(lead => [lead.id, lead]));
+    const oooActivities = automatedIds.size ? (dataset.activities || []).filter(row => automatedIds.has(activityLeadKey(row))) : [];
+    const oooPauseFor = leadId => {
+      const lead = leadById.get(leadId);
+      if (!lead) return undefined;
+      const state = oooPauseState(lead, oooActivities);
+      return { status: state.status, resumeAt: state.resumeAt || null, resumeSource: state.resumeSource || null,
+        statedReturnDate: state.statedReturnDate || null, ignoredPolicyResumeAt: state.ignoredPolicyResumeAt || null,
+        ledgerLastStep: state.ledgerLastStep ?? null, nextStep: state.nextStep ?? null };
+    };
     const records = filterReplyRecords(activeRecords, category).map(record => {
       const row = rowById.get(record.leadId) || {};
-      return { ...record, campaignVersion: row.campaignVersion || LEGACY_UNKNOWN, pipelinePresence: Boolean(row.pipelinePresence), pipelineStage: row.pipelineStage || '', boardLeadId: row.boardLeadId || '', mappingStatus: row.mappingStatus || 'not_in_pipeline' };
+      return { ...record, campaignVersion: row.campaignVersion || LEGACY_UNKNOWN, pipelinePresence: Boolean(row.pipelinePresence), pipelineStage: row.pipelineStage || '', boardLeadId: row.boardLeadId || '', mappingStatus: row.mappingStatus || 'not_in_pipeline',
+        ...(automatedIds.has(record.leadId) ? { oooPause: oooPauseFor(record.leadId) } : {}) };
     }).filter(record => !campaignVersion || campaignVersion === 'all' || record.campaignVersion === campaignVersion);
     res.json({
       category,
@@ -6469,6 +6485,74 @@ app.post('/api/ops/ooo-hold-release/:id', requireAuth, async (req, res) => {
   } catch (error) {
     if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
     console.error('[ooo-hold-release apply]', error.message);
+    res.status(500).json({ error: error.message });
+  } finally {
+    automationLaunchReserved = false;
+  }
+});
+
+// ── OOO resume scheduling (operator) ───────────────────────────────────────
+// An OOO with no reliable return date waits for a person (OOO_REVIEW); so does
+// one whose date the parser misread. This route lets that person set the
+// resume, and ONLY records the same ooo_resume_scheduled event the reply
+// handler writes (source operator_scheduled). No notes, no hold, no send: the
+// agent's ordinary gates — ownership, caps, windows, suppression — decide after
+// the instant. GET plans; POST applies the plan the operator reviewed.
+async function planOooResumeScheduleFor(leadId, { resumeAt, by, evidence }) {
+  const state = await loadFalseOptOutState(leadId);
+  if (!state.lead || state.leadMatches !== 1) {
+    return { state, status: 404, error: 'exactly one ColdEmail row is required for this lead' };
+  }
+  if (state.boardLeads.length) {
+    return { state, status: 409, error: 'this lead has a Pipeline card; its next action is managed on the board' };
+  }
+  const plan = planOooResumeSchedule({
+    lead: state.lead, activities: state.activities, suppressedEmails: state.suppressedEmails, resumeAt, by, evidence,
+  });
+  return { state, plan };
+}
+
+app.get('/api/ops/ooo-resume/:id', requireAuth, async (req, res) => {
+  try {
+    const { plan, status, error } = await withAuth(() => planOooResumeScheduleFor(String(req.params.id || '').trim(), {
+      resumeAt: String(req.query.resumeAt || ''), by: String(req.query.by || ''), evidence: String(req.query.evidence || ''),
+    }));
+    if (error) return res.status(status).json({ error });
+    res.json({ dryRun: true, ...plan });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ooo-resume plan]', error.message);
+    res.status(503).json({ error: 'OOO resume could not be planned: ' + error.message });
+  }
+});
+
+app.post('/api/ops/ooo-resume/:id', requireAuth, async (req, res) => {
+  const leadId = String(req.params.id || '').trim();
+  if (agentState.running || automationLaunchReserved) {
+    return res.status(409).json({ error: 'an agent pass or another reserved operation is running; retry outside it' });
+  }
+  automationLaunchReserved = true;
+  try {
+    const { plan, state, status, error } = await withAuth(() => planOooResumeScheduleFor(leadId, {
+      resumeAt: String(req.body?.resumeAt || ''), by: String(req.body?.by || ''), evidence: String(req.body?.evidence || ''),
+    }));
+    if (error) return res.status(status).json({ error });
+    if (!plan.ok) return res.status(409).json({ ok: false, refusals: plan.refusals, checks: plan.checks });
+    if (String(req.body?.fingerprint || '') !== plan.fingerprint) {
+      return res.status(409).json({ error: 'The plan changed since it was reviewed; re-run the GET dry run', checks: plan.checks });
+    }
+    // Idempotent: the event id names the OOO and the reviewed date.
+    const eventsAppended = await withAuth(() => appendMissingEvents([plan.event], state.activities));
+    invalidateOutreachCache('ooo_resume_scheduled');
+    const after = await withAuth(() => loadFalseOptOutState(leadId));
+    console.log(`[ooo-resume] ${leadId}: resume scheduled for ${JSON.parse(plan.event.metadata).resumeAt}; by ${req.body?.by}`);
+    res.json({ ok: true, eventsAppended, event: plan.event, verified: {
+      resumeEventPresent: after.activities.some(row => row.eventId === plan.event.eventId),
+      notes: after.lead?.notes || '', emailStatus: after.lead?.emailStatus || '', emailStep: after.lead?.emailStep || '',
+    }, automationSent: false });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ooo-resume apply]', error.message);
     res.status(500).json({ error: error.message });
   } finally {
     automationLaunchReserved = false;

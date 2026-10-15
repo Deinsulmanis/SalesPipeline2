@@ -203,7 +203,7 @@ const { hasUndeliveredDemoPair } = require('./integrations/demo-intent-state');
 const { oldestDueFirst, followUpSuccessTarget } = require('./integrations/scheduler-fairness');
 const { isFollowUpDue, FOLLOW_UP_STEP_COUNT } = require('./integrations/sequence-timing');
 const { unrecoveredTouchBlock } = require('./integrations/same-touch-recovery');
-const { planOooResume, buildOooResumeEvent } = require('./integrations/ooo-pause');
+const { planOooResume, buildOooResumeEvent, oooResumeCopy } = require('./integrations/ooo-pause');
 const { fairShareQueuedOrder } = require('./integrations/scheduled-slot-allocator');
 const {
   credentialsFor: gmailCredentialsFor, parseRegistry: parseGmailRegistry, withDefaultInboxes: withDefaultGmailInboxes,
@@ -2105,6 +2105,11 @@ async function deliverOrdinaryColdStep({
   // later one at send time too, not only in selection (same-touch-recovery.js).
   const failedTouch = unrecoveredTouchBlock(lead, activitiesForCycle || [], step);
   if (failedTouch) return { delivered: false, reason: failedTouch.reason };
+  // OOO resume (ooo-pause.js): the ledger's next unsent touch, never a stale
+  // row's guess; its first touch may open with one line of context.
+  const oooResume = Number(step) > 1 ? oooResumeCopy(lead, activitiesForCycle || [], { step: Number(step) }) : null;
+  if (oooResume?.refusal) return { delivered: false, reason: oooResume.refusal };
+  const resumeContext = oooResume?.contextLine ? { oooResumeContext: true } : {};
   // Staffing Follow-up #2 landing link. Pure and pinned: re-derived here from
   // the same action id and earlier attempts the caller rendered from, so the
   // locked-copy comparison below also proves the URL is unchanged. Null for
@@ -2121,7 +2126,7 @@ async function deliverOrdinaryColdStep({
   // Preview HTML previously disappeared before Gmail's plain-text-only MIME
   // assembly. Preserve the approved bold phrase without changing the text.
   const staffingEmail = lead.emailTemplateId === STAFFING_TEMPLATE
-    ? renderStaffingEmail(lead, step, landingPlan?.tracked ? { landingPageUrl: landingPlan.url } : {}) : null;
+    ? renderStaffingEmail(lead, step, landingPlan?.tracked ? { landingPageUrl: landingPlan.url, ...resumeContext } : resumeContext) : null;
   if (staffingEmail && staffingEmail.body !== body) return { delivered: false, reason: 'staffing delivery body differs from locked copy' };
   const clientCopyProblem = clientDeliveryCopyProblem(lead, step, body);
   if (clientCopyProblem) return { delivered: false, reason: clientCopyProblem };
@@ -2205,6 +2210,8 @@ async function deliverOrdinaryColdStep({
     subject, content: '', metadata: JSON.stringify({
       leadId: lead.id, step: Number(step), senderInboxId: sender.id,
       rfcMessageId, gmailThreadId: thread?.threadId || '',
+      // Audit: the touch that resumes the sequence after an OOO.
+      ...(oooResume?.resumed ? { oooResume: { resumeAt: oooResume.state.resumeAt, contextLine: oooResume.contextLine } } : {}),
       // The pin every later render of this action must honour.
       ...(landingLink ? { landingLink } : {}),
     }),
@@ -2509,43 +2516,54 @@ async function handleUnsubscribe(lead) {
 
 // An autoresponder pauses cold automation; it never becomes a [MANUAL HOLD].
 // A manual hold is absolute and only Resume releases it, which is how OOO
-// leads used to stay stopped forever. The pause is one append-only
-// ooo_resume_scheduled activity (integrations/ooo-pause.js): reply-operations
-// turns it into WAIT_UNTIL_RETURN, and ownership keeps cold sends off until the
-// resume instant. A later human reply, booking, opt-out or suppression — or a
+// leads used to stay stopped forever. A reliable stated return date becomes one
+// append-only ooo_resume_scheduled activity (integrations/ooo-pause.js):
+// reply-operations turns it into WAIT_UNTIL_RETURN, and ownership keeps cold
+// sends off until the resume instant. With no reliable date nothing is
+// scheduled — no date is invented — and the lead waits for a person to set one
+// (OOO_REVIEW). A later human reply, booking, opt-out or suppression — or a
 // hold a PERSON applies — still outranks it. The notes marker is history only.
-async function handleOutOfOffice(lead, { returnDate = '', occurredAt = '', messageId = '', activities = [] } = {}) {
+async function handleOutOfOffice(lead, { returnDate = '', occurredAt = '', messageId = '', subtype = null, activities = [] } = {}) {
   const rowNum = await resolveRow(lead.id);
   if (!rowNum) {
     console.warn(`[handleOutOfOffice] lead ${lead.id} (${lead.email}) no longer in sheet — skipping write.`);
     return { skipped: 'lead_row_missing' };
   }
-  const plan = planOooResume({ returnDate, occurredAt, now: Date.now() });
-  const event = buildOooResumeEvent({
-    lead, oooMessageId: messageId, oooOccurredAt: occurredAt, ...plan,
-    company: cleanCompanyName(lead.company) || lead.company || '',
-  });
-  // The same autoresponder is handled once; re-processing it records nothing new.
-  if (!(activities || []).some(row => row.eventId === event.eventId)) {
-    // Recorded BEFORE the notes marker: if this append fails the handler throws
-    // and the lead stays exactly as it was, still protected by the OOO reply
-    // itself (a stated date waits for it; no date waits indefinitely).
-    await recordColdCallActivityStrict(event);
-    if (Array.isArray(activities)) activities.push(event);
+  const plan = planOooResume({ returnDate, occurredAt, subtype });
+  if (plan.resumeAt) {
+    const event = buildOooResumeEvent({
+      lead, oooMessageId: messageId, oooOccurredAt: occurredAt,
+      resumeAt: plan.resumeAt, resumeSource: plan.resumeSource, statedReturnDate: plan.statedReturnDate,
+      company: cleanCompanyName(lead.company) || lead.company || '',
+    });
+    // The same autoresponder is handled once; re-processing it records nothing new.
+    if (!(activities || []).some(row => row.eventId === event.eventId)) {
+      // Recorded BEFORE the notes marker: if this append fails the handler throws
+      // and the lead stays exactly as it was, still protected by the OOO reply
+      // itself (with no resume record it waits for a person).
+      await recordColdCallActivityStrict(event);
+      if (Array.isArray(activities)) activities.push(event);
+    }
   }
+  // One OOO marker, describing the newest autoresponder.
   const notes = String(lead.notes || '');
-  const stated = Date.parse(returnDate || '');
-  const marker = Number.isFinite(stated)
-    ? `[REPLY: OOO until ${String(returnDate).slice(0, 10)}]`
-    : '[REPLY: OOO — retry in 7d]';
-  if (!/\[REPLY:\s*OOO/i.test(notes)) {
-    const nextNotes = prependNote(notes, marker);
+  const marker = plan.statedReturnDate && plan.resumeAt ? `[REPLY: OOO until ${plan.statedReturnDate}]`
+    : plan.resumeAt ? '[REPLY: OOO — retry in 7d]'
+      : '[REPLY: OOO — no return date, review]';
+  const existing = (notes.match(/\[REPLY:\s*OOO[^\]]*\]/i) || [''])[0];
+  if (existing !== marker) {
+    const nextNotes = existing ? notes.replace(existing, marker) : prependNote(notes, marker);
     await applyLeadChange(lead.id, {
       notes: nextNotes,
     }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
     lead.notes = nextNotes;
   }
+  if (!plan.resumeAt) {
+    console.log(`  ⏸ ${lead.company} — OOO with no reliable return date (${plan.reason}); held for human review, no resume scheduled`);
+    return { oooReviewRequired: true };
+  }
   console.log(`  ⏸ ${lead.company} — OOO pause until ${plan.resumeAt} (${plan.resumeSource}); no manual hold`);
+  return undefined;
 }
 
 async function handleWrongPerson(lead, { replyText = '', suppliedContact = '', proposedEmail = '' } = {}) {
@@ -3369,6 +3387,9 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
             result = await handleOutOfOffice(lead, {
               returnDate: canonicalReply.returnDate || '', occurredAt: message.occurredAt,
               messageId: message.messageId || '', activities: attributionActivities,
+              // Only the rule reading names the subtype; a model-decided OOO
+              // is treated as an absence (reviewed), never a generic retry.
+              subtype: canonicalReply.state === 'automated_reply' ? canonicalReply.subtype || null : null,
             });
             break;
           // Historical or CHECK_ONLY: no send-capable handler may run.
@@ -4785,7 +4806,12 @@ function coldSendGate(lead, context = null) {
 function staffingFollowUpBody(lead, step, activities = []) {
   const landingPlan = staffingColdStepLandingPlan({ lead, step, activities });
   if (landingPlan?.status === LANDING_PLAN_STATUS.BLOCKED) throw new Error(`landing link blocked: ${landingPlan.reason}`);
-  const email = renderStaffingEmail(lead, step, landingPlan?.tracked ? { landingPageUrl: landingPlan.url } : {});
+  // The first touch after an OOO return opens with one line of context; the
+  // same pure decision is re-derived in deliverOrdinaryColdStep.
+  const oooResume = oooResumeCopy(lead, activities, { step });
+  if (oooResume.refusal) throw new Error(oooResume.refusal);
+  const resumeContext = oooResume.contextLine ? { oooResumeContext: true } : {};
+  const email = renderStaffingEmail(lead, step, landingPlan?.tracked ? { landingPageUrl: landingPlan.url, ...resumeContext } : resumeContext);
   const bad = validateStaffingEmail(email, step);
   if (bad) throw new Error(bad);
   return email.body;

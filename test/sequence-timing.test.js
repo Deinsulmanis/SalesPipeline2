@@ -236,7 +236,9 @@ test('Touch 3 requires a delivered Touch 2: a step-1 lead is only ever offered s
 });
 
 test('the reservation and provider-recovery protections are unchanged', () => {
-  const deliver = agent.slice(agent.indexOf('async function deliverOrdinaryColdStep('), agent.indexOf('async function deliverOrdinaryColdStep(') + 6000);
+  // The whole function, to its closing brace — not a fixed-length prefix.
+  const start = agent.indexOf('async function deliverOrdinaryColdStep(');
+  const deliver = agent.slice(start, agent.indexOf('\n}\n', start) + 2);
   assert.match(deliver, /recovered = await findSuccessfulSequenceSend\(\{ gmail: mailbox, rfcMessageId \}\);/,
     'a step Gmail already delivered is recorded, never resent');
   assert.match(deliver, /an unresolved delivery reservation exists and Gmail has not confirmed it/,

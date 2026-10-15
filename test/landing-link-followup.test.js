@@ -144,7 +144,7 @@ test('deliverOrdinaryColdStep: plan before re-render and recovery; issuance befo
   const order = [
     'staffingColdStepLandingPlan({ lead, step, activities: activitiesForCycle || [] })',
     'landing link blocked',
-    "renderStaffingEmail(lead, step, landingPlan?.tracked ? { landingPageUrl: landingPlan.url } : {})",
+    "renderStaffingEmail(lead, step, landingPlan?.tracked ? { landingPageUrl: landingPlan.url, ...resumeContext } : resumeContext)",
     "staffing delivery body differs from locked copy",
     'findSuccessfulSequenceSend',
     'an unresolved delivery reservation exists',

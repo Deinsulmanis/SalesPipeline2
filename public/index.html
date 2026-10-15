@@ -8491,6 +8491,17 @@ const INBOX_FILTERS = Object.freeze([
 
 function setInboxFilter(value) { inboxFilter = value; renderInboxWorkspace(); }
 
+// An automated reply's OOO state (server: integrations/ooo-pause.js). A lead
+// with no reliable return date waits for a person; nothing invents a date.
+const OOO_PAUSE_LABEL = Object.freeze({
+  review_required: ['Review out-of-office return date', 'Human'],
+  waiting: ['Waiting for return', 'Waiting'],
+  resume_due: ['Resumes at the next send window', 'Automation'],
+  resumed: ['Sequence resumed after return', 'Automation'],
+  sequence_complete: ['Sequence complete — nothing to resume', 'None'],
+  superseded_by_human_reply: ['Human reply supersedes the OOO', 'Human'],
+});
+
 async function loadInboxWorkspace() {
   const host = document.getElementById('inbox-content');
   host.className = 'workspace-empty'; host.innerHTML = '<strong>Loading the reply queue…</strong>Reading canonical replies and Next Actions.';
@@ -8533,12 +8544,14 @@ function renderInboxWorkspace() {
     const action = inboxActionFor(record);
     const body = record.hasText ? record.replyText : 'Reply text unavailable — historical body was not stored.';
     const category = RD_CATEGORY_LABEL[record.category] || record.category;
-    const actionLabel = action?.label || (record.category === 'automated_reply' ? 'No human response required' : record.pipelinePresence ? 'Review reply' : 'Review before promotion');
-    const owner = action?.owner ? (NA_OWNER_LABEL[action.owner] || action.owner) : (record.category === 'automated_reply' ? 'Waiting' : 'Human');
+    const ooo = !action && record.oooPause ? OOO_PAUSE_LABEL[record.oooPause.status] : null;
+    const actionLabel = action?.label || (ooo ? ooo[0] : record.category === 'automated_reply' ? 'No human response required' : record.pipelinePresence ? 'Review reply' : 'Review before promotion');
+    const owner = action?.owner ? (NA_OWNER_LABEL[action.owner] || action.owner) : (ooo ? ooo[1] : record.category === 'automated_reply' ? 'Waiting' : 'Human');
+    const dueAt = action?.dueAt || (ooo && record.oooPause.resumeAt ? record.oooPause.resumeAt : '');
     return `<button type="button" class="inbox-row" onclick="openCeDetail('${escAttr(record.leadId)}')">
       <span class="inbox-person"><b>${esc(record.company || 'Unknown company')}</b><small>${esc([record.contactName,record.email].filter(Boolean).join(' · '))}</small><small>${esc(rdFormatTime(record.occurredAt))}</small></span>
       <span class="inbox-message"><span class="inbox-state">${esc(category)}</span><p>${esc(body)}</p><small>What they said · ${esc(record.reason || record.subtype || 'No additional reason stored')}</small></span>
-      <span class="inbox-action"><b>${esc(actionLabel)}</b><small>${esc(owner)}${action?.waitingOn ? ` · ${HOT_WAITING_LABEL[action.waitingOn] || action.waitingOn}` : ''}</small><small>${action?.dueAt ? `Due ${esc(rdFormatTime(action.dueAt))}` : 'No invented due date'}</small></span>
+      <span class="inbox-action"><b>${esc(actionLabel)}</b><small>${esc(owner)}${action?.waitingOn ? ` · ${HOT_WAITING_LABEL[action.waitingOn] || action.waitingOn}` : ''}</small><small>${dueAt ? `${ooo ? 'Resume' : 'Due'} ${esc(rdFormatTime(dueAt))}` : 'No invented due date'}</small></span>
     </button>`;
   }).join('');
 }

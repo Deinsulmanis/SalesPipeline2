@@ -104,6 +104,21 @@ function addVancouverDays(ms, days) {
   return result;
 }
 
+/**
+ * 00:00 Vancouver time on a calendar date ('YYYY-MM-DD'), as epoch ms; NaN when
+ * the value is not a date. A prospect "back October 19" is back from the start
+ * of the 19th here, not from UTC midnight (the 18th's afternoon in Vancouver).
+ */
+function vancouverDayStart(isoDate) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(isoDate || ''));
+  if (!match) return NaN;
+  const targetWall = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  if (new Date(targetWall).toISOString().slice(0, 10) !== match[0]) return NaN;
+  let result = targetWall - (wallAsUtc(targetWall) - targetWall);
+  result = targetWall - (wallAsUtc(result) - result);
+  return result;
+}
+
 /** ISO weekday, 1 = Monday … 7 = Sunday, in Vancouver. */
 function vancouverWeekday(ms) {
   const p = wallClock(ms);
@@ -278,6 +293,6 @@ function describeSequence() {
 module.exports = {
   SEQUENCE_TIMING, FOLLOW_UP_STEP_COUNT, NOMINAL_TOUCH_DAYS, DUE_BASIS,
   SEND_WINDOWS, SEND_WINDOW_CRON, DAY_MS,
-  addVancouverDays, vancouverWeekday, nextSendWindowAt,
-  touch1SentAt, stepAlreadySent, nextFollowUp, followUpDueAt, isFollowUpDue, describeSequence,
+  addVancouverDays, vancouverDayStart, vancouverWeekday, nextSendWindowAt,
+  touch1SentAt, stepAlreadySent, sendsFor, nextFollowUp, followUpDueAt, isFollowUpDue, describeSequence,
 };

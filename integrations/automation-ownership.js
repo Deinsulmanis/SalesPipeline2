@@ -95,6 +95,8 @@ const HUMAN_OWNED_ACTIONS = Object.freeze([
   REPLY_ACTION.RESPOND, REPLY_ACTION.CONTINUE_EVALUATION, REPLY_ACTION.BOOK_CALL,
   REPLY_ACTION.CONTACT_SUPPLIED, REPLY_ACTION.CONTACT_CHANGE_REVIEW,
   REPLY_ACTION.DECISION_MAKER_FOLLOW_UP, REPLY_ACTION.INVESTIGATE,
+  // An OOO with no reliable return date: a person sets the resume date.
+  REPLY_ACTION.OOO_REVIEW,
 ]);
 
 const norm = value => String(value || '').trim().toLowerCase();
@@ -421,8 +423,8 @@ function deriveOwnershipVerdict(lead = {}, {
     const reached = resumeAt && new Date(now).getTime() >= Date.parse(resumeAt);
     if (!reached) {
       const why = operation.dueAtSource === 'ooo_policy_default'
-        ? 'an out-of-office reply gave no return date, so the 7-day OOO policy applies'
-        : operation.dueAtSource === 'ooo_operator_repair'
+        ? 'an automated acknowledgement gave no date, so the 7-day autoresponder policy applies'
+        : ['ooo_operator_repair', 'ooo_operator_scheduled'].includes(operation.dueAtSource)
           ? 'an out-of-office pause was confirmed by an operator'
           : 'the prospect stated a return/revisit date';
       return verdict({
