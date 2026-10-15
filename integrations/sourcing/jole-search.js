@@ -115,9 +115,12 @@ function siteTieOf(contact = {}, site = {}) {
  * for a true site executive; otherwise the contact is returned as ineligible.
  * At employers over 1,000 employees (or of unknown size) only EXACT and
  * REGION contacts are eligible: same-state alone is no connection to the site.
+ * With `siteFirst`, the site tie outranks the family (exact-site buyers of any
+ * approved family before regional ones), to keep exact-site contacts near the
+ * approved 689's ~74%.
  * Returns { ranked, ineligible }.
  */
-function rankJoleContacts(contacts = [], { site = {}, employeeCount = null } = {}) {
+function rankJoleContacts(contacts = [], { site = {}, employeeCount = null, siteFirst = false } = {}) {
   const smallMid = Number.isFinite(employeeCount) && employeeCount <= SMALL_MID_MAX_EMPLOYEES;
   const ranked = [];
   const ineligible = [];
@@ -139,8 +142,12 @@ function rankJoleContacts(contacts = [], { site = {}, employeeCount = null } = {
       key: [BUYER_FAMILIES.findIndex(f => f.id === family), tie ? SITE_TIE_ORDER.indexOf(tie) : 3,
         contact.catchAll === false ? 0 : contact.catchAll === true ? 1 : 2, String(contact.id || contact.title || '')] });
   }
+  // siteFirst (reveal selection, operator instruction 2026-10-15): exact site,
+  // then region, then state, then no tie; the approved family order applies
+  // within each tier.
+  const order = siteFirst ? [1, 0, 2] : [0, 1, 2];
   ranked.sort((a, b) => {
-    for (let i = 0; i < 3; i++) if (a.key[i] !== b.key[i]) return a.key[i] - b.key[i];
+    for (const i of order) if (a.key[i] !== b.key[i]) return a.key[i] - b.key[i];
     return a.key[3] < b.key[3] ? -1 : a.key[3] > b.key[3] ? 1 : 0;
   });
   return { ranked: ranked.map(({ key, ...item }) => item), ineligible };

@@ -256,3 +256,14 @@ test('commuting region: places within 50 miles, nearest first', () => {
   assert.equal(findPlace([macon], { city: 'Macon', state: 'GA' }), macon);
   assert.equal(findPlace([macon], { city: 'Bibb', state: 'GA' }), null);
 });
+
+test('site-first selection: exact-site buyers of any approved family before regional or state ones', () => {
+  const contacts = [
+    { id: 'plant-state', title: 'Plant Manager', siteTie: 'STATE', catchAll: false },
+    { id: 'hr-exact', title: 'HR Manager', siteTie: 'EXACT', catchAll: false },
+    { id: 'plant-region', title: 'Operations Manager', siteTie: 'REGION', catchAll: false },
+    { id: 'maint-exact', title: 'Maintenance Manager', siteTie: 'EXACT', catchAll: false },
+  ];
+  assert.deepEqual(rankJoleContacts(contacts, { employeeCount: 300, siteFirst: true }).ranked.map(r => r.contact.id), ['hr-exact', 'maint-exact', 'plant-region', 'plant-state']);
+  assert.deepEqual(rankJoleContacts(contacts, { employeeCount: 300 }).ranked.map(r => r.contact.id), ['plant-region', 'plant-state', 'hr-exact', 'maint-exact']);
+});
