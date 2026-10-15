@@ -75,7 +75,10 @@ const FAMILY_PATTERNS = Object.freeze([
   ['superintendent_site', /\b(superintendent|site (manager|director|leader|lead))\b/],
   ['owner_executive', /\b(owner|president|ceo|chief executive|founder)\b/],
 ]);
-const NOT_A_BUYER = /\b(assistant|intern|coordinator|specialist|generalist|recruiter|analyst|clerk|technician|engineer)\b/;
+// Apollo's exact-title search still returns these (2026-10-15 validation:
+// "Sales Operations Manager", "Finance Operations Manager", "IT Site Manager",
+// "Maintenance Manager (Retired)"); none is an approved buyer.
+const NOT_A_BUYER = /\b(assistant|intern|coordinator|specialist|generalist|recruiter|analyst|clerk|technician|engineer|sales|marketing|finance|financial|treasury|accounting|it|technology|retired|former)\b/;
 // Small and mid-sized employers: up to 1,000 employees (the Phase 5 size bands
 // 1-200 and 201-1000).
 const SMALL_MID_MAX_EMPLOYEES = 1000;
@@ -141,10 +144,19 @@ const ymd = date => new Date(date).toISOString().slice(0, 10);
  * Free company discovery (apollo_organizations_lookup) for one approved sector.
  * Geography is the HIRING SITE: organization_job_locations, not headquarters.
  */
-function joleCompanyDiscoveryParams({ sectorId, page = 1, perPage = 100, now = Date.now(), evidenceDays = 30 } = {}) {
+// Employer-size bands for discovery. Unbanded, Apollo returns the largest
+// employers first: the 2026-10-15 sample was 87% 1,001+ employees vs 47% in
+// the approved 689. Query each band separately so the pool keeps the approved
+// mix (Phase 5 companies: 1-200 24%, 201-1000 29%, 1001+ 47%). Discovery only;
+// the ICP is unchanged.
+const EMPLOYEE_BANDS = Object.freeze({ small: '1,200', mid: '201,1000', large: '1001,1000000' });
+
+function joleCompanyDiscoveryParams({ sectorId, page = 1, perPage = 100, now = Date.now(), evidenceDays = 30, sizeBand = null } = {}) {
   const sector = JOLE_SECTORS.find(item => item.id === sectorId);
   if (!sector) throw new Error(`unknown Jole sector ${sectorId}`);
+  if (sizeBand != null && !EMPLOYEE_BANDS[sizeBand]) throw new Error(`unknown size band ${sizeBand}`);
   return {
+    ...(sizeBand ? { organization_num_employees_ranges: [EMPLOYEE_BANDS[sizeBand]] } : {}),
     organization_naics_codes: [...sector.naics],
     not_organization_naics_codes: [...SEARCH_EXCLUDED_NAICS],
     not_organization_sic_codes: [...SEARCH_EXCLUDED_SIC],
@@ -199,6 +211,6 @@ function sectorScreen({ name = '', domain = '', siteText = null } = {}) {
 }
 
 module.exports = {
-  JOLE_SECTORS, SEARCH_EXCLUDED_SIC, SEARCH_EXCLUDED_NAICS, CRAFT_JOB_TITLES, BUYER_FAMILIES, SMALL_MID_MAX_EMPLOYEES,
+  JOLE_SECTORS, SEARCH_EXCLUDED_SIC, SEARCH_EXCLUDED_NAICS, CRAFT_JOB_TITLES, BUYER_FAMILIES, SMALL_MID_MAX_EMPLOYEES, EMPLOYEE_BANDS,
   joleCompanyDiscoveryParams, joleBuyerSearchParams, sectorScreen, buyerFamilyOf, siteTieOf, rankJoleContacts,
 };

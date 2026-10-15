@@ -152,3 +152,28 @@ solar (rejects residential installers), contractor names or contractor
 websites (contractors-for-hire are outside the ICP), unchecked sites and sites
 with no industrial evidence. Only a reachable site that shows industrial
 operations passes.
+
+## Zero-credit validation, 2026-10-15
+
+325 discovered companies screened (255 fresh), Apollo credits spent 0.
+
+| Gate | Companies |
+|---|---:|
+| Duplicate of the 689 corpus | 70 |
+| Current client / competitor / staffing | 0 / 0 / 0 |
+| Sector reject on name (government, solar, contractor) | 7 |
+| Website holds (no industrial evidence 65, contractor 7, unreachable 10, no domain 6) | 88 |
+| No ≤30-day approved craft posting | 115 |
+| **Pass every free company-level gate** | **45** (17.6% of fresh) |
+
+Defects found and fixed during the run: name-extension identity matching
+("Koch" → "KOCH Finishing Systems"; now exact name or the employer's own
+domain only) and buyer titles Apollo's exact-title search still returns
+(sales, finance, IT, retired). Buyer availability (free people search, hiring-
+site state): 36 of 45 passers have ≥1 approved buyer with an email on file;
+1.91 revealable contacts per passer at Phase 5's 3-per-company cap.
+
+Open issue: the passing employers are 87% 1,001+ employees (Phase 5: 47%;
+none ≤200 vs 24%), because unbanded discovery returns the largest employers
+first. Discover per size band (`sizeBand`) and re-validate before the
+25-reveal quality test.

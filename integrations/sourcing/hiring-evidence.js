@@ -64,14 +64,14 @@ function usState(location) {
 
 /**
  * Does this posting belong to the employer? The posting company equals the
- * employer's name (legal suffixes ignored) or extends it ("Acme Steel" →
- * "Acme Steel Fabrication"), or the employer's own domain hosts the posting.
- * A SHORTER posting name ("Acme" for "Acme Steel") is never enough.
+ * employer's name (legal suffixes ignored), or the employer's own domain hosts
+ * the posting. A shorter OR longer name is never enough: "Koch" (Koch
+ * Industries, kochinc.com) is not "KOCH Finishing Systems".
  */
 function sameEmployer(posting, employer) {
   const a = bare(posting.company);
   const b = bare(employer.name);
-  if (a && b && (a === b || (b.length >= 4 && a.startsWith(`${b} `)))) return true;
+  if (a && b && a === b) return true;
   const domain = String(employer.domain || '').toLowerCase().replace(/^www\./, '');
   const host = hostOf(posting.url);
   return Boolean(domain && host && (host === domain || host.endsWith(`.${domain}`)));

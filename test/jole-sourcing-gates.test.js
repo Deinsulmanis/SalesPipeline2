@@ -37,6 +37,10 @@ test('discovery parameters: hiring-site geography, trailing 30 days, staffing ex
   assert.deepEqual(p.not_organization_sic_codes, ['7361', '7363']);
   assert.equal(p.page, 2);
   assert.throws(() => joleCompanyDiscoveryParams({ sectorId: 'pharma' }), /unknown Jole sector/);
+  assert.equal(p.organization_num_employees_ranges, undefined);
+  assert.deepEqual(joleCompanyDiscoveryParams({ sectorId: 'shipyard_marine', now: NOW, sizeBand: 'small' }).organization_num_employees_ranges, ['1,200']);
+  assert.deepEqual(joleCompanyDiscoveryParams({ sectorId: 'shipyard_marine', now: NOW, sizeBand: 'mid' }).organization_num_employees_ranges, ['201,1000']);
+  assert.throws(() => joleCompanyDiscoveryParams({ sectorId: 'shipyard_marine', sizeBand: 'huge' }), /unknown size band/);
 });
 
 test('buyer families are the five approved roles, exact titles only, in the approved order', () => {
@@ -125,6 +129,10 @@ test('identity: the employer’s own careers domain counts; a name collision doe
   assert.equal(evaluateHiringEvidence({ employer: e, now: NOW, postings: [posting({ company: 'Acme Steel Fabrication Group', url: 'https://careers.acmesteel.com/jobs/1' })] }).status, 'verified');
   assert.equal(evaluateHiringEvidence({ employer: e, now: NOW, postings: [posting({ company: 'Acme', url: 'https://www.linkedin.com/jobs/view/1' })] }).status, 'hold');
   assert.equal(evaluateHiringEvidence({ employer: { name: 'Austin Industrial' }, now: NOW, postings: [posting({ company: 'Austin Dynamics' })] }).status, 'hold');
+  // A longer posting name is a different company unless the employer's domain hosts it.
+  assert.equal(evaluateHiringEvidence({ employer: { name: 'Koch', domain: 'kochinc.com' }, now: NOW, postings: [posting({ company: 'KOCH Finishing Systems' })] }).status, 'hold');
+  assert.equal(evaluateHiringEvidence({ employer: { name: 'Atlas Copco' }, now: NOW, postings: [posting({ company: 'Atlas Copco Group' })] }).status, 'verified');
+  assert.equal(evaluateHiringEvidence({ employer: { name: 'Austal' }, now: NOW, postings: [posting({ company: 'Austal USA' })] }).status, 'verified');
 });
 
 test('Jole competitors named by Jorge are excluded by full name or domain only', () => {
@@ -168,7 +176,8 @@ test('buyer family of a title: approved families only', () => {
     ['Maintenance Superintendent', 'maintenance_reliability'], ['Reliability Manager', 'maintenance_reliability'],
     ['Site Manager', 'superintendent_site'], ['Superintendent', 'superintendent_site'], ['President', 'owner_executive'], ['Owner', 'owner_executive'],
   ]) assert.equal(buyerFamilyOf(title), family, title);
-  for (const title of ['HR Coordinator', 'Maintenance Technician', 'Recruiter', 'Sales Manager', 'Process Engineer', 'Executive Assistant to the President'])
+  for (const title of ['HR Coordinator', 'Maintenance Technician', 'Recruiter', 'Sales Manager', 'Process Engineer', 'Executive Assistant to the President',
+    'Sales Operations Manager', 'Finance Operations Manager', 'IT Site Manager', 'Technical Maintenance Manager(Retired)', 'Vice President, Operational Technology', 'Treasury Operations Manager'])
     assert.equal(buyerFamilyOf(title), null, title);
 });
 
