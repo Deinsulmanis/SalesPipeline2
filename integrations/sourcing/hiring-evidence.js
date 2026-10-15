@@ -14,6 +14,11 @@
  *   - a public URL (https)
  *   - a posting date no more than `maxAgeDays` (default 30, the ICP rule) old
  *     and not in the future
+ *   - work for the employer's OWN operations: a role that supplies service
+ *     personnel to customer sites (field service, installers, travelling
+ *     crews, outage/turnaround work) is contractor-for-hire work and does not
+ *     count. Judged on the title and, with `requireDescription`, the posting
+ *     text, which must then have been read.
  * Otherwise the employer is HELD before any paid email reveal.
  */
 
@@ -35,6 +40,23 @@ const CRAFT_CATEGORIES = Object.freeze([
 // Not the trade itself (mirrors the production role cleaner's NOT_THE_TRADE),
 // plus office roles that merely mention a trade.
 const NOT_THE_TRADE = /\b(helpers?|apprentices?|trainees?|interns?|supervisors?|foreman|foremen|laborers?|deckhands?|engineers?|managers?|inspectors?|instructors?|sales|coordinators?|planners?|schedulers?|estimators?|recruiters?)\b/;
+
+// Contractor-for-hire signals (operator decision 2026-10-15): the posting
+// supplies labor or service personnel to customers. "Serving customers across
+// industries" in company boilerplate is not one of them.
+const FIELD_SERVICE_TITLE = /\b(field service|service (technicians?|techs?|mechanics?|electricians?)|installers?|installation (technicians?|techs?|mechanics?|crew)|travel(?:l)?ing|travell?ers?|road (techs?|technicians?|mechanics?)|outage|turnaround|shutdown)\b/;
+const CUSTOMER_SITE_TEXT = /\b((at|to|on|in) (our )?(customer|client)s?'? ?(sites?|locations?|facilities|facility|premises|plants?|job ?sites?|refineries)|travel(?:l)?ing (welders?|technicians?|mechanics?|electricians?|millwrights?|pipefitters?|positions?|roles?|crews?)|per diem|field service)\b/;
+const TRAVEL_PERCENT = /travel[^.%]{0,40}?(\d{2,3})\s?%|(\d{2,3})\s?%[^.%]{0,20}travel/;
+
+/** Does this posting supply service personnel to customers rather than staff the employer's own site? */
+function fieldServiceForCustomers({ title = '', description = '' } = {}) {
+  const t = norm(title);
+  if (FIELD_SERVICE_TITLE.test(t)) return true;
+  const d = String(description || '').toLowerCase().replace(/\s+/g, ' ');
+  if (CUSTOMER_SITE_TEXT.test(d)) return true;
+  const travel = d.match(TRAVEL_PERCENT);
+  return Boolean(travel && Number(travel[1] || travel[2]) >= 25);
+}
 
 const US_STATES = new Set('AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC'.split(' '));
 const LEGAL = /\b(llc|l l c|inc|incorporated|ltd|corp|corporation|co|company|lp|llp|plc|group|holdings|the|usa|us|na|north america)\b/g;
@@ -77,10 +99,12 @@ function sameEmployer(posting, employer) {
   return Boolean(domain && host && (host === domain || host.endsWith(`.${domain}`)));
 }
 
-function judgePosting(posting, employer, { now, maxAgeDays }) {
+function judgePosting(posting, employer, { now, maxAgeDays, requireDescription }) {
   if (!sameEmployer(posting, employer)) return 'identity_mismatch';
   const role = approvedCraftRole(posting.title);
   if (!role) return 'role_not_approved';
+  if (fieldServiceForCustomers(posting)) return 'field_service_for_customers';
+  if (requireDescription && typeof posting.description !== 'string') return 'description_not_checked';
   if (!usState(posting.location)) return 'location_not_us';
   if (!/^https:\/\//i.test(String(posting.url || ''))) return 'no_public_url';
   const posted = Date.parse(posting.postedAt || '');
@@ -95,9 +119,9 @@ function judgePosting(posting, employer, { now, maxAgeDays }) {
  * `evidence` is the freshest qualifying posting: employer, role, raw title,
  * site, state, url, postedAt, verifiedAt.
  */
-function evaluateHiringEvidence({ employer = {}, postings = [], now = Date.now(), maxAgeDays = 30 } = {}) {
+function evaluateHiringEvidence({ employer = {}, postings = [], now = Date.now(), maxAgeDays = 30, requireDescription = false } = {}) {
   if (!employer.name && !employer.domain) return { status: 'hold', reason: 'no_employer_identity', considered: 0 };
-  const verdicts = postings.map(posting => ({ posting, reason: judgePosting(posting, employer, { now, maxAgeDays }) }));
+  const verdicts = postings.map(posting => ({ posting, reason: judgePosting(posting, employer, { now, maxAgeDays, requireDescription }) }));
   const good = verdicts.filter(item => !item.reason).map(item => item.posting)
     .sort((x, y) => Date.parse(y.postedAt) - Date.parse(x.postedAt));
   if (!good.length) {
@@ -112,6 +136,7 @@ function evaluateHiringEvidence({ employer = {}, postings = [], now = Date.now()
     status: 'verified', reason: 'verified_public_posting', considered: postings.length,
     roles: [...new Set(good.map(posting => approvedCraftRole(posting.title)))],
     qualifyingPostings: good.length,
+    qualifying: good,
     evidence: {
       employer: employer.name || '', postingCompany: best.company || '', role: approvedCraftRole(best.title), title: best.title,
       site: best.location || '', state: usState(best.location), url: best.url, postedAt: best.postedAt,
@@ -133,4 +158,7 @@ function evidenceSearchKeywords(employerName) {
   return [quoted, `${quoted} ${CRAFT_SEARCH_WORDS.join(' OR ')}`];
 }
 
-module.exports = { CRAFT_CATEGORIES, CRAFT_SEARCH_WORDS, approvedCraftRole, usState, sameEmployer, evaluateHiringEvidence, evidenceSearchKeywords };
+module.exports = {
+  CRAFT_CATEGORIES, CRAFT_SEARCH_WORDS, approvedCraftRole, usState, sameEmployer, fieldServiceForCustomers,
+  evaluateHiringEvidence, evidenceSearchKeywords,
+};

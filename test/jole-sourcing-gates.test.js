@@ -5,7 +5,7 @@ const {
   JOLE_SECTORS, SEARCH_EXCLUDED_NAICS, SEARCH_EXCLUDED_SIC, BUYER_FAMILIES,
   joleCompanyDiscoveryParams, joleBuyerSearchParams, sectorScreen, buyerFamilyOf, rankJoleContacts,
 } = require('../integrations/sourcing/jole-search');
-const { approvedCraftRole, usState, evaluateHiringEvidence, evidenceSearchKeywords } = require('../integrations/sourcing/hiring-evidence');
+const { approvedCraftRole, usState, evaluateHiringEvidence, evidenceSearchKeywords, fieldServiceForCustomers } = require('../integrations/sourcing/hiring-evidence');
 const { joleExclusionReason, joleExclusionCategory, JOLE_CURRENT_CLIENTS_ONBOARDING_2026_10_01 } = require('../integrations/sourcing/exclusions');
 
 const NOW = Date.parse('2026-10-15T20:00:00Z');
@@ -204,5 +204,52 @@ test('owner / executive only at small and mid companies, or as a true site execu
   assert.equal(rankJoleContacts([owner], { employeeCount: 5000 }).ineligible[0].reason, 'owner_executive_large_company');
   assert.equal(rankJoleContacts([owner], {}).ineligible[0].reason, 'owner_executive_size_unknown');
   assert.equal(rankJoleContacts([owner], { employeeCount: 1000 }).ranked.length, 1);
-  assert.equal(rankJoleContacts([{ id: 's', title: 'President, Port Arthur Refinery' }], { employeeCount: 20000 }).ranked.length, 1);
+  assert.equal(rankJoleContacts([{ id: 's', title: 'President, Port Arthur Refinery', siteTie: 'EXACT' }], { employeeCount: 20000 }).ranked.length, 1);
+});
+
+test('field service for customers is contractor-for-hire work; own-site roles pass', () => {
+  for (const posting of [
+    { title: 'Field Service Technician' }, { title: 'Traveling Welder' }, { title: 'Service Technician - Cranes' },
+    { title: 'Welder', description: 'Perform repairs at customer sites across the Gulf Coast.' },
+    { title: 'Millwright', description: 'Travel up to 75% to client facilities. Per diem provided.' },
+    { title: 'Electrician', description: 'This role requires 50% travel.' },
+  ]) assert.equal(fieldServiceForCustomers(posting), true, JSON.stringify(posting));
+  for (const posting of [
+    { title: 'Manufacturing Welder', description: 'Weld components to manufacture products at our Ville Platte plant.' },
+    { title: 'Welder Fitter III', description: 'Konecranes serves a broad range of customers across multiple industries. Weld structural steel used in overhead crane manufacturing. Travel insurance.' },
+    { title: 'Field Technician', description: 'Operate and maintain our compressor stations.' },
+    { title: 'Maintenance Technician', description: 'Occasional travel (10%) to sister plants.' },
+  ]) assert.equal(fieldServiceForCustomers(posting), false, JSON.stringify(posting));
+  const e = { name: 'Hayden Industrial' };
+  assert.equal(evaluateHiringEvidence({ employer: e, now: NOW, postings: [posting({ title: 'Field Service Welder' })] }).reason, 'no_qualifying_posting:field_service_for_customers');
+  assert.equal(evaluateHiringEvidence({ employer: e, now: NOW, requireDescription: true, postings: [posting()] }).reason, 'no_qualifying_posting:description_not_checked');
+  assert.equal(evaluateHiringEvidence({ employer: e, now: NOW, requireDescription: true, postings: [posting({ description: 'Shop welding at our Tulsa plant.' })] }).status, 'verified');
+});
+
+test('large employers: only exact-site or regional buyers; same state is not a site connection', () => {
+  const site = { city: 'Macon', state: 'GA' };
+  const contacts = [
+    { id: 'exact', title: 'Plant Manager', city: 'Macon', state: 'GA', catchAll: false },
+    { id: 'region', title: 'HR Manager', siteTie: 'REGION', catchAll: false },
+    { id: 'state', title: 'Maintenance Manager', city: 'Atlanta', state: 'GA', catchAll: false },
+  ];
+  const large = rankJoleContacts(contacts, { site, employeeCount: 20000 });
+  assert.deepEqual(large.ranked.map(r => r.contact.id), ['exact', 'region']);
+  assert.deepEqual(large.ineligible.map(i => i.reason), ['no_site_connection_large_employer']);
+  assert.equal(rankJoleContacts(contacts, { site }).ranked.length, 2, 'unknown size is treated as large');
+  assert.equal(rankJoleContacts(contacts, { site, employeeCount: 300 }).ranked.length, 3);
+});
+
+test('commuting region: places within 50 miles, nearest first', () => {
+  const { nearbyPlaces, findPlace, haversineMiles } = require('../integrations/sourcing/geo');
+  const places = [
+    { state: 'IL', name: 'Peoria city', lat: 40.7520, lon: -89.6170 },
+    { state: 'IL', name: 'East Peoria city', lat: 40.6720, lon: -89.5790 },
+    { state: 'IL', name: 'Manito village', lat: 40.4260, lon: -89.7790 },
+    { state: 'IL', name: 'Chicago city', lat: 41.8380, lon: -87.6860 },
+  ];
+  const peoria = findPlace(places, { city: 'Peoria', state: 'IL' });
+  assert.ok(peoria);
+  assert.deepEqual(nearbyPlaces(peoria, places).map(p => p.name), ['East Peoria', 'Manito']);
+  assert.ok(haversineMiles(peoria, places[3]) > 120);
 });

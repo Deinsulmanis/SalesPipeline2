@@ -94,9 +94,9 @@ function buyerFamilyOf(title) {
 }
 
 /**
- * EXACT (same city and state as the hiring site) or STATE (same state). REGION
- * — a nearby town in the site's commuting area, possibly across a state line —
- * has no recorded rule, so it is only used when the caller supplies it.
+ * EXACT (same city and state as the hiring site) or STATE (same state).
+ * REGION — within the site's commuting area (`geo.js`, 50 miles), possibly
+ * across a state line — is supplied by the caller (location-filtered search).
  */
 function siteTieOf(contact = {}, site = {}) {
   if (contact.siteTie && SITE_TIE_ORDER.includes(contact.siteTie)) return contact.siteTie;
@@ -113,6 +113,8 @@ function siteTieOf(contact = {}, site = {}) {
  * no tie, then non-catch-all before catch-all (unknown last), then a stable
  * key. Owner / executive is eligible only at companies of ≤1,000 employees or
  * for a true site executive; otherwise the contact is returned as ineligible.
+ * At employers over 1,000 employees (or of unknown size) only EXACT and
+ * REGION contacts are eligible: same-state alone is no connection to the site.
  * Returns { ranked, ineligible }.
  */
 function rankJoleContacts(contacts = [], { site = {}, employeeCount = null } = {}) {
@@ -127,6 +129,12 @@ function rankJoleContacts(contacts = [], { site = {}, employeeCount = null } = {
       continue;
     }
     const tie = siteTieOf(contact, site);
+    // Large (or unknown-size) employers: a buyer must be at the hiring site or
+    // in its commuting region, not merely somewhere in the same state.
+    if (!smallMid && tie !== 'EXACT' && tie !== 'REGION') {
+      ineligible.push({ contact, reason: 'no_site_connection_large_employer' });
+      continue;
+    }
     ranked.push({ contact, family, siteTie: tie,
       key: [BUYER_FAMILIES.findIndex(f => f.id === family), tie ? SITE_TIE_ORDER.indexOf(tie) : 3,
         contact.catchAll === false ? 0 : contact.catchAll === true ? 1 : 2, String(contact.id || contact.title || '')] });
