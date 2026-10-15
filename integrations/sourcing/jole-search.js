@@ -78,7 +78,7 @@ const FAMILY_PATTERNS = Object.freeze([
 // Apollo's exact-title search still returns these (2026-10-15 validation:
 // "Sales Operations Manager", "Finance Operations Manager", "IT Site Manager",
 // "Maintenance Manager (Retired)"); none is an approved buyer.
-const NOT_A_BUYER = /\b(assistant|intern|coordinator|specialist|generalist|recruiter|analyst|clerk|technician|engineer|sales|marketing|finance|financial|treasury|accounting|it|technology|retired|former)\b/;
+const NOT_A_BUYER = /\b(assistant|asst|customer|intern|coordinator|specialist|generalist|recruiter|analyst|clerk|technician|engineer|sales|marketing|finance|financial|treasury|accounting|it|technology|retired|former)\b/;
 // Small and mid-sized employers: up to 1,000 employees (the Phase 5 size bands
 // 1-200 and 201-1000).
 const SMALL_MID_MAX_EMPLOYEES = 1000;

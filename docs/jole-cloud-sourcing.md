@@ -177,3 +177,23 @@ Open issue: the passing employers are 87% 1,001+ employees (Phase 5: 47%;
 none ≤200 vs 24%), because unbanded discovery returns the largest employers
 first. Discover per size band (`sizeBand`) and re-validate before the
 25-reveal quality test.
+
+## Size-balanced validation, 2026-10-15 (zero credit)
+
+Employee size is a search-balancing and sampling variable, never an
+exclusion. Discovery runs three streams (`sizeBand`: 1-200, 201-1,000,
+1,001+) so Apollo's ranking does not set the mix; the pool is balanced to the
+approved 689 company mix (24 / 29 / 47%).
+
+| Band | Fresh | ICP rejects | Website holds | No evidence | Pass | Pass rate | Passers with a site-connected buyer (email on file) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 1-200 | 407 | 17 | 93 | 265 | 32 | 7.9% | 25 |
+| 201-1,000 | 423 | 32 | 102 | 241 | 48 | 11.3% | 40 |
+| 1,001+ | 205 | 4 | 76 | 87 | 38 | 18.5% | 22 |
+
+Rules applied: posting text read and field-service-for-customers roles held
+(`fieldServiceForCustomers`); buyers searched by exact city, 50-mile region
+(`geo.js`) and, for employers ≤1,000 only, state; each company contributes
+contacts from its best available tier only (exact, else region, else state),
+families in the approved order within the tier. Balanced pool (47 companies):
+67% exact-site contacts (689: ~74%).

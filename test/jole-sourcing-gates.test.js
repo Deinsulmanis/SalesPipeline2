@@ -177,7 +177,7 @@ test('buyer family of a title: approved families only', () => {
     ['Site Manager', 'superintendent_site'], ['Superintendent', 'superintendent_site'], ['President', 'owner_executive'], ['Owner', 'owner_executive'],
   ]) assert.equal(buyerFamilyOf(title), family, title);
   for (const title of ['HR Coordinator', 'Maintenance Technician', 'Recruiter', 'Sales Manager', 'Process Engineer', 'Executive Assistant to the President',
-    'Sales Operations Manager', 'Finance Operations Manager', 'IT Site Manager', 'Technical Maintenance Manager(Retired)', 'Vice President, Operational Technology', 'Treasury Operations Manager'])
+    'Sales Operations Manager', 'Finance Operations Manager', 'IT Site Manager', 'Technical Maintenance Manager(Retired)', 'Vice President, Operational Technology', 'Treasury Operations Manager', 'Asst to Evp/ceo', 'United States & Canada Customer Operations Manager'])
     assert.equal(buyerFamilyOf(title), null, title);
 });
 
