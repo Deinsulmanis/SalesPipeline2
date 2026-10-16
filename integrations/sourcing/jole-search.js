@@ -78,12 +78,17 @@ const FAMILY_PATTERNS = Object.freeze([
 // Apollo's exact-title search still returns these (2026-10-15 validation:
 // "Sales Operations Manager", "Finance Operations Manager", "IT Site Manager",
 // "Maintenance Manager (Retired)"); none is an approved buyer.
-const NOT_A_BUYER = /\b(assistant|asst|customer|intern|coordinator|specialist|generalist|recruiter|analyst|clerk|technician|engineer|sales|marketing|finance|financial|treasury|accounting|it|technology|retired|former|business operations|business development)\b/;
+const NOT_A_BUYER = /\b(assistant|asst|customer|intern|coordinator|specialist|generalist|recruiter|analyst|clerk|technician|engineer|sales|marketing|finance|financial|treasury|accounting|it|technology|retired|former|business operations|business development|commercial|remote|safety|environmental|environment|ehs|hse|quality)\b/;
+// Functional executives are not the owner/executive buyer: "VP of Engineering", "VP Product Innovation".
+const FUNCTIONAL_EXEC = /\b(engineering|product|innovation|research|r and d|legal|hr|human resources|supply chain)\b/;
 // Small and mid-sized employers: up to 1,000 employees (the Phase 5 size bands
 // 1-200 and 201-1000).
 const SMALL_MID_MAX_EMPLOYEES = 1000;
 const SITE_EXECUTIVE = /\b(plant|site|mill|facility|refinery|shipyard|terminal|works)\b/;
 const SITE_TIE_ORDER = Object.freeze(['EXACT', 'REGION', 'STATE']);
+const NON_SITE_SCOPE = /\b(territory|regional|region|americas|north america|global|corporate|division|enterprise|portfolio|projects?|programs?|area|district|zone|national|warehouse|logistics|supply chain|purchasing|procurement|field|service|services|support)\b/;
+// Any family at a large employer: project / growth / corporate remits are not the hiring site.
+const NON_SITE_ANY = /\b(projects?|growth|development|global|corporate|enterprise|installation|field)\b/;
 
 /** A General Manager title that is the site/plant/operations executive itself. */
 function siteGeneralManager(title) {
@@ -97,6 +102,7 @@ function buyerFamilyOf(title) {
   const t = String(title || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').trim();
   if (!t || NOT_A_BUYER.test(t)) return null;
   const hit = FAMILY_PATTERNS.find(([, pattern]) => pattern.test(t));
+  if (hit && hit[0] === 'owner_executive' && FUNCTIONAL_EXEC.test(t)) return null;
   return hit ? hit[0] : null;
 }
 
@@ -141,6 +147,12 @@ function rankJoleContacts(contacts = [], { site = {}, employeeCount = null, site
     // "GM - Film") has no reasonable remit over the hiring site's workforce.
     if (!smallMid && family === 'plant_operations' && /\bgeneral manager\b/i.test(String(contact.title || '')) && !siteGeneralManager(contact.title)) {
       ineligible.push({ contact, reason: 'functional_gm_large_employer' });
+      continue;
+    }
+    // Large employers: territory / regional / division / corporate operations
+    // roles are not leadership of the hiring site.
+    if (!smallMid && ((family === 'plant_operations' && NON_SITE_SCOPE.test(String(contact.title || '').toLowerCase())) || NON_SITE_ANY.test(String(contact.title || '').toLowerCase()))) {
+      ineligible.push({ contact, reason: 'non_site_operations_title_large_employer' });
       continue;
     }
     const tie = siteTieOf(contact, site);
@@ -208,6 +220,7 @@ function joleBuyerSearchParams({ organizationIds, familyId, perPage = 1 } = {}) 
 // ── Post-search sector screen ────────────────────────────────────────────────
 const PHARMA_CARE = /\b(pharma|pharmaceuticals?|biopharma|biotech|biologics|therapeutics|biosciences?|life sciences|vaccines?|diagnostics|cosmetics?|skin ?care|beauty|personal care|fragrances?)\b/;
 const SOLAR = /\bsolar\b/;
+const SOLAR_INSTALLER_SITE = /\b(residential solar|rooftop solar|home solar|solar for your home|go solar|solar (panel )?install(?:er|ers|ation|ations)|solar financing|solar loans?)\b/;
 const SOLAR_INSTALL = /\b(residential solar|solar install(?:er|ers|ation)|rooftop solar|homeowners?|solar for your home)\b/;
 const GOVERNMENT_NAME = /^(city|county|town|village|borough|township|state|commonwealth|parish) of\b/;
 const CONTRACTOR_NAME = /\b(construction|constructors?|contractors?|contracting|builders|homes|roofing|gutters?|remodel(?:ing)?|paving|excavating|landscaping)\b/;
@@ -233,6 +246,8 @@ function sectorScreen({ name = '', domain = '', siteText = null } = {}) {
   }
   if (CONTRACTOR_NAME.test(n)) return { decision: 'hold', reason: 'sector_contractor_review' };
   if (site == null) return { decision: 'hold', reason: 'website_not_checked' };
+  // Residential solar installers whose name does not say "solar" (YellowLite).
+  if (SOLAR_INSTALLER_SITE.test(site)) return { decision: 'reject', reason: 'sector_solar_installer' };
   if (CONTRACTOR_SITE.test(site)) return { decision: 'hold', reason: 'sector_contractor_review' };
   if (!INDUSTRIAL_SITE.test(site)) return { decision: 'hold', reason: 'website_no_industrial_evidence' };
   return { decision: 'pass', reason: 'industrial_employer' };
