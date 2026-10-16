@@ -197,3 +197,22 @@ Rules applied: posting text read and field-service-for-customers roles held
 contacts from its best available tier only (exact, else region, else state),
 families in the approved order within the tier. Balanced pool (47 companies):
 67% exact-site contacts (689: ~74%).
+
+## Final buyer-selection order (confirmed 2026-10-16)
+
+1. Exact hiring site, 2. within the 50-mile commuting region, 3. same state
+(only employers ≤1,000 employees). Within each tier: plant / operations /
+production → HR / talent acquisition → maintenance / reliability →
+superintendent / site → owner / executive (small/mid employers or true site
+executives only). `rankJoleContacts` default.
+
+## Representative 25-reveal quality test (2026-10-16)
+
+Standard Apollo email match only (no waterfall, phone or personal emails),
+one contact per company, 6 / 7 / 12 by size band. 25 credits (2,515 → 2,490).
+25 of 25 returned a verified email; 24 accepted after the import email rules,
+live net-new and suppression checks, employer, buyer-title, site-connection
+and evidence-age gates. One rejected: buyer title not approved ("Business
+Operations Manager"; the classifier now excludes business-operations and
+business-development titles). Revealed contacts are kept in session scratch
+only; nothing imported or queued.

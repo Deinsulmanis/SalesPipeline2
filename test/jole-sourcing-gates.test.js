@@ -177,11 +177,11 @@ test('buyer family of a title: approved families only', () => {
     ['Site Manager', 'superintendent_site'], ['Superintendent', 'superintendent_site'], ['President', 'owner_executive'], ['Owner', 'owner_executive'],
   ]) assert.equal(buyerFamilyOf(title), family, title);
   for (const title of ['HR Coordinator', 'Maintenance Technician', 'Recruiter', 'Sales Manager', 'Process Engineer', 'Executive Assistant to the President',
-    'Sales Operations Manager', 'Finance Operations Manager', 'IT Site Manager', 'Technical Maintenance Manager(Retired)', 'Vice President, Operational Technology', 'Treasury Operations Manager', 'Asst to Evp/ceo', 'United States & Canada Customer Operations Manager'])
+    'Sales Operations Manager', 'Finance Operations Manager', 'IT Site Manager', 'Technical Maintenance Manager(Retired)', 'Vice President, Operational Technology', 'Treasury Operations Manager', 'Asst to Evp/ceo', 'United States & Canada Customer Operations Manager', 'Business Operations Manager'])
     assert.equal(buyerFamilyOf(title), null, title);
 });
 
-test('contact order: family, then exact site, region, state, then non-catch-all', () => {
+test('family-first comparison order (siteFirst: false): family, then exact site, region, state, then non-catch-all', () => {
   const site = { city: 'Tulsa', state: 'OK' };
   const c = (id, title, city, state, catchAll, extra = {}) => ({ id, title, city, state, catchAll, ...extra });
   const { ranked, ineligible } = rankJoleContacts([
@@ -194,7 +194,7 @@ test('contact order: family, then exact site, region, state, then non-catch-all'
     c('super-exact', 'Superintendent', 'Tulsa', 'OK', false),
     c('owner', 'President', 'Tulsa', 'OK', false),
     c('analyst', 'HR Analyst', 'Tulsa', 'OK', false),
-  ], { site, employeeCount: 450 });
+  ], { site, employeeCount: 450, siteFirst: false });
   assert.deepEqual(ranked.map(r => r.contact.id), ['plant-exact', 'plant-exact-catchall', 'plant-region', 'plant-state-catchall', 'hr-exact', 'maint-exact', 'super-exact', 'owner']);
   assert.deepEqual(ineligible.map(i => i.reason), ['not_an_approved_buyer']);
 });
@@ -257,13 +257,13 @@ test('commuting region: places within 50 miles, nearest first', () => {
   assert.equal(findPlace([macon], { city: 'Bibb', state: 'GA' }), null);
 });
 
-test('site-first selection: exact-site buyers of any approved family before regional or state ones', () => {
+test('final order (default): exact site, then region, then state; approved family order within each tier', () => {
   const contacts = [
     { id: 'plant-state', title: 'Plant Manager', siteTie: 'STATE', catchAll: false },
     { id: 'hr-exact', title: 'HR Manager', siteTie: 'EXACT', catchAll: false },
     { id: 'plant-region', title: 'Operations Manager', siteTie: 'REGION', catchAll: false },
     { id: 'maint-exact', title: 'Maintenance Manager', siteTie: 'EXACT', catchAll: false },
   ];
-  assert.deepEqual(rankJoleContacts(contacts, { employeeCount: 300, siteFirst: true }).ranked.map(r => r.contact.id), ['hr-exact', 'maint-exact', 'plant-region', 'plant-state']);
-  assert.deepEqual(rankJoleContacts(contacts, { employeeCount: 300 }).ranked.map(r => r.contact.id), ['plant-region', 'plant-state', 'hr-exact', 'maint-exact']);
+  assert.deepEqual(rankJoleContacts(contacts, { employeeCount: 300 }).ranked.map(r => r.contact.id), ['hr-exact', 'maint-exact', 'plant-region', 'plant-state']);
+  assert.deepEqual(rankJoleContacts(contacts, { employeeCount: 300, siteFirst: false }).ranked.map(r => r.contact.id), ['plant-region', 'plant-state', 'hr-exact', 'maint-exact']);
 });

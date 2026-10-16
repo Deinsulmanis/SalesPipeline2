@@ -78,7 +78,7 @@ const FAMILY_PATTERNS = Object.freeze([
 // Apollo's exact-title search still returns these (2026-10-15 validation:
 // "Sales Operations Manager", "Finance Operations Manager", "IT Site Manager",
 // "Maintenance Manager (Retired)"); none is an approved buyer.
-const NOT_A_BUYER = /\b(assistant|asst|customer|intern|coordinator|specialist|generalist|recruiter|analyst|clerk|technician|engineer|sales|marketing|finance|financial|treasury|accounting|it|technology|retired|former)\b/;
+const NOT_A_BUYER = /\b(assistant|asst|customer|intern|coordinator|specialist|generalist|recruiter|analyst|clerk|technician|engineer|sales|marketing|finance|financial|treasury|accounting|it|technology|retired|former|business operations|business development)\b/;
 // Small and mid-sized employers: up to 1,000 employees (the Phase 5 size bands
 // 1-200 and 201-1000).
 const SMALL_MID_MAX_EMPLOYEES = 1000;
@@ -108,19 +108,16 @@ function siteTieOf(contact = {}, site = {}) {
 }
 
 /**
- * Approved deterministic contact order for one company (operator decision
- * 2026-10-15): family order above; within a family EXACT → REGION → STATE →
- * no tie, then non-catch-all before catch-all (unknown last), then a stable
- * key. Owner / executive is eligible only at companies of ≤1,000 employees or
+ * Approved deterministic contact order for one company (operator-confirmed
+ * 2026-10-16): location tier first — EXACT → REGION → STATE → no tie — then
+ * the family order above within each tier, then non-catch-all before
+ * catch-all (unknown last), then a stable key. Owner / executive is eligible only at companies of ≤1,000 employees or
  * for a true site executive; otherwise the contact is returned as ineligible.
  * At employers over 1,000 employees (or of unknown size) only EXACT and
  * REGION contacts are eligible: same-state alone is no connection to the site.
- * With `siteFirst`, the site tie outranks the family (exact-site buyers of any
- * approved family before regional ones), to keep exact-site contacts near the
- * approved 689's ~74%.
  * Returns { ranked, ineligible }.
  */
-function rankJoleContacts(contacts = [], { site = {}, employeeCount = null, siteFirst = false } = {}) {
+function rankJoleContacts(contacts = [], { site = {}, employeeCount = null, siteFirst = true } = {}) {
   const smallMid = Number.isFinite(employeeCount) && employeeCount <= SMALL_MID_MAX_EMPLOYEES;
   const ranked = [];
   const ineligible = [];
@@ -142,9 +139,10 @@ function rankJoleContacts(contacts = [], { site = {}, employeeCount = null, site
       key: [BUYER_FAMILIES.findIndex(f => f.id === family), tie ? SITE_TIE_ORDER.indexOf(tie) : 3,
         contact.catchAll === false ? 0 : contact.catchAll === true ? 1 : 2, String(contact.id || contact.title || '')] });
   }
-  // siteFirst (reveal selection, operator instruction 2026-10-15): exact site,
-  // then region, then state, then no tie; the approved family order applies
-  // within each tier.
+  // Final Jole order (operator-confirmed 2026-10-16): exact site, then the
+  // 50-mile region, then state (only where permitted), then no tie; the
+  // approved family order applies within each tier. siteFirst: false keeps
+  // the earlier family-first order for comparison only.
   const order = siteFirst ? [1, 0, 2] : [0, 1, 2];
   ranked.sort((a, b) => {
     for (const i of order) if (a.key[i] !== b.key[i]) return a.key[i] - b.key[i];
