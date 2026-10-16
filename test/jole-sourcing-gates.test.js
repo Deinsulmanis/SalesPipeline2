@@ -177,7 +177,7 @@ test('buyer family of a title: approved families only', () => {
     ['Site Manager', 'superintendent_site'], ['Superintendent', 'superintendent_site'], ['President', 'owner_executive'], ['Owner', 'owner_executive'],
   ]) assert.equal(buyerFamilyOf(title), family, title);
   for (const title of ['HR Coordinator', 'Maintenance Technician', 'Recruiter', 'Sales Manager', 'Process Engineer', 'Executive Assistant to the President',
-    'Sales Operations Manager', 'Finance Operations Manager', 'IT Site Manager', 'Technical Maintenance Manager(Retired)', 'Vice President, Operational Technology', 'Treasury Operations Manager', 'Asst to Evp/ceo', 'United States & Canada Customer Operations Manager', 'Business Operations Manager', 'Vice President, Commercial Operations', 'Remote Operations Center Superintendent', 'Vice President of Engineering', 'Vice President Product Innovation', 'Health and Safety Superintendent', 'Quality Manager', 'Transportation Operations Manager', 'Legal Operations Manager', 'Material Superintendent', 'Administrative Operations Manager', 'Vice President, Global Paper Sourcing', 'Director of Operations Integration'])
+    'Sales Operations Manager', 'Finance Operations Manager', 'IT Site Manager', 'Technical Maintenance Manager(Retired)', 'Vice President, Operational Technology', 'Treasury Operations Manager', 'Asst to Evp/ceo', 'United States & Canada Customer Operations Manager', 'Business Operations Manager', 'Vice President, Commercial Operations', 'Remote Operations Center Superintendent', 'Vice President of Engineering', 'Vice President Product Innovation', 'Health and Safety Superintendent', 'Quality Manager', 'Transportation Operations Manager', 'Legal Operations Manager', 'Material Superintendent', 'Administrative Operations Manager', 'Vice President, Global Paper Sourcing', 'Director of Operations Integration', 'Security Operations Manager', 'Vice President of Administration', 'Logistics Operations Manager'])
     assert.equal(buyerFamilyOf(title), null, title);
 });
 
@@ -285,7 +285,7 @@ test('solar installers are rejected from website text even without "solar" in th
 });
 
 test('large employers: territory, regional, division and corporate operations titles are not site leadership', () => {
-  for (const title of ['Territory Operations Manager', 'VP of Operations, Industrical Cranes, Region Americas', 'Division Operations Manager, Security Solutions', 'Central Regional Operations Manager', 'Major Projects Operations Manager',
+  for (const title of ['Territory Operations Manager', 'VP of Operations, Industrical Cranes, Region Americas', 'Division Operations Manager, Industrial Solutions', 'Central Regional Operations Manager', 'Major Projects Operations Manager',
     'Warehouse Operations Manager', 'Field Operations Manager', 'US&C Warehouse & Service Support Operations Mgr', 'Project Development Superintendent', 'Installation Superintendent', 'Senior Human Resources Business Partner/Director - Copper Growth & Development Americas'])
     assert.equal(rankJoleContacts([{ id: 'x', title, siteTie: 'EXACT' }], { employeeCount: 20000 }).ineligible[0].reason, 'non_site_operations_title_large_employer', title);
   for (const title of ['Plant Manager', 'Operations Manager', 'Production Manager', 'Plant Operations Manager', 'Regional Human Resources Manager', 'Maintenance Superintendent'])
