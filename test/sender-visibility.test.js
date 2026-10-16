@@ -246,7 +246,7 @@ test('13. the Outreach table has a Sending Inbox column that survives narrow scr
   // Columns shifted by one, so the mobile hide-list had to move with them, and
   // the loading row's colspan had to grow.
   assert.match(browser, /\.ce-table th:nth-child\(11\),\.ce-table td:nth-child\(11\) \{ display:none; \}/);
-  assert.match(browser, /colspan="11" class="ce-loading-row"/);
+  assert.match(browser, /colspan="\$\{activeClientIsManaged\(\) \? 16 : 11\}" class="ce-loading-row"/);
   // Unknown and Conflict are shown, never hidden.
   const chip = browser.slice(browser.indexOf('function senderChip'), browser.indexOf('function renderCeTable'));
   assert.match(chip, /state === 'unknown' \? 'Unknown'/);

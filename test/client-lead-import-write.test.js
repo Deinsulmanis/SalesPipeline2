@@ -288,32 +288,32 @@ test('import does not authorize anything: copy approved, Jole prepared but not a
 });
 
 // ── Jole copy ───────────────────────────────────────────────────────────────
-const LEAD = { firstName: 'Theodore', company: '110 Metalworks', roles: ['Tig Welder'], location: 'Liverpool, NY', landingPageUrl: 'https://jole-landing.netlify.app/', mailingAddress: ADDRESS };
+const LEAD = { firstName: 'Theodore', company: '110 Metalworks', roles: ['Tig Welder'], location: 'Liverpool, NY', landingPageUrl: 'https://jole-landing.netlify.app/', bookingLink: 'https://booking.jolebtx.com/meet/jorge', mailingAddress: ADDRESS };
 
-test('copy: touch 1 renders the approved one-role, two-role and reviewed-fallback openers', () => {
+test('copy: touch 1 renders the approved one-role and two-role openers', () => {
   const one = renderJoleEmployerStep({ ...LEAD, step: 1 });
-  assert.equal(one.subject, 'Tig Welder');
-  assert.equal(one.coreBody, 'Hi Theodore,\n\nSaw 110 Metalworks is hiring Tig Welder in Liverpool, NY.\n\nCurious — are you already covered on that, or still open to additional staffing support?\n\nJorge');
+  assert.equal(one.subject, 'Tig Welder — Liverpool, NY');
+  assert.equal(one.coreBody, 'Hi Theodore,\n\nSaw 110 Metalworks is hiring Tig Welder in Liverpool, NY.\n\nJole BTX helps industrial teams cover skilled-trade gaps with contract craft labor.\n\nIf that opening is still live, I can have our team look at the exact site requirements and tell you whether it\'s something we can realistically cover.\n\nWorth doing?\n\nJorge');
   assert.match(one.body, /Jorge Guerrero\nCEO\nJole BTX LLC\n1200 Industrial Pkwy/);
   assert.match(one.body, /This is a commercial email\. Not relevant\? Reply "unsubscribe"/);
   const two = renderJoleEmployerStep({ ...LEAD, step: 1, roles: ['Welder', 'Machinist'] });
   assert.equal(two.variant, 'two_roles');
-  assert.match(two.coreBody, /hiring Welder and Machinist in Liverpool, NY\.\n\nCurious — are you already covered on those/);
-  const fallback = renderJoleEmployerStep({ ...LEAD, step: 1, roles: [], location: '' });
-  assert.equal(fallback.subject, 'skilled trades');
-  assert.doesNotMatch(fallback.coreBody, /is hiring/);
+  assert.match(two.coreBody, /hiring Welder in Liverpool, NY and also has openings for Machinist at the site\./);
+  assert.throws(() => renderJoleEmployerStep({ ...LEAD, step: 1, roles: [] }), /verified hiring role/);
 });
 
-test('copy: only touch 2 carries a link, and only the approved HTTPS Jole landing page', () => {
+test('copy: only touch 2 carries the approved Jole landing and booking links', () => {
   const t2 = renderJoleEmployerStep({ ...LEAD, step: 2 });
   assert.equal(t2.subject, null);
-  assert.equal((t2.body.match(/https?:\/\//g) || []).length, 1);
-  assert.match(t2.coreBody, /Worth a conversation if Tig Welder is still a priority\?/);
+  assert.equal((t2.body.match(/https?:\/\//g) || []).length, 2);
+  assert.match(t2.coreBody, /Worth 10 minutes to see if Jole can realistically cover it\?/);
+  assert.match(t2.coreBody, /https:\/\/booking\.jolebtx\.com\/meet\/jorge/);
   for (const url of ['', 'http://jole-landing.netlify.app', 'https://scalelabai.ca/staffing', 'https://example.com', '{{jole_landing_page_url}}']) {
-    assert.throws(() => renderJoleEmployerStep({ ...LEAD, step: 2, landingPageUrl: url }), /landing page/, url);
+    assert.throws(() => renderJoleEmployerStep({ ...LEAD, step: 2, landingPageUrl: url }), /JOLE_LANDING_PAGE_URL/, url);
   }
+  assert.throws(() => renderJoleEmployerStep({ ...LEAD, step: 2, bookingLink: '' }), /JOLE_BOOKING_LINK/);
   const t3 = renderJoleEmployerStep({ ...LEAD, step: 3 });
-  assert.match(t3.coreBody, /Should I keep Jole in mind if 110 Metalworks needs additional skilled-trade labor/);
+  assert.match(t3.coreBody, /Just following up on the Tig Welder opening in Liverpool, NY/);
   assert.doesNotMatch(t3.body, /https?:\/\//);
 });
 
@@ -329,11 +329,27 @@ test('copy: missing or unsafe variables and a missing Jole address refuse to ren
     renderJoleEmployerStep({ ...LEAD, step: 1 }).coreBody);
 });
 
+test('copy: punctuation and multi-word roles and locations render cleanly across all touches', () => {
+  const lead = { ...LEAD, firstName: "Anne-Marie", company: "O'Brien & Sons, Inc.",
+    roles: ['Industrial Electricians', 'Maintenance Technicians'], location: 'Fort Worth, TX' };
+  for (const step of [1, 2, 3]) {
+    const email = renderJoleEmployerStep({ ...lead, step });
+    assert.match(email.coreBody, /Hi Anne-Marie,/);
+    assert.match(email.coreBody, /Industrial Electricians/);
+    assert.match(email.coreBody, /Fort Worth, TX/);
+    assert.doesNotMatch(email.body, /{{|}}|undefined|null|&#x20;|Re: Re:|\\\\/);
+    assert.doesNotMatch(email.coreBody, /  |\.\./);
+  }
+  const oneRole = renderJoleEmployerStep({ ...lead, roles: ['Industrial Electricians'], step: 1 });
+  assert.match(oneRole.coreBody, /Fort Worth, TX\./);
+  assert.doesNotMatch(oneRole.coreBody, /secondary_role_line|also has openings|  /);
+});
+
 test('copy: the template carries the final Jole copy and never ScaleLab\'s staffing-agency offer', () => {
   const template = clientTemplate('jole-industrial-employer-v1');
   assert.equal(template.clientId, 'jole');
   assert.equal(template.copy, JOLE_INDUSTRIAL_EMPLOYER_COPY);
-  assert.equal(template.copyVersion, 'jole_industrial_employer_v1');
+  assert.equal(template.copyVersion, 'jole_industrial_employer_v2');
   assert.equal(template.copy.steps.length, template.sequenceSteps);
   assert.deepEqual(template.copy.steps.map(step => step.sendAfterBusinessDays), [0, 3, 4]);
   const all = JSON.stringify(template.copy);

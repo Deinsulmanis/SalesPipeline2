@@ -62,6 +62,7 @@ const SCALELAB_ENV = Object.freeze({
   GMAIL_TRYSCALELABAI_TOKEN_JSON: '{}', GMAIL_SCALELABAITEAM_TOKEN_JSON: '{}',
   GMAIL_DENIELS_TOKEN_JSON: '{}', GMAIL_DENIELS_TRYSCALELABAI_TOKEN_JSON: '{}',
   JOLE_LANDING_PAGE_URL: 'https://jolebtx.netlify.app/industrial-staffing/',
+  JOLE_BOOKING_LINK: 'https://booking.jolebtx.com/jorge',
   JOLE_COMMERCIAL_MAILING_ADDRESS: '1313 E Alton Gloor, Suite I-2, Brownsville, TX 78526',
 });
 // Production after the launch-prep deploy and the lifecycle steps: the six

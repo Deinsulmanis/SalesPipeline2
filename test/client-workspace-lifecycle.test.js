@@ -27,6 +27,7 @@ const CAMPAIGN = 'jole-btx-employer-acquisition';
 const NOW = Date.parse('2026-10-20T15:00:00Z');
 const ENV = Object.freeze({
   JOLE_LANDING_PAGE_URL: 'https://jolebtx.netlify.app/industrial-staffing/',
+  JOLE_BOOKING_LINK: 'https://booking.jolebtx.com/jorge',
   JOLE_COMMERCIAL_MAILING_ADDRESS: '1313 E Alton Gloor, Suite I-2, Brownsville, TX 78526',
   // ScaleLab's address must never reach Jole's footer.
   COMMERCIAL_MAILING_ADDRESS: '500 ScaleLab Way, Vancouver, BC V6B 1A1',
@@ -104,12 +105,13 @@ test('import: research rows land in campaign_notes; the lead is still a plain Im
 test('personalization: renders the approved copy from stored research and Jole\'s own config', () => {
   const lead = joleLead();
   const t1 = renderClientLeadEmail(lead, 1, { env: ENV, now: NOW });
-  assert.equal(t1.subject, 'TIG Welders');
-  assert.match(t1.body, /^Hi Theodore,\n\nSaw 110 Metalworks is hiring TIG Welders and CNC Machinists in Liverpool, NY\./);
+  assert.equal(t1.subject, 'TIG Welders — Liverpool, NY');
+  assert.match(t1.body, /^Hi Theodore,\n\nSaw 110 Metalworks is hiring TIG Welders in Liverpool, NY and also has openings for CNC Machinists at the site\./);
   assert.match(t1.body, /Jorge Guerrero\nCEO\nJole BTX LLC\n1313 E Alton Gloor, Suite I-2, Brownsville, TX 78526/);
   assert.doesNotMatch(t1.body, /ScaleLab Way|scalelab/i);
   const t2 = renderClientLeadEmail(lead, 2, { env: ENV, now: NOW });
   assert.match(t2.body, /https:\/\/jolebtx\.netlify\.app\/industrial-staffing\//);
+  assert.match(t2.body, /https:\/\/booking\.jolebtx\.com\/jorge/);
   assert.equal(clientPersonalizationState(lead, { env: ENV, now: NOW }).status, 'ready');
 });
 
@@ -131,7 +133,7 @@ test('family: a Jole lead resolves through Jole\'s registry with full attributio
   assert.equal(isManagedFamily('jole_employer'), true);
   const attribution = coldSendAttribution(lead, 1);
   assert.deepEqual([attribution.campaignVersion, attribution.campaignFamily, attribution.copyVersion, attribution.sequenceId],
-    ['jole_industrial_employer_acquisition_v1', 'jole_employer', 'jole_industrial_employer_v1', 'jole_employer_cold']);
+    ['jole_industrial_employer_acquisition_v1', 'jole_employer', 'jole_industrial_employer_v2', 'jole_employer_cold']);
   // A lead whose owner contradicts the campaign, or that names a ScaleLab family, is unrouted.
   assert.equal(resolveLeadFamily({ ...lead, clientId: 'scalelab' }).family, 'unrouted');
   assert.equal(resolveLeadFamily({ ...lead, emailTemplateId: 'industrial-staffing-employer-v1' }).family, 'unrouted');

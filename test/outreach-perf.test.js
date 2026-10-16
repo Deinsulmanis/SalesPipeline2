@@ -296,7 +296,7 @@ test('22/23. desktop and mobile paging chrome are both defined', () => {
 
 test('the Campaigns panel is the only view that pulls the full set, on demand', () => {
   assert.match(browser, /async function ensureAllCeLeads\(\)/);
-  assert.match(browser, /fetch\('\/api\/coldemail\?limit=0'\)/);
+  assert.match(browser, /fetch\('\/api\/coldemail\?limit=0&client=' \+ encodeURIComponent\(activeClientId\)\)/);
   assert.match(browser, /for \(const l of \(ceAllLeads \|\| ceLeads\)\)/);
   // It is not fetched during the normal load.
   const loader = browser.slice(browser.indexOf('async function loadCeLeads'), browser.indexOf('function cleanCompanyName'));

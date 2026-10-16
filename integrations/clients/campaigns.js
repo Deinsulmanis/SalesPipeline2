@@ -140,7 +140,7 @@ const CLIENT_CAMPAIGNS = Object.freeze([
     audience: 'employers',
     // Attribution, as ScaleLab's campaign versions carry it.
     copyVersion: JOLE_INDUSTRIAL_EMPLOYER_COPY.copyVersion,
-    subjectStrategy: 'jole_hiring_role_v1',
+    subjectStrategy: 'jole_verified_role_location_v2',
     personalizationStrategy: 'jole_verified_hiring_v1',
     offerVersion: 'jole_skilled_trade_labor_v1',
     // "Saw X is hiring Y" must still be true when it is sent.

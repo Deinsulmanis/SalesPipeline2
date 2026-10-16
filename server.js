@@ -157,7 +157,8 @@ const { importClientLeads } = require('./integrations/clients/lead-import');
 const { createImportBatchStore, processPendingImportBatches } = require('./integrations/clients/import-batches');
 const { leadsForClient, leadDefinitelyOtherClient, resolveLeadClient } = require('./integrations/clients/ownership');
 const { resolveClientId, DEFAULT_CLIENT_ID, listClients } = require('./integrations/clients/registry');
-const { clientSendState } = require('./integrations/clients/send-policy');
+const { clientSendState, clientSendBlock } = require('./integrations/clients/send-policy');
+const { JOLE_EARLY_CRON } = require('./integrations/clients/send-windows');
 const { getLedgerStore } = require('./integrations/clients/ledger-store');
 const { emailUniquenessMode, leadsInEmailScope, leadsForCalendarMatching } = require('./integrations/clients/email-scope');
 const { filterInboxesForClient } = require('./integrations/clients/workspace-views');
@@ -7649,6 +7650,27 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   }, {
     timezone: 'America/Vancouver',
   });
+  // Chicago 07:00-08:30 precedes ScaleLab's Pacific scheduler. Its remaining
+  // 09:00-11:30 Chicago slots coincide with Pacific 07:00-09:30. The worker
+  // checks the Jole clock again before each send, including a run crossing noon.
+  cron.schedule(JOLE_EARLY_CRON, async () => {
+    if (clientSendBlock('jole', process.env)) return;
+    if (agentState.running || automationLaunchReserved) {
+      console.log('[cron] Agent already running — skipping Jole send window');
+      return;
+    }
+    const caps = scheduledSendCaps();
+    await launchAutomationAfterCalendar('scheduled Jole outreach run', () => {
+      if (agentState.running) return false;
+      spawnAgent(false, {
+        DAILY_CAP: String(caps.total),
+        PER_INBOX_RUN_CAP: String(caps.perInbox),
+        GMAIL_SENDER_RUNTIME_JSON: process.env.GMAIL_SENDER_RUNTIME_JSON || '[]',
+        SCHEDULED_CLIENT_SCOPE: 'jole',
+      });
+      return true;
+    });
+  }, { timezone: 'America/Chicago' });
   const bootCaps = scheduledSendCaps();
   console.log(`[cron] Outreach agent scheduled: :00 and :30, 7–11:30am Pacific, Mon–Fri (${bootCaps.perInbox}/inbox, ${bootCaps.total}/run, ${bootCaps.daily}/day, ${bootCaps.activeCount} active)`);
   console.log(JSON.stringify({ ...describeColdDeliveryPolicy(configuredSenders()), label: 'cron_boot' }));

@@ -60,7 +60,8 @@ function renderClientLeadEmail(lead = {}, step = 1, { env = process.env, now = D
   const copyEnv = client.copyEnv || {};
   const email = RENDERERS[inputs.template.id].render({
     step, firstName: inputs.firstName, company: lead.company, roles: inputs.roles, location: inputs.location,
-    landingPageUrl: env[copyEnv.landingPageUrl] || '', mailingAddress: env[copyEnv.mailingAddress] || '',
+    landingPageUrl: env[copyEnv.landingPageUrl] || '', bookingLink: env[copyEnv.bookingLink] || '',
+    mailingAddress: env[copyEnv.mailingAddress] || '',
   });
   return { subject: email.subject, body: email.body, step: email.step, variant: email.variant, copyVersion: email.copyVersion };
 }

@@ -139,6 +139,7 @@ test('authorized sendEmail proceeds to the provider exactly once', async () => {
   const send = new Function(
     'assertStaffingSendAllowed', 'assertSendAuthorized', 'PRIMARY_GMAIL_SENDER',
     'GmailOutreachProvider', 'gmailForSender', 'toRawMessage', 'withGmailProviderSend',
+    'clientSendWindowVerdict', 'tenantOf', 'SCHEDULED_CLIENT_SCOPE',
     `${code}; return sendEmail;`,
   )(
     () => {},
@@ -148,6 +149,9 @@ test('authorized sendEmail proceeds to the provider exactly once', async () => {
     () => ({ users: { messages: { send: async () => ({}) } } }),
     () => 'raw',
     ({ run }) => run(),
+    () => ({ allowed: true }),
+    () => 'scalelab',
+    '',
   );
   await send({
     lead: { id: '1', email: 'a@x.test' }, to: 'a@x.test', subject: 's', body: 'b',

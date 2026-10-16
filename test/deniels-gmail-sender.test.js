@@ -444,7 +444,7 @@ test('I. suppression, holds and opt-outs block a deniels send exactly as for eve
     }
   }
   // The single Gmail send path refuses any sender that is not delivery eligible.
-  assert.match(read('outreach-agent.js'), /assertSendAuthorized\(\);\n  assertStaffingSendAllowed\(lead\);\n  if \(!sender\?\.sendEligible\) throw/);
+  assert.match(read('outreach-agent.js'), /assertSendAuthorized\(\);\n  assertStaffingSendAllowed\(lead\);\n  const window = clientSendWindowVerdict\(tenantOf\(lead\), \{ scheduledClientScope: SCHEDULED_CLIENT_SCOPE \}\);\n  if \(!window\.allowed\) throw new Error\(window\.reason\);\n  if \(!sender\?\.sendEligible\) throw/);
 });
 
 // ── J. thread ownership ────────────────────────────────────────────────────

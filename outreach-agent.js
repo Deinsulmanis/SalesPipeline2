@@ -114,6 +114,7 @@ const {
 } = require('./integrations/clients/capacity');
 const { DEFAULT_CLIENT_ID } = require('./integrations/clients/registry');
 const { clientSendBlock } = require('./integrations/clients/send-policy');
+const { clientSendWindowVerdict } = require('./integrations/clients/send-windows');
 // Staffing supplies its own locked copy only. Sender selection, thread pinning,
 // quota, observer, suppression and ownership all stay on the shared path.
 const {
@@ -265,6 +266,7 @@ const DRY_RUN          = process.env.DRY_RUN !== 'false';          // default TR
 // every email send. Distinct from DRY_RUN, which also
 // skips the writes. Used by the 30-minute cron for near-real-time detection.
 const CHECK_ONLY       = process.env.CHECK_ONLY === 'true';
+const SCHEDULED_CLIENT_SCOPE = process.env.SCHEDULED_CLIENT_SCOPE === 'jole' ? 'jole' : '';
 // Terminal leads are checked only when the existing check-only scheduler
 // explicitly enables this flag for its once-daily window.
 const LATE_REPLY_CHECK = process.env.LATE_REPLY_CHECK === 'true';
@@ -1276,6 +1278,8 @@ function toRawMessage({ to, subject, body, html, inReplyTo, references, messageI
 async function sendEmail({ lead, to, subject, body, html, threadId, inReplyTo, references, messageId, sender = PRIMARY_GMAIL_SENDER, sendAction, extraHeaders = [] }) {
   assertSendAuthorized();
   assertStaffingSendAllowed(lead);
+  const window = clientSendWindowVerdict(tenantOf(lead), { scheduledClientScope: SCHEDULED_CLIENT_SCOPE });
+  if (!window.allowed) throw new Error(window.reason);
   if (!sender?.sendEligible) throw new Error(`Gmail sender ${sender?.id || 'unknown'} is not delivery eligible`);
   return withGmailProviderSend({
     lead, sendAction, sender,
@@ -2111,6 +2115,8 @@ async function deliverOrdinaryColdStep({
   const leadOwner = resolveLeadClient(lead);
   const clientBlocked = leadOwner.ok ? clientSendBlock(leadOwner.clientId) : null;
   if (clientBlocked) return { delivered: false, reason: `client send authority: ${clientBlocked.reason}` };
+  const window = clientSendWindowVerdict(tenantOf(lead), { scheduledClientScope: SCHEDULED_CLIENT_SCOPE });
+  if (!window.allowed) return { delivered: false, reason: window.reason };
   // A proven, unrecovered delivery failure of an earlier touch blocks every
   // later one at send time too, not only in selection (same-touch-recovery.js).
   const failedTouch = unrecoveredTouchBlock(lead, activitiesForCycle || [], step);
@@ -5599,10 +5605,12 @@ async function run() {
   // emailStep, and it cannot resume a held cold sequence. The pass re-reads
   // canonical activities, including any human_response_sent event persisted
   // moments ago, and refuses all execution if mailbox observation failed.
-  await runStageSequencePass(all, {
-    observationBySender, activitiesForCycle: ownershipActivities,
-    boardLeadsForCycle: ownershipBoard, sendsBySender, quotaState, windowQuota,
-  });
+  if (!SCHEDULED_CLIENT_SCOPE) {
+    await runStageSequencePass(all, {
+      observationBySender, activitiesForCycle: ownershipActivities,
+      boardLeadsForCycle: ownershipBoard, sendsBySender, quotaState, windowQuota,
+    });
+  }
   todaySent = quotaState.globalCount;
   dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
 
@@ -5611,6 +5619,11 @@ async function run() {
 
   // Phase 3 — follow-ups (replied leads already excluded by runReplyCheckPass)
   const followUps = selectFollowUps(all, ownershipActivities);
+  for (const pool of [queued, followUps]) {
+    for (let i = pool.length - 1; i >= 0; i--) {
+      if (!clientSendWindowVerdict(tenantOf(pool[i]), { scheduledClientScope: SCHEDULED_CLIENT_SCOPE }).allowed) pool.splice(i, 1);
+    }
+  }
 
   // Temporary recipient-provider admission (cold-delivery-policy.js): only
   // positively Google-hosted recipients enter this run's cold batches. Held

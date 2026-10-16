@@ -132,10 +132,9 @@ const JOLE = Object.freeze({
     allowedCampaignIds: Object.freeze(['jole-btx-employer-acquisition']),
     maxDailyPerInbox: 20,
   }),
-  // Assumed; confirm with Jorge before launch (send windows are still the
-  // shared Pacific windows until per-client windows exist).
+  // Confirmed client send-window timezone. ScaleLab retains Pacific windows.
   timezone: 'America/Chicago',
-  timezoneConfirmed: false,
+  timezoneConfirmed: true,
   representative: Object.freeze({
     name: 'Jorge Guerrero',
     role: 'Primary representative',
@@ -146,7 +145,7 @@ const JOLE = Object.freeze({
   senderIdentity: Object.freeze({ fromName: 'Jorge Guerrero', title: 'CEO', company: 'Jole BTX LLC' }),
   // Where Jole's copy reads its landing page and CAN-SPAM postal address.
   // Jole-only variables: neither falls back to ScaleLab's values.
-  copyEnv: Object.freeze({ landingPageUrl: 'JOLE_LANDING_PAGE_URL', mailingAddress: 'JOLE_COMMERCIAL_MAILING_ADDRESS' }),
+  copyEnv: Object.freeze({ landingPageUrl: 'JOLE_LANDING_PAGE_URL', bookingLink: 'JOLE_BOOKING_LINK', mailingAddress: 'JOLE_COMMERCIAL_MAILING_ADDRESS' }),
   escalation: Object.freeze({
     owner: 'scalelab',
     contactName: 'Jorge Guerrero',
