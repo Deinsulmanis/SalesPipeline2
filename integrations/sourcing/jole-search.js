@@ -223,6 +223,8 @@ const SOLAR = /\bsolar\b/;
 const SOLAR_INSTALLER_SITE = /\b(residential solar|rooftop solar|home solar|solar for your home|go solar|solar (panel )?install(?:er|ers|ation|ations)|solar financing|solar loans?)\b/;
 const SOLAR_INSTALL = /\b(residential solar|solar install(?:er|ers|ation)|rooftop solar|homeowners?|solar for your home)\b/;
 const GOVERNMENT_NAME = /^(city|county|town|village|borough|township|state|commonwealth|parish) of\b/;
+// Publicly owned utilities and agencies (municipal power, water and utility authorities, boards and districts).
+const PUBLIC_UTILITY_NAME = /\b(municipal|public (utility|utilities|power|works)|board of (water|light|public works)|(utility|utilities|water|power|sewer) (authority|district|commission))\b/;
 const CONTRACTOR_NAME = /\b(construction|constructors?|contractors?|contracting|builders|homes|roofing|gutters?|remodel(?:ing)?|paving|excavating|landscaping)\b/;
 const CONTRACTOR_SITE = /\b(general contractor|construction services|design[- ]build|construction management|we build homes|home improvement)\b/;
 const INDUSTRIAL_SITE = /\b(manufactur\w*|fabricat\w*|machin\w*|weld\w*|plant|mill|refin\w*|chemicals?|power|utilit\w*|steel|metals?|foundry|paper|mining|shipyard|shipbuild\w*|marine|pipeline|midstream|energy|industrial|equipment|production)\b/;
@@ -238,7 +240,7 @@ function sectorScreen({ name = '', domain = '', siteText = null } = {}) {
   const n = normalized(name);
   const d = String(domain || '').toLowerCase();
   if (PHARMA_CARE.test(n) || /pharma|biotech|therapeutic|cosmetic|beauty/.test(d)) return { decision: 'reject', reason: 'sector_pharma_biotech_consumer_care' };
-  if (GOVERNMENT_NAME.test(n) || /\.gov$|\.gov\.\w+$/.test(d)) return { decision: 'reject', reason: 'sector_government' };
+  if (GOVERNMENT_NAME.test(n) || PUBLIC_UTILITY_NAME.test(n) || /\.gov$|\.gov\.\w+$/.test(d)) return { decision: 'reject', reason: 'sector_government' };
   const site = siteText == null ? null : normalized(siteText);
   if (SOLAR.test(n) || SOLAR.test(d)) {
     if (site && SOLAR_INSTALL.test(site)) return { decision: 'reject', reason: 'sector_solar_installer' };

@@ -55,6 +55,8 @@ test('sector screen rejects pharma/consumer care and governments; holds solar an
   assert.equal(sectorScreen({ name: 'Beauty Quest Group' }).decision, 'reject');
   assert.equal(sectorScreen({ name: 'City of Omaha', domain: 'cityofomaha.org' }).reason, 'sector_government');
   assert.equal(sectorScreen({ name: 'Water Dept', domain: 'lascruces.gov' }).reason, 'sector_government');
+  for (const name of ['Lansing Board of Water & Light', 'Cape Fear Public Utility Authority', 'Massachusetts Municipal Wholesale Electric Company (MMWEC)'])
+    assert.equal(sectorScreen({ name, domain: 'example.org' }).reason, 'sector_government', name);
   assert.equal(sectorScreen({ name: 'Sol-Up Solar', siteText: 'Residential solar installation for homeowners' }).reason, 'sector_solar_installer');
   assert.equal(sectorScreen({ name: 'Acme Solar Power', siteText: 'utility-scale plant' }).decision, 'hold');
   assert.equal(sectorScreen({ name: 'Leafguard Brand Gutters' }).reason, 'sector_contractor_review');
