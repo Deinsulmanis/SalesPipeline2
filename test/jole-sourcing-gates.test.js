@@ -85,7 +85,7 @@ test('approved craft roles only; helpers, supervisors and office roles never cou
     ['Millwright', 'millwrights'], ['Journeyman Plumber-Pipefitter', 'pipefitters'], ['Pipe Fitter', 'pipefitters'],
   ]) assert.equal(approvedCraftRole(title), role, title);
   for (const title of ['Welder Helper', 'Electrical Apprentice', 'Maintenance Supervisor', 'Welding Engineer',
-    'Maintenance Manager', 'General Laborer', 'Production Operator', 'Warehouse Associate', 'Welding Inspector'])
+    'Maintenance Manager', 'General Laborer', 'Production Operator', 'Warehouse Associate', 'Welding Inspector', 'Team Lead IV, I&E Engineering'])
     assert.equal(approvedCraftRole(title), null, title);
 });
 
@@ -177,7 +177,7 @@ test('buyer family of a title: approved families only', () => {
     ['Site Manager', 'superintendent_site'], ['Superintendent', 'superintendent_site'], ['President', 'owner_executive'], ['Owner', 'owner_executive'],
   ]) assert.equal(buyerFamilyOf(title), family, title);
   for (const title of ['HR Coordinator', 'Maintenance Technician', 'Recruiter', 'Sales Manager', 'Process Engineer', 'Executive Assistant to the President',
-    'Sales Operations Manager', 'Finance Operations Manager', 'IT Site Manager', 'Technical Maintenance Manager(Retired)', 'Vice President, Operational Technology', 'Treasury Operations Manager', 'Asst to Evp/ceo', 'United States & Canada Customer Operations Manager', 'Business Operations Manager', 'Vice President, Commercial Operations', 'Remote Operations Center Superintendent', 'Vice President of Engineering', 'Vice President Product Innovation', 'Health and Safety Superintendent', 'Quality Manager', 'Transportation Operations Manager', 'Legal Operations Manager', 'Material Superintendent', 'Administrative Operations Manager'])
+    'Sales Operations Manager', 'Finance Operations Manager', 'IT Site Manager', 'Technical Maintenance Manager(Retired)', 'Vice President, Operational Technology', 'Treasury Operations Manager', 'Asst to Evp/ceo', 'United States & Canada Customer Operations Manager', 'Business Operations Manager', 'Vice President, Commercial Operations', 'Remote Operations Center Superintendent', 'Vice President of Engineering', 'Vice President Product Innovation', 'Health and Safety Superintendent', 'Quality Manager', 'Transportation Operations Manager', 'Legal Operations Manager', 'Material Superintendent', 'Administrative Operations Manager', 'Vice President, Global Paper Sourcing', 'Director of Operations Integration'])
     assert.equal(buyerFamilyOf(title), null, title);
 });
 

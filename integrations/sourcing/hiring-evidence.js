@@ -39,7 +39,7 @@ const CRAFT_CATEGORIES = Object.freeze([
 ]);
 // Not the trade itself (mirrors the production role cleaner's NOT_THE_TRADE),
 // plus office roles that merely mention a trade.
-const NOT_THE_TRADE = /\b(helpers?|apprentices?|trainees?|interns?|supervisors?|foreman|foremen|laborers?|deckhands?|engineers?|managers?|inspectors?|instructors?|sales|coordinators?|planners?|schedulers?|estimators?|recruiters?)\b/;
+const NOT_THE_TRADE = /\b(helpers?|apprentices?|trainees?|interns?|supervisors?|foreman|foremen|laborers?|deckhands?|engineers?|engineering|managers?|inspectors?|instructors?|sales|coordinators?|planners?|schedulers?|estimators?|recruiters?)\b/;
 
 // Contractor-for-hire signals (operator decision 2026-10-15): the posting
 // supplies labor or service personnel to customers. "Serving customers across
