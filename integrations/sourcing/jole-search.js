@@ -85,6 +85,13 @@ const SMALL_MID_MAX_EMPLOYEES = 1000;
 const SITE_EXECUTIVE = /\b(plant|site|mill|facility|refinery|shipyard|terminal|works)\b/;
 const SITE_TIE_ORDER = Object.freeze(['EXACT', 'REGION', 'STATE']);
 
+/** A General Manager title that is the site/plant/operations executive itself. */
+function siteGeneralManager(title) {
+  const t = String(title || '').toLowerCase().replace(/[^a-z ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (/^(senior |sr )?general manager$/.test(t)) return true;
+  return /\b(plant|site|mill|facility|refinery|works|operations|manufacturing|production)\b/.test(t.replace(/\bgeneral manager\b/, ''));
+}
+
 /** The approved buyer family of a title, or null (never a new family). */
 function buyerFamilyOf(title) {
   const t = String(title || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').trim();
@@ -126,6 +133,14 @@ function rankJoleContacts(contacts = [], { site = {}, employeeCount = null, site
     if (!family) { ineligible.push({ contact, reason: 'not_an_approved_buyer' }); continue; }
     if (family === 'owner_executive' && !smallMid && !SITE_EXECUTIVE.test(String(contact.title || '').toLowerCase())) {
       ineligible.push({ contact, reason: Number.isFinite(employeeCount) ? 'owner_executive_large_company' : 'owner_executive_size_unknown' });
+      continue;
+    }
+    // Large employers: a General Manager counts only as an operational/site
+    // executive ("General Manager", "Plant General Manager", "General Manager
+    // Operations"); a functional or other-business GM ("GM, Land & Water",
+    // "GM - Film") has no reasonable remit over the hiring site's workforce.
+    if (!smallMid && family === 'plant_operations' && /\bgeneral manager\b/i.test(String(contact.title || '')) && !siteGeneralManager(contact.title)) {
+      ineligible.push({ contact, reason: 'functional_gm_large_employer' });
       continue;
     }
     const tie = siteTieOf(contact, site);
@@ -225,5 +240,5 @@ function sectorScreen({ name = '', domain = '', siteText = null } = {}) {
 
 module.exports = {
   JOLE_SECTORS, SEARCH_EXCLUDED_SIC, SEARCH_EXCLUDED_NAICS, CRAFT_JOB_TITLES, BUYER_FAMILIES, SMALL_MID_MAX_EMPLOYEES, EMPLOYEE_BANDS,
-  joleCompanyDiscoveryParams, joleBuyerSearchParams, sectorScreen, buyerFamilyOf, siteTieOf, rankJoleContacts,
+  joleCompanyDiscoveryParams, joleBuyerSearchParams, sectorScreen, buyerFamilyOf, siteTieOf, siteGeneralManager, rankJoleContacts,
 };

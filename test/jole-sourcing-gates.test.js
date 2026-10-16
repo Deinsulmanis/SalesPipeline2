@@ -267,3 +267,14 @@ test('final order (default): exact site, then region, then state; approved famil
   assert.deepEqual(rankJoleContacts(contacts, { employeeCount: 300 }).ranked.map(r => r.contact.id), ['hr-exact', 'maint-exact', 'plant-region', 'plant-state']);
   assert.deepEqual(rankJoleContacts(contacts, { employeeCount: 300, siteFirst: false }).ranked.map(r => r.contact.id), ['plant-region', 'plant-state', 'hr-exact', 'maint-exact']);
 });
+
+test('large employers: only site/operations General Managers count; functional or other-business GMs do not', () => {
+  const { siteGeneralManager } = require('../integrations/sourcing/jole-search');
+  for (const title of ['General Manager', 'Plant General Manager', 'General Manager Operations - HPI', 'Site General Manager', 'Sr. General Manager'])
+    assert.equal(siteGeneralManager(title), true, title);
+  for (const title of ['General Manager, Land & Water', 'General Manager - Consumer, Professional, Industrial, and Aerial Film', 'General Manager, Nuton', 'General Manager - Advanced Services'])
+    assert.equal(siteGeneralManager(title), false, title);
+  const r = rankJoleContacts([{ id: 'gm', title: 'General Manager, Land & Water', siteTie: 'EXACT' }], { employeeCount: 50000 });
+  assert.deepEqual(r.ineligible.map(i => i.reason), ['functional_gm_large_employer']);
+  assert.equal(rankJoleContacts([{ id: 'gm', title: 'General Manager, Land & Water', siteTie: 'EXACT' }], { employeeCount: 400 }).ranked.length, 1, 'small/mid GMs are site executives');
+});
