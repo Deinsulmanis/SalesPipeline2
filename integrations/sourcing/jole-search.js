@@ -78,7 +78,7 @@ const FAMILY_PATTERNS = Object.freeze([
 // Apollo's exact-title search still returns these (2026-10-15 validation:
 // "Sales Operations Manager", "Finance Operations Manager", "IT Site Manager",
 // "Maintenance Manager (Retired)"); none is an approved buyer.
-const NOT_A_BUYER = /\b(assistant|asst|customer|intern|coordinator|specialist|generalist|recruiter|analyst|clerk|technician|engineer|sales|marketing|finance|financial|treasury|accounting|it|technology|retired|former|business operations|business development|commercial|remote|safety|environmental|environment|ehs|hse|quality|legal|materials?|transportation|fleet|administrative|admin|sourcing|procurement|purchasing|integration|security|administration|logistics)\b/;
+const NOT_A_BUYER = /\b(assistant|asst|customer|intern|coordinator|specialist|generalist|recruiter|analyst|clerk|technician|engineer|sales|marketing|finance|financial|treasury|accounting|it|technology|retired|former|business operations|business development|commercial|remote|safety|environmental|environment|ehs|hse|quality|legal|materials?|transportation|fleet|administrative|admin|sourcing|procurement|purchasing|integration|security|administration|logistics|counsel|exports?|owner operator|parts)\b/;
 // Functional executives are not the owner/executive buyer: "VP of Engineering", "VP Product Innovation".
 const FUNCTIONAL_EXEC = /\b(engineering|product|innovation|research|r and d|legal|hr|human resources|supply chain)\b/;
 // Small and mid-sized employers: up to 1,000 employees (the Phase 5 size bands
