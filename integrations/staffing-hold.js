@@ -1,5 +1,7 @@
 'use strict';
 
+const { SCHEMA_MARKER: STAFFING_V2_PROFILE_MARKER } = require('./staffing-v2-profile');
+
 // One structured hold annotation in the existing canonical campaign_notes
 // column. The review tag remains the source for fit, copy quality and routing.
 const START = '[STAFFING_HOLD_V1]';
@@ -27,6 +29,8 @@ function staffingHoldStatus(lead = {}) {
 }
 
 function withStaffingHold(campaignNotes, hold) {
+  // A V2 lead's campaign_notes is its sealed sourcing profile; a V1 hold block appended to it would corrupt it.
+  if (String(campaignNotes || '').includes(STAFFING_V2_PROFILE_MARKER)) throw new Error('a staffing V2 profile is not a V1 hold record');
   if (!hold || !REASONS.includes(hold.reason)) throw new Error('Invalid staffing hold reason');
   if (!String(hold.explanation || '').trim()) throw new Error('Staffing hold explanation required');
   if (!Array.isArray(hold.evidence) || !hold.evidence.length

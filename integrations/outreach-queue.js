@@ -5,7 +5,9 @@ const { sendSuppressionReason } = require('./pipeline-state');
 const { leadHasReply } = require('./reply-analytics');
 const { deriveAutomationOwnership } = require('./automation-ownership');
 const { resolveLeadClient } = require('./clients/ownership');
-const { isStaffingCampaign, staffingReviewStatus, renderStaffingEmail, validateStaffingEmail } = require('./staffing-campaign');
+const {
+  isStaffingCampaign, staffingReviewStatus, renderStaffingEmail, validateStaffingEmail, staffingV2SendBlock,
+} = require('./staffing-campaign');
 const { hasStaffingHoldMarker } = require('./staffing-hold');
 const { isClientTemplateId, renderClientLeadEmail, validateClientLeadEmail } = require('./clients/client-email');
 
@@ -132,6 +134,10 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
     if (coldSenderAllowed && !coldSenderAllowed(senderFor(lead))) {
       return { status: 422, error: `${senderFor(lead)} is not in the Gmail-healthy cold sender pool or is on the cold sender hold list` };
     }
+    // A V2 lead is queued only as itself, once routed: V2 campaign, template and
+    // version, structured roles + market, and V2 live. A refusal writes nothing.
+    const v2Block = staffingV2SendBlock({ ...lead, emailTemplateId, intendedCampaignVersion: campaignVersionId });
+    if (v2Block) return { status: 422, error: `${lead.company || lead.id}: ${v2Block}` };
   }
   const patchFor = lead => ({ stage: 'Queued', senderInboxId: senderFor(lead), emailTemplateId, routingRequired: 'true', intendedCampaignVersion: campaignVersionId });
 

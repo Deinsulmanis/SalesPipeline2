@@ -8,7 +8,7 @@
  */
 const LEGACY_UNKNOWN = 'legacy_unknown';
 const { staffingLaunchState } = require('./staffing-launch-gate');
-const { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_V2, staffingV2Live } = require('./staffing-campaign');
+const { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_V2, staffingV2Live, isStaffingV2Marked } = require('./staffing-campaign');
 const CAMPAIGN_VERSIONS = Object.freeze({
   [STAFFING_CAMPAIGN.id]: Object.freeze({
     id: STAFFING_CAMPAIGN.id, label: STAFFING_CAMPAIGN.name, niche: STAFFING_CAMPAIGN.niche,
@@ -212,6 +212,12 @@ function activeVersionForLead(lead = {}, { evidenceOnly = false } = {}) {
   if (version.family !== family) throw new Error(`Campaign version ${id} is incompatible with ${family}`);
   if (version.emailTemplateId && lead.emailTemplateId && version.emailTemplateId !== lead.emailTemplateId) {
     throw new Error(`Campaign version ${id} is incompatible with template ${lead.emailTemplateId}`);
+  }
+  // The staffing family's active version is V1. A lead that names V2 anywhere
+  // (label, template, version, V2 sourcing profile) resolves to V2 or to
+  // nothing: a blank or V1 version never makes it a V1 send.
+  if (family === CAMPAIGN_FAMILY.STAFFING && isStaffingV2Marked(lead) && version.id !== STAFFING_CAMPAIGN_V2.id) {
+    throw new Error(`staffing V2 lead requires campaign version ${STAFFING_CAMPAIGN_V2.id}; it never falls back to V1`);
   }
   return version;
 }

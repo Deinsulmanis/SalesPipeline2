@@ -2,7 +2,7 @@
 
 const { CAMPAIGN_VERSIONS, CAMPAIGN_FAMILY, resolveLeadFamily } = require('./campaign-versions');
 const { staffingSendBlockReason, isStaffingLead } = require('./staffing-launch-gate');
-const { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_V2, isStaffingCampaignVersionId } = require('./staffing-campaign');
+const { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_V2, isStaffingCampaignVersionId, staffingV2SendBlock } = require('./staffing-campaign');
 const { hasStaffingHoldMarker } = require('./staffing-hold');
 const { isStaffingOnlySender } = require('./gmail-inbox-registry');
 const { getClient } = require('./clients/registry');
@@ -203,6 +203,10 @@ function routedLeadReady(lead, env = process.env, { preparation = false } = {}) 
   const template = templateById(lead.emailTemplateId);
   if (!template?.ready) return { ok: false, reason: template?.reason || 'email template is unavailable' };
   if (template.niche !== normalizeNiche(lead.leadNiche)) return { ok: false, reason: 'email template does not match lead niche' };
+  // A V2-marked lead is sent only as a complete, live V2 lead with structured
+  // roles + market; anything less is held here, never re-routed to V1.
+  const v2Block = staffingV2SendBlock(lead);
+  if (v2Block) return { ok: false, reason: v2Block };
   return { ok: true, legacy: false, template };
 }
 

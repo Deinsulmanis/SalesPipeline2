@@ -137,7 +137,9 @@ async function stage2TimelineProbe({ leadId, sourceLeadId, email, authoritative,
   }
 }
 const { simulateRouting } = require('./integrations/gmail-routing-simulation');
-const { staffingReviewStatus } = require('./integrations/staffing-campaign');
+const { staffingReviewStatus, isStaffingV2Marked, STAFFING_CAMPAIGN_V2,
+  staffingV2CampaignNotesRefusal, STAFFING_V2_PROFILE_READ_ONLY } = require('./integrations/staffing-campaign');
+const { importStaffingV2Leads } = require('./integrations/staffing-v2-import');
 const { staffingHoldStatus } = require('./integrations/staffing-hold');
 const { EMAIL_TEMPLATES, LEAD_TYPES, LEAD_TYPE_IDS, normalizeNiche, leadTypeLabel, isKnownLeadType, campaignVersionsForRoute, validateCampaignVersionRoute, validateRoute, routedLeadReady } = require('./integrations/campaign-routing');
 const {
@@ -2462,10 +2464,53 @@ function importManagedClientLeads({ clientId, campaignId, rows, dryRun }) {
   }));
 }
 
+// ── INDUSTRIAL STAFFING V2 LEAD IMPORT (integrations/staffing-v2-import.js) ──
+// The only way a V2 lead enters storage: explicit V2 identity, V2_READY sourcing
+// records only, structured roles + market and the full sourcing profile kept in
+// campaign_notes. A DRY RUN unless the body sends `dry_run: false`. A write adds
+// Import-stage leads through the same primitives as the managed-client import —
+// one ColdEmail append, then the background outreach_leads mirror — and does
+// nothing else: no queue, sender, reservation, schedule or V2 activation.
+app.post('/api/staffing/v2/leads/import', requireAuth, async (req, res) => {
+  const body = req.body || {};
+  const dryRun = body.dry_run !== false;
+  try {
+    const result = await withAuth(() => importStaffingV2Leads({
+      payload: body, dryRun,
+      readCorpus: readClientImportCorpus,
+      appendLeads: async leads => {
+        await sheets().spreadsheets.values.append({
+          spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+          requestBody: { values: leads.map(lead => CE_COLUMNS.map(col => String(lead[col] ?? ''))) },
+        });
+        ceRowMap.clear();
+      },
+      mirrorLeads: async leads => {
+        if (outreachStateMode() !== 'off') mirrorOutreachLeadsInBackground(leads);
+        return { scheduled: outreachStateMode() !== 'off', leads: leads.length };
+      },
+      newId: () => Date.now().toString(36) + crypto.randomBytes(6).toString('hex'),
+    }));
+    res.json(result);
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    if (e.code === 'invalid_payload') return res.status(422).json({ error: e.message, code: e.code });
+    if (e.code === 'corpus_unavailable') return res.status(503).json({ error: e.message, code: e.code });
+    console.error('[Staffing V2 Import]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/coldemail/import', requireAuth, async (req, res) => {
   const { rows, campaign, campaign_notes, lead_niche } = req.body || {};
   if (!Array.isArray(rows)) return res.status(400).json({ error: 'body.rows must be an array' });
   if (!campaign || !String(campaign).trim()) return res.status(422).json({ error: 'Campaign name is required' });
+  // Industrial Staffing V2 never enters through this flat import: it would drop
+  // V2's structured profile and identity. Its own import keeps both.
+  if (isStaffingV2Marked({ campaign: String(campaign).trim(), campaign_notes })
+    || String(campaign).trim() === STAFFING_CAMPAIGN_V2.emailTemplateId) {
+    return res.status(422).json({ error: 'Industrial Staffing V2 leads use POST /api/staffing/v2/leads/import', code: 'use_staffing_v2_import' });
+  }
   const leadNiche = normalizeNiche(lead_niche);
   if (!leadNiche) return res.status(422).json({ error: 'Lead niche is required' });
   // Fail closed: an unrecognised lead type must not be stored and later resolved
@@ -5807,6 +5852,11 @@ app.post('/api/coldemail', requireAuth, async (req, res) => {
     return res.status(422).json({ error: 'managed-client leads use their own import', code: 'client_ownership_conflict' });
   }
   lead.clientId = DEFAULT_CLIENT_ID;
+  // A staffing V2 lead enters only through its own import, with its sealed profile.
+  if (isStaffingV2Marked({ ...lead, campaign: String(lead.campaign || '').trim() })
+    || String(lead.campaign || '').trim() === STAFFING_CAMPAIGN_V2.emailTemplateId) {
+    return res.status(422).json({ error: 'Industrial Staffing V2 leads use POST /api/staffing/v2/leads/import', code: 'use_staffing_v2_import' });
+  }
   // Same choke point as the CSV import: validate format and reject junk,
   // then dedupe against the sheet — this path previously had neither, so a
   // manual add could create a second sendable row for an existing address.
@@ -5971,6 +6021,15 @@ app.put('/api/coldemail/:id', requireAuth, rejectArchived('coldemail'), async (r
   try {
     const rowNum = await withAuth(() => findCERow(req.params.id));
     if (!rowNum) return res.status(404).json({ error: 'not found' });
+    // This full-row write may not change a staffing V2 lead's sealed profile, or
+    // put a V2 profile on any other lead. Checked against the row it overwrites.
+    const current = await withAuth(async () => {
+      const resp = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A${rowNum}:Y${rowNum}` });
+      const row = resp.data.values?.[0] || [];
+      return Object.fromEntries(CE_COLUMNS.map((field, i) => [field, row[i] || '']));
+    });
+    const notesRefusal = staffingV2CampaignNotesRefusal(current, vals[0][CE_EDITABLE_COLUMNS.indexOf('campaign_notes')]);
+    if (notesRefusal) return res.status(422).json({ error: notesRefusal, code: STAFFING_V2_PROFILE_READ_ONLY });
     await withAuth(async () => {
       await sheets().spreadsheets.values.update({
         spreadsheetId:   SPREADSHEET_ID,
