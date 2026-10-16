@@ -179,7 +179,7 @@ test('M/N. staffing reuses the shared sender, thread and follow-up machinery', (
   assert.ok(!/staffingSendEmail|sendStaffingEmail|staffingQuota|staffingReservation/.test(agent),
     'staffing must not fork the sending infrastructure');
   // Follow-up bodies branch on the template; sender/thread selection does not.
-  assert.match(agent, /if \(lead\.emailTemplateId === STAFFING_TEMPLATE\) \{\n\s*try \{ body = staffingFollowUpBody\(lead, nextStepNum, ownershipActivities\); \}/);
+  assert.match(agent, /if \(isStaffingTemplateId\(lead\.emailTemplateId\)\) \{\n\s*try \{ body = staffingFollowUpBody\(lead, nextStepNum, ownershipActivities\); \}/);
   assert.equal(agent.split('staffingFollowUpBody(lead, nextStepNum, ownershipActivities)').length - 1, 2, 'both follow-up sites are covered');
   // Dental and roofing keep the original unguarded call, so their behaviour is
   // provably unchanged by the staffing branch.

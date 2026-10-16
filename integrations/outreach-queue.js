@@ -122,6 +122,11 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
   for (const lead of selected) {
     const eligible = queueEligibility(lead, state);
     if (!eligible.ok) return { status: 409, error: `${lead.company || lead.id}: ${eligible.reason}` };
+    // A staffing lead is queued only under its own staffing version: choosing
+    // the other version here can never move a V1 lead into V2, or the reverse.
+    if (isStaffingCampaign(lead) && !isStaffingCampaign({ ...lead, emailTemplateId, intendedCampaignVersion: campaignVersionId })) {
+      return { status: 422, error: `${lead.company || lead.id}: the selected staffing campaign version is not this lead's campaign` };
+    }
     const route = validateSelection(lead, senderFor(lead));
     if (!route.ok) return { status: 422, error: route.reason };
     if (coldSenderAllowed && !coldSenderAllowed(senderFor(lead))) {

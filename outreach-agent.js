@@ -116,13 +116,15 @@ const { DEFAULT_CLIENT_ID } = require('./integrations/clients/registry');
 const { clientSendBlock } = require('./integrations/clients/send-policy');
 // Staffing supplies its own locked copy only. Sender selection, thread pinning,
 // quota, observer, suppression and ownership all stay on the shared path.
-const { STAFFING_CAMPAIGN, renderStaffingEmail, validateStaffingEmail, isStaffingCampaign } = require('./integrations/staffing-campaign');
+const {
+  renderStaffingEmail, validateStaffingEmail, isStaffingCampaign, staffingCampaignFor, isStaffingTemplateId,
+} = require('./integrations/staffing-campaign');
 const { landingLinkMetadata, PLAN_STATUS: LANDING_PLAN_STATUS } = require('./integrations/landing-link-token');
 const {
   staffingColdStepLandingPlan, staffingWarmReplyLandingPlan, warmReplyTemplate,
   buildIssuanceRecord, ensureLandingIssuance, recordLandingLinkSent,
 } = require('./integrations/landing-link-issuance');
-const STAFFING_TEMPLATE = STAFFING_CAMPAIGN.emailTemplateId;
+// Every staffing version (V1, V2) shares the staffing send path; only its copy differs.
 // Managed clients' cold copy (clients/client-email.js): same delivery, cadence
 // and safety gates as ScaleLab's; only the copy and its personalization differ.
 const { isClientTemplateId, renderClientLeadEmail, validateClientLeadEmail } = require('./integrations/clients/client-email');
@@ -2122,7 +2124,7 @@ async function deliverOrdinaryColdStep({
   // the same action id and earlier attempts the caller rendered from, so the
   // locked-copy comparison below also proves the URL is unchanged. Null for
   // every other step and template.
-  const landingPlan = lead.emailTemplateId === STAFFING_TEMPLATE
+  const landingPlan = isStaffingTemplateId(lead.emailTemplateId)
     ? staffingColdStepLandingPlan({ lead, step, activities: activitiesForCycle || [] }) : null;
   if (landingPlan?.status === LANDING_PLAN_STATUS.BLOCKED) return { delivered: false, reason: `landing link blocked: ${landingPlan.reason}` };
   const landingLink = landingLinkMetadata(landingPlan);
@@ -2133,7 +2135,7 @@ async function deliverOrdinaryColdStep({
   }) : null;
   // Preview HTML previously disappeared before Gmail's plain-text-only MIME
   // assembly. Preserve the approved bold phrase without changing the text.
-  const staffingEmail = lead.emailTemplateId === STAFFING_TEMPLATE
+  const staffingEmail = isStaffingTemplateId(lead.emailTemplateId)
     ? renderStaffingEmail(lead, step, landingPlan?.tracked ? { landingPageUrl: landingPlan.url, ...resumeContext } : resumeContext) : null;
   if (staffingEmail && staffingEmail.body !== body) return { delivered: false, reason: 'staffing delivery body differs from locked copy' };
   const clientCopyProblem = clientDeliveryCopyProblem(lead, step, body);
@@ -4831,10 +4833,10 @@ function coldFollowUpBlockReason(lead) {
   const family = familyForLead(lead);
   if (family === CAMPAIGN_FAMILY.UNROUTED) return 'unknown or ambiguous niche';
   if (isManagedFamily(family) !== isClientTemplateId(lead.emailTemplateId)) return 'client template and campaign family disagree';
-  if (family === CAMPAIGN_FAMILY.STAFFING && lead.emailTemplateId !== STAFFING_TEMPLATE) {
+  if (family === CAMPAIGN_FAMILY.STAFFING && !isStaffingTemplateId(lead.emailTemplateId)) {
     return 'staffing lead missing staffing template';
   }
-  if (family !== CAMPAIGN_FAMILY.STAFFING && lead.emailTemplateId === STAFFING_TEMPLATE) {
+  if (family !== CAMPAIGN_FAMILY.STAFFING && isStaffingTemplateId(lead.emailTemplateId)) {
     return 'staffing template on a non-staffing lead';
   }
   if (!authoritativeProvider({
@@ -5725,7 +5727,7 @@ async function run() {
         console.warn(`⏸️  follow-up deferred → ${lead.email} (${error.message})`);
         return false;
       }
-    } else if (lead.emailTemplateId === STAFFING_TEMPLATE) {
+    } else if (isStaffingTemplateId(lead.emailTemplateId)) {
       try { body = staffingFollowUpBody(lead, nextStepNum, ownershipActivities); }
       catch (error) {
         console.warn(`⏸️  follow-up deferred → ${lead.email} (${error.message})`);
@@ -5886,7 +5888,7 @@ async function run() {
         const invalid = validateRoofingSurveyInitial(email);
         if (invalid) throw new Error(invalid);
         built = { ...email, link: '', opener: 'locked roofing survey copy', openerTier: 'LOCKED', pitchTier: ROOFING_SURVEY_PROFILE };
-      } else if (lead.emailTemplateId === STAFFING_TEMPLATE) {
+      } else if (isStaffingTemplateId(lead.emailTemplateId)) {
         if (familyForLead(lead) !== CAMPAIGN_FAMILY.STAFFING) {
           throw new Error('staffing template cannot send for a non-staffing family');
         }
@@ -5923,8 +5925,8 @@ async function run() {
       ? validateClientLeadEmail(lead, { subject, body }, 1)
       : lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE
       ? validateRoofingSurveyInitial({ subject, body })
-      : lead.emailTemplateId === STAFFING_TEMPLATE
-      ? validateStaffingEmail({ subject, body }, 1)
+      : isStaffingTemplateId(lead.emailTemplateId)
+      ? validateStaffingEmail({ subject, body, campaignId: staffingCampaignFor(lead)?.id }, 1)
       : validateColdEmail(lead, subject, body, link, {
         cta, personalizationBlocks, demoIncluded, requiredBlocks,
         personalizationClaims, verifiedFactIds, demoCta, approvedGuarantee,
@@ -6036,7 +6038,7 @@ async function run() {
     // Only the staffing branch is guarded: dental and roofing keep their exact
     // previous behaviour, including how a copy failure propagates.
     let body;
-    if (lead.emailTemplateId === STAFFING_TEMPLATE) {
+    if (isStaffingTemplateId(lead.emailTemplateId)) {
       try { body = staffingFollowUpBody(lead, nextStepNum, ownershipActivities); }
       catch (error) {
         console.warn(`⏸️  follow-up deferred → ${lead.email} (${error.message})`);

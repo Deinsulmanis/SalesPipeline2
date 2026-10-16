@@ -38,8 +38,8 @@ const {
 } = require('./pipeline-state');
 const { latestResponseAt, isResponseEvidence, isProspectFacingResponse } = require('./prospect-response');
 const { displayStageFor } = require('./cold-call-pipeline');
-const { familyForLead, CAMPAIGN_FAMILY } = require('./campaign-versions');
-const { isStaffingCampaign, BOLD_PHRASES } = require('./staffing-campaign');
+const { familyForLead, CAMPAIGN_FAMILY, CAMPAIGN_VERSIONS } = require('./campaign-versions');
+const { isStaffingCampaign, BOLD_PHRASES, STAFFING_CAMPAIGN_V2 } = require('./staffing-campaign');
 const {
   STAFFING_NOTE, STAFFING_MARKET_MARKERS, STAFFING_SEND_INFO_MARKERS, CANDIDATE_SIDE_MARKERS,
   NOT_QUALIFIED_MARKERS, EMPLOYER_SIDE_MARKERS, isPricingQuestion, staffingHumanTouchBlock,
@@ -103,6 +103,16 @@ const QUALIFICATION_SLOTS = Object.freeze([
 ]);
 // The staffing cold Email 3 asks exactly this, so its delivery is the ask.
 const PRIORITY_QUESTION_ANCHOR = String(BOLD_PHRASES[2] || '').split('{{')[0].trim();
+// Staffing V2's Touch 3 asks the same question in its own words ("Should I
+// close the loop here, or is bringing in more employer accounts still
+// something {{company}} is looking to grow?"). It is recognised from its send
+// event, never from text: a step-3 send recorded under V2's campaign version
+// and V2's follow-up copy version. Reworded copy gets a new copy version
+// (campaign-versions.js), so it cannot be mistaken for this one.
+const V2_PRIORITY_ASK = Object.freeze({
+  campaignVersion: STAFFING_CAMPAIGN_V2.id,
+  copyVersion: CAMPAIGN_VERSIONS[STAFFING_CAMPAIGN_V2.id].followUpCopyVersion,
+});
 
 // ── small deterministic helpers ─────────────────────────────────────────────
 
@@ -626,7 +636,7 @@ function decisionFit(turn) {
   return decision.qualificationState || null;
 }
 
-function buildQualification({ lead, turns, notes, family }) {
+function buildQualification({ lead, turns, notes, family, rows = [] }) {
   const staffing = family === CAMPAIGN_FAMILY.STAFFING || (lead && isStaffingCampaign(lead));
   if (!staffing) {
     return { applicable: false, family: family || null, status: 'not_applicable', productionQualified: null, slots: {}, asked: [], legacyTags: [] };
@@ -639,10 +649,17 @@ function buildQualification({ lead, turns, notes, family }) {
   const automated = turns.filter(turn => turn.direction === 'outbound' && turn.actor === 'automation');
   const rolesAsks = automated.filter(turn => STAFFING_ASKS_ROLES.has(turn.actionType));
   const qualifiedSends = automated.filter(turn => turn.actionType === ACTION.AUTO_STAFFING_QUALIFIED);
+  const rowsById = new Map(rows.map(row => [row.eventId, row]));
+  const isV2PriorityAsk = turn => turn.sourceEventIds.some(id => {
+    const meta = (rowsById.get(id) || {}).metadata || {};
+    return Number(meta.step) === 3 && meta.campaignVersion === V2_PRIORITY_ASK.campaignVersion
+      && meta.copyVersion === V2_PRIORITY_ASK.copyVersion;
+  });
   const priorityAsks = automated.filter(turn => turn.actionType === 'cold_step_3'
     // Case-insensitive: Touch 3s sent before 2026-10-03 read "…is bringing…",
     // later ones "Is bringing…". Both asked the same question.
-    && PRIORITY_QUESTION_ANCHOR && turn.content.toLowerCase().includes(PRIORITY_QUESTION_ANCHOR.toLowerCase()));
+    && ((PRIORITY_QUESTION_ANCHOR && turn.content.toLowerCase().includes(PRIORITY_QUESTION_ANCHOR.toLowerCase()))
+      || isV2PriorityAsk(turn)));
   const firstRolesAskAt = rolesAsks.length ? rolesAsks[0].occurredAt : null;
   const prospectMessages = turns.filter(isProspectMessage);
 
@@ -1273,7 +1290,7 @@ function buildConversationState({
     rows, ledgerRows, lead, boardLead, messageTexts: messageTexts || {},
   });
   const terminalState = buildTerminalState({ lead, boardLead, rows, turns, suppressedEmails: suppressed, now: asOf });
-  const qualification = buildQualification({ lead, turns, notes, family });
+  const qualification = buildQualification({ lead, turns, notes, family, rows });
   const { questions, objections, referral, ambiguities } = buildQuestionsAndObjections({ turns, rows, family, lead });
   // Terminal precedence: nothing on an opted-out, rejected, bounced or closed
   // conversation is open work. The evidence stays; only the status says so.

@@ -2,7 +2,7 @@
 
 const { CAMPAIGN_VERSIONS, CAMPAIGN_FAMILY, resolveLeadFamily } = require('./campaign-versions');
 const { staffingSendBlockReason, isStaffingLead } = require('./staffing-launch-gate');
-const { STAFFING_CAMPAIGN } = require('./staffing-campaign');
+const { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_V2, isStaffingCampaignVersionId } = require('./staffing-campaign');
 const { hasStaffingHoldMarker } = require('./staffing-hold');
 const { isStaffingOnlySender } = require('./gmail-inbox-registry');
 const { getClient } = require('./clients/registry');
@@ -15,6 +15,11 @@ const EMAIL_TEMPLATES = Object.freeze([
   Object.freeze({ id: STAFFING_CAMPAIGN.emailTemplateId, name: STAFFING_CAMPAIGN.name,
     niche: STAFFING_CAMPAIGN.niche, ready: STAFFING_CAMPAIGN.ready, sequenceSteps: 3,
     reason: '' }),
+  // Staffing V2's copy: ready only once V2 is live (staffing-campaign.js).
+  Object.freeze({ id: STAFFING_CAMPAIGN_V2.emailTemplateId, name: STAFFING_CAMPAIGN_V2.name,
+    niche: STAFFING_CAMPAIGN_V2.niche, sequenceSteps: 3,
+    get ready() { return STAFFING_CAMPAIGN_V2.ready; },
+    get reason() { return STAFFING_CAMPAIGN_V2.ready ? '' : `${STAFFING_CAMPAIGN_V2.name} is registered but not live yet`; } }),
   // Retired with the dental offer (lead-archive RETIRED_OFFERS). Kept registered
   // so historical sends still resolve their copy; never ready again.
   Object.freeze({ id: 'dental-guarantee-v1', name: 'Dental guarantee pitch', niche: 'dental', ready: false, sequenceSteps: 3,
@@ -88,7 +93,7 @@ function routeClientVerdict({ lead = null, niche, inbox, emailTemplateId, campai
 
 function campaignVersionsForRoute({ niche, emailTemplateId = '' } = {}) {
   const normalizedNiche = normalizeNiche(niche);
-  return Object.values(CAMPAIGN_VERSIONS).filter(version => (version.status === 'active' || (version.id === STAFFING_CAMPAIGN.id && version.status === 'approved'))
+  return Object.values(CAMPAIGN_VERSIONS).filter(version => (version.status === 'active' || (isStaffingCampaignVersionId(version.id) && version.status === 'approved'))
     && version.niche === normalizedNiche
     && (!emailTemplateId || version.emailTemplateId === emailTemplateId));
 }
@@ -103,7 +108,7 @@ function validateCampaignVersionRoute({ niche, emailTemplateId, campaignVersionI
     return { ok: true, version: { id: managed.id, label: managed.label, niche: managed.leadType, emailTemplateId: managed.emailTemplateId, clientId: managed.clientId } };
   }
   const version = CAMPAIGN_VERSIONS[String(campaignVersionId || '').trim()];
-  if (!version || !(version.status === 'active' || (version.id === STAFFING_CAMPAIGN.id && version.status === 'approved'))) return { ok: false, reason: 'An approved registered campaign version is required' };
+  if (!version || !(version.status === 'active' || (isStaffingCampaignVersionId(version.id) && version.status === 'approved'))) return { ok: false, reason: 'An approved registered campaign version is required' };
   const normalizedNiche = normalizeNiche(niche);
   if (version.niche !== normalizedNiche) return { ok: false, reason: `${version.label} cannot be used for ${normalizedNiche} leads` };
   if (version.emailTemplateId !== String(emailTemplateId || '').trim()) return { ok: false, reason: `${version.label} does not use the selected email copy` };

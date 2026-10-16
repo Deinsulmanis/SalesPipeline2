@@ -8,7 +8,7 @@
  */
 const LEGACY_UNKNOWN = 'legacy_unknown';
 const { staffingLaunchState } = require('./staffing-launch-gate');
-const { STAFFING_CAMPAIGN } = require('./staffing-campaign');
+const { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_V2, staffingV2Live } = require('./staffing-campaign');
 const CAMPAIGN_VERSIONS = Object.freeze({
   [STAFFING_CAMPAIGN.id]: Object.freeze({
     id: STAFFING_CAMPAIGN.id, label: STAFFING_CAMPAIGN.name, niche: STAFFING_CAMPAIGN.niche,
@@ -18,6 +18,20 @@ const CAMPAIGN_VERSIONS = Object.freeze({
     get status() { return staffingLaunchState().status; },
     get activatedAt() { return staffingLaunchState().activatedAt; },
     meaning: 'Approved employer-meeting copy and personalization. Queueing is permitted; delivery requires separate explicit staffing activation.',
+  }),
+  // V2 has its own copy for every touch: Email 1 records staffing_locked_v2,
+  // Emails 2 and 3 industrial_staffing_follow_up_v2. Same subjects, cadence and
+  // offer as V1. Draft (unqueueable, unsendable) until staffing-campaign.js
+  // makes V2 live; live, it follows V1's staffing launch gate.
+  [STAFFING_CAMPAIGN_V2.id]: Object.freeze({
+    id: STAFFING_CAMPAIGN_V2.id, label: STAFFING_CAMPAIGN_V2.name, niche: STAFFING_CAMPAIGN_V2.niche,
+    emailTemplateId: STAFFING_CAMPAIGN_V2.emailTemplateId, family: 'industrial_staffing',
+    copyVersion: 'staffing_locked_v2', followUpCopyVersion: 'industrial_staffing_follow_up_v2',
+    personalizationStrategy: STAFFING_CAMPAIGN_V2.personalizationStrategy,
+    subjectStrategy: 'employer_accounts_locked_v1', offerVersion: 'employer_meetings_performance_v1',
+    get status() { return staffingV2Live() ? staffingLaunchState().status : 'draft'; },
+    activatedAt: null,
+    meaning: 'Industrial Staffing V2: V1 targeting, offer, subjects and cadence with V2 copy: a company-named roles-and-market opening, a performance-basis Touch 2 with no landing-page link, and a short close-the-loop Touch 3.',
   }),
   dental_v1_measured: Object.freeze({
     id: 'dental_v1_measured',

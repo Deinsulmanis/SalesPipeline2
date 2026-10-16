@@ -17,21 +17,79 @@ const STAFFING_CAMPAIGN = Object.freeze({
   ready: true,
 });
 
+// Industrial Staffing V2 (2026-10-15): a separate campaign whose ONLY intended
+// difference from V1 is the Email 1 copy. It shares V1's niche, personalization
+// strategy and model, subject, cadence, Email 2 and Email 3, and its own id,
+// template and copy version keep every V2 send attributable apart from V1.
+//
+// V2 is registered but NOT live: no lead can be queued to it and nothing can
+// send under it until a reviewed change sets STAFFING_V2_LIVE to true. Live, it
+// follows V1's staffing launch gate (campaign-versions.js).
+const STAFFING_V2_LIVE = false;
+let staffingV2LiveOverride = null;
+function staffingV2Live() {
+  return staffingV2LiveOverride === null ? STAFFING_V2_LIVE : staffingV2LiveOverride;
+}
+/** Tests only: model V2 live (true) or locked (false); null restores the source value. */
+function setStaffingV2LiveForTests(value) {
+  staffingV2LiveOverride = value === null ? null : Boolean(value);
+}
+
+const STAFFING_CAMPAIGN_V2 = Object.freeze({
+  id: 'industrial_staffing_employer_acquisition_v2',
+  name: 'Industrial Staffing Agency V2',
+  legacyNames: Object.freeze([]),
+  niche: STAFFING_CAMPAIGN.niche,
+  emailTemplateId: 'industrial-staffing-employer-v2',
+  personalizationStrategy: STAFFING_CAMPAIGN.personalizationStrategy,
+  model: STAFFING_CAMPAIGN.model,
+  get status() { return staffingV2Live() ? 'approved' : 'draft'; },
+  get ready() { return staffingV2Live(); },
+});
+
+const STAFFING_CAMPAIGNS = Object.freeze([STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_V2]);
+
 // Every campaign label that identifies this campaign: the current name, the id,
 // and any name it was stored under previously.
 const STAFFING_CAMPAIGN_LABELS = Object.freeze([
   STAFFING_CAMPAIGN.name, STAFFING_CAMPAIGN.id, ...STAFFING_CAMPAIGN.legacyNames,
 ]);
+const labelsOf = campaign => (campaign === STAFFING_CAMPAIGN ? STAFFING_CAMPAIGN_LABELS
+  : [campaign.name, campaign.id, ...campaign.legacyNames]);
 
-function isStaffingCampaign(lead = {}) {
+// A lead belongs to exactly one staffing version: every campaign identifier it
+// carries (label, id, template) must name the same version, or it is neither.
+function matchesStaffingCampaign(lead, campaign) {
+  const labels = labelsOf(campaign);
   const ids = [lead.campaignId, lead.intendedCampaignVersion].filter(Boolean);
-  const matches = STAFFING_CAMPAIGN_LABELS.includes(lead.campaign) || ids.includes(STAFFING_CAMPAIGN.id);
+  const matches = labels.includes(lead.campaign) || ids.includes(campaign.id);
   if (!matches) return false;
-  if (ids.some(id => id !== STAFFING_CAMPAIGN.id)) return false;
-  if (lead.campaign && !STAFFING_CAMPAIGN_LABELS.includes(lead.campaign)) return false;
-  if (lead.emailTemplateId && lead.emailTemplateId !== STAFFING_CAMPAIGN.emailTemplateId) return false;
+  if (ids.some(id => id !== campaign.id)) return false;
+  if (lead.campaign && !labels.includes(lead.campaign)) return false;
+  if (lead.emailTemplateId && lead.emailTemplateId !== campaign.emailTemplateId) return false;
   if (lead.leadNiche && !['industrial_staffing', 'staffing'].includes(lead.leadNiche)) return false;
   return true;
+}
+
+/** The staffing campaign version (V1 or V2) this lead belongs to, or null. */
+function staffingCampaignFor(lead = {}) {
+  return STAFFING_CAMPAIGNS.find(campaign => matchesStaffingCampaign(lead, campaign)) || null;
+}
+
+function isStaffingCampaign(lead = {}) {
+  return Boolean(staffingCampaignFor(lead));
+}
+
+/** Is this one of the staffing versions' email templates? */
+function isStaffingTemplateId(id) {
+  const value = String(id || '').trim();
+  return STAFFING_CAMPAIGNS.some(campaign => campaign.emailTemplateId === value);
+}
+
+/** Is this one of the staffing versions' campaign ids? */
+function isStaffingCampaignVersionId(id) {
+  const value = String(id || '').trim();
+  return STAFFING_CAMPAIGNS.some(campaign => campaign.id === value);
 }
 
 const STAFFING_LANDING_PAGE_URL = 'https://scalelabai.ca/staffing/';
@@ -103,6 +161,44 @@ const BOLD_PHRASES = Object.freeze([
   'Is bringing in more employer accounts something {{company}} is focused on right now?',
 ]);
 const BOLD_PHRASE = BOLD_PHRASES[0];
+
+// V2's own copy for all three touches. Cadence and thread subjects are V1's
+// (sequence-timing.js, gmail-threading.js). V2 Touch 2 deliberately carries NO
+// landing-page link, and V2 Touch 3 has no bold phrase.
+const LOCKED_EMAILS_V2 = Object.freeze([
+  `Hi {{firstName}},\n\nSaw {{company}} places {{roles}} for {{market}}.\n\nWe help industrial staffing agencies turn that market into qualified employer meetings. We work on a performance basis, so our incentives are tied to actually producing meetings.\n\nWorth seeing how we'd approach this for {{company}}?\n\nDeins`,
+  `Hi {{firstName}},\n\nJust to clarify what I mean by performance basis.\n\nWe handle the employer prospecting, outreach and qualification around the roles {{company}} already fills, reaching thousands of relevant employers and putting interested ones directly on your calendar.\n\nOur compensation is tied to qualified employer meetings that actually take place, not the amount of outreach we run.\n\nWorth a quick conversation if bringing in more employer accounts is a priority?\n\nDeins`,
+  `Hi {{firstName}},\n\nShould I close the loop here, or is bringing in more employer accounts still something {{company}} is looking to grow?\n\nDeins`,
+]);
+const BOLD_PHRASES_V2 = Object.freeze([
+  'We work on a performance basis, so our incentives are tied to actually producing meetings.',
+  'Our compensation is tied to qualified employer meetings that actually take place, not the amount of outreach we run.',
+  null,
+]);
+// What validation requires each V2 touch to contain: its bold phrase, or for
+// Touch 3 its one question.
+const LOCKED_PHRASES_V2 = Object.freeze([
+  BOLD_PHRASES_V2[0],
+  BOLD_PHRASES_V2[1],
+  'Should I close the loop here, or is bringing in more employer accounts still something {{company}} is looking to grow?',
+]);
+const copyFor = campaign => (campaign === STAFFING_CAMPAIGN_V2
+  ? { emails: LOCKED_EMAILS_V2, bold: BOLD_PHRASES_V2, landingPage: false }
+  : { emails: LOCKED_EMAILS, bold: BOLD_PHRASES, landingPage: true });
+
+// V2's opening names the roles and the market that V1's research already
+// validated, verbatim from the stored V1 opening ("Saw you place {roles} for
+// {market}."). Only that shape carries both; a market-only, territory-only or
+// missing opening has no supported roles + market, and V2 refuses to render
+// rather than invent either.
+const V1_ROLES_MARKET_OPENING = /^Saw (?:you place|your team placing) (.+?) for (.+)\.$/;
+function staffingOpeningParts(opening) {
+  const match = V1_ROLES_MARKET_OPENING.exec(String(opening || '').trim());
+  if (!match) return null;
+  const roles = match[1].trim();
+  const market = match[2].trim();
+  return roles && market ? { roles, market } : null;
+}
 // Cadence: staffing does not get its own scheduler, only its own copy. Its
 // timing is THE sequence timing (integrations/sequence-timing.js), re-exported
 // here by reference so nothing can hold a second copy of the delays.
@@ -114,30 +210,42 @@ const {
 } = require('./staffing-compliance');
 
 function renderStaffingPreview(lead, result, step = 1, options = {}) {
-  if (!isStaffingCampaign(lead)) throw new Error('Staffing campaign assignment required');
+  const campaign = staffingCampaignFor(lead);
+  if (!campaign) throw new Error('Staffing campaign assignment required');
   if (![1, 2, 3].includes(step)) throw new Error('Invalid staffing sequence step');
-  const noPersonalization = step === 1 && !result?.hyperPersonalizedOpening && staffingNoPersonalizationAllowed(lead);
+  const v2 = campaign === STAFFING_CAMPAIGN_V2;
+  const copy = copyFor(campaign);
+  // V1's no-personalization Email 1 has no V2 counterpart: V2 Email 1 needs roles + market.
+  const noPersonalization = !v2 && step === 1 && !result?.hyperPersonalizedOpening && staffingNoPersonalizationAllowed(lead);
   if (step === 1 && (result?.reviewFlag || (!result?.hyperPersonalizedOpening && !noPersonalization))) return null;
+  const parts = v2 && step === 1 ? staffingOpeningParts(result?.hyperPersonalizedOpening) : null;
+  if (v2 && step === 1 && !parts) return null;
   const vars = {
     firstName: String(lead.firstName || lead.first || lead.contactName?.split(/\s+/)[0] || 'there').trim(),
     company: String(lead.company || '').trim(),
     hyperPersonalizedOpening: result?.hyperPersonalizedOpening || '',
+    ...(parts || {}),
   };
   if (!vars.company || Object.values(vars).some(v => /[\r\n]|{{|}}/.test(v))) throw new Error('Invalid template variable');
   const merge = text => text.replace(/{{(\w+)}}/g, (_, key) => vars[key]);
   const identity = staffingSenderIdentity(options.env || process.env, options);
-  // Only step 2 carries the landing page; a tracked URL anywhere else is a caller bug.
+  // Only V1 step 2 carries the landing page; a tracked URL anywhere else is a caller bug.
+  if (options.landingPageUrl && !copy.landingPage) throw new Error('staffing V2 copy carries no landing-page URL');
   if (options.landingPageUrl && step !== 2) throw new Error('only staffing step 2 carries the landing-page URL');
   // Touch 1 is never a resume: an OOO can only answer an email already sent.
   if (options.oooResumeContext && step === 1) throw new Error('only a staffing follow-up can resume after an out-of-office reply');
-  const locked = withStaffingLandingUrl(noPersonalization ? NO_PERSONALIZATION_EMAIL : LOCKED_EMAILS[step - 1], options.landingPageUrl);
+  const locked = withStaffingLandingUrl(noPersonalization ? NO_PERSONALIZATION_EMAIL : copy.emails[step - 1], options.landingPageUrl);
   const template = options.oooResumeContext ? withOooResumeContext(locked) : locked;
   const body = appendStaffingComplianceFooter(merge(template), identity);
   // Bold only the locked offer phrase, never a model-authored opener or footer.
-  const phrase = merge(BOLD_PHRASES[step - 1]);
-  let html = body.split(phrase).map(part => escapeHtml(part)).join(`<strong>${escapeHtml(phrase)}</strong>`);
+  // A touch with no bold phrase (V2 Touch 3) renders with none.
+  const phrase = copy.bold[step - 1] ? merge(copy.bold[step - 1]) : null;
+  let html = phrase ? body.split(phrase).map(part => escapeHtml(part)).join(`<strong>${escapeHtml(phrase)}</strong>`) : escapeHtml(body);
   html = html.split('\n\n').map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('\n');
-  return { subject: step === 1 ? 'employer accounts' : null, body, html, step, previewOnly: true };
+  // A V2 render names its campaign so validation checks V2's locked phrase;
+  // a V1 render keeps exactly the shape it always had.
+  return { subject: step === 1 ? 'employer accounts' : null, body, html, step, previewOnly: true,
+    ...(v2 ? { campaignId: campaign.id } : {}) };
 }
 
 /**
@@ -158,17 +266,22 @@ function staffingOpeningFor(lead = {}) {
  * than mailing a half-merged template.
  */
 function renderStaffingEmail(lead = {}, step = 1, options = {}) {
-  if (!isStaffingCampaign(lead)) throw new Error('Staffing campaign assignment required');
+  const campaign = staffingCampaignFor(lead);
+  if (!campaign) throw new Error('Staffing campaign assignment required');
   if (![1, 2, 3].includes(step)) throw new Error('Invalid staffing sequence step');
   const opening = staffingOpeningFor(lead);
+  if (campaign === STAFFING_CAMPAIGN_V2 && step === 1 && !staffingOpeningParts(opening)) {
+    throw new Error('staffing V2 Email 1 needs a stored roles-and-market opening ("Saw you place {roles} for {market}.")');
+  }
   if (step === 1 && !opening && !staffingNoPersonalizationAllowed(lead)) throw new Error('staffing lead has no stored personalized opening');
   const rendered = renderStaffingPreview(lead, { hyperPersonalizedOpening: opening, reviewFlag: false }, step, options);
   if (!rendered) throw new Error('staffing copy could not be rendered');
-  return { subject: rendered.subject, body: rendered.body, html: rendered.html, step };
+  return { subject: rendered.subject, body: rendered.body, html: rendered.html, step,
+    ...(rendered.campaignId ? { campaignId: rendered.campaignId } : {}) };
 }
 
 /** @returns an error string when the assembled staffing email is unsafe, else null. */
-function validateStaffingEmail({ subject, body, leadId } = {}, step = 1) {
+function validateStaffingEmail({ subject, body, leadId, campaignId } = {}, step = 1) {
   const text = String(body || '');
   if (!text.trim()) return 'staffing body is empty';
   if (/{{|}}/.test(text)) return 'staffing body still contains an unmerged placeholder';
@@ -180,7 +293,9 @@ function validateStaffingEmail({ subject, body, leadId } = {}, step = 1) {
   // Anchor on the literal text BEFORE the first placeholder: the merged body
   // has a company name where the placeholder was, so the full phrase will not
   // match verbatim.
-  const anchor = String(BOLD_PHRASES[step - 1] || '').split('{{')[0].trim();
+  // A V2 email is checked against V2's locked phrases; anything else against V1's.
+  const phrases = campaignId === STAFFING_CAMPAIGN_V2.id ? LOCKED_PHRASES_V2 : BOLD_PHRASES;
+  const anchor = String(phrases[step - 1] || '').split('{{')[0].trim();
   if (anchor && !text.includes(anchor)) return 'staffing body is missing its locked phrase';
   return staffingComplianceError(text, { leadId });
 }
@@ -189,4 +304,7 @@ module.exports = { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_LABELS, isStaffingCampai
   OOO_RESUME_CONTEXT_LINE,
   STAFFING_SEQUENCE_TIMING, renderStaffingPreview, staffingOpeningFor, staffingReviewStatus, replaceStaffingReviewTag,
   staffingNoPersonalizationAllowed, renderStaffingEmail, validateStaffingEmail,
-  isTrackedStaffingLandingUrl, withStaffingLandingUrl };
+  isTrackedStaffingLandingUrl, withStaffingLandingUrl,
+  STAFFING_CAMPAIGN_V2, STAFFING_CAMPAIGNS, LOCKED_EMAILS_V2, BOLD_PHRASES_V2, LOCKED_PHRASES_V2,
+  staffingCampaignFor, isStaffingTemplateId, isStaffingCampaignVersionId, staffingOpeningParts,
+  staffingV2Live, setStaffingV2LiveForTests };
