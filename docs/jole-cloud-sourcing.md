@@ -216,3 +216,32 @@ and evidence-age gates. One rejected: buyer title not approved ("Business
 Operations Manager"; the classifier now excludes business-operations and
 business-development titles). Revealed contacts are kept in session scratch
 only; nothing imported or queued.
+
+## Completion run results (2026-10-17)
+
+Final: 311 new accepted leads (22 from the 25-reveal test + 289 from the run), corpus 689 → 1,000.
+Not imported, queued or sent. Lead data lives only in private session scratch (never committed).
+
+| Measure | Result |
+|---|---|
+| Paid reveals | 327 (25 test + 302 run), standard match only, no waterfall / phone / personal email |
+| Reveal → accepted | 311 / 327 = 95.1% (run alone 289 / 302 = 95.7%) |
+| Apollo balance | 2,168 at finish; floor 2,140 never at risk; every batch reconciled to the ledger |
+| Email status | 311 / 311 verified; 189 non-catch-all, 122 catch-all domain |
+| Companies | 185, max 3 contacts each |
+| Size (companies) | large 42%, mid 37%, small 21% (target 47 / 29 / 24) |
+| Sector (companies) | fabrication 56%, metals/mining/paper 20%, refining/chemical 15%, power 3%, shipyard 3%, pipeline 2%, oil & gas 1% |
+| Site connection | exact site 58%, ≤50-mile region 30%, same state (small/mid only) 12% |
+| Buyer family | plant/ops 51%, HR/TA 23%, owner/exec 13%, maintenance 9%, superintendent/site 4% |
+
+Rejected after reveal (16): no site connection 3, email domain not the target employer 3, functional GM at large
+employer 2, duplicate company domain 2, ambiguous email owner (same address for two people) 2, beverage plant
+(ICP sector review) 2, government entity 1, duplicate email 1, title not approved 1 (test-batch rejections included).
+
+Rule fixes made during the run (all tested): engineering-leadership postings are not craft evidence; sourcing,
+procurement, purchasing, integration, security, administration, logistics, counsel, exports, owner-operator and
+parts titles are not buyers; publicly owned utilities / authorities / municipal agencies fall under the government
+exclusion. Every accepted lead was re-checked after each fix.
+
+Lesson: deep Apollo discovery pages yield ~1–2% passers; the 30-day craft-posting evidence gate is the binding
+constraint. Untitled small-company metals/refining/power pages and the reserved same-state contacts closed the gap.
