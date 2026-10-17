@@ -217,7 +217,7 @@ test('13. archived records never appear in active funnel stages; Current campaig
   assert.ok(!Object.values(lifetimeActive.stageLeadIds).flat().some(id => /^[drm]\d$/.test(id)), 'Lifetime in the active scope is staffing lifetime');
   const historical = buildFunnelAnalytics({ leads, activities, currentVersion: currentLiveCampaignVersion() }, { version: 'lifetime' });
   assert.ok(historical.stageLeadIds.sent.includes('d1'), 'the historical scope keeps them');
-  assert.match(serverSrc, /currentVersion: currentLiveCampaignVersion\(\),\n    \}, req\.query\);/);
+  assert.match(serverSrc, /currentVersion: view\?\.clientId === 'jole' \? '' : currentLiveCampaignVersion\(\),\n    \}, req\.query\);/);
   assert.ok(!/currentVersion: ACTIVE_CAMPAIGN_VERSION\.dental_ai_receptionist/.test(serverSrc), 'no surface defaults to the retired dental campaign');
 });
 

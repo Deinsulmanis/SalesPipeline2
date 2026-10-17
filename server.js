@@ -156,7 +156,8 @@ const { registerClientRoutes } = require('./integrations/clients/routes');
 const { importClientLeads } = require('./integrations/clients/lead-import');
 const { createImportBatchStore, processPendingImportBatches } = require('./integrations/clients/import-batches');
 const { leadsForClient, leadDefinitelyOtherClient, resolveLeadClient } = require('./integrations/clients/ownership');
-const { resolveClientId, DEFAULT_CLIENT_ID, listClients } = require('./integrations/clients/registry');
+const { clientOutreachView } = require('./integrations/clients/outreach-view');
+const { resolveClientId, DEFAULT_CLIENT_ID, listClients, getClient: getManagedClientConfig } = require('./integrations/clients/registry');
 const { clientSendState, clientSendBlock } = require('./integrations/clients/send-policy');
 const { JOLE_EARLY_CRON } = require('./integrations/clients/send-windows');
 const { getLedgerStore } = require('./integrations/clients/ledger-store');
@@ -1753,6 +1754,15 @@ async function getOutreachDataset({ force = false } = {}) {
 const DEFAULT_CE_PAGE = 100;
 const MAX_CE_PAGE = 500;
 
+function outreachClientView(dataset, query) {
+  // Missing scope is the legacy ScaleLab context, never an all-tenant read.
+  const client = resolveClientId(query.client === undefined ? 'scalelab' : query.client);
+  if (!client.ok) return client;
+  // Send-activity days are counted on the client's own clock (client config).
+  return { ok: true, view: clientOutreachView(dataset, client.clientId, configuredSenders(),
+    getManagedClientConfig(client.clientId).timezone || 'America/Vancouver') };
+}
+
 function filterOutreachRows(rows, query) {
   const stage = String(query.stage || 'all');
   const campaign = String(query.campaign || '').trim();
@@ -1815,16 +1825,10 @@ function filterOutreachRows(rows, query) {
 app.get('/api/coldemail', requireAuth, async (req, res) => {
   try {
     const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
-    // Optional client scope, applied here on the server: the browser never
-    // receives another client's rows to hide. Absent means the legacy
-    // behaviour (every row).
-    let scopedRows = dataset.rows;
-    if (req.query.client !== undefined) {
-      const client = resolveClientId(req.query.client);
-      if (!client.ok) return res.status(400).json({ error: client.reason, code: client.code });
-      const ids = new Set(leadsForClient(dataset.leads || [], client.clientId).map(lead => String(lead.id)));
-      scopedRows = dataset.rows.filter(row => ids.has(String(row.id)));
-    }
+    // Client scope is applied on the server. A missing query selects ScaleLab.
+    const scope = outreachClientView(dataset, req.query);
+    if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
+    const scopedRows = scope.view?.rows || dataset.rows;
     const filtered = filterOutreachRows(scopedRows, req.query);
     const requested = req.query.limit === undefined ? DEFAULT_CE_PAGE : parseInt(req.query.limit, 10);
     const limit = Number.isFinite(requested) && requested > 0 ? Math.min(requested, MAX_CE_PAGE) : 0;
@@ -1836,16 +1840,16 @@ app.get('/api/coldemail', requireAuth, async (req, res) => {
       totalUnfiltered: scopedRows.length,
       offset, limit,
       hasMore: limit ? offset + page.length < filtered.length : false,
-      counts: dataset.counts,
-      facets: dataset.facets,
+      counts: scope.view?.counts || dataset.counts,
+      facets: scope.view?.facets || dataset.facets,
       // Human labels for the canonical lead types, so filters and tables render
       // "Staffing Agency" rather than the stored id.
       leadTypeLabels: Object.fromEntries(LEAD_TYPE_IDS.map(id => [id, leadTypeLabel(id)])),
       // The inbox filter's options, from the same identity map the rows used.
       // Address and id only — nothing about credentials travels to the browser.
-      senderOptions: senderFilterOptions(visibleSenderIdentities()),
-      pipelineAudit: dataset.pipelineAudit,
-      sendActivity: dataset.sendActivity,
+      senderOptions: senderFilterOptions(scope.view ? scope.view.senderRows : visibleSenderIdentities()),
+      pipelineAudit: scope.view?.pipelineAudit || dataset.pipelineAudit,
+      sendActivity: scope.view?.sendActivity || dataset.sendActivity,
       fetchedAt: new Date(dataset.at).toISOString(),
     });
   } catch (e) {
@@ -2004,20 +2008,27 @@ app.get('/api/coldemail/funnel', requireAuth, async (req, res) => {
   try {
     const startedAt = process.hrtime.bigint();
     const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const clientScope = outreachClientView(dataset, req.query);
+    if (!clientScope.ok) return res.status(400).json({ error: clientScope.reason, code: clientScope.code });
+    const view = clientScope.view;
     // Active by default: the live offers only. ?scope=historical is all time,
     // retired offers included, and the response says which one it is.
     const scope = parseAnalyticsScope(req.query.scope);
-    const scopedLeads = scope === ANALYTICS_SCOPE.HISTORICAL ? dataset.leads : activeLeadsOf(dataset);
+    const scopedLeads = scope === ANALYTICS_SCOPE.HISTORICAL
+      ? (view?.leads || dataset.leads)
+      : (view ? view.leads.filter(lead => view.rows.some(row => String(row.id) === String(lead.id))) : activeLeadsOf(dataset));
     const analytics = buildFunnelAnalytics({
-      leads: scopedLeads, boardLeads: dataset.boardLeads, activities: dataset.activities,
-      replyRecords: dataset.replyRecords,
-      currentVersion: currentLiveCampaignVersion(),
+      leads: scopedLeads, boardLeads: view?.clientId === 'jole' ? [] : dataset.boardLeads,
+      activities: view ? (scope === ANALYTICS_SCOPE.HISTORICAL ? view.activities : view.activeActivities) : dataset.activities,
+      replyRecords: view?.replyRecords || dataset.replyRecords,
+      currentVersion: view?.clientId === 'jole' ? '' : currentLiveCampaignVersion(),
     }, req.query);
     // The re-engagement journey is judged on its own terms — replies, positive
     // replies, booked calls, closed clients — not folded into cold-campaign
     // numbers it would otherwise distort.
     analytics.genericReengagement = genericReengagementAnalytics({
-      activities: dataset.activities, leads: dataset.leads,
+      activities: view ? (scope === ANALYTICS_SCOPE.HISTORICAL ? view.activities : view.activeActivities) : dataset.activities,
+      leads: scopedLeads,
     });
     const stage = String(req.query.stage || '').trim();
     const requested = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 100));
@@ -2027,7 +2038,7 @@ app.get('/api/coldemail/funnel', requireAuth, async (req, res) => {
     if (stage && analytics.stageLeadIds[stage]) {
       const ids = analytics.stageLeadIds[stage]; stageTotal = ids.length;
       // Historical drill-down: resolves archived leads too (labelled).
-      const rowById = new Map((dataset.allRows || dataset.rows).map(row => [row.id, row]));
+      const rowById = new Map((view ? [...view.rows, ...view.archivedRows] : dataset.allRows || dataset.rows).map(row => [row.id, row]));
       // Project to exactly what the drill-down list renders. Whole ColdEmail
       // rows carry notes/siteContext/campaign_notes blobs, which made a single
       // 100-row page ~194 KB; the five displayed fields are ~10 KB. The lead
@@ -2045,7 +2056,8 @@ app.get('/api/coldemail/funnel', requireAuth, async (req, res) => {
       // Historical reporting: the funnel counts every lead ever sent, archived
       // ones included, so rates stay comparable over time.
       scope: { scope, historical: scope === ANALYTICS_SCOPE.HISTORICAL, includesArchived: scope === ANALYTICS_SCOPE.HISTORICAL,
-        leads: scopedLeads.length, archivedLeads: (dataset.archivedRows || []).length, currentVersion: currentLiveCampaignVersion() },
+        leads: scopedLeads.length, archivedLeads: (view?.archivedRows || dataset.archivedRows || []).length,
+        currentVersion: view?.clientId === 'jole' ? '' : currentLiveCampaignVersion() },
       ...(records ? { stage, records, pagination: { total: stageTotal, offset, limit: requested, hasMore: offset + records.length < stageTotal } } : {}),
       generatedMs: Number(process.hrtime.bigint() - startedAt) / 1e6,
       fetchedAt: new Date(dataset.at).toISOString(),
@@ -2350,7 +2362,9 @@ app.get('/api/proposalOpens', requireAuth, async (_req, res) => {
     // Annotated once inside the shared snapshot, so the Opens panel and the
     // Opens/Warm cards can never disagree about what counts as a real open.
     const dataset = await getOutreachDataset();
-    res.json(dataset.annotatedOpens);
+    const scope = outreachClientView(dataset, _req.query);
+    if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
+    res.json(scope.view?.opens || dataset.annotatedOpens);
   } catch (e) {
     console.error('[ProposalOpens GET]', e.message);
     res.json([]);
@@ -2873,12 +2887,12 @@ function signalMatchesLead(row, lead) {
   return Boolean(openKey(lead.company) && openKey(row.company) === openKey(lead.company));
 }
 
-function timelineForLead(lead, dataset, activities, signalLead = lead) {
+function timelineForLead(lead, dataset, activities, signalLead = lead, senders = visibleSenderIdentities()) {
   const opens = (dataset?.annotatedOpens || []).filter(row => row.real !== false && signalMatchesLead(row, signalLead));
   return buildActivityTimeline({
     lead, activities, opens,
     // Identity only: the timeline needs to turn a sender id into an address.
-    senders: visibleSenderIdentities(),
+    senders,
   });
 }
 
@@ -5445,10 +5459,14 @@ function archiveFacets(rows) {
 app.get('/api/archive', requireAuth, async (req, res) => {
   try {
     const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const scope = outreachClientView(dataset, req.query);
+    if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
     let unresolved = null;
     let unresolvedError = '';
     try { unresolved = await unresolvedReservationsByLead(); } catch (error) { unresolvedError = error.message; }
+    const allowed = scope.view && new Set(scope.view.archivedRows.map(row => String(row.id)));
     const all = archiveListRows(dataset, unresolved)
+      .filter(row => !scope.view || (row.kind === 'board' ? scope.view.clientId === 'scalelab' : allowed.has(String(row.id))))
       .sort((a, b) => String(b.archivedAt || '').localeCompare(String(a.archivedAt || '')) || String(a.company).localeCompare(String(b.company)));
     const filtered = filterArchiveRows(all, req.query);
     const requested = parseInt(req.query.limit, 10);
@@ -5760,9 +5778,33 @@ require('./integrations/staffing-preview-route').registerStaffingAdmitRoute(app,
   classifyEmail: email => recipientProviderClassifier.classify(email),
 });
 
+function scopedOutreachStats(dataset, view) {
+  const categoryByLead = new Map(view.replyRecords.map(row => [String(row.leadId), row.category]));
+  return {
+    ...view.counts, replied: view.metrics.totalReplies, replyMetrics: view.metrics,
+    signals: view.signals, sendActivity: view.sendActivity, pipelineAudit: view.pipelineAudit,
+    totalLeads: view.rows.length,
+    scope: { scope: 'active', activeLeads: view.rows.length, definition: 'This client only.' },
+    senderAnalytics: buildSenderAnalytics({
+      leads: view.leads.filter(lead => view.rows.some(row => String(row.id) === String(lead.id))),
+      activities: view.activeActivities, senders: view.senderRows,
+      replyCategoryByLead: categoryByLead,
+    }),
+    historical: {
+      scope: 'historical', includesArchived: true, archivedLeads: view.archivedRows.length,
+      replyMetrics: view.historicalMetrics, sendActivity: view.historicalSendActivity,
+      definition: 'This client, including archived leads.',
+    },
+    fetchedAt: new Date(dataset.at).toISOString(),
+  };
+}
+
 app.get('/api/coldemail/stats', requireAuth, async (req, res) => {
   try {
     const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const scope = outreachClientView(dataset, req.query);
+    if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
+    if (scope.view) return res.json(scopedOutreachStats(dataset, scope.view));
     res.json({
       ...dataset.counts,
       replied: dataset.metrics.totalReplies,
@@ -5785,6 +5827,9 @@ app.get('/api/coldemail/stats', requireAuth, async (req, res) => {
 app.get('/api/coldemail/summary', requireAuth, async (req, res) => {
   try {
     const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const scope = outreachClientView(dataset, req.query);
+    if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
+    if (scope.view) return res.json(scopedOutreachStats(dataset, scope.view));
     res.json({
       ...dataset.counts,
       totalLeads: dataset.rows.length,
@@ -5807,18 +5852,21 @@ app.get('/api/coldemail/summary', requireAuth, async (req, res) => {
 app.get('/api/coldemail/replies', requireAuth, async (req, res) => {
   try {
     const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const scope = outreachClientView(dataset, req.query);
+    if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
+    const view = scope.view || dataset;
     const category = String(req.query.category || 'all');
-    const rowById = new Map(dataset.rows.map(row => [row.id, row]));
-    const archivedIds = new Set((dataset.archivedRows || []).map(row => row.id));
+    const rowById = new Map(view.rows.map(row => [row.id, row]));
+    const archivedIds = new Set((view.archivedRows || []).map(row => row.id));
     const campaignVersion = String(req.query.campaignVersion || '').trim();
     // The Inbox is an operational queue: an archived lead's conversation is
     // read in Archive, not worked here. Analytics keeps it (historical).
-    const activeRecords = dataset.replyRecords.filter(record => !archivedIds.has(record.leadId));
+    const activeRecords = view.replyRecords.filter(record => !archivedIds.has(record.leadId));
     // An automated reply carries its OOO state (ooo-pause.js), so a lead that
     // needs a person to set its return date is visible, never silently parked.
     const automatedIds = new Set(activeRecords.filter(record => record.category === 'automated_reply').map(record => record.leadId));
-    const leadById = new Map((dataset.leads || []).filter(lead => automatedIds.has(lead.id)).map(lead => [lead.id, lead]));
-    const oooActivities = automatedIds.size ? (dataset.activities || []).filter(row => automatedIds.has(activityLeadKey(row))) : [];
+    const leadById = new Map((view.leads || []).filter(lead => automatedIds.has(lead.id)).map(lead => [lead.id, lead]));
+    const oooActivities = automatedIds.size ? (view.activities || []).filter(row => automatedIds.has(activityLeadKey(row))) : [];
     const oooPauseFor = leadId => {
       const lead = leadById.get(leadId);
       if (!lead) return undefined;
@@ -5835,7 +5883,7 @@ app.get('/api/coldemail/replies', requireAuth, async (req, res) => {
     res.json({
       category,
       total: activeRecords.length,
-      archivedExcluded: dataset.replyRecords.length - activeRecords.length,
+      archivedExcluded: view.replyRecords.length - activeRecords.length,
       records,
       fetchedAt: new Date(dataset.at).toISOString(),
     });
@@ -5910,21 +5958,30 @@ const COLD_EMAIL_DASHBOARD_STAGES = new Set(['Import','Contacted','Replied','Rev
 app.get('/api/coldemail/:id/activity', requireAuth, async (req, res) => {
   try {
     const dataset = await getOutreachDataset();
-    const lead = dataset.leads.find(row => row.id === req.params.id);
+    const scope = outreachClientView(dataset, req.query);
+    if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
+    const lead = scope.view.leads.find(row => row.id === req.params.id);
     if (!lead) return res.status(404).json({ error: 'not found' });
-    const activities = dataset.activities.filter(row => activityMatchesLead(row, lead));
-    const timeline = timelineForLead(lead, dataset, activities);
-    const row = dataset.rows.find(item => item.id === lead.id) || {};
-    const boardLead = dataset.boardLeads.find(item => item.id === row.boardLeadId)
-      || dataset.boardLeads.find(item => normalizeEmail(item.email) === normalizeEmail(lead.email))
-      || null;
+    // The established match (lead id, or email for a legacy row without one),
+    // kept inside this client: a row that names another client's lead never matches.
+    const tenantLeadIds = new Set(scope.view.leads.map(item => String(item.id)));
+    const activities = (dataset.activities || []).filter(row => {
+      const rowLeadId = String(row.sourceLeadId || row.leadId || '').replace(/^CE-/, '').trim();
+      return activityMatchesLead(row, lead) && (!rowLeadId || tenantLeadIds.has(rowLeadId));
+    });
+    const timeline = timelineForLead(lead, { annotatedOpens: scope.view.opens }, activities, lead, scope.view.senderRows);
+    const row = scope.view.rows.find(item => item.id === lead.id) || {};
+    const boardLead = scope.view.clientId === 'scalelab'
+      ? dataset.boardLeads.find(item => item.id === row.boardLeadId)
+        || dataset.boardLeads.find(item => normalizeEmail(item.email) === normalizeEmail(lead.email))
+      : null;
     const now = new Date();
     const nextAction = deriveNextAction(boardLead || {
       id: `CE-${lead.id}`, email: lead.email, company: lead.company, stage: '',
     }, lead, {
       activities, now,
       observers: observerHealth(dataset.mailboxObservationState || [], { now,
-        senderIds: observableSenders(configuredSenders()).map(item => item.id) }),
+        senderIds: observableSenders(scope.view.senderRows).map(item => item.id) }),
       suppressedEmails: dataset.suppressedEmails || new Set(),
       sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true',
       outreachOnly: !boardLead,

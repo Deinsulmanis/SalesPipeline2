@@ -105,9 +105,9 @@ test('the row and lazy drawer expose canonical pipeline state for non-board lead
   assert.match(browser, /Not in Pipeline/);
   assert.match(browser, /Not in Sales Pipeline/);
   assert.match(browser, /openCeDetail\('\$\{l\.id\}'\)/);
-  assert.match(browser, /fetch\(`\/api\/coldemail\/\$\{encodeURIComponent\(id\)\}\/activity`\)/);
+  assert.match(browser, /fetch\(`\/api\/coldemail\/\$\{encodeURIComponent\(id\)\}\/activity\?client=\$\{encodeURIComponent\(clientId\)\}`\)/);
   assert.match(server, /mappingStatus: row\.mappingStatus/);
-  assert.match(server, /timelineForLead\(lead, dataset, activities\)/);
+  assert.match(server, /timelineForLead\(lead, \{ annotatedOpens: scope\.view\.opens \}, activities/);
 });
 
 test('master filters are server-side, debounced, responsive, and keep the initial DOM bounded', () => {
@@ -123,8 +123,8 @@ test('master filters are server-side, debounced, responsive, and keep the initia
 });
 
 test('summary and reply drill-down reuse the same snapshot and canonical pipeline join', () => {
-  assert.match(server, /pipelineAudit: dataset\.pipelineAudit/);
-  assert.match(server, /const rowById = new Map\(dataset\.rows\.map/);
+  assert.match(server, /pipelineAudit: scope\.view\?\.pipelineAudit \|\| dataset\.pipelineAudit/);
+  assert.match(server, /const rowById = new Map\(view\.rows\.map/);
   assert.match(browser, /record\.mappingStatus === 'conflict'/);
   const start = browser.indexOf('function rdStageLabel');
   const end = browser.indexOf('\n}', start) + 2;

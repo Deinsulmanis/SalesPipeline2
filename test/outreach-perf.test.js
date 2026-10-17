@@ -151,9 +151,9 @@ test('10. the drawer still loads full detail on demand', () => {
 
 test('11. drill-down records and card counts come from the same snapshot', () => {
   const replies = handler('/api/coldemail/replies');
-  assert.match(replies, /dataset\.replyRecords/);
+  assert.match(replies, /view\.replyRecords/);
   const stats = handler('/api/coldemail/stats');
-  assert.match(stats, /dataset\.metrics/);
+  assert.match(stats, /scopedOutreachStats\(dataset, scope\.view\)/);
   // Both derive from one build, so they cannot disagree. The reply evidence map
   // is built ONCE and handed to both, which is what makes that true — asserting
   // the shared variable rather than an exact call signature, so the property
@@ -296,7 +296,7 @@ test('22/23. desktop and mobile paging chrome are both defined', () => {
 
 test('the Campaigns panel is the only view that pulls the full set, on demand', () => {
   assert.match(browser, /async function ensureAllCeLeads\(\)/);
-  assert.match(browser, /fetch\('\/api\/coldemail\?limit=0&client=' \+ encodeURIComponent\(activeClientId\)\)/);
+  assert.match(browser, /fetch\('\/api\/coldemail\?limit=0&client=' \+ encodeURIComponent\(clientId\)\)/);
   assert.match(browser, /for \(const l of \(ceAllLeads \|\| ceLeads\)\)/);
   // It is not fetched during the normal load.
   const loader = browser.slice(browser.indexOf('async function loadCeLeads'), browser.indexOf('function cleanCompanyName'));

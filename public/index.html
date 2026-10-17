@@ -2085,6 +2085,10 @@
   body[data-client-mode="managed"] #ws-campaigns .client-view,
   body[data-client-mode="managed"] #ws-analytics .client-view,
   body[data-client-mode="managed"] #ws-settings .client-view{display:none!important}
+  #jole-report-launcher,#jole-report-view{display:none}
+  body[data-daily-report="true"] #jole-report-launcher{display:block}
+  body[data-client-mode="managed"].daily-report-mode #ws-analytics > :not(.workspace-intro):not(#jole-report-view){display:none!important}
+  body[data-client-mode="managed"].daily-report-mode #jole-report-view{display:block}
   /* Global ScaleLab stats / funnel are not client-scoped; hide them for a managed client. */
   body[data-client-mode="managed"] #ce-stats-bar,
   body[data-client-mode="managed"] #ce-reply-metrics,
@@ -2094,6 +2098,8 @@
   body[data-client-mode="managed"] #staffing-launch-panel,
   body[data-client-mode="managed"] #ce-digest-card,
   body[data-client-mode="managed"] #ce-leads-panel #crm-health-panel{display:none!important}
+  body[data-client-mode="managed"] #ws-settings #agent-panel{display:none!important}
+  body[data-client-mode="managed"] #smartlead-health{display:none!important}
   body:not([data-client-mode="managed"]) .ce-extra-col{display:none}
   body[data-client-mode="managed"] .ce-sl-only{display:none}
   .lead-status-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:10px;margin:0 0 14px;padding:0 28px}
@@ -2141,6 +2147,18 @@
   #client-ops-content .client-grid{margin-top:0}
   @media(max-width:1100px){.analytics-grid{grid-template-columns:1fr}}
   @media(max-width:700px){.client-grid{grid-template-columns:1fr}.funnel-row{grid-template-columns:104px minmax(0,1fr) 36px;gap:8px}.campaign-grid{grid-template-columns:1fr}.client-empty{padding:18px}}
+.jole-report{max-width:1080px;margin:0 auto;padding:36px;background:#f8f7f4;color:#20302c;border:1px solid #dadfd8;border-radius:16px;box-shadow:0 16px 44px rgba(20,36,31,.08)}
+.jole-report-head{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;border-bottom:2px solid #203f36;padding-bottom:24px;margin-bottom:24px}
+.jole-report-kicker{font:700 12px/1.4 Outfit,system-ui,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:#527266}
+.jole-report h2{font:700 clamp(27px,4vw,40px)/1.12 Outfit,system-ui,sans-serif;margin:10px 0;color:#173c32}
+.jole-report p{margin:0;color:#4d665d}.jole-report h3{font:700 13px/1.4 Outfit,system-ui,sans-serif;letter-spacing:.1em;text-transform:uppercase;color:#436559;margin:30px 0 12px}
+.jole-report-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.jole-report-grid.secondary{grid-template-columns:repeat(4,minmax(0,1fr))}.jole-report-grid.totals{grid-template-columns:repeat(4,minmax(0,1fr))}
+.jole-report-metric{background:#fff;border:1px solid #dce4de;border-radius:12px;padding:18px;min-height:100px}.jole-report-metric span{display:block;font-size:12px;color:#50675e}.jole-report-metric strong{display:block;font-size:30px;line-height:1.25;margin-top:8px;color:#153e32}.jole-report-metric small{font-size:12px;color:#61766d}
+.jole-report-senders{display:grid;gap:8px}.jole-report-sender{display:grid;grid-template-columns:minmax(0,2fr) repeat(3,minmax(0,1fr));gap:12px;align-items:center;background:#fff;border:1px solid #dce4de;border-radius:9px;padding:12px 16px;font-size:13px}.jole-report-sender b{overflow-wrap:anywhere}.jole-report-footer{border-top:1px solid #dce4de;padding-top:16px;margin-top:28px!important;font-size:12px}
+.jole-report-tools{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;align-items:center}.jole-report-tools input,.jole-report-tools button{min-height:44px}.jole-report-tools button{border:1px solid #759083;background:#fff;color:#173c32;border-radius:8px;padding:8px 16px;cursor:pointer}
+@media(max-width:760px){.jole-report{padding:20px}.jole-report-head{display:block}.jole-report-grid,.jole-report-grid.totals{grid-template-columns:repeat(2,minmax(0,1fr))}.jole-report-grid.secondary{grid-template-columns:repeat(2,minmax(0,1fr))}.jole-report-sender{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.jole-report-sender>*{min-width:0}}
+@media(max-width:420px){.jole-report{padding:16px}.jole-report-grid,.jole-report-grid.totals,.jole-report-grid.secondary{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.jole-report-metric{padding:12px;min-height:84px}.jole-report-metric strong{font-size:22px}.jole-report-sender{grid-template-columns:1fr 1fr}.jole-report-sender b{grid-column:1/-1;overflow-wrap:break-word}}
+@media print{#crm-sidebar,header,.jole-report-tools,.workspace-intro{display:none!important}html,body{background:#fff!important}.jole-report{box-shadow:none;border:0;max-width:none;padding:0;background:#fff}#jole-report-view{width:auto;box-sizing:border-box}.jole-report-metric,.jole-report-sender{break-inside:avoid}}
 </style>
 </head>
 <body>
@@ -4194,6 +4212,8 @@ function renderAgentLog(entries) {
 }
 
 async function refreshAgentLeadCounts(loadedLeads = null) {
+  const clientId = activeClientId;
+  const token = clientViewToken;
   try {
     // The `loadedLeads` fast path was removed: it counted whatever array it was
     // handed, which after pagination is one page. These are global counters, so
@@ -4205,9 +4225,11 @@ async function refreshAgentLeadCounts(loadedLeads = null) {
       document.getElementById('as-done').textContent    = ceOutreachStats.done;
       return;
     }
-    const resp = await fetch('/api/coldemail/stats');
+    const resp = await fetch('/api/coldemail/stats?client=' + encodeURIComponent(activeClientId));
+    if (token !== clientViewToken || clientId !== activeClientId) return;
     if (!resp.ok) { ['as-queued','as-emailed','as-replied','as-done'].forEach(id => document.getElementById(id).textContent = '–'); return; }
     const counts = await resp.json();
+    if (token !== clientViewToken || clientId !== activeClientId) return;
     document.getElementById('as-queued').textContent  = counts.queued;
     document.getElementById('as-emailed').textContent = counts.emailed;
     document.getElementById('as-replied').textContent = counts.replied;
@@ -5694,19 +5716,24 @@ async function reloadCePage({ append = false, offset = 0 } = {}) {
     const resp = await fetch('/api/coldemail?' + ceQuery({ offset }));
     if (!resp.ok || seq !== ceRequestSeq) return;
     const data = await resp.json();
+    if (seq !== ceRequestSeq) return;
     ceLeads = append ? [...ceLeads, ...(data.leads || [])] : (data.leads || []);
     ceTotal = data.total || 0;
     ceHasMore = Boolean(data.hasMore);
     ceFacets = data.facets || ceFacets;
     ceFetchedAt = data.fetchedAt || null;
-    loadStaffingLaunchPanel();
+    if (!activeClientIsManaged()) loadStaffingLaunchPanel();
   } catch (e) {
     showToast('Could not load leads: ' + e.message, 'error');
   } finally {
-    if (seq === ceRequestSeq) ceLoading = false;
-    renderCeTable();
-    loadFunnelAnalytics(); // separate scoped analytics; operational cards stay global
-    loadCrmHealth();       // read-only diagnostics; renders collapsed
+    if (seq === ceRequestSeq) {
+      ceLoading = false;
+      renderCeTable();
+      if (!activeClientIsManaged()) {
+        loadFunnelAnalytics();
+        loadCrmHealth();
+      }
+    }
   }
 }
 
@@ -5716,9 +5743,13 @@ function loadMoreCeLeads() { reloadCePage({ append: true, offset: ceLeads.length
 // lead, so it pulls the full light set on demand rather than on every load.
 async function ensureAllCeLeads() {
   if (ceAllLeads && ceAllLeadsClient === activeClientId) return ceAllLeads;
-  const resp = await fetch('/api/coldemail?limit=0&client=' + encodeURIComponent(activeClientId));
-  ceAllLeads = resp.ok ? ((await resp.json()).leads || []) : [];
-  ceAllLeadsClient = activeClientId;
+  const clientId = activeClientId;
+  const token = clientViewToken;
+  const resp = await fetch('/api/coldemail?limit=0&client=' + encodeURIComponent(clientId));
+  const rows = resp.ok ? ((await resp.json()).leads || []) : [];
+  if (token !== clientViewToken || clientId !== activeClientId) return [];
+  ceAllLeads = rows;
+  ceAllLeadsClient = clientId;
   return ceAllLeads;
 }
 
@@ -5727,6 +5758,7 @@ async function ensureAllCeLeads() {
 async function loadClientCatalog() {
   if (clientCatalogFor === activeClientId) return clientCatalog;
   const clientId = activeClientId;
+  const token = clientViewToken;
   let catalog = null;
   if (activeClientIsManaged()) {
     try {
@@ -5734,7 +5766,7 @@ async function loadClientCatalog() {
       catalog = resp.ok ? await resp.json() : null;
     } catch (_) { /* names fall back to the stored id */ }
   }
-  if (clientId !== activeClientId) return null;   // switched client mid-request
+  if (token !== clientViewToken || clientId !== activeClientId) return null;
   clientCatalog = catalog;
   clientCatalogFor = clientId;
   return catalog;
@@ -5747,18 +5779,25 @@ function campaignName(value) {
 
 async function loadClientStatusLeads() {
   if (ceStatusClient === activeClientId && ceStatusLeads.length) return ceStatusLeads;
-  const resp = await fetch('/api/coldemail?limit=0&client=' + encodeURIComponent(activeClientId));
-  ceStatusLeads = resp.ok ? ((await resp.json()).leads || []) : [];
-  ceStatusClient = activeClientId;
+  const clientId = activeClientId;
+  const token = clientViewToken;
+  const resp = await fetch('/api/coldemail?limit=0&client=' + encodeURIComponent(clientId));
+  const rows = resp.ok ? ((await resp.json()).leads || []) : [];
+  if (token !== clientViewToken || clientId !== activeClientId) return [];
+  ceStatusLeads = rows;
+  ceStatusClient = clientId;
   syncLeadStatusSummary();
   return ceStatusLeads;
 }
 
 async function loadClientLeadExtras() {
+  const clientId = activeClientId;
+  const token = clientViewToken;
   clientLeadExtras = new Map();
   if (!activeClientIsManaged()) return;
   try {
     const data = await clientApi('/leads?limit=1000');
+    if (token !== clientViewToken || clientId !== activeClientId) return;
     for (const lead of data.leads || []) clientLeadExtras.set(String(lead.id), lead);
   } catch (_) { /* extras are optional; the shared table still renders */ }
 }
@@ -5808,17 +5847,22 @@ function persistWorkspaceHash() {
 }
 
 async function loadCeLeads() {
+  const clientId = activeClientId;
+  const token = clientViewToken;
+  const current = () => clientId === activeClientId && token === clientViewToken;
   try {
     ceLoading = true;
     renderCeTable();
     const [ceResp, opensResp, statsResp, versionsResp] = await Promise.all([
       fetch('/api/coldemail?' + ceQuery()),
-      fetch('/api/proposalOpens'),
-      fetch('/api/coldemail/stats'),
-      fetch('/api/campaign-versions'),
+      fetch('/api/proposalOpens?client=' + encodeURIComponent(clientId)),
+      fetch('/api/coldemail/stats?client=' + encodeURIComponent(clientId)),
+      activeClientIsManaged() ? Promise.resolve(null) : fetch('/api/campaign-versions'),
     ]);
+    if (!current()) return;
     if (!ceResp.ok) { showToast('Could not load cold email leads: ' + ceResp.status, 'error'); return; }
     const cePage = await ceResp.json();
+    if (!current()) return;
     ceLeads     = cePage.leads || [];
     ceTotal     = cePage.total || 0;
     ceHasMore   = Boolean(cePage.hasMore);
@@ -5827,6 +5871,7 @@ async function loadCeLeads() {
       // A managed client's header and version filter come from its own catalog:
       // live campaigns only, by display name. ScaleLab's registry never shows here.
       const catalog = await loadClientCatalog();
+      if (!current()) return;
       const live = (catalog && catalog.campaigns || []).filter(item => !item.archivedAt);
       document.getElementById('ce-current-campaign').textContent = live.length
         ? `${activeClient().displayName} · Active campaign${live.length === 1 ? '' : 's'}: ${live.map(item => item.label).join(' · ')}`
@@ -5836,10 +5881,11 @@ async function loadCeLeads() {
         .map(item => `<option value="${escAttr(item.campaignVersion)}">${esc(item.label)}</option>`).join('')
         + '<option value="legacy_unknown">Not sent yet / unattributed</option>';
       select.value = ceCampaignVersionFilter;
-    } else if (versionsResp.ok) {
+    } else if (versionsResp?.ok) {
       const registry = await versionsResp.json();
-      const current = registry.active?.dental_ai_receptionist || '—';
-      document.getElementById('ce-current-campaign').textContent = `Current campaign: ${current}`;
+      if (!current()) return;
+      const liveVersion = registry.active?.dental_ai_receptionist || '—';
+      document.getElementById('ce-current-campaign').textContent = `Current campaign: ${liveVersion}`;
       const select = document.getElementById('ce-version-filter');
       select.innerHTML = '<option value="">All campaign versions</option>' + Object.keys(registry.versions || {}).concat(['legacy_unknown'])
         .map(id => `<option value="${escAttr(id)}">${esc(id)}</option>`).join('');
@@ -5858,7 +5904,9 @@ async function loadCeLeads() {
     }
     ceFetchedAt = cePage.fetchedAt || null;
     ceAllLeads  = null;
-    ceOpensData = opensResp.ok ? await opensResp.json() : [];
+    const opensData = opensResp.ok ? await opensResp.json() : [];
+    if (!current()) return;
+    ceOpensData = opensData;
     // /api/proposalOpens annotates every row with `real` via the shared
     // open-filter module (server-side), so mail-scanner detonations are already
     // identified. Count only real opens; rows missing the flag (an older cached
@@ -5870,29 +5918,33 @@ async function loadCeLeads() {
       if (key) ceOpensMap.set(key, (ceOpensMap.get(key) || 0) + 1);
     }
 
-    ceOutreachStats = statsResp.ok ? await statsResp.json() : null;
+    const outreachStats = statsResp.ok ? await statsResp.json() : null;
+    if (!current()) return;
+    ceOutreachStats = outreachStats;
     rdRecords = [];  // refetched on next drill-down open so rows track the counters
     ceLoading = false;
     updateCeStats();
-    loadDigest();          // additive — failure never blocks the rest of the view
+    if (!activeClientIsManaged()) loadDigest();
     buildSendChart();
     await loadClientStatusLeads();
+    if (!current()) return;
     await loadClientLeadExtras();
+    if (!current()) return;
     syncLeadStatusSummary();
     renderCeTable();
     if (ceActiveFilter === 'campaigns') renderCampaignsPanel();
     refreshAgentLeadCounts(ceLeads);
   } catch (e) {
-    showToast('Could not reach server: ' + e.message, 'error');
+    if (current()) showToast('Could not reach server: ' + e.message, 'error');
   } finally {
-    ceLoading = false;
+    if (current()) ceLoading = false;
   }
 }
 
 function funnelRate(value) { return value === null || value === undefined ? '—' : `${value.toFixed(1)}%`; }
 function funnelQuery(stage = '') {
   const params = new URLSearchParams({ version: document.getElementById('funnel-version')?.value || 'current',
-    scope: document.getElementById('funnel-scope')?.value || 'active' });
+    scope: document.getElementById('funnel-scope')?.value || 'active', client: activeClientId });
   const days = document.getElementById('funnel-window')?.value || 'all';
   if (days !== 'all') {
     const vanParts = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Vancouver', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
@@ -5972,11 +6024,16 @@ function toggleCrmHealth() {
 
 async function loadFunnelAnalytics() {
   const host = document.getElementById('ce-funnel-analytics'); if (!host) return;
+  const clientId = activeClientId;
+  const token = clientViewToken;
+  const current = () => token === clientViewToken && clientId === activeClientId;
   host.setAttribute('aria-busy', 'true');
   try {
     const response = await fetch('/api/coldemail/funnel?' + funnelQuery());
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    funnelAnalytics = await response.json();
+    const result = await response.json();
+    if (!current()) return;
+    funnelAnalytics = result;
     // Rendered OUTSIDE the fetch guard. Folding both into one catch is what let
     // a render crash masquerade as an unreachable endpoint for so long.
     try { renderFunnelAnalytics(funnelAnalytics); }
@@ -5986,8 +6043,8 @@ async function loadFunnelAnalytics() {
       return;
     }
   } catch (error) {
-    document.getElementById('ce-funnel-sample').textContent = 'Campaign analytics unavailable; operational data is unaffected.';
-  } finally { host.removeAttribute('aria-busy'); }
+    if (current()) document.getElementById('ce-funnel-sample').textContent = 'Campaign analytics unavailable; operational data is unaffected.';
+  } finally { if (current()) host.removeAttribute('aria-busy'); }
 }
 
 function syncFunnelFacet(id, values, emptyLabel) {
@@ -6169,14 +6226,16 @@ function buildSendChart() {
   const legendEl = document.getElementById('ce-chart-legend');
   if (!chartEl || !legendEl) return;
 
-  const toVancouverDate = d => new Date(d).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+  // The client's own clock (client config), the same one the server counts sends in.
+  const chartTimeZone = activeClient()?.timezone || 'America/Vancouver';
+  const toClientDate = d => new Date(d).toLocaleDateString('en-CA', { timeZone: chartTimeZone });
 
   const CHART_DAYS = 14;
   const days = [];
   for (let i = CHART_DAYS - 1; i >= 0; i--) {
     const d = new Date();
     d.setDate(d.getDate() - i);
-    days.push(toVancouverDate(d));
+    days.push(toClientDate(d));
   }
 
   // Server aggregation uses the full cached activity snapshot. Never rebuild
@@ -6344,7 +6403,8 @@ function renderCeFooter() {
 function refreshCeLeads() {
   ceAllLeads = null;
   rdRecords = [];
-  fetch('/api/coldemail/stats?refresh=1').then(() => loadCeLeads());
+  rdLoading = false;
+  fetch('/api/coldemail/stats?refresh=1&client=' + encodeURIComponent(activeClientId)).then(() => loadCeLeads());
 }
 
 // Debounced so typing does not fire a request per keystroke; the server answers
@@ -6508,6 +6568,7 @@ function renderGmailInboxSelector() {
 }
 
 function campaignProvider(name) {
+  if (activeClientIsManaged()) return { provider: 'gmail', syncStatus: 'local', externalCampaignId: '', sendingPool: '' };
   const mapping = smartleadIntegration?.campaigns?.find(c => c.internalCampaignId === name);
   return mapping || { provider: 'gmail', syncStatus: 'local', externalCampaignId: '', sendingPool: '' };
 }
@@ -6561,7 +6622,7 @@ function buildCampaignStats() {
     const interested     = leads.filter(l => l.replyCategory === 'positive').length;
     const interestedRate = replied > 0 ? (interested / replied) * 100 : 0;           // positive ÷ genuine replies
 
-    const providerStats = smartleadIntegration?.stats?.find(s => s.internalCampaignId === name && s.provider === 'smartlead');
+    const providerStats = !activeClientIsManaged() && smartleadIntegration?.stats?.find(s => s.internalCampaignId === name && s.provider === 'smartlead');
     if (providerStats) {
       const slTotal = Number(providerStats.totalLeads || total);
       const slSent = Number(providerStats.sent || 0);
@@ -6587,9 +6648,13 @@ function buildCampaignStats() {
 async function renderCampaignsPanel() {
   const wrap = document.getElementById('ce-campaigns-table-wrap');
   if (!wrap) return;
+  const clientId = activeClientId;
+  const token = clientViewToken;
+  const current = () => token === clientViewToken && clientId === activeClientId;
   if (!ceAllLeads) {
     wrap.innerHTML = '<div class="ce-empty">Loading campaigns…</div>';
     await ensureAllCeLeads();
+    if (!current()) return;
   }
 
   if (ceAllLeads.length === 0 && !activeClientIsManaged()) {
@@ -6601,6 +6666,7 @@ async function renderCampaignsPanel() {
   // and are counted on that campaign's Archived card instead. Nothing is
   // re-attributed: the stored campaign id stays on every lead.
   const catalog = activeClientIsManaged() ? await loadClientCatalog() : null;
+  if (!current()) return;
   const archivedRowTotals = new Map();
   const rows = buildCampaignStats().filter(row => {
     if (!catalog || typeof WorkspaceShared === 'undefined' || !WorkspaceShared.isArchivedCampaign(row.name, catalog)) return true;
@@ -6608,7 +6674,7 @@ async function renderCampaignsPanel() {
     archivedRowTotals.set(label, (archivedRowTotals.get(label) || 0) + row.total);
     return false;
   });
-  if (!smartleadIntegration && !smartleadIntegrationLoading) loadSmartleadIntegration();
+  if (!activeClientIsManaged() && !smartleadIntegration && !smartleadIntegrationLoading) loadSmartleadIntegration();
   const health = document.getElementById('smartlead-health');
   if (health && smartleadIntegration) {
     health.querySelector('span').textContent = smartleadIntegration.testMode
@@ -6639,7 +6705,7 @@ async function renderCampaignsPanel() {
             <dt>Opens (informational)</dt><dd>${r.opens || '—'}</dd>
             <dt>Genuine Replies</dt><dd class="${replyClass(r.replyRate)}">${r.replied || '—'}${r.delivered > 0 ? ` · ${fmtPct(r.replyRate)}` : ''}</dd>
             <dt>Positive</dt><dd>${r.interested || '—'}${r.replied > 0 ? ` · ${fmtPct(r.interestedRate)}` : ''}</dd>
-            <dt>Provider</dt><dd><button class="btn-cancel" style="padding:5px 8px" data-campaign="${escAttr(r.name)}" onclick="event.stopPropagation();openProviderModal(this.dataset.campaign)">${esc(campaignProvider(r.name).provider === 'smartlead' ? 'Smartlead' : 'Gmail')}</button></dd>
+            <dt>Provider</dt><dd>${activeClientIsManaged() ? 'Gmail' : `<button class="btn-cancel" style="padding:5px 8px" data-campaign="${escAttr(r.name)}" onclick="event.stopPropagation();openProviderModal(this.dataset.campaign)">${esc(campaignProvider(r.name).provider === 'smartlead' ? 'Smartlead' : 'Gmail')}</button>`}</dd>
           </dl>
         </div>`).join('')}
     </div>`;
@@ -6686,7 +6752,7 @@ async function renderCampaignsPanel() {
             <td class="${replyClass(r.replyRate)}">${r.delivered > 0 ? fmtPct(r.replyRate) : '—'}</td>
             <td>${r.interested || '—'}</td>
             <td>${r.replied > 0 ? fmtPct(r.interestedRate) : '—'}</td>
-            <td><button class="btn-cancel" style="padding:5px 8px" data-campaign="${escAttr(r.name)}" onclick="event.stopPropagation();openProviderModal(this.dataset.campaign)">${esc(campaignProvider(r.name).provider === 'smartlead' ? 'Smartlead' : 'Gmail')}</button></td>
+            <td>${activeClientIsManaged() ? 'Gmail' : `<button class="btn-cancel" style="padding:5px 8px" data-campaign="${escAttr(r.name)}" onclick="event.stopPropagation();openProviderModal(this.dataset.campaign)">${esc(campaignProvider(r.name).provider === 'smartlead' ? 'Smartlead' : 'Gmail')}</button>`}</td>
           </tr>`).join('')}
       </tbody>
     </table>` + archivedHtml;
@@ -6811,6 +6877,8 @@ let rdExpanded = new Set();
 let rdLoading  = false;
 
 async function openReplyDrill(category = 'all') {
+  const clientId = activeClientId;
+  const token = clientViewToken;
   rdCategory = RD_CATEGORY_LABEL[category] ? category : 'all';
   rdExpanded = new Set();
   document.getElementById('rd-search').value = '';
@@ -6823,9 +6891,12 @@ async function openReplyDrill(category = 'all') {
       // Fetch the full canonical set once, then switch categories client-side.
       // Only replying leads cross the wire, never the whole lead table.
       const version = ceCampaignVersionFilter ? `&campaignVersion=${encodeURIComponent(ceCampaignVersionFilter)}` : '';
-      const resp = await fetch('/api/coldemail/replies?category=all' + version);
-      rdRecords = resp.ok ? ((await resp.json()).records || []) : [];
-    } catch (_) { rdRecords = []; }
+      const resp = await fetch('/api/coldemail/replies?category=all&client=' + encodeURIComponent(clientId) + version);
+      const records = resp.ok ? ((await resp.json()).records || []) : [];
+      if (token !== clientViewToken || clientId !== activeClientId) return;
+      rdRecords = records;
+    } catch (_) { if (token === clientViewToken && clientId === activeClientId) rdRecords = []; }
+    if (token !== clientViewToken || clientId !== activeClientId) return;
     rdLoading = false;
   }
   renderReplyDrill();
@@ -6957,11 +7028,13 @@ function closeCeDetail(e) {
 }
 
 async function loadCeActivity(id) {
+  const clientId = activeClientId;
+  const token = clientViewToken;
   try {
-    const response = await fetch(`/api/coldemail/${encodeURIComponent(id)}/activity`);
+    const response = await fetch(`/api/coldemail/${encodeURIComponent(id)}/activity?client=${encodeURIComponent(clientId)}`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
-    if (ceDetailId !== id) return;
+    if (ceDetailId !== id || token !== clientViewToken || clientId !== activeClientId) return;
     const lead = ceLeads.find(row => row.id === id);
     if (lead && data.lead) {
       Object.assign(lead, data.lead);
@@ -6971,7 +7044,7 @@ async function loadCeActivity(id) {
     openCeDetail(id, { skipActivity: true });
     renderActivityTimeline(data.activities, 'ce-d-activity');
   } catch (error) {
-    if (ceDetailId === id) document.getElementById('ce-d-activity').innerHTML = '<div class="activity-empty">Activity could not be loaded. Lead data was not changed.</div>';
+    if (ceDetailId === id && token === clientViewToken && clientId === activeClientId) document.getElementById('ce-d-activity').innerHTML = '<div class="activity-empty">Activity could not be loaded. Lead data was not changed.</div>';
   }
 }
 
@@ -6983,9 +7056,12 @@ function openCeDetail(id) {
   // at all. Fetches exactly one row from the shared snapshot, then reopens.
   if (!lead) {
     if (options.retried) return;
-    fetch('/api/coldemail?limit=1&leadId=' + encodeURIComponent(id))
+    const clientId = activeClientId;
+    const token = clientViewToken;
+    fetch('/api/coldemail?limit=1&client=' + encodeURIComponent(clientId) + '&leadId=' + encodeURIComponent(id))
       .then(response => (response.ok ? response.json() : null))
       .then(page => {
+        if (token !== clientViewToken || clientId !== activeClientId) return;
         const fetched = page && (page.leads || [])[0];
         if (!fetched) { showToast('That lead could not be loaded.', 'error'); return; }
         ceLeads = ceLeads.concat([fetched]);
@@ -7632,6 +7708,7 @@ function installWorkspaceShell() {
   const inbox = make('inbox', workspaceIntro('Human attention', 'Inbox', 'What prospects said, what should happen next, and who owns the move.'));
   const campaigns = make('campaigns', workspaceIntro('Attribution', 'Campaigns', 'Measured campaign versions remain separate from legacy activity with unknown attribution.'));
   const analytics = make('analytics', workspaceIntro('Performance', 'Analytics', 'Campaign funnel, replies, engagement signals, and daily sending activity.'));
+  analytics.insertAdjacentHTML('beforeend', '<div id="jole-report-launcher" class="jole-report-tools"><button type="button" onclick="showJoleDailyReport()">Open Jole Daily Report</button></div><div id="jole-report-view" aria-live="polite"></div>');
   const staffing = make('staffing', workspaceIntro('Outreach links', 'Staffing Funnel', 'What happened after a tracked staffing link was sent: visits, engagement tiers, video, booking clicks and assisted bookings.'));
   const sequences = make('sequences', workspaceIntro('Automation', 'Sequences', 'Explicit stage-sequence enrollment, current step, and next scheduled action.'));
   const bookings = make('bookings', workspaceIntro('Call lifecycle', 'Bookings', 'Upcoming calls, outcome-needed meetings, cancellations, and no-shows.'));
@@ -7684,6 +7761,7 @@ function installWorkspaceShell() {
 function toggleSidebar() { document.getElementById('crm-sidebar')?.classList.toggle('open'); }
 
 async function setWorkspace(name, { replace = false } = {}) {
+  document.body.classList.remove('daily-report-mode');
   const client = activeClient();
   const nav = clientNavigation(client);
   // Only a workspace this client has; anything else lands on its default.
@@ -7726,7 +7804,10 @@ async function loadWorkspace(name) {
   // client. Sales views that have a managed read model stay client-specific.
   const shared = typeof WorkspaceShared !== 'undefined' && WorkspaceShared.usesSharedWorkspace(name);
   if (activeClientIsManaged() && name !== 'clients' && !shared) return loadManagedWorkspace(name);
-  if (name === 'pipeline') return;
+  if (name === 'pipeline') {
+    if (!activeClientIsManaged() && !leads.length) { await loadLeads(); renderBoard(); }
+    return;
+  }
   if (['outreach','campaigns','analytics','inbox'].includes(name)) await ensureOutreachReadModel();
   if (name === 'inbox') return loadInboxWorkspace();
   if (name === 'campaigns') { document.getElementById('ce-campaigns-panel').style.display = 'block'; return renderCampaignsPanel(); }
@@ -7740,7 +7821,7 @@ async function loadWorkspace(name) {
   if (name === 'bookings') return loadBookingsWorkspace();
   if (name === 'archive') return loadArchiveWorkspace();
   if (name === 'settings') {
-    await loadSettingsWorkspace();
+    if (await loadSettingsWorkspace() === false) return;
     if (activeClientIsManaged()) return decorateManagedSettings();
     return;
   }
@@ -7888,6 +7969,9 @@ async function loadManagedClients() {
 
 function applyClientMode() {
   document.body.dataset.clientMode = activeClientIsManaged() ? 'managed' : 'default';
+  document.body.dataset.clientId = activeClientId;
+  // Server-declared capability (/api/clients dailyReport), never a client name.
+  document.body.dataset.dailyReport = activeClient()?.dailyReport ? 'true' : 'false';
 }
 
 /**
@@ -7900,6 +7984,45 @@ async function switchClient(clientId, { workspace = null, replace = false } = {}
   activeClientId = clientId;
   try { localStorage.setItem('sp2.activeClient', clientId); } catch (_) { /* per-viewer convenience only */ }
   clientViewToken += 1;
+  ceRequestSeq += 1;
+  if (ceSearchTimer) clearTimeout(ceSearchTimer);
+  ceLoading = true;
+  ceFetchedAt = null;
+  ceLeads = [];
+  ceTotal = 0;
+  ceHasMore = false;
+  ceFacets = { stages: {}, niches: {}, campaigns: {}, campaignVersions: {}, senders: {} };
+  ceOutreachStats = null;
+  funnelAnalytics = null;
+  ceOpensData = [];
+  ceOpensMap = new Map();
+  ceSelected = new Set();
+  rdRecords = [];
+  rdLoading = false;
+  ceSearchQuery = '';
+  ceCampaignFilter = '';
+  ceReplyCategoryFilter = '';
+  ceNicheFilter = 'all';
+  cePipelinePresenceFilter = '';
+  cePipelineStageFilter = '';
+  ceSequenceFilter = '';
+  ceAutomationFilter = '';
+  ceCampaignVersionFilter = '';
+  ceSenderFilter = '';
+  const ceSearch = document.getElementById('ce-search');
+  if (ceSearch) ceSearch.value = '';
+  const senderFilter = document.getElementById('ce-sender-filter');
+  if (senderFilter) senderFilter.innerHTML = '<option value="">All inboxes</option>';
+  const versionFilter = document.getElementById('ce-version-filter');
+  if (versionFilter) versionFilter.innerHTML = '<option value="">All campaigns</option>';
+  const campaignHeader = document.getElementById('ce-current-campaign');
+  if (campaignHeader) campaignHeader.textContent = '';
+  const statusSummary = document.getElementById('lead-status-summary');
+  if (statusSummary) statusSummary.innerHTML = '';
+  document.getElementById('ce-detail-overlay')?.classList.remove('open');
+  document.getElementById('reply-drill-overlay')?.classList.remove('open');
+  renderCeTable();
+  updateCeStats();
   applyClientMode();
   renderClientSwitcher();
   renderNavigation();
@@ -7912,6 +8035,12 @@ async function switchClient(clientId, { workspace = null, replace = false } = {}
   clientLeadExtras = new Map();
   if (!parseWorkspaceHash().stage) ceActiveFilter = 'all';
   document.querySelectorAll('.client-view').forEach(node => { node.innerHTML = ''; });
+  archiveState.rows = [];
+  archiveState.total = 0;
+  archiveState.totalArchived = 0;
+  archiveState.facets = null;
+  archiveState.current = null;
+  archiveState.loaded = false;
   const nav = clientNavigation();
   const target = workspace
     ? (nav.workspaces.includes(workspace) ? workspace : nav.defaultWorkspace)
@@ -8009,6 +8138,7 @@ function pct(numerator, denominator) {
 
 /** Dispatch for a managed client's workspaces. Each renders into its own .client-view. */
 async function loadManagedWorkspace(name) {
+  if (name === 'analytics') joleReportRequestSeq += 1;
   const host = document.getElementById(`client-view-${name}`);
   if (!host) return;
   const token = clientViewToken;
@@ -8169,6 +8299,70 @@ async function renderManagedAnalytics(client) {
   return clientStatusBadges({ ...client, ...o.client }, o.sending) + note + `<div class="analytics-grid">${funnelHtml}<div class="analytics-side">${meetingHtml}${billingHtml}</div></div>${campaignHtml}`;
 }
 
+// Rates are stored to 3 places; the report shows one. Missing evidence is never a zero.
+function joleReportValue(value, suffix = '') {
+  if (value === null || value === undefined) return 'Unavailable';
+  return suffix === '%' ? `${Number(value).toFixed(1)}%` : `${value}${suffix}`;
+}
+function joleSenderHealthLabel(value) { return value === 'healthy' ? 'Healthy' : value === 'unavailable' ? 'Unavailable' : 'Needs attention'; }
+function joleReportMetric(label, value, suffix = '') {
+  return `<div class="jole-report-metric"><span>${esc(label)}</span><strong>${esc(joleReportValue(value, suffix))}</strong></div>`;
+}
+// A held or capped inbox's zero is an operating decision; the row says which.
+function joleSenderState(sender) {
+  if (sender.cold_hold) return 'On hold (warm-up)';
+  return joleSenderHealthLabel(sender.health || 'unavailable');
+}
+function renderJoleDailyReport(report, title = '') {
+  const timeZone = report.timezone || 'UTC';
+  const date = new Date(`${report.report_date}T12:00:00Z`).toLocaleDateString('en-US', { timeZone, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const senders = (report.per_sender || []).map(sender => `<div class="jole-report-sender"><b>${esc(sender.email || sender.sender_id)}${Number.isInteger(sender.daily_limit) ? `<small> · ${esc(sender.daily_limit)}/day</small>` : ''}</b><span>Sent: ${esc(joleReportValue(sender.sent_today))}</span><span>Replies: ${esc(joleReportValue(sender.replies_attributable))}</span><span>${esc(joleSenderState(sender))}</span></div>`).join('');
+  return `<article class="jole-report" aria-label="Daily outreach report">
+    <div class="jole-report-head"><div><div class="jole-report-kicker">Daily Outreach Report</div><h2>${esc(title)}</h2><p>${esc(date)}</p></div><p>Prepared by ScaleLab AI</p></div>
+    <h3>Today</h3><div class="jole-report-grid">${joleReportMetric('Emails sent', report.successful_sends)}${joleReportMetric('Replies', report.replies)}${joleReportMetric('Interested replies', report.positive_replies)}${joleReportMetric('Meetings booked', report.meetings_booked)}</div>
+    <div class="jole-report-grid secondary" style="margin-top:12px">${joleReportMetric('Negative replies', report.negative_replies)}${joleReportMetric('Bounces', report.bounces)}${joleReportMetric('Unsubscribes', report.unsubscribe_requests)}${joleReportMetric('Leads remaining', report.untouched_remaining)}</div>
+    <h3>Campaign totals</h3><div class="jole-report-grid totals">${joleReportMetric('Total contacted', report.contacted_cumulative)}${joleReportMetric('Total replies', report.replies_cumulative)}${joleReportMetric('Reply rate', report.reply_rate, '%')}${joleReportMetric('Interested replies', report.positive_replies_cumulative)}${joleReportMetric('Interested reply rate', report.positive_reply_rate, '%')}${joleReportMetric('Meetings booked', report.meetings_cumulative)}${joleReportMetric('Meeting rate', report.meeting_rate, '%')}</div>
+    <h3>Sender breakdown</h3><div class="jole-report-senders">${senders || '<p>No sender activity recorded.</p>'}</div>
+    <p class="jole-report-footer">"Today" covers activity since the previous weekday's 2:00 PM up to 2:00 PM on the report date. Reporting timezone: ${esc(timeZone)} · Frozen ${esc(new Date(report.generated_at).toLocaleString('en-US', { timeZone }))}</p>
+  </article>`;
+}
+let joleReportRequestSeq = 0;
+function closeJoleDailyReport() {
+  joleReportRequestSeq += 1;
+  document.body.classList.remove('daily-report-mode');
+  document.getElementById('jole-report-view').innerHTML = '';
+}
+async function showJoleDailyReport(date = '') {
+  if (!activeClient()?.dailyReport || activeWorkspace !== 'analytics') return;
+  const clientId = activeClientId;
+  const timeZone = activeClient()?.timezone || 'UTC';
+  const token = clientViewToken;
+  const seq = ++joleReportRequestSeq;
+  const current = () => seq === joleReportRequestSeq && token === clientViewToken && clientId === activeClientId
+    && activeWorkspace === 'analytics' && document.body.classList.contains('daily-report-mode');
+  const host = document.getElementById('jole-report-view');
+  document.body.classList.add('daily-report-mode');
+  const selected = date || (() => {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })
+      .formatToParts(new Date()).map(part => [part.type, part.value]));
+    return `${parts.year}-${parts.month}-${parts.day}`;
+  })();
+  const tools = `<div class="jole-report-tools"><button type="button" onclick="closeJoleDailyReport()">Back to analytics</button><label for="jole-report-date">Report date</label><input id="jole-report-date" type="date" value="${escAttr(selected)}" onchange="showJoleDailyReport(this.value)"></div>`;
+  host.innerHTML = tools + '<div class="workspace-empty"><strong>Loading report…</strong></div>';
+  try {
+    const response = await fetch(`/api/clients/${encodeURIComponent(clientId)}/daily-report?date=${encodeURIComponent(selected)}`);
+    const data = await response.json().catch(() => ({}));
+    if (!current()) return;
+    if (!response.ok) {
+      host.innerHTML = tools + `<div class="workspace-empty"><strong>Report unavailable</strong>${response.status === 404 ? 'No frozen report has been generated for this date.' : 'The daily report store is not ready. Please try again later.'}</div>`;
+      return;
+    }
+    host.innerHTML = tools + renderJoleDailyReport(data.report, data.title);
+  } catch (_) {
+    if (current()) host.innerHTML = tools + '<div class="workspace-empty"><strong>Report unavailable</strong>Please try again later.</div>';
+  }
+}
+
 async function renderManagedSettings(client) {
   const s = await clientApi('/settings');
   const status = s.status;
@@ -8276,26 +8470,29 @@ async function loadClientOpsWorkspace() {
       if (revHost) {
         try {
           const meet = await fetch(`/api/clients/${encodeURIComponent(client.clientId)}/meetings`).then(r => r.json());
-          revHost.innerHTML = renderRevenuePanel(client, meet.meetings || [], meet.billing || o.billing || {});
+          if (current()) revHost.innerHTML = renderRevenuePanel(client, meet.meetings || [], meet.billing || o.billing || {});
         } catch (error) {
-          revHost.innerHTML = `<p class="client-note">Meeting ledger unavailable: ${esc(error.message)}. Revenue cards stay empty rather than inventing figures.</p>`;
+          if (current()) revHost.innerHTML = `<p class="client-note">Meeting ledger unavailable: ${esc(error.message)}. Revenue cards stay empty rather than inventing figures.</p>`;
         }
       }
     }
     if (activeClientIsManaged()) await renderClientLeads(client.clientId);
     if (o.pipeline?.available && current()) await renderClientLedger(client.clientId);
   } catch (error) {
-    host.innerHTML = `<div class="workspace-empty"><strong>Client operations unavailable</strong>${esc(error.message)}</div>`;
+    if (current()) host.innerHTML = `<div class="workspace-empty"><strong>Client operations unavailable</strong>${esc(error.message)}</div>`;
   }
 }
 
 async function renderClientLeads(clientId) {
   const host = document.getElementById('client-leads');
   if (!host) return;
+  const token = clientViewToken;
+  const current = () => token === clientViewToken && clientId === activeClientId;
   try {
     const response = await fetch(`/api/clients/${encodeURIComponent(clientId)}/leads?limit=200`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
+    if (!current()) return;
     const roleCell = lead => (lead.roles || []).map(role => `<span title="Posting: ${escAttr(role.raw)}">${esc(role.clean || '— review')}</span>`).join('<br>') || '—';
     const personalization = lead => { const p = lead.personalization || {}; return `${esc(p.status || '—')}${p.reason ? `<div class="client-note">${esc(p.reason)}</div>` : ''}`; };
     const rows = (data.leads || []).map(lead => `<tr><td><b>${esc(lead.company || '—')}</b><div class="client-note">${esc(lead.contactName || '')}${lead.title ? ' · ' + esc(lead.title) : ''}</div></td><td>${esc(lead.email)}</td><td>${roleCell(lead)}</td><td>${esc(lead.hiringSite || '—')}${lead.tier ? `<div class="client-note">${esc(lead.tier)}${lead.siteTie ? ' · ' + esc(lead.siteTie) : ''}</div>` : ''}</td><td>${personalization(lead)}</td><td>${esc(lead.stage || '—')}${lead.emailStatus ? ' · ' + esc(lead.emailStatus) : ''}</td><td>${esc(lead.senderInboxId || 'unassigned')}</td><td>${lead.routingReady ? 'Yes' : 'No'}</td></tr>`).join('');
@@ -8306,18 +8503,20 @@ async function renderClientLeads(clientId) {
       ${rows || '<tr><td colspan="8">No leads imported for this client yet.</td></tr>'}
       </tbody></table></div></div>`;
   } catch (error) {
-    host.innerHTML = `<p class="client-note">Leads unavailable: ${esc(error.message)}</p>`;
+    if (current()) host.innerHTML = `<p class="client-note">Leads unavailable: ${esc(error.message)}</p>`;
   }
 }
 
 async function renderClientLedger(clientId) {
   const host = document.getElementById('client-ledger');
   if (!host) return;
+  const token = clientViewToken;
   const base = `/api/clients/${encodeURIComponent(clientId)}`;
   const [clar, meet] = await Promise.all([
     fetch(`${base}/clarifications?status=open`).then(r => r.json()),
     fetch(`${base}/meetings`).then(r => r.json()),
   ]);
+  if (token !== clientViewToken || clientId !== activeClientId) return;
   const open = clar.clarifications || [];
   const meetings = meet.meetings || [];
   const forms = open.map(item => `<form class="client-card client-form" data-client="${escAttr(clientId)}" data-clarification="${escAttr(item.clarification_id)}" onsubmit="answerClientClarification(event)">
@@ -8506,13 +8705,18 @@ const OOO_PAUSE_LABEL = Object.freeze({
 });
 
 async function loadInboxWorkspace() {
+  const clientId = activeClientId;
+  const token = clientViewToken;
   const host = document.getElementById('inbox-content');
   host.className = 'workspace-empty'; host.innerHTML = '<strong>Loading the reply queue…</strong>Reading canonical replies and Next Actions.';
   if (!rdRecords.length) {
-    const response = await fetch('/api/coldemail/replies?category=all');
-    rdRecords = response.ok ? ((await response.json()).records || []) : [];
+    const response = await fetch('/api/coldemail/replies?category=all&client=' + encodeURIComponent(clientId));
+    const records = response.ok ? ((await response.json()).records || []) : [];
+    if (token !== clientViewToken || clientId !== activeClientId) return;
+    rdRecords = records;
   }
   if (!nextActions.size) await loadNextActions();
+  if (token !== clientViewToken || clientId !== activeClientId) return;
   renderInboxWorkspace();
 }
 
@@ -8677,6 +8881,9 @@ function renderArchiveRows() {
 async function loadArchiveWorkspace({ append = false } = {}) {
   const host = document.getElementById('archive-content');
   if (!host) return;
+  const clientId = activeClientId;
+  const token = clientViewToken;
+  const current = () => token === clientViewToken && clientId === activeClientId;
   if (!append) {
     archiveState.offset = 0;
     host.className = 'workspace-empty';
@@ -8685,9 +8892,11 @@ async function loadArchiveWorkspace({ append = false } = {}) {
   const params = new URLSearchParams({ limit: String(ARCHIVE_PAGE), offset: String(append ? archiveState.rows.length : 0) });
   for (const [key, value] of Object.entries(archiveQuery())) if (value) params.set(key, value);
   try {
+    params.set('client', clientId);
     const response = await fetch('/api/archive?' + params.toString());
     if (!response.ok) throw new Error((await apiError(response, 'Archive could not be loaded')).message);
     const data = await response.json();
+    if (!current()) return;
     archiveState.rows = append ? archiveState.rows.concat(data.rows || []) : (data.rows || []);
     archiveState.total = data.total || 0;
     archiveState.totalArchived = data.totalArchived || 0;
@@ -8702,6 +8911,7 @@ async function loadArchiveWorkspace({ append = false } = {}) {
     renderArchiveSummary(data);
     renderArchiveRows();
   } catch (error) {
+    if (!current()) return;
     host.className = 'workspace-empty';
     host.innerHTML = `<strong>Archive unavailable</strong>${esc(error.message || 'The archive could not be loaded.')} Nothing was changed.`;
   }
@@ -8839,12 +9049,15 @@ async function loadBookingsWorkspace() {
 }
 
 async function loadSettingsWorkspace() {
+  const clientId = activeClientId;
+  const token = clientViewToken;
   const [response, inboxResponse] = await Promise.all([
     fetch('/api/crm/ui-status'),
-    fetch(`/api/integrations/gmail-inboxes?client=${encodeURIComponent(activeClientId)}`),
+    fetch(`/api/integrations/gmail-inboxes?client=${encodeURIComponent(clientId)}`),
   ]);
   const data = response.ok ? await response.json() : null;
   const inboxData = inboxResponse.ok ? await inboxResponse.json() : null;
+  if (token !== clientViewToken || clientId !== activeClientId) return false;
   const host = document.getElementById('settings-status');
   if (!data) host.innerHTML = '<div class="workspace-empty"><strong>Configuration unavailable</strong>The read-only status endpoint could not be loaded.</div>';
   else {
@@ -9011,17 +9224,16 @@ async function init() {
   installWorkspaceShell();
   await loadManagedClients();
   renderClientSwitcher();
-  showLoadingOverlay('Loading your leads…');
-  try {
-    await loadLeads();
-  } catch(e) {
-    showToast('Could not load leads: ' + e.message, 'error');
-  }
-  hideLoadingOverlay();
-  renderBoard();
   // The URL decides the client when it names one; otherwise the last client used.
   const { clientId, workspace } = parseWorkspaceHash();
   const initial = location.hash ? clientId : (knownClient(storedClientId) ? storedClientId : defaultClientId());
+  if (initial === defaultClientId()) {
+    showLoadingOverlay('Loading your leads…');
+    try { await loadLeads(); }
+    catch(e) { showToast('Could not load leads: ' + e.message, 'error'); }
+    hideLoadingOverlay();
+    renderBoard();
+  }
   await switchClient(initial, { workspace, replace: true });
 }
 init();

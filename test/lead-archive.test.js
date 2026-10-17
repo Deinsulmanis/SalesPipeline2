@@ -232,9 +232,9 @@ test('5. archived records leave active lists, counts, facets, queued and board t
   assert.match(serverSrc, /const boardLeads = allBoardLeads\.filter\(card => !isArchivedLead\(card\)\);\n  const archivedBoardLeads = allBoardLeads\.filter\(card => isArchivedLead\(card\)\);\n  const pipelineIndex = buildOutreachPipelineIndex\(leads, boardLeads\);/);
   // /api/leads (the Pipeline board) and the Inbox exclude archived records.
   assert.match(serverSrc, /res\.json\(req\.query\.archived === 'include' \? leads : leads\.filter\(lead => !isArchivedLead\(lead\)\)\);/);
-  assert.match(serverSrc, /const activeRecords = dataset\.replyRecords\.filter\(record => !archivedIds\.has\(record\.leadId\)\);/);
+  assert.match(serverSrc, /const activeRecords = view\.replyRecords\.filter\(record => !archivedIds\.has\(record\.leadId\)\);/);
   // The browser's lead table reads dataset.rows, which is active only.
-  assert.match(serverSrc, /let scopedRows = dataset\.rows;/);
+  assert.match(serverSrc, /const scopedRows = scope\.view\?\.rows \|\| dataset\.rows;/);
 });
 
 // ── 6/7. history and provider ids ───────────────────────────────────────────
