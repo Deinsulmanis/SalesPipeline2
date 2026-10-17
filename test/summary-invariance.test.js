@@ -124,7 +124,7 @@ test('11/12. a stage filter or search narrows the table, never the cards', () =>
   const query = browser.slice(browser.indexOf('function ceQuery'), browser.indexOf('async function reloadCePage'));
   assert.match(query, /params\.set\('stage', stage\)/, 'the LEAD query is filtered');
   const loader = browser.slice(browser.indexOf('async function loadCeLeads'), browser.indexOf('function cleanCompanyName'));
-  assert.match(loader, /fetch\('\/api\/coldemail\/stats'\)/, 'the SUMMARY request is unfiltered');
+  assert.match(loader, /fetch\('\/api\/coldemail\/stats\?client=' \+ encodeURIComponent\(clientId\)\)/, 'the SUMMARY request is client scoped and unfiltered');
   assert.ok(!/coldemail\/stats\?[^']*stage/.test(browser), 'no filter is ever appended to the summary');
   // And re-filtering does not recompute the cards.
   const reload = browser.slice(browser.indexOf('async function reloadCePage'), browser.indexOf('function loadMoreCeLeads'));
@@ -174,7 +174,7 @@ test('13. the master view adds one fixed board read, never a per-lead read', () 
   assert.equal((loader.match(/spreadsheets\.values\.batchGet/g) || []).length, 1, 'one fixed batch including the board join');
   // The opens are annotated once and reused rather than recomputed per request.
   assert.match(loader, /const annotatedOpens = annotateOpens\(\{/);
-  assert.match(handler('/api/proposalOpens'), /res\.json\(dataset\.annotatedOpens\)/);
+  assert.match(handler('/api/proposalOpens'), /res\.json\(scope\.view\?\.opens \|\| dataset\.annotatedOpens\)/);
 });
 
 test('the Agent tab counters are global too', () => {

@@ -31,6 +31,8 @@ const { buildClientPipeline } = require('./pipeline');
 const { buildClientInbox, buildClientSettings } = require('./workspace-views');
 const { clientPersonalizationState } = require('./client-email');
 const { readLeadProfile } = require('./lead-profile');
+const { createSupabaseDailyReportStore } = require('./daily-report-store');
+const { createJoleDailyReportService, reportDate, REPORT_TITLE, CLIENT_ID: DAILY_REPORT_CLIENT_ID } = require('./daily-report');
 
 function registerClientRoutes(app, {
   requireAuth, loadDataset, getStore, senders, routedLeadReady, env = process.env, log = console,
@@ -42,9 +44,17 @@ function registerClientRoutes(app, {
   importLeads = null,
   // Import batches store (import-batches.js); absent, the imports view is empty.
   importBatches = () => null,
+  reportStore = null, startReportScheduler = true,
 }) {
   const router = express.Router();
   router.use(requireAuth);
+  const dailyReportStore = reportStore || createSupabaseDailyReportStore({ env });
+  const dailyReportService = createJoleDailyReportService({
+    store: dailyReportStore, loadDataset,
+    listMeetings: clientId => getStore().listMeetings(clientId),
+    senders, senderStatus, env, log,
+  });
+  if (startReportScheduler) dailyReportService.start();
 
   const clientParam = (req, res, next) => {
     const resolved = resolveClientId(req.params.clientId);
@@ -77,13 +87,15 @@ function registerClientRoutes(app, {
 
   router.get('/', (_req, res) => {
     res.json({
-      clients: listClients().map(config => ({ ...publicClient(config), sending: clientSendState(config.id, env) })),
+      clients: listClients().map(config => ({ ...publicClient(config), sending: clientSendState(config.id, env),
+        // The dashboard shows the daily report from this flag, never from a client name.
+        dailyReport: config.id === DAILY_REPORT_CLIENT_ID })),
     });
   });
 
   router.get('/:clientId', clientParam, (req, res) => {
     res.json({
-      client: publicClient(req.client),
+      client: { ...publicClient(req.client), dailyReport: req.client.id === DAILY_REPORT_CLIENT_ID },
       sending: clientSendState(req.client.id, env),
       campaigns: campaignsForClient(req.client.id).map(campaign => ({ ...campaign, sendable: campaignSendable(campaign) })),
       archivedCampaigns: campaignsForClient(req.client.id, { includeArchived: true }).filter(campaign => campaign.archivedAt)
@@ -100,6 +112,19 @@ function registerClientRoutes(app, {
         ledger: await ledgerFor(req.client.id), env, routedLeadReady,
       });
       res.json({ ...overview, fetchedAt: new Date(dataset.at || Date.now()).toISOString() });
+    } catch (error) { fail(res, error); }
+  });
+
+  // A stored, immutable operator snapshot. GET never computes or writes one.
+  router.get('/:clientId/daily-report', clientParam, async (req, res) => {
+    if (req.client.id !== DAILY_REPORT_CLIENT_ID) return res.status(404).json({ error: 'No daily report for this client', code: 'report_not_found' });
+    if (!dailyReportStore.enabled) return res.status(503).json({ error: 'Daily reports are not available yet', code: 'report_unavailable' });
+    const date = String(req.query.date || reportDate(new Date()));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(422).json({ error: 'date must be YYYY-MM-DD', code: 'invalid_date' });
+    try {
+      const report = await dailyReportStore.get(req.client.id, date);
+      if (!report) return res.status(404).json({ error: 'No frozen report for this date yet', code: 'report_not_found' });
+      res.json({ title: REPORT_TITLE, report });
     } catch (error) { fail(res, error); }
   });
 

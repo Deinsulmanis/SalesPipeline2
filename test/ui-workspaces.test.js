@@ -23,7 +23,7 @@ test('sidebar navigation is read-only and only changes workspace state', () => {
 });
 
 test('Inbox consumes canonical reply records and canonical Next Actions', () => {
-  assert.match(html, /fetch\('\/api\/coldemail\/replies\?category=all'\)/);
+  assert.match(html, /fetch\('\/api\/coldemail\/replies\?category=all&client=' \+ encodeURIComponent\(clientId\)\)/);
   assert.match(html, /inboxActionFor\(record\)/);
   assert.match(html, /nextActions\.get\(record\.boardLeadId\)/);
   assert.match(server, /boardLeadId: row\.boardLeadId \|\| ''/);
@@ -82,7 +82,7 @@ test('an Inbox row can open a lead that is not on the loaded Outreach page', () 
   // holds one bounded 100-row page, so an Inbox row is frequently for a lead
   // the browser has never fetched. openCeDetail used to return silently in
   // that case and the click did nothing at all.
-  assert.match(html, /fetch\('\/api\/coldemail\?limit=1&leadId=' \+ encodeURIComponent\(id\)\)/,
+  assert.match(html, /fetch\('\/api\/coldemail\?limit=1&client=' \+ encodeURIComponent\(clientId\) \+ '&leadId=' \+ encodeURIComponent\(id\)\)/,
     'the drawer falls back to fetching the single lead');
   assert.match(html, /if \(options\.retried\) return;/, 'and the retry is bounded, so it cannot loop');
 

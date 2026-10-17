@@ -285,7 +285,7 @@ test('dashboard: managed views read client-scoped APIs and reuse shared Growth w
   assert.match(HTML, /body\[data-client-mode="managed"\] #ws-pipeline>:not\(\.workspace-intro\):not\(\.client-view\)/);
   assert.match(HTML, /body:not\(\[data-client-mode="managed"\]\) \.client-view\{display:none!important\}/);
   assert.match(HTML, /WorkspaceShared\.usesSharedWorkspace\(name\)/);
-  assert.match(HTML, /limit=0&client=' \+ encodeURIComponent\(activeClientId\)/);
+  assert.match(HTML, /limit=0&client=' \+ encodeURIComponent\(clientId\)/);
 });
 
 test('dashboard: empty states say why there is no data, without fake records', () => {

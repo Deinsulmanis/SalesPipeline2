@@ -50,7 +50,8 @@ test('pin: observers match only their own client\'s leads and route negative sup
 });
 
 test('pin: the directory endpoint scopes rows to a client on the server', () => {
-  assert.match(server, /const ids = new Set\(leadsForClient\(dataset\.leads \|\| \[\], client\.clientId\)\.map\(lead => String\(lead\.id\)\)\);/);
+  assert.match(server, /const scopedRows = scope\.view\?\.rows \|\| dataset\.rows;/);
+  assert.match(server, /clientOutreachView\(dataset, client\.clientId/);
   assert.match(server, /registerClientRoutes\(app, \{\n  requireAuth,/);
 });
 
