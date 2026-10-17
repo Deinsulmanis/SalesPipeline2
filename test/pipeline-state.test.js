@@ -40,31 +40,14 @@ test('scenario 1b: a lead past the last step remains an explicit Pipeline review
 });
 
 // ── 2 & 3. Demo played, once and repeatedly ─────────────────────────────────
-test('scenario 2/3: the demo trigger is deduped durably by leadId|trigger, not by timestamp', () => {
-  // Repeated plays must log but must never re-fire the booking-link email.
-  assert.match(agent, /loadFiredIntents/);
-  assert.match(agent, /\$\{row\[1\]\}\|\$\{row\[4\] \|\| 'both-audios'\}/);
-  assert.match(agent, /if \(fired\.has\(`\$\{lead\.id\}\|both-audios`\)\) continue;/);
-  // and the fire is recorded BEFORE any later step can throw
-  assert.match(agent, /Record the fire BEFORE anything else can fail/);
+test('scenario 2/3: no demo trigger exists to fire a booking-link email', () => {
+  assert.doesNotMatch(agent, /loadFiredIntents|both-audios/);
 });
-
-test('scenario 3: repeated demo plays collapse to a pair test rather than a counter', () => {
-  // Restated, not weakened: creation is now guarded on pair HISTORY rather than
-  // on the active pair, so a retracted pair is not written again on the next
-  // pass. The invariant is unchanged — a play never increments a counter, and
-  // never produces a second pair for a lead that already has one.
-  assert.match(agent, /if \(!play \|\| play\.intro < 1 \|\| play\.demo < 1 \|\| hasDemoPairHistory\(lead, activities\)\) continue;/);
-  assert.match(agent, /if \(!hasUndeliveredDemoPair\(lead, activities\)\) continue;/);
-});
-
 // ── 4. Positive reply ───────────────────────────────────────────────────────
 test('scenario 4: a replied lead stops automation and is excluded from every send selector', () => {
   const twin = { emailStatus: 'replied', emailStep: '1' };
   assert.equal(deriveAutomationState(twin).state, AUTOMATION_STATES.STOPPED);
   assert.match(agent, /function selectFollowUps[\s\S]{0,200}emailStatus !== 'emailed'/);
-  // the intent (demo) trigger also refuses to mail a lead already in conversation
-  assert.match(agent, /lead\.emailStatus === 'replied' \|\| lead\.stage === 'Replied'/);
 });
 
 test('scenario 4b: Hot with no follow-up date has no defined next step', () => {

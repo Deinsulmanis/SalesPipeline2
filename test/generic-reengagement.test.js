@@ -46,7 +46,7 @@ const copyOpts = { campaignTemplates: TEMPLATES };
 const twinOf = (over = {}) => ({
   id: 'L1', email: 'info@cityclinic.com', company: 'City Clinic', contactName: 'Dr Sarah Chen',
   stage: 'Done', emailStatus: 'done', emailStep: '3', notes: '',
-  lastEmailedAt: daysAgo(40), senderInboxId: 'primary', campaign: 'toronto-medspa-jul', ...over,
+  lastEmailedAt: daysAgo(40), senderInboxId: 'primary', campaign: 'bc-trades-jul', ...over,
 });
 const ev = (eventType, occurredAt, metadata = {}) => ({
   eventId: `${eventType}:${occurredAt}`, eventType, occurredAt, metadata: JSON.stringify(metadata),

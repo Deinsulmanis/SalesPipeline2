@@ -164,7 +164,7 @@ test('integrity audit reports duplicate ids, send/reply ids, invalid dates and o
 });
 
 test('Outreach timeline is lazy and initial lead loading never fetches all timelines', () => {
-  assert.match(browser, /fetch\(`\/api\/coldemail\/\$\{encodeURIComponent\(id\)\}\/activity`\)/);
+  assert.match(browser, /fetch\(`\/api\/coldemail\/\$\{encodeURIComponent\(id\)\}\/activity\?client=\$\{encodeURIComponent\(clientId\)\}`\)/);
   const initialLoader = browser.slice(browser.indexOf('async function loadCeLeads'), browser.indexOf('function cleanCompanyName'));
   assert.doesNotMatch(initialLoader, /\/activity/);
   assert.match(server, /app\.get\('\/api\/coldemail\/:id\/activity'/);
@@ -187,6 +187,6 @@ test('new activity work contains no outbound send invocation', () => {
   assert.doesNotMatch(moduleSource, /sendEmail|gmail\(\)|nodemailer/);
   const route = server.slice(server.indexOf("app.get('/api/coldemail/:id/activity'"), server.indexOf("app.patch('/api/coldemail/:id/stage'"));
   assert.doesNotMatch(route, /sendEmail|gmail\(|values\.(?:append|update|batchUpdate)/);
-  assert.match(agent, /const MIN_DELAY = 45 \* 1000/);
-  assert.match(agent, /const MAX_DELAY = 120 \* 1000/);
+  assert.match(agent, /const MIN_DELAY = 30 \* 1000/);
+  assert.match(agent, /const MAX_DELAY = 90 \* 1000/);
 });

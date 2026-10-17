@@ -291,8 +291,8 @@ test('global classifier is not loosened for bare Interested or send me some info
 
 test('agent routes staffing SEND_INFO and qualification without the dental question+booking path', () => {
   const agent = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
-  assert.match(agent, /case 'SEND_INFO':/);
-  assert.match(agent, /case 'STAFFING_QUALIFICATION':/);
+  assert.match(agent, /case REPLY_ROUTE\.SEND_INFO:/);
+  assert.match(agent, /case REPLY_ROUTE\.STAFFING_QUALIFICATION:/);
   assert.match(agent, /overlayStaffingReplyClassification/);
   const question = agent.slice(agent.indexOf('async function handleQuestion'), agent.indexOf('async function handleNeedsHuman'));
   assert.match(question, /isStaffingCampaign\(lead\)/);

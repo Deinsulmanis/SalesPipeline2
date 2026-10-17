@@ -31,13 +31,43 @@ test('continuous initial imports cannot indefinitely starve follow-ups', async (
 });
 
 test('oldest legitimate overdue follow-ups are selected first', () => {
-  const sequence = [{ delayDays: 3 }, { delayDays: 5 }];
+  // Touch 3 for 'middle' is MAX(T1 Aug 6 + 7d, T2 Aug 12 + 3d) = Aug 15.
+  const activities = [
+    { eventType: 'initial_email_sent', sourceLeadId: 'middle', occurredAt: '2026-08-06T00:00:00Z' },
+  ];
   const ordered = oldestDueFirst([
     { id: 'later', emailStep: '1', lastEmailedAt: '2026-08-20T00:00:00Z' },
     { id: 'oldest', emailStep: '1', lastEmailedAt: '2026-08-10T00:00:00Z' },
     { id: 'middle', emailStep: '2', lastEmailedAt: '2026-08-12T00:00:00Z' },
-  ], sequence);
+  ], activities);
   assert.deepEqual(ordered.map(x => x.id), ['oldest', 'middle', 'later']);
+});
+
+test('Touch 3 ordering is anchored on Touch 1, not only on Touch 2', () => {
+  // Both Touch 2s went out Aug 12. 'early' started Aug 4 (Touch 3 due Aug 15,
+  // the Touch 2 floor); 'late' started Aug 9 (Touch 3 due Aug 16, Day 7).
+  const activities = [
+    { eventType: 'initial_email_sent', sourceLeadId: 'late', occurredAt: '2026-08-09T00:00:00Z' },
+    { eventType: 'initial_email_sent', sourceLeadId: 'early', occurredAt: '2026-08-04T00:00:00Z' },
+  ];
+  const ordered = oldestDueFirst([
+    { id: 'late', emailStep: '2', lastEmailedAt: '2026-08-12T00:00:00Z' },
+    { id: 'early', emailStep: '2', lastEmailedAt: '2026-08-12T00:00:00Z' },
+  ], activities);
+  assert.deepEqual(ordered.map(x => x.id), ['early', 'late']);
+});
+
+test('drain mode lets follow-ups take the whole bucket without raising it', async () => {
+  const normal = await simulateFairBatch({ initials: leads('i', 10), followUps: leads('f', 10), attemptInitial: ok, attemptFollowUp: ok });
+  const drain = await simulateFairBatch({ initials: leads('i', 10), followUps: leads('f', 10), attemptInitial: ok, attemptFollowUp: ok, drain: true });
+  assert.deepEqual([normal.followUpSent, normal.initialSent, normal.sent], [4, 1, 5]);
+  assert.deepEqual([drain.followUpSent, drain.initialSent, drain.sent], [5, 0, 5], 'same five-send bucket');
+  // With no backlog, drain mode still sends initials into the unused space.
+  const idle = await simulateFairBatch({ initials: leads('i', 10), followUps: leads('f', 2), attemptInitial: ok, attemptFollowUp: ok, drain: true });
+  assert.deepEqual([idle.followUpSent, idle.initialSent], [2, 3]);
+  assert.equal(followUpSuccessTarget(5, { drain: true }), 5);
+  assert.equal(followUpSuccessTarget(5), 4);
+  assert.equal(followUpSuccessTarget(0, { drain: true }), 0);
 });
 
 test('blocked follow-ups do not consume successful-send positions', async () => {
@@ -73,7 +103,9 @@ test('production policy retains daily cap, refill, thread gate and demo stop', (
   assert.match(agent, /DAILY_SEND_LIMIT = SENDER_CAPACITY\.globalDailyLimit/);
   assert.equal(followUpSuccessTarget(5), 4);
   assert.match(agent, /followBatchesBySender/);
-  assert.match(agent, /fillSenderFollowUps\(sender\.id, followUpSuccessTarget\(senderRemaining\)\)/);
+  assert.match(agent, /fillSenderFollowUps\(sender\.id, followUpSuccessTarget\(senderRemaining, \{ drain: FOLLOW_UP_DRAIN_MODE \}\)\)/);
+  // Drain mode is opt-in and off unless the variable is exactly 'true'.
+  assert.match(agent, /const FOLLOW_UP_DRAIN_MODE = process\.env\.FOLLOW_UP_DRAIN_MODE === 'true';/);
   assert.match(agent, /fillSenderFollowUps\(sender\.id\);/);
   assert.match(agent, /resolveColdFollowUpThread/);
   assert.match(agent, /canonical Gmail thread could not be proven/);

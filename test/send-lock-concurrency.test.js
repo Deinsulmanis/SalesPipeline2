@@ -12,6 +12,7 @@ const {
 } = require('../integrations/send-lock');
 const { sendAuthorization } = require('../integrations/send-authorization');
 const { guardProviderSend } = require('../integrations/send-safety-revalidate');
+const { googleRecipient } = require('../test-support/google-recipient');
 const { ordinaryColdActionId, smartleadEnqueueActionId, warmReplyActionId } = require('../integrations/outbound-action-id');
 const { STATUS } = require('../integrations/send-reservation-rules');
 
@@ -35,7 +36,7 @@ async function guardedProviderSend({ action, current, suppressed = new Set(), en
   const auth = sendAuthorization(env);
   if (!auth.allowed) return { sent: 0, code: auth.code, reason: auth.reason };
   const gate = await guardProviderSend(current || lead(), {
-    env,
+    env, classifyRecipient: googleRecipient,
     loadFreshLead: async () => current || lead(),
     loadSuppressedEmails: async () => suppressed,
   }, { purpose: action.actionType === 'gmail_sequence_step' ? 'sequence' : 'cold' });

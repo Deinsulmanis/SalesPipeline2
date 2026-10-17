@@ -260,8 +260,6 @@ test('the legacy Promoted stage is read-only and gates nothing that sends', () =
   // Nothing writes it: it is a human-set label in the Outreach dropdown.
   assert.ok(!/values: \[\['Promoted'\]\]/.test(agent) && !/values: \[\['Promoted'\]\]/.test(server),
     'automation must not start writing the legacy stage');
-  // It is still honoured where it exists, as an extra intent-suppression read.
-  assert.match(agent, /lead\.stage === 'Replied' \|\| lead\.stage === 'Promoted'/);
   // emailStatus is still the primary cadence condition...
   assert.match(agent, /if \(l\.emailStatus !== 'emailed'\) return false;/);
   // ...but it is no longer the ONLY thing standing between a promoted lead and

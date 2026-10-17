@@ -256,5 +256,13 @@ test('Resume is the one caller that declares a release', () => {
   ];
   const declarations = callers.flatMap(([file, src]) =>
     (src.match(/releaseMarkers: \[/g) || []).map(() => file));
-  assert.deepEqual(declarations, ['server.js'], 'no other writer may declare a release');
+  // The other sanctioned releases: the Archive restore, which releases the
+  // archive marker and nothing else (never an opt-out, bounce or hold), and the
+  // OOO hold release, which releases only a hold the old OOO handler applied.
+  assert.deepEqual(declarations, ['server.js', 'server.js', 'server.js'], 'no other writer may declare a release');
+  assert.deepEqual(serverSrc.match(/releaseMarkers: \[[^\]]*\]/g).sort(),
+    ['releaseMarkers: [ARCHIVE_MARKER_PREFIX]', 'releaseMarkers: [MANUAL_HOLD_TAG]', 'releaseMarkers: [MANUAL_HOLD_TAG]']);
+  const restore = serverSrc.slice(serverSrc.indexOf("app.post('/api/archive/leads/:id/restore'"),
+    serverSrc.indexOf("app.post('/api/archive/cards/:id/restore'"));
+  assert.match(restore, /releaseMarkers: \[ARCHIVE_MARKER_PREFIX\]/, 'the archive release lives in the restore route only');
 });

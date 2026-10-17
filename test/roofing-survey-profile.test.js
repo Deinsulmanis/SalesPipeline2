@@ -68,7 +68,9 @@ test('feature flags default disabled and existing campaigns remain routed normal
   assert.match(env, /ROOFING_SURVEY_REPLY_FLOW_ENABLED=false/);
   assert.match(env, /ROOFING_SURVEY_AUTO_REPLY_ENABLED=false/);
   const routing = require('../integrations/campaign-routing');
-  assert.equal(routing.templateById('dental-guarantee-v1').ready, true);
+  // Dental copy is registered but retired with the offer (2026-09-30).
+  assert.equal(routing.templateById('dental-guarantee-v1').ready, false);
+  assert.match(routing.templateById('dental-guarantee-v1').reason, /retired/);
 });
 
 test('no API secret appears in rendered copy, drafts, or source logs', () => {

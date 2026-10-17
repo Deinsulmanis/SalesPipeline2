@@ -122,10 +122,8 @@ test('thread resolver accepts current and historical exact subjects', async () =
   assert.equal(result.subject, 'quick question about Invisalign');
 });
 
-test('dental intent path supplies all Gmail thread requirements and remains fail closed', () => {
+test('the retired dental demo-intent thread reply is gone; threaded replies still carry headers', () => {
   const agent = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
-  assert.match(agent, /expectedSubjects: \[currentSubject, legacySubject\]/);
   assert.match(agent, /threadId: thread\.threadId, inReplyTo: thread\.inReplyTo, references: thread\.references/);
-  assert.match(agent, /original Gmail thread could not be verified/);
-  assert.match(agent, /if \(fired\.has\(`\$\{lead\.id\}\|both-audios`\)\) continue/);
+  assert.doesNotMatch(agent, /both-audios|runIntentTriggerPass/);
 });

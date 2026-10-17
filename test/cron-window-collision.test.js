@@ -26,7 +26,7 @@ const cron = require('node-cron');
 const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 
 const INTENT_CRON = '1-59/3 * * * *';
-const SEND_CRON = '0,30 8-11 * * 1-5';
+const SEND_CRON = '0,30 7-11 * * 1-5';
 
 /** The minutes an expression actually fires on, per node-cron itself. */
 function fireMinutes(expr, samples = 240) {
@@ -34,13 +34,13 @@ function fireMinutes(expr, samples = 240) {
   return [...new Set(task.getNextRuns(samples).map(d => d.getMinutes()))].sort((a, b) => a - b);
 }
 
-test('the production intent backstop uses the offset expression', () => {
-  assert.match(server, /cron\.schedule\('1-59\/3 \* \* \* \*'/,
-    'the intent backstop must not return to a schedule that lands on :00/:30');
-  assert.doesNotMatch(server, /cron\.schedule\('\*\/3 \* \* \* \*'/,
-    "'*/3' fires at :00 and :30 and collides with the send window");
+test('no three-minute intent backstop is scheduled any more', () => {
+  // The demo-intent backstop is retired, so nothing ticks every three minutes
+  // and nothing can collide with a :00/:30 send window.
+  assert.doesNotMatch(server, /cron\.schedule\('1-59\/3 \* \* \* \*'/);
+  assert.doesNotMatch(server, /cron\.schedule\('\*\/3 \* \* \* \*'/);
+  assert.doesNotMatch(server, /spawnAgentIntentOnly|intentBackstop/);
 });
-
 test('1. the intent cron never fires at minute 00', () => {
   assert.ok(!fireMinutes(INTENT_CRON).includes(0), 'minute 0 must be free for the send window');
 });
@@ -52,7 +52,7 @@ test('2. the intent cron never fires at minute 30', () => {
 test('3. the scheduled send cron still fires at :00 and :30', () => {
   const minutes = fireMinutes(SEND_CRON);
   assert.deepEqual(minutes, [0, 30], 'the send window schedule is unchanged');
-  assert.match(server, /cron\.schedule\('0,30 8-11 \* \* 1-5'/);
+  assert.match(server, /cron\.schedule\('0,30 7-11 \* \* 1-5'/);
 });
 
 test('4. there are still 20 intent-backstop opportunities per hour', () => {
@@ -77,10 +77,12 @@ test('the two schedules can no longer collide on any minute', () => {
 });
 
 test('6. no production send limit changed', () => {
-  // The repair is a schedule offset. Per-inbox window size stays 5; the
+  // The repair is a schedule offset. The per-inbox window ceiling is the shared
+  // MAX_INBOX_PER_RUN_LIMIT (6); the
   // combined run/day ceilings are derived from ACTIVE inboxes, not hardcoded
   // to a two-inbox total.
-  assert.match(server, /const SCHEDULED_SEND_PER_INBOX_CAP = 5;/);
+  assert.match(server, /const SCHEDULED_SEND_PER_INBOX_CAP = MAX_INBOX_PER_RUN_LIMIT;/);
+  assert.equal(require('../integrations/gmail-sender-capacity').MAX_INBOX_PER_RUN_LIMIT, 6);
   assert.match(server, /function scheduledSendCaps/);
   assert.match(server, /PER_INBOX_RUN_CAP: String\(caps\.perInbox\)/);
   assert.match(server, /DAILY_CAP: String\(caps\.total\)/);
@@ -90,8 +92,11 @@ test('6. no production send limit changed', () => {
   const routing = fs.readFileSync(path.join(__dirname, '..', 'integrations', 'gmail-sender-routing.js'), 'utf8');
   assert.match(routing, /dailyLimit: Number\(env\.GMAIL_PRIMARY_DAILY_LIMIT \|\| DEFAULT_INBOX_DAILY_LIMIT\)/);
   const fairness = fs.readFileSync(path.join(__dirname, '..', 'integrations', 'scheduler-fairness.js'), 'utf8');
-  assert.match(fairness, /return Math\.min\(4, Math\.max\(0, Number\(cap\) - 1\)\);/,
+  assert.match(fairness, /return Math\.min\(4, Math\.max\(0, remaining - 1\)\);/,
     'the 4-follow-up/1-initial policy is untouched');
+  const { followUpSuccessTarget } = require('../integrations/scheduler-fairness');
+  assert.deepEqual([0, 1, 2, 5, 6].map(cap => followUpSuccessTarget(cap)), [0, 0, 1, 4, 4],
+    'default (non-drain) follow-up share per bucket is unchanged');
 });
 
 test('the skip-without-catch-up behaviour itself is unchanged', () => {

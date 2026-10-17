@@ -31,13 +31,14 @@ const filterOutreachRows = new Function(`
   return filterOutreachRows;
 `)();
 
-const buildOutreachPipelineIndex = new Function(`
+const { leadsInEmailScope } = require('../integrations/clients/email-scope');
+const buildOutreachPipelineIndex = new Function('leadsInEmailScope', 'DEFAULT_CLIENT_ID', `
   const normalizeEmail = value => String(value || '').trim().toLowerCase();
   const displayStageFor = value => String(value || '').trim().toLowerCase();
   const resolvePromotionIdentity = ${resolvePromotionIdentity.toString()};
   ${sourceFunction('buildOutreachPipelineIndex')}
   return buildOutreachPipelineIndex;
-`)();
+`)(leadsInEmailScope, 'scalelab');
 
 const row = (id, extra = {}) => ({
   id, company: `${id} Dental`, contactName: `Dr ${id}`, email: `${id}@example.com`, website: `${id}.example.com`,
@@ -81,23 +82,22 @@ test('pipeline mapping prefers CE id, falls back to unique exact email, and neve
   assert.equal(conflict.boardLeadId, '');
 });
 
-test('pipeline, reply, engagement, and sequence filters compose before pagination', () => {
+test('pipeline, reply and sequence filters compose before pagination', () => {
   const rows = [
     row('positive-out', { replyCategory: 'positive' }),
     row('human-out', { replyCategory: 'needs_human' }),
-    row('demo-out', { demoEngaged: true }),
+    row('plain-out'),
     row('hot', { pipelinePresence: true, pipelineStage: 'hot', mappingStatus: 'matched', replyCategory: 'positive' }),
     row('complete', { sequenceState: 'complete' }),
     row('active', { sequenceState: 'active', automationState: 'active' }),
   ];
-  assert.deepEqual(filterOutreachRows(rows, { pipelinePresence: 'out' }).map(x => x.id), ['positive-out','human-out','demo-out','complete','active']);
+  assert.deepEqual(filterOutreachRows(rows, { pipelinePresence: 'out' }).map(x => x.id), ['positive-out','human-out','plain-out','complete','active']);
   assert.deepEqual(filterOutreachRows(rows, { pipelinePresence: 'in', pipelineStage: 'hot' }).map(x => x.id), ['hot']);
   assert.deepEqual(filterOutreachRows(rows, { replyCategory: 'positive', pipelinePresence: 'out' }).map(x => x.id), ['positive-out']);
   assert.deepEqual(filterOutreachRows(rows, { replyCategory: 'needs_human', pipelinePresence: 'out' }).map(x => x.id), ['human-out']);
-  assert.deepEqual(filterOutreachRows(rows, { engagement: 'demo', pipelinePresence: 'out' }).map(x => x.id), ['demo-out']);
   assert.deepEqual(filterOutreachRows(rows, { sequenceState: 'complete' }).map(x => x.id), ['complete']);
   assert.deepEqual(filterOutreachRows(rows, { sequenceState: 'active' }).map(x => x.id), ['active']);
-  assert.deepEqual(filterOutreachRows(rows, { replyCategory: 'none' }).map(x => x.id), ['demo-out','complete','active']);
+  assert.deepEqual(filterOutreachRows(rows, { replyCategory: 'none' }).map(x => x.id), ['plain-out','complete','active']);
 });
 
 test('the row and lazy drawer expose canonical pipeline state for non-board leads', () => {
@@ -105,15 +105,17 @@ test('the row and lazy drawer expose canonical pipeline state for non-board lead
   assert.match(browser, /Not in Pipeline/);
   assert.match(browser, /Not in Sales Pipeline/);
   assert.match(browser, /openCeDetail\('\$\{l\.id\}'\)/);
-  assert.match(browser, /fetch\(`\/api\/coldemail\/\$\{encodeURIComponent\(id\)\}\/activity`\)/);
+  assert.match(browser, /fetch\(`\/api\/coldemail\/\$\{encodeURIComponent\(id\)\}\/activity\?client=\$\{encodeURIComponent\(clientId\)\}`\)/);
   assert.match(server, /mappingStatus: row\.mappingStatus/);
-  assert.match(server, /timelineForLead\(lead, dataset, activities\)/);
+  assert.match(server, /timelineForLead\(lead, \{ annotatedOpens: scope\.view\.opens \}, activities/);
 });
 
 test('master filters are server-side, debounced, responsive, and keep the initial DOM bounded', () => {
-  for (const name of ['pipelinePresence','pipelineStage','engagement','sequenceState','automationState']) {
+  for (const name of ['pipelinePresence','pipelineStage','sequenceState','automationState']) {
     assert.match(browser, new RegExp(`params\\.set\\('${name}'`));
   }
+  // The demo-only engagement filter is retired with the demo it filtered on.
+  assert.doesNotMatch(browser, /params\.set\('engagement'|id="ce-engagement-filter"/);
   assert.match(browser, /setTimeout\(\(\) => reloadCePage\(\), 250\)/);
   assert.match(browser, /const CE_PAGE_SIZE = 100;/);
   assert.match(browser, /@media \(max-width: 700px\)[\s\S]*?\.ce-master-filters/);
@@ -121,8 +123,8 @@ test('master filters are server-side, debounced, responsive, and keep the initia
 });
 
 test('summary and reply drill-down reuse the same snapshot and canonical pipeline join', () => {
-  assert.match(server, /pipelineAudit: dataset\.pipelineAudit/);
-  assert.match(server, /const rowById = new Map\(dataset\.rows\.map/);
+  assert.match(server, /pipelineAudit: scope\.view\?\.pipelineAudit \|\| dataset\.pipelineAudit/);
+  assert.match(server, /const rowById = new Map\(view\.rows\.map/);
   assert.match(browser, /record\.mappingStatus === 'conflict'/);
   const start = browser.indexOf('function rdStageLabel');
   const end = browser.indexOf('\n}', start) + 2;

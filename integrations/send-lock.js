@@ -9,6 +9,8 @@ const {
 const { createPgSendReservationStore } = require('./send-reservation-store');
 const { isDefinitePreDeliveryFailure, providerIdsFromResult } = require('./provider-delivery-error');
 const { STATUS } = require('./send-reservation-rules');
+const { checkActionOwnership, resolveLeadClient } = require('./clients/ownership');
+const { clientSendBlock } = require('./clients/send-policy');
 
 const LEASE_OWNER = `${os.hostname()}:${process.pid}:${crypto.randomUUID()}`;
 
@@ -32,6 +34,7 @@ function logSendLock(event, fields = {}) {
     status: fields.status || null,
   };
   if (fields.code) payload.code = fields.code;
+  if (fields.clientId) payload.client_id = fields.clientId;
   console.log(JSON.stringify(payload));
 }
 
@@ -84,7 +87,25 @@ async function assertSendLockReady(env = process.env) {
   return health;
 }
 
+// A reservation belongs to exactly one client. An action whose lead, sender,
+// campaign and template disagree is refused before any row exists — on the
+// locked and the pre-activation unlocked path alike. Actions without an
+// ownership block (legacy callers) are unchanged.
+function assertActionOwnership(action) {
+  const owner = checkActionOwnership(action?.ownership);
+  if (!owner.ok) {
+    logSendLock('reservation_denied', {
+      actionId: action?.actionId, leadId: action?.leadId, provider: action?.provider, code: owner.code,
+    });
+    const error = new Error(owner.reason);
+    error.code = owner.code;
+    throw error;
+  }
+  return owner.clientId || undefined;
+}
+
 async function withOutboundReservation(action, run, env = process.env) {
+  const clientId = assertActionOwnership(action);
   if (!sendLockEnabled(env) && !injectedStore) return run();
   if (!action?.actionId) {
     const error = new Error('durable send reservation action_id is required');
@@ -109,7 +130,7 @@ async function withOutboundReservation(action, run, env = process.env) {
   }
   logSendLock('reservation_acquired', {
     actionId: action.actionId, leadId: action.leadId, provider: action.provider,
-    status: reserved.reservation.status,
+    status: reserved.reservation.status, clientId,
   });
   const started = await store.markProviderAttemptStarted(action.actionId, LEASE_OWNER);
   if (!started.ok) {
@@ -166,7 +187,62 @@ async function withOutboundReservation(action, run, env = process.env) {
   }
 }
 
-async function withGmailProviderSend({ lead, sendAction, run, env = process.env }) {
+// Defense in depth at the Gmail provider boundary: every final gate already
+// enforces the client switch, but no path — present or future — may reach the
+// provider for a lead whose client is not active, not enabled, or unowned.
+function assertLeadClientMaySend(lead, sendAction, env) {
+  if (!lead) return;
+  const owner = resolveLeadClient(lead);
+  const blocked = owner.ok ? clientSendBlock(owner.clientId, env) : { code: owner.code, reason: owner.reason };
+  if (!blocked) return;
+  logSendLock('reservation_denied', {
+    actionId: sendAction?.actionId, leadId: lead.id, provider: 'gmail', code: blocked.code,
+    clientId: owner.ok ? owner.clientId : undefined,
+  });
+  const error = new Error(blocked.reason);
+  error.code = blocked.code;
+  throw error;
+}
+
+// The last tenant check before Gmail, whatever routing, queue row or runtime
+// overlay produced this pairing: the sending inbox must belong to the lead's
+// client, a managed client's inbox must serve the lead's campaign, and the
+// inbox must be delivery eligible with no policy blocker. Only the client of
+// each side is compared, so ScaleLab's own sends are judged exactly as before.
+function assertSenderServesLead(lead, sender, sendAction) {
+  if (!lead) return;
+  const refuse = (code, reason) => {
+    logSendLock('reservation_denied', { actionId: sendAction?.actionId, leadId: lead.id, provider: 'gmail', code, senderInboxId: sender?.id });
+    const error = new Error(reason);
+    error.code = code;
+    throw error;
+  };
+  const { resolveSenderClient } = require('./clients/ownership');
+  const { getClient } = require('./clients/registry');
+  const { senderServesCampaign } = require('./clients/sender-policy');
+  const leadOwner = resolveLeadClient(lead);
+  // A managed client's lead never reaches Gmail without the sending inbox
+  // being judged here. ScaleLab callers keep their existing behaviour.
+  if (!sender) {
+    if (leadOwner.ok && !getClient(leadOwner.clientId).isDefault) refuse('sender_required', `lead ${lead.id} needs its sending inbox judged before delivery`);
+    return;
+  }
+  const senderOwner = resolveSenderClient(sender);
+  if (!leadOwner.ok || !senderOwner.ok) refuse('client_unresolved', (leadOwner.ok ? senderOwner : leadOwner).reason);
+  if (leadOwner.clientId !== senderOwner.clientId) {
+    refuse('client_ownership_conflict', `sender ${sender.id} belongs to ${senderOwner.clientId}, lead ${lead.id} to ${leadOwner.clientId}`);
+  }
+  if (sender.policyBlockers?.length) refuse('sender_policy_blocked', `sender ${sender.id}: ${sender.policyBlockers[0]}`);
+  if (sender.sendEligible !== true) refuse('sender_not_eligible', `sender ${sender.id} is not delivery eligible`);
+  if (!getClient(senderOwner.clientId).isDefault && !senderServesCampaign(sender, lead.intendedCampaignVersion || lead.campaign)) {
+    refuse('sender_campaign_not_allowed', `sender ${sender.id} does not serve campaign ${lead.intendedCampaignVersion || lead.campaign || '(blank)'}`);
+  }
+}
+
+async function withGmailProviderSend({ lead, sendAction, run, sender = null, env = process.env }) {
+  assertActionOwnership(sendAction);
+  assertLeadClientMaySend(lead, sendAction, env);
+  assertSenderServesLead(lead, sender, sendAction);
   if (!sendLockEnabled(env) && !injectedStore) return run();
   const action = sendAction && sendAction.actionId ? sendAction : null;
   if (!action) {

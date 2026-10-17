@@ -1,6 +1,7 @@
 'use strict';
 
 const { attributionFromActivity, LEGACY_UNKNOWN } = require('./campaign-versions');
+const { stripQuotedReply } = require('./reply-reconciliation');
 
 const DEFAULT_LATE_REPLY_LOOKBACK_DAYS = 60;
 const DEFAULT_LATE_REPLY_BATCH_LIMIT = 75;
@@ -136,7 +137,7 @@ function buildLateReplyActivity(lead, message, classification, outbound = null) 
     eventType: 'late_reply',
     occurredAt: String(message.occurredAt || new Date().toISOString()),
     subject: String(message.subject || ''),
-    content: String(message.body || message.snippet || '').trim().slice(0, 1500),
+    content: stripQuotedReply(message.body || message.snippet || '').slice(0, 1500),
     metadata: JSON.stringify({
       classification,
       gmailMessageId: messageId,
@@ -163,7 +164,9 @@ async function processLateReply({ lead, message, outbound, classify, existingEve
     return { status: 'duplicate', eventId };
   }
 
-  const replyText = String(message.body || message.snippet || '').trim();
+  // Only the prospect's own words reach the classifier; a quoted cold email
+  // carries our "Reply "unsubscribe"" footer.
+  const replyText = stripQuotedReply(message.body || message.snippet || '');
   const classification = await classify(lead.company, replyText);
   const safeClassification = LATE_REPLY_LABELS[classification] ? classification : 'NEEDS_HUMAN';
   const notes = lateReplyNotes(lead.notes, safeClassification);
