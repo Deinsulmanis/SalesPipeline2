@@ -1667,6 +1667,41 @@
   .sender-field-v { margin:2px 0; }
   .sender-field-d { font-size:11.5px;color:var(--text-muted); }
   .sender-field-d:empty { display:none; }
+
+  /* Managed-client conversation drawer (#client-detail-overlay): the Outreach
+     drawer's frame plus the reply and step rows only it needs. Everything is
+     scoped to the overlay, so the Outreach drawer renders exactly as before.
+     Long addresses, URLs, company names and replies wrap instead of overflowing. */
+  #client-detail-overlay .detail-header-left { min-width:0; }
+  #client-detail-overlay .modal-close { flex-shrink:0; }
+  /* The managed Inbox rows became buttons to open the drawer; they keep the
+     page's type and full width, so the list reads exactly as it did. */
+  #client-view-inbox .inbox-row { font:inherit; width:100%; }
+  #client-detail-overlay .detail-name,
+  #client-detail-overlay .detail-sub { overflow-wrap:anywhere; }
+  #client-detail-overlay .detail-field-val { min-width:0; word-break:normal; overflow-wrap:anywhere; }
+  .cd-badges { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .cd-badge { display:inline-flex; font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px; border:1px solid var(--border); color:var(--text-secondary); }
+  .cd-badge[data-tone="positive"] { background:var(--success-bg); color:var(--success); border-color:transparent; }
+  .cd-badge[data-tone="negative"] { background:var(--danger-bg); color:var(--danger); border-color:transparent; }
+  .cd-badge[data-tone="warn"]     { background:var(--warn-bg); color:var(--warn); border-color:transparent; }
+  .cd-reply { padding:12px; border:1px solid var(--border); border-radius:10px; background:var(--tint-faint); }
+  .cd-reply + .cd-reply { margin-top:10px; }
+  .cd-reply-body { margin:10px 0; font-size:13px; line-height:1.55; color:var(--text); white-space:pre-wrap; overflow-wrap:anywhere; }
+  .cd-meta { display:block; margin-top:4px; font-size:11.5px; color:var(--text-muted); overflow-wrap:anywhere; }
+  .cd-mono { font-family:'Consolas', 'Menlo', 'Monaco', monospace; font-size:12px; overflow-wrap:anywhere; }
+  .cd-steps { display:flex; flex-direction:column; gap:10px; margin-bottom:10px; }
+  .cd-step { display:grid; grid-template-columns:16px minmax(0,1fr); gap:10px; align-items:start; font-size:13px; }
+  .cd-step-dot { font-size:15px; line-height:1.2; color:var(--text-muted); }
+  .cd-step[data-state="sent"] .cd-step-dot, .cd-step[data-state="sent_unproven"] .cd-step-dot { color:var(--green); }
+  .cd-step[data-state="current"] .cd-step-dot { color:var(--warn); }
+  .cd-step[data-state="failed"] .cd-step-dot { color:var(--danger); }
+  .cd-step[data-state="current"] .cd-step-label { font-weight:600; }
+  .cd-step[data-state="pending"] .cd-step-label,
+  .cd-step[data-state="stopped"] .cd-step-label,
+  .cd-step[data-state="not_sent"] .cd-step-label { color:var(--text-muted); }
+  .cd-next { padding:12px; border:1px solid var(--border); border-radius:10px; margin-bottom:12px; }
+  .cd-next b { display:block; font-size:13px; }
   /* "Sent from deins@tryscalelabai.ca" under an outbound timeline event. */
   .activity-sender { font-size:11.5px;color:var(--text-secondary);margin-top:3px; }
   .activity-sender[data-legacy="true"] { color:var(--text-muted);font-style:italic; }
@@ -2969,6 +3004,20 @@
         <div id="ce-d-notes" style="font-size:13px;color:var(--text-muted);white-space:pre-wrap;line-height:1.5"></div>
       </div>
     </div>
+  </div>
+</div>
+<!-- A managed client's Inbox conversation. Same frame as the Outreach drawer;
+     filled only from /api/clients/:clientId/inbox/:leadId. -->
+<div class="detail-overlay" id="client-detail-overlay" onclick="closeClientConversation(event)">
+  <div class="detail-panel" role="dialog" aria-modal="true" aria-labelledby="cd-name" onclick="event.stopPropagation()">
+    <div class="detail-header">
+      <div class="detail-header-left">
+        <div class="detail-name" id="cd-name"></div>
+        <div class="detail-sub" id="cd-sub"></div>
+      </div>
+      <button type="button" class="modal-close" id="cd-close" aria-label="Close conversation details" onclick="closeClientConversation()">✕</button>
+    </div>
+    <div class="detail-body" id="cd-body"></div>
   </div>
 </div>
 
@@ -7847,6 +7896,8 @@ try { storedClientId = localStorage.getItem('sp2.activeClient') || ''; } catch (
 let STATIC_NAVIGATION = null;   // the sidebar as shipped in HTML: the fallback if /api/clients is unavailable
 const NAV_ICONS = Object.create(null);
 let clientViewToken = 0;        // guards against a slow response rendering into another client's view
+let clientDetailLeadId = '';      // the managed-client conversation drawer's lead
+let clientDetailReturnFocus = null;
 
 // esc() leaves quotes alone; attribute values need them escaped too.
 function escAttr(value) { return esc(value).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
@@ -8020,6 +8071,8 @@ async function switchClient(clientId, { workspace = null, replace = false } = {}
   const statusSummary = document.getElementById('lead-status-summary');
   if (statusSummary) statusSummary.innerHTML = '';
   document.getElementById('ce-detail-overlay')?.classList.remove('open');
+  document.getElementById('client-detail-overlay')?.classList.remove('open');
+  clientDetailLeadId = '';
   document.getElementById('reply-drill-overlay')?.classList.remove('open');
   renderCeTable();
   updateCeStats();
@@ -8206,12 +8259,214 @@ async function renderManagedInbox(client) {
   const stateLabel = value => String(value || 'unclassified').replace(/_/g, ' ');
   // A clarification usually quotes the reply verbatim; only show questions that add something.
   const extraQuestions = row => row.openClarifications.map(item => item.question).filter(question => question && question.trim() !== String(row.excerpt || '').trim());
-  return badges + summary + `<div class="inbox-list">${rows.map(row => `<div class="inbox-row">
-      <div class="inbox-person"><b>${esc(row.company || row.email)}</b><small>${esc([row.contactName, row.email].filter(Boolean).join(' · '))}</small></div>
-      <div class="inbox-message"><span class="client-badge">${esc(stateLabel(row.workflowState))}</span><p class="client-note">${esc(row.excerpt || row.subject || '')}</p>
-        ${extraQuestions(row).length ? `<p class="client-note"><b>Awaiting client:</b> ${esc(extraQuestions(row).join(' · '))}</p>` : ''}</div>
-      <div class="inbox-action"><b>${esc(stateLabel(row.conversationStatus))}</b><small>${esc(row.campaign ? campaignName(row.campaign) : '')}${row.receivedAt ? ' · ' + esc(new Date(row.receivedAt).toLocaleString()) : ''}</small></div>
-    </div>`).join('')}</div>`;
+  // Each row opens the conversation drawer, like the ScaleLab Inbox rows do.
+  return badges + summary + `<div class="inbox-list">${rows.map(row => `<button type="button" class="inbox-row" data-lead-id="${escAttr(row.leadId)}" onclick="openClientConversation(this.dataset.leadId)" aria-haspopup="dialog">
+      <span class="inbox-person"><b>${esc(row.company || row.email)}</b><small>${esc([row.contactName, row.email].filter(Boolean).join(' · '))}</small></span>
+      <span class="inbox-message"><span class="client-badge">${esc(stateLabel(row.workflowState))}</span><p class="client-note">${esc(row.excerpt || row.subject || '')}</p>
+        ${extraQuestions(row).length ? `<p class="client-note"><b>Awaiting client:</b> ${esc(extraQuestions(row).join(' · '))}</p>` : ''}</span>
+      <span class="inbox-action"><b>${esc(stateLabel(row.conversationStatus))}</b><small>${esc(row.campaign ? campaignName(row.campaign) : '')}${row.receivedAt ? ' · ' + esc(new Date(row.receivedAt).toLocaleString()) : ''}</small></span>
+    </button>`).join('')}</div>`;
+}
+
+// ── MANAGED-CLIENT CONVERSATION DRAWER ──────────────────────────────────────
+// One Inbox conversation in the Outreach drawer's frame. Its data comes only
+// from this client's read-only endpoint (clients/conversation-detail.js), so a
+// row of another client cannot reach it; a response for any other client or
+// lead than the one requested is refused rather than rendered.
+
+const CD_OWNER_LABEL = { automation: 'Automation', operator: 'ScaleLab operator', none: 'No one' };
+const CD_STEP_TEXT = {
+  sent: 'Sent', sent_unproven: 'Sent (lead row; no message on the ledger)', current: 'Current',
+  pending: 'Pending', stopped: 'Not sent — stopped by reply', not_sent: 'Not sent — sequence ended', failed: 'Delivery failed',
+};
+const CD_STEP_DOT = { sent: '●', sent_unproven: '●', current: '◉', failed: '✕' };
+
+function cdWords(value) { return String(value || '').replace(/_/g, ' ').trim(); }
+function cdTime(value) { return value ? rdFormatTime(value) : ''; }
+function cdField(label, html) {
+  return html ? `<div class="detail-field"><span class="detail-field-label">${esc(label)}</span><span class="detail-field-val">${html}</span></div>` : '';
+}
+function cdSection(title, html) {
+  return html && html.trim() ? `<section><div class="detail-section-title">${esc(title)}</div>${html}</section>` : '';
+}
+function cdLink(url) {
+  return /^https?:\/\//i.test(url || '') ? `<a href="${escAttr(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a>` : '';
+}
+function cdTone(reply) {
+  if (reply.sentiment === 'positive') return 'positive';
+  if (reply.sentiment === 'negative' || reply.sentiment === 'unsubscribe') return 'negative';
+  if (['needs_review', 'wrong_contact', 'awaiting_client_clarification'].includes(reply.workflowState)) return 'warn';
+  return '';
+}
+
+function openClientConversation(leadId) {
+  const overlay = document.getElementById('client-detail-overlay');
+  if (!overlay || !leadId) return;
+  clientDetailLeadId = String(leadId);
+  clientDetailReturnFocus = document.activeElement;
+  document.getElementById('cd-name').textContent = 'Loading conversation…';
+  document.getElementById('cd-sub').textContent = '';
+  document.getElementById('cd-body').innerHTML = '<div class="activity-empty">Reading this conversation from the server…</div>';
+  overlay.classList.add('open');
+  document.getElementById('cd-close').focus();
+  loadClientConversation(clientDetailLeadId);
+}
+
+async function loadClientConversation(leadId) {
+  const clientId = activeClientId;
+  const token = clientViewToken;
+  const current = () => leadId === clientDetailLeadId && token === clientViewToken && clientId === activeClientId;
+  try {
+    const detail = await clientApi(`/inbox/${encodeURIComponent(leadId)}`);
+    if (!current()) return;
+    if (detail.clientId !== clientId || detail.leadId !== leadId) throw new Error('the server answered for a different conversation');
+    renderClientConversation(detail);
+  } catch (error) {
+    if (!current()) return;
+    document.getElementById('cd-name').textContent = 'Conversation unavailable';
+    document.getElementById('cd-body').innerHTML = `<div class="activity-empty">This conversation could not be loaded (${esc(error.message)}). Nothing was changed.</div>`;
+  }
+}
+
+function closeClientConversation(e) {
+  const overlay = document.getElementById('client-detail-overlay');
+  if (!overlay || (e && e.target !== overlay)) return;
+  overlay.classList.remove('open');
+  clientDetailLeadId = '';
+  const back = clientDetailReturnFocus;
+  clientDetailReturnFocus = null;
+  if (back && document.contains(back) && typeof back.focus === 'function') back.focus();
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  const overlay = document.getElementById('client-detail-overlay');
+  if (overlay && overlay.classList.contains('open')) closeClientConversation();
+});
+
+function cdSenderHtml(sender, clientName) {
+  if (!sender) return '';
+  if (sender.state === 'unknown') {
+    return `<div class="sender-field"><span class="sender-field-v"><span class="sender-chip" data-state="unknown">Unknown</span></span><span class="sender-field-d">${esc(sender.detail || 'No sender was recorded. It is not guessed.')}</span></div>`;
+  }
+  if (sender.state === 'conflict') {
+    const candidates = (sender.candidates || []).filter(Boolean).map(item => `<span class="sender-field-d">${esc(item.label)}${item.email ? ' · ' + esc(item.email) : ''} · <span class="cd-mono">${esc(item.senderId)}</span></span>`).join('');
+    return `<div class="sender-field"><span class="sender-field-v"><span class="sender-chip" data-state="conflict">Conflict</span></span><span class="sender-field-d">${esc(sender.detail || '')}</span>${candidates}</div>`;
+  }
+  const proof = sender.proof
+    ? `Proven by Step ${esc(sender.proof.step || '?')} sent ${esc(cdTime(sender.proof.sentAt))}${sender.proof.providerMessageId ? ` · Gmail message <span class="cd-mono">${esc(sender.proof.providerMessageId)}</span>` : ''}`
+    : '';
+  const assigned = sender.assignmentDiffers && sender.assigned
+    ? `<span class="sender-field-d">Currently assigned: ${esc(sender.assigned.label)}${sender.assigned.email ? ' · ' + esc(sender.assigned.email) : ''} · <span class="cd-mono">${esc(sender.assigned.senderId)}</span> — not the inbox that sent.${sender.assignmentConflict ? " The send path treats this as a sender conflict; review before any follow-up." : ""}</span>`
+    : '';
+  const outside = sender.inClient === false
+    ? `<span class="sender-field-d" style="color:var(--danger)">Not a ${esc(clientName)} inbox — its address is not shown. Review required.</span>` : '';
+  return `<div class="sender-field" style="margin-top:0;padding-top:0;border-top:0">
+      <span class="sender-field-v" style="font-size:14px;font-weight:600">${esc(sender.label || sender.senderId)}</span>
+      ${sender.email ? `<span class="cd-mono">${esc(sender.email)}</span>` : ''}
+      <span class="sender-field-d">Inbox ID: <span class="cd-mono">${esc(sender.senderId)}</span></span>
+      <span class="sender-field-v"><span class="sender-chip" data-state="${escAttr(sender.state)}">${esc(sender.stateLabel || sender.state)}</span></span>
+      <span class="sender-field-d">${proof}</span>${assigned}${outside}
+    </div>`;
+}
+
+function renderClientConversation(d) {
+  const client = activeClient();
+  const contact = d.contact || {};
+  const replies = d.replies || [];
+  const campaign = d.campaign || {};
+  const pipeline = d.pipeline || {};
+  const sequence = d.sequence || { steps: [] };
+  const times = d.timestamps || {};
+  document.getElementById('cd-name').textContent = contact.company || contact.email || 'Conversation';
+  document.getElementById('cd-sub').textContent = [contact.name, contact.title].filter(Boolean).join(' · ');
+
+  const contactHtml = [
+    cdField('Name', esc(contact.name)),
+    cdField('Email', contact.email ? `<a href="mailto:${escAttr(contact.email)}">${esc(contact.email)}</a>` : ''),
+    cdField('Title', esc(contact.title)),
+    cdField('Company', esc(contact.company)),
+    cdField('Location', esc([contact.city, contact.state].filter(Boolean).join(', '))),
+    cdField('Company domain', esc(contact.companyDomain)),
+    cdField('Company size', esc(contact.companySize)),
+    cdField('LinkedIn', cdLink(contact.linkedinUrl)),
+  ].join('');
+
+  const replyHtml = replies.map(reply => {
+    const classifier = reply.classifier
+      ? [cdWords(reply.classifier.state), cdWords(reply.classifier.reason), reply.classifier.confidence ? `${reply.classifier.confidence} confidence` : ''].filter(Boolean).join(' · ') : '';
+    return `<article class="cd-reply">
+        <div class="cd-badges"><span class="cd-badge" data-tone="${escAttr(cdTone(reply))}">${esc(cdWords(reply.workflowState) || 'unclassified')}</span>${reply.sentiment ? `<span class="cd-badge">${esc(reply.sentiment)}</span>` : ''}</div>
+        <span class="cd-meta">${esc(cdTime(reply.receivedAt) || 'Date unknown')}${reply.subject ? ' · ' + esc(reply.subject) : ''}</span>
+        <div class="cd-reply-body">${reply.body ? esc(reply.body) : '<span style="color:var(--text-muted)">Reply text was not stored.</span>'}</div>
+        ${reply.bodyMayBeTruncated ? '<span class="cd-meta">Stored text is capped at 1,500 characters; the full message is in Gmail.</span>' : ''}
+        <div class="detail-fields" style="margin-top:10px">
+          ${cdField('Classification', esc(cdWords(reply.workflowState)))}
+          ${cdField('Classifier', esc(classifier))}
+          ${cdField('Conversation', esc(cdWords(reply.conversationStatus)))}
+          ${cdField('Received on', reply.receivedOn ? esc(reply.receivedOn.email || reply.receivedOn.senderId) : '')}
+          ${cdField('Asks the client', reply.clarification ? esc(reply.clarification.question) : '')}
+        </div>
+      </article>`;
+  }).join('');
+
+  const stepsHtml = (sequence.steps || []).length ? `<div class="cd-steps">${sequence.steps.map(step => `<div class="cd-step" data-state="${escAttr(step.state)}">
+        <span class="cd-step-dot" aria-hidden="true">${CD_STEP_DOT[step.state] || '○'}</span>
+        <span><span class="cd-step-label">Step ${esc(step.step)} — ${esc(step.label)}</span>
+          <small class="cd-meta">${esc(CD_STEP_TEXT[step.state] || step.state)}${step.sentAt ? ' · ' + esc(cdTime(step.sentAt)) : ''}${step.dueAt ? ' · due ' + esc(cdTime(step.dueAt)) : ''}</small></span>
+      </div>`).join('')}</div>
+      <div class="cd-badges"><span class="cd-badge">${esc(sequence.summary || '')}</span></div>
+      ${sequence.stoppedByReply ? '<span class="cd-meta">The reply ended the cold sequence; no further step will send.</span>' : ''}` : '';
+
+  const roleText = role => role ? esc(role.clean || role.raw) + (role.raw && role.clean && role.raw !== role.clean ? ` <small style="color:var(--text-muted)">posted as ${esc(role.raw)}</small>` : '') : '';
+  const postings = campaign.relevantRoles30d !== null && campaign.relevantRoles30d !== undefined
+    ? `${campaign.relevantRoles30d} craft${campaign.coreTradeRoles30d !== null && campaign.coreTradeRoles30d !== undefined ? ` (${campaign.coreTradeRoles30d} core-trade)` : ''}` : '';
+  const campaignHtml = [
+    cdField('Campaign', campaign.label || campaign.id ? esc(campaign.label || campaignName(campaign.id)) + (campaign.label && campaign.id ? ` <small style="color:var(--text-muted)">${esc(campaign.id)}</small>` : '') : ''),
+    cdField('Hiring role', roleText(campaign.primaryRole)),
+    cdField('Secondary role', roleText(campaign.secondaryRole)),
+    cdField('Hiring location', esc(campaign.location) + (campaign.location && campaign.siteTie ? ` <small style="color:var(--text-muted)">site tie ${esc(campaign.siteTie.toLowerCase())}</small>` : '')),
+    cdField('Sector', esc([campaign.sector, campaign.tier].filter(Boolean).join(' · '))),
+    cdField('Hiring evidence', cdLink(campaign.evidenceUrl)),
+    cdField('Posting date', esc(campaign.postingDate)),
+    cdField('Research verified', esc(campaign.verifiedAt)),
+    cdField('Postings, last 30 days', esc(postings)),
+  ].join('') + (campaign.context ? `<p class="cd-meta" style="margin-top:10px;font-size:12.5px;line-height:1.5">${esc(campaign.context)}</p>` : '');
+
+  const next = pipeline.nextAction;
+  const owner = next ? (next.owner === 'client' ? client.displayName : (CD_OWNER_LABEL[next.owner] || next.owner)) : '';
+  const nextHtml = next ? `<div class="cd-next"><b>${esc(next.label)}</b>
+      <span class="cd-meta">${esc(owner)}${next.dueAt ? ' · ' + esc(cdTime(next.dueAt)) : ''}</span>
+      ${next.detail ? `<span class="cd-meta">${esc(next.detail)}</span>` : ''}</div>` : '';
+  const suppression = pipeline.suppression
+    ? `${esc(pipeline.suppression.scope === 'global' ? 'Globally suppressed' : `Suppressed for ${client.displayName}`)}<small class="cd-meta">${esc(pipeline.suppression.reason)}</small>` : 'Not suppressed';
+  const pipelineHtml = nextHtml + `<div class="detail-fields">
+      ${cdField('Stage', esc(pipeline.stageLabel))}
+      ${cdField('Conversation status', esc(cdWords(pipeline.conversationStatus)))}
+      ${cdField('Qualification', esc(cdWords(pipeline.qualificationStatus)))}
+      ${cdField('Clarification required', pipeline.clarificationRequired ? 'Yes' : 'No')}
+      ${(pipeline.clarifications || []).map(item => cdField('Open question', esc(item.question))).join('')}
+      ${cdField('Conversation closed', pipeline.closed ? 'Yes' : 'No')}
+      ${cdField('Suppression', suppression)}
+    </div>${pipeline.ledgerAvailable === false ? '<span class="cd-meta">The client ledger is unavailable, so qualification and meetings may be missing here.</span>' : ''}`;
+
+  const activityHtml = [
+    cdField('First outreach sent', esc(cdTime(times.firstOutreachAt))),
+    cdField('Most recent outreach', esc(cdTime(times.lastOutreachAt))),
+    cdField('Reply received', esc(cdTime(times.replyReceivedAt))),
+    cdField('Next scheduled follow-up', esc(cdTime(times.nextFollowUpAt))),
+    cdField('Meeting', d.meeting ? esc([cdTime(d.meeting.scheduledFor), cdWords(d.meeting.status).toLowerCase()].filter(Boolean).join(' · ')) : ''),
+  ].join('');
+
+  document.getElementById('cd-body').innerHTML = [
+    cdSection('Contact', contactHtml ? `<div class="detail-fields">${contactHtml}</div>` : ''),
+    cdSection(replies.length > 1 ? `Replies (${replies.length})` : 'Reply', replyHtml),
+    cdSection('Sending inbox', cdSenderHtml(d.sender, client.displayName)),
+    cdSection('Email sequence', stepsHtml),
+    cdSection('Campaign context', campaignHtml ? `<div class="detail-fields">${campaignHtml}</div>` : ''),
+    cdSection('Pipeline & next action', pipelineHtml),
+    cdSection('Activity', activityHtml ? `<div class="detail-fields">${activityHtml}</div>` : ''),
+  ].join('');
 }
 
 async function renderManagedBookings(client) {

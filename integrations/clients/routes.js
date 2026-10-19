@@ -29,6 +29,7 @@ const ledger = require('./ledger');
 const { validateClientLeadImport } = require('./lead-import');
 const { buildClientPipeline } = require('./pipeline');
 const { buildClientInbox, buildClientSettings } = require('./workspace-views');
+const { buildClientConversationDetail } = require('./conversation-detail');
 const { clientPersonalizationState } = require('./client-email');
 const { readLeadProfile } = require('./lead-profile');
 const { createSupabaseDailyReportStore } = require('./daily-report-store');
@@ -175,6 +176,30 @@ function registerClientRoutes(app, {
       res.json(buildClientInbox({
         clientId: req.client.id, leads: leadsForClient(activeLeads(dataset), req.client.id),
         activities: dataset.activities || [], ledger: await ledgerFor(req.client.id),
+      }));
+    } catch (error) { fail(res, error); }
+  });
+
+  // One conversation, for the Inbox detail drawer. Read-only, and only for a
+  // managed client: the lead must be this client's, and everything shown of it
+  // is scoped again in buildClientConversationDetail.
+  router.get('/:clientId/inbox/:leadId', clientParam, async (req, res) => {
+    if (req.client.replyPolicy?.mode !== 'managed') {
+      return res.status(404).json({ error: 'No managed conversations for this client', code: 'conversation_not_found' });
+    }
+    try {
+      const dataset = await loadDataset({ force: req.query.refresh === '1' });
+      const lead = leadsForClient(activeLeads(dataset), req.client.id).find(item => String(item.id) === String(req.params.leadId));
+      if (!lead) return res.status(404).json({ error: 'No such conversation for this client', code: 'conversation_not_found' });
+      let clientEntries = null;
+      const store = getStore();
+      if (store?.enabled) {
+        try { clientEntries = { available: true, entries: await store.listClientSuppressions(req.client.id) }; } catch (error) { clientEntries = { available: false, error: error.message }; }
+      }
+      res.json(buildClientConversationDetail({
+        clientId: req.client.id, lead, activities: dataset.activities || [], ledger: await ledgerFor(req.client.id),
+        senders: senders(), suppression: { suppressedEmails: dataset.suppressedEmails || new Set(), clientEntries },
+        routedLeadReady, env,
       }));
     } catch (error) { fail(res, error); }
   });
