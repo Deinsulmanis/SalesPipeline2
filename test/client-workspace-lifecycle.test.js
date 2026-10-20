@@ -104,12 +104,15 @@ test('import: research rows land in campaign_notes; the lead is still a plain Im
 // ── Personalization ─────────────────────────────────────────────────────────
 test('personalization: renders the approved copy from stored research and Jole\'s own config', () => {
   const lead = joleLead();
-  const t1 = renderClientLeadEmail(lead, 1, { env: ENV, now: NOW });
+  // A lead whose sequence began on v2 (its Touch 1 recorded v2) keeps v2.
+  const activities = [{ eventType: 'initial_email_sent', sourceLeadId: lead.id, occurredAt: '2026-10-19T12:00:00.000Z',
+    metadata: JSON.stringify({ copyVersion: 'jole_industrial_employer_v2' }) }];
+  const t1 = renderClientLeadEmail(lead, 1, { env: ENV, now: NOW, activities });
   assert.equal(t1.subject, 'TIG Welders — Liverpool, NY');
   assert.match(t1.body, /^Hi Theodore,\n\nSaw 110 Metalworks is hiring TIG Welders in Liverpool, NY and also has openings for CNC Machinists at the site\./);
   assert.match(t1.body, /Jorge Guerrero\nCEO\nJole BTX LLC\n1313 E Alton Gloor, Suite I-2, Brownsville, TX 78526/);
   assert.doesNotMatch(t1.body, /ScaleLab Way|scalelab/i);
-  const t2 = renderClientLeadEmail(lead, 2, { env: ENV, now: NOW });
+  const t2 = renderClientLeadEmail(lead, 2, { env: ENV, now: NOW, activities });
   assert.match(t2.body, /https:\/\/jolebtx\.netlify\.app\/industrial-staffing\//);
   assert.match(t2.body, /https:\/\/booking\.jolebtx\.com\/jorge/);
   assert.equal(clientPersonalizationState(lead, { env: ENV, now: NOW }).status, 'ready');

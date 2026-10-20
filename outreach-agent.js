@@ -1261,11 +1261,19 @@ function encodeHeaderValue(value) {
 // Same proof the staffing branch makes, for a managed client: what is about to
 // be delivered is exactly its approved copy for this step. '' when it is (or
 // the lead is not a managed client's).
-function clientDeliveryCopyProblem(lead, step, body) {
+// The activities are the cycle's ledger, which pins the lead's copy version.
+function clientDeliveryCopyProblem(lead, step, body, activities = []) {
   if (!isClientTemplateId(lead.emailTemplateId)) return '';
   let clientEmail = null;
-  try { clientEmail = renderClientLeadEmail(lead, step); } catch (error) { return `client copy could not be rendered: ${error.message}`; }
+  try { clientEmail = renderClientLeadEmail(lead, step, { activities }); } catch (error) { return `client copy could not be rendered: ${error.message}`; }
   return clientEmail.body === body ? '' : 'client delivery body differs from its approved copy';
+}
+
+// A managed client's send records the copy version it actually rendered (a
+// lead's sequence keeps the version of its first send). ScaleLab attribution
+// is returned untouched.
+function withClientCopyVersion(attribution, copyVersion) {
+  return copyVersion ? { ...attribution, copyVersion } : attribution;
 }
 
 function fromNameForSender(sender) {
@@ -2196,7 +2204,7 @@ async function deliverOrdinaryColdStep({
   const staffingEmail = isStaffingTemplateId(lead.emailTemplateId)
     ? renderStaffingEmail(lead, step, landingPlan?.tracked ? { landingPageUrl: landingPlan.url, ...resumeContext } : resumeContext) : null;
   if (staffingEmail && staffingEmail.body !== body) return { delivered: false, reason: 'staffing delivery body differs from locked copy' };
-  const clientCopyProblem = clientDeliveryCopyProblem(lead, step, body);
+  const clientCopyProblem = clientDeliveryCopyProblem(lead, step, body, activitiesForCycle || []);
   if (clientCopyProblem) return { delivered: false, reason: clientCopyProblem };
   const mailbox = gmailForSender(sender);
   const rfcMessageId = coldStepRfcMessageId(lead.id, step, sender.email);
@@ -2287,6 +2295,9 @@ async function deliverOrdinaryColdStep({
       rfcMessageId, gmailThreadId: thread?.threadId || '',
       // Audit: the touch that resumes the sequence after an OOO.
       ...(oooResume?.resumed ? { oooResume: { resumeAt: oooResume.state.resumeAt, contextLine: oooResume.contextLine } } : {}),
+      // A managed client's copy version, so even an unconfirmed attempt pins
+      // the lead's sequence (clients/jole-copy.js resolveJoleCopyVersion).
+      ...(isClientTemplateId(lead.emailTemplateId) && attribution?.copyVersion ? { copyVersion: attribution.copyVersion } : {}),
       // The pin every later render of this action must honour.
       ...(landingLink ? { landingLink } : {}),
     }),
@@ -5831,14 +5842,16 @@ async function runInner() {
     // Only the staffing branch is guarded: dental and roofing keep their exact
     // previous behaviour, including how a copy failure propagates.
     let body;
+    let clientCopyVersion = '';
     if (isClientTemplateId(lead.emailTemplateId)) {
       // A managed client's follow-up: its own copy, or a deferral — never the
-      // dental follow-up sequence.
+      // dental follow-up sequence. The ledger pins the version its thread began on.
       try {
-        const email = renderClientLeadEmail(lead, nextStepNum);
+        const email = renderClientLeadEmail(lead, nextStepNum, { activities: ownershipActivities });
         const bad = validateClientLeadEmail(lead, email, nextStepNum);
         if (bad) throw new Error(bad);
         body = email.body;
+        clientCopyVersion = email.copyVersion;
       } catch (error) {
         console.warn(`⏸️  follow-up deferred → ${lead.email} (${error.message})`);
         return false;
@@ -5898,7 +5911,7 @@ async function runInner() {
     }
 
     try {
-      const attribution = coldSendAttribution(lead, nextStepNum);
+      const attribution = withClientCopyVersion(coldSendAttribution(lead, nextStepNum), clientCopyVersion);
       const delivery = await deliverOrdinaryColdStep({
         lead, step: nextStepNum, sender: selectedSender, subject, body, attribution,
         activitiesForCycle: ownershipActivities, thread,
@@ -5979,8 +5992,8 @@ async function runInner() {
         // stored at import; the renderer only merges it, and throws (draft
         // for review) when it is missing, unreviewed or stale.
         if (!isClientTemplateId(lead.emailTemplateId)) throw new Error('managed client lead has no client template');
-        const email = renderClientLeadEmail(lead, 1);
-        built = { subject: email.subject, body: email.body, link: '', opener: 'stored client personalization', openerTier: 'LOCKED', pitchTier: familyForLead(lead) };
+        const email = renderClientLeadEmail(lead, 1, { activities: ownershipActivities });
+        built = { subject: email.subject, body: email.body, link: '', opener: 'stored client personalization', openerTier: 'LOCKED', pitchTier: familyForLead(lead), copyVersion: email.copyVersion };
       } else if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE) {
         const qualification = qualifyRoofingLead(lead);
         if (!qualification.ok) throw new Error(`roofing lead qualification failed (${qualification.reasonCode})`);
@@ -6022,7 +6035,7 @@ async function runInner() {
     // Validate the exact assembled body in every mode. Dry runs preview this
     // same normalized value; live runs fail closed and preserve the lead.
     const invalid = isClientTemplateId(lead.emailTemplateId)
-      ? validateClientLeadEmail(lead, { subject, body }, 1)
+      ? validateClientLeadEmail(lead, { subject, body, copyVersion: built.copyVersion }, 1)
       : lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE
       ? validateRoofingSurveyInitial({ subject, body })
       : isStaffingTemplateId(lead.emailTemplateId)
@@ -6082,7 +6095,7 @@ async function runInner() {
     }
 
     try {
-      const attribution = coldSendAttribution(lead, 1, { personalizationMetadata: validatedPersonalizationMetadata });
+      const attribution = withClientCopyVersion(coldSendAttribution(lead, 1, { personalizationMetadata: validatedPersonalizationMetadata }), built.copyVersion);
       const delivery = await deliverOrdinaryColdStep({
         lead, step: 1, sender: selectedSender, subject, body, attribution,
         personalizationMetadata: validatedPersonalizationMetadata,

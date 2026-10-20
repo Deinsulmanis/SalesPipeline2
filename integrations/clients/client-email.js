@@ -18,14 +18,26 @@
 const { getClient } = require('./registry');
 const { clientTemplate, clientCampaign } = require('./campaigns');
 const { readLeadProfile } = require('./lead-profile');
-const { renderJoleEmployerStep, validateJoleEmployerEmail } = require('./jole-copy');
+const { JOLE_COPY_VERSIONS, resolveJoleCopyVersion } = require('./jole-copy');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// Template id → its renderer. A managed template with no entry here cannot send.
+// Template id → its copy versions and how a lead picks one. A managed template
+// with no entry here cannot send. The version is per lead, from send evidence:
+// a sequence never changes copy mid-thread.
 const RENDERERS = Object.freeze({
-  'jole-industrial-employer-v1': Object.freeze({ render: renderJoleEmployerStep, validate: validateJoleEmployerEmail }),
+  'jole-industrial-employer-v1': Object.freeze({ versions: JOLE_COPY_VERSIONS, resolveVersion: resolveJoleCopyVersion }),
 });
+
+/** The copy version (and its render/validate) this lead's sequence uses. */
+function clientCopyVersionFor(lead = {}, { activities = [] } = {}) {
+  const renderer = RENDERERS[String(lead.emailTemplateId || '').trim()];
+  if (!renderer) throw fail('template_unknown', `no client renderer for ${lead.emailTemplateId || '(blank)'}`);
+  const resolved = renderer.resolveVersion(lead, activities);
+  const version = renderer.versions[resolved.copyVersion];
+  if (!version) throw fail('copy_version_unknown', `no client copy for version ${resolved.copyVersion}`);
+  return { ...resolved, ...version };
+}
 
 const isClientTemplateId = id => Boolean(RENDERERS[String(id || '').trim()] && clientTemplate(id));
 
@@ -53,12 +65,16 @@ function personalizationFor(lead, { now = Date.now() } = {}) {
   return { profile, campaign, template, firstName, roles: personalization.roles || [], location: personalization.location || '' };
 }
 
-/** Render one touch for sending. Throws (fail closed) on anything missing. */
-function renderClientLeadEmail(lead = {}, step = 1, { env = process.env, now = Date.now() } = {}) {
+/**
+ * Render one touch for sending. Throws (fail closed) on anything missing.
+ * activities: the activity ledger the send decision is made on; it pins the
+ * lead's copy version (clientCopyVersionFor).
+ */
+function renderClientLeadEmail(lead = {}, step = 1, { env = process.env, now = Date.now(), activities = [] } = {}) {
   const inputs = personalizationFor(lead, { now });
   const client = getClient(inputs.campaign.clientId);
   const copyEnv = client.copyEnv || {};
-  const email = RENDERERS[inputs.template.id].render({
+  const email = clientCopyVersionFor(lead, { activities }).render({
     step, firstName: inputs.firstName, company: lead.company, roles: inputs.roles, location: inputs.location,
     landingPageUrl: env[copyEnv.landingPageUrl] || '', bookingLink: env[copyEnv.bookingLink] || '',
     mailingAddress: env[copyEnv.mailingAddress] || '',
@@ -66,10 +82,14 @@ function renderClientLeadEmail(lead = {}, step = 1, { env = process.env, now = D
   return { subject: email.subject, body: email.body, step: email.step, variant: email.variant, copyVersion: email.copyVersion };
 }
 
-function validateClientLeadEmail(lead = {}, email = {}, step = 1) {
+// Validates against the version the email was rendered from (email.copyVersion),
+// else the version the lead resolves to on these activities.
+function validateClientLeadEmail(lead = {}, email = {}, step = 1, { activities = [] } = {}) {
   const renderer = RENDERERS[String(lead.emailTemplateId || '').trim()];
   if (!renderer) return 'no client renderer for this template';
-  return renderer.validate(email, step) || '';
+  const version = email.copyVersion ? renderer.versions[email.copyVersion] : clientCopyVersionFor(lead, { activities });
+  if (!version) return `no client copy for version ${email.copyVersion}`;
+  return version.validate(email, step) || '';
 }
 
 /**
@@ -91,4 +111,4 @@ function clientPersonalizationState(lead = {}, { env = process.env, now = Date.n
   }
 }
 
-module.exports = { isClientTemplateId, renderClientLeadEmail, validateClientLeadEmail, clientPersonalizationState };
+module.exports = { isClientTemplateId, renderClientLeadEmail, validateClientLeadEmail, clientPersonalizationState, clientCopyVersionFor };

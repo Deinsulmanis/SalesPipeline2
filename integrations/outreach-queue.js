@@ -57,7 +57,7 @@ function queueEligibility(lead, {
   if (isClientTemplateId(lead.emailTemplateId)) {
     try {
       for (const step of [1, 2, 3]) {
-        const email = renderClientLeadEmail(lead, step, { env: env || process.env });
+        const email = renderClientLeadEmail(lead, step, { env: env || process.env, activities: mine });
         const error = validateClientLeadEmail(lead, email, step);
         if (error) return { ok: false, reason: error };
       }

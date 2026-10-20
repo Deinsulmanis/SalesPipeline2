@@ -198,18 +198,21 @@ test('7. Jole sends only weekdays 07:00–11:59 America/Chicago', () => {
 
 test('8–10. v2 renders: role — location subject, optional second role, both Touch 2 URLs, Jole\'s address only', () => {
   const one = joleLead(3);
-  const e1 = renderClientLeadEmail(one, 1, { env: MONDAY_ENV, now: MONDAY_0900_CT });
+  // Monday's leads began their sequences on v2 (their Touch 1 recorded v2), so they keep v2.
+  const v2Began = lead => [{ eventType: 'initial_email_sent', sourceLeadId: lead.id, occurredAt: '2026-10-19T14:00:00.000Z',
+    metadata: JSON.stringify({ copyVersion: 'jole_industrial_employer_v2' }) }];
+  const e1 = renderClientLeadEmail(one, 1, { env: MONDAY_ENV, now: MONDAY_0900_CT, activities: v2Began(one) });
   assert.equal(e1.copyVersion, 'jole_industrial_employer_v2');
   assert.equal(e1.subject, 'Millwrights — Mont Belvieu, TX');
   assert.match(e1.body, /^Hi Pat,\n\nSaw Gulf Fabrication 3, LLC is hiring Millwrights in Mont Belvieu, TX\.\n/);
   assert.doesNotMatch(e1.body, /also has openings/);
   const two = joleLead(4, { profile: { secondary_role: 'I&E Technician' } });
-  assert.match(renderClientLeadEmail(two, 1, { env: MONDAY_ENV, now: MONDAY_0900_CT }).body,
+  assert.match(renderClientLeadEmail(two, 1, { env: MONDAY_ENV, now: MONDAY_0900_CT, activities: v2Began(two) }).body,
     /hiring Millwrights in Mont Belvieu, TX and also has openings for I&E Technicians at the site\./);
-  const e2 = renderClientLeadEmail(one, 2, { env: MONDAY_ENV, now: MONDAY_0900_CT });
+  const e2 = renderClientLeadEmail(one, 2, { env: MONDAY_ENV, now: MONDAY_0900_CT, activities: v2Began(one) });
   assert.deepEqual(e2.body.match(/https?:\/\/\S+/g), [LANDING, BOOKING]);
   for (const step of [1, 2, 3]) {
-    const { body } = renderClientLeadEmail(one, step, { env: MONDAY_ENV, now: MONDAY_0900_CT });
+    const { body } = renderClientLeadEmail(one, step, { env: MONDAY_ENV, now: MONDAY_0900_CT, activities: v2Began(one) });
     assert.ok(body.includes(`\nJorge Guerrero\nCEO\nJole BTX LLC\n${ADDRESS}\n`), `touch ${step} footer`);
     assert.doesNotMatch(body, /scalelab|new westminster|{{|}}|undefined|null/i);
   }
