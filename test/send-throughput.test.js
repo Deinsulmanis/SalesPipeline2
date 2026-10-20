@@ -7,7 +7,7 @@ const path = require('node:path');
 const { buildSendRunPlan } = require('../integrations/send-run-plan');
 const { createSendQuotaCoordinator, preDeliveryRefusal } = require('../integrations/send-quota-coordinator');
 const { createSenderPacer } = require('../integrations/sender-pacer');
-const { runSenderLanes } = require('../integrations/sender-lanes');
+const { runSenderLanes, concurrentSenderLanesEnabled } = require('../integrations/sender-lanes');
 const { createMemorySendQuotaStore } = require('../test-support/send-quota-memory');
 const { simulate } = require('../scripts/simulate-send-throughput');
 const { createMemorySendReservationStore } = require('../integrations/send-reservation-memory');
@@ -29,6 +29,20 @@ const capacity = { globalDailyLimit: 245, globalPerRunLimit: 39,
   clientLimits: { scalelab: { daily: 185, perRun: 27 }, jole: { daily: 60, perRun: 12 } } };
 const dayKey = '2026-10-20';
 const silent = () => {};
+
+test('concurrent sender lanes require an explicit true flag', async () => {
+  assert.equal(concurrentSenderLanesEnabled({}), false);
+  assert.equal(concurrentSenderLanesEnabled({ SEND_CONCURRENT_SENDER_LANES: 'false' }), false);
+  assert.equal(concurrentSenderLanesEnabled({ SEND_CONCURRENT_SENDER_LANES: 'true' }), true);
+  let running = 0;
+  let peak = 0;
+  await runSenderLanes([{ id: 'a' }, { id: 'b' }], async () => {
+    peak = Math.max(peak, ++running);
+    await new Promise(resolve => setTimeout(resolve, 1));
+    running--;
+  }, { parallel: concurrentSenderLanesEnabled({}) });
+  assert.equal(peak, 1);
+});
 
 function customPlan({ globalDaily = 10, globalRun = 10, clientDaily = 10, clientRun = 10,
   laneDaily = 10, laneRun = 1, clientId = 'scalelab', senderIds = ['a', 'b'] } = {}) {

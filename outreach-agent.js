@@ -82,7 +82,7 @@ const { buildSendRunPlan } = require('./integrations/send-run-plan');
 const { createPgSendQuotaStore } = require('./integrations/send-quota-store');
 const { createSendQuotaCoordinator, preDeliveryRefusal } = require('./integrations/send-quota-coordinator');
 const { createSenderPacer } = require('./integrations/sender-pacer');
-const { runSenderLanes } = require('./integrations/sender-lanes');
+const { runSenderLanes, concurrentSenderLanesEnabled } = require('./integrations/sender-lanes');
 // Stage 3D: dual-read measurement only. No decision below reads its result.
 const { probeOutreachParity, formatProbeLine } = require('./integrations/outreach-dual-read');
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
@@ -5468,7 +5468,7 @@ async function runStageSequencePass(allLeads, {
       activeSendQuota?.laneStarted(sender.id);
       try { for (const target of stageTargetsBySender.get(sender.id)) await attemptStageTarget(target); }
       finally { activeSendQuota?.laneFinished(sender.id); }
-    }, { parallel: Boolean(activeSendQuota) });
+    }, { parallel: Boolean(activeSendQuota) && concurrentSenderLanesEnabled() });
   const stageFailures = stageOutcomes.filter(item => item.status === 'rejected');
   for (const failure of stageFailures) console.error(`[StageSeq] sender lane failed: ${failure.reason?.message || failure.reason}`);
   for (const target of unownedStageTargets) await attemptStageTarget(target);
@@ -6133,7 +6133,7 @@ async function runInner() {
   const eligibleLanes = GMAIL_SENDERS.filter(item => item.sendEligible
     && (!activeSendQuota || activeSendQuota.canStart(item.id)));
   const outcomes = await runSenderLanes(eligibleLanes, runSenderLane,
-    { parallel: Boolean(activeSendQuota) });
+    { parallel: Boolean(activeSendQuota) && concurrentSenderLanesEnabled() });
   const failures = outcomes.filter(outcome => outcome.status === 'rejected');
   for (const outcome of failures) console.error(`[sender-lane] worker failed: ${outcome.reason?.message || outcome.reason}`);
   if (failures.length) throw new AggregateError(failures.map(item => item.reason), 'sender lane failed');
