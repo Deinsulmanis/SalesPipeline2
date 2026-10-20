@@ -110,11 +110,11 @@ function staffingComplianceError(body, { leadId } = {}) {
   return null;
 }
 
-// Industrial Staffing V2 (locked 2026-10-20): Touch 1 ends with its own short
-// business footer (brand, the same COMMERCIAL_MAILING_ADDRESS on one line,
-// website, reply-to-unsubscribe line); Touches 2–3 end at the sign-off. The
-// reply "unsubscribe" handling and List-Unsubscribe headers are the existing
-// ones. V1's footer above is unchanged.
+// Industrial Staffing V2 (locked 2026-10-20): every touch ends with V2's own
+// short business footer (brand, the same COMMERCIAL_MAILING_ADDRESS on one
+// line, website, reply-to-unsubscribe line). The reply "unsubscribe" handling
+// and List-Unsubscribe headers are the existing ones. V1's footer above is
+// unchanged.
 const STAFFING_V2_BRAND = 'ScaleLabAI';
 const STAFFING_V2_UNSUBSCRIBE_LINE = 'To unsubscribe, reply “unsubscribe”';
 const STAFFING_V2_FOOTER = new RegExp(`\\n\\n${STAFFING_V2_BRAND}\\n[^\\n]+\\n[^\\n]+\\n${STAFFING_V2_UNSUBSCRIBE_LINE}$`);
@@ -139,11 +139,7 @@ function staffingV2ComplianceError(body, step, { leadId } = {}) {
     return 'staffing V2 body must not carry the V1 compliance footer';
   }
   const unsubscribeLines = text.split(STAFFING_V2_UNSUBSCRIBE_LINE).length - 1;
-  if (step === 1) {
-    if (unsubscribeLines !== 1 || !STAFFING_V2_FOOTER.test(text)) return 'staffing V2 Touch 1 must end with its business footer';
-  } else if (unsubscribeLines || text.includes(`\n\n${STAFFING_V2_BRAND}\n`)) {
-    return `staffing V2 Touch ${step} must not carry a footer`;
-  }
+  if (unsubscribeLines !== 1 || !STAFFING_V2_FOOTER.test(text)) return `staffing V2 Touch ${step} must end with its business footer`;
   if (leadId && String(leadId).trim() && text.includes(String(leadId).trim())) {
     return 'staffing footer must not expose an internal lead id';
   }

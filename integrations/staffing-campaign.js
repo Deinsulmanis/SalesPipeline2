@@ -226,8 +226,8 @@ const BOLD_PHRASE = BOLD_PHRASES[0];
 
 // V2's own copy for all three touches (locked 2026-10-20). Cadence and thread
 // subjects are V1's (sequence-timing.js, gmail-threading.js). No V2 touch
-// carries a landing-page link, V2 Touch 3 has no bold phrase, and only V2
-// Touch 1 carries a footer (V2's own, staffing-compliance.js).
+// carries a landing-page link, V2 Touch 3 has no bold phrase, and every V2
+// touch ends with V2's own footer (staffing-compliance.js).
 const LOCKED_EMAILS_V2 = Object.freeze([
   `Hi {{firstName}},\n\nSaw {{company}} places {{roles}} for {{market}}.\n\nI found 10 employers actively hiring in that market that look like potential accounts for {{company}}.\n\nWe also generate qualified employer meetings for staffing agencies on a performance basis. No qualified meetings, no meeting fees.\n\nWant the 10?\n\nDeins`,
   `Hi {{firstName}},\n\nThe 10 employers I mentioned are just a small sample of the accounts we'd go after for {{company}}.\n\nWe identify the right employers, reach the decision-makers, qualify interest, and put interested prospects directly on your calendar.\n\nThe important part: if we don't generate qualified employer meetings that actually happen, you don't pay meeting fees.\n\nSo you're not paying us for activity, outreach volume, or a bunch of emails being sent. You're paying for actual meetings.\n\nHappy to send over the 10 I pulled for you if you want to take a look.\n\nDeins`,
@@ -314,9 +314,9 @@ function renderStaffingPreview(lead, result, step = 1, options = {}) {
   const locked = withStaffingLandingUrl(noPersonalization ? NO_PERSONALIZATION_EMAIL : copy.emails[step - 1], options.landingPageUrl);
   const template = options.oooResumeContext ? withOooResumeContext(locked) : locked;
   // V1: the shared compliance footer on every touch. V2: its own footer on
-  // Touch 1 only; Touches 2–3 end at the sign-off.
-  const body = !v2 ? appendStaffingComplianceFooter(merge(template), identity)
-    : step === 1 ? appendStaffingV2Footer(merge(template), identity) : merge(template);
+  // every touch.
+  const body = v2 ? appendStaffingV2Footer(merge(template), identity)
+    : appendStaffingComplianceFooter(merge(template), identity);
   // Bold only the locked offer phrase, never a model-authored opener or footer.
   // A touch with no bold phrase (V2 Touch 3) renders with none.
   const phrase = copy.bold[step - 1] ? merge(copy.bold[step - 1]) : null;

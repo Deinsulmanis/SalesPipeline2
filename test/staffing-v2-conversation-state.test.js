@@ -144,10 +144,10 @@ const FINGERPRINTS = {
     'd12521017d57af5b91f2d93408071a5b0100d72ea81c52238cdeff9be0b29d03',
   ],
   [STAFFING_CAMPAIGN_V2.id]: [
-    // Relocked V2 copy, 2026-10-20.
+    // Relocked V2 copy, 2026-10-20, with V2's footer on every touch.
     '98b267b399a0c8045e5ab7e4b72768676d7045390341ecc663033d01925f3d34',
-    '7dfc38664cefd140634aceadc61a9fa56bb3471b853063e0588fe68f94f35c4b',
-    '53aa8661150b9714c14f65e57092ce6cade13a280f128727c51f6580f8f67d1d',
+    '17972b74ef57b6e68a3d51dc099fee876ab2ed5a3db9701cf05ad36899c0da17',
+    '9f5f134b52dd3549b7011f0f8c07d568ba1637480a30ffd7319a6e01efff9344',
   ],
 };
 

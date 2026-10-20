@@ -3,7 +3,7 @@
 // Industrial Staffing V2 (2026-10-15/16, copy relocked 2026-10-20): a separate
 // campaign with V1's targeting, offer, subjects and cadence and its own copy
 // for all three touches. These tests pin V2's identity and copy (no touch
-// carries a landing-page link, Touch 3 no bold, only Touch 1 a footer), keep
+// carries a landing-page link, Touch 3 no bold, every touch V2's own footer), keep
 // V1's three emails and its Touch 2 landing link exactly as they were, keep
 // every V1/V2 identifier apart in attribution, and show V2 stays unqueueable
 // and unsendable until made live.
@@ -53,8 +53,8 @@ const FOOTER_TEXT = '\n\nScaleLabAi\n150 Braid Street\nNew Westminster, BC V3L 0
   + 'This is a commercial email. Not relevant? Reply "unsubscribe" and I won\'t follow up again.\n\nRef: SA-48271';
 const FOOTER_HTML = '\n<p>ScaleLabAi<br>150 Braid Street<br>New Westminster, BC V3L 0L4<br>Canada<br>scalelabai.ca</p>\n'
   + '<p>This is a commercial email. Not relevant? Reply &quot;unsubscribe&quot; and I won&#39;t follow up again.</p>\n<p>Ref: SA-48271</p>';
-// V2 Touch 1's own footer: brand, the production mailing address on one line,
-// website, and the reply-to-unsubscribe line. Touches 2–3 carry none.
+// V2's own footer on every touch: brand, the production mailing address on one
+// line, website, and the reply-to-unsubscribe line.
 const V2_FOOTER_TEXT = `\n\nScaleLabAI\n150 Braid Street, New Westminster, BC V3L 0L4, Canada\nscalelabai.ca\n${V2_UNSUBSCRIBE}`;
 const V2_FOOTER_HTML = `\n<p>ScaleLabAI<br>150 Braid Street, New Westminster, BC V3L 0L4, Canada<br>scalelabai.ca<br>${V2_UNSUBSCRIBE}</p>`;
 const copyOf = body => body.split(/\n\nScaleLabA[iI]\n/)[0];
@@ -82,8 +82,8 @@ const V2_TEXT = [
     + 'We identify the right employers, reach the decision-makers, qualify interest, and put interested prospects directly on your calendar.\n\n'
     + `${IMPORTANT_PART}\n\n`
     + "So you're not paying us for activity, outreach volume, or a bunch of emails being sent. You're paying for actual meetings.\n\n"
-    + `${SEND_THE_10}\n\nDeins`,
-  `Hi Dana,\n\nQuick question before I close the loop.\n\n${PRIORITY_QUESTION}\n\nDeins`,
+    + `${SEND_THE_10}\n\nDeins` + V2_FOOTER_TEXT,
+  `Hi Dana,\n\nQuick question before I close the loop.\n\n${PRIORITY_QUESTION}\n\nDeins` + V2_FOOTER_TEXT,
 ];
 const V2_TOUCH_1_HTML = '<p>Hi Dana,</p>\n<p>Saw Tradeco Construction places electricians and plumbers for commercial and industrial contractors.</p>\n'
   + '<p>I found 10 employers actively hiring in that market that look like potential accounts for Tradeco Construction.</p>\n'
@@ -93,8 +93,8 @@ const V2_TOUCH_2_HTML = '<p>Hi Dana,</p>\n<p>The 10 employers I mentioned are ju
   + '<p>We identify the right employers, reach the decision-makers, qualify interest, and put interested prospects directly on your calendar.</p>\n'
   + '<p><strong>The important part: if we don&#39;t generate qualified employer meetings that actually happen, you don&#39;t pay meeting fees.</strong></p>\n'
   + '<p>So you&#39;re not paying us for activity, outreach volume, or a bunch of emails being sent. You&#39;re paying for actual meetings.</p>\n'
-  + `<p>${SEND_THE_10}</p>\n<p>Deins</p>`;
-const V2_TOUCH_3_HTML = `<p>Hi Dana,</p>\n<p>Quick question before I close the loop.</p>\n<p>${PRIORITY_QUESTION}</p>\n<p>Deins</p>`;
+  + `<p>${SEND_THE_10}</p>\n<p>Deins</p>` + V2_FOOTER_HTML;
+const V2_TOUCH_3_HTML = `<p>Hi Dana,</p>\n<p>Quick question before I close the loop.</p>\n<p>${PRIORITY_QUESTION}</p>\n<p>Deins</p>` + V2_FOOTER_HTML;
 
 function withLaunchedStaffing(t, { v2Live = false } = {}) {
   const saved = process.env.STAFFING_LAUNCH_ACTIVATED_AT;
@@ -152,7 +152,7 @@ test('1. V2 Touch 1 is byte-identical to the approved Touch 1 (text, HTML, subje
   assert.ok(email.html.includes(`<strong>${RISK_REVERSAL}</strong>`));
   assert.equal(email.body.includes('*'), false);
   assert.equal(email.body.includes('—'), false, 'no em dash anywhere, including before Deins');
-  // Touch 1 alone carries the footer, ending with the reply-to-unsubscribe line.
+  // The footer closes Touch 1, ending with the reply-to-unsubscribe line.
   assert.ok(email.body.endsWith(V2_FOOTER_TEXT));
   assert.equal(email.body.split(V2_UNSUBSCRIBE).length, 2);
   assert.equal(/Ref: SA-48271|This is a commercial email|Not relevant\?/.test(email.body), false, 'no V1 footer');
@@ -163,15 +163,17 @@ test('1. V2 Touch 1 is byte-identical to the approved Touch 1 (text, HTML, subje
 
 // ── 2–5. V2 Touch 2 ──────────────────────────────────────────────────────────
 
-test('2. V2 Touch 2 renders the exact approved wording, with no footer', () => {
+test('2. V2 Touch 2 renders the exact approved wording, with the V2 footer', () => {
   const email = renderStaffingEmail(v2Lead(), 2, OPTIONS);
   assert.equal(email.body, V2_TEXT[1]);
   assert.equal(email.html, V2_TOUCH_2_HTML);
   assert.equal(email.campaignId, V2_ID);
   assert.equal(validateStaffingEmail(email, 2), null);
   assert.ok(email.body.includes(`\n\n${SEND_THE_10}\n\n`), 'the corrected closing line');
-  assert.ok(email.body.endsWith('\n\nDeins'), 'Touch 2 ends at the sign-off');
-  assert.equal(/ScaleLabA[iI]|scalelabai\.ca|unsubscribe|150 Braid|Ref: SA-48271/i.test(email.body), false, 'no footer of any kind');
+  assert.ok(copyOf(email.body).endsWith('\n\nDeins'), 'the copy ends at the sign-off');
+  assert.ok(email.body.endsWith(V2_FOOTER_TEXT), 'then the V2 footer');
+  assert.equal(email.body.split(V2_UNSUBSCRIBE).length, 2);
+  assert.equal(/Ref: SA-48271|This is a commercial email|Not relevant\?/.test(email.body), false, 'no V1 footer');
   assert.equal(email.body.includes('—'), false, 'no em dash anywhere in Touch 2');
   assert.equal(LOCKED_EMAILS_V2[1], "Hi {{firstName}},\n\nThe 10 employers I mentioned are just a small sample of the accounts we'd go after for {{company}}.\n\nWe identify the right employers, reach the decision-makers, qualify interest, and put interested prospects directly on your calendar.\n\nThe important part: if we don't generate qualified employer meetings that actually happen, you don't pay meeting fees.\n\nSo you're not paying us for activity, outreach volume, or a bunch of emails being sent. You're paying for actual meetings.\n\nHappy to send over the 10 I pulled for you if you want to take a look.\n\nDeins");
 });
@@ -222,22 +224,24 @@ test('6. V1 Touch 2 keeps its landing page: untracked URL by default, a tracked 
 
 // ── 7–8. V2 Touch 3 ──────────────────────────────────────────────────────────
 
-test('7. V2 Touch 3 renders the exact approved wording, with no bold and no footer', () => {
+test('7. V2 Touch 3 renders the exact approved wording, with no bold and the V2 footer', () => {
   const email = renderStaffingEmail(v2Lead(), 3, OPTIONS);
   assert.equal(email.body, V2_TEXT[2]);
   assert.equal(email.html, V2_TOUCH_3_HTML);
   assert.equal(email.html.includes('<strong>'), false);
   assert.equal(BOLD_PHRASES_V2[2], null);
   assert.equal(validateStaffingEmail(email, 3), null);
-  assert.deepEqual(email.body.split('\n').filter(Boolean),
+  assert.deepEqual(copyOf(email.body).split('\n').filter(Boolean),
     ['Hi Dana,', 'Quick question before I close the loop.', PRIORITY_QUESTION, 'Deins'], 'greeting, opener, one question, sign-off');
-  assert.equal(/ScaleLabA[iI]|unsubscribe|150 Braid|Ref: SA-48271/i.test(email.body), false, 'no footer of any kind');
+  assert.ok(email.body.endsWith(V2_FOOTER_TEXT));
+  assert.equal(email.body.split(V2_UNSUBSCRIBE).length, 2);
+  assert.equal(/Ref: SA-48271|This is a commercial email|Not relevant\?/.test(email.body), false, 'no V1 footer');
   // No extra pitch: neither the 10 employers nor the performance terms come back.
-  assert.equal(/\b10\b|meeting fees|performance basis|pay/i.test(email.body), false);
+  assert.equal(/\b10\b|meeting fees|performance basis|pay/i.test(copyOf(email.body)), false);
   assert.equal(LOCKED_EMAILS_V2[2], 'Hi {{firstName}},\n\nQuick question before I close the loop.\n\nIs bringing in more employer accounts something {{company}} is actively focused on right now, or are you mainly focused on filling demand from existing clients?\n\nDeins');
 });
 
-test('8. no V2 touch carries a link or names the website outside Touch 1\'s footer', () => {
+test('8. no V2 touch carries a link or names the website outside its footer', () => {
   for (const step of [1, 2, 3]) {
     const { body, html } = renderStaffingEmail(v2Lead(), step, OPTIONS);
     assert.equal(LINK.test(body) || LINK.test(html), false, `touch ${step}`);
@@ -246,23 +250,25 @@ test('8. no V2 touch carries a link or names the website outside Touch 1\'s foot
   }
 });
 
-test('V2 validation: Touch 1 must end with its footer; Touches 2–3 must carry none; the V1 footer is never V2\'s', () => {
-  const t1 = renderStaffingEmail(v2Lead(), 1, OPTIONS);
-  assert.equal(validateStaffingEmail({ ...t1, body: copyOf(t1.body) }, 1), 'staffing V2 Touch 1 must end with its business footer');
-  assert.equal(validateStaffingEmail({ ...t1, body: `${t1.body}\n\nP.S.` }, 1), 'staffing V2 Touch 1 must end with its business footer');
-  for (const step of [2, 3]) {
+test('V2 validation: every touch must end with exactly one V2 footer; the V1 footer is never V2\'s', () => {
+  for (const step of [1, 2, 3]) {
     const email = renderStaffingEmail(v2Lead(), step, OPTIONS);
-    assert.equal(validateStaffingEmail({ ...email, body: email.body + V2_FOOTER_TEXT }, step), `staffing V2 Touch ${step} must not carry a footer`);
-    assert.equal(validateStaffingEmail({ ...email, body: email.body + FOOTER_TEXT }, step), 'staffing V2 body must not carry the V1 compliance footer');
+    const refusal = `staffing V2 Touch ${step} must end with its business footer`;
+    assert.equal(validateStaffingEmail(email, step), null, `touch ${step}`);
+    assert.equal(validateStaffingEmail({ ...email, body: copyOf(email.body) }, step), refusal, 'missing');
+    assert.equal(validateStaffingEmail({ ...email, body: `${email.body}\n\nP.S.` }, step), refusal, 'not last');
+    assert.equal(validateStaffingEmail({ ...email, body: email.body + V2_FOOTER_TEXT }, step), refusal, 'twice');
+    assert.equal(validateStaffingEmail({ ...email, body: copyOf(email.body) + FOOTER_TEXT }, step), 'staffing V2 body must not carry the V1 compliance footer');
   }
-  assert.equal(validateStaffingEmail({ ...t1, body: copyOf(t1.body) + FOOTER_TEXT }, 1), 'staffing V2 body must not carry the V1 compliance footer');
 });
 
-test('a reply quoting V2 Touch 1\'s footer inline is not an unsubscribe; a real "unsubscribe" still is', () => {
+test('a reply quoting any V2 touch\'s footer inline is not an unsubscribe; a real "unsubscribe" still is', () => {
   const { classifyReplyText } = require('../integrations/canonical-reply');
   const { classifiableText } = require('../integrations/reply-reconciliation');
-  const quoted = `Yes, send the 10 please.\n\n${V2_TEXT[0]}`;
-  assert.notEqual(classifyReplyText(classifiableText({ body: quoted })).reason, 'unsubscribe_request');
+  for (const touch of V2_TEXT) {
+    const quoted = `Yes, send the 10 please.\n\n${touch}`;
+    assert.notEqual(classifyReplyText(classifiableText({ body: quoted })).reason, 'unsubscribe_request');
+  }
   assert.equal(classifyReplyText(classifiableText({ body: 'unsubscribe' })).reason, 'unsubscribe_request');
   assert.equal(classifyReplyText(classifiableText({ body: `unsubscribe\n\n${V2_TEXT[0]}` })).reason, 'unsubscribe_request');
 });
@@ -466,11 +472,9 @@ test('V2 inherits V1 elsewhere: launch gate, cadence, ICP, offer family, send-pa
   assert.deepEqual(resolveCampaign({ name: STAFFING_CAMPAIGN_V2.name }).icp, resolveCampaign({ id: V1_ID }).icp);
   const { offerForLead } = require('../integrations/offer-config');
   assert.equal(offerForLead(v2Lead()).id, offerForLead(v1Lead()).id);
-  // V1 keeps its compliance footer on every touch; V2 Touch 1 ends with its
-  // own footer and V2 Touches 2–3 end at the sign-off.
+  // V1 keeps its compliance footer on every touch; every V2 touch ends with V2's own.
   for (const step of [1, 2, 3]) assert.ok(renderStaffingEmail(v1Lead(), step, OPTIONS).body.endsWith('Ref: SA-48271'));
-  assert.ok(renderStaffingEmail(v2Lead(), 1, OPTIONS).body.endsWith(V2_UNSUBSCRIBE));
-  for (const step of [2, 3]) assert.ok(renderStaffingEmail(v2Lead(), step, OPTIONS).body.endsWith('\n\nDeins'));
+  for (const step of [1, 2, 3]) assert.ok(renderStaffingEmail(v2Lead(), step, OPTIONS).body.endsWith(V2_FOOTER_TEXT));
   const agent = fs.readFileSync(path.join(ROOT, 'outreach-agent.js'), 'utf8');
   assert.equal(/STAFFING_TEMPLATE\b/.test(agent), false);
   assert.equal((agent.match(/isStaffingTemplateId\(lead\.emailTemplateId\)/g) || []).length, 8);
