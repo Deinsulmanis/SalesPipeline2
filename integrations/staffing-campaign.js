@@ -224,25 +224,26 @@ const BOLD_PHRASES = Object.freeze([
 ]);
 const BOLD_PHRASE = BOLD_PHRASES[0];
 
-// V2's own copy for all three touches. Cadence and thread subjects are V1's
-// (sequence-timing.js, gmail-threading.js). V2 Touch 2 deliberately carries NO
-// landing-page link, and V2 Touch 3 has no bold phrase.
+// V2's own copy for all three touches (locked 2026-10-20). Cadence and thread
+// subjects are V1's (sequence-timing.js, gmail-threading.js). No V2 touch
+// carries a landing-page link, V2 Touch 3 has no bold phrase, and only V2
+// Touch 1 carries a footer (V2's own, staffing-compliance.js).
 const LOCKED_EMAILS_V2 = Object.freeze([
-  `Hi {{firstName}},\n\nSaw {{company}} places {{roles}} for {{market}}.\n\nWe help industrial staffing agencies turn that market into qualified employer meetings. We work on a performance basis, so our incentives are tied to actually producing meetings.\n\nWorth seeing how we'd approach this for {{company}}?\n\nDeins`,
-  `Hi {{firstName}},\n\nJust to clarify what I mean by performance basis.\n\nWe handle the employer prospecting, outreach and qualification around the roles {{company}} already fills, reaching thousands of relevant employers and putting interested ones directly on your calendar.\n\nOur compensation is tied to qualified employer meetings that actually take place, not the amount of outreach we run.\n\nWorth a quick conversation if bringing in more employer accounts is a priority?\n\nDeins`,
-  `Hi {{firstName}},\n\nShould I close the loop here, or is bringing in more employer accounts still something {{company}} is looking to grow?\n\nDeins`,
+  `Hi {{firstName}},\n\nSaw {{company}} places {{roles}} for {{market}}.\n\nI found 10 employers actively hiring in that market that look like potential accounts for {{company}}.\n\nWe also generate qualified employer meetings for staffing agencies on a performance basis. No qualified meetings, no meeting fees.\n\nWant the 10?\n\nDeins`,
+  `Hi {{firstName}},\n\nThe 10 employers I mentioned are just a small sample of the accounts we'd go after for {{company}}.\n\nWe identify the right employers, reach the decision-makers, qualify interest, and put interested prospects directly on your calendar.\n\nThe important part: if we don't generate qualified employer meetings that actually happen, you don't pay meeting fees.\n\nSo you're not paying us for activity, outreach volume, or a bunch of emails being sent. You're paying for actual meetings.\n\nHappy to send over the 10 I pulled for you if you want to take a look.\n\nDeins`,
+  `Hi {{firstName}},\n\nQuick question before I close the loop.\n\nIs bringing in more employer accounts something {{company}} is actively focused on right now, or are you mainly focused on filling demand from existing clients?\n\nDeins`,
 ]);
 const BOLD_PHRASES_V2 = Object.freeze([
-  'We work on a performance basis, so our incentives are tied to actually producing meetings.',
-  'Our compensation is tied to qualified employer meetings that actually take place, not the amount of outreach we run.',
+  'No qualified meetings, no meeting fees.',
+  "The important part: if we don't generate qualified employer meetings that actually happen, you don't pay meeting fees.",
   null,
 ]);
 // What validation requires each V2 touch to contain: its bold phrase, or for
-// Touch 3 its one question.
+// Touch 3 its opening line (the question itself starts with V1 Touch 3's words).
 const LOCKED_PHRASES_V2 = Object.freeze([
   BOLD_PHRASES_V2[0],
   BOLD_PHRASES_V2[1],
-  'Should I close the loop here, or is bringing in more employer accounts still something {{company}} is looking to grow?',
+  'Quick question before I close the loop.',
 ]);
 const copyFor = campaign => (campaign === STAFFING_CAMPAIGN_V2
   ? { emails: LOCKED_EMAILS_V2, bold: BOLD_PHRASES_V2, landingPage: false }
@@ -278,7 +279,7 @@ const { SEQUENCE_TIMING: STAFFING_SEQUENCE_TIMING } = require('./sequence-timing
 const escapeHtml = text => String(text).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const {
   appendStaffingComplianceFooter, staffingSenderIdentity, staffingComplianceError,
-  STAFFING_CAMPAIGN_REF,
+  appendStaffingV2Footer, staffingV2ComplianceError, STAFFING_CAMPAIGN_REF,
 } = require('./staffing-compliance');
 
 function renderStaffingPreview(lead, result, step = 1, options = {}) {
@@ -312,7 +313,10 @@ function renderStaffingPreview(lead, result, step = 1, options = {}) {
   if (options.oooResumeContext && step === 1) throw new Error('only a staffing follow-up can resume after an out-of-office reply');
   const locked = withStaffingLandingUrl(noPersonalization ? NO_PERSONALIZATION_EMAIL : copy.emails[step - 1], options.landingPageUrl);
   const template = options.oooResumeContext ? withOooResumeContext(locked) : locked;
-  const body = appendStaffingComplianceFooter(merge(template), identity);
+  // V1: the shared compliance footer on every touch. V2: its own footer on
+  // Touch 1 only; Touches 2–3 end at the sign-off.
+  const body = !v2 ? appendStaffingComplianceFooter(merge(template), identity)
+    : step === 1 ? appendStaffingV2Footer(merge(template), identity) : merge(template);
   // Bold only the locked offer phrase, never a model-authored opener or footer.
   // A touch with no bold phrase (V2 Touch 3) renders with none.
   const phrase = copy.bold[step - 1] ? merge(copy.bold[step - 1]) : null;
@@ -381,7 +385,9 @@ function validateStaffingEmail({ subject, body, leadId, campaignId } = {}, step 
   const phrases = campaignId === STAFFING_CAMPAIGN_V2.id ? LOCKED_PHRASES_V2 : BOLD_PHRASES;
   const anchor = String(phrases[step - 1] || '').split('{{')[0].trim();
   if (anchor && !text.includes(anchor)) return 'staffing body is missing its locked phrase';
-  return staffingComplianceError(text, { leadId });
+  return campaignId === STAFFING_CAMPAIGN_V2.id
+    ? staffingV2ComplianceError(text, step, { leadId })
+    : staffingComplianceError(text, { leadId });
 }
 
 module.exports = { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_LABELS, isStaffingCampaign, STAFFING_LANDING_PAGE_URL, LOCKED_EMAILS, BOLD_PHRASE, BOLD_PHRASES,

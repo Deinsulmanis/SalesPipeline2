@@ -1,11 +1,12 @@
 'use strict';
 
 // Conversation state recognises the staffing "priority question" for both
-// campaigns: V1's Touch 3 by its wording (unchanged), V2's Touch 3 ("Should I
-// close the loop here, or is bringing in more employer accounts still
-// something {{company}} is looking to grow?") by its send event — a step-3 send
-// recorded under V2's campaign version and follow-up copy version. No V2 text
-// is matched, so no company name or unrelated message can trigger it.
+// campaigns: V1's Touch 3 by its wording (unchanged), V2's Touch 3 by its send
+// event — a step-3 send recorded under V2's campaign version and follow-up copy
+// version. Since the 2026-10-20 relock V2's question ("Is bringing in more
+// employer accounts something {{company}} is actively focused on right now,
+// …?") opens with V1 Touch 3's words, so a recorded V2 Touch 3 body is also an
+// ask by V1's wording rule. Replies, human messages and other touches are not.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -20,7 +21,7 @@ const { PRODUCTION_STAFFING_RENDER_OPTIONS: OPTIONS } = require('../test-support
 
 const NOW = '2026-10-20T18:00:00.000Z';
 const at = day => `2026-10-${String(day).padStart(2, '0')}T15:00:00.000Z`;
-const V2_TOUCH_3_WORDING = 'Should I close the loop here, or is bringing in more employer accounts still something Harbour Staffing is looking to grow?';
+const V2_TOUCH_3_WORDING = 'Is bringing in more employer accounts something Harbour Staffing is actively focused on right now, or are you mainly focused on filling demand from existing clients?';
 
 const leadFor = (campaign, extra = {}) => ({
   id: 'S1', email: 'owner@harbour.test', company: 'Harbour Staffing', contactName: 'Alex Harbour',
@@ -109,15 +110,25 @@ test('V2 Touch 1 and Touch 2 do not set it', () => {
 
 test('unrelated inbound or outbound text never triggers it', () => {
   const v2Meta = attributionFor(v2Lead, 3);
+  const misattributed = {
+    'no attribution': {},
+    'attributed to V1': { ...v2Meta, campaignVersion: STAFFING_CAMPAIGN.id },
+    'another copy version': { ...v2Meta, copyVersion: 'industrial_staffing_follow_up_v1' },
+  };
   const cases = {
     'prospect quotes the V2 question': [send(v2Lead, 1, 1), inbound(v2Lead, 'r1', 2, `> ${V2_TOUCH_3_WORDING}\nWho is this?`)],
     'a human reply uses the V2 question': [send(v2Lead, 1, 1), humanOut(v2Lead, 'h1', 2, V2_TOUCH_3_WORDING)],
     'a V2 Touch 2 containing the wording': [send(v2Lead, 2, 4, { body: V2_TOUCH_3_WORDING })],
-    'a step-3 send with V2 wording but no attribution': [send(v2Lead, 3, 8, { meta: {} })],
-    'a step-3 send attributed to V1': [send(v2Lead, 3, 8, { meta: { ...v2Meta, campaignVersion: STAFFING_CAMPAIGN.id } })],
-    'a V2 step-3 send under another copy version': [send(v2Lead, 3, 8, { meta: { ...v2Meta, copyVersion: 'industrial_staffing_follow_up_v1' } })],
+    // Without V2's attribution, a step-3 send whose body does not ask is not an ask.
+    ...Object.fromEntries(Object.entries(misattributed).map(([name, meta]) => [`a step-3 send, ${name}, unrecorded body`, [send(v2Lead, 3, 8, { meta, body: '' })]])),
   };
   for (const [name, activities] of Object.entries(cases)) assert.deepEqual(askedSteps(priority(v2Lead, activities)), [], name);
+  // The relocked V2 Touch 3 (2026-10-20) asks with V1 Touch 3's opening words,
+  // so its recorded body is also an ask by V1's unchanged wording rule, even
+  // with no or wrong attribution: it did ask the priority question.
+  for (const [name, meta] of Object.entries(misattributed)) {
+    assert.deepEqual(askedSteps(priority(v2Lead, [send(v2Lead, 3, 8, { meta })])), ['cold_step_3'], name);
+  }
   // V1 likewise: a reply carrying V2's wording is not an ask.
   assert.deepEqual(askedSteps(priority(v1Lead, [send(v1Lead, 1, 1), inbound(v1Lead, 'r1', 2, V2_TOUCH_3_WORDING)])), []);
 });
@@ -133,9 +144,10 @@ const FINGERPRINTS = {
     'd12521017d57af5b91f2d93408071a5b0100d72ea81c52238cdeff9be0b29d03',
   ],
   [STAFFING_CAMPAIGN_V2.id]: [
-    'b10366b6383a74fd527247359c52f14a65c4eacd634b59304df0edb75e3ec344',
-    '3a251be793bf620956ac28a257ab89f81102fc042d25078eb77f09ca714acc76',
-    '1cb2edd1574818a11459dda31247106881563cc00fedde8cd2c0d1093f36a6d0',
+    // Relocked V2 copy, 2026-10-20.
+    '98b267b399a0c8045e5ab7e4b72768676d7045390341ecc663033d01925f3d34',
+    '7dfc38664cefd140634aceadc61a9fa56bb3471b853063e0588fe68f94f35c4b',
+    '53aa8661150b9714c14f65e57092ce6cade13a280f128727c51f6580f8f67d1d',
   ],
 };
 

@@ -90,6 +90,8 @@ const OWN_OUTBOUND_COPY = [
   /Not relevant\?\s*(?=Reply\b)/gi,
   /You(?:'|’)re receiving this because your business is publicly listed\.?/gi,
   /Reply\s+["“”]unsubscribe["“”]\s+and\s+I(?:(?:'|’)ll)?\s+(?:remove you(?:\s+immediately)?|won(?:'|’)t follow up again)\.?/gi,
+  // Staffing V2 Touch 1's footer line (staffing-compliance.js).
+  /To unsubscribe,\s*reply\s+["“”]unsubscribe["“”]\.?/gi,
   /\bRef:\s*S[AL]-[A-Za-z0-9-]+/g,
 ];
 
