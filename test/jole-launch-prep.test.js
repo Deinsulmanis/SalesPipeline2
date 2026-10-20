@@ -393,8 +393,9 @@ test('source: one Gmail send call in production code, behind sendEmail → withG
   assert.deepEqual(sendSites, ['outreach-agent.js']);
   const agent = fs.readFileSync(path.join(ROOT, 'outreach-agent.js'), 'utf8');
   const sendEmail = agent.slice(agent.indexOf('async function sendEmail('), agent.indexOf('async function loadOutreachProviderState('));
-  assert.match(sendEmail, /if \(!sender\?\.sendEligible\) throw/);
-  assert.match(sendEmail, /return withGmailProviderSend\(\{/);
+  assert.match(sendEmail, /if \(!senderMayStillSend\(sender\)\) throw preDeliveryRefusal/);
+  assert.match(sendEmail, /activeSendQuota\.execute\(\{/);
+  assert.match(sendEmail, /run: \(\{ markProviderStart \}\) => withGmailProviderSend\(\{/);
   assert.ok(sendEmail.indexOf('withGmailProviderSend') < sendEmail.indexOf('.messages.send('));
   // The agent never asks for preparation readiness: selection and sending are strict.
   assert.equal(/preparation\s*:\s*true/.test(agent), false);
@@ -661,11 +662,13 @@ test('scheduler run after CLIENT_SENDING_AUTHORIZED=jole: the same Jole leads pa
 
 test('source: the agent\'s step-1 loop and cold delivery check client authority before sender, reservation and Gmail', () => {
   assert.match(AGENT, /const queued = selectQueued\(all\);/);
-  const loop = agentSlice('── New sends (step 1)', '── Follow-up refill');
-  const order = ['clientCapacityVerdict(', 'chooseSender(', 'deliverOrdinaryColdStep('].map(token => loop.indexOf(token));
-  assert.ok(order.every(index => index > 0) && order[0] < order[1] && order[1] < order[2], JSON.stringify(order));
+  const attempt = agentSlice('async function attemptNewLead(', 'const newBatchBySender =');
+  assert.ok(attempt.indexOf('clientCapacityVerdict(') > 0);
+  assert.ok(attempt.indexOf('clientCapacityVerdict(') < attempt.indexOf('deliverOrdinaryColdStep('));
+  const routing = agentSlice('const newBatchBySender =', 'async function runSenderLane(');
+  assert.match(routing, /chooseSender\(/);
   const deliver = agentSlice('async function deliverOrdinaryColdStep(', 'async function markReplied(');
-  const steps = ['clientSendBlock(', 'findSuccessfulSequenceSend(', 'stepOneAlreadySent(', 'recordColdCallActivityStrict(reservation)', 'guardProviderSend(', 'sendEmail({']
+  const steps = ['clientSendBlock(', 'findSuccessfulSequenceSend(', 'stepOneAlreadySent(', 'guardProviderSend(', 'recordColdCallActivityStrict(reservation)', 'sendEmail({']
     .map(token => deliver.indexOf(token));
   assert.ok(steps.every(index => index > 0), JSON.stringify(steps));
   assert.deepEqual([...steps].sort((a, b) => a - b), steps, 'client authority is the first check, before Gmail probes and the ledger reservation');

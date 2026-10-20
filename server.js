@@ -680,6 +680,40 @@ async function persistSenderRuntimeStatus(senderId, status, updatedBy = 'operato
     .filter(row => row.id !== senderId);
   overlay.push({ id: senderId, status });
   publishSenderRuntime(overlay);
+  // The child inherits its boot environment. A pause must also reach an
+  // already-running send pass before its next provider dispatch.
+  if (agentChild?.connected) {
+    const child = agentChild;
+    const requestId = crypto.randomUUID();
+    try {
+      await new Promise((resolve, reject) => {
+        const cleanup = () => {
+          clearTimeout(timer);
+          child.off('message', onMessage);
+          child.off('exit', onExit);
+          child.off('disconnect', onExit);
+        };
+        const onMessage = message => {
+          if (message?.type !== 'sender_runtime_status_ack' || message.requestId !== requestId) return;
+          cleanup(); resolve();
+        };
+        const onExit = () => { cleanup(); resolve(); };
+        const timer = setTimeout(() => { cleanup(); reject(new Error('sender status acknowledgement timed out')); }, 3000);
+        child.on('message', onMessage);
+        child.once('exit', onExit);
+        child.once('disconnect', onExit);
+        child.send({ type: 'sender_runtime_status', senderId, status, requestId }, error => {
+          if (error) { cleanup(); reject(error); }
+        });
+      });
+    } catch (error) {
+      const workerStopRequested = status !== 'active' && child.exitCode === null
+        ? child.kill('SIGTERM') : false;
+      console.error(JSON.stringify({ event: 'sender_runtime_status_relay_failed', senderId,
+        status, workerStopRequested, code: error.code || 'ack_timeout' }));
+      throw error;
+    }
+  }
 }
 
 loadSenderRuntimeOverlay().then(() => {
@@ -715,6 +749,14 @@ function scheduledSendCaps(senders = configuredSenders()) {
     total: capacity.globalPerRunLimit,
     daily: capacity.globalDailyLimit,
     activeCount: capacity.activeCount,
+  };
+}
+
+function scheduledQuotaRunEnv(tick = new Date()) {
+  return {
+    SEND_RUN_ID: crypto.randomUUID(),
+    SEND_SCHEDULED_TICK_AT: tick.toISOString(),
+    SEND_RUN_DEADLINE_AT: new Date(tick.getTime() + 25 * 60000).toISOString(),
   };
 }
 
@@ -758,6 +800,7 @@ function startAgentProcess(extraEnv, dryRun) {
   const child = spawn('node', ['outreach-agent.js'], {
     cwd: __dirname,
     env: { ...process.env, ...extraEnv },
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
   agentChild = child;
 
@@ -7687,17 +7730,20 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   // fields Pacific-local and handles PDT/PST automatically; do NOT
   // hand-convert to UTC.
   cron.schedule('0,30 7-11 * * 1-5', async () => {
+    const tick = new Date();
     console.log('[cron] Triggering scheduled outreach agent run...');
     if (agentState.running || automationLaunchReserved) {
       // Never replay missed windows back-to-back. A slow run must reduce the
       // day's volume, not create a burst outside its scheduled slot.
-      console.log('[cron] Agent already running — skipping this send window; no catch-up burst will be queued');
+      console.log(JSON.stringify({ event: 'send_tick_skipped', scheduledTick: tick.toISOString(),
+        reason: 'prior_run_active', activeRunStartedAt: agentState.startedAt }));
       return;
     }
     const caps = scheduledSendCaps();
     await launchAutomationAfterCalendar('scheduled outreach run', () => {
       if (agentState.running) return false;
       spawnAgent(false, {
+        ...scheduledQuotaRunEnv(tick),
         DAILY_CAP: String(caps.total),
         PER_INBOX_RUN_CAP: String(caps.perInbox),
         GMAIL_SENDER_RUNTIME_JSON: process.env.GMAIL_SENDER_RUNTIME_JSON || '[]',
@@ -7711,15 +7757,18 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   // 09:00-11:30 Chicago slots coincide with Pacific 07:00-09:30. The worker
   // checks the Jole clock again before each send, including a run crossing noon.
   cron.schedule(JOLE_EARLY_CRON, async () => {
+    const tick = new Date();
     if (clientSendBlock('jole', process.env)) return;
     if (agentState.running || automationLaunchReserved) {
-      console.log('[cron] Agent already running — skipping Jole send window');
+      console.log(JSON.stringify({ event: 'send_tick_skipped', scheduledTick: tick.toISOString(),
+        reason: 'prior_run_active', scope: 'jole', activeRunStartedAt: agentState.startedAt }));
       return;
     }
     const caps = scheduledSendCaps();
     await launchAutomationAfterCalendar('scheduled Jole outreach run', () => {
       if (agentState.running) return false;
       spawnAgent(false, {
+        ...scheduledQuotaRunEnv(tick),
         DAILY_CAP: String(caps.total),
         PER_INBOX_RUN_CAP: String(caps.perInbox),
         GMAIL_SENDER_RUNTIME_JSON: process.env.GMAIL_SENDER_RUNTIME_JSON || '[]',

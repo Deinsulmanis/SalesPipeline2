@@ -539,7 +539,7 @@ test('a booking by an archived lead is surfaced for review and never blocks auto
 });
 
 test('stage sequences skip archived cards and retired-offer twins before any provider work', () => {
-  assert.match(agentSrc, /if \(staffingSendBlockReason\(twin \|\| boardLead\)\) continue;\n    if \(outreachBlockForLead\(boardLead\) \|\| \(twin && outreachBlockForLead\(twin\)\)\) continue;/);
+  assert.match(agentSrc, /if \(staffingSendBlockReason\(twin \|\| boardLead\)\) return;\n    if \(outreachBlockForLead\(boardLead\) \|\| \(twin && outreachBlockForLead\(twin\)\)\) return;/);
   const card = { id: 'b1', stage: 'archived', notes: '[ARCHIVED: offer_retired_dental]', tradeType: 'Dentist' };
   assert.equal(outreachBlockForLead(card).code, 'archived');
   assert.equal(deriveAutomationOwnership(staffingLead(), { boardLead: card, sendingEnabled: true }).blockedBy, BLOCKED_BY.ARCHIVED);

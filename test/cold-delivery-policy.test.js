@@ -239,13 +239,13 @@ test('15. the gate runs before any reservation and every existing send protectio
   const step = agent.slice(agent.indexOf('async function deliverOrdinaryColdStep'), agent.indexOf('// Phase 4: mark a lead'));
   const at = needle => { const i = step.indexOf(needle); assert.ok(i >= 0, needle); return i; };
   // provider-first recovery and the step-1 probe still precede; then the gate;
-  // then the unresolved-reservation refusal, the reservation, the final guard, the send.
+  // then the unresolved-reservation refusal, fresh guard, reservation, and send.
   assert.ok(at('findSuccessfulSequenceSend') < at('recipientProviderClassifier.classify(lead.email)'));
   assert.ok(at('stepOneAlreadySent') < at('coldDeliveryVerdict({ sender, classification: recipientProvider })'));
   assert.ok(at('coldDeliveryVerdict({ sender, classification: recipientProvider })') < at("row.eventType === 'ordinary_send_reserved'"));
   assert.ok(at('an unresolved delivery reservation exists') < at('await recordColdCallActivityStrict(reservation)'));
-  assert.ok(at('await recordColdCallActivityStrict(reservation)') < at('guardProviderSend(lead'));
-  assert.ok(at('guardProviderSend(lead') < at('result = await sendEmail('));
+  assert.ok(at('guardProviderSend(lead') < at('await recordColdCallActivityStrict(reservation)'));
+  assert.ok(at('await recordColdCallActivityStrict(reservation)') < at('result = await sendEmail('));
   assert.ok(at('if (!coldVerdict.allowed)') < at('const reservationEventId'));
   assert.match(step, /isDefinitePreDeliveryFailure\(error\)/);
   assert.match(step, /delivery outcome is ambiguous; reservation retained/);
@@ -261,13 +261,13 @@ test('15. the gate runs before any reservation and every existing send protectio
   const view = server.slice(server.indexOf("app.get('/api/ops/cold-delivery-gate'"), server.indexOf("app.get('/api/ops/mailbox-diagnostic'"));
   assert.doesNotMatch(view, /applyLeadChange|appendColdCallActivities|sendEmail|values\.(?:append|update)/);
   // Stage sequences use the same pre-reserve + final-gate shape as ordinary cold.
-  const seq = agent.slice(agent.indexOf('async function runStageSequencePass'), agent.indexOf('async function run()'));
+  const seq = agent.slice(agent.indexOf('async function runStageSequencePass'), agent.indexOf('async function runInner()'));
   const seqAt = needle => { const i = seq.indexOf(needle); assert.ok(i >= 0, needle); return i; };
   assert.ok(seqAt('recipientProviderClassifier.classify(boardLead.email)') < seqAt('eventType: SEQUENCE_EVENTS.SEND_RESERVED'));
   assert.ok(seqAt('coldDeliveryVerdict({ sender, classification: recipientProvider })') < seqAt('const reservationEventId'));
   assert.ok(seqAt('if (!coldVerdict.allowed)') < seqAt('await recordColdCallActivityStrict(reservation)'));
-  assert.ok(seqAt('await recordColdCallActivityStrict(reservation)') < seqAt('guardProviderSend(safetyLead'));
-  assert.ok(seqAt('guardProviderSend(safetyLead') < seqAt('result = await sendEmail('));
+  assert.ok(seqAt('guardProviderSend(safetyLead') < seqAt('await recordColdCallActivityStrict(reservation)'));
+  assert.ok(seqAt('await recordColdCallActivityStrict(reservation)') < seqAt('result = await sendEmail('));
   assert.match(seq, /purpose: 'sequence'/);
   assert.match(agent, /describeColdDeliveryPolicy\(GMAIL_SENDERS\)/);
   assert.match(server, /describeColdDeliveryPolicy\(configuredSenders\(\)\)/);

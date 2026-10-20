@@ -56,11 +56,11 @@ test('pin: the directory endpoint scopes rows to a client on the server', () => 
 });
 
 test('pin: client capacity is checked before every sender choice, and a refused lead never ends the pass', () => {
-  const checks = [...agent.matchAll(/const clientCap = clientCapacityVerdict\(clientCapacity, tenantOf\(lead\)\);\n    if \(!clientCap\.allowed\) \{[^\n]*(return false|continue); \}\n    let senderChoice;/g)];
+  const checks = [...agent.matchAll(/const clientCap = clientCapacityVerdict\(clientCapacity, tenantOf\(lead\)\);\n    if \(!clientCap\.allowed\) \{[^\n]*(return false|return|continue); \}/g)];
   assert.equal(checks.length, 3, 'all three attempt sites check client capacity');
   // Site 1 is inside attemptFollowUp (a function); sites 2 and 3 are loop bodies
   // of the send pass, where `return` would stop every other client's sends.
-  assert.deepEqual(checks.map(match => match[1]), ['return false', 'continue', 'continue']);
+  assert.deepEqual(checks.map(match => match[1]), ['return false', 'return', 'continue']);
   assert.equal((agent.match(/onProviderSuccess: providerSuccessCounter\(selectedSender, lead\),/g) || []).length, 3);
   assert.match(agent, /recordClientSend\(clientCapacity, tenantOf\(lead\)\);/);
 });

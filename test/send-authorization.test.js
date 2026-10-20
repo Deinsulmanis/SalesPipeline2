@@ -93,7 +93,7 @@ test('Gmail sendEmail calls assertSendAuthorized before constructing the provide
     source.indexOf('async function sendEmail('),
     source.indexOf('async function loadOutreachProviderState('),
   );
-  assert.match(code, /assertSendAuthorized\(\);\r?\n  assertStaffingSendAllowed\(lead\);/);
+  assert.match(code, /try \{ assertSendAuthorized\(\); assertStaffingSendAllowed\(lead\); \}/);
 
   let constructed = 0;
   class Provider {
@@ -102,7 +102,7 @@ test('Gmail sendEmail calls assertSendAuthorized before constructing the provide
   }
   const send = new Function(
     'assertStaffingSendAllowed', 'assertSendAuthorized', 'PRIMARY_GMAIL_SENDER',
-    'GmailOutreachProvider', 'gmailForSender', 'toRawMessage', 'withGmailProviderSend',
+    'GmailOutreachProvider', 'gmailForSender', 'toRawMessage', 'withGmailProviderSend', 'preDeliveryRefusal', 'sendLockEnabled',
     `${code}; return sendEmail;`,
   )(
     () => {},
@@ -116,6 +116,8 @@ test('Gmail sendEmail calls assertSendAuthorized before constructing the provide
     () => assert.fail('Gmail client must not be built'),
     () => assert.fail('MIME must not be built'),
     () => assert.fail('durable lock must not run before authorization'),
+    (_code, reason) => new Error(reason),
+    () => true,
   );
   await assert.rejects(
     send({ lead: { id: '1', email: 'a@x.test' }, to: 'a@x.test', sender: { sendEligible: true } }),
@@ -140,6 +142,9 @@ test('authorized sendEmail proceeds to the provider exactly once', async () => {
     'assertStaffingSendAllowed', 'assertSendAuthorized', 'PRIMARY_GMAIL_SENDER',
     'GmailOutreachProvider', 'gmailForSender', 'toRawMessage', 'withGmailProviderSend',
     'clientSendWindowVerdict', 'tenantOf', 'SCHEDULED_CLIENT_SCOPE',
+    'preDeliveryRefusal', 'senderMayStillSend', 'activeSendQuota', 'activeSenderPacer',
+    'resolveLeadClient', 'guardProviderSend', 'freshSendSafetyDeps', 'recipientProviderClassifier',
+    'runWithGmailFeature', 'fromNameForSender', 'sendLockEnabled',
     `${code}; return sendEmail;`,
   )(
     () => {},
@@ -152,10 +157,22 @@ test('authorized sendEmail proceeds to the provider exactly once', async () => {
     () => ({ allowed: true }),
     () => 'scalelab',
     '',
+    (_code, reason) => new Error(reason),
+    () => true,
+    { execute: ({ run }) => run({ markProviderStart: async () => {} }) },
+    { run: (_senderId, task) => task() },
+    () => ({ ok: true, clientId: 'scalelab' }),
+    async () => ({ allowed: true }),
+    () => ({}),
+    { peek: () => ({ provider: 'google' }) },
+    (_feature, task) => task(),
+    () => 'Test',
+    () => true,
   );
   await send({
     lead: { id: '1', email: 'a@x.test' }, to: 'a@x.test', subject: 's', body: 'b',
     sender: { sendEligible: true, id: 'primary', email: 'from@x.test' },
+    sendAction: { actionId: 'test-action', actionType: 'gmail_cold_step' },
   });
   assert.equal(constructed, 1);
   assert.equal(sent, 1);

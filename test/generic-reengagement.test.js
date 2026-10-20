@@ -458,7 +458,7 @@ test('V. step and enrolment ids are deterministic, so nothing can send or enrol 
   // The runner keeps its duplicate-send guards for this journey: a recorded
   // step is skipped, and an unresolved reservation blocks a second attempt.
   const runner = readSource('outreach-agent.js');
-  assert.match(runner, /if \(activities\.some\(row => row\.eventId === eventId\)\) continue;/);
+  assert.match(runner, /if \(activities\.some\(row => row\.eventId === eventId\)\) return;/);
   assert.match(runner, /a durable delivery reservation exists and Gmail has not confirmed it yet/);
 });
 

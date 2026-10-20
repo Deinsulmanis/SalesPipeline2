@@ -116,13 +116,13 @@ test('9. durable reservation and send-authorization protections remain intact', 
 
 test('the sequence call site classifies before reserve and peeks at the final gate', () => {
   const agent = fs.readFileSync(path.join(root, 'outreach-agent.js'), 'utf8').split('\r\n').join('\n');
-  const pass = agent.slice(agent.indexOf('async function runStageSequencePass'), agent.indexOf('async function run()'));
+  const pass = agent.slice(agent.indexOf('async function runStageSequencePass'), agent.indexOf('async function runInner()'));
   const at = needle => { const i = pass.indexOf(needle); assert.ok(i >= 0, needle); return i; };
   assert.ok(at('recipientProviderClassifier.classify(boardLead.email)') < at('eventType: SEQUENCE_EVENTS.SEND_RESERVED'));
   assert.ok(at('coldDeliveryVerdict({ sender, classification: recipientProvider })') < at('const reservationEventId'));
   assert.ok(at('if (!coldVerdict.allowed)') < at('await recordColdCallActivityStrict(reservation)'));
-  assert.ok(at('await recordColdCallActivityStrict(reservation)') < at('guardProviderSend(safetyLead'));
-  assert.ok(at('guardProviderSend(safetyLead') < at('result = await sendEmail('));
+  assert.ok(at('guardProviderSend(safetyLead') < at('await recordColdCallActivityStrict(reservation)'));
+  assert.ok(at('await recordColdCallActivityStrict(reservation)') < at('result = await sendEmail('));
   assert.match(pass, /purpose: 'sequence', senderInboxId: sender\.id, coldSender: sender/);
   const guard = fs.readFileSync(path.join(root, 'integrations/send-safety-revalidate.js'), 'utf8');
   assert.match(guard, /isProspectingSend\(options\.purpose\)/);

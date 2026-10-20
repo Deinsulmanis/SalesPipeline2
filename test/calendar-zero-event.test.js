@@ -190,7 +190,7 @@ test('F1 fail-closed: with Supabase authoritative, an unreadable corpus refuses 
   assert.match(readLeads, /if \(!fallback\.allowed\) \{\s*throw new Error/);
 
   // readLeads() runs before any pass in run(), and a throw exits the process 1.
-  const run = agent.slice(agent.indexOf('async function run()'));
+  const run = agent.slice(agent.indexOf('async function runInner()'));
   const read = run.indexOf('const all = await readLeads(snapshot.coldEmail)');
   assert.ok(read > 0);
   for (const pass of ['runHumanOutboundPass(', 'runReplyCheckPass(']) {

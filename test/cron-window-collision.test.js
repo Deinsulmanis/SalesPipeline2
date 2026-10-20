@@ -102,7 +102,7 @@ test('6. no production send limit changed', () => {
 test('the skip-without-catch-up behaviour itself is unchanged', () => {
   // The repair removes the collision; it does not add replay. A genuinely busy
   // agent must still drop the window rather than burst later.
-  assert.match(server, /skipping this send window; no catch-up burst will be queued/);
+  assert.match(server, /event: 'send_tick_skipped'[\s\S]*reason: 'prior_run_active'/);
   assert.doesNotMatch(server, /pendingScheduledSendRuns|MAX_PENDING_SCHEDULED_SEND_RUNS/);
   assert.match(server, /if \(agentState\.running \|\| automationLaunchReserved\) \{/,
     'the shared mutex guard remains');

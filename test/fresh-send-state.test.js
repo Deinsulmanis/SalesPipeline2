@@ -183,7 +183,7 @@ test('the agent wires the single-lead loader into every provider-send gate and t
   assert.match(deps, /createFreshSendStateLoader\(\{/);
   assert.match(deps, /getLeadById: id => getOutreachLeadById\(id\)/);
   assert.ok(!/readLeads\(snapshot\.coldEmail\)/.test(deps), 'the per-send gate no longer reads the corpus');
-  assert.equal((agent.match(/guardProviderSend\([^)]*freshSendSafetyDeps\(\)/g) || []).length, 3, 'cold, Smartlead and sequence sends share it');
+  assert.equal((agent.match(/guardProviderSend\([\s\S]*?freshSendSafetyDeps\(\)/g) || []).length, 4, 'Gmail final gate, candidate cold and sequence gates, and Smartlead share it');
   assert.match(agent, /const current = await freshLeadFromSnapshot\(\{ snapshot: fresh, leadId: lead\.id,/, 'warm final gate');
   // The remaining corpus reads are the ones that need every lead: run start and Agent v2 evidence.
   const corpusReads = agent.match(/readLeads\((?:snapshot|fresh)\.coldEmail\)/g) || [];
