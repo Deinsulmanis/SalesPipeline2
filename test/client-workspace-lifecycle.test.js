@@ -8,6 +8,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+// Fixture Jole leads are classified exact for v4 (test-support/jole-v4-fixtures.js).
+require('../test-support/jole-v4-fixtures').classifyFixtureLeadsExact();
 const fs = require('fs');
 const path = require('path');
 
