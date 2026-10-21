@@ -233,12 +233,16 @@ async function preview(env) {
   const corpus = await readOutreachCorpus({ env });
   if (!corpus.ok) throw new Error(`Canonical read failed: ${corpus.reason}`);
   const byId = new Map(corpus.leads.map(lead => [lead.id, lead]));
+  // PREVIEW_PLAN renders the planned adoption patches before they are applied.
+  const planned = env.PREVIEW_PLAN ? new Map(JSON.parse(fs.readFileSync(env.PREVIEW_PLAN, 'utf8')).adoptions
+    .map(item => [item.leadId, item.patch])) : new Map();
   const routed = { emailTemplateId: STAFFING_CAMPAIGN_2.emailTemplateId, intendedCampaignVersion: STAFFING_CAMPAIGN_2.id };
   const out = [`# Staffing Outreach Campaign 2 previews (${new Date().toISOString()})`, ''];
   let failures = 0;
   for (const id of ids) {
-    const lead = byId.get(id);
-    if (!lead) throw new Error(`Preview lead ${id} not found`);
+    const stored = byId.get(id);
+    if (!stored) throw new Error(`Preview lead ${id} not found`);
+    const lead = { ...stored, ...(planned.get(id) || {}) };
     out.push(`## ${lead.company} — ${lead.contactName} <${lead.email}> (${id})`, '');
     for (const step of [1, 2, 3]) {
       try {
@@ -260,9 +264,75 @@ async function preview(env) {
   if (failures) process.exitCode = 1;
 }
 
+// ADOPT-PLAN (read-only): plans sealing each prepared V2 import record
+// (ADOPTION_PAYLOAD) onto its existing Campaign 2 row, into PLAN_PATH.
+// ADOPT (APPLY_CAMPAIGN2_ADOPTION=yes): commits that plan, compare-and-set
+// against each row's planned campaign_notes, stage and company.
+const ADOPTED_FIELDS = ['company', 'campaign_notes', 'leadNiche', 'emailTemplateId', 'intendedCampaignVersion'];
+// The strict read: a failed suppression read stops the plan.
+async function suppressedEmailsFor(env) {
+  const { sheetsClient } = await sheetRows(env);
+  const response = await sheetsClient.spreadsheets.values.get({ spreadsheetId: env.SPREADSHEET_ID, range: 'Suppression!A:A' });
+  return new Set((response.data.values || []).slice(1).map(row => lower(row[0])).filter(Boolean));
+}
+async function adoptPlan(env) {
+  const { planCampaign2Adoption } = require('../integrations/staffing-campaign-2-adoption');
+  const payload = JSON.parse(fs.readFileSync(env.ADOPTION_PAYLOAD, 'utf8').replace(/^\uFEFF/, ''));
+  const corpus = await readOutreachCorpus({ env });
+  if (!corpus.ok) throw new Error(`Canonical read failed: ${corpus.reason}`);
+  const suppressedEmails = await suppressedEmailsFor(env);
+  const result = planCampaign2Adoption(payload, { leads: corpus.leads, suppressedEmails }, {
+    renderOptions: { env, ...(env.PREVIEW_MAILING_ADDRESS ? { mailingAddress: env.PREVIEW_MAILING_ADDRESS } : {}) },
+  });
+  const { rows } = await sheetRows(env);
+  const adoptions = result.adoptions.map(adoption => {
+    const row = rows.get(adoption.leadId) || [];
+    if (row.length !== 1) throw new Error(`Lead ${adoption.leadId} is not exactly one ColdEmail row`);
+    return { ...adoption, row: row[0] };
+  });
+  const summary = { plannedAt: new Date().toISOString(), records: result.request.records.length,
+    adoptions: adoptions.length, alreadyAdopted: result.alreadyAdopted.length, refusals: result.refusals.length,
+    refusalsByCode: result.refusalsByCode,
+    byTier: adoptions.reduce((acc, item) => ({ ...acc, [item.tier]: (acc[item.tier] || 0) + 1 }), {}) };
+  fs.writeFileSync(env.PLAN_PATH, JSON.stringify({ summary, adoptions, alreadyAdopted: result.alreadyAdopted, refusals: result.refusals }, null, 2));
+  console.log(JSON.stringify(summary, null, 2));
+}
+async function adopt(env) {
+  if (env.APPLY_CAMPAIGN2_ADOPTION !== 'yes') throw new Error('Set APPLY_CAMPAIGN2_ADOPTION=yes after reviewing the exact plan');
+  const planned = JSON.parse(fs.readFileSync(env.PLAN_PATH, 'utf8'));
+  for (const item of planned.adoptions) {
+    const fields = Object.keys(item.patch);
+    if (fields.some(field => !ADOPTED_FIELDS.includes(field))) throw new Error(`Plan patch for ${item.leadId} touches ${fields.join(', ')}`);
+  }
+  const corpus = await readOutreachCorpus({ env });
+  if (!corpus.ok) throw new Error(`Canonical read failed: ${corpus.reason}`);
+  const byId = new Map(corpus.leads.map(lead => [lead.id, lead]));
+  for (const item of planned.adoptions) {
+    const lead = byId.get(item.leadId);
+    if (!lead || lead.campaign !== STAFFING_CAMPAIGN_2.name) throw new Error(`Planned lead ${item.leadId} is no longer in Campaign 2`);
+    for (const [field, value] of Object.entries(item.expectedState)) {
+      if (String(lead[field] || '').trim() !== String(value)) throw new Error(`Lead ${item.leadId} changed since the plan (${field})`);
+    }
+    if (!neverSent(lead) || String(lead.senderInboxId || '').trim()) throw new Error(`Lead ${item.leadId} has been routed or contacted`);
+  }
+  const { sheetsClient, rows } = await sheetRows(env);
+  for (const item of planned.adoptions) {
+    if ((rows.get(item.leadId) || [])[0] !== item.row) throw new Error(`ColdEmail row moved for ${item.leadId}`);
+  }
+  const result = await applyLeadChanges(planned.adoptions.map(item => ({
+    leadId: item.leadId, patch: item.patch, row: item.row, expectedState: item.expectedState,
+  })), { sheetsClient, spreadsheetId: env.SPREADSHEET_ID, env });
+  const report = { appliedAt: new Date().toISOString(), summary: result.summary,
+    outcomes: result.results.map(row => ({ leadId: row.leadId, status: row.status, reason: row.reason, mirrored: row.mirrored })) };
+  fs.writeFileSync(env.APPLY_REPORT_PATH, JSON.stringify(report, null, 2));
+  const failed = report.outcomes.filter(row => !['succeeded', 'unchanged'].includes(row.status) || (row.status === 'succeeded' && !row.mirrored));
+  console.log(JSON.stringify({ appliedAt: report.appliedAt, summary: report.summary, notAppliedOrUnmirrored: failed.length }));
+  if (failed.length) process.exitCode = 1;
+}
+
 if (require.main === module) {
   const env = { ...process.env, SUPABASE_OUTREACH_MODE: 'primary', SUPABASE_OUTREACH_WRITES: 'supabase' };
-  const run = { apply, preview, hold: holdCleared }[env.MODE] || plan;
+  const run = { apply, preview, hold: holdCleared, 'adopt-plan': adoptPlan, adopt }[env.MODE] || plan;
   run(env).catch(error => { console.error(error.message); process.exitCode = 1; });
 }
 

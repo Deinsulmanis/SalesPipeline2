@@ -26,11 +26,20 @@
  * digest that does not match reads as `staffing_v2_profile_integrity_failed`.
  * It is never repaired or reconstructed: V2 Touch 1 refuses to render and the
  * lead is held.
+ *
+ * Tiers (schema v2, 2026-10-21): every V2 lead is ICP Tier A or Tier B inside
+ * the same campaign. `icp_tier`, `lead_tag` and `copy_variant` travel together
+ * (TIER_RULES). Tier A carries roles + market for its Touch 1; Tier B carries
+ * no roles or market, only its verified `tier_b_positioning` and evidence.
+ * `icp_lane` is the sourcing skill's separate staffing/recruiting lane and is
+ * not the tier.
  */
 
 const crypto = require('node:crypto');
 
-const SCHEMA = 'staffing_v2_lead_profile_v1';
+// v2 adds the tier fields. No v1 profile was ever stored; one would read as
+// the wrong schema and be held, never repaired or treated as V1.
+const SCHEMA = 'staffing_v2_lead_profile_v2';
 // The largest profile the import stores, and the largest a read accepts. A full
 // V2_READY record serializes to about 2,600 characters, so 30,000 leaves ten
 // times that for long evidence and source text. It stays well under the 50,000
@@ -40,8 +49,21 @@ const SCHEMA = 'staffing_v2_lead_profile_v1';
 const MAX_STAFFING_V2_PROFILE_CHARS = 30000;
 const PROFILE_INTEGRITY_FAILED = 'staffing_v2_profile_integrity_failed';
 // Present in every serialized profile (it is written first), so even a profile
-// that has since been corrupted still identifies its lead as V2.
-const SCHEMA_MARKER = `"schema":"${SCHEMA}"`;
+// that has since been corrupted still identifies its lead as V2. It names the
+// schema family, not one version, so a profile of any version marks its lead V2.
+const SCHEMA_MARKER = '"schema":"staffing_v2_lead_profile_v';
+
+// Each tier's lead tag and copy variant. A record's three tier fields must be
+// exactly one row of this table.
+const TIER_RULES = Object.freeze({
+  TIER_A: Object.freeze({ lead_tag: 'ICP_TIER_A', copy_variant: 'STAFFING_V2_TIER_A_SPECIFIC' }),
+  TIER_B: Object.freeze({ lead_tag: 'ICP_TIER_B', copy_variant: 'STAFFING_V2_TIER_B_INDUSTRIAL' }),
+});
+const TIER_B_FIELDS = Object.freeze(['tier_b_confidence', 'tier_b_positioning', 'tier_b_specialty',
+  'tier_b_evidence_url', 'tier_b_evidence_summary']);
+// What Tier B never carries: Touch 1's roles + market and their evidence.
+const TIER_A_COPY_FIELDS = Object.freeze(['roles', 'market', 'roles_evidence', 'market_evidence',
+  'role_market_evidence_source']);
 
 const ENUMS = Object.freeze({
   icp_lane: Object.freeze(['TIER_A_STAFFING', 'TIER_B_RECRUITING']),
@@ -61,7 +83,12 @@ const ENUMS = Object.freeze({
     'WAREHOUSE_LOGISTICS_LIGHT_INDUSTRIAL', 'OTHER_INDUSTRIAL']),
   specialty_tags: Object.freeze(['OIL_GAS', 'MARINE_SHIPYARD', 'SHUTDOWN_TURNAROUND']),
   company_fit_status: Object.freeze(['ICP_CONFIRMED', 'ICP_REVIEW', 'ICP_REJECT']),
-  copy_readiness_status: Object.freeze(['ROLE_MARKET_VERIFIED', 'ROLE_MARKET_INCOMPLETE', 'ROLE_MARKET_FAILED']),
+  copy_readiness_status: Object.freeze(['ROLE_MARKET_VERIFIED', 'ROLE_MARKET_INCOMPLETE', 'ROLE_MARKET_FAILED',
+    'TIER_B_POSITIONING_VERIFIED']),
+  icp_tier: Object.freeze(Object.keys(TIER_RULES)),
+  lead_tag: Object.freeze(Object.values(TIER_RULES).map(rule => rule.lead_tag)),
+  copy_variant: Object.freeze(Object.values(TIER_RULES).map(rule => rule.copy_variant)),
+  tier_b_confidence: Object.freeze(['HIGH', 'MEDIUM']),
   buyer_status: Object.freeze(['BUYER_CONFIRMED', 'BUYER_REVIEW', 'BUYER_REJECT']),
   email_readiness_status: Object.freeze(['EMAIL_READY', 'EMAIL_CATCH_ALL', 'EMAIL_HOLD', 'EMAIL_REJECT']),
   v2_status: Object.freeze(['V2_READY', 'V2_REVIEW', 'V2_REJECT']),
@@ -81,6 +108,10 @@ const FIELD_TYPES = Object.freeze({
   city: 'text', state: 'text', country: 'text', employee_count: 'int',
   // campaign
   campaign_id: 'text', template_id: 'text',
+  // tier
+  icp_tier: 'text', lead_tag: 'text', copy_variant: 'text',
+  tier_b_confidence: 'text', tier_b_positioning: 'text', tier_b_specialty: 'text',
+  tier_b_evidence_url: 'text', tier_b_evidence_summary: 'text',
   // buyer
   buyer_cohort: 'text', buyer_priority: 'text', buyer_family: 'text', buyer_evidence: 'text',
   alternate_buyers: 'list', buyer_assignment_method: 'text', buyer_randomization_bucket: 'text',
@@ -215,8 +246,22 @@ function readStaffingV2Profile(lead = {}) {
   if (mistyped.length || ['import_schema', 'import_key'].some(key => !isText(parsed[key]))) {
     return failed(`profile has wrongly typed field(s): ${mistyped.slice(0, 5).join(', ') || 'import identity'}`);
   }
+  // The tier, its tag and its copy variant are one row of TIER_RULES, or the
+  // profile is not what the import sealed.
+  const rule = TIER_RULES[parsed.icp_tier];
+  if (!rule || parsed.lead_tag !== rule.lead_tag || parsed.copy_variant !== rule.copy_variant) {
+    return failed('profile has an inconsistent icp_tier, lead_tag and copy_variant');
+  }
   const roles = Array.isArray(parsed.roles) ? parsed.roles.map(text).filter(Boolean) : [];
   const market = text(parsed.market);
+  if (parsed.icp_tier === 'TIER_B') {
+    if (roles.length || TIER_A_COPY_FIELDS.some(field => field !== 'roles' && text(parsed[field]))) {
+      return failed('a Tier B profile carries roles, market or their evidence');
+    }
+    if (!text(parsed.tier_b_positioning)) return { ok: false, reason: 'staffing V2 Tier B profile has no tier_b_positioning' };
+    return { ok: true, profile: { ...parsed, roles, market } };
+  }
+  if (TIER_B_FIELDS.some(field => text(parsed[field]))) return failed('a Tier A profile carries Tier B fields');
   if (!roles.length) return { ok: false, reason: 'staffing V2 profile has no roles' };
   if (!market) return { ok: false, reason: 'staffing V2 profile has no market' };
   return { ok: true, profile: { ...parsed, roles, market } };
@@ -234,7 +279,7 @@ function staffingV2RolesText(roles = []) {
 
 module.exports = {
   SCHEMA, SCHEMA_MARKER, MAX_STAFFING_V2_PROFILE_CHARS, PROFILE_INTEGRITY_FAILED,
-  DIGESTED_KEYS, ENUMS, FIELD_TYPES, FIELDS,
+  DIGESTED_KEYS, ENUMS, FIELD_TYPES, FIELDS, TIER_RULES, TIER_B_FIELDS, TIER_A_COPY_FIELDS,
   normalizeRecord, profileDigest, serializeStaffingV2Profile, hasStaffingV2ProfileMarker, readStaffingV2Profile,
   staffingV2RolesText, toList, toInt,
 };

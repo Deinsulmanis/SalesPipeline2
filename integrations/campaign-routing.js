@@ -2,7 +2,7 @@
 
 const { CAMPAIGN_VERSIONS, CAMPAIGN_FAMILY, resolveLeadFamily } = require('./campaign-versions');
 const { staffingSendBlockReason, isStaffingLead } = require('./staffing-launch-gate');
-const { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_V2, isStaffingCampaignVersionId, staffingV2SendBlock } = require('./staffing-campaign');
+const { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_2, STAFFING_CAMPAIGN_V2, isStaffingCampaignVersionId, staffingV2SendBlock } = require('./staffing-campaign');
 const { hasStaffingHoldMarker } = require('./staffing-hold');
 const { isStaffingOnlySender } = require('./gmail-inbox-registry');
 const { getClient } = require('./clients/registry');
@@ -15,6 +15,9 @@ const EMAIL_TEMPLATES = Object.freeze([
   Object.freeze({ id: STAFFING_CAMPAIGN.emailTemplateId, name: STAFFING_CAMPAIGN.name,
     niche: STAFFING_CAMPAIGN.niche, ready: STAFFING_CAMPAIGN.ready, sequenceSteps: 3,
     reason: '' }),
+  // Campaign 2 sends V2's copy from each lead's sealed profile (staffing-campaign.js).
+  Object.freeze({ id: STAFFING_CAMPAIGN_2.emailTemplateId, name: STAFFING_CAMPAIGN_2.name,
+    niche: STAFFING_CAMPAIGN_2.niche, ready: STAFFING_CAMPAIGN_2.ready, sequenceSteps: 3, reason: '' }),
   // Staffing V2's copy: ready only once V2 is live (staffing-campaign.js).
   Object.freeze({ id: STAFFING_CAMPAIGN_V2.emailTemplateId, name: STAFFING_CAMPAIGN_V2.name,
     niche: STAFFING_CAMPAIGN_V2.niche, sequenceSteps: 3,

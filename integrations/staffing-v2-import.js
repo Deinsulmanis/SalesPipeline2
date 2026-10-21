@@ -12,7 +12,10 @@
  *  - requires an explicit V2 campaign + template identity on the request and on
  *    every record, and refuses V1's (or anything else) outright;
  *  - accepts only the sourcing system's finished `V2_READY` records, with every
- *    gate passed, structured roles + market, and a buyer cohort the run allowed;
+ *    gate passed, an explicit ICP tier with its lead tag and copy variant, and a
+ *    buyer cohort the run allowed. Tier A carries structured roles + market and
+ *    its ICP scores; Tier B carries its verified positioning and no roles,
+ *    market or Tier A scores;
  *  - checks every address against suppression and every client's leads, and
  *    every company/domain/Apollo identity against ScaleLab's existing leads;
  *  - writes Import-stage leads that carry their full V2 identity (campaign,
@@ -35,11 +38,12 @@ const { resolveLeadClient } = require('./clients/ownership');
 const { DEFAULT_CLIENT_ID } = require('./clients/registry');
 const { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_V2 } = require('./staffing-campaign');
 const {
-  ENUMS, PROFILE_INTEGRITY_FAILED, normalizeRecord, serializeStaffingV2Profile, hasStaffingV2ProfileMarker,
-  readStaffingV2Profile,
+  ENUMS, PROFILE_INTEGRITY_FAILED, TIER_RULES, TIER_B_FIELDS, TIER_A_COPY_FIELDS, normalizeRecord,
+  serializeStaffingV2Profile, hasStaffingV2ProfileMarker, readStaffingV2Profile,
 } = require('./staffing-v2-profile');
 
-const IMPORT_SCHEMA = 'staffing_v2_import_v1';
+// v2: every record names its ICP tier, lead tag and copy variant (Tier A / Tier B).
+const IMPORT_SCHEMA = 'staffing_v2_import_v2';
 const V2_ID = STAFFING_CAMPAIGN_V2.id;
 const V2_TEMPLATE = STAFFING_CAMPAIGN_V2.emailTemplateId;
 const MAX_RECORDS = 500;
@@ -81,6 +85,14 @@ const companyDomains = (profile, email) => workDomains([profile.company_domain, 
 // braces, markup or links.
 const UNSAFE_TEXT = /[\r\n<>]|{{|}}|https?:\/\/|www\./i;
 const DOMAIN = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/;
+// Tier B Touch 1 merges the positioning as written: "Saw {{company}} handles
+// {{tier_b_positioning}}." So it is a short lower-case phrase that ends in a
+// word (the template adds the full stop) and never repeats a word back to back.
+const TIER_B_POSITIONING = /^[a-z0-9][a-z0-9 ,&'/-]*[a-z0-9]$/;
+const REPEATED_WORD = /\b(\w+)\s+\1\b/i;
+// The Tier A 100-point ICP rubric (lane, band and every score but the email's).
+const TIER_A_SCORING = ['icp_lane', 'icp_priority_band', 'staffing_model_score', 'vertical_score', 'buyer_score',
+  'evidence_score', 'economics_score', 'company_profile_score', 'pre_reveal_subtotal', 'total_icp_score'];
 
 function importKeyFor(email, apolloPersonId) {
   return crypto.createHash('sha256').update(`${V2_ID}|${normalizeEmail(email)}|${text(apolloPersonId)}`).digest('hex').slice(0, 32);
@@ -147,17 +159,47 @@ function recordProblem(profile, unknown, run) {
     return refuse('invalid_domain', 'company_domain is not a domain');
   }
   if (profile.country !== 'US') return refuse('not_us', 'the initial V2 campaign is United States only');
-  // Roles + market, structured. No fallback, no inference.
-  if (!profile.roles.length) return refuse('roles_missing', 'roles are required for V2 Touch 1');
-  if (profile.roles.length > 3 || profile.roles.some(role => role.length > 60 || UNSAFE_TEXT.test(role))
-    || (profile.roles.length > 1 && profile.roles.some(role => / and /i.test(role)))) {
-    return refuse('roles_invalid', 'roles must be 1–3 short worker roles');
+  // ICP tier: its tier, lead tag and copy variant are one row of TIER_RULES.
+  const tierRule = TIER_RULES[profile.icp_tier];
+  if (!tierRule) return refuse('invalid_tier', `icp_tier must be ${ENUMS.icp_tier.join(' or ')}`);
+  if (!ENUMS.copy_variant.includes(profile.copy_variant)) return refuse('invalid_copy_variant', `copy_variant must be ${ENUMS.copy_variant.join(' or ')}`);
+  if (profile.copy_variant !== tierRule.copy_variant) {
+    return refuse('copy_variant_mismatch', `${profile.icp_tier} uses ${tierRule.copy_variant}, not ${profile.copy_variant}`);
   }
-  if (!profile.market) return refuse('market_missing', 'market is required for V2 Touch 1');
-  if (profile.market.length > 120 || UNSAFE_TEXT.test(profile.market)) return refuse('market_invalid', 'market must be a short employer description');
-  // The stored proof that the agency places these roles for that market.
-  if (!profile.roles_evidence || !profile.market_evidence || !profile.role_market_evidence_source) {
-    return refuse('evidence_missing', 'roles_evidence, market_evidence and role_market_evidence_source are required');
+  if (profile.lead_tag !== tierRule.lead_tag) return refuse('invalid_lead_tag', `${profile.icp_tier} is tagged ${tierRule.lead_tag}`);
+  const tierB = profile.icp_tier === 'TIER_B';
+  if (tierB) {
+    // Tier B's Touch 1 is its verified positioning. It has no roles or market,
+    // and none is ever inferred for it.
+    if (TIER_A_COPY_FIELDS.some(field => (Array.isArray(profile[field]) ? profile[field].length : profile[field]))) {
+      return refuse('tier_b_roles_market_refused', 'Tier B carries no roles, market or role/market evidence');
+    }
+    if (!profile.tier_b_positioning) return refuse('tier_b_positioning_missing', 'tier_b_positioning is required for Tier B Touch 1');
+    if (profile.tier_b_positioning.length > 80 || UNSAFE_TEXT.test(profile.tier_b_positioning)
+      || !TIER_B_POSITIONING.test(profile.tier_b_positioning) || REPEATED_WORD.test(profile.tier_b_positioning)) {
+      return refuse('tier_b_positioning_invalid', 'tier_b_positioning must be a short lower-case phrase such as "light-industrial staffing"');
+    }
+    if (profile.tier_b_confidence && !ENUMS.tier_b_confidence.includes(profile.tier_b_confidence)) {
+      return refuse('invalid_tier_b_field', 'tier_b_confidence must be HIGH or MEDIUM');
+    }
+    if (profile.tier_b_specialty && !/^[A-Z][A-Z_]*$/.test(profile.tier_b_specialty)) return refuse('invalid_tier_b_field', 'tier_b_specialty must be an upper-case tag');
+    if (profile.tier_b_evidence_url && !/^https?:\/\/\S+$/.test(profile.tier_b_evidence_url)) {
+      return refuse('invalid_tier_b_field', 'tier_b_evidence_url must be an http(s) URL');
+    }
+  } else {
+    if (TIER_B_FIELDS.some(field => profile[field])) return refuse('tier_b_fields_on_tier_a', 'a Tier A record carries no Tier B fields');
+    // Roles + market, structured. No fallback, no inference.
+    if (!profile.roles.length) return refuse('roles_missing', 'roles are required for V2 Touch 1');
+    if (profile.roles.length > 3 || profile.roles.some(role => role.length > 60 || UNSAFE_TEXT.test(role))
+      || (profile.roles.length > 1 && profile.roles.some(role => / and /i.test(role)))) {
+      return refuse('roles_invalid', 'roles must be 1–3 short worker roles');
+    }
+    if (!profile.market) return refuse('market_missing', 'market is required for V2 Touch 1');
+    if (profile.market.length > 120 || UNSAFE_TEXT.test(profile.market)) return refuse('market_invalid', 'market must be a short employer description');
+    // The stored proof that the agency places these roles for that market.
+    if (!profile.roles_evidence || !profile.market_evidence || !profile.role_market_evidence_source) {
+      return refuse('evidence_missing', 'roles_evidence, market_evidence and role_market_evidence_source are required');
+    }
   }
   // Only finished, ready records.
   if (profile.v2_status !== 'V2_READY') return refuse('not_v2_ready', `v2_status is ${profile.v2_status || '(blank)'}; only V2_READY imports`);
@@ -165,17 +207,29 @@ function recordProblem(profile, unknown, run) {
     if (profile[gate] !== 'PASS') return refuse('gate_not_passed', `${gate} is ${profile[gate] || '(blank)'}`);
   }
   if (profile.hard_gate_failures.length) return refuse('gate_not_passed', 'hard_gate_failures is not empty');
-  const statuses = { company_fit_status: 'ICP_CONFIRMED', copy_readiness_status: 'ROLE_MARKET_VERIFIED', buyer_status: 'BUYER_CONFIRMED' };
+  const statuses = { company_fit_status: 'ICP_CONFIRMED',
+    copy_readiness_status: tierB ? 'TIER_B_POSITIONING_VERIFIED' : 'ROLE_MARKET_VERIFIED', buyer_status: 'BUYER_CONFIRMED' };
   for (const [field, expected] of Object.entries(statuses)) {
     if (profile[field] !== expected) return refuse('status_not_ready', `${field} is ${profile[field] || '(blank)'}`);
   }
   if (profile.duplicate_status !== 'CLEAR') return refuse('declared_duplicate', `duplicate_status is ${profile.duplicate_status || '(blank)'}`);
   if (profile.suppression_status !== 'CLEAR') return refuse('declared_suppressed', `suppression_status is ${profile.suppression_status || '(blank)'}`);
-  // ICP lane, band and enumerated attributes.
-  if (!ENUMS.icp_lane.includes(profile.icp_lane)) return refuse('invalid_lane', 'icp_lane must be TIER_A_STAFFING or TIER_B_RECRUITING');
-  if (!['PRIORITY_A', 'PRIORITY_B'].includes(profile.icp_priority_band)) return refuse('invalid_band', `icp_priority_band ${profile.icp_priority_band || '(blank)'} is not importable`);
-  if (!ENUMS.staffing_model.includes(profile.staffing_model) || !ENUMS.vertical.includes(profile.vertical) || profile.vertical === 'NOT_APPROVED') {
-    return refuse('invalid_icp', 'staffing_model and vertical must be approved V2 values');
+  // ICP lane, band and enumerated attributes. Tier B is not scored on Tier A's
+  // rubric: its lane, band and ICP scores stay blank, never estimated.
+  if (tierB) {
+    if (TIER_A_SCORING.some(field => profile[field] !== null && profile[field] !== '')) {
+      return refuse('tier_b_scored', 'Tier B leaves icp_lane, icp_priority_band and the Tier A ICP scores blank');
+    }
+    if ((profile.staffing_model && !ENUMS.staffing_model.includes(profile.staffing_model))
+      || (profile.vertical && (!ENUMS.vertical.includes(profile.vertical) || profile.vertical === 'NOT_APPROVED'))) {
+      return refuse('invalid_icp', 'staffing_model and vertical must be approved V2 values when given');
+    }
+  } else {
+    if (!ENUMS.icp_lane.includes(profile.icp_lane)) return refuse('invalid_lane', 'icp_lane must be TIER_A_STAFFING or TIER_B_RECRUITING');
+    if (!['PRIORITY_A', 'PRIORITY_B'].includes(profile.icp_priority_band)) return refuse('invalid_band', `icp_priority_band ${profile.icp_priority_band || '(blank)'} is not importable`);
+    if (!ENUMS.staffing_model.includes(profile.staffing_model) || !ENUMS.vertical.includes(profile.vertical) || profile.vertical === 'NOT_APPROVED') {
+      return refuse('invalid_icp', 'staffing_model and vertical must be approved V2 values');
+    }
   }
   if (profile.vertical_sublane && !ENUMS.vertical_sublane.includes(profile.vertical_sublane)) return refuse('invalid_icp', 'vertical_sublane is not a V2 value');
   if (profile.specialty_tags.some(tag => !ENUMS.specialty_tags.includes(tag))) return refuse('invalid_icp', 'specialty_tags contains an unknown tag');
@@ -209,18 +263,24 @@ function recordProblem(profile, unknown, run) {
   if (profile.email_readiness_status !== expectedReadiness) return refuse('email_not_ready', `email_readiness_status must be ${expectedReadiness}`);
   if (profile.reveal_result !== 'MATCHED_EMAIL') return refuse('email_not_ready', 'reveal_result must be MATCHED_EMAIL');
   if (![0, 1].includes(profile.reveal_credit_cost)) return refuse('invalid_provenance', 'reveal_credit_cost must be 0 or 1');
-  // Scores: the locked anchors, consistent sums and band.
-  for (const [field, anchors] of Object.entries(SCORE_ANCHORS)) {
-    if (!anchors.includes(profile[field])) return refuse('invalid_score', `${field} ${profile[field] ?? '(blank)'} is not a V2_READY anchor`);
+  // Scores: the locked anchors, consistent sums and band. Tier B carries only
+  // the email score.
+  const emailScore = profile.catch_all_status === 'Y' ? 3 : 5;
+  if (tierB) {
+    if (profile.email_quality_score !== emailScore) return refuse('invalid_score', 'email_quality_score does not match catch_all_status');
+  } else {
+    for (const [field, anchors] of Object.entries(SCORE_ANCHORS)) {
+      if (!anchors.includes(profile[field])) return refuse('invalid_score', `${field} ${profile[field] ?? '(blank)'} is not a V2_READY anchor`);
+    }
+    if (profile.buyer_score !== rules.buyerScore) return refuse('invalid_score', `buyer_score must be ${rules.buyerScore} for ${profile.buyer_cohort}`);
+    if (profile.email_quality_score !== emailScore) return refuse('invalid_score', 'email_quality_score does not match catch_all_status');
+    const subtotal = PRE_REVEAL_SCORES.reduce((sum, field) => sum + profile[field], 0);
+    if (profile.pre_reveal_subtotal !== subtotal) return refuse('invalid_score', 'pre_reveal_subtotal is not the sum of the pre-reveal scores');
+    if (subtotal < 70) return refuse('invalid_score', 'pre_reveal_subtotal is below 70');
+    if (profile.total_icp_score !== subtotal + profile.email_quality_score) return refuse('invalid_score', 'total_icp_score is not the sum of all scores');
+    const band = profile.total_icp_score >= 85 ? 'PRIORITY_A' : profile.total_icp_score >= 75 ? 'PRIORITY_B' : null;
+    if (band !== profile.icp_priority_band) return refuse('invalid_score', `total ${profile.total_icp_score} does not match ${profile.icp_priority_band}`);
   }
-  if (profile.buyer_score !== rules.buyerScore) return refuse('invalid_score', `buyer_score must be ${rules.buyerScore} for ${profile.buyer_cohort}`);
-  if (profile.email_quality_score !== (profile.catch_all_status === 'Y' ? 3 : 5)) return refuse('invalid_score', 'email_quality_score does not match catch_all_status');
-  const subtotal = PRE_REVEAL_SCORES.reduce((sum, field) => sum + profile[field], 0);
-  if (profile.pre_reveal_subtotal !== subtotal) return refuse('invalid_score', 'pre_reveal_subtotal is not the sum of the pre-reveal scores');
-  if (subtotal < 70) return refuse('invalid_score', 'pre_reveal_subtotal is below 70');
-  if (profile.total_icp_score !== subtotal + profile.email_quality_score) return refuse('invalid_score', 'total_icp_score is not the sum of all scores');
-  const band = profile.total_icp_score >= 85 ? 'PRIORITY_A' : profile.total_icp_score >= 75 ? 'PRIORITY_B' : null;
-  if (band !== profile.icp_priority_band) return refuse('invalid_score', `total ${profile.total_icp_score} does not match ${profile.icp_priority_band}`);
   // Run-level restrictions.
   if (Number.isNaN(profile.employee_count) || (profile.employee_count !== null && profile.employee_count < 0)) {
     return refuse('invalid_icp', 'employee_count must be a whole number or blank');

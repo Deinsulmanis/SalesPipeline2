@@ -25,17 +25,17 @@ const CAMPAIGN_VERSIONS = Object.freeze({
     get activatedAt() { return staffingLaunchState().activatedAt; },
     meaning: 'Approved employer-meeting copy and personalization. Queueing is permitted; delivery requires separate explicit staffing activation.',
   }),
-  // Campaign 2 sends V1's copy, subjects, cadence and offer unchanged, so its
-  // copy versions are V1's; only the campaign version tells the cohorts apart.
+  // Campaign 2 sends V2's locked copy (Tier A / Tier B Touch 1, V2 Touches 2
+  // and 3), so its copy versions are V2's; the campaign version tells it apart.
   [STAFFING_CAMPAIGN_2.id]: Object.freeze({
     id: STAFFING_CAMPAIGN_2.id, label: STAFFING_CAMPAIGN_2.name, niche: STAFFING_CAMPAIGN_2.niche,
     emailTemplateId: STAFFING_CAMPAIGN_2.emailTemplateId, family: 'industrial_staffing',
-    copyVersion: 'staffing_locked_v1', followUpCopyVersion: 'industrial_staffing_follow_up_v1',
+    copyVersion: 'staffing_locked_v2', followUpCopyVersion: 'industrial_staffing_follow_up_v2',
     personalizationStrategy: STAFFING_CAMPAIGN_2.personalizationStrategy,
     subjectStrategy: 'employer_accounts_locked_v1', offerVersion: 'employer_meetings_performance_v1',
     get status() { return staffingCampaign2Status(); },
     get activatedAt() { return staffingCampaign2Status() === 'active' ? STAFFING_CAMPAIGN_2_SEND_NOT_BEFORE : null; },
-    meaning: 'Staffing Outreach Campaign 2: a new cohort on the Industrial Staffing Agency (V1) locked copy, subjects, cadence and offer, attributed separately. No touch may send before 2026-10-23 07:00 America/Vancouver.',
+    meaning: 'Staffing Outreach Campaign 2: the Industrial Staffing V2 locked copy (Tier A roles-and-market or Tier B positioning Touch 1, V2 Touches 2 and 3, V2 footer), V1 subjects, cadence and offer, attributed separately. No touch may send before 2026-10-23 07:00 America/Vancouver.',
   }),
   // V2 has its own copy for every touch: Email 1 records staffing_locked_v2,
   // Emails 2 and 3 industrial_staffing_follow_up_v2. Same subjects, cadence and
