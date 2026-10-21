@@ -124,8 +124,11 @@ test('personalization: fails closed — no profile, review, stale evidence, or m
   assert.throws(() => renderClientLeadEmail(joleLead({ campaign_notes: '' }), 1, { env: ENV, now: NOW }), /research profile/);
   assert.throws(() => renderClientLeadEmail(joleLead({}, { verified_role: 'Shop Helper', secondary_role: '' }), 1, { env: ENV, now: NOW }), /needs review/);
   const stale = Date.parse('2026-12-01T15:00:00Z');
-  assert.throws(() => renderClientLeadEmail(joleLead(), 1, { env: ENV, now: stale }), /older than 45 days/);
-  assert.equal(clientPersonalizationState(joleLead(), { env: ENV, now: stale }).status, 'stale');
+  // The campaign's 45-day evidence gate still governs a v2 thread (v4 applies its own 30-day rule per mode).
+  const v2Thread = joleLead({ emailStep: '1', emailStatus: 'emailed', lastEmailedAt: '2026-10-19T12:00:00.000Z' });
+  const v2Sent = [{ eventType: 'initial_email_sent', sourceLeadId: v2Thread.id, occurredAt: '2026-10-19T12:00:00.000Z', metadata: JSON.stringify({ copyVersion: 'jole_industrial_employer_v2' }) }];
+  assert.throws(() => renderClientLeadEmail(v2Thread, 2, { env: ENV, now: stale, activities: v2Sent }), /older than 45 days/);
+  assert.equal(clientPersonalizationState(v2Thread, { env: ENV, now: stale }).status, 'stale');
   // Only Jole's variables: ScaleLab's COMMERCIAL_MAILING_ADDRESS never substitutes.
   assert.throws(() => renderClientLeadEmail(joleLead(), 1, { env: { COMMERCIAL_MAILING_ADDRESS: ENV.COMMERCIAL_MAILING_ADDRESS }, now: NOW }), /mailing address/);
   assert.equal(clientPersonalizationState(joleLead(), { env: {}, now: NOW }).status, 'config_missing');

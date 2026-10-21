@@ -229,7 +229,9 @@ test('11–12. only personalization-ready, fresh leads render; needs-review lead
   assert.equal(clientPersonalizationState(review, { env: MONDAY_ENV, now: MONDAY_0900_CT }).status, 'needs_review');
   assert.throws(() => renderClientLeadEmail(review, 1, { env: MONDAY_ENV, now: MONDAY_0900_CT }), /needs review/);
   // The live Oct 7 verification stamp is 12 days old on Monday; the gate still bites when it ages out.
-  assert.throws(() => renderClientLeadEmail(joleLead(7), 1, { env: MONDAY_ENV, now: Date.parse('2026-10-07') + 46 * DAY }), /older than/);
+  // The 45-day gate still governs a thread that began on v2 (v4 applies its own 30-day rule per mode).
+  const v2Began7 = [{ eventType: 'initial_email_sent', sourceLeadId: 'JL7', occurredAt: '2026-10-19T14:00:00.000Z', metadata: JSON.stringify({ copyVersion: 'jole_industrial_employer_v2' }) }];
+  assert.throws(() => renderClientLeadEmail(joleLead(7), 2, { env: MONDAY_ENV, now: Date.parse('2026-10-07') + 46 * DAY, activities: v2Began7 }), /older than/);
   // The refill never assigns an Import / needs-review lead to any inbox.
   const plan = planSenderRebalance({ leads: [review, ...READY.map((id, i) => joleLead(10 + i, { senderInboxId: id }))],
     activities: [], senders: configuredSenders(RAMP_ENV), horizon: MONDAY_0900_CT, env: RAMP_ENV });

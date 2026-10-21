@@ -12,7 +12,9 @@ function classifyFixtureLeadsExact(extra = {}) {
     ...extra,
     '*': lead => {
       const personalization = readLeadProfile(lead)?.personalization || {};
-      return { mode: 'exact', role: (personalization.roles || [])[0] || null, location: personalization.location || null, reason: 'test fixture' };
+      // Checked "now", so the 30-day freshness rule keeps fixture leads exact whenever the suite runs.
+      return { mode: 'exact', role: (personalization.roles || [])[0] || null, location: personalization.location || null,
+        evidenceCheckedAt: new Date().toISOString(), reason: 'test fixture' };
     },
   });
 }

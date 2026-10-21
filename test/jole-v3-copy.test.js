@@ -194,7 +194,7 @@ test('4. held Jole leads stay held: review, stale evidence and MANUAL HOLD refus
   assert.equal(clientPersonalizationState(review, { env: ENV, now: NOW }).status, 'needs_review');
   assert.equal(queueEligibility(review, { leads: [review], env: ENV }).ok, false);
   const stale = joleLead(21);
-  assert.throws(() => renderClientLeadEmail(stale, 1, { env: ENV, now: Date.parse('2026-12-31T14:00:00Z'), activities: [] }), /older than 45 days/);
+  assert.throws(() => renderClientLeadEmail(stale, 1, { env: ENV, now: Date.parse('2026-12-31T14:00:00Z'), activities: v3Began(stale) }), /older than 45 days/);
   const held = joleLead(22, { notes: '[MANUAL HOLD] operator review' });
   const verdict = queueEligibility(held, { leads: [held], env: ENV });
   assert.equal(verdict.ok, false);

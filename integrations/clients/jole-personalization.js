@@ -14,6 +14,12 @@
  * followUpHolds names already-contacted leads (any copy version) whose next
  * touch would repeat a claim the audit found false; their follow-ups never send.
  *
+ * Freshness: exact and role_only claim current hiring, so their evidence
+ * (evidenceCheckedAt: the latest valid check of the cited posting) must be at
+ * most 30 days old when Touch 1 renders. Older evidence fails downward to
+ * general_craft, which claims no current opening. A thread already started
+ * keeps its recorded mode on Touches 2 and 3, whose wording is conditional.
+ *
  * Thread consistency: a v4 send records its mode, role and site in the ledger
  * (reservation and send metadata). Every later touch of that lead uses the
  * values its FIRST v4 outbound row recorded, so a later classification edit
@@ -26,6 +32,8 @@ const DATA = require('./data/jole-personalization-v4.json');
 const { COPY_VERSION_V4, SENDABLE_MODES, PERSONALIZATION_MODES } = require('./jole-copy');
 
 const LEADS = Object.freeze(DATA.leads || {});
+const FRESHNESS_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const FOLLOW_UP_HOLDS = Object.freeze(DATA.followUpHolds || {});
 
 const OUTBOUND_EVIDENCE = /(?:email_sent|follow_up_sent|sequence_step_sent|booking_link_sent|human_response_sent|send_reserved|send_uncertain)/;
@@ -74,17 +82,28 @@ function pinnedFromLedger(lead, activities) {
  * The personalization a v4 render of this lead must use:
  * { mode, role, location, secondaryRole, reason, source }.
  */
-function jolePersonalizationFor(lead = {}, activities = []) {
+/** Is this entry's current-hiring evidence at most 30 days old at `now`? */
+function evidenceFresh(entry, now = Date.now()) {
+  const checked = Date.parse(entry?.evidenceCheckedAt || '');
+  return Number.isFinite(checked) && now - checked <= FRESHNESS_DAYS * DAY_MS;
+}
+
+function jolePersonalizationFor(lead = {}, activities = [], { now = Date.now() } = {}) {
   const pinned = pinnedFromLedger(lead, activities);
   if (pinned) return pinned;
   const entry = joleClassificationFor(lead);
   if (!entry) return { mode: 'hold', role: null, location: null, secondaryRole: null, source: 'none', reason: 'not classified for Jole v4 personalization' };
+  // Fail downward: a current-hiring claim needs evidence checked within 30 days.
+  const stale = ['exact', 'role_only'].includes(entry.mode) && !evidenceFresh(entry, now);
+  const mode = stale ? 'general_craft' : entry.mode;
   return {
-    mode: entry.mode, role: entry.role || null, location: entry.location || null,
-    secondaryRole: entry.secondaryRole || null, source: 'classification', reason: entry.reason || '',
-    // Strings the lower modes must never print (the claims the audit could not support).
-    forbiddenRoles: entry.mode === 'general_craft' ? (entry.unsupportedRoles || []) : [],
-    forbiddenLocations: entry.mode === 'exact' ? [] : (entry.unsupportedLocations || []),
+    mode, role: ['exact', 'role_only'].includes(mode) ? entry.role || null : null,
+    location: mode === 'exact' ? entry.location || null : null,
+    secondaryRole: mode === 'exact' ? entry.secondaryRole || null : null, source: 'classification',
+    reason: stale ? `evidence checked ${entry.evidenceCheckedAt || 'never'} is older than ${FRESHNESS_DAYS} days; ${entry.mode} fell to general_craft` : entry.reason || '',
+    // Strings the lower modes must never print (the claims the evidence cannot support).
+    forbiddenRoles: mode === 'general_craft' ? [...new Set([...(entry.unsupportedRoles || []), entry.role].filter(Boolean))] : [],
+    forbiddenLocations: mode === 'exact' ? [] : [...new Set([...(entry.unsupportedLocations || []), entry.location].filter(Boolean))],
   };
 }
 
@@ -102,6 +121,6 @@ function joleFollowUpHold(lead = {}) {
 }
 
 module.exports = {
-  JOLE_PERSONALIZATION_DATA: DATA, joleClassificationFor, jolePersonalizationFor, joleSelectionHold, joleFollowUpHold,
+  JOLE_PERSONALIZATION_DATA: DATA, FRESHNESS_DAYS, evidenceFresh, joleClassificationFor, jolePersonalizationFor, joleSelectionHold, joleFollowUpHold,
   setJoleClassificationForTests,
 };

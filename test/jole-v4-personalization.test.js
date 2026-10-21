@@ -49,10 +49,11 @@ const reservation = (lead, meta, at = '2026-10-22T12:00:00.000Z') => ({
   eventType: 'ordinary_send_reserved', occurredAt: at, metadata: JSON.stringify({ leadId: lead.id, step: 1, ...meta }),
 });
 const CLASSIFIED = {
-  JV41: { mode: 'exact', role: 'Millwrights', location: 'Mont Belvieu, TX', reason: 'fixture' },
-  JV42: { mode: 'role_only', role: 'Millwrights', location: null, unsupportedLocations: ['Mont Belvieu, TX', 'Baytown, TX'], reason: 'fixture' },
+  JV41: { mode: 'exact', role: 'Millwrights', location: 'Mont Belvieu, TX', evidenceCheckedAt: '2026-10-15', unsupportedLocations: ['Mont Belvieu, TX'], unsupportedRoles: ['Millwrights', 'Millwright', 'Pipefitters'], reason: 'fixture' },
+  JV42: { mode: 'role_only', role: 'Millwrights', location: null, evidenceCheckedAt: '2026-10-05', unsupportedLocations: ['Mont Belvieu, TX', 'Baytown, TX'], unsupportedRoles: ['Millwrights', 'Millwright', 'Pipefitters'], reason: 'fixture' },
   JV43: { mode: 'general_craft', role: null, location: null, unsupportedLocations: ['Mont Belvieu, TX'], unsupportedRoles: ['Millwrights', 'Millwright', 'Pipefitters'], reason: 'fixture' },
   JV44: { mode: 'hold', role: null, location: null, reason: 'cited role is travel or non-site work' },
+  JV46: { mode: 'exact', role: 'Millwrights', location: 'Mont Belvieu, TX', evidenceCheckedAt: '2026-09-20', unsupportedLocations: ['Mont Belvieu, TX'], unsupportedRoles: ['Millwrights', 'Millwright', 'Pipefitters'], reason: 'fixture' },
   followUpHolds: { JV49: { reason: 'jole_industrial_employer_v2 thread: audit A; its next touch would repeat that claim' } },
 };
 const classified = fn => { setJoleClassificationForTests(CLASSIFIED); try { return fn(); } finally { setJoleClassificationForTests(null); } };
@@ -117,6 +118,29 @@ test('the mode guard refuses any claim its mode does not permit', () => {
   assert.throws(() => renderJoleEmployerStepV4({ step: 1, firstName: 'Pat', company: 'Acme', mailingAddress: ADDRESS, personalization: { mode: 'exact', role: 'Welders' } }), /location is missing|unsafe/);
 });
 
+// ── 30-day freshness ─────────────────────────────────────────────────────────
+test('exact and role_only need evidence checked within 30 days; older evidence falls to general_craft', () => classified(() => {
+  // JV46: exact, checked 2026-09-20, which is 32 days before NOW.
+  for (const step of [1, 2, 3]) {
+    const email = render(joleLead(6), step);
+    assert.equal(email.personalization.mode, 'general_craft');
+    assert.doesNotMatch(`${email.subject || ''}\n${core(email.body)}`, /hiring|opening|Millwright|Pipefitter|Mont Belvieu/i);
+  }
+  assert.match(jolePersonalizationFor(joleLead(6), [], { now: NOW }).reason, /older than 30 days; exact fell to general_craft/);
+  // JV42: role_only checked 2026-10-05 is fresh through Nov 3 and stale from Nov 4 00:00 UTC.
+  const lead = joleLead(2);
+  assert.equal(renderClientLeadEmail(lead, 1, { env: ENV, now: Date.parse('2026-11-03T12:00:00Z') }).personalization.mode, 'role_only');
+  assert.equal(renderClientLeadEmail(lead, 1, { env: ENV, now: Date.parse('2026-11-05T12:00:00Z') }).personalization.mode, 'general_craft');
+  // general_craft claims no current opening: no evidence-age gate, not even the old 45-day one.
+  const late = Date.parse('2026-12-31T14:00:00Z');
+  assert.equal(renderClientLeadEmail(joleLead(3), 1, { env: ENV, now: late }).personalization.mode, 'general_craft');
+  assert.equal(renderClientLeadEmail(joleLead(1), 1, { env: ENV, now: late }).personalization.mode, 'general_craft');
+  // A started v4 thread keeps its recorded mode on Touches 2 and 3.
+  const started = joleLead(1, { stage: 'Contacted', emailStatus: 'emailed', emailStep: '1', lastEmailedAt: '2026-10-22T12:00:03.000Z' });
+  const ledger = [reservation(started, { copyVersion: COPY_VERSION_V4, personalizationMode: 'exact', personalizationRole: 'Millwrights', personalizationSite: 'Mont Belvieu, TX' })];
+  assert.equal(renderClientLeadEmail(started, 3, { env: ENV, now: Date.parse('2026-11-06T12:00:00Z'), activities: ledger }).personalization.mode, 'exact');
+}));
+
 // ── Holds ────────────────────────────────────────────────────────────────────
 test('hold and unclassified leads never render, never queue, and are skipped before any render', () => classified(() => {
   for (const lead of [joleLead(4), joleLead(5)]) { // 4 = hold, 5 = not classified
@@ -174,14 +198,15 @@ test('contacted v2 threads stay v2; a held one never sends its next touch', () =
 }));
 
 // ── The reviewed production classification (2026-10-21) ─────────────────────
-test('the classification covers the 902 untouched leads and 50 contacted holds, with only permitted claims', () => {
+test('the classification covers the 902 untouched leads and 50 contacted holds, with only permitted, fresh claims', () => {
   assert.equal(DATA.schema, 'jole_personalization_v4');
   assert.equal(CURRENT_COPY_VERSION, COPY_VERSION_V4);
   const entries = Object.entries(DATA.leads);
   assert.equal(entries.length, 902, '846 Queued + 56 Import untouched leads');
   const count = mode => entries.filter(([, entry]) => entry.mode === mode).length;
   assert.deepEqual({ exact: count('exact'), role_only: count('role_only'), general_craft: count('general_craft'), hold: count('hold') },
-    { exact: 476, role_only: 303, general_craft: 56, hold: 67 });
+    { exact: 463, role_only: 241, general_craft: 131, hold: 67 });
+  const firstWindow = Date.parse('2026-10-22T12:00:00.000Z');
   for (const [id, entry] of entries) {
     if (entry.mode === 'exact') {
       assert.ok(entry.role && entry.location && /^[^,]+, [A-Z]{2}$/.test(entry.location), id);
@@ -191,6 +216,13 @@ test('the classification covers the 902 untouched leads and 50 contacted holds, 
       assert.ok(['posting_title', 'posting_recheck'].includes(entry.roleSource), `${id}: role evidence`);
     }
     if (entry.mode === 'role_only') assert.ok(entry.role && entry.location === null, id);
+    if (entry.mode === 'exact' || entry.mode === 'role_only') {
+      // A current-hiring claim: independently checked role, evidence at most 30 days old at the first window.
+      assert.ok(['phase3_reopen_2026-10-05', 'posting_date'].includes(entry.freshnessSource), `${id}: freshness source`);
+      assert.ok(firstWindow - Date.parse(entry.evidenceCheckedAt) <= 30 * 86400000, `${id}: evidence ${entry.evidenceCheckedAt} older than 30 days`);
+      assert.ok(['posting_title', 'posting_recheck'].includes(entry.roleSource), `${id}: role evidence`);
+    }
+    assert.ok(Array.isArray(entry.unsupportedRoles) && Array.isArray(entry.unsupportedLocations), `${id}: what a lower mode must never print`);
     if (entry.mode === 'general_craft' || entry.mode === 'hold') assert.ok(entry.role === null && entry.location === null, id);
     assert.equal(entry.secondaryRole, null, `${id}: no second role was independently verified`);
     assert.ok(entry.evidenceStatus && entry.reason, id);
