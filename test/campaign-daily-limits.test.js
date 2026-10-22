@@ -41,7 +41,8 @@ test('deployment settings resolve to 50 per established sender / 100 total with 
   assert.equal(capacity.dailySum, 100);
   assert.equal(capacity.globalDailyLimit, 100);
   assert.equal(capacity.globalPerRunLimit, 10);
-  assert.deepEqual(senders.filter(sender => sender.id !== 'primary').map(sender => ({
+  // ScaleLab's own inboxes; Jole's dormant inboxes are pinned in jole-six-senders.test.js.
+  assert.deepEqual(senders.filter(sender => sender.id !== 'primary' && (sender.clientId || 'scalelab') === 'scalelab').map(sender => ({
     email: sender.email, dailyLimit: sender.dailyLimit, perRunLimit: sender.perRunLimit,
     status: sender.status,
   })), [

@@ -11,6 +11,9 @@
  * ledger proves the OOO handler applied it (not a person), and replaces it
  * with the same event-sourced OOO pause the new handler writes.
  *
+ * planOooResumeSchedule is the operator's other OOO action: setting the resume
+ * date for a lead the handler could not date, recording the same event.
+ *
  * Every check reuses the shared definitions (suppression, booking events, hold
  * release) rather than restating them. Pure: the server route persists.
  */
@@ -19,10 +22,13 @@ const {
   MANUAL_HOLD_TAG, sendSuppressionReason, releaseHoldFromNotes, CALL_BOOKING_EVENTS,
 } = require('./pipeline-state');
 const { activityBelongsToLead } = require('./lead-activity');
-const { buildOooResumeEvent, OOO_RESUME_SOURCE, parseMetadata } = require('./ooo-pause');
-
-// A resume further out than this is a mis-parsed date, not an absence.
-const MAX_RESUME_HORIZON_DAYS = 60;
+const {
+  buildOooResumeEvent, OOO_RESUME_SOURCE, parseMetadata, MAX_RESUME_HORIZON_DAYS,
+  oooPauseState, OOO_PAUSE_STATUS,
+} = require('./ooo-pause');
+const { vancouverDayStart } = require('./sequence-timing');
+const { classifyReplyText } = require('./canonical-reply');
+const { isArchivedLead } = require('./lead-archive');
 const GENUINE_REPLY_EVENTS = new Set([
   'positive_reply', 'meeting_requested', 'late_reply', 'question_reply', 'negative_reply',
   'unsubscribe_reply', 'wrong_person_reply', 'needs_human_reply',
@@ -95,4 +101,90 @@ function planOooHoldRelease({ lead = {}, activities = [], suppressedEmails = new
   return { ok: true, refusals: [], checks, event, nextNotes, fingerprint };
 }
 
-module.exports = { planOooHoldRelease, MAX_RESUME_HORIZON_DAYS };
+// 'YYYY-MM-DD' is a return DAY (00:00 Vancouver); anything else must be an instant.
+function resumeInstantMs(value) {
+  const text = String(value || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return vancouverDayStart(text);
+  return toMs(text);
+}
+
+/**
+ * An operator sets the resume for an OOO lead the handler could not date: no
+ * reliable return date, a misread one, or a schedule the retired 7-day policy
+ * invented. It records the SAME ooo_resume_scheduled event the handler writes,
+ * source operator_scheduled — and nothing else: no notes, no hold, no send.
+ * After that instant the agent's ordinary gates decide, caps and windows
+ * included. Refuses whenever automation resuming would be wrong.
+ *
+ * @returns {{ ok, refusals: string[], checks, event, alreadyRecorded, fingerprint }}
+ */
+function planOooResumeSchedule({
+  lead = {}, activities = [], suppressedEmails = new Set(), resumeAt, by = '', evidence = '', now = Date.now(),
+} = {}) {
+  const nowMs = new Date(now).getTime();
+  const notes = String(lead.notes || '');
+  const mine = (activities || []).filter(row => activityBelongsToLead(row, lead));
+  const state = oooPauseState(lead, mine, { now: nowMs });
+  const ooo = state.oooEventId ? mine.find(row => row.eventId === state.oooEventId) || null : null;
+  const oooAt = ooo ? toMs(ooo.occurredAt) : NaN;
+  // What the autoresponder says, read again with the current parser: evidence
+  // for the operator, never a substitute for their decision.
+  const parsedReturnDate = ooo && String(ooo.content || '').trim()
+    ? (classifyReplyText(String(ooo.content), { subject: ooo.subject || '', now: ooo.occurredAt }).returnDate || null)
+    : null;
+  const humanResponse = mine.find(row => row.eventType === 'human_response_sent' && toMs(row.occurredAt) > oooAt);
+  const booking = mine.find(row => CALL_BOOKING_EVENTS.includes(String(row.eventType || '')));
+  const suppression = sendSuppressionReason(lead, { suppressedEmails });
+  const resumeMs = resumeInstantMs(resumeAt);
+
+  const refusals = [];
+  if (!String(by).trim()) refusals.push('by is required (who set the resume date)');
+  if (state.status === OOO_PAUSE_STATUS.NONE) refusals.push('no automated reply is recorded for this lead');
+  if (state.status === OOO_PAUSE_STATUS.SUPERSEDED) refusals.push('a genuine reply exists; a person owns the next move');
+  if (state.status === OOO_PAUSE_STATUS.SEQUENCE_COMPLETE) refusals.push('every touch was already sent; there is nothing to resume');
+  if (state.status === OOO_PAUSE_STATUS.RESUMED) refusals.push('a touch was already sent after this autoresponder; the sequence has resumed');
+  if (humanResponse) refusals.push('a person answered after the OOO; automation must not resume');
+  if (booking) refusals.push(`a booking exists (${booking.eventType})`);
+  if (notes.includes(MANUAL_HOLD_TAG)) refusals.push('the lead is on [MANUAL HOLD]; only Resume (or the OOO hold release) may lift it');
+  else if (suppression) refusals.push(`suppressed (${suppression})`);
+  if (isArchivedLead(lead)) refusals.push('the lead is archived');
+  if (String(lead.emailStatus || '').trim().toLowerCase() !== 'emailed') {
+    refusals.push(`emailStatus is "${lead.emailStatus || ''}", not an active cold sequence`);
+  }
+  if (state.status !== OOO_PAUSE_STATUS.NONE && !state.stepsConsistent) {
+    refusals.push(`the ledger shows Touch ${state.ledgerLastStep} sent but the row says step ${state.cellStep}; reconcile the sequence first`);
+  }
+  if (state.status !== OOO_PAUSE_STATUS.NONE && !state.nextStep) refusals.push('no next touch exists to resume');
+  if (!Number.isFinite(resumeMs)) refusals.push('resumeAt is required: a return day (YYYY-MM-DD) or an ISO instant');
+  else {
+    if (Number.isFinite(oooAt) && resumeMs < vancouverDayStart(new Date(oooAt).toISOString().slice(0, 10))) {
+      refusals.push('resumeAt is before the day of the OOO reply');
+    }
+    if (resumeMs > nowMs + MAX_RESUME_HORIZON_DAYS * 86400000) refusals.push(`resumeAt is more than ${MAX_RESUME_HORIZON_DAYS} days out`);
+  }
+
+  const checks = {
+    status: state.status || null, oooEventId: state.oooEventId || null, oooOccurredAt: state.oooOccurredAt || null,
+    oooSubject: ooo ? (ooo.subject || '') : null,
+    recordedReturnDate: state.statedReturnDate || null, parsedReturnDate,
+    currentResumeAt: state.resumeAt || null, currentResumeSource: state.resumeSource || null,
+    ignoredPolicyResumeAt: state.ignoredPolicyResumeAt || null,
+    ledgerLastStep: state.ledgerLastStep ?? null, cellStep: state.cellStep ?? null, nextStep: state.nextStep ?? null,
+    humanResponseAfterOoo: Boolean(humanResponse), booking: booking?.eventType || null,
+    manualHold: notes.includes(MANUAL_HOLD_TAG), suppression: suppression || null,
+    emailStatus: lead.emailStatus || '', senderInboxId: lead.senderInboxId || '',
+  };
+  if (refusals.length) return { ok: false, refusals, checks, event: null, alreadyRecorded: false, fingerprint: null };
+
+  const event = buildOooResumeEvent({
+    lead, oooMessageId: state.oooMessageId || '', oooOccurredAt: state.oooOccurredAt,
+    resumeAt: new Date(resumeMs).toISOString(), resumeSource: OOO_RESUME_SOURCE.OPERATOR_SCHEDULED,
+    by: String(by).trim(), occurredAt: new Date(nowMs).toISOString(),
+    statedReturnDate: parsedReturnDate || '', evidence,
+  });
+  const alreadyRecorded = mine.some(row => row.eventId === event.eventId);
+  const fingerprint = [lead.id, notes, lead.emailStep || '', state.oooEventId, event.eventId].join('|');
+  return { ok: true, refusals: [], checks, event, alreadyRecorded, fingerprint };
+}
+
+module.exports = { planOooHoldRelease, planOooResumeSchedule, MAX_RESUME_HORIZON_DAYS };

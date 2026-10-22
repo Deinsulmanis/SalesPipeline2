@@ -3,7 +3,7 @@
 const { google } = require('googleapis');
 const { DEFAULT_INBOX_DAILY_LIMIT, DEFAULT_INBOX_PER_RUN_LIMIT } = require('./gmail-sender-capacity');
 const { DEFAULT_CLIENT_ID, resolveClientId } = require('./clients/registry');
-const { senderPolicyBlockers, cappedDailyLimit } = require('./clients/sender-policy');
+const { senderPolicyBlockers, senderPreparationBlockers, cappedDailyLimit } = require('./clients/sender-policy');
 
 const STATUSES = new Set(['warming', 'ready', 'active', 'paused', 'error']);
 
@@ -55,6 +55,26 @@ const DEFAULT_SECONDARY_INBOXES = Object.freeze([
     perRunLimit: 2,
     observerEnabled: true,
   }),
+  // Jole BTX LLC's six cold-sending mailboxes (client `jole`), scoped to
+  // Jole's one campaign, at Jole's launch capacity: 20/day (the client's hard
+  // per-inbox ceiling) and 2 per scheduled window. Readiness is the runtime
+  // lifecycle (mark ready → activate); send authority is NOT: until
+  // CLIENT_SENDING_AUTHORIZED names jole, Jole's sender policy holds every
+  // one of these non-sending, whatever its status. Jorge's corporate
+  // jolebtx.com is never a sender.
+  ...[
+    ['jole_group_jorge', 'jorge@jolebtxgroup.com'],
+    ['jole_group_jguerrero', 'j.guerrero@jolebtxgroup.com'],
+    ['jole_team_jorge', 'jorge@jolebtxteam.com'],
+    ['jole_team_jguerrero', 'j.guerrero@jolebtxteam.com'],
+    ['jole_industrial_jorge', 'jorge@joleindustrial.com'],
+    ['jole_industrial_jguerrero', 'j.guerrero@joleindustrial.com'],
+  ].map(([id, email]) => Object.freeze({
+    id, email, clientId: 'jole', status: 'warming',
+    tokenEnv: `GMAIL_${id.toUpperCase()}_TOKEN_JSON`,
+    dailyLimit: 20, perRunLimit: 2, observerEnabled: true,
+    allowedCampaignIds: Object.freeze(['jole-btx-employer-acquisition']),
+  })),
 ]);
 
 function parseEntry(entry, index, seenIds, seenEmails, env = process.env) {
@@ -95,6 +115,10 @@ function parseEntry(entry, index, seenIds, seenEmails, env = process.env) {
     ? Object.freeze(entry.allowedCampaignIds.map(value => String(value || '').trim()).filter(Boolean)) : null;
   const draft = { id, email, clientId, ...(allowedCampaignIds ? { allowedCampaignIds } : {}) };
   const policyBlockers = senderPolicyBlockers(draft, env);
+  // Preparation is judged separately from sending (see clients/send-policy.js):
+  // a managed inbox may be readied and assigned leads while the client's final
+  // send authorization is off, and stays non-sending until it is on.
+  const preparationBlockers = managed ? senderPreparationBlockers(draft) : null;
   const effectiveDailyLimit = cappedDailyLimit(draft, dailyLimit);
   return Object.freeze({
     id, email, status, tokenEnv, dailyLimit: effectiveDailyLimit, perRunLimit, observerEnabled, provider: 'gmail',
@@ -103,6 +127,10 @@ function parseEntry(entry, index, seenIds, seenEmails, env = process.env) {
     ...(allowedCampaignIds ? { allowedCampaignIds } : {}),
     ...(effectiveDailyLimit !== dailyLimit ? { configuredDailyLimit: dailyLimit } : {}),
     ...(policyBlockers.length ? { policyBlockers: Object.freeze(policyBlockers) } : {}),
+    ...(managed ? {
+      preparationBlockers: Object.freeze(preparationBlockers),
+      clientAuthorized: !policyBlockers.some(reason => reason.startsWith('client sending is not authorized')),
+    } : {}),
   });
 }
 
@@ -123,7 +151,23 @@ function withDefaultInboxes(entries = [], env = process.env) {
     if (seenIds.has(def.id) || seenEmails.has(def.email)) continue;
     extras.push(parseEntry(def, entries.length + extras.length, seenIds, seenEmails, env));
   }
-  return [...entries, ...extras];
+  return isolateManagedCredentials([...entries, ...extras]);
+}
+
+// One mailbox, one credential. A managed client's inbox whose token variable
+// is shared with any other inbox could send as the wrong account, so it is
+// blocked (not thrown: a bad managed-client row never takes ScaleLab's
+// registry down). ScaleLab's own rows keep exactly their existing rules.
+function isolateManagedCredentials(entries) {
+  const uses = new Map();
+  for (const entry of entries) uses.set(entry.tokenEnv, (uses.get(entry.tokenEnv) || 0) + 1);
+  return entries.map(entry => {
+    const managed = entry.clientId && entry.clientId !== DEFAULT_CLIENT_ID;
+    if (!managed || uses.get(entry.tokenEnv) < 2) return entry;
+    const reason = `${entry.tokenEnv} is shared with another inbox; each mailbox needs its own credential`;
+    return Object.freeze({ ...entry, policyBlockers: Object.freeze([...(entry.policyBlockers || []), reason]),
+      preparationBlockers: Object.freeze([...(entry.preparationBlockers || []), reason]) });
+  });
 }
 
 function sendEligibleFor(entry, env = process.env) {
@@ -144,7 +188,23 @@ function publicRegistry(entries, env = process.env) {
     ...(entry.allowedCampaignIds ? { allowedCampaignIds: [...entry.allowedCampaignIds] } : {}),
     ...(entry.configuredDailyLimit !== undefined ? { configuredDailyLimit: entry.configuredDailyLimit } : {}),
     ...(entry.policyBlockers?.length ? { policyBlockers: [...entry.policyBlockers] } : {}),
+    ...(entry.preparationBlockers ? {
+      preparationBlockers: [...entry.preparationBlockers], clientAuthorized: entry.clientAuthorized === true,
+      preparationReady: preparationReadyFor(entry, env),
+    } : {}),
   }));
+}
+
+/**
+ * A managed inbox that is operationally ready: active, capacity configured,
+ * credentialed and clear of every preparation blocker. It may be assigned and
+ * queued leads. It is NOT send eligible unless sendEligible says so, which also
+ * requires the client's final send authorization.
+ */
+function preparationReadyFor(entry, env = process.env) {
+  if (!entry.preparationBlockers) return false;
+  const credentialConfigured = Boolean(env[entry.tokenEnv] || entry.credentialConfigured);
+  return entry.status === 'active' && entry.dailyLimit > 0 && credentialConfigured && !entry.preparationBlockers.length;
 }
 
 function assertDormant(entry) {
@@ -220,6 +280,9 @@ function applySenderRuntime(senders = [], overlay = []) {
       ...sender,
       status,
       sendEligible: status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured && !sender.policyBlockers?.length,
+      ...(sender.preparationBlockers ? {
+        preparationReady: status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured && !sender.preparationBlockers.length,
+      } : {}),
     };
   });
 }
@@ -227,6 +290,6 @@ function applySenderRuntime(senders = [], overlay = []) {
 module.exports = {
   STATUSES, DEFAULT_SECONDARY_INBOXES, STAFFING_ONLY_SENDER_IDS, isStaffingOnlySender,
   parseRegistry, withDefaultInboxes, publicRegistry, assertDormant,
-  credentialsFor, verifyInbox, verifyMailboxAccess, sendEligibleFor,
+  credentialsFor, verifyInbox, verifyMailboxAccess, sendEligibleFor, preparationReadyFor,
   parseRuntimeOverlay, applySenderRuntime,
 };

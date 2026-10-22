@@ -73,8 +73,10 @@ test('SAFE E2E: Jole lead → routing → queue dry run → gate → reply → c
   assert.equal(jole.clientId, 'jole');
   const inboxes = senders.map(sender => ({ ...sender, deliveryImplemented: true }));
   const route = validateRoute({ niche: lead.leadNiche, senderInboxId: 'jole_test', emailTemplateId: lead.emailTemplateId, inboxes, lead, campaignVersionId: lead.intendedCampaignVersion });
-  assert.equal(route.ok, false);
-  assert.equal(route.code, undefined, 'isolation passes; only the draft template refuses');
+  // Isolation passes and the approved campaign routes; the queue and send
+  // gates below are what still refuse.
+  assert.equal(route.ok, true);
+  assert.equal(route.clientId, 'jole');
   assert.equal(validateRoute({ niche: lead.leadNiche, senderInboxId: 'primary', emailTemplateId: lead.emailTemplateId, inboxes, lead }).code, 'client_ownership_conflict');
   assert.equal(chooseSender({ lead, senders, sendsToday: new Map() }).sender.id, 'jole_test');
   assert.equal(chooseSender({ lead: { ...lead, senderInboxId: '', routingRequired: '' }, senders: senders.filter(s => s.id !== 'jole_test'), sendsToday: new Map() }).sender, null);
@@ -88,7 +90,10 @@ test('SAFE E2E: Jole lead → routing → queue dry run → gate → reply → c
     applyChanges: async () => { applied += 1; return []; },
     appendActivity: async () => { applied += 1; },
   });
-  assert.equal(queued.status, 422);
+  // Refused before any mutation: the lead has no researched personalization,
+  // so its Jole copy cannot render (the same check the agent makes at send).
+  assert.equal(queued.status, 409);
+  assert.match(queued.error, /research profile/);
   assert.equal(applied, 0);
 
   // 4. Final send gate in a fully authorized send process. Before activation
@@ -164,7 +169,9 @@ test('SAFE E2E: Jole lead → routing → queue dry run → gate → reply → c
   assert.equal(overview.billing.billableMeetings, 1);
   assert.equal(overview.billing.accruedCents, 35000);
   assert.equal(overview.sending.sendingEnabled, false);
-  assert.deepEqual(overview.deliverability.senders.map(s => s.id), ['jole_test']);
+  // Jole's own inboxes only: the fixture sender plus the six registered (dormant) Jole inboxes.
+  assert.deepEqual(overview.deliverability.senders.map(s => s.id), ['jole_test', 'jole_group_jorge', 'jole_group_jguerrero',
+    'jole_team_jorge', 'jole_team_jguerrero', 'jole_industrial_jorge', 'jole_industrial_jguerrero']);
 
   const scalelabOverview = buildClientOverview({ clientId: 'scalelab', leads: [...corpus, lead], activities, senders, routedLeadReady, env: {} });
   assert.equal(scalelabOverview.leads.imported, 2);

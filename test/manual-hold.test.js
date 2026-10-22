@@ -445,7 +445,7 @@ test('every send path is accounted for and gated', () => {
   const ordinary = agentSrc.slice(agentSrc.indexOf('async function deliverOrdinaryColdStep'), agentSrc.indexOf('// Phase 4: mark a lead'));
   assert.equal((ordinary.match(/await sendEmail\(/g) || []).length, 1, 'ordinary steps send from one recovery-safe path');
 
-  const pass = agentSrc.slice(agentSrc.indexOf('async function runStageSequencePass'), agentSrc.indexOf('async function run()'));
+  const pass = agentSrc.slice(agentSrc.indexOf('async function runStageSequencePass'), agentSrc.indexOf('async function runInner()'));
   assert.equal((pass.match(/await sendEmail\(/g) || []).length, 1, 'the stage pass sends from one place');
   assert.match(pass, /if \(!STAGE_SEQUENCES_ENABLED\) \{/, 'gated by the stage flag');
   assert.match(pass, /sendingEnabled: SENDING_ENABLED/, 'and by the shared global kill-switch gate');
@@ -459,8 +459,7 @@ test('recipient selection is unchanged apart from suppression', () => {
   assert.match(agentSrc, /function selectFollowUps[\s\S]{0,200}emailStatus !== 'emailed'/);
 });
 
-test('demo-play dedupe and reply handling still stop the sequence', () => {
-  assert.match(agentSrc, /if \(fired\.has\(`\$\{lead\.id\}\|both-audios`\)\) continue;/);
+test('reply handling still stops the sequence', () => {
   assert.match(agentSrc, /lead\.emailStatus = 'replied';/);
   assert.match(agentSrc, /addSuppression\(lead\.email, 'unsubscribe'/);
 });

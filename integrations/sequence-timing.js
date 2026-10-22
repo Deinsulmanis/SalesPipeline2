@@ -23,10 +23,12 @@
  * morning send windows. The windows themselves (weekdays 07:00–11:30) are
  * unchanged: a follow-up that falls due at a weekend waits for Monday.
  *
- * Pure: no I/O, no requires beyond the lead-row matcher.
+ * Pure: no I/O, no requires beyond the lead-row matcher and the failed-touch
+ * guard (also pure).
  */
 
 const { activityLeadKey } = require('./lead-activity');
+const { unrecoveredTouchBlock } = require('./same-touch-recovery');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TIMEZONE = 'America/Vancouver';
@@ -98,6 +100,21 @@ function addVancouverDays(ms, days) {
   const targetWall = wallAsUtc(ms) + days * DAY_MS;
   let result = targetWall - (wallAsUtc(ms) - ms);
   // Re-apply the offset in force at the target instant (DST may differ).
+  result = targetWall - (wallAsUtc(result) - result);
+  return result;
+}
+
+/**
+ * 00:00 Vancouver time on a calendar date ('YYYY-MM-DD'), as epoch ms; NaN when
+ * the value is not a date. A prospect "back October 19" is back from the start
+ * of the 19th here, not from UTC midnight (the 18th's afternoon in Vancouver).
+ */
+function vancouverDayStart(isoDate) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(isoDate || ''));
+  if (!match) return NaN;
+  const targetWall = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  if (new Date(targetWall).toISOString().slice(0, 10) !== match[0]) return NaN;
+  let result = targetWall - (wallAsUtc(targetWall) - targetWall);
   result = targetWall - (wallAsUtc(result) - result);
   return result;
 }
@@ -206,7 +223,11 @@ function stepAlreadySent(lead, activities, step) {
  * sender always used) plus the ledger for Touch 1. Callers keep their own
  * status, stage, ownership and suppression gates; this answers WHEN only.
  *
- * @returns {{ currentStep, nextStep, dueAt, dueAtIso, basis, touch1At, touch2At, alreadySent }|null}
+ * `blockedBy` is set when an earlier touch provably failed and was never
+ * recovered (same-touch-recovery.js): the next touch would follow an email the
+ * prospect never received, so it is never due, whatever the clock says.
+ *
+ * @returns {{ currentStep, nextStep, dueAt, dueAtIso, basis, touch1At, touch2At, alreadySent, blockedBy }|null}
  */
 function nextFollowUp(lead = {}, { activities = [] } = {}) {
   const currentStep = parseInt(lead.emailStep || '0', 10);
@@ -237,6 +258,7 @@ function nextFollowUp(lead = {}, { activities = [] } = {}) {
   return {
     currentStep, nextStep, dueAt, dueAtIso: new Date(dueAt).toISOString(), basis,
     touch1At, touch2At, alreadySent: stepAlreadySent(lead, activities, nextStep),
+    blockedBy: unrecoveredTouchBlock(lead, activities, nextStep),
   };
 }
 
@@ -248,11 +270,12 @@ function followUpDueAt(lead, options = {}) {
 
 /**
  * THE timing gate. True when a follow-up step exists, its due instant has
- * passed, and the ledger does not already show that step delivered.
+ * passed, the ledger does not already show that step delivered, and no earlier
+ * touch is a proven, unrecovered delivery failure.
  */
 function isFollowUpDue(lead, now = Date.now(), options = {}) {
   const next = nextFollowUp(lead, options);
-  if (!next || next.alreadySent) return false;
+  if (!next || next.alreadySent || next.blockedBy) return false;
   return new Date(now).getTime() >= next.dueAt;
 }
 
@@ -270,6 +293,6 @@ function describeSequence() {
 module.exports = {
   SEQUENCE_TIMING, FOLLOW_UP_STEP_COUNT, NOMINAL_TOUCH_DAYS, DUE_BASIS,
   SEND_WINDOWS, SEND_WINDOW_CRON, DAY_MS,
-  addVancouverDays, vancouverWeekday, nextSendWindowAt,
-  touch1SentAt, stepAlreadySent, nextFollowUp, followUpDueAt, isFollowUpDue, describeSequence,
+  addVancouverDays, vancouverDayStart, vancouverWeekday, nextSendWindowAt,
+  touch1SentAt, stepAlreadySent, sendsFor, nextFollowUp, followUpDueAt, isFollowUpDue, describeSequence,
 };

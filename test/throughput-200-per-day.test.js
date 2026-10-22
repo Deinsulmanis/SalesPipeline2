@@ -80,7 +80,7 @@ test('rollout steps: each sender change is visible alone while the 15 ceiling st
 
 test('final configuration: 21 per window, 200 per day, daily caps sum to exactly 200', () => {
   const { senders, capacity, buckets: open } = windowFor(FINAL);
-  assert.deepEqual(senders.map(s => [s.id, s.sendEligible, s.dailyLimit, s.perRunLimit]), [
+  assert.deepEqual(senders.filter(s => (s.clientId || 'scalelab') === 'scalelab').map(s => [s.id, s.sendEligible, s.dailyLimit, s.perRunLimit]), [
     ['primary', true, 60, 6], ['tryscalelabai', true, 60, 6], ['scalelabaiteam', true, 40, 5],
     ['deniels', true, 20, 2], ['deniels_tryscalelabai', true, 20, 2],
   ]);
@@ -145,7 +145,7 @@ function simulateDays({ min, max, perWindow, days, ceiling = 200 }) {
 test('scheduled pacing is 30–90 s between sends', () => {
   assert.equal(delay('MIN_DELAY'), 30);
   assert.equal(delay('MAX_DELAY'), 90);
-  assert.match(agent, /const jitter = \(\) => MIN_DELAY \+ Math\.floor\(Math\.random\(\) \* \(MAX_DELAY - MIN_DELAY\)\);/);
+  assert.match(agent, /createSenderPacer\(\{ minDelayMs: MIN_DELAY, maxDelayMs: MAX_DELAY \}\)/);
 });
 
 test('a 21-send window ends well inside 30 minutes, so no scheduled pass overlaps the next', () => {
@@ -170,7 +170,7 @@ test('no catch-up burst: a busy agent still skips the window, schedule unchanged
   assert.match(server, /cron\.schedule\('0,30 7-11 \* \* 1-5', async \(\) => \{/);
   const tick = server.slice(server.indexOf("cron.schedule('0,30 7-11 * * 1-5'"), server.indexOf("const bootCaps = scheduledSendCaps();"));
   assert.match(tick, /if \(agentState\.running \|\| automationLaunchReserved\) \{/);
-  assert.match(tick, /skipping this send window; no catch-up burst will be queued/);
+  assert.match(tick, /event: 'send_tick_skipped'[\s\S]*reason: 'prior_run_active'/);
   assert.match(tick, /PER_INBOX_RUN_CAP: String\(caps\.perInbox\)/);
 });
 

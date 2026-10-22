@@ -47,8 +47,7 @@ test('all warm prospect responses route through the hardened primitive', () => {
   const question = source.slice(source.indexOf('async function handleQuestion'), source.indexOf('async function handleNeedsHuman'));
   const roofing = source.slice(source.indexOf('async function handleRoofingSurveyReply'), source.indexOf('async function runReplyCheckPass'));
   const positive = source.slice(source.indexOf('async function handlePositiveAutomation'), source.indexOf('async function writeLateReplyNotes'));
-  const intent = source.slice(source.indexOf('async function runIntentTriggerPass'), source.indexOf('async function runHumanOutboundPass'));
-  for (const block of [question, roofing, positive, intent]) {
+  for (const block of [question, roofing, positive]) {
     assert.match(block, /deliverHardenedWarmReply/);
     assert.doesNotMatch(block, /await sendEmail\(/);
   }

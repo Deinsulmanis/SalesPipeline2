@@ -59,8 +59,9 @@ const {
   readCanonicalLead,
 } = require('./integrations/outreach-state');
 const { applyFalseOptOutCorrection, FALSE_OPT_OUT_TAG } = require('./integrations/false-opt-out-correction');
-const { planOooHoldRelease } = require('./integrations/ooo-hold-repair');
-const { createIntentBackstop, BACKSTOP_REASON } = require('./integrations/intent-backstop');
+const { planOooHoldRelease, planOooResumeSchedule } = require('./integrations/ooo-hold-repair');
+const { oooPauseState } = require('./integrations/ooo-pause');
+const { activityLeadKey } = require('./integrations/lead-activity');
 // Stage 3D: dual-read measurement only. Nothing branches on its output.
 const {
   probeOutreachParityInBackground, stage3ParitySnapshot, DASHBOARD_OMITTED_FIELDS,
@@ -136,6 +137,10 @@ async function stage2TimelineProbe({ leadId, sourceLeadId, email, authoritative,
   }
 }
 const { simulateRouting } = require('./integrations/gmail-routing-simulation');
+const { staffingReviewStatus, isStaffingV2Marked, STAFFING_CAMPAIGN_V2,
+  staffingV2CampaignNotesRefusal, STAFFING_V2_PROFILE_READ_ONLY } = require('./integrations/staffing-campaign');
+const { importStaffingV2Leads } = require('./integrations/staffing-v2-import');
+const { staffingHoldStatus } = require('./integrations/staffing-hold');
 const { EMAIL_TEMPLATES, LEAD_TYPES, LEAD_TYPE_IDS, normalizeNiche, leadTypeLabel, isKnownLeadType, campaignVersionsForRoute, validateCampaignVersionRoute, validateRoute, routedLeadReady } = require('./integrations/campaign-routing');
 const {
   ARCHIVE_MARKER_PREFIX, ARCHIVE_EVENT_TYPE, ARCHIVED_REPLY_EVENT_TYPE, ARCHIVE_REASONS, ARCHIVE_REASON_LABELS,
@@ -148,8 +153,13 @@ const {
 } = require('./integrations/analytics-scope');
 // Managed clients (internal operator views only; clients never log in).
 const { registerClientRoutes } = require('./integrations/clients/routes');
-const { leadsForClient, leadDefinitelyOtherClient } = require('./integrations/clients/ownership');
-const { resolveClientId, DEFAULT_CLIENT_ID } = require('./integrations/clients/registry');
+const { importClientLeads } = require('./integrations/clients/lead-import');
+const { createImportBatchStore, processPendingImportBatches } = require('./integrations/clients/import-batches');
+const { leadsForClient, leadDefinitelyOtherClient, resolveLeadClient } = require('./integrations/clients/ownership');
+const { clientOutreachView } = require('./integrations/clients/outreach-view');
+const { resolveClientId, DEFAULT_CLIENT_ID, listClients, getClient: getManagedClientConfig } = require('./integrations/clients/registry');
+const { clientSendState, clientSendBlock } = require('./integrations/clients/send-policy');
+const { JOLE_EARLY_CRON } = require('./integrations/clients/send-windows');
 const { getLedgerStore } = require('./integrations/clients/ledger-store');
 const { emailUniquenessMode, leadsInEmailScope, leadsForCalendarMatching } = require('./integrations/clients/email-scope');
 const { filterInboxesForClient } = require('./integrations/clients/workspace-views');
@@ -173,10 +183,6 @@ const { buildConfirmedSendActivity, buildCanonicalDigest, bouncedLeadIds } = req
 const { buildCrmHealth } = require('./integrations/crm-health');
 const { observerHealth } = require('./integrations/gmail-observer-health');
 const { gmailUsageSnapshot } = require('./integrations/gmail-api-guard');
-const { hasUndeliveredDemoPair } = require('./integrations/demo-intent-state');
-const {
-  normalizeLeadToken, aggregateDemoPlays, attributeDemoPlays, demoPlayForLead,
-} = require('./integrations/demo-attribution');
 const { observeMailbox } = require('./integrations/gmail-mailbox-observer');
 const { planMailboxEvents } = require('./integrations/mailbox-observation-events');
 const { proveLegacyEvidence, applyProvenEvidence, legacyEvidenceInputs } = require('./integrations/gmail-evidence-reconciliation');
@@ -317,16 +323,6 @@ function cleanCompanyName(raw) {
   return raw.slice(0, cutAt).trim() || raw.trim();
 }
 
-// Which clip a DemoPlays row represents. Mirrors the /demo-played write-side
-// whitelist exactly — lowercase, only 'intro' or 'demo' accepted, anything else
-// (including a BLANK column F on rows written before the intro shipped, which
-// were all receptionist-demo plays) resolves to 'demo'. Kept here rather than
-// inlined so read and write can never disagree about what a row means.
-function normalizeAudioType(raw) {
-  const t = String(raw == null ? '' : raw).trim().toLowerCase();
-  return (t === 'intro' || t === 'demo') ? t : 'demo';
-}
-
 // Canonical company key for matching a ProposalOpens row to its lead. Mirrors
 // ceCompanyKey() in public/index.html: clean the name, lowercase, strip
 // non-alphanumerics. Used only for the open-filter lookups below.
@@ -342,8 +338,7 @@ const proposalToken = id => crypto.createHash('sha1').update(String(id)).digest(
 // above keeps serving links already in circulation). Resolves the token to the
 // lead by hashing column A, logs the open with the SAME cleaned company the
 // old links carried (attribution preserved), then 302s to the Netlify page
-// with the same query params plus `lt`, the lead token. The page sends `lt`
-// back on every demo-play pixel, which is what attributes a play to ONE lead.
+// with the same query params plus `lt`, the lead token.
 //
 // FALLBACK: an unresolvable token (unknown, sheet error, lead deleted) must
 // never show the prospect an error page — it degrades to the bare proposal
@@ -372,8 +367,8 @@ app.get('/p/:token', async (req, res) => {
       if (lead.company)     fwd.set('company', lead.company);
       if (lead.contactName) fwd.set('contact', lead.contactName);
       if (lead.tradeType)   fwd.set('niche',   lead.tradeType);
-      // The token this link was resolved from, so a demo play on the page names
-      // this lead and no other location that shares its company name.
+      // The token this link was resolved from, so page telemetry names this
+      // lead and no other location that shares its company name.
       fwd.set('lt', token);
       url.search = fwd.toString();
       dest = url.toString();
@@ -407,87 +402,17 @@ app.get('/p/:token', async (req, res) => {
   res.redirect(302, dest);
 });
 
-// ── DEMO PLAY TRACKING (public — no auth) ──────────────────────────────────────
-// Fired as a tracking pixel from the proposal page when the demo audio actually
-// plays — a stronger intent signal than an open. Deliberately writes to its OWN
-// tab (DemoPlays), NOT ProposalOpens. Opens are retained as passive telemetry;
-// demo plays are the verified engagement signal. Same guard shape as /p (IP
-// block, bot UA, empty/Unknown company) —
-// bot/self-traffic matters even more here since this is meant to be high-intent.
-app.get('/demo-played', (req, res) => {
-  const companyParam = String(req.query.company ?? '').trim();
-  const company = companyParam || 'Unknown';
-  const niche   = req.query.niche || 'Unknown';
-  const ua      = req.headers['user-agent'] || '';
-  const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.ip;
-
-  // Which clip was played. The proposal page now renders a short spoken intro
-  // next to the receptionist demo on dental pages, and both fire this pixel —
-  // without this column the sheet cannot tell "heard the 14s hello" from "heard
-  // the receptionist", which is the signal that actually drives follow-up.
-  //
-  // Whitelisted, not passed through: this lands in a spreadsheet cell, so an
-  // arbitrary query string must never reach it. Anything unrecognised — and
-  // notably any pixel from an older cached page that sends no audio_type at
-  // all — falls back to 'demo', which is exactly what those pixels meant.
-  const rawType   = String(req.query.audio_type ?? '').trim().toLowerCase();
-  const audioType = (rawType === 'intro' || rawType === 'demo') ? rawType : 'demo';
-
-  // The lead token /p/:token forwarded to the page. It attributes this play to
-  // exactly one lead. Whitelisted like audio_type: anything but a well-formed
-  // token is stored blank, which reads as a legacy company-only row.
-  const leadToken = normalizeLeadToken(req.query.lt);
-
-  // Always a no-op pixel response — nothing renders, nothing for the page to
-  // read, so there's no failure mode visible to the visitor either way.
-  const sendPixel = () => res.status(204).end();
-
-  const BLOCKED_IPS = ['75.155.151.158'];
-  if (BLOCKED_IPS.includes(clientIp)) {
-    console.log(`[/demo-played] Skipping own IP: ${clientIp} — ${company}`);
-    return sendPixel();
-  }
-
-  if (BOT_PATTERNS.test(ua)) {
-    console.warn(`[/demo-played] Bot skipped — company: ${company}, ua: ${ua}`);
-    return sendPixel();
-  }
-
-  if (!companyParam || companyParam.toLowerCase() === 'unknown') {
-    console.warn(`[/demo-played] No resolvable company — not logging. url: ${req.originalUrl} ip: ${clientIp}`);
-    return sendPixel();
-  }
-
-  // audio_type is APPENDED as column F, never inserted mid-row: existing rows
-  // already have clientIp in D and ua in E, and shifting them would silently
-  // re-label historical data. Rows written before this change have F blank and
-  // were all receptionist-demo plays, so treat blank as 'demo' when filtering.
-  // lead_token is appended the same way, as column G; blank means a legacy row.
-  const row = [new Date().toISOString(), company, niche, clientIp, ua, audioType, leadToken];
-
-  sheets().spreadsheets.values.append({
-    spreadsheetId:   SPREADSHEET_ID,
-    range:           'DemoPlays!A:G',
-    valueInputOption:'RAW',
-    insertDataOption:'INSERT_ROWS',
-    requestBody:     { values: [row] },
-  })
-    // Event-driven intent trigger: if THIS play just completed an intro+demo
-    // pair for this company, fire the follow-up now rather than waiting for the
-    // cron. Chained after the append so the pass sees the row it is reacting to.
-    .then(() => maybeFireIntent(company, leadToken))
-    .catch(e => console.error('[/demo-played] Sheet write failed:', e.message));
-
-  sendPixel();
-});
+// The abandoned voice-receptionist demo had a /demo-played tracking pixel that
+// logged audio plays and spawned an intent pass. Both are gone; the route now
+// 404s like any unknown path, and historical DemoPlays rows stay in the sheet.
 
 // ── HOT-LEAD ENGAGEMENT TRACKING (public — no auth) ────────────────────────────
 // Fired as a tracking pixel from the proposal page when a visitor hits 100%
 // scroll OR 120s of active time — whichever comes first, and only once (the
 // page enforces the once-per-view rule; this route just records what it's told).
-// Writes to its OWN tab (ProposalEngaged), NOT ProposalOpens or DemoPlays: those
+// Writes to its OWN tab (ProposalEngaged), NOT ProposalOpens: those
 // have separate meanings and must remain independently auditable. Same guard
-// shape as /p and /demo-played (IP block, bot UA, empty/Unknown company).
+// shape as /p (IP block, bot UA, empty/Unknown company).
 app.get('/engaged', (req, res) => {
   const companyParam = String(req.query.company ?? '').trim();
   const company = companyParam || 'Unknown';
@@ -645,7 +570,7 @@ function sheets() {
       const ranges = rangesTouched(params);
       if (ranges.some(range => range.includes(CE_SHEET_NAME) || range.includes(`${SHEET_NAME}!`)
         || range.includes(COLD_CALL_ACTIVITY_SHEET))) invalidateOutreachCache(`write:${method}`);
-      if (ranges.some(range => /DemoPlays|ProposalOpens|ProposalEngaged/.test(range))) invalidateOutreachCache(`write:${method}`);
+      if (ranges.some(range => /ProposalOpens|ProposalEngaged/.test(range))) invalidateOutreachCache(`write:${method}`);
       return original(params);
     };
   }
@@ -755,9 +680,46 @@ async function persistSenderRuntimeStatus(senderId, status, updatedBy = 'operato
     .filter(row => row.id !== senderId);
   overlay.push({ id: senderId, status });
   publishSenderRuntime(overlay);
+  // The child inherits its boot environment. A pause must also reach an
+  // already-running send pass before its next provider dispatch.
+  if (agentChild?.connected) {
+    const child = agentChild;
+    const requestId = crypto.randomUUID();
+    try {
+      await new Promise((resolve, reject) => {
+        const cleanup = () => {
+          clearTimeout(timer);
+          child.off('message', onMessage);
+          child.off('exit', onExit);
+          child.off('disconnect', onExit);
+        };
+        const onMessage = message => {
+          if (message?.type !== 'sender_runtime_status_ack' || message.requestId !== requestId) return;
+          cleanup(); resolve();
+        };
+        const onExit = () => { cleanup(); resolve(); };
+        const timer = setTimeout(() => { cleanup(); reject(new Error('sender status acknowledgement timed out')); }, 3000);
+        child.on('message', onMessage);
+        child.once('exit', onExit);
+        child.once('disconnect', onExit);
+        child.send({ type: 'sender_runtime_status', senderId, status, requestId }, error => {
+          if (error) { cleanup(); reject(error); }
+        });
+      });
+    } catch (error) {
+      const workerStopRequested = status !== 'active' && child.exitCode === null
+        ? child.kill('SIGTERM') : false;
+      console.error(JSON.stringify({ event: 'sender_runtime_status_relay_failed', senderId,
+        status, workerStopRequested, code: error.code || 'ack_timeout' }));
+      throw error;
+    }
+  }
 }
 
-loadSenderRuntimeOverlay().catch(error => {
+loadSenderRuntimeOverlay().then(() => {
+  const { describeColdDeliveryPolicy } = require('./integrations/cold-delivery-policy');
+  console.log(JSON.stringify({ ...describeColdDeliveryPolicy(configuredSenders()), label: 'runtime_overlay' }));
+}).catch(error => {
   console.warn(`[gmail-sender-runtime] boot load failed (${error.message})`);
 });
 
@@ -790,15 +752,18 @@ function scheduledSendCaps(senders = configuredSenders()) {
   };
 }
 
+function scheduledQuotaRunEnv(tick = new Date()) {
+  return {
+    SEND_RUN_ID: crypto.randomUUID(),
+    SEND_SCHEDULED_TICK_AT: tick.toISOString(),
+    SEND_RUN_DEADLINE_AT: new Date(tick.getTime() + 25 * 60000).toISOString(),
+  };
+}
+
 function agentPushLine(line) {
   agentState.log.push({ ts: new Date().toISOString(), line });
   if (agentState.log.length > LOG_CAP) agentState.log.shift();
 }
-
-// Whether a three-minute backstop tick should launch an intent-only pass. It
-// starts armed (boot) and is disarmed only by a clean intent pass that saw no
-// pending work — see integrations/intent-backstop.js.
-const intentBackstop = createIntentBackstop();
 
 // Hourly egress meter: one summary line, never per-row. Server-side corpus
 // reads come from outreach-state's own counter; agent-process reads are
@@ -806,25 +771,17 @@ const intentBackstop = createIntentBackstop();
 const AGENT_CORPUS_READ_LINE = '[outreach-read] automation corpus from Supabase';
 const egressMeter = {
   calendarChecks: 0, calendarZeroEvent: 0, calendarContextLoads: 0,
-  intentDemoLaunches: 0, intentBackstopLaunches: 0, agentCorpusReads: 0,
-  serverCorpusReadsAtLastReport: 0, backstopTicksAtLastReport: 0, backstopIdleAtLastReport: 0,
+  agentCorpusReads: 0, serverCorpusReadsAtLastReport: 0,
 };
 function reportEgressMeter() {
   const corpus = outreachCorpusReadStats();
-  const backstop = intentBackstop.snapshot();
   console.log(`[egress-meter] last hour: corpusReads server=${corpus.reads - egressMeter.serverCorpusReadsAtLastReport}`
     + ` agent=${egressMeter.agentCorpusReads}`
     + ` | calendar checks=${egressMeter.calendarChecks} zeroEvent=${egressMeter.calendarZeroEvent}`
-    + ` contextLoads=${egressMeter.calendarContextLoads}`
-    + ` | intent launches demo=${egressMeter.intentDemoLaunches} backstop=${egressMeter.intentBackstopLaunches}`
-    + ` | backstop ticks=${backstop.ticks - egressMeter.backstopTicksAtLastReport}`
-    + ` idle=${backstop.idleTicks - egressMeter.backstopIdleAtLastReport}`
-    + ` armed=${backstop.armed ? backstop.reasons.join(',') : 'no'}`);
+    + ` contextLoads=${egressMeter.calendarContextLoads}`);
   Object.assign(egressMeter, {
     calendarChecks: 0, calendarZeroEvent: 0, calendarContextLoads: 0,
-    intentDemoLaunches: 0, intentBackstopLaunches: 0, agentCorpusReads: 0,
-    serverCorpusReadsAtLastReport: corpus.reads,
-    backstopTicksAtLastReport: backstop.ticks, backstopIdleAtLastReport: backstop.idleTicks,
+    agentCorpusReads: 0, serverCorpusReadsAtLastReport: corpus.reads,
   });
 }
 
@@ -833,22 +790,17 @@ function reportEgressMeter() {
 // triggers — UI, the morning send cron and the :15/:45 check-only cron — funnel
 // through here and share agentState, so agentState.running is a single
 // mutual-exclusion flag across all.
-function startAgentProcess(extraEnv, dryRun, { intentTrigger = null } = {}) {
+function startAgentProcess(extraEnv, dryRun) {
   agentState.running   = true;
   agentState.dryRun    = dryRun;
   agentState.startedAt = new Date().toISOString();
   agentState.log       = [];
   agentState.exitCode  = null;
-  // Every process reports its intent state; only an intent-only pass's report
-  // may disarm the backstop. Every other mode's reports can only arm it.
-  const intentRun = intentBackstop.onAgentStarted({
-    intent: extraEnv.INTENT_ONLY === 'true' && extraEnv.CHECK_ONLY !== 'true',
-    trigger: intentTrigger || '',
-  });
 
   const child = spawn('node', ['outreach-agent.js'], {
     cwd: __dirname,
     env: { ...process.env, ...extraEnv },
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
   agentChild = child;
 
@@ -856,10 +808,8 @@ function startAgentProcess(extraEnv, dryRun, { intentTrigger = null } = {}) {
   child.stderr.pipe(process.stderr);
 
   let outBuf = '', errBuf = '';
-  // Intent-state reports (which arm or disarm the backstop) and corpus reads
-  // (metered). Read alongside the parity probe, never instead of it.
+  // Corpus reads (metered). Read alongside the parity probe, never instead of it.
   const readAgentLine = l => {
-    intentBackstop.onAgentLine(l, intentRun);
     if (l.includes(AGENT_CORPUS_READ_LINE)) egressMeter.agentCorpusReads += 1;
   };
 
@@ -891,20 +841,9 @@ function startAgentProcess(extraEnv, dryRun, { intentTrigger = null } = {}) {
     agentChild = null;
   });
 
-  // 'close', not 'exit': it fires only after stdout has been fully drained, so
-  // a process's last intent-state report cannot arrive after its verdict. For an
-  // intent-only pass, a non-zero or signal exit or a missing report leaves the
-  // backstop armed.
-  child.on('close', code => {
+  // 'close', not 'exit': it fires only after stdout has been fully drained.
+  child.on('close', () => {
     if (outBuf) { readAgentLine(outBuf); agentPushLine(outBuf); outBuf = ''; }
-    const wasArmed = intentBackstop.snapshot().armed;
-    const verdict = intentBackstop.onAgentClosed(intentRun, code);
-    const armed = intentBackstop.snapshot().armed;
-    if (intentRun.intent || armed !== wasArmed) {
-      console.log(`[intent-backstop] ${intentRun.intent ? `${intentRun.trigger} intent pass` : 'agent run'} `
-        + `closed (exit ${code}) — ${armed ? `armed: ${intentBackstop.snapshot().reasons.join(',')}` : 'disarmed'}`
-        + ` (${verdict.reason})`);
-    }
   });
 }
 
@@ -922,76 +861,6 @@ function spawnAgent(dryRun, extraEnv = {}) {
 // Check-only pass: real sheet writes (reply/bounce detection), no sends.
 // Guards on agentState.running so it never spawns a second concurrent process
 // while a full run is already going.
-// Fires the both-audios intent pass. Spawned on demand when a demo play
-// completes a pair, and by a safety cron. Cheap: the agent's INTENT_ONLY mode
-// skips reply/bounce detection and all outreach.
-// Does this company now have BOTH a real intro play and a real demo play?
-// Cheap read of DemoPlays only — the agent re-derives everything authoritatively
-// and owns the fired-state check, so a false positive here costs one no-op
-// spawn, never a duplicate email.
-async function companyHasBothAudios(company, leadToken = '') {
-  const key = openKey(company);
-  if (!key && !leadToken) return false;
-  const r = await sheets().spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A:G',
-  });
-  let intro = false, demo = false;
-  for (const row of (r.data.values || []).slice(1)) {
-    // A tokened play counts only toward its own lead, a legacy play only toward
-    // its company. Attribution itself is the agent's; this only saves a spawn.
-    const rowToken = normalizeLeadToken(row[6]);
-    if (leadToken ? rowToken !== leadToken : (rowToken || openKey(row[1] || '') !== key)) continue;
-    const ip = (row[3] || '').trim();
-    if (['75.155.151.158'].includes(ip)) continue;      // own IP
-    if (BOT_PATTERNS.test(row[4] || '')) continue;      // bot UA
-    if (normalizeAudioType(row[5]) === 'intro') intro = true; else demo = true;
-  }
-  return intro && demo;
-}
-
-// A false negative here would strand a pair until some other pass noticed it,
-// because the backstop no longer polls blindly. It cannot produce one: the
-// agent pairs a token row only with rows of the same token (checked exactly
-// here), and a legacy row only with rows whose normalizeName(cleanCompanyName)
-// key matches — equal keys under that normaliser are equal under openKey too,
-// and the bot and own-IP exclusions are identical (the agent additionally drops
-// datacenter IPs). test/intent-backstop.test.js pins all three.
-async function maybeFireIntent(company, leadToken = '') {
-  try {
-    if (await companyHasBothAudios(company, leadToken)) {
-      spawnAgentIntentOnly(`both audios played — ${company}`, { trigger: 'demo' });
-    }
-  } catch (e) {
-    // Never let intent detection break the tracking pixel. The backstop is
-    // armed, so the next tick runs the pass this check could not confirm.
-    intentBackstop.markNeeded(BACKSTOP_REASON.DEMO_LAUNCH_SKIPPED);
-    console.warn('[intent] pair check failed:', e.message);
-  }
-}
-
-// trigger 'demo' is the immediate path; 'backstop' is the three-minute tick.
-// A demo launch that does not start arms the backstop; a backstop launch that
-// does not start was armed already and stays armed.
-function spawnAgentIntentOnly(why, { trigger = 'backstop' } = {}) {
-  const skipped = () => { if (trigger === 'demo') intentBackstop.markNeeded(BACKSTOP_REASON.DEMO_LAUNCH_SKIPPED); };
-  if (agentState.running || automationLaunchReserved) {
-    skipped();
-    console.log(`[intent] agent busy — skipping intent spawn (${why}); the cron backstop will retry`);
-    return;
-  }
-  launchAutomationAfterCalendar(`intent-only pass: ${why}`, () => {
-    if (agentState.running) return false;
-    console.log(`[intent] spawning intent-only pass (${why})`);
-    if (trigger === 'demo') egressMeter.intentDemoLaunches += 1; else egressMeter.intentBackstopLaunches += 1;
-    startAgentProcess({ DRY_RUN: 'false', INTENT_ONLY: 'true' }, false, { intentTrigger: trigger });
-    return true;
-  }).then(result => { if (!result || !result.launched) skipped(); })
-    .catch(error => {
-      skipped();
-      console.error('[Calendar safety] intent pass blocked:', error.message);
-    });
-}
-
 function spawnAgentCheckOnly(extraEnv = {}) {
   if (agentState.running || automationLaunchReserved) {
     console.log('[cron] Agent already running — skipping check-only pass this tick');
@@ -1363,8 +1232,8 @@ app.delete('/api/leads/:id', requireAuth, rejectArchived('board'), async (req, r
 
 // Verifying the sheet exists and its header is intact costs a spreadsheets.get
 // plus a header read — measured at ~780ms, paid on EVERY dashboard load for a
-// check whose answer cannot change while the process runs. Guarded the same way
-// ensureDemoPlaysHeader is: at most once per process.
+// check whose answer cannot change while the process runs. Guarded by a module
+// flag: at most once per process.
 let ceSheetChecked = false;
 async function ensureColdEmailSheet() {
   if (ceSheetChecked) return;
@@ -1460,11 +1329,11 @@ async function readColdEmailDashboardRows() {
 
 // ── SHARED OUTREACH DATASET ─────────────────────────────────────────────────
 // The Outreach page used to read the ColdEmail sheet three times per load (the
-// lead list, the stats card, and the reply drill-down each fetched it), plus
-// DemoPlays twice. All of them now derive from this one cached snapshot.
+// lead list, the stats card, and the reply drill-down each fetched it). All of
+// them now derive from this one cached snapshot.
 //
 // Freshness: a short TTL bounds staleness, and any write this process makes to
-// ColdEmail or DemoPlays busts the cache synchronously (see sheets()), so a
+// ColdEmail or the proposal telemetry tabs busts the cache synchronously (see sheets()), so a
 // stage change or an import is visible on the very next read. The TTL only ever
 // hides changes made OUTSIDE this process — e.g. someone editing the sheet by
 // hand or the agent writing from its own process.
@@ -1529,6 +1398,16 @@ function toLightRow(lead, category, attribution = {}, sender = null, extras = {}
   row.bounced = Boolean(extras.bouncedLeadIds && extras.bouncedLeadIds.has(lead.id))
     || /\[BOUNCED/i.test(lead.notes || '');
   row.manualHold = /\[MANUAL HOLD\]/i.test(lead.notes || '');
+  if (String(lead.leadNiche || '').toLowerCase().includes('staffing')
+    && resolveLeadClient(lead).clientId === DEFAULT_CLIENT_ID) {
+    const review = staffingReviewStatus(lead);
+    const hold = staffingHoldStatus(lead);
+    row.staffingHoldReason = hold?.reason || '';
+    row.staffingHoldExplanation = hold?.explanation || '';
+    row.staffingFit = review?.fit || '';
+    row.staffingPersonalization = review?.personalization || '';
+    row.staffingRoutingReady = review?.routingReady ?? false;
+  }
   row.suppressed = row.bounced || /\[(?:UNSUBSCRIBED|SUPPRESSED|BOUNCED)/i.test(lead.notes || '') || /^(?:Unsub|Unsubscribed)$/i.test(lead.stage || '');
   row.campaignVersion = attribution.campaignVersion || LEGACY_UNKNOWN;
   row.campaignFamily = attribution.campaignFamily || '';
@@ -1608,9 +1487,7 @@ async function loadOutreachDataset() {
     ...(ceFromSupabase ? [] : [`${CE_SHEET_NAME}!A:O`, `${CE_SHEET_NAME}!Q:X`]),
     'ReplyDrafts!A:L',
     `${COLD_CALL_ACTIVITY_SHEET}!A:J`, `${PROVIDER_LEADS_SHEET}!A:N`,
-    // A:G, not A:F — column G carries the lead token, and without it the
-    // dashboard can only fall back to matching plays by company name.
-    'DemoPlays!A:G', 'ProposalOpens!A:F', 'ProposalEngaged!A:F', AGENT_READ_RANGE,
+    'ProposalOpens!A:F', 'ProposalEngaged!A:F', AGENT_READ_RANGE,
     mailboxCheckpointRange(), 'Suppression!A:A',
   ];
   const snapshot = await sheets().spreadsheets.values.batchGet({
@@ -1630,12 +1507,11 @@ async function loadOutreachDataset() {
   const draftResponse = responseAt(2);
   const activityResponse = responseAt(3);
   const providerResponse = responseAt(4);
-  const demoResponse = responseAt(5);
-  const openResponse = responseAt(6);
-  const engagedResponse = responseAt(7);
-  const boardResponse = responseAt(8);
-  const mailboxObservationResponse = responseAt(9);
-  const suppressionResponse = responseAt(10);
+  const openResponse = responseAt(5);
+  const engagedResponse = responseAt(6);
+  const boardResponse = responseAt(7);
+  const mailboxObservationResponse = responseAt(8);
+  const suppressionResponse = responseAt(9);
 
   ceRowMap.clear();
   let leads = ceRows.slice(1).map((row, index) => {
@@ -1761,17 +1637,6 @@ async function loadOutreachDataset() {
   const senderIdentities = visibleSenderIdentities();
   const leadKeys = new Set();
   const bounceIds = bouncedLeadIds({ leads, activities });
-  // Demo engagement is LEAD-scoped, by the same rule the agent sends on: a play
-  // belongs to the lead whose token it carries, or — for a token-less legacy row
-  // — to the ONE lead that owns its company key. A key several locations of one
-  // brand share is ambiguous and credits none of them.
-  //
-  // This was keyed by company name, which is not an identity: one visitor's
-  // session on one Smili Dental location's proposal page lit up the "Demo
-  // played" badge on all four locations, and made each of them read as engaged.
-  const demoAttribution = attributeDemoPlays(leads,
-    aggregateDemoPlays(demoResponse.data.values || [], { companyKey: openKey }),
-    { companyKey: openKey });
   const realOpenCounts = new Map();
   // Every lead gets the same light row (reply category, sender, attribution),
   // so an archived lead reads exactly like an active one in Archive. Only
@@ -1801,14 +1666,6 @@ async function loadOutreachDataset() {
     const row = toLightRow(lead, categoryByLeadId.get(lead.id), attribution, sender, { bouncedLeadIds: bounceIds });
     row.archived = archived;
     Object.assign(row, pipelineIndex.byColdEmailId.get(lead.id));
-    const attributedPlay = demoPlayForLead(demoAttribution, lead.id);
-    row.demoEngaged = Boolean(attributedPlay);
-    // The counts the row cell and the detail drawer render, so neither has to
-    // aggregate telemetry by company name in the browser.
-    row.demoPlays = attributedPlay ? {
-      count: attributedPlay.intro + attributedPlay.demo,
-      intro: attributedPlay.intro, demo: attributedPlay.demo, last: attributedPlay.last,
-    } : null;
     row.sequenceState = outreachSequenceState(lead);
     const automation = deriveAutomationState(lead);
     row.automationState = automation.state;
@@ -1821,7 +1678,7 @@ async function loadOutreachDataset() {
   counts.archived = archivedRows.length + archivedBoardLeads.filter(card => !archivedRows
     .some(row => `CE-${row.id}` === card.id || normalizeEmail(row.email) === normalizeEmail(card.email))).length;
 
-  // Opens remain passive telemetry. Warm is canonical demo engagement only.
+  // Opens remain passive telemetry.
   // These headline numbers used to be computed in the browser from the full
   // lead array. Once the list was paginated that array became one page, so the
   // cards silently started describing 100 rows instead of 1,849. They are
@@ -1832,15 +1689,9 @@ async function loadOutreachDataset() {
   //   opens = DISTINCT companies with >= 1 real open, that match a lead
   //   hits  = sum of those companies' real opens (a prospect reloading counts once
   //           in `opens`, but every real hit shows in the label)
-  //   warm  = leads with verified demo engagement; opens never contribute
   // `real` excludes scanner detonations via the shared open-filter module.
   const proposalOpens = openResponse.data.values || [];
   const proposalEngaged = engagedResponse.data.values || [];
-  const demoPlays = demoResponse.data.values || [];
-  const demoRows = demoPlays.slice(1).map(row => ({
-    timestamp: row[0] || '', company: row[1] || '', niche: row[2] || '',
-    ip: row[3] || '', userAgent: row[4] || '', audioType: normalizeAudioType(row[5]),
-  }));
   const openRows = proposalOpens.slice(1).map(row => ({
     timestamp: row[0] || '', company: row[1] || '', niche: row[2] || '',
     id: row[3] || '', ip: row[4] || '', userAgent: row[5] || '',
@@ -1856,7 +1707,6 @@ async function loadOutreachDataset() {
     keyOf: row => openKey(row.company),
     leadFor: row => (row.id && leadById.get(row.id)) || leadByKey.get(openKey(row.company)) || null,
     engagedRows: proposalEngaged.slice(1).map(row => ({ company: row[1] || '' })),
-    demoRows: demoRows.map(row => ({ company: row.company })),
   });
   const realOpensByCompany = realOpenCounts;
   for (const open of annotatedOpens) {
@@ -1865,15 +1715,12 @@ async function loadOutreachDataset() {
     if (!k) continue;
     realOpensByCompany.set(k, (realOpensByCompany.get(k) || 0) + 1);
   }
-  const signals = { opens: 0, hits: 0, warm: 0, demoPlays: 0 };
+  const signals = { opens: 0, hits: 0 };
   for (const [k, n] of realOpensByCompany) {
     if (!leadKeys.has(k)) continue;      // orphaned open rows are not lead opens
     signals.opens++;
     signals.hits += n;
   }
-  signals.demoPlays = demoRows.filter(row => leadKeys.has(openKey(row.company))).length;
-  for (const row of allRows) row.warm = row.demoEngaged;
-  signals.warm = rows.filter(row => row.warm).length;
   const outside = rows.filter(row => !row.pipelinePresence && row.mappingStatus !== 'conflict');
   const pipelineAudit = {
     total: rows.length,
@@ -1881,7 +1728,6 @@ async function loadOutreachDataset() {
     notInPipeline: outside.length,
     positiveNotInPipeline: outside.filter(row => row.replyCategory === 'positive').length,
     needsHumanNotInPipeline: outside.filter(row => row.replyCategory === 'needs_human').length,
-    demoEngagedNotInPipeline: outside.filter(row => row.demoEngaged).length,
     sequenceCompleteNotInPipeline: outside.filter(row => row.sequenceState === 'complete').length,
     activeSequenceNotInPipeline: outside.filter(row => row.sequenceState === 'active' || row.sequenceState === 'queued').length,
     ambiguousMappings: pipelineIndex.ambiguousMappings,
@@ -1906,7 +1752,7 @@ async function loadOutreachDataset() {
     activeLeads,           // the ACTIVE scope (analytics-scope.js); server-side only
     historicalMetrics, historicalSendActivity,
     pipelineAudit, boardLeads,
-    demoPlays, demoRows, proposalOpens, proposalEngaged,
+    proposalOpens, proposalEngaged,
     annotatedOpens,        // computed once; the Opens panel reuses it
     mailboxObservationState: mailboxObservationResponse.data.values || [],
     suppressedEmails: new Set((suppressionResponse.data.values || []).slice(1)
@@ -1951,6 +1797,15 @@ async function getOutreachDataset({ force = false } = {}) {
 const DEFAULT_CE_PAGE = 100;
 const MAX_CE_PAGE = 500;
 
+function outreachClientView(dataset, query) {
+  // Missing scope is the legacy ScaleLab context, never an all-tenant read.
+  const client = resolveClientId(query.client === undefined ? 'scalelab' : query.client);
+  if (!client.ok) return client;
+  // Send-activity days are counted on the client's own clock (client config).
+  return { ok: true, view: clientOutreachView(dataset, client.clientId, configuredSenders(),
+    getManagedClientConfig(client.clientId).timezone || 'America/Vancouver') };
+}
+
 function filterOutreachRows(rows, query) {
   const stage = String(query.stage || 'all');
   const campaign = String(query.campaign || '').trim();
@@ -1959,7 +1814,6 @@ function filterOutreachRows(rows, query) {
   const category = String(query.replyCategory || '').trim().toLowerCase();
   const pipelinePresence = String(query.pipelinePresence || '').trim().toLowerCase();
   const pipelineStage = String(query.pipelineStage || '').trim().toLowerCase();
-  const engagement = String(query.engagement || '').trim().toLowerCase();
   const sequenceState = String(query.sequenceState || '').trim().toLowerCase();
   const automationState = String(query.automationState || '').trim().toLowerCase();
   // Which sending inbox owns the conversation. Matched against the ownership
@@ -1995,9 +1849,6 @@ function filterOutreachRows(rows, query) {
     if (pipelinePresence === 'out' && (row.pipelinePresence || row.mappingStatus === 'conflict')) return false;
     if (pipelinePresence === 'conflict' && row.mappingStatus !== 'conflict') return false;
     if (pipelineStage && pipelineStage !== 'all' && row.pipelineStage !== pipelineStage) return false;
-    if (engagement === 'demo' && !row.demoEngaged) return false;
-    if (engagement === 'warm' && !row.warm) return false;
-    if (engagement === 'none' && (row.demoEngaged || row.warm)) return false;
     if (sequenceState && sequenceState !== 'all' && row.sequenceState !== sequenceState) return false;
     if (automationState === 'suppressed' && !row.suppressed) return false;
     else if (automationState === 'held' && !row.manualHold) return false;
@@ -2017,16 +1868,10 @@ function filterOutreachRows(rows, query) {
 app.get('/api/coldemail', requireAuth, async (req, res) => {
   try {
     const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
-    // Optional client scope, applied here on the server: the browser never
-    // receives another client's rows to hide. Absent means the legacy
-    // behaviour (every row).
-    let scopedRows = dataset.rows;
-    if (req.query.client !== undefined) {
-      const client = resolveClientId(req.query.client);
-      if (!client.ok) return res.status(400).json({ error: client.reason, code: client.code });
-      const ids = new Set(leadsForClient(dataset.leads || [], client.clientId).map(lead => String(lead.id)));
-      scopedRows = dataset.rows.filter(row => ids.has(String(row.id)));
-    }
+    // Client scope is applied on the server. A missing query selects ScaleLab.
+    const scope = outreachClientView(dataset, req.query);
+    if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
+    const scopedRows = scope.view?.rows || dataset.rows;
     const filtered = filterOutreachRows(scopedRows, req.query);
     const requested = req.query.limit === undefined ? DEFAULT_CE_PAGE : parseInt(req.query.limit, 10);
     const limit = Number.isFinite(requested) && requested > 0 ? Math.min(requested, MAX_CE_PAGE) : 0;
@@ -2038,16 +1883,16 @@ app.get('/api/coldemail', requireAuth, async (req, res) => {
       totalUnfiltered: scopedRows.length,
       offset, limit,
       hasMore: limit ? offset + page.length < filtered.length : false,
-      counts: dataset.counts,
-      facets: dataset.facets,
+      counts: scope.view?.counts || dataset.counts,
+      facets: scope.view?.facets || dataset.facets,
       // Human labels for the canonical lead types, so filters and tables render
       // "Staffing Agency" rather than the stored id.
       leadTypeLabels: Object.fromEntries(LEAD_TYPE_IDS.map(id => [id, leadTypeLabel(id)])),
       // The inbox filter's options, from the same identity map the rows used.
       // Address and id only — nothing about credentials travels to the browser.
-      senderOptions: senderFilterOptions(visibleSenderIdentities()),
-      pipelineAudit: dataset.pipelineAudit,
-      sendActivity: dataset.sendActivity,
+      senderOptions: senderFilterOptions(scope.view ? scope.view.senderRows : visibleSenderIdentities()),
+      pipelineAudit: scope.view?.pipelineAudit || dataset.pipelineAudit,
+      sendActivity: scope.view?.sendActivity || dataset.sendActivity,
       fetchedAt: new Date(dataset.at).toISOString(),
     });
   } catch (e) {
@@ -2068,7 +1913,38 @@ registerClientRoutes(app, {
     const capacity = capacityFromEnv(configuredSenders());
     return { dailyLimit: capacity.globalDailyLimit, windowLimit: capacity.globalPerRunLimit };
   },
+  importLeads: options => importManagedClientLeads(options),
+  importBatches: () => clientImportBatchStore,
 });
+
+// ── MANAGED-CLIENT IMPORT BATCHES + READINESS ───────────────────────────────
+// A batch (public.client_lead_import_batches) is imported by THIS process
+// through importManagedClientLeads — the dashboard import's own path. Only
+// operator-promoted `pending` batches run; claiming is atomic.
+const clientImportBatchStore = createImportBatchStore();
+async function runClientImportBatches(trigger) {
+  const outcomes = await processPendingImportBatches({ store: clientImportBatchStore, importLeads: importManagedClientLeads });
+  if (outcomes.length) console.log(`[import-batches] ${trigger}: ${outcomes.map(o => `${o.id}=${o.status}${o.written !== undefined ? ` written ${o.written}` : ''}`).join(', ')}`);
+}
+
+// One line per managed client at boot: what is configured and what is not.
+// Booleans and counts only; no value of any variable is logged.
+function logManagedClientReadiness() {
+  const store = getLedgerStore();
+  const senders = configuredSenders();
+  for (const client of listClients().filter(item => !item.isDefault)) {
+    const mine = senders.filter(sender => sender.clientId === client.id);
+    const copyEnv = client.copyEnv || {};
+    console.log(JSON.stringify({
+      event: 'client_readiness', client_id: client.id, sending: clientSendState(client.id).sendingEnabled,
+      ledger_available: Boolean(store?.enabled), capacity_daily: client.capacity.dailyCap,
+      senders: mine.length, senders_eligible: mine.filter(sender => sender.sendEligible).length,
+      landing_page_configured: Boolean(copyEnv.landingPageUrl && process.env[copyEnv.landingPageUrl]),
+      mailing_address_configured: Boolean(copyEnv.mailingAddress && process.env[copyEnv.mailingAddress]),
+      import_batches_available: clientImportBatchStore.enabled,
+    }));
+  }
+}
 
 app.get('/api/campaign-versions', requireAuth, (req, res) => {
   res.json({ active: ACTIVE_CAMPAIGN_VERSION, versions: CAMPAIGN_VERSIONS });
@@ -2175,20 +2051,27 @@ app.get('/api/coldemail/funnel', requireAuth, async (req, res) => {
   try {
     const startedAt = process.hrtime.bigint();
     const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const clientScope = outreachClientView(dataset, req.query);
+    if (!clientScope.ok) return res.status(400).json({ error: clientScope.reason, code: clientScope.code });
+    const view = clientScope.view;
     // Active by default: the live offers only. ?scope=historical is all time,
     // retired offers included, and the response says which one it is.
     const scope = parseAnalyticsScope(req.query.scope);
-    const scopedLeads = scope === ANALYTICS_SCOPE.HISTORICAL ? dataset.leads : activeLeadsOf(dataset);
+    const scopedLeads = scope === ANALYTICS_SCOPE.HISTORICAL
+      ? (view?.leads || dataset.leads)
+      : (view ? view.leads.filter(lead => view.rows.some(row => String(row.id) === String(lead.id))) : activeLeadsOf(dataset));
     const analytics = buildFunnelAnalytics({
-      leads: scopedLeads, boardLeads: dataset.boardLeads, activities: dataset.activities,
-      replyRecords: dataset.replyRecords,
-      currentVersion: currentLiveCampaignVersion(),
+      leads: scopedLeads, boardLeads: view?.clientId === 'jole' ? [] : dataset.boardLeads,
+      activities: view ? (scope === ANALYTICS_SCOPE.HISTORICAL ? view.activities : view.activeActivities) : dataset.activities,
+      replyRecords: view?.replyRecords || dataset.replyRecords,
+      currentVersion: view?.clientId === 'jole' ? '' : currentLiveCampaignVersion(),
     }, req.query);
     // The re-engagement journey is judged on its own terms — replies, positive
     // replies, booked calls, closed clients — not folded into cold-campaign
     // numbers it would otherwise distort.
     analytics.genericReengagement = genericReengagementAnalytics({
-      activities: dataset.activities, leads: dataset.leads,
+      activities: view ? (scope === ANALYTICS_SCOPE.HISTORICAL ? view.activities : view.activeActivities) : dataset.activities,
+      leads: scopedLeads,
     });
     const stage = String(req.query.stage || '').trim();
     const requested = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 100));
@@ -2198,7 +2081,7 @@ app.get('/api/coldemail/funnel', requireAuth, async (req, res) => {
     if (stage && analytics.stageLeadIds[stage]) {
       const ids = analytics.stageLeadIds[stage]; stageTotal = ids.length;
       // Historical drill-down: resolves archived leads too (labelled).
-      const rowById = new Map((dataset.allRows || dataset.rows).map(row => [row.id, row]));
+      const rowById = new Map((view ? [...view.rows, ...view.archivedRows] : dataset.allRows || dataset.rows).map(row => [row.id, row]));
       // Project to exactly what the drill-down list renders. Whole ColdEmail
       // rows carry notes/siteContext/campaign_notes blobs, which made a single
       // 100-row page ~194 KB; the five displayed fields are ~10 KB. The lead
@@ -2216,7 +2099,8 @@ app.get('/api/coldemail/funnel', requireAuth, async (req, res) => {
       // Historical reporting: the funnel counts every lead ever sent, archived
       // ones included, so rates stay comparable over time.
       scope: { scope, historical: scope === ANALYTICS_SCOPE.HISTORICAL, includesArchived: scope === ANALYTICS_SCOPE.HISTORICAL,
-        leads: scopedLeads.length, archivedLeads: (dataset.archivedRows || []).length, currentVersion: currentLiveCampaignVersion() },
+        leads: scopedLeads.length, archivedLeads: (view?.archivedRows || dataset.archivedRows || []).length,
+        currentVersion: view?.clientId === 'jole' ? '' : currentLiveCampaignVersion() },
       ...(records ? { stage, records, pagination: { total: stageTotal, offset, limit: requested, hasMore: offset + records.length < stageTotal } } : {}),
       generatedMs: Number(process.hrtime.bigint() - startedAt) / 1e6,
       fetchedAt: new Date(dataset.at).toISOString(),
@@ -2377,32 +2261,6 @@ app.get('/api/crm/health', requireAuth, async (req, res) => {
   }
 });
 
-// The DemoPlays header was written before audio_type and lead_token existed, so
-// it can read fewer columns than rows write. Positional data is already correct —
-// this only labels columns F and G. Writes A1:G1 exclusively, so no row data can
-// shift. Guarded by a module flag: repaired at most once per process, never on
-// every request.
-let demoPlaysHeaderChecked = false;
-async function ensureDemoPlaysHeader() {
-  if (demoPlaysHeaderChecked) return;
-  demoPlaysHeaderChecked = true;   // set first: a failure must not retry-loop
-  try {
-    const hdr = await sheets().spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A1:G1',
-    });
-    const row = (hdr.data.values || [])[0] || [];
-    if (row.length >= 7 && String(row[6]).trim()) return;   // already labelled
-    await sheets().spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A1:G1',
-      valueInputOption: 'RAW',
-      requestBody: { values: [['timestamp', 'company', 'niche', 'ip', 'ua', 'audio_type', 'lead_token']] },
-    });
-    console.log('[DemoPlays] header extended to include lead_token (column G)');
-  } catch (e) {
-    console.warn('[DemoPlays] header check failed:', e.message);
-  }
-}
-
 // ── DAILY DIGEST ──────────────────────────────────────────────────────────────
 // One summary card per day, rendered on the dashboard (not SMS, not email).
 // Generated at 18:00 America/Vancouver and cached in its own tab so it is
@@ -2431,12 +2289,10 @@ async function ensureDigestSheet() {
 
 // Computes today's numbers from the source tabs. Read-only.
 async function computeDigest(day) {
-  const [ceR, opR, dpR, drR, inR, actR] = await Promise.all([
+  const [ceR, opR, drR, actR] = await Promise.all([
     sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE }),
     sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ProposalOpens!A:F' }),
-    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'DemoPlays!A:F' }),
     sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'ReplyDrafts!A:I' }).catch(() => ({ data: {} })),
-    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'IntentFired!A:E' }).catch(() => ({ data: {} })),
     sheets().spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID, range: `${COLD_CALL_ACTIVITY_SHEET}!A:J`,
     }).catch(() => ({ data: {} })),
@@ -2465,19 +2321,6 @@ async function computeDigest(day) {
   const todaysRealOpens = annotatedOpens.filter(o => o.real && isToday(o.timestamp));
   const realOpens = { rows: todaysRealOpens.length, companies: new Set(todaysRealOpens.map(o => o.key).filter(Boolean)).size };
 
-  // ── demo plays today, split by clip, plus how many companies now hold a pair ──
-  const playsToday = (dpR.data.values || []).slice(1).filter(r => isToday(r[0]));
-  const introToday = playsToday.filter(r => normalizeAudioType(r[5]) === 'intro').length;
-  const demoToday  = playsToday.filter(r => normalizeAudioType(r[5]) !== 'intro').length;
-  const pairKeys = new Map();
-  for (const r of (dpR.data.values || []).slice(1)) {
-    const k = openKey(r[1] || ''); if (!k) continue;
-    const e = pairKeys.get(k) || { intro: false, demo: false };
-    if (normalizeAudioType(r[5]) === 'intro') e.intro = true; else e.demo = true;
-    pairKeys.set(k, e);
-  }
-  const bothPairs = [...pairKeys.values()].filter(v => v.intro && v.demo).length;
-
   // ── auto-answers vs drafts ──
   const autoAnswered = leadRows.filter(r => isToday(r[9]) && /auto-answered/.test(r[11] || '')).length;
   const draftRows = (drR.data.values || []).slice(1);
@@ -2485,18 +2328,13 @@ async function computeDigest(day) {
   const draftsPending = draftRows.filter(r => (r[8] || 'pending').toLowerCase() === 'pending').length;
 
   // ── booking links sent, by trigger ──
-  const intentRows = (inR.data.values || []).slice(1);
-  const bookingByTrigger = {
-    'question reply': autoAnswered,
-    'both audios':    intentRows.filter(r => isToday(r[0])).length,
-  };
+  const bookingByTrigger = { 'question reply': autoAnswered };
 
   return {
     date: day,
     generatedAt: new Date().toISOString(),
     emailsSent: canonical.emailsSent,
     realOpens,
-    demoPlays: { intro: introToday, demo: demoToday, total: playsToday.length, companiesWithBothPairs: bothPairs },
     replies: canonical.replies,
     bookings: canonical.bookings,
     answers: { autoSent: autoAnswered, draftsCreated: draftsToday, draftsPending },
@@ -2554,37 +2392,6 @@ app.get('/api/digest', requireAuth, async (req, res) => {
   }
 });
 
-// Serves the DemoPlays log, same shape as /api/proposalOpens plus the
-// normalized audioType per row.
-//
-// NOTE: the opens scanner filter is deliberately NOT applied here. A play event
-// requires someone to press play on an audio element — mail scanners fetch
-// links, they don't do that — and the live log confirms it: 0 of 20 demo plays
-// came from a datacenter IP. Running the opens filter over this data could only
-// discard real signal. The write-side guards (blocked IP / bot UA / empty
-// company) already ran in /demo-played, so a logged row is trustworthy.
-app.get('/api/demoPlays', requireAuth, async (_req, res) => {
-  try {
-    await ensureDemoPlaysHeader();
-    // Served from the shared snapshot rather than its own read.
-    const rows = (await getOutreachDataset()).demoPlays;
-    res.json(rows.slice(1).map(row => ({
-      timestamp: row[0] || '',
-      company:   row[1] || '',
-      niche:     row[2] || '',
-      ip:        row[3] || '',
-      userAgent: row[4] || '',
-      audioType: normalizeAudioType(row[5]),
-      // The lead this play names. Blank on rows written before the page
-      // forwarded the token, which are legacy company-keyed evidence.
-      leadToken: normalizeLeadToken(row[6]),
-    })));
-  } catch (e) {
-    console.error('[DemoPlays GET]', e.message);
-    res.json([]);
-  }
-});
-
 // Serves the ProposalOpens log with each row annotated { scanner, rescued, real }
 // by the SHARED open-filter module — the same code outreach-agent.js gates warm
 // follow-ups with. The dashboard counts only `real` rows, so the headline "Opens"
@@ -2598,7 +2405,9 @@ app.get('/api/proposalOpens', requireAuth, async (_req, res) => {
     // Annotated once inside the shared snapshot, so the Opens panel and the
     // Opens/Warm cards can never disagree about what counts as a real open.
     const dataset = await getOutreachDataset();
-    res.json(dataset.annotatedOpens);
+    const scope = outreachClientView(dataset, _req.query);
+    if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
+    res.json(scope.view?.opens || dataset.annotatedOpens);
   } catch (e) {
     console.error('[ProposalOpens GET]', e.message);
     res.json([]);
@@ -2657,10 +2466,109 @@ async function existingColdEmailAddresses(clientId) {
   return new Set(leadsInEmailScope(rows, clientId).map(lead => normalizeEmail(lead.email)).filter(Boolean));
 }
 
+// ── MANAGED-CLIENT LEAD IMPORT (storage for lead-import.js importClientLeads) ──
+// Same primitives as the legacy import below: one ColdEmail append, then the
+// outreach_leads mirror. The differences are deliberate: every read is fresh
+// and fails closed (an unreadable Suppression tab refuses the import rather
+// than reading as empty), and the corpus is BOTH stores (Sheets is written
+// first; Supabase may be the read authority).
+async function readClientImportCorpus() {
+  await ensureColdEmailSheet();
+  const [coldEmail, suppression] = await Promise.all([
+    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE }),
+    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${SUPPRESSION_SHEET}!A:A` }),
+  ]);
+  const leads = (coldEmail.data.values || []).slice(1)
+    .map(row => Object.fromEntries(CE_COLUMNS.map((field, i) => [field, row[i] || ''])));
+  if (outreachStateMode() !== 'off') {
+    const mirrored = await readOutreachCorpus();
+    if (!mirrored.ok) throw Object.assign(new Error(`outreach corpus unreadable: ${mirrored.reason}`), { code: 'corpus_unavailable' });
+    leads.push(...mirrored.leads);
+  }
+  const suppressedEmails = new Set((suppression.data.values || []).slice(1).map(row => normalizeEmail(row[0])).filter(Boolean));
+  return { leads, suppressedEmails };
+}
+
+async function readClientImportSuppressions(clientId) {
+  const store = getLedgerStore();
+  if (!store?.enabled) return { available: false, reason: store?.reason || 'client ledger is disabled' };
+  try {
+    return { available: true, entries: await store.listClientSuppressions(clientId) };
+  } catch (error) {
+    return { available: false, error: error.message || 'client suppression read failed' };
+  }
+}
+
+function importManagedClientLeads({ clientId, campaignId, rows, dryRun }) {
+  return withAuth(() => importClientLeads({
+    clientId, campaignId, rows, dryRun,
+    readCorpus: readClientImportCorpus,
+    readClientSuppressions: readClientImportSuppressions,
+    appendLeads: async leads => {
+      await sheets().spreadsheets.values.append({
+        spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+        requestBody: { values: leads.map(lead => CE_COLUMNS.map(col => String(lead[col] ?? ''))) },
+      });
+      ceRowMap.clear();
+    },
+    // Background, as every ColdEmail write path: the mirror sits after the
+    // authoritative append and must never fail it. Dedupe reads Sheets too, so
+    // a retry before the mirror lands still sees these rows.
+    mirrorLeads: async leads => {
+      if (outreachStateMode() !== 'off') mirrorOutreachLeadsInBackground(leads);
+      return { scheduled: outreachStateMode() !== 'off', leads: leads.length };
+    },
+    newId: () => Date.now().toString(36) + crypto.randomBytes(6).toString('hex'),
+  }));
+}
+
+// ── INDUSTRIAL STAFFING V2 LEAD IMPORT (integrations/staffing-v2-import.js) ──
+// The only way a V2 lead enters storage: explicit V2 identity, V2_READY sourcing
+// records only, structured roles + market and the full sourcing profile kept in
+// campaign_notes. A DRY RUN unless the body sends `dry_run: false`. A write adds
+// Import-stage leads through the same primitives as the managed-client import —
+// one ColdEmail append, then the background outreach_leads mirror — and does
+// nothing else: no queue, sender, reservation, schedule or V2 activation.
+app.post('/api/staffing/v2/leads/import', requireAuth, async (req, res) => {
+  const body = req.body || {};
+  const dryRun = body.dry_run !== false;
+  try {
+    const result = await withAuth(() => importStaffingV2Leads({
+      payload: body, dryRun,
+      readCorpus: readClientImportCorpus,
+      appendLeads: async leads => {
+        await sheets().spreadsheets.values.append({
+          spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+          requestBody: { values: leads.map(lead => CE_COLUMNS.map(col => String(lead[col] ?? ''))) },
+        });
+        ceRowMap.clear();
+      },
+      mirrorLeads: async leads => {
+        if (outreachStateMode() !== 'off') mirrorOutreachLeadsInBackground(leads);
+        return { scheduled: outreachStateMode() !== 'off', leads: leads.length };
+      },
+      newId: () => Date.now().toString(36) + crypto.randomBytes(6).toString('hex'),
+    }));
+    res.json(result);
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    if (e.code === 'invalid_payload') return res.status(422).json({ error: e.message, code: e.code });
+    if (e.code === 'corpus_unavailable') return res.status(503).json({ error: e.message, code: e.code });
+    console.error('[Staffing V2 Import]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/coldemail/import', requireAuth, async (req, res) => {
   const { rows, campaign, campaign_notes, lead_niche } = req.body || {};
   if (!Array.isArray(rows)) return res.status(400).json({ error: 'body.rows must be an array' });
   if (!campaign || !String(campaign).trim()) return res.status(422).json({ error: 'Campaign name is required' });
+  // Industrial Staffing V2 never enters through this flat import: it would drop
+  // V2's structured profile and identity. Its own import keeps both.
+  if (isStaffingV2Marked({ campaign: String(campaign).trim(), campaign_notes })
+    || String(campaign).trim() === STAFFING_CAMPAIGN_V2.emailTemplateId) {
+    return res.status(422).json({ error: 'Industrial Staffing V2 leads use POST /api/staffing/v2/leads/import', code: 'use_staffing_v2_import' });
+  }
   const leadNiche = normalizeNiche(lead_niche);
   if (!leadNiche) return res.status(422).json({ error: 'Lead niche is required' });
   // Fail closed: an unrecognised lead type must not be stored and later resolved
@@ -3016,65 +2924,18 @@ function activityMatchesLead(row, lead) {
   return rowIds.includes(id) || (email && normalizeEmail(row.email) === email);
 }
 
-function bookingLinkBlockerFor(lead, activities, dataset, now = new Date()) {
-  if (!hasUndeliveredDemoPair(lead, activities)) return null;
-  if (!SENDING_ENABLED()) return {
-    code: 'sending_disabled',
-    label: 'Booking link pending — automation is paused',
-    reason: 'the global sending switch is disabled; pending intent remains durable',
-  };
-
-  const senders = configuredSenders();
-  const ownership = resolveSenderOwnership({ lead, activities, senders: visibleSenderIdentities() });
-  const sender = ownership.senderId && senders.find(item => item.id === ownership.senderId);
-  if (!sender || !sender.sendEligible || ['unknown', 'conflict'].includes(ownership.state)) return {
-    code: 'sender_proof',
-    label: 'Booking link pending — sender proof unavailable',
-    reason: ownership.detail || 'the established sending inbox cannot be proven',
-  };
-
-  const observers = observerHealth(dataset.mailboxObservationState || [], {
-    now, senderIds: observableSenders(senders).map(item => item.id),
-  });
-  const observer = observers.find(item => item.senderInboxId === sender.id);
-  if (!observer || observer.health !== 'healthy') return {
-    code: 'mailbox_observation',
-    label: 'Booking link pending — waiting for mailbox health',
-    reason: observer?.quotaBackoff
-      ? 'the owning Gmail observer is quota-limited; delivery fails closed until it recovers'
-      : 'the owning Gmail observer is unavailable; delivery fails closed until it is healthy',
-  };
-
-  const dayKey = now.toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
-  const senderCount = senderCountsToday(dataset.activities || [], dayKey).get(sender.id) || 0;
-  const globalCount = successfulSendCountToday(dataset.activities || [], dayKey);
-  const globalLimit = capacityFromEnv(senders).globalDailyLimit;
-  if (globalCount >= globalLimit) return {
-    code: 'global_quota',
-    label: 'Booking link pending — daily send capacity reached',
-    reason: `global daily quota reached (${globalCount}/${globalLimit}); delivery will retry on a later pass`,
-  };
-  if (senderCount >= sender.dailyLimit) return {
-    code: 'sender_quota',
-    label: 'Booking link pending — sender capacity reached',
-    reason: `owning sender daily quota reached (${senderCount}/${sender.dailyLimit}); delivery will retry later`,
-  };
-  return null;
-}
-
 function signalMatchesLead(row, lead) {
   const id = String(lead.id || '').replace(/^CE-/, '');
   if (row.id) return String(row.id).replace(/^CE-/, '') === id;
   return Boolean(openKey(lead.company) && openKey(row.company) === openKey(lead.company));
 }
 
-function timelineForLead(lead, dataset, activities, signalLead = lead) {
+function timelineForLead(lead, dataset, activities, signalLead = lead, senders = visibleSenderIdentities()) {
   const opens = (dataset?.annotatedOpens || []).filter(row => row.real !== false && signalMatchesLead(row, signalLead));
-  const demos = (dataset?.demoRows || []).filter(row => signalMatchesLead(row, signalLead));
   return buildActivityTimeline({
-    lead, activities, opens, demos,
+    lead, activities, opens,
     // Identity only: the timeline needs to turn a sender id into an address.
-    senders: visibleSenderIdentities(),
+    senders,
   });
 }
 
@@ -5218,6 +5079,12 @@ app.patch('/api/leads/:id/call-details', requireAuth, rejectArchived('board'), a
 
 const { queueSelectedLeads, AUTO_SENDER } = require('./integrations/outreach-queue');
 const {
+  createProviderClassifier, admitByRecipientProvider, coldSenderPool, coldSenderHolds, coldDeliveryVerdict,
+  recipientProviderPolicy, coldInboxDailyCap, describeColdDeliveryPolicy,
+} = require('./integrations/cold-delivery-policy');
+// Temporary recipient-provider gate: one domain-level MX cache for the server.
+const recipientProviderClassifier = createProviderClassifier();
+const {
   assignBatch, planSenderRebalance, nextSendDayHorizon,
 } = require('./integrations/sender-balance');
 const { staffingLaunchState } = require('./integrations/staffing-launch-gate');
@@ -5269,12 +5136,16 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
         : { assignments: new Map(), refused: [{ leadId: batch[0]?.id || '',
           reason: 'automatic sender assignment requires Supabase canonical state and the durable send lock' }] })
         : undefined,
+      admitRecipients: leads => admitByRecipientProvider(leads, recipientProviderClassifier),
+      coldSenderAllowed: senderId => { const pool = coldSenderPool(); return (!pool || pool.has(senderId)) && !coldSenderHolds().has(senderId); },
       validateSelection: (lead, leadSender) => {
         if (normalizeNiche(lead.leadNiche || lead.tradeType) === 'industrial_staffing'
           && (outreachStateMode() !== 'primary' || outreachWriteAuthority() !== 'supabase')) {
           return { ok: false, reason: 'Staffing queue requires Supabase primary reads and canonical writes; current production authority must be reconciled first' };
         }
-        const route = validateRoute({ niche: lead.leadNiche || lead.tradeType, senderInboxId: leadSender, emailTemplateId, inboxes: gmailInboxOptions(), lead, campaignVersionId });
+        // Queueing is preparation: a managed inbox held only by its client's
+        // final send authorization may take the route; delivery re-checks.
+        const route = validateRoute({ niche: lead.leadNiche || lead.tradeType, senderInboxId: leadSender, emailTemplateId, inboxes: gmailInboxOptions(), lead, campaignVersionId, preparation: true });
         if (!route.ok) return route;
         const versionRoute = validateCampaignVersionRoute({ niche: lead.leadNiche || lead.tradeType, emailTemplateId, campaignVersionId });
         if (!versionRoute.ok) return versionRoute;
@@ -5631,10 +5502,14 @@ function archiveFacets(rows) {
 app.get('/api/archive', requireAuth, async (req, res) => {
   try {
     const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const scope = outreachClientView(dataset, req.query);
+    if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
     let unresolved = null;
     let unresolvedError = '';
     try { unresolved = await unresolvedReservationsByLead(); } catch (error) { unresolvedError = error.message; }
+    const allowed = scope.view && new Set(scope.view.archivedRows.map(row => String(row.id)));
     const all = archiveListRows(dataset, unresolved)
+      .filter(row => !scope.view || (row.kind === 'board' ? scope.view.clientId === 'scalelab' : allowed.has(String(row.id))))
       .sort((a, b) => String(b.archivedAt || '').localeCompare(String(a.archivedAt || '')) || String(a.company).localeCompare(String(b.company)));
     const filtered = filterArchiveRows(all, req.query);
     const requested = parseInt(req.query.limit, 10);
@@ -5927,9 +5802,52 @@ app.post('/api/archive/cards/:id/restore', requireAuth, async (req, res) => {
 // counts only, never lead rows, so the metric cards can paint without waiting
 // on the lead list. Now reads the shared snapshot instead of fetching the
 // ColdEmail sheet a second time.
+
+require('./integrations/staffing-preview-route').registerStaffingAdmitRoute(app, requireAuth, {
+  loadLead: async id => {
+    const corpus = await readOutreachCorpus();
+    if (!corpus.ok) throw new Error('Canonical Outreach state unavailable: ' + corpus.reason);
+    const matches = (corpus.leads || []).filter(lead => lead.id === id);
+    if (matches.length !== 1) throw new Error(`expected one lead ${id}, found ${matches.length}`);
+    return matches[0];
+  },
+  applyPatch: async (lead, patch) => {
+    const rowNum = await withAuth(() => findCERow(lead.id));
+    if (!rowNum) throw new Error('lead identity is not exactly one canonical row');
+    return applyLeadChange(lead.id, patch, {
+      row: rowNum, expectedState: lead, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID,
+    });
+  },
+  classifyEmail: email => recipientProviderClassifier.classify(email),
+});
+
+function scopedOutreachStats(dataset, view) {
+  const categoryByLead = new Map(view.replyRecords.map(row => [String(row.leadId), row.category]));
+  return {
+    ...view.counts, replied: view.metrics.totalReplies, replyMetrics: view.metrics,
+    signals: view.signals, sendActivity: view.sendActivity, pipelineAudit: view.pipelineAudit,
+    totalLeads: view.rows.length,
+    scope: { scope: 'active', activeLeads: view.rows.length, definition: 'This client only.' },
+    senderAnalytics: buildSenderAnalytics({
+      leads: view.leads.filter(lead => view.rows.some(row => String(row.id) === String(lead.id))),
+      activities: view.activeActivities, senders: view.senderRows,
+      replyCategoryByLead: categoryByLead,
+    }),
+    historical: {
+      scope: 'historical', includesArchived: true, archivedLeads: view.archivedRows.length,
+      replyMetrics: view.historicalMetrics, sendActivity: view.historicalSendActivity,
+      definition: 'This client, including archived leads.',
+    },
+    fetchedAt: new Date(dataset.at).toISOString(),
+  };
+}
+
 app.get('/api/coldemail/stats', requireAuth, async (req, res) => {
   try {
     const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const scope = outreachClientView(dataset, req.query);
+    if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
+    if (scope.view) return res.json(scopedOutreachStats(dataset, scope.view));
     res.json({
       ...dataset.counts,
       replied: dataset.metrics.totalReplies,
@@ -5952,6 +5870,9 @@ app.get('/api/coldemail/stats', requireAuth, async (req, res) => {
 app.get('/api/coldemail/summary', requireAuth, async (req, res) => {
   try {
     const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const scope = outreachClientView(dataset, req.query);
+    if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
+    if (scope.view) return res.json(scopedOutreachStats(dataset, scope.view));
     res.json({
       ...dataset.counts,
       totalLeads: dataset.rows.length,
@@ -5974,21 +5895,38 @@ app.get('/api/coldemail/summary', requireAuth, async (req, res) => {
 app.get('/api/coldemail/replies', requireAuth, async (req, res) => {
   try {
     const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const scope = outreachClientView(dataset, req.query);
+    if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
+    const view = scope.view || dataset;
     const category = String(req.query.category || 'all');
-    const rowById = new Map(dataset.rows.map(row => [row.id, row]));
-    const archivedIds = new Set((dataset.archivedRows || []).map(row => row.id));
+    const rowById = new Map(view.rows.map(row => [row.id, row]));
+    const archivedIds = new Set((view.archivedRows || []).map(row => row.id));
     const campaignVersion = String(req.query.campaignVersion || '').trim();
     // The Inbox is an operational queue: an archived lead's conversation is
     // read in Archive, not worked here. Analytics keeps it (historical).
-    const activeRecords = dataset.replyRecords.filter(record => !archivedIds.has(record.leadId));
+    const activeRecords = view.replyRecords.filter(record => !archivedIds.has(record.leadId));
+    // An automated reply carries its OOO state (ooo-pause.js), so a lead that
+    // needs a person to set its return date is visible, never silently parked.
+    const automatedIds = new Set(activeRecords.filter(record => record.category === 'automated_reply').map(record => record.leadId));
+    const leadById = new Map((view.leads || []).filter(lead => automatedIds.has(lead.id)).map(lead => [lead.id, lead]));
+    const oooActivities = automatedIds.size ? (view.activities || []).filter(row => automatedIds.has(activityLeadKey(row))) : [];
+    const oooPauseFor = leadId => {
+      const lead = leadById.get(leadId);
+      if (!lead) return undefined;
+      const state = oooPauseState(lead, oooActivities);
+      return { status: state.status, resumeAt: state.resumeAt || null, resumeSource: state.resumeSource || null,
+        statedReturnDate: state.statedReturnDate || null, ignoredPolicyResumeAt: state.ignoredPolicyResumeAt || null,
+        ledgerLastStep: state.ledgerLastStep ?? null, nextStep: state.nextStep ?? null };
+    };
     const records = filterReplyRecords(activeRecords, category).map(record => {
       const row = rowById.get(record.leadId) || {};
-      return { ...record, campaignVersion: row.campaignVersion || LEGACY_UNKNOWN, pipelinePresence: Boolean(row.pipelinePresence), pipelineStage: row.pipelineStage || '', boardLeadId: row.boardLeadId || '', mappingStatus: row.mappingStatus || 'not_in_pipeline' };
+      return { ...record, campaignVersion: row.campaignVersion || LEGACY_UNKNOWN, pipelinePresence: Boolean(row.pipelinePresence), pipelineStage: row.pipelineStage || '', boardLeadId: row.boardLeadId || '', mappingStatus: row.mappingStatus || 'not_in_pipeline',
+        ...(automatedIds.has(record.leadId) ? { oooPause: oooPauseFor(record.leadId) } : {}) };
     }).filter(record => !campaignVersion || campaignVersion === 'all' || record.campaignVersion === campaignVersion);
     res.json({
       category,
       total: activeRecords.length,
-      archivedExcluded: dataset.replyRecords.length - activeRecords.length,
+      archivedExcluded: view.replyRecords.length - activeRecords.length,
       records,
       fetchedAt: new Date(dataset.at).toISOString(),
     });
@@ -6006,6 +5944,11 @@ app.post('/api/coldemail', requireAuth, async (req, res) => {
     return res.status(422).json({ error: 'managed-client leads use their own import', code: 'client_ownership_conflict' });
   }
   lead.clientId = DEFAULT_CLIENT_ID;
+  // A staffing V2 lead enters only through its own import, with its sealed profile.
+  if (isStaffingV2Marked({ ...lead, campaign: String(lead.campaign || '').trim() })
+    || String(lead.campaign || '').trim() === STAFFING_CAMPAIGN_V2.emailTemplateId) {
+    return res.status(422).json({ error: 'Industrial Staffing V2 leads use POST /api/staffing/v2/leads/import', code: 'use_staffing_v2_import' });
+  }
   // Same choke point as the CSV import: validate format and reject junk,
   // then dedupe against the sheet — this path previously had neither, so a
   // manual add could create a second sendable row for an existing address.
@@ -6058,29 +6001,39 @@ const COLD_EMAIL_DASHBOARD_STAGES = new Set(['Import','Contacted','Replied','Rev
 app.get('/api/coldemail/:id/activity', requireAuth, async (req, res) => {
   try {
     const dataset = await getOutreachDataset();
-    const lead = dataset.leads.find(row => row.id === req.params.id);
+    const scope = outreachClientView(dataset, req.query);
+    if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
+    const lead = scope.view.leads.find(row => row.id === req.params.id);
     if (!lead) return res.status(404).json({ error: 'not found' });
-    const activities = dataset.activities.filter(row => activityMatchesLead(row, lead));
-    const timeline = timelineForLead(lead, dataset, activities);
-    const row = dataset.rows.find(item => item.id === lead.id) || {};
-    const boardLead = dataset.boardLeads.find(item => item.id === row.boardLeadId)
-      || dataset.boardLeads.find(item => normalizeEmail(item.email) === normalizeEmail(lead.email))
-      || null;
+    // The established match (lead id, or email for a legacy row without one),
+    // kept inside this client: a row that names another client's lead never matches.
+    const tenantLeadIds = new Set(scope.view.leads.map(item => String(item.id)));
+    const activities = (dataset.activities || []).filter(row => {
+      const rowLeadId = String(row.sourceLeadId || row.leadId || '').replace(/^CE-/, '').trim();
+      return activityMatchesLead(row, lead) && (!rowLeadId || tenantLeadIds.has(rowLeadId));
+    });
+    const timeline = timelineForLead(lead, { annotatedOpens: scope.view.opens }, activities, lead, scope.view.senderRows);
+    const row = scope.view.rows.find(item => item.id === lead.id) || {};
+    const boardLead = scope.view.clientId === 'scalelab'
+      ? dataset.boardLeads.find(item => item.id === row.boardLeadId)
+        || dataset.boardLeads.find(item => normalizeEmail(item.email) === normalizeEmail(lead.email))
+      : null;
     const now = new Date();
-    const bookingLinkBlocker = bookingLinkBlockerFor(lead, activities, dataset, now);
     const nextAction = deriveNextAction(boardLead || {
       id: `CE-${lead.id}`, email: lead.email, company: lead.company, stage: '',
     }, lead, {
       activities, now,
       observers: observerHealth(dataset.mailboxObservationState || [], { now,
-        senderIds: observableSenders(configuredSenders()).map(item => item.id) }),
+        senderIds: observableSenders(scope.view.senderRows).map(item => item.id) }),
       suppressedEmails: dataset.suppressedEmails || new Set(),
       sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true',
       outreachOnly: !boardLead,
-      bookingLinkBlocker,
     });
     res.json({
-      lead: { ...lead, ...row }, activities: timeline,
+      lead: { ...lead, ...row,
+        staffingHold: String(lead.leadNiche || '').toLowerCase().includes('staffing')
+          && resolveLeadClient(lead).clientId === DEFAULT_CLIENT_ID ? staffingHoldStatus(lead) : null },
+      activities: timeline,
       pipeline: {
         presence: Boolean(row.pipelinePresence), stage: row.pipelineStage || '',
         boardLeadId: row.boardLeadId || '', mappingStatus: row.mappingStatus || 'not_in_pipeline',
@@ -6169,6 +6122,15 @@ app.put('/api/coldemail/:id', requireAuth, rejectArchived('coldemail'), async (r
   try {
     const rowNum = await withAuth(() => findCERow(req.params.id));
     if (!rowNum) return res.status(404).json({ error: 'not found' });
+    // This full-row write may not change a staffing V2 lead's sealed profile, or
+    // put a V2 profile on any other lead. Checked against the row it overwrites.
+    const current = await withAuth(async () => {
+      const resp = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A${rowNum}:Y${rowNum}` });
+      const row = resp.data.values?.[0] || [];
+      return Object.fromEntries(CE_COLUMNS.map((field, i) => [field, row[i] || '']));
+    });
+    const notesRefusal = staffingV2CampaignNotesRefusal(current, vals[0][CE_EDITABLE_COLUMNS.indexOf('campaign_notes')]);
+    if (notesRefusal) return res.status(422).json({ error: notesRefusal, code: STAFFING_V2_PROFILE_READ_ONLY });
     await withAuth(async () => {
       await sheets().spreadsheets.values.update({
         spreadsheetId:   SPREADSHEET_ID,
@@ -6410,13 +6372,20 @@ function gmailInboxOptions() {
     warmupStatus: sender.status,
     provider: 'gmail',
     dailyLimit: sender.dailyLimit,
-    perRunLimit: sender.perRunLimit || DEFAULT_INBOX_PER_RUN_LIMIT,
+    perRunLimit: sender.perRunLimit ?? DEFAULT_INBOX_PER_RUN_LIMIT,
     observerEnabled: sender.observerEnabled !== false,
     staffingOnly: isStaffingOnlySender(sender),
     clientId: sender.clientId || DEFAULT_CLIENT_ID,
     ...(sender.allowedCampaignIds ? { allowedCampaignIds: [...sender.allowedCampaignIds] } : {}),
     ...(sender.configuredDailyLimit !== undefined ? { configuredDailyLimit: sender.configuredDailyLimit } : {}),
     ...(sender.policyBlockers?.length ? { policyBlockers: [...sender.policyBlockers] } : {}),
+    // Managed inboxes: operational readiness and send authority, kept apart.
+    ...(sender.preparationBlockers ? {
+      preparationBlockers: [...sender.preparationBlockers],
+      preparationReady: sender.preparationReady === true,
+      clientAuthorized: sender.clientAuthorized === true,
+      capacityConfigured: Number(sender.dailyLimit) > 0 && Number(sender.perRunLimit) > 0,
+    } : {}),
     credentialConfigured: sender.credentialConfigured,
     identityVerified: sender.id === 'primary' ? Boolean(process.env.GMAIL_TOKEN_JSON) : sender.credentialConfigured,
     sendEligible: sender.sendEligible,
@@ -6487,12 +6456,13 @@ async function gmailInboxStatus() {
       return {
         ...inbox,
         observerHealth: observerLabel,
+        ...(inbox.preparationBlockers ? { observerHealthy: observerLabel === 'healthy' } : {}),
         observer,
         sentToday: sent,
         remainingToday: remaining,
         controls: {
           canMarkReady: inbox.status === 'warming',
-          canActivate: inbox.status === 'ready' && blockers.length === 0,
+          canActivate: (inbox.status === 'ready' || inbox.status === 'paused') && blockers.length === 0,
           canPause: inbox.status === 'active',
           activationBlockers: blockers,
         },
@@ -6504,6 +6474,8 @@ async function gmailInboxStatus() {
       globalPerRunLimit: capacity.globalPerRunLimit,
       dailyCeiling: capacity.dailyCeiling,
       perRunCeiling: capacity.perRunCeiling,
+      // Per-client allocation; the global limits above are their sum.
+      clientLimits: capacity.clientLimits,
     },
   };
 }
@@ -6691,6 +6663,74 @@ app.post('/api/ops/ooo-hold-release/:id', requireAuth, async (req, res) => {
   }
 });
 
+// ── OOO resume scheduling (operator) ───────────────────────────────────────
+// An OOO with no reliable return date waits for a person (OOO_REVIEW); so does
+// one whose date the parser misread. This route lets that person set the
+// resume, and ONLY records the same ooo_resume_scheduled event the reply
+// handler writes (source operator_scheduled). No notes, no hold, no send: the
+// agent's ordinary gates — ownership, caps, windows, suppression — decide after
+// the instant. GET plans; POST applies the plan the operator reviewed.
+async function planOooResumeScheduleFor(leadId, { resumeAt, by, evidence }) {
+  const state = await loadFalseOptOutState(leadId);
+  if (!state.lead || state.leadMatches !== 1) {
+    return { state, status: 404, error: 'exactly one ColdEmail row is required for this lead' };
+  }
+  if (state.boardLeads.length) {
+    return { state, status: 409, error: 'this lead has a Pipeline card; its next action is managed on the board' };
+  }
+  const plan = planOooResumeSchedule({
+    lead: state.lead, activities: state.activities, suppressedEmails: state.suppressedEmails, resumeAt, by, evidence,
+  });
+  return { state, plan };
+}
+
+app.get('/api/ops/ooo-resume/:id', requireAuth, async (req, res) => {
+  try {
+    const { plan, status, error } = await withAuth(() => planOooResumeScheduleFor(String(req.params.id || '').trim(), {
+      resumeAt: String(req.query.resumeAt || ''), by: String(req.query.by || ''), evidence: String(req.query.evidence || ''),
+    }));
+    if (error) return res.status(status).json({ error });
+    res.json({ dryRun: true, ...plan });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ooo-resume plan]', error.message);
+    res.status(503).json({ error: 'OOO resume could not be planned: ' + error.message });
+  }
+});
+
+app.post('/api/ops/ooo-resume/:id', requireAuth, async (req, res) => {
+  const leadId = String(req.params.id || '').trim();
+  if (agentState.running || automationLaunchReserved) {
+    return res.status(409).json({ error: 'an agent pass or another reserved operation is running; retry outside it' });
+  }
+  automationLaunchReserved = true;
+  try {
+    const { plan, state, status, error } = await withAuth(() => planOooResumeScheduleFor(leadId, {
+      resumeAt: String(req.body?.resumeAt || ''), by: String(req.body?.by || ''), evidence: String(req.body?.evidence || ''),
+    }));
+    if (error) return res.status(status).json({ error });
+    if (!plan.ok) return res.status(409).json({ ok: false, refusals: plan.refusals, checks: plan.checks });
+    if (String(req.body?.fingerprint || '') !== plan.fingerprint) {
+      return res.status(409).json({ error: 'The plan changed since it was reviewed; re-run the GET dry run', checks: plan.checks });
+    }
+    // Idempotent: the event id names the OOO and the reviewed date.
+    const eventsAppended = await withAuth(() => appendMissingEvents([plan.event], state.activities));
+    invalidateOutreachCache('ooo_resume_scheduled');
+    const after = await withAuth(() => loadFalseOptOutState(leadId));
+    console.log(`[ooo-resume] ${leadId}: resume scheduled for ${JSON.parse(plan.event.metadata).resumeAt}; by ${req.body?.by}`);
+    res.json({ ok: true, eventsAppended, event: plan.event, verified: {
+      resumeEventPresent: after.activities.some(row => row.eventId === plan.event.eventId),
+      notes: after.lead?.notes || '', emailStatus: after.lead?.emailStatus || '', emailStep: after.lead?.emailStep || '',
+    }, automationSent: false });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[ooo-resume apply]', error.message);
+    res.status(500).json({ error: error.message });
+  } finally {
+    automationLaunchReserved = false;
+  }
+});
+
 app.get('/api/ops/agent-v2', requireAuth, async (_req, res) => {
   const { agentV2ShadowConfig } = require('./integrations/agent-v2-shadow-hook');
   const config = agentV2ShadowConfig(process.env);
@@ -6861,6 +6901,54 @@ app.get('/api/ops/gmail-usage', requireAuth, async (_req, res) => {
   }
 });
 
+// Read-only view of the temporary cold deliverability gate. Never sends, never
+// writes. ?leadId= gives one lead's provider classification and the final
+// verdict for its assigned sender; ?summary=1 classifies every pending cold
+// lead (queued first touches and emailed step 1–2 follow-ups) by provider.
+app.get('/api/ops/cold-delivery-gate', requireAuth, async (req, res) => {
+  try {
+    const senders = configuredSenders();
+    const pool = coldSenderPool();
+    const out = {
+      policy: recipientProviderPolicy(), coldSenderPool: pool ? [...pool] : 'all', coldInboxDailyCap: coldInboxDailyCap(),
+      senders: senders.map(sender => ({ id: sender.id, email: sender.email, status: sender.status, sendEligible: sender.sendEligible,
+        dailyLimit: sender.dailyLimit, configuredDailyLimit: sender.configuredDailyLimit ?? sender.dailyLimit,
+        perRunLimit: sender.perRunLimit, inColdPool: !pool || pool.has(sender.id), coldHold: coldSenderHolds().get(sender.id) || null })),
+      sends: 0, writes: 0,
+    };
+    const leadId = String(req.query.leadId || '').trim();
+    if (leadId || req.query.summary === '1') {
+      const corpus = await readOutreachCorpus();
+      if (!corpus.ok) return res.status(503).json({ error: 'Canonical Outreach state unavailable' });
+      if (leadId) {
+        const matches = corpus.leads.filter(lead => lead.id === leadId);
+        if (matches.length !== 1) return res.status(404).json({ error: `expected one lead ${leadId}, found ${matches.length}` });
+        const lead = matches[0];
+        const classification = await recipientProviderClassifier.classify(lead.email);
+        const sender = senders.find(item => item.id === lead.senderInboxId) || null;
+        out.lead = { id: lead.id, stage: lead.stage, emailStatus: lead.emailStatus, emailStep: lead.emailStep, senderInboxId: lead.senderInboxId,
+          domain: classification.domain, provider: classification.provider, classification: classification.reason,
+          source: classification.source, cache: classification.cache, classifiedAt: classification.classifiedAt || null,
+          verdict: coldDeliveryVerdict({ sender, classification }) };
+      }
+      if (req.query.summary === '1') {
+        const pending = corpus.leads.filter(lead => {
+          const status = String(lead.emailStatus || '').trim().toLowerCase();
+          if (lead.stage === 'Queued' && !status) return true;
+          return status === 'emailed' && [1, 2].includes(Number(lead.emailStep));
+        });
+        // Counted under google_only semantics so the breakdown is true providers
+        // even when the policy is switched off.
+        const admission = await admitByRecipientProvider(pending, recipientProviderClassifier, { RECIPIENT_PROVIDER_POLICY: 'google_only' });
+        const byProvider = { GOOGLE: admission.allowed.size, MICROSOFT: 0, OTHER: 0, UNKNOWN: 0 };
+        for (const item of admission.held) byProvider[item.provider] = (byProvider[item.provider] || 0) + 1;
+        out.summary = { pending: pending.length, byProvider, classifier: recipientProviderClassifier.stats() };
+      }
+    }
+    res.json(out);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
 app.get('/api/ops/mailbox-diagnostic', requireAuth, async (req, res) => {
   try {
     const dataset = await getOutreachDataset({ force: true });
@@ -6870,11 +6958,15 @@ app.get('/api/ops/mailbox-diagnostic', requireAuth, async (req, res) => {
       const row = (dataset.mailboxObservationState || []).find(row => row[0] === sender.id) || [];
       const trace = [];
       try {
+        // Same client scope as the agent's observer: an inbox never matches
+        // another client's leads.
+        const owner = require('./integrations/clients/ownership').resolveSenderClient(sender);
+        const scopedLeads = owner.ok ? leadsInEmailScope(dataset.leads, owner.clientId) : dataset.leads;
         const observation = await observeMailbox({ ...mailbox, senderInboxId: sender.id, senderEmail: mailbox.email,
-          leads: dataset.leads, activities: dataset.activities, historyId: row[1] || null,
+          leads: scopedLeads, activities: dataset.activities, historyId: row[1] || null,
           lastSuccessfulObservationAt: row[2] || null, previousHealth: row[5] || null,
           log: (state, details) => trace.push({ state, ...details }) });
-        const plan = await planMailboxEvents({ observation, gmail: mailbox.gmail, leads: dataset.leads,
+        const plan = await planMailboxEvents({ observation, gmail: mailbox.gmail, leads: scopedLeads,
           activities: dataset.activities, senderInboxId: sender.id, senderEmail: mailbox.email });
         results.push({ senderInboxId: sender.id, before: row, mode: observation.mode, trace,
           from: observation.from, nextHistoryId: observation.nextHistoryId,
@@ -7235,6 +7327,7 @@ app.get('/api/ops/send-quota', requireAuth, async (_req, res) => {
       globalPerRunLimit: capacity.globalPerRunLimit,
       dailyCeiling: capacity.dailyCeiling,
       perRunCeiling: capacity.perRunCeiling,
+      clientLimits: capacity.clientLimits,
       inboxes: senders.map(sender => ({
         id: sender.id, email: sender.email, status: sender.status,
         sendEligible: sender.sendEligible, dailyLimit: sender.dailyLimit,
@@ -7355,6 +7448,7 @@ app.post('/api/integrations/smartlead/campaigns/:internalCampaignId/leads/:leadI
     if (!eligibility.ok) return res.status(409).json({ error: eligibility.reason });
     assertSendAuthorized();
     const safety = await guardProviderSend(found.lead, {
+      classifyRecipient: email => recipientProviderClassifier.classify(email),
       loadFreshLead: async () => {
         const again = await findColdEmailLead({ id: found.lead.id });
         return again ? again.lead : null;
@@ -7636,17 +7730,20 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   // fields Pacific-local and handles PDT/PST automatically; do NOT
   // hand-convert to UTC.
   cron.schedule('0,30 7-11 * * 1-5', async () => {
+    const tick = new Date();
     console.log('[cron] Triggering scheduled outreach agent run...');
     if (agentState.running || automationLaunchReserved) {
       // Never replay missed windows back-to-back. A slow run must reduce the
       // day's volume, not create a burst outside its scheduled slot.
-      console.log('[cron] Agent already running — skipping this send window; no catch-up burst will be queued');
+      console.log(JSON.stringify({ event: 'send_tick_skipped', scheduledTick: tick.toISOString(),
+        reason: 'prior_run_active', activeRunStartedAt: agentState.startedAt }));
       return;
     }
     const caps = scheduledSendCaps();
     await launchAutomationAfterCalendar('scheduled outreach run', () => {
       if (agentState.running) return false;
       spawnAgent(false, {
+        ...scheduledQuotaRunEnv(tick),
         DAILY_CAP: String(caps.total),
         PER_INBOX_RUN_CAP: String(caps.perInbox),
         GMAIL_SENDER_RUNTIME_JSON: process.env.GMAIL_SENDER_RUNTIME_JSON || '[]',
@@ -7656,8 +7753,33 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   }, {
     timezone: 'America/Vancouver',
   });
+  // Chicago 07:00-08:30 precedes ScaleLab's Pacific scheduler. Its remaining
+  // 09:00-11:30 Chicago slots coincide with Pacific 07:00-09:30. The worker
+  // checks the Jole clock again before each send, including a run crossing noon.
+  cron.schedule(JOLE_EARLY_CRON, async () => {
+    const tick = new Date();
+    if (clientSendBlock('jole', process.env)) return;
+    if (agentState.running || automationLaunchReserved) {
+      console.log(JSON.stringify({ event: 'send_tick_skipped', scheduledTick: tick.toISOString(),
+        reason: 'prior_run_active', scope: 'jole', activeRunStartedAt: agentState.startedAt }));
+      return;
+    }
+    const caps = scheduledSendCaps();
+    await launchAutomationAfterCalendar('scheduled Jole outreach run', () => {
+      if (agentState.running) return false;
+      spawnAgent(false, {
+        ...scheduledQuotaRunEnv(tick),
+        DAILY_CAP: String(caps.total),
+        PER_INBOX_RUN_CAP: String(caps.perInbox),
+        GMAIL_SENDER_RUNTIME_JSON: process.env.GMAIL_SENDER_RUNTIME_JSON || '[]',
+        SCHEDULED_CLIENT_SCOPE: 'jole',
+      });
+      return true;
+    });
+  }, { timezone: 'America/Chicago' });
   const bootCaps = scheduledSendCaps();
   console.log(`[cron] Outreach agent scheduled: :00 and :30, 7–11:30am Pacific, Mon–Fri (${bootCaps.perInbox}/inbox, ${bootCaps.total}/run, ${bootCaps.daily}/day, ${bootCaps.activeCount} active)`);
+  console.log(JSON.stringify({ ...describeColdDeliveryPolicy(configuredSenders()), label: 'cron_boot' }));
 
   // :15/:45, never :00/:30 — the send cron above fires on :00 and :30, so the
   // check-only pass is offset by 15 min to avoid racing it for the
@@ -7671,34 +7793,6 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   }, {
     timezone: 'America/Vancouver',
   });
-
-  // Safety net for the both-audios trigger. The /demo-played route fires it
-  // event-driven, so this only picks up plays whose spawn was skipped because
-  // the agent was busy, or that arrived while the process was restarting.
-  // Every 3 minutes keeps the worst case inside the ~5-minute target.
-  //
-  // OFFSET BY ONE MINUTE, DELIBERATELY. This backstop and the scheduled send
-  // window above share agentState.running. Under '*/3' it fired at 0,3,…,57 —
-  // which includes :00 and :30, exactly when the send cron fires. An intent
-  // pass that was still holding the mutex at that instant made the send window
-  // log "Agent already running — skipping this send window" and that window's
-  // ten sends were dropped with no catch-up, costing whole windows a day and
-  // holding production at ~50 sends against an 80 ceiling.
-  // '1-59/3' keeps twenty opportunities an hour and the same uniform 3-minute
-  // spacing, on 1,4,…,58 — so it can never land on a send window again.
-  //
-  // CONDITIONAL. A tick launches only while the backstop is armed — at boot, after
-  // a demo launch that did not start, after a failed or unreported pass, or while
-  // a pass or the check-only hint reports pending intent work. A tick with
-  // nothing pending launches nothing, so it downloads nothing.
-  cron.schedule('1-59/3 * * * *', () => {
-    const tick = intentBackstop.onTick();
-    if (!tick.run) return;
-    spawnAgentIntentOnly(`cron backstop: ${tick.reasons.join(',')}`, { trigger: 'backstop' });
-  }, {
-    timezone: 'America/Vancouver',
-  });
-  console.log('[cron] Intent backstop scheduled: every 3 minutes while armed, offset off :00/:30');
 
   // Calendar incremental sync is independently gated. With the flag OFF the
   // first line of the orchestrator returns before reading Calendar, Sheets, or
@@ -7739,8 +7833,8 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   console.log('[cron] Landing attribution reconciler scheduled every 15 minutes (feature-gated)');
 
   // Pre-window sender refill, 06:40 Pacific on weekdays, twenty minutes before
-  // the first send tick. 06:50 retries a run that found a pass active (an armed
-  // intent backstop can also fire at :40); on a balanced queue it moves nothing,
+  // the first send tick. 06:50 retries a run that found a pass active; on a
+  // balanced queue it moves nothing,
   // and the 06:55 send-window guard refuses anything later. Admission already
   // balances new work; this catches what admission cannot see coming — an
   // inbox activated after its peers were loaded, follow-up waves that fill one
@@ -7770,7 +7864,7 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   }, { timezone: 'America/Vancouver' });
   console.log('[cron] Smartlead reconciliation scheduled: hourly at :12');
   console.log('[cron] Daily digest scheduled: 18:00 Pacific');
-  // One line an hour: corpus reads, Calendar checks and intent launches.
+  // One line an hour: corpus reads and Calendar checks.
   cron.schedule('59 * * * *', reportEgressMeter, { timezone: 'America/Vancouver' });
   console.log('[cron] Check-only pass scheduled: :15 and :45 every hour');
   console.log('[cron] Late-reply terminal watcher hosted by check-only: daily at 12:15 Pacific');
@@ -7784,6 +7878,13 @@ app.listen(PORT, () => {
   console.log(mirrorEnabled()
     ? '[supabase-mirror] enabled — canonical activity is shadow-mirrored after each Google Sheets write'
     : '[supabase-mirror] disabled — Google Sheets only (set SUPABASE_URL and SUPABASE_SECRET_KEY to enable)');
+  try { logManagedClientReadiness(); } catch (error) { console.warn(`[clients] readiness log failed: ${error.message}`); }
+  // Operator-promoted import batches: shortly after boot, then every 10 minutes.
+  if (process.env.RAILWAY_ENVIRONMENT && clientImportBatchStore.enabled) {
+    const run = trigger => runClientImportBatches(trigger).catch(error => console.error(`[import-batches] ${error.message}`));
+    setTimeout(() => run('boot'), 45 * 1000).unref();
+    setInterval(() => run('interval'), 10 * 60 * 1000).unref();
+  }
   sendLockHealth().then(health => {
     console.log(health.enabled === false
       ? '[send-lock] disabled — dedicated outbound reservation database is not active'

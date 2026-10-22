@@ -2,18 +2,24 @@
 
 const { CAMPAIGN_VERSIONS, CAMPAIGN_FAMILY, resolveLeadFamily } = require('./campaign-versions');
 const { staffingSendBlockReason, isStaffingLead } = require('./staffing-launch-gate');
-const { STAFFING_CAMPAIGN } = require('./staffing-campaign');
+const { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_V2, isStaffingCampaignVersionId, staffingV2SendBlock } = require('./staffing-campaign');
+const { hasStaffingHoldMarker } = require('./staffing-hold');
 const { isStaffingOnlySender } = require('./gmail-inbox-registry');
 const { getClient } = require('./clients/registry');
 const { clientCampaign, clientTemplate, clientLeadType, campaignSendable } = require('./clients/campaigns');
 const { checkClientConsistency, resolveLeadClient } = require('./clients/ownership');
-const { clientSendBlock } = require('./clients/send-policy');
+const { clientSendBlock, clientPreparationBlock } = require('./clients/send-policy');
 const { outreachBlockForLead, RETIRED_OFFERS } = require('./lead-archive');
 
 const EMAIL_TEMPLATES = Object.freeze([
   Object.freeze({ id: STAFFING_CAMPAIGN.emailTemplateId, name: STAFFING_CAMPAIGN.name,
     niche: STAFFING_CAMPAIGN.niche, ready: STAFFING_CAMPAIGN.ready, sequenceSteps: 3,
     reason: '' }),
+  // Staffing V2's copy: ready only once V2 is live (staffing-campaign.js).
+  Object.freeze({ id: STAFFING_CAMPAIGN_V2.emailTemplateId, name: STAFFING_CAMPAIGN_V2.name,
+    niche: STAFFING_CAMPAIGN_V2.niche, sequenceSteps: 3,
+    get ready() { return STAFFING_CAMPAIGN_V2.ready; },
+    get reason() { return STAFFING_CAMPAIGN_V2.ready ? '' : `${STAFFING_CAMPAIGN_V2.name} is registered but not live yet`; } }),
   // Retired with the dental offer (lead-archive RETIRED_OFFERS). Kept registered
   // so historical sends still resolve their copy; never ready again.
   Object.freeze({ id: 'dental-guarantee-v1', name: 'Dental guarantee pitch', niche: 'dental', ready: false, sequenceSteps: 3,
@@ -87,7 +93,7 @@ function routeClientVerdict({ lead = null, niche, inbox, emailTemplateId, campai
 
 function campaignVersionsForRoute({ niche, emailTemplateId = '' } = {}) {
   const normalizedNiche = normalizeNiche(niche);
-  return Object.values(CAMPAIGN_VERSIONS).filter(version => (version.status === 'active' || (version.id === STAFFING_CAMPAIGN.id && version.status === 'approved'))
+  return Object.values(CAMPAIGN_VERSIONS).filter(version => (version.status === 'active' || (isStaffingCampaignVersionId(version.id) && version.status === 'approved'))
     && version.niche === normalizedNiche
     && (!emailTemplateId || version.emailTemplateId === emailTemplateId));
 }
@@ -102,7 +108,7 @@ function validateCampaignVersionRoute({ niche, emailTemplateId, campaignVersionI
     return { ok: true, version: { id: managed.id, label: managed.label, niche: managed.leadType, emailTemplateId: managed.emailTemplateId, clientId: managed.clientId } };
   }
   const version = CAMPAIGN_VERSIONS[String(campaignVersionId || '').trim()];
-  if (!version || !(version.status === 'active' || (version.id === STAFFING_CAMPAIGN.id && version.status === 'approved'))) return { ok: false, reason: 'An approved registered campaign version is required' };
+  if (!version || !(version.status === 'active' || (isStaffingCampaignVersionId(version.id) && version.status === 'approved'))) return { ok: false, reason: 'An approved registered campaign version is required' };
   const normalizedNiche = normalizeNiche(niche);
   if (version.niche !== normalizedNiche) return { ok: false, reason: `${version.label} cannot be used for ${normalizedNiche} leads` };
   if (version.emailTemplateId !== String(emailTemplateId || '').trim()) return { ok: false, reason: `${version.label} does not use the selected email copy` };
@@ -114,13 +120,17 @@ function retiredLeadType(niche) {
   return RETIRED_OFFERS.find(offer => offer.leadType === niche) || null;
 }
 
-function validateRoute({ niche, senderInboxId, emailTemplateId, inboxes = [], requireReady = true, lead = null, campaignVersionId = '' } = {}) {
+// validateRoute serves queueing and sender balancing, never delivery.
+// `preparation` lets a managed client's operationally ready inbox take a route
+// while the client's final send authorization is off; delivery re-checks
+// sendEligible and the client send gate at send time.
+function validateRoute({ niche, senderInboxId, emailTemplateId, inboxes = [], requireReady = true, lead = null, campaignVersionId = '', preparation = false } = {}) {
   const normalizedNiche = normalizeNiche(niche);
   const template = templateById(emailTemplateId);
   const inbox = inboxes.find(item => item.id === senderInboxId);
   if (!normalizedNiche) return { ok: false, reason: 'Lead niche is required' };
   if (!inbox) return { ok: false, reason: 'A registered sending inbox is required' };
-  if (!inbox.sendEligible) return { ok: false, reason: `${inbox.email} is not eligible to send` };
+  if (!inbox.sendEligible && !(preparation && inbox.preparationReady === true)) return { ok: false, reason: `${inbox.email} is not eligible to send` };
   if (!inbox.deliveryImplemented) return { ok: false, reason: `${inbox.email} is connected but sender routing is not active yet` };
   const owner = routeClientVerdict({ lead, niche: normalizedNiche, inbox, emailTemplateId, campaignVersionId });
   if (!owner.ok) return { ok: false, code: owner.code, reason: owner.reason };
@@ -140,7 +150,10 @@ function validateRoute({ niche, senderInboxId, emailTemplateId, inboxes = [], re
 
 // A managed client's lead is ready only through its own campaign registry;
 // the legacy family resolver knows nothing about it and must not decide it.
-function managedLeadReady(lead, clientId, env) {
+// `preparation` judges launch readiness: every check except the client's
+// final send authorization (CLIENT_SENDING_AUTHORIZED). Send selection never
+// passes it.
+function managedLeadReady(lead, clientId, env, { preparation = false } = {}) {
   const client = getClient(clientId);
   if (!lead.leadNiche || !lead.senderInboxId || !lead.emailTemplateId || !lead.intendedCampaignVersion) {
     return { ok: false, reason: 'routing assignment is incomplete' };
@@ -154,12 +167,12 @@ function managedLeadReady(lead, clientId, env) {
   const template = clientTemplate(lead.emailTemplateId);
   if (!template || template.id !== campaign.emailTemplateId) return { ok: false, reason: 'email template does not match the campaign' };
   if (template.niche !== normalizeNiche(lead.leadNiche)) return { ok: false, reason: 'email template does not match lead niche' };
-  const blocked = clientSendBlock(client.id, env);
+  const blocked = preparation ? clientPreparationBlock(client.id) : clientSendBlock(client.id, env);
   if (blocked) return { ok: false, code: blocked.code, reason: blocked.reason };
   return { ok: true, legacy: false, template, clientId: client.id };
 }
 
-function routedLeadReady(lead, env = process.env) {
+function routedLeadReady(lead, env = process.env, { preparation = false } = {}) {
   // Archived leads and retired offers first, before ownership and before the
   // legacy bypass below: a legacy dental row has no routing fields at all, and
   // "legacy: true" must never mean "sendable" for an offer that no longer exists.
@@ -169,7 +182,7 @@ function routedLeadReady(lead, env = process.env) {
   // carries another client's sender, is refused before any legacy bypass.
   const ownerOfLead = resolveLeadClient(lead);
   if (!ownerOfLead.ok) return { ok: false, code: ownerOfLead.code, reason: ownerOfLead.reason };
-  if (!getClient(ownerOfLead.clientId).isDefault) return managedLeadReady(lead, ownerOfLead.clientId, env);
+  if (!getClient(ownerOfLead.clientId).isDefault) return managedLeadReady(lead, ownerOfLead.clientId, env, { preparation });
   if (String(lead.senderInboxId || '').trim()) {
     const senderOwner = checkClientConsistency({ lead });
     if (!senderOwner.ok) return { ok: false, code: senderOwner.code, reason: senderOwner.reason };
@@ -178,6 +191,7 @@ function routedLeadReady(lead, env = process.env) {
   // rows, so it may not use the legacy bypass that exists for old dental and
   // roofing records. A staffing row without explicit routing is refused.
   const staffing = isStaffingLead(lead);
+  if (staffing && hasStaffingHoldMarker(lead)) return { ok: false, reason: 'staffing hold requires explicit reviewed release' };
   if (!staffing && String(lead.routingRequired || '').toLowerCase() !== 'true') return { ok: true, legacy: true };
   if (!lead.leadNiche || !lead.senderInboxId || !lead.emailTemplateId) return { ok: false, reason: 'routing assignment is incomplete' };
   const resolved = resolveLeadFamily(lead);
@@ -189,6 +203,10 @@ function routedLeadReady(lead, env = process.env) {
   const template = templateById(lead.emailTemplateId);
   if (!template?.ready) return { ok: false, reason: template?.reason || 'email template is unavailable' };
   if (template.niche !== normalizeNiche(lead.leadNiche)) return { ok: false, reason: 'email template does not match lead niche' };
+  // A V2-marked lead is sent only as a complete, live V2 lead with structured
+  // roles + market; anything less is held here, never re-routed to V1.
+  const v2Block = staffingV2SendBlock(lead);
+  if (v2Block) return { ok: false, reason: v2Block };
   return { ok: true, legacy: false, template };
 }
 

@@ -447,8 +447,8 @@ test('every application-owned live automation launch observes Calendar first and
   assert.ok(manual.indexOf("launchAutomationAfterCalendar('manual live outreach run'") < manual.indexOf('spawnAgent(false)'));
   const scheduled = server.slice(server.indexOf("cron.schedule('0,30 7-11"), server.indexOf("cron.schedule('15,45"));
   assert.ok(scheduled.indexOf("launchAutomationAfterCalendar('scheduled outreach run'") < scheduled.indexOf('spawnAgent(false'));
-  const intent = server.slice(server.indexOf('function spawnAgentIntentOnly'), server.indexOf('function spawnAgentCheckOnly'));
-  assert.ok(intent.indexOf('launchAutomationAfterCalendar') < intent.indexOf('startAgentProcess'));
+  // The retired demo-intent launch is gone rather than exempt.
+  assert.doesNotMatch(server, /function spawnAgentIntentOnly/);
   const completed = server.slice(server.indexOf("child.on('exit'"), server.indexOf('function spawnAgent(dryRun'));
   assert.doesNotMatch(completed, /spawnAgent\(false|pendingScheduledSendRuns/,
     'completed runs never launch catch-up sends outside a scheduled window');

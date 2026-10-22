@@ -164,7 +164,7 @@ test('integrity audit reports duplicate ids, send/reply ids, invalid dates and o
 });
 
 test('Outreach timeline is lazy and initial lead loading never fetches all timelines', () => {
-  assert.match(browser, /fetch\(`\/api\/coldemail\/\$\{encodeURIComponent\(id\)\}\/activity`\)/);
+  assert.match(browser, /fetch\(`\/api\/coldemail\/\$\{encodeURIComponent\(id\)\}\/activity\?client=\$\{encodeURIComponent\(clientId\)\}`\)/);
   const initialLoader = browser.slice(browser.indexOf('async function loadCeLeads'), browser.indexOf('function cleanCompanyName'));
   assert.doesNotMatch(initialLoader, /\/activity/);
   assert.match(server, /app\.get\('\/api\/coldemail\/:id\/activity'/);

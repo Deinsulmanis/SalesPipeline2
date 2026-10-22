@@ -75,9 +75,12 @@ const JOLE = Object.freeze({
   // explicit ScaleLab operator instruction. The three onboarding items are
   // recorded as attested by that instruction; they were not independently
   // verified inside SalesPipeline2. Client-active means the workspace, ledger,
-  // campaign configuration and sender management are live. It grants NO send
-  // authority: sending.enabled stays false, CLIENT_SENDING_AUTHORIZED does not
-  // name Jole, client capacity stays 0 and every Jole sender starts paused.
+  // campaign configuration and sender management are live.
+  // 2026-10-15 launch preparation: the reviewed key (sending.enabled) is on, so
+  // Jole's inboxes, leads and queue can be fully prepared. The final key,
+  // CLIENT_SENDING_AUTHORIZED, does not name Jole: until it does, no Jole
+  // email can send (client capacity, sender eligibility and the provider gate
+  // all refuse). Launch is setting CLIENT_SENDING_AUTHORIZED=jole.
   lifecycleStatus: 'active',
   active: true,
   onboarding: Object.freeze({
@@ -91,8 +94,10 @@ const JOLE = Object.freeze({
   kind: 'managed_client',
   // The internal ScaleLab workspace for operating Jole. Navigation only — every
   // view is still scoped to Jole on the server.
-  workspaces: Object.freeze(['clients', 'pipeline', 'inbox', 'bookings', 'campaigns', 'analytics', 'settings']),
-  defaultWorkspace: 'clients',
+  // Outreach is the shared lead directory ScaleLab already uses. Jole lands
+  // there so Import / Queued sit in the same table, filters and cards.
+  workspaces: Object.freeze(['clients', 'pipeline', 'inbox', 'bookings', 'outreach', 'campaigns', 'analytics', 'settings']),
+  defaultWorkspace: 'outreach',
   terminology: Object.freeze({ lead: 'employer lead', leads: 'employer leads', prospect: 'employer' }),
   // Jole never operates SalesPipeline2. There is no login, account or
   // permission for it anywhere in this system.
@@ -100,15 +105,16 @@ const JOLE = Object.freeze({
   namespace: 'jole',
   legacyFamilyKeywords: Object.freeze([]),
   sending: Object.freeze({
-    // DISABLED. Activation is a later, explicit instruction: flip this in a
-    // reviewed commit AND name the client in CLIENT_SENDING_AUTHORIZED.
-    enabled: false,
+    // Reviewed key ON (2026-10-15) for launch preparation. Sending still needs
+    // the second, independent key: CLIENT_SENDING_AUTHORIZED naming jole.
+    enabled: true,
     requiresEnvAuthorization: true,
     clientSuppressionRequired: true,
   }),
-  // Safe until launch: zero capacity. Real numbers are a launch decision and
-  // are set in the same reviewed commit that enables sending.
-  capacity: Object.freeze({ dailyCap: 0, windowCap: 0, reservedDaily: 0, reservedWindow: 0 }),
+  // Launch capacity: six inboxes × 20/day = 120/day, × 2 per window = 12 per
+  // window. Jole's own allocation (gmail-sender-capacity.js), never taken from
+  // ScaleLab's; 0 in effect while CLIENT_SENDING_AUTHORIZED does not name Jole.
+  capacity: Object.freeze({ dailyCap: 120, windowCap: 12, reservedDaily: 0, reservedWindow: 0 }),
   // Who may send for Jole, and how much. Enforced by clients/sender-policy.js
   // at registry load and at every client-consistency check, so a mis-entered
   // registry row can never widen it.
@@ -126,15 +132,20 @@ const JOLE = Object.freeze({
     allowedCampaignIds: Object.freeze(['jole-btx-employer-acquisition']),
     maxDailyPerInbox: 20,
   }),
-  // Assumed; confirm with Jorge before launch (send windows are still the
-  // shared Pacific windows until per-client windows exist).
+  // Confirmed client send-window timezone. ScaleLab retains Pacific windows.
   timezone: 'America/Chicago',
-  timezoneConfirmed: false,
+  timezoneConfirmed: true,
   representative: Object.freeze({
     name: 'Jorge Guerrero',
     role: 'Primary representative',
     operatesPlatform: false,
   }),
+  // Who Jole's cold email is from. Every Jole sender uses this display name;
+  // it never falls back to ScaleLab's FROM_NAME.
+  senderIdentity: Object.freeze({ fromName: 'Jorge Guerrero', title: 'CEO', company: 'Jole BTX LLC' }),
+  // Where Jole's copy reads its landing page and CAN-SPAM postal address.
+  // Jole-only variables: neither falls back to ScaleLab's values.
+  copyEnv: Object.freeze({ landingPageUrl: 'JOLE_LANDING_PAGE_URL', bookingLink: 'JOLE_BOOKING_LINK', mailingAddress: 'JOLE_COMMERCIAL_MAILING_ADDRESS' }),
   escalation: Object.freeze({
     owner: 'scalelab',
     contactName: 'Jorge Guerrero',

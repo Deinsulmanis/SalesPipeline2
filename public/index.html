@@ -959,7 +959,7 @@
      ══════════════════════════════════════════════════════════════════════════ */
 
   /* NOTE: deliberately NO `overflow-x: hidden` on html/body. It was tried and it
-     silently HID ten genuinely-overflowing views (the demos/opens tables, the
+     silently HID ten genuinely-overflowing views (the opens table, the
      agent stat grid, the campaigns table) — the page measured clean while
      content was still clipped off-screen. Every overflow below is fixed at its
      source instead; a container only scrolls when it opts in. */
@@ -969,10 +969,9 @@
     .header-right { gap: 8px; flex-wrap: wrap; }
     .stats-bar, .ce-stats { padding-left: 0; padding-right: 0; }
     .ce-table-wrap, .table-wrap { padding-left: 16px; padding-right: 16px; }
-    /* The demos/opens panels wrap their table in a bare padded div, so the
-       720px min-width had nothing to scroll inside. Make those panels the
-       scroll container. */
-    #ce-demos-panel > div, #ce-opens-panel > div {
+    /* The opens panel wraps its table in a bare padded div, so the 720px
+       min-width had nothing to scroll inside. Make it the scroll container. */
+    #ce-opens-panel > div {
       overflow-x: auto;
       -webkit-overflow-scrolling: touch;
       padding-left: 16px;
@@ -1668,6 +1667,41 @@
   .sender-field-v { margin:2px 0; }
   .sender-field-d { font-size:11.5px;color:var(--text-muted); }
   .sender-field-d:empty { display:none; }
+
+  /* Managed-client conversation drawer (#client-detail-overlay): the Outreach
+     drawer's frame plus the reply and step rows only it needs. Everything is
+     scoped to the overlay, so the Outreach drawer renders exactly as before.
+     Long addresses, URLs, company names and replies wrap instead of overflowing. */
+  #client-detail-overlay .detail-header-left { min-width:0; }
+  #client-detail-overlay .modal-close { flex-shrink:0; }
+  /* The managed Inbox rows became buttons to open the drawer; they keep the
+     page's type and full width, so the list reads exactly as it did. */
+  #client-view-inbox .inbox-row { font:inherit; width:100%; }
+  #client-detail-overlay .detail-name,
+  #client-detail-overlay .detail-sub { overflow-wrap:anywhere; }
+  #client-detail-overlay .detail-field-val { min-width:0; word-break:normal; overflow-wrap:anywhere; }
+  .cd-badges { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .cd-badge { display:inline-flex; font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px; border:1px solid var(--border); color:var(--text-secondary); }
+  .cd-badge[data-tone="positive"] { background:var(--success-bg); color:var(--success); border-color:transparent; }
+  .cd-badge[data-tone="negative"] { background:var(--danger-bg); color:var(--danger); border-color:transparent; }
+  .cd-badge[data-tone="warn"]     { background:var(--warn-bg); color:var(--warn); border-color:transparent; }
+  .cd-reply { padding:12px; border:1px solid var(--border); border-radius:10px; background:var(--tint-faint); }
+  .cd-reply + .cd-reply { margin-top:10px; }
+  .cd-reply-body { margin:10px 0; font-size:13px; line-height:1.55; color:var(--text); white-space:pre-wrap; overflow-wrap:anywhere; }
+  .cd-meta { display:block; margin-top:4px; font-size:11.5px; color:var(--text-muted); overflow-wrap:anywhere; }
+  .cd-mono { font-family:'Consolas', 'Menlo', 'Monaco', monospace; font-size:12px; overflow-wrap:anywhere; }
+  .cd-steps { display:flex; flex-direction:column; gap:10px; margin-bottom:10px; }
+  .cd-step { display:grid; grid-template-columns:16px minmax(0,1fr); gap:10px; align-items:start; font-size:13px; }
+  .cd-step-dot { font-size:15px; line-height:1.2; color:var(--text-muted); }
+  .cd-step[data-state="sent"] .cd-step-dot, .cd-step[data-state="sent_unproven"] .cd-step-dot { color:var(--green); }
+  .cd-step[data-state="current"] .cd-step-dot { color:var(--warn); }
+  .cd-step[data-state="failed"] .cd-step-dot { color:var(--danger); }
+  .cd-step[data-state="current"] .cd-step-label { font-weight:600; }
+  .cd-step[data-state="pending"] .cd-step-label,
+  .cd-step[data-state="stopped"] .cd-step-label,
+  .cd-step[data-state="not_sent"] .cd-step-label { color:var(--text-muted); }
+  .cd-next { padding:12px; border:1px solid var(--border); border-radius:10px; margin-bottom:12px; }
+  .cd-next b { display:block; font-size:13px; }
   /* "Sent from deins@tryscalelabai.ca" under an outbound timeline event. */
   .activity-sender { font-size:11.5px;color:var(--text-secondary);margin-top:3px; }
   .activity-sender[data-legacy="true"] { color:var(--text-muted);font-style:italic; }
@@ -2036,7 +2070,7 @@
   .inbox-toolbar{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:13px}.inbox-filter{min-height:36px;padding:7px 11px;border:1px solid var(--border);background:var(--surface);color:var(--text-secondary);border-radius:7px;font:inherit;font-size:12px;font-weight:650;cursor:pointer}.inbox-filter.active{border-color:var(--primary);color:var(--primary);background:var(--primary-bg)}
   .inbox-list{display:grid;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface)}.inbox-row{display:grid;grid-template-columns:minmax(180px,.8fr) minmax(260px,1.35fr) minmax(210px,.85fr);gap:18px;padding:15px 17px;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--text);text-align:left;cursor:pointer}.inbox-row:last-child{border-bottom:0}.inbox-row:hover{background:var(--tint-faint)}.inbox-row:focus-visible{outline:3px solid var(--primary);outline-offset:-3px}.inbox-person b,.inbox-action b{display:block;font-size:13px}.inbox-person small,.inbox-message small,.inbox-action small{display:block;color:var(--text-muted);font-size:11px;margin-top:4px}.inbox-message p{margin:6px 0 0;font-size:12px;line-height:1.48;color:var(--text-secondary);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.inbox-state{display:inline-flex;padding:3px 7px;border-radius:5px;background:var(--wash-1);font-size:10px;font-weight:750;text-transform:uppercase;letter-spacing:.04em}
   .status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}.status-card{padding:14px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}.status-card-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.status-card b{font-size:13px}.status-card p{font-size:11px;color:var(--text-muted);line-height:1.5;margin:7px 0 0}.state-pill{font-size:10px;font-weight:750;padding:3px 7px;border:1px solid var(--border);border-radius:999px}.state-pill[data-on="true"]{color:var(--success);background:var(--success-bg)}.state-pill[data-on="false"]{color:var(--text-muted);background:var(--tint-faint)}
-  #ws-analytics .funnel-analytics,#ws-health .health-panel{margin:0}#ws-analytics #ce-chart-wrap{padding:18px!important;margin:14px 0!important;background:var(--surface);border:1px solid var(--border);border-radius:10px}#ws-campaigns #ce-campaigns-panel,#ws-settings #agent-panel,#ws-analytics #ce-demos-panel,#ws-analytics #ce-opens-panel{display:block!important;margin:0}
+  #ws-analytics .funnel-analytics,#ws-health .health-panel{margin:0}#ws-analytics #ce-chart-wrap{padding:18px!important;margin:14px 0!important;background:var(--surface);border:1px solid var(--border);border-radius:10px}#ws-campaigns #ce-campaigns-panel,#ws-settings #agent-panel,#ws-analytics #ce-opens-panel{display:block!important;margin:0}
   .archive-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:0 0 16px}.archive-kpi{display:flex;flex-direction:column;gap:4px;padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:var(--surface)}.archive-kpi strong{font-size:22px;letter-spacing:-.02em;color:var(--text)}.archive-kpi small{font-size:11px;color:var(--text-muted)}.archive-kpi-label{font-size:10px;font-weight:750;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)}.archive-kpi-warn{border-color:var(--warn)}.archive-kpi-warn strong{color:var(--warn)}
   .archive-toolbar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 12px;align-items:end;padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:8px}.archive-field{display:flex;flex-direction:column;gap:5px;font-size:11px;font-weight:650;color:var(--text-secondary);min-width:0}.archive-field input,.archive-field select{min-height:40px;padding:8px 10px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font:inherit;font-size:13px;min-width:0}.archive-field input:focus-visible,.archive-field select:focus-visible{outline:2px solid var(--primary);outline-offset:1px}.archive-field-search{grid-column:span 2}.archive-clear{min-height:40px;justify-self:start}
   .archive-count-note{font-size:12px;color:var(--text-muted);margin:0 0 10px}.archive-table{display:grid;gap:8px}.archive-head,.archive-row{display:grid;grid-template-columns:minmax(200px,1.6fr) minmax(140px,1.1fr) minmax(100px,.8fr) minmax(130px,1fr) minmax(130px,1fr) minmax(100px,.8fr);gap:14px;align-items:start}.archive-head{padding:0 16px;font-size:10px;font-weight:750;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)}
@@ -2076,11 +2110,47 @@
   /* Client switcher status line */
   .client-switch-status{display:block;margin-top:7px;font-size:11px;font-weight:650;color:var(--text-muted)}.client-switch-status[data-on="false"]{color:var(--warn)}.client-switch-status[data-on="true"]{color:var(--success)}
   @media(max-width:980px) and (min-width:701px){.client-switch{display:none}}
-  /* Client-scoped views: in a managed client's workspace only the client view shows. */
-  body[data-client-mode="managed"] .crm-workspace:not(#ws-clients)>:not(.workspace-intro):not(.client-view){display:none!important}
+  /* Managed clients reuse the shared Outreach / Campaigns / Analytics / Settings
+     surfaces. Only Sales views that have a client-specific read model hide the
+     ScaleLab board (pipeline kanban, reply inbox, call bookings). */
+  body[data-client-mode="managed"] #ws-pipeline>:not(.workspace-intro):not(.client-view),
+  body[data-client-mode="managed"] #ws-inbox>:not(.workspace-intro):not(.client-view),
+  body[data-client-mode="managed"] #ws-bookings>:not(.workspace-intro):not(.client-view){display:none!important}
   body:not([data-client-mode="managed"]) .client-view{display:none!important}
-  /* These ScaleLab panels carry ID-level !important display rules of their own; outrank them explicitly. */
-  body[data-client-mode="managed"] #ws-campaigns #ce-campaigns-panel,body[data-client-mode="managed"] #ws-settings #agent-panel,body[data-client-mode="managed"] #ws-analytics #ce-demos-panel,body[data-client-mode="managed"] #ws-analytics #ce-opens-panel,body[data-client-mode="managed"] #ws-analytics #ce-chart-wrap,body[data-client-mode="managed"] #ws-analytics #ce-funnel-analytics{display:none!important}
+  body[data-client-mode="managed"] #ws-campaigns .client-view,
+  body[data-client-mode="managed"] #ws-analytics .client-view,
+  body[data-client-mode="managed"] #ws-settings .client-view{display:none!important}
+  #jole-report-launcher,#jole-report-view{display:none}
+  body[data-daily-report="true"] #jole-report-launcher{display:block}
+  body[data-client-mode="managed"].daily-report-mode #ws-analytics > :not(.workspace-intro):not(#jole-report-view){display:none!important}
+  body[data-client-mode="managed"].daily-report-mode #jole-report-view{display:block}
+  /* Global ScaleLab stats / funnel are not client-scoped; hide them for a managed client. */
+  body[data-client-mode="managed"] #ce-stats-bar,
+  body[data-client-mode="managed"] #ce-reply-metrics,
+  body[data-client-mode="managed"] #ce-funnel-analytics,
+  body[data-client-mode="managed"] #ce-sender-analytics,
+  body[data-client-mode="managed"] #ce-chart-wrap,
+  body[data-client-mode="managed"] #staffing-launch-panel,
+  body[data-client-mode="managed"] #ce-digest-card,
+  body[data-client-mode="managed"] #ce-leads-panel #crm-health-panel{display:none!important}
+  body[data-client-mode="managed"] #ws-settings #agent-panel{display:none!important}
+  body[data-client-mode="managed"] #smartlead-health{display:none!important}
+  body:not([data-client-mode="managed"]) .ce-extra-col{display:none}
+  body[data-client-mode="managed"] .ce-sl-only{display:none}
+  .lead-status-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:10px;margin:0 0 14px;padding:0 28px}
+  .lead-status-card{appearance:none;display:block;width:100%;text-align:left;padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:inherit;cursor:pointer}
+  .lead-status-card:hover,.lead-status-card:focus-visible{border-color:var(--border-hover);outline:none}
+  .lead-status-card[data-active="true"]{border-color:var(--primary);background:var(--tint-soft)}
+  .lead-status-card span{display:block;font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--text-muted);font-weight:750}
+  .lead-status-card b{display:block;font-size:22px;line-height:1.2;margin-top:6px;font-variant-numeric:tabular-nums;color:var(--text)}
+  .lead-status-callout{margin:0 28px 14px;padding:12px 16px;border:1px dashed var(--border-hover);border-radius:10px;background:var(--tint-faint);font-size:13px;color:var(--text-secondary);line-height:1.5}
+  .lead-status-callout strong{color:var(--text)}
+  .ce-row-chip{display:inline-block;margin:2px 4px 0 0;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;background:var(--tint-faint);color:var(--text-muted)}
+  .ce-row-chip[data-tone="warn"]{color:var(--warn);background:var(--warn-bg)}
+  .ce-row-chip[data-tone="ok"]{color:var(--success);background:var(--success-bg)}
+  .revenue-panel{margin:0 0 16px}
+  .campaign-archived{opacity:.78}
+  .campaign-archived h3{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin:18px 0 10px}
   .client-badges{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 16px}
   .client-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(136px,1fr));gap:12px;margin:0 0 16px}
   .metric-card{padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:var(--surface);min-width:0}
@@ -2112,6 +2182,18 @@
   #client-ops-content .client-grid{margin-top:0}
   @media(max-width:1100px){.analytics-grid{grid-template-columns:1fr}}
   @media(max-width:700px){.client-grid{grid-template-columns:1fr}.funnel-row{grid-template-columns:104px minmax(0,1fr) 36px;gap:8px}.campaign-grid{grid-template-columns:1fr}.client-empty{padding:18px}}
+.jole-report{max-width:1080px;margin:0 auto;padding:36px;background:#f8f7f4;color:#20302c;border:1px solid #dadfd8;border-radius:16px;box-shadow:0 16px 44px rgba(20,36,31,.08)}
+.jole-report-head{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;border-bottom:2px solid #203f36;padding-bottom:24px;margin-bottom:24px}
+.jole-report-kicker{font:700 12px/1.4 Outfit,system-ui,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:#527266}
+.jole-report h2{font:700 clamp(27px,4vw,40px)/1.12 Outfit,system-ui,sans-serif;margin:10px 0;color:#173c32}
+.jole-report p{margin:0;color:#4d665d}.jole-report h3{font:700 13px/1.4 Outfit,system-ui,sans-serif;letter-spacing:.1em;text-transform:uppercase;color:#436559;margin:30px 0 12px}
+.jole-report-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.jole-report-grid.secondary{grid-template-columns:repeat(4,minmax(0,1fr))}.jole-report-grid.totals{grid-template-columns:repeat(4,minmax(0,1fr))}
+.jole-report-metric{background:#fff;border:1px solid #dce4de;border-radius:12px;padding:18px;min-height:100px}.jole-report-metric span{display:block;font-size:12px;color:#50675e}.jole-report-metric strong{display:block;font-size:30px;line-height:1.25;margin-top:8px;color:#153e32}.jole-report-metric small{font-size:12px;color:#61766d}
+.jole-report-senders{display:grid;gap:8px}.jole-report-sender{display:grid;grid-template-columns:minmax(0,2fr) repeat(3,minmax(0,1fr));gap:12px;align-items:center;background:#fff;border:1px solid #dce4de;border-radius:9px;padding:12px 16px;font-size:13px}.jole-report-sender b{overflow-wrap:anywhere}.jole-report-footer{border-top:1px solid #dce4de;padding-top:16px;margin-top:28px!important;font-size:12px}
+.jole-report-tools{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;align-items:center}.jole-report-tools input,.jole-report-tools button{min-height:44px}.jole-report-tools button{border:1px solid #759083;background:#fff;color:#173c32;border-radius:8px;padding:8px 16px;cursor:pointer}
+@media(max-width:760px){.jole-report{padding:20px}.jole-report-head{display:block}.jole-report-grid,.jole-report-grid.totals{grid-template-columns:repeat(2,minmax(0,1fr))}.jole-report-grid.secondary{grid-template-columns:repeat(2,minmax(0,1fr))}.jole-report-sender{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.jole-report-sender>*{min-width:0}}
+@media(max-width:420px){.jole-report{padding:16px}.jole-report-grid,.jole-report-grid.totals,.jole-report-grid.secondary{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.jole-report-metric{padding:12px;min-height:84px}.jole-report-metric strong{font-size:22px}.jole-report-sender{grid-template-columns:1fr 1fr}.jole-report-sender b{grid-column:1/-1;overflow-wrap:break-word}}
+@media print{#crm-sidebar,header,.jole-report-tools,.workspace-intro{display:none!important}html,body{background:#fff!important}.jole-report{box-shadow:none;border:0;max-width:none;padding:0;background:#fff}#jole-report-view{width:auto;box-sizing:border-box}.jole-report-metric,.jole-report-sender{break-inside:avoid}}
 </style>
 </head>
 <body>
@@ -2285,7 +2367,7 @@
     <button class="ce-tab"        data-ce="Promoted"     onclick="setCeFilter('Promoted')">Promoted</button>
     <button class="ce-tab"        data-ce="Unsubscribed" onclick="setCeFilter('Unsubscribed')">Unsub</button>
     <div class="ce-actions">
-      <select id="ce-niche-filter" aria-label="Filter by lead type" onchange="setCeNicheFilter(this.value)" style="width:auto;min-width:118px;padding:7px 10px"><option value="all">All lead types</option><option value="dental">Dental</option><option value="roofing">Roofing</option><option value="industrial_staffing">Staffing Agency</option></select>
+      <select id="ce-niche-filter" class="ce-sl-only" aria-label="Filter by lead type" onchange="setCeNicheFilter(this.value)" style="width:auto;min-width:118px;padding:7px 10px"><option value="all">All lead types</option><option value="dental">Dental</option><option value="roofing">Roofing</option><option value="industrial_staffing">Staffing Agency</option></select>
       <div class="ce-search-wrap">
         <svg class="ce-search-icon" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
         <input type="text" id="ce-search" placeholder="Search leads…" oninput="onCeSearch(this.value)">
@@ -2300,7 +2382,6 @@
         Queue Selected (<span id="bulk-count">0</span>)
       </button>
       <button class="ce-tab" data-ce="campaigns" onclick="setCeFilter('campaigns')">📊 Campaigns</button>
-      <button class="ce-tab" data-ce="demos" onclick="setCeFilter('demos')">▶️ Demo Plays</button>
       <button class="ce-tab" data-ce="opens" onclick="setCeFilter('opens')">📬 Opens</button>
       <button class="ce-tab" data-ce="agent" onclick="setCeFilter('agent')" style="margin-left:6px">
         <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.45 2 2 0 0 1 3.59 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.49a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21.73 16z"/></svg>
@@ -2316,7 +2397,6 @@
       <select id="ce-reply-filter" aria-label="Reply category" onchange="setCeMasterFilter('reply',this.value)"><option value="">All replies</option><option value="positive">Positive</option><option value="negative">Negative</option><option value="needs_human">Needs Human</option><option value="unclassified">Unclassified</option><option value="none">No Reply</option></select>
       <select id="ce-pipeline-filter" aria-label="Sales Pipeline presence" onchange="setCeMasterFilter('presence',this.value)"><option value="">All pipeline relationships</option><option value="in">In Sales Pipeline</option><option value="out">Not in Sales Pipeline</option><option value="conflict">Mapping conflict</option></select>
       <select id="ce-pipeline-stage-filter" aria-label="Sales Pipeline stage" onchange="setCeMasterFilter('pipelineStage',this.value)"><option value="">All pipeline stages</option><option value="follow_up">Follow Up</option><option value="hot">Hot</option><option value="call_booked">Call Booked</option><option value="closed_won">Closed / Won</option><option value="closed_lost">Closed / Lost</option></select>
-      <select id="ce-engagement-filter" aria-label="Engagement" onchange="setCeMasterFilter('engagement',this.value)"><option value="">All engagement</option><option value="demo">Demo played</option><option value="warm">Warm</option><option value="none">No demo activity</option></select>
       <select id="ce-sequence-filter" aria-label="Sequence state" onchange="setCeMasterFilter('sequence',this.value)"><option value="">All sequence states</option><option value="active">Active sequence</option><option value="complete">Sequence complete</option><option value="queued">Queued</option><option value="not_started">Not started</option></select>
       <select id="ce-version-filter" aria-label="Campaign version" onchange="setCeMasterFilter('campaignVersion',this.value)"><option value="">All campaign versions</option></select>
       <select id="ce-sender-filter" aria-label="Sending inbox" onchange="setCeMasterFilter('senderInbox',this.value)"><option value="">All inboxes</option></select>
@@ -2326,18 +2406,17 @@
     <div class="ce-quick-views" aria-label="Quick views">
       <button class="ce-quick-view" onclick="applyCeQuickView('attention')">Needs Attention</button>
       <button class="ce-quick-view" onclick="applyCeQuickView('positive')">Positive Replies</button>
-      <button class="ce-quick-view" onclick="applyCeQuickView('demo')">Demo Engaged</button>
       <button class="ce-quick-view" onclick="applyCeQuickView('not-in-pipeline')">Not in Pipeline</button>
       <button class="ce-quick-view" onclick="applyCeQuickView('complete')">Sequence Complete</button>
       <button class="ce-quick-view" onclick="applyCeQuickView('suppressed')">Suppressed</button>
     </div>
+    <div id="lead-status-summary" class="lead-status-summary" aria-label="Lead status"></div>
+    <div id="lead-status-callout" class="lead-status-callout" hidden></div>
     <div class="analytics-scope-note" id="ce-stat-scope" data-scope="active"><b>Active outreach</b> Live offers only — archived leads and retired offers are excluded. Historical totals are in Analytics.</div>
     <div class="stats-bar" id="ce-stats-bar">
       <div class="stat stat-secondary" title="Every ColdEmail row with a valid id, contacted or not."><div><div class="stat-val" id="ce-stat-total">0</div><div class="stat-label">Total Leads</div></div></div>
       <div class="stat"><div><div class="stat-val" id="ce-stat-queued">0</div><div class="stat-label">Queued</div></div></div>
       <div class="stat stat-secondary" title="Unique leads that have been contacted at least once. Lead-based — a lead mailed three times counts once. Not the same as All Outbound Sends, which counts messages."><div><div class="stat-val" id="ce-stat-emailed">0</div><div class="stat-label">Unique Contacted</div></div></div>
-      <div class="stat"><div><div class="stat-val" id="ce-stat-demo-plays">0</div><div class="stat-label">Demo Plays</div></div></div>
-      <div class="stat"><div><div class="stat-val" id="ce-stat-warm">0</div><div class="stat-label">Demo-engaged Leads</div></div></div>
     </div>
     <div class="reply-metrics-bar" id="ce-reply-metrics" aria-label="Reply outcomes">
       <button type="button" class="stat stat-clickable" onclick="openReplyDrill('all')" aria-label="Inbound Messages — open reply list" title="Unique leads that sent us anything at all: human replies, autoresponders, mailbox-change notices, and leads whose reply evidence we cannot trust."><div><div class="stat-val" id="ce-stat-replied">0</div><div class="stat-label">Inbound Messages</div></div></button>
@@ -2416,7 +2495,13 @@
             <th>Email</th>
             <th>City</th>
             <th>Trade</th>
+            <th class="ce-extra-col">Title</th>
+            <th class="ce-extra-col">Hiring role</th>
+            <th class="ce-extra-col">Location</th>
+            <th class="ce-extra-col">Sector</th>
             <th class="ce-th-sender" title="Which Gmail inbox owns this conversation. Historical ownership, not the inbox that would be chosen today.">Sending Inbox</th>
+            <th class="ce-extra-col">Step</th>
+            <th class="ce-extra-col">Last emailed</th>
             <th>Opens</th>
             <th>Pipeline</th>
             <th>Stage</th>
@@ -2441,30 +2526,10 @@
     <div id="digest-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px"></div>
   </div>
 
-  <!-- Demo plays panel — placed ABOVE the opens panel: pressing play is a
-       stronger buying signal than loading the proposal page. -->
-  <div id="ce-demos-panel" style="display:none">
-    <div style="padding:20px 28px">
-      <div class="analytics-scope-note" data-scope="historical"><b>Retired offers · historical</b> Demo and proposal telemetry from the dental and med spa receptionist offers, kept for history. Nothing here describes the active staffing campaign.</div>
-      <table class="ce-table">
-        <thead>
-          <tr>
-            <th>Company</th>
-            <th>Played</th>
-            <th>Plays</th>
-            <th>Most recent</th>
-          </tr>
-        </thead>
-        <tbody id="ce-demos-tbody"></tbody>
-      </table>
-      <div class="ce-empty" id="ce-demos-empty" style="display:none">No demo plays recorded yet.</div>
-    </div>
-  </div>
-
   <!-- Opens panel (proposal opens log) -->
   <div id="ce-opens-panel" style="display:none">
     <div style="padding:20px 28px">
-      <div class="analytics-scope-note" data-scope="historical"><b>Retired offers · historical</b> Demo and proposal telemetry from the dental and med spa receptionist offers, kept for history. Nothing here describes the active staffing campaign.</div>
+      <div class="analytics-scope-note" data-scope="historical"><b>Retired offers · historical</b> Proposal telemetry from the dental and med spa receptionist offers, kept for history. Nothing here describes the active staffing campaign.</div>
       <table class="ce-table">
         <thead>
           <tr>
@@ -2923,10 +2988,6 @@
         <div id="ce-d-pipeline"></div>
       </div>
       <div>
-        <div class="detail-section-title">Demo Plays</div>
-        <div id="ce-d-demos"></div>
-      </div>
-      <div>
         <div class="detail-section-title">Proposal Opens</div>
         <div id="ce-d-opens"></div>
       </div>
@@ -2945,7 +3006,22 @@
     </div>
   </div>
 </div>
+<!-- A managed client's Inbox conversation. Same frame as the Outreach drawer;
+     filled only from /api/clients/:clientId/inbox/:leadId. -->
+<div class="detail-overlay" id="client-detail-overlay" onclick="closeClientConversation(event)">
+  <div class="detail-panel" role="dialog" aria-modal="true" aria-labelledby="cd-name" onclick="event.stopPropagation()">
+    <div class="detail-header">
+      <div class="detail-header-left">
+        <div class="detail-name" id="cd-name"></div>
+        <div class="detail-sub" id="cd-sub"></div>
+      </div>
+      <button type="button" class="modal-close" id="cd-close" aria-label="Close conversation details" onclick="closeClientConversation()">✕</button>
+    </div>
+    <div class="detail-body" id="cd-body"></div>
+  </div>
+</div>
 
+<script src="/workspace-shared.js"></script>
 <script>
 // ============================================================
 // CONFIGURATION — fill these in before first use (see SETUP.md)
@@ -2971,7 +3047,7 @@ const COLUMNS = [
 const COL_RANGE = `${GOOGLE_CONFIG.SHEET_NAME}!A:Q`;
 
 const STAGES = [
-  { id: 'follow_up',   label: 'Follow Up',     color: 'var(--primary)', rule: 'Auto: both demo clips played' },
+  { id: 'follow_up',   label: 'Follow Up',     color: 'var(--primary)', rule: 'Manual, or a dated recontact reply' },
   { id: 'hot',         label: 'Hot',           color: 'var(--danger)',  rule: 'Auto: positive email reply' },
   { id: 'call_booked', label: 'Call Booked',   color: 'var(--violet)',  rule: 'Meeting time required' },
   { id: 'closed_won',  label: 'Closed / Won',  color: 'var(--success)', rule: 'Won — set by hand' },
@@ -4185,6 +4261,8 @@ function renderAgentLog(entries) {
 }
 
 async function refreshAgentLeadCounts(loadedLeads = null) {
+  const clientId = activeClientId;
+  const token = clientViewToken;
   try {
     // The `loadedLeads` fast path was removed: it counted whatever array it was
     // handed, which after pagination is one page. These are global counters, so
@@ -4196,9 +4274,11 @@ async function refreshAgentLeadCounts(loadedLeads = null) {
       document.getElementById('as-done').textContent    = ceOutreachStats.done;
       return;
     }
-    const resp = await fetch('/api/coldemail/stats');
+    const resp = await fetch('/api/coldemail/stats?client=' + encodeURIComponent(activeClientId));
+    if (token !== clientViewToken || clientId !== activeClientId) return;
     if (!resp.ok) { ['as-queued','as-emailed','as-replied','as-done'].forEach(id => document.getElementById(id).textContent = '–'); return; }
     const counts = await resp.json();
+    if (token !== clientViewToken || clientId !== activeClientId) return;
     document.getElementById('as-queued').textContent  = counts.queued;
     document.getElementById('as-emailed').textContent = counts.emailed;
     document.getElementById('as-replied').textContent = counts.replied;
@@ -4222,6 +4302,12 @@ let ceFacets = { stages: {}, niches: {}, campaigns: {} };
 let ceFetchedAt = null;
 let ceLoading = false;
 let ceAllLeads = null;      // full light set, loaded only for the Campaigns panel
+let ceAllLeadsClient = '';
+let ceStatusLeads = [];     // client-scoped light rows for status cards
+let ceStatusClient = '';
+let clientLeadExtras = new Map();
+let clientCatalog = null;   // GET /api/clients/:id for the managed client in view
+let clientCatalogFor = '';
 let ceSearchTimer = null;
 let ceRequestSeq = 0;       // guards against an older response landing last
 let ceSelected     = new Set();
@@ -4231,7 +4317,6 @@ let ceReplyCategoryFilter = '';   // set by a reply stat card drill-down
 let ceNicheFilter = 'all';
 let cePipelinePresenceFilter = '';
 let cePipelineStageFilter = '';
-let ceEngagementFilter = '';
 let ceSequenceFilter = '';
 let ceAutomationFilter = '';
 let ceCampaignVersionFilter = '';
@@ -4242,10 +4327,6 @@ let queueRouteIds = [];
 let outreachRoutingOptions = null;
 let ceOpensMap       = new Map();
 let ceOpensData    = [];
-// Demo plays — a stronger buying signal than an open (they pressed play), so
-// these rank above opens everywhere the two appear together.
-let ceDemoMap      = new Map();   // companyKey → { count, demo, intro, last }
-let ceDemoData     = [];
 let ceOutreachStats = null;
 let ceDetailId = '';
 let funnelAnalytics = null;
@@ -4261,7 +4342,6 @@ function setCeMasterFilter(kind, value) {
   if (kind === 'reply') ceReplyCategoryFilter = value;
   if (kind === 'presence') cePipelinePresenceFilter = value;
   if (kind === 'pipelineStage') cePipelineStageFilter = value;
-  if (kind === 'engagement') ceEngagementFilter = value;
   if (kind === 'sequence') ceSequenceFilter = value;
   if (kind === 'campaignVersion') ceCampaignVersionFilter = value;
   if (kind === 'senderInbox') ceSenderFilter = value;
@@ -4271,7 +4351,7 @@ function setCeMasterFilter(kind, value) {
 function syncCeMasterFilters() {
   const values = {
     'ce-reply-filter': ceReplyCategoryFilter, 'ce-pipeline-filter': cePipelinePresenceFilter,
-    'ce-pipeline-stage-filter': cePipelineStageFilter, 'ce-engagement-filter': ceEngagementFilter,
+    'ce-pipeline-stage-filter': cePipelineStageFilter,
     'ce-sequence-filter': ceSequenceFilter, 'ce-version-filter': ceCampaignVersionFilter,
     'ce-sender-filter': ceSenderFilter,
   };
@@ -4280,7 +4360,7 @@ function syncCeMasterFilters() {
 
 function clearCeMasterFilters(shouldReload = true) {
   ceReplyCategoryFilter = cePipelinePresenceFilter = cePipelineStageFilter = '';
-  ceEngagementFilter = ceSequenceFilter = ceAutomationFilter = '';
+  ceSequenceFilter = ceAutomationFilter = '';
   ceCampaignVersionFilter = ceSenderFilter = '';
   syncCeMasterFilters(); if (shouldReload) reloadCePage();
 }
@@ -4289,7 +4369,6 @@ function applyCeQuickView(view) {
   clearCeMasterFilters(false);
   if (view === 'attention') { ceReplyCategoryFilter = 'needs_human'; cePipelinePresenceFilter = 'out'; }
   if (view === 'positive') ceReplyCategoryFilter = 'positive';
-  if (view === 'demo') ceEngagementFilter = 'demo';
   if (view === 'not-in-pipeline') cePipelinePresenceFilter = 'out';
   if (view === 'complete') ceSequenceFilter = 'complete';
   if (view === 'suppressed') ceAutomationFilter = 'suppressed';
@@ -5611,16 +5690,16 @@ function setMotion(m) {
 function setCeFilter(f) {
   const stageChanged = ceActiveFilter !== f;
   ceActiveFilter = f;
+  syncLeadStatusSummary();
+  persistWorkspaceHash();
   const isAgent     = f === 'agent';
   const isOpens     = f === 'opens';
-  const isDemos     = f === 'demos';
   const isCampaigns = f === 'campaigns';
-  const isLeadsView = (!isAgent && !isOpens && !isDemos && !isCampaigns);
+  const isLeadsView = (!isAgent && !isOpens && !isCampaigns);
   document.getElementById('ce-leads-panel').style.display      = isLeadsView ? 'block' : 'none';
   const digestCard = document.getElementById('ce-digest-card');
   if (digestCard && digestCard.dataset.loaded === '1') digestCard.style.display = isLeadsView ? 'block' : 'none';
   document.getElementById('agent-panel').style.display         = isAgent     ? 'block' : 'none';
-  document.getElementById('ce-demos-panel').style.display      = isDemos     ? 'block' : 'none';
   document.getElementById('ce-opens-panel').style.display      = isOpens     ? 'block' : 'none';
   document.getElementById('ce-campaigns-panel').style.display  = isCampaigns ? 'block' : 'none';
   document.querySelectorAll('.ce-tab').forEach(t =>
@@ -5628,8 +5707,6 @@ function setCeFilter(f) {
   );
   if (isAgent) {
     showAgentTab();
-  } else if (isDemos) {
-    renderDemosPanel();
   } else if (isOpens) {
     renderOpensPanel();
   } else if (isCampaigns) {
@@ -5645,7 +5722,10 @@ function setCeFilter(f) {
 // so the browser never holds rows it is not showing.
 function ceQuery(extra = {}) {
   const params = new URLSearchParams();
-  const stage = ['all', 'agent', 'opens', 'demos', 'campaigns'].includes(ceActiveFilter) ? 'all' : ceActiveFilter;
+  const shared = typeof WorkspaceShared !== 'undefined' ? WorkspaceShared : null;
+  const special = shared ? shared.serverStageForFilter(ceActiveFilter) : ceActiveFilter;
+  const stage = ['all', 'agent', 'opens', 'campaigns'].includes(ceActiveFilter) || special === null
+    ? 'all' : (special || 'all');
   params.set('stage', stage);
   // The server scopes the directory to the selected client.
   params.set('client', activeClientId);
@@ -5655,7 +5735,6 @@ function ceQuery(extra = {}) {
   if (ceReplyCategoryFilter) params.set('replyCategory', ceReplyCategoryFilter);
   if (cePipelinePresenceFilter) params.set('pipelinePresence', cePipelinePresenceFilter);
   if (cePipelineStageFilter) params.set('pipelineStage', cePipelineStageFilter);
-  if (ceEngagementFilter) params.set('engagement', ceEngagementFilter);
   if (ceSequenceFilter) params.set('sequenceState', ceSequenceFilter);
   if (ceAutomationFilter) params.set('automationState', ceAutomationFilter);
   if (ceCampaignVersionFilter) params.set('campaignVersion', ceCampaignVersionFilter);
@@ -5674,22 +5753,36 @@ async function reloadCePage({ append = false, offset = 0 } = {}) {
   ceLoading = true;
   renderCeTable();
   try {
+    const shared = typeof WorkspaceShared !== 'undefined' ? WorkspaceShared : null;
+    if (shared && shared.serverStageForFilter(ceActiveFilter) === null) {
+      const all = await loadClientStatusLeads();
+      if (seq !== ceRequestSeq) return;
+      ceLeads = all.filter(lead => shared.matchesStatusFilter(lead, ceActiveFilter));
+      ceTotal = ceLeads.length;
+      ceHasMore = false;
+      return;
+    }
     const resp = await fetch('/api/coldemail?' + ceQuery({ offset }));
     if (!resp.ok || seq !== ceRequestSeq) return;
     const data = await resp.json();
+    if (seq !== ceRequestSeq) return;
     ceLeads = append ? [...ceLeads, ...(data.leads || [])] : (data.leads || []);
     ceTotal = data.total || 0;
     ceHasMore = Boolean(data.hasMore);
     ceFacets = data.facets || ceFacets;
     ceFetchedAt = data.fetchedAt || null;
-    loadStaffingLaunchPanel();
+    if (!activeClientIsManaged()) loadStaffingLaunchPanel();
   } catch (e) {
     showToast('Could not load leads: ' + e.message, 'error');
   } finally {
-    if (seq === ceRequestSeq) ceLoading = false;
-    renderCeTable();
-    loadFunnelAnalytics(); // separate scoped analytics; operational cards stay global
-    loadCrmHealth();       // read-only diagnostics; renders collapsed
+    if (seq === ceRequestSeq) {
+      ceLoading = false;
+      renderCeTable();
+      if (!activeClientIsManaged()) {
+        loadFunnelAnalytics();
+        loadCrmHealth();
+      }
+    }
   }
 }
 
@@ -5698,33 +5791,150 @@ function loadMoreCeLeads() { reloadCePage({ append: true, offset: ceLeads.length
 // The Campaigns panel is the one view that genuinely aggregates across every
 // lead, so it pulls the full light set on demand rather than on every load.
 async function ensureAllCeLeads() {
-  if (ceAllLeads) return ceAllLeads;
-  const resp = await fetch('/api/coldemail?limit=0');
-  ceAllLeads = resp.ok ? ((await resp.json()).leads || []) : [];
+  if (ceAllLeads && ceAllLeadsClient === activeClientId) return ceAllLeads;
+  const clientId = activeClientId;
+  const token = clientViewToken;
+  const resp = await fetch('/api/coldemail?limit=0&client=' + encodeURIComponent(clientId));
+  const rows = resp.ok ? ((await resp.json()).leads || []) : [];
+  if (token !== clientViewToken || clientId !== activeClientId) return [];
+  ceAllLeads = rows;
+  ceAllLeadsClient = clientId;
   return ceAllLeads;
 }
 
+// Campaign display names come from the selected client's catalog. The default
+// client has none, so its campaign names render exactly as stored.
+async function loadClientCatalog() {
+  if (clientCatalogFor === activeClientId) return clientCatalog;
+  const clientId = activeClientId;
+  const token = clientViewToken;
+  let catalog = null;
+  if (activeClientIsManaged()) {
+    try {
+      const resp = await fetch(`/api/clients/${encodeURIComponent(clientId)}`);
+      catalog = resp.ok ? await resp.json() : null;
+    } catch (_) { /* names fall back to the stored id */ }
+  }
+  if (token !== clientViewToken || clientId !== activeClientId) return null;
+  clientCatalog = catalog;
+  clientCatalogFor = clientId;
+  return catalog;
+}
+
+function campaignName(value) {
+  const catalog = clientCatalogFor === activeClientId ? clientCatalog : null;
+  return typeof WorkspaceShared !== 'undefined' ? WorkspaceShared.campaignDisplayName(value, catalog) : String(value || '');
+}
+
+async function loadClientStatusLeads() {
+  if (ceStatusClient === activeClientId && ceStatusLeads.length) return ceStatusLeads;
+  const clientId = activeClientId;
+  const token = clientViewToken;
+  const resp = await fetch('/api/coldemail?limit=0&client=' + encodeURIComponent(clientId));
+  const rows = resp.ok ? ((await resp.json()).leads || []) : [];
+  if (token !== clientViewToken || clientId !== activeClientId) return [];
+  ceStatusLeads = rows;
+  ceStatusClient = clientId;
+  syncLeadStatusSummary();
+  return ceStatusLeads;
+}
+
+async function loadClientLeadExtras() {
+  const clientId = activeClientId;
+  const token = clientViewToken;
+  clientLeadExtras = new Map();
+  if (!activeClientIsManaged()) return;
+  try {
+    const data = await clientApi('/leads?limit=1000');
+    if (token !== clientViewToken || clientId !== activeClientId) return;
+    for (const lead of data.leads || []) clientLeadExtras.set(String(lead.id), lead);
+  } catch (_) { /* extras are optional; the shared table still renders */ }
+}
+
+function syncLeadStatusSummary() {
+  const host = document.getElementById('lead-status-summary');
+  if (!host || typeof WorkspaceShared === 'undefined') return;
+  const counts = WorkspaceShared.leadStatusCounts(ceStatusLeads);
+  host.innerHTML = WorkspaceShared.STATUS_FILTERS.map(item => (
+    `<button type="button" class="lead-status-card" data-status="${escAttr(item.id)}" data-active="${ceActiveFilter === item.id ? 'true' : 'false'}" onclick="setLeadStatusFilter('${item.id}')"><span>${esc(item.label)}</span><b>${esc(counts[item.id] ?? 0)}</b></button>`
+  )).join('');
+  const callout = document.getElementById('lead-status-callout');
+  if (!callout) return;
+  const terms = clientTerms();
+  if (ceActiveFilter === 'Import') {
+    const imported = ceStatusLeads.filter(lead => WorkspaceShared.matchesStatusFilter(lead, 'Import'));
+    const unsent = imported.filter(lead => !WorkspaceShared.everSent(lead)).length;
+    const held = imported.filter(lead => lead.manualHold).length;
+    callout.hidden = false;
+    callout.innerHTML = `<strong>${imported.length} imported ${esc(terms.leads)}</strong> waiting to be personalized or queued. ${unsent} have never been sent. ${held ? held + ' on manual hold. ' : ''}Imported is not Queued — nothing here goes out until it is admitted.`;
+  } else if (ceActiveFilter === 'Queued') {
+    const queued = ceStatusLeads.filter(lead => WorkspaceShared.matchesStatusFilter(lead, 'Queued'));
+    const byInbox = {};
+    for (const lead of queued) {
+      const inbox = lead.senderEmail || lead.senderInboxId || 'unassigned';
+      byInbox[inbox] = (byInbox[inbox] || 0) + 1;
+    }
+    const inboxLine = Object.entries(byInbox).map(([id, n]) => `${n} → ${id}`).join(' · ') || 'none assigned';
+    callout.hidden = false;
+    callout.innerHTML = `<strong>${queued.length} queued ${esc(terms.leads)}</strong> waiting for the next send window. Inboxes: ${esc(inboxLine)}. Eligibility is evaluated at send time; this view does not create queue state.`;
+  } else {
+    callout.hidden = true;
+    callout.textContent = '';
+  }
+}
+
+function setLeadStatusFilter(id) {
+  setCeFilter(id);
+}
+
+function persistWorkspaceHash() {
+  if (typeof hashForWorkspace !== 'function' || !activeWorkspace) return;
+  const base = hashForWorkspace(activeClientId, activeWorkspace);
+  const stage = ceActiveFilter && ceActiveFilter !== 'all' && activeWorkspace === 'outreach' ? `?stage=${encodeURIComponent(ceActiveFilter)}` : '';
+  const next = base + stage;
+  if (location.hash !== next) history.replaceState(null, '', next);
+}
+
 async function loadCeLeads() {
+  const clientId = activeClientId;
+  const token = clientViewToken;
+  const current = () => clientId === activeClientId && token === clientViewToken;
   try {
     ceLoading = true;
     renderCeTable();
-    const [ceResp, opensResp, demoResp, statsResp, versionsResp] = await Promise.all([
+    const [ceResp, opensResp, statsResp, versionsResp] = await Promise.all([
       fetch('/api/coldemail?' + ceQuery()),
-      fetch('/api/proposalOpens'),
-      fetch('/api/demoPlays'),
-      fetch('/api/coldemail/stats'),
-      fetch('/api/campaign-versions'),
+      fetch('/api/proposalOpens?client=' + encodeURIComponent(clientId)),
+      fetch('/api/coldemail/stats?client=' + encodeURIComponent(clientId)),
+      activeClientIsManaged() ? Promise.resolve(null) : fetch('/api/campaign-versions'),
     ]);
+    if (!current()) return;
     if (!ceResp.ok) { showToast('Could not load cold email leads: ' + ceResp.status, 'error'); return; }
     const cePage = await ceResp.json();
+    if (!current()) return;
     ceLeads     = cePage.leads || [];
     ceTotal     = cePage.total || 0;
     ceHasMore   = Boolean(cePage.hasMore);
     ceFacets    = cePage.facets || ceFacets;
-    if (versionsResp.ok) {
+    if (activeClientIsManaged()) {
+      // A managed client's header and version filter come from its own catalog:
+      // live campaigns only, by display name. ScaleLab's registry never shows here.
+      const catalog = await loadClientCatalog();
+      if (!current()) return;
+      const live = (catalog && catalog.campaigns || []).filter(item => !item.archivedAt);
+      document.getElementById('ce-current-campaign').textContent = live.length
+        ? `${activeClient().displayName} · Active campaign${live.length === 1 ? '' : 's'}: ${live.map(item => item.label).join(' · ')}`
+        : `${activeClient().displayName} · campaign counts are on the Campaigns workspace`;
+      const select = document.getElementById('ce-version-filter');
+      select.innerHTML = '<option value="">All campaigns</option>' + live.filter(item => item.campaignVersion)
+        .map(item => `<option value="${escAttr(item.campaignVersion)}">${esc(item.label)}</option>`).join('')
+        + '<option value="legacy_unknown">Not sent yet / unattributed</option>';
+      select.value = ceCampaignVersionFilter;
+    } else if (versionsResp?.ok) {
       const registry = await versionsResp.json();
-      const current = registry.active?.dental_ai_receptionist || '—';
-      document.getElementById('ce-current-campaign').textContent = `Current campaign: ${current}`;
+      if (!current()) return;
+      const liveVersion = registry.active?.dental_ai_receptionist || '—';
+      document.getElementById('ce-current-campaign').textContent = `Current campaign: ${liveVersion}`;
       const select = document.getElementById('ce-version-filter');
       select.innerHTML = '<option value="">All campaign versions</option>' + Object.keys(registry.versions || {}).concat(['legacy_unknown'])
         .map(id => `<option value="${escAttr(id)}">${esc(id)}</option>`).join('');
@@ -5743,7 +5953,9 @@ async function loadCeLeads() {
     }
     ceFetchedAt = cePage.fetchedAt || null;
     ceAllLeads  = null;
-    ceOpensData = opensResp.ok ? await opensResp.json() : [];
+    const opensData = opensResp.ok ? await opensResp.json() : [];
+    if (!current()) return;
+    ceOpensData = opensData;
     // /api/proposalOpens annotates every row with `real` via the shared
     // open-filter module (server-side), so mail-scanner detonations are already
     // identified. Count only real opens; rows missing the flag (an older cached
@@ -5755,40 +5967,33 @@ async function loadCeLeads() {
       if (key) ceOpensMap.set(key, (ceOpensMap.get(key) || 0) + 1);
     }
 
-    // Demo plays — aggregated per company the same way opens are (one entry per
-    // ceCompanyKey), but carrying which clips were played and the most recent
-    // timestamp. No scanner filter: see /api/demoPlays in server.js for why.
-    ceDemoData = demoResp.ok ? await demoResp.json() : [];
-    ceOutreachStats = statsResp.ok ? await statsResp.json() : null;
+    const outreachStats = statsResp.ok ? await statsResp.json() : null;
+    if (!current()) return;
+    ceOutreachStats = outreachStats;
     rdRecords = [];  // refetched on next drill-down open so rows track the counters
-    ceDemoMap  = new Map();
-    for (const d of ceDemoData) {
-      const key = ceCompanyKey(d.company);
-      if (!key) continue;
-      const e = ceDemoMap.get(key) || { count: 0, demo: 0, intro: 0, last: '' };
-      e.count++;
-      if (d.audioType === 'intro') e.intro++; else e.demo++;
-      if ((d.timestamp || '') > e.last) e.last = d.timestamp || '';
-      ceDemoMap.set(key, e);
-    }
     ceLoading = false;
     updateCeStats();
-    loadDigest();          // additive — failure never blocks the rest of the view
+    if (!activeClientIsManaged()) loadDigest();
     buildSendChart();
+    await loadClientStatusLeads();
+    if (!current()) return;
+    await loadClientLeadExtras();
+    if (!current()) return;
+    syncLeadStatusSummary();
     renderCeTable();
     if (ceActiveFilter === 'campaigns') renderCampaignsPanel();
     refreshAgentLeadCounts(ceLeads);
   } catch (e) {
-    showToast('Could not reach server: ' + e.message, 'error');
+    if (current()) showToast('Could not reach server: ' + e.message, 'error');
   } finally {
-    ceLoading = false;
+    if (current()) ceLoading = false;
   }
 }
 
 function funnelRate(value) { return value === null || value === undefined ? '—' : `${value.toFixed(1)}%`; }
 function funnelQuery(stage = '') {
   const params = new URLSearchParams({ version: document.getElementById('funnel-version')?.value || 'current',
-    scope: document.getElementById('funnel-scope')?.value || 'active' });
+    scope: document.getElementById('funnel-scope')?.value || 'active', client: activeClientId });
   const days = document.getElementById('funnel-window')?.value || 'all';
   if (days !== 'all') {
     const vanParts = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Vancouver', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
@@ -5868,11 +6073,16 @@ function toggleCrmHealth() {
 
 async function loadFunnelAnalytics() {
   const host = document.getElementById('ce-funnel-analytics'); if (!host) return;
+  const clientId = activeClientId;
+  const token = clientViewToken;
+  const current = () => token === clientViewToken && clientId === activeClientId;
   host.setAttribute('aria-busy', 'true');
   try {
     const response = await fetch('/api/coldemail/funnel?' + funnelQuery());
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    funnelAnalytics = await response.json();
+    const result = await response.json();
+    if (!current()) return;
+    funnelAnalytics = result;
     // Rendered OUTSIDE the fetch guard. Folding both into one catch is what let
     // a render crash masquerade as an unreachable endpoint for so long.
     try { renderFunnelAnalytics(funnelAnalytics); }
@@ -5882,8 +6092,8 @@ async function loadFunnelAnalytics() {
       return;
     }
   } catch (error) {
-    document.getElementById('ce-funnel-sample').textContent = 'Campaign analytics unavailable; operational data is unaffected.';
-  } finally { host.removeAttribute('aria-busy'); }
+    if (current()) document.getElementById('ce-funnel-sample').textContent = 'Campaign analytics unavailable; operational data is unaffected.';
+  } finally { if (current()) host.removeAttribute('aria-busy'); }
 }
 
 function syncFunnelFacet(id, values, emptyLabel) {
@@ -5922,13 +6132,12 @@ function renderFunnelAnalytics(data) {
     ['Sent', c.sent, 'Unique leads with at least one qualifying send in this campaign version. Lead-based, not message-based.'],
     ['Reply Rate / Sent', funnelRate(r.sentToReply), 'Genuine human replies ÷ sent cohort. Automated replies, contact-change notices and unknowns are excluded from the numerator.'],
     ['Positive Rate / Sent', funnelRate(r.sentToPositive), 'Positive replies ÷ sent cohort.'],
-    ['Demo Rate / Sent', funnelRate(r.sentToDemo), 'Leads that reached Demo ÷ sent cohort.'],
     ['Calls Booked', c.callBooked, 'Leads with a booked call in this cohort.'],
     ['Show Rate', funnelRate(r.showRate), 'Calls held ÷ (held + no-show). Shows “—” until at least one call has resolved — it is never 0% by default.'],
     ['Closed Won', c.won, 'Leads with a won outcome in this cohort.'],
   ];
   document.getElementById('funnel-kpis').innerHTML = kpis.map(([label,value,help]) => `<div class="funnel-kpi" title="${escAttr(help)}"><strong>${esc(value)}</strong><span>${esc(label)}</span></div>`).join('');
-  const labels = { sent:'Sent',replied:'Replies',positive:'Positive',demo:'Demo',hot:'Hot',callBooked:'Calls Booked',callHeld:'Calls Held',won:'Won' };
+  const labels = { sent:'Sent',replied:'Replies',positive:'Positive',hot:'Hot',callBooked:'Calls Booked',callHeld:'Calls Held',won:'Won' };
   document.getElementById('funnel-flow').innerHTML = (data.funnel || []).map(step => `<button type="button" class="funnel-step" onclick="openFunnelStage('${escAttr(step.key)}')"><span>${esc(labels[step.key] || step.key)}</span><b>${step.count}</b><small>${step.key === 'sent' ? 'Cohort' : `${funnelRate(step.fromPrevious)} from prior`}</small><small>${step.key === 'sent' ? 'unique leads' : `${funnelRate(step.fromSent)} of sent cohort`}</small></button>`).join('');
   const replies = [['Positive',c.positive],['Negative',c.negative],['Needs Human',c.needsHuman],['Unclassified',c.unclassified]];
   document.getElementById('funnel-replies').innerHTML = replies.map(([label,value]) => `<div class="funnel-mini"><b>${value || 0}</b>${label}</div>`).join('');
@@ -5982,36 +6191,6 @@ function ceLeadCompanyKeys() {
     if (k) keys.add(k);
   }
   return keys;
-}
-
-// Engagement signal tiers, strongest first. Pressing play beats loading the
-// page, and hearing the receptionist beats the 14-second hello:
-//   played receptionist demo > played intro > opened proposal > nothing
-// One definition, used by the lead table, the detail panel and any sort, so the
-// ranking cannot drift between them.
-const CE_SIGNAL = { DEMO: 3, INTRO: 2, OPEN: 1, NONE: 0 };
-
-function ceSignalFor(company) {
-  const k = ceCompanyKey(company);
-  if (!k) return { tier: CE_SIGNAL.NONE, label: '—', plays: 0, opens: 0 };
-  const d = ceDemoMap.get(k);
-  const opens = ceOpensMap.get(k) || 0;
-  if (d && d.demo > 0)  return { tier: CE_SIGNAL.DEMO,  label: 'Receptionist demo', plays: d.count, opens, last: d.last };
-  if (d && d.intro > 0) return { tier: CE_SIGNAL.INTRO, label: 'Intro (14s hello)', plays: d.count, opens, last: d.last };
-  if (opens > 0)        return { tier: CE_SIGNAL.OPEN,  label: 'Opened proposal',   plays: 0, opens };
-  return { tier: CE_SIGNAL.NONE, label: '—', plays: 0, opens: 0 };
-}
-
-// Badge for which clip a company played. A company that played both is shown as
-// the stronger one (the receptionist demo), per the tiers above.
-function ceDemoBadge(entry) {
-  if (!entry || !entry.count) return '';
-  const isDemo = entry.demo > 0;
-  const text   = isDemo ? 'Receptionist demo' : 'Intro (14s hello)';
-  const color  = isDemo ? 'var(--success)' : 'var(--info)';
-  const bg     = isDemo ? 'var(--success-bg)' : 'var(--info-bg)';
-  const both   = (entry.demo > 0 && entry.intro > 0) ? ' + intro' : '';
-  return `<span style="background:${bg};color:${color};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap">${text}${both}</span>`;
 }
 
 // A lead counts as "replied" if a human actually responded. emailStatus alone is
@@ -6072,8 +6251,6 @@ function updateCeStats() {
   document.getElementById('ce-stat-positive-of-replies').textContent = replyMetrics ? pct(replyMetrics.positiveOfReplies) : '–';
   document.getElementById('ce-stat-positive-rate').textContent = replyMetrics ? pct(replyMetrics.positiveReplyRate) : '–';
 
-  document.getElementById('ce-stat-demo-plays').textContent = num(signals.demoPlays, '–');
-  document.getElementById('ce-stat-warm').textContent  = num(signals.warm, '–');
   const scopeNote = document.getElementById('ce-stat-scope');
   if (scopeNote && counts.scope) scopeNote.innerHTML = `<b>Active outreach</b> ${esc(String(counts.scope.activeLeads))} live-offer leads · archived and retired offers excluded (${esc(String(counts.archived ?? 0))} archived). Historical totals are in Analytics.`;
   renderSenderAnalytics(counts.senderAnalytics);
@@ -6098,14 +6275,16 @@ function buildSendChart() {
   const legendEl = document.getElementById('ce-chart-legend');
   if (!chartEl || !legendEl) return;
 
-  const toVancouverDate = d => new Date(d).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+  // The client's own clock (client config), the same one the server counts sends in.
+  const chartTimeZone = activeClient()?.timezone || 'America/Vancouver';
+  const toClientDate = d => new Date(d).toLocaleDateString('en-CA', { timeZone: chartTimeZone });
 
   const CHART_DAYS = 14;
   const days = [];
   for (let i = CHART_DAYS - 1; i >= 0; i--) {
     const d = new Date();
     d.setDate(d.getDate() - i);
-    days.push(toVancouverDate(d));
+    days.push(toClientDate(d));
   }
 
   // Server aggregation uses the full cached activity snapshot. Never rebuild
@@ -6181,12 +6360,14 @@ function renderCeTable() {
     // A loading page must not read as "no leads" — that was indistinguishable
     // from an empty sheet while the request was in flight.
     tbody.innerHTML = ceLoading
-      ? '<tr><td colspan="11" class="ce-loading-row">Loading leads…</td></tr>'
+      ? `<tr><td colspan="${activeClientIsManaged() ? 16 : 11}" class="ce-loading-row">Loading leads…</td></tr>`
       : '';
     empty.style.display = ceLoading ? 'none' : 'block';
     empty.textContent = q
       ? `No leads match "${ceSearchQuery}"`
-      : 'No leads found. Import a CSV to get started.';
+      : (activeClientIsManaged()
+        ? `No ${clientTerms().leads} yet. They appear here after import — this directory stays empty until then.`
+        : 'No leads found. Import a CSV to get started.');
     if (selAll) selAll.checked = false;
     renderCeFooter();
     return;
@@ -6201,28 +6382,41 @@ function renderCeTable() {
     const emailSafe = (l.email || '').replace(/"/g, '&quot;');
     const openKey   = ceCompanyKey(l.company);
     const opens     = ceOpensMap.get(openKey) || 0;
-    // Lead-scoped, from the server's attribution. Never ceDemoMap, which is
-    // keyed by company and would credit every location of a shared brand.
-    const demoEntry = l.demoPlays && l.demoPlays.count ? l.demoPlays : null;
     const hasLateReply = l.lateReply === true || /\[LATE REPLY:/i.test(l.notes || '');
     const pipelineLabel = l.mappingStatus === 'conflict' ? 'Mapping conflict'
       : l.pipelinePresence ? ((STAGES.find(stage => stage.id === l.pipelineStage) || {}).label || l.pipelineStage)
       : 'Not in Pipeline';
     const pipelineState = l.mappingStatus === 'conflict' ? 'conflict' : (l.pipelinePresence ? 'in' : 'out');
-    // Opens are passive telemetry. Demo plays remain the engagement signal.
-    const opensTd   = demoEntry
-      ? `<td style="color:var(--success);font-weight:600" title="${demoEntry.demo > 0 ? 'Played the receptionist demo' : 'Played the intro'}">▶ ${demoEntry.count}${opens ? ` · ${opens} open${opens > 1 ? 's' : ''}` : ''}</td>`
-      : opens > 0
+    // Opens are passive telemetry.
+    const opensTd   = opens > 0
         ? `<td style="color:var(--text-muted)" title="Informational open telemetry only">${opens} open${opens > 1 ? 's' : ''}</td>`
           : `<td style="color:var(--text-muted)">—</td>`;
+    const extra = clientLeadExtras.get(String(l.id)) || {};
+    const vis = typeof WorkspaceShared !== 'undefined' ? WorkspaceShared.importVisibility(l, extra) : null;
+    const chips = [];
+    if (l.stage === 'Import' && vis) {
+      chips.push(`<span class="ce-row-chip" data-tone="${vis.personalized ? 'ok' : 'warn'}">${vis.personalized ? 'Personalized' : 'Needs personalization'}</span>`);
+      chips.push(`<span class="ce-row-chip" data-tone="${vis.sent ? 'ok' : 'warn'}">${vis.sent ? 'Sent before' : 'Never sent'}</span>`);
+      if (vis.blockers.length) chips.push(`<span class="ce-row-chip" data-tone="warn">${esc(vis.blockers[0])}</span>`);
+    }
+    if (l.stage === 'Queued') {
+      const qv = typeof WorkspaceShared !== 'undefined' ? WorkspaceShared.queuedVisibility(l, extra) : null;
+      if (qv && qv.blocker) chips.push(`<span class="ce-row-chip" data-tone="warn">${esc(qv.blocker)}</span>`);
+    }
+    if (l.staffingHoldReason) chips.push(`<span class="ce-row-chip" data-tone="warn" title="${escAttr(l.staffingHoldExplanation || l.staffingHoldReason)}">Hold: ${esc(l.staffingHoldReason.replaceAll('_', ' ').toLowerCase())}</span>`);
+    const roles = (extra.roles || []).map(role => role.clean || role.raw).filter(Boolean).join(', ');
+    const extraCols = `<td class="ce-extra-col">${esc(extra.title || '—')}</td><td class="ce-extra-col">${esc(roles || '—')}</td><td class="ce-extra-col">${esc(extra.hiringSite || l.city || '—')}${extra.tier ? `<div class="ce-row-badges"><span class="ce-row-chip">${esc(extra.tier)}${extra.siteTie ? ' · ' + esc(extra.siteTie) : ''}${extra.catchAll ? ' · catch-all' : ''}</span></div>` : ''}</td><td class="ce-extra-col">${esc(extra.sector || '—')}</td>`;
     return `<tr data-id="${l.id}" onclick="openCeDetail('${l.id}')" style="cursor:pointer">
       <td onclick="event.stopPropagation()"><label class="check-hit"><input type="checkbox" class="ce-row-check" data-id="${l.id}" ${checked} onchange="toggleCeRow(this)"></label></td>
-      <td class="ce-td-company">${esc(l.company) || '<span style="color:var(--text-muted)">—</span>'}<div class="ce-row-badges">${l.replyCategory ? `<span class="ce-row-badge">${esc((RD_CATEGORY_LABEL[l.replyCategory] || l.replyCategory))}</span>` : ''}${l.demoEngaged ? '<span class="ce-row-badge">Demo played</span>' : ''}${l.manualHold ? '<span class="ce-row-badge">Manual hold</span>' : ''}</div></td>
+      <td class="ce-td-company">${esc(l.company) || '<span style="color:var(--text-muted)">—</span>'}<div class="ce-row-badges">${l.replyCategory ? `<span class="ce-row-badge">${esc((RD_CATEGORY_LABEL[l.replyCategory] || l.replyCategory))}</span>` : ''}${l.manualHold ? '<span class="ce-row-badge">Manual hold</span>' : ''}${chips.join('')}</div></td>
       <td>${cell(l.contactName)}</td>
       <td class="ce-td-email">${l.email ? `<a href="mailto:${emailSafe}">${esc(l.email)}</a>` : '—'}</td>
       <td>${cell(l.city)}</td>
       <td>${esc(l.tradeType) || '—'}</td>
+      ${extraCols}
       <td class="ce-td-sender">${senderChip(l)}</td>
+      <td class="ce-extra-col">${esc(l.emailStep || '—')}</td>
+      <td class="ce-extra-col">${esc(l.lastEmailedAt ? new Date(l.lastEmailedAt).toLocaleString() : 'Never')}</td>
       ${opensTd}
       <td><span class="pipeline-marker" data-state="${pipelineState}" title="${escAttr(pipelineLabel)}">${esc(pipelineLabel)}</span></td>
       <td onclick="event.stopPropagation()"><div class="ce-stage-stack"><select class="ce-stage-select" onchange="setCeLeadStage('${l.id}',this.value)">${stageOpts}</select>${hasLateReply ? '<span class="ce-late-reply" title="Reply received after the sequence ended. Automation is still stopped.">Late reply</span>' : ''}</div></td>
@@ -6258,7 +6452,8 @@ function renderCeFooter() {
 function refreshCeLeads() {
   ceAllLeads = null;
   rdRecords = [];
-  fetch('/api/coldemail/stats?refresh=1').then(() => loadCeLeads());
+  rdLoading = false;
+  fetch('/api/coldemail/stats?refresh=1&client=' + encodeURIComponent(activeClientId)).then(() => loadCeLeads());
 }
 
 // Debounced so typing does not fire a request per keystroke; the server answers
@@ -6337,55 +6532,10 @@ function renderDigest(d) {
   document.getElementById('digest-grid').innerHTML = [
     digestTile('emails sent', d.emailsSent ?? 0),
     digestTile('real opens', d.realOpens?.rows ?? 0, { sub: `${d.realOpens?.companies ?? 0} companies · bots filtered` }),
-    digestTile('demo plays', d.demoPlays?.total ?? 0, {
-      color: 'var(--success)',
-      sub: `${d.demoPlays?.intro ?? 0} intro · ${d.demoPlays?.demo ?? 0} demo`,
-    }),
-    digestTile('both-audio pairs', d.demoPlays?.companiesWithBothPairs ?? 0, { color: 'var(--success)', sub: 'companies, all time' }),
     digestTile('replies', d.replies?.total ?? 0, { sub: replySub || '—' }),
     digestTile('auto-answered', d.answers?.autoSent ?? 0, { sub: `${d.answers?.draftsCreated ?? 0} drafted instead` }),
     digestTile('booking links sent', d.bookingLinksSent?.total ?? 0, { color: 'var(--primary)', sub: bookingSub || '—' }),
   ].join('');
-}
-
-// Demo plays, aggregated one row per company (ceDemoMap is already keyed that
-// way), newest activity first. Mirrors renderOpensPanel's shape; the difference
-// is that opens are logged as a flat event stream while a play is a strong
-// enough signal to be worth collapsing per company at a glance.
-function renderDemosPanel() {
-  const tbody = document.getElementById('ce-demos-tbody');
-  const empty = document.getElementById('ce-demos-empty');
-  if (!tbody || !empty) return;
-
-  // One display row per company. The company label comes from the most recent
-  // raw row so it reads the way it was logged.
-  const latestName = new Map();
-  [...ceDemoData]
-    .sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''))
-    .forEach(d => { const k = ceCompanyKey(d.company); if (k) latestName.set(k, d.company); });
-
-  const rows = [...ceDemoMap.entries()]
-    .map(([k, e]) => ({ key: k, company: latestName.get(k) || '—', ...e }))
-    .sort((a, b) => (b.last || '').localeCompare(a.last || ''));
-
-  if (rows.length === 0) {
-    tbody.innerHTML = '';
-    empty.style.display = 'block';
-    return;
-  }
-  empty.style.display = 'none';
-  tbody.innerHTML = rows.map(r => {
-    const timeStr = r.last ? new Date(r.last).toLocaleString() : '—';
-    const playsTd = r.count >= 2
-      ? `<td style="color:var(--success);font-weight:600">▶ ${r.count}</td>`
-      : `<td style="color:var(--text-secondary)">${r.count}</td>`;
-    return `<tr>
-      <td class="ce-td-company">${esc(r.company) || '—'}</td>
-      <td>${ceDemoBadge(r)}</td>
-      ${playsTd}
-      <td style="white-space:nowrap;color:var(--text-secondary)">${esc(timeStr)}</td>
-    </tr>`;
-  }).join('');
 }
 
 function renderOpensPanel() {
@@ -6414,6 +6564,7 @@ function renderOpensPanel() {
 let smartleadIntegration = null;
 let smartleadIntegrationLoading = false;
 let gmailInboxIntegration = null;
+let gmailInboxIntegrationClient = '';
 let gmailInboxIntegrationLoading = false;
 
 async function loadSmartleadIntegration() {
@@ -6432,8 +6583,11 @@ async function loadGmailInboxIntegration() {
   if (gmailInboxIntegrationLoading) return;
   gmailInboxIntegrationLoading = true;
   try {
-    const response = await fetch('/api/integrations/gmail-inboxes');
+    // Scoped to the client in view: a client's sending rail lists its own inboxes only.
+    const clientId = activeClientId;
+    const response = await fetch(`/api/integrations/gmail-inboxes?client=${encodeURIComponent(clientId)}`);
     gmailInboxIntegration = response.ok ? await response.json() : { inboxes: [] };
+    gmailInboxIntegrationClient = clientId;
   } finally {
     gmailInboxIntegrationLoading = false;
     renderGmailInboxSelector();
@@ -6453,13 +6607,17 @@ function renderGmailInboxSelector() {
   select.innerHTML = inboxes.map(inbox => `<option value="${escAttr(inbox.id)}" ${inbox.currentRoute ? 'selected' : ''} ${inbox.currentRoute ? '' : 'disabled'}>${esc(inbox.email)}${inbox.currentRoute ? ' — Current sender' : ` — ${inbox.status}`}</option>`).join('');
   status.innerHTML = `<div class="inbox-route-head"><span class="inbox-route-kicker">Gmail sending rail</span><span class="inbox-route-readonly">View only</span></div><div class="inbox-route-list">${inboxes.map(inbox => {
     const warming = inbox.status === 'warming' || inbox.status === 'ready' || !inbox.sendEligible;
-    const label = inbox.sendEligible ? 'Current' : (inbox.status === 'warming' ? 'Warming · locked' : inbox.status === 'ready' ? 'Ready · inactive' : `${inbox.status} · inactive`);
-    const meta = `${inbox.dailyLimit}/day · ${inbox.perRunLimit || 5}/run · ${inbox.sendEligible ? 'Cold sending active' : 'Cold sending inactive'}`;
+    // A managed inbox that is fully prepared but held by its client's final
+    // send authorization says so, instead of reading as merely inactive.
+    const held = !inbox.sendEligible && inbox.preparationReady === true && inbox.clientAuthorized === false;
+    const label = inbox.sendEligible ? 'Current' : held ? 'Active · client launch hold' : (inbox.status === 'warming' ? 'Warming · locked' : inbox.status === 'ready' ? 'Ready · inactive' : `${inbox.status} · inactive`);
+    const meta = `${inbox.dailyLimit}/day · ${inbox.perRunLimit ?? 5}/run · ${inbox.sendEligible ? 'Cold sending active' : held ? 'Prepared · sending not authorized (CLIENT_SENDING_AUTHORIZED)' : 'Cold sending inactive'}`;
     return `<div class="inbox-route-row ${warming ? 'warming' : ''}"><span class="inbox-route-dot" aria-hidden="true"></span><div><div class="inbox-route-email">${esc(inbox.email)}</div><div class="inbox-route-meta">${esc(meta)}</div></div><span class="inbox-route-badge">${esc(label)}</span></div>`;
   }).join('')}</div>`;
 }
 
 function campaignProvider(name) {
+  if (activeClientIsManaged()) return { provider: 'gmail', syncStatus: 'local', externalCampaignId: '', sendingPool: '' };
   const mapping = smartleadIntegration?.campaigns?.find(c => c.internalCampaignId === name);
   return mapping || { provider: 'gmail', syncStatus: 'local', externalCampaignId: '', sendingPool: '' };
 }
@@ -6513,7 +6671,7 @@ function buildCampaignStats() {
     const interested     = leads.filter(l => l.replyCategory === 'positive').length;
     const interestedRate = replied > 0 ? (interested / replied) * 100 : 0;           // positive ÷ genuine replies
 
-    const providerStats = smartleadIntegration?.stats?.find(s => s.internalCampaignId === name && s.provider === 'smartlead');
+    const providerStats = !activeClientIsManaged() && smartleadIntegration?.stats?.find(s => s.internalCampaignId === name && s.provider === 'smartlead');
     if (providerStats) {
       const slTotal = Number(providerStats.totalLeads || total);
       const slSent = Number(providerStats.sent || 0);
@@ -6539,18 +6697,33 @@ function buildCampaignStats() {
 async function renderCampaignsPanel() {
   const wrap = document.getElementById('ce-campaigns-table-wrap');
   if (!wrap) return;
+  const clientId = activeClientId;
+  const token = clientViewToken;
+  const current = () => token === clientViewToken && clientId === activeClientId;
   if (!ceAllLeads) {
     wrap.innerHTML = '<div class="ce-empty">Loading campaigns…</div>';
     await ensureAllCeLeads();
+    if (!current()) return;
   }
 
-  if (ceAllLeads.length === 0) {
+  if (ceAllLeads.length === 0 && !activeClientIsManaged()) {
     wrap.innerHTML = '<div class="ce-empty">No campaigns tagged yet — campaign names are set when you import a CSV.</div>';
     return;
   }
 
-  const rows = buildCampaignStats();
-  if (!smartleadIntegration && !smartleadIntegrationLoading) loadSmartleadIntegration();
+  // A managed client's lead rows on an archived campaign leave the working view
+  // and are counted on that campaign's Archived card instead. Nothing is
+  // re-attributed: the stored campaign id stays on every lead.
+  const catalog = activeClientIsManaged() ? await loadClientCatalog() : null;
+  if (!current()) return;
+  const archivedRowTotals = new Map();
+  const rows = buildCampaignStats().filter(row => {
+    if (!catalog || typeof WorkspaceShared === 'undefined' || !WorkspaceShared.isArchivedCampaign(row.name, catalog)) return true;
+    const label = WorkspaceShared.campaignDisplayName(row.name, catalog);
+    archivedRowTotals.set(label, (archivedRowTotals.get(label) || 0) + row.total);
+    return false;
+  });
+  if (!activeClientIsManaged() && !smartleadIntegration && !smartleadIntegrationLoading) loadSmartleadIntegration();
   const health = document.getElementById('smartlead-health');
   if (health && smartleadIntegration) {
     health.querySelector('span').textContent = smartleadIntegration.testMode
@@ -6573,7 +6746,7 @@ async function renderCampaignsPanel() {
              onclick="filterByCampaign(this.dataset.campaign)"
              role="button" tabindex="0"
              onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();filterByCampaign(this.dataset.campaign);}">
-          <div class="campaign-card-name">${esc(r.name)}${r.statsSource === 'smartlead' ? ' <span title="Counts reported by Smartlead using its own reply classification, not the CRM canonical one." style="font-weight:400;opacity:.7">· Smartlead counts</span>' : ''}</div>
+          <div class="campaign-card-name">${esc(campaignName(r.name))}${r.statsSource === 'smartlead' ? ' <span title="Counts reported by Smartlead using its own reply classification, not the CRM canonical one." style="font-weight:400;opacity:.7">· Smartlead counts</span>' : ''}</div>
           <dl class="campaign-card-metrics">
             <dt>Total</dt><dd>${r.total}</dd>
             <dt>Delivered</dt><dd>${r.delivered}</dd>
@@ -6581,11 +6754,23 @@ async function renderCampaignsPanel() {
             <dt>Opens (informational)</dt><dd>${r.opens || '—'}</dd>
             <dt>Genuine Replies</dt><dd class="${replyClass(r.replyRate)}">${r.replied || '—'}${r.delivered > 0 ? ` · ${fmtPct(r.replyRate)}` : ''}</dd>
             <dt>Positive</dt><dd>${r.interested || '—'}${r.replied > 0 ? ` · ${fmtPct(r.interestedRate)}` : ''}</dd>
-            <dt>Provider</dt><dd><button class="btn-cancel" style="padding:5px 8px" data-campaign="${escAttr(r.name)}" onclick="event.stopPropagation();openProviderModal(this.dataset.campaign)">${esc(campaignProvider(r.name).provider === 'smartlead' ? 'Smartlead' : 'Gmail')}</button></dd>
+            <dt>Provider</dt><dd>${activeClientIsManaged() ? 'Gmail' : `<button class="btn-cancel" style="padding:5px 8px" data-campaign="${escAttr(r.name)}" onclick="event.stopPropagation();openProviderModal(this.dataset.campaign)">${esc(campaignProvider(r.name).provider === 'smartlead' ? 'Smartlead' : 'Gmail')}</button>`}</dd>
           </dl>
         </div>`).join('')}
     </div>`;
 
+  let archivedHtml = '';
+  if (catalog) {
+    const parts = typeof WorkspaceShared !== 'undefined'
+      ? WorkspaceShared.partitionCampaigns(catalog.campaigns, catalog.archivedCampaigns)
+      : { active: [], archived: catalog.archivedCampaigns || [] };
+    if (parts.archived.length) {
+      const leadCount = item => archivedRowTotals.get(item.label || item.id) || 0;
+      archivedHtml = `<div class="campaign-archived"><h3>Archived / inactive</h3>
+        <p class="client-note">These campaigns stay out of the working view. Their history is kept; leads stay attributed to them.</p>
+        <div class="campaign-grid">${parts.archived.map(item => `<article class="client-card campaign-card"><div class="campaign-card-head"><h4>${esc(item.label || item.id)}</h4><span class="status-pill">Archived</span></div><p class="client-note">${esc(item.id)}${item.archivedAt ? ' · ' + esc(item.archivedAt) : ''} · ${esc(leadCount(item))} lead${leadCount(item) === 1 ? '' : 's'}</p></article>`).join('')}</div></div>`;
+    }
+  }
   wrap.innerHTML = cardsHtml + `
     <table class="ce-campaigns-table">
       <thead>
@@ -6606,7 +6791,7 @@ async function renderCampaignsPanel() {
       <tbody>
         ${rows.map(r => `
           <tr data-campaign="${escAttr(r.name)}" onclick="filterByCampaign(this.dataset.campaign)" title="Click to filter leads by this campaign">
-            <td class="ce-campaign-name-cell">${esc(r.name)}${r.statsSource === 'smartlead' ? ' <span title="Counts reported by Smartlead using its own reply classification, not the CRM canonical one." style="opacity:.7">· Smartlead counts</span>' : ''}</td>
+            <td class="ce-campaign-name-cell">${esc(campaignName(r.name))}${r.statsSource === 'smartlead' ? ' <span title="Counts reported by Smartlead using its own reply classification, not the CRM canonical one." style="opacity:.7">· Smartlead counts</span>' : ''}</td>
             <td>${r.total}</td>
             <td>${r.delivered}</td>
             <td>${r.bounced || '—'}</td>
@@ -6616,10 +6801,10 @@ async function renderCampaignsPanel() {
             <td class="${replyClass(r.replyRate)}">${r.delivered > 0 ? fmtPct(r.replyRate) : '—'}</td>
             <td>${r.interested || '—'}</td>
             <td>${r.replied > 0 ? fmtPct(r.interestedRate) : '—'}</td>
-            <td><button class="btn-cancel" style="padding:5px 8px" data-campaign="${escAttr(r.name)}" onclick="event.stopPropagation();openProviderModal(this.dataset.campaign)">${esc(campaignProvider(r.name).provider === 'smartlead' ? 'Smartlead' : 'Gmail')}</button></td>
+            <td>${activeClientIsManaged() ? 'Gmail' : `<button class="btn-cancel" style="padding:5px 8px" data-campaign="${escAttr(r.name)}" onclick="event.stopPropagation();openProviderModal(this.dataset.campaign)">${esc(campaignProvider(r.name).provider === 'smartlead' ? 'Smartlead' : 'Gmail')}</button>`}</td>
           </tr>`).join('')}
       </tbody>
-    </table>`;
+    </table>` + archivedHtml;
 }
 
 function openProviderModal(campaignName) {
@@ -6630,7 +6815,7 @@ function openProviderModal(campaignName) {
   document.getElementById('smartlead-sending-pool').value = mapping.sendingPool || '';
   document.getElementById('provider-test-result').textContent = mapping.syncStatus ? `Status: ${mapping.syncStatus}${mapping.lastSynchronizedAt ? ' · ' + new Date(mapping.lastSynchronizedAt).toLocaleString() : ''}` : '';
   toggleSmartleadFields();
-  if (!gmailInboxIntegration && !gmailInboxIntegrationLoading) loadGmailInboxIntegration();
+  if ((!gmailInboxIntegration || gmailInboxIntegrationClient !== activeClientId) && !gmailInboxIntegrationLoading) loadGmailInboxIntegration();
   else renderGmailInboxSelector();
   document.getElementById('provider-modal-overlay').classList.add('open');
 }
@@ -6704,7 +6889,7 @@ function updateCampaignFilterChip() {
   const name = document.getElementById('ce-campaign-filter-name');
   if (!bar || !name) return;
   if (ceCampaignFilter) {
-    name.textContent = ceCampaignFilter;
+    name.textContent = campaignName(ceCampaignFilter);
     bar.style.display = 'flex';
   } else {
     bar.style.display = 'none';
@@ -6741,6 +6926,8 @@ let rdExpanded = new Set();
 let rdLoading  = false;
 
 async function openReplyDrill(category = 'all') {
+  const clientId = activeClientId;
+  const token = clientViewToken;
   rdCategory = RD_CATEGORY_LABEL[category] ? category : 'all';
   rdExpanded = new Set();
   document.getElementById('rd-search').value = '';
@@ -6753,9 +6940,12 @@ async function openReplyDrill(category = 'all') {
       // Fetch the full canonical set once, then switch categories client-side.
       // Only replying leads cross the wire, never the whole lead table.
       const version = ceCampaignVersionFilter ? `&campaignVersion=${encodeURIComponent(ceCampaignVersionFilter)}` : '';
-      const resp = await fetch('/api/coldemail/replies?category=all' + version);
-      rdRecords = resp.ok ? ((await resp.json()).records || []) : [];
-    } catch (_) { rdRecords = []; }
+      const resp = await fetch('/api/coldemail/replies?category=all&client=' + encodeURIComponent(clientId) + version);
+      const records = resp.ok ? ((await resp.json()).records || []) : [];
+      if (token !== clientViewToken || clientId !== activeClientId) return;
+      rdRecords = records;
+    } catch (_) { if (token === clientViewToken && clientId === activeClientId) rdRecords = []; }
+    if (token !== clientViewToken || clientId !== activeClientId) return;
     rdLoading = false;
   }
   renderReplyDrill();
@@ -6887,11 +7077,13 @@ function closeCeDetail(e) {
 }
 
 async function loadCeActivity(id) {
+  const clientId = activeClientId;
+  const token = clientViewToken;
   try {
-    const response = await fetch(`/api/coldemail/${encodeURIComponent(id)}/activity`);
+    const response = await fetch(`/api/coldemail/${encodeURIComponent(id)}/activity?client=${encodeURIComponent(clientId)}`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
-    if (ceDetailId !== id) return;
+    if (ceDetailId !== id || token !== clientViewToken || clientId !== activeClientId) return;
     const lead = ceLeads.find(row => row.id === id);
     if (lead && data.lead) {
       Object.assign(lead, data.lead);
@@ -6901,7 +7093,7 @@ async function loadCeActivity(id) {
     openCeDetail(id, { skipActivity: true });
     renderActivityTimeline(data.activities, 'ce-d-activity');
   } catch (error) {
-    if (ceDetailId === id) document.getElementById('ce-d-activity').innerHTML = '<div class="activity-empty">Activity could not be loaded. Lead data was not changed.</div>';
+    if (ceDetailId === id && token === clientViewToken && clientId === activeClientId) document.getElementById('ce-d-activity').innerHTML = '<div class="activity-empty">Activity could not be loaded. Lead data was not changed.</div>';
   }
 }
 
@@ -6913,9 +7105,12 @@ function openCeDetail(id) {
   // at all. Fetches exactly one row from the shared snapshot, then reopens.
   if (!lead) {
     if (options.retried) return;
-    fetch('/api/coldemail?limit=1&leadId=' + encodeURIComponent(id))
+    const clientId = activeClientId;
+    const token = clientViewToken;
+    fetch('/api/coldemail?limit=1&client=' + encodeURIComponent(clientId) + '&leadId=' + encodeURIComponent(id))
       .then(response => (response.ok ? response.json() : null))
       .then(page => {
+        if (token !== clientViewToken || clientId !== activeClientId) return;
         const fetched = page && (page.leads || [])[0];
         if (!fetched) { showToast('That lead could not be loaded.', 'error'); return; }
         ceLeads = ceLeads.concat([fetched]);
@@ -6982,7 +7177,7 @@ function openCeDetail(id) {
 
   // ── Next action ──────────────────────────────────────────────
   // Decision logic lives on the server in deriveNextAction(). The browser only
-  // formats that canonical result, including demo-intent safety blockers.
+  // formats that canonical result.
   const next = lead.canonicalNextAction;
   const nextTone = next && next.status === 'blocked' ? 'var(--warn)'
     : next && next.owner === 'automation' ? 'var(--blue)' : 'var(--text)';
@@ -6992,34 +7187,6 @@ function openCeDetail(id) {
        ${next.reason ? `<p style="font-size:12px;color:var(--text-muted);margin-top:5px">${esc(next.reason)}</p>` : ''}`
     : `<p style="font-size:13px;color:var(--text-muted)">${options.skipActivity ? 'Canonical Next Action unavailable.' : 'Loading canonical Next Action…'}</p>`;
   document.getElementById('ce-d-next').innerHTML = nextHtml;
-
-  // ── Demo plays ───────────────────────────────────────────────
-  // Rendered above opens: pressing play is the stronger signal.
-  const demoKey   = ceCompanyKey(lead.company);
-  // Lead-scoped like the row cell: a location that never played anything shows
-  // nothing here, even when a sibling location of the same brand did.
-  const demoEntry = lead.demoPlays && lead.demoPlays.count ? lead.demoPlays : null;
-  let demosHtml;
-  if (!demoEntry) {
-    demosHtml = `<p style="font-size:13px;color:var(--text-muted)">No demo plays recorded.</p>`;
-  } else {
-    const matches = ceDemoData
-      .filter(d => ceCompanyKey(d.company) === demoKey)
-      .sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
-    const capped = matches.slice(0, 5);
-    const extra  = matches.length - capped.length;
-    demosHtml  = `<p style="font-size:13px;font-weight:600;color:var(--success);margin-bottom:8px">▶ ${demoEntry.count} play${demoEntry.count > 1 ? 's' : ''} ${ceDemoBadge(demoEntry)}</p>`;
-    demosHtml += '<div style="display:flex;flex-direction:column;gap:4px">';
-    for (const d of capped) {
-      const ts = d.timestamp ? new Date(d.timestamp).toLocaleString() : '—';
-      const what = d.audioType === 'intro' ? 'intro' : 'demo';
-      demosHtml += `<div style="font-size:12px;color:var(--text-secondary)">${esc(ts)} · <span style="color:var(--text-muted)">${what}</span></div>`;
-    }
-    if (extra > 0) demosHtml += `<div style="font-size:12px;color:var(--text-muted)">+ ${extra} more</div>`;
-    demosHtml += '</div>';
-  }
-  const demosEl = document.getElementById('ce-d-demos');
-  if (demosEl) demosEl.innerHTML = demosHtml;
 
   // ── Proposal opens ───────────────────────────────────────────
   const openKey = ceCompanyKey(lead.company);
@@ -7046,13 +7213,19 @@ function openCeDetail(id) {
 
   // ── Contact fields ───────────────────────────────────────────
   const fieldRows = [
+    lead.staffingHold && { label: 'Hold reason', val: esc(lead.staffingHold.reason.replaceAll('_', ' ').toLowerCase()) },
+    lead.staffingHold && { label: 'Why held', val: esc(lead.staffingHold.explanation) },
+    lead.staffingHold && { label: 'Fit', val: esc(lead.staffingFit || 'Review required') },
+    lead.staffingHold && { label: 'Personalization', val: esc(lead.staffingPersonalization || 'Review required') },
+    lead.staffingHold && { label: 'Routing ready', val: lead.staffingRoutingReady ? 'Yes' : 'No' },
+    lead.staffingHold && { label: 'Manual hold', val: lead.manualHold ? 'Yes' : 'No' },
     lead.email       && { label: 'Email',        val: `<a href="mailto:${esc(lead.email)}">${esc(lead.email)}</a>` },
     lead.website     && { label: 'Website',      val: `<a href="${/^https?:\/\//i.test(lead.website) ? '' : 'https://'}${esc(lead.website)}" target="_blank">${esc(lead.website)}</a>` },
     lead.city        && { label: 'City',         val: esc(lead.city) },
     lead.tradeType   && { label: 'Niche',        val: esc(lead.tradeType) },
     lead.rating        && { label: 'Rating',       val: `${esc(lead.rating)} ★` },
     lead.reviewCount   && { label: 'Reviews',      val: esc(lead.reviewCount) },
-    lead.campaign      && { label: 'Campaign',     val: esc(lead.campaign) },
+    lead.campaign      && { label: 'Campaign',     val: esc(campaignName(lead.campaign)) + (campaignName(lead.campaign) !== String(lead.campaign).trim() ? ` <small style="color:var(--text-muted)">${esc(lead.campaign)}</small>` : '') },
     lead.campaignVersion && { label: 'Campaign Version', val: esc(lead.campaignVersion) },
     (lead.leadNiche || lead.tradeType) && { label: 'Lead Type', val: esc(normalizedRouteNiche(lead) || lead.tradeType) },
     lead.senderInboxId && { label: 'Sending Inbox', val: esc(lead.senderInboxId === 'primary' ? 'Current Gmail inbox' : lead.senderInboxId) },
@@ -7361,6 +7534,54 @@ async function deleteCeLead(id) {
 
 // ── CSV IMPORT ───────────────────────────────────────────────────────────────
 
+// A managed client's import: every research column travels with the row and
+// the client's own server-side import builds the profile. Same endpoint and
+// checks as any client import; never ScaleLab's /api/coldemail/import.
+function parseCsvRecords(text) {
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim());
+  if (lines.length < 2) return [];
+  const headers = splitCSVLine(lines[0]).map(h => h.trim().toLowerCase().replace(/[\s-]+/g, '_'));
+  return lines.slice(1).map(line => {
+    const cells = splitCSVLine(line);
+    return Object.fromEntries(headers.map((h, i) => [h, (cells[i] || '').trim()]));
+  });
+}
+
+function handleClientCsvImport(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  event.target.value = '';
+  const clientId = activeClientId;
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    try {
+      const records = parseCsvRecords(e.target.result);
+      if (!records.length) return showToast('No data rows found in CSV.', 'warning');
+      const info = await (await fetch(`/api/clients/${encodeURIComponent(clientId)}`)).json();
+      const campaign = (info.campaigns || [])[0];
+      if (!campaign) return showToast('This client has no campaign to import into.', 'warning');
+      const rows = records.map(r => ({
+        company: r.company || r.company_name || '', email: r.email || '',
+        contactName: r.contact_name || [r.first_name, r.last_name].filter(Boolean).join(' '),
+        city: r.hiring_site || r.city || '', website: r.website || '', tradeType: r.sector || r.trade_type || '',
+        evidence: r.why_contact_is_relevant || r.evidence || '', research: r,
+      }));
+      showToast(`Importing ${rows.length} row(s) into ${campaign.label}…`, 'info');
+      const resp = await fetch(`/api/clients/${encodeURIComponent(clientId)}/leads/import`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmClientId: clientId, campaignId: campaign.id, rows }),
+      });
+      const result = await resp.json().catch(() => ({}));
+      if (!resp.ok) return showToast(`Import failed: ${result.error || resp.status}`, 'error');
+      const reasons = Object.entries(result.refusalsByCode || {}).map(([code, n]) => `${n} ${code}`).join(', ') || 'none';
+      showToast(`Imported ${result.written} lead(s); ${result.rejected} not imported (${reasons})`, result.written ? 'success' : 'warning');
+      if (activeClientId === clientId) renderClientLeads(clientId);
+    } catch (err) { showToast('Import error: ' + err.message, 'error'); }
+  };
+  reader.readAsText(file);
+}
+
+
 function handleCsvImport(event) {
   const file = event.target.files[0];
   if (!file) return;
@@ -7536,6 +7757,7 @@ function installWorkspaceShell() {
   const inbox = make('inbox', workspaceIntro('Human attention', 'Inbox', 'What prospects said, what should happen next, and who owns the move.'));
   const campaigns = make('campaigns', workspaceIntro('Attribution', 'Campaigns', 'Measured campaign versions remain separate from legacy activity with unknown attribution.'));
   const analytics = make('analytics', workspaceIntro('Performance', 'Analytics', 'Campaign funnel, replies, engagement signals, and daily sending activity.'));
+  analytics.insertAdjacentHTML('beforeend', '<div id="jole-report-launcher" class="jole-report-tools"><button type="button" onclick="showJoleDailyReport()">Open Jole Daily Report</button></div><div id="jole-report-view" aria-live="polite"></div>');
   const staffing = make('staffing', workspaceIntro('Outreach links', 'Staffing Funnel', 'What happened after a tracked staffing link was sent: visits, engagement tiers, video, booking clicks and assisted bookings.'));
   const sequences = make('sequences', workspaceIntro('Automation', 'Sequences', 'Explicit stage-sequence enrollment, current step, and next scheduled action.'));
   const bookings = make('bookings', workspaceIntro('Call lifecycle', 'Bookings', 'Upcoming calls, outcome-needed meetings, cancellations, and no-shows.'));
@@ -7568,7 +7790,6 @@ function installWorkspaceShell() {
   move('ce-funnel-analytics', 'ws-analytics');
   move('ce-sender-analytics', 'ws-analytics');
   move('ce-chart-wrap', 'ws-analytics');
-  move('ce-demos-panel', 'ws-analytics');
   move('ce-opens-panel', 'ws-analytics');
   move('ce-campaigns-panel', 'ws-campaigns');
   move('agent-panel', 'ws-settings');
@@ -7581,7 +7802,7 @@ function installWorkspaceShell() {
   document.querySelectorAll('header .search-wrap, header .btn-add').forEach(node => { node.style.display = 'none'; });
   document.documentElement.classList.add('workspace-ready');
   document.body.classList.add('workspace-ready');
-  document.querySelectorAll('.ce-tab[data-ce="campaigns"],.ce-tab[data-ce="demos"],.ce-tab[data-ce="opens"],.ce-tab[data-ce="agent"]').forEach(button => button.remove());
+  document.querySelectorAll('.ce-tab[data-ce="campaigns"],.ce-tab[data-ce="opens"],.ce-tab[data-ce="agent"]').forEach(button => button.remove());
   // Verified obsolete presentation only. Generic lead type data remains in the
   // backend and historical rows remain readable in the drawer.
 }
@@ -7589,6 +7810,7 @@ function installWorkspaceShell() {
 function toggleSidebar() { document.getElementById('crm-sidebar')?.classList.toggle('open'); }
 
 async function setWorkspace(name, { replace = false } = {}) {
+  document.body.classList.remove('daily-report-mode');
   const client = activeClient();
   const nav = clientNavigation(client);
   // Only a workspace this client has; anything else lands on its default.
@@ -7608,7 +7830,8 @@ async function setWorkspace(name, { replace = false } = {}) {
   const boardTools = name === 'pipeline' && !managed;   // search/add act on ScaleLab's board only
   if (search) search.style.display = boardTools ? '' : 'none';
   if (add) add.style.display = boardTools ? '' : 'none';
-  const nextHash = hashForWorkspace(client.clientId, name);
+  const nextHash = hashForWorkspace(client.clientId, name)
+    + (name === 'outreach' && ceActiveFilter && ceActiveFilter !== 'all' ? `?stage=${encodeURIComponent(ceActiveFilter)}` : '');
   if (location.hash !== nextHash) history[replace ? 'replaceState' : 'pushState'](null, '', nextHash);
   document.getElementById('workspace-stage')?.scrollTo?.({ top: 0 });
   await loadWorkspace(name);
@@ -7619,27 +7842,38 @@ async function ensureOutreachReadModel() {
     workspaceLoaded.outreach = true;
     ceSelected.clear(); updateBulkQueueBtn();
     await loadCeLeads();
+  } else if (ceStatusClient !== activeClientId) {
+    await loadClientStatusLeads();
+    await loadClientLeadExtras();
   }
 }
 
 async function loadWorkspace(name) {
-  // A managed client's workspaces are client-scoped views; Client Ops is shared.
-  if (activeClientIsManaged() && name !== 'clients') return loadManagedWorkspace(name);
-  if (name === 'pipeline') return;
+  // Shared Growth/System workspaces use the same ScaleLab surfaces for every
+  // client. Sales views that have a managed read model stay client-specific.
+  const shared = typeof WorkspaceShared !== 'undefined' && WorkspaceShared.usesSharedWorkspace(name);
+  if (activeClientIsManaged() && name !== 'clients' && !shared) return loadManagedWorkspace(name);
+  if (name === 'pipeline') {
+    if (!activeClientIsManaged() && !leads.length) { await loadLeads(); renderBoard(); }
+    return;
+  }
   if (['outreach','campaigns','analytics','inbox'].includes(name)) await ensureOutreachReadModel();
   if (name === 'inbox') return loadInboxWorkspace();
   if (name === 'campaigns') { document.getElementById('ce-campaigns-panel').style.display = 'block'; return renderCampaignsPanel(); }
   if (name === 'analytics') {
-    document.getElementById('ce-demos-panel').style.display = 'block';
     document.getElementById('ce-opens-panel').style.display = 'block';
-    renderDemosPanel(); renderOpensPanel(); buildSendChart(); return loadFunnelAnalytics();
+    renderOpensPanel(); buildSendChart(); return loadFunnelAnalytics();
   }
   if (name === 'health') { await loadCrmHealth(); document.getElementById('crm-health-body').hidden = false; document.getElementById('crm-health-toggle').setAttribute('aria-expanded','true'); return; }
   if (name === 'sequences') return loadSequencesWorkspace();
   if (name === 'staffing') return loadStaffingFunnel();
   if (name === 'bookings') return loadBookingsWorkspace();
   if (name === 'archive') return loadArchiveWorkspace();
-  if (name === 'settings') return loadSettingsWorkspace();
+  if (name === 'settings') {
+    if (await loadSettingsWorkspace() === false) return;
+    if (activeClientIsManaged()) return decorateManagedSettings();
+    return;
+  }
   if (name === 'clients') return loadClientOpsWorkspace();
 }
 
@@ -7662,6 +7896,8 @@ try { storedClientId = localStorage.getItem('sp2.activeClient') || ''; } catch (
 let STATIC_NAVIGATION = null;   // the sidebar as shipped in HTML: the fallback if /api/clients is unavailable
 const NAV_ICONS = Object.create(null);
 let clientViewToken = 0;        // guards against a slow response rendering into another client's view
+let clientDetailLeadId = '';      // the managed-client conversation drawer's lead
+let clientDetailReturnFocus = null;
 
 // esc() leaves quotes alone; attribute values need them escaped too.
 function escAttr(value) { return esc(value).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
@@ -7730,10 +7966,13 @@ function markActiveNav() {
 
 function parseWorkspaceHash(hash = location.hash) {
   const raw = decodeURIComponent(String(hash || '').replace(/^#/, ''));
-  if (!raw) return { clientId: null, workspace: null };
-  const slash = raw.indexOf('/');
-  if (slash >= 0) return { clientId: raw.slice(0, slash), workspace: raw.slice(slash + 1) || null };
-  return { clientId: defaultClientId(), workspace: raw };
+  if (!raw) return { clientId: null, workspace: null, stage: null };
+  const [path, query] = raw.split('?');
+  const params = new URLSearchParams(query || '');
+  const stage = params.get('stage');
+  const slash = path.indexOf('/');
+  if (slash >= 0) return { clientId: path.slice(0, slash), workspace: path.slice(slash + 1) || null, stage };
+  return { clientId: defaultClientId(), workspace: path, stage };
 }
 
 function hashForWorkspace(clientId, workspace) {
@@ -7781,6 +8020,9 @@ async function loadManagedClients() {
 
 function applyClientMode() {
   document.body.dataset.clientMode = activeClientIsManaged() ? 'managed' : 'default';
+  document.body.dataset.clientId = activeClientId;
+  // Server-declared capability (/api/clients dailyReport), never a client name.
+  document.body.dataset.dailyReport = activeClient()?.dailyReport ? 'true' : 'false';
 }
 
 /**
@@ -7793,12 +8035,65 @@ async function switchClient(clientId, { workspace = null, replace = false } = {}
   activeClientId = clientId;
   try { localStorage.setItem('sp2.activeClient', clientId); } catch (_) { /* per-viewer convenience only */ }
   clientViewToken += 1;
+  ceRequestSeq += 1;
+  if (ceSearchTimer) clearTimeout(ceSearchTimer);
+  ceLoading = true;
+  ceFetchedAt = null;
+  ceLeads = [];
+  ceTotal = 0;
+  ceHasMore = false;
+  ceFacets = { stages: {}, niches: {}, campaigns: {}, campaignVersions: {}, senders: {} };
+  ceOutreachStats = null;
+  funnelAnalytics = null;
+  ceOpensData = [];
+  ceOpensMap = new Map();
+  ceSelected = new Set();
+  rdRecords = [];
+  rdLoading = false;
+  ceSearchQuery = '';
+  ceCampaignFilter = '';
+  ceReplyCategoryFilter = '';
+  ceNicheFilter = 'all';
+  cePipelinePresenceFilter = '';
+  cePipelineStageFilter = '';
+  ceSequenceFilter = '';
+  ceAutomationFilter = '';
+  ceCampaignVersionFilter = '';
+  ceSenderFilter = '';
+  const ceSearch = document.getElementById('ce-search');
+  if (ceSearch) ceSearch.value = '';
+  const senderFilter = document.getElementById('ce-sender-filter');
+  if (senderFilter) senderFilter.innerHTML = '<option value="">All inboxes</option>';
+  const versionFilter = document.getElementById('ce-version-filter');
+  if (versionFilter) versionFilter.innerHTML = '<option value="">All campaigns</option>';
+  const campaignHeader = document.getElementById('ce-current-campaign');
+  if (campaignHeader) campaignHeader.textContent = '';
+  const statusSummary = document.getElementById('lead-status-summary');
+  if (statusSummary) statusSummary.innerHTML = '';
+  document.getElementById('ce-detail-overlay')?.classList.remove('open');
+  document.getElementById('client-detail-overlay')?.classList.remove('open');
+  clientDetailLeadId = '';
+  document.getElementById('reply-drill-overlay')?.classList.remove('open');
+  renderCeTable();
+  updateCeStats();
   applyClientMode();
   renderClientSwitcher();
   renderNavigation();
   // Client-scoped read models reload from the server for the new client.
   workspaceLoaded.outreach = false;
+  ceAllLeads = null;
+  ceAllLeadsClient = '';
+  ceStatusLeads = [];
+  ceStatusClient = '';
+  clientLeadExtras = new Map();
+  if (!parseWorkspaceHash().stage) ceActiveFilter = 'all';
   document.querySelectorAll('.client-view').forEach(node => { node.innerHTML = ''; });
+  archiveState.rows = [];
+  archiveState.total = 0;
+  archiveState.totalArchived = 0;
+  archiveState.facets = null;
+  archiveState.current = null;
+  archiveState.loaded = false;
   const nav = clientNavigation();
   const target = workspace
     ? (nav.workspaces.includes(workspace) ? workspace : nav.defaultWorkspace)
@@ -7811,7 +8106,10 @@ async function setActiveClient(clientId) {
 }
 
 async function routeFromHash({ replace = true } = {}) {
-  const { clientId, workspace } = parseWorkspaceHash();
+  const { clientId, workspace, stage } = parseWorkspaceHash();
+  if (stage && WorkspaceShared && WorkspaceShared.STATUS_FILTERS.some(item => item.id === stage)) {
+    ceActiveFilter = stage;
+  }
   const target = clientId && knownClient(clientId) ? clientId : defaultClientId();
   if (target !== activeClientId) return switchClient(target, { workspace, replace });
   return setWorkspace(workspace || clientNavigation().defaultWorkspace, { replace });
@@ -7825,6 +8123,41 @@ function clientKv(label, value) { return `<div class="client-kv"><span>${esc(lab
 function clientCard(title, rows) { return `<div class="client-card"><h3>${esc(title)}</h3>${rows.join('')}</div>`; }
 function metricCard(label, value, hint = '') {
   return `<div class="metric-card"><span>${esc(label)}</span><b>${esc(value)}</b>${hint ? `<small>${esc(hint)}</small>` : ''}</div>`;
+}
+function renderRevenuePanel(client, meetings, billing) {
+  if (typeof WorkspaceShared === 'undefined' || !WorkspaceShared.shouldShowRevenuePanel(client)) return '';
+  const rev = WorkspaceShared.revenueFromMeetings(meetings || [], billing || {}, client);
+  const money = cents => rev.currency ? clientMoney(cents, rev.currency) : '—';
+  const feeLine = rev.feeConfigured
+    ? money(rev.feePerMeetingCents)
+    : 'Not in client config — add billing.performanceFeeCents';
+  const campaignLine = Object.entries(rev.meetingsByCampaign)
+    .map(([id, n]) => `${n} · ${id === 'unassigned' ? id : campaignName(id)}`).join(' · ') || 'None yet';
+  const rows = (meetings || []).map(m => `<tr>
+      <td>${esc(m.scheduled_for ? new Date(m.scheduled_for).toLocaleString() : '—')}</td>
+      <td>${esc(m.employer || m.company || m.lead_id || '—')}</td>
+      <td>${esc(m.attendee_name || m.contactName || '—')}</td>
+      <td>${esc(m.campaign_id ? campaignName(m.campaign_id) : '—')}</td>
+      <td>${m.billable || m.meeting_status === 'QUALIFIED_HELD' ? 'Qualified' : esc(m.qualification_status || m.meeting_status || '—')}</td>
+      <td>${m.performance_fee_cents && rev.currency ? esc(clientMoney(m.performance_fee_cents, m.currency || rev.currency)) : (rev.feeConfigured ? esc(money(rev.feePerMeetingCents)) : '—')}</td>
+      <td>${esc(m.invoice_status || '—')}</td>
+      <td>${esc(m.invoice_status === 'paid' ? 'Paid' : (m.invoice_status === 'invoiced' ? 'Invoiced' : 'Unpaid'))}</td>
+    </tr>`).join('');
+  return `<section class="revenue-panel" data-revenue-client="${escAttr(client.clientId)}" aria-label="Meetings and revenue">
+    <div class="client-metrics">
+      ${metricCard('Meetings booked', rev.totalMeetings)}
+      ${metricCard('Qualified meetings', rev.qualifiedMeetings, 'Billable when held and qualified')}
+      ${metricCard('Meetings this month', rev.meetingsThisMonth)}
+      ${metricCard('Fee per qualified meeting', feeLine, rev.missingFee ? 'Missing backend/config field: billing.performanceFeeCents' : 'From client billing config')}
+      ${metricCard('Total earned', rev.missingFee ? '—' : money(rev.earnedCents))}
+      ${metricCard('Invoiced', rev.missingFee ? '—' : money(rev.invoicedCents))}
+      ${metricCard('Outstanding', rev.missingFee ? '—' : money(rev.outstandingCents))}
+      ${metricCard('Paid', rev.missingFee ? '—' : money(rev.paidCents))}
+    </div>
+    <p class="client-note">Qualified meetings × fee per meeting = billable revenue. Meetings are not invented; an empty table means none are on the ledger yet. Campaign mix: ${esc(campaignLine)}.</p>
+    <div class="client-table-wrap"><table class="client-table"><thead><tr><th>Meeting date</th><th>Company</th><th>Contact</th><th>Campaign</th><th>Qualified</th><th>Fee</th><th>Invoice</th><th>Payment</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="8">No meetings recorded for this client.</td></tr>'}</tbody></table></div>
+  </section>`;
 }
 const EMPTY_ICONS = {
   leads: '<path d="M4 5h16M4 12h10M4 19h7"/>',
@@ -7858,6 +8191,7 @@ function pct(numerator, denominator) {
 
 /** Dispatch for a managed client's workspaces. Each renders into its own .client-view. */
 async function loadManagedWorkspace(name) {
+  if (name === 'analytics') joleReportRequestSeq += 1;
   const host = document.getElementById(`client-view-${name}`);
   if (!host) return;
   const token = clientViewToken;
@@ -7865,6 +8199,7 @@ async function loadManagedWorkspace(name) {
   const render = html => { if (token === clientViewToken && client.clientId === activeClientId) host.innerHTML = html; };
   render('<div class="workspace-empty"><strong>Loading…</strong>Reading this client\'s data from the server.</div>');
   try {
+    await loadClientCatalog();
     if (name === 'pipeline') return render(await renderManagedPipeline(client));
     if (name === 'inbox') return render(await renderManagedInbox(client));
     if (name === 'bookings') return render(await renderManagedBookings(client));
@@ -7899,7 +8234,7 @@ async function renderManagedPipeline(client) {
         <div class="col-count">${esc(stage.count)}</div>
       </div>
       <div class="col-body" role="list" aria-label="${escAttr(stage.label)}">
-        ${stage.leads.length ? stage.leads.map(lead => `<div class="card" role="listitem"><div class="card-top"><div><div class="card-name">${esc(lead.company || lead.email || lead.id)}</div><div class="card-sub">${esc([lead.contactName, lead.campaign].filter(Boolean).join(' · '))}</div></div></div></div>`).join('') : '<div class="empty-col">No leads</div>'}
+        ${stage.leads.length ? stage.leads.map(lead => `<div class="card" role="listitem"><div class="card-top"><div><div class="card-name">${esc(lead.company || lead.email || lead.id)}</div><div class="card-sub">${esc([lead.contactName, lead.campaign && campaignName(lead.campaign)].filter(Boolean).join(' · '))}</div></div></div></div>`).join('') : '<div class="empty-col">No leads</div>'}
         ${stage.count > stage.leads.length ? `<div class="empty-col">+${esc(stage.count - stage.leads.length)} more</div>` : ''}
       </div>
     </div>`).join('');
@@ -7924,12 +8259,214 @@ async function renderManagedInbox(client) {
   const stateLabel = value => String(value || 'unclassified').replace(/_/g, ' ');
   // A clarification usually quotes the reply verbatim; only show questions that add something.
   const extraQuestions = row => row.openClarifications.map(item => item.question).filter(question => question && question.trim() !== String(row.excerpt || '').trim());
-  return badges + summary + `<div class="inbox-list">${rows.map(row => `<div class="inbox-row">
-      <div class="inbox-person"><b>${esc(row.company || row.email)}</b><small>${esc([row.contactName, row.email].filter(Boolean).join(' · '))}</small></div>
-      <div class="inbox-message"><span class="client-badge">${esc(stateLabel(row.workflowState))}</span><p class="client-note">${esc(row.excerpt || row.subject || '')}</p>
-        ${extraQuestions(row).length ? `<p class="client-note"><b>Awaiting client:</b> ${esc(extraQuestions(row).join(' · '))}</p>` : ''}</div>
-      <div class="inbox-action"><b>${esc(stateLabel(row.conversationStatus))}</b><small>${esc(row.campaign || '')}${row.receivedAt ? ' · ' + esc(new Date(row.receivedAt).toLocaleString()) : ''}</small></div>
-    </div>`).join('')}</div>`;
+  // Each row opens the conversation drawer, like the ScaleLab Inbox rows do.
+  return badges + summary + `<div class="inbox-list">${rows.map(row => `<button type="button" class="inbox-row" data-lead-id="${escAttr(row.leadId)}" onclick="openClientConversation(this.dataset.leadId)" aria-haspopup="dialog">
+      <span class="inbox-person"><b>${esc(row.company || row.email)}</b><small>${esc([row.contactName, row.email].filter(Boolean).join(' · '))}</small></span>
+      <span class="inbox-message"><span class="client-badge">${esc(stateLabel(row.workflowState))}</span><p class="client-note">${esc(row.excerpt || row.subject || '')}</p>
+        ${extraQuestions(row).length ? `<p class="client-note"><b>Awaiting client:</b> ${esc(extraQuestions(row).join(' · '))}</p>` : ''}</span>
+      <span class="inbox-action"><b>${esc(stateLabel(row.conversationStatus))}</b><small>${esc(row.campaign ? campaignName(row.campaign) : '')}${row.receivedAt ? ' · ' + esc(new Date(row.receivedAt).toLocaleString()) : ''}</small></span>
+    </button>`).join('')}</div>`;
+}
+
+// ── MANAGED-CLIENT CONVERSATION DRAWER ──────────────────────────────────────
+// One Inbox conversation in the Outreach drawer's frame. Its data comes only
+// from this client's read-only endpoint (clients/conversation-detail.js), so a
+// row of another client cannot reach it; a response for any other client or
+// lead than the one requested is refused rather than rendered.
+
+const CD_OWNER_LABEL = { automation: 'Automation', operator: 'ScaleLab operator', none: 'No one' };
+const CD_STEP_TEXT = {
+  sent: 'Sent', sent_unproven: 'Sent (lead row; no message on the ledger)', current: 'Current',
+  pending: 'Pending', stopped: 'Not sent — stopped by reply', not_sent: 'Not sent — sequence ended', failed: 'Delivery failed',
+};
+const CD_STEP_DOT = { sent: '●', sent_unproven: '●', current: '◉', failed: '✕' };
+
+function cdWords(value) { return String(value || '').replace(/_/g, ' ').trim(); }
+function cdTime(value) { return value ? rdFormatTime(value) : ''; }
+function cdField(label, html) {
+  return html ? `<div class="detail-field"><span class="detail-field-label">${esc(label)}</span><span class="detail-field-val">${html}</span></div>` : '';
+}
+function cdSection(title, html) {
+  return html && html.trim() ? `<section><div class="detail-section-title">${esc(title)}</div>${html}</section>` : '';
+}
+function cdLink(url) {
+  return /^https?:\/\//i.test(url || '') ? `<a href="${escAttr(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a>` : '';
+}
+function cdTone(reply) {
+  if (reply.sentiment === 'positive') return 'positive';
+  if (reply.sentiment === 'negative' || reply.sentiment === 'unsubscribe') return 'negative';
+  if (['needs_review', 'wrong_contact', 'awaiting_client_clarification'].includes(reply.workflowState)) return 'warn';
+  return '';
+}
+
+function openClientConversation(leadId) {
+  const overlay = document.getElementById('client-detail-overlay');
+  if (!overlay || !leadId) return;
+  clientDetailLeadId = String(leadId);
+  clientDetailReturnFocus = document.activeElement;
+  document.getElementById('cd-name').textContent = 'Loading conversation…';
+  document.getElementById('cd-sub').textContent = '';
+  document.getElementById('cd-body').innerHTML = '<div class="activity-empty">Reading this conversation from the server…</div>';
+  overlay.classList.add('open');
+  document.getElementById('cd-close').focus();
+  loadClientConversation(clientDetailLeadId);
+}
+
+async function loadClientConversation(leadId) {
+  const clientId = activeClientId;
+  const token = clientViewToken;
+  const current = () => leadId === clientDetailLeadId && token === clientViewToken && clientId === activeClientId;
+  try {
+    const detail = await clientApi(`/inbox/${encodeURIComponent(leadId)}`);
+    if (!current()) return;
+    if (detail.clientId !== clientId || detail.leadId !== leadId) throw new Error('the server answered for a different conversation');
+    renderClientConversation(detail);
+  } catch (error) {
+    if (!current()) return;
+    document.getElementById('cd-name').textContent = 'Conversation unavailable';
+    document.getElementById('cd-body').innerHTML = `<div class="activity-empty">This conversation could not be loaded (${esc(error.message)}). Nothing was changed.</div>`;
+  }
+}
+
+function closeClientConversation(e) {
+  const overlay = document.getElementById('client-detail-overlay');
+  if (!overlay || (e && e.target !== overlay)) return;
+  overlay.classList.remove('open');
+  clientDetailLeadId = '';
+  const back = clientDetailReturnFocus;
+  clientDetailReturnFocus = null;
+  if (back && document.contains(back) && typeof back.focus === 'function') back.focus();
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  const overlay = document.getElementById('client-detail-overlay');
+  if (overlay && overlay.classList.contains('open')) closeClientConversation();
+});
+
+function cdSenderHtml(sender, clientName) {
+  if (!sender) return '';
+  if (sender.state === 'unknown') {
+    return `<div class="sender-field"><span class="sender-field-v"><span class="sender-chip" data-state="unknown">Unknown</span></span><span class="sender-field-d">${esc(sender.detail || 'No sender was recorded. It is not guessed.')}</span></div>`;
+  }
+  if (sender.state === 'conflict') {
+    const candidates = (sender.candidates || []).filter(Boolean).map(item => `<span class="sender-field-d">${esc(item.label)}${item.email ? ' · ' + esc(item.email) : ''} · <span class="cd-mono">${esc(item.senderId)}</span></span>`).join('');
+    return `<div class="sender-field"><span class="sender-field-v"><span class="sender-chip" data-state="conflict">Conflict</span></span><span class="sender-field-d">${esc(sender.detail || '')}</span>${candidates}</div>`;
+  }
+  const proof = sender.proof
+    ? `Proven by Step ${esc(sender.proof.step || '?')} sent ${esc(cdTime(sender.proof.sentAt))}${sender.proof.providerMessageId ? ` · Gmail message <span class="cd-mono">${esc(sender.proof.providerMessageId)}</span>` : ''}`
+    : '';
+  const assigned = sender.assignmentDiffers && sender.assigned
+    ? `<span class="sender-field-d">Currently assigned: ${esc(sender.assigned.label)}${sender.assigned.email ? ' · ' + esc(sender.assigned.email) : ''} · <span class="cd-mono">${esc(sender.assigned.senderId)}</span> — not the inbox that sent.${sender.assignmentConflict ? " The send path treats this as a sender conflict; review before any follow-up." : ""}</span>`
+    : '';
+  const outside = sender.inClient === false
+    ? `<span class="sender-field-d" style="color:var(--danger)">Not a ${esc(clientName)} inbox — its address is not shown. Review required.</span>` : '';
+  return `<div class="sender-field" style="margin-top:0;padding-top:0;border-top:0">
+      <span class="sender-field-v" style="font-size:14px;font-weight:600">${esc(sender.label || sender.senderId)}</span>
+      ${sender.email ? `<span class="cd-mono">${esc(sender.email)}</span>` : ''}
+      <span class="sender-field-d">Inbox ID: <span class="cd-mono">${esc(sender.senderId)}</span></span>
+      <span class="sender-field-v"><span class="sender-chip" data-state="${escAttr(sender.state)}">${esc(sender.stateLabel || sender.state)}</span></span>
+      <span class="sender-field-d">${proof}</span>${assigned}${outside}
+    </div>`;
+}
+
+function renderClientConversation(d) {
+  const client = activeClient();
+  const contact = d.contact || {};
+  const replies = d.replies || [];
+  const campaign = d.campaign || {};
+  const pipeline = d.pipeline || {};
+  const sequence = d.sequence || { steps: [] };
+  const times = d.timestamps || {};
+  document.getElementById('cd-name').textContent = contact.company || contact.email || 'Conversation';
+  document.getElementById('cd-sub').textContent = [contact.name, contact.title].filter(Boolean).join(' · ');
+
+  const contactHtml = [
+    cdField('Name', esc(contact.name)),
+    cdField('Email', contact.email ? `<a href="mailto:${escAttr(contact.email)}">${esc(contact.email)}</a>` : ''),
+    cdField('Title', esc(contact.title)),
+    cdField('Company', esc(contact.company)),
+    cdField('Location', esc([contact.city, contact.state].filter(Boolean).join(', '))),
+    cdField('Company domain', esc(contact.companyDomain)),
+    cdField('Company size', esc(contact.companySize)),
+    cdField('LinkedIn', cdLink(contact.linkedinUrl)),
+  ].join('');
+
+  const replyHtml = replies.map(reply => {
+    const classifier = reply.classifier
+      ? [cdWords(reply.classifier.state), cdWords(reply.classifier.reason), reply.classifier.confidence ? `${reply.classifier.confidence} confidence` : ''].filter(Boolean).join(' · ') : '';
+    return `<article class="cd-reply">
+        <div class="cd-badges"><span class="cd-badge" data-tone="${escAttr(cdTone(reply))}">${esc(cdWords(reply.workflowState) || 'unclassified')}</span>${reply.sentiment ? `<span class="cd-badge">${esc(reply.sentiment)}</span>` : ''}</div>
+        <span class="cd-meta">${esc(cdTime(reply.receivedAt) || 'Date unknown')}${reply.subject ? ' · ' + esc(reply.subject) : ''}</span>
+        <div class="cd-reply-body">${reply.body ? esc(reply.body) : '<span style="color:var(--text-muted)">Reply text was not stored.</span>'}</div>
+        ${reply.bodyMayBeTruncated ? '<span class="cd-meta">Stored text is capped at 1,500 characters; the full message is in Gmail.</span>' : ''}
+        <div class="detail-fields" style="margin-top:10px">
+          ${cdField('Classification', esc(cdWords(reply.workflowState)))}
+          ${cdField('Classifier', esc(classifier))}
+          ${cdField('Conversation', esc(cdWords(reply.conversationStatus)))}
+          ${cdField('Received on', reply.receivedOn ? esc(reply.receivedOn.email || reply.receivedOn.senderId) : '')}
+          ${cdField('Asks the client', reply.clarification ? esc(reply.clarification.question) : '')}
+        </div>
+      </article>`;
+  }).join('');
+
+  const stepsHtml = (sequence.steps || []).length ? `<div class="cd-steps">${sequence.steps.map(step => `<div class="cd-step" data-state="${escAttr(step.state)}">
+        <span class="cd-step-dot" aria-hidden="true">${CD_STEP_DOT[step.state] || '○'}</span>
+        <span><span class="cd-step-label">Step ${esc(step.step)} — ${esc(step.label)}</span>
+          <small class="cd-meta">${esc(CD_STEP_TEXT[step.state] || step.state)}${step.sentAt ? ' · ' + esc(cdTime(step.sentAt)) : ''}${step.dueAt ? ' · due ' + esc(cdTime(step.dueAt)) : ''}</small></span>
+      </div>`).join('')}</div>
+      <div class="cd-badges"><span class="cd-badge">${esc(sequence.summary || '')}</span></div>
+      ${sequence.stoppedByReply ? '<span class="cd-meta">The reply ended the cold sequence; no further step will send.</span>' : ''}` : '';
+
+  const roleText = role => role ? esc(role.clean || role.raw) + (role.raw && role.clean && role.raw !== role.clean ? ` <small style="color:var(--text-muted)">posted as ${esc(role.raw)}</small>` : '') : '';
+  const postings = campaign.relevantRoles30d !== null && campaign.relevantRoles30d !== undefined
+    ? `${campaign.relevantRoles30d} craft${campaign.coreTradeRoles30d !== null && campaign.coreTradeRoles30d !== undefined ? ` (${campaign.coreTradeRoles30d} core-trade)` : ''}` : '';
+  const campaignHtml = [
+    cdField('Campaign', campaign.label || campaign.id ? esc(campaign.label || campaignName(campaign.id)) + (campaign.label && campaign.id ? ` <small style="color:var(--text-muted)">${esc(campaign.id)}</small>` : '') : ''),
+    cdField('Hiring role', roleText(campaign.primaryRole)),
+    cdField('Secondary role', roleText(campaign.secondaryRole)),
+    cdField('Hiring location', esc(campaign.location) + (campaign.location && campaign.siteTie ? ` <small style="color:var(--text-muted)">site tie ${esc(campaign.siteTie.toLowerCase())}</small>` : '')),
+    cdField('Sector', esc([campaign.sector, campaign.tier].filter(Boolean).join(' · '))),
+    cdField('Hiring evidence', cdLink(campaign.evidenceUrl)),
+    cdField('Posting date', esc(campaign.postingDate)),
+    cdField('Research verified', esc(campaign.verifiedAt)),
+    cdField('Postings, last 30 days', esc(postings)),
+  ].join('') + (campaign.context ? `<p class="cd-meta" style="margin-top:10px;font-size:12.5px;line-height:1.5">${esc(campaign.context)}</p>` : '');
+
+  const next = pipeline.nextAction;
+  const owner = next ? (next.owner === 'client' ? client.displayName : (CD_OWNER_LABEL[next.owner] || next.owner)) : '';
+  const nextHtml = next ? `<div class="cd-next"><b>${esc(next.label)}</b>
+      <span class="cd-meta">${esc(owner)}${next.dueAt ? ' · ' + esc(cdTime(next.dueAt)) : ''}</span>
+      ${next.detail ? `<span class="cd-meta">${esc(next.detail)}</span>` : ''}</div>` : '';
+  const suppression = pipeline.suppression
+    ? `${esc(pipeline.suppression.scope === 'global' ? 'Globally suppressed' : `Suppressed for ${client.displayName}`)}<small class="cd-meta">${esc(pipeline.suppression.reason)}</small>` : 'Not suppressed';
+  const pipelineHtml = nextHtml + `<div class="detail-fields">
+      ${cdField('Stage', esc(pipeline.stageLabel))}
+      ${cdField('Conversation status', esc(cdWords(pipeline.conversationStatus)))}
+      ${cdField('Qualification', esc(cdWords(pipeline.qualificationStatus)))}
+      ${cdField('Clarification required', pipeline.clarificationRequired ? 'Yes' : 'No')}
+      ${(pipeline.clarifications || []).map(item => cdField('Open question', esc(item.question))).join('')}
+      ${cdField('Conversation closed', pipeline.closed ? 'Yes' : 'No')}
+      ${cdField('Suppression', suppression)}
+    </div>${pipeline.ledgerAvailable === false ? '<span class="cd-meta">The client ledger is unavailable, so qualification and meetings may be missing here.</span>' : ''}`;
+
+  const activityHtml = [
+    cdField('First outreach sent', esc(cdTime(times.firstOutreachAt))),
+    cdField('Most recent outreach', esc(cdTime(times.lastOutreachAt))),
+    cdField('Reply received', esc(cdTime(times.replyReceivedAt))),
+    cdField('Next scheduled follow-up', esc(cdTime(times.nextFollowUpAt))),
+    cdField('Meeting', d.meeting ? esc([cdTime(d.meeting.scheduledFor), cdWords(d.meeting.status).toLowerCase()].filter(Boolean).join(' · ')) : ''),
+  ].join('');
+
+  document.getElementById('cd-body').innerHTML = [
+    cdSection('Contact', contactHtml ? `<div class="detail-fields">${contactHtml}</div>` : ''),
+    cdSection(replies.length > 1 ? `Replies (${replies.length})` : 'Reply', replyHtml),
+    cdSection('Sending inbox', cdSenderHtml(d.sender, client.displayName)),
+    cdSection('Email sequence', stepsHtml),
+    cdSection('Campaign context', campaignHtml ? `<div class="detail-fields">${campaignHtml}</div>` : ''),
+    cdSection('Pipeline & next action', pipelineHtml),
+    cdSection('Activity', activityHtml ? `<div class="detail-fields">${activityHtml}</div>` : ''),
+  ].join('');
 }
 
 async function renderManagedBookings(client) {
@@ -7954,12 +8491,13 @@ async function renderManagedBookings(client) {
     ${metricCard('Accrued', clientMoney(billing.accruedCents, billing.currency))}
   </div>`;
   if (!meetings.length) {
-    return badges + summary + emptyState(`No ${client.displayName} meetings yet`, onboardingPending(client)
+    return badges + summary + renderRevenuePanel(client, meetings, billing) + emptyState(`No ${client.displayName} meetings yet`, onboardingPending(client)
       ? `Meetings are recorded here after ${client.displayName} is activated and employers book. A meeting bills only when it is held and qualified.`
       : 'Meetings appear here when they are booked. A meeting bills only when it is held and qualified.', 'calendar');
   }
-  return badges + summary + `<div class="booking-list">${meetings.map(meeting => `<div class="operational-row">
-      <span><b>${esc(employerByLead.get(meeting.lead_id) || meeting.lead_id)}</b><small>${esc([meeting.attendee_name, meeting.attendee_title].filter(Boolean).join(' · ') || 'Attendee not recorded')} · ${esc(meeting.campaign_id || '')}</small></span>
+  const revenue = renderRevenuePanel(client, meetings, billing);
+  return badges + summary + revenue + `<div class="booking-list">${meetings.map(meeting => `<div class="operational-row">
+      <span><b>${esc(employerByLead.get(meeting.lead_id) || meeting.lead_id)}</b><small>${esc([meeting.attendee_name, meeting.attendee_title].filter(Boolean).join(' · ') || 'Attendee not recorded')} · ${esc(meeting.campaign_id ? campaignName(meeting.campaign_id) : '')}</small></span>
       <span class="operational-row-meta"><b>${esc(meeting.meeting_status.replace(/_/g, ' '))}</b><small>${esc(meeting.scheduled_for ? new Date(meeting.scheduled_for).toLocaleString() : 'Not scheduled')} · ${meeting.billable ? esc('Billable ' + clientMoney(meeting.performance_fee_cents, meeting.currency)) : esc('Not billable')}</small></span>
     </div>`).join('')}</div>`;
 }
@@ -8014,6 +8552,70 @@ async function renderManagedAnalytics(client) {
   ]);
   const note = o.leads.imported === 0 ? emptyState(`No ${client.displayName} activity yet`, 'Every metric below starts at zero and fills in as leads are imported, sent, answered and met.', 'chart') : '';
   return clientStatusBadges({ ...client, ...o.client }, o.sending) + note + `<div class="analytics-grid">${funnelHtml}<div class="analytics-side">${meetingHtml}${billingHtml}</div></div>${campaignHtml}`;
+}
+
+// Rates are stored to 3 places; the report shows one. Missing evidence is never a zero.
+function joleReportValue(value, suffix = '') {
+  if (value === null || value === undefined) return 'Unavailable';
+  return suffix === '%' ? `${Number(value).toFixed(1)}%` : `${value}${suffix}`;
+}
+function joleSenderHealthLabel(value) { return value === 'healthy' ? 'Healthy' : value === 'unavailable' ? 'Unavailable' : 'Needs attention'; }
+function joleReportMetric(label, value, suffix = '') {
+  return `<div class="jole-report-metric"><span>${esc(label)}</span><strong>${esc(joleReportValue(value, suffix))}</strong></div>`;
+}
+// A held or capped inbox's zero is an operating decision; the row says which.
+function joleSenderState(sender) {
+  if (sender.cold_hold) return 'On hold (warm-up)';
+  return joleSenderHealthLabel(sender.health || 'unavailable');
+}
+function renderJoleDailyReport(report, title = '') {
+  const timeZone = report.timezone || 'UTC';
+  const date = new Date(`${report.report_date}T12:00:00Z`).toLocaleDateString('en-US', { timeZone, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const senders = (report.per_sender || []).map(sender => `<div class="jole-report-sender"><b>${esc(sender.email || sender.sender_id)}${Number.isInteger(sender.daily_limit) ? `<small> · ${esc(sender.daily_limit)}/day</small>` : ''}</b><span>Sent: ${esc(joleReportValue(sender.sent_today))}</span><span>Replies: ${esc(joleReportValue(sender.replies_attributable))}</span><span>${esc(joleSenderState(sender))}</span></div>`).join('');
+  return `<article class="jole-report" aria-label="Daily outreach report">
+    <div class="jole-report-head"><div><div class="jole-report-kicker">Daily Outreach Report</div><h2>${esc(title)}</h2><p>${esc(date)}</p></div><p>Prepared by ScaleLab AI</p></div>
+    <h3>Today</h3><div class="jole-report-grid">${joleReportMetric('Emails sent', report.successful_sends)}${joleReportMetric('Replies', report.replies)}${joleReportMetric('Interested replies', report.positive_replies)}${joleReportMetric('Meetings booked', report.meetings_booked)}</div>
+    <div class="jole-report-grid secondary" style="margin-top:12px">${joleReportMetric('Negative replies', report.negative_replies)}${joleReportMetric('Bounces', report.bounces)}${joleReportMetric('Unsubscribes', report.unsubscribe_requests)}${joleReportMetric('Leads remaining', report.untouched_remaining)}</div>
+    <h3>Campaign totals</h3><div class="jole-report-grid totals">${joleReportMetric('Total contacted', report.contacted_cumulative)}${joleReportMetric('Total replies', report.replies_cumulative)}${joleReportMetric('Reply rate', report.reply_rate, '%')}${joleReportMetric('Interested replies', report.positive_replies_cumulative)}${joleReportMetric('Interested reply rate', report.positive_reply_rate, '%')}${joleReportMetric('Meetings booked', report.meetings_cumulative)}${joleReportMetric('Meeting rate', report.meeting_rate, '%')}</div>
+    <h3>Sender breakdown</h3><div class="jole-report-senders">${senders || '<p>No sender activity recorded.</p>'}</div>
+    <p class="jole-report-footer">"Today" covers activity since the previous weekday's 2:00 PM up to 2:00 PM on the report date. Reporting timezone: ${esc(timeZone)} · Frozen ${esc(new Date(report.generated_at).toLocaleString('en-US', { timeZone }))}</p>
+  </article>`;
+}
+let joleReportRequestSeq = 0;
+function closeJoleDailyReport() {
+  joleReportRequestSeq += 1;
+  document.body.classList.remove('daily-report-mode');
+  document.getElementById('jole-report-view').innerHTML = '';
+}
+async function showJoleDailyReport(date = '') {
+  if (!activeClient()?.dailyReport || activeWorkspace !== 'analytics') return;
+  const clientId = activeClientId;
+  const timeZone = activeClient()?.timezone || 'UTC';
+  const token = clientViewToken;
+  const seq = ++joleReportRequestSeq;
+  const current = () => seq === joleReportRequestSeq && token === clientViewToken && clientId === activeClientId
+    && activeWorkspace === 'analytics' && document.body.classList.contains('daily-report-mode');
+  const host = document.getElementById('jole-report-view');
+  document.body.classList.add('daily-report-mode');
+  const selected = date || (() => {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })
+      .formatToParts(new Date()).map(part => [part.type, part.value]));
+    return `${parts.year}-${parts.month}-${parts.day}`;
+  })();
+  const tools = `<div class="jole-report-tools"><button type="button" onclick="closeJoleDailyReport()">Back to analytics</button><label for="jole-report-date">Report date</label><input id="jole-report-date" type="date" value="${escAttr(selected)}" onchange="showJoleDailyReport(this.value)"></div>`;
+  host.innerHTML = tools + '<div class="workspace-empty"><strong>Loading report…</strong></div>';
+  try {
+    const response = await fetch(`/api/clients/${encodeURIComponent(clientId)}/daily-report?date=${encodeURIComponent(selected)}`);
+    const data = await response.json().catch(() => ({}));
+    if (!current()) return;
+    if (!response.ok) {
+      host.innerHTML = tools + `<div class="workspace-empty"><strong>Report unavailable</strong>${response.status === 404 ? 'No frozen report has been generated for this date.' : 'The daily report store is not ready. Please try again later.'}</div>`;
+      return;
+    }
+    host.innerHTML = tools + renderJoleDailyReport(data.report, data.title);
+  } catch (_) {
+    if (current()) host.innerHTML = tools + '<div class="workspace-empty"><strong>Report unavailable</strong>Please try again later.</div>';
+  }
 }
 
 async function renderManagedSettings(client) {
@@ -8102,53 +8704,74 @@ async function loadClientOpsWorkspace() {
       clientKv('Invoiced', b.available ? clientMoney(b.invoicedCents, b.currency) : '—'),
     ];
     const grid = `<div class="client-grid">
-      ${clientCard('Leads', [clientKv('Imported', o.leads.imported), clientKv('Approved', o.leads.approved), clientKv('Routing-ready', o.leads.routingReady), clientKv('Queued', o.leads.queued), clientKv('Sent', o.leads.sent)])}
+      ${clientCard('Leads', [clientKv('Imported', o.leads.imported), clientKv('Approved', o.leads.approved), clientKv('Routing-ready', o.leads.routingReady), clientKv('Queued', o.leads.queued), clientKv('Sent', o.leads.sent),
+        ...(o.leads.personalization ? [clientKv('Personalization ready', o.leads.personalization.ready || 0), clientKv('Needs review', (o.leads.personalization.needs_review || 0) + (o.leads.personalization.not_ready || 0)), clientKv('Evidence stale', o.leads.personalization.stale || 0)] : [])])}
       ${clientCard('Sending', [clientKv('Sends', o.deliverability.sends), clientKv('Delivered (est.)', o.deliverability.deliveredEstimate), clientKv('Bounced', o.deliverability.bounced), clientKv('Suppressed', o.deliverability.suppressed), clientKv('Senders', o.deliverability.senders.length)])}
       ${clientCard('Replies', [clientKv('Replies', o.replies.total), clientKv('Positive', o.replies.positive), clientKv('Neutral', o.replies.neutral), clientKv('Negative', o.replies.negative), clientKv('Unsubscribe', o.replies.unsubscribe)])}
       ${pipelineRows ? clientCard('Pipeline', pipelineRows) : ''}
       ${billingRows ? clientCard('Billing', billingRows) : ''}
     </div>`;
-    const campaigns = o.campaigns.length ? `<div class="client-section"><h3>Campaigns</h3><div class="client-table-wrap"><table class="client-table"><thead><tr><th>#</th><th>Campaign</th><th>Status</th><th>Leads</th><th>Sendable</th></tr></thead><tbody>
-      ${o.campaigns.map(c => `<tr><td>${esc(c.number)}</td><td><b>${esc(c.label)}</b><div class="client-note">${esc(c.icp?.summary || '')}</div></td><td>${esc(c.status)}</td><td>${esc(c.leads)}</td><td>${c.sendable ? 'Yes' : esc('No — ' + (c.blockedBy || ''))}</td></tr>`).join('')}
+    const campaigns = o.campaigns.length ? `<div class="client-section"><h3>Campaigns</h3><div class="client-table-wrap"><table class="client-table"><thead><tr><th>#</th><th>Campaign</th><th>Status</th><th>Leads</th><th>Queued</th><th>Sent</th><th>Ready to send</th></tr></thead><tbody>
+      ${o.campaigns.map(c => `<tr><td>${esc(c.number)}</td><td><b>${esc(c.label)}</b><div class="client-note">${esc(c.icp?.summary || '')}</div><div class="client-note">Template ${esc(c.emailTemplateId || '')}</div></td><td>${esc(c.status)}</td><td>${esc(c.leads)}</td><td>${esc(c.queued ?? 0)}</td><td>${esc(c.sent ?? 0)}</td><td>${c.ready ? 'Yes' : esc('No — ' + ((c.readinessBlockers || [])[0] || c.blockedBy || ''))}</td></tr>`).join('')}
     </tbody></table></div></div>` : '';
     const ledgerNote = o.pipeline && !o.pipeline.available ? `<p class="client-note">Meeting ledger unavailable: ${esc(o.pipeline.reason || '')}</p>` : '';
     const leadsSlot = activeClientIsManaged() ? '<div id="client-leads"></div>' : '';
     // A slower response for a client the operator has since switched away from is dropped.
     if (!current()) return;
-    host.innerHTML = header + grid + campaigns + leadsSlot + (o.pipeline?.available ? '<div id="client-ledger"></div>' : ledgerNote);
+    const revenueSlot = WorkspaceShared && WorkspaceShared.shouldShowRevenuePanel(client) ? '<div id="client-revenue"></div>' : '';
+    host.innerHTML = header + grid + campaigns + revenueSlot + leadsSlot + (o.pipeline?.available ? '<div id="client-ledger"></div>' : ledgerNote);
+    if (revenueSlot && current()) {
+      const revHost = document.getElementById('client-revenue');
+      if (revHost) {
+        try {
+          const meet = await fetch(`/api/clients/${encodeURIComponent(client.clientId)}/meetings`).then(r => r.json());
+          if (current()) revHost.innerHTML = renderRevenuePanel(client, meet.meetings || [], meet.billing || o.billing || {});
+        } catch (error) {
+          if (current()) revHost.innerHTML = `<p class="client-note">Meeting ledger unavailable: ${esc(error.message)}. Revenue cards stay empty rather than inventing figures.</p>`;
+        }
+      }
+    }
     if (activeClientIsManaged()) await renderClientLeads(client.clientId);
     if (o.pipeline?.available && current()) await renderClientLedger(client.clientId);
   } catch (error) {
-    host.innerHTML = `<div class="workspace-empty"><strong>Client operations unavailable</strong>${esc(error.message)}</div>`;
+    if (current()) host.innerHTML = `<div class="workspace-empty"><strong>Client operations unavailable</strong>${esc(error.message)}</div>`;
   }
 }
 
 async function renderClientLeads(clientId) {
   const host = document.getElementById('client-leads');
   if (!host) return;
+  const token = clientViewToken;
+  const current = () => token === clientViewToken && clientId === activeClientId;
   try {
     const response = await fetch(`/api/clients/${encodeURIComponent(clientId)}/leads?limit=200`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
-    const rows = (data.leads || []).map(lead => `<tr><td><b>${esc(lead.company || '—')}</b><div class="client-note">${esc(lead.contactName || '')}</div></td><td>${esc(lead.email)}</td><td>${esc(lead.campaign || '—')}</td><td>${esc(lead.stage || '—')}${lead.emailStatus ? ' · ' + esc(lead.emailStatus) : ''}</td><td>${esc(lead.senderInboxId || 'unassigned')}</td><td>${lead.routingReady ? 'Yes' : 'No'}</td></tr>`).join('');
+    if (!current()) return;
+    const roleCell = lead => (lead.roles || []).map(role => `<span title="Posting: ${escAttr(role.raw)}">${esc(role.clean || '— review')}</span>`).join('<br>') || '—';
+    const personalization = lead => { const p = lead.personalization || {}; return `${esc(p.status || '—')}${p.reason ? `<div class="client-note">${esc(p.reason)}</div>` : ''}`; };
+    const rows = (data.leads || []).map(lead => `<tr><td><b>${esc(lead.company || '—')}</b><div class="client-note">${esc(lead.contactName || '')}${lead.title ? ' · ' + esc(lead.title) : ''}</div></td><td>${esc(lead.email)}</td><td>${roleCell(lead)}</td><td>${esc(lead.hiringSite || '—')}${lead.tier ? `<div class="client-note">${esc(lead.tier)}${lead.siteTie ? ' · ' + esc(lead.siteTie) : ''}</div>` : ''}</td><td>${personalization(lead)}</td><td>${esc(lead.stage || '—')}${lead.emailStatus ? ' · ' + esc(lead.emailStatus) : ''}</td><td>${esc(lead.senderInboxId || 'unassigned')}</td><td>${lead.routingReady ? 'Yes' : 'No'}</td></tr>`).join('');
     host.innerHTML = `<div class="client-section"><h3>Leads (${esc(data.total)})</h3>
       <p class="client-note">Only this client's leads, selected on the server.${data.total > (data.leads || []).length ? ` Showing the first ${esc((data.leads || []).length)}.` : ''}</p>
-      <div class="client-table-wrap"><table class="client-table"><thead><tr><th>Employer</th><th>Email</th><th>Campaign</th><th>State</th><th>Sender</th><th>Routing-ready</th></tr></thead><tbody>
-      ${rows || '<tr><td colspan="6">No leads imported for this client yet.</td></tr>'}
+      <label class="btn-import-csv" title="Import this client's leads from a research CSV"><input type="file" accept=".csv" style="display:none" onchange="handleClientCsvImport(event)">Import CSV</label>
+      <div class="client-table-wrap"><table class="client-table"><thead><tr><th>Employer</th><th>Email</th><th>Hiring role</th><th>Hiring site</th><th>Personalization</th><th>State</th><th>Sender</th><th>Routing-ready</th></tr></thead><tbody>
+      ${rows || '<tr><td colspan="8">No leads imported for this client yet.</td></tr>'}
       </tbody></table></div></div>`;
   } catch (error) {
-    host.innerHTML = `<p class="client-note">Leads unavailable: ${esc(error.message)}</p>`;
+    if (current()) host.innerHTML = `<p class="client-note">Leads unavailable: ${esc(error.message)}</p>`;
   }
 }
 
 async function renderClientLedger(clientId) {
   const host = document.getElementById('client-ledger');
   if (!host) return;
+  const token = clientViewToken;
   const base = `/api/clients/${encodeURIComponent(clientId)}`;
   const [clar, meet] = await Promise.all([
     fetch(`${base}/clarifications?status=open`).then(r => r.json()),
     fetch(`${base}/meetings`).then(r => r.json()),
   ]);
+  if (token !== clientViewToken || clientId !== activeClientId) return;
   const open = clar.clarifications || [];
   const meetings = meet.meetings || [];
   const forms = open.map(item => `<form class="client-card client-form" data-client="${escAttr(clientId)}" data-clarification="${escAttr(item.clarification_id)}" onsubmit="answerClientClarification(event)">
@@ -8325,14 +8948,30 @@ const INBOX_FILTERS = Object.freeze([
 
 function setInboxFilter(value) { inboxFilter = value; renderInboxWorkspace(); }
 
+// An automated reply's OOO state (server: integrations/ooo-pause.js). A lead
+// with no reliable return date waits for a person; nothing invents a date.
+const OOO_PAUSE_LABEL = Object.freeze({
+  review_required: ['Review out-of-office return date', 'Human'],
+  waiting: ['Waiting for return', 'Waiting'],
+  resume_due: ['Resumes at the next send window', 'Automation'],
+  resumed: ['Sequence resumed after return', 'Automation'],
+  sequence_complete: ['Sequence complete — nothing to resume', 'None'],
+  superseded_by_human_reply: ['Human reply supersedes the OOO', 'Human'],
+});
+
 async function loadInboxWorkspace() {
+  const clientId = activeClientId;
+  const token = clientViewToken;
   const host = document.getElementById('inbox-content');
   host.className = 'workspace-empty'; host.innerHTML = '<strong>Loading the reply queue…</strong>Reading canonical replies and Next Actions.';
   if (!rdRecords.length) {
-    const response = await fetch('/api/coldemail/replies?category=all');
-    rdRecords = response.ok ? ((await response.json()).records || []) : [];
+    const response = await fetch('/api/coldemail/replies?category=all&client=' + encodeURIComponent(clientId));
+    const records = response.ok ? ((await response.json()).records || []) : [];
+    if (token !== clientViewToken || clientId !== activeClientId) return;
+    rdRecords = records;
   }
   if (!nextActions.size) await loadNextActions();
+  if (token !== clientViewToken || clientId !== activeClientId) return;
   renderInboxWorkspace();
 }
 
@@ -8367,12 +9006,14 @@ function renderInboxWorkspace() {
     const action = inboxActionFor(record);
     const body = record.hasText ? record.replyText : 'Reply text unavailable — historical body was not stored.';
     const category = RD_CATEGORY_LABEL[record.category] || record.category;
-    const actionLabel = action?.label || (record.category === 'automated_reply' ? 'No human response required' : record.pipelinePresence ? 'Review reply' : 'Review before promotion');
-    const owner = action?.owner ? (NA_OWNER_LABEL[action.owner] || action.owner) : (record.category === 'automated_reply' ? 'Waiting' : 'Human');
+    const ooo = !action && record.oooPause ? OOO_PAUSE_LABEL[record.oooPause.status] : null;
+    const actionLabel = action?.label || (ooo ? ooo[0] : record.category === 'automated_reply' ? 'No human response required' : record.pipelinePresence ? 'Review reply' : 'Review before promotion');
+    const owner = action?.owner ? (NA_OWNER_LABEL[action.owner] || action.owner) : (ooo ? ooo[1] : record.category === 'automated_reply' ? 'Waiting' : 'Human');
+    const dueAt = action?.dueAt || (ooo && record.oooPause.resumeAt ? record.oooPause.resumeAt : '');
     return `<button type="button" class="inbox-row" onclick="openCeDetail('${escAttr(record.leadId)}')">
       <span class="inbox-person"><b>${esc(record.company || 'Unknown company')}</b><small>${esc([record.contactName,record.email].filter(Boolean).join(' · '))}</small><small>${esc(rdFormatTime(record.occurredAt))}</small></span>
       <span class="inbox-message"><span class="inbox-state">${esc(category)}</span><p>${esc(body)}</p><small>What they said · ${esc(record.reason || record.subtype || 'No additional reason stored')}</small></span>
-      <span class="inbox-action"><b>${esc(actionLabel)}</b><small>${esc(owner)}${action?.waitingOn ? ` · ${HOT_WAITING_LABEL[action.waitingOn] || action.waitingOn}` : ''}</small><small>${action?.dueAt ? `Due ${esc(rdFormatTime(action.dueAt))}` : 'No invented due date'}</small></span>
+      <span class="inbox-action"><b>${esc(actionLabel)}</b><small>${esc(owner)}${action?.waitingOn ? ` · ${HOT_WAITING_LABEL[action.waitingOn] || action.waitingOn}` : ''}</small><small>${dueAt ? `${ooo ? 'Resume' : 'Due'} ${esc(rdFormatTime(dueAt))}` : 'No invented due date'}</small></span>
     </button>`;
   }).join('');
 }
@@ -8495,6 +9136,9 @@ function renderArchiveRows() {
 async function loadArchiveWorkspace({ append = false } = {}) {
   const host = document.getElementById('archive-content');
   if (!host) return;
+  const clientId = activeClientId;
+  const token = clientViewToken;
+  const current = () => token === clientViewToken && clientId === activeClientId;
   if (!append) {
     archiveState.offset = 0;
     host.className = 'workspace-empty';
@@ -8503,9 +9147,11 @@ async function loadArchiveWorkspace({ append = false } = {}) {
   const params = new URLSearchParams({ limit: String(ARCHIVE_PAGE), offset: String(append ? archiveState.rows.length : 0) });
   for (const [key, value] of Object.entries(archiveQuery())) if (value) params.set(key, value);
   try {
+    params.set('client', clientId);
     const response = await fetch('/api/archive?' + params.toString());
     if (!response.ok) throw new Error((await apiError(response, 'Archive could not be loaded')).message);
     const data = await response.json();
+    if (!current()) return;
     archiveState.rows = append ? archiveState.rows.concat(data.rows || []) : (data.rows || []);
     archiveState.total = data.total || 0;
     archiveState.totalArchived = data.totalArchived || 0;
@@ -8520,6 +9166,7 @@ async function loadArchiveWorkspace({ append = false } = {}) {
     renderArchiveSummary(data);
     renderArchiveRows();
   } catch (error) {
+    if (!current()) return;
     host.className = 'workspace-empty';
     host.innerHTML = `<strong>Archive unavailable</strong>${esc(error.message || 'The archive could not be loaded.')} Nothing was changed.`;
   }
@@ -8657,12 +9304,15 @@ async function loadBookingsWorkspace() {
 }
 
 async function loadSettingsWorkspace() {
+  const clientId = activeClientId;
+  const token = clientViewToken;
   const [response, inboxResponse] = await Promise.all([
     fetch('/api/crm/ui-status'),
-    fetch(`/api/integrations/gmail-inboxes?client=${encodeURIComponent(activeClientId)}`),
+    fetch(`/api/integrations/gmail-inboxes?client=${encodeURIComponent(clientId)}`),
   ]);
   const data = response.ok ? await response.json() : null;
   const inboxData = inboxResponse.ok ? await inboxResponse.json() : null;
+  if (token !== clientViewToken || clientId !== activeClientId) return false;
   const host = document.getElementById('settings-status');
   if (!data) host.innerHTML = '<div class="workspace-empty"><strong>Configuration unavailable</strong>The read-only status endpoint could not be loaded.</div>';
   else {
@@ -8678,6 +9328,29 @@ async function loadSettingsWorkspace() {
   renderSettingsInboxRouting(inboxData || null);
   renderLandingInternalMark();
   document.getElementById('agent-panel').style.display = 'block';
+}
+
+function decorateManagedSettings() {
+  const client = activeClient();
+  const sending = client.sending || {};
+  const host = document.getElementById('settings-status');
+  const inboxHost = document.getElementById('settings-inbox-routing');
+  const inboxCount = inboxHost ? inboxHost.querySelectorAll('.inbox-sender-card').length : 0;
+  const activeCount = inboxHost ? inboxHost.querySelectorAll('.inbox-sender-card:not(.warming)').length : 0;
+  if (host) {
+    host.innerHTML = [
+      ['Client sending', Boolean(sending.sendingEnabled), sending.sendingEnabled ? 'Sending allowed' : (sending.blockReason || 'Sending is disabled for this client')],
+      ['Connected inboxes', inboxCount > 0, `${inboxCount} connected · ${activeCount} active · capacity follows registered inboxes only`],
+    ].map(([label, on, copy]) => `<div class="status-card"><div class="status-card-head"><b>${esc(label)}</b><span class="state-pill" data-on="${on}">${on ? 'On' : 'Off'}</span></div><p>${esc(copy)}</p></div>`).join('');
+  }
+  const landing = document.getElementById('settings-landing-internal');
+  if (landing) landing.style.display = 'none';
+  const agent = document.getElementById('agent-panel');
+  if (agent) agent.style.display = 'none';
+  if (inboxHost && inboxCount === 0) {
+    const empty = inboxHost.querySelector('.inbox-route-row, .workspace-empty');
+    if (!empty) inboxHost.insertAdjacentHTML('beforeend', emptyState(`No ${client.displayName} sending inboxes`, 'Inboxes appear here once a mailbox is registered for this client. None are invented.', 'send'));
+  }
 }
 
 // Marks THIS browser internal on the staffing landing page: a five-minute,
@@ -8779,9 +9452,10 @@ function renderSettingsInboxRouting(payload) {
           <div>Provider: <b>Gmail</b></div>
           <div>Warmup: <b>${esc(warmupLabel(inbox.warmupStatus || inbox.status))}</b></div>
           <div>Cold sending: <b>${inbox.sendingActive || inbox.sendEligible ? 'Active' : 'Inactive'}</b></div>
+          ${inbox.clientAuthorized === undefined ? '' : `<div>Client send authorization: <b>${inbox.clientAuthorized ? 'Authorized' : 'Off (launch hold)'}</b> · Prepared: <b>${inbox.preparationReady ? 'Yes' : 'No'}</b></div>`}
           <div>Observer: <b>${esc(observerLabel(inbox))}</b></div>
           <div>Daily cap: <b>${esc(String(inbox.dailyLimit))}</b></div>
-          <div>Per-run cap: <b>${esc(String(inbox.perRunLimit || 5))}</b></div>
+          <div>Per-run cap: <b>${esc(String(inbox.perRunLimit ?? 5))}</b></div>
           <div>Sent today: <b>${esc(String(inbox.sentToday ?? 0))}</b></div>
           <div>Remaining today: <b>${esc(String(inbox.remainingToday ?? inbox.dailyLimit))}</b></div>
         </div>
@@ -8805,17 +9479,16 @@ async function init() {
   installWorkspaceShell();
   await loadManagedClients();
   renderClientSwitcher();
-  showLoadingOverlay('Loading your leads…');
-  try {
-    await loadLeads();
-  } catch(e) {
-    showToast('Could not load leads: ' + e.message, 'error');
-  }
-  hideLoadingOverlay();
-  renderBoard();
   // The URL decides the client when it names one; otherwise the last client used.
   const { clientId, workspace } = parseWorkspaceHash();
   const initial = location.hash ? clientId : (knownClient(storedClientId) ? storedClientId : defaultClientId());
+  if (initial === defaultClientId()) {
+    showLoadingOverlay('Loading your leads…');
+    try { await loadLeads(); }
+    catch(e) { showToast('Could not load leads: ' + e.message, 'error'); }
+    hideLoadingOverlay();
+    renderBoard();
+  }
   await switchClient(initial, { workspace, replace: true });
 }
 init();

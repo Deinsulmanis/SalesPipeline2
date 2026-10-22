@@ -133,7 +133,7 @@ test('B. deniels daily limit is 10: send 10 allowed, send 11 refused by routing 
 });
 
 test('C. existing sender caps are identical before and after deniels is added and activated', () => {
-  const shape = env => configuredSenders(env).filter(sender => sender.id !== 'deniels').map(sender => ({
+  const shape = env => configuredSenders(env).filter(sender => sender.id !== 'deniels' && (sender.clientId || 'scalelab') === 'scalelab').map(sender => ({
     id: sender.id, email: sender.email, status: sender.status, dailyLimit: sender.dailyLimit,
     perRunLimit: sender.perRunLimit, sendEligible: sender.sendEligible,
   }));
@@ -218,7 +218,7 @@ test('E. existing quota callers and default-cap senders keep the uniform bucket'
   const raised = createSendingWindowQuota({ senderIds: ['primary'], perSenderLimit: 5, globalLimit: 10, perSenderLimits: { primary: 9 } });
   assert.equal(sendingWindowRemainingBySender(raised).get('primary'), 5);
   const agent = read('outreach-agent.js');
-  assert.equal((agent.match(/perSenderLimits: SENDER_PER_RUN_LIMITS/g) || []).length, 2, 'main and intent passes both use sender caps');
+  assert.equal((agent.match(/perSenderLimits: SENDER_PER_RUN_LIMITS/g) || []).length, 1, 'the main pass uses sender caps (the intent pass is retired)');
   assert.match(agent, /const SENDER_PER_RUN_LIMITS = new Map\(GMAIL_SENDERS/);
 });
 
@@ -377,14 +377,15 @@ test('G. an unhealthy, stale or missing deniels observer blocks its sends and do
 test('G. Activate Sender refuses deniels until auth, observer and history cursor are healthy, and accepts its 10/day cap', () => {
   const senders = configuredSenders(DEPLOYED);
   const ready = markWarmupReady(byId(senders, 'deniels'));
-  const blockers = context => activationBlockers(ready, { senders, ...context });
+  const noHold = { COLD_SENDER_HOLDS: 'none' };
+  const blockers = context => activationBlockers(ready, { senders, env: noHold, ...context });
   assert.ok(blockers({ auth: healthyAuth, observer: null }).includes('gmail observer unhealthy'));
   assert.ok(blockers({ auth: healthyAuth, observer: { ...healthyObserver, health: 'unavailable' } }).includes('gmail observer unhealthy'));
   assert.ok(blockers({ auth: healthyAuth, observer: { ...healthyObserver, cursorState: 'missing' } }).includes('history cursor missing'));
   assert.ok(blockers({ auth: healthyAuth, observer: { ...healthyObserver, health: 'backoff', quotaBackoff: true } }).includes('gmail backoff'));
   assert.ok(blockers({ auth: { authenticated: false }, observer: healthyObserver }).includes('gmail auth unhealthy'));
   assert.deepEqual(blockers({ auth: healthyAuth, observer: healthyObserver }), []);
-  const active = activateSender(ready, { auth: healthyAuth, observer: healthyObserver, senders });
+  const active = activateSender(ready, { auth: healthyAuth, observer: healthyObserver, senders, env: noHold });
   assert.equal(active.status, 'active');
   assert.equal(active.dailyLimit, 10);
   // Lower caps pass the gate; caps above the supported maximum still do not.
@@ -443,7 +444,8 @@ test('I. suppression, holds and opt-outs block a deniels send exactly as for eve
     }
   }
   // The single Gmail send path refuses any sender that is not delivery eligible.
-  assert.match(read('outreach-agent.js'), /assertSendAuthorized\(\);\n  assertStaffingSendAllowed\(lead\);\n  if \(!sender\?\.sendEligible\) throw/);
+  assert.match(read('outreach-agent.js'), /if \(!window\.allowed\) throw preDeliveryRefusal\('send_window_closed'/);
+  assert.match(read('outreach-agent.js'), /if \(!senderMayStillSend\(sender\)\) throw preDeliveryRefusal\('sender_held'/);
 });
 
 // ── J. thread ownership ────────────────────────────────────────────────────

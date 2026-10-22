@@ -27,7 +27,7 @@
 
 const { DEFAULT_CLIENT_ID, getClient, listClients, resolveClientId } = require('./registry');
 const { clientCampaign } = require('./campaigns');
-const { clientSendBlock } = require('./send-policy');
+const { clientSendBlock, clientPreparationBlock } = require('./send-policy');
 
 const text = value => String(value == null ? '' : value).trim();
 const domainOf = email => text(email).toLowerCase().split('@')[1] || '';
@@ -49,6 +49,23 @@ function senderAllowedCampaigns(sender = {}) {
 
 /** Why this sender may not send under the client sender policies; [] when nothing blocks it. */
 function senderPolicyBlockers(sender = {}, env = process.env) {
+  return policyBlockersWith(sender, owner => clientSendBlock(owner.id, env),
+    block => `client sending is not authorized: ${block.reason}`);
+}
+
+/**
+ * Why this sender may not be PREPARED (readied, activated, assigned leads): the
+ * same domain, campaign and client rules, but the client check is the
+ * preparation authority, which ignores only CLIENT_SENDING_AUTHORIZED. A sender
+ * with no preparation blockers can be fully readied while its send blockers
+ * still hold it non-sending.
+ */
+function senderPreparationBlockers(sender = {}) {
+  return policyBlockersWith(sender, owner => clientPreparationBlock(owner.id),
+    block => `client cannot be prepared for sending: ${block.reason}`);
+}
+
+function policyBlockersWith(sender, clientGate, describe) {
   const owner = senderOwner(sender);
   if (!owner) return ['sender names an unknown client'];
   const blockers = [];
@@ -72,8 +89,8 @@ function senderPolicyBlockers(sender = {}, env = process.env) {
   // A registry row saying "active" is not send authority: until the client
   // itself may send (active + sending.enabled + CLIENT_SENDING_AUTHORIZED),
   // every one of its inboxes is held non-sending, whatever its status says.
-  const clientBlock = clientSendBlock(owner.id, env);
-  if (clientBlock) blockers.push(`client sending is not authorized: ${clientBlock.reason}`);
+  const clientBlock = clientGate(owner);
+  if (clientBlock) blockers.push(describe(clientBlock));
   return blockers;
 }
 
@@ -97,4 +114,7 @@ function senderServesCampaign(sender = {}, campaignRef = '') {
   return senderAllowedCampaigns(sender).includes(campaign.id);
 }
 
-module.exports = { senderOwner, senderAllowedCampaigns, senderPolicyBlockers, cappedDailyLimit, senderServesCampaign, domainOf };
+module.exports = {
+  senderOwner, senderAllowedCampaigns, senderPolicyBlockers, senderPreparationBlockers,
+  cappedDailyLimit, senderServesCampaign, domainOf,
+};

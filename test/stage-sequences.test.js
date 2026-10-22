@@ -34,7 +34,7 @@ const evalSeq = (over = {}) => evaluateStageSequence({ now: NOW, ...ON, ...over 
 const hotStale = { staleness: 'stale', waitingOn: 'waiting_on_prospect' };
 
 // The agent's stage pass, sliced for source assertions.
-const pass = agent.slice(agent.indexOf('async function runStageSequencePass'), agent.indexOf('async function run()'));
+const pass = agent.slice(agent.indexOf('async function runStageSequencePass'), agent.indexOf('async function runInner()'));
 
 // ── GLOBAL SAFETY (1–15) ────────────────────────────────────────────────────
 
@@ -321,7 +321,7 @@ test('42/43/44/45. a step is deterministic and provider failures do not consume 
   assert.equal(sequenceStepEventId('L1', 'hot_stale_v1', 1), sequenceStepEventId('L1', 'hot_stale_v1', 1));
   assert.notEqual(sequenceStepEventId('L1', 'hot_stale_v1', 1), sequenceStepEventId('L1', 'hot_stale_v1', 2));
   // The pass skips a step whose event already exists.
-  assert.match(pass, /if \(activities\.some\(row => row\.eventId === eventId\)\) continue;/);
+  assert.match(pass, /if \(activities\.some\(row => row\.eventId === eventId\)\) return;/);
   assert.match(pass, /sequenceRfcMessageId\(eventId, sender\.email\)/);
   assert.match(pass, /findSuccessfulSequenceSend/);
   assert.match(pass, /A provider failure consumes no quota\./);

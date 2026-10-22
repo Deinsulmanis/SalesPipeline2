@@ -1,8 +1,9 @@
 'use strict';
 
-// OOO auto-resume (2026-10-03). An autoresponder pauses cold automation until
-// the stated return date (or the 7-day OOO policy) through an append-only
+// OOO auto-resume (2026-10-03; review rule 2026-10-15). An autoresponder
+// pauses cold automation until the stated return date through an append-only
 // ooo_resume_scheduled event — never a [MANUAL HOLD], which stays absolute.
+// An absence with no reliable date is human review: no date is invented.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -54,19 +55,31 @@ function owner(target, activities, now, extra = {}) {
 
 // ── The resume rule ──────────────────────────────────────────────────────────
 
-test('a stated future return date wins; otherwise 7 Vancouver days from the autoresponder', () => {
-  assert.deepEqual(planOooResume({ returnDate: '2026-10-05', occurredAt: OOO_AT, now: OOO_AT }),
-    { resumeAt: '2026-10-05T00:00:00.000Z', resumeSource: OOO_RESUME_SOURCE.PROSPECT_STATED });
-  const policy = planOooResume({ returnDate: '', occurredAt: '2026-10-01T14:48:46.000Z', now: '2026-10-01T15:00:00Z' });
-  assert.equal(policy.resumeSource, OOO_RESUME_SOURCE.POLICY_DEFAULT);
-  assert.equal(policy.resumeAt, '2026-10-08T14:48:46.000Z');
+test('a stated return date resumes at 00:00 Vancouver that day; an absence with no date schedules nothing', () => {
+  assert.deepEqual(planOooResume({ returnDate: '2026-10-05', occurredAt: OOO_AT }), {
+    resumeAt: '2026-10-05T07:00:00.000Z', resumeSource: OOO_RESUME_SOURCE.PROSPECT_STATED,
+    reviewRequired: false, statedReturnDate: '2026-10-05',
+  });
+  // No date for an absence: nothing is invented, a person reviews.
+  const undated = planOooResume({ returnDate: '', occurredAt: '2026-10-01T14:48:46.000Z', subtype: 'out_of_office' });
+  assert.equal(undated.resumeAt, null);
+  assert.equal(undated.reviewRequired, true);
+  // A model-decided OOO carries no subtype and is treated as an absence too.
+  assert.equal(planOooResume({ occurredAt: OOO_AT }).reviewRequired, true);
+  // A generic acknowledgement claims no absence and keeps its 7-day retry.
+  const generic = planOooResume({ occurredAt: '2026-10-01T14:48:46.000Z', subtype: 'autoresponder' });
+  assert.equal(generic.resumeSource, OOO_RESUME_SOURCE.POLICY_DEFAULT);
+  assert.equal(generic.resumeAt, '2026-10-08T14:48:46.000Z');
   assert.equal(OOO_DEFAULT_RETRY_DAYS, 7);
-  // A stated date already in the past falls back to the policy, never "now".
-  assert.equal(planOooResume({ returnDate: '2026-09-01', occurredAt: OOO_AT, now: OOO_AT }).resumeSource,
-    OOO_RESUME_SOURCE.POLICY_DEFAULT);
-  // Deterministic: re-processing the same autoresponder later gives the same date.
-  assert.deepEqual(planOooResume({ occurredAt: OOO_AT, now: '2026-09-30T15:00:00Z' }),
-    planOooResume({ occurredAt: OOO_AT, now: '2026-10-02T15:00:00Z' }));
+  // A stated date that has already passed is still the prospect's date: the
+  // lead is back, and the ordinary gates decide when the next touch goes.
+  assert.equal(planOooResume({ returnDate: '2026-09-22', occurredAt: '2026-09-17T18:12:09.000Z' }).resumeAt,
+    '2026-09-22T07:00:00.000Z');
+  // A date implausibly far out is a misreading: reviewed, not scheduled.
+  assert.equal(planOooResume({ returnDate: '2027-03-01', occurredAt: OOO_AT }).reviewRequired, true);
+  // Deterministic: no clock is read, so re-processing gives the same plan.
+  assert.deepEqual(planOooResume({ returnDate: '2026-10-05', occurredAt: OOO_AT }),
+    planOooResume({ returnDate: '2026-10-05', occurredAt: OOO_AT }));
 });
 
 test('the resume event is append-only metadata with a stable id and no message text', () => {
@@ -99,21 +112,38 @@ test('OOO with a known return date: waits until it, then cold automation resumes
 
 // ── OOO with "retry in N days" ───────────────────────────────────────────────
 
-test('OOO with no date ("retry in 7 days"): the policy date gates, then automation resumes', () => {
+test('an absence the 7-day policy dated (TeamWRX): the invented date is set aside and a person reviews', () => {
   const acts = [sent, oooReply(null), resume('2026-10-07T14:10:51.000Z')];
   const op = deriveReplyOperation(lead({ notes: '[REPLY: OOO — retry in 7d]' }), { activities: acts });
+  assert.equal(op.action, REPLY_ACTION.OOO_REVIEW);
+  assert.equal(op.dueAt, null, 'no invented due date');
+  assert.equal(op.requiresHumanReview, true);
+  assert.equal(op.evidence.ignoredPolicyResumeAt, '2026-10-07T14:10:51.000Z');
+  for (const now of ['2026-10-07T14:00:00Z', '2026-10-07T14:30:00Z', '2026-11-30T15:00:00Z']) {
+    const { verdict, allowed } = owner(lead(), acts, now);
+    assert.equal(verdict.owner, 'human', now);
+    assert.equal(allowed, false, `${now}: nothing sends on the policy date or after it`);
+  }
+});
+
+test('a generic acknowledgement keeps the 7-day retry: the policy date gates, then automation resumes', () => {
+  const ack = row('out_of_office_reply', OOO_AT, { canonicalState: 'automated_reply', subtype: 'autoresponder', gmailMessageId: 'ooo-msg-1' });
+  const acts = [sent, ack, resume('2026-10-07T14:10:51.000Z')];
+  const op = deriveReplyOperation(lead(), { activities: acts });
   assert.equal(op.action, REPLY_ACTION.WAIT_UNTIL_RETURN);
   assert.equal(op.dueAtSource, DUE_SOURCE.OOO_POLICY);
   const before = owner(lead(), acts, '2026-10-07T14:00:00Z');
   assert.equal(before.allowed, false);
-  assert.match(before.verdict.reason, /7-day OOO policy/);
+  assert.match(before.verdict.reason, /7-day autoresponder policy/);
   assert.equal(owner(lead(), acts, '2026-10-07T14:30:00Z').allowed, true);
 });
 
-test('an OOO handled before this change (no resume event) still waits with nothing due — Mc Labor stays manual', () => {
+test('an OOO with no date and no resume record (Mc Labor) is human review — never silent, never sent', () => {
   const acts = [sent, oooReply(null)];
   const { verdict, allowed } = owner(lead({ notes: '[REPLY: OOO — retry in 7d]' }), acts, '2026-10-30T15:00:00Z');
-  assert.equal(verdict.blockedBy, 'nothing_due');
+  assert.equal(verdict.owner, 'human');
+  assert.equal(verdict.blockedBy, 'human_owned');
+  assert.match(verdict.reason, /ooo_return_review/);
   assert.equal(allowed, false);
 });
 
@@ -176,7 +206,10 @@ test('suppression before resume: the durable list refuses after the date', () =>
 test('the OOO handler records the pause and never writes a hold or resume tag', () => {
   const handler = agent.slice(agent.indexOf('async function handleOutOfOffice('), agent.indexOf('async function handleWrongPerson'));
   assert.doesNotMatch(handler, /applyHoldToNotes|applyResumeToNotes|\[MANUAL HOLD\]'/);
-  assert.match(handler, /const plan = planOooResume\(\{ returnDate, occurredAt, now: Date\.now\(\) \}\);/);
+  assert.match(handler, /const plan = planOooResume\(\{ returnDate, occurredAt, subtype \}\);/);
+  // No reliable date: nothing is scheduled and the decision says a person reviews.
+  assert.match(handler, /if \(plan\.resumeAt\) \{\n\s*const event = buildOooResumeEvent\(/);
+  assert.match(handler, /return \{ oooReviewRequired: true \};/);
   // Idempotent per autoresponder, and the event lands before the notes marker.
   assert.match(handler, /if \(!\(activities \|\| \[\]\)\.some\(row => row\.eventId === event\.eventId\)\) \{/);
   assert.ok(handler.indexOf('recordColdCallActivityStrict(event)') < handler.indexOf('applyLeadChange('));
@@ -193,8 +226,13 @@ test('same pass: the send pass\'s ownership context is built after the reply pas
 
 test('the reply decision records an OOO pause, not a hold', () => {
   const decisionSrc = read('integrations/reply-decision.js');
-  assert.match(decisionSrc, /case ROUTE\.OUT_OF_OFFICE:\n\s*return \{ executedAction: ACTION\.WAIT_OUT_OF_OFFICE, status: EXECUTION_STATUS\.WAITING, effects: \[EFFECT\.OOO_PAUSE_SCHEDULED\] \};/);
+  const { executionForRoute, ROUTE, EFFECT } = require('../integrations/reply-decision');
+  assert.deepEqual(executionForRoute(ROUTE.OUT_OF_OFFICE, undefined).effects, [EFFECT.OOO_PAUSE_SCHEDULED]);
+  assert.deepEqual(executionForRoute(ROUTE.OUT_OF_OFFICE, { oooReviewRequired: true }).effects, [EFFECT.OOO_REVIEW_REQUIRED]);
+  assert.equal(executionForRoute(ROUTE.OUT_OF_OFFICE, { oooReviewRequired: true }).status, 'waiting');
+  assert.doesNotMatch(decisionSrc, /case ROUTE\.OUT_OF_OFFICE:[^;]*HOLD_APPLIED/);
   assert.match(decisionSrc, /OOO_PAUSE_SCHEDULED: 'ooo_pause_scheduled'/);
+  assert.match(decisionSrc, /OOO_REVIEW_REQUIRED: 'ooo_review_required'/);
 });
 
 // ── One-off repair of leads the old handler held ─────────────────────────────

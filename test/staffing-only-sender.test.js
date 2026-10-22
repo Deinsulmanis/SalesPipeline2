@@ -54,7 +54,7 @@ function legacyAllowedForLead(sender, lead = {}) {
 
 test('fixture mirrors production: five senders, scalelabaiteam active at 40/5 and flagged staffing-only', () => {
   const senders = roster();
-  assert.deepEqual(senders.map(sender => [sender.id, sender.sendEligible, sender.dailyLimit, sender.perRunLimit]), [
+  assert.deepEqual(senders.filter(sender => (sender.clientId || 'scalelab') === 'scalelab').map(sender => [sender.id, sender.sendEligible, sender.dailyLimit, sender.perRunLimit]), [
     ['primary', true, 50, 5], ['tryscalelabai', true, 50, 5], ['scalelabaiteam', true, 40, 5],
     ['deniels', true, 20, 2], ['deniels_tryscalelabai', true, 20, 2],
   ]);

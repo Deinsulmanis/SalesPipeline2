@@ -57,8 +57,14 @@ const BLOCKING_ACTIVITY = /(reply|replied|agent_v2|decision|human|takeover|email
 
 const text = value => String(value == null ? '' : value).trim();
 
+// Inboxes that may take new step-1 work. A managed client's inbox that is
+// operationally ready but held by the client's final send authorization is
+// included: assignment is preparation, and the send path still requires
+// sendEligible. ScaleLab inboxes carry no preparationReady, so their set is
+// exactly the send-eligible one.
 function balancingSenders(senders = []) {
-  return senders.filter(sender => sender && sender.status === 'active' && sender.sendEligible === true
+  return senders.filter(sender => sender && sender.status === 'active'
+    && (sender.sendEligible === true || sender.preparationReady === true)
     && Number(sender.dailyLimit) > 0);
 }
 
@@ -71,6 +77,7 @@ function routeInboxes(senders) {
   return senders.map(sender => ({
     id: sender.id, email: sender.email || sender.id, sendEligible: Boolean(sender.sendEligible),
     deliveryImplemented: true, staffingOnly: isStaffingOnlySender(sender),
+    ...(sender.preparationReady !== undefined ? { preparationReady: sender.preparationReady === true } : {}),
   }));
 }
 
@@ -78,10 +85,10 @@ function routeInboxes(senders) {
 // the same allowedForLead() the scheduled sender enforces, plus the queue
 // route's validateRoute() (staffing-only reservation, template ↔ niche).
 function senderCompatible(sender, lead, inboxes) {
-  if (!allowedForLead(sender, lead)) return false;
+  if (!allowedForLead(sender, lead, { preparation: true })) return false;
   return validateRoute({
     niche: lead.leadNiche || lead.tradeType, senderInboxId: sender.id,
-    emailTemplateId: lead.emailTemplateId, inboxes,
+    emailTemplateId: lead.emailTemplateId, inboxes, preparation: true,
   }).ok;
 }
 
@@ -116,7 +123,10 @@ function firstTouchMovability(lead, ctx) {
   if (blocking) return { ok: false, reason: `activity ${blocking.eventType}` };
   const suppressed = sendSuppressionReason(lead, { suppressedEmails: ctx.suppressedEmails });
   if (suppressed) return { ok: false, reason: `suppressed (${suppressed})` };
-  const routed = routedLeadReady(lead, ctx.env);
+  // Movability is a preparation question (could this lead be queued again?),
+  // so a managed client's final send authorization does not decide it. The
+  // send path re-checks that authorization itself.
+  const routed = routedLeadReady(lead, ctx.env, { preparation: true });
   if (!routed.ok) return { ok: false, reason: `routing: ${routed.reason}` };
   // The queue route's own preflight, with the same (default) render options it
   // uses, so a lead is movable exactly when it could be queued again.

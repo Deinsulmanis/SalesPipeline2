@@ -33,13 +33,13 @@ test('engagement lookup no longer costs a second ColdEmail read', () => {
   const handler = server.slice(server.indexOf("app.get('/api/proposalOpens'"));
   const body = handler.slice(0, handler.indexOf('\n});'));
   assert.match(body, /const dataset = await getOutreachDataset\(\);/);
-  assert.match(body, /res\.json\(dataset\.annotatedOpens\)/);
+  assert.match(body, /res\.json\(scope\.view\?\.opens \|\| dataset\.annotatedOpens\)/);
   assert.ok(!/spreadsheets\.values\.get/.test(body), 'the opens route reads no sheet of its own');
 });
 
 test('dashboard counters reuse loaded data and otherwise use the compact stats endpoint', () => {
   assert.match(browser, /refreshAgentLeadCounts\(ceLeads\)/);
-  assert.match(browser, /fetch\('\/api\/coldemail\/stats'\)/);
+  assert.match(browser, /fetch\('\/api\/coldemail\/stats\?client=' \+ encodeURIComponent\(activeClientId\)\)/);
   assert.match(server, /app\.get\('\/api\/coldemail\/stats', requireAuth/);
 });
 

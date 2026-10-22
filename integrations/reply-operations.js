@@ -27,7 +27,10 @@ const {
 } = require('./canonical-reply');
 const { latestResponseAt } = require('./prospect-response');
 const { operationalReplyEvidence } = require('./reply-decision');
-const { scheduledOooResume, OOO_RESUME_SOURCE } = require('./ooo-pause');
+const {
+  scheduledOooResume, ignoredPolicyResume, statedReturnDay, isGenericAutoresponder, OOO_RESUME_SOURCE,
+} = require('./ooo-pause');
+const { vancouverDayStart } = require('./sequence-timing');
 
 /**
  * Operational actions. These EXTEND the existing ACTION_TYPE vocabulary in
@@ -44,6 +47,10 @@ const REPLY_ACTION = Object.freeze({
   CONTACT_SUPPLIED: 'contact_supplied',           // they handed us an address
   CONTACT_CHANGE_REVIEW: 'contact_change_review', // mailbox migration, needs approval
   WAIT_UNTIL_RETURN: 'wait_until_return',         // closure/OOO with a known date
+  // An absence (out-of-office, closure) with no reliable return date. Nothing
+  // resumes until a person sets the date (or stops the sequence); no date is
+  // ever invented.
+  OOO_REVIEW: 'ooo_return_review',
   WAIT: 'waiting_prospect',                       // reuses the existing type
   NO_ACTION_SUPPRESSED: 'no_action_suppressed',   // terminal / opted out
   INVESTIGATE: 'investigate',                     // unknown, malformed, conflicting
@@ -80,10 +87,12 @@ const DUE_SOURCE = Object.freeze({
   MANUAL_FOLLOW_UP: 'manual_follow_up_date',
   MEETING: 'scheduled_meeting',
   REPLY_RECEIVED: 'reply_received_at',
-  // The 7-day OOO policy when the autoresponder stated no return date.
+  // The 7-day retry after a generic acknowledgement (never an absence).
   OOO_POLICY: 'ooo_policy_default',
   // An operator-confirmed resume for a lead the old OOO handler held.
   OPERATOR_REPAIR: 'ooo_operator_repair',
+  // A person read the autoresponder and set the resume date.
+  OPERATOR_SCHEDULED: 'ooo_operator_scheduled',
   NONE: 'none',
 });
 
@@ -164,14 +173,16 @@ function deriveReplyOperation(lead = {}, {
 
   // ── A machine answered ───────────────────────────────────────────────────
   if (resolved.state === REPLY_STATE.AUTOMATED_REPLY) {
-    // The OOO handler records when automation may resume (integrations/
-    // ooo-pause.js): the stated return date or the 7-day policy. That record,
-    // made at or after THIS autoresponder, is the date cold automation waits for.
-    const scheduled = scheduledOooResume(activities, { since: resolved.occurredAt });
+    // The OOO handler (or an operator) records when automation may resume
+    // (integrations/ooo-pause.js). That record, made at or after THIS
+    // autoresponder, is the instant cold automation waits for.
+    const generic = isGenericAutoresponder(resolved.subtype);
+    const scheduled = scheduledOooResume(activities, { since: resolved.occurredAt, acceptPolicy: generic });
     if (scheduled) {
-      const dueAtSource = scheduled.resumeSource === OOO_RESUME_SOURCE.PROSPECT_STATED ? DUE_SOURCE.PROSPECT_STATED
-        : scheduled.resumeSource === OOO_RESUME_SOURCE.OPERATOR_REPAIR ? DUE_SOURCE.OPERATOR_REPAIR
-          : DUE_SOURCE.OOO_POLICY;
+      const dueAtSource = scheduled.resumeSource === OOO_RESUME_SOURCE.OPERATOR_REPAIR ? DUE_SOURCE.OPERATOR_REPAIR
+        : scheduled.resumeSource === OOO_RESUME_SOURCE.OPERATOR_SCHEDULED ? DUE_SOURCE.OPERATOR_SCHEDULED
+          : scheduled.resumeSource === OOO_RESUME_SOURCE.POLICY_DEFAULT ? DUE_SOURCE.OOO_POLICY
+            : DUE_SOURCE.PROSPECT_STATED;
       return operation({
         action: REPLY_ACTION.WAIT_UNTIL_RETURN,
         reason: `${resolved.subtype || 'automated reply'}; cold automation resumes at the scheduled OOO return`,
@@ -181,25 +192,40 @@ function deriveReplyOperation(lead = {}, {
         evidence: { ...evidence, oooResumeEventId: scheduled.eventId || null, oooResumeSource: scheduled.resumeSource },
       });
     }
-    const returnDate = isoOrNull(resolved.returnDate);
-    if (returnDate) {
+    // A return date recorded with the reply itself (handled before resume
+    // events existed) is the same prospect evidence: back from that day.
+    const statedDay = statedReturnDay(resolved.returnDate);
+    if (statedDay) {
       return operation({
         action: REPLY_ACTION.WAIT_UNTIL_RETURN,
         reason: `${resolved.subtype || 'automated reply'} with a stated return date`,
         owner: ACTION_OWNER.NONE, waitingOn: WAITING_ON.DATE,
         priority: PRIORITY.LOW,
-        dueAt: returnDate, dueAtSource: DUE_SOURCE.PROSPECT_STATED,
+        dueAt: new Date(vancouverDayStart(statedDay)).toISOString(), dueAtSource: DUE_SOURCE.PROSPECT_STATED,
         evidence,
       });
     }
-    // No date was stated and no OOO resume was recorded (an autoresponder
-    // handled before 2026-10-03), so none is invented. Nothing to do yet, and
-    // pretending otherwise would create fake human work or a surprise send.
+    // A generic acknowledgement ("we received your message") claims no
+    // absence: nothing to do yet, and no human work is invented either.
+    if (generic) {
+      return operation({
+        action: REPLY_ACTION.WAIT,
+        reason: `${resolved.subtype} with no stated return date`,
+        owner: ACTION_OWNER.NONE, waitingOn: WAITING_ON.PROSPECT,
+        priority: PRIORITY.LOW, evidence,
+      });
+    }
+    // An absence with no reliable return date: none is invented — and the
+    // lead is not left silently waiting either. A person sets the resume date
+    // or stops the sequence; until then nothing automated may contact the
+    // prospect. A date the 7-day policy wrote is shown as set aside, never obeyed.
+    const ignored = ignoredPolicyResume(activities, { since: resolved.occurredAt });
     return operation({
-      action: REPLY_ACTION.WAIT,
-      reason: `${resolved.subtype || 'automated reply'} with no stated return date`,
-      owner: ACTION_OWNER.NONE, waitingOn: WAITING_ON.PROSPECT,
-      priority: PRIORITY.LOW, evidence,
+      action: REPLY_ACTION.OOO_REVIEW,
+      reason: `${resolved.subtype || 'automated reply'} with no reliable return date; a person must set the resume date or stop the sequence`,
+      owner: ACTION_OWNER.HUMAN, waitingOn: WAITING_ON.HUMAN_REVIEW,
+      priority: PRIORITY.NORMAL, requiresHumanReview: true,
+      evidence: { ...evidence, ignoredPolicyResumeAt: ignored ? ignored.resumeAt : null },
     });
   }
 

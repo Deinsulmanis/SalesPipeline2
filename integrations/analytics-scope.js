@@ -19,6 +19,7 @@
 
 const { outreachBlockForLead, RETIRED_OFFERS } = require('./lead-archive');
 const { CAMPAIGN_VERSIONS } = require('./campaign-versions');
+const { retractedBounceEventIds } = require('./delivery-status');
 
 const ANALYTICS_SCOPE = Object.freeze({ ACTIVE: 'active', HISTORICAL: 'historical' });
 const REPORTING_TIMEZONE = 'America/Vancouver';
@@ -118,6 +119,7 @@ function buildSenderAnalytics({ leads = [], activities = [], senders = [], reply
     queued: 0, inSequence: 0,
   }]));
   const seenMessages = new Set();
+  const retractedBounces = retractedBounceEventIds(activities);
   for (const row of activities) {
     const leadId = activityLeadKey(row);
     if (!activeIds.has(leadId)) continue;
@@ -138,6 +140,7 @@ function buildSenderAnalytics({ leads = [], activities = [], senders = [], reply
       if (['positive', 'negative', 'needs_human', 'unclassified'].includes(category)) entry.genuineReplyLeads.add(leadId);
       if (category === 'positive') entry.positiveLeads.add(leadId);
     } else if (type === 'email_bounced') {
+      if (retractedBounces.has(String(row.eventId || ''))) continue;
       entry.bouncedLeads.add(leadId);
     }
   }

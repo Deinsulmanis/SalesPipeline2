@@ -93,7 +93,7 @@ test('Gmail sendEmail calls assertSendAuthorized before constructing the provide
     source.indexOf('async function sendEmail('),
     source.indexOf('async function loadOutreachProviderState('),
   );
-  assert.match(code, /assertSendAuthorized\(\);\r?\n  assertStaffingSendAllowed\(lead\);/);
+  assert.match(code, /try \{ assertSendAuthorized\(\); assertStaffingSendAllowed\(lead\); \}/);
 
   let constructed = 0;
   class Provider {
@@ -102,7 +102,7 @@ test('Gmail sendEmail calls assertSendAuthorized before constructing the provide
   }
   const send = new Function(
     'assertStaffingSendAllowed', 'assertSendAuthorized', 'PRIMARY_GMAIL_SENDER',
-    'GmailOutreachProvider', 'gmailForSender', 'toRawMessage', 'withGmailProviderSend',
+    'GmailOutreachProvider', 'gmailForSender', 'toRawMessage', 'withGmailProviderSend', 'preDeliveryRefusal', 'sendLockEnabled',
     `${code}; return sendEmail;`,
   )(
     () => {},
@@ -116,6 +116,8 @@ test('Gmail sendEmail calls assertSendAuthorized before constructing the provide
     () => assert.fail('Gmail client must not be built'),
     () => assert.fail('MIME must not be built'),
     () => assert.fail('durable lock must not run before authorization'),
+    (_code, reason) => new Error(reason),
+    () => true,
   );
   await assert.rejects(
     send({ lead: { id: '1', email: 'a@x.test' }, to: 'a@x.test', sender: { sendEligible: true } }),
@@ -139,6 +141,10 @@ test('authorized sendEmail proceeds to the provider exactly once', async () => {
   const send = new Function(
     'assertStaffingSendAllowed', 'assertSendAuthorized', 'PRIMARY_GMAIL_SENDER',
     'GmailOutreachProvider', 'gmailForSender', 'toRawMessage', 'withGmailProviderSend',
+    'clientSendWindowVerdict', 'tenantOf', 'SCHEDULED_CLIENT_SCOPE',
+    'preDeliveryRefusal', 'senderMayStillSend', 'activeSendQuota', 'activeSenderPacer',
+    'resolveLeadClient', 'guardProviderSend', 'freshSendSafetyDeps', 'recipientProviderClassifier',
+    'runWithGmailFeature', 'fromNameForSender', 'sendLockEnabled',
     `${code}; return sendEmail;`,
   )(
     () => {},
@@ -148,10 +154,25 @@ test('authorized sendEmail proceeds to the provider exactly once', async () => {
     () => ({ users: { messages: { send: async () => ({}) } } }),
     () => 'raw',
     ({ run }) => run(),
+    () => ({ allowed: true }),
+    () => 'scalelab',
+    '',
+    (_code, reason) => new Error(reason),
+    () => true,
+    { execute: ({ run }) => run({ markProviderStart: async () => {} }) },
+    { run: (_senderId, task) => task() },
+    () => ({ ok: true, clientId: 'scalelab' }),
+    async () => ({ allowed: true }),
+    () => ({}),
+    { peek: () => ({ provider: 'google' }) },
+    (_feature, task) => task(),
+    () => 'Test',
+    () => true,
   );
   await send({
     lead: { id: '1', email: 'a@x.test' }, to: 'a@x.test', subject: 's', body: 'b',
     sender: { sendEligible: true, id: 'primary', email: 'from@x.test' },
+    sendAction: { actionId: 'test-action', actionType: 'gmail_cold_step' },
   });
   assert.equal(constructed, 1);
   assert.equal(sent, 1);
@@ -163,9 +184,11 @@ test('Smartlead enqueue and ordinary/sequence sends keep the authorization gate 
   assert.match(agent, /withGmailProviderSend\(/);
   assert.match(agent, /withOutboundReservation\(sendAction/);
   assert.match(agent, /async function enqueueSmartleadLead\(lead, mapping\) \{\n  assertSendAuthorized\(\);/);
-  assert.match(agent, /const gate = await guardProviderSend\(lead, freshSendSafetyDeps\(\), \{ purpose: 'cold' \}\);/);
-  // Gmail sends pass the sending inbox so the final gate enforces client isolation.
-  assert.match(agent, /const gate = await guardProviderSend\(lead, freshSendSafetyDeps\(\), \{ purpose: 'cold', senderInboxId: sender\.id \}\);/);
-  assert.match(agent, /const gate = await guardProviderSend\(safetyLead, freshSendSafetyDeps\(\), \{ purpose: 'sequence', senderInboxId: sender\.id \}\);/);
+  // Smartlead enqueue: fresh-state deps plus the recipient-provider classifier.
+  assert.match(agent, /const gate = await guardProviderSend\(lead, \{ \.\.\.freshSendSafetyDeps\(\),\n    classifyRecipient: email => recipientProviderClassifier\.classify\(email\) \}, \{ purpose: 'cold' \}\);/);
+  // Gmail sends pass the sending inbox so the final gate enforces client isolation,
+  // and the sender itself so the cold-delivery policy judges sender AND recipient.
+  assert.match(agent, /const gate = await guardProviderSend\(lead, \{ \.\.\.freshSendSafetyDeps\(\),\n    classifyRecipient: email => recipientProviderClassifier\.peek\(email\) \},\n  \{ purpose: 'cold', senderInboxId: sender\.id, coldSender: sender \}\);/);
+  assert.match(agent, /const gate = await guardProviderSend\(safetyLead, \{ \.\.\.freshSendSafetyDeps\(\),\n      classifyRecipient: email => recipientProviderClassifier\.peek\(email\) \},\n    \{ purpose: 'sequence', senderInboxId: sender\.id, coldSender: sender \}\);/);
   assert.match(server, /assertSendAuthorized\(\);\n    const safety = await guardProviderSend\(found\.lead/);
 });

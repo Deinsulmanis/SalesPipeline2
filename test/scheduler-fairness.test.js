@@ -103,7 +103,7 @@ test('production policy retains daily cap, refill, thread gate and demo stop', (
   assert.match(agent, /DAILY_SEND_LIMIT = SENDER_CAPACITY\.globalDailyLimit/);
   assert.equal(followUpSuccessTarget(5), 4);
   assert.match(agent, /followBatchesBySender/);
-  assert.match(agent, /fillSenderFollowUps\(sender\.id, followUpSuccessTarget\(senderRemaining, \{ drain: FOLLOW_UP_DRAIN_MODE \}\)\)/);
+  assert.match(agent, /fillSenderFollowUps\(sender\.id,\s*followUpSuccessTarget\(senderRemaining, \{ drain: FOLLOW_UP_DRAIN_MODE \}\)\)/);
   // Drain mode is opt-in and off unless the variable is exactly 'true'.
   assert.match(agent, /const FOLLOW_UP_DRAIN_MODE = process\.env\.FOLLOW_UP_DRAIN_MODE === 'true';/);
   assert.match(agent, /fillSenderFollowUps\(sender\.id\);/);

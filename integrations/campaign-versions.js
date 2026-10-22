@@ -8,7 +8,7 @@
  */
 const LEGACY_UNKNOWN = 'legacy_unknown';
 const { staffingLaunchState } = require('./staffing-launch-gate');
-const { STAFFING_CAMPAIGN } = require('./staffing-campaign');
+const { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_V2, staffingV2Live, isStaffingV2Marked } = require('./staffing-campaign');
 const CAMPAIGN_VERSIONS = Object.freeze({
   [STAFFING_CAMPAIGN.id]: Object.freeze({
     id: STAFFING_CAMPAIGN.id, label: STAFFING_CAMPAIGN.name, niche: STAFFING_CAMPAIGN.niche,
@@ -18,6 +18,20 @@ const CAMPAIGN_VERSIONS = Object.freeze({
     get status() { return staffingLaunchState().status; },
     get activatedAt() { return staffingLaunchState().activatedAt; },
     meaning: 'Approved employer-meeting copy and personalization. Queueing is permitted; delivery requires separate explicit staffing activation.',
+  }),
+  // V2 has its own copy for every touch: Email 1 records staffing_locked_v2,
+  // Emails 2 and 3 industrial_staffing_follow_up_v2. Same subjects, cadence and
+  // offer as V1. Draft (unqueueable, unsendable) until staffing-campaign.js
+  // makes V2 live; live, it follows V1's staffing launch gate.
+  [STAFFING_CAMPAIGN_V2.id]: Object.freeze({
+    id: STAFFING_CAMPAIGN_V2.id, label: STAFFING_CAMPAIGN_V2.name, niche: STAFFING_CAMPAIGN_V2.niche,
+    emailTemplateId: STAFFING_CAMPAIGN_V2.emailTemplateId, family: 'industrial_staffing',
+    copyVersion: 'staffing_locked_v2', followUpCopyVersion: 'industrial_staffing_follow_up_v2',
+    personalizationStrategy: STAFFING_CAMPAIGN_V2.personalizationStrategy,
+    subjectStrategy: 'employer_accounts_locked_v1', offerVersion: 'employer_meetings_performance_v1',
+    get status() { return staffingV2Live() ? staffingLaunchState().status : 'draft'; },
+    activatedAt: null,
+    meaning: 'Industrial Staffing V2: V1 targeting, offer, subjects and cadence with V2 copy: a company-named roles-and-market opening, a performance-basis Touch 2 with no landing-page link, and a short close-the-loop Touch 3.',
   }),
   dental_v1_measured: Object.freeze({
     id: 'dental_v1_measured',
@@ -111,7 +125,34 @@ function familyFromCampaignVersionId(id) {
   return version ? version.family : null;
 }
 
+// A managed client's lead belongs to its client's campaign registry, not to
+// ScaleLab's keyword families (Jole's copy says "staffing"; it is not
+// ScaleLab's staffing offer). Its family is that campaign's lead type. Lazy
+// require: clients/ modules load routing helpers that load this file.
+function managedCampaignForLead(lead = {}) {
+  const { clientCampaign } = require('./clients/campaigns');
+  return clientCampaign(lead.intendedCampaignVersion) || clientCampaign(lead.campaign) || null;
+}
+
+function isManagedFamily(family) {
+  const { CLIENT_LEAD_TYPES } = require('./clients/campaigns');
+  return CLIENT_LEAD_TYPES.some(type => type.id === family);
+}
+
 function resolveLeadFamily(lead = {}) {
+  const managed = managedCampaignForLead(lead);
+  if (managed) {
+    const owner = String(lead.clientId || '').trim();
+    if (owner && owner !== managed.clientId) {
+      return { family: CAMPAIGN_FAMILY.UNROUTED, confident: false, reason: `campaign ${managed.id} belongs to ${managed.clientId}, the lead to ${owner}` };
+    }
+    // A ScaleLab family named on the lead's niche or template is a conflict, never a tie-break.
+    const legacy = [familyFromText(lead.leadNiche), familyFromText(lead.emailTemplateId)].filter(Boolean);
+    if (legacy.length) {
+      return { family: CAMPAIGN_FAMILY.UNROUTED, confident: false, candidates: [managed.leadType, ...legacy], reason: 'campaign mapping is ambiguous' };
+    }
+    return { family: managed.leadType, confident: true, reason: '', managed: true, clientId: managed.clientId, campaignId: managed.id };
+  }
   const signals = [
     familyFromText(lead.leadNiche),
     familyFromText(lead.tradeType),
@@ -161,6 +202,7 @@ function activeVersionForLead(lead = {}, { evidenceOnly = false } = {}) {
     }
     throw new Error(resolved.reason || 'Campaign family is unrouted');
   }
+  if (resolved.managed) return managedCampaignVersion(managedCampaignForLead(lead), lead, { evidenceOnly });
   const id = String(lead.intendedCampaignVersion || '').trim() || ACTIVE_CAMPAIGN_VERSION[family];
   if (!id) throw new Error(`No active campaign version for ${family}`);
   const version = campaignVersion(id);
@@ -171,7 +213,31 @@ function activeVersionForLead(lead = {}, { evidenceOnly = false } = {}) {
   if (version.emailTemplateId && lead.emailTemplateId && version.emailTemplateId !== lead.emailTemplateId) {
     throw new Error(`Campaign version ${id} is incompatible with template ${lead.emailTemplateId}`);
   }
+  // The staffing family's active version is V1. A lead that names V2 anywhere
+  // (label, template, version, V2 sourcing profile) resolves to V2 or to
+  // nothing: a blank or V1 version never makes it a V1 send.
+  if (family === CAMPAIGN_FAMILY.STAFFING && isStaffingV2Marked(lead) && version.id !== STAFFING_CAMPAIGN_V2.id) {
+    throw new Error(`staffing V2 lead requires campaign version ${STAFFING_CAMPAIGN_V2.id}; it never falls back to V1`);
+  }
   return version;
+}
+
+// A managed campaign's version, in the shape ScaleLab versions have, so the
+// one attribution and delivery path serves both. Approved (or active) only.
+function managedCampaignVersion(campaign, lead = {}, { evidenceOnly = false } = {}) {
+  const { CAMPAIGN_STATUS } = require('./clients/campaigns');
+  const live = [CAMPAIGN_STATUS.APPROVED, CAMPAIGN_STATUS.ACTIVE].includes(campaign.status) && !campaign.archivedAt;
+  if (!live && !evidenceOnly) throw new Error(`Campaign ${campaign.id} is not approved`);
+  if (lead.emailTemplateId && campaign.emailTemplateId !== lead.emailTemplateId) {
+    throw new Error(`Campaign ${campaign.id} is incompatible with template ${lead.emailTemplateId}`);
+  }
+  return Object.freeze({
+    id: campaign.campaignVersion || campaign.id, label: campaign.label, niche: campaign.leadType,
+    emailTemplateId: campaign.emailTemplateId, family: campaign.leadType, clientId: campaign.clientId,
+    copyVersion: campaign.copyVersion || '', followUpCopyVersion: campaign.copyVersion || '',
+    subjectStrategy: campaign.subjectStrategy || '', personalizationStrategy: campaign.personalizationStrategy || '',
+    offerVersion: campaign.offerVersion || '', status: live ? 'active' : 'retired',
+  });
 }
 
 function coldSendAttribution(lead = {}, step = 1, sendMeta = {}, { evidenceOnly = false } = {}) {
@@ -291,7 +357,7 @@ function buildCampaignVersionIndex(leads = [], activities = []) {
 
 module.exports = {
   LEGACY_UNKNOWN, CAMPAIGN_FAMILY, CAMPAIGN_VERSIONS, ACTIVE_CAMPAIGN_VERSION,
-  familyForLead, resolveLeadFamily, campaignVersion, activeVersionForLead, coldSendAttribution,
+  familyForLead, resolveLeadFamily, campaignVersion, activeVersionForLead, coldSendAttribution, isManagedFamily,
   stageSequenceAttribution, attributionFromActivity, replyTouchAttribution,
   acquisitionAttribution, latestSendAttribution, promotionAttribution, parseMetadata,
   buildCampaignVersionIndex,

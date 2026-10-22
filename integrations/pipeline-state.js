@@ -35,7 +35,7 @@ const { latestResponseAt } = require('./prospect-response');
 // The sender's OWN ownership verdict. Reactivation asks the same question the
 // agent asks before it mails anyone, rather than keeping a second opinion.
 const { OWNER, BLOCKED_BY } = require('./automation-ownership');
-const { demoPairEventFor, hasUndeliveredDemoPair } = require('./demo-intent-state');
+const { hasUndeliveredDemoPair } = require('./demo-intent-state');
 const { ARCHIVE_MARKER_PREFIX, archiveReasonFromNotes, retiredOfferBlock } = require('./lead-archive');
 
 // ── AUTOMATION STATE ────────────────────────────────────────────────────────
@@ -548,6 +548,7 @@ const ACTION_TYPE = Object.freeze({
   CONTACT_SUPPLIED:      'contact_supplied',
   CONTACT_CHANGE_REVIEW: 'contact_change_review',
   WAIT_UNTIL_RETURN:     'wait_until_return',
+  REVIEW_OOO_RETURN:     'review_ooo_return',
   INVESTIGATE_REPLY:     'investigate',
   BOOKING_LINK_PENDING:  'booking_link_pending',
   SEQUENCE_STEP:         'sequence_step',
@@ -1320,6 +1321,7 @@ function deriveNextAction(boardLead, twin, context = {}) {
       [REPLY_ACTION.CONTACT_SUPPLIED]: ACTION_TYPE.CONTACT_SUPPLIED,
       [REPLY_ACTION.CONTACT_CHANGE_REVIEW]: ACTION_TYPE.CONTACT_CHANGE_REVIEW,
       [REPLY_ACTION.WAIT_UNTIL_RETURN]: ACTION_TYPE.WAIT_UNTIL_RETURN,
+      [REPLY_ACTION.OOO_REVIEW]: ACTION_TYPE.REVIEW_OOO_RETURN,
       [REPLY_ACTION.WAIT]: ACTION_TYPE.WAITING_PROSPECT,
       [REPLY_ACTION.INVESTIGATE]: ACTION_TYPE.INVESTIGATE_REPLY,
       [REPLY_ACTION.NO_ACTION_SUPPRESSED]: ACTION_TYPE.NONE_LOST,
@@ -1329,6 +1331,7 @@ function deriveNextAction(boardLead, twin, context = {}) {
       [REPLY_ACTION.REVISIT_LATER]: 'Revisit later', [REPLY_ACTION.DECISION_MAKER_FOLLOW_UP]: 'Follow up with decision maker',
       [REPLY_ACTION.CONTACT_SUPPLIED]: 'Review supplied contact', [REPLY_ACTION.CONTACT_CHANGE_REVIEW]: 'Review contact change',
       [REPLY_ACTION.WAIT_UNTIL_RETURN]: 'Wait until return', [REPLY_ACTION.WAIT]: 'Waiting — no human response required',
+      [REPLY_ACTION.OOO_REVIEW]: 'Review out-of-office return date',
       [REPLY_ACTION.RESPOND]: 'Respond to prospect', [REPLY_ACTION.INVESTIGATE]: 'Investigate reply evidence',
       [REPLY_ACTION.NO_ACTION_SUPPRESSED]: 'None — reply closed the conversation',
     };
@@ -1380,38 +1383,9 @@ function deriveNextAction(boardLead, twin, context = {}) {
     }
   }
 
-  // A qualifying demo is a durable prospect action, distinct from delivery.
-  // Once recorded it owns the automation slot until the canonical
-  // booking_link_sent event exists. Reply/meeting/hold/suppression/terminal
-  // branches above still win; ordinary cold cadence below never does.
-  if (hasUndeliveredDemoPair(twin || lead, activities)) {
-    if (permanentSuppression && permanentSuppression !== MANUAL_HOLD_TAG) {
-      return nothing(ACTION_TYPE.NONE_LOST, 'None — suppressed',
-        `suppressed (${permanentSuppression}); booking-link delivery is blocked`);
-    }
-    if (hasManualHold((twin && twin.notes) || '') && !manualHoldReleased((twin && twin.notes) || '', now)) {
-      return buildAction({
-        type: ACTION_TYPE.BLOCKED_BY_HOLD,
-        label: 'Booking link pending — blocked by manual hold',
-        dueAt: null, owner: ACTION_OWNER.HUMAN, status: ACTION_STATUS.BLOCKED,
-        source: 'canonical-demo-pair', reason: 'MANUAL HOLD supersedes pending demo intent',
-        needsAttention: true, now,
-      });
-    }
-    const blocker = context.bookingLinkBlocker || null;
-    const pair = demoPairEventFor(twin || lead, activities);
-    return buildAction({
-      type: ACTION_TYPE.BOOKING_LINK_PENDING,
-      label: blocker?.label || 'Booking-link follow-up pending',
-      dueAt: null, owner: ACTION_OWNER.AUTOMATION,
-      status: blocker ? ACTION_STATUS.BLOCKED : ACTION_STATUS.DUE_TODAY,
-      source: 'canonical-demo-pair',
-      reason: blocker?.reason || 'verified demo pair recorded; hardened booking-link delivery is pending',
-      needsAttention: Boolean(blocker), now,
-      intentOccurredAt: pair?.occurredAt || null,
-      blockedBy: blocker?.code || null,
-    });
-  }
+  // A recorded demo pair (the retired voice-receptionist demo) no longer owns
+  // an automation slot: the booking-link deliverer is gone, so advertising a
+  // pending automated send would be false. Its history stays on the timeline.
 
   // A board card in Follow Up is Pipeline-owned. Ordinary cold Email 2/3 is
   // structurally blocked by the sender even when the stale ColdEmail twin still

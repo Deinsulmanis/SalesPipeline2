@@ -34,13 +34,13 @@ function fireMinutes(expr, samples = 240) {
   return [...new Set(task.getNextRuns(samples).map(d => d.getMinutes()))].sort((a, b) => a - b);
 }
 
-test('the production intent backstop uses the offset expression', () => {
-  assert.match(server, /cron\.schedule\('1-59\/3 \* \* \* \*'/,
-    'the intent backstop must not return to a schedule that lands on :00/:30');
-  assert.doesNotMatch(server, /cron\.schedule\('\*\/3 \* \* \* \*'/,
-    "'*/3' fires at :00 and :30 and collides with the send window");
+test('no three-minute intent backstop is scheduled any more', () => {
+  // The demo-intent backstop is retired, so nothing ticks every three minutes
+  // and nothing can collide with a :00/:30 send window.
+  assert.doesNotMatch(server, /cron\.schedule\('1-59\/3 \* \* \* \*'/);
+  assert.doesNotMatch(server, /cron\.schedule\('\*\/3 \* \* \* \*'/);
+  assert.doesNotMatch(server, /spawnAgentIntentOnly|intentBackstop/);
 });
-
 test('1. the intent cron never fires at minute 00', () => {
   assert.ok(!fireMinutes(INTENT_CRON).includes(0), 'minute 0 must be free for the send window');
 });
@@ -102,7 +102,7 @@ test('6. no production send limit changed', () => {
 test('the skip-without-catch-up behaviour itself is unchanged', () => {
   // The repair removes the collision; it does not add replay. A genuinely busy
   // agent must still drop the window rather than burst later.
-  assert.match(server, /skipping this send window; no catch-up burst will be queued/);
+  assert.match(server, /event: 'send_tick_skipped'[\s\S]*reason: 'prior_run_active'/);
   assert.doesNotMatch(server, /pendingScheduledSendRuns|MAX_PENDING_SCHEDULED_SEND_RUNS/);
   assert.match(server, /if \(agentState\.running \|\| automationLaunchReserved\) \{/,
     'the shared mutex guard remains');

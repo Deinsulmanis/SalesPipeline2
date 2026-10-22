@@ -208,13 +208,13 @@ test('the replies endpoint is read-only, authenticated, and category-filtered', 
   // Records are built once in the shared snapshot; the endpoint filters them.
   assert.match(server, /buildReplyRecords\(leads, \{/);
   // Archived conversations are read in Archive; the Inbox filters the active records.
-  assert.match(body, /const activeRecords = dataset\.replyRecords\.filter\(record => !archivedIds\.has\(record\.leadId\)\)/);
+  assert.match(body, /const activeRecords = view\.replyRecords\.filter\(record => !archivedIds\.has\(record\.leadId\)\)/);
   assert.match(body, /filterReplyRecords\(activeRecords, category\)/);
   assert.ok(!/values\.(update|append|batchUpdate|clear)/.test(body), 'endpoint performs no sheet writes');
 });
 
 test('drill-down reuses canonical records instead of reclassifying in the browser', () => {
-  assert.match(browser, /fetch\('\/api\/coldemail\/replies\?category=all' \+ version\)/);
+  assert.match(browser, /fetch\('\/api\/coldemail\/replies\?category=all&client=' \+ encodeURIComponent\(clientId\) \+ version\)/);
   // No second category mapping in the browser: rows carry the server's category.
   assert.ok(!/INTERESTED|MEETING_REQUEST|NOT_INTERESTED/.test(browser.slice(
     browser.indexOf('function openReplyDrill'), browser.indexOf('function renderReplyDrill'))));

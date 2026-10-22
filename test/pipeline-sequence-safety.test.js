@@ -121,11 +121,11 @@ test('MANUAL HOLD blocks auto-enrollment including explicit lifecycle recovery',
     callState: { status: 'no_show' }, activities: [ev('meeting_no_show', '2026-09-01T18:00:00Z')] }).enroll, false);
 });
 
-test('CHECK_ONLY returns before every stage, intent, or cold send path', () => {
-  const run = agentSource.slice(agentSource.indexOf('async function run()'));
+test('CHECK_ONLY returns before every stage or cold send path', () => {
+  const run = agentSource.slice(agentSource.indexOf('async function runInner()'));
   const exit = run.indexOf("if (CHECK_ONLY) {");
   assert.ok(exit >= 0);
-  assert.match(run, /if \(INTENT_ONLY && !CHECK_ONLY\)/, 'check-only also disables the early intent send branch');
+  assert.doesNotMatch(agentSource, /INTENT_ONLY/, 'the retired intent-only send branch is gone');
   for (const sendPath of ['await runStageSequencePass(', 'const queued = selectQueued(all)']) {
     assert.ok(exit < run.indexOf(sendPath), `${sendPath} must be after the check-only exit`);
   }
@@ -139,7 +139,7 @@ test('CHECK_ONLY blocks both reply auto-response provider paths', () => {
 });
 
 test('restart recovery probes Gmail before provider delivery and checkpoints strictly', () => {
-  const pass = agentSource.slice(agentSource.indexOf('async function runStageSequencePass'), agentSource.indexOf('async function run()'));
+  const pass = agentSource.slice(agentSource.indexOf('async function runStageSequencePass'), agentSource.indexOf('async function runInner()'));
   assert.ok(pass.indexOf('findSuccessfulSequenceSend') < pass.indexOf('result = await sendEmail('));
   assert.match(pass, /await recordColdCallActivityStrict\(/);
   assert.match(pass, /eventType: SEQUENCE_EVENTS\.SEND_RESERVED/);
@@ -149,11 +149,11 @@ test('restart recovery probes Gmail before provider delivery and checkpoints str
 });
 
 test('stage successes reduce the same global capacity used by later cold sends', () => {
-  const run = agentSource.slice(agentSource.indexOf('async function run()'));
+  const run = agentSource.slice(agentSource.indexOf('async function runInner()'));
   assert.match(run, /const quotaState = \{ globalCount: todaySent \};/);
   assert.match(run, /todaySent = quotaState\.globalCount;/);
   assert.match(run, /dailyRemaining = Math\.max\(0, DAILY_SEND_LIMIT - todaySent\);/);
-  const pass = agentSource.slice(agentSource.indexOf('async function runStageSequencePass'), agentSource.indexOf('async function run()'));
+  const pass = agentSource.slice(agentSource.indexOf('async function runStageSequencePass'), agentSource.indexOf('async function runInner()'));
   assert.match(pass, /quotaState\.globalCount = todaySent;/);
 });
 

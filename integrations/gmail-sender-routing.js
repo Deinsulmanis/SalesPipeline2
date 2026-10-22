@@ -10,6 +10,7 @@ const { getClient } = require('./clients/registry');
 const { checkClientConsistency } = require('./clients/ownership');
 const { senderServesCampaign } = require('./clients/sender-policy');
 const { activityBelongsToLead } = require('./lead-activity');
+const { applyColdInboxCap } = require('./cold-delivery-policy');
 
 function parseMetadata(value) {
   try { return value && typeof value === 'object' ? value : JSON.parse(String(value || '{}')); }
@@ -27,15 +28,25 @@ function configuredSenders(env = process.env) {
   };
   const secondary = withDefaultInboxes(parseRegistry(env.GMAIL_INBOX_REGISTRY_JSON || '[]', env), env).map(entry => ({
     ...entry, oauthClient: 'secondary', provider: 'gmail',
-    perRunLimit: Number(entry.perRunLimit || DEFAULT_INBOX_PER_RUN_LIMIT),
+    // A managed client's 0/run is a real zero (a dormant inbox); ScaleLab rows
+    // keep the existing "0 or blank means the default" reading.
+    perRunLimit: entry.clientId && !getClient(entry.clientId).isDefault
+      ? Number(entry.perRunLimit ?? DEFAULT_INBOX_PER_RUN_LIMIT)
+      : Number(entry.perRunLimit || DEFAULT_INBOX_PER_RUN_LIMIT),
     observerEnabled: entry.observerEnabled !== false,
     credentialConfigured: Boolean(env[entry.tokenEnv]),
   }));
   const senders = [primary, ...secondary].map(sender => ({
     ...sender,
     sendEligible: sender.status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured && !sender.policyBlockers?.length,
+    // Managed inboxes only: operationally ready (may be assigned and queued
+    // leads) without implying send authority. ScaleLab rows carry no new field.
+    ...(sender.preparationBlockers ? {
+      preparationReady: sender.status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured && !sender.preparationBlockers.length,
+    } : {}),
   }));
-  return applySenderRuntime(senders, parseRuntimeOverlay(env.GMAIL_SENDER_RUNTIME_JSON || '[]'));
+  // Temporary per-inbox ceiling (cold-delivery-policy.js): lowers, never raises.
+  return applyColdInboxCap(applySenderRuntime(senders, parseRuntimeOverlay(env.GMAIL_SENDER_RUNTIME_JSON || '[]')), env);
 }
 
 function observableSenders(senders = []) {
@@ -44,7 +55,11 @@ function observableSenders(senders = []) {
     && sender.credentialConfigured);
 }
 
-function allowedForLead(sender, lead = {}) {
+// `preparation` is for assignment, balancing and queueing only: a managed
+// client's inbox that is operationally ready but held by the client's final
+// send authorization may take leads. The send path never passes it, so
+// delivery still requires sendEligible.
+function allowedForLead(sender, lead = {}, { preparation = false } = {}) {
   // Client isolation before anything else, for pinned, assigned and dynamic
   // choices alike: a sender serves only its own client's leads, and there is
   // no cross-client fallback. The lead's stored senderInboxId is set aside
@@ -57,7 +72,8 @@ function allowedForLead(sender, lead = {}) {
   // A managed client's sender also serves only the campaigns its client's
   // senderPolicy allows it; a lead on any other campaign gets no sender.
   if (!getClient(owner.clientId).isDefault) {
-    return sender.sendEligible === true && senderServesCampaign(sender, lead.intendedCampaignVersion || lead.campaign);
+    const ready = sender.sendEligible === true || (preparation && sender.preparationReady === true);
+    return ready && senderServesCampaign(sender, lead.intendedCampaignVersion || lead.campaign);
   }
   // A staffing-only mailbox serves the staffing campaign's canonical niche and
   // nothing else: not dental, roofing, blank, or a lookalike "*staffing" niche.

@@ -19,11 +19,11 @@ const {
 const { planOfferRetirement, verifyProtectedRecords, sendableNow } = require('../integrations/offer-retirement');
 const { routedLeadReady, validateRoute, templateById } = require('../integrations/campaign-routing');
 const { guardProviderSend } = require('../integrations/send-safety-revalidate');
+const { googleRecipient } = require('../test-support/google-recipient');
 const { deriveAutomationOwnership, OWNER, BLOCKED_BY } = require('../integrations/automation-ownership');
 const { planSenderRebalance } = require('../integrations/sender-balance');
 const { sequenceAllowedForLead } = require('../integrations/stage-sequences');
 const { promotionDecision, PROMOTION_TRIGGER, resolvePromotionIdentity } = require('../integrations/promotion-policy');
-const { pendingIntentWork } = require('../integrations/intent-backstop');
 const { CAMPAIGN_VERSIONS } = require('../integrations/campaign-versions');
 const { STAFFING_CAMPAIGN } = require('../integrations/staffing-campaign');
 const { STAFFING_RENDER_OPTIONS } = require('../test-support/staffing-mail');
@@ -43,7 +43,7 @@ const SEND_ENV = Object.freeze({
   SEND_AUTHORIZED_TOKEN: 'token', SEND_WORKER_ROLE: 'outreach-sender', SEND_LOCK_ENABLED: 'true', ...STAFFING_ENV,
 });
 const gate = (snapshot, current = snapshot, purpose = 'cold') => guardProviderSend(snapshot,
-  { env: SEND_ENV, loadFreshState: async () => ({ current, suppressedEmails: new Set() }) }, { purpose });
+  { env: SEND_ENV, classifyRecipient: googleRecipient, loadFreshState: async () => ({ current, suppressedEmails: new Set() }) }, { purpose });
 
 // ── production shapes ───────────────────────────────────────────────────────
 const TRADE_SELECT = Object.freeze({ id: 'mq4vq4pw2t0w6u6qwmp', type: 'trade', first: 'christopher', last: 'cook',
@@ -196,7 +196,6 @@ test('6. an archived roofing or med spa lead cannot be reactivated by an observe
       identity: resolvePromotionIdentity(archived, [], { coldEmailTwinCount: 1 }), meetingAt: '2026-10-05T17:00:00.000Z', suppressedEmails: new Set() });
     assert.equal(decision.shouldPromote, false, trigger);
   }
-  assert.equal(pendingIntentWork({ leads: [archived, roofingLead()], plays: [], activities: [], companyKey: v => v }), 0);
 });
 
 // ── 7–10: the protected clients ────────────────────────────────────────────

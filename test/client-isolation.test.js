@@ -68,12 +68,14 @@ test('registry: ScaleLab and Jole resolve; unknown and blank are rejected', () =
   assert.deepEqual(listClients().map(client => client.id).sort(), ['jole', 'scalelab']);
 });
 
-test('registry: Jole is a managed client, active, no platform access, sending disabled', () => {
+test('registry: Jole is a managed client, active, no platform access, sending key on but not authorized', () => {
   const jole = getClient('jole');
   assert.equal(jole.displayName, 'Jole BTX LLC');
   assert.equal(jole.lifecycleStatus, 'active');
   assert.equal(jole.active, true);
-  assert.equal(jole.sending.enabled, false);
+  assert.equal(jole.sending.enabled, true, 'reviewed key on for launch preparation');
+  assert.equal(jole.sending.requiresEnvAuthorization, true, 'the env key stays required');
+  assert.equal(clientSendBlock('jole', {}).code, 'client_sending_disabled', 'not authorized without CLIENT_SENDING_AUTHORIZED');
   assert.equal(jole.platformAccess, 'none');
   assert.equal(jole.representative.name, 'Jorge Guerrero');
   assert.equal(jole.representative.operatesPlatform, false);
@@ -203,9 +205,11 @@ test('routing: validateRoute refuses cross-client sender, template and campaign'
   assert.equal(joleOnScalelab.code, 'client_ownership_conflict');
   const campaignMismatch = validateRoute({ niche: 'dental', senderInboxId: 'primary', emailTemplateId: 'dental-guarantee-v1', inboxes, campaignVersionId: 'jole-btx-employer-acquisition' });
   assert.equal(campaignMismatch.code, 'client_ownership_conflict');
-  // Same client end to end: isolation passes; the draft template's readiness is what refuses.
+  // Same client end to end: isolation passes and the approved campaign routes.
+  // Routing is not sending: routedLeadReady (below) and the send gate still
+  // refuse while Jole's client switch is off.
   const jole = validateRoute({ niche: 'jole_employer', senderInboxId: 'jole_test', emailTemplateId: 'jole-industrial-employer-v1', inboxes, campaignVersionId: 'jole-btx-employer-acquisition' });
-  assert.equal(jole.ok, false); assert.equal(jole.code, undefined); assert.match(jole.reason, /not deployed or approved/);
+  assert.equal(jole.ok, true); assert.equal(jole.clientId, 'jole');
   // Same client, retired offer: refused on the offer, not on isolation.
   assert.equal(validateRoute({ niche: 'dental', senderInboxId: 'primary', emailTemplateId: 'dental-guarantee-v1', inboxes }).code, 'offer_retired');
 });
@@ -222,10 +226,11 @@ test('routing: inbox rows without clientId (as sender-balance passes them) still
   }
 });
 
-test('routing: Jole campaigns are not queueable while draft/placeholder', () => {
-  assert.match(validateCampaignVersionRoute({ niche: 'jole_employer', emailTemplateId: 'jole-industrial-employer-v1', campaignVersionId: 'jole-btx-employer-acquisition' }).reason, /draft/);
-  assert.match(validateCampaignVersionRoute({ niche: 'jole_employer', emailTemplateId: 'jole-gulf-industrial-v1', campaignVersionId: 'JOLE_GULF_INDUSTRIAL' }).reason, /disabled/);
-  assert.match(validateCampaignVersionRoute({ niche: 'jole_employer', emailTemplateId: 'jole-shipyard-v1', campaignVersionId: 'JOLE_SHIPYARD' }).reason, /disabled/);
+test('routing: only the approved Jole campaign is queueable; archived placeholders never are', () => {
+  assert.equal(validateCampaignVersionRoute({ niche: 'jole_employer', emailTemplateId: 'jole-industrial-employer-v1', campaignVersionId: 'jole-btx-employer-acquisition' }).ok, true);
+  assert.match(validateCampaignVersionRoute({ niche: 'jole_employer', emailTemplateId: 'jole-gulf-industrial-v1', campaignVersionId: 'JOLE_GULF_INDUSTRIAL' }).reason, /archived/);
+  assert.match(validateCampaignVersionRoute({ niche: 'jole_employer', emailTemplateId: 'jole-shipyard-v1', campaignVersionId: 'JOLE_SHIPYARD' }).reason, /archived/);
+  assert.match(validateCampaignVersionRoute({ niche: 'jole_employer', emailTemplateId: 'jole-dc-mission-critical-v1', campaignVersionId: 'JOLE_DC_MISSION_CRITICAL' }).reason, /archived/);
 });
 
 test('routing: routedLeadReady refuses Jole leads through their own registry and never the legacy bypass', () => {
@@ -234,10 +239,11 @@ test('routing: routedLeadReady refuses Jole leads through their own registry and
   const original = process.env.GMAIL_INBOX_REGISTRY_JSON;
   process.env.GMAIL_INBOX_REGISTRY_JSON = JSON.stringify([{ id: 'jole_test', email: 'outreach@jole-test.invalid', status: 'warming', tokenEnv: 'GMAIL_JOLE_TEST_TOKEN_JSON', dailyLimit: 0, clientId: 'jole' }]);
   try {
-    // Registered Jole sender: ownership passes; the draft campaign refuses.
+    // Registered Jole sender: ownership and the approved campaign pass; Jole's
+    // client sending switch refuses.
     const verdict = routedLeadReady(joleLead({ routingRequired: '' }), {});
     assert.equal(verdict.ok, false);
-    assert.equal(verdict.code, 'campaign_draft');
+    assert.equal(verdict.code, 'client_sending_disabled');
     assert.equal(routedLeadReady(joleLead({ tradeType: 'staffing' }), {}).code, 'client_ownership_conflict');
     // A legacy lead holding a Jole sender id is refused before the legacy bypass.
     assert.equal(routedLeadReady({ ...legacyBlank(), senderInboxId: 'jole_test' }, {}).code, 'client_ownership_conflict');
@@ -260,20 +266,19 @@ test('final gate: JOLE SEND DISABLE — blocked even when every other requiremen
     clientSuppression: { available: true, entries: [] },
   });
   assert.equal(verdict.allowed, false);
-  assert.equal(verdict.code, 'client_sending_disabled', 'active client, sending switch off');
-  // Naming Jole in the env allow-list does not override the source-controlled switch.
-  const envOnly = evaluateFreshSendSafety(lead, lead, new Set(), {
-    purpose: 'cold', env: { CLIENT_SENDING_AUTHORIZED: 'jole' }, senderInboxId: 'jole_test', senders: SENDERS,
-    clientSuppression: { available: true, entries: [] },
-  });
-  assert.equal(envOnly.code, 'client_sending_disabled');
-  assert.equal(clientSendBlock('jole', { CLIENT_SENDING_AUTHORIZED: 'jole' }).code, 'client_sending_disabled');
+  assert.equal(verdict.code, 'client_sending_disabled', 'active client, final env authorization off');
+  // CLIENT_SENDING_AUTHORIZED is the final launch switch: with the reviewed
+  // config key already on, naming Jole is what authorizes it.
+  assert.equal(clientSendBlock('jole', { CLIENT_SENDING_AUTHORIZED: 'jole' }), null);
+  assert.equal(clientSendBlock('jole', { CLIENT_SENDING_AUTHORIZED: 'scalelab' }).code, 'client_sending_disabled', 'only naming jole counts');
   const pending = require('../test-support/client-lifecycle').pendingJoleForTest();
   try {
     assert.equal(clientSendBlock('jole', { CLIENT_SENDING_AUTHORIZED: 'jole' }).code, 'client_inactive');
   } finally { pending(); }
-  // Even once activated, the send switch stays off until a reviewed commit enables it.
-  const restore = require('../test-support/client-lifecycle').activateJoleForTest();
+  // Two independent keys: with the reviewed config key off, the env key alone authorizes nothing.
+  const restore = require('../test-support/client-lifecycle').activateJoleForTest({
+    sending: Object.freeze({ enabled: false, requiresEnvAuthorization: true, clientSuppressionRequired: true }),
+  });
   try {
     assert.equal(clientSendBlock('jole', { CLIENT_SENDING_AUTHORIZED: 'jole' }).code, 'client_sending_disabled');
   } finally { restore(); }

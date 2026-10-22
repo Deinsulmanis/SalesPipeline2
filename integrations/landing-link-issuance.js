@@ -15,7 +15,7 @@
  * missing issuance from it.
  */
 
-const { STAFFING_CAMPAIGN, isStaffingCampaign } = require('./staffing-campaign');
+const { STAFFING_CAMPAIGN, isStaffingCampaign, staffingCampaignFor, isStaffingCampaignVersionId } = require('./staffing-campaign');
 const { ordinaryColdActionId, responseActionId } = require('./outbound-action-id');
 const {
   LANDING_LINK_SOURCE, landingTrackingState, planLandingLink, coldStepPriorAttempts,
@@ -31,7 +31,11 @@ const LANDING_REPLY_TEMPLATE = Object.freeze({
 });
 const WARM_REPLY_TEMPLATE_ID = 'staffing_warm_reply';
 
-/** Follow-up #2 plan, or null for anything that isn't a staffing step 2. */
+/**
+ * Follow-up #2 plan, or null for anything that isn't a V1 staffing step 2.
+ * Staffing V2's Touch 2 deliberately carries no landing-page link, so it never
+ * gets a plan, an issuance or a recorded link.
+ */
 function staffingColdStepLandingPlan({ lead, step, activities = [], env = process.env }) {
   if (!lead || lead.emailTemplateId !== STAFFING_CAMPAIGN.emailTemplateId || Number(step) !== 2) return null;
   return planLandingLink({
@@ -61,7 +65,11 @@ function buildIssuanceRecord({ plan, actionId, lead, triggerAction = null, campa
     lead_id: String(lead.id),
     source: plan.source,
     trigger_action: triggerAction,
-    campaign_id: STAFFING_CAMPAIGN.id,
+    // The lead's own staffing version, so a V2 link is never recorded as V1.
+    // The reconciler knows only the lead id; the send's recorded campaign
+    // version names the campaign then.
+    campaign_id: (staffingCampaignFor(lead)
+      || (isStaffingCampaignVersionId(campaignVersion) ? { id: campaignVersion } : STAFFING_CAMPAIGN)).id,
     campaign_version: campaignVersion || null,
     template_id: String(templateId || ''),
     template_version: String(templateVersion || ''),

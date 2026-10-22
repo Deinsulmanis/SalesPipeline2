@@ -9,7 +9,8 @@
  * Every client-scoped route resolves :clientId through the registry first
  * (unknown ids are 404), scopes the corpus to that client server side, and
  * reads ledger rows with a client_id filter in the database query. Nothing
- * here sends, queues or reserves.
+ * here sends, queues or reserves. The one lead write (leads/import) adds
+ * Import-stage leads with no sender.
  */
 
 const express = require('express');
@@ -28,15 +29,33 @@ const ledger = require('./ledger');
 const { validateClientLeadImport } = require('./lead-import');
 const { buildClientPipeline } = require('./pipeline');
 const { buildClientInbox, buildClientSettings } = require('./workspace-views');
+const { buildClientConversationDetail } = require('./conversation-detail');
+const { clientPersonalizationState } = require('./client-email');
+const { readLeadProfile } = require('./lead-profile');
+const { createSupabaseDailyReportStore } = require('./daily-report-store');
+const { createJoleDailyReportService, reportDate, REPORT_TITLE, CLIENT_ID: DAILY_REPORT_CLIENT_ID } = require('./daily-report');
 
 function registerClientRoutes(app, {
   requireAuth, loadDataset, getStore, senders, routedLeadReady, env = process.env, log = console,
   // Server inbox status rows (all clients; scoped per client here) and the
   // service send ceilings. Both optional: Settings degrades to config only.
   senderStatus = async () => [], globalCapacity = () => ({ dailyLimit: 0, windowLimit: 0 }),
+  // Managed-client lead import (lead-import.js importClientLeads, bound to
+  // server storage). Absent, the import route answers 503.
+  importLeads = null,
+  // Import batches store (import-batches.js); absent, the imports view is empty.
+  importBatches = () => null,
+  reportStore = null, startReportScheduler = true,
 }) {
   const router = express.Router();
   router.use(requireAuth);
+  const dailyReportStore = reportStore || createSupabaseDailyReportStore({ env });
+  const dailyReportService = createJoleDailyReportService({
+    store: dailyReportStore, loadDataset,
+    listMeetings: clientId => getStore().listMeetings(clientId),
+    senders, senderStatus, env, log,
+  });
+  if (startReportScheduler) dailyReportService.start();
 
   const clientParam = (req, res, next) => {
     const resolved = resolveClientId(req.params.clientId);
@@ -69,15 +88,19 @@ function registerClientRoutes(app, {
 
   router.get('/', (_req, res) => {
     res.json({
-      clients: listClients().map(config => ({ ...publicClient(config), sending: clientSendState(config.id, env) })),
+      clients: listClients().map(config => ({ ...publicClient(config), sending: clientSendState(config.id, env),
+        // The dashboard shows the daily report from this flag, never from a client name.
+        dailyReport: config.id === DAILY_REPORT_CLIENT_ID })),
     });
   });
 
   router.get('/:clientId', clientParam, (req, res) => {
     res.json({
-      client: publicClient(req.client),
+      client: { ...publicClient(req.client), dailyReport: req.client.id === DAILY_REPORT_CLIENT_ID },
       sending: clientSendState(req.client.id, env),
       campaigns: campaignsForClient(req.client.id).map(campaign => ({ ...campaign, sendable: campaignSendable(campaign) })),
+      archivedCampaigns: campaignsForClient(req.client.id, { includeArchived: true }).filter(campaign => campaign.archivedAt)
+        .map(campaign => ({ id: campaign.id, label: campaign.label, archivedAt: campaign.archivedAt })),
     });
   });
 
@@ -93,6 +116,31 @@ function registerClientRoutes(app, {
     } catch (error) { fail(res, error); }
   });
 
+  // A stored, immutable operator snapshot. GET never computes or writes one.
+  router.get('/:clientId/daily-report', clientParam, async (req, res) => {
+    if (req.client.id !== DAILY_REPORT_CLIENT_ID) return res.status(404).json({ error: 'No daily report for this client', code: 'report_not_found' });
+    if (!dailyReportStore.enabled) return res.status(503).json({ error: 'Daily reports are not available yet', code: 'report_unavailable' });
+    const date = String(req.query.date || reportDate(new Date()));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(422).json({ error: 'date must be YYYY-MM-DD', code: 'invalid_date' });
+    try {
+      const report = await dailyReportStore.get(req.client.id, date);
+      if (!report) return res.status(404).json({ error: 'No frozen report for this date yet', code: 'report_not_found' });
+      res.json({ title: REPORT_TITLE, report });
+    } catch (error) { fail(res, error); }
+  });
+
+  // What an operator needs to see of a lead's research and personalization.
+  const leadResearchView = lead => {
+    const profile = readLeadProfile(lead);
+    if (!profile) return { personalization: { status: 'no_profile' } };
+    return {
+      title: profile.contact?.title || '', sector: profile.company?.sector || '', tier: profile.company?.tier || '',
+      hiringSite: profile.hiring?.site || '', siteTie: profile.hiring?.siteTie || '', catchAll: profile.email?.domainCatchAll ?? null,
+      roles: (profile.hiring?.roles || []).map(role => ({ raw: role.raw, clean: role.clean, status: role.status })),
+      personalization: clientPersonalizationState(lead, { env }),
+    };
+  };
+
   router.get('/:clientId/leads', clientParam, async (req, res) => {
     try {
       const dataset = await loadDataset({ force: req.query.refresh === '1' });
@@ -105,6 +153,7 @@ function registerClientRoutes(app, {
           stage: lead.stage, emailStatus: lead.emailStatus, emailStep: lead.emailStep,
           campaign: lead.intendedCampaignVersion || lead.campaign, senderInboxId: lead.senderInboxId,
           routingReady: routedLeadReady(lead, env).ok,
+          ...leadResearchView(lead),
         })),
       });
     } catch (error) { fail(res, error); }
@@ -131,6 +180,30 @@ function registerClientRoutes(app, {
     } catch (error) { fail(res, error); }
   });
 
+  // One conversation, for the Inbox detail drawer. Read-only, and only for a
+  // managed client: the lead must be this client's, and everything shown of it
+  // is scoped again in buildClientConversationDetail.
+  router.get('/:clientId/inbox/:leadId', clientParam, async (req, res) => {
+    if (req.client.replyPolicy?.mode !== 'managed') {
+      return res.status(404).json({ error: 'No managed conversations for this client', code: 'conversation_not_found' });
+    }
+    try {
+      const dataset = await loadDataset({ force: req.query.refresh === '1' });
+      const lead = leadsForClient(activeLeads(dataset), req.client.id).find(item => String(item.id) === String(req.params.leadId));
+      if (!lead) return res.status(404).json({ error: 'No such conversation for this client', code: 'conversation_not_found' });
+      let clientEntries = null;
+      const store = getStore();
+      if (store?.enabled) {
+        try { clientEntries = { available: true, entries: await store.listClientSuppressions(req.client.id) }; } catch (error) { clientEntries = { available: false, error: error.message }; }
+      }
+      res.json(buildClientConversationDetail({
+        clientId: req.client.id, lead, activities: dataset.activities || [], ledger: await ledgerFor(req.client.id),
+        senders: senders(), suppression: { suppressedEmails: dataset.suppressedEmails || new Set(), clientEntries },
+        routedLeadReady, env,
+      }));
+    } catch (error) { fail(res, error); }
+  });
+
   router.get('/:clientId/settings', clientParam, async (req, res) => {
     try {
       const dataset = await loadDataset({ force: false });
@@ -151,6 +224,39 @@ function registerClientRoutes(app, {
         existingLeads: dataset.leads || [], suppressedEmails: dataset.suppressedEmails || new Set(),
       }));
     } catch (error) { fail(res, error); }
+  });
+
+  // The write. The body names the client a second time (confirmClientId), so a
+  // mistyped URL cannot land leads in another client. One import per client at
+  // a time; a retry after a timeout is safe because already-written rows come
+  // back as duplicates. dryRun:true runs every check against the same fresh
+  // corpus and writes nothing.
+  const importsInFlight = new Set();
+  router.post('/:clientId/leads/import', clientParam, async (req, res) => {
+    if (typeof importLeads !== 'function') return res.status(503).json({ error: 'client lead import is not configured', code: 'import_unavailable' });
+    if (req.client.isDefault) return res.status(422).json({ error: 'ScaleLab leads use the existing import', code: 'use_legacy_import' });
+    if (String(req.body?.confirmClientId || '') !== req.client.id) {
+      return res.status(422).json({ error: `confirmClientId must be exactly "${req.client.id}"`, code: 'client_scope_required' });
+    }
+    if (importsInFlight.has(req.client.id)) return res.status(409).json({ error: 'an import for this client is already running', code: 'import_in_progress' });
+    importsInFlight.add(req.client.id);
+    try {
+      const result = await importLeads({
+        clientId: req.client.id, campaignId: req.body?.campaignId, rows: req.body?.rows, dryRun: req.body?.dryRun === true,
+      });
+      log.log(JSON.stringify({
+        event: 'client_leads_imported', client_id: result.clientId, campaign_id: result.campaignId, dry_run: result.dryRun,
+        received: result.received, accepted: result.accepted, rejected: result.rejected, written: result.written, by: operator(req),
+      }));
+      res.json(result);
+    } catch (error) { fail(res, error); } finally { importsInFlight.delete(req.client.id); }
+  });
+
+  router.get('/:clientId/imports', clientParam, async (req, res) => {
+    const store = importBatches();
+    if (!store?.enabled) return res.json({ clientId: req.client.id, available: false, batches: [] });
+    try { res.json({ clientId: req.client.id, available: true, batches: await store.listForClient(req.client.id) }); }
+    catch (error) { fail(res, error); }
   });
 
   // ── Ledger ────────────────────────────────────────────────────────────────

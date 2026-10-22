@@ -11,7 +11,7 @@ const agent = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), '
 
 test('a busy safe pass skips the scheduled window without creating a catch-up burst', () => {
   assert.doesNotMatch(server, /pendingScheduledSendRuns|MAX_PENDING_SCHEDULED_SEND_RUNS/);
-  assert.match(server, /skipping this send window; no catch-up burst will be queued/);
+  assert.match(server, /event: 'send_tick_skipped'[\s\S]*reason: 'prior_run_active'/);
   assert.doesNotMatch(server, /Agent already running — skipping this tick/);
 });
 
@@ -29,8 +29,10 @@ test('late-refused candidates do not consume the successful-send window target',
   assert.match(batching, /consumeSendingWindowSuccess\(windowQuota, sender\.id\)/);
   assert.match(batching, /sendingWindowRemainingBySender\(windowQuota\)/);
   assert.match(batching, /while \(index < batch\.length && sent < effectiveCap/);
-  assert.ok((batching.match(/if \(sent >= effectiveCap \|\| sendingWindowSnapshot\(windowQuota\)\.globalRemaining <= 0\) break;/g) || []).length >= 2,
-    'ordinary paths retain the remaining global daily ceiling as well as the window ceiling');
+  assert.match(batching, /if \(sent >= effectiveCap \|\| !senderMayStillSend\(sender\)/,
+    'planned sender lanes retain the global success ceiling');
+  assert.match(batching, /if \(sent >= effectiveCap \|\| sendingWindowSnapshot\(windowQuota\)\.globalRemaining <= 0\) break;/,
+    'unowned follow-ups retain the global success ceiling');
   assert.ok((batching.match(/sent\+\+/g) || []).length >= 2, 'only successful provider paths advance reporting');
 });
 
@@ -86,11 +88,11 @@ test('scheduler passes a strict 6-per-inbox ceiling with derived totals', () => 
 test('ordinary and stage sends consume the same window quota after provider success', () => {
   const setup = agent.slice(agent.indexOf('const windowQuota = createSendingWindowQuota'), agent.indexOf('// Phase 1 — new sends'));
   assert.match(setup, /runStageSequencePass[\s\S]*windowQuota/);
-  assert.match(setup, /runIntentTriggerPass[\s\S]*windowQuota/);
+  assert.doesNotMatch(agent, /runIntentTriggerPass/, 'the retired demo-intent pass no longer sends');
   const ordinary = agent.slice(agent.indexOf('async function deliverOrdinaryColdStep'), agent.indexOf('// Phase 4: mark a lead'));
   assert.ok(ordinary.lastIndexOf('await sendEmail') < ordinary.lastIndexOf('onProviderSuccess'));
   assert.ok(ordinary.lastIndexOf('onProviderSuccess') < ordinary.lastIndexOf('markSent'));
-  const stage = agent.slice(agent.indexOf('async function runStageSequencePass'), agent.indexOf('async function run()'));
+  const stage = agent.slice(agent.indexOf('async function runStageSequencePass'), agent.indexOf('async function runInner()'));
   assert.ok(stage.lastIndexOf('await sendEmail') < stage.lastIndexOf('consumeSendingWindowSuccess'));
   assert.ok(stage.lastIndexOf('consumeSendingWindowSuccess') < stage.lastIndexOf('persistSequenceStep'));
 });

@@ -5,7 +5,11 @@ const { sendSuppressionReason } = require('./pipeline-state');
 const { leadHasReply } = require('./reply-analytics');
 const { deriveAutomationOwnership } = require('./automation-ownership');
 const { resolveLeadClient } = require('./clients/ownership');
-const { isStaffingCampaign, staffingReviewStatus, renderStaffingEmail, validateStaffingEmail } = require('./staffing-campaign');
+const {
+  isStaffingCampaign, staffingReviewStatus, renderStaffingEmail, validateStaffingEmail, staffingV2SendBlock,
+} = require('./staffing-campaign');
+const { hasStaffingHoldMarker } = require('./staffing-hold');
+const { isClientTemplateId, renderClientLeadEmail, validateClientLeadEmail } = require('./clients/client-email');
 
 const normalize = value => String(value || '').trim().toLowerCase();
 
@@ -48,7 +52,19 @@ function queueEligibility(lead, {
     sendingEnabled: true, suppressionReason: item => sendSuppressionReason(item, { suppressedEmails }),
   });
   if (!ownership.sendAllowed || ownership.owner !== 'cold_automation') return { ok: false, reason: ownership.reason, ownership };
+  // A managed client's lead is admitted only when every touch of its client's
+  // copy renders from its stored, reviewed, current personalization.
+  if (isClientTemplateId(lead.emailTemplateId)) {
+    try {
+      for (const step of [1, 2, 3]) {
+        const email = renderClientLeadEmail(lead, step, { env: env || process.env, activities: mine });
+        const error = validateClientLeadEmail(lead, email, step);
+        if (error) return { ok: false, reason: error };
+      }
+    } catch (error) { return { ok: false, reason: error.message }; }
+  }
   if (normalize(lead.leadNiche).includes('staffing')) {
+    if (hasStaffingHoldMarker(lead)) return { ok: false, reason: 'staffing hold requires explicit reviewed release' };
     if (!isStaffingCampaign(lead)) return { ok: false, reason: 'staffing campaign attribution conflicts' };
     const review = staffingReviewStatus(lead);
     if (review && (review.fit !== 'ICP_CONFIRMED' || !review.routingReady
@@ -76,6 +92,7 @@ const AUTO_SENDER = 'auto';
 
 async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaignVersionId }, {
   loadState, validateSelection, applyChanges, appendActivity, appendActivities, assignSenders,
+  admitRecipients, coldSenderAllowed,
   now = () => new Date().toISOString(),
 }) {
   const state = await loadState();
@@ -91,13 +108,36 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
     assignments = assigned.assignments;
   }
   const senderFor = lead => (assignments ? assignments.get(lead.id) : senderInboxId);
+  // Temporary recipient-provider admission (cold-delivery-policy.js): a lead
+  // whose mailbox is not positively Google-hosted is not admitted. It is a
+  // hold, not a verdict on the lead — nothing about it is written.
+  if (admitRecipients) {
+    const admission = await admitRecipients(selected);
+    if (admission.held.length) {
+      const first = admission.held[0];
+      return { status: 409, holdReason: first.holdReason, held: admission.held,
+        error: `${first.leadId}: ${first.holdReason} (${first.domain || 'no domain'}); ${admission.held.length} of ${selected.length} selected leads are held by the recipient-provider policy` };
+    }
+  }
   // Validate the entire selection before any mutation. A repeated request with
   // exactly the same route is a no-op, not another enrollment/audit event.
   for (const lead of selected) {
     const eligible = queueEligibility(lead, state);
     if (!eligible.ok) return { status: 409, error: `${lead.company || lead.id}: ${eligible.reason}` };
+    // A staffing lead is queued only under its own staffing version: choosing
+    // the other version here can never move a V1 lead into V2, or the reverse.
+    if (isStaffingCampaign(lead) && !isStaffingCampaign({ ...lead, emailTemplateId, intendedCampaignVersion: campaignVersionId })) {
+      return { status: 422, error: `${lead.company || lead.id}: the selected staffing campaign version is not this lead's campaign` };
+    }
     const route = validateSelection(lead, senderFor(lead));
     if (!route.ok) return { status: 422, error: route.reason };
+    if (coldSenderAllowed && !coldSenderAllowed(senderFor(lead))) {
+      return { status: 422, error: `${senderFor(lead)} is not in the Gmail-healthy cold sender pool or is on the cold sender hold list` };
+    }
+    // A V2 lead is queued only as itself, once routed: V2 campaign, template and
+    // version, structured roles + market, and V2 live. A refusal writes nothing.
+    const v2Block = staffingV2SendBlock({ ...lead, emailTemplateId, intendedCampaignVersion: campaignVersionId });
+    if (v2Block) return { status: 422, error: `${lead.company || lead.id}: ${v2Block}` };
   }
   const patchFor = lead => ({ stage: 'Queued', senderInboxId: senderFor(lead), emailTemplateId, routingRequired: 'true', intendedCampaignVersion: campaignVersionId });
 

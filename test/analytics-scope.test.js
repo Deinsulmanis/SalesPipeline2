@@ -217,7 +217,7 @@ test('13. archived records never appear in active funnel stages; Current campaig
   assert.ok(!Object.values(lifetimeActive.stageLeadIds).flat().some(id => /^[drm]\d$/.test(id)), 'Lifetime in the active scope is staffing lifetime');
   const historical = buildFunnelAnalytics({ leads, activities, currentVersion: currentLiveCampaignVersion() }, { version: 'lifetime' });
   assert.ok(historical.stageLeadIds.sent.includes('d1'), 'the historical scope keeps them');
-  assert.match(serverSrc, /currentVersion: currentLiveCampaignVersion\(\),\n    \}, req\.query\);/);
+  assert.match(serverSrc, /currentVersion: view\?\.clientId === 'jole' \? '' : currentLiveCampaignVersion\(\),\n    \}, req\.query\);/);
   assert.ok(!/currentVersion: ACTIVE_CAMPAIGN_VERSION\.dental_ai_receptionist/.test(serverSrc), 'no surface defaults to the retired dental campaign');
 });
 
@@ -307,7 +307,7 @@ test('17. a rate with a zero denominator is unknown, never NaN, Infinity or 0%',
 test('every operational summary names its scope; retired telemetry panels are labelled historical', () => {
   assert.match(serverSrc, /scope: \{ scope: ANALYTICS_SCOPE\.ACTIVE, activeLeads: active\.length,/);
   assert.equal((serverSrc.match(/\.\.\.analyticsScopeBlocks\(dataset\),/g) || []).length, 2, 'stats and summary');
-  assert.equal((browserSrc.match(/<b>Retired offers · historical<\/b>/g) || []).length, 2, 'demo plays and proposal opens');
+  assert.equal((browserSrc.match(/<b>Retired offers · historical<\/b>/g) || []).length, 1, 'proposal opens (the demo plays panel is retired)');
   assert.match(browserSrc, /<select id="funnel-scope" aria-label="Analytics scope"/);
   assert.match(browserSrc, /scope: document\.getElementById\('funnel-scope'\)\?\.value \|\| 'active'/);
 });

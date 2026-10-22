@@ -23,7 +23,8 @@ const { DEFAULT_SECONDARY_INBOXES } = require('../integrations/gmail-inbox-regis
 const CAMPAIGN = 'jole-btx-employer-acquisition';
 const VERSION = 'jole_industrial_employer_acquisition_v1';
 
-// Production's registry as configured today: five ScaleLab inboxes, no Jole row.
+// Production's registry override as configured: ScaleLab rows only. Jole's six
+// inboxes come from the source-controlled defaults (gmail-inbox-registry.js).
 const PROD_ENV = {
   FROM_EMAIL: 'deins@scalelabai.ca', GMAIL_TOKEN_JSON: '{}', GMAIL_PRIMARY_DAILY_LIMIT: '60', GMAIL_PRIMARY_PER_RUN_LIMIT: '6',
   GMAIL_INBOX_REGISTRY_JSON: JSON.stringify([
@@ -63,25 +64,32 @@ test('1-2. Jole is out of onboarding: an active, configured client with no platf
   assert.equal(jole.active, true);
   assert.equal(jole.displayName, 'Jole BTX LLC');
   assert.equal(jole.platformAccess, 'none');
-  assert.deepEqual([...jole.workspaces], ['clients', 'pipeline', 'inbox', 'bookings', 'campaigns', 'analytics', 'settings']);
+  assert.deepEqual([...jole.workspaces], ['clients', 'pipeline', 'inbox', 'bookings', 'outreach', 'campaigns', 'analytics', 'settings']);
 });
 
-test('3. the Jole campaign exists with its exact identifiers, configured as a never-sendable draft', () => {
+test('3. the Jole campaign exists with its exact identifiers: copy approved, never sendable while the client switch is off', () => {
   const campaign = clientCampaign(CAMPAIGN);
   assert.equal(campaign.clientId, 'jole');
   assert.equal(campaign.emailTemplateId, 'jole-industrial-employer-v1');
   assert.equal(campaign.campaignVersion, VERSION);
   assert.equal(clientCampaign(VERSION), campaign, 'the stored campaign version resolves to the same campaign');
-  assert.equal(clientTemplate('jole-industrial-employer-v1').ready, false);
-  assert.equal(campaignSendable(campaign).ok, false);
+  assert.equal(clientTemplate('jole-industrial-employer-v1').ready, true);
+  assert.equal(campaignSendable(campaign).ok, true, 'the campaign itself is approved');
+  assert.equal(require('../integrations/clients/send-policy').clientSendBlock('jole', {}).code, 'client_sending_disabled', 'the client switch still refuses');
   assert.deepEqual([...getClient('jole').senderPolicy.allowedCampaignIds], [CAMPAIGN]);
 });
 
-test('4. production today has no Jole sender; any registered Jole sender belongs to Jole and only its campaign', () => {
-  assert.equal(configuredSenders(PROD_ENV).filter(sender => sender.clientId === 'jole').length, 0);
+test('4. production registers six Jole senders at launch caps, none send eligible; every Jole sender belongs to Jole and only its campaign', () => {
+  const registered = configuredSenders(PROD_ENV).filter(sender => sender.clientId === 'jole');
+  assert.equal(registered.length, 6);
+  for (const sender of registered) {
+    assert.equal(sender.status, 'warming', 'readiness is the runtime lifecycle, not the registry default');
+    assert.equal(sender.dailyLimit, 20);
+    assert.equal(sender.sendEligible, false);
+  }
   const senders = configuredSenders(withJole([joleRow('jole_team1', 'a@jolebtxteam.com'), joleRow('jole_group1', 'b@jolebtxgroup.com')]));
   const jole = senders.filter(sender => sender.clientId === 'jole');
-  assert.deepEqual(jole.map(sender => sender.id), ['jole_team1', 'jole_group1']);
+  assert.deepEqual(jole.map(sender => sender.id).slice(0, 2), ['jole_team1', 'jole_group1']);
   for (const sender of jole) {
     assert.equal(senderServesCampaign(sender, CAMPAIGN), true);
     assert.equal(senderServesCampaign(sender, VERSION), true);
@@ -99,14 +107,15 @@ test('5. a Jole sender can never serve ScaleLab', () => {
 });
 
 test('6. a ScaleLab sender can never serve Jole', () => {
-  for (const sender of configuredSenders(PROD_ENV)) {
+  for (const sender of configuredSenders(PROD_ENV).filter(item => (item.clientId || 'scalelab') === 'scalelab')) {
     assert.equal(allowedForLead(sender, joleLead()), false, sender.id);
     assert.equal(checkClientConsistency({ lead: joleLead(), sender }).ok, false, sender.id);
   }
 });
 
 test('7-8. no eligible Jole sender fails closed: the lead stays unassigned and unsent, with no ScaleLab fallback', () => {
-  const scalelab = configuredSenders(PROD_ENV).map(sender => ({ ...sender, status: 'active', sendEligible: true }));
+  const scalelab = configuredSenders(PROD_ENV).filter(sender => (sender.clientId || 'scalelab') === 'scalelab')
+    .map(sender => ({ ...sender, status: 'active', sendEligible: true }));
   const admission = assignNewLeads({ batch: [joleLead()], senders: scalelab });
   assert.equal(admission.assignments.size, 0);
   assert.deepEqual(admission.refused, [{ leadId: 'jl1', reason: 'no active compatible sending inbox' }]);
@@ -132,7 +141,7 @@ test('9. a Jole inbox is hard-capped at 20 per day; a higher configured value is
   assert.equal(cappedDailyLimit({ email: 'x@jolebtxteam.com', clientId: 'jole' }, 500), 20);
 });
 
-test('10. a paused Jole sender cannot send, and none can be activated while Jole sending is off', () => {
+test('10. a paused Jole sender cannot send; it can be activated while Jole is prepared, and still cannot send until authorized', () => {
   const senders = configuredSenders(withJole([joleRow('jole_team1', 'a@jolebtxteam.com')]));
   const sender = senders.find(item => item.id === 'jole_team1');
   assert.equal(sender.status, 'paused');
@@ -140,18 +149,35 @@ test('10. a paused Jole sender cannot send, and none can be activated while Jole
   const blockers = activationBlockers({ ...sender, status: 'ready' }, {
     auth: { authenticated: true, identityVerified: true }, observer: { health: 'healthy', cursorState: 'present' }, senders,
   });
-  assert.ok(blockers.some(reason => /client sending is not authorized/.test(reason)), blockers.join('; '));
+  // Preparation authority (active client, reviewed key on) is enough to activate.
+  assert.equal(blockers.some(reason => /client sending is not authorized|cannot be prepared/.test(reason)), false, blockers.join('; '));
+  assert.equal(sender.preparationReady, false, 'paused: not operationally ready either');
+  // A client whose reviewed key is off cannot even be prepared.
+  const restore = require('../test-support/client-lifecycle').activateJoleForTest({
+    sending: Object.freeze({ enabled: false, requiresEnvAuthorization: true, clientSuppressionRequired: true }),
+    capacity: Object.freeze({ dailyCap: 0, windowCap: 0, reservedDaily: 0, reservedWindow: 0 }),
+  });
+  try {
+    const off = configuredSenders(withJole([joleRow('jole_team1', 'a@jolebtxteam.com')])).find(item => item.id === 'jole_team1');
+    const refused = activationBlockers({ ...off, status: 'ready' }, {
+      auth: { authenticated: true, identityVerified: true }, observer: { health: 'healthy', cursorState: 'present' }, senders,
+    });
+    assert.ok(refused.some(reason => /cannot be prepared/.test(reason)), refused.join('; '));
+  } finally { restore(); }
 });
 
-test('11. client activation does not activate a sender: even a row marked active stays non-sending', () => {
-  for (const env of [withJole([joleRow('jole_team1', 'a@jolebtxteam.com', { status: 'active' })]),
-    withJole([joleRow('jole_team1', 'a@jolebtxteam.com', { status: 'active' })], { CLIENT_SENDING_AUTHORIZED: 'jole' })]) {
-    const sender = configuredSenders(env).find(item => item.id === 'jole_team1');
-    assert.equal(sender.status, 'active');
-    assert.equal(sender.sendEligible, false);
-    assert.match(sender.policyBlockers.join(' '), /client sending is not authorized/);
-  }
-  assert.equal(clientSendState('jole', { CLIENT_SENDING_AUTHORIZED: 'jole' }).sendingEnabled, false);
+test('11. an active Jole row is prepared but non-sending until CLIENT_SENDING_AUTHORIZED names jole', () => {
+  const held = configuredSenders(withJole([joleRow('jole_team1', 'a@jolebtxteam.com', { status: 'active' })]))
+    .find(item => item.id === 'jole_team1');
+  assert.deepEqual([held.status, held.sendEligible, held.preparationReady, held.clientAuthorized], ['active', false, true, false]);
+  assert.match(held.policyBlockers.join(' '), /client sending is not authorized/);
+  assert.deepEqual([...held.preparationBlockers], []);
+  // The single launch action: the same row becomes send eligible, nothing else changes.
+  const launched = configuredSenders(withJole([joleRow('jole_team1', 'a@jolebtxteam.com', { status: 'active' })], { CLIENT_SENDING_AUTHORIZED: 'jole' }))
+    .find(item => item.id === 'jole_team1');
+  assert.deepEqual([launched.status, launched.sendEligible, launched.clientAuthorized], ['active', true, true]);
+  assert.equal(clientSendState('jole', {}).sendingEnabled, false);
+  assert.equal(clientSendState('jole', { CLIENT_SENDING_AUTHORIZED: 'jole' }).sendingEnabled, true);
 });
 
 test('12-13. client activation queues and assigns nothing: Jole leads are not routable, movable or assignable', () => {
@@ -182,7 +208,7 @@ test('a Jole sender on another Jole campaign is refused at the shared consistenc
 });
 
 test('15. ScaleLab senders are byte-for-byte unchanged: same caps, statuses, eligibility, no new fields', () => {
-  const senders = configuredSenders(PROD_ENV);
+  const senders = configuredSenders(PROD_ENV).filter(sender => (sender.clientId || 'scalelab') === 'scalelab');
   assert.deepEqual(senders.map(sender => [sender.id, sender.email, sender.status, sender.dailyLimit, sender.perRunLimit, sender.sendEligible, sender.clientId || 'scalelab']), [
     ['primary', 'deins@scalelabai.ca', 'active', 60, 6, true, 'scalelab'],
     ['tryscalelabai', 'deins@tryscalelabai.ca', 'active', 60, 6, true, 'scalelab'],
@@ -194,9 +220,11 @@ test('15. ScaleLab senders are byte-for-byte unchanged: same caps, statuses, eli
     for (const key of ['policyBlockers', 'allowedCampaignIds', 'configuredDailyLimit']) assert.equal(sender[key], undefined, `${sender.id}.${key}`);
     assert.equal(senderServesCampaign(sender, 'industrial_staffing_employer_acquisition_v1'), true);
   }
-  assert.deepEqual(DEFAULT_SECONDARY_INBOXES.map(row => [row.id, row.status, row.dailyLimit, row.perRunLimit]), [
+  assert.deepEqual(DEFAULT_SECONDARY_INBOXES.filter(row => !row.clientId).map(row => [row.id, row.status, row.dailyLimit, row.perRunLimit]), [
     ['scalelabaiteam', 'warming', 40, 5], ['deniels', 'warming', 20, 2], ['deniels_tryscalelabai', 'warming', 20, 2],
   ]);
+  assert.deepEqual(DEFAULT_SECONDARY_INBOXES.filter(row => row.clientId).map(row => [row.clientId, row.status, row.dailyLimit, row.perRunLimit]),
+    Array(6).fill(['jole', 'warming', 20, 2]));
   // A malformed Jole row never takes the ScaleLab registry down with it.
   const mixed = configuredSenders(withJole([joleRow('jole_bad', 'x@jolebtx.com', { status: 'active', dailyLimit: 999 })]));
   assert.equal(mixed.find(item => item.id === 'tryscalelabai').sendEligible, true);
@@ -205,9 +233,12 @@ test('15. ScaleLab senders are byte-for-byte unchanged: same caps, statuses, eli
 test('16. no Jole email can be sent from this configuration: the provider boundary refuses before Gmail', async () => {
   const { withGmailProviderSend } = require('../integrations/send-lock');
   let providerCalled = false;
-  for (const env of [{}, { CLIENT_SENDING_AUTHORIZED: 'jole' }, { SEND_LOCK_ENABLED: 'true' }]) {
+  for (const env of [{}, { SEND_LOCK_ENABLED: 'true' }, { CLIENT_SENDING_AUTHORIZED: 'scalelab' }]) {
     await assert.rejects(withGmailProviderSend({ lead: joleLead(), sendAction: { actionId: 'cold:jl1:1', leadId: 'jl1' },
       run: async () => { providerCalled = true; }, env }), error => error.code === 'client_sending_disabled');
   }
+  // Even authorized, a Jole lead never reaches Gmail without its inbox being judged.
+  await assert.rejects(withGmailProviderSend({ lead: joleLead(), sendAction: { actionId: 'cold:jl1:1', leadId: 'jl1' },
+    run: async () => { providerCalled = true; }, env: { CLIENT_SENDING_AUTHORIZED: 'jole' } }), error => error.code === 'sender_required');
   assert.equal(providerCalled, false);
 });

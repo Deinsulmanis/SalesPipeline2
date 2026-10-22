@@ -4,7 +4,7 @@
 // Sources: staffing-personalization.js POLICY and the September 15 batch-2
 // discovery report/screen. This conservative baseline retains the newer screening
 // requirements as well as the older fact/territory rules; it never rewrites either.
-const { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_LABELS } = require('../staffing-campaign');
+const { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_LABELS, STAFFING_CAMPAIGN_V2 } = require('../staffing-campaign');
 const STAFFING_ID = STAFFING_CAMPAIGN.id;
 const STAFFING_ICP = {
   policyVersion: 'staffing_research_baseline_20260915',
@@ -40,11 +40,16 @@ const STAFFING_ICP = {
   ],
   scope: 'Company fit only. Duplicate screening, buyer seniority, email verification/catch-all tier and send eligibility remain separate controls.',
 };
-const registry = { [STAFFING_ID]: { id: STAFFING_ID, name: STAFFING_CAMPAIGN.name, icp: STAFFING_ICP } };
+const registry = {
+  [STAFFING_ID]: { id: STAFFING_ID, name: STAFFING_CAMPAIGN.name, icp: STAFFING_ICP },
+  // Staffing V2 changes only Email 1 copy: it researches against V1's ICP, unchanged.
+  [STAFFING_CAMPAIGN_V2.id]: { id: STAFFING_CAMPAIGN_V2.id, name: STAFFING_CAMPAIGN_V2.name, icp: STAFFING_ICP },
+};
 function resolveCampaign(campaign = {}) {
   // Explicit inline criteria support other campaigns and isolated experiments.
   // They are snapshotted per run and never saved back to the campaign registry.
-  const id = campaign.id || (STAFFING_CAMPAIGN_LABELS.includes(campaign.name) ? STAFFING_ID : '');
+  const id = campaign.id || (STAFFING_CAMPAIGN_LABELS.includes(campaign.name) ? STAFFING_ID
+    : campaign.name === STAFFING_CAMPAIGN_V2.name ? STAFFING_CAMPAIGN_V2.id : '');
   const known = registry[id];
   return structuredClone({ id, name: campaign.name || known?.name || '',
     icp: campaign.icp === undefined ? known?.icp || {} : campaign.icp });

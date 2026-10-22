@@ -13,7 +13,7 @@ const browser = source(path.join('public', 'index.html'));
 
 test('one or many opens cannot create Warm status or an outbound candidate', () => {
   const loader = server.slice(server.indexOf('async function loadOutreachDataset'), server.indexOf('async function getOutreachDataset'));
-  assert.match(loader, /row\.warm = row\.demoEngaged;/);
+  assert.doesNotMatch(loader, /row\.warm|signals\.warm/, 'no Warm signal exists to be created');
   assert.doesNotMatch(loader, /if \(n >= 2\) signals\.warm\+\+|signals\.warm\+\+/);
   assert.doesNotMatch(agent, /getOpenTriggeredLeads|warmLeads|open-triggered|WARM_FOLLOW_UP_TEMPLATE/);
   assert.doesNotMatch(agent.slice(agent.indexOf('const newBatch'), agent.indexOf('console.log(`\\nDone.')), /ProposalOpens|annotatedOpens|realOpen|getOpenTriggered/i);
@@ -29,21 +29,14 @@ test('opens cannot mutate ownership, stage, safety, priority, sequences, or send
   assert.doesNotMatch(telemetry, /stage\s*=|emailStatus\s*=|sequenceState\s*=/);
 });
 
-test('verified demo engagement remains the Warm signal and primary card', () => {
-  // Restated, not weakened. Demo engagement is still the Warm signal and opens
-  // still cannot create it; what changed is WHO a play belongs to. It is now
-  // attributed to one lead — the token's owner, or the single owner of a
-  // token-less row's company key — instead of every lead sharing a company
-  // name, which credited four Smili locations for one visitor's session.
-  assert.match(server, /const attributedPlay = demoPlayForLead\(demoAttribution, lead\.id\);/);
-  assert.match(server, /row\.demoEngaged = Boolean\(attributedPlay\);/);
-  assert.doesNotMatch(server, /demoCompanyKeys/);
-  assert.match(server, /row\.warm = row\.demoEngaged;/);
-  assert.match(browser, /id="ce-stat-demo-plays"[^>]*>0<[\s\S]{0,100}Demo Plays/);
-  assert.match(browser, /id="ce-stat-warm"[^>]*>0<[\s\S]{0,120}Demo-engaged Leads/);
+test('the retired demo engagement signal is gone from rows and cards', () => {
+  // The voice-receptionist demo is abandoned. Its play attribution, the Warm
+  // signal derived from it, and its cards are removed; opens still never
+  // create engagement on their own.
+  assert.doesNotMatch(server, /demoPlayForLead|row\.demoEngaged|row\.demoPlays/);
+  assert.doesNotMatch(browser, /id="ce-stat-demo-plays"|id="ce-stat-warm"/);
   assert.doesNotMatch(browser, /id="ce-stat-opens"/);
 });
-
 test('historical open telemetry remains available but is labeled informational', () => {
   assert.match(server, /app\.get\('\/api\/proposalOpens'/);
   assert.match(server, /annotateOpens\(/);

@@ -8,6 +8,7 @@ const { checkClientConsistency, resolveLeadClient } = require('./clients/ownersh
 const { clientSendBlock } = require('./clients/send-policy');
 const { evaluateScopedSuppression } = require('./clients/suppression');
 const { outreachBlockForLead } = require('./lead-archive');
+const { providerVerdict, coldDeliveryVerdict, isProspectingSend } = require('./cold-delivery-policy');
 
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
@@ -162,7 +163,36 @@ async function guardProviderSend(lead, deps = {}, options = {}) {
   const env = deps.env || options.env || process.env;
   const auth = sendAuthorization(env);
   if (!auth.allowed) return auth;
-  return revalidateFreshSendSafety(lead, { ...deps, env }, options);
+  const safety = await revalidateFreshSendSafety(lead, { ...deps, env }, options);
+  // Prospecting (cold + stage-sequence + unknown purpose) gets the recipient-
+  // provider / sender-pool gate. Warm replies to an existing conversation do
+  // not. The purpose string is 'sequence' for stage sequences, so a 'cold'
+  // equality check here would let them bypass google_only.
+  if (!safety.allowed || !isProspectingSend(options.purpose)) return safety;
+  return coldDeliveryGate(lead, deps, options, env, safety);
+}
+
+/**
+ * Temporary recipient-provider policy (cold-delivery-policy.js) as the last
+ * word on every prospecting send or enqueue (ordinary cold, stage-sequence,
+ * Smartlead). The classification comes from the caller's classifier (normally
+ * a cache read); none, or a failure, is UNKNOWN and refuses under google_only.
+ * When the Gmail sender is named it must also be send-eligible and in the
+ * Gmail-healthy pool.
+ */
+async function coldDeliveryGate(lead, deps, options, env, safety) {
+  let classification = null;
+  try {
+    classification = typeof deps.classifyRecipient === 'function' ? await deps.classifyRecipient(lead.email) : null;
+  } catch (_) { classification = null; }
+  const verdict = options.coldSender
+    ? coldDeliveryVerdict({ sender: options.coldSender, classification, env })
+    : providerVerdict(classification, env);
+  if (!verdict.allowed) {
+    return { allowed: false, code: verdict.code, reason: verdict.reason, layer: verdict.layer || 'recipient',
+      provider: verdict.provider, domain: classification?.domain || '' };
+  }
+  return safety;
 }
 
 module.exports = {

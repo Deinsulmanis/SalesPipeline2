@@ -68,6 +68,7 @@ const { mirrorConfig } = require('./supabase-mirror');
 const { resolveLeadClient } = require('./clients/ownership');
 const { resolveClientId, DEFAULT_CLIENT_ID } = require('./clients/registry');
 const { ARCHIVE_MARKER_PREFIX, ARCHIVED_STAGE, archiveReasonFromNotes } = require('./lead-archive');
+const { staffingV2CampaignNotesRefusal } = require('./staffing-campaign');
 
 const TABLE = 'outreach_leads';
 const REQUEST_TIMEOUT_MS = 5000;
@@ -847,6 +848,45 @@ async function readCanonicalSheetNotes(sheetsClient, spreadsheetId, range, leadI
   }
 }
 
+// ── campaign_notes on a staffing V2 lead ────────────────────────────────────
+//
+// A V2 lead's campaign_notes is its digest-sealed sourcing profile, written once
+// by the V2 import. Every write path here checks a campaign_notes patch against
+// the row it would overwrite (staffingV2CampaignNotesRefusal) and refuses before
+// anything is written. Supabase authority checks the CAS read on every attempt;
+// Sheets authority reads the row first and fails closed when it cannot.
+function rowRange(sheetName, row) {
+  return `${sheetName}!A${row}:${columnLetterFor(SHEET_FIELDS[SHEET_FIELDS.length - 1])}${row}`;
+}
+
+function leadFromRowRange(valueRange) {
+  const values = (valueRange && valueRange.values && valueRange.values[0]) || [];
+  return Object.fromEntries(SHEET_FIELDS.map((field, index) => [field, String(values[index] ?? '')]));
+}
+
+async function readSheetRows(sheetsClient, spreadsheetId, ranges) {
+  const reader = sheetsClient && sheetsClient.spreadsheets && sheetsClient.spreadsheets.values;
+  if (!reader || (typeof reader.batchGet !== 'function' && typeof reader.get !== 'function')) {
+    throw new Error('cannot read the current row to check a campaign_notes write: Sheets reader is unavailable');
+  }
+  try {
+    if (typeof reader.batchGet === 'function') {
+      const response = await reader.batchGet({ spreadsheetId, ranges });
+      return ((response && response.data && response.data.valueRanges) || []).map(leadFromRowRange);
+    }
+    const rows = [];
+    for (const range of ranges) rows.push(leadFromRowRange((await reader.get({ spreadsheetId, range })).data));
+    return rows;
+  } catch (error) {
+    throw new Error(`cannot read the current row to check a campaign_notes write: ${error.message}`);
+  }
+}
+
+function campaignNotesRefusalError(id, refusal, logger) {
+  logger.warn(`[outreach-state] lead ${id}: campaign_notes write REFUSED — ${refusal}. No write was made.`);
+  return Object.assign(new Error(`outreach mutation refused for ${id}: ${refusal}`), { refused: true });
+}
+
 function notePreservedMarkers(id, merged, logger) {
   if (merged.kept.length) {
     writeDiagnostics.safetyMarkersKept += merged.kept.length;
@@ -931,11 +971,19 @@ async function applyCanonicalChange(id, patch, {
     if (field === 'emailStep') column.email_step_int = intOrNull(value);
   }
   const writesNotes = Object.prototype.hasOwnProperty.call(patch, 'notes');
+  const writesCampaignNotes = Object.prototype.hasOwnProperty.call(patch, 'campaign_notes');
 
   let conflicts = 0;
   for (let attempt = 1; attempt <= MAX_CAS_ATTEMPTS; attempt++) {
     const current = await readCanonicalLead(id, { env });
     if (!current.ok) return { ok: false, conflicts, reason: current.reason };
+
+    // Against the row as it is now, on every attempt: a V2 profile is read-only.
+    const notesRefusal = writesCampaignNotes ? staffingV2CampaignNotesRefusal(current.lead, patch.campaign_notes) : null;
+    if (notesRefusal) {
+      logger.warn(`[outreach-state] lead ${id}: campaign_notes write REFUSED — ${notesRefusal}. No write was made.`);
+      return { ok: false, refused: true, conflicts, reason: notesRefusal };
+    }
 
     // Every attempt, not only retries: a notes value built from an older read
     // must not lift a suppression, or move a scheduled resume, that is in
@@ -1056,6 +1104,14 @@ async function applyLeadChange(leadId, patch, {
   let notesPatch = patch;
   let keptMarkers = [];
   let resumeTagKept = false;
+
+  // Sheets authority: check a campaign_notes write against the row it overwrites.
+  // Supabase authority does this inside applyCanonicalChange instead.
+  if (Object.prototype.hasOwnProperty.call(patch, 'campaign_notes') && outreachWriteAuthority(env) === 'sheets') {
+    const [current] = await readSheetRows(sheetsClient, spreadsheetId, [rowRange(sheetName, parsedRow)]);
+    const refusal = staffingV2CampaignNotesRefusal(current, patch.campaign_notes);
+    if (refusal) throw campaignNotesRefusalError(id, refusal, logger);
+  }
 
   // Sheets authority: re-read the durable Notes cell and keep send-safety /
   // resume markers a stale in-memory prepend would otherwise erase. Supabase
@@ -1307,6 +1363,17 @@ async function applyLeadChanges(changes, {
   }
 
   // ── Sheets canonical (Stage 3B–3E) ────────────────────────────────────────
+  // A campaign_notes write is checked against the row it overwrites; one
+  // refusal stops the whole batch before anything is written.
+  const campaignNotesWrites = prepared.filter(change => Object.prototype.hasOwnProperty.call(change.patch, 'campaign_notes'));
+  if (campaignNotesWrites.length) {
+    const rows = await readSheetRows(sheetsClient, spreadsheetId, campaignNotesWrites.map(change => rowRange(sheetName, change.row)));
+    campaignNotesWrites.forEach((change, index) => {
+      const refusal = staffingV2CampaignNotesRefusal(rows[index], change.patch.campaign_notes);
+      if (refusal) throw campaignNotesRefusalError(change.id, refusal, logger);
+    });
+  }
+
   // Re-read durable Notes before writing so a stale patch cannot lift a hold,
   // opt-out, bounce, or scheduled-resume tag. Fail closed if the read fails.
   const notesWrites = prepared.filter(change => Object.prototype.hasOwnProperty.call(change.patch, 'notes'));

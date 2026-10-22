@@ -24,10 +24,10 @@ const {
 const { planOfferRetirement, sendableNow } = require('../integrations/offer-retirement');
 const { routedLeadReady, validateRoute, templateById } = require('../integrations/campaign-routing');
 const { evaluateFreshSendSafety, guardProviderSend } = require('../integrations/send-safety-revalidate');
+const { googleRecipient } = require('../test-support/google-recipient');
 const { deriveAutomationOwnership, OWNER, BLOCKED_BY, NON_COLD_STAGES } = require('../integrations/automation-ownership');
 const { sendSuppressionReason, deriveAutomationState, AUTOMATION_STATES } = require('../integrations/pipeline-state');
 const { planSenderRebalance } = require('../integrations/sender-balance');
-const { pendingIntentWork } = require('../integrations/intent-backstop');
 const { runGoogleCalendarSync } = require('../integrations/google-calendar');
 const { coldSendAttribution } = require('../integrations/campaign-versions');
 const { STAFFING_CAMPAIGN } = require('../integrations/staffing-campaign');
@@ -100,7 +100,7 @@ const SEND_ENV = Object.freeze({
   ...STAFFING_ENV,
 });
 const freshGate = (snapshot, current, purpose = 'cold') => guardProviderSend(snapshot,
-  { env: SEND_ENV, loadFreshState: async () => ({ current, suppressedEmails: new Set() }) }, { purpose });
+  { env: SEND_ENV, classifyRecipient: googleRecipient, loadFreshState: async () => ({ current, suppressedEmails: new Set() }) }, { purpose });
 
 // ── Dental recognition ──────────────────────────────────────────────────────
 
@@ -232,9 +232,9 @@ test('5. archived records leave active lists, counts, facets, queued and board t
   assert.match(serverSrc, /const boardLeads = allBoardLeads\.filter\(card => !isArchivedLead\(card\)\);\n  const archivedBoardLeads = allBoardLeads\.filter\(card => isArchivedLead\(card\)\);\n  const pipelineIndex = buildOutreachPipelineIndex\(leads, boardLeads\);/);
   // /api/leads (the Pipeline board) and the Inbox exclude archived records.
   assert.match(serverSrc, /res\.json\(req\.query\.archived === 'include' \? leads : leads\.filter\(lead => !isArchivedLead\(lead\)\)\);/);
-  assert.match(serverSrc, /const activeRecords = dataset\.replyRecords\.filter\(record => !archivedIds\.has\(record\.leadId\)\);/);
+  assert.match(serverSrc, /const activeRecords = view\.replyRecords\.filter\(record => !archivedIds\.has\(record\.leadId\)\);/);
   // The browser's lead table reads dataset.rows, which is active only.
-  assert.match(serverSrc, /let scopedRows = dataset\.rows;/);
+  assert.match(serverSrc, /const scopedRows = scope\.view\?\.rows \|\| dataset\.rows;/);
 });
 
 // ── 6/7. history and provider ids ───────────────────────────────────────────
@@ -516,16 +516,9 @@ test('a reply from an archived lead is recorded but never promotes, answers, dra
   assert.ok(agentSrc.indexOf('if (isArchivedLead(lead)) {') < agentSrc.indexOf('case REPLY_ROUTE.INTERESTED:'));
 });
 
-test('archived and retired leads never arm the demo-intent backstop or get a booking link', () => {
-  const plays = [];
-  const lead = archived(staffingLead({ id: 'arch' }), ARCHIVE_REASONS.MANUAL);
-  const activities = [{ sourceLeadId: 'arch', leadId: 'CE-arch', eventType: 'demo_pair_played', occurredAt: '2026-09-29T10:00:00Z',
-    metadata: JSON.stringify({ introPlays: 1, demoPlays: 1 }) }];
-  assert.equal(pendingIntentWork({ leads: [lead, legacyDental({ id: 'dd' })], plays, activities, companyKey: v => v }), 0);
-  const prepare = agentSrc.slice(agentSrc.indexOf('async function prepareDemoIntentCandidates'), agentSrc.indexOf('async function reportIntentWorkHint'));
-  assert.equal((prepare.match(/outreachBlockForLead\(lead\)/g) || []).length, 2, 'both pair creation and due selection skip them');
+test('archived and retired leads cannot get a demo booking link: the path is retired', () => {
+  assert.doesNotMatch(agentSrc, /prepareDemoIntentCandidates|runIntentTriggerPass|both-audios/);
 });
-
 test('a booking by an archived lead is surfaced for review and never blocks automation', async () => {
   const applied = [];
   const result = await runGoogleCalendarSync({
@@ -546,7 +539,7 @@ test('a booking by an archived lead is surfaced for review and never blocks auto
 });
 
 test('stage sequences skip archived cards and retired-offer twins before any provider work', () => {
-  assert.match(agentSrc, /if \(staffingSendBlockReason\(twin \|\| boardLead\)\) continue;\n    if \(outreachBlockForLead\(boardLead\) \|\| \(twin && outreachBlockForLead\(twin\)\)\) continue;/);
+  assert.match(agentSrc, /if \(staffingSendBlockReason\(twin \|\| boardLead\)\) return;\n    if \(outreachBlockForLead\(boardLead\) \|\| \(twin && outreachBlockForLead\(twin\)\)\) return;/);
   const card = { id: 'b1', stage: 'archived', notes: '[ARCHIVED: offer_retired_dental]', tradeType: 'Dentist' };
   assert.equal(outreachBlockForLead(card).code, 'archived');
   assert.equal(deriveAutomationOwnership(staffingLead(), { boardLead: card, sendingEnabled: true }).blockedBy, BLOCKED_BY.ARCHIVED);
