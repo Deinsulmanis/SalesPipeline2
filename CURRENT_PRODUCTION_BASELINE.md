@@ -1,6 +1,6 @@
 # Current production baseline
 
-**Last verified:** 2026-10-22 UTC (git refs + Railway live SHA). Runtime/env/Supabase from the same-day read-only audit.
+**Last verified:** 2026-10-22 19:48 UTC (git refs + Railway live SHA + post-launch read-only endpoints).
 **Start all new work from:** `main`
 
 Read this before starting any code change. Everything under "Snapshot" was true
@@ -29,29 +29,33 @@ Workflow:
    version of every code, test and config file. Never merge `main` into the
    production branch.
 
-On 2026-10-22 `cursor/staffing-agent-shadow-production-7402` was fast-forwarded
-to live `8bb1f5a` (never force; never merged `main` into it). `main` then
-merged that SHA (`903e6d1`). Code, test and config on `main` equal `8bb1f5a`;
-`main` additionally carries only documentation (`CURRENT_PRODUCTION_BASELINE.md`,
-`OWNER_OPERATOR_GUIDE.md`, `salespipelineflowaudit.md`) and
-`.claude/skills/salespipeline2-outreach-safety/`. Jole copy v4 (`51ccf60`,
-`cf9c453` on `fix/send-throughput-20261020`) is still undeployed and is not on
-`main` or the named production branch.
+On 2026-10-22 production moved from `8bb1f5a` (Jole copy v3) to approved Jole
+copy v4 `cf9c45388a705a9993fc5b2ef7bdfa488f965780`. Named production
+`cursor/staffing-agent-shadow-production-7402` is fast-forwarded to that SHA
+(never force; never merged `main` into it). `main` merges production first,
+then keeps docs and `.claude/skills/`. Do not treat `fix/send-throughput-20261020`
+as the source of truth after this cutover.
 
 ## Snapshot: production on 2026-10-22
 
 Railway project / service: `modest-peace` / `SalesPipeline2`
 (https://receptionist.scalelabai.ca), region us-west2.
 
-**Production SHA (re-verified 2026-10-22 05:59 UTC):** `8bb1f5a4c3e11bba540d4385a3c14e128e3b3efe`
-(Railway deployment `ab266573`, SUCCESS, deployed from
-`fix/send-throughput-20261020`): Jole BTX copy v3 for never-contacted Jole
-leads, plus send-quota lanes (flag `SEND_CONCURRENT_SENDER_LANES=false`).
-Named production branch is now exactly this SHA. Railway's last successful
-deploy still records the throughput branch as the watch that shipped it.
+**Production SHA (re-verified 2026-10-22 19:48 UTC):** `cf9c45388a705a9993fc5b2ef7bdfa488f965780`
+(Railway deployment `d97fba1e`, SUCCESS; code deploy `47ecebb2` first shipped
+this SHA from `fix/send-throughput-20261020`, then `CLIENT_SENDING_AUTHORIZED=jole`
+restarted the same SHA). Jole BTX copy v4 (30-day evidence + independently
+checked role evidence) for never-contacted Jole leads; contacted Jole threads
+stay on the copy version recorded at first send (v2). Send-quota lanes remain
+flagged off (`SEND_CONCURRENT_SENDER_LANES=false`). Quota coordinator schema
+is live on send-lock Postgres (`send_control.*`; predeploy
+`node scripts/send-quota-migrate.js` verified).
 
-`CLIENT_SENDING_AUTHORIZED=none` — Jole is prepared and not sending. ScaleLab
-staffing v1 is Active / sending. Do not authorize Jole from a docs refresh.
+`CLIENT_SENDING_AUTHORIZED=jole` — Jole BTX is production-authorized and ready
+for normal scheduled sending (Chicago weekdays 07:00–11:59 CT;
+`JOLE_EARLY_CRON` `0,30 7-8 * * 1-5`). ScaleLab staffing v1 remains Active /
+sending (Pacific 07:00–11:30). Industrial Jole inboxes stay at cap 0 with
+`warmup_incomplete`. Do not send manual test outreach to prove this.
 
 Earlier snapshot (2026-10-05): `25831dc6de9408139d23bb2073fef7c3642749a5`
 (Railway deployment `40deeac0`, SUCCESS): Jole BTX LLC taken out of onboarding
@@ -161,14 +165,16 @@ campaign status: the offer gate is separate and fails closed.
     Hidden navigation is never the boundary; every client route filters on the
     server.
 
-**Jole BTX LLC (managed client, id `jole`) — ACTIVE, NOT SENDING (since 2026-10-05):**
+**Jole BTX LLC (managed client, id `jole`) — ACTIVE, AUTHORIZED (since 2026-10-22 19:47 UTC):**
 - `lifecycleStatus = active`, `active = true`; activation recorded as
   `scalelab-operator (instruction 2026-10-05)`. The onboarding items (agreement,
   form, $175 balance) are recorded as attested by that instruction, not
   verified inside SalesPipeline2.
-- **No send authority:** `sending.enabled = false`, `CLIENT_SENDING_AUTHORIZED`
-  unset, client capacity **0/0**. Every send path refuses with
-  `client_sending_disabled`; Agent v2 refuses with `client_not_authorized`.
+- **Send authority on:** `sending.enabled = true`, `CLIENT_SENDING_AUTHORIZED=jole`,
+  `launchHold = false`, campaign `jole-btx-employer-acquisition` ready. Client
+  capacity **75/day, 12/window** (four production inboxes 15/20/20/20; industrial
+  pair held at 0). First natural Jole window after this cutover is the next
+  Chicago weekday 07:00 CT. Do not force a send.
 - **Sender policy** (`senderPolicy` in `client-configs.js`, enforced by
   `integrations/clients/sender-policy.js`): outbound domains `jolebtxteam.com`,
   `jolebtxgroup.com`, `joleindustrial.com`; `jolebtx.com` protected (never a cold
@@ -233,6 +239,8 @@ not re-run them.
 | `20260925000000_landing_link_attribution.sql` | `landing_link_issuances`, `landing_sessions` and `landing_events` are readable |
 | `20260930000000_client_ledger.sql` | Applied 2026-09-29 (recorded as version `20260930015011`, name `client_ledger`). `clients` = `jole`, `scalelab`; six tables with RLS; 0 rows |
 | `20260930010000_outreach_leads_client_id.sql` | Applied 2026-09-29 (recorded as version `20260930015039`, name `outreach_leads_client_id`). `client_id` NOT NULL DEFAULT `scalelab`, FK present, `outreach_leads_client_email_key` added; global `outreach_leads_email_normalized_key` retained |
+| `20261008000000_client_lead_import_batches.sql` | Applied (table readable; 1 row as of 2026-10-22) |
+| `20261016000000_client_daily_reports.sql` | Applied (table readable; 3 rows as of 2026-10-22) |
 
 **Not applied (deliberately):** `20260930020000_outreach_leads_tenant_scoped_email.sql`
 (drops the global email index); see launch gate A. All three client migrations
@@ -241,35 +249,32 @@ were validated beforehand on real PostgreSQL 17.9 (UTF-8), 46/46 checks
 
 Send-lock Postgres (`db/migrations/`): `20260917000000_outbound_send_reservations.sql`
 backs the live send lock (`/api/send-lock/health` → `kind: postgres`).
-`anthropic_usage_events` is created on demand by `integrations/anthropic-usage.js`.
+`20261020000000_send_quota_reservations.sql` (`send_control` quota buckets/runs/lanes)
+is live; Railway predeploy `node scripts/send-quota-migrate.js` verified on
+2026-10-22. `anthropic_usage_events` is created on demand by
+`integrations/anthropic-usage.js`.
 
-## Jole launch gates (all open)
+## Jole launch gates
 
-**A. Before the first Jole lead import:**
+**Sending authorization (2026-10-22):** complete for the four production Jole
+inboxes. Industrial pair remains `warmup_incomplete` at cap 0. First natural
+scheduled Jole send is still pending the next Chicago weekday window.
+
+**A. Before the first Jole lead import:** import already happened; these remain open for later tenant-email work:
 - Fix the Sheets-mode dashboard reads (`A:O` + `Q:X`) to read `clientId`
   (column Y); today those fallback reads infer ownership.
 - Apply `20260930020000_outreach_leads_tenant_scoped_email.sql`.
 - Set `OUTREACH_EMAIL_UNIQUENESS=client` when cross-client email ownership is
   needed (until then imports refuse an address any client already has).
 
-**B. Before Jole sending:**
-- Fix demo-intent per-client metering (warm/intent sends are refused for an
-  inactive client today but are not counted against client capacity).
-- Provision Jole sending domains and inboxes; warm the senders.
-- Add Gmail credentials and `GMAIL_INBOX_REGISTRY_JSON` entries with
-  `"clientId": "jole"`.
-- Configure Jole client send caps (and ScaleLab's reservation) in
-  `integrations/clients/client-configs.js`.
-- Finalize campaign copy; mark the template ready and the campaign approved.
-- Activate Jole only after the agreement is signed, the onboarding form is
-  returned and the remaining $175 is paid (reviewed commit: onboarding items
-  true, `activation.activatedBy` / `activatedAt`, `lifecycleStatus: 'active'`).
-- Separately authorize sending: `sending.enabled: true` in a reviewed commit
-  **and** `CLIENT_SENDING_AUTHORIZED=jole` on the service.
+**B. Before Jole sending:** done for production-ready inboxes (copy v4 deployed,
+campaign approved, `CLIENT_SENDING_AUTHORIZED=jole`). Remaining: finish warmup
+on `jole_industrial_*` before raising those caps above 0.
 
 **C. Production validation still pending:**
-- The first real send window on the multi-client code: watch `[client-cap]`
-  and confirm ScaleLab still sends normally.
+- First natural Jole send window after v4 authorization: watch `[client-cap]`
+  Jole `allowed`, reservations confirm once, V4 copy on never-contacted leads,
+  v2 threads unchanged, and ScaleLab still sending normally.
 
 ## Where things live
 

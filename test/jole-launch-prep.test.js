@@ -13,6 +13,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+// Fixture Jole leads are classified exact for v4 (test-support/jole-v4-fixtures.js).
+require('../test-support/jole-v4-fixtures').classifyFixtureLeadsExact();
+const clientEmail = require('../integrations/clients/client-email');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -561,6 +564,7 @@ async function schedulerRun(leads, env, { stopAtProvider = false } = {}) {
       const capture = (...args) => logs.push(args.join(' '));
       const sandbox = {
         QUEUE_STAGE: 'Queued', routedLeadReady, tenantOf, DEFAULT_CLIENT_ID, SUPPRESSED_EMAILS: new Set(),
+        isClientTemplateId: clientEmail.isClientTemplateId, clientSelectionHold: clientEmail.clientSelectionHold,
         normEmail: e => (e || '').toLowerCase().trim(), classifyLeadEmail: classify,
         console: { log: capture, warn: capture, error: capture },
       };

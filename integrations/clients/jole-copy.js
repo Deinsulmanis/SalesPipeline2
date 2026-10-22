@@ -191,14 +191,137 @@ function renderJoleEmployerStepV3({ step, firstName, company, roles = [], locati
   return email;
 }
 
+/**
+ * Jole BTX employer-acquisition copy, v4 (2026-10-21): evidence-aware. Each
+ * lead's sequence uses exactly one personalization mode, decided from its
+ * evidence (clients/jole-personalization.js) and pinned by its first send:
+ *
+ *   exact          role AND hiring site independently supported by the same
+ *                  posting; the copy names both
+ *   role_only      the craft role is supported, the site is not: the copy
+ *                  names the role and never a place
+ *   general_craft  a valid industrial employer without a clean current role
+ *                  claim: the copy names neither a role, a place nor an opening
+ *   hold           never rendered
+ *
+ * Same dash rule, link rule, footer and cadence as v3.
+ */
+const COPY_VERSION_V4 = 'jole_industrial_employer_v4';
+const PERSONALIZATION_MODES = Object.freeze(['exact', 'role_only', 'general_craft', 'hold']);
+const SENDABLE_MODES = Object.freeze(['exact', 'role_only', 'general_craft']);
+
+const V4_T2_CONTEXT = 'Just to give you some context, Jole has supported industrial employers with skilled trade labor for about 25 years and works with roughly 800 workers a year.';
+const V4_T2_OVERVIEW = `Here's a quick overview of Jole:\n${JOLE_V3_OVERVIEW_URL}`;
+const V4_COPY = Object.freeze({
+  exact: Object.freeze({
+    subject: '{{role}} | {{location}}',
+    bodies: Object.freeze([
+      'Hi {{first_name}},\n\nSaw {{company}} is hiring {{role}} in {{location}}{{secondary_role_line}}.\n\nI can have our team check whether Jole has the right craft coverage for that site and what it would realistically take to fill the gap.\n\nWant me to check?\n\nJorge',
+      `Hi {{first_name}},\n\n${V4_T2_CONTEXT}\n\nFor an opening like {{role}} in {{location}}, we'd look at the site, shift, certifications, headcount and start date, then tell you whether it's something we can realistically cover.\n\nWe're not trying to force every opening into a fit. If we can't cover it properly, we'll tell you.\n\n${V4_T2_OVERVIEW}\n\nIf {{role}} is still open, worth having us take a look?\n\nJorge`,
+      'Hi {{first_name}},\n\nIs getting the {{role}} opening in {{location}} covered still a priority for {{company}}, or has the need changed?\n\nJorge',
+    ]),
+  }),
+  role_only: Object.freeze({
+    subject: '{{role}}',
+    bodies: Object.freeze([
+      'Hi {{first_name}},\n\nSaw {{company}} has been hiring {{role}} recently.\n\nI can have our team check whether Jole has the right craft coverage and what it would realistically take to support the need.\n\nWant me to check?\n\nJorge',
+      `Hi {{first_name}},\n\n${V4_T2_CONTEXT}\n\nFor a need like {{role}}, we'd look at the shift, certifications, headcount, start date and site requirements, then tell you whether it's something we can realistically cover.\n\nWe're not trying to force every opening into a fit. If we can't cover it properly, we'll tell you.\n\n${V4_T2_OVERVIEW}\n\nIf the {{role}} need is still active, worth having us take a look?\n\nJorge`,
+      'Hi {{first_name}},\n\nIs getting the {{role}} need covered still a priority for {{company}}, or has the need changed?\n\nJorge',
+    ]),
+  }),
+  general_craft: Object.freeze({
+    subject: 'skilled trade coverage',
+    bodies: Object.freeze([
+      'Hi {{first_name}},\n\nReaching out because {{company}} operates in an industrial environment where skilled trade coverage can become a bottleneck.\n\nI can have our team look at where Jole could realistically support your craft needs when coverage gets tight.\n\nWorth a look?\n\nJorge',
+      `Hi {{first_name}},\n\n${V4_T2_CONTEXT}\n\nWhen an employer needs additional craft coverage, we look at the trades, site requirements, headcount, certifications and timing, then tell them whether it's something we can realistically support.\n\nWe're not trying to force every requirement into a fit. If we can't cover it properly, we'll tell you.\n\n${V4_T2_OVERVIEW}\n\nWorth keeping Jole in mind when coverage gets tight?\n\nJorge`,
+      'Hi {{first_name}},\n\nIs adding another option for skilled trade coverage something {{company}} is focused on right now, or are you mostly covered?\n\nJorge',
+    ]),
+  }),
+});
+
+const JOLE_INDUSTRIAL_EMPLOYER_COPY_V4 = Object.freeze({
+  copyVersion: COPY_VERSION_V4, sender: SENDER, modes: V4_COPY,
+  // v3's cadence: T1, then three and four business days after the previous touch.
+  steps: Object.freeze(STEPS_V3.map(({ step, sendAfterBusinessDays }) => Object.freeze({ step, sendAfterBusinessDays }))),
+  requiredConfig: Object.freeze(['JOLE_COMMERCIAL_MAILING_ADDRESS']),
+  cadence: JOLE_INDUSTRIAL_EMPLOYER_COPY.cadence,
+  footer: JOLE_INDUSTRIAL_EMPLOYER_COPY.footer,
+  linkPolicy: JOLE_INDUSTRIAL_EMPLOYER_COPY_V3.linkPolicy,
+});
+
+const CITY_STATE = /\b[A-Z][A-Za-z.' ]+, [A-Z]{2}\b/;
+const fail = (code, message) => Object.assign(new Error(message), { code });
+
+/**
+ * The claims each mode may and may not make, on the sales copy (subject and
+ * body before the footer). '' when the email keeps to its mode.
+ */
+function v4ModeProblem(email, { mode, role = '', location = '', company = '', forbiddenRoles = [], forbiddenLocations = [] } = {}) {
+  const copy = `${email.subject || ''}\n${email.coreBody || ''}`;
+  const has = text => Boolean(text) && copy.toLowerCase().includes(String(text).toLowerCase());
+  if (mode === 'exact') return has(role) && has(location) ? '' : 'exact copy must name its verified role and site';
+  // Neither lower mode may place the company anywhere ("Acme, LP" is a name, not a place).
+  const withoutCompany = company ? copy.split(company).join(' ') : copy;
+  if (CITY_STATE.test(withoutCompany) || [location, ...forbiddenLocations].some(has)) return `${mode} copy must not name a location`;
+  if (mode === 'role_only') return has(role) ? '' : 'role_only copy must name its verified role';
+  if (mode === 'general_craft') {
+    if (/\bhiring\b|\bopenings?\b|\bposting\b/i.test(copy)) return 'general_craft copy must not claim a current opening';
+    if ([role, ...forbiddenRoles].some(has)) return 'general_craft copy must not name a role';
+    return '';
+  }
+  return `invalid personalization mode ${mode}`;
+}
+
+function validateJoleEmployerEmailV4(email = {}, step, personalization) {
+  const base = validateJoleEmployerEmailV3(email, step);
+  if (base) return base;
+  if (!personalization) return '';
+  return v4ModeProblem({ ...email, coreBody: email.coreBody ?? String(email.body || '').split(`\n\n${SENDER.name}\n${SENDER.title}\n`)[0] }, personalization);
+}
+
+/**
+ * Render one v4 touch. personalization: { mode, role, location,
+ * secondaryRole } from the lead's resolved evidence. Throws on hold, an
+ * unknown mode, a missing value the mode needs, or any claim the mode forbids.
+ */
+function renderJoleEmployerStepV4({ step, firstName, company, mailingAddress, personalization = {} } = {}, { withFooter = true } = {}) {
+  const definition = STEPS_V3.find(item => item.step === Number(step));
+  if (!definition) throw fail('invalid_step', `invalid Jole step ${step}`);
+  const mode = String(personalization.mode || '');
+  if (mode === 'hold') throw fail('personalization_hold', `Jole personalization hold: ${personalization.reason || 'held for review'}`);
+  if (!SENDABLE_MODES.includes(mode)) throw fail('personalization_mode_missing', `no Jole personalization mode for this lead (${mode || 'unclassified'})`);
+  const template = V4_COPY[mode];
+  const vars = { first_name: cleanVariable(firstName, 'first_name'), company: cleanVariable(companyWithoutDashSuffix(company), 'company') };
+  if (mode === 'exact' || mode === 'role_only') vars.role = cleanVariable(personalization.role, 'role');
+  if (mode === 'exact') {
+    vars.location = cleanVariable(personalization.location, 'location');
+    // Only a second role with its own verified evidence; none is otherwise invented.
+    vars.secondary_role_line = personalization.secondaryRole ? ` and also has openings for ${cleanVariable(personalization.secondaryRole, 'role')} at the site` : '';
+  }
+  const fill = text => text.replace(/{{(\w+)}}/g, (_, key) => {
+    if (!Object.hasOwn(vars, key) || (!vars[key] && key !== 'secondary_role_line')) throw fail('invalid_variable', `Jole copy variable ${key} is missing`);
+    return vars[key];
+  });
+  const coreBody = fill(template.bodies[definition.step - 1]);
+  const body = withFooter ? `${coreBody}\n\n${joleFooter(mailingAddress)}` : coreBody;
+  const email = {
+    step: definition.step, variant: mode, subject: definition.step === 1 ? fill(template.subject) : null,
+    coreBody, body, copyVersion: COPY_VERSION_V4, personalizationMode: mode,
+  };
+  const problem = validateJoleEmployerEmailV4(email, definition.step, { ...personalization, mode, company: vars.company });
+  if (problem) throw fail('invalid_copy', `Jole copy refused: ${problem}`);
+  return email;
+}
+
 // Every Jole copy version that has ever sent, by the id its sends record.
 const JOLE_COPY_VERSIONS = Object.freeze({
   [COPY_VERSION]: Object.freeze({ copy: JOLE_INDUSTRIAL_EMPLOYER_COPY, render: renderJoleEmployerStep, validate: validateJoleEmployerEmail }),
   [COPY_VERSION_V3]: Object.freeze({ copy: JOLE_INDUSTRIAL_EMPLOYER_COPY_V3, render: renderJoleEmployerStepV3, validate: validateJoleEmployerEmailV3 }),
+  [COPY_VERSION_V4]: Object.freeze({ copy: JOLE_INDUSTRIAL_EMPLOYER_COPY_V4, render: renderJoleEmployerStepV4, validate: validateJoleEmployerEmailV4, evidenceAware: true }),
 });
 // What a never-contacted lead starts on, and what a lead whose send evidence
 // predates version stamping (every send before v3) continues on.
-const CURRENT_COPY_VERSION = COPY_VERSION_V3;
+const CURRENT_COPY_VERSION = COPY_VERSION_V4;
 const LEGACY_COPY_VERSION = COPY_VERSION;
 
 // The same outbound evidence outreach-queue.js refuses a re-queue on: sends,
@@ -241,4 +364,6 @@ module.exports = {
   JOLE_INDUSTRIAL_EMPLOYER_COPY_V3, COPY_VERSION_V3, JOLE_V3_OVERVIEW_URL,
   renderJoleEmployerStepV3, validateJoleEmployerEmailV3, companyWithoutDashSuffix,
   JOLE_COPY_VERSIONS, CURRENT_COPY_VERSION, LEGACY_COPY_VERSION, resolveJoleCopyVersion,
+  JOLE_INDUSTRIAL_EMPLOYER_COPY_V4, COPY_VERSION_V4, PERSONALIZATION_MODES, SENDABLE_MODES,
+  renderJoleEmployerStepV4, validateJoleEmployerEmailV4, v4ModeProblem,
 };
