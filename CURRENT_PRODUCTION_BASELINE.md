@@ -1,6 +1,6 @@
 # Current production baseline
 
-**Last verified:** 2026-09-30 Pacific (refs, Railway deployment, logs, read-only endpoints and read-only SQL); production SHA and the Jole section re-verified 2026-10-05
+**Last verified:** 2026-10-22 UTC (git refs + Railway live SHA). Runtime/env/Supabase from the same-day read-only audit.
 **Start all new work from:** `main`
 
 Read this before starting any code change. Everything under "Snapshot" was true
@@ -29,24 +29,34 @@ Workflow:
    version of every code, test and config file. Never merge `main` into the
    production branch.
 
-On 2026-09-29 `main` was reconciled this way (merge `e06e8b0` of production
-`72f9e285`, then merge `9541c1d` of production `f70e24f0`). Its code, test and config tree equals production exactly; `main`
-additionally carries only documentation (`CURRENT_PRODUCTION_BASELINE.md`,
+On 2026-10-22 `cursor/staffing-agent-shadow-production-7402` was fast-forwarded
+to live `8bb1f5a` (never force; never merged `main` into it). `main` then
+merged that SHA (`903e6d1`). Code, test and config on `main` equal `8bb1f5a`;
+`main` additionally carries only documentation (`CURRENT_PRODUCTION_BASELINE.md`,
 `OWNER_OPERATOR_GUIDE.md`, `salespipelineflowaudit.md`) and
-`.claude/skills/salespipeline2-outreach-safety/`.
+`.claude/skills/salespipeline2-outreach-safety/`. Jole copy v4 (`51ccf60`,
+`cf9c453` on `fix/send-throughput-20261020`) is still undeployed and is not on
+`main` or the named production branch.
 
-## Snapshot: production on 2026-09-29
+## Snapshot: production on 2026-10-22
 
 Railway project / service: `modest-peace` / `SalesPipeline2`
 (https://receptionist.scalelabai.ca), region us-west2.
 
-**Production SHA (re-verified 2026-10-05 21:25 Pacific):** `25831dc6de9408139d23bb2073fef7c3642749a5`
+**Production SHA (re-verified 2026-10-22 05:59 UTC):** `8bb1f5a4c3e11bba540d4385a3c14e128e3b3efe`
+(Railway deployment `ab266573`, SUCCESS, deployed from
+`fix/send-throughput-20261020`): Jole BTX copy v3 for never-contacted Jole
+leads, plus send-quota lanes (flag `SEND_CONCURRENT_SENDER_LANES=false`).
+Named production branch is now exactly this SHA. Railway's last successful
+deploy still records the throughput branch as the watch that shipped it.
+
+`CLIENT_SENDING_AUTHORIZED=none` — Jole is prepared and not sending. ScaleLab
+staffing v1 is Active / sending. Do not authorize Jole from a docs refresh.
+
+Earlier snapshot (2026-10-05): `25831dc6de9408139d23bb2073fef7c3642749a5`
 (Railway deployment `40deeac0`, SUCCESS): Jole BTX LLC taken out of onboarding
 with a fail-closed sender policy, on top of `a6685fa` (Touch 3 Day-7 cadence +
 OOO pause), `04ef9f0` and `874faf9` (Agent v2 shadow/canary, execution off).
-`main` = merge `0876fb4` + this doc; code identical to production. Observed at
-the same time: `primary` active, the other four ScaleLab inboxes paused
-(operator state, untouched by the Jole deploy).
 
 Earlier: `4ca54466fd0853653c9bd7b0a73fffa3140eea87` (Railway deployment
 `29e46857`), deployed 2026-09-30 20:47 Pacific: `f70e24f` plus
