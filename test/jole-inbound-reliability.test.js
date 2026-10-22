@@ -204,6 +204,115 @@ test('two Jole leads with the same email fail closed', () => {
   );
 });
 
+function matchJole(message, { lead = joleLead(), activities, leads } = {}) {
+  return matchMailboxMessages([message], {
+    leads: leads || [lead],
+    activities: activities || [outboundActivity(lead)],
+    senderInboxId: JOLE_SENDER.id,
+    senderEmail: JOLE_SENDER.email,
+  });
+}
+
+test('1. same Gmail thread and same prospect address matches the Jole lead', () => {
+  const lead = joleLead();
+  const matched = matchJole(inboundMessage({ id: 'c1', from: lead.email, threadId: 't-jole-1' }), { lead });
+  assert.equal(matched.replies.get(lead.id).id, 'c1');
+});
+
+test('2. same Gmail thread and a different From address matches the Jole lead', () => {
+  const lead = joleLead();
+  const matched = matchJole(inboundMessage({
+    id: 'c2', from: 'assistant@factory.example', threadId: 't-jole-1', inReplyTo: '',
+  }), { lead });
+  assert.equal(matched.replies.get(lead.id).id, 'c2');
+});
+
+test('3. a new Gmail thread from the same prospect address matches the Jole lead', () => {
+  const lead = joleLead();
+  const matched = matchJole(inboundMessage({
+    id: 'c3', from: lead.email, threadId: 'brand-new-thread', inReplyTo: '',
+  }), { lead });
+  assert.equal(matched.replies.get(lead.id).id, 'c3');
+});
+
+test('4. a new thread from another address matches when In-Reply-To is the outbound RFC id', () => {
+  const lead = joleLead();
+  const matched = matchJole(inboundMessage({
+    id: 'c4', from: 'patricia.ops@factory.example', threadId: 'client-mail-thread',
+    inReplyTo: '<jole-out-1@jolebtxgroup.com>',
+  }), { lead });
+  assert.equal(matched.replies.get(lead.id).id, 'c4');
+});
+
+test('5. References alone is enough when In-Reply-To is absent', () => {
+  const lead = joleLead();
+  const message = inboundMessage({
+    id: 'c5', from: 'patricia.ops@factory.example', threadId: 'client-mail-thread', inReplyTo: '',
+  });
+  message.payload.headers = message.payload.headers
+    .filter(header => header.name !== 'In-Reply-To' && header.name !== 'References');
+  message.payload.headers.push({ name: 'References', value: '<unrelated@other> <jole-out-1@jolebtxgroup.com>' });
+  const matched = matchJole(message, { lead });
+  assert.equal(matched.replies.get(lead.id).id, 'c5');
+});
+
+test('6. a new thread, different address, and no RFC headers stays unmatched', () => {
+  const lead = joleLead();
+  const matched = matchJole(inboundMessage({
+    id: 'c6', from: 'someone.else@factory.example', threadId: 'unrelated-thread', inReplyTo: '',
+  }), { lead });
+  assert.equal(matched.replies.size, 0);
+});
+
+test('7. ambiguous ownership fails closed instead of choosing a lead', () => {
+  const a = joleLead({ id: 'j1' });
+  const b = joleLead({ id: 'j2', email: 'other@factory.example' });
+  const activities = [
+    outboundActivity(a, { rfcMessageId: '<out-a@jole>', gmailMessageId: 'oa', threadId: 'ta' }),
+    outboundActivity(b, { rfcMessageId: '<out-b@jole>', gmailMessageId: 'ob', threadId: 'tb' }),
+  ];
+  const both = inboundMessage({
+    id: 'c7', from: 'third@factory.example', threadId: 'new', inReplyTo: '<out-a@jole>',
+  });
+  both.payload.headers = both.payload.headers.filter(header => header.name !== 'References');
+  both.payload.headers.push({ name: 'References', value: '<out-b@jole>' });
+  assert.throws(
+    () => matchJole(both, { leads: [a, b], activities }),
+    /Ambiguous inbound CRM RFC identity/,
+  );
+  assert.throws(
+    () => matchJole(inboundMessage({ id: 'dup', from: a.email, threadId: 'new', inReplyTo: '' }), {
+      leads: [a, joleLead({ id: 'j3' })], activities: [],
+    }),
+    /Ambiguous inbound CRM identity/,
+  );
+});
+
+test('tenant: a Jole inbox cannot attribute mail to a ScaleLab lead, and the reverse is impossible', () => {
+  const jole = joleLead();
+  const scale = scalelabLead();
+  assert.deepEqual(leadsInEmailScope([jole, scale], 'jole').map(item => item.id), ['jole-lead-1']);
+  assert.deepEqual(leadsInEmailScope([jole, scale], 'scalelab').map(item => item.id), ['sl-1']);
+  const joleScoped = matchMailboxMessages([
+    inboundMessage({ id: 'j', from: scale.email, threadId: 'scale-thread', inReplyTo: '<scale-out@scalelabai.ca>' }),
+  ], {
+    leads: leadsInEmailScope([jole, scale], 'jole'),
+    activities: [outboundActivity(scale, { rfcMessageId: '<scale-out@scalelabai.ca>', threadId: 'scale-thread' })],
+    senderInboxId: JOLE_SENDER.id, senderEmail: JOLE_SENDER.email,
+  });
+  assert.equal(joleScoped.replies.size, 0);
+  const scaleScoped = matchMailboxMessages([
+    inboundMessage({ id: 's', from: jole.email, threadId: 't-jole-1', inReplyTo: '<jole-out-1@jolebtxgroup.com>' }),
+  ], {
+    leads: leadsInEmailScope([jole, scale], 'scalelab'),
+    activities: [outboundActivity(jole)],
+    senderInboxId: SCALELAB_SENDER.id, senderEmail: SCALELAB_SENDER.email,
+  });
+  assert.equal(scaleScoped.replies.size, 0);
+  assert.equal(resolveReplyClientContext({ senderInboxId: JOLE_SENDER.id, lead: scale, senders: SENDERS }).ok, false);
+  assert.equal(resolveReplyClientContext({ senderInboxId: SCALELAB_SENDER.id, lead: jole, senders: SENDERS }).ok, false);
+});
+
 test('inbox cursors stay isolated: activities from another inbox do not bind a thread', () => {
   const lead = joleLead();
   const activities = [{
