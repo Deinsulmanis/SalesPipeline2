@@ -8,6 +8,9 @@ const { uniqueSuppressions, suppressionForCanonical, inboundAlreadyEvaluated } =
 const { eventTypeFor, stripQuotedReply } = require('./reply-reconciliation');
 const { planOutboundActivity } = require('./human-outbound');
 const { providerMessageId } = require('./canonical-sends');
+const { resolveLeadClient } = require('./clients/ownership');
+const { getClient } = require('./clients/registry');
+const { managedReplyNeedsHandler } = require('./clients/reply-pipeline');
 const norm = value => String(value || '').trim().toLowerCase();
 
 const HUMAN_REPLY_TEXT_LIMIT = 1500;
@@ -168,7 +171,10 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
       // mutations cannot be skipped just because the Gmail event exists.
       const terminal = canonical.reason === 'unsubscribe_request'
         || (canonical.state === 'negative' && canonical.reason === 'explicit_rejection');
-      if ((!already && !evaluated) || terminal) {
+      const owner = resolveLeadClient(lead);
+      const managed = owner.ok && getClient(owner.clientId).replyPolicy?.mode === 'managed';
+      const needsManaged = managed && managedReplyNeedsHandler(activities, message.id, owner.clientId);
+      if ((!already && !evaluated) || terminal || needsManaged) {
         replies.push({ leadId, message, historical, canonical, alreadyRecorded: already || evaluated });
       }
     }

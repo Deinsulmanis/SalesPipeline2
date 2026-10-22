@@ -182,6 +182,7 @@ const { buildAnalyticsIntegrity } = require('./integrations/analytics-integrity'
 const { buildConfirmedSendActivity, buildCanonicalDigest, bouncedLeadIds } = require('./integrations/canonical-sends');
 const { buildCrmHealth } = require('./integrations/crm-health');
 const { observerHealth } = require('./integrations/gmail-observer-health');
+const { clientInboundHealth } = require('./integrations/clients/inbound-health');
 const { gmailUsageSnapshot } = require('./integrations/gmail-api-guard');
 const { observeMailbox } = require('./integrations/gmail-mailbox-observer');
 const { planMailboxEvents } = require('./integrations/mailbox-observation-events');
@@ -6426,6 +6427,7 @@ async function gmailInboxStatus() {
   const capacity = capacityFromEnv(senders);
   let observers = [];
   let sentToday = new Map();
+  let inboundHealth = null;
   try {
     const dataset = await getOutreachDataset();
     const dayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
@@ -6433,6 +6435,12 @@ async function gmailInboxStatus() {
     observers = observerHealth(dataset.mailboxObservationState || [], {
       senderIds: observableSenders(senders).map(item => item.id),
     });
+    inboundHealth = {
+      jole: clientInboundHealth({
+        clientId: 'jole', senders, observerRows: dataset.mailboxObservationState || [],
+        activities: dataset.activities || [],
+      }),
+    };
   } catch (_) { /* status-only fallback: registry remains visible */ }
   return {
     inboxes: inboxes.map(inbox => {
@@ -6477,6 +6485,7 @@ async function gmailInboxStatus() {
       // Per-client allocation; the global limits above are their sum.
       clientLimits: capacity.clientLimits,
     },
+    inboundHealth,
   };
 }
 
@@ -6946,6 +6955,17 @@ app.get('/api/ops/cold-delivery-gate', requireAuth, async (req, res) => {
       }
     }
     res.json(out);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/api/ops/jole-inbound-health', requireAuth, async (_req, res) => {
+  try {
+    const senders = configuredSenders();
+    const dataset = await getOutreachDataset({ force: true });
+    res.json(clientInboundHealth({
+      clientId: 'jole', senders, observerRows: dataset.mailboxObservationState || [],
+      activities: dataset.activities || [],
+    }));
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 

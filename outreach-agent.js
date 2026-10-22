@@ -110,7 +110,7 @@ const { outreachBlockForLead, isArchivedLead, archiveReasonFromNotes, ARCHIVED_R
 // Managed clients: ownership travels with every send action and reply.
 const { actionOwnership, resolveSenderClient, resolveLeadClient } = require('./integrations/clients/ownership');
 const { resolveReplyClientContext } = require('./integrations/clients/reply-policy');
-const { handleManagedClientReply } = require('./integrations/clients/reply-pipeline');
+const { handleManagedClientReply, managedReplyNeedsHandler } = require('./integrations/clients/reply-pipeline');
 const { buildClientSuppression } = require('./integrations/clients/suppression');
 const { getClient: getManagedClient } = require('./integrations/clients/registry');
 const { getLedgerStore } = require('./integrations/clients/ledger-store');
@@ -183,7 +183,7 @@ const { classifyStaffingReply, unroutedReplyDecision, STAFFING_CLARIFICATION,
   staffingReplyHistory, staffingRepeatReason, staffingHumanTouchBlock,
 } = require('./integrations/staffing-reply-policy');
 const {
-  inboundAlreadyEvaluated, committedInboundClassification,
+  inboundAlreadyEvaluated, committedInboundClassification, inboundMessageIdOf,
   skipHandlerForEvaluatedMessage, recordedTerminalReply, NOTE_ALREADY_HANDLED,
 } = require('./integrations/inbound-reply-guard');
 const { commercialListUnsubscribeHeaders } = require('./integrations/commercial-email-headers');
@@ -3287,7 +3287,17 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     const recorded = recordedTerminalReply(row, { currentEmail: lead.email });
     const unsub = recorded.unsubscribe;
     const neg = recorded.rejection;
-    if (!unsub && !neg) continue;
+    if (!unsub && !neg) {
+      // Managed clients have no gmail_reply_evaluated / 90-minute send retry.
+      // A persisted gmail-reply that never reached handleManagedClientReply
+      // must replay here — including CHECK_ONLY and after a long outage.
+      const inboundId = metadata.gmailMessageId || inboundMessageIdOf(row);
+      const managedContext = resolveReplyClientContext({
+        senderInboxId: metadata.senderInboxId || lead.senderInboxId, lead, senders: GMAIL_SENDERS,
+      });
+      if (!(managedContext.ok && managedContext.policyMode === 'managed'
+        && managedReplyNeedsHandler(activitiesForCycle, inboundId, managedContext.clientId))) continue;
+    }
     const notes = String(lead.notes || '');
     const optOutApplied = /\[REPLY:\s*Unsubscribed\]/i.test(notes) && String(lead.stage) === 'Unsub'
       && SUPPRESSED_EMAILS.has(normEmail(lead.email));

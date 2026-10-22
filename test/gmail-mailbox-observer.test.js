@@ -7,6 +7,63 @@ const body = text => ({ mimeType: 'text/plain', body: { data: Buffer.from(text).
 const message = ({ id, from, threadId, at, text, labels = [] }) => ({ id, threadId, internalDate: String(Date.parse(at)), labelIds: labels,
   payload: { ...body(text), headers: [{ name: 'From', value: from }, { name: 'Message-ID', value: `<${id}@test>` }] }, snippet: text });
 
+test('mailbox messages match a different From alias via In-Reply-To of the outbound RFC id', () => {
+  const leads = [
+    { id: 'a', email: 'pat@factory.example', lastEmailedAt: '2026-09-01T00:00:00Z' },
+    { id: 'b', email: 'other@factory.example', lastEmailedAt: '2026-09-01T00:00:00Z' },
+  ];
+  const activities = [{
+    sourceLeadId: 'a',
+    metadata: JSON.stringify({
+      senderInboxId: 'jole_group_jorge', gmailThreadId: 't-out', rfcMessageId: '<jole-out-1@jolebtxgroup.com>',
+    }),
+  }];
+  const alias = {
+    id: 'r-alias', threadId: 't-new-client-thread', internalDate: String(Date.parse('2026-09-02T00:00:00Z')),
+    payload: {
+      mimeType: 'text/plain',
+      body: { data: Buffer.from('Yes, call me').toString('base64url') },
+      headers: [
+        { name: 'From', value: 'Patricia <patricia.ops@factory.example>' },
+        { name: 'In-Reply-To', value: '<jole-out-1@jolebtxgroup.com>' },
+        { name: 'References', value: '<jole-out-1@jolebtxgroup.com>' },
+        { name: 'Message-ID', value: '<alias-reply@factory.example>' },
+      ],
+    },
+    snippet: 'Yes, call me',
+  };
+  const result = matchMailboxMessages([alias], {
+    leads, activities, senderInboxId: 'jole_group_jorge', senderEmail: 'jorge@jolebtxgroup.com',
+  });
+  assert.equal(result.replies.get('a').id, 'r-alias');
+  assert.equal(result.replies.has('b'), false);
+});
+
+test('RFC identity that points at a different lead than From is a conflict, not a guess', () => {
+  const leads = [
+    { id: 'a', email: 'a@example.com', lastEmailedAt: '2026-09-01T00:00:00Z' },
+    { id: 'b', email: 'b@example.com', lastEmailedAt: '2026-09-01T00:00:00Z' },
+  ];
+  const activities = [{
+    sourceLeadId: 'b',
+    metadata: JSON.stringify({ senderInboxId: 'primary', rfcMessageId: '<out-b@x>' }),
+  }];
+  const msg = {
+    id: 'conflict', threadId: 't-new', internalDate: String(Date.parse('2026-09-02T00:00:00Z')),
+    payload: {
+      mimeType: 'text/plain', body: { data: Buffer.from('hi').toString('base64url') },
+      headers: [
+        { name: 'From', value: 'a@example.com' },
+        { name: 'In-Reply-To', value: '<out-b@x>' },
+      ],
+    },
+  };
+  assert.throws(
+    () => matchMailboxMessages([msg], { leads, activities, senderInboxId: 'primary', senderEmail: 'deins@scalelabai.ca' }),
+    /Conflicting inbound CRM RFC identity/,
+  );
+});
+
 test('mailbox messages match locally by exact address or canonical thread', () => {
   const leads = [{ id: 'a', email: 'a@example.com', lastEmailedAt: '2026-09-01T00:00:00Z' },
     { id: 'b', email: 'info@example.com', lastEmailedAt: '2026-09-01T00:00:00Z' }];
