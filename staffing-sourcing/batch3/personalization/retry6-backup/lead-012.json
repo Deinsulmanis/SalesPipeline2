@@ -1,0 +1,91 @@
+{
+  "firstName": "Barbara",
+  "lastName": "Lopez",
+  "fullName": "Barbara Lopez",
+  "jobTitle": "Co-Owner",
+  "company": "LEAD Industrial Staffing",
+  "companyWebsite": "http://www.leadstaff.services",
+  "companyDomain": "leadstaff.services",
+  "companyCity": "Portland",
+  "companyState": "Texas",
+  "companySizeCategory": "11-50",
+  "staffingLane": "A",
+  "staffingSpecialization": "manufacturing; logistics; distribution; construction",
+  "emailStatus": "verified (NOT catch-all) — Tier 1 send-ready",
+  "sourceEvidence": "Apollo people search + website ICP; keywords=b2b,skilled trades recruitment,certified welders,pipefitters,recruitment,temporary help services,employee benefits,manufacturing",
+  "apolloVerifiedEmail": "blopez@leadstaff.com",
+  "buyerTier": "Tier 1",
+  "emailCatchAll": "false",
+  "emailVerificationStatus": "verified",
+  "apolloPersonId": "5f49e16fc985340001c1fe9b",
+  "apolloAccountId": "65eab30788833300076226a9",
+  "linkedinUrl": "http://www.linkedin.com/in/barbara-holder-lopez-7380617a",
+  "source": "apollo_batch3",
+  "notes": "related_email_domain=leadstaff.com",
+  "personCity": "Portland",
+  "personState": "Texas",
+  "estimatedEmployees": "28",
+  "sicCodes": "7363,7361",
+  "naicsCodes": "561320",
+  "campaign": "Industrial Staffing Agency",
+  "campaignId": "industrial_staffing_employer_acquisition_v1",
+  "strategy": "staffing_market_evidence_v1",
+  "model": "claude-haiku-4-5",
+  "generatedAt": "2026-09-18T01:05:53.439Z",
+  "research": {
+    "pages": [],
+    "failures": [
+      "non_public_address"
+    ],
+    "reviewRequired": true,
+    "retrieval": {
+      "homepageFailed": true,
+      "alternateCompanyPageAttempted": false,
+      "domainIdentityVerified": false,
+      "usableAlternateEvidence": false,
+      "attempts": [
+        {
+          "url": "http://www.leadstaff.services",
+          "homepage": true,
+          "ok": false,
+          "status": null,
+          "reason": "non_public_address"
+        }
+      ]
+    }
+  },
+  "retrieval": {
+    "homepageFailed": true,
+    "alternateCompanyPageAttempted": false,
+    "domainIdentityVerified": false,
+    "usableAlternateEvidence": false,
+    "attempts": [
+      {
+        "url": "http://www.leadstaff.services",
+        "homepage": true,
+        "ok": false,
+        "status": null,
+        "reason": "non_public_address"
+      }
+    ]
+  },
+  "icpFit": "UNKNOWN",
+  "hyperPersonalizedOpening": "",
+  "confidence": "RETRY_REQUIRED",
+  "classification": "RETRY_REQUIRED",
+  "safeToSend": false,
+  "reviewFlag": true,
+  "primaryReason": "RETRIEVAL_UNUSABLE",
+  "supportingReasons": [],
+  "reviewReasons": [
+    "RETRIEVAL_UNUSABLE"
+  ],
+  "facts": [],
+  "sourceURL_or_sourceDescription": "",
+  "emailPreview": null,
+  "previewOnly": true,
+  "codeDigest": "0caa20fc47f4e8a1de14eb6ec20905530f960d9e7c89aac76bf051fdcbb19bb8",
+  "liveCommit": "732e215",
+  "elapsedMs": 1,
+  "catchAllSource": false
+}

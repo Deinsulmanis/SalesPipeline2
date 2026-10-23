@@ -1,0 +1,16 @@
+{
+  "before": {
+    "total": 333,
+    "queued": 325,
+    "sent": 8,
+    "dentalTotal": 1316,
+    "unfiltered": 2182
+  },
+  "csvRows": 21,
+  "preflightAccepted": 21,
+  "preflightBlocked": [],
+  "import": null,
+  "queue": null,
+  "after": null,
+  "verification": null
+}

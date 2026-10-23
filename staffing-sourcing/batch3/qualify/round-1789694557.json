@@ -1,0 +1,58 @@
+[
+  {
+    "company": "APS Employment Services, Inc.",
+    "class": "generic_staffing",
+    "website": "http://www.apsemploymentservices.com",
+    "domain": "apsemploymentservices.com",
+    "person_id": "64eec1c47a9eae00012b09cd",
+    "final_url": "https://www.apsemploymentservices.com/",
+    "error": "",
+    "site_fit": true,
+    "site_mismatch": false,
+    "snippet": " Employment Agency l Saginaw MI l APS Employment Services, Inc CALL US! 800-929-2816 1840 N Michigan Ave, Suite 3, Saginaw MI 48602 Home Our Story Employers Temporary Staffing Temp-To-Hire Direct Hire Job Seekers Benefits Online Application Job Opportunities Respite/ CLS Services",
+    "decision": "pass",
+    "reason": "site_fit"
+  },
+  {
+    "company": "United Employment Group, Inc.",
+    "class": "generic_staffing",
+    "website": "http://www.unitedemployment.com",
+    "domain": "unitedemployment.com",
+    "person_id": "54a70d647468696220cad810",
+    "final_url": "https://unitedemployment.com/",
+    "error": "",
+    "site_fit": true,
+    "site_mismatch": false,
+    "snippet": " United Employment Associates \u2013 Recruiting Firm \u2013 Emmaus, PA 308 Main Street Emmaus, PA 18049 (610) 437-5040 i&#110;&#x66;&#x6f;&#x40;u&#110;&#x69;&#x74;&#x65;d&#101;&#x6d;&#x70;&#x6c;o&#121;&#x6d;&#x65;&#x6e;t&#46;&#x63;&#x6f;&#x6d; United Employment Associates Recruiting Firm |",
+    "decision": "pass",
+    "reason": "site_fit"
+  },
+  {
+    "company": "Fusco Personnel, Inc.",
+    "class": "generic_staffing",
+    "website": "http://www.fuscopersonnel.net",
+    "domain": "fuscopersonnel.net",
+    "person_id": "60e85e1e2fc719000105df1d",
+    "final_url": "https://fuscopersonnel.net/",
+    "error": "",
+    "site_fit": true,
+    "site_mismatch": false,
+    "snippet": " Fusco Recruiting Talent and Culture 1.800.34.FUSCO Fusco Personnel Our Services Industries We Serve Placement Options Job Seekers FAQs Join Our Talent Network Search Jobs / Apply Now Employers FAQs The Fusco Difference Welcome Employers Employees Access Payroll Information About",
+    "decision": "pass",
+    "reason": "site_fit"
+  },
+  {
+    "company": "The Personnel Store, Inc.",
+    "class": "generic_staffing",
+    "website": "http://www.personnelstore.com",
+    "domain": "personnelstore.com",
+    "person_id": "66ff9cdfad0d090001bb0ef6",
+    "final_url": "http://www.personnelstore.com",
+    "error": "",
+    "site_fit": true,
+    "site_mismatch": false,
+    "snippet": " Personnelstore.com \u2014 Purpose-built. Network-backed. | An eCorp Venture Personnelstore.com An eCorp Venture About Refer &amp; Earn Newsletter Get Started \u25cf Personnelstore.com is live \u00b7 Part of the VentureOS network of 20,000+ smart entities \u00b7 Weekly digest via newsletter.org \u25c6 ne",
+    "decision": "pass",
+    "reason": "site_fit"
+  }
+]

@@ -1,0 +1,460 @@
+{
+  "credits_consumed": 10,
+  "total_requested_enrichments": 10,
+  "unique_enriched_records": 10,
+  "missing_records": 0,
+  "request_id": 3208456923795158787,
+  "status": "success",
+  "matches": [
+    {
+      "id": "66fe0d107673080001e802a4",
+      "first_name": "Lori",
+      "last_name": "Schweigert",
+      "name": "Lori Schweigert",
+      "title": "Owner",
+      "linkedin_url": "http://www.linkedin.com/in/lori-schweigert-3847505",
+      "email": "lori@advanced-employment.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Billings",
+      "state": "Montana",
+      "country": "United States",
+      "organization": {
+        "id": "61ec896ea226ab0001d61b5f",
+        "name": "Advanced Employment Services",
+        "website_url": "http://www.advanced-employment.com",
+        "primary_domain": "advanced-employment.com",
+        "city": "Billings",
+        "state": "Montana",
+        "country": "United States",
+        "estimated_num_employees": 41,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "56131",
+          "561320"
+        ],
+        "keywords": [
+          "benefits administration",
+          "manufacturing",
+          "background screening",
+          "local job market",
+          "job placement",
+          "employee benefits",
+          "permanent placement",
+          "workforce solutions",
+          "business services",
+          "staffing industry expertise",
+          "payroll processing",
+          "employment placement agencies and executive search services"
+        ]
+      }
+    },
+    {
+      "id": "66f178a7fbe2d90001d974aa",
+      "first_name": "Jorge",
+      "last_name": "Cruz",
+      "name": "Jorge Cruz",
+      "title": "CEO/Owner",
+      "linkedin_url": "http://www.linkedin.com/in/jorge-cruz-52227690",
+      "email": "jcruz@americasstaffingpartner.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Bethlehem",
+      "state": "Pennsylvania",
+      "country": "United States",
+      "organization": {
+        "id": "55ea518bf3e5bb593000152a",
+        "name": "America's Staffing Partner, Inc.",
+        "website_url": "http://www.americasstaffingpartner.com",
+        "primary_domain": "americasstaffingpartner.com",
+        "city": "Bethlehem",
+        "state": "Pennsylvania",
+        "country": "United States",
+        "estimated_num_employees": 58,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "56132",
+          "561311"
+        ],
+        "keywords": [
+          "contract vehicles",
+          "temporary help services",
+          "government",
+          "staffing solutions",
+          "logistics staffing",
+          "customized staffing programs",
+          "government contracting",
+          "operational efficiency",
+          "medical staffing",
+          "employee retention",
+          "nationwide staffing",
+          "services"
+        ]
+      }
+    },
+    {
+      "id": "57d8d6dba6da98726a96287f",
+      "first_name": "Tina",
+      "last_name": "Breaux",
+      "name": "Tina Breaux",
+      "title": "Owner",
+      "linkedin_url": "http://www.linkedin.com/in/tina-breaux-a4486355",
+      "email": "tina@associatedstaffing.biz",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Raceland",
+      "state": "Louisiana",
+      "country": "United States",
+      "organization": {
+        "id": "54a128a969702d8cfc346a01",
+        "name": "Associated Staffing",
+        "website_url": "http://www.associated-staffing.com",
+        "primary_domain": "associated-staffing.com",
+        "city": "Grand Island",
+        "state": "Nebraska",
+        "country": "United States",
+        "estimated_num_employees": 79,
+        "sic_codes": [
+          "7361",
+          "7363"
+        ],
+        "naics_codes": [
+          "561311",
+          "561320"
+        ],
+        "keywords": [
+          "staffing support",
+          "customer service",
+          "human resources",
+          "staffing services",
+          "employment law updates",
+          "local business support",
+          "community initiatives",
+          "temp-to-hire",
+          "local community",
+          "business partnerships",
+          "staffing agency",
+          "community engagement"
+        ]
+      }
+    },
+    {
+      "id": "66f58322c94beb0001667981",
+      "first_name": "Jody",
+      "last_name": "Cramer",
+      "name": "Jody Cramer",
+      "title": "Founder/President",
+      "linkedin_url": "http://www.linkedin.com/in/jody-cramer-32520ba",
+      "email": "jody@bigskystaffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Bozeman",
+      "state": "Montana",
+      "country": "United States",
+      "organization": {
+        "id": "5a9dc239a6da98d96d81500c",
+        "name": "Big Sky Staffing",
+        "website_url": "http://www.bigskystaffing.com",
+        "primary_domain": "bigskystaffing.com",
+        "city": "Bozeman",
+        "state": "Montana",
+        "country": "United States",
+        "estimated_num_employees": 2,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "56131"
+        ],
+        "keywords": [
+          "executive search",
+          "temp to hire",
+          "office jobs",
+          "construction jobs",
+          "contract staffing",
+          "manufacturing jobs",
+          "accounting jobs",
+          "sales roles",
+          "project manager jobs",
+          "electrician jobs",
+          "insurance jobs",
+          "masonry jobs"
+        ]
+      }
+    },
+    {
+      "id": "54c1e45e7468697af7521359",
+      "first_name": "Brooke",
+      "last_name": "Jenkins",
+      "name": "Brooke Jenkins",
+      "title": "Owner",
+      "linkedin_url": "http://www.linkedin.com/in/brooke-jenkins-ba81b127",
+      "email": "bjenkins@edgestonestaffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Taunton",
+      "state": "Massachusetts",
+      "country": "United States",
+      "organization": {
+        "id": "63190ce43feff600df5524bf",
+        "name": "Edgestone Staffing",
+        "website_url": "http://www.edgestonestaffing.com",
+        "primary_domain": "edgestonestaffing.com",
+        "city": "Taunton",
+        "state": "Massachusetts",
+        "country": "United States",
+        "estimated_num_employees": 32,
+        "sic_codes": [
+          "7361",
+          "7363"
+        ],
+        "naics_codes": [
+          "561311",
+          "561320"
+        ],
+        "keywords": [
+          "candidate matching",
+          "medical staffing",
+          "administrative staffing",
+          "industry expertise",
+          "quality assurance",
+          "local staffing market",
+          "job placement",
+          "healthcare staffing",
+          "permanent placement",
+          "staffing for distribution",
+          "long-term staffing",
+          "medical staffing pool"
+        ]
+      }
+    },
+    {
+      "id": "670e969812e7a00001abf058",
+      "first_name": "Gerald",
+      "last_name": "Ford",
+      "name": "Gerald Ford",
+      "title": "Owner",
+      "linkedin_url": "http://www.linkedin.com/in/geraldfordlinkedin",
+      "email": "gerald.ford@fordifiedstaffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Houston",
+      "state": "Texas",
+      "country": "United States",
+      "organization": {
+        "id": "619d63d0c458b600a4dfb62e",
+        "name": "FORDIFIED STAFFING",
+        "website_url": "http://www.fordifiedstaffing.com",
+        "primary_domain": "fordifiedstaffing.com",
+        "city": "Houston",
+        "state": "Texas",
+        "country": "United States",
+        "estimated_num_employees": 3,
+        "sic_codes": [
+          "7363"
+        ],
+        "naics_codes": [
+          "56132"
+        ],
+        "keywords": [
+          "temp-to-hire",
+          "fueling personnel",
+          "recruiting strategies",
+          "industrial project staffing",
+          "staffing",
+          "manual labor staffing",
+          "workforce management",
+          "industrial electricians",
+          "safety compliance",
+          "industrial staffing",
+          "system fabrication",
+          "hazardous environment staffing"
+        ]
+      }
+    },
+    {
+      "id": "66f83aa2f3aaa20001206e5e",
+      "first_name": "Wayne",
+      "last_name": "Montour",
+      "name": "Wayne Montour",
+      "title": "President & Founder",
+      "linkedin_url": "http://www.linkedin.com/in/wayne-montour-5b111913",
+      "email": "wayne@greenarrowstaffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Rochester",
+      "state": "Michigan",
+      "country": "United States",
+      "organization": {
+        "id": "556d3abc736964121f26c600",
+        "name": "Green Arrow Staffing",
+        "website_url": "http://www.greenarrowstaffing.com",
+        "primary_domain": "greenarrowstaffing.com",
+        "city": "Auburn Hills",
+        "state": "Michigan",
+        "country": "United States",
+        "estimated_num_employees": 22,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "561311",
+          "561320"
+        ],
+        "keywords": [
+          "recruiting",
+          "staffing",
+          "employment",
+          "direct hires",
+          "contract",
+          "community-oriented staffing",
+          "construction",
+          "light industrial",
+          "government contract staffing",
+          "contract-to-hire",
+          "contract staffing",
+          "diversity and inclusion"
+        ]
+      }
+    },
+    {
+      "id": "57d4db64a6da9853e64a118a",
+      "first_name": "Felisha",
+      "last_name": "Belin",
+      "name": "Felisha Belin",
+      "title": "Owner",
+      "linkedin_url": "http://www.linkedin.com/in/felisha-belin-5baa32b7",
+      "email": "felisha@handsonstaffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Norfolk",
+      "state": "Virginia",
+      "country": "United States",
+      "organization": {
+        "id": "57c4cd07a6da986a77ccc5c5",
+        "name": "Hands On Staffing",
+        "website_url": "http://www.handsonstaffing.com",
+        "primary_domain": "handsonstaffing.com",
+        "city": "Auburndale",
+        "state": "Florida",
+        "country": "United States",
+        "estimated_num_employees": 66,
+        "sic_codes": [
+          "7361",
+          "7363"
+        ],
+        "naics_codes": [
+          "56131",
+          "561320"
+        ],
+        "keywords": [
+          "scaffolding",
+          "light industrial",
+          "hospitality",
+          "contractor staffing",
+          "ongoing improvement",
+          "staffing solutions",
+          "staffing expertise",
+          "service industry staffing",
+          "certified payroll",
+          "construction workers",
+          "manufacturing workers",
+          "construction staffing"
+        ]
+      }
+    },
+    {
+      "id": "57db863ea6da98685b77ce9c",
+      "first_name": "Mike",
+      "last_name": "Woolsey",
+      "name": "Mike Woolsey",
+      "title": "Owner/Pres",
+      "linkedin_url": "http://www.linkedin.com/in/mike-woolsey-abb63a55",
+      "email": "mike@srmutah.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Ogden",
+      "state": "Utah",
+      "country": "United States",
+      "organization": {
+        "id": "5500bae5736964611d921c00",
+        "name": "Staffing Resource Management",
+        "website_url": "http://www.srmutah.com",
+        "primary_domain": "srmutah.com",
+        "city": "South Ogden",
+        "state": "Utah",
+        "country": "United States",
+        "estimated_num_employees": 1,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "56132"
+        ],
+        "keywords": [
+          "manufacturing skilled tradsman",
+          "staffing partnership",
+          "administrative office support",
+          "customized services",
+          "payroll service",
+          "assembly mechanical assembly",
+          "project management",
+          "employment services",
+          "warehouse staffing",
+          "staff resource management",
+          "staffing solutions",
+          "technical staffing"
+        ]
+      }
+    },
+    {
+      "id": "66f263f416d93f0001719fda",
+      "first_name": "Belinda",
+      "last_name": "Lewis",
+      "name": "Belinda Lewis",
+      "title": "Owner",
+      "linkedin_url": "http://www.linkedin.com/in/belinda-lewis-bb655711",
+      "email": "belinda@sterling-apartments.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Dallas",
+      "state": "Texas",
+      "country": "United States",
+      "organization": {
+        "id": "54a1f4be7468692e71827d00",
+        "name": "Sterling Personnel",
+        "website_url": "http://www.sterling-personnel.com",
+        "primary_domain": "sterling-personnel.com",
+        "city": "Carrollton",
+        "state": "Texas",
+        "country": "United States",
+        "estimated_num_employees": 89,
+        "sic_codes": [
+          "7363"
+        ],
+        "naics_codes": [
+          "561320",
+          "561311"
+        ],
+        "keywords": [
+          "manufacturing",
+          "distribution",
+          "administrative",
+          "industrial",
+          "staffing company",
+          "staffing for administrative roles",
+          "warehouse staffing",
+          "staffing analytics",
+          "services",
+          "client relationship management",
+          "permanent staffing",
+          "office staffing"
+        ]
+      }
+    }
+  ]
+}

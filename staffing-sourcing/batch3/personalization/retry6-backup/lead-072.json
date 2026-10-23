@@ -1,0 +1,91 @@
+{
+  "firstName": "Larry",
+  "lastName": "Flight",
+  "fullName": "Larry Flight",
+  "jobTitle": "Co-Founder and President",
+  "company": "Staffing Authority, LLC",
+  "companyWebsite": "http://www.staffingauthorityllc.com",
+  "companyDomain": "staffingauthorityllc.com",
+  "companyCity": "Las Vegas",
+  "companyState": "Nevada",
+  "companySizeCategory": "11-50",
+  "staffingLane": "A",
+  "staffingSpecialization": "light industrial; industrial",
+  "emailStatus": "verified (NOT catch-all) — Tier 1 send-ready",
+  "sourceEvidence": "Apollo people search + website ICP; keywords=staffing recruiting,staffing,recruitment,employment,temporary staffing,permanent staffing,light industrial,call center",
+  "apolloVerifiedEmail": "larry@staffingauthority.com",
+  "buyerTier": "Tier 1",
+  "emailCatchAll": "false",
+  "emailVerificationStatus": "verified",
+  "apolloPersonId": "66fc80290cbf9000015fd6de",
+  "apolloAccountId": "5b85ca28f874f76b0ba01610",
+  "linkedinUrl": "http://www.linkedin.com/in/larry-flight-93533490",
+  "source": "apollo_batch3",
+  "notes": "related_email_domain=staffingauthority.com",
+  "personCity": "Las Vegas",
+  "personState": "Nevada",
+  "estimatedEmployees": "26",
+  "sicCodes": "7361",
+  "naicsCodes": "561311,561312",
+  "campaign": "Industrial Staffing Agency",
+  "campaignId": "industrial_staffing_employer_acquisition_v1",
+  "strategy": "staffing_market_evidence_v1",
+  "model": "claude-haiku-4-5",
+  "generatedAt": "2026-09-18T01:05:53.548Z",
+  "research": {
+    "pages": [],
+    "failures": [
+      "certificate has expired"
+    ],
+    "reviewRequired": true,
+    "retrieval": {
+      "homepageFailed": true,
+      "alternateCompanyPageAttempted": false,
+      "domainIdentityVerified": false,
+      "usableAlternateEvidence": false,
+      "attempts": [
+        {
+          "url": "http://www.staffingauthorityllc.com",
+          "homepage": true,
+          "ok": false,
+          "status": null,
+          "reason": "certificate has expired"
+        }
+      ]
+    }
+  },
+  "retrieval": {
+    "homepageFailed": true,
+    "alternateCompanyPageAttempted": false,
+    "domainIdentityVerified": false,
+    "usableAlternateEvidence": false,
+    "attempts": [
+      {
+        "url": "http://www.staffingauthorityllc.com",
+        "homepage": true,
+        "ok": false,
+        "status": null,
+        "reason": "certificate has expired"
+      }
+    ]
+  },
+  "icpFit": "UNKNOWN",
+  "hyperPersonalizedOpening": "",
+  "confidence": "RETRY_REQUIRED",
+  "classification": "RETRY_REQUIRED",
+  "safeToSend": false,
+  "reviewFlag": true,
+  "primaryReason": "RETRIEVAL_UNUSABLE",
+  "supportingReasons": [],
+  "reviewReasons": [
+    "RETRIEVAL_UNUSABLE"
+  ],
+  "facts": [],
+  "sourceURL_or_sourceDescription": "",
+  "emailPreview": null,
+  "previewOnly": true,
+  "codeDigest": "0caa20fc47f4e8a1de14eb6ec20905530f960d9e7c89aac76bf051fdcbb19bb8",
+  "liveCommit": "732e215",
+  "elapsedMs": 73,
+  "catchAllSource": false
+}

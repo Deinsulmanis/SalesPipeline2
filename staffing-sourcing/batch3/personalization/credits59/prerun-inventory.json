@@ -1,0 +1,22 @@
+{
+  "attemptedTarget": 59,
+  "source": "personalization/cont73/results.json primaryReason=MODEL_CREDITS_EXHAUSTED",
+  "excluded": {
+    "completedHighMediumReviewIcp": 14,
+    "retrievalUnusable": 2,
+    "held6": 6,
+    "alreadyImportedContinuation": 6
+  },
+  "cachedResearchReusable": 6,
+  "freshResearchRequired": 53,
+  "allRequireModelWork": 59,
+  "reusableLeads": [
+    {"email": "vtempo@aapstaff.com", "company": "All About Personnel", "pages": 6, "textChars": 22184},
+    {"email": "ruben@cleanpowerstaffing.com", "company": "Clean Power Staffing", "pages": 4, "textChars": 5275},
+    {"email": "elizabeth@coryerstaffing.com", "company": "Coryer Staffing", "pages": 3, "textChars": 5885},
+    {"email": "amelia.garcia@electivestaffing.com", "company": "Elective Staffing", "pages": 4, "textChars": 5085},
+    {"email": "mstauffer@unitedemploymentgroup.com", "company": "United Employment Group", "pages": 6, "textChars": 15028},
+    {"email": "randy.sawyer@sawyerstaffing.com", "company": "Sawyer Staffing", "pages": 1, "textChars": 1809}
+  ],
+  "notes": "Cached pages are sufficient for the existing researchCompany hook. Extract/fact-audit/opening-audit still run through the live pipeline; partial model metadata is not a resume checkpoint. The 53 uncached leads need homepage retrieval plus model work. Anthropic ping succeeded before this recovery."
+}
