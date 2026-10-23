@@ -1,5 +1,10 @@
 'use strict';
 
+// These tests exercise live staffing machinery with Industrial Staffing Agency
+// (V1) fixtures. V1 itself is a completed campaign; that is pinned in
+// test/completed-campaign.test.js.
+require('../integrations/lead-archive').setCompletedCampaignsForTests([]);
+
 // Industrial Staffing V2 (2026-10-15/16, copy relocked 2026-10-20): a separate
 // campaign with V1's targeting, offer, subjects and cadence and its own copy
 // for all three touches. These tests pin V2's identity and copy (no touch

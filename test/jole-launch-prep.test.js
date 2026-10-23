@@ -1,5 +1,10 @@
 'use strict';
 
+// These tests exercise live staffing machinery with Industrial Staffing Agency
+// (V1) fixtures. V1 itself is a completed campaign; that is pinned in
+// test/completed-campaign.test.js.
+require('../integrations/lead-archive').setCompletedCampaignsForTests([]);
+
 // Jole launch preparation (2026-10-15). Jole is fully prepared: its six
 // inboxes are active at 20/day and 2/window, its personalization-ready leads
 // are assigned and queued. But CLIENT_SENDING_AUTHORIZED does not name jole, so

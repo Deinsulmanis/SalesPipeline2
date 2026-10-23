@@ -1,4 +1,9 @@
 'use strict';
+
+// These tests exercise live staffing machinery with Industrial Staffing Agency
+// (V1) fixtures. V1 itself is a completed campaign; that is pinned in
+// test/completed-campaign.test.js.
+require('../integrations/lead-archive').setCompletedCampaignsForTests([]);
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs');
 const {execFileSync}=require('node:child_process');
 const {staffingLaunchState,staffingSendBlockReason,assertStaffingSendAllowed,ACTIVATION_VARIABLE}=require('../integrations/staffing-launch-gate');

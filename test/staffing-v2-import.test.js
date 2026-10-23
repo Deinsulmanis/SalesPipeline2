@@ -1,5 +1,10 @@
 'use strict';
 
+// These tests exercise live staffing machinery with Industrial Staffing Agency
+// (V1) fixtures. V1 itself is a completed campaign; that is pinned in
+// test/completed-campaign.test.js.
+require('../integrations/lead-archive').setCompletedCampaignsForTests([]);
+
 // Industrial Staffing V2 import + persistence: the explicit-identity import
 // path, the structured profile that carries roles + market and the experiment
 // fields, and the guards that keep a V2 lead from ever queueing or sending as

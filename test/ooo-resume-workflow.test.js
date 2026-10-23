@@ -1,5 +1,10 @@
 'use strict';
 
+// These tests exercise live staffing machinery with Industrial Staffing Agency
+// (V1) fixtures. V1 itself is a completed campaign; that is pinned in
+// test/completed-campaign.test.js.
+require('../integrations/lead-archive').setCompletedCampaignsForTests([]);
+
 // The OOO workflow end to end (2026-10-15): an autoresponder pauses the cold
 // sequence until a STATED return date, then the sequence continues at the next
 // unsent touch — never Touch 1 again — with one line of context, through every

@@ -145,7 +145,7 @@ const { EMAIL_TEMPLATES, LEAD_TYPES, LEAD_TYPE_IDS, normalizeNiche, leadTypeLabe
 const {
   ARCHIVE_MARKER_PREFIX, ARCHIVE_EVENT_TYPE, ARCHIVED_REPLY_EVENT_TYPE, ARCHIVE_REASONS, ARCHIVE_REASON_LABELS,
   isArchivedLead, archiveReasonFromNotes, retiredOfferBlock, retiredOfferById, currentArchiveRecord, isProtectedRecord,
-  planLeadArchive, planBoardArchive, planLeadRestore, planBoardRestore,
+  planLeadArchive, planBoardArchive, planLeadRestore, planBoardRestore, completedCampaigns, completedCampaignByLabel,
 } = require('./integrations/lead-archive');
 const { planOfferRetirement } = require('./integrations/offer-retirement');
 const {
@@ -1948,7 +1948,7 @@ function logManagedClientReadiness() {
 }
 
 app.get('/api/campaign-versions', requireAuth, (req, res) => {
-  res.json({ active: ACTIVE_CAMPAIGN_VERSION, versions: CAMPAIGN_VERSIONS });
+  res.json({ active: ACTIVE_CAMPAIGN_VERSION, versions: CAMPAIGN_VERSIONS, completedCampaigns: completedCampaigns() });
 });
 
 // Non-secret operational configuration for the CRM Settings workspace. This
@@ -7425,6 +7425,8 @@ app.put('/api/integrations/smartlead/campaigns/:internalCampaignId', requireAuth
   const provider = req.body.provider === 'smartlead' ? 'smartlead' : 'gmail';
   const externalCampaignId = String(req.body.externalCampaignId || '').trim();
   if (!internalCampaignId) return res.status(400).json({ error: 'Internal campaign ID is required' });
+  const completed = completedCampaignByLabel(internalCampaignId);
+  if (completed) return res.status(409).json({ error: `${completed.label} was completed on ${completed.completedAt}; its provider mapping is read-only`, code: 'campaign_completed' });
   if (provider === 'smartlead' && !/^\d+$/.test(externalCampaignId)) return res.status(422).json({ error: 'A numeric Smartlead campaign ID is required' });
   const now = new Date().toISOString();
   try {

@@ -1,5 +1,10 @@
 'use strict';
 
+// These tests exercise live staffing machinery with Industrial Staffing Agency
+// (V1) fixtures. V1 itself is a completed campaign; that is pinned in
+// test/completed-campaign.test.js.
+require('../integrations/lead-archive').setCompletedCampaignsForTests([]);
+
 // Analytics after the retirement of dental, roofing and med spa (2026-09-30).
 // Every operational number describes the ACTIVE scope — leads that are not
 // archived and whose offer is not retired — and only views that say

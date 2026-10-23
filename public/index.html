@@ -2150,7 +2150,8 @@
   .ce-row-chip[data-tone="ok"]{color:var(--success);background:var(--success-bg)}
   .revenue-panel{margin:0 0 16px}
   .campaign-archived{opacity:.78}
-  .campaign-archived h3{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin:18px 0 10px}
+  .campaign-archived h3,.campaign-completed h3{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin:18px 0 10px}
+  .campaign-completed .campaign-card{cursor:pointer}
   .client-badges{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 16px}
   .client-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(136px,1fr));gap:12px;margin:0 0 16px}
   .metric-card{padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:var(--surface);min-width:0}
@@ -5933,6 +5934,7 @@ async function loadCeLeads() {
     } else if (versionsResp?.ok) {
       const registry = await versionsResp.json();
       if (!current()) return;
+      completedCampaignList = registry.completedCampaigns || [];
       const liveVersion = registry.active?.dental_ai_receptionist || '—';
       document.getElementById('ce-current-campaign').textContent = `Current campaign: ${liveVersion}`;
       const select = document.getElementById('ce-version-filter');
@@ -6691,6 +6693,19 @@ function buildCampaignStats() {
   return rows;
 }
 
+// ScaleLab campaigns that have finished (integrations/lead-archive.js
+// COMPLETED_CAMPAIGNS). The server refuses every send for them whatever this
+// list says; it only decides which section a campaign is shown in.
+let completedCampaignList = null;
+async function loadCompletedCampaigns() {
+  if (completedCampaignList) return completedCampaignList;
+  try {
+    const resp = await fetch('/api/campaign-versions');
+    if (resp.ok) completedCampaignList = (await resp.json()).completedCampaigns || [];
+  } catch (_) { /* shown as active until the registry loads */ }
+  return completedCampaignList || [];
+}
+
 // Campaign stats genuinely aggregate across every lead, so this view — and only
 // this view — pulls the full light set. It is fetched on demand and cached for
 // the session, so the default table load never pays for it.
@@ -6716,8 +6731,13 @@ async function renderCampaignsPanel() {
   // re-attributed: the stored campaign id stays on every lead.
   const catalog = activeClientIsManaged() ? await loadClientCatalog() : null;
   if (!current()) return;
+  const completedList = activeClientIsManaged() ? [] : await loadCompletedCampaigns();
+  if (!current()) return;
   const archivedRowTotals = new Map();
+  const completedRows = [];
   const rows = buildCampaignStats().filter(row => {
+    const completed = completedList.find(item => (item.labels || []).includes(row.name));
+    if (completed) { completedRows.push({ ...row, completed }); return false; }
     if (!catalog || typeof WorkspaceShared === 'undefined' || !WorkspaceShared.isArchivedCampaign(row.name, catalog)) return true;
     const label = WorkspaceShared.campaignDisplayName(row.name, catalog);
     archivedRowTotals.set(label, (archivedRowTotals.get(label) || 0) + row.total);
@@ -6771,6 +6791,18 @@ async function renderCampaignsPanel() {
         <div class="campaign-grid">${parts.archived.map(item => `<article class="client-card campaign-card"><div class="campaign-card-head"><h4>${esc(item.label || item.id)}</h4><span class="status-pill">Archived</span></div><p class="client-note">${esc(item.id)}${item.archivedAt ? ' · ' + esc(item.archivedAt) : ''} · ${esc(leadCount(item))} lead${leadCount(item) === 1 ? '' : 's'}</p></article>`).join('')}</div></div>`;
     }
   }
+
+  const completedHtml = completedRows.length ? `<div class="campaign-completed"><h3>Completed campaigns</h3>
+      <p class="client-note">Finished and read-only: nothing can be queued or sent for these campaigns. Every lead, send, reply, meeting, bounce and unsubscribe is kept; the numbers are their full history. Click a campaign to browse its leads.</p>
+      <div class="campaign-grid">${completedRows.map(r => `<article class="client-card campaign-card" data-campaign="${escAttr(r.name)}"
+          onclick="filterByCampaign(this.dataset.campaign)" role="button" tabindex="0"
+          onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();filterByCampaign(this.dataset.campaign);}">
+        <div class="campaign-card-head"><div><div class="workspace-eyebrow">${esc(r.completed.id)}</div><h4>${esc(campaignName(r.name))}</h4></div><span class="status-pill" data-status="completed">Completed</span></div>
+        <p class="client-note">Completed ${esc(r.completed.completedAt)} · read-only</p>
+        <div class="campaign-stats">${[['Leads', r.total], ['Delivered', r.delivered], ['Bounced', r.bounced || 0],
+          ['Genuine replies', r.replied || 0], ['Positive', r.interested || 0], ['Reply %', r.delivered > 0 ? fmtPct(r.replyRate) : '—']]
+          .map(([label, value]) => `<div><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join('')}</div>
+      </article>`).join('')}</div></div>` : '';
   wrap.innerHTML = cardsHtml + `
     <table class="ce-campaigns-table">
       <thead>
@@ -6804,7 +6836,7 @@ async function renderCampaignsPanel() {
             <td>${activeClientIsManaged() ? 'Gmail' : `<button class="btn-cancel" style="padding:5px 8px" data-campaign="${escAttr(r.name)}" onclick="event.stopPropagation();openProviderModal(this.dataset.campaign)">${esc(campaignProvider(r.name).provider === 'smartlead' ? 'Smartlead' : 'Gmail')}</button>`}</td>
           </tr>`).join('')}
       </tbody>
-    </table>` + archivedHtml;
+    </table>` + completedHtml + archivedHtml;
 }
 
 function openProviderModal(campaignName) {
