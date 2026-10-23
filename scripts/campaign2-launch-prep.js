@@ -264,6 +264,75 @@ async function preview(env) {
   if (failures) process.exitCode = 1;
 }
 
+// RECLASSIFY-PLAN (read-only) / RECLASSIFY (APPLY_CAMPAIGN2_RECLASSIFY=yes):
+// every Campaign 2 lead without an adopted profile is held, with a reason that
+// reflects the V3 ICP its sourcing run used (all eight staffing verticals in
+// scope). The vertical rules in eligibility() are not applied: they were the
+// industrial-only V1 rule. Every such lead also lacks verified Tier A roles +
+// market or Tier B positioning, so Campaign 2 copy cannot render for it.
+const GENUINE_HOLDS = new Set(['ICP_REJECT', 'ICP_CONFLICT', 'REVIEW_REQUIRED']);
+const RECLASSIFIED_AT = '2026-10-23T08:00:00.000Z';
+const RECLASSIFY_SOURCE = 'campaign2-launch-prep reclassify 2026-10-23 (V3 ICP; Campaign 2 sends V2 Tier A / Tier B copy)';
+function reclassifiedHold(source) {
+  const genuine = eligibility(source).filter(reason => GENUINE_HOLDS.has(reason.hold)
+    && !/sourced vertical|no sourced vertical/.test(reason.detail));
+  const copy = { hold: 'REVIEW_REQUIRED', fit: 'ICP_CONFIRMED',
+    detail: 'no verified Tier A roles + market or Tier B positioning in a sealed V2 record; Campaign 2 copy cannot render without inventing them' };
+  const reasons = [...genuine, copy];
+  const [primary] = reasons;
+  const category = primary.fit === 'ICP_REJECT' ? 'ICP_REJECTED' : genuine.length ? 'DATA_QUALITY_REVIEW' : 'COPY_DATA_MISSING';
+  const tagged = replaceStaffingReviewTag('', { fit: primary.fit, personalization: 'NONE_REQUIRED', routingReady: false });
+  const campaignNotes = withStaffingHold(tagged, {
+    reason: primary.hold, explanation: `Held from Staffing Outreach Campaign 2: ${primary.detail}`,
+    evidence: reasons.map(reason => ({ source: 'FINAL-USABLE-POOL-FOR-MANUAL-REVIEW.csv', detail: reason.detail })),
+    reviewedAt: RECLASSIFIED_AT, reviewSource: RECLASSIFY_SOURCE,
+    temporary: primary.fit !== 'ICP_REJECT', couldBecomeEligible: primary.fit !== 'ICP_REJECT',
+  });
+  return { category, primary: primary.hold, reasons: reasons.map(reason => reason.detail), campaignNotes };
+}
+async function reclassifyPlan(env) {
+  const { hasStaffingV2ProfileMarker } = require('../integrations/staffing-v2-profile');
+  const source = parseCsv(fs.readFileSync(env.SOURCE_CSV, 'utf8').replace(/^\uFEFF/, ''));
+  const byEmail = new Map(source.map(row => [lower(row.email), row]));
+  const corpus = await readOutreachCorpus({ env });
+  if (!corpus.ok) throw new Error(`Canonical read failed: ${corpus.reason}`);
+  const leads = corpus.leads.filter(lead => lead.campaign === STAFFING_CAMPAIGN_2.name && !hasStaffingV2ProfileMarker(lead));
+  const { rows } = await sheetRows(env);
+  const changes = leads.map(lead => {
+    const sourceRow = byEmail.get(lower(lead.email));
+    if (!sourceRow) throw new Error(`Campaign 2 lead ${lead.id} has no sourcing row`);
+    if (lead.stage !== 'Import' || !neverSent(lead) || String(lead.senderInboxId || '').trim()) throw new Error(`Lead ${lead.id} has been routed or contacted`);
+    const row = rows.get(lead.id) || [];
+    if (row.length !== 1) throw new Error(`Lead ${lead.id} is not exactly one ColdEmail row`);
+    const hold = reclassifiedHold(sourceRow);
+    const after = { ...lead, campaign_notes: hold.campaignNotes };
+    if (!staffingHoldStatus(after) || staffingHoldInconsistencies(after).length) throw new Error(`Hold for ${lead.id} is inconsistent`);
+    return { leadId: lead.id, row: row[0], email: lead.email, company: lead.company, category: hold.category, holdReason: hold.primary,
+      reasons: hold.reasons, previous: staffingHoldStatus(lead)?.reason || 'CLEARED',
+      expectedState: { campaign_notes: String(lead.campaign_notes || ''), stage: String(lead.stage || '') },
+      patch: { campaign_notes: hold.campaignNotes } };
+  });
+  const tally = key => changes.reduce((acc, change) => ({ ...acc, [change[key]]: (acc[change[key]] || 0) + 1 }), {});
+  const summary = { plannedAt: new Date().toISOString(), leads: changes.length, byCategory: tally('category'),
+    byHoldReason: tally('holdReason'), previously: tally('previous') };
+  fs.writeFileSync(env.PLAN_PATH, JSON.stringify({ summary, changes }, null, 2));
+  console.log(JSON.stringify(summary, null, 2));
+}
+async function reclassify(env) {
+  if (env.APPLY_CAMPAIGN2_RECLASSIFY !== 'yes') throw new Error('Set APPLY_CAMPAIGN2_RECLASSIFY=yes after reviewing the exact plan');
+  const planned = JSON.parse(fs.readFileSync(env.PLAN_PATH, 'utf8'));
+  if (planned.changes.some(change => Object.keys(change.patch).join() !== 'campaign_notes')) throw new Error('Plan touches fields other than campaign_notes');
+  const { sheetsClient } = await sheetRows(env);
+  const result = await applyLeadChanges(planned.changes.map(change => ({
+    leadId: change.leadId, patch: change.patch, row: change.row, expectedState: change.expectedState,
+  })), { sheetsClient, spreadsheetId: env.SPREADSHEET_ID, env });
+  const failed = result.results.filter(row => !['succeeded', 'unchanged'].includes(row.status) || (row.status === 'succeeded' && !row.mirrored));
+  fs.writeFileSync(env.APPLY_REPORT_PATH, JSON.stringify({ appliedAt: new Date().toISOString(), summary: result.summary,
+    outcomes: result.results.map(row => ({ leadId: row.leadId, status: row.status, reason: row.reason, mirrored: row.mirrored })) }, null, 2));
+  console.log(JSON.stringify({ summary: result.summary, notAppliedOrUnmirrored: failed.length }));
+  if (failed.length) process.exitCode = 1;
+}
+
 // ADOPT-PLAN (read-only): plans sealing each prepared V2 import record
 // (ADOPTION_PAYLOAD) onto its existing Campaign 2 row, into PLAN_PATH.
 // ADOPT (APPLY_CAMPAIGN2_ADOPTION=yes): commits that plan, compare-and-set
@@ -332,8 +401,9 @@ async function adopt(env) {
 
 if (require.main === module) {
   const env = { ...process.env, SUPABASE_OUTREACH_MODE: 'primary', SUPABASE_OUTREACH_WRITES: 'supabase' };
-  const run = { apply, preview, hold: holdCleared, 'adopt-plan': adoptPlan, adopt }[env.MODE] || plan;
+  const run = { apply, preview, hold: holdCleared, 'adopt-plan': adoptPlan, adopt,
+    'reclassify-plan': reclassifyPlan, reclassify }[env.MODE] || plan;
   run(env).catch(error => { console.error(error.message); process.exitCode = 1; });
 }
 
-module.exports = { eligibility, patchFor, parseCsv };
+module.exports = { eligibility, patchFor, parseCsv, reclassifiedHold };
