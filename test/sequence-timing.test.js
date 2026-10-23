@@ -1,5 +1,10 @@
 'use strict';
 
+// These tests exercise live staffing machinery with Industrial Staffing Agency
+// (V1) fixtures. V1 itself is a completed campaign; that is pinned in
+// test/completed-campaign.test.js.
+require('../integrations/lead-archive').setCompletedCampaignsForTests([]);
+
 // Touch 3 timing repair (2026-10-03). Touch 3 is due at
 // MAX(Touch 1 + 7 days, Touch 2 + 3 days), from ONE definition that every
 // consumer reads. These tests pin the rule, the window/timezone behaviour, the

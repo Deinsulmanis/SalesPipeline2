@@ -1,5 +1,10 @@
 'use strict';
 
+// These tests exercise live staffing machinery with Industrial Staffing Agency
+// (V1) fixtures. V1 itself is a completed campaign; that is pinned in
+// test/completed-campaign.test.js.
+require('../integrations/lead-archive').setCompletedCampaignsForTests([]);
+
 // Soft archive and the retirement of the dental offer (2026-09-30).
 //
 // Two independent guarantees are pinned here:

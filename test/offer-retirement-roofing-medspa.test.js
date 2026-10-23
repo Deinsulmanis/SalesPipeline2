@@ -1,5 +1,10 @@
 'use strict';
 
+// These tests exercise live staffing machinery with Industrial Staffing Agency
+// (V1) fixtures. V1 itself is a completed campaign; that is pinned in
+// test/completed-campaign.test.js.
+require('../integrations/lead-archive').setCompletedCampaignsForTests([]);
+
 // Roofing and med spa retired (2026-09-30) with the same machinery as dental,
 // and two Closed/Won clients — Trade Select and SureSky Roofing — that no part
 // of the retirement may touch. Shapes are production's (read-only audit of the

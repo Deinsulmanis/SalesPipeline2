@@ -289,13 +289,72 @@ function retiredOfferById(id) {
   return RETIRED_OFFERS.find(offer => offer.id === text(id).trim()) || null;
 }
 
-/** { code: 'offer_retired', reason } when the lead's offer is retired, else null. */
+// ── Completed campaigns ─────────────────────────────────────────────────────
+//
+// A completed campaign is one named campaign of a still-live offer that has
+// finished. Its leads keep every field, stage, outcome and event exactly as
+// they were; they are not archived. What changes is that nothing may be sent
+// for them again, by any path, and analytics treat them as history.
+//
+// Matched by the exact stored campaign label and owning client ONLY. Never by
+// niche, family, template or campaign version: other campaigns of the same
+// offer (Staffing Outreach Campaign 2, Industrial Staffing Agency V2) share
+// those and must stay untouched.
+const COMPLETED_CAMPAIGNS = Object.freeze([
+  Object.freeze({
+    id: 'industrial_staffing_employer_acquisition_v1',
+    label: 'Industrial Staffing Agency',
+    clientId: 'scalelab',
+    labels: Object.freeze([
+      'Industrial Staffing Agency',
+      'Industrial Staffing — Employer Acquisition',
+      'industrial_staffing_employer_acquisition_v1',
+    ]),
+    completedAt: '2026-10-23',
+  }),
+]);
+let completedCampaignsOverride = null;
+function completedCampaigns() {
+  return completedCampaignsOverride === null ? COMPLETED_CAMPAIGNS : completedCampaignsOverride;
+}
+/** Tests only: model exactly these campaigns as completed; null restores the source list. */
+function setCompletedCampaignsForTests(list) {
+  completedCampaignsOverride = list === null ? null : Object.freeze([...list]);
+}
+
+/** The completed campaign this lead belongs to, or null. */
+function completedCampaignFor(lead) {
+  if (!lead || typeof lead !== 'object' || isProtectedRecord(lead)) return null;
+  const label = text(lead.campaign).trim();
+  if (!label) return null;
+  const clientId = norm(lead.clientId);
+  return completedCampaigns().find(campaign => campaign.labels.includes(label)
+    && (!clientId || clientId === campaign.clientId)) || null;
+}
+
+function completedCampaignByLabel(label) {
+  const value = text(label).trim();
+  return completedCampaigns().find(campaign => campaign.labels.includes(value)) || null;
+}
+
+/**
+ * { code, reason } when the lead's offer is retired or its campaign completed,
+ * else null. Every send gate, ownership verdict and active-analytics filter
+ * reads this, so a completed campaign is stopped everywhere at once.
+ */
 function retiredOfferBlock(lead) {
   const match = retiredOfferFor(lead);
-  if (!match) return null;
+  if (match) {
+    return {
+      code: 'offer_retired', offerId: match.offer.id,
+      reason: `the ${match.offer.label} offer was retired on ${match.offer.retiredAt}; nothing may be sent for it`,
+    };
+  }
+  const completed = completedCampaignFor(lead);
+  if (!completed) return null;
   return {
-    code: 'offer_retired', offerId: match.offer.id,
-    reason: `the ${match.offer.label} offer was retired on ${match.offer.retiredAt}; nothing may be sent for it`,
+    code: 'campaign_completed', offerId: '', campaignId: completed.id,
+    reason: `the ${completed.label} campaign was completed on ${completed.completedAt}; nothing may be sent for it`,
   };
 }
 
@@ -541,6 +600,8 @@ module.exports = {
   MED_SPA_TRADE_TYPES, roofingSignals, medSpaSignals,
   archiveMarker, archiveReasonFromNotes, isArchivedLead, addArchiveMarker, removeArchiveMarker,
   dentalSignals, retiredOfferFor, retiredOfferById, retiredOfferBlock, outreachBlockForLead,
+  COMPLETED_CAMPAIGNS, completedCampaigns, completedCampaignFor, completedCampaignByLabel,
+  setCompletedCampaignsForTests,
   eventsForLead, restoreCount, currentArchiveRecord, neverSent, parseMetadata,
   planLeadArchive, planBoardArchive, planLeadRestore, planBoardRestore,
 };
