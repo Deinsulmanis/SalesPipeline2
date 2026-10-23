@@ -1,0 +1,5 @@
+{
+  "name": "ScaleLab Sales Pipeline",
+  "install": "npm ci",
+  "ports": [3000]
+}
