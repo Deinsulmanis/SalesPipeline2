@@ -116,7 +116,7 @@ test('A3 — scoping cannot hide a divergence in a field the source DID load', (
   // `id` is the join key, not a comparable value: a different id is a MISSING
   // lead, which A4 covers. Every other critical field must report a divergence.
   const compared = CRITICAL_FIELDS.filter(f => f !== 'id' && !DASHBOARD_OMITTED_FIELDS.includes(f));
-  assert.equal(compared.length, 19, 'nineteen critical fields are compared on the dashboard path');
+  assert.equal(compared.length, 20, 'twenty critical fields (ownership included) are compared on the dashboard path');
   for (const field of compared) {
     const sheet = [lead('a', { [field]: 'SHEET' })];
     const mirror = new Map([['a', lead('a', { [field]: 'SUPABASE' })]]);
@@ -339,8 +339,8 @@ test('D3 — the UI probe excludes exactly the field its snapshot does not load'
   assert.match(serverSrc, /comparable: CE_COLUMNS\.filter\(field => !DASHBOARD_OMITTED_FIELDS\.includes\(field\)\)/);
 });
 
-test('D4 — the agent probe compares EVERY field, because it reads A:X', () => {
-  assert.match(agentSrc, /const READ_RANGE\s*=\s*`\$\{SHEET_NAME\}!A:X`/);
+test('D4 — the agent probe compares EVERY field, because it reads A:Y', () => {
+  assert.match(agentSrc, /const READ_RANGE\s*=\s*`\$\{SHEET_NAME\}!A:Y`/);
   const hook = agentSrc.match(/const parity = await probeOutreachParity\(all, \{[^)]*\)/)[0];
   assert.ok(!hook.includes('comparable'),
     'the automation corpus is complete, so no field may be excluded from its comparison');

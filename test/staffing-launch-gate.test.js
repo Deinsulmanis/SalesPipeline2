@@ -1,4 +1,9 @@
 'use strict';
+
+// These tests exercise live staffing machinery with Industrial Staffing Agency
+// (V1) fixtures. V1 itself is a completed campaign; that is pinned in
+// test/completed-campaign.test.js.
+require('../integrations/lead-archive').setCompletedCampaignsForTests([]);
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs');
 const {execFileSync}=require('node:child_process');
 const {staffingLaunchState,staffingSendBlockReason,assertStaffingSendAllowed,ACTIVATION_VARIABLE}=require('../integrations/staffing-launch-gate');
@@ -27,7 +32,7 @@ test('approved queue route stays selectable while actual routing/attribution rem
  const saved=process.env[ACTIVATION_VARIABLE];delete process.env[ACTIVATION_VARIABLE];
  try{
   const routing=require('../integrations/campaign-routing'),versions=require('../integrations/campaign-versions');
-  assert.equal(routing.campaignVersionsForRoute({niche:lead.leadNiche}).length,1);
+  assert.equal(routing.campaignVersionsForRoute({niche:lead.leadNiche}).length,2);
   assert.equal(routing.routedLeadReady(lead).ok,false);
   assert.throws(()=>versions.activeVersionForLead(lead),/not active/);
   process.env[ACTIVATION_VARIABLE]=approvedAt;
@@ -38,14 +43,14 @@ test('approved queue route stays selectable while actual routing/attribution rem
 test('the actual provider function refuses staffing before constructing or calling Gmail',async()=>{
  const source=fs.readFileSync(require.resolve('../outreach-agent'),'utf8');
  const code=source.slice(source.indexOf('async function sendEmail('),source.indexOf('async function loadOutreachProviderState('));
- let calls=0;const send=new Function('assertStaffingSendAllowed','assertSendAuthorized','PRIMARY_GMAIL_SENDER','GmailOutreachProvider','gmailForSender','toRawMessage','withGmailProviderSend',`${code};return sendEmail;`)(l=>assertStaffingSendAllowed(l,{}),()=>{},{},class{constructor(){calls++;}},()=>assert.fail('Gmail must not be constructed'),()=>assert.fail('MIME must not be built'),()=>assert.fail('lock must not run'));
+ let calls=0;const send=new Function('assertStaffingSendAllowed','assertSendAuthorized','PRIMARY_GMAIL_SENDER','GmailOutreachProvider','gmailForSender','toRawMessage','withGmailProviderSend','preDeliveryRefusal','sendLockEnabled',`${code};return sendEmail;`)(l=>assertStaffingSendAllowed(l,{}),()=>{},{},class{constructor(){calls++;}},()=>assert.fail('Gmail must not be constructed'),()=>assert.fail('MIME must not be built'),()=>assert.fail('lock must not run'),(_code,reason)=>new Error(reason),()=>true);
  await assert.rejects(send({lead,to:'test@example.com'}),/paused/);assert.equal(calls,0);
 });
 test('warm, stage, intent, ordinary and Smartlead boundaries retain the gate',()=>{
  const s=fs.readFileSync(require.resolve('../outreach-agent'),'utf8').replace(/\r\n/g,'\n');
  assert.match(s,/function suppressionReason\(lead\) \{\n  const staffingBlocked = staffingSendBlockReason\(lead\);\n  if \(staffingBlocked\) return staffingBlocked;/);
  assert.match(s,/finalRevalidate: async \(\) => \{\n      if \(staffingSendBlockReason\(lead\)\)/);
- assert.match(s,/if \(staffingSendBlockReason\(twin \|\| boardLead\)\) continue;/);
+ assert.match(s,/if \(staffingSendBlockReason\(twin \|\| boardLead\)\) return;/);
  assert.match(s,/sendProvider: payload => \{/);
  assert.match(s,/assertGmailProviderAllowed\(\{/);
  assert.match(s,/return sendEmail\(\{/);

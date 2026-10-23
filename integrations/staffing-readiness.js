@@ -1,6 +1,6 @@
 'use strict';
 
-const { STAFFING_CAMPAIGN, staffingOpeningFor, renderStaffingEmail, validateStaffingEmail } = require('./staffing-campaign');
+const { STAFFING_CAMPAIGN, staffingOpeningFor, staffingNoPersonalizationAllowed, renderStaffingEmail, validateStaffingEmail } = require('./staffing-campaign');
 const { staffingLaunchState, isStaffingLead } = require('./staffing-launch-gate');
 const { CAMPAIGN_FAMILY, resolveLeadFamily, familyForLead } = require('./campaign-versions');
 const { routedLeadReady } = require('./campaign-routing');
@@ -10,6 +10,7 @@ const { deriveAutomationOwnership, mayColdSend } = require('./automation-ownersh
 const { sendAuthorization } = require('./send-authorization');
 const { authoritativeProvider } = require('./provider-ownership');
 const { deriveSequenceState } = require('./stage-sequences');
+const { describeSequence, NOMINAL_TOUCH_DAYS, FOLLOW_UP_STEP_COUNT } = require('./sequence-timing');
 const { isValidCommercialMailingAddress, looksLikeTestFixtureMailingAddress } = require('./staffing-compliance');
 
 function hasManualHold(lead = {}) {
@@ -17,7 +18,7 @@ function hasManualHold(lead = {}) {
 }
 
 function missingPersonalization(lead) {
-  return !staffingOpeningFor(lead);
+  return !staffingOpeningFor(lead) && !staffingNoPersonalizationAllowed(lead);
 }
 
 function missingIdentity(lead) {
@@ -105,18 +106,17 @@ function staffingReadinessReport({
   };
 }
 
+// Timing is read from integrations/sequence-timing.js, never restated here.
 function staffingSequenceDiff() {
-  const approved = [
-    { step: 1, subject: 'employer accounts', delayDays: 0 },
-    { step: 2, subject: null, delayDays: 3 },
-    { step: 3, subject: null, delayDays: 5 },
-  ];
+  const approved = describeSequence().map(item => ({
+    step: item.step, subject: item.step === 1 ? 'employer accounts' : null, day: item.day, timing: item.rule,
+  }));
   return {
     campaignId: STAFFING_CAMPAIGN.id,
-    copyNote: 'Repo locked copy matches the approved staffing sequence. Email 3 inserts a line break after "Quick question —". Apostrophes are straight, not curly.',
-    delays: [0, 3, 5],
+    copyNote: 'Repo locked copy matches the approved staffing sequence. Email 3 asks the single question and signs off "Deins". Apostrophes are straight, not curly.',
+    days: [...NOMINAL_TOUCH_DAYS],
     stopOnReply: true,
-    maxSteps: 3,
+    maxSteps: FOLLOW_UP_STEP_COUNT + 1,
     providerDefault: 'gmail unless CampaignIntegrations maps the campaign to smartlead',
     approved,
   };

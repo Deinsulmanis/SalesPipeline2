@@ -215,6 +215,11 @@ const BUYING_INTENT_MARKERS = [
   ['next_steps', /\b(?:next steps?|what(?:'?s| is) the next step|how do we (?:start|proceed)|where do we go from here)\b/i],
   ['meeting', /\b(?:book a (?:call|demo|meeting)|schedule (?:a )?(?:call|demo|meeting|something)|set up a (?:call|demo|meeting)|happy to (?:chat|talk|meet)|(?:can|could) we (?:chat|talk|meet)|(?:are you|when are you) (?:free|available)|what times? (?:are )?available|send (?:me )?(?:your )?calendar|let['’]?s (?:chat|talk|meet)|video call|zoom)\b/i],
   ['willing_to_evaluate', /\b(?:willing to (?:try|test|look|evaluate)|open to (?:trying|testing|seeing)|would consider|interested in seeing)\b/i],
+  // A request for a proposal is the same evaluation step as asking for pricing.
+  ['proposal', /\b(?:send (?:me |us |over )?(?:a |the |your )?proposal|(?:request|need|want|like) (?:a |the |your )?proposal)\b/i],
+  // The prospect accepted the meeting invitation (Google / Outlook calendar
+  // replies). Accepting a call is the strongest interest a reply can carry.
+  ['meeting_accepted', /\bhas accepted (?:this|your|the) invitation\b|^accepted:\s.+@/im],
   // Plain expressed interest. The subject pattern is required so this can never
   // fire on "we are NOT interested" — the negation sits exactly where the
   // optional intensifier would be, so the match simply fails.
@@ -332,41 +337,108 @@ function nextWeekdayIso(base, weekdayIndex) {
   return start.toISOString().slice(0, 10);
 }
 
+// Abbreviations real autoresponders use ("Returning Oct 21"). They are only
+// ever read straight after a return phrase, so "may" elsewhere is inert.
+const MONTH_ABBREVIATIONS = Object.freeze({
+  jan: 0, feb: 1, mar: 2, apr: 3, jun: 5, jul: 6, aug: 7, sep: 8, sept: 8, oct: 9, nov: 10, dec: 11,
+});
+const MONTH_TOKEN_RE = `(?:${MONTH_RE}|${Object.keys(MONTH_ABBREVIATIONS).sort((a, b) => b.length - a.length).join('|')})\\.?`;
+const monthIndexOf = token => {
+  const name = lower(token).replace(/\.$/, '');
+  return MONTHS.includes(name) ? MONTHS.indexOf(name) : (MONTH_ABBREVIATIONS[name] ?? -1);
+};
+// A return phrase; whatever follows it is read as the return date.
+const RETURN_ANCHOR_RE = /\b(?:until|till|back|return(?:s|ing)?|re-?open(?:s|ing)?|resum\w*)\b(?:\s+(?:in|to)\s+(?:the\s+)?office)?(?:\s+(?:on|by))?/gi;
+const RETURN_TAIL_RE = new RegExp(
+  `^\\s*,?\\s*(?:(${WEEKDAY_RE})\\b\\s*,?\\s*)?(?:the\\s+)?(?:`
+  + `(${MONTH_TOKEN_RE})\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b(?:,?\\s+(\\d{4})\\b)?`
+  + `|(\\d{1,2})(?:st|nd|rd|th)?(?:\\s+of)?\\s+(${MONTH_TOKEN_RE})(?![a-z])(?:,?\\s+(\\d{4})\\b)?`
+  + '|(\\d{1,2})\\/(\\d{1,2})(?:\\/(\\d{4}|\\d{2}))?(?![\\d/])'
+  + ')?', 'i');
+const DAY_MS = 24 * 60 * 60 * 1000;
+// A stated date this far either side of the message is a misreading or a stale
+// autoresponder, not a return. Dates in one message may differ by a weekend
+// ("out until Friday 16, back Monday 19"); further apart they contradict.
+const RETURN_DATE_PAST_DAYS = 14;
+const RETURN_DATE_HORIZON_DAYS = 60;
+const RETURN_DATE_SPREAD_DAYS = 4;
+
+/**
+ * The return date stated after one return phrase: { ms } for a usable date,
+ * { conflict } for a malformed date or a weekday that contradicts it, or null
+ * when the phrase is not followed by a date at all ("back shortly").
+ */
+function statedReturnAfterAnchor(tail, { resolvedYear, messageDayMs }) {
+  const match = RETURN_TAIL_RE.exec(tail);
+  const weekdayIndex = match && match[1] ? WEEKDAYS.indexOf(lower(match[1])) : -1;
+  let month = -1; let day = 0; let statedYear = 0;
+  if (match && match[2]) { month = monthIndexOf(match[2]); day = Number(match[3]); statedYear = Number(match[4] || 0); }
+  else if (match && match[6]) { month = monthIndexOf(match[6]); day = Number(match[5]); statedYear = Number(match[7] || 0); }
+  else if (match && match[8]) {
+    // North American month/day. A first number above 12 is a day/month
+    // order this parser does not read, so it is malformed rather than guessed.
+    month = Number(match[8]) - 1; day = Number(match[9]); statedYear = Number(match[10] || 0);
+    if (month < 0 || month > 11) return { conflict: 'unreadable numeric date' };
+  }
+  if (month < 0) {
+    // Digits where a date belongs ("until Monday, 10//05/26", "on the 21st")
+    // are a date we cannot read — never a reason to fall back to the weekday.
+    const rest = match ? tail.slice(match[0].length) : tail;
+    if (/^\s*,?\s*(?:the\s+)?\d/.test(rest)) return { conflict: 'malformed date' };
+    if (weekdayIndex < 0) return null;
+    // "until Monday" is resolved against the message's own timestamp only.
+    if (!Number.isFinite(messageDayMs)) return null;
+    return { ms: Date.parse(nextWeekdayIso(new Date(messageDayMs), weekdayIndex)) };
+  }
+  let year = statedYear ? (statedYear < 100 ? 2000 + statedYear : statedYear) : resolvedYear;
+  if (!year) return null;   // no year and no message date: refuse rather than guess
+  const at = y => {
+    const ms = Date.UTC(y, month, day);
+    const date = new Date(ms);
+    return date.getUTCMonth() === month && date.getUTCDate() === day ? ms : NaN;
+  };
+  let ms = at(year);
+  // "back January 5" written on December 20 means next January.
+  if (!statedYear && Number.isFinite(ms) && Number.isFinite(messageDayMs)
+    && ms < messageDayMs - RETURN_DATE_PAST_DAYS * DAY_MS) ms = at(++year);
+  if (!Number.isFinite(ms)) return { conflict: 'not a calendar date' };
+  if (weekdayIndex >= 0 && new Date(ms).getUTCDay() !== weekdayIndex) {
+    return { conflict: `${WEEKDAYS[weekdayIndex]} does not fall on ${new Date(ms).toISOString().slice(0, 10)}` };
+  }
+  return { ms };
+}
+
+/**
+ * A return date, but only when it is unambiguous.
+ *
+ * Read only after a return phrase ("back", "until", "returning", "reopen",
+ * "resume"), so a date in a signature is never a return. Accepts "October
+ * 21", "Oct 21st", "21 October", "10/21", "10/21/26" and an optional weekday
+ * that must agree with the date. "until Monday" resolves from the message's
+ * own timestamp; "next Monday", "next week", "the 21st", a malformed or
+ * self-contradicting date, or one implausibly far from the message returns ''.
+ */
 function extractReturnDate(text, { year, now = null } = {}) {
   const value = String(text || '');
   const baseMs = Date.parse(now || '');
   const base = Number.isFinite(baseMs) ? new Date(baseMs) : null;
   const resolvedYear = year || (base ? base.getUTCFullYear() : 0);
-  // Anchored to an explicit return/reopen phrase so a random date in a
-  // signature or an appointment reminder is never mistaken for a return.
-  const anchored = new RegExp(
-    `(?:until|back(?: in the office)?(?: on)?|re-?open(?:s|ing)?(?: on)?|resum\\w*(?: on)?|return(?:s|ing)?(?: on)?)\\s+` +
-    `(?:the\\s+)?(?:(${MONTH_RE})\\s+(\\d{1,2})|(\\d{1,2})\\s+(${MONTH_RE}))`,
-    'i');
-  const match = anchored.exec(value);
-  if (match) {
-    const monthName = lower(match[1] || match[4]);
-    const day = Number(match[2] || match[3]);
-    const monthIndex = MONTHS.indexOf(monthName);
-    if (monthIndex >= 0 && Number.isInteger(day) && day >= 1 && day <= 31 && resolvedYear) {
-      const iso = new Date(Date.UTC(resolvedYear, monthIndex, day));
-      if (iso.getUTCMonth() === monthIndex && iso.getUTCDate() === day) {
-        return iso.toISOString().slice(0, 10);
-      }
-    }
+  const messageDayMs = base ? Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate()) : NaN;
+  const found = [];
+  for (const anchor of value.matchAll(RETURN_ANCHOR_RE)) {
+    const stated = statedReturnAfterAnchor(value.slice(anchor.index + anchor[0].length, anchor.index + anchor[0].length + 60),
+      { resolvedYear, messageDayMs });
+    if (!stated) continue;
+    if (stated.conflict) return '';
+    found.push(stated.ms);
   }
-  // Weekday returns are only resolved when the inbound timestamp is known.
-  // "until Monday" from a dated message is evidence; inventing a week is not.
-  if (base) {
-    const weekday = new RegExp(
-      `(?:until|back(?: in (?:the )?(?:office|on))?|return(?:s|ing)?(?: on)?)\\s+(?:next\\s+)?(${WEEKDAY_RE})\\b`,
-      'i').exec(value);
-    if (weekday) {
-      const weekdayIndex = WEEKDAYS.indexOf(lower(weekday[1]));
-      if (weekdayIndex >= 0) return nextWeekdayIso(base, weekdayIndex);
-    }
-  }
-  return '';
+  if (!found.length) return '';
+  const earliest = Math.min(...found);
+  const latest = Math.max(...found);
+  if (latest - earliest > RETURN_DATE_SPREAD_DAYS * DAY_MS) return '';
+  if (Number.isFinite(messageDayMs) && (earliest < messageDayMs - RETURN_DATE_PAST_DAYS * DAY_MS
+    || latest > messageDayMs + RETURN_DATE_HORIZON_DAYS * DAY_MS)) return '';
+  return new Date(latest).toISOString().slice(0, 10);
 }
 
 /**
@@ -685,6 +757,12 @@ function resolveReplyState(lead = {}, { activities = [], manualOverride = null }
           suppliedContact: meta.suppliedContact || null,
           evidenceSignals: Array.isArray(meta.evidenceSignals) ? meta.evidenceSignals : [],
           confidence: meta.confidence || null,
+          // Present only on rows read through reply-decision's operational
+          // view: production's decision for this message, and whether the
+          // state above is that decision's or the rule classifier's.
+          replyDecision: meta.replyDecision || null,
+          canonicalStateSource: meta.canonicalStateSource || null,
+          ruleCanonicalState: meta.ruleCanonicalState || null,
         };
       }
     }

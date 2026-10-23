@@ -15,6 +15,7 @@
 
 'use strict';
 const fs = require('fs');
+const path = require('path');
 
 const FILE = process.argv[2] || 'leads-enriched.csv';
 
@@ -30,6 +31,11 @@ const THIRD_PARTY_DOMAINS = [
   'truehealthdigest.com', 'godaddy.com', 'gumdocs.com', 'studiothink.com',
   'ingest.sentry.io',
 ];
+
+// IANA's delegated TLD snapshot admits real modern extensions without making
+// concatenation bleed such as gmail.comhours look like a valid address.
+const DELEGATED_TLDS = new Set(fs.readFileSync(path.join(__dirname, 'data', 'iana-tlds-alpha.txt'), 'utf8')
+  .split(/\r?\n/).filter(line => line && !line.startsWith('#')).map(line => line.toLowerCase()));
 
 // Simple CSV line splitter (handles quoted fields).
 function splitLine(line, delim) {
@@ -59,9 +65,10 @@ function classify(email) {
   if (/^[^a-z0-9]/.test(e)) return 'MALFORMED';
   if (/^\d[\d\-]*[a-z]/.test(local)) return 'MALFORMED';   // 800-7297info, 0939information
 
-  // TLD sanity: real TLD is 2-6 letters. gmail.comhours / gmail.comtel / gmail.com604... fail this.
+  // Preserve the legacy 2-6 letter rule, but admit longer delegated TLDs.
+  // Unknown long suffixes (including typical scraped-text bleed) still fail.
   const tld = domain.split('.').pop();
-  if (!/^[a-z]{2,6}$/.test(tld)) return 'MALFORMED';
+  if (!/^[a-z]{2,6}$/.test(tld) && !DELEGATED_TLDS.has(tld)) return 'MALFORMED';
 
   if (THIRD_PARTY_DOMAINS.some(d => domain === d || domain.endsWith('.' + d))) return 'THIRD_PARTY';
 

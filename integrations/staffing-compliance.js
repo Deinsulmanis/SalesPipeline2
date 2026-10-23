@@ -110,6 +110,45 @@ function staffingComplianceError(body, { leadId } = {}) {
   return null;
 }
 
+// Industrial Staffing V2 (locked 2026-10-20): every touch ends with V2's own
+// short business footer (brand, the same COMMERCIAL_MAILING_ADDRESS on one
+// line, website, reply-to-unsubscribe line). The reply "unsubscribe" handling
+// and List-Unsubscribe headers are the existing ones. V1's footer above is
+// unchanged.
+const STAFFING_V2_BRAND = 'ScaleLabAI';
+const STAFFING_V2_UNSUBSCRIBE_LINE = 'To unsubscribe, reply “unsubscribe”';
+const STAFFING_V2_FOOTER = new RegExp(`\\n\\n${STAFFING_V2_BRAND}\\n[^\\n]+\\n[^\\n]+\\n${STAFFING_V2_UNSUBSCRIBE_LINE}$`);
+
+function formatStaffingV2Footer(identity) {
+  const address = String(identity.mailingAddress || '').split('\n').map(line => line.trim()).filter(Boolean).join(', ');
+  const website = String(identity.website || '').trim();
+  return [STAFFING_V2_BRAND, address, website, STAFFING_V2_UNSUBSCRIBE_LINE].join('\n');
+}
+
+function appendStaffingV2Footer(body, identity) {
+  const core = String(body || '').replace(/\s+$/, '');
+  if (core.includes(STAFFING_V2_UNSUBSCRIBE_LINE) || core.includes(STAFFING_UNSUBSCRIBE_LINE)) {
+    throw new Error('staffing body already contains a compliance footer');
+  }
+  return `${core}\n\n${formatStaffingV2Footer(identity)}`;
+}
+
+function staffingV2ComplianceError(body, step, { leadId } = {}) {
+  const text = String(body || '');
+  if (text.includes(STAFFING_UNSUBSCRIBE_LINE) || text.includes(STAFFING_COMMERCIAL_NOTICE) || text.includes(STAFFING_CAMPAIGN_REF)) {
+    return 'staffing V2 body must not carry the V1 compliance footer';
+  }
+  const unsubscribeLines = text.split(STAFFING_V2_UNSUBSCRIBE_LINE).length - 1;
+  if (unsubscribeLines !== 1 || !STAFFING_V2_FOOTER.test(text)) return `staffing V2 Touch ${step} must end with its business footer`;
+  if (leadId && String(leadId).trim() && text.includes(String(leadId).trim())) {
+    return 'staffing footer must not expose an internal lead id';
+  }
+  if (/\bRef: SL-/i.test(text) || /\bCE-[A-Za-z0-9_-]+/.test(text)) {
+    return 'staffing footer must not expose internal identifiers';
+  }
+  return null;
+}
+
 module.exports = {
   STAFFING_CAMPAIGN_REF,
   STAFFING_REF_LINE,
@@ -126,4 +165,9 @@ module.exports = {
   formatStaffingComplianceFooter,
   appendStaffingComplianceFooter,
   staffingComplianceError,
+  STAFFING_V2_BRAND,
+  STAFFING_V2_UNSUBSCRIBE_LINE,
+  formatStaffingV2Footer,
+  appendStaffingV2Footer,
+  staffingV2ComplianceError,
 };

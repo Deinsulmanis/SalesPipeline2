@@ -1,0 +1,44 @@
+{
+  "leads": [
+    {
+      "id": "SHADOW-1",
+      "email": "owner@example.test",
+      "company": "Example Industrial Staffing",
+      "campaign": "Industrial Staffing",
+      "leadNiche": "industrial_staffing",
+      "stage": "Replied",
+      "emailStatus": "replied",
+      "emailStep": "1",
+      "notes": "",
+      "senderInboxId": "primary"
+    }
+  ],
+  "boardLeads": [],
+  "activities": [
+    {
+      "eventId": "gmail-reply:fixture-m1",
+      "leadId": "CE-SHADOW-1",
+      "sourceLeadId": "SHADOW-1",
+      "email": "owner@example.test",
+      "company": "Example Industrial Staffing",
+      "eventType": "positive_reply",
+      "occurredAt": "2026-09-23T17:00:00.000Z",
+      "subject": "Re: employer meetings",
+      "content": "Please send information about the pilot.",
+      "metadata": "{\"gmailMessageId\":\"fixture-m1\",\"gmailThreadId\":\"fixture-t1\",\"senderInboxId\":\"primary\",\"classification\":\"SEND_INFO\",\"from\":\"owner@example.test\",\"genuineHuman\":true}"
+    },
+    {
+      "eventId": "gmail-evaluated:primary:fixture-m1",
+      "leadId": "CE-SHADOW-1",
+      "sourceLeadId": "SHADOW-1",
+      "email": "owner@example.test",
+      "company": "Example Industrial Staffing",
+      "eventType": "gmail_reply_evaluated",
+      "occurredAt": "2026-09-23T17:01:00.000Z",
+      "subject": "",
+      "content": "",
+      "metadata": "{\"gmailMessageId\":\"fixture-m1\",\"classification\":\"SEND_INFO\"}"
+    }
+  ],
+  "suppressedEmails": []
+}

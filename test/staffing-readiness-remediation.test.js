@@ -140,7 +140,10 @@ test('8. staffing lead cannot enter a dental sequence', () => {
 
 test('9. dental lead cannot enter a staffing sequence', () => {
   assert.equal(sequenceAllowedForLead('industrial_staffing_cold', dental()).ok, false);
-  assert.equal(sequenceAllowedForLead('demo_follow_up_v1', dental()).ok, true);
+  // The dental offer is retired (2026-09-30): a dental lead enters no sequence at all.
+  const demo = sequenceAllowedForLead('demo_follow_up_v1', dental());
+  assert.equal(demo.ok, false);
+  assert.equal(demo.code, 'offer_retired');
 });
 
 test('10. staffing provider ownership is singular', () => {

@@ -19,8 +19,12 @@
  * auditable. See deriveSequenceState().
  */
 
-const { addBusinessDays, businessDay } = require('./pipeline-state');
+const { addBusinessDays, businessDay, MEANINGFUL_INBOUND_EVENTS } = require('./pipeline-state');
+const {
+  isResponseEvidence, HUMAN_RESPONSE_EVENT, RECORDED_CONVERSATION_EVENTS, MEETING_RESPONSE_EVENTS,
+} = require('./prospect-response');
 const { CAMPAIGN_FAMILY, resolveLeadFamily } = require('./campaign-versions');
+const { outreachBlockForLead } = require('./lead-archive');
 // Stage comparisons go through the canonical normaliser, never the raw cell.
 // Legacy rows store values like 'lost', 'warm' or 'Hot', and a raw compare
 // would silently skip both the Hot journey AND the closed-lost stop condition.
@@ -36,7 +40,7 @@ const GENERIC_CONFIG = genericConfig();
 // ── TIMING ──────────────────────────────────────────────────────────────────
 // Every delay in one place. Business days, matching the Hot conversation clock —
 // a recovery email landing on a Sunday helps nobody. These are NOT the cold
-// cadence (FOLLOW_UP_DELAY_DAYS); conflating the two would tie a recovery
+// cadence (integrations/sequence-timing.js); conflating the two would tie a recovery
 // journey to the cold sending schedule.
 const SEQUENCE_TIMING = Object.freeze({
   DEMO_STEP_1_BUSINESS_DAYS: 3,   // after the booking-link email already sent
@@ -143,6 +147,9 @@ function sequenceAllowedForLead(sequenceId, lead = {}) {
   const id = String(sequenceId || '');
   const resolved = resolveLeadFamily(lead);
   if (!id) return { ok: false, reason: 'sequence id is required', family: resolved.family };
+  // No journey may attach to an archived lead or to a retired offer's lead.
+  const blocked = outreachBlockForLead(lead);
+  if (blocked) return { ok: false, reason: blocked.reason, code: blocked.code, family: resolved.family };
   if (id === 'industrial_staffing_cold' && resolved.family !== CAMPAIGN_FAMILY.STAFFING) {
     return { ok: false, reason: 'staffing sequence cannot attach to a non-staffing lead', family: resolved.family };
   }
@@ -189,6 +196,23 @@ const HUMAN_INTERVENTION_EVENTS = Object.freeze(['human_response_sent', 'convers
 const BOOKING_EVENTS = Object.freeze(['call_booked', 'meeting_rescheduled']);
 
 const HARD_SUPPRESSION_TAGS = Object.freeze(['[REPLY: Unsubscribed]', '[REPLY: Not Interested]', '[BOUNCED']);
+
+// Answers a person or a meeting provides. An automated warm reply also answers
+// the prospect (prospect-response.js), but it may not on its own authorise
+// automatic Hot follow-up: that still needs one of these after the prospect's
+// last message, exactly as before automated replies counted as answers.
+const PERSON_OR_MEETING_RESPONSE_EVENTS = Object.freeze([
+  HUMAN_RESPONSE_EVENT, ...RECORDED_CONVERSATION_EVENTS, ...MEETING_RESPONSE_EVENTS,
+]);
+
+function answeredOnlyByAutomation(activities = []) {
+  const automated = (activities || []).some(row => isResponseEvidence(row)
+    && !PERSON_OR_MEETING_RESPONSE_EVENTS.includes(String((row && row.eventType) || '')));
+  if (!automated) return false;
+  const personAt = latestAt(activities, PERSON_OR_MEETING_RESPONSE_EVENTS);
+  const inboundAt = latestAt(activities, MEANINGFUL_INBOUND_EVENTS);
+  return !(personAt && (!inboundAt || personAt >= inboundAt));
+}
 
 function latestAt(activities, types) {
   let latest = '';
@@ -558,6 +582,9 @@ function automaticEnrollmentDecision(input = {}) {
     && !(hotState && hotState.waitingOn === 'waiting_on_prospect'
       && ['follow_up_due', 'overdue', 'stale', 'severely_stale'].includes(hotState.staleness))) {
     return { enroll: false, reason: 'Hot lead is not due while waiting on the prospect' };
+  }
+  if (sequenceId === 'hot_stale_v1' && answeredOnlyByAutomation(activities)) {
+    return { enroll: false, reason: 'answered only by an automated reply; automatic Hot follow-up needs a human response, recorded conversation or meeting' };
   }
   if (sequenceId === 'no_show_recovery_v1' && String(callState?.status || '') !== 'no_show') {
     return { enroll: false, reason: 'explicit no-show event is missing' };

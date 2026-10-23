@@ -269,11 +269,14 @@ test('the cards and the funnel read the SAME classification source', () => {
   const server = readSource(path.join(root, 'server.js'));
   // Both are handed the activity index; only one of them used to be, which is
   // exactly why the Outreach cards and the funnel disagreed in production.
-  assert.match(server, /const metrics = buildReplyMetrics\(leads, \{[\s\S]{0,160}activitiesByLeadId,/);
+  // The cards read the ACTIVE scope (live offers only, with their own
+  // activity); the historical metrics read everything. Same classifier inputs.
+  assert.match(server, /const metrics = buildReplyMetrics\(activeLeads, \{[\s\S]{0,160}activitiesByLeadId: activeActivitiesByLeadId,/);
+  assert.match(server, /const historicalMetrics = buildReplyMetrics\(leads, \{[\s\S]{0,160}activitiesByLeadId,/);
   assert.match(server, /const replyRecords = buildReplyRecords\(leads, \{[\s\S]{0,160}activitiesByLeadId,/);
   // And the index is built before either of them.
   assert.ok(server.indexOf('const activitiesByLeadId = new Map();')
-    < server.indexOf('const metrics = buildReplyMetrics(leads, {'));
+    < server.indexOf('const metrics = buildReplyMetrics(activeLeads, {'));
 });
 
 // ── 19–23. Labels must state the metric they actually carry ─────────────────
@@ -295,7 +298,8 @@ test('19. the send chart is named for all outbound sends, because that is what i
   }
   // Counting four send types while calling it "Daily Sends" left the reader to
   // guess whether stage-sequence and booking-link sends were in it.
-  assert.ok(browser.includes('All Outbound Sends — Last 14 Days'));
+  // It is message-based and ACTIVE-scoped: live-offer leads only.
+  assert.ok(browser.includes('Outbound Sends · Active Outreach — Last 14 Days'));
   assert.ok(!/>Daily Sends — Last 14 Days</.test(browser));
 });
 
@@ -308,7 +312,9 @@ test('20. unique contacted is labelled lead-based, so it cannot be read as a sen
 
 test('21. every funnel rate KPI names its denominator', () => {
   const body = sliceFn(browser, 'renderFunnelAnalytics');
-  for (const label of ['Reply Rate / Sent', 'Positive Rate / Sent', 'Demo Rate / Sent']) {
+  // The retired Demo stage no longer has a rate.
+  assert.ok(!body.includes('Demo Rate / Sent'));
+  for (const label of ['Reply Rate / Sent', 'Positive Rate / Sent']) {
     assert.ok(body.includes(label), `${label} must state its denominator`);
   }
   // The funnel divides by the sent cohort, the Outreach cards by delivered.

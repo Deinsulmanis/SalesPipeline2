@@ -315,6 +315,7 @@ test('every production Anthropic call site is tracked with an explicit feature',
     'integrations/reply-classifier.js',
     'integrations/staffing-personalization.js',
     'integrations/roofing-survey-profile.js',
+    'integrations/staffing-conversation-agent.js',
     'enrich-names.js',
   ];
   for (const file of files) {

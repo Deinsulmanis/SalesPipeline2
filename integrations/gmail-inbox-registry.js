@@ -2,8 +2,22 @@
 
 const { google } = require('googleapis');
 const { DEFAULT_INBOX_DAILY_LIMIT, DEFAULT_INBOX_PER_RUN_LIMIT } = require('./gmail-sender-capacity');
+const { DEFAULT_CLIENT_ID, resolveClientId } = require('./clients/registry');
+const { senderPolicyBlockers, senderPreparationBlockers, cappedDailyLimit } = require('./clients/sender-policy');
 
 const STATUSES = new Set(['warming', 'ready', 'active', 'paused', 'error']);
+
+// scalelabaiteam.com exists only for US staffing-agency outreach. It is
+// staffing-only by identity, not just by flag, so a GMAIL_INBOX_REGISTRY_JSON
+// override that omits staffingOnly can never widen it to other niches.
+const STAFFING_ONLY_SENDER_IDS = Object.freeze(['scalelabaiteam']);
+const STAFFING_ONLY_SENDER_EMAILS = Object.freeze(['deins@scalelabaiteam.com']);
+
+function isStaffingOnlySender(sender = {}) {
+  return sender?.staffingOnly === true
+    || STAFFING_ONLY_SENDER_IDS.includes(String(sender?.id || '').trim())
+    || STAFFING_ONLY_SENDER_EMAILS.includes(String(sender?.email || '').trim().toLowerCase());
+}
 
 const DEFAULT_SECONDARY_INBOXES = Object.freeze([
   Object.freeze({
@@ -14,10 +28,56 @@ const DEFAULT_SECONDARY_INBOXES = Object.freeze([
     dailyLimit: DEFAULT_INBOX_DAILY_LIMIT,
     perRunLimit: DEFAULT_INBOX_PER_RUN_LIMIT,
     observerEnabled: true,
+    staffingOnly: true,
   }),
+  // New mailbox on the established scalelabai.ca domain. Smartlead warms it
+  // independently; campaign sends use this Gmail sender only after the
+  // operator activates it behind the healthy-observer gate. Conservative
+  // caps: 20/day (raised from 10 on 2026-09-24) spread at 2 per window, so the
+  // ten weekday windows are its whole day. Raise them by hand.
+  Object.freeze({
+    id: 'deniels',
+    email: 'deniels@scalelabai.ca',
+    status: 'warming',
+    tokenEnv: 'GMAIL_DENIELS_TOKEN_JSON',
+    dailyLimit: 20,
+    perRunLimit: 2,
+    observerEnabled: true,
+  }),
+  // Second mailbox on tryscalelabai.ca, same pattern and caps as deniels:
+  // 20/day (raised from 10 on 2026-09-24) at 2 per window.
+  Object.freeze({
+    id: 'deniels_tryscalelabai',
+    email: 'deniels@tryscalelabai.ca',
+    status: 'warming',
+    tokenEnv: 'GMAIL_DENIELS_TRYSCALELABAI_TOKEN_JSON',
+    dailyLimit: 20,
+    perRunLimit: 2,
+    observerEnabled: true,
+  }),
+  // Jole BTX LLC's six cold-sending mailboxes (client `jole`), scoped to
+  // Jole's one campaign, at Jole's launch capacity: 20/day (the client's hard
+  // per-inbox ceiling) and 2 per scheduled window. Readiness is the runtime
+  // lifecycle (mark ready → activate); send authority is NOT: until
+  // CLIENT_SENDING_AUTHORIZED names jole, Jole's sender policy holds every
+  // one of these non-sending, whatever its status. Jorge's corporate
+  // jolebtx.com is never a sender.
+  ...[
+    ['jole_group_jorge', 'jorge@jolebtxgroup.com'],
+    ['jole_group_jguerrero', 'j.guerrero@jolebtxgroup.com'],
+    ['jole_team_jorge', 'jorge@jolebtxteam.com'],
+    ['jole_team_jguerrero', 'j.guerrero@jolebtxteam.com'],
+    ['jole_industrial_jorge', 'jorge@joleindustrial.com'],
+    ['jole_industrial_jguerrero', 'j.guerrero@joleindustrial.com'],
+  ].map(([id, email]) => Object.freeze({
+    id, email, clientId: 'jole', status: 'warming',
+    tokenEnv: `GMAIL_${id.toUpperCase()}_TOKEN_JSON`,
+    dailyLimit: 20, perRunLimit: 2, observerEnabled: true,
+    allowedCampaignIds: Object.freeze(['jole-btx-employer-acquisition']),
+  })),
 ]);
 
-function parseEntry(entry, index, seenIds, seenEmails) {
+function parseEntry(entry, index, seenIds, seenEmails, env = process.env) {
   const id = String(entry?.id || '').trim();
   const email = String(entry?.email || '').trim().toLowerCase();
   const status = String(entry?.status || 'warming').trim().toLowerCase();
@@ -25,6 +85,11 @@ function parseEntry(entry, index, seenIds, seenEmails) {
   const dailyLimit = Number(entry?.dailyLimit ?? 0);
   const perRunLimit = Number(entry?.perRunLimit ?? DEFAULT_INBOX_PER_RUN_LIMIT);
   const observerEnabled = entry?.observerEnabled !== false;
+  const staffingOnly = entry?.staffingOnly === true;
+  // The managed client this inbox serves. Omitted means the default client,
+  // which is every inbox that existed before clients did. An unknown client is
+  // a configuration error, never a silent default.
+  const rawClientId = String(entry?.clientId ?? '').trim();
   if (!id || !/^[a-z0-9_-]+$/i.test(id)) throw new Error(`Gmail inbox entry ${index + 1} has an invalid id`);
   if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error(`Gmail inbox ${id} has an invalid email`);
   if (!STATUSES.has(status)) throw new Error(`Gmail inbox ${id} has an invalid status`);
@@ -32,38 +97,84 @@ function parseEntry(entry, index, seenIds, seenEmails) {
   if (!/^GMAIL_[A-Z0-9_]+_TOKEN_JSON$/.test(tokenEnv)) throw new Error(`Gmail inbox ${id} has an invalid tokenEnv`);
   if (!Number.isInteger(dailyLimit) || dailyLimit < 0) throw new Error(`Gmail inbox ${id} has an invalid dailyLimit`);
   if (!Number.isInteger(perRunLimit) || perRunLimit < 0) throw new Error(`Gmail inbox ${id} has an invalid perRunLimit`);
+  let clientId = '';
+  if (rawClientId) {
+    const resolved = resolveClientId(rawClientId);
+    if (!resolved.ok) throw new Error(`Gmail inbox ${id} names an unknown client`);
+    clientId = resolved.clientId;
+  }
+  if (staffingOnly && clientId && clientId !== DEFAULT_CLIENT_ID) throw new Error(`Gmail inbox ${id} cannot be staffing-only for another client`);
   if (seenIds.has(id) || seenEmails.has(email)) throw new Error(`Duplicate Gmail inbox entry: ${id}`);
   seenIds.add(id); seenEmails.add(email);
+  // A managed client's sender: campaign allowlist, per-inbox hard ceiling and
+  // domain rules from its client's senderPolicy (clients/sender-policy.js).
+  // Violations block the sender instead of throwing, so one bad managed-client
+  // row cannot invalidate the ScaleLab inboxes beside it.
+  const managed = Boolean(clientId && clientId !== DEFAULT_CLIENT_ID);
+  const allowedCampaignIds = managed && Array.isArray(entry?.allowedCampaignIds)
+    ? Object.freeze(entry.allowedCampaignIds.map(value => String(value || '').trim()).filter(Boolean)) : null;
+  const draft = { id, email, clientId, ...(allowedCampaignIds ? { allowedCampaignIds } : {}) };
+  const policyBlockers = senderPolicyBlockers(draft, env);
+  // Preparation is judged separately from sending (see clients/send-policy.js):
+  // a managed inbox may be readied and assigned leads while the client's final
+  // send authorization is off, and stays non-sending until it is on.
+  const preparationBlockers = managed ? senderPreparationBlockers(draft) : null;
+  const effectiveDailyLimit = cappedDailyLimit(draft, dailyLimit);
   return Object.freeze({
-    id, email, status, tokenEnv, dailyLimit, perRunLimit, observerEnabled, provider: 'gmail',
+    id, email, status, tokenEnv, dailyLimit: effectiveDailyLimit, perRunLimit, observerEnabled, provider: 'gmail',
+    ...(staffingOnly ? { staffingOnly } : {}),
+    ...(clientId ? { clientId } : {}),
+    ...(allowedCampaignIds ? { allowedCampaignIds } : {}),
+    ...(effectiveDailyLimit !== dailyLimit ? { configuredDailyLimit: dailyLimit } : {}),
+    ...(policyBlockers.length ? { policyBlockers: Object.freeze(policyBlockers) } : {}),
+    ...(managed ? {
+      preparationBlockers: Object.freeze(preparationBlockers),
+      clientAuthorized: !policyBlockers.some(reason => reason.startsWith('client sending is not authorized')),
+    } : {}),
   });
 }
 
-function parseRegistry(raw = process.env.GMAIL_INBOX_REGISTRY_JSON || '[]') {
+function parseRegistry(raw = process.env.GMAIL_INBOX_REGISTRY_JSON || '[]', env = process.env) {
   let entries;
   try { entries = JSON.parse(raw || '[]'); } catch (_) { throw new Error('GMAIL_INBOX_REGISTRY_JSON must be valid JSON'); }
   if (!Array.isArray(entries)) throw new Error('GMAIL_INBOX_REGISTRY_JSON must be a JSON array');
   const seenIds = new Set();
   const seenEmails = new Set();
-  return entries.map((entry, index) => parseEntry(entry, index, seenIds, seenEmails));
+  return entries.map((entry, index) => parseEntry(entry, index, seenIds, seenEmails, env));
 }
 
-function withDefaultInboxes(entries = []) {
+function withDefaultInboxes(entries = [], env = process.env) {
   const seenIds = new Set(entries.map(entry => entry.id));
   const seenEmails = new Set(entries.map(entry => entry.email));
   const extras = [];
   for (const def of DEFAULT_SECONDARY_INBOXES) {
     if (seenIds.has(def.id) || seenEmails.has(def.email)) continue;
-    extras.push(parseEntry(def, entries.length + extras.length, seenIds, seenEmails));
+    extras.push(parseEntry(def, entries.length + extras.length, seenIds, seenEmails, env));
   }
-  return [...entries, ...extras];
+  return isolateManagedCredentials([...entries, ...extras]);
+}
+
+// One mailbox, one credential. A managed client's inbox whose token variable
+// is shared with any other inbox could send as the wrong account, so it is
+// blocked (not thrown: a bad managed-client row never takes ScaleLab's
+// registry down). ScaleLab's own rows keep exactly their existing rules.
+function isolateManagedCredentials(entries) {
+  const uses = new Map();
+  for (const entry of entries) uses.set(entry.tokenEnv, (uses.get(entry.tokenEnv) || 0) + 1);
+  return entries.map(entry => {
+    const managed = entry.clientId && entry.clientId !== DEFAULT_CLIENT_ID;
+    if (!managed || uses.get(entry.tokenEnv) < 2) return entry;
+    const reason = `${entry.tokenEnv} is shared with another inbox; each mailbox needs its own credential`;
+    return Object.freeze({ ...entry, policyBlockers: Object.freeze([...(entry.policyBlockers || []), reason]),
+      preparationBlockers: Object.freeze([...(entry.preparationBlockers || []), reason]) });
+  });
 }
 
 function sendEligibleFor(entry, env = process.env) {
   const credentialConfigured = entry.id === 'primary'
     ? Boolean(env.GMAIL_TOKEN_JSON || entry.credentialConfigured)
     : Boolean(env[entry.tokenEnv] || entry.credentialConfigured);
-  return entry.status === 'active' && entry.dailyLimit > 0 && credentialConfigured;
+  return entry.status === 'active' && entry.dailyLimit > 0 && credentialConfigured && !entry.policyBlockers?.length;
 }
 
 function publicRegistry(entries, env = process.env) {
@@ -73,7 +184,27 @@ function publicRegistry(entries, env = process.env) {
     observerEnabled: entry.observerEnabled !== false, provider: 'gmail',
     credentialConfigured: Boolean(env[entry.tokenEnv]),
     sendEligible: sendEligibleFor(entry, env),
+    clientId: entry.clientId || DEFAULT_CLIENT_ID,
+    ...(entry.allowedCampaignIds ? { allowedCampaignIds: [...entry.allowedCampaignIds] } : {}),
+    ...(entry.configuredDailyLimit !== undefined ? { configuredDailyLimit: entry.configuredDailyLimit } : {}),
+    ...(entry.policyBlockers?.length ? { policyBlockers: [...entry.policyBlockers] } : {}),
+    ...(entry.preparationBlockers ? {
+      preparationBlockers: [...entry.preparationBlockers], clientAuthorized: entry.clientAuthorized === true,
+      preparationReady: preparationReadyFor(entry, env),
+    } : {}),
   }));
+}
+
+/**
+ * A managed inbox that is operationally ready: active, capacity configured,
+ * credentialed and clear of every preparation blocker. It may be assigned and
+ * queued leads. It is NOT send eligible unless sendEligible says so, which also
+ * requires the client's final send authorization.
+ */
+function preparationReadyFor(entry, env = process.env) {
+  if (!entry.preparationBlockers) return false;
+  const credentialConfigured = Boolean(env[entry.tokenEnv] || entry.credentialConfigured);
+  return entry.status === 'active' && entry.dailyLimit > 0 && credentialConfigured && !entry.preparationBlockers.length;
 }
 
 function assertDormant(entry) {
@@ -148,14 +279,17 @@ function applySenderRuntime(senders = [], overlay = []) {
     return {
       ...sender,
       status,
-      sendEligible: status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured,
+      sendEligible: status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured && !sender.policyBlockers?.length,
+      ...(sender.preparationBlockers ? {
+        preparationReady: status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured && !sender.preparationBlockers.length,
+      } : {}),
     };
   });
 }
 
 module.exports = {
-  STATUSES, DEFAULT_SECONDARY_INBOXES,
+  STATUSES, DEFAULT_SECONDARY_INBOXES, STAFFING_ONLY_SENDER_IDS, isStaffingOnlySender,
   parseRegistry, withDefaultInboxes, publicRegistry, assertDormant,
-  credentialsFor, verifyInbox, verifyMailboxAccess, sendEligibleFor,
+  credentialsFor, verifyInbox, verifyMailboxAccess, sendEligibleFor, preparationReadyFor,
   parseRuntimeOverlay, applySenderRuntime,
 };

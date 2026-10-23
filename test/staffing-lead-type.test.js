@@ -1,4 +1,9 @@
 'use strict';
+
+// These tests exercise live staffing machinery with Industrial Staffing Agency
+// (V1) fixtures. V1 itself is a completed campaign; that is pinned in
+// test/completed-campaign.test.js.
+require('../integrations/lead-archive').setCompletedCampaignsForTests([]);
 /**
  * Staffing Agency as a first-class CRM lead type.
  *
@@ -115,7 +120,7 @@ test('G/H. ACTIVE_CAMPAIGN_VERSION maps the staffing family to the real version 
   assert.equal(ACTIVE_CAMPAIGN_VERSION.industrial_staffing, STAFFING_CAMPAIGN.id);
   assert.ok(CAMPAIGN_VERSIONS[ACTIVE_CAMPAIGN_VERSION.industrial_staffing], 'the mapped id is a registered version');
   assert.equal(CAMPAIGN_VERSIONS[ACTIVE_CAMPAIGN_VERSION.industrial_staffing].family, 'industrial_staffing');
-  // Dental and roofing mappings are untouched.
+  // Dental and roofing mappings are untouched (dental's mapped version is retired, never re-pointed).
   assert.equal(ACTIVE_CAMPAIGN_VERSION.dental_ai_receptionist, 'dental_v3_pay_per_booking');
   assert.equal(ACTIVE_CAMPAIGN_VERSION.roofing_survey, 'roofing_survey_v1_measured');
 });
@@ -124,7 +129,9 @@ test('I. a draft or stale staffing version fails closed at attribution', () => {
   // The mapping exists, so the failure is now the activation gate, not a gap.
   assert.throws(() => activeVersionForLead(staffingLead()), /is not active/);
   assert.throws(() => coldSendAttribution(staffingLead()), /is not active/);
-  assert.doesNotThrow(() => coldSendAttribution({ leadNiche: 'dental', emailTemplateId: 'dental-guarantee-v1' }));
+  // Dental is retired: a new send cannot be attributed, a recorded one still can.
+  assert.throws(() => coldSendAttribution({ leadNiche: 'dental', emailTemplateId: 'dental-guarantee-v1' }), /not active/);
+  assert.doesNotThrow(() => coldSendAttribution({ leadNiche: 'dental', emailTemplateId: 'dental-guarantee-v1' }, 1, {}, { evidenceOnly: true }));
   // An unregistered version id is refused outright.
   assert.throws(() => activeVersionForLead(staffingLead({ intendedCampaignVersion: 'industrial_staffing_v99' })), /Unknown campaign version/);
   // A staffing lead pointed at a dental version is refused as incompatible.
@@ -143,9 +150,10 @@ test('M. staffing can never take the legacy pre-routing bypass', () => {
     assert.equal(gate.ok, false, JSON.stringify(lead));
     assert.notEqual(gate.legacy, true, 'staffing must not be treated as a legacy row');
   }
-  // Legitimate legacy dental and roofing rows keep the bypass.
-  assert.deepEqual(routedLeadReady({ leadNiche: 'dental', routingRequired: '' }), { ok: true, legacy: true });
-  assert.deepEqual(routedLeadReady({ leadNiche: 'roofing', routingRequired: 'false' }), { ok: true, legacy: true });
+  // Legacy dental and roofing are retired (2026-09-30): the bypass never reaches them.
+  assert.equal(routedLeadReady({ leadNiche: 'dental', routingRequired: '' }).code, 'offer_retired');
+  assert.equal(routedLeadReady({ leadNiche: 'roofing', routingRequired: 'false' }).code, 'offer_retired');
+  assert.deepEqual(routedLeadReady({ tradeType: 'Plumber', routingRequired: 'false' }), { ok: true, legacy: true });
   assert.deepEqual(routedLeadReady({}), { ok: true, legacy: true }, 'unrouted legacy rows are unaffected');
 });
 
@@ -160,7 +168,7 @@ test('N/O. routing and the scheduler refuse staffing until explicit activation',
   const inboxes = [{ id: 'primary', email: 'd@x.ca', sendEligible: true, deliveryImplemented: true }];
   assert.equal(validateRoute({ niche: 'industrial_staffing', senderInboxId: 'primary',
     emailTemplateId: STAFFING_CAMPAIGN.emailTemplateId, inboxes }).ok, true);
-  assert.equal(campaignVersionsForRoute({ niche: 'industrial_staffing' }).length, 1);
+  assert.equal(campaignVersionsForRoute({ niche: 'industrial_staffing' }).length, 2);
 });
 
 test('P. with a ready template the same route passes only through the normal gates', () => {
@@ -194,10 +202,11 @@ test('Z. dental and roofing behaviour is unchanged by the lead-type work', () =>
   assert.equal(normalizeNiche('roofing'), 'roofing');
   assert.equal(leadTypeLabel('dental'), 'Dental');
   assert.equal(leadTypeLabel('roofing'), 'Roofing');
-  assert.equal(templateById('dental-guarantee-v1').ready, true);
+  assert.equal(templateById('dental-guarantee-v1').ready, false, 'retired with the dental offer');
   assert.equal(familyForLead({ leadNiche: 'dental', emailTemplateId: 'dental-guarantee-v1' }), 'dental_ai_receptionist');
   assert.equal(familyForLead({ leadNiche: 'roofing' }), 'roofing_survey');
   assert.equal(familyForLead({}), 'unrouted', 'blank niche must not inherit dental');
   assert.equal(offerForLead({ leadNiche: 'dental' }).targetCustomer, 'dental practices');
-  assert.ok(campaignVersionsForRoute({ niche: 'dental' }).length > 0, 'dental still has an active version');
+  assert.equal(campaignVersionsForRoute({ niche: 'dental' }).length, 0, 'dental was retired on 2026-09-30: no version is routable');
+  assert.equal(campaignVersionsForRoute({ niche: 'roofing' }).length, 0, 'roofing was retired on 2026-09-30: no version is routable');
 });

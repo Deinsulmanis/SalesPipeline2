@@ -9,7 +9,7 @@ const { hasManualHold, releaseHoldFromNotes, deriveCallLifecycle,
 const { evaluateStageSequence, deriveSequenceState, provenSequenceSenderId,
   resolveSequenceThread, automaticEnrollmentDecision, SEQUENCES, SEQUENCE_EVENTS } = require('./stage-sequences');
 const { deriveAutomationOwnership, ownershipSummary, executableOwners } = require('./automation-ownership');
-const { latestHumanOutboundAt } = require('./human-outbound');
+const { latestResponseAt } = require('./prospect-response');
 
 const meta = row => { try { return JSON.parse(row.metadata || '{}'); } catch (_) { return {}; } };
 const norm = value => String(value || '').trim().toLowerCase();
@@ -30,7 +30,7 @@ function canonicalResult(s, activities = s.activities, twin = s.twins[0], now = 
     hotState: deriveHotState(s.boardLead, { activities, now }), now,
     suppressedEmails: s.suppressedEmails, identityConflict: s.identityConflict, featureEnabled: s.sequencesEnabled });
   const ownership = deriveAutomationOwnership(twin, { boardLead: s.boardLead, activities, callState, sequenceState,
-    now, humanTouchAt: latestHumanOutboundAt(activities), sequencesEnabled: s.sequencesEnabled,
+    now, humanTouchAt: latestResponseAt(activities), sequencesEnabled: s.sequencesEnabled,
     suppressionReason: lead => sendSuppressionReason(lead, { suppressedEmails: s.suppressedEmails }) });
   const nextAction = deriveNextAction(s.boardLead, twin, { activities, sequenceState, now,
     sequencesEnabled: s.sequencesEnabled, suppressedEmails: s.suppressedEmails, observers: s.observers });

@@ -1,9 +1,10 @@
 'use strict';
 
 const { deterministicReplyCategory } = require('./reply-classifier');
-const { resolveReplyState, EVIDENCE_SOURCE } = require('./canonical-reply');
+const { resolveReplyState, EVIDENCE_SOURCE, LEGACY_REPLY_EVENT_TYPES, malformedEmailReason } = require('./canonical-reply');
+const { applyReplyDecisionsToReplyEvidence } = require('./reply-decision');
 const {
-  canonicalSendRows, uniqueCanonicalBounces, flattenActivitiesByLeadId,
+  canonicalSendRows, uniqueCanonicalBounces, flattenActivitiesByLeadId, deliveredLeadIds,
 } = require('./canonical-sends');
 
 const ANALYTICS_CATEGORY = Object.freeze({
@@ -69,6 +70,68 @@ function leadHasCanonicalInbound(activities = []) {
   return (activities || []).some(row => REPLY_EVIDENCE_TYPES.has(String(row.eventType || '')));
 }
 
+// The managed-client reply pipeline (clients/reply-pipeline.js) records a
+// sentiment instead of a canonical state. Same meanings, mapped once.
+const MANAGED_REPLY_EVENT = 'client_reply_classified';
+const MANAGED_SENTIMENT_STATE = Object.freeze({
+  positive: 'positive', negative: 'negative', unsubscribe: 'negative',
+  neutral: 'needs_human', automated: 'automated_reply',
+});
+const DECISIVE_STATES = new Set(['positive', 'negative']);
+
+function parseRowMetadata(row) {
+  if (row && typeof row.metadata === 'object' && row.metadata) return row.metadata;
+  try { return JSON.parse((row && row.metadata) || '{}'); } catch (_) { return {}; }
+}
+
+/**
+ * Where a lead's conversation has got to: the latest DECISIVE statement in it.
+ *
+ * Decisive means a message whose final state is positive or negative, or a
+ * human classification override (reply-overrides.js) at the moment it was made.
+ * A later needs-human message — a calendar acceptance, a question about forms,
+ * "sounds good, talk Thursday" read as unclear — does not undo interest the
+ * prospect already expressed; a later rejection or unsubscribe does.
+ *
+ * This used to be "the latest genuine message", and the human override was
+ * never passed in, so a prospect who asked for a call and then accepted the
+ * invite counted as Needs Human, and a reply a human had re-labelled Positive
+ * still counted as whatever its next message said. Returns null when nothing
+ * decisive exists; the caller then falls back to the latest-message reading.
+ */
+function conversationOutcome(lead = {}, decidedActivities = []) {
+  const leadId = String(lead.id || '').replace(/^CE-/, '').trim();
+  const statements = [];
+  for (const row of decidedActivities || []) {
+    const type = String(row.eventType || '');
+    const meta = parseRowMetadata(row);
+    let state = '';
+    let reason = '';
+    if (LEGACY_REPLY_EVENT_TYPES.includes(type)) { state = meta.canonicalState || ''; reason = meta.reason || ''; }
+    else if (type === MANAGED_REPLY_EVENT) {
+      state = MANAGED_SENTIMENT_STATE[String(meta.sentiment || '')] || '';
+      if (meta.sentiment === 'unsubscribe') reason = 'unsubscribe_request';
+    }
+    if (DECISIVE_STATES.has(state)) statements.push({ state, reason, at: String(row.occurredAt || '') });
+  }
+  const { activeOverrides, OVERRIDE_KIND } = require('./reply-overrides');
+  const overrideRows = (decidedActivities || []).flatMap(row => {
+    if (String(row.eventType || '') !== OVERRIDE_KIND.CLASSIFICATION) return [];
+    const meta = parseRowMetadata(row);
+    return [{ ...meta, kind: row.eventType, at: meta.at || row.occurredAt, overrideId: row.eventId,
+      leadId: String(meta.leadId || '').replace(/^CE-/, '') }];
+  });
+  const override = activeOverrides(overrideRows, leadId).classification;
+  if (override && override.state) {
+    statements.push({ state: override.state, reason: override.reason || '', at: String(override.at || ''), override: true });
+  }
+  // A human override is a decision even when it says needs_human or automated.
+  const decisive = statements.filter(item => item.override || DECISIVE_STATES.has(item.state));
+  if (!decisive.length) return null;
+  decisive.sort((a, b) => a.at.localeCompare(b.at));
+  return decisive[decisive.length - 1];
+}
+
 /**
  * A lead's reply category, from EVIDENCE ONLY.
  *
@@ -90,7 +153,38 @@ function leadHasCanonicalInbound(activities = []) {
  * canonical-reply documents, and the tag remains the fallback beneath it.
  */
 function categoryFromEvidence(lead = {}, activities = [], storedClassifications = []) {
-  const resolved = resolveReplyState(lead, { activities });
+  return replyOutcomeFromEvidence(lead, activities, storedClassifications).category;
+}
+
+/** The lead's category plus whether its decisive negative was an unsubscribe. */
+function replyOutcomeFromEvidence(lead = {}, activities = [], storedClassifications = []) {
+  // A reply production decided is counted as production decided it: the final
+  // classification's state, not the rule classifier's first reading. Replies
+  // from before decision records existed keep their stored evidence.
+  const decided = applyReplyDecisionsToReplyEvidence(activities || []);
+  const outcome = !malformedEmailReason(lead.email) ? conversationOutcome(lead, decided) : null;
+  if (outcome) {
+    return {
+      category: CANONICAL_STATE_CATEGORY[outcome.state] || ANALYTICS_CATEGORY.UNKNOWN,
+      unsubscribe: outcome.state === 'negative' && outcome.reason === 'unsubscribe_request',
+    };
+  }
+  let category = categoryFromLatestEvidence(lead, decided, storedClassifications);
+  // A managed client's non-decisive reply (neutral, automated) carries no
+  // canonical state for the resolver to read; its latest sentiment is the answer.
+  if (category === ANALYTICS_CATEGORY.UNKNOWN) {
+    const managed = decided.filter(row => String(row.eventType || '') === MANAGED_REPLY_EVENT)
+      .sort((a, b) => String(a.occurredAt || '').localeCompare(String(b.occurredAt || '')));
+    const latest = managed.length ? MANAGED_SENTIMENT_STATE[String(parseRowMetadata(managed[managed.length - 1]).sentiment || 'neutral')] : '';
+    if (latest) category = CANONICAL_STATE_CATEGORY[latest] || category;
+  }
+  const unsubscribe = category === ANALYTICS_CATEGORY.NEGATIVE
+    && /\[REPLY:\s*Unsubscribed?\b/i.test(String(lead.notes || ''));
+  return { category, unsubscribe };
+}
+
+function categoryFromLatestEvidence(lead = {}, decidedActivities = [], storedClassifications = []) {
+  const resolved = resolveReplyState(lead, { activities: decidedActivities });
   if (resolved.source === EVIDENCE_SOURCE.CANONICAL_ACTIVITY) {
     return CANONICAL_STATE_CATEGORY[resolved.state] || ANALYTICS_CATEGORY.UNKNOWN;
   }
@@ -129,7 +223,7 @@ const REPLY_EVIDENCE_TYPES = new Set([
 
 function buildReplyEvidenceMap(activities = []) {
   const byLead = new Map();
-  for (const row of activities || []) {
+  for (const row of applyReplyDecisionsToReplyEvidence(activities || [])) {
     const eventType = String(row.eventType || '');
     if (!REPLY_EVIDENCE_TYPES.has(eventType)) continue;
     const id = String(row.sourceLeadId || row.leadId || '').replace(/^CE-/, '').trim();
@@ -167,9 +261,14 @@ function buildReplyRecords(leads = [], { classificationsByLeadId = new Map(), ev
     const evidence = evidenceByLeadId.get(id) || [];
     const latest = evidence[0] || null;
     const notes = String(lead.notes || '');
+    const outcome = replyOutcomeFromEvidence(lead, inboundActivities, classificationsByLeadId.get(id) || []);
     records.push({
       leadId: id,
-      category: categoryFromEvidence(lead, inboundActivities, classificationsByLeadId.get(id) || []),
+      category: outcome.category,
+      // A negative whose decisive statement was an opt-out. Still counted as
+      // negative (the canonical taxonomy); reported separately so a DNC is
+      // never read as an ordinary "not interested".
+      unsubscribe: outcome.unsubscribe,
       company: String(lead.company || ''),
       contactName: String(lead.contactName || ''),
       email: String(lead.email || ''),
@@ -218,7 +317,7 @@ function filterReplyRecords(records = [], category = '') {
 // its detail view cannot drift apart.
 function buildReplyMetrics(leads = [], { classificationsByLeadId = new Map(), evidenceByLeadId = new Map(), activitiesByLeadId = new Map() } = {}) {
   const metrics = {
-    totalReplies: 0, positive: 0, negative: 0, needsHuman: 0, unclassified: 0, unknown: 0,
+    totalReplies: 0, positive: 0, negative: 0, unsubscribed: 0, needsHuman: 0, unclassified: 0, unknown: 0,
     automatedReply: 0, contactChangeReview: 0,
     contacted: 0, delivered: 0, positiveReplyRate: 0,
   };
@@ -237,16 +336,24 @@ function buildReplyMetrics(leads = [], { classificationsByLeadId = new Map(), ev
       metrics.delivered++;
     }
   }
-  // When send activity is present, delivered is confirmed sends minus unique
-  // canonical bounces (activity, [BOUNCED] note, and suppression collapse to one).
-  if (confirmedSends > 0) metrics.delivered = Math.max(0, confirmedSends - uniqueBounces.length);
+  // When send activity is present, delivered is LEADS: distinct leads with a
+  // provider-confirmed send, minus leads that bounced. It used to be confirmed
+  // MESSAGES minus bounces, which divided replying leads by every first email
+  // AND every follow-up — a lead-grain numerator over a message-grain
+  // denominator, understating every rate that uses it. The message count is
+  // still reported, under its own name.
+  if (confirmedSends > 0) metrics.delivered = deliveredLeadIds({ leads, activities }).size;
+  metrics.deliveredMessages = Math.max(0, confirmedSends - uniqueBounces.length);
   metrics.confirmedSends = confirmedSends;
   metrics.canonicalBounces = uniqueBounces.length;
   // The SAME records the drill-down returns, so a card and its list can never
   // disagree — and the same canonical evidence hierarchy the funnel uses.
   const records = buildReplyRecords(leads, { classificationsByLeadId, evidenceByLeadId, activitiesByLeadId });
   metrics.totalReplies = records.length;
-  for (const record of records) metrics[CATEGORY_METRIC_KEY[record.category] || 'unclassified']++;
+  for (const record of records) {
+    metrics[CATEGORY_METRIC_KEY[record.category] || 'unclassified']++;
+    if (record.unsubscribe) metrics.unsubscribed++;   // subset of negative, not a partition bucket
+  }
   // GENUINE replies: a person wrote back. An autoresponder, a mailbox-migration
   // notice and an evidence-free row are all inbound, but none of them is a
   // human conversation, and letting them inflate reply rate is how a campaign
@@ -328,7 +435,7 @@ module.exports = {
   ANALYTICS_CATEGORY, analyticsCategoryFor, categoriesFromNotes, leadHasReply,
   leadHasCanonicalInbound,
   classificationFromLead, buildReplyMetrics, buildStoredClassificationMap,
-  buildReplyEvidenceMap, buildReplyRecords, filterReplyRecords, categoryFromEvidence,
+  buildReplyEvidenceMap, buildReplyRecords, filterReplyRecords, categoryFromEvidence, replyOutcomeFromEvidence,
   GENUINE_REPLY_CATEGORIES,
   CANONICAL_STATE_CATEGORY,
   planReplyBackfill, applyBackfillPlan,

@@ -9,6 +9,7 @@
  */
 
 const { parseMetadata, attributionFromActivity, LEGACY_UNKNOWN } = require('./campaign-versions');
+const { retractedBounceEventIds } = require('./delivery-status');
 
 const REPORTING_TIMEZONE = 'America/Vancouver';
 
@@ -188,8 +189,12 @@ function uniqueCanonicalBounces({ leads = [], activities = [], suppressedEmails 
     byKey.set(key, { key, leadId: extra.leadId || '', providerMessageId: extra.providerMessageId || '', sources: extra.sources || [] });
   };
   const leadHasEvent = new Set();
+  // A bounce our classifier invented (a delay or sender-auth notice) and an
+  // audited retraction withdrew is not a bounce.
+  const retracted = retractedBounceEventIds(activities);
   for (const row of activities) {
     if (String(row.eventType || row.event_type || '') !== 'email_bounced') continue;
+    if (retracted.has(String(row.eventId || ''))) continue;
     const leadId = sourceLeadId(row);
     const pid = providerMessageId(row);
     if (leadId) leadHasEvent.add(leadId);
@@ -224,6 +229,21 @@ function canonicalDelivered({ leads = [], activities = [], suppressedEmails = []
   const confirmed = canonicalSendRows(activities).confirmed.length;
   const bounces = uniqueCanonicalBounces({ leads, activities, suppressedEmails }).length;
   return Math.max(0, confirmed - bounces);
+}
+
+// LEADS, not messages: distinct leads with at least one provider-confirmed
+// send, minus those leads that bounced. The denominator for any per-lead rate
+// (a lead that received three emails is one delivered lead, not three). When
+// `leads` is given, only those leads count — the caller's scope is respected.
+function deliveredLeadIds({ leads = [], activities = [], suppressedEmails = [] } = {}) {
+  const inScope = leads.length ? new Set(leads.map(lead => String(lead.id || '').trim()).filter(Boolean)) : null;
+  const sent = new Set();
+  for (const row of canonicalSendRows(activities).confirmed) {
+    const id = sourceLeadId(row);
+    if (id && (!inScope || inScope.has(id))) sent.add(id);
+  }
+  for (const id of bouncedLeadIds({ leads, activities, suppressedEmails })) sent.delete(id);
+  return sent;
 }
 
 function bouncedLeadIds({ leads = [], activities = [], suppressedEmails = [] } = {}) {
@@ -261,11 +281,17 @@ function classifyProviderSendAgainstCrm(message, crmProviderIds = new Set()) {
   return crmProviderIds.has(pid) ? 'CONFIRMED_SEND' : 'RECONCILIATION_REQUIRED';
 }
 
-function buildCanonicalDigest({ day, activities = [], leads = [] } = {}) {
+// activeLeadIds (optional): the ACTIVE analytics scope. When given, replies
+// and bookings count only for active leads; a reply from an archived lead of a
+// retired offer is real mail but not campaign performance, and is reported
+// apart as archivedReplies. Sends are every confirmed campaign send that day.
+function buildCanonicalDigest({ day, activities = [], leads = [], activeLeadIds = null } = {}) {
   const sends = canonicalSendRows(activities);
   const onDay = rows => rows.filter(row => vancouverDay(row.occurredAt) === day);
   const sentToday = onDay(sends.confirmed);
-  const repliesToday = onDay(canonicalReplyMessages(activities));
+  const allRepliesToday = onDay(canonicalReplyMessages(activities));
+  const inScope = row => !activeLeadIds || activeLeadIds.has(sourceLeadId(row));
+  const repliesToday = allRepliesToday.filter(inScope);
   const byClassification = groupCount(repliesToday, classifyReplyEvent);
   const breakdown = {};
   for (const [key, count] of Object.entries(byClassification)) {
@@ -273,7 +299,8 @@ function buildCanonicalDigest({ day, activities = [], leads = [] } = {}) {
     if (count) breakdown[label] = count;
   }
   const bookingsToday = uniqueBy(
-    activities.filter(row => String(row.eventType || '') === 'call_booked' && vancouverDay(row.occurredAt) === day),
+    activities.filter(row => String(row.eventType || '') === 'call_booked' && vancouverDay(row.occurredAt) === day
+      && (!activeLeadIds || !String(row.sourceLeadId || '').trim() || inScope(row))),
     sourceLeadId,
   );
   return {
@@ -286,7 +313,9 @@ function buildCanonicalDigest({ day, activities = [], leads = [] } = {}) {
       negative: byClassification.negative || 0,
       unsubscribes: byClassification.unsubscribe || 0,
       needsHuman: byClassification.needs_human || 0,
+      archived: allRepliesToday.length - repliesToday.length,
     },
+    scope: activeLeadIds ? 'active' : 'historical',
     bookings: bookingsToday.length,
     sendClasses: {
       confirmed: sentToday.length,
@@ -439,6 +468,7 @@ module.exports = {
   canonicalMeetingLeads,
   uniqueCanonicalBounces,
   canonicalDelivered,
+  deliveredLeadIds,
   bouncedLeadIds,
   flattenActivitiesByLeadId,
   classifyCrmSendAgainstProvider,

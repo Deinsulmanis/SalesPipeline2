@@ -1,10 +1,16 @@
 'use strict';
 
+// These tests exercise live staffing machinery with Industrial Staffing Agency
+// (V1) fixtures. V1 itself is a completed campaign; that is pinned in
+// test/completed-campaign.test.js.
+require('../integrations/lead-archive').setCompletedCampaignsForTests([]);
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { guardProviderSend, revalidateFreshSendSafety, evaluateFreshSendSafety } = require('../integrations/send-safety-revalidate');
+const { googleRecipient } = require('../test-support/google-recipient');
 const { REQUIRED_WORKER_ROLE } = require('../integrations/send-authorization');
 const { assertStaffingSendAllowed, ACTIVATION_VARIABLE } = require('../integrations/staffing-launch-gate');
 
@@ -33,7 +39,7 @@ function eligibleLead(overrides = {}) {
 async function attemptSend(lead, durable, env, purpose = 'cold') {
   let providerCalls = 0;
   const gate = await guardProviderSend(lead, {
-    env,
+    env, classifyRecipient: googleRecipient,
     loadFreshLead: async id => (durable.leads.has(id) ? durable.leads.get(id) : null),
     loadSuppressedEmails: async () => {
       if (durable.suppressionError) throw new Error(durable.suppressionError);

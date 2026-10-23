@@ -45,6 +45,7 @@
  */
 
 const { malformedEmailReason } = require('./canonical-reply');
+const { providerMessageId } = require('./canonical-sends');
 
 const HUMAN_OUTBOUND_EVENT = 'human_response_sent';
 
@@ -154,11 +155,11 @@ function planOutboundActivity(message = {}, context = {}) {
 
   const eventId = outboundEventId(message.id);
   const existing = existingActivitiesByLead.get(match.leadId) || [];
-  const already = existing.some(row => {
-    if (String(row.eventId || '') === eventId) return true;
-    try { return String(JSON.parse(row.metadata || '{}').gmailMessageId || '') === String(message.id); }
-    catch (_) { return false; }
-  });
+  // Recorded under the canonical provider id, whichever key the writer used:
+  // stage-sequence sends store it as providerMessageId, and matching only
+  // gmailMessageId recorded those automated sends as human replies.
+  const already = existing.some(row => String(row.eventId || '') === eventId
+    || providerMessageId(row) === String(message.id));
   if (already) {
     return { ...base, outcome: OUTCOME.ALREADY_RECORDED, match: match.via, activity: null,
       leadId: match.leadId, company: match.lead.company || '', reason: 'already recorded' };

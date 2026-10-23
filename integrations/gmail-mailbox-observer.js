@@ -4,11 +4,10 @@ const {
   providerRead, isRateLimited, statusOf, persistedGmailMessageIds,
   getMailboxBackoff, signalMailboxBackoff, QUOTA_RETRY_DELAYS_MS,
 } = require('./gmail-api-guard');
+const { DELIVERY_CLASS, classifyDeliveryStatus } = require('./delivery-status');
 
 const DAEMON_FROM = /mailer-daemon|postmaster/i;
 const AUTOMATED_FROM = /mailer-daemon|postmaster|no-?reply|do-?not-?reply/i;
-const PERMANENT_FAILURE = /permanent|address not found|no such (?:user|mailbox|address|recipient)|user unknown|does(?: not|n['’]?t) exist|mailbox (?:full|unavailable|is full)|recipient (?:rejected|not found|address rejected)|account (?:has been )?(?:disabled|closed|suspended)|\b55[013456]\b|\b5\.\d\.\d\b/i;
-const TRANSIENT_FAILURE = /delivery (?:is )?incomplete|will (?:retry|keep trying|try again)|temporar(?:y|ily)|being delayed|greylist|\b4\.\d\.\d\b/i;
 
 const norm = value => String(value || '').trim().toLowerCase();
 const OVERLAP_MS = 5 * 60 * 1000;
@@ -67,11 +66,45 @@ function firstPlainText(payload) {
   return '';
 }
 
+// The first text/html leaf. Read only when a message has no text/plain part:
+// iPhone Mail sends multipart/alternative with HTML alone.
+function firstHtmlText(payload) {
+  if (!payload) return '';
+  if (payload.mimeType === 'text/html' && payload.body?.data) {
+    return Buffer.from(payload.body.data, 'base64url').toString('utf8');
+  }
+  for (const child of payload.parts || []) {
+    const html = firstHtmlText(child);
+    if (html) return html;
+  }
+  return '';
+}
+
+function normalizeRfcId(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  const bracketed = raw.match(/<[^>]+>/);
+  if (bracketed) return bracketed[0];
+  return raw.includes('@') ? `<${raw.replace(/^<|>$/g, '')}>` : '';
+}
+
+function rfcIdsFromValue(value) {
+  const found = [];
+  String(value || '').replace(/<[^>]+>/g, match => {
+    const id = normalizeRfcId(match);
+    if (id) found.push(id);
+    return match;
+  });
+  return found;
+}
+
 function candidateIndexes(leads, activities, senderInboxId) {
   const byEmail = new Map();
   const byThread = new Map();
+  const byRfc = new Map();
   const byId = new Map((leads || []).map(lead => [String(lead.id), lead]));
   const conflicts = new Set();
+  const rfcConflicts = new Set();
   for (const lead of leads || []) {
     const email = norm(lead.email);
     if (!email) continue;
@@ -90,15 +123,41 @@ function candidateIndexes(leads, activities, senderInboxId) {
       if (byThread.has(threadId) && byThread.get(threadId).id !== lead.id) conflicts.add(threadId);
       else byThread.set(threadId, lead);
     }
+    const rfc = normalizeRfcId(metadata.rfcMessageId);
+    if (rfc && lead) {
+      if (byRfc.has(rfc) && byRfc.get(rfc).id !== lead.id) rfcConflicts.add(rfc);
+      else byRfc.set(rfc, lead);
+    }
   }
   for (const threadId of conflicts) byThread.delete(threadId);
-  return { byEmail, byThread };
+  for (const rfc of rfcConflicts) byRfc.delete(rfc);
+  return { byEmail, byThread, byRfc };
+}
+
+function leadFromRfcHeaders(payload, byRfc) {
+  const ids = [
+    ...rfcIdsFromValue(headerValue(payload, 'In-Reply-To')),
+    ...rfcIdsFromValue(headerValue(payload, 'References')),
+  ];
+  const matched = [];
+  const seen = new Set();
+  for (const id of ids) {
+    const lead = byRfc.get(id);
+    if (lead && !seen.has(lead.id)) {
+      seen.add(lead.id);
+      matched.push(lead);
+    }
+  }
+  if (matched.length > 1) return { conflict: true };
+  return { lead: matched[0] || null };
 }
 
 function matchMailboxMessages(messages, { leads = [], activities = [], senderInboxId, senderEmail }) {
-  const { byEmail, byThread } = candidateIndexes(leads, activities, senderInboxId);
+  const { byEmail, byThread, byRfc } = candidateIndexes(leads, activities, senderInboxId);
   const replies = new Map();
   const bounces = new Map();
+  // Sender-side authentication failures: recorded, never a recipient bounce.
+  const senderAuthFailures = new Map();
   for (const message of messages || []) {
     if ((message.labelIds || []).includes('SENT')) continue;
     const fromAddr = parseAddr(headerValue(message.payload, 'From'));
@@ -110,25 +169,39 @@ function matchMailboxMessages(messages, { leads = [], activities = [], senderInb
         const email = norm(lead.email);
         const afterMs = Date.parse(lead.lastEmailedAt || '');
         if (!email || !Number.isFinite(afterMs) || occurredMs <= afterMs || !bounceMentionsRecipient(allText, email)) continue;
-        if (TRANSIENT_FAILURE.test(allText) && !PERMANENT_FAILURE.test(allText)) continue;
-        if (PERMANENT_FAILURE.test(allText)) bounces.set(lead.id, message);
+        // Only positive recipient-side evidence is a bounce. A delay notice or
+        // an SPF/DKIM/DMARC rejection of OUR domain never suppresses a prospect.
+        const verdict = classifyDeliveryStatus(message.payload, { recipient: email, subject: headerValue(message.payload, 'Subject') });
+        if (verdict.category === DELIVERY_CLASS.RECIPIENT_INVALID) bounces.set(lead.id, message);
+        else if (verdict.category === DELIVERY_CLASS.SENDER_AUTH_FAILURE) senderAuthFailures.set(lead.id, { message, verdict });
       }
       continue;
     }
     const direct = byEmail.get(fromAddr) || [];
     if (direct.length > 1) throw new Error(`Ambiguous inbound CRM identity for Gmail message ${message.id}`);
-    if (byThread.has(message.threadId) && direct.length === 1 && byThread.get(message.threadId).id !== direct[0].id) {
+    const rfcMatch = leadFromRfcHeaders(message.payload, byRfc);
+    if (rfcMatch.conflict) throw new Error(`Ambiguous inbound CRM RFC identity for Gmail message ${message.id}`);
+    const threadLead = byThread.get(message.threadId) || null;
+    const rfcLead = rfcMatch.lead || null;
+    const emailLead = direct.length === 1 ? direct[0] : null;
+    if (threadLead && emailLead && threadLead.id !== emailLead.id) {
       throw new Error(`Conflicting inbound CRM thread for Gmail message ${message.id}`);
     }
-    if (AUTOMATED_FROM.test(fromAddr) && !direct.length && !byThread.has(message.threadId)) continue;
-    const lead = byThread.get(message.threadId) || (direct.length === 1 ? direct[0] : null);
+    if (threadLead && rfcLead && threadLead.id !== rfcLead.id) {
+      throw new Error(`Conflicting inbound CRM RFC thread for Gmail message ${message.id}`);
+    }
+    if (rfcLead && emailLead && rfcLead.id !== emailLead.id) {
+      throw new Error(`Conflicting inbound CRM RFC identity for Gmail message ${message.id}`);
+    }
+    if (AUTOMATED_FROM.test(fromAddr) && !emailLead && !threadLead && !rfcLead) continue;
+    const lead = threadLead || rfcLead || emailLead;
     if (!lead) continue;
     const afterMs = Date.parse(lead.lastEmailedAt || '');
     if (!Number.isFinite(afterMs) || occurredMs <= afterMs) continue;
     const prior = replies.get(lead.id);
     if (!prior || Number(prior.internalDate || 0) < occurredMs) replies.set(lead.id, message);
   }
-  return { replies, bounces };
+  return { replies, bounces, senderAuthFailures };
 }
 
 async function listChangedIds(gmail, { historyId, maxPages = 20, readOpts } = {}) {
@@ -290,6 +363,11 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
   let quotaBackoff = null;
   let messagesFetched = 0;
   let messagesDeduplicated = 0;
+  // One thread recovery per thread per pass. Every vanished message in a thread
+  // recovers the same thread, and refetching it per message turned a handful of
+  // deleted messages into a full-thread read storm that exhausted the per-user
+  // Gmail quota on every pass, so the mailbox could never advance its cursor.
+  const recoveredThreads = new Map();
   for (const id of slice) {
     if (knownIds.has(id)) {
       messagesDeduplicated += 1;
@@ -319,11 +397,14 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
       // A vanished resource is NOT an expired cursor. Preserve the provider
       // tombstone and attempt thread recovery; never report it as zero events.
       let threadRecovered = false;
-      if (threadId) {
+      if (threadId && recoveredThreads.has(threadId)) {
+        threadRecovered = recoveredThreads.get(threadId);
+      } else if (threadId) {
         try {
           const thread = await providerRead('users.threads.get', { userId: 'me', id: threadId, format: 'full' }, params => gmail.users.threads.get(params), readOpts);
           messages.push(...thread.data.messages || []); threadRecovered = true;
         } catch (threadError) { if (statusOf(threadError) !== 404) throw threadError; }
+        recoveredThreads.set(threadId, threadRecovered);
       }
       unavailable.push({ id, threadId: threadId || '', status: 404, threadRecovered,
         classification: 'provider_resource_unavailable', contentRecoverable: false });
@@ -371,6 +452,7 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
     ...matchMailboxMessages(unique, { leads, activities, senderInboxId, senderEmail }) };
 }
 
-module.exports = { headerValue, parseAddr, decodeBodies, firstPlainText, matchMailboxMessages,
+module.exports = { headerValue, parseAddr, decodeBodies, firstPlainText, firstHtmlText, matchMailboxMessages,
   bounceMentionsRecipient, extractedEmails, listChangedIds, listCatchup, observeMailbox, providerRead, isRateLimited,
-  OVERLAP_MS, STALE_MS, RECOVERY_READ_BUDGET, byIdAscending, persistedGmailMessageIds };
+  OVERLAP_MS, STALE_MS, RECOVERY_READ_BUDGET, byIdAscending, persistedGmailMessageIds,
+  normalizeRfcId, rfcIdsFromValue };

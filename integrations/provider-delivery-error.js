@@ -2,6 +2,8 @@
 
 function isDefinitePreDeliveryFailure(error) {
   if (!error) return false;
+  // Raised only by our own final gate, before the Gmail request is dispatched.
+  if (error.preDeliveryRefusal === true) return true;
   if (error.code === 'durable_checkpoint_failed') return false;
   if (error.code === 'lock_database_unavailable' || error.code === 'lock_schema_missing') return false;
   if (error.code === 'send_lock_required' || error.code === 'send_lock_action_required') return false;

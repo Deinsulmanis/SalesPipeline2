@@ -1,4 +1,9 @@
 'use strict';
+
+// These tests exercise live staffing machinery with Industrial Staffing Agency
+// (V1) fixtures. V1 itself is a completed campaign; that is pinned in
+// test/completed-campaign.test.js.
+require('../integrations/lead-archive').setCompletedCampaignsForTests([]);
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -120,13 +125,13 @@ test('server queue uses canonical full rows and expected-state mutations', () =>
 
 test('server staffing queue refuses Sheets authority before route validation', () => {
   const source = fs.readFileSync(require.resolve('../server.js'), 'utf8').split('\r\n').join('\n');
-  const start = source.indexOf('validateSelection: lead => {', source.indexOf("app.post('/api/coldemail/queue'"));
+  const start = source.indexOf('validateSelection: (lead, leadSender) => {', source.indexOf("app.post('/api/coldemail/queue'"));
   const arrow = source.slice(start + 'validateSelection: '.length, source.indexOf(',\n      applyChanges:', start));
   let routeCalls = 0;
   const make = new Function('outreachStateMode', 'outreachWriteAuthority', 'normalizeNiche', 'validateRoute', 'validateCampaignVersionRoute', 'gmailInboxOptions', 'ROOFING_SURVEY_TEMPLATE', 'qualifyRoofingLead', 'senderInboxId', 'emailTemplateId', 'campaignVersionId', `return (${arrow});`);
   for (const [mode, authority, allowed] of [['dual', 'sheets', false], ['primary', 'sheets', false], ['dual', 'supabase', false], ['primary', 'supabase', true]]) {
     const validate = make(() => mode, () => authority, s => s, () => { routeCalls++; return { ok: true }; }, () => ({ ok: true }), () => [], 'roofing-survey-v1', () => ({ ok: true }), 'primary', staffing.emailTemplateId, STAFFING_CAMPAIGN.id);
-    const result = validate(staffing);
+    const result = validate(staffing, 'primary');
     assert.equal(result.ok, allowed);
     if (!allowed) assert.match(result.reason, /requires Supabase/);
   }
