@@ -29,6 +29,36 @@ const { upsertOpportunity, openClarification } = require('./ledger');
 const REPLY_EVENT_TYPE = 'client_reply_classified';
 const NOT_INTERESTED_TAG = '[REPLY: Not Interested]';
 
+function parseActivityMeta(row = {}) {
+  try {
+    return typeof row.metadata === 'object' && row.metadata
+      ? row.metadata
+      : JSON.parse(row.metadata || '{}');
+  } catch (_) {
+    return {};
+  }
+}
+
+/**
+ * True when a Gmail inbound exists (or is about to) but the managed handler
+ * has not yet written client_reply_classified. Replay must keep trying after
+ * a crash, CHECK_ONLY, or a >90-minute outage — otherwise a Jole lead stays
+ * in the cold cadence with only the raw gmail-reply row.
+ */
+function managedReplyNeedsHandler(activities = [], messageId = '', clientId = '') {
+  const id = String(messageId || '').trim();
+  const client = String(clientId || '').trim();
+  if (!id || !client) return false;
+  const eventId = replyEventId(client, id);
+  return !(activities || []).some((row) => {
+    if (String(row.eventId || '') === eventId) return true;
+    if (String(row.eventType || '') !== REPLY_EVENT_TYPE) return false;
+    const meta = parseActivityMeta(row);
+    return String(meta.gmailMessageId || '') === id
+      && (!meta.clientId || String(meta.clientId) === client);
+  });
+}
+
 function prependTag(notes, tag) {
   const existing = String(notes || '');
   if (existing.includes(tag)) return existing;
@@ -133,4 +163,4 @@ async function handleManagedClientReply({ lead, message = {}, replyText = '', co
   return { handled: true, eventId, verdict, suppression, ledger };
 }
 
-module.exports = { REPLY_EVENT_TYPE, replyEventId, handleManagedClientReply };
+module.exports = { REPLY_EVENT_TYPE, replyEventId, handleManagedClientReply, managedReplyNeedsHandler };

@@ -19,14 +19,20 @@ const { getClient } = require('./registry');
 const { clientTemplate, clientCampaign } = require('./campaigns');
 const { readLeadProfile } = require('./lead-profile');
 const { JOLE_COPY_VERSIONS, resolveJoleCopyVersion } = require('./jole-copy');
+const { jolePersonalizationFor, joleSelectionHold, joleFollowUpHold } = require('./jole-personalization');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Template id → its copy versions and how a lead picks one. A managed template
 // with no entry here cannot send. The version is per lead, from send evidence:
-// a sequence never changes copy mid-thread.
+// a sequence never changes copy mid-thread. An evidence-aware version also
+// takes the lead's personalization (mode and verified claims); selectionHold
+// and followUpHold say why a lead may not start, or continue, a sequence.
 const RENDERERS = Object.freeze({
-  'jole-industrial-employer-v1': Object.freeze({ versions: JOLE_COPY_VERSIONS, resolveVersion: resolveJoleCopyVersion }),
+  'jole-industrial-employer-v1': Object.freeze({
+    versions: JOLE_COPY_VERSIONS, resolveVersion: resolveJoleCopyVersion,
+    personalizationFor: jolePersonalizationFor, selectionHold: joleSelectionHold, followUpHold: joleFollowUpHold,
+  }),
 });
 
 /** The copy version (and its render/validate) this lead's sequence uses. */
@@ -44,7 +50,9 @@ const isClientTemplateId = id => Boolean(RENDERERS[String(id || '').trim()] && c
 const fail = (code, message) => Object.assign(new Error(message), { code });
 
 /** Personalization inputs for a lead, or throws with the reason it is not ready. */
-function personalizationFor(lead, { now = Date.now() } = {}) {
+// enforceEvidenceAge: the campaign-wide evidence age gate. Evidence-aware
+// copy (v4) applies its own per-mode 30-day rule instead.
+function personalizationFor(lead, { now = Date.now(), enforceEvidenceAge = true } = {}) {
   const template = clientTemplate(lead.emailTemplateId);
   if (!template || !RENDERERS[template.id]) throw fail('template_unknown', `no client renderer for ${lead.emailTemplateId || '(blank)'}`);
   const campaign = clientCampaign(lead.intendedCampaignVersion || lead.campaign);
@@ -57,7 +65,7 @@ function personalizationFor(lead, { now = Date.now() } = {}) {
   // "Is hiring X" must still be true: evidence older than the campaign allows is re-verified first.
   const maxAge = campaign.personalization?.maxEvidenceAgeDays;
   const verifiedAt = Date.parse(profile.hiring?.verifiedAt || '');
-  if (maxAge) {
+  if (maxAge && enforceEvidenceAge) {
     if (!Number.isFinite(verifiedAt)) throw fail('evidence_undated', 'hiring evidence has no verification date');
     if (now - verifiedAt > maxAge * DAY_MS) throw fail('evidence_stale', `hiring evidence verified ${profile.hiring.verifiedAt} is older than ${maxAge} days; re-verify the posting`);
   }
@@ -71,24 +79,49 @@ function personalizationFor(lead, { now = Date.now() } = {}) {
  * lead's copy version (clientCopyVersionFor).
  */
 function renderClientLeadEmail(lead = {}, step = 1, { env = process.env, now = Date.now(), activities = [] } = {}) {
-  const inputs = personalizationFor(lead, { now });
+  const version = clientCopyVersionFor(lead, { activities });
+  const inputs = personalizationFor(lead, { now, enforceEvidenceAge: !version.evidenceAware });
   const client = getClient(inputs.campaign.clientId);
   const copyEnv = client.copyEnv || {};
-  const email = clientCopyVersionFor(lead, { activities }).render({
+  const renderer = RENDERERS[inputs.template.id];
+  // A contacted lead whose next touch would repeat a claim found false never continues.
+  const followUpHold = Number(step) > 1 ? renderer.followUpHold?.(lead) : '';
+  if (followUpHold) throw fail('followup_hold', followUpHold);
+  const personalization = version.evidenceAware ? renderer.personalizationFor(lead, activities, { now }) : undefined;
+  const email = version.render({
     step, firstName: inputs.firstName, company: lead.company, roles: inputs.roles, location: inputs.location,
     landingPageUrl: env[copyEnv.landingPageUrl] || '', bookingLink: env[copyEnv.bookingLink] || '',
-    mailingAddress: env[copyEnv.mailingAddress] || '',
+    mailingAddress: env[copyEnv.mailingAddress] || '', personalization,
   });
-  return { subject: email.subject, body: email.body, step: email.step, variant: email.variant, copyVersion: email.copyVersion };
+  return {
+    subject: email.subject, body: email.body, step: email.step, variant: email.variant, copyVersion: email.copyVersion,
+    ...(personalization ? { personalization: { mode: personalization.mode, role: personalization.role, location: personalization.location } } : {}),
+  };
+}
+
+/** Why an untouched client lead may not start its sequence ('' when it may). */
+function clientSelectionHold(lead = {}) {
+  const renderer = RENDERERS[String(lead.emailTemplateId || '').trim()];
+  return renderer?.selectionHold ? renderer.selectionHold(lead) : '';
+}
+
+/** Why a contacted client lead's next follow-up may not send ('' when it may). */
+function clientFollowUpHold(lead = {}) {
+  const renderer = RENDERERS[String(lead.emailTemplateId || '').trim()];
+  return renderer?.followUpHold ? renderer.followUpHold(lead) : '';
 }
 
 // Validates against the version the email was rendered from (email.copyVersion),
 // else the version the lead resolves to on these activities.
-function validateClientLeadEmail(lead = {}, email = {}, step = 1, { activities = [] } = {}) {
+function validateClientLeadEmail(lead = {}, email = {}, step = 1, { activities = [], now = Date.now() } = {}) {
   const renderer = RENDERERS[String(lead.emailTemplateId || '').trim()];
   if (!renderer) return 'no client renderer for this template';
   const version = email.copyVersion ? renderer.versions[email.copyVersion] : clientCopyVersionFor(lead, { activities });
   if (!version) return `no client copy for version ${email.copyVersion}`;
+  if (version.evidenceAware) {
+    // The resolved claims (with what the mode must never print), overridden by what this email rendered from.
+    return version.validate(email, step, { ...renderer.personalizationFor(lead, activities, { now }), ...(email.personalization || {}) }) || '';
+  }
   return version.validate(email, step) || '';
 }
 
@@ -98,10 +131,14 @@ function validateClientLeadEmail(lead = {}, email = {}, step = 1, { activities =
  */
 function clientPersonalizationState(lead = {}, { env = process.env, now = Date.now() } = {}) {
   try {
-    const inputs = personalizationFor(lead, { now });
+    const evidenceAware = (() => { try { return Boolean(clientCopyVersionFor(lead).evidenceAware); } catch (_) { return false; } })();
+    const inputs = personalizationFor(lead, { now, enforceEvidenceAge: !evidenceAware });
+    const held = clientSelectionHold(lead);
+    if (held && !lead.emailStep && !lead.emailStatus) return { status: 'hold', roles: inputs.roles, location: inputs.location, reason: held };
     try {
       const email = renderClientLeadEmail(lead, 1, { env, now });
-      return { status: 'ready', roles: inputs.roles, location: inputs.location, subject: email.subject, variant: email.variant };
+      return { status: 'ready', roles: inputs.roles, location: inputs.location, subject: email.subject, variant: email.variant,
+        ...(email.personalization ? { mode: email.personalization.mode } : {}) };
     } catch (error) {
       return { status: 'config_missing', roles: inputs.roles, location: inputs.location, reason: error.message };
     }
@@ -111,4 +148,7 @@ function clientPersonalizationState(lead = {}, { env = process.env, now = Date.n
   }
 }
 
-module.exports = { isClientTemplateId, renderClientLeadEmail, validateClientLeadEmail, clientPersonalizationState, clientCopyVersionFor };
+module.exports = {
+  isClientTemplateId, renderClientLeadEmail, validateClientLeadEmail, clientPersonalizationState, clientCopyVersionFor,
+  clientSelectionHold, clientFollowUpHold,
+};

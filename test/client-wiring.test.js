@@ -41,6 +41,12 @@ test('pin: every reply resolves its client context before any legacy handler run
   assert.doesNotMatch(block, /sendEmail\(|deliverOrdinaryColdStep\(|guardProviderSend\(/);
 });
 
+test('pin: Jole inbound health is a read-only operator signal', () => {
+  assert.match(server, /app\.get\('\/api\/ops\/jole-inbound-health', requireAuth/);
+  assert.match(server, /inboundHealth = \{\n      jole: clientInboundHealth\(/);
+  assert.match(agent, /managedReplyNeedsHandler\(activitiesForCycle, inboundId, managedContext\.clientId\)/);
+});
+
 test('pin: observers match only their own client\'s leads and route negative suppression by scope', () => {
   assert.match(agent, /const senderLeads = senderClient\.ok \? leadsInEmailScope\(candidates, senderClient\.clientId\) : candidates;/);
   // The legacy human-outbound scan correlates addresses inside the mailbox's client only.
