@@ -82,7 +82,7 @@ const { buildSendRunPlan } = require('./integrations/send-run-plan');
 const { createPgSendQuotaStore } = require('./integrations/send-quota-store');
 const { createSendQuotaCoordinator, preDeliveryRefusal } = require('./integrations/send-quota-coordinator');
 const { createSenderPacer } = require('./integrations/sender-pacer');
-const { runSenderLanes, concurrentSenderLanesEnabled } = require('./integrations/sender-lanes');
+const { runSenderLanes, runClientOverlappedSenderLanes, concurrentSenderLanesEnabled } = require('./integrations/sender-lanes');
 // Stage 3D: dual-read measurement only. No decision below reads its result.
 const { probeOutreachParity, formatProbeLine } = require('./integrations/outreach-dual-read');
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
@@ -6182,7 +6182,7 @@ async function runInner() {
   }
   const eligibleLanes = GMAIL_SENDERS.filter(item => item.sendEligible
     && (!activeSendQuota || activeSendQuota.canStart(item.id)));
-  const outcomes = await runSenderLanes(eligibleLanes, runSenderLane,
+  const outcomes = await runClientOverlappedSenderLanes(eligibleLanes, runSenderLane,
     { parallel: Boolean(activeSendQuota) && concurrentSenderLanesEnabled() });
   const failures = outcomes.filter(outcome => outcome.status === 'rejected');
   for (const outcome of failures) console.error(`[sender-lane] worker failed: ${outcome.reason?.message || outcome.reason}`);

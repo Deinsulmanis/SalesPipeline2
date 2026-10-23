@@ -7,7 +7,7 @@ const path = require('node:path');
 const { buildSendRunPlan } = require('../integrations/send-run-plan');
 const { createSendQuotaCoordinator, preDeliveryRefusal } = require('../integrations/send-quota-coordinator');
 const { createSenderPacer } = require('../integrations/sender-pacer');
-const { runSenderLanes, concurrentSenderLanesEnabled } = require('../integrations/sender-lanes');
+const { runSenderLanes, runClientOverlappedSenderLanes, concurrentSenderLanesEnabled } = require('../integrations/sender-lanes');
 const { createMemorySendQuotaStore } = require('../test-support/send-quota-memory');
 const { simulate } = require('../scripts/simulate-send-throughput');
 const { createMemorySendReservationStore } = require('../integrations/send-reservation-memory');
@@ -42,6 +42,53 @@ test('concurrent sender lanes require an explicit true flag', async () => {
     running--;
   }, { parallel: concurrentSenderLanesEnabled({}) });
   assert.equal(peak, 1);
+});
+
+test('shared windows start a managed client beside the default client', async () => {
+  const started = [];
+  let running = 0;
+  let peak = 0;
+  const lanes = [
+    { id: 'primary', clientId: 'scalelab' },
+    { id: 'second', clientId: 'scalelab' },
+    { id: 'jole_a', clientId: 'jole' },
+    { id: 'jole_b', clientId: 'jole' },
+  ];
+  await runClientOverlappedSenderLanes(lanes, async sender => {
+    started.push(sender.id);
+    peak = Math.max(peak, ++running);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    running--;
+    return sender.id;
+  }, { parallel: false });
+  assert.equal(peak, 2);
+  assert.ok(started.indexOf('jole_a') < started.indexOf('second'));
+  assert.ok(started.indexOf('jole_b') > started.indexOf('jole_a'));
+  assert.deepEqual(started.filter(id => id.startsWith('jole') || id === 'primary').slice(0, 2).sort(), ['jole_a', 'primary']);
+});
+
+test('one client stays in its existing lane order when overlap has nothing to separate', async () => {
+  const started = [];
+  let running = 0;
+  let peak = 0;
+  await runClientOverlappedSenderLanes([
+    { id: 'jole_a', clientId: 'jole' },
+    { id: 'jole_b', clientId: 'jole' },
+  ], async sender => {
+    started.push(sender.id);
+    peak = Math.max(peak, ++running);
+    await new Promise(resolve => setTimeout(resolve, 15));
+    running--;
+  }, { parallel: false });
+  assert.equal(peak, 1);
+  assert.deepEqual(started, ['jole_a', 'jole_b']);
+});
+
+test('cold sends overlap clients; stage sequences stay on the single lane runner', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
+  assert.match(source, /runClientOverlappedSenderLanes\(eligibleLanes, runSenderLane/);
+  assert.match(source, /const stageOutcomes = await runSenderLanes\(/);
+  assert.equal(source.includes('runClientOverlappedSenderLanes(eligibleLanes'), true);
 });
 
 function customPlan({ globalDaily = 10, globalRun = 10, clientDaily = 10, clientRun = 10,
