@@ -1,6 +1,6 @@
 # Current production baseline
 
-**Last verified:** 2026-10-22 UTC (git refs + Railway live SHA). Runtime/env/Supabase from the same-day read-only audit.
+**Last verified:** 2026-10-23 00:18 UTC (git refs + Railway live SHA + post-deploy check-only pass).
 **Start all new work from:** `main`
 
 Read this before starting any code change. Everything under "Snapshot" was true
@@ -29,29 +29,58 @@ Workflow:
    version of every code, test and config file. Never merge `main` into the
    production branch.
 
-On 2026-10-22 `cursor/staffing-agent-shadow-production-7402` was fast-forwarded
-to live `8bb1f5a` (never force; never merged `main` into it). `main` then
-merged that SHA (`903e6d1`). Code, test and config on `main` equal `8bb1f5a`;
-`main` additionally carries only documentation (`CURRENT_PRODUCTION_BASELINE.md`,
-`OWNER_OPERATOR_GUIDE.md`, `salespipelineflowaudit.md`) and
-`.claude/skills/salespipeline2-outreach-safety/`. Jole copy v4 (`51ccf60`,
-`cf9c453` on `fix/send-throughput-20261020`) is still undeployed and is not on
-`main` or the named production branch.
+On 2026-10-23 production moved from Jole copy v4 `cf9c453` to inbound-reliability
+`c8350f4aca825f09ba23086938d3777c1b9f6f27`. Named production
+`cursor/staffing-agent-shadow-production-7402` and the Railway watch branch
+`fix/send-throughput-20261020` were fast-forwarded to that SHA (never force;
+never merged `main` into either). `main` then merges production and keeps docs
+and `.claude/skills/`. The live process was shipped by a one-shot Railway
+redeploy of that commit; the branch fast-forward did not start a second deploy.
 
-## Snapshot: production on 2026-10-22
+## Snapshot: production on 2026-10-23
 
 Railway project / service: `modest-peace` / `SalesPipeline2`
 (https://receptionist.scalelabai.ca), region us-west2.
 
-**Production SHA (re-verified 2026-10-22 05:59 UTC):** `8bb1f5a4c3e11bba540d4385a3c14e128e3b3efe`
-(Railway deployment `ab266573`, SUCCESS, deployed from
-`fix/send-throughput-20261020`): Jole BTX copy v3 for never-contacted Jole
-leads, plus send-quota lanes (flag `SEND_CONCURRENT_SENDER_LANES=false`).
-Named production branch is now exactly this SHA. Railway's last successful
-deploy still records the throughput branch as the watch that shipped it.
+**Production SHA (re-verified 2026-10-23 00:18 UTC):** `c8350f4aca825f09ba23086938d3777c1b9f6f27`
+(Railway deployment `c2abfb3e-ed26-4d3a-b133-314114ee0d41`, SUCCESS, created
+2026-10-22 23:57 UTC from `fix/send-throughput-20261020`). Previous live
+deployment `d97fba1e` (`cf9c45388a705a9993fc5b2ef7bdfa488f965780`) is REMOVED.
+Jole BTX copy v4 is unchanged. This deploy adds Jole inbound reliability only:
+managed-handler retry until `client_reply_classified` exists, and deterministic
+RFC `In-Reply-To` / `References` matching on the same sender inbox. No
+migration. `CLIENT_SENDING_AUTHORIZED` was not changed. Send-quota lanes remain
+flagged off (`SEND_CONCURRENT_SENDER_LANES=false`).
 
-`CLIENT_SENDING_AUTHORIZED=none` — Jole is prepared and not sending. ScaleLab
-staffing v1 is Active / sending. Do not authorize Jole from a docs refresh.
+**Inbound reliability.** Matching order is Gmail `threadId`, then RFC message
+id on that sender inbox, then exact From address. A conflict throws and the
+observation cursor stays put. A different From address on a new thread with no
+`In-Reply-To` or `References` stays unmatched; the system does not guess a
+lead. Dedupe keys remain `gmail-reply:{gmailMessageId}` and
+`client-reply:{clientId}:{messageId}`. Tests on this SHA: full suite 3303
+tests, 3294 pass, 2 fail, 7 skip. The two failures are the pre-existing
+Vancouver DST fixtures in `test/call-booked-meeting-time.test.js` (same two
+failures on `cf9c453`, which had 3268 tests, 3259 pass, 2 fail, 7 skip). The
+seven skips need `SEND_LOCK_TEST_DATABASE_URL`. No new Gmail, ownership,
+dedupe, reservation, sequence, or send failure. The 2026-10-23 00:15 UTC
+check-only pass exited 0: Supabase loaded 3852 leads, send-lock stayed
+enabled, all 11 observers logged `history_incremental_ok`, and no inbound
+event was persisted.
+
+**Health-rollup caveat.** `GET /api/ops/jole-inbound-health` is read-only and
+does not send. `observerHealth` unions the requested sender ids with every
+checkpoint row, so ScaleLab historical `gmail-reply` rows are counted in the
+Jole payload. At 00:18 UTC that was `pendingManagedHandler` 98 (primary 56,
+tryscalelabai 20, deniels 14, deniels_tryscalelabai 8) and verdict `warning`.
+Jole's six inboxes were each pending 0 and healthy. That count is not
+cross-tenant attribution. Reply handling still requires
+`replyPolicy.mode === managed`.
+
+`CLIENT_SENDING_AUTHORIZED=jole` — Jole BTX is production-authorized and ready
+for normal scheduled sending (Chicago weekdays 07:00–11:59 CT;
+`JOLE_EARLY_CRON` `0,30 7-8 * * 1-5`). ScaleLab staffing v1 remains Active /
+sending (Pacific 07:00–11:30). Industrial Jole inboxes stay at cap 0 with
+`warmup_incomplete`. Do not send manual test outreach to prove this.
 
 Earlier snapshot (2026-10-05): `25831dc6de9408139d23bb2073fef7c3642749a5`
 (Railway deployment `40deeac0`, SUCCESS): Jole BTX LLC taken out of onboarding
@@ -103,17 +132,24 @@ never to a sending state. Do not re-enable dental by editing a template or a
 campaign status: the offer gate is separate and fails closed.
 
 **Live (can mutate CRM state or send):**
-- Cold outreach over Gmail: five active senders (`primary`, `tryscalelabai`,
-  `scalelabaiteam`, `deniels`, `deniels_tryscalelabai`). Daily limits are
-  60/60/40/20/20, with global ceilings of 200 per day and 21 per window.
-  `scalelabaiteam` is staffing-only. Windows are :00/:30, 07:00–11:30 Pacific,
-  Mon–Fri. The boot cron line `(6/inbox, 12/run, 120/day, 2 active)` is stale
-  display text; trust `/api/integrations/gmail-inboxes` → `capacity` and the
-  per-window `[cap]` lines.
+- Cold outreach over Gmail. At the 2026-10-23 00:15 UTC check-only pass the
+  runtime overlay daily limits were ScaleLab `primary` 50, `tryscalelabai` 30,
+  `scalelabaiteam` 15, `deniels` 45, `deniels_tryscalelabai` 45, and Jole
+  `jole_group_jorge` 15, `jole_group_jguerrero` 20, `jole_team_jorge` 20,
+  `jole_team_jguerrero` 20, both industrial inboxes 0 (`warmup_incomplete`).
+  UI capacity was 260/day and 39/run across 11 senders. `[cap]` was 111/260
+  Vancouver. Windows are :00/:30, ScaleLab 07:00–11:30 Pacific and Jole
+  07:00–11:59 Chicago, Mon–Fri. The boot cron line
+  `(6/inbox, 12/run, 80/day, 2 active)` is stale display text; trust
+  `/api/integrations/gmail-inboxes` → `capacity` and the `[cap]` / `[client-cap]`
+  lines.
 - Staffing campaign sends (the staffing-only sender sent its cap on the last send day).
-- Reply observation: Gmail history observers on all five inboxes run in the
-  :15/:45 check-only pass. Replies are classified from the prospect's own words
-  only.
+- Reply observation: Gmail history observers on the five ScaleLab inboxes and
+  six Jole inboxes run in the :15/:45 check-only pass. Replies are classified
+  from the prospect's own words only. Jole uses the managed handler (no
+  auto-send). ScaleLab staffing reply behavior is unchanged by the inbound
+  reliability patch except that a same-inbox RFC header match is also accepted,
+  and an identity conflict fails closed.
 - Google Calendar booking sync every 5 minutes; every automation launch waits
   for a successful sync.
 - Demo-intent backstop (every 3 minutes while armed).
@@ -147,8 +183,9 @@ campaign status: the offer gate is separate and fails closed.
     the final gate, reservations, the Gmail provider boundary, observers and the
     reply loop. Email identity is tenant-scoped in code; the database still has
     the global email index (launch gate A).
-  - Client send capacity (`[client-cap]` log line per pass): ScaleLab has no
-    client cap (exactly the global 200/day, 21/window); Jole 0/0.
+  - Client send capacity (`[client-cap]` at 2026-10-23 00:15 UTC): ScaleLab
+    `sentToday` 111, `remaining` 27, `allowed` true; Jole `sentToday` 0,
+    `remaining` 12, `allowed` true (Chicago window was closed).
   - All five senders resolve to `scalelab` (`/api/integrations/gmail-inboxes`
     shows `clientId`; `?client=<id>` returns only that client's inboxes).
   - **Client-aware dashboard:** the sidebar comes from each client's config
@@ -161,52 +198,46 @@ campaign status: the offer gate is separate and fails closed.
     Hidden navigation is never the boundary; every client route filters on the
     server.
 
-**Jole BTX LLC (managed client, id `jole`) — ACTIVE, NOT SENDING (since 2026-10-05):**
+**Jole BTX LLC (managed client, id `jole`) — ACTIVE, AUTHORIZED (since 2026-10-22 19:47 UTC):**
 - `lifecycleStatus = active`, `active = true`; activation recorded as
   `scalelab-operator (instruction 2026-10-05)`. The onboarding items (agreement,
   form, $175 balance) are recorded as attested by that instruction, not
   verified inside SalesPipeline2.
-- **No send authority:** `sending.enabled = false`, `CLIENT_SENDING_AUTHORIZED`
-  unset, client capacity **0/0**. Every send path refuses with
-  `client_sending_disabled`; Agent v2 refuses with `client_not_authorized`.
+- **Send authority on:** `sending.enabled = true`, `CLIENT_SENDING_AUTHORIZED=jole`,
+  `launchHold = false`, campaign `jole-btx-employer-acquisition` ready. Client
+  capacity **75/day, 12/window** (four production inboxes 15/20/20/20; industrial
+  pair held at 0). First natural Jole window after this cutover is the next
+  Chicago weekday 07:00 CT. Do not force a send.
 - **Sender policy** (`senderPolicy` in `client-configs.js`, enforced by
   `integrations/clients/sender-policy.js`): outbound domains `jolebtxteam.com`,
   `jolebtxgroup.com`, `joleindustrial.com`; `jolebtx.com` protected (never a cold
   sender); no other client may use any of them; every Jole sender serves only
   `jole-btx-employer-acquisition`; hard cap **20/day per inbox** (clamped).
-  While Jole may not send, every Jole inbox is non-send-eligible whatever its
-  status and Activate Sender is refused. No automatic ramp exists; the intended
-  launch ramp (8–10, then 12–15, then up to 20 per inbox per day after healthy
-  placement) is an operator decision.
-- **Jole mailboxes registered: 0.** None exists with credentials in production
-  (no Jole row in `GMAIL_INBOX_REGISTRY_JSON`, no Jole token variable).
-  2026-10-05 DNS: `jolebtxteam.com` and `jolebtxgroup.com` are on Google
-  Workspace (Google SPF, DKIM `google` selector, DMARC `p=none`);
-  `joleindustrial.com` is email forwarding only (no mailboxes, no DKIM, no DMARC).
-  To register one: add a row with `clientId: "jole"`, `status: "paused"`,
-  `dailyLimit` ≤ 20 and its own `GMAIL_<ID>_TOKEN_JSON`.
-- Campaign `jole-btx-employer-acquisition` (template
-  `jole-industrial-employer-v1`, version `jole_industrial_employer_acquisition_v1`):
-  **draft**, template not ready (copy not deployed). Legacy `JOLE_DC_MISSION_CRITICAL`
-  (draft) and `JOLE_GULF_INDUSTRIAL` / `JOLE_SHIPYARD` (disabled) are unchanged
-  and no Jole sender may serve them.
-- An uncommitted Jole copy implementation (`integrations/jole-campaign.js`)
-  exists only in the main checkout's working tree. It assumes client id
-  `jole-btx` and no tenant column; it must be reconciled to client `jole` and
-  this catalog before it can ship.
-- Jole leads **0**; Jole senders **0**; Jole sends **0**.
-- Verify: `GET /api/clients`, `GET /api/clients/jole/overview`,
-  `GET /api/clients/jole/settings` (caps 0, no inboxes, `senderPolicy`).
+  Industrial inboxes stay at daily limit 0 with `warmup_incomplete`.
+- **Six Jole mailboxes are registered and observing:** `jole_group_jorge`
+  (`jorge@jolebtxgroup.com`), `jole_group_jguerrero`, `jole_team_jorge`,
+  `jole_team_jguerrero`, `jole_industrial_jorge`, `jole_industrial_jguerrero`.
+  At 2026-10-23 00:18 UTC all six were `sendEligible: true` and
+  `observerHealth: healthy` (last success 00:15 UTC, history mode, no last
+  error). Jole overview replies were 1 unsubscribe. No prospect mail was sent
+  to prove the deploy.
+- Campaign `jole-btx-employer-acquisition` is the only campaign those senders
+  may serve. Copy v4 applies to never-contacted Jole leads. Reply policy mode
+  is `managed`: classify, stop or hold the cold sequence, and do not
+  auto-send, promote, or book.
+- Verify: `GET /api/clients/jole/overview`,
+  `GET /api/integrations/gmail-inboxes?client=jole`,
+  `GET /api/ops/jole-inbound-health` (read the per-inbox Jole rows; the rollup
+  currently also lists ScaleLab checkpoints).
 
 **Shadow (no send, CRM or queue authority):**
 - Staffing Conversation Agent / Agent v2: `[staffing-shadow] init enabled=true mode=shadow`, every authority flag `false`.
 - Research/ICP Agent V1: manual `POST /api/agents/research/test` only; writes only `research_icp_runs`.
 
 **Pending production validation:**
-- No send window has run on the multi-client code (`72f9e285` and later) yet. At the first window (07:00 Pacific,
-  Mon-Fri) watch `[client-cap]` (ScaleLab `allowed` with `remaining` equal to the
-  window ceiling; Jole `blockedBy: client_sending_disabled`) and confirm ScaleLab sends,
-  reservations confirm and `[cap]` advances normally.
+- The next Chicago weekday Jole send window still has to run after this
+  inbound deploy. Watch `[client-cap]` Jole `allowed`, one reservation per
+  send, and no follow-up after a legitimate managed reply. Do not force a send.
 
 **Failing:**
 - Smartlead reconcile: every hourly run at :12 logs `AUTHENTICATION_ERROR` for
@@ -233,6 +264,8 @@ not re-run them.
 | `20260925000000_landing_link_attribution.sql` | `landing_link_issuances`, `landing_sessions` and `landing_events` are readable |
 | `20260930000000_client_ledger.sql` | Applied 2026-09-29 (recorded as version `20260930015011`, name `client_ledger`). `clients` = `jole`, `scalelab`; six tables with RLS; 0 rows |
 | `20260930010000_outreach_leads_client_id.sql` | Applied 2026-09-29 (recorded as version `20260930015039`, name `outreach_leads_client_id`). `client_id` NOT NULL DEFAULT `scalelab`, FK present, `outreach_leads_client_email_key` added; global `outreach_leads_email_normalized_key` retained |
+| `20261008000000_client_lead_import_batches.sql` | Applied (table readable; 1 row as of 2026-10-22) |
+| `20261016000000_client_daily_reports.sql` | Applied (table readable; 3 rows as of 2026-10-22) |
 
 **Not applied (deliberately):** `20260930020000_outreach_leads_tenant_scoped_email.sql`
 (drops the global email index); see launch gate A. All three client migrations
@@ -241,35 +274,33 @@ were validated beforehand on real PostgreSQL 17.9 (UTF-8), 46/46 checks
 
 Send-lock Postgres (`db/migrations/`): `20260917000000_outbound_send_reservations.sql`
 backs the live send lock (`/api/send-lock/health` → `kind: postgres`).
-`anthropic_usage_events` is created on demand by `integrations/anthropic-usage.js`.
+`20261020000000_send_quota_reservations.sql` (`send_control` quota buckets/runs/lanes)
+is live; Railway predeploy `node scripts/send-quota-migrate.js` verified on
+2026-10-22. `anthropic_usage_events` is created on demand by
+`integrations/anthropic-usage.js`.
 
-## Jole launch gates (all open)
+## Jole launch gates
 
-**A. Before the first Jole lead import:**
+**Sending authorization (2026-10-22):** complete for the four production Jole
+inboxes. Industrial pair remains `warmup_incomplete` at cap 0. First natural
+scheduled Jole send is still pending the next Chicago weekday window.
+
+**A. Before the first Jole lead import:** import already happened; these remain open for later tenant-email work:
 - Fix the Sheets-mode dashboard reads (`A:O` + `Q:X`) to read `clientId`
   (column Y); today those fallback reads infer ownership.
 - Apply `20260930020000_outreach_leads_tenant_scoped_email.sql`.
 - Set `OUTREACH_EMAIL_UNIQUENESS=client` when cross-client email ownership is
   needed (until then imports refuse an address any client already has).
 
-**B. Before Jole sending:**
-- Fix demo-intent per-client metering (warm/intent sends are refused for an
-  inactive client today but are not counted against client capacity).
-- Provision Jole sending domains and inboxes; warm the senders.
-- Add Gmail credentials and `GMAIL_INBOX_REGISTRY_JSON` entries with
-  `"clientId": "jole"`.
-- Configure Jole client send caps (and ScaleLab's reservation) in
-  `integrations/clients/client-configs.js`.
-- Finalize campaign copy; mark the template ready and the campaign approved.
-- Activate Jole only after the agreement is signed, the onboarding form is
-  returned and the remaining $175 is paid (reviewed commit: onboarding items
-  true, `activation.activatedBy` / `activatedAt`, `lifecycleStatus: 'active'`).
-- Separately authorize sending: `sending.enabled: true` in a reviewed commit
-  **and** `CLIENT_SENDING_AUTHORIZED=jole` on the service.
+**B. Before Jole sending:** done for production-ready inboxes (copy v4 deployed,
+campaign approved, `CLIENT_SENDING_AUTHORIZED=jole`). Remaining: finish warmup
+on `jole_industrial_*` before raising those caps above 0.
 
 **C. Production validation still pending:**
-- The first real send window on the multi-client code: watch `[client-cap]`
-  and confirm ScaleLab still sends normally.
+- First natural Jole send window after this inbound deploy: watch `[client-cap]`
+  Jole `allowed`, reservations confirm once, v4 copy on never-contacted leads,
+  and ScaleLab still sending normally. Inbound observers were already proven
+  on the 2026-10-23 00:15 UTC check-only pass.
 
 ## Where things live
 
@@ -319,8 +350,10 @@ correction branches from 2026-09-25/26).
 5. Read-only endpoints: `/api/integrations/gmail-inboxes` (caps, observers,
    `clientId`), `/api/integrations/supabase/stage3-parity` (mode, write
    authority), `/api/send-lock/health`, `/api/landing/collector-health`,
-   `/api/landing/funnel`, `/api/clients`, `/api/clients/jole/overview`, and
-   `[client-cap]` in a send or check-only pass.
+   `/api/landing/funnel`,    `/api/clients`, `/api/clients/jole/overview`,
+   `/api/ops/jole-inbound-health` (Jole rows pending 0; ignore the ScaleLab
+   rows the rollup currently includes), and `[client-cap]` in a send or
+   check-only pass.
 6. Ownership: `node -r dotenv/config scripts/client-ownership-audit.js` (0
    conflicts) and a `scripts/client-id-backfill.js` dry run (0 fill, 0 mismatch).
 7. Update this file and its date.
