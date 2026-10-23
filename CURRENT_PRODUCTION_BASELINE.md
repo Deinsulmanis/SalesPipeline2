@@ -186,8 +186,10 @@ campaign status: the offer gate is separate and fails closed.
   - Client send capacity (`[client-cap]` at 2026-10-23 00:15 UTC): ScaleLab
     `sentToday` 111, `remaining` 27, `allowed` true; Jole `sentToday` 0,
     `remaining` 12, `allowed` true (Chicago window was closed).
-  - All five senders resolve to `scalelab` (`/api/integrations/gmail-inboxes`
-    shows `clientId`; `?client=<id>` returns only that client's inboxes).
+  - Sender ownership is explicit `clientId`. ScaleLab's five senders resolve
+    to `scalelab`. Jole's six resolve to `jole`.
+    `GET /api/integrations/gmail-inboxes?client=<id>` returns only that
+    client's inboxes.
   - **Client-aware dashboard:** the sidebar comes from each client's config
     (`integrations/clients/navigation.js`; `workspaces` and `defaultWorkspace`
     in `client-configs.js`). ScaleLab keeps every module. Jole has Client Ops,
