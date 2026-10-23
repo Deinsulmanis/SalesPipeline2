@@ -17,7 +17,7 @@
  * the active scope.
  */
 
-const { outreachBlockForLead, RETIRED_OFFERS } = require('./lead-archive');
+const { outreachBlockForLead, RETIRED_OFFERS, completedCampaigns } = require('./lead-archive');
 const { CAMPAIGN_VERSIONS } = require('./campaign-versions');
 const { retractedBounceEventIds } = require('./delivery-status');
 
@@ -58,8 +58,10 @@ function activitiesForLeads(activities = [], leads = []) {
  */
 function liveCampaignVersions() {
   const retiredFamilies = new Set(RETIRED_OFFERS.map(offer => offer.family));
+  const completed = new Set(completedCampaigns().map(campaign => campaign.id));
   return Object.values(CAMPAIGN_VERSIONS)
-    .filter(version => ['active', 'approved'].includes(version.status) && !retiredFamilies.has(version.family))
+    .filter(version => ['active', 'approved'].includes(version.status) && !retiredFamilies.has(version.family)
+      && !completed.has(version.id))
     .map(version => version.id);
 }
 

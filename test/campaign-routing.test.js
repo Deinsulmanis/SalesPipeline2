@@ -68,7 +68,8 @@ test('campaign versions are derived from the canonical registry and reject incom
   assert.deepEqual(campaignVersionsForRoute({ niche: 'dental' }).map(version => version.id), []);
   assert.match(validateCampaignVersionRoute({ niche: 'dental', emailTemplateId: 'dental-guarantee-v1', campaignVersionId: 'dental_v3_pay_per_booking' }).reason, /approved registered campaign version/);
   assert.deepEqual(campaignVersionsForRoute({ niche: 'roofing' }).map(version => version.id), [], 'roofing retired 2026-09-30');
-  assert.deepEqual(campaignVersionsForRoute({ niche: 'industrial_staffing' }).map(version => version.id), ['industrial_staffing_employer_acquisition_v1']);
+  assert.deepEqual(campaignVersionsForRoute({ niche: 'industrial_staffing' }).map(version => version.id),
+    ['industrial_staffing_employer_acquisition_v1', 'industrial_staffing_outreach_campaign_2']);
   assert.match(validateCampaignVersionRoute({ niche: 'industrial_staffing', emailTemplateId: 'dental-guarantee-v1', campaignVersionId: 'industrial_staffing_employer_acquisition_v1' }).reason, /does not use/);
   assert.match(validateCampaignVersionRoute({ niche: 'dental', emailTemplateId: 'industrial-staffing-employer-v1', campaignVersionId: 'industrial_staffing_employer_acquisition_v1' }).reason, /cannot be used/);
 });

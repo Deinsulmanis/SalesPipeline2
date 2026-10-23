@@ -87,7 +87,9 @@ test('a V1 lead in any state cannot be routed, sent, sequenced or refilled', asy
   }
 });
 
-test('the final gate refuses on the lead as it is NOW, even from a stale sendable snapshot', async () => {
+test('the final gate refuses on the lead as it is NOW, even from a stale sendable snapshot', async t => {
+  // After Campaign 2's start, so only the completion can refuse.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-26T16:00:00.000Z') });
   const stale = followUpDue(campaign2Lead({ id: 'moved', emailTemplateId: STAFFING_CAMPAIGN.emailTemplateId }));
   const current = { ...stale, campaign: STAFFING_CAMPAIGN.name };
   assert.equal((await gate(stale, current)).code, 'campaign_completed');

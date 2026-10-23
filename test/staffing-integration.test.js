@@ -234,7 +234,7 @@ test('R. a ready but paused staffing campaign cannot pass the routing gate', () 
     inboxes: [{ id: 'primary', email: 'd@x.ca', sendEligible: true, deliveryImplemented: true }] }).ok, true);
   assert.equal(validateCampaignVersionRoute({ niche: 'industrial_staffing',
     emailTemplateId: STAFFING_CAMPAIGN.emailTemplateId, campaignVersionId: STAFFING_CAMPAIGN.id }).ok, true);
-  assert.equal(campaignVersionsForRoute({ niche: 'industrial_staffing' }).length, 1, 'one approved staffing version can be selected');
+  assert.equal(campaignVersionsForRoute({ niche: 'industrial_staffing' }).length, 2, 'V1 and Staffing Outreach Campaign 2 can be selected');
 });
 
 test('S. importing alone leaves a lead unqueued and unroutable', () => {

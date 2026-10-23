@@ -419,7 +419,8 @@ test('14. STAFFING_V2_LIVE stays false in source and at runtime', () => {
 test('15. no queue or send path is enabled for V2: not offered, refused by the queue route, held by selection, refused at send', async t => {
   withLaunchedStaffing(t, { v2Live: false });
   assert.equal(CAMPAIGN_VERSIONS[V1_ID].status, 'active', 'V1 follows the staffing launch gate as before');
-  assert.deepEqual(campaignVersionsForRoute({ niche: 'industrial_staffing' }).map(v => v.id), [V1_ID]);
+  assert.deepEqual(campaignVersionsForRoute({ niche: 'industrial_staffing' }).map(v => v.id),
+    [V1_ID, 'industrial_staffing_outreach_campaign_2']);
   assert.equal(validateCampaignVersionRoute({ niche: 'industrial_staffing', emailTemplateId: V2_TEMPLATE, campaignVersionId: V2_ID }).ok, false);
   assert.equal(templateById(V2_TEMPLATE).ready, false);
   const held = routedLeadReady(v2Lead({ senderInboxId: 'primary', routingRequired: 'true' }), { STAFFING_LAUNCH_ACTIVATED_AT: LAUNCHED });

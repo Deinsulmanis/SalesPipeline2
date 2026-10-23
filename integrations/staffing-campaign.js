@@ -53,7 +53,26 @@ const STAFFING_CAMPAIGN_V2 = Object.freeze({
   get ready() { return staffingV2Live(); },
 });
 
-const STAFFING_CAMPAIGNS = Object.freeze([STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_V2]);
+// Staffing Outreach Campaign 2 (2026-10-23): a new cohort sent with V1's
+// locked template and copy, unchanged. Its own id and label keep every send
+// attributable apart from V1, which is a completed campaign. It may not send
+// before its approved start (staffing-launch-gate.js).
+const {
+  STAFFING_CAMPAIGN_2_ID, STAFFING_CAMPAIGN_2_NAME,
+} = require('./staffing-launch-gate');
+const STAFFING_CAMPAIGN_2 = Object.freeze({
+  id: STAFFING_CAMPAIGN_2_ID,
+  name: STAFFING_CAMPAIGN_2_NAME,
+  legacyNames: Object.freeze([]),
+  niche: STAFFING_CAMPAIGN.niche,
+  emailTemplateId: STAFFING_CAMPAIGN.emailTemplateId,
+  personalizationStrategy: STAFFING_CAMPAIGN.personalizationStrategy,
+  model: STAFFING_CAMPAIGN.model,
+  status: 'approved',
+  ready: true,
+});
+
+const STAFFING_CAMPAIGNS = Object.freeze([STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_2, STAFFING_CAMPAIGN_V2]);
 
 // Every campaign label that identifies this campaign: the current name, the id,
 // and any name it was stored under previously.
@@ -395,7 +414,7 @@ module.exports = { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_LABELS, isStaffingCampai
   STAFFING_SEQUENCE_TIMING, renderStaffingPreview, staffingOpeningFor, staffingReviewStatus, replaceStaffingReviewTag,
   staffingNoPersonalizationAllowed, renderStaffingEmail, validateStaffingEmail,
   isTrackedStaffingLandingUrl, withStaffingLandingUrl,
-  STAFFING_CAMPAIGN_V2, STAFFING_CAMPAIGNS, LOCKED_EMAILS_V2, BOLD_PHRASES_V2, LOCKED_PHRASES_V2,
+  STAFFING_CAMPAIGN_2, STAFFING_CAMPAIGN_V2, STAFFING_CAMPAIGNS, LOCKED_EMAILS_V2, BOLD_PHRASES_V2, LOCKED_PHRASES_V2,
   staffingCampaignFor, isStaffingTemplateId, isStaffingCampaignVersionId, staffingOpeningParts,
   staffingV2Live, setStaffingV2LiveForTests,
   isStaffingV2Marked, staffingV2SendBlock, staffingV2Parts,

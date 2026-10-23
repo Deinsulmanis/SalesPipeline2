@@ -275,7 +275,8 @@ test('8. ScaleLab copy and campaign registries are byte-identical to production 
   // Fingerprints taken on e25666c before this change; an intentional ScaleLab copy edit must update them.
   assert.equal(sha(LOCKED_EMAILS), 'a5b4edf21580ddd4534617c51240e5e1fa26efb1fe243a870dd360ea43cc5397');
   assert.equal(sha(LOCKED_EMAILS_V2), '700d17e34c9d30446f786f378d6ac6876597e95a8d79cdf86e6c207961225fd1');
-  assert.equal(sha(CAMPAIGN_VERSIONS), 'aec4cdceecf994b5cbbea4afe7257bc66b1541f87a8c53c3d795fb00592d28f8');
+  // Updated 2026-10-23 for the Staffing Outreach Campaign 2 version; LOCKED_EMAILS is unchanged.
+  assert.equal(sha(CAMPAIGN_VERSIONS), '227fd9bfbf850326804c0edc974f30506bf3b93caf7c52050fc61de9a4b4a11f');
   // Jole v2 is also unchanged, for the 98 threads already on it.
   assert.equal(COPY_VERSION, 'jole_industrial_employer_v2');
   assert.equal(JOLE_INDUSTRIAL_EMPLOYER_COPY.steps[0].subject, '{{role}} — {{location}}');

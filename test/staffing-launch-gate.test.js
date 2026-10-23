@@ -32,7 +32,7 @@ test('approved queue route stays selectable while actual routing/attribution rem
  const saved=process.env[ACTIVATION_VARIABLE];delete process.env[ACTIVATION_VARIABLE];
  try{
   const routing=require('../integrations/campaign-routing'),versions=require('../integrations/campaign-versions');
-  assert.equal(routing.campaignVersionsForRoute({niche:lead.leadNiche}).length,1);
+  assert.equal(routing.campaignVersionsForRoute({niche:lead.leadNiche}).length,2);
   assert.equal(routing.routedLeadReady(lead).ok,false);
   assert.throws(()=>versions.activeVersionForLead(lead),/not active/);
   process.env[ACTIVATION_VARIABLE]=approvedAt;
