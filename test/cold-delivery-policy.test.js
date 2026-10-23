@@ -28,14 +28,17 @@ function classifierWith(table, { now = () => 0, ttlMs } = {}) {
   return { classifier: createProviderClassifier({ resolveMx, now, ttlMs, logger: quiet, env: {} }), calls };
 }
 const err = code => Object.assign(new Error(code), { code });
-const GOOGLE_POLICY = {}; // default policy = google_only
+const GOOGLE_POLICY = Object.freeze({ RECIPIENT_PROVIDER_POLICY: 'google_only' }); // explicit opt-in; the default is off
 const healthy = (id = 'primary') => ({ id, status: 'active', sendEligible: true });
 
 // Authorized env for the real final gate, as in the existing gate tests.
 const SEND_ENV = Object.freeze({
   SENDING_ENABLED: 'true', SEND_AUTHORIZED_ENV: 'test', RAILWAY_ENVIRONMENT: 'test',
   SEND_AUTHORIZED_TOKEN: 'token', SEND_WORKER_ROLE: 'outreach-sender', SEND_LOCK_ENABLED: 'true',
+  // google_only is retired as the default (2026-10-23); these tests cover it as the explicit opt-in.
+  RECIPIENT_PROVIDER_POLICY: 'google_only',
 });
+process.env.RECIPIENT_PROVIDER_POLICY = 'google_only';
 const lead = (overrides = {}) => ({ id: 'L1', email: 'owner@acme.test', notes: '', stage: 'Queued', emailStatus: '', emailStep: '', ...overrides });
 const finalGate = (current, { classifyRecipient, coldSender, suppressed = new Set(), env = SEND_ENV } = {}) => guardProviderSend(current,
   { env, classifyRecipient, loadFreshState: async () => ({ current, suppressedEmails: suppressed }) },
@@ -216,7 +219,7 @@ test('14. a provider hold changes nothing on the lead and admits nothing to the 
   const held = deepFreeze(lead({ id: 'M1', email: 'pat@outlook.com', stage: 'Contacted', emailStatus: 'emailed', emailStep: '2', lastEmailedAt: '2026-10-01T00:00:00Z' }));
   const before = JSON.stringify(held);
   const { classifier } = classifierWith({});
-  const admission = await admitByRecipientProvider([held], classifier, {});
+  const admission = await admitByRecipientProvider([held], classifier, GOOGLE_POLICY);
   assert.equal(admission.allowed.size, 0);
   assert.deepEqual(admission.held.map(item => item.holdReason), [HOLD_REASON.MICROSOFT]);
   assert.equal(JSON.stringify(held), before);
@@ -225,7 +228,7 @@ test('14. a provider hold changes nothing on the lead and admits nothing to the 
   const result = await queueSelectedLeads({ ids: ['M1'], senderInboxId: 'primary', emailTemplateId: 't', campaignVersionId: 'v' }, {
     loadState: async () => ({ leads: [lead({ id: 'M1', email: 'pat@outlook.com', stage: 'Import', campaign: 'c' })], activities: [], boardLeads: [] }),
     validateSelection: () => ({ ok: true }), applyChanges: async () => { applied++; return []; },
-    admitRecipients: leads => admitByRecipientProvider(leads, classifier, {}),
+    admitRecipients: leads => admitByRecipientProvider(leads, classifier, GOOGLE_POLICY),
   });
   assert.equal(result.status, 409);
   assert.equal(result.holdReason, HOLD_REASON.MICROSOFT);
@@ -330,7 +333,7 @@ test('describeColdDeliveryPolicy reports the live pool and holds without secrets
     { id: 'tryscalelabai', email: 'deins@tryscalelabai.ca', status: 'paused', sendEligible: false, dailyLimit: 30, perRunLimit: 6 },
   ], { COLD_SENDER_POOL: 'primary,scalelabaiteam', COLD_INBOX_DAILY_CAP: '30' });
   assert.equal(snapshot.event, 'cold_delivery_policy');
-  assert.equal(snapshot.policy, 'google_only');
+  assert.equal(snapshot.policy, 'off');
   assert.deepEqual(snapshot.coldSenderPool, ['primary', 'scalelabaiteam']);
   assert.equal(snapshot.coldInboxDailyCap, 30);
   assert.equal(snapshot.senders[0].inColdPool, true);
@@ -350,12 +353,14 @@ test('prospecting intent: cold and sequence are gated; warm conversational traff
   assert.equal(isProspectingSend('WARM'), false);
 });
 
-test('policy flag: default and unrecognised values fail closed to google_only; off disables', () => {
-  assert.equal(recipientProviderPolicy({}), 'google_only');
-  assert.equal(recipientProviderPolicy({ RECIPIENT_PROVIDER_POLICY: 'block_microsoft' }), 'google_only');
+test('policy flag: off by default and for unrecognised values; google_only only when named', () => {
+  assert.equal(recipientProviderPolicy({}), 'off');
+  assert.equal(recipientProviderPolicy({ RECIPIENT_PROVIDER_POLICY: 'block_microsoft' }), 'off');
   assert.equal(recipientProviderPolicy({ RECIPIENT_PROVIDER_POLICY: 'OFF' }), 'off');
+  assert.equal(recipientProviderPolicy({ RECIPIENT_PROVIDER_POLICY: 'Google_Only' }), 'google_only');
   assert.equal(providerVerdict({ provider: PROVIDER.MICROSOFT }, { RECIPIENT_PROVIDER_POLICY: 'off' }).allowed, true);
-  assert.equal(providerVerdict(null, {}).code, HOLD_REASON.UNKNOWN);
+  assert.equal(providerVerdict({ provider: PROVIDER.MICROSOFT }, {}).allowed, true);
+  assert.equal(providerVerdict(null, { RECIPIENT_PROVIDER_POLICY: 'google_only' }).code, HOLD_REASON.UNKNOWN);
   assert.equal(classifyMxHosts('x.com', null).reason, 'no_mx');
 });
 

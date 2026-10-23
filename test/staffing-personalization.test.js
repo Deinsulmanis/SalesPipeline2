@@ -490,6 +490,8 @@ test('admit holds Microsoft Import leads without writing and holds failed person
     loadLead:async()=>importLead,applyPatch:async()=>{throw new Error('must not write');},
     classifyEmail:async()=>({provider:'MICROSOFT',reason:'microsoft_mx',domain:'example.com'}),
     personalize:async()=>{throw new Error('must not personalize');},
+    // google_only is retired as the default (2026-10-23); this covers it as the explicit opt-in.
+    env:{RECIPIENT_PROVIDER_POLICY:'google_only'},
   });
   assert.equal(microsoft.ok,false);assert.equal(microsoft.held,true);assert.equal(microsoft.reason,'recipient_provider_microsoft');assert.equal(microsoft.writes,0);
   const patches=[];

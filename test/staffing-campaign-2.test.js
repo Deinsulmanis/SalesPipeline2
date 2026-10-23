@@ -284,3 +284,93 @@ test('the start restriction applies only to Campaign 2', () => {
   assert.equal(staffingSendBlockReason({ leadNiche: 'dental' }, SEND_ENV, before), '');
   assert.equal(isStaffingCampaign(adopted(tierA())), true);
 });
+
+// -- 2026-10-23: the Gmail-only recipient restriction is retired ------------
+
+const { PROVIDER, RECIPIENT_INVALID, admitByRecipientProvider, coldDeliveryVerdict, providerVerdict } = require('../integrations/cold-delivery-policy');
+const PRIMARY = Object.freeze({ id: 'primary', email: 'deins@scalelabai.ca', status: 'active', sendEligible: true, clientId: 'scalelab' });
+// Production cold-delivery values; RECIPIENT_PROVIDER_POLICY deliberately unset.
+const LIVE_SEND_ENV = Object.freeze({ ...SEND_ENV, COLD_SENDER_POOL: 'all', COLD_INBOX_DAILY_CAP: '50' });
+const recipient = (provider, reason) => async email => ({ provider, reason, domain: email.split('@')[1] || '' });
+const finalGate = (lead, classifyRecipient, { env = LIVE_SEND_ENV, suppressed = new Set() } = {}) => guardProviderSend(lead,
+  { env, classifyRecipient, loadFreshState: async () => ({ current: lead, suppressedEmails: suppressed }) },
+  { purpose: 'cold', coldSender: PRIMARY, senderInboxId: PRIMARY.id });
+const PROVIDERS = [
+  ['Gmail', PROVIDER.GOOGLE, 'google_mx'], ['Microsoft', PROVIDER.MICROSOFT, 'microsoft_mx'],
+  ['other provider', PROVIDER.OTHER, 'other_provider_mx'], ['security gateway', PROVIDER.UNKNOWN, 'security_gateway'],
+];
+
+test('valid Gmail, Microsoft and other-provider recipients are all admitted by default', async () => {
+  for (const [label, provider, reason] of PROVIDERS) {
+    assert.equal(providerVerdict({ provider, reason }, {}).allowed, true, label);
+    assert.equal(coldDeliveryVerdict({ sender: PRIMARY, classification: { provider, reason }, env: LIVE_SEND_ENV }).allowed, true, label);
+  }
+  const leads = [{ id: 'g', email: 'a@gmail.com' }, { id: 'm', email: 'b@outlook.com' }, { id: 'o', email: 'c@zoho.biz' }];
+  const classifier = { classify: async () => { throw new Error('queue admission must not depend on the provider'); } };
+  assert.deepEqual([...(await admitByRecipientProvider(leads, classifier, {})).allowed].sort(), ['g', 'm', 'o']);
+});
+
+test('after the 07:00 PT start, the final dispatch gate admits an adopted Campaign 2 lead on any provider', async (t) => {
+  withClock(t, OPEN);
+  for (const [label, provider, reason] of PROVIDERS) {
+    const lead = routed(adopted(tierA({ email: `jordan.reyes@${label.replace(/\W/g, '')}.test` })));
+    const verdict = await finalGate(lead, recipient(provider, reason));
+    assert.equal(verdict.allowed, true, `${label}: ${JSON.stringify(verdict)}`);
+  }
+});
+
+test('the final gate does not reinstate Gmail-only, and still honours an explicit google_only opt-in', async (t) => {
+  withClock(t, OPEN);
+  const lead = routed(adopted(tierB()));
+  assert.equal((await finalGate(lead, recipient(PROVIDER.MICROSOFT, 'microsoft_mx'))).allowed, true);
+  const optIn = await finalGate(lead, recipient(PROVIDER.MICROSOFT, 'microsoft_mx'), { env: { ...LIVE_SEND_ENV, RECIPIENT_PROVIDER_POLICY: 'google_only' } });
+  assert.equal(optIn.allowed, false);
+  assert.equal(optIn.code, 'recipient_provider_microsoft');
+  // An unrecognised value is never read as google_only.
+  assert.equal((await finalGate(lead, recipient(PROVIDER.OTHER, 'other_provider_mx'), { env: { ...LIVE_SEND_ENV, RECIPIENT_PROVIDER_POLICY: 'gmail' } })).allowed, true);
+});
+
+test('invalid and suppressed recipients stay blocked whatever the provider', async (t) => {
+  withClock(t, OPEN);
+  const lead = routed(adopted(tierA()));
+  const noMx = await finalGate(lead, recipient(PROVIDER.UNKNOWN, 'no_mx'));
+  assert.equal(noMx.allowed, false);
+  assert.equal(noMx.code, RECIPIENT_INVALID);
+  // A transient lookup failure is not invalidity: it does not block.
+  assert.equal((await finalGate(lead, recipient(PROVIDER.UNKNOWN, 'lookup_failed:ETIMEOUT'))).allowed, true);
+  const malformed = await finalGate({ ...lead, email: 'jordan.reyes' }, recipient(PROVIDER.UNKNOWN, 'malformed_address'));
+  assert.equal(malformed.allowed, false);
+  const admission = await admitByRecipientProvider([{ id: 'x', email: 'no-at-sign' }, { id: 'y', email: 'ok@example.com' }], null, {});
+  assert.deepEqual([...admission.allowed], ['y']);
+  assert.equal(admission.held[0].holdReason, RECIPIENT_INVALID);
+  for (const [label, provider, reason] of PROVIDERS) {
+    const suppressed = await finalGate(lead, recipient(provider, reason), { suppressed: new Set([lead.email]) });
+    assert.equal(suppressed.allowed, false, label);
+    const bounced = await finalGate({ ...lead, notes: '[BOUNCED: 5.1.1 user unknown]' }, recipient(provider, reason));
+    assert.equal(bounced.allowed, false, label);
+    const unsubscribed = await finalGate({ ...lead, notes: '[REPLY: Unsubscribed]' }, recipient(provider, reason));
+    assert.equal(unsubscribed.code, 'unsubscribed', label);
+  }
+});
+
+test('no Campaign 2 lead on any provider passes the final gate before 14:00Z', async (t) => {
+  withClock(t, OPEN - 1);
+  for (const [label, provider, reason] of PROVIDERS) {
+    const verdict = await finalGate(routed(adopted(tierB({ email: `casey@${label.replace(/\W/g, '')}.test` }))), recipient(provider, reason));
+    assert.equal(verdict.allowed, false, label);
+    assert.equal(verdict.code, 'staffing_launch_paused', label);
+  }
+});
+
+test('Microsoft and other-provider Campaign 2 leads render the unchanged V2 Tier A / Tier B copy', () => {
+  for (const [record, variant] of [[tierA({ email: 'jordan@contoso-staffing.test' }), 'TIER_A'], [tierB({ email: 'casey@zoho-staffing.test' }), 'TIER_B']]) {
+    const lead = adopted(record);
+    assert.equal(lead.emailTemplateId, STAFFING_CAMPAIGN_2.emailTemplateId);
+    assert.equal(lead.intendedCampaignVersion, STAFFING_CAMPAIGN_2.id);
+    for (const step of [1, 2, 3]) {
+      const rendered = renderStaffingEmail(lead, step, OPTIONS);
+      assert.ok(rendered && rendered.body, `${variant} step ${step}`);
+      assert.equal(validateStaffingEmail(rendered, step), null, `${variant} step ${step}`);
+    }
+  }
+});

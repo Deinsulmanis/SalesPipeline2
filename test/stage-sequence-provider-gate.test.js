@@ -15,7 +15,10 @@ const root = path.join(__dirname, '..');
 const SEND_ENV = Object.freeze({
   SENDING_ENABLED: 'true', SEND_AUTHORIZED_ENV: 'test', RAILWAY_ENVIRONMENT: 'test',
   SEND_AUTHORIZED_TOKEN: 'token', SEND_WORKER_ROLE: 'outreach-sender', SEND_LOCK_ENABLED: 'true',
+  // google_only is retired as the default (2026-10-23); these tests cover it as the explicit opt-in.
+  RECIPIENT_PROVIDER_POLICY: 'google_only',
 });
+process.env.RECIPIENT_PROVIDER_POLICY = 'google_only';
 const PRIMARY = Object.freeze({ id: 'primary', status: 'active', sendEligible: true });
 const PAUSED = Object.freeze({ id: 'primary', status: 'paused', sendEligible: false });
 const GOOGLE = Object.freeze({ provider: PROVIDER.GOOGLE, domain: 'acme.com', reason: 'google_mx' });

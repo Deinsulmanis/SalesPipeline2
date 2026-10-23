@@ -310,12 +310,13 @@ const roster = ids => Object.fromEntries(ids.map(id => {
   return [id, [sender.sendEligible, sender.dailyLimit, sender.perRunLimit]];
 }));
 
-test('9. ScaleLab caps and sending configuration are unchanged (185/day, 27/run)', () => {
+test('9. ScaleLab inbox caps are unchanged; the aggregate is held to 170/day (27/run)', () => {
   assert.deepEqual(roster(SCALELAB), {
     primary: [true, 50, 6], tryscalelabai: [true, 30, 6], scalelabaiteam: [true, 15, 5],
     deniels: [true, 45, 5], deniels_tryscalelabai: [true, 45, 5],
   });
-  assert.deepEqual(capacityFromEnv(configuredSenders(LIVE_ENV), LIVE_ENV).clientLimits.scalelab, { daily: 185, perRun: 27 });
+  // The inbox caps sum to 185; the intended ScaleLab aggregate (2026-10-23) is 170.
+  assert.deepEqual(capacityFromEnv(configuredSenders(LIVE_ENV), LIVE_ENV).clientLimits.scalelab, { daily: 170, perRun: 27 });
   for (const id of SCALELAB) assert.equal(coldSenderHolds(LIVE_ENV).has(id), false, id);
 });
 

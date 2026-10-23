@@ -88,7 +88,8 @@ test('final configuration: 21 per window, 200 per day, daily caps sum to exactly
   assert.equal(capacity.perRunSum, 21);
   assert.equal(capacity.globalPerRunLimit, 21);
   assert.equal(capacity.dailySum, 200);
-  assert.equal(capacity.globalDailyLimit, 200);
+  // Since 2026-10-23 the ScaleLab aggregate is held to 170/day.
+  assert.equal(capacity.globalDailyLimit, 170);
   // Ten windows × 21 = 210 slots; the 200 ceiling is the hard stop, and every
   // inbox can reach its own day inside ten windows.
   const slots = (server.match(/cron\.schedule\('0,30 7-11 \* \* 1-5'/) ? 10 : 0);

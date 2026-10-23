@@ -8,6 +8,10 @@ const DEFAULT_INBOX_PER_RUN_LIMIT = 5;
 const MAX_INBOX_PER_RUN_LIMIT = 6;
 const DEFAULT_DAILY_CEILING = 120;
 const DEFAULT_PER_RUN_CEILING = 15;
+// ScaleLab's intended aggregate cold volume (2026-10-23): at most 170 sends a
+// day across its inboxes, whatever the inbox caps or GMAIL_GLOBAL_DAILY_CEILING
+// add up to. A maximum only: it never raises a lower ceiling.
+const SCALELAB_MAX_DAILY = 170;
 
 function positiveInt(value, fallback) {
   const parsed = Number(value);
@@ -66,7 +70,7 @@ function clientAllocations(active, { dailyCap, perRunCap }) {
     const daily = mine.reduce((sum, sender) => sum + positiveInt(sender.dailyLimit, 0), 0);
     const perRun = mine.reduce((sum, sender) => sum + positiveInt(sender.perRunLimit, DEFAULT_INBOX_PER_RUN_LIMIT), 0);
     if (client.isDefault) {
-      limits[client.id] = { daily: Math.min(dailyCap, daily), perRun: Math.min(perRunCap, perRun) };
+      limits[client.id] = { daily: Math.min(dailyCap, daily, SCALELAB_MAX_DAILY), perRun: Math.min(perRunCap, perRun) };
     } else {
       const cfg = getClient(client.id).capacity || {};
       const capDaily = cfg.dailyCap === null || cfg.dailyCap === undefined ? daily : positiveInt(cfg.dailyCap, 0);
@@ -86,6 +90,6 @@ function capacityFromEnv(senders = [], env = process.env) {
 
 module.exports = {
   DEFAULT_INBOX_DAILY_LIMIT, DEFAULT_INBOX_PER_RUN_LIMIT, MAX_INBOX_PER_RUN_LIMIT,
-  DEFAULT_DAILY_CEILING, DEFAULT_PER_RUN_CEILING,
+  DEFAULT_DAILY_CEILING, DEFAULT_PER_RUN_CEILING, SCALELAB_MAX_DAILY,
   activeColdSenders, senderCapacity, capacityFromEnv,
 };
