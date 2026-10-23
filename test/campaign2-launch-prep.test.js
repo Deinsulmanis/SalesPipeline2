@@ -33,6 +33,7 @@ test('every hold reason produces a consistent, unsendable hold record', () => {
     [row({ vertical: 'GENERALIST_COMMERCIAL' }), 'ICP_UNCONFIRMED'],
     [row({ vertical: '' }), 'ICP_UNCONFIRMED'],
     [row({ title: 'Manager' }), 'REVIEW_REQUIRED'],
+    [row({ email: 'it@labormasters.com' }), 'REVIEW_REQUIRED'],
   ];
   for (const [source, reason] of cases) {
     const reasons = eligibility(source);

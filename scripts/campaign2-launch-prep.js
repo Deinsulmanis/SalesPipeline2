@@ -28,6 +28,7 @@ const EXCLUDED_VERTICALS = new Set(['ACCOUNTING_FINANCE', 'ADMIN_OFFICE', 'PROFE
 const REVIEW_VERTICALS = new Set(['GENERALIST_COMMERCIAL', 'ENGINEERING_TECHNICAL']);
 const NON_US_TLD = /\.(uk|ca|au|in|de|ie|nz)$/i;
 const BUYER_TITLE = /owner|president|ceo|chief|founder|partner|principal|managing director|vp|vice president|head of|director|general manager|coo|cro/i;
+const ROLE_MAILBOX = /^(it|info|admin|office|sales|hr|jobs|careers|contact|support|hello|team|recruiting|staffing)$/i;
 
 function parseCsv(text) {
   const rows = []; let row = []; let cell = ''; let quoted = false;
@@ -62,6 +63,8 @@ function eligibility(source) {
   if (companyDomain && emailDomain !== companyDomain) reasons.push({ hold: 'ICP_CONFLICT', fit: 'ICP_UNRESOLVED', detail: `email domain ${emailDomain} differs from company domain ${companyDomain}` });
   if (REVIEW_VERTICALS.has(vertical)) reasons.push({ hold: 'ICP_UNCONFIRMED', fit: 'ICP_UNRESOLVED', detail: `sourced vertical ${vertical} needs documented industrial evidence` });
   if (!vertical) reasons.push({ hold: 'ICP_UNCONFIRMED', fit: 'ICP_UNRESOLVED', detail: 'no sourced vertical recorded; industrial fit is unconfirmed' });
+  const localPart = lower(source.email).split('@')[0];
+  if (ROLE_MAILBOX.test(localPart)) reasons.push({ hold: 'REVIEW_REQUIRED', fit: 'ICP_UNRESOLVED', detail: `${localPart}@ is a role mailbox, not the named buyer's address` });
   if (!BUYER_TITLE.test(String(source.title || ''))) reasons.push({ hold: 'REVIEW_REQUIRED', fit: 'ICP_UNRESOLVED', detail: `title "${source.title || ''}" is outside the approved buyer cohorts` });
   return reasons;
 }
@@ -192,9 +195,75 @@ async function apply(env) {
   if (report.outcomes.some(row => !['succeeded', 'unchanged'].includes(row.status) || (row.status === 'succeeded' && !row.mirrored))) process.exitCode = 1;
 }
 
+// HOLD (APPLY_CAMPAIGN2_HOLD=yes): holds the cleared leads in HOLD_IDS whose
+// sourcing row now fails eligibility(), compare-and-set against their cleared tag.
+async function holdCleared(env) {
+  if (env.APPLY_CAMPAIGN2_HOLD !== 'yes') throw new Error('Set APPLY_CAMPAIGN2_HOLD=yes after reviewing HOLD_IDS');
+  const ids = String(env.HOLD_IDS || '').split(',').map(id => id.trim()).filter(Boolean);
+  const source = parseCsv(fs.readFileSync(env.SOURCE_CSV, 'utf8').replace(/^\uFEFF/, ''));
+  const byEmail = new Map(source.map(row => [lower(row.email), row]));
+  const corpus = await readOutreachCorpus({ env });
+  if (!corpus.ok) throw new Error(`Canonical read failed: ${corpus.reason}`);
+  const byId = new Map(corpus.leads.map(lead => [lead.id, lead]));
+  const cleared = replaceStaffingReviewTag('', { fit: 'ICP_CONFIRMED', personalization: 'NONE_REQUIRED', routingReady: true });
+  const { sheetsClient, rows } = await sheetRows(env);
+  const changes = ids.map(id => {
+    const lead = byId.get(id);
+    if (!lead || lead.campaign !== STAFFING_CAMPAIGN_2.name || lead.stage !== 'Import' || !neverSent(lead) || lead.campaign_notes !== cleared) {
+      throw new Error(`Lead ${id} is not a cleared, unqueued Campaign 2 lead`);
+    }
+    const reasons = eligibility(byEmail.get(lower(lead.email)) || {});
+    if (!reasons.length) throw new Error(`Lead ${id} still passes eligibility; nothing to hold`);
+    const patch = { campaign_notes: patchFor(lead, byEmail.get(lower(lead.email)), reasons).campaign_notes };
+    if (staffingHoldInconsistencies({ ...lead, ...patch }).length) throw new Error(`Hold record for ${id} is inconsistent`);
+    const row = rows.get(id) || [];
+    if (row.length !== 1) throw new Error(`Lead ${id} is not exactly one ColdEmail row`);
+    return { leadId: id, row: row[0], patch, expectedState: { campaign_notes: cleared, stage: 'Import' } };
+  });
+  const result = await applyLeadChanges(changes, { sheetsClient, spreadsheetId: env.SPREADSHEET_ID, env });
+  console.log(JSON.stringify({ summary: result.summary, outcomes: result.results.map(row => ({ leadId: row.leadId, status: row.status, mirrored: row.mirrored })) }));
+  if (result.results.some(row => row.status !== 'succeeded' || !row.mirrored)) process.exitCode = 1;
+}
+
+// PREVIEW (read-only): renders every touch for PREVIEW_IDS (comma-separated)
+// from their canonical rows, exactly as the sender would, into PREVIEW_PATH.
+async function preview(env) {
+  const { renderStaffingEmail, validateStaffingEmail } = require('../integrations/staffing-campaign');
+  const ids = String(env.PREVIEW_IDS || '').split(',').map(id => id.trim()).filter(Boolean);
+  const corpus = await readOutreachCorpus({ env });
+  if (!corpus.ok) throw new Error(`Canonical read failed: ${corpus.reason}`);
+  const byId = new Map(corpus.leads.map(lead => [lead.id, lead]));
+  const routed = { emailTemplateId: STAFFING_CAMPAIGN_2.emailTemplateId, intendedCampaignVersion: STAFFING_CAMPAIGN_2.id };
+  const out = [`# Staffing Outreach Campaign 2 previews (${new Date().toISOString()})`, ''];
+  let failures = 0;
+  for (const id of ids) {
+    const lead = byId.get(id);
+    if (!lead) throw new Error(`Preview lead ${id} not found`);
+    out.push(`## ${lead.company} — ${lead.contactName} <${lead.email}> (${id})`, '');
+    for (const step of [1, 2, 3]) {
+      try {
+        // Production renders its own COMMERCIAL_MAILING_ADDRESS; a local preview may stand one in.
+        const email = renderStaffingEmail({ ...lead, ...routed }, step,
+          { env, ...(env.PREVIEW_MAILING_ADDRESS ? { mailingAddress: env.PREVIEW_MAILING_ADDRESS } : {}) });
+        const error = validateStaffingEmail(email, step);
+        if (error) failures += 1;
+        out.push(`### Email ${step}${email.subject ? ` — subject: ${email.subject}` : ' — same thread (Re: employer accounts)'}${error ? ` — INVALID: ${error}` : ''}`,
+          '', '```', email.body, '```', '');
+      } catch (error) {
+        failures += 1;
+        out.push(`### Email ${step} — REFUSED: ${error.message}`, '');
+      }
+    }
+  }
+  fs.writeFileSync(env.PREVIEW_PATH, out.join('\n'));
+  console.log(JSON.stringify({ leads: ids.length, touches: ids.length * 3, failures }));
+  if (failures) process.exitCode = 1;
+}
+
 if (require.main === module) {
   const env = { ...process.env, SUPABASE_OUTREACH_MODE: 'primary', SUPABASE_OUTREACH_WRITES: 'supabase' };
-  (env.MODE === 'apply' ? apply(env) : plan(env)).catch(error => { console.error(error.message); process.exitCode = 1; });
+  const run = { apply, preview, hold: holdCleared }[env.MODE] || plan;
+  run(env).catch(error => { console.error(error.message); process.exitCode = 1; });
 }
 
 module.exports = { eligibility, patchFor, parseCsv };
