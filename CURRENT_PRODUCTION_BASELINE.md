@@ -29,6 +29,19 @@ Workflow:
    version of every code, test and config file. Never merge `main` into the
    production branch.
 
+**2026-10-23 06:08 UTC — pushed, NOT yet verified in Railway.** Both production
+branches were fast-forwarded `c8350f4` → `5a8b61c` ("feat: complete the Industrial
+Staffing Agency (V1) campaign"). It adds `COMPLETED_CAMPAIGNS` in
+`integrations/lead-archive.js`: the 1,002 ScaleLab leads labelled
+`Industrial Staffing Agency` are refused by every send gate
+(`campaign_completed`), leave active analytics, stay in historical analytics and
+show under **Completed campaigns** in the ScaleLab Campaigns panel. No lead row,
+Railway variable, sender, cap, window or suppression was changed. Staffing
+Outreach Campaign 2 (537 leads), V2 and Jole are untouched. The session that
+pushed it had no Railway or dashboard access: confirm the deployment's
+`commitHash` is `5a8b61c` and the boot lines before treating the snapshot below
+as superseded.
+
 On 2026-10-23 production moved from Jole copy v4 `cf9c453` to inbound-reliability
 `c8350f4aca825f09ba23086938d3777c1b9f6f27`. Named production
 `cursor/staffing-agent-shadow-production-7402` and the Railway watch branch
