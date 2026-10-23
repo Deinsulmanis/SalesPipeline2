@@ -1,5 +1,10 @@
 'use strict';
 
+// These tests exercise live staffing machinery with Industrial Staffing Agency
+// (V1) fixtures. V1 itself is a completed campaign; that is pinned in
+// test/completed-campaign.test.js.
+require('../integrations/lead-archive').setCompletedCampaignsForTests([]);
+
 // Phase 1: the deterministic, read-only conversation state. Every scenario is
 // built from ledger rows shaped exactly as production writes them, and reply
 // decisions are created with production's own reply-decision functions.

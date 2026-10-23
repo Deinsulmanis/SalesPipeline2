@@ -1,5 +1,10 @@
 'use strict';
 
+// These tests exercise live staffing machinery with Industrial Staffing Agency
+// (V1) fixtures. V1 itself is a completed campaign; that is pinned in
+// test/completed-campaign.test.js.
+require('../integrations/lead-archive').setCompletedCampaignsForTests([]);
+
 // OOO auto-resume (2026-10-03; review rule 2026-10-15). An autoresponder
 // pauses cold automation until the stated return date through an append-only
 // ooo_resume_scheduled event — never a [MANUAL HOLD], which stays absolute.
