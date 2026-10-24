@@ -225,6 +225,24 @@ const unfilledShare = row => (row.target - row.load) / row.dailyLimit;
  * The refill plan. Pure and deterministic: the same inputs always produce the
  * same moves, and a plan applied and re-planned produces no moves.
  */
+function scopedBalanceInput(input, { client, bufferRatio } = {}) {
+  if (bufferRatio !== undefined) {
+    const ratio = Number(bufferRatio);
+    if (!client || !Number.isFinite(ratio) || ratio < 0 || ratio > 8) {
+      throw new Error('bufferRatio requires a client and must be between 0 and 8');
+    }
+    input = { ...input, bufferRatio: ratio };
+  }
+  if (!client) return input;
+  const { resolveClientId, DEFAULT_CLIENT_ID } = require('./clients/registry');
+  const resolved = resolveClientId(client);
+  if (!resolved.ok) throw new Error(resolved.reason);
+  // Keep the full corpus and activity history for duplicate/suppression checks;
+  // only the sender pool is scoped, so no other client's lead can be moved.
+  return { ...input, senders: input.senders.filter(sender =>
+    (sender.clientId || DEFAULT_CLIENT_ID) === resolved.clientId) };
+}
+
 function planSenderRebalance(input) {
   const workload = senderWorkload(input);
   const rows = new Map(workload.senders.map(row => [row.id, { ...row }]));
@@ -374,5 +392,5 @@ function nextSendDayHorizon(now = new Date()) {
 module.exports = {
   DEFAULT_BUFFER_RATIO, BLOCKING_ACTIVITY, balancingSenders, targetFor, senderCompatible,
   firstTouchMovability, projectedFollowUps, senderWorkload, planSenderRebalance, assignNewLeads,
-  assignBatch, nextSendDayHorizon,
+  assignBatch, nextSendDayHorizon, scopedBalanceInput,
 };

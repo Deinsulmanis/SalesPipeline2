@@ -5086,7 +5086,7 @@ const {
 // Temporary recipient-provider gate: one domain-level MX cache for the server.
 const recipientProviderClassifier = createProviderClassifier();
 const {
-  assignBatch, planSenderRebalance, nextSendDayHorizon,
+  assignBatch, planSenderRebalance, nextSendDayHorizon, scopedBalanceInput,
 } = require('./integrations/sender-balance');
 const { staffingLaunchState } = require('./integrations/staffing-launch-gate');
 app.get('/api/staffing/launch-readiness', requireAuth, async (_req, res) => {
@@ -5200,7 +5200,8 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
 // else, one compare-and-set per lead, and never runs beside a send pass.
 
 async function unresolvedReservationLeadIds() {
-  const listed = await listUnresolvedReservations();
+  // Balancing must also exclude fresh reservations, not only expired leases.
+  const listed = await listUnresolvedReservations(process.env, { includeActive: true });
   if (listed.enabled === false) throw new Error('Durable send lock is disabled; sender balancing refuses to run without it');
   return new Set(['sentUnconfirmed', 'reconciliationRequired', 'staleReserved', 'expiredSending']
     .flatMap(key => listed[key] || [])
@@ -5241,7 +5242,7 @@ function senderBalanceView(plan) {
   };
 }
 
-async function runSenderRebalance({ trigger, apply }) {
+async function runSenderRebalance({ trigger, apply, client, bufferRatio }) {
   if (senderRebalanceInFlight) return { status: 409, error: 'A sender rebalance is already running' };
   if (apply && (agentState.running || automationLaunchReserved)) {
     return { status: 409, error: 'An agent pass is active or launching; sender assignments are not changed beside it' };
@@ -5254,7 +5255,7 @@ async function runSenderRebalance({ trigger, apply }) {
   // assignments are being written; the refill runs well clear of a send tick.
   if (apply) automationLaunchReserved = true;
   try {
-    const input = await withAuth(() => loadSenderBalanceInput());
+    const input = scopedBalanceInput(await withAuth(() => loadSenderBalanceInput()), { client, bufferRatio });
     const plan = planSenderRebalance(input);
     const view = senderBalanceView(plan);
     if (!apply) return { status: 200, applied: false, ...view };
@@ -5313,9 +5314,10 @@ async function runSenderRebalance({ trigger, apply }) {
 }
 
 // Read-only plan: what the refill would move right now, and why.
-app.get('/api/ops/sender-balance', requireAuth, async (_req, res) => {
+app.get('/api/ops/sender-balance', requireAuth, async (req, res) => {
   try {
-    const result = await runSenderRebalance({ trigger: 'ops_plan', apply: false });
+    const result = await runSenderRebalance({ trigger: 'ops_plan', apply: false,
+      client: req.query.client, bufferRatio: req.query.bufferRatio });
     res.status(result.status).json(result);
   } catch (error) {
     if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
@@ -5324,9 +5326,10 @@ app.get('/api/ops/sender-balance', requireAuth, async (_req, res) => {
   }
 });
 
-app.post('/api/ops/sender-balance', requireAuth, async (_req, res) => {
+app.post('/api/ops/sender-balance', requireAuth, async (req, res) => {
   try {
-    const result = await runSenderRebalance({ trigger: 'ops_manual', apply: true });
+    const result = await runSenderRebalance({ trigger: 'ops_manual', apply: true,
+      client: req.query.client, bufferRatio: req.query.bufferRatio });
     res.status(result.status).json(result);
   } catch (error) {
     if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });

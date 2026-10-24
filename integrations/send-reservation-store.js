@@ -210,14 +210,14 @@ function createPgSendReservationStore({ connectionString, pool: existingPool } =
       if (result.rows[0]) return { ok: true, reservation: rowView(result.rows[0]) };
       return { ok: false, code: 'reservation_terminal', reason: 'terminal rows are not moved to reconciliation_required' };
     },
-    async listUnresolved() {
+    async listUnresolved({ includeActive = false } = {}) {
       const result = await query(
         `SELECT * FROM ${TABLE}
           WHERE status IN ($1, $2)
-             OR (status IN ($3, $4) AND lease_expires_at < NOW())
+             OR (status IN ($3, $4) AND ($5 OR lease_expires_at < NOW()))
           ORDER BY updated_at DESC
-          LIMIT 500`,
-        [STATUS.SENT_UNCONFIRMED, STATUS.RECONCILIATION_REQUIRED, STATUS.RESERVED, STATUS.SENDING],
+          ${includeActive ? '' : 'LIMIT 500'}`,
+        [STATUS.SENT_UNCONFIRMED, STATUS.RECONCILIATION_REQUIRED, STATUS.RESERVED, STATUS.SENDING, includeActive],
       );
       const all = result.rows.map(rowView);
       return {
