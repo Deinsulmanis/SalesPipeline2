@@ -92,10 +92,18 @@ function buildJoleDailyReport({ dataset, meetings = [], senders = [], inboxes = 
   const sendsInPeriod = confirmed.filter(row => inPeriod(row.occurredAt));
   const contacted = new Set(confirmed.map(activityLeadId));
   const everContacted = new Set(sendEvidence.confirmed.map(activityLeadId));
+  // A step-1 lead whose copy failed validation is parked as emailStatus 'draft'
+  // (outreach-agent markColdStepDrafted) and was never sent, so its status is no
+  // contact signal. Only while nothing else disagrees: a contact stage, a step,
+  // a send timestamp or any unconfirmed, reserved or failed send row keeps it uncertain.
+  const sendAttemptLeads = new Set([...sendEvidence.unconfirmed, ...sendEvidence.reserved, ...sendEvidence.failed].map(activityLeadId));
+  const parkedUnsentDraft = lead => String(lead.emailStatus || '').trim().toLowerCase() === 'draft'
+    && String(lead.stage || '') === 'Queued' && !(Number(lead.emailStep || 0) > 0)
+    && !String(lead.lastEmailedAt || '').trim() && !sendAttemptLeads.has(String(lead.id));
   const uncertainContacted = leads.filter(lead =>
     (String(lead.emailStatus || '').trim() || Number(lead.emailStep || 0) > 0
       || ['Contacted', 'Replied', 'Done', 'Unsub', 'Unsubscribed'].includes(String(lead.stage || '')))
-    && !everContacted.has(String(lead.id)));
+    && !everContacted.has(String(lead.id)) && !parkedUnsentDraft(lead));
   const replyRecords = (dataset.replyRecords || []).filter(row => ids.has(String(row.leadId)));
   const replyEvents = activities.filter(row => REPLY_TYPES.has(String(row.eventType || '')));
   const earliestReplyByLead = new Map();

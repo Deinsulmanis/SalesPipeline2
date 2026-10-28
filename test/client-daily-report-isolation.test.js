@@ -250,6 +250,55 @@ test('unsupported daily metrics remain unavailable instead of fabricated zero', 
   assert.equal(undated.per_sender[0].sent_today, null);
 });
 
+// Production 2026-10-27: muz4hqf98919a6001ed2 failed step-1 validation and was
+// parked Queued + emailStatus 'draft' with no step, timestamp or send row. That
+// one never-sent lead blanked the contacted count and every rate.
+const parkedDraft = lead('muz4hqf98919a6001ed2', 'jole', { senderInboxId: 'jole_group_jorge',
+  stage: 'Queued', emailStatus: 'draft', emailStep: '', lastEmailedAt: '' });
+const withParkedDraft = (draft, activities = []) => ({ ...dataset,
+  leads: [j1, j2, draft, s1, s2], rows: [j1, j2, draft, s1, s2],
+  activities: [...dataset.activities, ...activities] });
+const RATE_FIELDS = ['untouched_remaining', 'contacted_cumulative', 'reply_rate', 'positive_reply_rate', 'meeting_rate'];
+
+test('a never-sent lead parked as a Queued draft does not blank campaign totals', () => {
+  const report = buildJoleDailyReport({ dataset: withParkedDraft(parkedDraft), senders, now: new Date(at) });
+  assert.equal(report.contacted_cumulative, 1);
+  assert.equal(report.untouched_remaining, 2);
+  assert.equal(report.reply_rate, 0);
+  assert.equal(report.positive_reply_rate, 0);
+  assert.equal(report.meeting_rate, 0);
+  for (const field of RATE_FIELDS) assert.equal(report.unavailable[field], undefined, field);
+  // Case is not evidence: a 'Draft' status is the same parked lead.
+  const cased = buildJoleDailyReport({ dataset: withParkedDraft({ ...parkedDraft, emailStatus: ' Draft ' }), senders, now: new Date(at) });
+  assert.equal(cased.contacted_cumulative, 1);
+});
+
+test('a draft lead with conflicting contact or send evidence still blanks campaign totals', () => {
+  const sendRow = (eventType, metadata = {}) => ({ eventId: `${eventType}-d`, sourceLeadId: parkedDraft.id, eventType,
+    occurredAt: '2026-10-16T17:00:00Z', metadata: JSON.stringify({ senderInboxId: 'jole_group_jorge', ...metadata }) });
+  const conflicts = {
+    'contact stage': [{ ...parkedDraft, stage: 'Contacted' }],
+    'done stage': [{ ...parkedDraft, stage: 'Done' }],
+    'email step': [{ ...parkedDraft, emailStep: '1' }],
+    'send timestamp': [{ ...parkedDraft, lastEmailedAt: '2026-10-16T17:00:00Z' }],
+    'unconfirmed send row': [parkedDraft, [sendRow('initial_email_sent')]],
+    'send reservation': [parkedDraft, [sendRow('ordinary_send_reserved')]],
+    'failed send': [parkedDraft, [sendRow('ordinary_send_failed')]],
+    'non-draft status': [{ ...parkedDraft, emailStatus: 'emailed' }],
+  };
+  for (const [name, [draft, activities]] of Object.entries(conflicts)) {
+    const report = buildJoleDailyReport({ dataset: withParkedDraft(draft, activities), senders, now: new Date(at) });
+    for (const field of RATE_FIELDS) {
+      assert.equal(report[field], null, `${name}: ${field}`);
+      assert.match(report.unavailable[field], /provider-confirmed send record/, `${name}: ${field}`);
+    }
+  }
+  // A provider-confirmed send makes the draft a contacted lead, counted once.
+  const sent = buildJoleDailyReport({ dataset: withParkedDraft(parkedDraft,
+    [send('jgd', parkedDraft.id, 'jole_group_jorge')]), senders, now: new Date(at) });
+  assert.equal(sent.contacted_cumulative, 2);
+});
+
 test('operator report API is Jole-only and reads the stored snapshot', async () => {
   const store = createMemoryDailyReportStore();
   const report = buildJoleDailyReport({ dataset, senders, now: new Date(at) });
