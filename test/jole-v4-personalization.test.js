@@ -7,6 +7,10 @@
 // re-audit). A v4 thread keeps the mode its first send recorded; v2 and v3
 // threads keep their copy; contacted threads whose next touch would repeat a
 // false claim are held. ScaleLab is untouched (jole-v3-copy.test.js pins it).
+//
+// Since v5 (2026-10-27) every touch not yet attempted renders v5
+// (jole-v5-copy.test.js). The v4 copy below is pinned as history: a step the
+// ledger shows sent on v4 still reconstructs exactly that v4 email.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -14,7 +18,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const {
-  COPY_VERSION, COPY_VERSION_V3, COPY_VERSION_V4, CURRENT_COPY_VERSION, renderJoleEmployerStepV4, v4ModeProblem,
+  COPY_VERSION, COPY_VERSION_V3, COPY_VERSION_V4, COPY_VERSION_V5, CURRENT_COPY_VERSION, renderJoleEmployerStepV4, v4ModeProblem,
   JOLE_INDUSTRIAL_EMPLOYER_COPY_V4, JOLE_V3_OVERVIEW_URL,
 } = require('../integrations/clients/jole-copy');
 const {
@@ -58,11 +62,22 @@ const CLASSIFIED = {
 };
 const classified = fn => { setJoleClassificationForTests(CLASSIFIED); try { return fn(); } finally { setJoleClassificationForTests(null); } };
 const render = (lead, step, activities = []) => renderClientLeadEmail(lead, step, { env: ENV, now: NOW, activities });
+// A v4 thread's ledger through `step`: every touch sent on v4 with the mode, role and site its lead resolved to.
+const v4History = (lead, step) => {
+  const p = jolePersonalizationFor(lead, [], { now: NOW });
+  const meta = { copyVersion: COPY_VERSION_V4, personalizationMode: p.mode, personalizationRole: p.role || '', personalizationSite: p.location || '' };
+  return Array.from({ length: step }, (_, i) => ({
+    eventId: `v4-sent:${lead.id}:${i + 1}`, leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email,
+    eventType: i === 0 ? 'initial_email_sent' : 'follow_up_sent', occurredAt: `2026-10-2${i}T12:00:00.000Z`,
+    metadata: JSON.stringify({ leadId: lead.id, step: i + 1, ...meta }),
+  }));
+};
+const renderV4 = (lead, step) => render(lead, step, v4History(lead, step));
 
 // ── The approved copy, mode by mode ──────────────────────────────────────────
 test('exact: names the verified role and site on every touch, exactly the approved v4 copy', () => classified(() => {
   const lead = joleLead(1);
-  const [t1, t2, t3] = [1, 2, 3].map(step => render(lead, step));
+  const [t1, t2, t3] = [1, 2, 3].map(step => renderV4(lead, step));
   assert.equal(t1.copyVersion, 'jole_industrial_employer_v4');
   assert.deepEqual(t1.personalization, { mode: 'exact', role: 'Millwrights', location: 'Mont Belvieu, TX' });
   assert.equal(t1.subject, 'Millwrights | Mont Belvieu, TX');
@@ -75,7 +90,7 @@ test('exact: names the verified role and site on every touch, exactly the approv
 
 test('role_only: names the role, never a city or site', () => classified(() => {
   const lead = joleLead(2);
-  const [t1, t2, t3] = [1, 2, 3].map(step => render(lead, step));
+  const [t1, t2, t3] = [1, 2, 3].map(step => renderV4(lead, step));
   assert.equal(t1.subject, 'Millwrights');
   assert.equal(core(t1.body), 'Hi Pat,\n\nSaw Gulf Fabrication 2, LLC has been hiring Millwrights recently.\n\nI can have our team check whether Jole has the right craft coverage and what it would realistically take to support the need.\n\nWant me to check?\n\nJorge');
   assert.equal(core(t2.body), "Hi Pat,\n\nJust to give you some context, Jole has supported industrial employers with skilled trade labor for about 25 years and works with roughly 800 workers a year.\n\nFor a need like Millwrights, we'd look at the shift, certifications, headcount, start date and site requirements, then tell you whether it's something we can realistically cover.\n\nWe're not trying to force every opening into a fit. If we can't cover it properly, we'll tell you.\n\nHere's a quick overview of Jole:\nhttps://jolebtx.netlify.app/\n\nIf the Millwrights need is still active, worth having us take a look?\n\nJorge");
@@ -85,7 +100,7 @@ test('role_only: names the role, never a city or site', () => classified(() => {
 
 test('general_craft: names neither a role, a place nor a current opening', () => classified(() => {
   const lead = joleLead(3);
-  const [t1, t2, t3] = [1, 2, 3].map(step => render(lead, step));
+  const [t1, t2, t3] = [1, 2, 3].map(step => renderV4(lead, step));
   assert.equal(t1.subject, 'skilled trade coverage');
   assert.equal(core(t1.body), 'Hi Pat,\n\nReaching out because Gulf Fabrication 3, LLC operates in an industrial environment where skilled trade coverage can become a bottleneck.\n\nI can have our team look at where Jole could realistically support your craft needs when coverage gets tight.\n\nWorth a look?\n\nJorge');
   assert.equal(core(t2.body), "Hi Pat,\n\nJust to give you some context, Jole has supported industrial employers with skilled trade labor for about 25 years and works with roughly 800 workers a year.\n\nWhen an employer needs additional craft coverage, we look at the trades, site requirements, headcount, certifications and timing, then tell them whether it's something we can realistically support.\n\nWe're not trying to force every requirement into a fit. If we can't cover it properly, we'll tell you.\n\nHere's a quick overview of Jole:\nhttps://jolebtx.netlify.app/\n\nWorth keeping Jole in mind when coverage gets tight?\n\nJorge");
@@ -96,7 +111,8 @@ test('general_craft: names neither a role, a place nor a current opening', () =>
 test('every v4 mode: no dash punctuation, the v3 footer, the overview link on Touch 2 only, and the v3 cadence', () => classified(() => {
   for (const n of [1, 2, 3]) {
     for (const step of [1, 2, 3]) {
-      const email = render(joleLead(n), step);
+      const email = renderV4(joleLead(n), step);
+      assert.equal(email.copyVersion, COPY_VERSION_V4);
       assert.doesNotMatch(`${email.subject || ''}\n${email.body}`, DASH);
       assert.ok(email.body.endsWith(FOOTER));
       assert.deepEqual(email.body.match(/https?:\/\/\S+/g) || [], step === 2 ? [JOLE_V3_OVERVIEW_URL] : []);
@@ -161,19 +177,20 @@ test('the agent skips held leads in selection and held threads in follow-ups, an
   const blocked = source.slice(source.indexOf('function coldFollowUpBlockReason('), source.indexOf('function selectQueued('));
   assert.match(blocked, /clientFollowUpHold\(lead\)/);
   assert.match(source, /personalizationMode: attribution\.personalizationMode, personalizationRole: attribution\.personalizationRole/);
-  assert.match(source, /withClientCopyVersion\(coldSendAttribution\(lead, nextStepNum\), clientCopyVersion, clientPersonalization\)/);
-  assert.match(source, /withClientCopyVersion\(coldSendAttribution\(lead, 1, \{ personalizationMetadata: validatedPersonalizationMetadata \}\), built\.copyVersion, built\.clientPersonalization\)/);
+  assert.match(source, /withClientCopyVersion\(coldSendAttribution\(lead, nextStepNum\), clientCopyVersion, clientPersonalization, clientCopyAudit\)/);
+  assert.match(source, /withClientCopyVersion\(coldSendAttribution\(lead, 1, \{ personalizationMetadata: validatedPersonalizationMetadata \}\), built\.copyVersion, built\.clientPersonalization, built\.clientCopyAudit\)/);
 });
 
 // ── Thread consistency ───────────────────────────────────────────────────────
-test('a v4 thread keeps the mode, role and site its first send recorded, whatever the classification says later', () => {
+test('a v4 thread keeps the mode, role and site its first send recorded (now on v5 follow-ups), whatever the classification says later', () => {
   const lead = joleLead(2, { stage: 'Contacted', emailStatus: 'emailed', emailStep: '1', lastEmailedAt: '2026-10-22T12:00:03.000Z' });
   const ledger = [reservation(lead, { copyVersion: COPY_VERSION_V4, personalizationMode: 'role_only', personalizationRole: 'Millwrights', personalizationSite: '' })];
   setJoleClassificationForTests({ JV42: { mode: 'exact', role: 'Pipefitters', location: 'Baytown, TX' } });
   try {
     for (const step of [2, 3]) {
       const email = render(lead, step, ledger);
-      assert.equal(email.copyVersion, COPY_VERSION_V4);
+      assert.equal(email.copyVersion, COPY_VERSION_V5);
+      assert.equal(email.threadCopyVersion, COPY_VERSION_V4);
       assert.deepEqual(email.personalization, { mode: 'role_only', role: 'Millwrights', location: null });
       assert.doesNotMatch(email.body, /Pipefitter|Baytown/);
     }
@@ -181,26 +198,31 @@ test('a v4 thread keeps the mode, role and site its first send recorded, whateve
   } finally { setJoleClassificationForTests(null); }
 });
 
-test('contacted v2 threads stay v2; a held one never sends its next touch', () => classified(() => {
+test('contacted v2 and v3 threads continue on v5 with the claim their Touch 1 made; a held one never sends its next touch', () => classified(() => {
   const v2Sent = lead => [{ eventType: 'initial_email_sent', sourceLeadId: lead.id, occurredAt: '2026-10-19T12:00:40.000Z',
-    metadata: JSON.stringify({ copyVersion: COPY_VERSION, sequenceStep: 1 }) }];
+    subject: 'Millwrights — Mont Belvieu, TX', metadata: JSON.stringify({ copyVersion: COPY_VERSION, sequenceStep: 1 }) }];
   const contacted = n => joleLead(n, { stage: 'Contacted', emailStatus: 'emailed', emailStep: '1', lastEmailedAt: '2026-10-19T12:00:40.000Z' });
   const ok = contacted(8);
-  assert.equal(render(ok, 2, v2Sent(ok)).copyVersion, COPY_VERSION);
+  assert.equal(render(ok, 2, v2Sent(ok)).copyVersion, COPY_VERSION_V5);
+  assert.deepEqual(render(ok, 2, v2Sent(ok)).personalization, { mode: 'exact', role: 'Millwrights', location: 'Mont Belvieu, TX' });
+  // Its own Touch 1 still reconstructs as v2.
+  assert.equal(render(ok, 1, v2Sent(ok)).copyVersion, COPY_VERSION);
   const held = contacted(9);
   assert.match(clientFollowUpHold(held), /Jole follow-up hold: .*next touch would repeat that claim/);
   for (const step of [2, 3]) assert.throws(() => render(held, step, v2Sent(held)), /Jole follow-up hold/);
   assert.equal(joleFollowUpHold(ok), '');
-  // A v3 thread is unaffected by v4.
+  // A v3 thread continues on v5 the same way.
   const v3 = contacted(7);
-  const v3Ledger = [reservation(v3, { copyVersion: COPY_VERSION_V3 })];
-  assert.equal(render(v3, 2, v3Ledger).copyVersion, COPY_VERSION_V3);
+  const v3Ledger = [reservation(v3, { copyVersion: COPY_VERSION_V3 }), { eventType: 'initial_email_sent', sourceLeadId: v3.id,
+    occurredAt: '2026-10-22T12:00:03.000Z', subject: 'Millwrights | Mont Belvieu, TX', metadata: JSON.stringify({ copyVersion: COPY_VERSION_V3 }) }];
+  assert.equal(render(v3, 2, v3Ledger).copyVersion, COPY_VERSION_V5);
+  assert.equal(render(v3, 2, v3Ledger).threadCopyVersion, COPY_VERSION_V3);
 }));
 
 // ── The reviewed production classification (2026-10-21) ─────────────────────
 test('the classification covers the 902 untouched leads and 50 contacted holds, with only permitted, fresh claims', () => {
   assert.equal(DATA.schema, 'jole_personalization_v4');
-  assert.equal(CURRENT_COPY_VERSION, COPY_VERSION_V4);
+  assert.equal(CURRENT_COPY_VERSION, COPY_VERSION_V5);
   const entries = Object.entries(DATA.leads);
   assert.equal(entries.length, 902, '846 Queued + 56 Import untouched leads');
   const count = mode => entries.filter(([, entry]) => entry.mode === mode).length;

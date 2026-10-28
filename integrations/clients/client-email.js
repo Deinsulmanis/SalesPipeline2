@@ -35,14 +35,25 @@ const RENDERERS = Object.freeze({
   }),
 });
 
-/** The copy version (and its render/validate) this lead's sequence uses. */
-function clientCopyVersionFor(lead = {}, { activities = [] } = {}) {
+/**
+ * The copy version (and its render/validate) that renders `step` of this lead
+ * (default: its next step), with the version its thread began on.
+ */
+function clientCopyVersionFor(lead = {}, { activities = [], step } = {}) {
   const renderer = RENDERERS[String(lead.emailTemplateId || '').trim()];
   if (!renderer) throw fail('template_unknown', `no client renderer for ${lead.emailTemplateId || '(blank)'}`);
-  const resolved = renderer.resolveVersion(lead, activities);
+  const resolved = renderer.resolveVersion(lead, activities, { step });
   const version = renderer.versions[resolved.copyVersion];
   if (!version) throw fail('copy_version_unknown', `no client copy for version ${resolved.copyVersion}`);
   return { ...resolved, ...version };
+}
+
+// The campaign evidence age gate applies unless the copy has its own evidence
+// rule (v4 and v5, per mode); a thread begun on copy without one keeps the
+// campaign gate on every later touch, whichever version renders it.
+function campaignEvidenceAgeApplies(version = {}, versions = {}) {
+  const threadVersion = version.threadCopyVersion ? versions[version.threadCopyVersion] : null;
+  return !version.evidenceAware || Boolean(threadVersion && !threadVersion.evidenceAware);
 }
 
 const isClientTemplateId = id => Boolean(RENDERERS[String(id || '').trim()] && clientTemplate(id));
@@ -79,11 +90,11 @@ function personalizationFor(lead, { now = Date.now(), enforceEvidenceAge = true 
  * lead's copy version (clientCopyVersionFor).
  */
 function renderClientLeadEmail(lead = {}, step = 1, { env = process.env, now = Date.now(), activities = [] } = {}) {
-  const version = clientCopyVersionFor(lead, { activities });
-  const inputs = personalizationFor(lead, { now, enforceEvidenceAge: !version.evidenceAware });
+  const version = clientCopyVersionFor(lead, { activities, step });
+  const renderer = RENDERERS[String(lead.emailTemplateId || '').trim()];
+  const inputs = personalizationFor(lead, { now, enforceEvidenceAge: campaignEvidenceAgeApplies(version, renderer.versions) });
   const client = getClient(inputs.campaign.clientId);
   const copyEnv = client.copyEnv || {};
-  const renderer = RENDERERS[inputs.template.id];
   // A contacted lead whose next touch would repeat a claim found false never continues.
   const followUpHold = Number(step) > 1 ? renderer.followUpHold?.(lead) : '';
   if (followUpHold) throw fail('followup_hold', followUpHold);
@@ -95,6 +106,9 @@ function renderClientLeadEmail(lead = {}, step = 1, { env = process.env, now = D
   });
   return {
     subject: email.subject, body: email.body, step: email.step, variant: email.variant, copyVersion: email.copyVersion,
+    // Audit: the version the thread began on, and why this touch uses copyVersion.
+    ...(version.threadCopyVersion ? { threadCopyVersion: version.threadCopyVersion } : {}),
+    ...(version.reason ? { copyVersionReason: version.reason } : {}),
     ...(personalization ? { personalization: { mode: personalization.mode, role: personalization.role, location: personalization.location } } : {}),
   };
 }
@@ -131,8 +145,10 @@ function validateClientLeadEmail(lead = {}, email = {}, step = 1, { activities =
  */
 function clientPersonalizationState(lead = {}, { env = process.env, now = Date.now() } = {}) {
   try {
-    const evidenceAware = (() => { try { return Boolean(clientCopyVersionFor(lead).evidenceAware); } catch (_) { return false; } })();
-    const inputs = personalizationFor(lead, { now, enforceEvidenceAge: !evidenceAware });
+    const enforceEvidenceAge = (() => {
+      try { return campaignEvidenceAgeApplies(clientCopyVersionFor(lead), RENDERERS[String(lead.emailTemplateId || '').trim()].versions); } catch (_) { return true; }
+    })();
+    const inputs = personalizationFor(lead, { now, enforceEvidenceAge });
     const held = clientSelectionHold(lead);
     if (held && !lead.emailStep && !lead.emailStatus) return { status: 'hold', roles: inputs.roles, location: inputs.location, reason: held };
     try {

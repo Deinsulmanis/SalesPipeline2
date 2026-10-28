@@ -4,6 +4,11 @@
 // caps and windows; only the copy a never-contacted Jole lead receives
 // changes. A lead already in a sequence keeps the version its first send
 // recorded, so no existing thread ever switches copy. ScaleLab is untouched.
+//
+// Since v5 (2026-10-27) the version is per STEP: a sent step keeps the version
+// it recorded, and every touch not yet attempted renders v5, carrying forward
+// the claim the thread's Touch 1 made (jole-v5-copy.test.js). The v2 and v3
+// copy below is pinned as history: steps the ledger shows sent on them.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -17,7 +22,7 @@ const {
 } = require('../integrations/clients/jole-copy');
 const { renderClientLeadEmail, validateClientLeadEmail, clientPersonalizationState, clientCopyVersionFor, isClientTemplateId } = require('../integrations/clients/client-email');
 const { buildLeadProfile, profileFromResearchRow, serializeLeadProfile } = require('../integrations/clients/lead-profile');
-const { CURRENT_COPY_VERSION, COPY_VERSION_V4 } = require('../integrations/clients/jole-copy');
+const { CURRENT_COPY_VERSION, COPY_VERSION_V5 } = require('../integrations/clients/jole-copy');
 const { setJoleClassificationForTests } = require('../integrations/clients/jole-personalization');
 const { queueEligibility } = require('../integrations/outreach-queue');
 const { CAMPAIGN_VERSIONS } = require('../integrations/campaign-versions');
@@ -50,9 +55,9 @@ const joleLead = (n = 1, { profile = {}, ...extra } = {}) => ({
   ...extra,
 });
 // A lead's ledger rows, as readColdCallActivities returns them.
-const sent = (lead, { step = 1, copyVersion = COPY_VERSION, at = '2026-10-19T12:00:40.000Z', eventType } = {}) => ({
+const sent = (lead, { step = 1, copyVersion = COPY_VERSION, at = '2026-10-19T12:00:40.000Z', eventType, subject = '' } = {}) => ({
   eventId: `sent:${lead.id}:${step}`, leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email,
-  eventType: eventType || (step === 1 ? 'initial_email_sent' : 'follow_up_sent'), occurredAt: at,
+  eventType: eventType || (step === 1 ? 'initial_email_sent' : 'follow_up_sent'), occurredAt: at, subject,
   metadata: JSON.stringify({ campaignVersion: 'jole_industrial_employer_acquisition_v1', sequenceStep: step, ...(copyVersion ? { copyVersion } : {}) }),
 });
 const reserved = (lead, { step = 1, copyVersion, at = '2026-10-19T12:00:37.000Z' } = {}) => ({
@@ -60,8 +65,10 @@ const reserved = (lead, { step = 1, copyVersion, at = '2026-10-19T12:00:37.000Z'
   eventType: 'ordinary_send_reserved', occurredAt: at,
   metadata: JSON.stringify({ leadId: lead.id, step, senderInboxId: 'jole_group_jorge', ...(copyVersion ? { copyVersion } : {}) }),
 });
-// Since v4 (2026-10-21) an untouched lead starts v4; a lead whose thread began on v3 keeps v3.
-const v3Began = lead => [reserved(lead, { copyVersion: COPY_VERSION_V3, at: '2026-10-21T12:00:00.000Z' })];
+// A v3 thread whose three touches were all sent on v3: each step reconstructs as v3.
+const v3Began = lead => [reserved(lead, { copyVersion: COPY_VERSION_V3, at: '2026-10-21T12:00:00.000Z' }),
+  ...[1, 2, 3].map(step => sent(lead, { step, copyVersion: COPY_VERSION_V3, at: `2026-10-2${step}T12:00:03.000Z` }))];
+const V2_SUBJECT = 'Millwrights — Mont Belvieu, TX';
 const withClassified = (ids, fn) => {
   setJoleClassificationForTests(Object.fromEntries(ids.map(id => [id, { mode: 'exact', role: 'Millwrights', location: 'Mont Belvieu, TX' }])));
   try { return fn(); } finally { setJoleClassificationForTests(null); }
@@ -72,11 +79,11 @@ const DASH = /[‒-―−]|\s-|-\s|--/;
 const coreOf = body => body.slice(0, body.indexOf('\n\nJorge Guerrero\nCEO\n'));
 
 // ── 1. untouched → v3 ────────────────────────────────────────────────────────
-test('1. a Jole thread that began on v3 renders the approved v3 copy exactly (untouched leads now start v4)', () => {
+test('1. v3 history reconstructs the approved v3 copy exactly (untouched leads now start v5)', () => {
   const lead = joleLead(1);
-  assert.deepEqual(resolveJoleCopyVersion(lead, []), { copyVersion: COPY_VERSION_V4, reason: 'no_outbound_evidence' });
-  assert.equal(CURRENT_COPY_VERSION, COPY_VERSION_V4);
-  assert.deepEqual(resolveJoleCopyVersion(lead, v3Began(lead)), { copyVersion: COPY_VERSION_V3, reason: 'first_outbound_recorded_version' });
+  assert.deepEqual(resolveJoleCopyVersion(lead, []), { copyVersion: COPY_VERSION_V5, threadCopyVersion: null, step: 1, reason: 'no_outbound_evidence' });
+  assert.equal(CURRENT_COPY_VERSION, COPY_VERSION_V5);
+  assert.deepEqual(resolveJoleCopyVersion(lead, v3Began(lead)), { copyVersion: COPY_VERSION_V3, threadCopyVersion: COPY_VERSION_V3, step: 1, reason: 'step_sent_recorded_version' });
   const t1 = renderClientLeadEmail(lead, 1, { env: ENV, now: NOW, activities: v3Began(lead) });
   assert.equal(t1.copyVersion, 'jole_industrial_employer_v3');
   assert.equal(t1.subject, 'Millwrights | Mont Belvieu, TX');
@@ -139,51 +146,69 @@ test('1c. v3 drops a dash-separated company suffix, keeps in-word hyphens, and r
 });
 
 // ── 2–3. contacted leads stay on their sequence ─────────────────────────────
-test('2. a Jole lead with a Touch 1 send stays on v2 for every later touch', () => {
+test('2. a Jole lead with a v2 Touch 1 keeps that Touch 1 and continues on v5 with the claim it made', () => {
   const lead = contacted(10);
-  const activities = [reserved(lead), sent(lead)];
-  assert.deepEqual(resolveJoleCopyVersion(lead, activities), { copyVersion: COPY_VERSION, reason: 'outbound_evidence_predates_version' });
+  const activities = [reserved(lead), sent(lead, { subject: V2_SUBJECT })];
+  assert.deepEqual(resolveJoleCopyVersion(lead, activities), { copyVersion: COPY_VERSION_V5, threadCopyVersion: COPY_VERSION, step: 2, reason: 'v5_rollout_next_unsent_step' });
   for (const step of [2, 3]) {
     const email = renderClientLeadEmail(lead, step, { env: ENV, now: NOW, activities });
-    assert.equal(email.copyVersion, 'jole_industrial_employer_v2');
+    assert.equal(email.copyVersion, COPY_VERSION_V5);
+    assert.equal(email.threadCopyVersion, COPY_VERSION);
     assert.equal(validateClientLeadEmail(lead, email, step), '');
   }
-  assert.match(renderClientLeadEmail(lead, 2, { env: ENV, now: NOW, activities }).body, /Worth 10 minutes to see if Jole can realistically cover it\?/);
-  assert.match(renderClientLeadEmail(lead, 3, { env: ENV, now: NOW, activities }).body, /^Hi Pat,\n\nJust following up on the Millwrights opening/);
-  // Without the reservation row (the send event alone) the recorded version decides.
-  assert.deepEqual(resolveJoleCopyVersion(lead, [sent(lead)]), { copyVersion: COPY_VERSION, reason: 'first_outbound_recorded_version' });
+  assert.match(renderClientLeadEmail(lead, 2, { env: ENV, now: NOW, activities }).body, /^Hi Pat,\n\nWas the Millwrights opening in Mont Belvieu, TX for a specific project/);
+  assert.match(renderClientLeadEmail(lead, 3, { env: ENV, now: NOW, activities }).body, /^Hi Pat,\n\nQuick question, are you the one/);
+  // Its delivered Touch 1 still reconstructs as v2.
+  assert.equal(renderClientLeadEmail(lead, 1, { env: ENV, now: NOW, activities }).subject, V2_SUBJECT);
+  assert.equal(resolveJoleCopyVersion(lead, [sent(lead)]).threadCopyVersion, COPY_VERSION);
+  // A Touch 1 subject that does not prove the claim holds the thread rather than guess.
+  assert.throws(() => renderClientLeadEmail(lead, 2, { env: ENV, now: NOW, activities: [sent(lead, { subject: 'Welders — Mobile, AL' })] }), /personalization hold/);
 });
 
 test('3. a Jole lead with Touch 2 or Touch 3 history stays on v2', () => {
   const lead = contacted(11, { emailStep: '2' });
   const t2 = [reserved(lead), sent(lead), sent(lead, { step: 2, at: '2026-10-22T12:00:00.000Z' })];
-  assert.equal(resolveJoleCopyVersion(lead, t2).copyVersion, COPY_VERSION);
-  assert.equal(renderClientLeadEmail(lead, 3, { env: ENV, now: NOW, activities: t2 }).copyVersion, COPY_VERSION);
+  assert.equal(resolveJoleCopyVersion(lead, t2).copyVersion, COPY_VERSION_V5);
+  assert.equal(resolveJoleCopyVersion(lead, t2).threadCopyVersion, COPY_VERSION);
+  assert.equal(resolveJoleCopyVersion(lead, t2, { step: 2 }).copyVersion, COPY_VERSION, 'the delivered Touch 2 keeps v2');
+  t2[1] = sent(lead, { subject: V2_SUBJECT });
+  assert.equal(renderClientLeadEmail(lead, 3, { env: ENV, now: NOW, activities: t2 }).copyVersion, COPY_VERSION_V5);
   const done = contacted(12, { emailStep: '3', emailStatus: 'done' });
   const t3 = [sent(done), sent(done, { step: 2, at: '2026-10-22T12:00:00.000Z' }), sent(done, { step: 3, at: '2026-10-28T12:00:00.000Z' })];
-  assert.equal(resolveJoleCopyVersion(done, t3).copyVersion, COPY_VERSION);
-  // Even a later row stamped v3 cannot move a thread that began on v2: the FIRST send decides.
+  for (const step of [1, 2, 3]) assert.equal(resolveJoleCopyVersion(done, t3, { step }).copyVersion, COPY_VERSION, `delivered step ${step} keeps v2`);
+  // The thread's origin is its FIRST send, whatever a later row was stamped.
   const mislabelled = [sent(lead), sent(lead, { step: 2, copyVersion: COPY_VERSION_V3, at: '2026-10-22T12:00:00.000Z' })];
-  assert.equal(resolveJoleCopyVersion(lead, mislabelled).copyVersion, COPY_VERSION);
-  // A lead row that shows a send with no ledger evidence at hand also stays on v2.
+  assert.equal(resolveJoleCopyVersion(lead, mislabelled).threadCopyVersion, COPY_VERSION);
+  // A lead row that shows a send with no ledger evidence at hand began on v2,
+  // and with no Touch 1 row to prove its claim, cannot render a follow-up.
   for (const row of [{ emailStep: '1' }, { emailStatus: 'emailed' }, { lastEmailedAt: '2026-10-19T12:00:40.000Z' }]) {
-    assert.deepEqual(resolveJoleCopyVersion(joleLead(13, row), []), { copyVersion: COPY_VERSION, reason: 'lead_row_shows_prior_send' });
+    assert.equal(resolveJoleCopyVersion(joleLead(13, row), []).threadCopyVersion, COPY_VERSION);
   }
+  assert.throws(() => renderClientLeadEmail(contacted(13), 2, { env: ENV, now: NOW, activities: [] }), /personalization hold/);
   // Matching by address when a ledger row has no lead id (older rows).
   const byEmail = { eventType: 'initial_email_sent', email: 'PAT@gulffab14.com', occurredAt: '2026-10-19T12:00:00.000Z', metadata: '{}' };
-  assert.equal(resolveJoleCopyVersion(joleLead(14), [byEmail]).copyVersion, COPY_VERSION);
+  assert.equal(resolveJoleCopyVersion(joleLead(14), [byEmail]).threadCopyVersion, COPY_VERSION);
   // Another lead's send is not this lead's evidence.
-  assert.equal(resolveJoleCopyVersion(joleLead(15), [sent(joleLead(16))]).copyVersion, CURRENT_COPY_VERSION);
+  assert.deepEqual(resolveJoleCopyVersion(joleLead(15), [sent(joleLead(16))]), { copyVersion: CURRENT_COPY_VERSION, threadCopyVersion: null, step: 1, reason: 'no_outbound_evidence' });
 });
 
-test('3b. a v3 thread stays on v3: its reservation and send record v3, so Touches 2 and 3 render v3', () => {
-  const lead = joleLead(17);
-  const t1 = renderClientLeadEmail(lead, 1, { env: ENV, now: NOW, activities: v3Began(lead) });
+test('3b. a v3 thread keeps its v3 Touch 1; Touches 2 and 3 render v5 with the v3 claim', () => {
   const after = contacted(17);
-  const ledger = [reserved(after, { copyVersion: t1.copyVersion, at: '2026-10-21T12:00:00.000Z' }), sent(after, { copyVersion: t1.copyVersion, at: '2026-10-21T12:00:03.000Z' })];
-  for (const step of [2, 3]) assert.equal(renderClientLeadEmail(after, step, { env: ENV, now: NOW, activities: ledger }).copyVersion, COPY_VERSION_V3);
-  // A v3 attempt whose delivery failed retries as v3 (its reservation carries the version).
+  const ledger = [reserved(after, { copyVersion: COPY_VERSION_V3, at: '2026-10-21T12:00:00.000Z' }),
+    sent(after, { copyVersion: COPY_VERSION_V3, at: '2026-10-21T12:00:03.000Z', subject: 'Millwrights | Mont Belvieu, TX' })];
+  for (const step of [2, 3]) {
+    const email = renderClientLeadEmail(after, step, { env: ENV, now: NOW, activities: ledger });
+    assert.equal(email.copyVersion, COPY_VERSION_V5);
+    assert.equal(email.threadCopyVersion, COPY_VERSION_V3);
+  }
+  assert.equal(renderClientLeadEmail(after, 1, { env: ENV, now: NOW, activities: ledger }).copyVersion, COPY_VERSION_V3);
+  // A v3 attempt whose outcome is unresolved keeps v3, so a recovery records what was attempted.
+  const lead = joleLead(17);
   assert.equal(resolveJoleCopyVersion(lead, [reserved(lead, { copyVersion: COPY_VERSION_V3 })]).copyVersion, COPY_VERSION_V3);
+  // One whose failure (nothing delivered) was recorded does not pin anything.
+  const failed = { eventId: `cold-reserve:${lead.id}:step1:attempt1:failed`, sourceLeadId: lead.id, eventType: 'ordinary_send_failed',
+    occurredAt: '2026-10-19T12:00:39.000Z', metadata: JSON.stringify({ leadId: lead.id, step: 1, reservationEventId: `cold-reserve:${lead.id}:step1:attempt1` }) };
+  assert.equal(resolveJoleCopyVersion(lead, [reserved(lead, { copyVersion: COPY_VERSION_V3 }), failed]).copyVersion, COPY_VERSION_V5);
 });
 
 // ── 4–6. holds, suppression, duplicates ──────────────────────────────────────
@@ -210,7 +235,7 @@ test('5. suppressed Jole leads stay suppressed', () => {
   assert.equal(suppressed.ok, false);
   const unsub = joleLead(31, { stage: 'Unsub', emailStatus: 'done', emailStep: '1' });
   assert.equal(queueEligibility(unsub, { leads: [unsub], env: ENV }).ok, false);
-  assert.equal(resolveJoleCopyVersion(unsub, []).copyVersion, COPY_VERSION, 'an unsubscribed contact is never treated as untouched');
+  assert.equal(resolveJoleCopyVersion(unsub, []).threadCopyVersion, COPY_VERSION, 'an unsubscribed contact is never treated as untouched');
 });
 
 test('6. switching untouched leads to v3 cannot create a duplicate action', () => {
@@ -266,7 +291,7 @@ test('7. ScaleLab leads never resolve to Jole v3', () => {
   assert.doesNotMatch(JSON.stringify(CAMPAIGN_VERSIONS), /jole/i);
   // The agent overrides attribution only with a client email's version; ScaleLab sends pass none.
   const source = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
-  assert.match(source, /function withClientCopyVersion\(attribution, copyVersion, personalization = null\) \{\n  if \(!copyVersion\) return attribution;/);
+  assert.match(source, /function withClientCopyVersion\(attribution, copyVersion, personalization = null, audit = \{\}\) \{\n  if \(!copyVersion\) return attribution;/);
   assert.equal(isClientTemplateId('jole-industrial-employer-v1'), true);
 });
 

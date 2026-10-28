@@ -1270,15 +1270,22 @@ function clientDeliveryCopyProblem(lead, step, body, activities = []) {
 }
 
 // A managed client's send records the copy version it actually rendered (a
-// lead's sequence keeps the version of its first send), and for an
+// sent step keeps the version it recorded; an unsent one renders the current
+// version), and for an
 // evidence-aware version the personalization mode, role and site it used.
+// audit: the version the lead's thread began on and why this touch uses
+// copyVersion (clients/jole-copy.js resolveJoleCopyVersion), when known.
 // ScaleLab attribution is returned untouched.
-function withClientCopyVersion(attribution, copyVersion, personalization = null) {
+function withClientCopyVersion(attribution, copyVersion, personalization = null, audit = {}) {
   if (!copyVersion) return attribution;
+  const rollout = {
+    ...(audit?.threadCopyVersion ? { threadCopyVersion: audit.threadCopyVersion } : {}),
+    ...(audit?.copyVersionReason ? { copyVersionReason: audit.copyVersionReason } : {}),
+  };
   return personalization?.mode ? {
-    ...attribution, copyVersion, personalizationMode: personalization.mode,
+    ...attribution, copyVersion, ...rollout, personalizationMode: personalization.mode,
     personalizationRole: personalization.role || '', personalizationSite: personalization.location || '',
-  } : { ...attribution, copyVersion };
+  } : { ...attribution, copyVersion, ...rollout };
 }
 
 function fromNameForSender(sender) {
@@ -2303,6 +2310,7 @@ async function deliverOrdinaryColdStep({
       // A managed client's copy version, so even an unconfirmed attempt pins
       // the lead's sequence (clients/jole-copy.js resolveJoleCopyVersion).
       ...(isClientTemplateId(lead.emailTemplateId) && attribution?.copyVersion ? { copyVersion: attribution.copyVersion } : {}),
+      ...(isClientTemplateId(lead.emailTemplateId) && attribution?.threadCopyVersion ? { threadCopyVersion: attribution.threadCopyVersion } : {}),
       ...(isClientTemplateId(lead.emailTemplateId) && attribution?.personalizationMode ? {
         personalizationMode: attribution.personalizationMode, personalizationRole: attribution.personalizationRole,
         personalizationSite: attribution.personalizationSite,
@@ -5879,9 +5887,11 @@ async function runInner() {
     let body;
     let clientCopyVersion = '';
     let clientPersonalization = null;
+    let clientCopyAudit = null;
     if (isClientTemplateId(lead.emailTemplateId)) {
       // A managed client's follow-up: its own copy, or a deferral — never the
-      // dental follow-up sequence. The ledger pins the version its thread began on.
+      // dental follow-up sequence. The ledger pins the version of an attempted
+      // step and the claims its thread began with.
       try {
         const email = renderClientLeadEmail(lead, nextStepNum, { activities: ownershipActivities });
         const bad = validateClientLeadEmail(lead, email, nextStepNum);
@@ -5889,6 +5899,7 @@ async function runInner() {
         body = email.body;
         clientCopyVersion = email.copyVersion;
         clientPersonalization = email.personalization || null;
+        clientCopyAudit = { threadCopyVersion: email.threadCopyVersion, copyVersionReason: email.copyVersionReason };
       } catch (error) {
         console.warn(`⏸️  follow-up deferred → ${lead.email} (${error.message})`);
         return false;
@@ -5948,7 +5959,7 @@ async function runInner() {
     }
 
     try {
-      const attribution = withClientCopyVersion(coldSendAttribution(lead, nextStepNum), clientCopyVersion, clientPersonalization);
+      const attribution = withClientCopyVersion(coldSendAttribution(lead, nextStepNum), clientCopyVersion, clientPersonalization, clientCopyAudit);
       const delivery = await deliverOrdinaryColdStep({
         lead, step: nextStepNum, sender: selectedSender, subject, body, attribution,
         activitiesForCycle: ownershipActivities, thread,
@@ -6030,7 +6041,7 @@ async function runInner() {
         // for review) when it is missing, unreviewed or stale.
         if (!isClientTemplateId(lead.emailTemplateId)) throw new Error('managed client lead has no client template');
         const email = renderClientLeadEmail(lead, 1, { activities: ownershipActivities });
-        built = { subject: email.subject, body: email.body, link: '', opener: 'stored client personalization', openerTier: 'LOCKED', pitchTier: familyForLead(lead), copyVersion: email.copyVersion, clientPersonalization: email.personalization || null };
+        built = { subject: email.subject, body: email.body, link: '', opener: 'stored client personalization', openerTier: 'LOCKED', pitchTier: familyForLead(lead), copyVersion: email.copyVersion, clientPersonalization: email.personalization || null, clientCopyAudit: { threadCopyVersion: email.threadCopyVersion, copyVersionReason: email.copyVersionReason } };
       } else if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE) {
         const qualification = qualifyRoofingLead(lead);
         if (!qualification.ok) throw new Error(`roofing lead qualification failed (${qualification.reasonCode})`);
@@ -6132,7 +6143,7 @@ async function runInner() {
     }
 
     try {
-      const attribution = withClientCopyVersion(coldSendAttribution(lead, 1, { personalizationMetadata: validatedPersonalizationMetadata }), built.copyVersion, built.clientPersonalization);
+      const attribution = withClientCopyVersion(coldSendAttribution(lead, 1, { personalizationMetadata: validatedPersonalizationMetadata }), built.copyVersion, built.clientPersonalization, built.clientCopyAudit);
       const delivery = await deliverOrdinaryColdStep({
         lead, step: 1, sender: selectedSender, subject, body, attribution,
         personalizationMetadata: validatedPersonalizationMetadata,

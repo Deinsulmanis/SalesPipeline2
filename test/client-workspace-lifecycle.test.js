@@ -106,9 +106,9 @@ test('import: research rows land in campaign_notes; the lead is still a plain Im
 // ── Personalization ─────────────────────────────────────────────────────────
 test('personalization: renders the approved copy from stored research and Jole\'s own config', () => {
   const lead = joleLead();
-  // A lead whose sequence began on v2 (its Touch 1 recorded v2) keeps v2.
-  const activities = [{ eventType: 'initial_email_sent', sourceLeadId: lead.id, occurredAt: '2026-10-19T12:00:00.000Z',
-    metadata: JSON.stringify({ copyVersion: 'jole_industrial_employer_v2' }) }];
+  // Touches sent on v2 (each recorded v2) reconstruct as v2.
+  const activities = [1, 2].map(step => ({ eventType: step === 1 ? 'initial_email_sent' : 'follow_up_sent', sourceLeadId: lead.id,
+    occurredAt: `2026-10-${18 + step}T12:00:00.000Z`, metadata: JSON.stringify({ copyVersion: 'jole_industrial_employer_v2', step }) }));
   const t1 = renderClientLeadEmail(lead, 1, { env: ENV, now: NOW, activities });
   assert.equal(t1.subject, 'TIG Welders — Liverpool, NY');
   assert.match(t1.body, /^Hi Theodore,\n\nSaw 110 Metalworks is hiring TIG Welders in Liverpool, NY and also has openings for CNC Machinists at the site\./);
