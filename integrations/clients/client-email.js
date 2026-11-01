@@ -19,7 +19,7 @@ const { getClient } = require('./registry');
 const { clientTemplate, clientCampaign } = require('./campaigns');
 const { readLeadProfile } = require('./lead-profile');
 const { JOLE_COPY_VERSIONS, resolveJoleCopyVersion } = require('./jole-copy');
-const { jolePersonalizationFor, joleSelectionHold, joleFollowUpHold } = require('./jole-personalization');
+const { jolePersonalizationFor, joleSelectionHold, joleFollowUpHold, joleDeliverabilityHold } = require('./jole-personalization');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -31,7 +31,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const RENDERERS = Object.freeze({
   'jole-industrial-employer-v1': Object.freeze({
     versions: JOLE_COPY_VERSIONS, resolveVersion: resolveJoleCopyVersion,
-    personalizationFor: jolePersonalizationFor, selectionHold: joleSelectionHold, followUpHold: joleFollowUpHold,
+    personalizationFor: jolePersonalizationFor, selectionHold: joleSelectionHold, followUpHold: joleFollowUpHold, deliverabilityHold: joleDeliverabilityHold,
   }),
 });
 
@@ -95,6 +95,12 @@ function renderClientLeadEmail(lead = {}, step = 1, { env = process.env, now = D
   const inputs = personalizationFor(lead, { now, enforceEvidenceAge: campaignEvidenceAgeApplies(version, renderer.versions) });
   const client = getClient(inputs.campaign.clientId);
   const copyEnv = client.copyEnv || {};
+  // A lead on the deliverability hold never renders Touch 1, so the queue
+  // preflight, the refill and the last check before a reservation all refuse it.
+  // A lead already contacted is past this gate: its thread rendering is unchanged.
+  const untouched = !String(lead.emailStatus || '').trim() && !Number(lead.emailStep || 0);
+  const deliverabilityHold = Number(step) === 1 && untouched ? renderer.deliverabilityHold?.(lead) : '';
+  if (deliverabilityHold) throw fail('selection_hold', deliverabilityHold);
   // A contacted lead whose next touch would repeat a claim found false never continues.
   const followUpHold = Number(step) > 1 ? renderer.followUpHold?.(lead) : '';
   if (followUpHold) throw fail('followup_hold', followUpHold);

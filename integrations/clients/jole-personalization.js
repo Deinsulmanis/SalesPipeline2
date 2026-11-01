@@ -31,6 +31,7 @@
  */
 
 const DATA = require('./data/jole-personalization-v4.json');
+const DELIVERABILITY_DATA = require('./data/jole-deliverability-holds.json');
 const { COPY_VERSION, COPY_VERSION_V3, COPY_VERSION_V4, COPY_VERSION_V5, SENDABLE_MODES, PERSONALIZATION_MODES } = require('./jole-copy');
 const { readLeadProfile } = require('./lead-profile');
 
@@ -46,6 +47,7 @@ const LEADS = Object.freeze(DATA.leads || {});
 const FRESHNESS_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FOLLOW_UP_HOLDS = Object.freeze(DATA.followUpHolds || {});
+const DELIVERABILITY_HOLDS = Object.freeze(DELIVERABILITY_DATA.leads || {});
 
 const OUTBOUND_EVIDENCE = /(?:email_sent|follow_up_sent|sequence_step_sent|booking_link_sent|human_response_sent|send_reserved|send_uncertain)/;
 const metadataOf = row => {
@@ -149,8 +151,21 @@ function jolePersonalizationFor(lead = {}, activities = [], { now = Date.now() }
   };
 }
 
+/**
+ * Why this untouched lead may not get a first touch for deliverability reasons
+ * ('' when it may). The list (data/jole-deliverability-holds.json) names lead
+ * ids with their evidence; it never touches a lead row or a contacted lead.
+ */
+function joleDeliverabilityHold(lead = {}) {
+  const holds = classificationOverride ? classificationOverride.deliverabilityHolds || {} : DELIVERABILITY_HOLDS;
+  const hold = holds[String(lead.id || '').trim()];
+  return hold ? `Jole deliverability hold: ${hold.reason}` : '';
+}
+
 /** Why an untouched lead may not start a v4 sequence ('' when it may). */
 function joleSelectionHold(lead = {}) {
+  const deliverability = joleDeliverabilityHold(lead);
+  if (deliverability) return deliverability;
   const entry = joleClassificationFor(lead);
   if (!entry) return 'not classified for Jole v4 personalization';
   return SENDABLE_MODES.includes(entry.mode) ? '' : `Jole personalization hold: ${entry.reason || 'held for review'}`;
@@ -163,6 +178,6 @@ function joleFollowUpHold(lead = {}) {
 }
 
 module.exports = {
-  JOLE_PERSONALIZATION_DATA: DATA, FRESHNESS_DAYS, evidenceFresh, joleClassificationFor, jolePersonalizationFor, joleSelectionHold, joleFollowUpHold,
+  JOLE_PERSONALIZATION_DATA: DATA, FRESHNESS_DAYS, evidenceFresh, joleClassificationFor, jolePersonalizationFor, joleSelectionHold, joleFollowUpHold, joleDeliverabilityHold,
   setJoleClassificationForTests,
 };

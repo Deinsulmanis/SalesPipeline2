@@ -33,9 +33,11 @@ function clientInboundHealth({
 } = {}) {
   const client = getClient(clientId);
   const mine = (senders || []).filter(sender => String(sender.clientId || '') === client.id);
-  const observers = observerHealth(observerRows, {
-    senderIds: mine.map(sender => sender.id), now,
-  });
+  // observerHealth reports every mailbox it has a row for; this answer covers
+  // this client's inboxes only. Another client's inbound was never ours to handle.
+  const mineIds = new Set(mine.map(sender => sender.id));
+  const observers = observerHealth(observerRows, { senderIds: [...mineIds], now })
+    .filter(observer => mineIds.has(observer.senderInboxId));
   const inboxes = observers.map((observer) => {
     const sender = mine.find(item => item.id === observer.senderInboxId) || {};
     const inbound = (activities || []).filter((row) => {

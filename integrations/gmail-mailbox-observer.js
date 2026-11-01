@@ -4,12 +4,20 @@ const {
   providerRead, isRateLimited, statusOf, persistedGmailMessageIds,
   getMailboxBackoff, signalMailboxBackoff, QUOTA_RETRY_DELAYS_MS,
 } = require('./gmail-api-guard');
-const { DELIVERY_CLASS, classifyDeliveryStatus } = require('./delivery-status');
+const { DELIVERY_CLASS, classifyDeliveryStatus, isDeliveryNotice } = require('./delivery-status');
+const { resolveLeadClient } = require('./clients/ownership');
+const { DEFAULT_CLIENT_ID } = require('./clients/registry');
 
 const DAEMON_FROM = /mailer-daemon|postmaster/i;
 const AUTOMATED_FROM = /mailer-daemon|postmaster|no-?reply|do-?not-?reply/i;
 
 const norm = value => String(value || '').trim().toLowerCase();
+// Gateway notice detection and the finer delivery classes apply to managed
+// clients. ScaleLab's inboxes keep the rules they have always had.
+const isManagedLead = lead => {
+  const owner = resolveLeadClient(lead);
+  return owner.ok && owner.clientId !== DEFAULT_CLIENT_ID;
+};
 const OVERLAP_MS = 5 * 60 * 1000;
 const STALE_MS = 90 * 60 * 1000;
 
@@ -156,24 +164,33 @@ function matchMailboxMessages(messages, { leads = [], activities = [], senderInb
   const { byEmail, byThread, byRfc } = candidateIndexes(leads, activities, senderInboxId);
   const replies = new Map();
   const bounces = new Map();
+  const bounceVerdicts = new Map();
   // Sender-side authentication failures: recorded, never a recipient bounce.
   const senderAuthFailures = new Map();
+  // Delays, temporary failures and policy rejections: recorded, never suppressed.
+  const deliveryNotices = new Map();
   for (const message of messages || []) {
     if ((message.labelIds || []).includes('SENT')) continue;
     const fromAddr = parseAddr(headerValue(message.payload, 'From'));
     if (!fromAddr || fromAddr === norm(senderEmail)) continue;
     const occurredMs = Number(message.internalDate || 0);
     const allText = decodeBodies(message.payload);
-    if (DAEMON_FROM.test(fromAddr)) {
+    const daemonNotice = DAEMON_FROM.test(fromAddr);
+    const gatewayNotice = !daemonNotice && isDeliveryNotice(message.payload, fromAddr) && leads.some(isManagedLead);
+    if (daemonNotice || gatewayNotice) {
       for (const lead of leads) {
         const email = norm(lead.email);
         const afterMs = Date.parse(lead.lastEmailedAt || '');
         if (!email || !Number.isFinite(afterMs) || occurredMs <= afterMs || !bounceMentionsRecipient(allText, email)) continue;
-        // Only positive recipient-side evidence is a bounce. A delay notice or
-        // an SPF/DKIM/DMARC rejection of OUR domain never suppresses a prospect.
+        const managed = isManagedLead(lead);
+        if (gatewayNotice && !managed) continue;
+        // Only positive recipient-side evidence is a bounce. A delay notice, a
+        // policy refusal or an SPF/DKIM/DMARC rejection of OUR domain never
+        // suppresses a prospect.
         const verdict = classifyDeliveryStatus(message.payload, { recipient: email, subject: headerValue(message.payload, 'Subject') });
-        if (verdict.category === DELIVERY_CLASS.RECIPIENT_INVALID) bounces.set(lead.id, message);
-        else if (verdict.category === DELIVERY_CLASS.SENDER_AUTH_FAILURE) senderAuthFailures.set(lead.id, { message, verdict });
+        if (verdict.category === DELIVERY_CLASS.SENDER_AUTH_FAILURE) senderAuthFailures.set(lead.id, { message, verdict });
+        else if (managed ? verdict.suppress : verdict.legacyBounce) { bounces.set(lead.id, message); bounceVerdicts.set(lead.id, verdict); }
+        else if (managed && verdict.category !== DELIVERY_CLASS.UNKNOWN) deliveryNotices.set(lead.id, { message, verdict });
       }
       continue;
     }
@@ -201,7 +218,7 @@ function matchMailboxMessages(messages, { leads = [], activities = [], senderInb
     const prior = replies.get(lead.id);
     if (!prior || Number(prior.internalDate || 0) < occurredMs) replies.set(lead.id, message);
   }
-  return { replies, bounces, senderAuthFailures };
+  return { replies, bounces, bounceVerdicts, senderAuthFailures, deliveryNotices };
 }
 
 async function listChangedIds(gmail, { historyId, maxPages = 20, readOpts } = {}) {
@@ -453,6 +470,6 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
 }
 
 module.exports = { headerValue, parseAddr, decodeBodies, firstPlainText, firstHtmlText, matchMailboxMessages,
-  bounceMentionsRecipient, extractedEmails, listChangedIds, listCatchup, observeMailbox, providerRead, isRateLimited,
+  isManagedLead, bounceMentionsRecipient, extractedEmails, listChangedIds, listCatchup, observeMailbox, providerRead, isRateLimited,
   OVERLAP_MS, STALE_MS, RECOVERY_READ_BUDGET, byIdAscending, persistedGmailMessageIds,
   normalizeRfcId, rfcIdsFromValue };

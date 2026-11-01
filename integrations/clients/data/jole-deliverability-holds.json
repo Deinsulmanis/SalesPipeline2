@@ -1,0 +1,1841 @@
+{
+  "schema": "jole_deliverability_holds_v1",
+  "decidedAt": "2026-11-01",
+  "authorizedBy": "operator instruction 2026-11-01 (Jole deliverability remediation)",
+  "basis": {
+    "firstTouches": 469,
+    "bounces": 19,
+    "proofpointCatchAll": "15/93 = 16.1%",
+    "catchAll": "18/187 = 9.6%",
+    "nonCatchAll": "1/282 = 0.4%"
+  },
+  "release": "Removing an entry lets that lead start its sequence again. Contacted leads are never affected: this list only stops a first touch.",
+  "summary": {
+    "candidates": 91,
+    "held": 91,
+    "excluded": 0
+  },
+  "excluded": [],
+  "leads": {
+    "muz4hqf385db52dff6d7": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "clearwaterpaper.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00345a01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf3ab6481918825": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "domtar.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-001d9703.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf3f414a0883a3b": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "gp.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00164e01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf3c8fdb40c1899": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "guardian.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00164e01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf39ecd00cd41f6": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "guardian.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00164e01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "role_only"
+      }
+    },
+    "muz4hqf3df09ee937969": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "martinmarietta.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-0058fe01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "role_only"
+      }
+    },
+    "muz4hqf33308517ea1f2": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "martinmarietta.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-0058fe01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf32f8649b19ec0": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "martinmarietta.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-0058fe01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "role_only"
+      }
+    },
+    "muz4hqf39fb589f5e5d6": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "novelis.adityabirla.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mx0a-001f4a02.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "general_craft"
+      }
+    },
+    "muz4hqf32dce1fd4ca95": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "novelis.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mx0a-001f4a02.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "general_craft"
+      }
+    },
+    "muz4hqf3ccc066df798d": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "novelis.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mx0a-001f4a02.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "general_craft"
+      }
+    },
+    "muz4hqf4b5857314501c": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "peabodyenergy.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00139201.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf44a0e8f02602b": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "peabodyenergy.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00139201.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf44b98e49f04d9": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "precastcorp.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mx0a-001a0401.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "general_craft"
+      }
+    },
+    "muz4hqf420d54b25660c": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "precastcorp.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mx0a-001a0401.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "general_craft"
+      }
+    },
+    "muz4hqf4d59425d09e5c": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "rockymountainsteelmills.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-001fe501.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf4a9021f1de307": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "rockymountainsteelmills.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-001fe501.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf4c6bc3bfd97f0": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "sarecycling.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00890d01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "role_only"
+      }
+    },
+    "muz4hqf4ee0354a741e7": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "sarecycling.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00890d01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf497dcce7e485e": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "sarecycling.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00890d01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "role_only"
+      }
+    },
+    "muz4hqf4a1f189168048": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "waupacafoundry.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00354c01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf4673418f00553": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "waupacafoundry.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00354c01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf492997064fbdb": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "eqt.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00014502.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf4c1272fb8df0d": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "eqt.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00014502.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "role_only"
+      }
+    },
+    "muz4hqf420ff1d982a68": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "expandenergy.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-0017eb01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf48e3ad6c70f56": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "vallourec.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00163401.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "role_only"
+      }
+    },
+    "muz4hqf49bca46abec60": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "vallourec.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00163401.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "role_only"
+      }
+    },
+    "muz4hqf4d98d01c2a7ba": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "vallourec.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00163401.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf48a2ccd08d259": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "williams.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00188a01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "role_only"
+      }
+    },
+    "muz4hqf4d15894db832a": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "eprod.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00208201.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf4b6e12f092544": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "eprod.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00208201.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf404a78085d4bc": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "eprod.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00208201.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "role_only"
+      }
+    },
+    "muz4hqf5a458b2ac0f9a": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "ameren.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00009501.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "general_craft"
+      }
+    },
+    "muz4hqf5c0f0d92cbbe9": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "ameren.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00009501.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "general_craft"
+      }
+    },
+    "muz4hqf57c53dcdc39be": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "aep.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-0006a701.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "general_craft"
+      }
+    },
+    "muz4hqf50d150fd0ea3c": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "aep.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-0006a701.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "general_craft"
+      }
+    },
+    "muz4hqf54f3ea5cef91b": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "aep.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-0006a701.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf5e76e8adca885": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "aep.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-0006a701.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf533dfd4304e3f": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "onegas.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00197902.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "general_craft"
+      }
+    },
+    "muz4hqf65c427a1ee55b": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "saws.org",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-002ae702.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "role_only"
+      }
+    },
+    "muz4hqf6010abd09faba": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "talenenergy.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mx0a-00331101.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf6aad7e782c72b": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "celanese.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-0016a101.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "role_only"
+      }
+    },
+    "muz4hqf635cd955d9d0c": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "cfindustries.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-001cc202.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf6d2182eeb29fc": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "cfindustries.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-001cc202.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "role_only"
+      }
+    },
+    "muz4hqf6e474f9e332d6": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "invista.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00164e01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "role_only"
+      }
+    },
+    "muz4hqf7cfdc73bd65d7": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "olin.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00676101.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf7f53f14b0c83d": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "solenis.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00325703.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "role_only"
+      }
+    },
+    "muz4hqf70ee551b8762a": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "solenis.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00325703.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "role_only"
+      }
+    },
+    "muz4hqf724d0739de06c": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "valero.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-005ffb01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "role_only"
+      }
+    },
+    "muz4hqf7a2af8934e358": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "venturegloballng.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00597401.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqf7abf4fdb2cc52": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "us.fincantieri.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-0094ee01.gslb.gpphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_industrial_jorge",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqfa6e812f71729d": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "wireco.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint_essentials",
+        "mxHost": "mx1-us1.ppe-hosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_group_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqfabdc9aa6c00b2": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "uss.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00264f01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_group_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqfaa7eb6e3cfbbb": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "centerpointenergy.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-0001aa01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_group_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqfb80f034f34aa3": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "spireenergy.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-004ef101.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_team_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqfb4e0e29f61043": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "spireenergy.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-004ef101.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_team_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "muz4hqfb6e05ce3fdd1f": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "delekus.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Phase5_Final_Corpus 2026-10-07",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00522301.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_team_jorge",
+        "copyMode": "exact"
+      }
+    },
+    "mvcyikhc92b43ceae6d7": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "nouryon.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-003be001.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_team_jorge",
+        "copyMode": "general_craft"
+      }
+    },
+    "mvcyikhd42b3c793253c": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "hinckleyyachts.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint_essentials",
+        "mxHost": "mx1-us1.ppe-hosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_group_jorge",
+        "copyMode": "exact"
+      }
+    },
+    "mvcyikhdf278325d8428": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "hinckleyyachts.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint_essentials",
+        "mxHost": "mx1-us1.ppe-hosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_group_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "mvcyikhd3796fdf2e56a": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "westlakepipe.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-0018f101.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_team_jorge",
+        "copyMode": "general_craft"
+      }
+    },
+    "mvcyikhe2d6e9630df6b": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "valmont.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-001a8001.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_group_jguerrero",
+        "copyMode": "general_craft"
+      }
+    },
+    "mvcyikhe0bfcb0302a64": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "valmont.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-001a8001.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_team_jguerrero",
+        "copyMode": "general_craft"
+      }
+    },
+    "mvcyikheb297e5c64f60": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "crowncork.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00332101.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_group_jorge",
+        "copyMode": "exact"
+      }
+    },
+    "mvcyikhea9f0a03f7f59": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "kochind.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00164e01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_team_jorge",
+        "copyMode": "general_craft"
+      }
+    },
+    "mvcyikhefc608f51c4f9": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "iceindustries.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint_essentials",
+        "mxHost": "mx1-us1.ppe-hosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_group_jorge",
+        "copyMode": "general_craft"
+      }
+    },
+    "mvcyikhea11c899b100f": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "teknorapex.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-007ecb01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_group_jguerrero",
+        "copyMode": "general_craft"
+      }
+    },
+    "mvcyikheb508978449be": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "teknorapex.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-007ecb01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_group_jguerrero",
+        "copyMode": "general_craft"
+      }
+    },
+    "mvcyikhe7f4733132275": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "fuillc.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint_essentials",
+        "mxHost": "mx1-us1.ppe-hosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_group_jorge",
+        "copyMode": "general_craft"
+      }
+    },
+    "mvcyikhe98a4ce6f398c": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "darlingii.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-0066dc03.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_group_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "mvcyikhea15136def9ab": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "darlingii.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-0066dc03.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_team_jorge",
+        "copyMode": "exact"
+      }
+    },
+    "mvcyikhe423049eb236d": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "darlingii.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-0066dc03.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_group_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "mvcyikhe70bf763d01e3": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "winchester.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00676201.gslb.gpphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_group_jguerrero",
+        "copyMode": "general_craft"
+      }
+    },
+    "mvcyikhfa32954632dea": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "epcor.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-003d1301.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_group_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "mvcyikhf42aac1ba2faa": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "epcor.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-003d1301.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_team_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "mvcyikhf6bbd5727c5fd": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "epcor.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-003d1301.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_group_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "mvcyikhf26e461d7f36a": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "glengery.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-002c6801.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_group_jorge",
+        "copyMode": "exact"
+      }
+    },
+    "mvcyikhf4833f1be2950": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "glengery.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-002c6801.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_group_jorge",
+        "copyMode": "exact"
+      }
+    },
+    "mvcyikhff2953a823b7c": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "glengery.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-002c6801.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_team_jorge",
+        "copyMode": "exact"
+      }
+    },
+    "mvcyikhfb315e4e9d411": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "hoodcontainer.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-004b3001.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_team_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "mvcyikhf257ca5e8f01b": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "nicorgas.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00113601.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_team_jguerrero",
+        "copyMode": "general_craft"
+      }
+    },
+    "mvcyikhfca71a13031ad": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "nicorgas.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00113601.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_team_jguerrero",
+        "copyMode": "general_craft"
+      }
+    },
+    "mvcyikhfe2f9f44d053a": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "aerogel.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-0021fa01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_team_jguerrero",
+        "copyMode": "role_only"
+      }
+    },
+    "mvcyikhfae3ecca04a3d": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "ugies.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00634c01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_team_jorge",
+        "copyMode": "exact"
+      }
+    },
+    "mvcyikhf8133d968fcc0": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "ugies.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00634c01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_team_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "mvcyikhf50d964f5224f": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "weil-mclain.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-0023ed01.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_team_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "mvcyikhf1e39c19168ce": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "seaboardenergy.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00166602.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_group_jguerrero",
+        "copyMode": "exact"
+      }
+    },
+    "mvcyikhf835f768c7318": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "seaboardenergy.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-00166602.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_team_jorge",
+        "copyMode": "exact"
+      }
+    },
+    "mvcyikhf96f44f29cd03": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "gelest.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-0048ac03.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_group_jguerrero",
+        "copyMode": "general_craft"
+      }
+    },
+    "mvcyikhf33014eb2c0cd": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "gelest.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-0048ac03.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_group_jguerrero",
+        "copyMode": "general_craft"
+      }
+    },
+    "mvcyikhfafd36e6bc11e": {
+      "segment": "proofpoint_catch_all",
+      "reason": "catch-all domain behind Proofpoint: 15/93 first touches bounced (16.1%)",
+      "evidence": {
+        "recipientDomain": "gelest.com",
+        "domainCatchAll": true,
+        "emailStatus": "VERIFIED",
+        "sourceCorpus": "Jole_Completion_Corpus 2026-10-17",
+        "mxGateway": "proofpoint",
+        "mxHost": "mxa-0048ac03.gslb.pphosted.com"
+      },
+      "originalState": {
+        "stage": "Queued",
+        "emailStatus": "",
+        "emailStep": "",
+        "lastEmailedAt": "",
+        "senderInboxId": "jole_team_jguerrero",
+        "copyMode": "general_craft"
+      }
+    }
+  }
+}

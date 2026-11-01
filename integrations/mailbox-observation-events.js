@@ -2,7 +2,7 @@
 
 // Observation has no sender, stage writer, enrollment capability or model API.
 // Canonical evidence is committed before any subsequent automation evaluation.
-const { headerValue, parseAddr, firstPlainText, firstHtmlText, decodeBodies, matchMailboxMessages, providerRead } = require('./gmail-mailbox-observer');
+const { headerValue, parseAddr, firstPlainText, firstHtmlText, decodeBodies, matchMailboxMessages, providerRead, isManagedLead } = require('./gmail-mailbox-observer');
 const { classifyReplyText } = require('./canonical-reply');
 const { uniqueSuppressions, suppressionForCanonical, inboundAlreadyEvaluated } = require('./inbound-reply-guard');
 const { eventTypeFor, stripQuotedReply } = require('./reply-reconciliation');
@@ -11,10 +11,38 @@ const { providerMessageId } = require('./canonical-sends');
 const { resolveLeadClient } = require('./clients/ownership');
 const { getClient } = require('./clients/registry');
 const { managedReplyNeedsHandler } = require('./clients/reply-pipeline');
+const { DELIVERY_CLASS, LATER_TOUCH_BLOCKING_CLASSES, DELIVERY_DEFERRED_EVENT, DELIVERY_FAILED_EVENT } = require('./delivery-status');
 const norm = value => String(value || '').trim().toLowerCase();
 
 const HUMAN_REPLY_TEXT_LIMIT = 1500;
 const SENDER_AUTH_FAILURE_EVENT = 'sender_auth_delivery_failure';
+const COLD_SEND_EVENTS = new Set(['initial_email_sent', 'follow_up_sent', 'sequence_step_sent']);
+
+// The cold send a delivery notice answers: the latest send to this lead before
+// the notice, preferring the notice's own thread. Cisco and Trend Micro notices
+// start a new thread, so the thread alone cannot name it.
+function originalDelivery(leadRows = [], message, noticeAt) {
+  const rowMeta = row => { try { return typeof row.metadata === 'object' ? row.metadata || {} : JSON.parse(row.metadata || '{}'); } catch (_) { return {}; } };
+  const sends = leadRows.filter(row => COLD_SEND_EVENTS.has(String(row.eventType || '')))
+    .map(row => ({ row, data: rowMeta(row), at: Date.parse(row.occurredAt || '') }))
+    .filter(item => Number.isFinite(item.at) && item.at <= noticeAt)
+    .sort((a, b) => b.at - a.at);
+  const found = sends.find(item => String(item.data.gmailThreadId || '') === String(message.threadId || '')) || sends[0];
+  if (!found) return null;
+  const step = found.row.eventType === 'initial_email_sent' ? 1 : Number(found.data.step ?? found.data.sequenceStep);
+  return { gmailMessageId: providerMessageId(found.row) || '', gmailThreadId: String(found.data.gmailThreadId || ''),
+    sentAt: found.row.occurredAt, ...(Number.isInteger(step) && step >= 1 ? { step } : {}) };
+}
+
+// What a delivery notice literally said, and which send it was about.
+function deliveryFields(verdict = {}, original, noticeFrom) {
+  return { deliveryClass: verdict.category || null, bounceType: verdict.bounceType ?? null,
+    dsnAction: verdict.action || null, dsnStatus: verdict.status || null, enhancedCode: verdict.enhancedCode || null,
+    smtpCode: verdict.smtpCode || null, diagnostic: verdict.diagnostic || null, remoteMta: verdict.remoteMta || null,
+    finalFailure: Boolean(verdict.final), noticeFromDomain: String(noticeFrom || '').split('@')[1] || null,
+    ...(original ? { originalGmailMessageId: original.gmailMessageId, originalGmailThreadId: original.gmailThreadId,
+      originalSendAt: original.sentAt, ...(original.step ? { step: original.step } : {}) } : {}) };
+}
 
 // The words the sender actually wrote, and the ONLY text a reply classifier may
 // read. text/plain when the client sent it; otherwise the text/html part, cut
@@ -67,6 +95,7 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
     && !(item.labelIds || []).includes('SENT')
     && parseAddr(headerValue(item.payload, 'From')) === norm(leadEmail));
   const threadCache = new Map();
+  const plannedDeliveries = new Set();
   const add = event => { if (!existing.has(event.eventId)) { events.push(event); existing.add(event.eventId); } };
   // The first outreach timestamp is authoritative for matching, not the most
   // recent follow-up: a later send must never hide an earlier unseen reply.
@@ -119,7 +148,8 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
     }
     const matched = matchMailboxMessages([message], { leads: matchLeads, activities, senderInboxId, senderEmail });
     const authFailures = matched.senderAuthFailures || new Map();
-    if (!matched.replies.size && !matched.bounces.size && !authFailures.size) { ignored.push({ id: message.id, reason: 'unmatched_or_irrelevant' }); continue; }
+    const deliveryNotices = matched.deliveryNotices || new Map();
+    if (!matched.replies.size && !matched.bounces.size && !authFailures.size && !deliveryNotices.size) { ignored.push({ id: message.id, reason: 'unmatched_or_irrelevant' }); continue; }
     // Our domain failed SPF/DKIM/DMARC: an infrastructure fact about the sender.
     // No suppression — the recipient is not disproven and stays recoverable.
     for (const [leadId, { verdict }] of authFailures) {
@@ -135,11 +165,37 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
     for (const [leadId] of matched.bounces) {
       const lead = byId.get(String(leadId));
       const eventId = `gmail-bounce:${senderInboxId}:${message.id}:${leadId}`;
+      const mine = existingActivitiesByLead.get(lead.id) || [];
+      const original = originalDelivery(mine, message, at);
       suppressions.push({ email: lead.email, reason: 'bounce', company: lead.company });
+      // Two gateways can report the same failed delivery. One bounce row each.
+      const deliveryKey = `email_bounced:${lead.id}:${original?.gmailMessageId || message.id}`;
+      const reported = plannedDeliveries.has(deliveryKey) || (original && mine.some(row => row.eventType === 'email_bounced'
+        && Date.parse(row.occurredAt || '') >= Date.parse(original.sentAt || '')));
+      plannedDeliveries.add(deliveryKey);
+      if (reported && isManagedLead(lead)) continue;
       add({ eventId, leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email, company: lead.company,
         eventType: 'email_bounced', occurredAt, content: '', subject: headerValue(message.payload, 'Subject'),
         metadata: JSON.stringify({ provider: 'gmail', gmailMessageId: message.id, gmailThreadId: message.threadId,
-          senderInboxId, rfcMessageId, recoveredDuringOutage: observation.recovered, autoSendAllowed: false }) });
+          senderInboxId, rfcMessageId, ...deliveryFields(matched.bounceVerdicts?.get(leadId), original, from),
+          recipientSuppressed: true, deliveryKey, recoveredDuringOutage: observation.recovered, autoSendAllowed: false }) });
+    }
+    // Delays, final temporary failures and policy refusals are facts about one
+    // delivery, not about the mailbox, so they never suppress. One row per
+    // delivery and outcome: Gmail repeats a delay notice for days.
+    for (const [leadId, { verdict }] of deliveryNotices) {
+      const lead = byId.get(String(leadId));
+      const original = originalDelivery(existingActivitiesByLead.get(lead.id) || [], message, at);
+      const deferred = verdict.category === DELIVERY_CLASS.TEMPORARY_PROVIDER_DELAY;
+      const deliveryKey = `${verdict.category}:${lead.id}:${original?.gmailMessageId || message.id}:${verdict.enhancedCode || 'nocode'}`;
+      const blocksLaterTouches = LATER_TOUCH_BLOCKING_CLASSES.has(verdict.category);
+      add({ eventId: `gmail-delivery:${senderInboxId}:${deliveryKey}`, leadId: `CE-${lead.id}`, sourceLeadId: lead.id,
+        email: lead.email, company: lead.company, eventType: deferred ? DELIVERY_DEFERRED_EVENT : DELIVERY_FAILED_EVENT,
+        occurredAt, content: '', subject: headerValue(message.payload, 'Subject'),
+        metadata: JSON.stringify({ provider: 'gmail', gmailMessageId: message.id, gmailThreadId: message.threadId,
+          senderInboxId, rfcMessageId, ...deliveryFields(verdict, original, from), recipientSuppressed: false,
+          blocksLaterTouches, deliveryKey, recoveredDuringOutage: observation.recovered, autoSendAllowed: false,
+          requiresHumanAttention: blocksLaterTouches }) });
     }
     for (const [leadId] of matched.replies) {
       const lead = byId.get(String(leadId));

@@ -183,6 +183,7 @@ const { buildConfirmedSendActivity, buildCanonicalDigest, bouncedLeadIds } = req
 const { buildCrmHealth } = require('./integrations/crm-health');
 const { observerHealth } = require('./integrations/gmail-observer-health');
 const { clientInboundHealth } = require('./integrations/clients/inbound-health');
+const { clientDeliveryHealth } = require('./integrations/clients/delivery-health');
 const { gmailUsageSnapshot } = require('./integrations/gmail-api-guard');
 const { observeMailbox } = require('./integrations/gmail-mailbox-observer');
 const { planMailboxEvents } = require('./integrations/mailbox-observation-events');
@@ -6514,7 +6515,11 @@ app.get('/api/ops/send-audit', requireAuth, (req, res) => {
   const date = String(req.query.date || '').trim()
     || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(422).json({ error: 'date must be YYYY-MM-DD' });
-  const child = spawn('node', ['scripts/audit-gmail-crm-sends.js', `--date=${date}`], {
+  // ?client= audits one managed client's inboxes. Its absence is the ScaleLab audit.
+  const client = req.query.client === undefined ? null : resolveClientId(req.query.client);
+  if (client && !client.ok) return res.status(422).json({ error: client.reason });
+  const scoped = client && client.clientId !== DEFAULT_CLIENT_ID ? [`--client=${client.clientId}`] : [];
+  const child = spawn('node', ['scripts/audit-gmail-crm-sends.js', `--date=${date}`, ...scoped], {
     cwd: __dirname, env: process.env,
   });
   let stdout = '', stderr = '';
@@ -6969,6 +6974,17 @@ app.get('/api/ops/jole-inbound-health', requireAuth, async (_req, res) => {
       clientId: 'jole', senders, observerRows: dataset.mailboxObservationState || [],
       activities: dataset.activities || [],
     }));
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// Read-only: how this client's mail is failing, by class, inbox and domain, from
+// the activity ledger. No Gmail call, no send, no write.
+app.get('/api/ops/client-delivery-health', requireAuth, async (req, res) => {
+  try {
+    const client = resolveClientId(req.query.client);
+    if (!client.ok) return res.status(422).json({ error: client.reason });
+    const dataset = await getOutreachDataset();
+    res.json(clientDeliveryHealth({ clientId: client.clientId, senders: configuredSenders(), activities: dataset.activities || [] }));
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 

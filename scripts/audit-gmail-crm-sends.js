@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { google } = require('googleapis');
-const { parseRegistry, credentialsFor } = require('../integrations/gmail-inbox-registry');
+const { parseRegistry, withDefaultInboxes, credentialsFor } = require('../integrations/gmail-inbox-registry');
 const { wrapSheetsReadClient } = require('../integrations/google-sheets-resilience');
 const { senderEvidence, SENDER_ATTRIBUTED_EVENTS } = require('../integrations/gmail-sender-routing');
 const { NON_COLD_STAGES } = require('../integrations/automation-ownership');
@@ -15,7 +15,11 @@ const { isFollowUpDue } = require('../integrations/sequence-timing');
 
 const DATE = (process.argv.find(arg => arg.startsWith('--date=')) || '').slice(7)
   || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+// --client=<id> audits exactly that managed client's inboxes, including the ones
+// the code registers by default. Without it the audit is the ScaleLab one.
+const CLIENT = (process.argv.find(arg => arg.startsWith('--client=')) || '').slice(9).trim();
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
+const missingCredentials = [];
 
 function dayInVancouver(value) {
   const date = new Date(value);
@@ -52,16 +56,20 @@ function decodedText(payload) {
 
 function mailboxes() {
   const result = [];
-  const primaryRaw = process.env.GMAIL_TOKEN_JSON
-    || fs.readFileSync(path.join(__dirname, '..', 'token.json'), 'utf8');
-  const primaryAuth = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET, process.env.GOOGLE_REDIRECT_URI,
-  );
-  primaryAuth.setCredentials(JSON.parse(primaryRaw));
-  result.push({ id: 'primary', expectedEmail: String(process.env.FROM_EMAIL || '').toLowerCase(), auth: primaryAuth });
+  if (!CLIENT) {
+    const primaryRaw = process.env.GMAIL_TOKEN_JSON
+      || fs.readFileSync(path.join(__dirname, '..', 'token.json'), 'utf8');
+    const primaryAuth = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET, process.env.GOOGLE_REDIRECT_URI,
+    );
+    primaryAuth.setCredentials(JSON.parse(primaryRaw));
+    result.push({ id: 'primary', expectedEmail: String(process.env.FROM_EMAIL || '').toLowerCase(), auth: primaryAuth });
+  }
 
-  for (const entry of parseRegistry(process.env.GMAIL_INBOX_REGISTRY_JSON || '[]')) {
-    if (!process.env[entry.tokenEnv]) continue;
+  const registry = parseRegistry(process.env.GMAIL_INBOX_REGISTRY_JSON || '[]');
+  const entries = CLIENT ? withDefaultInboxes(registry).filter(entry => entry.clientId === CLIENT) : registry;
+  for (const entry of entries) {
+    if (!process.env[entry.tokenEnv]) { missingCredentials.push(entry.id); continue; }
     const auth = new google.auth.OAuth2(
       process.env.GMAIL_SECONDARY_GOOGLE_CLIENT_ID,
       process.env.GMAIL_SECONDARY_GOOGLE_CLIENT_SECRET,
@@ -87,7 +95,7 @@ async function sentOnDate(mailbox) {
   const messages = [];
   for (const stub of listed.data.messages || []) {
     const response = await gmail.users.messages.get({
-      userId: 'me', id: stub.id, format: 'full',
+      userId: 'me', id: stub.id, format: CLIENT ? 'metadata' : 'full',
       metadataHeaders: ['From', 'To', 'Cc', 'Subject', 'Message-ID'],
     });
     const item = response.data;
@@ -97,7 +105,7 @@ async function sentOnDate(mailbox) {
       senderInboxId: mailbox.id, senderEmail: authenticatedEmail,
       providerMessageId: item.id || '', threadId: item.threadId || '', occurredAt,
       rfcMessageId: header(item.payload, 'Message-ID'), subject: header(item.payload, 'Subject'),
-      bodySha256: crypto.createHash('sha256').update(decodedText(item.payload)).digest('hex'),
+      bodySha256: CLIENT ? null : crypto.createHash('sha256').update(decodedText(item.payload)).digest('hex'),
       recipients: [...addresses(header(item.payload, 'To')), ...addresses(header(item.payload, 'Cc'))],
     });
   }
@@ -145,15 +153,15 @@ async function main() {
   const sheets = wrapSheetsReadClient(google.sheets({ version: 'v4', auth: sheetAuth }));
   const snapshot = await sheets.spreadsheets.values.batchGet({
     spreadsheetId: SPREADSHEET_ID,
-    ranges: ['ColdEmail!A:X', 'ColdCallActivity!A:J', 'Leads!A:W'],
+    ranges: ['ColdEmail!A:Y', 'ColdCallActivity!A:J', 'Leads!A:W'],
   });
   const values = index => snapshot.data.valueRanges?.[index]?.values || [];
   const cold = values(0).slice(1).map((row, index) => ({
     row: index + 2, id: row[0] || '', company: row[1] || '', email: String(row[3] || '').toLowerCase(),
     stage: row[7] || '', emailStatus: row[8] || '', lastEmailedAt: row[9] || '',
     emailStep: row[10] || '', senderInboxId: row[20] || '',
-    emailTemplateId: row[21] || '', routingRequired: row[22] || '', leadNiche: row[19] || '',
-  })).filter(row => row.id);
+    emailTemplateId: row[21] || '', routingRequired: row[22] || '', leadNiche: row[19] || '', clientId: row[24] || '',
+  })).filter(row => row.id && (!CLIENT || row.clientId === CLIENT));
   const activityHeader = ['eventId','leadId','sourceLeadId','email','company','eventType','occurredAt','subject','content','metadata'];
   const activities = values(1).slice(1).map(row => Object.fromEntries(activityHeader.map((key, i) => [key, row[i] || ''])));
   const activityByProviderId = new Map();
@@ -203,7 +211,7 @@ async function main() {
     id: row[0] || '', company: row[6] || '', email: String(row[10] || '').toLowerCase(), stage: row[12] || '',
   })).filter(row => row.id);
   const unknownSenderOwnership = [];
-  for (const lead of cold) {
+  for (const lead of CLIENT ? [] : cold) {
     const related = activities.filter(row => row.sourceLeadId === lead.id || row.leadId === `CE-${lead.id}`);
     const ids = new Set([lead.senderInboxId, ...related.map(row => metadata(row.metadata).senderInboxId)].filter(Boolean));
     const pipeline = board.find(row => row.id === `CE-${lead.id}` || (lead.email && row.email === lead.email));
@@ -222,6 +230,24 @@ async function main() {
   }
 
   const dueFollowUps = ordinaryFollowUpsDue(cold, Date.now(), activities);
+  // Both directions, by Gmail message id. Mail in Sent that reaches no lead is
+  // warm-up or manual traffic: counted, because it is real volume on the inbox.
+  const sentIds = new Set(allSent.map(message => message.providerMessageId));
+  const inboxIds = new Set(configuredMailboxes.map(box => box.id));
+  const crmSends = activities.filter(row => ['initial_email_sent', 'follow_up_sent'].includes(row.eventType)
+    && dayInVancouver(row.occurredAt) === DATE && inboxIds.has(metadata(row.metadata).senderInboxId));
+  const providerIdOf = row => metadata(row.metadata).gmailMessageId || metadata(row.metadata).providerMessageId || '';
+  const reconciliation = {
+    crmSends: crmSends.length,
+    crmSendsFoundInGmailSent: crmSends.filter(row => sentIds.has(providerIdOf(row))).length,
+    crmSendsMissingFromGmailSent: crmSends.filter(row => !sentIds.has(providerIdOf(row))).map(row => row.eventId),
+    gmailSentToLeadsWithoutCrmRecord: crmMessages.filter(row => !row.activityEventId).map(row => row.providerMessageId),
+    otherGmailSent: allSent.length - crmMessages.length,
+    perInbox: Object.fromEntries(configuredMailboxes.map(box => [box.id, {
+      gmailSent: allSent.filter(message => message.senderInboxId === box.id).length,
+      crmSends: crmSends.filter(row => metadata(row.metadata).senderInboxId === box.id).length,
+    }])),
+  };
   const senderUnknownFollowUps = dueFollowUps.filter(lead => senderEvidence(lead, activities).length !== 1);
   const attributedEvents = activities.filter(row => SENDER_ATTRIBUTED_EVENTS.includes(row.eventType));
   const firstMultiInboxEvidenceAt = attributedEvents
@@ -235,7 +261,7 @@ async function main() {
   });
 
   console.log(JSON.stringify({
-    date: DATE, mailboxesAudited: configuredMailboxes.map(box => box.id),
+    date: DATE, ...(CLIENT ? { client: CLIENT } : {}), mailboxesAudited: configuredMailboxes.map(box => box.id), missingCredentials, reconciliation,
     allSentMessages: allSent.length, crmMatchedMessages: crmMessages.length,
     crmMessages, deterministicGaps: crmMessages.filter(row => !row.checkpointed),
     ordinaryFollowUpOwnership: {

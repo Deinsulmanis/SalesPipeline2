@@ -3,17 +3,21 @@
  * delivery-status.js — what a delivery-status notification proves about the RECIPIENT.
  * ─────────────────────────────────────────────────────────────────────────────
  * A bounce suppresses a prospect permanently, so only positive recipient-side
- * evidence may produce one. Two notices are explicitly NOT that evidence:
+ * evidence may produce one. These notices are explicitly NOT that evidence:
  *
  *   delay        Gmail's "(Delay)" notice says "You'll be notified if the
  *                delivery fails permanently" — the bare word "permanent" once
  *                turned every delay into a hard bounce (Oct 3 2026 incident).
  *   sender auth  SPF/DKIM/DMARC/public-key failures (Microsoft 450 4.7.26 and
  *                friends) describe OUR domain, not their mailbox.
+ *   policy       A permanent refusal for reputation, content or the recipient
+ *                organisation's rules says nothing about the mailbox. A sender
+ *                block would otherwise suppress every prospect it touched.
  *
  * Only the notice's own text is read: the message/delivery-status fields and
  * the human explanation. The returned original message is skipped — its
  * DKIM-Signature / Authentication-Results headers mention DKIM on every DSN.
+ * Status codes are read literally from the notice and never inferred.
  */
 
 const DELIVERY_CLASS = Object.freeze({
@@ -23,12 +27,57 @@ const DELIVERY_CLASS = Object.freeze({
   // A final failure whose status is still 4.x.x (retries expired): the message
   // was not delivered, but nothing says the address is bad.
   UNDELIVERED_TEMPORARY: 'undelivered_temporary',
+  // Permanent, for reputation, content or the recipient organisation's policy.
+  POLICY_REJECTION: 'policy_rejection',
+  // Permanent, because the recipient's own mail routing failed (a mail loop).
+  RECIPIENT_ROUTING_FAILURE: 'recipient_routing_failure',
+  // Permanent, with nothing readable that says why.
+  PERMANENT_UNCLASSIFIED: 'permanent_unclassified',
+  // A gateway's "could not be delivered" that carries no code and no reason.
+  UNDELIVERED_UNSPECIFIED: 'undelivered_unspecified',
   UNKNOWN: 'unknown',
 });
+
+// Permanent failures that keep the long-standing bounce + suppression path.
+const SUPPRESSING_CLASSES = new Set([DELIVERY_CLASS.RECIPIENT_INVALID,
+  DELIVERY_CLASS.RECIPIENT_ROUTING_FAILURE, DELIVERY_CLASS.PERMANENT_UNCLASSIFIED]);
+const HARD_CLASSES = new Set([...SUPPRESSING_CLASSES, DELIVERY_CLASS.POLICY_REJECTION]);
+const SOFT_CLASSES = new Set([DELIVERY_CLASS.TEMPORARY_PROVIDER_DELAY, DELIVERY_CLASS.UNDELIVERED_TEMPORARY]);
+// Final failures that stop the next touch of the sequence without suppressing:
+// a follow-up must not chase an email that never arrived.
+const LATER_TOUCH_BLOCKING_CLASSES = new Set([DELIVERY_CLASS.POLICY_REJECTION, DELIVERY_CLASS.UNDELIVERED_UNSPECIFIED]);
+
+const DELIVERY_DEFERRED_EVENT = 'email_delivery_deferred';
+const DELIVERY_FAILED_EVENT = 'email_delivery_failed';
 
 // The existing hard-bounce vocabulary, unchanged. It is consulted only after
 // delay and sender-auth notices have been ruled out.
 const PERMANENT_FAILURE = /permanent|address not found|no such (?:user|mailbox|address|recipient)|user unknown|does(?: not|n['’]?t) exist|mailbox (?:full|unavailable|is full)|recipient (?:rejected|not found|address rejected)|account (?:has been )?(?:disabled|closed|suspended)|\b55[013456]\b|\b5\.\d\.\d\b/i;
+
+// RFC 3463 enhanced codes, not IP fragments: 10.5.1.1 and 52.101.41.26 never match.
+const ENHANCED_CODE = /(?<![\d.])([245]\.\d{1,3}\.\d{1,3})(?![\d.])/g;
+const SMTP_REPLY = /(?:^|[\s;'"(])([245]\d{2})(?=[ -])/;
+const POLICY_TEXT = /\bspam\b|spamhaus|spamcop|black ?list|block ?list|\breputation\b|\bbanned\b|\bunsolicited\b|content (?:rejected|filter)|rejected (?:by|due to|because of) (?:policy|content|security)|policy (?:violation|rejection|restriction|reasons?)|(?:blocked|denied) by (?:policy|administrator|recipient|sender)|message (?:was |has been )?(?:blocked|quarantined)|sender (?:is |was |has been )?(?:blocked|denied|not allowed|rejected)|not (?:allowed|authorized|permitted) to (?:send|relay)|does not allow external/i;
+const RECIPIENT_TEXT = /recipient (?:address )?(?:rejected|not found)|recipientnotfound|user unknown|unknown (?:user|address|recipient)|no such (?:user|mailbox|address|recipient)|address not found|does(?: not|n['’]?t) exist|mailbox (?:unavailable|not found|full|is full)|invalid (?:recipient|mailbox)|account (?:has been )?(?:disabled|closed|suspended)/i;
+const ROUTING_TEXT = /hop count|mail loop|too many hops|routing loop|no route to/i;
+const UNDELIVERED_TEXT = /could not be delivered|couldn'?t be delivered|was not delivered|wasn'?t delivered|undeliverable|delivery (?:has )?failed/i;
+// 5.1.7/5.1.8 are about the SENDER's address; 5.2.1 is a disabled mailbox.
+const RECIPIENT_CODE = /^5\.1\.(?!7$|8$)\d+$|^5\.2\.[12]$/;
+
+// A delivery notice, however its gateway dresses it. Cisco and Trend Micro send
+// theirs from noreply addresses, so the From line alone misses them. A person's
+// reply is never one: the subject rule needs an automated sender.
+const NOTICE_SUBJECT = /^(?:\[postmaster\]\s*)?(?:undeliverable\b|undelivered mail|delivery status notification|delivery (?:has )?failed|delivery failure|email delivery failure|mail delivery (?:failed|failure|subsystem)|returned mail|failure notice|message (?:not delivered|could not be delivered))/i;
+const AUTOMATED_NOTICE_SENDER = /mailer-daemon|postmaster|no-?reply|do-?not-?reply|mail-?delivery|bounces?@/i;
+function isDeliveryNotice(payload = {}, fromAddress = '') {
+  const header = name => (payload?.headers || []).find(item => norm(item.name) === name)?.value || '';
+  if (/mailer-daemon|postmaster/i.test(fromAddress)) return true;
+  if (/report-type="?delivery-status/i.test(header('content-type'))) return true;
+  const hasStatusPart = part => Boolean(part) && (/^message\/(?:global-)?delivery-status$/i.test(part.mimeType || '')
+    || (part.parts || []).some(hasStatusPart));
+  if (hasStatusPart(payload)) return true;
+  return AUTOMATED_NOTICE_SENDER.test(fromAddress) && NOTICE_SUBJECT.test(header('subject'));
+}
 
 // X.7.23 SPF validation failed · X.7.25 sending IP has no valid reverse DNS ·
 // X.7.26 unauthenticated mail (SPF/DKIM/DMARC). All describe the sender.
@@ -97,7 +146,7 @@ function recipientBlocks(text) {
       current = {}; blocks.push(current);
     }
     if (!current) { current = {}; blocks.push(current); }
-    if (['final-recipient', 'original-recipient', 'action', 'status', 'diagnostic-code', 'will-retry-until'].includes(field)) {
+    if (['final-recipient', 'original-recipient', 'action', 'status', 'diagnostic-code', 'will-retry-until', 'remote-mta'].includes(field)) {
       current[field] = current[field] ? `${current[field]} ${match[2]}` : match[2];
       lastField = field;
     } else lastField = '';
@@ -113,7 +162,13 @@ const recipientOf = block => norm(String(block['final-recipient'] || block['orig
  * @param input    a Gmail message payload, or plain notice text
  * @param recipient the lead address (selects its block in a multi-recipient report)
  * @param subject  the notice subject, when known
- * @returns { category, action, status, final, senderAuth, recipientInvalid }
+ * @returns { category, action, status, final, senderAuth, recipientInvalid,
+ *   suppress, bounceType, enhancedCode, smtpCode, diagnostic, remoteMta }
+ *   suppress    this notice proves a permanent recipient-side failure
+ *   legacyBounce the original rule (any 5.x.x or permanent wording). ScaleLab's
+ *                inboxes keep it, so their suppression behaviour is unchanged.
+ *   bounceType  'hard' (permanent), 'soft' (temporary) or null (the notice does not say)
+ *   enhancedCode, smtpCode, diagnostic  literal notice text; '' when it has none
  */
 function classifyDeliveryStatus(input, { recipient = '', subject = '' } = {}) {
   const parts = typeof input === 'string' ? { status: '', human: input } : noticeParts(input);
@@ -126,7 +181,8 @@ function classifyDeliveryStatus(input, { recipient = '', subject = '' } = {}) {
   const named = all.filter(block => recipientOf(block));
   if (wanted && named.length && !mine.length) return {
     category: DELIVERY_CLASS.UNKNOWN, action: '', status: '', final: false,
-    senderAuth: false, recipientInvalid: false,
+    senderAuth: false, recipientInvalid: false, suppress: false, legacyBounce: false, bounceType: null,
+    enhancedCode: '', smtpCode: '', diagnostic: '', remoteMta: '',
   };
   const blocks = mine.length ? mine : all;
   const actions = blocks.map(block => norm(block.action).split(/\s/)[0]).filter(Boolean);
@@ -141,13 +197,41 @@ function classifyDeliveryStatus(input, { recipient = '', subject = '' } = {}) {
   const delayed = action === 'delayed'
     || (!action && (DELAY_SUBJECT.test(String(subject || '')) || DELAY_TEXT.test(human)));
   const final = !delayed && (action === 'failed' || !action);
+  // The reason as the notice states it: the machine field, or else the human
+  // line naming a code. Addresses are masked; nothing is added or inferred.
+  const humanEvidence = named.length > 1 && mine.length ? '' : human;
+  const reason = diagnostics || humanEvidence;
+  const codes = [...new Set([...`${diagnostics}\n${humanEvidence}`.matchAll(ENHANCED_CODE)].map(match => match[1]))];
+  const specific = [...codes, ...statuses].find(code => !/^[245]\.0\.0$/.test(code)) || status || codes[0] || '';
+  const smtpCode = (SMTP_REPLY.exec(reason) || [])[1] || '';
+  const namesCode = new RegExp(ENHANCED_CODE.source);
+  const reasonLine = diagnostics || String(humanEvidence).split(/\r?\n/).find(line => namesCode.test(line)) || humanEvidence;
+  const diagnostic = String(reasonLine || '').replace(/\s+/g, ' ').trim()
+    .replace(/[a-z0-9._%+=-]+@/gi, '***@').slice(0, 300);
+  const remoteMta = String(blocks.map(block => block['remote-mta'] || '').find(Boolean) || '')
+    .replace(/^[^;]*;\s*/, '').trim().slice(0, 120);
   const result = (category, extra = {}) => ({ category, action, status, final, senderAuth,
-    recipientInvalid: category === DELIVERY_CLASS.RECIPIENT_INVALID, ...extra });
+    recipientInvalid: category === DELIVERY_CLASS.RECIPIENT_INVALID,
+    suppress: SUPPRESSING_CLASSES.has(category),
+    legacyBounce: !senderAuth && !delayed && (status.startsWith('5.') || PERMANENT_FAILURE.test(evidence)),
+    bounceType: HARD_CLASSES.has(category) ? 'hard' : SOFT_CLASSES.has(category) ? 'soft'
+      : category === DELIVERY_CLASS.SENDER_AUTH_FAILURE ? (status.startsWith('5.') ? 'hard' : status.startsWith('4.') ? 'soft' : null) : null,
+    enhancedCode: specific, smtpCode, diagnostic, remoteMta, ...extra });
 
   if (senderAuth) return result(DELIVERY_CLASS.SENDER_AUTH_FAILURE);
   if (delayed) return result(DELIVERY_CLASS.TEMPORARY_PROVIDER_DELAY);
-  if (status.startsWith('5.') || PERMANENT_FAILURE.test(evidence)) return result(DELIVERY_CLASS.RECIPIENT_INVALID);
-  if (action === 'failed' || status.startsWith('4.')) return result(DELIVERY_CLASS.UNDELIVERED_TEMPORARY);
+  // A report's own 4.x.x status outranks loose wording such as "permanently".
+  if (status.startsWith('4.')) return result(DELIVERY_CLASS.UNDELIVERED_TEMPORARY);
+  if (status.startsWith('5.') || codes.some(code => code.startsWith('5.')) || PERMANENT_FAILURE.test(evidence)) {
+    const policyCode = [status, ...codes].some(code => /^5\.7\./.test(code));
+    if (POLICY_TEXT.test(reason) || (policyCode && /access denied/i.test(reason))) return result(DELIVERY_CLASS.POLICY_REJECTION);
+    if (RECIPIENT_TEXT.test(reason) || codes.some(code => RECIPIENT_CODE.test(code)) || RECIPIENT_CODE.test(status)) return result(DELIVERY_CLASS.RECIPIENT_INVALID);
+    if (ROUTING_TEXT.test(reason) || [status, ...codes].some(code => /^5\.4\./.test(code))) return result(DELIVERY_CLASS.RECIPIENT_ROUTING_FAILURE);
+    if (policyCode) return result(DELIVERY_CLASS.POLICY_REJECTION);
+    return result(DELIVERY_CLASS.PERMANENT_UNCLASSIFIED);
+  }
+  if (action === 'failed') return result(DELIVERY_CLASS.UNDELIVERED_TEMPORARY);
+  if (UNDELIVERED_TEXT.test(human)) return result(DELIVERY_CLASS.UNDELIVERED_UNSPECIFIED);
   return result(DELIVERY_CLASS.UNKNOWN);
 }
 
@@ -192,7 +276,8 @@ function retractedBounceEventIds(activities = []) {
 }
 
 module.exports = {
-  DELIVERY_CLASS, PERMANENT_FAILURE, classifyDeliveryStatus, noticeParts, recipientBlocks,
+  DELIVERY_CLASS, PERMANENT_FAILURE, classifyDeliveryStatus, noticeParts, recipientBlocks, isDeliveryNotice,
+  SUPPRESSING_CLASSES, LATER_TOUCH_BLOCKING_CLASSES, DELIVERY_DEFERRED_EVENT, DELIVERY_FAILED_EVENT,
   BOUNCE_RETRACTED_EVENT, RETRACTION_DECISION, NON_RECIPIENT_CLASSES,
   bounceRetractionEventId, retractedBounceEventIds,
 };

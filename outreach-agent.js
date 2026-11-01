@@ -4506,7 +4506,7 @@ async function checkForBounce(lead) {
       if (!gmailMailboxObserver.bounceMentionsRecipient(body, lowerEmail)) continue;
       const verdict = classifyDeliveryStatus(full.data.payload, { recipient: lowerEmail,
         subject: gmailMailboxObserver.headerValue(full.data.payload, 'Subject') });
-      if (verdict.category === DELIVERY_CLASS.RECIPIENT_INVALID) return true;
+      if (tenantOf(lead) === DEFAULT_CLIENT_ID ? verdict.legacyBounce : verdict.suppress) return true;
       if (verdict.category !== DELIVERY_CLASS.UNKNOWN) {
         console.log(`  ⏳ ${lead.email} — ${verdict.category}, not marking bounced`);
       }
