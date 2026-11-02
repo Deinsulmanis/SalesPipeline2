@@ -18,13 +18,31 @@ Root: `C:\Users\deins\OneDrive\JoleBTXOutBound\JoleBTXLeadSample\`
 | `Phase2_Corpus/Jole_REJECT_2026-10-05.csv`, `Jole_HOLD_2026-10-05.csv` | Phase 2 company rejects (staffing, labor overlap, DNC) and holds (contractors, service firms) |
 | `Phase3_Strict_ICP/Phase3_Strict_ICP_Report.md`, `Phase4_Enrichment/Phase4_Jole_Enrichment_Report.md`, `Phase5_Final_Corpus/Jole_Final_Audit_Report.md` | How each gate was applied, worked examples |
 
+Also in `C:\Users\deins\Downloads\` (Nov 2026 buying-signal work, no contacts purchased):
+
+| File | What it holds |
+|---|---|
+| `Jole_150_Company_Buying_Signal_Test.csv`, `Jole_150_Removed_Log.csv` | 145 signal-test companies and removals |
+| `Jole_38_Requalified_Companies.csv`, `Jole_38_Requalification_Report.md` | The current decisions on the 38, under v3 of this skill |
+| `Jole_38_Qualified_Companies_and_Buyers.csv`, `Jole_38_Buyer_Research_List.csv`, `Jole_38_Research_Findings.md` | The pre-v3 research. Its tiers are superseded, but its evidence and 72 buyer records remain useful. |
+
 Also dedupe against the live database:
 - Supabase project `lasyefxhuwysjebasdbf`, table `outreach_leads`, every client.
 - Global suppression.
 
 Run these as read-only `SELECT`s.
 
+## Requalification and research output columns (keep this order)
+
+```
+Company,Website,Industrial sector,Original qualification,Original score,Original deduction reasons,Newly resolved assumptions,Revised ICP eligibility,Revised opportunity score,Revised opportunity priority,Outreach readiness,Verified buying signal,Signal evidence URL,Signal date,Project stage,Relevant trades,Evidence of outside-labor use,Primary buyer,Buyer verification status,Procurement restrictions,Remaining research gaps,Reason for revised classification,Recommended next action
+```
+
+For a new research run with no prior decision, drop the three `Original` columns and `Newly resolved assumptions`.
+
 ## Approved-corpus column schema (keep this exact order)
+
+This schema is for contact waves destined for live V5. `priority_tier`, `verified_role`, `posting_date` and `hiring_evidence_url` are hiring-lane fields.
 
 ```
 source,final_status,reason_code,reason_detail,first_name,last_name,title,buyer_type,company,company_domain,website,email,email_domain,email_status,email_domain_catch_all,apollo_person_id,apollo_organization_id,apollo_organization_name,linkedin_url,contact_city,contact_state,hiring_site,hiring_location_verified_role,site_tie,sector,priority_tier,company_size,verified_role,secondary_role,posting_date,hiring_evidence_url,relevant_roles_30d,core_trade_roles_30d,why_contact_is_relevant,company_contact_number,apollo_credits_used,apollo_organization_id_source
@@ -35,7 +53,7 @@ source,final_status,reason_code,reason_detail,first_name,last_name,title,buyer_t
 | Column | Allowed values |
 |---|---|
 | `sector` | One of the seven ICP sectors, written exactly as in SKILL.md |
-| `priority_tier` | `Tier A` or `Tier B` |
+| `priority_tier` | `Tier A` or `Tier B` (V5 hiring-lane tier, not the opportunity priority) |
 | `buyer_type` | `Plant / operations / production`, `HR / talent acquisition`, `Maintenance / reliability`, `Owner / executive`, or `Superintendent / site leadership` |
 | `site_tie` | `EXACT`, `REGION` or `STATE` |
 | `email_status` | `VERIFIED` only |
@@ -71,5 +89,5 @@ source,final_status,reason_code,reason_detail,first_name,last_name,title,buyer_t
 | Sender name | Jorge Guerrero, CEO |
 | Campaign | `jole-btx-employer-acquisition` (the only campaign Jole's sender policy allows) |
 | Template | `jole-industrial-employer-v1`, a three-touch sequence |
-| Archived Jole campaigns | Data-center, Gulf industrial and shipyard. These were contractor ICPs; never route new leads to them. |
-| Code | SalesPipeline2 on Railway, production branch `cursor/staffing-agent-shadow-production-7402`. Jole config is in `integrations/clients/campaigns.js` and `client-configs.js`. |
+| Archived Jole campaigns | Data-center, Gulf industrial and shipyard. Never route new leads to them. This is a routing rule, not a ban on contractors. |
+| Code | SalesPipeline2 on Railway. The production branch moves, so check `CURRENT_PRODUCTION_BASELINE.md` on `main` and the Railway deployment record instead of trusting a name here. Jole config is in `integrations/clients/campaigns.js` and `client-configs.js`; copy is in `jole-copy.js`; holds are in `integrations/clients/data/jole-deliverability-holds.json`. |
