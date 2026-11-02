@@ -159,7 +159,8 @@ const { leadsForClient, leadDefinitelyOtherClient, resolveLeadClient } = require
 const { clientOutreachView } = require('./integrations/clients/outreach-view');
 const { resolveClientId, DEFAULT_CLIENT_ID, listClients, getClient: getManagedClientConfig } = require('./integrations/clients/registry');
 const { clientSendState, clientSendBlock } = require('./integrations/clients/send-policy');
-const { JOLE_EARLY_CRON } = require('./integrations/clients/send-windows');
+const { JOLE_EARLY_CRON, clientSendWindowVerdict } = require('./integrations/clients/send-windows');
+const { PLACEMENT_TEST_CLIENT, PLACEMENT_TEST_CONFIRM, PLACEMENT_TEST_RECIPIENTS, validPlacementLabel } = require('./integrations/placement-test');
 const { getLedgerStore } = require('./integrations/clients/ledger-store');
 const { emailUniquenessMode, leadsInEmailScope, leadsForCalendarMatching } = require('./integrations/clients/email-scope');
 const { filterInboxesForClient } = require('./integrations/clients/workspace-views');
@@ -7348,6 +7349,25 @@ app.post('/api/integrations/gmail-inboxes/:id/pause', requireAuth, async (req, r
     });
   } catch (error) { res.status(422).json({ error: error.message }); }
 });
+
+// Starts one controlled inbox-placement test (integrations/placement-test.js).
+// The agent process does the sending, behind the same authorization, reservation
+// and quota as a scheduled run. Owned mailboxes only; a repeated label sends nothing.
+app.post('/api/ops/placement-test', requireAuth, (req, res) => {
+  const label = String(req.body?.label || '').trim();
+  if (req.body?.confirm !== PLACEMENT_TEST_CONFIRM || !validPlacementLabel(label)) {
+    return res.status(422).json({ error: 'label and confirmation are required', sends: 0 });
+  }
+  if (clientSendWindowVerdict(PLACEMENT_TEST_CLIENT).allowed) {
+    return res.status(409).json({ error: 'refused: the client send window is open', sends: 0 });
+  }
+  if (agentState.running || automationLaunchReserved) {
+    return res.status(409).json({ error: 'refused: an automation run is active', sends: 0 });
+  }
+  spawnAgent(false, { PLACEMENT_TEST_LABEL: label });
+  res.status(202).json({ started: true, label, recipients: PLACEMENT_TEST_RECIPIENTS.map(item => item.id) });
+});
+// End placement test route
 
 app.get('/api/ops/send-quota', requireAuth, async (_req, res) => {
   try {

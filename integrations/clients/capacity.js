@@ -26,7 +26,8 @@ const { getClient, listClients, resolveClientId } = require('./registry');
 const { clientSendBlock } = require('./send-policy');
 const { tenantOf } = require('./email-scope');
 
-const SUCCESSFUL_SEND_EVENTS = Object.freeze(['initial_email_sent', 'follow_up_sent', 'sequence_step_sent', 'booking_link_sent']);
+const SUCCESSFUL_SEND_EVENTS = Object.freeze(['initial_email_sent', 'follow_up_sent', 'sequence_step_sent', 'booking_link_sent', 'placement_test_sent']);
+const metadataClient = row => { try { return String(JSON.parse(row.metadata || '{}').clientId || ''); } catch (_) { return ''; } };
 
 const nonNegative = value => Math.max(0, value);
 
@@ -49,7 +50,8 @@ function clientSendCountsToday(activities = [], { dayKey, leadsById = new Map(),
     seen.add(key);
     const leadId = String(row.sourceLeadId || '').trim() || String(row.leadId || '').replace(/^CE-/, '');
     const lead = leadsById.get(leadId);
-    const client = (lead && tenantOf(lead)) || fallback;
+    // A placement test has no lead: its row names its client.
+    const client = (lead && tenantOf(lead)) || metadataClient(row) || fallback;
     counts.set(client, (counts.get(client) || 0) + 1);
   }
   return counts;

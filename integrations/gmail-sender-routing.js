@@ -176,7 +176,7 @@ function chooseSender({
 }
 
 const SUCCESSFUL_SEND_EVENTS = Object.freeze([
-  'initial_email_sent', 'follow_up_sent', 'sequence_step_sent', 'booking_link_sent',
+  'initial_email_sent', 'follow_up_sent', 'sequence_step_sent', 'booking_link_sent', 'placement_test_sent',
 ]);
 
 function senderCountsToday(activities = [], dayKey) {

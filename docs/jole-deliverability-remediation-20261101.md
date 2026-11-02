@@ -36,6 +36,20 @@ pins this.
 Rows written before this change have no `deliveryClass`. They stay as written and report as
 `unclassified`.
 
+## Controlled placement test
+
+`POST /api/ops/placement-test` with `{ "label": "seed-20261101a", "confirm": "SEND_PLACEMENT_TEST" }`
+sends one labelled message from each eligible Jole inbox to each mailbox listed in
+`integrations/placement-test.js`. Those mailboxes are owned, and their inbox and spam folders
+can be read.
+
+- The agent process sends, behind the same authorization, durable reservation and quota
+  coordinator as a scheduled run. The sends spend that day's real capacity.
+- It refuses to start while Jole's send window is open or an automation run is active.
+- It reads no prospect. A repeated label sends nothing: its action ids are held.
+- Coverage is Google Workspace only. Adding Microsoft 365 or Proofpoint needs an owned mailbox
+  there, added to the list, with a way to read its junk or quarantine folder.
+
 ## Rollback
 
 1. Redeploy Railway deployment `00b06d86-d344-4224-a96f-637e345c2a10` (`3f13ca2`). No data

@@ -119,6 +119,7 @@ const {
   createClientCapacityState, clientSendCountsToday, clientCapacityVerdict, recordClientSend, clientCapacitySnapshot,
 } = require('./integrations/clients/capacity');
 const { DEFAULT_CLIENT_ID } = require('./integrations/clients/registry');
+const { PLACEMENT_TEST_EVENT, PLACEMENT_TEST_CLIENT, PLACEMENT_TEST_RECIPIENTS, validPlacementLabel, placementMessage, placementSenders, runPlacementTest } = require('./integrations/placement-test');
 const { clientSendBlock } = require('./integrations/clients/send-policy');
 const { clientSendWindowVerdict } = require('./integrations/clients/send-windows');
 // Staffing supplies its own locked copy only. Sender selection, thread pinning,
@@ -273,6 +274,7 @@ const DRY_RUN          = process.env.DRY_RUN !== 'false';          // default TR
 // skips the writes. Used by the 30-minute cron for near-real-time detection.
 const CHECK_ONLY       = process.env.CHECK_ONLY === 'true';
 const SCHEDULED_CLIENT_SCOPE = process.env.SCHEDULED_CLIENT_SCOPE === 'jole' ? 'jole' : '';
+const PLACEMENT_TEST_LABEL = String(process.env.PLACEMENT_TEST_LABEL || '').trim();
 // Terminal leads are checked only when the existing check-only scheduler
 // explicitly enables this flag for its once-daily window.
 const LATE_REPLY_CHECK = process.env.LATE_REPLY_CHECK === 'true';
@@ -1355,14 +1357,20 @@ async function sendEmail({ lead, to, subject, body, html, threadId, inReplyTo, r
           throw preDeliveryRefusal('sender_or_window_closed', finalWindow.reason || 'sender is no longer eligible');
         }
         await markProviderStart();
-        const provider = new GmailOutreachProvider({ send: message => runWithGmailFeature('send_provider', () => gmailForSender(sender, { feature: 'send_provider' }).users.messages.send({
-          userId: 'me',
-          requestBody: { raw: toRawMessage({ ...message, fromEmail: sender.email, fromName: fromNameForSender(sender), extraHeaders }), ...(message.threadId ? { threadId: message.threadId } : {}) },
-        })) });
-        return provider.sendEmail({ to, subject, body, html, threadId, inReplyTo, references, messageId });
+        return gmailProviderSend(sender, { to, subject, body, html, threadId, inReplyTo, references, messageId }, extraHeaders);
       },
     }),
   }));
+}
+
+// The one Gmail provider call. Both callers arrive here through the quota
+// coordinator and a durable reservation.
+function gmailProviderSend(sender, payload, extraHeaders = []) {
+  const provider = new GmailOutreachProvider({ send: message => runWithGmailFeature('send_provider', () => gmailForSender(sender, { feature: 'send_provider' }).users.messages.send({
+    userId: 'me',
+    requestBody: { raw: toRawMessage({ ...message, fromEmail: sender.email, fromName: fromNameForSender(sender), extraHeaders }), ...(message.threadId ? { threadId: message.threadId } : {}) },
+  })) });
+  return provider.sendEmail(payload);
 }
 
 async function loadOutreachProviderState(campaignRowsOverride = null, mappingRowsOverride = null) {
@@ -5531,6 +5539,50 @@ async function runStageSequencePass(allLeads, {
   return sent;
 }
 
+// A controlled inbox-placement test (integrations/placement-test.js). Only the
+// operator route starts this. It reads no prospect, shares every send gate
+// except the client's window: it refuses to run inside that window, so it never
+// competes with a scheduled send for a lane.
+async function runPlacementTestPass() {
+  if (DRY_RUN || CHECK_ONLY) throw new Error('a placement test is a live run');
+  if (!validPlacementLabel(PLACEMENT_TEST_LABEL)) throw new Error('placement test label is invalid');
+  assertSendAuthorized();
+  if (!sendLockEnabled()) throw new Error('durable action reservation is required for a placement test');
+  await assertSendLockReady();
+  const blocked = clientSendBlock(PLACEMENT_TEST_CLIENT);
+  if (blocked) throw new Error(`client send authority: ${blocked.reason}`);
+  if (clientSendWindowVerdict(PLACEMENT_TEST_CLIENT).allowed) throw new Error('refused: the client send window is open');
+  await withAuth(ensureAgentHeaders);
+  const snapshot = await withAuth(loadAgentSnapshot);
+  const activities = await readColdCallActivities(snapshot.activityRows);
+  const senders = placementSenders(GMAIL_SENDERS, { mayStillSend: senderMayStillSend });
+  const dayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+  const sentTodayBySender = senderCountsToday(activities, dayKey);
+  const sentTodayGlobal = successfulSendCountToday(activities, dayKey);
+  // Every send of this client carries one of these inboxes, so no corpus read is needed.
+  const sentTodayByClient = new Map([[PLACEMENT_TEST_CLIENT, senders.reduce((sum, sender) => sum + (sentTodayBySender.get(sender.id) || 0), 0)]]);
+  const plan = buildSendRunPlan({ senders, capacity: SENDER_CAPACITY, sentTodayBySender, sentTodayByClient, sentTodayGlobal,
+    perInboxRunCap: PLACEMENT_TEST_RECIPIENTS.length });
+  activeSendQuotaStore = createPgSendQuotaStore({ connectionString: process.env.SEND_LOCK_DATABASE_URL });
+  const quota = createSendQuotaCoordinator({ store: activeSendQuotaStore, runId: crypto.randomUUID(), dayKey, plan,
+    scheduledTickAt: new Date().toISOString(), deadlineAt: new Date(Date.now() + 25 * 60000).toISOString(),
+    baselines: { global: sentTodayGlobal, clients: sentTodayByClient, senders: sentTodayBySender } });
+  await quota.start();
+  activeSendQuota = quota;
+  const mailingAddress = process.env[getManagedClient(PLACEMENT_TEST_CLIENT).copyEnv?.mailingAddress] || '';
+  const results = await runPlacementTest({ label: PLACEMENT_TEST_LABEL, senders, quota, reserve: withOutboundReservation,
+    deliver: (sender, message) => gmailProviderSend(sender, message),
+    messageFor: ({ label, sender, recipient }) => placementMessage({ label, sender, recipient, senderName: fromNameForSender(sender), mailingAddress }),
+    between: () => new Promise(resolve => setTimeout(resolve, 20000)),
+    record: async ({ actionId, sender, recipient, message, label, gmailMessageId, gmailThreadId }) => {
+      await recordColdCallActivityStrict({ eventId: actionId, leadId: '', sourceLeadId: '', email: recipient.email, company: '',
+        eventType: PLACEMENT_TEST_EVENT, subject: message.subject, content: '', metadata: JSON.stringify({ provider: 'gmail', clientId: sender.clientId,
+          senderInboxId: sender.id, recipientId: recipient.id, recipientProvider: recipient.provider, label, gmailMessageId, gmailThreadId, autoSendAllowed: false }) });
+      await confirmOutboundReservation(actionId).catch(error => console.warn(`[placement-test] reservation confirm: ${error.message}`));
+    } });
+  console.log(JSON.stringify({ event: 'placement_test_finished', label: PLACEMENT_TEST_LABEL, results }));
+}
+
 async function runInner() {
   if (!SPREADSHEET_ID) throw new Error('SPREADSHEET_ID missing from .env');
   if (!DRY_RUN && !CHECK_ONLY && !FROM_EMAIL) throw new Error('FROM_EMAIL missing from .env (required to send)');
@@ -6304,7 +6356,8 @@ async function runInner() {
 
 async function run() {
   let terminationReason = 'complete';
-  try { await runInner(); }
+  try { if (PLACEMENT_TEST_LABEL) await runPlacementTestPass();
+  else await runInner(); }
   catch (error) { terminationReason = 'fatal'; throw error; }
   finally {
     if (activeSendQuota) {
