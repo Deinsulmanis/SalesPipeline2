@@ -237,10 +237,13 @@ def cmd_install(args):
     commit, files = repo_tree(args.repo, args.ref)
     state = read_state(args.home)
     if not args.replace_local_edits:
-        # Local edits: skill files that differ from the commit last installed (on a first install, from the
-        # target). They block the install unless the installation already matches the target.
-        base = repo_tree(args.repo, state['commit'])[1] if state.get('commit') else files
-        edits = [d for d in compare(args.home, base) if d.startswith(SKILL_DRIFT)]
+        # Local edits: skill files that differ from the commit last installed. On a first install there is no
+        # such commit, so only existing files that differ from the target count; a missing file is not an edit.
+        # Edits block the install unless the installation already matches the target.
+        if state.get('commit'):
+            edits = [d for d in compare(args.home, repo_tree(args.repo, state['commit'])[1]) if d.startswith(SKILL_DRIFT)]
+        else:
+            edits = [d for d in compare(args.home, files) if d.startswith(SKILL_DRIFT[1:])]
         if edits and [d for d in compare(args.home, files) if d.startswith(SKILL_DRIFT)]:
             print('Refusing: the installation has changes that are not in %s:' % (state.get('commit') or args.ref)[:12])
             for line in edits:
