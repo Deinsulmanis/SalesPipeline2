@@ -13,7 +13,8 @@ Installation, all generated from that source:
   python tools/sync.py export --to DIR      copy the installed skills into DIR (a docs/jole-skills folder), to commit them
 
 Read-only towards git: it runs only rev-parse, ls-tree and cat-file. It never commits, pushes, checks out,
-fetches, prunes or touches worktrees. Backups go to ~/.claude/backups/jole-skills/, outside the skills folder.
+fetches, prunes or touches worktrees. Backups go to ~/.claude/jole-skill-backups/, outside the skills folder
+and away from Claude Code's own ~/.claude/backups/.
 """
 import argparse
 import datetime
@@ -218,7 +219,7 @@ def cmd_status(args):
 
 
 def backup(home, stamp):
-    target = os.path.join(home, '.claude', 'backups', 'jole-skills', stamp)
+    target = os.path.join(home, '.claude', 'jole-skill-backups', stamp)
     for skill in SKILLS:
         for base, sub in ((os.path.join(home, '.claude', 'skills'), 'claude-skills'), (os.path.join(home, '.agents', 'skills'), 'agents-skills')):
             src = os.path.join(base, skill)

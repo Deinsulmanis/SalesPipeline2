@@ -25,7 +25,7 @@ python %USERPROFILE%\.claude\skills\jolesbtxicpskill\tools\sync.py status
 python <this folder>\jolesbtxicpskill\tools\sync.py install --ref origin/main
 ```
 
-`install` backs up the current copies to `~/.claude/backups/jole-skills/`, and refuses to overwrite local edits that are not committed here.
+`install` backs up the current copies to `~/.claude/jole-skill-backups/`, and refuses to overwrite local edits that are not committed here.
 
 **Tests.** `python jolesbtxicpskill/tests/run_all.py` from this folder runs every skill's tests. The installation check and the discovery tests (Codex pointers, instruction files) run only from the installed copy. The fresh-session check is `jolesbtxicpskill/tests/cold_session/run_cold.py`; it uses real model sessions and costs money.
 

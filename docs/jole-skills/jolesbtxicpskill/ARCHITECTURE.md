@@ -127,7 +127,7 @@ The skills are not kept in the repository's `.claude/skills/`: project skills th
 |---|---|
 | `python tools/sync.py status` | Compares every installed file, pointer and instruction section with the installed commit. Prints IN SYNC or each drifted item; exit 1 on drift. Notes when the installed ref has moved. |
 | `python tools/sync.py status --ref origin/main` | Compares with another ref instead, for example before re-pointing at `main` |
-| `python tools/sync.py install --ref <ref>` | Installs that commit, backs up the current copies to `~/.claude/backups/jole-skills/<time>/`, regenerates the pointers and instruction sections, records the commit. Refuses while the installation has edits that are not in the installed commit, unless `--replace-local-edits`. |
+| `python tools/sync.py install --ref <ref>` | Installs that commit, backs up the current copies to `~/.claude/jole-skill-backups/<time>/`, regenerates the pointers and instruction sections, records the commit. Refuses while the installation has edits that are not in the installed commit, unless `--replace-local-edits`. |
 | `python tools/sync.py export --to <worktree>/docs/jole-skills` | Copies the installed skills into a repository folder so an edit can be committed |
 
 `sync.py` only reads git (`rev-parse`, `ls-tree`, `cat-file`). It never commits, pushes, checks out, fetches, prunes or touches worktrees. `tests/run_all.py` ends with `sync.py status` and fails on drift; `--allow-drift` reports drift without failing, for use mid-edit.

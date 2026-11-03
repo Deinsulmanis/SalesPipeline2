@@ -406,7 +406,7 @@ class Installation(unittest.TestCase):
         self.assertEqual(len(re.findall(r'\bgit\(', source)) - 1, len(re.findall(r"git\(\s*[a-z.]+,\s*'(?:rev-parse|ls-tree|cat-file)'", source)))
 
     def test_backups_stay_outside_the_skills_folder(self):
-        self.assertIn("'backups', 'jole-skills'", C.read(C.POLICY_DIR, 'tools', 'sync.py'))
+        self.assertIn("'.claude', 'jole-skill-backups'", C.read(C.POLICY_DIR, 'tools', 'sync.py'))
 
     def test_instruction_section_files_exist(self):
         self.assertEqual(sorted(INSTRUCTION_SECTIONS), ['claude-section.md', 'codex-section.md'])
