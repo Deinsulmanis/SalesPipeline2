@@ -23,7 +23,7 @@ Also in `C:\Users\deins\Downloads\` (Nov 2026 buying-signal work, no contacts pu
 | File | What it holds |
 |---|---|
 | `Jole_150_Company_Buying_Signal_Test.csv`, `Jole_150_Removed_Log.csv` | 145 signal-test companies and removals |
-| `Jole_38_Requalified_Companies.csv`, `Jole_38_Requalification_Report.md` | The current decisions on the 38, under v3 of this skill |
+| `Jole_38_Requalified_Companies.csv`, `Jole_38_Requalification_Report.md` | The v3 decisions on the 38 and their evidence. The v4 per-dimension decisions, with a reason for every change, are in `tests/regression_38.json`. |
 | `Jole_38_Qualified_Companies_and_Buyers.csv`, `Jole_38_Buyer_Research_List.csv`, `Jole_38_Research_Findings.md` | The pre-v3 research. Its tiers are superseded, but its evidence and 72 buyer records remain useful. |
 
 Also dedupe against the live database:
@@ -32,7 +32,9 @@ Also dedupe against the live database:
 
 Run these as read-only `SELECT`s.
 
-## Requalification and research output columns (keep this order)
+## Requalification and research output columns (v3 runs)
+
+New runs use the batch CSV in CONTRACT.md. This is the schema of the November 2026 requalification files:
 
 ```
 Company,Website,Industrial sector,Original qualification,Original score,Original deduction reasons,Newly resolved assumptions,Revised ICP eligibility,Revised opportunity score,Revised opportunity priority,Outreach readiness,Verified buying signal,Signal evidence URL,Signal date,Project stage,Relevant trades,Evidence of outside-labor use,Primary buyer,Buyer verification status,Procurement restrictions,Remaining research gaps,Reason for revised classification,Recommended next action
@@ -52,9 +54,9 @@ source,final_status,reason_code,reason_detail,first_name,last_name,title,buyer_t
 
 | Column | Allowed values |
 |---|---|
-| `sector` | One of the seven ICP sectors, written exactly as in SKILL.md |
+| `sector` | One of the seven ICP sectors, written exactly as in `jole-icp-qualification` |
 | `priority_tier` | `Tier A` or `Tier B` (V5 hiring-lane tier, not the opportunity priority) |
-| `buyer_type` | `Plant / operations / production`, `HR / talent acquisition`, `Maintenance / reliability`, `Owner / executive`, or `Superintendent / site leadership` |
+| `buyer_type` | `Plant / operations / production`, `HR / talent acquisition`, `Maintenance / reliability`, `Owner / executive`, `Superintendent / site leadership`, or `Procurement / subcontracts` (added in 4.0.0; production stores it as free text, at most 80 characters) |
 | `site_tie` | `EXACT`, `REGION` or `STATE` |
 | `email_status` | `VERIFIED` only |
 | `email_domain_catch_all` | `Y` or `N` |
@@ -80,6 +82,30 @@ source,final_status,reason_code,reason_detail,first_name,last_name,title,buyer_t
 - It builds the `client_lead_profile_v1` profile from `research`.
 - It cleans `verified_role` into a trade name; for example, "Welder - 2nd Shift" becomes "Welders".
 - Helper, apprentice, supervisor and bare "Technician" / "Operator" roles are marked `needs_review`, so prefer a specific trade title in `verified_role`.
+
+## Contact-wave QC files
+
+Every contact record gets `APPROVED`, `HOLD` or `REMOVE` in `final_status`, with one reason code: `weak_buyer_role`, `location_too_remote`, `wrong_site`, `employment_uncertain`, `no_longer_employed`, `email_issue`, `not_icp`, `duplicate`, `dnc`.
+
+Write the files to a new dated folder next to the earlier phases, e.g. `JoleBTXLeadSample/Wave2_<YYYY-MM-DD>/`:
+- Approved CSV, in the approved-corpus schema above.
+- Hold, removed and no-valid-contact CSVs, each with its reasons.
+- An import payload JSON, in the row shape above.
+- A short report:
+  - totals by bucket, sector, priority and buyer type;
+  - the EXACT / REGION / STATE split;
+  - catch-all versus non-catch-all;
+  - credits spent and remaining balance;
+  - questionable accounts;
+  - confirmation that nothing was sent, queued or imported.
+
+## Where the next wave should look first
+
+- **Expansion-pool names that one new trade posting would qualify:** General Dynamics Electric Boat, Great Lakes Dredge & Dock, Edison Chouest Offshore, Aries Marine, Texas International Terminals, Devon Energy, Ascent Resources and Cheniere Energy. Expansion-pool names count as already sourced.
+- **The 140 strict-cohort companies with no Apollo contact.** Try LinkedIn or company sites rather than Apollo.
+- **Pipeline / midstream**, the thinnest sector (15 contacts). Grow it with midstream operators, and assess pipeline contractors under the contractor rule.
+- **The 34 records in `Jole_Final_Review_Hold.csv`**, if their hold reason can be cleared with free checks.
+- **The 38 requalified companies:** v4 decisions in `tests/regression_38.json`; evidence in `Jole_38_Requalified_Companies.csv` in Downloads.
 
 ## Production identifiers
 

@@ -1,0 +1,43 @@
+{
+  "schema": "jole_buyer_fixtures_v1",
+  "skill_version": "1.0.0",
+  "cases": [
+    {"id": "B01", "title": "Large multi-site employer: only an unrelated HQ CFO",
+     "candidate": {"name": "Pat Doe", "role_strength": "WEAK", "source": "company", "current": true, "size": "1001+", "relation": "hq_unrelated"},
+     "expect": "BUYER NOT SITE-CONNECTED"},
+    {"id": "B02", "title": "Large employer: plant manager at the plant in a 2026 press release",
+     "candidate": {"name": "Lee Ray", "role_strength": "STRONG", "source": "public_dated", "current": true, "size": "1001+", "relation": "at_site"},
+     "expect": "BUYER VERIFIED"},
+    {"id": "B03", "title": "Small fabrication shop: owner at HQ, which is the shop",
+     "candidate": {"name": "Sam Lin", "role_strength": "STRONG", "source": "company", "current": true, "size": "1-1000", "relation": "hq_company_level"},
+     "expect": "BUYER VERIFIED"},
+    {"id": "B04", "title": "Unknown size, remote president",
+     "candidate": {"name": "Ann Cole", "role_strength": "STRONG", "source": "company", "current": true, "size": "unknown", "relation": "elsewhere"},
+     "expect": "BUYER NOT SITE-CONNECTED"},
+    {"id": "B05", "title": "Unknown size, HQ leader with verified central authority over plant labor",
+     "candidate": {"name": "Dan Fox", "role_strength": "STRONG", "source": "company", "current": true, "size": "unknown", "relation": "hq_unrelated", "central_authority": true},
+     "expect": "BUYER VERIFIED"},
+    {"id": "B06", "title": "Strong demand, nobody found: never a guessed name",
+     "candidate": {"name": null, "role_strength": "STRONG"}, "expect": "BUYER NOT IDENTIFIED"},
+    {"id": "B07", "title": "Apollo preview with a masked surname",
+     "candidate": {"name": "Chris M.", "role_strength": "STRONG", "source": "apollo_preview", "current": null, "size": "1001+", "relation": "at_site"},
+     "expect": "BUYER PARTIAL"},
+    {"id": "B08", "title": "Production supervisor at the site: weak role",
+     "candidate": {"name": "Joe Park", "role_strength": "WEAK", "source": "company", "current": true, "size": "1001+", "relation": "at_site"},
+     "expect": "BUYER PARTIAL"},
+    {"id": "B09", "title": "Buyer within 50 miles of a large plant",
+     "candidate": {"name": "Kim Hale", "role_strength": "STRONG", "source": "company", "current": true, "size": "1001+", "relation": "within_50mi"},
+     "expect": "BUYER VERIFIED"},
+    {"id": "B10", "title": "Undated LinkedIn headline only",
+     "candidate": {"name": "Rob Diaz", "role_strength": "STRONG", "source": "undated", "current": null, "size": "1-1000", "relation": "at_site"},
+     "expect": "BUYER PARTIAL"}
+  ],
+  "roles": [
+    {"model": "contractor_project", "expect": "Project Director or Construction Manager"},
+    {"model": "plant_turnaround", "expect": "Turnaround or Outage Manager"},
+    {"model": "shipyard", "employees": 2500, "expect": "Shipyard General Manager"},
+    {"model": "fabrication_shop", "employees": 40, "expect": "Owner, CEO or President"},
+    {"model": "plant", "employees": 900, "need": "permanent", "expect": "Site HR or talent acquisition lead"},
+    {"model": "supplier_approval", "expect": "Procurement or subcontracts leader"}
+  ]
+}
