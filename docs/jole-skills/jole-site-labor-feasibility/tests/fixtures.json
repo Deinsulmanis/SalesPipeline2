@@ -1,6 +1,6 @@
 {
   "schema": "jole_feasibility_fixtures_v1",
-  "skill_version": "1.0.0",
+  "skill_version": "1.0.1",
   "cases": [
     {"id": "P01", "title": "Project labor agreement binding suppliers, union referral (TVA pattern)",
      "requirements": [{"trigger": "project_labor_agreement", "kind": "VERIFIED BLOCK", "clause": "PMMA Art. I flowdown; Art. III exclusive representation and referral, any-source after 48 hours"}],

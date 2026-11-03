@@ -49,6 +49,70 @@ OWNER = {
 HARD_DECISIONS = {'EXCLUDED', 'PROHIBITED', 'SUPPRESSED', 'BLOCKED BY VERIFIED REQUIREMENT', 'REJECT'}
 CONFIDENCE = ('HIGH', 'MEDIUM', 'LOW')
 
+# Shared policy section 7, in table order. Days a finding may be relied on for each use:
+# research = research and ranking; action = before spend, import or queue; copy = before a claim in copy.
+# 0 means the same day (live). None means the finding is never a claim in copy.
+FRESHNESS = {
+    'hiring_posting': {'changes': 'Fast', 'research': 30, 'action': 30, 'copy': 30},
+    'project_status': {'changes': 'Medium', 'research': 90, 'action': 90, 'copy': 30},
+    'fit_facts': {'changes': 'Slow', 'research': 365, 'action': 365, 'copy': None},
+    'labor_terms': {'changes': 'Slow', 'research': 365, 'action': 365, 'copy': None},
+    'buyer_employment': {'changes': 'Fast', 'research': 90, 'action': 30, 'copy': None},
+    'crm_suppression': {'changes': 'Fast', 'research': 30, 'action': 0, 'copy': None},
+    'email_status': {'changes': 'Medium', 'research': 30, 'action': 30, 'copy': None},
+}
+USES = ('research', 'action', 'copy')
+# The finding each dimension's reuse rests on. A signal resting only on postings uses hiring_posting.
+DIMENSION_FINDING = {'icp': 'fit_facts', 'signal': 'project_status', 'feasibility': 'labor_terms',
+                     'buyer': 'buyer_employment', 'dedupe': 'crm_suppression', 'dedupe_contact': 'crm_suppression',
+                     'contact': 'email_status'}
+PRODUCTION_HIRING_DAYS = 30  # integrations/clients/jole-personalization.js FRESHNESS_DAYS
+
+
+def age_days(checked, today):
+    import datetime
+    return (datetime.date.fromisoformat(today) - datetime.date.fromisoformat(checked)).days
+
+
+def reliance(finding, checked, today, use, date_passed=False):
+    """(ok, reason). ok False means re-verify before this use. It never changes a decision label."""
+    limit = FRESHNESS[finding][use]
+    if limit is None:
+        return False, 'not a claim in copy'
+    if date_passed:
+        return False, 'a date it records has passed since it was checked'
+    age = age_days(checked, today)
+    if age > limit:
+        return False, '%d days old; %s allows %d for %s' % (age, finding, limit, use)
+    return True, ''
+
+
+def lower(confidence):
+    return {'HIGH': 'MEDIUM', 'MEDIUM': 'LOW'}.get(confidence, 'LOW')
+
+
+def age_adjusted(decision, confidence, finding, checked, today, use='research', date_passed=False):
+    """(decision, confidence, reverify or None). Old evidence lowers reliance, never the decision."""
+    ok, why = reliance(finding, checked, today, use, date_passed)
+    if ok:
+        return decision, confidence, None
+    return decision, lower(confidence), {'finding': finding, 'checked': checked, 'before': use, 'why': why}
+
+
+# Shared policy "How to use", step 2: route by question, not by the number of subjects.
+QUESTION_OWNER = {'fit': 'jole-icp-qualification', 'demand': 'jole-buying-signals', 'priority': 'jole-buying-signals',
+                  'buyer': 'jole-buyer-identification', 'feasibility': 'jole-site-labor-feasibility',
+                  'dedupe': 'jole-dedupe-suppression', 'contact': 'jole-contact-deliverability',
+                  'readiness': 'jole-outreach-readiness'}
+
+
+def route(questions, next_action=False, plan=False):
+    """Skills a session should load for a task that asks these questions (any number of subjects)."""
+    owners = sorted({QUESTION_OWNER[q] for q in questions})
+    if len(owners) == 1 and not next_action and not plan:
+        return [POLICY] + owners
+    return [POLICY, ORCHESTRATOR] + owners
+
 # Shared policy section 2. Display names exactly as written there.
 CLIENT_FAMILY_NAMES = ['Karpower', 'Karpowership', 'Kiewit Offshore Services', 'KOS', 'TIC', 'Weeks Marine',
                        'SpaceX', 'SpaceXAI']
@@ -181,11 +245,15 @@ def validate_output(obj, skill):
     return problems
 
 
-def load_logic(skill, module):
-    """Import a specialist's reference logic by path, without name clashes."""
+def load_module(path, name):
+    """Import a file by path, without name clashes."""
     import importlib.util
-    path = os.path.join(SKILLS_ROOT, skill, 'tests', module + '.py')
-    spec = importlib.util.spec_from_file_location(module, path)
+    spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def load_logic(skill, module):
+    """Import a specialist's reference logic by path."""
+    return load_module(os.path.join(SKILLS_ROOT, skill, 'tests', module + '.py'), module)

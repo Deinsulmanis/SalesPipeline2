@@ -21,7 +21,11 @@ FIXTURES = json.loads(C.read(HERE, 'fixtures.json'))
 REQUIRED = [
     'Do not run all seven skills on every lead',
     'This skill does not redo specialist research and owns no qualification rule of its own',
-    'Reuse any output still inside its freshness window',
+    'Reuse any output still inside its window for the task\'s use',
+    'A past-window result with no new research keeps its label',
+    'Never turn it into NOT EVALUATED or a worse label because of its age',
+    'Not this skill: the owning specialist, loaded directly',
+    'One question, even over a long list, goes straight to the specialist that owns it',
     'If the company fails industrial ICP, stop expensive buyer research',
     'If it is a known suppressed account, stop contact sourcing',
     'If the user wants only company discovery, do not run email qualification',
@@ -55,6 +59,10 @@ class Integrated(unittest.TestCase):
                     self.assertEqual(out['next_action'], e['next_action'])
                 if 'conflicts' in e:
                     self.assertEqual(len(out['conflicts']), e['conflicts'])
+                if 'reverify' in e:
+                    self.assertEqual([r['dimension'] for r in out['reverify']], e['reverify'])
+                for dim, want in e.get('confidence', {}).items():
+                    self.assertEqual(out['dimensions'][dim]['confidence'], want, dim)
                 if 'overlap' in e:
                     self.assertEqual(out['dimensions']['icp']['details']['labor_supply_overlap'], e['overlap'])
                 self.assertIn(out['next_action'], C.LABELS['next_action'])
@@ -96,6 +104,55 @@ class Principles(unittest.TestCase):
         order = 'STOP, then HOLD, REVIEW, RESEARCH FIT, RESEARCH FEASIBILITY, RESEARCH SIGNAL, RESEARCH BUYER, SOURCE CONTACT, VERIFY CONTACT, COPY REVIEW, HUMAN REVIEW'
         self.assertIn(order, policy)
         self.assertEqual(', '.join(C.LABELS['next_action']).replace('STOP, HOLD', 'STOP, then HOLD'), order)
+
+
+class Freshness(unittest.TestCase):
+    TODAY = '2026-11-03'
+
+    def test_age_never_changes_a_label(self):
+        """Any recorded label, three years old and with no new research, comes back unchanged."""
+        for dim in ('icp', 'signal', 'buyer', 'feasibility', 'dedupe', 'contact'):
+            for label in C.LABELS[dim if dim != 'signal' else 'signal']:
+                prior = {dim: {'decision': label, 'date': '2023-11-01', 'version': '1.0.0', 'confidence': 'HIGH'}}
+                out = O.run({'task': 'full', 'today': self.TODAY, 'prior': prior})
+                with self.subTest(dim=dim, label=label):
+                    rec = out['dimensions'][dim]
+                    self.assertEqual(rec['decision'], label)
+                    self.assertEqual(rec['confidence'], 'MEDIUM')
+                    self.assertIn(dim, [r['dimension'] for r in out['reverify']])
+
+    def test_old_fit_is_never_an_exclusion(self):
+        for age_years in (1, 2, 5):
+            date = '%d-11-01' % (2026 - age_years)
+            out = O.run({'task': 'requalify', 'today': self.TODAY,
+                         'prior': {'icp': {'decision': 'QUALIFIED', 'date': date, 'version': '1.0.0'}}})
+            self.assertEqual(out['dimensions']['icp']['decision'], 'QUALIFIED')
+            self.assertNotEqual(out['next_action'], 'STOP')
+
+    def test_windows_come_from_the_shared_table(self):
+        self.assertFalse(hasattr(O, 'REUSE_DAYS'), 'the orchestrator must not keep its own windows')
+        for dim, finding in C.DIMENSION_FINDING.items():
+            self.assertIn(finding, C.FRESHNESS, dim)
+
+    def test_versions_come_from_frontmatter(self):
+        for dim, skill in O.SKILL_OF.items():
+            self.assertEqual(O.VERSION[dim], C.frontmatter(C.skill_text(skill))['version'], dim)
+
+
+class Routing(unittest.TestCase):
+    def test_single_question_never_loads_the_orchestrator(self):
+        for q in C.QUESTION_OWNER:
+            self.assertEqual(C.route([q]), [C.POLICY, C.QUESTION_OWNER[q]], q)
+
+    def test_multi_question_tasks_load_it(self):
+        self.assertIn(C.ORCHESTRATOR, C.route(['fit', 'demand']))
+        self.assertIn(C.ORCHESTRATOR, C.route(['fit'], next_action=True))
+        self.assertIn(C.ORCHESTRATOR, C.route(['dedupe', 'fit'], plan=True))
+        self.assertEqual(C.route(['demand', 'priority']), [C.POLICY, 'jole-buying-signals'])
+
+    def test_single_dimension_plan_runs_one_step(self):
+        for dim in ('icp', 'signal', 'buyer', 'feasibility', 'dedupe', 'contact', 'readiness'):
+            self.assertEqual(len(O.plan('single:' + dim)), 1, dim)
 
 
 class Policy(unittest.TestCase):

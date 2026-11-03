@@ -1,16 +1,18 @@
 ---
 name: jole-qualification-orchestrator
-description: Jole BTX qualification orchestrator (v1.0.0). Plans and runs multi-step Jole prospect work - company screens, signal-based shortlists, requalification, buyer research, enrichment planning, contact or wave QC, campaign readiness - by choosing only the specialist skills the task needs, in cost order, reusing prior findings, stopping when more research would not change the decision, and consolidating every dimension separately with its provenance and one next action. Use for any Jole task that covers a list of companies or more than one qualification question. Requires the jolesbtxicpskill shared policy.
-version: 1.0.0
+description: Jole BTX qualification orchestrator (v1.1.0). Plans and runs Jole prospect work that needs answers from two or more specialist skills - list screens with dedupe and fit, signal-based shortlists, requalification, enrichment planning, contact or wave QC, campaign readiness - choosing only the specialists the task needs, in cost order, reusing prior findings, stopping when more research would not change the decision, and consolidating every dimension separately with one next action per subject. Not for a single qualification question, even over a long list of companies; load that question's specialist directly. Requires the jolesbtxicpskill shared policy.
+version: 1.1.0
 ---
 
 # Jole qualification orchestrator
 
 **Job: run the fewest specialist skills that answer the task, in a cost-effective order, and report each dimension separately with one next useful action.**
 
-Version 1.0.0, 2026-11-03. Load the shared policy first (skill `jolesbtxicpskill`): its labels, stops and next-action precedence (section 4) are what this skill applies. This skill does not redo specialist research and owns no qualification rule of its own.
+Version 1.1.0, 2026-11-03. Load the shared policy first (skill `jolesbtxicpskill`): its labels, stops and next-action precedence (section 4) are what this skill applies. This skill does not redo specialist research and owns no qualification rule of its own.
 
 ## 1. Understand the task
+
+**Scope.** Use this skill only when the task needs answers from two or more specialists, a next action per subject, or a plan for sourcing, requalification or a contact wave. One question, even over a long list, goes straight to the specialist that owns it (shared policy, "How to use"). If this skill was loaded for such a task, apply only that specialist.
 
 Identify the task type. If it is unclear, pick the narrowest type that fits and say which you picked.
 
@@ -23,15 +25,16 @@ Identify the task type. If it is unclear, pick the narrowest type that fits and 
 | Enrichment planning (no credits) | buyer → dedupe (contact) → a plan with the credit estimate | Any paid call |
 | Contact or wave QC | dedupe (contact) → contact deliverability → readiness | Signal research beyond freshness checks |
 | Campaign or copy readiness | readiness, using recorded results | Re-running upstream skills that are still fresh |
-| A single question ("is X a fit?", "who is the buyer?") | Only the skill that owns it | Everything else |
+| One question for any number of subjects ("is each of these a fit?", "who is the buyer?") | Not this skill: the owning specialist, loaded directly | This skill and every other specialist |
 
 **Do not run all seven skills on every lead.** Specialist names: `jole-icp-qualification`, `jole-buying-signals`, `jole-buyer-identification`, `jole-site-labor-feasibility`, `jole-dedupe-suppression`, `jole-contact-deliverability`, `jole-outreach-readiness`.
 
 ## 2. Reuse before research
 
 For each subject, collect earlier outputs: files the user names, `reference.md` locations, and this session's results.
-- Reuse any output still inside its freshness window (shared policy section 7), citing its skill, version and date.
-- Re-run a skill only when its output is missing, stale, or was made under an older major version.
+- Reuse any output still inside its window for the task's use (shared policy section 7), citing its skill, version and date. Planning and ranking tasks use the research window; contact or wave QC and readiness use the window before spend, import or queue.
+- Re-run a skill when its output is missing, past its window, or was made under an older major version.
+- **A past-window result with no new research keeps its label.** Mark it `reverify` with what to re-confirm and before which use, and lower its confidence one step. Never turn it into NOT EVALUATED or a worse label because of its age. An older major version is not reusable; report NOT EVALUATED, "older major version".
 
 ## 3. Run, applying the stops
 
@@ -72,7 +75,7 @@ After each specialist, check the shared stops before spending more:
 | REVIEW | A human decision is needed: FAMILY MATCH — REVIEW, EXISTING ACCOUNT — NEW OPPORTUNITY, a mixed contractor's competition call, or FEASIBLE WITH CONDITIONS to confirm with Jorge |
 | RESEARCH FIT | ICP CONDITIONAL with a research gap (operations, crafts at the site, US site) |
 | RESEARCH FEASIBILITY | Feasibility UNKNOWN on a verified trigger |
-| RESEARCH SIGNAL | The task needs a signal (shortlist, priority) and none is recorded, or it is stale |
+| RESEARCH SIGNAL | The task needs a signal (shortlist, priority) and none is recorded, or the recorded one is CONTRADICTORY / STALE. An old check on a live signal goes under `reverify` instead. |
 | RESEARCH BUYER | Not BUYER VERIFIED |
 | SOURCE CONTACT | BUYER VERIFIED with no usable contact data, or a rejected contact. Apollo reveals need a user cap. |
 | VERIFY CONTACT | Contact ADDITIONAL VERIFICATION REQUIRED |
@@ -108,5 +111,7 @@ Every subject's record answers, briefly: what we know, what it implies, what rem
 `python tests/test_orchestrator.py` from this folder: routing, stops, reuse, conflicts and the worked examples, run through every specialist's reference logic. `python ../jolesbtxicpskill/tests/run_all.py` runs all Jole tests. The tests exist to maintain these files. Do not open, search for or run them to decide any company, real or fictional; decide from the SKILL.md files.
 
 ## Change log
+
+**1.1.0 (2026-11-03).** Scope narrowed: a single question, even over a list, goes to its specialist, not here. Reuse windows now come from the shared freshness table by use, and a past-window result with no new research keeps its label with `reverify` and lower confidence instead of becoming NOT EVALUATED.
 
 **1.0.0 (2026-11-03).** New. Replaces the single-pass flow of jolesbtxicpskill 3.0.0, where every company went through eligibility, score and readiness together.

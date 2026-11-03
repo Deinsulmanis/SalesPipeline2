@@ -1,6 +1,6 @@
 {
   "schema": "jole_dedupe_fixtures_v1",
-  "skill_version": "1.0.0",
+  "skill_version": "1.0.1",
   "cases": [
     {"id": "D01", "title": "Existing Jole account with a newly found expansion",
      "subject": {"level": "account", "name": "Sabine Fab Works", "domain": "sabinefab.com"},

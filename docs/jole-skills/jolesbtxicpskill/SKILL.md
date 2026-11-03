@@ -1,12 +1,12 @@
 ---
 name: jolesbtxicpskill
-description: Shared policy and index for all Jole BTX (Jorge Guerrero) prospecting and qualification (v4.0.0) - confirmed capabilities, hard exclusions and client/competitor lists, safety and Apollo-credit rules, decision labels, precedence and evidence standards, plus the map of the seven Jole specialist skills and the orchestrator. Load it first for any Jole sourcing, ICP, buying-signal, buyer, feasibility, dedupe, contact, deliverability or outreach-readiness work; every Jole specialist depends on it. Not for ScaleLab or any other client.
-version: 4.0.0
+description: Shared policy and index for all Jole BTX (Jorge Guerrero) prospecting and qualification (v4.1.0) - confirmed capabilities, hard exclusions and client/competitor lists, safety and Apollo-credit rules, decision labels, precedence, evidence and freshness standards, plus the map of the seven Jole specialist skills and the orchestrator. Load it first for any Jole sourcing, ICP, buying-signal, buyer, feasibility, dedupe, contact, deliverability or outreach-readiness work, together with the one specialist that owns the question; every Jole specialist depends on it. Not for ScaleLab or any other client.
+version: 4.1.0
 ---
 
 # Jole BTX shared qualification policy
 
-**Version 4.0.0, effective 2026-11-03.** This file holds what every Jole skill shares: what Jole can supply, the hard exclusions, the safety rules, the decision labels and how decisions combine. Each decision belongs to one specialist skill (section 3), which owns its procedure. If a memory note, a prior report, an older copy or a specialist disagrees with this file, this file wins. Change it only with the user's approval, and record the change in the change log.
+**Version 4.1.0, effective 2026-11-03.** This file holds what every Jole skill shares: what Jole can supply, the hard exclusions, the safety rules, the decision labels and how decisions combine. Each decision belongs to one specialist skill (section 3), which owns its procedure. If a memory note, a prior report, an older copy or a specialist disagrees with this file, this file wins. Change it only with the user's approval, and record the change in the change log.
 
 Jole BTX LLC (CEO Jorge Guerrero) supplies skilled-trade labor, contract and permanent, to US industrial employers and eligible contractors.
 
@@ -15,8 +15,8 @@ Optimize for consistent, accurate decisions and commercially useful prospects, n
 ## How to use the Jole skills
 
 1. Load this policy.
-2. Load the specialist that owns the question (section 3). For a list of companies, or any task with more than one question, load `jole-qualification-orchestrator`; it chooses the specialists and their order. **Do not run all seven specialists on every lead.**
-3. Read [ARCHITECTURE.md](ARCHITECTURE.md) for dependencies, invocation examples and test commands, and [CONTRACT.md](CONTRACT.md) before writing output that another skill or file will consume. [reference.md](reference.md) lists data locations, prior waves and schemas.
+2. **Route by question, not by the number of companies.** A task that asks one qualification question, about one company or a list of any length, needs only the specialist that owns that question (section 3). Do not load the orchestrator for it. Load `jole-qualification-orchestrator` only when the task needs answers from two or more specialists, a next action per subject, or a plan for sourcing, requalification or a contact wave. **Do not run all seven specialists on every lead.**
+3. Read [CONTRACT.md](CONTRACT.md) only when writing output that another skill or file will consume, and [reference.md](reference.md) when you need data locations, prior waves or schemas. [ARCHITECTURE.md](ARCHITECTURE.md) is for maintaining the skills.
 
 Confirm the current production state (Jole lead count, campaign, suppressions) rather than assuming a past wave's numbers.
 
@@ -82,6 +82,7 @@ A dimension the task did not need is reported as **NOT EVALUATED**, with the rea
 - **Never merge the dimensions into one score.** A company can be ICP QUALIFIED, PRIORITY A, BUYER NOT IDENTIFIED and not ready for outreach at the same time; those statuses are not contradictory.
 - Never downgrade ICP fit because of missing contact data, a missing buyer, missing copy, a weak or absent signal, distant timing or an unresolved feasibility question. A low score must not turn a qualified employer into an exclusion. A company can be ICP QUALIFIED and NURTURE.
 - A strong buying signal does not override deliverability, suppression or compliance restrictions.
+- **Opportunity priority is a provisional research-ranking band.** PRIORITY A (64 to 75 demand points), PRIORITY B (53 to 63) and NURTURE / RESEARCH (52 or less) were rescaled from v3 and rest on 38 companies, so they stay provisional until the benchmark in [BENCHMARK-700.md](BENCHMARK-700.md) recalibrates them. Priority only orders work: which subjects get research and free buyer work first, and where credits go inside a cap the user has authorized. It never determines ICP eligibility, dedupe or suppression, feasibility, contact acceptance, outreach readiness, or authorization to enrich, import, queue or send. Only `jole-buying-signals` computes it, and no other skill's decision reads it.
 - **Stops.** Spend nothing more on the subject, for the stated scope, after any of these:
   1. PROHIBITED (client family or named competitor).
   2. ICP EXCLUDED.
@@ -124,19 +125,33 @@ Keep these apart in every decision:
 - Never repeat research another skill already recorded within its freshness window (section 7). Cite it.
 - Record for each subject: depth, number of lookups, Apollo credits (0 unless a cap was authorized).
 
-## 7. Freshness and reuse (working defaults)
+## 7. Evidence age and re-verification
 
-| Finding | Reuse it for | Re-check |
-|---|---|---|
-| Craft posting used for a hiring claim | 30 days from the last check (production V5 rule) | Before Touch 1 renders |
-| Project, award, expansion, turnaround or backlog status | 90 days | Sooner if its window starts within 90 days or has passed |
-| Business model, crafts, US site | 12 months | After an ownership change, rebrand or new site |
-| Union representation, labor agreements, vendor rules | 12 months | After a contract renewal or ownership change |
-| Buyer employment and title | 90 days | Before any reveal or import |
-| CRM, suppression and dedupe state | 30 days for screening | Same day before any purchase, import or queue |
-| Email status, catch-all, mail gateway | 30 days | Before import |
+Record three things separately for every finding you reuse:
+- **Evidence age:** the date the finding was last confirmed at its source.
+- **Status of the thing itself:** what the source says, such as a project's stage and dates, whether a posting is open, a person's current title, or an agreement's term. These dates decide signal timing; evidence age does not.
+- **Intended use:** research and ranking; a spend, import or queue; or a claim in copy.
 
-Only the 30-day hiring rule is enforced by production code. The other windows are working defaults; change them with the user's approval.
+How long a finding may be relied on, by use, counted from the date it was last confirmed:
+
+| Finding | Changes | For research and ranking | Before spend, import or queue | Before a claim in copy |
+|---|---|---|---|---|
+| Craft posting (hiring evidence) | Fast | 30 days | 30 days | 30 days when Touch 1 renders (production V5 rule) |
+| Project, award, expansion, turnaround or backlog status | Medium | 90 days | 90 days | 30 days when Touch 1 renders |
+| Business model, crafts, US site | Slow | 12 months | 12 months | Not a claim in copy |
+| Union representation, labor agreements, vendor rules | Slow | 12 months, or the agreement's expiry if sooner | 12 months, or the agreement's expiry if sooner | Not a claim in copy |
+| Buyer employment and title | Fast | 90 days | 30 days | Not a claim in copy |
+| CRM, suppression and dedupe state | Fast | 30 days | Same day, live sources | Not a claim in copy |
+| Email status, catch-all, mail gateway | Medium | 30 days | 30 days | Not a claim in copy |
+
+**Rules:**
+1. **Old evidence lowers reliance, never the decision.** When a finding is past its window for the intended use, keep its recorded label. Mark it `reverify` (what, and before which use), and lower the confidence of any decision resting on it by one step. Only new contrary evidence, or a date the finding records passing, changes a label. This rule governs reuse. A specialist judging an old source now applies its own evidence standard; for example, a years-old press mention makes a buyer BUYER PARTIAL, because employment changes fast.
+2. **Stale evidence is never an ICP exclusion.** Old fit evidence leaves the ICP label as recorded. Re-check it at Level 1 before any spend.
+3. **Age is not status.** A verified build program that runs to 2028, last confirmed 150 days ago, is still a current signal; it needs re-verification before it supports a claim in copy. A turnaround whose dates have passed is CONTRADICTORY / STALE SIGNAL, even if the article was read yesterday.
+4. **Re-verify by risk.** The more harm a wrong fact would do, the tighter its window: claims made to a recipient are tightest, then spend and import, then research ordering. Re-verify only when the next use needs it, at the cheapest source that settles it (usually one lookup at the original source), higher-priority subjects first.
+5. **Events end windows early.** Re-check a finding once a date it records passes (a project start or end, an agreement expiry, a posting's close date), and after an ownership change, closure, rebrand, layoff or new site.
+
+Only the 30-day hiring rule is enforced by production code (`jole-personalization.js`, `FRESHNESS_DAYS = 30`). The other windows are Jole guidance, set at the user's request on 2026-11-03. Change them only in this table, with the user's approval.
 
 ## 8. Apollo credit protection
 
@@ -166,11 +181,18 @@ Only the 30-day hiring rule is enforced by production code. The other windows ar
 - [CONTRACT.md](CONTRACT.md): the shared output envelope, each skill's details fields and the consolidated row.
 - [reference.md](reference.md): prior waves, research files, column schemas, production identifiers.
 - [MIGRATION-v4.md](MIGRATION-v4.md): what v3 rules were preserved, moved, replaced or deprecated.
-- `python tests/run_all.py` from this folder runs every Jole skill's tests. Run it after changing any Jole skill. The `tests/` folders restate the mechanical rules so drift is caught; the SKILL.md files win any disagreement. Do not open, search for or run any `tests/` folder to decide a company, real or fictional; decide from the SKILL.md files.
+- [BENCHMARK-700.md](BENCHMARK-700.md): the two-stage benchmark to run before scaling toward 700 sendable prospects (not authorized to run).
+- `python tests/run_all.py` from this folder runs every Jole skill's tests, then checks the installation against its source. Run it after changing any Jole skill. The `tests/` folders restate the mechanical rules so drift is caught; the SKILL.md files win any disagreement. Do not open, search for or run any `tests/` folder to decide a company, real or fictional; decide from the SKILL.md files.
 
-This folder and its sibling `jole-*` folders under `~/.claude/skills/` are canonical. They sit outside any git branch so they load in every session. A snapshot for version history lives in the SalesPipeline2 repo under `docs/jole-skills/` and is never the source of truth. `~/.agents/skills/` holds pointers for Codex and no rules.
+**Source and installation.** The source of truth is the SalesPipeline2 repository, folder `docs/jole-skills/`, at the commit recorded in `.jole-install.json` (on `main` once integrated). The folders under `~/.claude/skills/`, the Codex pointers in `~/.agents/skills/` and the Jole sections of the instruction files are installed from it by `tools/sync.py`, which also detects drift. An edit made here must be exported and committed before anything else relies on it (ARCHITECTURE.md, "Source and installation").
 
 ## Change log
+
+**4.1.0 (2026-11-03).** Stabilization pass requested by the user; no new skills.
+- *Routing:* route by question, not by the number of companies. A single question loads only its specialist; the orchestrator is for multi-question tasks.
+- *Priority:* the 64 and 53 bands are stated as provisional research-ranking bands that never decide eligibility, suppression, readiness or authorization.
+- *Freshness:* section 7 now separates evidence age, the status of the thing itself and the intended use, with a window per use. Old evidence lowers reliance and confidence but never a label, and is never an ICP exclusion. Claims in copy about projects, expansions or turnarounds need evidence confirmed within 30 days, matching the production hiring rule (previously 90 days).
+- *Source:* the repository folder `docs/jole-skills/` is now the source of truth; the local folders are installations checked by `tools/sync.py`.
 
 **4.0.0 (2026-11-03).** Requested by the user: split qualification into independent specialist skills.
 - *Why:* v3 still evaluated eligibility, demand, buyers, access and readiness in one file and folded buyer and procurement points into the opportunity score, so research effort went into rejecting or deprioritizing legitimate employers for reasons unrelated to fit.

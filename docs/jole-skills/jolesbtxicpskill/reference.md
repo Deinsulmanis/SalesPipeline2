@@ -56,12 +56,29 @@ source,final_status,reason_code,reason_detail,first_name,last_name,title,buyer_t
 |---|---|
 | `sector` | One of the seven ICP sectors, written exactly as in `jole-icp-qualification` |
 | `priority_tier` | `Tier A` or `Tier B` (V5 hiring-lane tier, not the opportunity priority) |
-| `buyer_type` | `Plant / operations / production`, `HR / talent acquisition`, `Maintenance / reliability`, `Owner / executive`, `Superintendent / site leadership`, or `Procurement / subcontracts` (added in 4.0.0; production stores it as free text, at most 80 characters) |
+| `buyer_type` | `Plant / operations / production`, `HR / talent acquisition`, `Maintenance / reliability`, `Owner / executive`, `Superintendent / site leadership`, or `Procurement / subcontracts` (added in 4.0.0). Exact values only: any other spelling is a QC error. See "Production compatibility of research fields" |
 | `site_tie` | `EXACT`, `REGION` or `STATE` |
 | `email_status` | `VERIFIED` only |
 | `email_domain_catch_all` | `Y` or `N` |
 | `posting_date` | `YYYY-MM-DD` |
 | `hiring_evidence_url` | The live posting: a LinkedIn job view or the employer's ATS |
+
+## Production compatibility of research fields
+
+Checked 2026-11-03, read-only, against production `8ca4234` (`origin/fix/send-throughput-20261020`) and the live database.
+
+**`buyer_type` = `Procurement / subcontracts` is compatible. No production change is needed to import it.**
+- **Storage:** `integrations/clients/lead-profile.js` stores `buyerType` as free text, cut at 80 characters, with no list of allowed values; `lead-import.js` does not validate it. The new value is 26 characters.
+- **Display:** `conversation-detail.js` returns it in the Jole Inbox drawer's contact data, but `public/index.html` does not render it.
+- **Reports and copy:** the client daily report (`daily-report.js`, `daily-report-store.js`), `reporting.js` and V5 personalization (`jole-personalization.js`) never read it. No database view, function or column refers to a buyer field.
+- **Live data:** all 1,000 Jole leads carry one of the five older values (539 Plant / operations / production, 228 HR / talent acquisition, 118 Maintenance / reliability, 91 Owner / executive, 24 Superintendent / site leadership), as do the approved-corpus files.
+
+**Future production changes** (none made; each needs separate authorization):
+1. `integrations/clients/campaigns.js` lists the campaign's `icp.buyerRoles` as display metadata only. Add `Procurement / subcontracts` the next time that definition changes. Its `icp.summary`, shown in the dashboard's Campaigns panel, still reads "Industrial end employers (not contractors-for-hire, not staffing agencies) with verified skilled-trade hiring in the last 30 days", which predates the v3 and v4 policy; correct it at the same time.
+2. Production accepts any text for `buyer_type`, so a misspelling would silently create a seventh group in any later breakdown. Either add an allowed-value check at import, or keep enforcing exact values in wave QC (the rule above).
+3. Any future report that groups by buyer type must include the sixth value.
+
+Spreadsheet or CSV summaries built from wave files outside production will simply show a sixth group.
 
 ## Import payload row shape
 

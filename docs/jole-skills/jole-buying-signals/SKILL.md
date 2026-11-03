@@ -1,14 +1,14 @@
 ---
 name: jole-buying-signals
-description: Jole BTX demand-signal assessment (v1.0.0). Weighs what evidence suggests a company may need more skilled-trade workers, and when - craft hiring, project or contract awards, shipbuilding or fabrication backlog, facility expansion, production growth, turnarounds and outages, documented subcontract labor, stated shortages, contract mobilizations. Returns a signal status and a demand-only opportunity priority (PRIORITY A, PRIORITY B or NURTURE / RESEARCH). Use for Jole signal research, signal-based shortlists and prioritizing prospects; never to decide ICP fit. Requires the jolesbtxicpskill shared policy.
-version: 1.0.0
+description: Jole BTX demand-signal assessment (v1.1.0). Weighs what evidence suggests a company may need more skilled-trade workers, and when - craft hiring, project or contract awards, shipbuilding or fabrication backlog, facility expansion, production growth, turnarounds and outages, documented subcontract labor, stated shortages, contract mobilizations. Returns a signal status and a demand-only opportunity priority (PRIORITY A, PRIORITY B or NURTURE / RESEARCH), a provisional research-ranking band. Use for Jole signal research, demand questions and prioritizing prospects; load it directly, without the orchestrator, when demand or priority is the only question, for one company or a list. Never decides ICP fit. Requires the jolesbtxicpskill shared policy.
+version: 1.1.0
 ---
 
 # Jole buying-signal intelligence
 
 **Question: what evidence suggests the employer may need additional skilled workers, and when?**
 
-Version 1.0.0, 2026-11-03. Load the shared policy first (skill `jolesbtxicpskill`). Its evidence levels, freshness windows and labels apply here.
+Version 1.1.0, 2026-11-03. Load the shared policy first (skill `jolesbtxicpskill`). Its evidence levels, freshness windows and labels apply here.
 
 ## Use it when
 
@@ -64,6 +64,8 @@ No buying signal is not equivalent to failed ICP qualification. This skill never
 
 When a stale verified signal and a live potential one both exist, report POTENTIAL SIGNAL. A signal whose window has passed is expired, whatever its source. An undated "always hiring" page shows which crafts exist but is not a hiring signal.
 
+**Evidence age is not signal status** (shared policy section 7). The status comes from the event's own stage and dates compared with today. "Stale" in CONTRADICTORY / STALE SIGNAL means the window has passed or newer evidence contradicts the signal, not that our check is old. If the check is older than the window for its intended use, keep the status and set `reverify`, naming what to re-confirm and before which use. Lower the confidence one step. Re-confirm only when the next use needs it: ranking needs project evidence from the last 90 days and postings from the last 30; a claim in copy needs either confirmed within 30 days.
+
 ## Outside-labor evidence
 
 - **DOCUMENTED:** the company states or files that it uses subcontract, contract or supplemental craft labor. Record the period.
@@ -85,8 +87,10 @@ Score only these three components. Buyer accessibility and procurement are separ
 
 **Demand score** = the sum, 0 to 75. **PRIORITY A** 64 to 75. **PRIORITY B** 53 to 63. **NURTURE / RESEARCH** 52 or less. (These are the v3 bands of 85 and 70 per cent, applied to 75 points.)
 
+**These bands are provisional research-ranking bands.** They rest on 38 companies and will be recalibrated by the benchmark (`jolesbtxicpskill/BENCHMARK-700.md`). Priority orders research, free buyer work and the use of credits inside an authorized cap. It never decides ICP eligibility, dedupe or suppression, feasibility, contact acceptance, outreach readiness, or authorization to enrich, import, queue or send (shared policy section 4).
+
 - Geography is not a scoring factor. Dollar size is not an input. Large dollar announcements must not inflate scores: read job counts and net new roles.
-- Anchors bind: a POTENTIAL, stale or absent signal scores at most 11 for signal; external labor above 20 needs DOCUMENTED current use; timing above 16 needs a window that is active or within 90 days.
+- Anchors bind: a POTENTIAL, expired, contradicted or absent signal scores at most 11 for signal; external labor above 20 needs DOCUMENTED current use; timing above 16 needs a window that is active or within 90 days.
 - Do not score EXCLUDED or PROHIBITED companies. A low score never changes the ICP label.
 
 ## Hiring facts for copy
@@ -114,7 +118,7 @@ Never use Indeed, ZipRecruiter, Glassdoor or SimplyHired (shared policy section 
 Envelope from `jolesbtxicpskill/CONTRACT.md`, decision = the signal status, plus:
 
 ```json
-"details": {"signals": [{"type": 2, "level": "VERIFIED", "what": "...", "date": "YYYY-MM-DD", "window": "active | within_90 | later | unknown | passed", "crafts": [], "scale": "40 net new jobs", "source": "https://..."}],
+"details": {"signals": [{"type": 2, "level": "VERIFIED", "what": "...", "date": "YYYY-MM-DD", "checked": "YYYY-MM-DD", "window": "active | within_90 | later | unknown | passed", "crafts": [], "scale": "40 net new jobs", "source": "https://..."}],
   "outside_labor": "DOCUMENTED | PLAUSIBLE | CONTRA-INDICATED | UNKNOWN", "outside_labor_evidence": "...",
   "demand": {"signal": 0, "external": 0, "timing": 0, "total": 0}, "priority": "PRIORITY A | PRIORITY B | NURTURE / RESEARCH",
   "hiring_facts": [{"role": "...", "site": "...", "posted": "YYYY-MM-DD", "checked": "YYYY-MM-DD", "url": "...", "source": "LinkedIn | ATS"}],
@@ -130,6 +134,8 @@ Envelope from `jolesbtxicpskill/CONTRACT.md`, decision = the signal status, plus
 | Filings document 620 subcontract laborers and an active backlog (Conrad) | VERIFIED CURRENT SIGNAL; outside labor DOCUMENTED | Spending more time proving it buys outside labor |
 | State release: 940 nested contractor jobs, first phase 2030 (Shintech) | VERIFIED FUTURE SIGNAL; timing low | Scored as current |
 | Turnaround that already happened (Cenovus Lima) | CONTRADICTORY / STALE SIGNAL | Shown as a live signal |
+| Build program running to 2028, last confirmed 150 days ago, nothing newer | VERIFIED CURRENT SIGNAL, confidence lowered, `reverify` before ranking it as A or using it in copy | CONTRADICTORY / STALE because the check is old |
+| Priority A shipyard whose only contact is on a Proofpoint catch-all | PRIORITY A stays; the contact HOLD is decided by `jole-contact-deliverability` | Priority used to release the hold |
 | Aggregator Aluminum Welder listing with conflicting dates (Metal Shark) | POTENTIAL for signal 1 until the employer's board confirms it | Recorded as verified hiring |
 | 3,750 jobs with a local-hire pledge (Hyundai Translead), or $60M and 20 net new jobs (Fairbanks Morse Defense) | Score the reachable labor need | Score the headline |
 
@@ -138,5 +144,7 @@ Envelope from `jolesbtxicpskill/CONTRACT.md`, decision = the signal status, plus
 `python tests/test_signals.py` from this folder. `tests/signal_logic.py` restates the mechanical rules; this file wins any disagreement.
 
 ## Change log
+
+**1.1.0 (2026-11-03).** The priority bands are stated as provisional research-ranking bands. Evidence age is separated from signal status: an old check sets `reverify` and lowers confidence but never makes a live signal stale. Signals record the date last checked. The description now says to load this skill directly for a demand-only question.
 
 **1.0.0 (2026-11-03).** Split from jolesbtxicpskill 3.0.0, sections 4, 5 and part of 7. Added the five signal statuses, the outside-labor field, signal type 7 (stated shortage) and mobilizations under type 2. Priority is now demand-only: v3's buyer (15) and procurement (10) points were removed, and the bands were rescaled to 75 points.

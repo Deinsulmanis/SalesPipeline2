@@ -1,6 +1,6 @@
 {
   "schema": "jole_icp_fixtures_v1",
-  "skill_version": "1.0.0",
+  "skill_version": "1.1.0",
   "note": "Boundary cases that used to be falsely rejected are marked boundary; negatives show the screen does not accept everyone.",
   "cases": [
     {"id": "I01", "kind": "boundary", "title": "Shipyard with active fabrication, no postings, no award, no buyer",

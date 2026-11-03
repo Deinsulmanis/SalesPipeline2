@@ -1,14 +1,14 @@
 ---
 name: jole-dedupe-suppression
-description: Jole BTX duplicate, client-family and suppression control (v1.0.0). Decides whether an account or contact is genuinely net-new and eligible for further sourcing - checks the live CRM across all clients, prior Jole sourcing waves, previously purchased contacts, client families, named competitors, corporate subsidiaries, normalized domains, DNC and global or client suppression by email, domain and company. Returns NET NEW, EXISTING ACCOUNT — NEW OPPORTUNITY, EXISTING CONTACT, FAMILY MATCH — REVIEW, SUPPRESSED or PROHIBITED. Read-only. Requires the jolesbtxicpskill shared policy.
-version: 1.0.0
+description: Jole BTX duplicate, client-family and suppression control (v1.0.1). Decides whether an account or contact is genuinely net-new and eligible for further sourcing - checks the live CRM across all clients, prior Jole sourcing waves, previously purchased contacts, client families, named competitors, corporate subsidiaries, normalized domains, DNC and global or client suppression by email, domain and company. Returns NET NEW, EXISTING ACCOUNT — NEW OPPORTUNITY, EXISTING CONTACT, FAMILY MATCH — REVIEW, SUPPRESSED or PROHIBITED. Read-only; load it directly, without the orchestrator, when duplicates or suppression are the only question, for one record or a list. Requires the jolesbtxicpskill shared policy.
+version: 1.0.1
 ---
 
 # Jole duplicate, client and suppression control
 
 **Question: is this account genuinely net-new and eligible for further sourcing?**
 
-Version 1.0.0, 2026-11-03. Load the shared policy first (skill `jolesbtxicpskill`). The client families and named competitors are defined only in its section 2. Everything here is read-only: `SELECT` queries and file reads, never a write.
+Version 1.0.1, 2026-11-03. Load the shared policy first (skill `jolesbtxicpskill`). The client families and named competitors are defined only in its section 2. Everything here is read-only: `SELECT` queries and file reads, never a write.
 
 ## Use it when
 
@@ -102,5 +102,7 @@ Envelope from `jolesbtxicpskill/CONTRACT.md`, plus:
 `python tests/test_dedupe.py` from this folder. `tests/dedupe_logic.py` restates the mechanical rules; this file wins any disagreement.
 
 ## Change log
+
+**1.0.1 (2026-11-03).** The description now says to load this skill directly for a dedupe-only question.
 
 **1.0.0 (2026-11-03).** Split from jolesbtxicpskill 3.0.0, sections 3 (DNC and client families) and 10. Added the six outcomes, the source authority table, live versus mirror confidence, account, contact and family passes, and the production company-key rule.

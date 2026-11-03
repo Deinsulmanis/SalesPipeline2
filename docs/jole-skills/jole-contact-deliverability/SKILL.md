@@ -1,14 +1,14 @@
 ---
 name: jole-contact-deliverability
-description: Jole BTX recipient and email qualification (v1.0.0). Decides whether a specific buyer's email is suitable for outbound - verified identity and current employment, company and domain match, Apollo verification status, catch-all and Proofpoint risk, mail gateway, suppression and DNC, prior bounces and delivery failures, duplicates across clients. Returns CONTACT ACCEPTED FOR REVIEW, ADDITIONAL VERIFICATION REQUIRED, HOLD or REJECT. Use only once a buyer is identified and contact data exists; never sends test emails or spends credits. Requires the jolesbtxicpskill shared policy.
-version: 1.0.0
+description: Jole BTX recipient and email qualification (v1.0.1). Decides whether a specific buyer's email is suitable for outbound - verified identity and current employment, company and domain match, Apollo verification status, catch-all and Proofpoint risk, mail gateway, suppression and DNC, prior bounces and delivery failures, duplicates across clients. Returns CONTACT ACCEPTED FOR REVIEW, ADDITIONAL VERIFICATION REQUIRED, HOLD or REJECT. Use only once a buyer is identified and contact data exists; never sends test emails or spends credits; load it directly, without the orchestrator, when email quality is the only question. Requires the jolesbtxicpskill shared policy.
+version: 1.0.1
 ---
 
 # Jole contact and email deliverability qualification
 
 **Question: is the proposed recipient's email suitable for outbound sending?**
 
-Version 1.0.0, 2026-11-03. Load the shared policy first (skill `jolesbtxicpskill`).
+Version 1.0.1, 2026-11-03. Load the shared policy first (skill `jolesbtxicpskill`).
 
 ## Use it when
 
@@ -100,5 +100,7 @@ Envelope from `jolesbtxicpskill/CONTRACT.md`, subject = the contact, plus:
 `python tests/test_contact.py` from this folder. `tests/contact_logic.py` restates the mechanical rules; this file wins any disagreement.
 
 ## Change log
+
+**1.0.1 (2026-11-03).** The description now says to load this skill directly for an email-only question.
 
 **1.0.0 (2026-11-03).** Split from jolesbtxicpskill 3.0.0, section 9. Added the four outcomes, the six ordered checks, Proofpoint Essentials MX hosts, the unknown-catch-all case and delivery-history checks. The bounce figures come from the 2026-11-01 remediation.

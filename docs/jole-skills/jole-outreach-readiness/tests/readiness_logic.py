@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Reference logic for jole-outreach-readiness 1.0.0. SKILL.md wins any disagreement.
+"""Reference logic for jole-outreach-readiness 1.1.0. SKILL.md wins any disagreement.
 
 Inputs:
   icp, dedupe, feasibility, buyer, contact   labels from the owning skills, or NOT EVALUATED
@@ -19,8 +19,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
                                 'jolesbtxicpskill', 'tests'))
 import jole_common as C  # noqa: E402
 
-HIRING_FRESHNESS_DAYS = 30      # production jole-personalization.js FRESHNESS_DAYS
-SIGNAL_REUSE_DAYS = 90          # shared policy section 7
+HIRING_FRESHNESS_DAYS = C.FRESHNESS['hiring_posting']['copy']    # production jole-personalization.js FRESHNESS_DAYS
+SIGNAL_CLAIM_DAYS = C.FRESHNESS['project_status']['copy']        # shared policy section 7 (guidance)
 NE = C.NOT_EVALUATED
 
 
@@ -41,9 +41,9 @@ def copy_fit(approach, evidence, list_basis='general', approvals=()):
         return True, 'v5_' + modes[0], ''
     if approach in (2, 3, 4):
         live = ev.get('signal_status') in ('VERIFIED CURRENT SIGNAL', 'VERIFIED FUTURE SIGNAL')
-        fresh = ev.get('signal_checked_days') is not None and ev['signal_checked_days'] <= SIGNAL_REUSE_DAYS
+        fresh = ev.get('signal_checked_days') is not None and ev['signal_checked_days'] <= SIGNAL_CLAIM_DAYS
         if not (live and fresh):
-            return False, '', 'signal not verified and fresh'
+            return False, '', 'signal not verified or not confirmed within %d days' % SIGNAL_CLAIM_DAYS
         if 'signal_variant_%d' % approach not in approvals:
             return False, '', 'no approved sequence for approach %d' % approach
         return True, 'signal_variant_%d' % approach, ''

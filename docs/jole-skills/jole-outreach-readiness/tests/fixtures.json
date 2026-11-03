@@ -1,6 +1,6 @@
 {
   "schema": "jole_readiness_fixtures_v1",
-  "skill_version": "1.0.0",
+  "skill_version": "1.1.0",
   "base": {"icp": "QUALIFIED", "dedupe": "NET NEW", "feasibility": "NOT EVALUATED", "buyer": "BUYER VERIFIED", "contact": "CONTACT ACCEPTED FOR REVIEW"},
   "cases": [
     {"id": "R01", "title": "Signal-based lead with no hiring role, hiring opener planned",
@@ -39,6 +39,11 @@
     {"id": "R18", "title": "Conditions confirmed by Jorge", "facts": {"feasibility": "FEASIBLE WITH CONDITIONS", "open_conditions": false, "approach": 5}, "expect": "READY FOR APPROVED SEQUENCE"},
     {"id": "R19", "title": "Suppressed account", "facts": {"dedupe": "SUPPRESSED"}, "expect": "HOLD"},
     {"id": "R20", "title": "Contact already in a sequence", "facts": {"dedupe": "EXISTING CONTACT"}, "expect": "HOLD"},
-    {"id": "R21", "title": "ICP conditional", "facts": {"icp": "CONDITIONAL"}, "expect": "HOLD"}
+    {"id": "R21", "title": "ICP conditional", "facts": {"icp": "CONDITIONAL"}, "expect": "HOLD"},
+    {"id": "R22", "kind": "boundary", "title": "Approved award variant, award confirmed exactly 30 days ago", "facts": {"approach": 2, "evidence": {"signal_status": "VERIFIED CURRENT SIGNAL", "signal_checked_days": 30}, "list_basis": "signal", "approvals": ["signal_variant_2"]}, "expect": "READY FOR APPROVED SEQUENCE"},
+    {"id": "R23", "kind": "boundary", "title": "Approved award variant, award last confirmed 31 days ago", "facts": {"approach": 2, "evidence": {"signal_status": "VERIFIED CURRENT SIGNAL", "signal_checked_days": 31}, "list_basis": "signal", "approvals": ["signal_variant_2"]}, "expect": "COPY / SIGNAL REVIEW REQUIRED"},
+    {"id": "R24", "kind": "boundary", "title": "Approved expansion variant, confirmed 80 days ago (was enough under 1.0.0)", "facts": {"approach": 3, "evidence": {"signal_status": "VERIFIED FUTURE SIGNAL", "signal_checked_days": 80}, "list_basis": "signal", "approvals": ["signal_variant_3"]}, "expect": "COPY / SIGNAL REVIEW REQUIRED"},
+    {"id": "R25", "kind": "negative", "title": "Priority A does not make a stale hiring claim ready", "facts": {"approach": 1, "priority": "PRIORITY A", "evidence": {"verified_role": "Pipe Welder", "verified_location": "Lake Charles, LA", "checked_days": 31}}, "expect": "COPY / SIGNAL REVIEW REQUIRED"},
+    {"id": "R26", "kind": "negative", "title": "Priority A does not lift a contact hold", "facts": {"contact": "HOLD", "priority": "PRIORITY A"}, "expect": "HOLD"}
   ]
 }

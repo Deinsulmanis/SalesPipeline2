@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Reference logic for jole-qualification-orchestrator 1.0.0. SKILL.md wins any disagreement.
+"""Reference logic for jole-qualification-orchestrator 1.1.0. SKILL.md wins any disagreement.
 
 run(subject) takes one subject's facts, runs only the steps the task needs
 through each specialist's reference logic, applies the shared stops and skip
@@ -17,11 +17,11 @@ subject = {
   "dedupe_contact": {"subject": {...}, "records": {...}},
   "contact": {...contact facts...},
   "readiness": {"approach": n, "evidence": {...}, "list_basis": ..., "approvals": [...]},
-  "prior": {dimension: {"decision": ..., "date": "YYYY-MM-DD", "version": "1.0.0", ...}},
+  "prior": {dimension: {"decision": ..., "date": "YYYY-MM-DD" (last confirmed), "version": "1.0.0",
+            "confidence": ..., "basis": "hiring" (signal only), "date_passed": bool, ...}},
   "force_buyer": bool
 }
 """
-import datetime
 import os
 import sys
 
@@ -41,8 +41,11 @@ NE = C.NOT_EVALUATED
 DIMENSIONS = ('dedupe', 'icp', 'signal', 'feasibility', 'buyer', 'dedupe_contact', 'contact', 'readiness')
 STEP_DIM = {'dedupe_account': 'dedupe', 'icp': 'icp', 'signals': 'signal', 'feasibility': 'feasibility',
             'buyer': 'buyer', 'dedupe_contact': 'dedupe_contact', 'contact': 'contact', 'readiness': 'readiness'}
-REUSE_DAYS = {'dedupe': 30, 'icp': 365, 'signal': 90, 'feasibility': 365, 'buyer': 90,
-              'dedupe_contact': 0, 'contact': 30, 'readiness': 0}
+# Contact or wave QC and readiness precede spend, import or queue; every other task plans or ranks.
+ACTION_TASKS = ('contact_qc', 'readiness')
+ACTION_STEPS = ('SOURCE CONTACT', 'HUMAN REVIEW')
+FACTS_KEY = {'dedupe': 'dedupe_account', 'icp': 'icp', 'signal': 'signals', 'feasibility': 'feasibility',
+             'buyer': 'buyer', 'dedupe_contact': 'dedupe_contact', 'contact': 'contact', 'readiness': 'readiness'}
 PLANS = {
     'company_screen': ['dedupe_account', 'icp'],
     'signal_shortlist': ['dedupe_account', 'icp', 'signals', 'feasibility'],
@@ -54,8 +57,11 @@ PLANS = {
     'full': ['dedupe_account', 'icp', 'signals', 'feasibility', 'buyer', 'dedupe_contact', 'contact', 'readiness'],
 }
 NEEDS_SIGNAL = ('signal_shortlist', 'requalify', 'full')
-VERSION = {'icp': '1.0.0', 'signal': '1.0.0', 'buyer': '1.0.0', 'feasibility': '1.0.0', 'dedupe': '1.0.0',
-           'dedupe_contact': '1.0.0', 'contact': '1.0.0', 'readiness': '1.0.0'}
+SKILL_OF = {'icp': 'jole-icp-qualification', 'signal': 'jole-buying-signals', 'buyer': 'jole-buyer-identification',
+            'feasibility': 'jole-site-labor-feasibility', 'dedupe': 'jole-dedupe-suppression',
+            'dedupe_contact': 'jole-dedupe-suppression', 'contact': 'jole-contact-deliverability',
+            'readiness': 'jole-outreach-readiness'}
+VERSION = {dim: C.frontmatter(C.skill_text(skill))['version'] for dim, skill in SKILL_OF.items()}
 
 
 BLOCKING_TRIGGERS = ('project_labor_agreement', 'hiring_hall')
@@ -74,14 +80,28 @@ def plan(task, flags=()):
     return steps
 
 
-def _fresh(prior, dim, today):
+def finding_of(dim, record):
+    return 'hiring_posting' if dim == 'signal' and record.get('basis') == 'hiring' else C.DIMENSION_FINDING[dim]
+
+
+def _prior(prior, dim, today, use):
+    """(record, state, why). state: '' (none), 'fresh', 'stale' (past its window) or 'incompatible'."""
     p = (prior or {}).get(dim)
     if not p or not p.get('date'):
-        return None
+        return None, '', ''
     if str(p.get('version', '1')).split('.')[0] != VERSION[dim].split('.')[0]:
-        return None
-    age = (datetime.date.fromisoformat(today) - datetime.date.fromisoformat(p['date'])).days
-    return p if age <= REUSE_DAYS[dim] else None
+        return p, 'incompatible', 'older major version'
+    if dim == 'readiness':
+        return None, '', ''  # readiness is recomputed from its inputs every time
+    ok, why = C.reliance(finding_of(dim, p), p['date'], today, use, p.get('date_passed', False))
+    return p, ('fresh' if ok else 'stale'), why
+
+
+def _keep_stale(p, dim, why, use):
+    """Shared policy section 7: a past-window result keeps its label, with reverify and lower confidence."""
+    rec = dict(p, reused=True, confidence=C.lower(p.get('confidence', 'HIGH')))
+    rec['reverify'] = {'dimension': dim, 'finding': finding_of(dim, p), 'checked': p['date'], 'before': use, 'why': why}
+    return rec
 
 
 def account_stop(d):
@@ -99,21 +119,32 @@ def account_stop(d):
 def run(s):
     today = s.get('today', '2026-11-03')
     task = s.get('task', 'full')
+    use = 'action' if task in ACTION_TASKS else 'research'
     d = {dim: {'decision': NE, 'reason': 'not needed for this task'} for dim in DIMENSIONS}
     ran, reused, conflicts = [], [], []
     icp_details = {}
-    # Reuse every fresh prior result first, whether or not this task's plan includes it.
+    # Reuse every prior result first, whether or not this task's plan includes it. A past-window
+    # result keeps its label with reverify; new research below replaces it when facts are supplied.
     for dim in DIMENSIONS:
-        prior = _fresh(s.get('prior'), dim, today)
-        if prior:
-            d[dim] = dict(prior, reused=True)
-            reused.append(dim)
-            if dim == 'icp':
-                icp_details = prior.get('details', {})
+        prior, state, why = _prior(s.get('prior'), dim, today, use)
+        if state == 'incompatible':
+            d[dim] = {'decision': NE, 'reason': 'older major version'}
+            continue
+        if not state:
+            continue
+        d[dim] = dict(prior, reused=True) if state == 'fresh' else _keep_stale(prior, dim, why, use)
+        reused.append(dim)
+        if dim == 'icp':
+            icp_details = prior.get('details', {})
     for step in plan(task, (s.get('feasibility') or {}).get('flags', [])):
         dim = STEP_DIM[step]
         if d[dim].get('reused'):
-            continue
+            if not (d[dim].get('reverify') and s.get(FACTS_KEY[dim]) is not None):
+                continue
+            reused.remove(dim)  # new research replaces the past-window result
+            d[dim] = {'decision': NE, 'reason': 'replaced by new research'}
+            if dim == 'icp':
+                icp_details = {}
         stop = account_stop(d)
         if stop:
             d[dim] = {'decision': NE, 'reason': 'stopped: ' + stop}
@@ -181,15 +212,25 @@ def run(s):
             facts.update(r)
             d[dim] = {'decision': RDY.decide(facts)[0]}
         ran.append(dim)
-        d[dim]['skill'] = '%s@%s' % ({'dedupe_contact': 'jole-dedupe-suppression', 'signal': 'jole-buying-signals'}.get(dim, C.OWNER.get(dim, '')), VERSION[dim])
+        d[dim]['skill'] = '%s@%s' % (SKILL_OF[dim], VERSION[dim])
         d[dim]['date'] = today
 
     if d['dedupe']['decision'] == 'PROHIBITED' and d['icp']['decision'] in ('QUALIFIED', 'CONDITIONAL'):
         conflicts.append({'between': ['icp', 'dedupe'], 'what': 'dedupe found a prohibited family the ICP name check did not',
                           'resolution': 'STOP by precedence; ICP left as recorded'})
     action = next_action(d, icp_details, task)
+    reverify = [d[dim]['reverify'] for dim in DIMENSIONS if d[dim].get('reverify')]
+    if action in ACTION_STEPS:
+        # Re-verify by risk: before a spend or an import, check each reused input against its action window.
+        for dim in DIMENSIONS:
+            rec = d[dim]
+            if rec.get('reused') and not rec.get('reverify'):
+                ok, why = C.reliance(finding_of(dim, rec), rec['date'], today, 'action', rec.get('date_passed', False))
+                if not ok:
+                    reverify.append({'dimension': dim, 'finding': finding_of(dim, rec), 'checked': rec['date'],
+                                     'before': 'action', 'why': why})
     return {'dimensions': d, 'ran': ran, 'reused': reused, 'conflicts': conflicts, 'next_action': action,
-            'stop_reason': account_stop(d)}
+            'stop_reason': account_stop(d), 'reverify': reverify}
 
 
 def next_action(d, icp_details, task):

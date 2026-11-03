@@ -1,14 +1,14 @@
 ---
 name: jole-outreach-readiness
-description: Jole BTX message fit and outreach readiness (v1.0.0). Decides whether a contact can be approached with accurate, evidence-supported, approved messaging - chooses the campaign approach (hiring trigger, project or contract award, expansion or production growth, turnaround or maintenance, general industrial workforce), checks every claim against verified, fresh evidence and the approved V5 modes, and checks company, buyer, contact and suppression prerequisites. Returns READY FOR APPROVED SEQUENCE, COPY / SIGNAL REVIEW REQUIRED, CONTACT VERIFICATION REQUIRED, HOLD or EXCLUDED. Cannot authorize import or sending. Requires the jolesbtxicpskill shared policy.
-version: 1.0.0
+description: Jole BTX message fit and outreach readiness (v1.1.0). Decides whether a contact can be approached with accurate, evidence-supported, approved messaging - chooses the campaign approach (hiring trigger, project or contract award, expansion or production growth, turnaround or maintenance, general industrial workforce), checks every claim against verified, fresh evidence and the approved V5 modes, and checks company, buyer, contact and suppression prerequisites. Returns READY FOR APPROVED SEQUENCE, COPY / SIGNAL REVIEW REQUIRED, CONTACT VERIFICATION REQUIRED, HOLD or EXCLUDED; load it directly, without the orchestrator, when copy or readiness is the only question, for one contact or a wave. Cannot authorize import or sending. Requires the jolesbtxicpskill shared policy.
+version: 1.1.0
 ---
 
 # Jole outreach readiness and message fit
 
 **Question: can this contact be approached using accurate, evidence-supported messaging?**
 
-Version 1.0.0, 2026-11-03. Load the shared policy first (skill `jolesbtxicpskill`). Do not modify or activate V5.
+Version 1.1.0, 2026-11-03. Load the shared policy first (skill `jolesbtxicpskill`). Do not modify or activate V5.
 
 ## Use it when
 
@@ -32,7 +32,7 @@ Do not require a job posting for project-based or general-workforce prospecting.
 | # | Approach | The claim it makes | Evidence it needs | Approved sequence today |
 |---|---|---|---|---|
 | 1 | Hiring trigger | "Saw {company} is hiring {role} [in {site}]" | A verified posting for a Jole craft. Role, and site for `exact`. Evidence last checked within 30 days. | V5 `exact` or `role_only` |
-| 2 | Project or contract award | Names the award or project | VERIFIED CURRENT or VERIFIED FUTURE signal with a craft link, checked within 90 days | None |
+| 2 | Project or contract award | Names the award or project | VERIFIED CURRENT or VERIFIED FUTURE signal with a craft link, confirmed within 30 days when Touch 1 renders | None |
 | 3 | Expansion or production growth | Names the expansion or growth | Same as approach 2 | None |
 | 4 | Turnaround or maintenance | Names the outage or turnaround | Same as approach 2, with dates | None |
 | 5 | General industrial workforce | No trigger claim | ICP fit only | V5 `general_craft`, subject to the list rule below |
@@ -44,6 +44,7 @@ Do not require a job posting for project-based or general-workforce prospecting.
 - `campaigns.js` also declares `maxEvidenceAgeDays: 45`. The 30-day check governs v4 and v5.
 
 **Rules:**
+- **Claims in copy have the tightest freshness** (shared policy section 7): every factual claim about hiring, a project, an expansion or a turnaround must rest on evidence confirmed at its source within 30 days when Touch 1 renders. Only the hiring rule is enforced by production code; the others are Jole guidance. Opportunity priority never makes a claim acceptable or a contact ready.
 - Existing V5 hiring copy is used only where its hiring claim is actually supported. A signal-based company without a verified hiring role must not use a hiring-based V5 variant.
 - Do not invent a role, project, hiring requirement or labor shortage. Every claim in copy cites the evidence it rests on.
 - `general_craft` is not an approved signal-aware variant. Using it for a signal-sourced list needs the user's separate authorization; without it, such leads are COPY / SIGNAL REVIEW REQUIRED.
@@ -117,5 +118,7 @@ These are copy rules, not ICP rules. They apply only to a wave destined for the 
 `python tests/test_readiness.py` from this folder. `tests/readiness_logic.py` restates the mechanical rules; this file wins any disagreement.
 
 ## Change log
+
+**1.1.0 (2026-11-03).** Claims in copy about a project, award, expansion or turnaround now need evidence confirmed within 30 days when Touch 1 renders, not 90, matching the hiring rule (shared policy section 7). Priority is stated as never deciding readiness. The description now says to load this skill directly for a copy-only question.
 
 **1.0.0 (2026-11-03).** Split from jolesbtxicpskill 3.0.0, sections 6, 7, 12 (`why_contact_is_relevant`) and 14. Replaced the v3 readiness states with these five outcomes, added the five campaign approaches, and corrected the hiring freshness rule from 45 to 30 days to match `jole-personalization.js`.

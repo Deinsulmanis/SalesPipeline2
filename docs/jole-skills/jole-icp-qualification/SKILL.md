@@ -1,14 +1,14 @@
 ---
 name: jole-icp-qualification
-description: Jole BTX company-fit screen (v1.0.0). Decides whether Jole could realistically supply industrial skilled-trade labor to a company - industrial employer or eligible contractor versus staffing firm, real operations and Jole crafts at a US site, client and competitor exclusions. Returns QUALIFIED, CONDITIONAL or EXCLUDED. Use to screen, qualify or requalify companies for Jole, or to answer "is this company a fit for Jole?". It never judges demand, timing, buyers, union access, contacts or copy. Requires the jolesbtxicpskill shared policy.
-version: 1.0.0
+description: Jole BTX company-fit screen (v1.1.0). Decides whether Jole could realistically supply industrial skilled-trade labor to a company - industrial employer or eligible contractor versus staffing firm, real operations and Jole crafts at a US site, client and competitor exclusions. Returns QUALIFIED, CONDITIONAL or EXCLUDED. Use to qualify or requalify companies for Jole, or to answer "is this company a fit for Jole?"; load it directly, without the orchestrator, when fit is the only question, for one company or a list. It never judges demand, timing, buyers, union access, contacts or copy. Requires the jolesbtxicpskill shared policy.
+version: 1.1.0
 ---
 
 # Jole industrial ICP qualification
 
 **Question: can Jole realistically provide industrial skilled labor to this company?**
 
-Version 1.0.0, 2026-11-03. This is the first substantive gate for every Jole company. Load the shared policy first (skill `jolesbtxicpskill`, file `~/.claude/skills/jolesbtxicpskill/SKILL.md`). Its capabilities, crafts list, hard exclusions, evidence standard and labels apply here and are not repeated.
+Version 1.1.0, 2026-11-03. This is the first substantive gate for every Jole company. Load the shared policy first (skill `jolesbtxicpskill`, file `~/.claude/skills/jolesbtxicpskill/SKILL.md`). Its capabilities, crafts list, hard exclusions, evidence standard and labels apply here and are not repeated.
 
 ## Use it when
 
@@ -43,6 +43,8 @@ Level 1 by default. Stop at the first hard exclusion with evidence; otherwise st
    - **NONE:** verified operations use no Jole craft (an insurer, a software firm, an equipment-service firm with no crafts of its own).
    If the only crafts are off Jole's published list, the label is CONDITIONAL with the gap "Jole to confirm the craft".
 5. **US operating site.** An existing site, or an announced site of an operating company, counts. A pre-revenue developer is CONDITIONAL with a credit hold.
+
+**Old evidence.** Fit facts may be reused for 12 months (shared policy section 7). Older fit evidence never changes the label and is never an exclusion. Keep the label, lower the confidence one step, and set `reverify` so it is re-checked at Level 1 before any spend. Only new evidence changes the label, for example a closure, a sale to a staffing firm, or the site no longer doing the work.
 6. **Use case.** An employer with Jole crafts at a site has a credible use for permanent or contract skilled-trade workers. Whether it buys contract labor now is a demand question for `jole-buying-signals`. Missing proof of prior subcontract use is not a hard exclusion.
 
 Go to Level 2 only when one check, usually craft fit at the site, would move CONDITIONAL to QUALIFIED or EXCLUDED and the company looks worth it.
@@ -127,5 +129,7 @@ Use the envelope in `jolesbtxicpskill/CONTRACT.md` with these details:
 `python tests/test_icp.py` from this folder. `tests/icp_logic.py` restates the mechanical rules; this file wins any disagreement.
 
 ## Change log
+
+**1.1.0 (2026-11-03).** Added the old-evidence rule: fit evidence older than 12 months lowers confidence and sets `reverify`, but never changes the label. The description now says to load this skill directly for a fit-only question.
 
 **1.0.0 (2026-11-03).** Split from jolesbtxicpskill 3.0.0, sections 1 and 3. Union and labor-agreement decisions moved to `jole-site-labor-feasibility`; DNC and suppression to `jole-dedupe-suppression`. Added craft-fit levels (DIRECT, PROCESS, UNCLEAR, NONE) and the operational-evidence rule, so a legitimate employer qualifies from its verified operations without demand research.

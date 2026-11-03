@@ -1,14 +1,14 @@
 ---
 name: jole-buyer-identification
-description: Jole BTX buyer selection (v1.0.0). Identifies who is the most relevant person to approach about additional skilled labor at a qualified company - yard or plant GM, operations, project, construction, turnaround, maintenance or fabrication leaders, owners at small firms, procurement where supplier approval is required, HR for permanent hires - tied to the actual facility or project. Applies the site-connection rule, returns BUYER VERIFIED, BUYER PARTIAL, BUYER NOT SITE-CONNECTED or BUYER NOT IDENTIFIED, never invents a name and never spends Apollo credits. Requires the jolesbtxicpskill shared policy.
-version: 1.0.0
+description: Jole BTX buyer selection (v1.0.1). Identifies who is the most relevant person to approach about additional skilled labor at a qualified company - yard or plant GM, operations, project, construction, turnaround, maintenance or fabrication leaders, owners at small firms, procurement where supplier approval is required, HR for permanent hires - tied to the actual facility or project. Applies the site-connection rule, returns BUYER VERIFIED, BUYER PARTIAL, BUYER NOT SITE-CONNECTED or BUYER NOT IDENTIFIED, never invents a name and never spends Apollo credits. Load it directly, without the orchestrator, when the buyer is the only question. Requires the jolesbtxicpskill shared policy.
+version: 1.0.1
 ---
 
 # Jole buyer identification
 
 **Question: who is the most relevant person to approach about additional skilled labor?**
 
-Version 1.0.0, 2026-11-03. Load the shared policy first (skill `jolesbtxicpskill`). Apollo credit rules are in its section 8.
+Version 1.0.1, 2026-11-03. Load the shared policy first (skill `jolesbtxicpskill`). Apollo credit rules are in its section 8.
 
 ## Use it when
 
@@ -30,6 +30,7 @@ A company may remain ICP-qualified without a named buyer. This skill never chang
    - Public LinkedIn profiles.
    - Apollo `apollo_mixed_people_api_search`, using `person_locations` as a site test.
    No reveals without an authorized cap.
+   Before any reveal or import, re-confirm the current title and site with the free people search when the record is older than 30 days (shared policy section 7).
 3. **Apply the site-connection gate** (below).
 4. **Check authority and currency:** a dated source; current employment; a re-check after an acquisition.
 5. **Pick a primary buyer.** Add a secondary only when it is justified by a different buyer role or a different site.
@@ -130,5 +131,7 @@ Envelope from `jolesbtxicpskill/CONTRACT.md`, decision = the primary buyer's sta
 `python tests/test_buyer.py` from this folder. `tests/buyer_logic.py` restates the mechanical rules; this file wins any disagreement.
 
 ## Change log
+
+**1.0.1 (2026-11-03).** The description now says to load this skill directly for a buyer-only question. Added the shared 30-day re-confirmation before any reveal or import.
 
 **1.0.0 (2026-11-03).** Split from jolesbtxicpskill 3.0.0, section 8. Added role selection by operating model and signal; turnaround, project, construction, fabrication, craft-workforce and procurement roles; `HQ-AUTHORITY` tie; the `Procurement / subcontracts` buyer type. Status labels renamed with a BUYER prefix, and NOT FOUND became BUYER NOT IDENTIFIED.

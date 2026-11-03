@@ -1,6 +1,6 @@
 {
   "schema": "jole_contact_fixtures_v1",
-  "skill_version": "1.0.0",
+  "skill_version": "1.0.1",
   "cases": [
     {"id": "E01", "title": "Proofpoint catch-all at a Priority A company",
      "facts": {"identity": "current", "domain_match": "company", "email_status": "VERIFIED", "mx_host": "mxa-00345a01.gslb.pphosted.com", "catch_all": true, "company_priority": "PRIORITY A"},

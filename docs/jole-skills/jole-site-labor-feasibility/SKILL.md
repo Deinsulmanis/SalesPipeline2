@@ -1,14 +1,14 @@
 ---
 name: jole-site-labor-feasibility
-description: Jole BTX commercial-path check (v1.0.0). Decides whether Jole has a practical way to supply workers to a specific site, project or contract when a material question is raised - union representation, hiring halls, project labor agreements, Navy, defense, federal or nuclear requirements, clearances and site access, approved-vendor rules, new-owner onboarding, local-hire pledges, or an owner that buys craft labor through an EPC or prime. Returns FEASIBLE, FEASIBLE WITH CONDITIONS, UNKNOWN or BLOCKED BY VERIFIED REQUIREMENT. Use only when such a trigger exists. Requires the jolesbtxicpskill shared policy.
-version: 1.0.0
+description: Jole BTX commercial-path check (v1.0.1). Decides whether Jole has a practical way to supply workers to a specific site, project or contract when a material question is raised - union representation, hiring halls, project labor agreements, Navy, defense, federal or nuclear requirements, clearances and site access, approved-vendor rules, new-owner onboarding, local-hire pledges, or an owner that buys craft labor through an EPC or prime. Returns FEASIBLE, FEASIBLE WITH CONDITIONS, UNKNOWN or BLOCKED BY VERIFIED REQUIREMENT. Use only when such a trigger exists; load it directly, without the orchestrator, when access is the only question. Requires the jolesbtxicpskill shared policy.
+version: 1.0.1
 ---
 
 # Jole site, labor and procurement feasibility
 
 **Question: is there a practical commercial path for Jole to supply workers for this specific operation?**
 
-Version 1.0.0, 2026-11-03. Load the shared policy first (skill `jolesbtxicpskill`).
+Version 1.0.1, 2026-11-03. Load the shared policy first (skill `jolesbtxicpskill`).
 
 ## Use it only when a trigger exists
 
@@ -119,5 +119,7 @@ Envelope from `jolesbtxicpskill/CONTRACT.md`, plus:
 `python tests/test_feasibility.py` from this folder. `tests/feasibility_logic.py` restates the mechanical rules; this file wins any disagreement.
 
 ## Change log
+
+**1.0.1 (2026-11-03).** The description now says to load this skill directly for an access-only question.
 
 **1.0.0 (2026-11-03).** Split from jolesbtxicpskill 3.0.0, section 3 ("Labor agreements and restricted work") and the compliance gate of section 6. A binding agreement is now BLOCKED BY VERIFIED REQUIREMENT here, not an ICP exclusion, so fit and access are recorded separately.

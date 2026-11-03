@@ -1,6 +1,6 @@
 {
   "schema": "jole_signal_fixtures_v1",
-  "skill_version": "1.0.0",
+  "skill_version": "1.1.0",
   "cases": [
     {"id": "S01", "title": "Valid shipyard, no posting and no award: no signal is not an ICP failure",
      "signals": [{"level": "INDUSTRY FIT ONLY", "window": "unknown"}], "outside_labor": "UNKNOWN", "window": "unknown",

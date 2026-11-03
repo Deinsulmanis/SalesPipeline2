@@ -1,6 +1,6 @@
 {
   "schema": "jole_buyer_fixtures_v1",
-  "skill_version": "1.0.0",
+  "skill_version": "1.0.1",
   "cases": [
     {"id": "B01", "title": "Large multi-site employer: only an unrelated HQ CFO",
      "candidate": {"name": "Pat Doe", "role_strength": "WEAK", "source": "company", "current": true, "size": "1001+", "relation": "hq_unrelated"},
