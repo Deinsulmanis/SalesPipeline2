@@ -1,0 +1,27 @@
+{
+  "schema": "jole_freshness_fixtures_v1",
+  "policy_version": "4.1.0",
+  "today": "2026-11-03",
+  "cases": [
+    {"id": "F01", "kind": "boundary", "title": "Hiring claim in copy, posting confirmed 30 days ago (production rule)", "finding": "hiring_posting", "checked": "2026-10-04", "use": "copy", "ok": true},
+    {"id": "F02", "kind": "boundary", "title": "Hiring claim in copy, posting confirmed 31 days ago", "finding": "hiring_posting", "checked": "2026-10-03", "use": "copy", "ok": false},
+    {"id": "F03", "kind": "boundary", "title": "Posting used for ranking, 31 days old", "finding": "hiring_posting", "checked": "2026-10-03", "use": "research", "ok": false},
+    {"id": "F04", "kind": "boundary", "title": "Project status for ranking, 90 days old", "finding": "project_status", "checked": "2026-08-05", "use": "research", "ok": true},
+    {"id": "F05", "kind": "boundary", "title": "Project status for ranking, 91 days old", "finding": "project_status", "checked": "2026-08-04", "use": "research", "ok": false},
+    {"id": "F06", "kind": "boundary", "title": "Project claim in copy, 30 days old", "finding": "project_status", "checked": "2026-10-04", "use": "copy", "ok": true},
+    {"id": "F07", "kind": "boundary", "title": "Project claim in copy, 31 days old (90 under 1.0.0)", "finding": "project_status", "checked": "2026-10-03", "use": "copy", "ok": false},
+    {"id": "F08", "kind": "boundary", "title": "Fit facts, 365 days old, before a spend", "finding": "fit_facts", "checked": "2025-11-03", "use": "action", "ok": true},
+    {"id": "F09", "kind": "boundary", "title": "Fit facts, 366 days old, for research", "finding": "fit_facts", "checked": "2025-11-02", "use": "research", "ok": false},
+    {"id": "F10", "kind": "negative", "title": "Fit facts are never a claim in copy", "finding": "fit_facts", "checked": "2026-11-03", "use": "copy", "ok": false},
+    {"id": "F11", "kind": "boundary", "title": "Buyer employment, 45 days old, for research", "finding": "buyer_employment", "checked": "2026-09-19", "use": "research", "ok": true},
+    {"id": "F12", "kind": "boundary", "title": "Buyer employment, 45 days old, before a reveal", "finding": "buyer_employment", "checked": "2026-09-19", "use": "action", "ok": false},
+    {"id": "F13", "kind": "boundary", "title": "Buyer employment, 30 days old, before a reveal", "finding": "buyer_employment", "checked": "2026-10-04", "use": "action", "ok": true},
+    {"id": "F14", "kind": "boundary", "title": "CRM and suppression state checked today, before import", "finding": "crm_suppression", "checked": "2026-11-03", "use": "action", "ok": true},
+    {"id": "F15", "kind": "boundary", "title": "CRM and suppression state checked yesterday, before import", "finding": "crm_suppression", "checked": "2026-11-02", "use": "action", "ok": false},
+    {"id": "F16", "kind": "boundary", "title": "CRM and suppression state, 30 days old, for screening", "finding": "crm_suppression", "checked": "2026-10-04", "use": "research", "ok": true},
+    {"id": "F17", "kind": "boundary", "title": "Email status, 31 days old, before import", "finding": "email_status", "checked": "2026-10-03", "use": "action", "ok": false},
+    {"id": "F18", "kind": "boundary", "title": "Labor agreement read 200 days ago, inside 12 months", "finding": "labor_terms", "checked": "2026-04-17", "use": "research", "ok": true},
+    {"id": "F19", "kind": "negative", "title": "Labor agreement read 200 days ago but it has since expired", "finding": "labor_terms", "checked": "2026-04-17", "use": "research", "date_passed": true, "ok": false},
+    {"id": "F20", "kind": "negative", "title": "Project confirmed last week but its start date has since passed", "finding": "project_status", "checked": "2026-10-27", "use": "research", "date_passed": true, "ok": false}
+  ]
+}

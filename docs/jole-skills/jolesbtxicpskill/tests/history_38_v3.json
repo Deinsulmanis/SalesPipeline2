@@ -1,0 +1,837 @@
+[
+ {
+  "name": "Conrad Shipyard",
+  "facts": {
+   "business": "end_employer",
+   "trade": "established",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "VERIFIED",
+   "company": "Conrad Shipyard"
+  },
+  "parts": [
+   28,
+   23,
+   19,
+   12,
+   7
+  ],
+  "score": 89,
+  "priority": "PRIORITY A",
+  "eligibility": "QUALIFIED",
+  "readiness": "CONTACT VERIFICATION REQUIRED"
+ },
+ {
+  "name": "East Coast Repair & Fabrication / S23 Holdings",
+  "facts": {
+   "business": "end_employer",
+   "trade": "established",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "VERIFIED",
+   "company": "East Coast Repair & Fabrication / S23 Holdings"
+  },
+  "parts": [
+   27,
+   18,
+   15,
+   13,
+   6
+  ],
+  "score": 79,
+  "priority": "PRIORITY B",
+  "eligibility": "QUALIFIED",
+  "readiness": "CONTACT VERIFICATION REQUIRED"
+ },
+ {
+  "name": "Sterling Shipyard",
+  "facts": {
+   "business": "end_employer",
+   "trade": "established",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "VERIFIED",
+   "company": "Sterling Shipyard"
+  },
+  "parts": [
+   25,
+   14,
+   18,
+   14,
+   8
+  ],
+  "score": 79,
+  "priority": "PRIORITY B",
+  "eligibility": "QUALIFIED",
+  "readiness": "CONTACT VERIFICATION REQUIRED"
+ },
+ {
+  "name": "SAFE Boats International",
+  "facts": {
+   "business": "end_employer",
+   "trade": "established",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "VERIFIED",
+   "company": "SAFE Boats International"
+  },
+  "parts": [
+   26,
+   13,
+   17,
+   13,
+   7
+  ],
+  "score": 76,
+  "priority": "PRIORITY B",
+  "eligibility": "QUALIFIED",
+  "readiness": "CONTACT VERIFICATION REQUIRED"
+ },
+ {
+  "name": "Metal Shark",
+  "facts": {
+   "business": "end_employer",
+   "trade": "established",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "VERIFIED",
+   "company": "Metal Shark"
+  },
+  "parts": [
+   25,
+   14,
+   16,
+   13,
+   6
+  ],
+  "score": 74,
+  "priority": "PRIORITY B",
+  "eligibility": "QUALIFIED",
+  "readiness": "CONTACT VERIFICATION REQUIRED"
+ },
+ {
+  "name": "Leading Edge Manufacturing",
+  "facts": {
+   "business": "end_employer",
+   "trade": "established",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "VERIFIED",
+   "company": "Leading Edge Manufacturing"
+  },
+  "parts": [
+   22,
+   12,
+   16,
+   13,
+   9
+  ],
+  "score": 72,
+  "priority": "PRIORITY B",
+  "eligibility": "QUALIFIED",
+  "readiness": "CONTACT VERIFICATION REQUIRED"
+ },
+ {
+  "name": "Detyens Shipyards",
+  "facts": {
+   "business": "end_employer",
+   "trade": "established",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "PARTIAL",
+   "company": "Detyens Shipyards"
+  },
+  "parts": [
+   25,
+   14,
+   17,
+   9,
+   7
+  ],
+  "score": 72,
+  "priority": "PRIORITY B",
+  "eligibility": "QUALIFIED",
+  "readiness": "BUYER RESEARCH REQUIRED"
+ },
+ {
+  "name": "Walashek Industrial & Marine",
+  "facts": {
+   "business": "contractor",
+   "trade": "established",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "VERIFIED",
+   "company": "Walashek Industrial & Marine"
+  },
+  "parts": [
+   24,
+   13,
+   14,
+   14,
+   6
+  ],
+  "score": 71,
+  "priority": "PRIORITY B",
+  "eligibility": "QUALIFIED",
+  "readiness": "CONTACT VERIFICATION REQUIRED"
+ },
+ {
+  "name": "Premium Plate (TF Warren)",
+  "facts": {
+   "business": "end_employer",
+   "trade": "established",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "VERIFIED",
+   "company": "Premium Plate (TF Warren)"
+  },
+  "parts": [
+   17,
+   7,
+   18,
+   14,
+   8
+  ],
+  "score": 64,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "QUALIFIED",
+  "readiness": "CONTACT VERIFICATION REQUIRED"
+ },
+ {
+  "name": "Westerman, Inc.",
+  "facts": {
+   "business": "end_employer",
+   "trade": "established",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "VERIFIED",
+   "restriction": "New owner Centrus (closed Oct 19, 2026) and nuclear-grade Hebron work: confirm vendor and qualification rules",
+   "company": "Westerman, Inc."
+  },
+  "parts": [
+   24,
+   13,
+   10,
+   12,
+   4
+  ],
+  "score": 63,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "QUALIFIED",
+  "readiness": "COMPLIANCE / PROCUREMENT REVIEW"
+ },
+ {
+  "name": "Derecktor Shipyards",
+  "facts": {
+   "business": "end_employer",
+   "trade": "established",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "PARTIAL",
+   "company": "Derecktor Shipyards"
+  },
+  "parts": [
+   18,
+   10,
+   17,
+   7,
+   8
+  ],
+  "score": 60,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "QUALIFIED",
+  "readiness": "BUYER RESEARCH REQUIRED"
+ },
+ {
+  "name": "Virginia Steel & Fabrication",
+  "facts": {
+   "business": "end_employer",
+   "trade": "established",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "PARTIAL",
+   "company": "Virginia Steel & Fabrication"
+  },
+  "parts": [
+   21,
+   12,
+   9,
+   8,
+   8
+  ],
+  "score": 58,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "QUALIFIED",
+  "readiness": "BUYER RESEARCH REQUIRED"
+ },
+ {
+  "name": "Shintech Louisiana",
+  "facts": {
+   "business": "end_employer",
+   "trade": "established",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "PARTIAL",
+   "company": "Shintech Louisiana"
+  },
+  "parts": [
+   19,
+   18,
+   4,
+   10,
+   5
+  ],
+  "score": 56,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "QUALIFIED",
+  "readiness": "BUYER RESEARCH REQUIRED"
+ },
+ {
+  "name": "Quality Companies",
+  "facts": {
+   "business": "mixed_contractor",
+   "trade": "established",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "VERIFIED",
+   "restriction": "Group sells 'Contract/Supplemental Labor' and I&E technicians through QPM: review competition before contact",
+   "company": "Quality Companies"
+  },
+  "parts": [
+   23,
+   9,
+   9,
+   12,
+   3
+  ],
+  "score": 56,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "CONDITIONAL",
+  "readiness": "COMPLIANCE / PROCUREMENT REVIEW"
+ },
+ {
+  "name": "Gradian Thermal Solutions",
+  "facts": {
+   "business": "end_employer",
+   "trade": "inferred",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "PARTIAL",
+   "company": "Gradian Thermal Solutions"
+  },
+  "parts": [
+   19,
+   8,
+   16,
+   6,
+   7
+  ],
+  "score": 56,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "CONDITIONAL",
+  "readiness": "SIGNAL VERIFICATION REQUIRED"
+ },
+ {
+  "name": "The Conair Group",
+  "facts": {
+   "business": "end_employer",
+   "trade": "established",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "PARTIAL",
+   "company": "The Conair Group"
+  },
+  "parts": [
+   20,
+   7,
+   10,
+   8,
+   8
+  ],
+  "score": 53,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "QUALIFIED",
+  "readiness": "BUYER RESEARCH REQUIRED"
+ },
+ {
+  "name": "Atlantic Alumina (Atalco)",
+  "facts": {
+   "business": "end_employer",
+   "trade": "established",
+   "access": "union_unknown",
+   "signal": "VERIFIED",
+   "buyer": "PARTIAL",
+   "restriction": "About 70% of jobs are USW members: check the agreement's subcontracting terms",
+   "company": "Atlantic Alumina (Atalco)"
+  },
+  "parts": [
+   20,
+   11,
+   10,
+   8,
+   4
+  ],
+  "score": 53,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "CONDITIONAL",
+  "readiness": "COMPLIANCE / PROCUREMENT REVIEW"
+ },
+ {
+  "name": "Metallus",
+  "facts": {
+   "business": "end_employer",
+   "trade": "established",
+   "access": "union_contractors_documented",
+   "signal": "VERIFIED",
+   "buyer": "PARTIAL",
+   "restriction": "USW Local 1123 plant: confirm whether non-approved contractors can supply shutdown crafts",
+   "company": "Metallus"
+  },
+  "parts": [
+   19,
+   14,
+   8,
+   7,
+   3
+  ],
+  "score": 51,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "QUALIFIED",
+  "readiness": "COMPLIANCE / PROCUREMENT REVIEW"
+ },
+ {
+  "name": "V&S Schuler Tubular Products",
+  "facts": {
+   "business": "end_employer",
+   "trade": "established",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "NOT_SITE_CONNECTED",
+   "company": "V&S Schuler Tubular Products"
+  },
+  "parts": [
+   20,
+   11,
+   9,
+   3,
+   7
+  ],
+  "score": 50,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "QUALIFIED",
+  "readiness": "BUYER RESEARCH REQUIRED"
+ },
+ {
+  "name": "QT Corporation",
+  "facts": {
+   "business": "end_employer",
+   "trade": "inferred",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "VERIFIED",
+   "company": "QT Corporation"
+  },
+  "parts": [
+   16,
+   6,
+   8,
+   13,
+   7
+  ],
+  "score": 50,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "CONDITIONAL",
+  "readiness": "SIGNAL VERIFICATION REQUIRED"
+ },
+ {
+  "name": "Niagara Power Transformer",
+  "facts": {
+   "business": "end_employer",
+   "trade": "inferred",
+   "access": "union_unknown",
+   "signal": "VERIFIED",
+   "buyer": "VERIFIED",
+   "restriction": "IBEW Local 41 shop: 57 of 73 new jobs are IBEW",
+   "company": "Niagara Power Transformer"
+  },
+  "parts": [
+   20,
+   4,
+   9,
+   13,
+   3
+  ],
+  "score": 49,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "CONDITIONAL",
+  "readiness": "COMPLIANCE / PROCUREMENT REVIEW"
+ },
+ {
+  "name": "Defense Maritime Solutions",
+  "facts": {
+   "business": "end_employer",
+   "trade": "inferred",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "VERIFIED",
+   "company": "Defense Maritime Solutions"
+  },
+  "parts": [
+   18,
+   6,
+   8,
+   13,
+   3
+  ],
+  "score": 48,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "CONDITIONAL",
+  "readiness": "SIGNAL VERIFICATION REQUIRED"
+ },
+ {
+  "name": "CP Industries",
+  "facts": {
+   "business": "end_employer",
+   "trade": "inferred",
+   "access": "union_unknown",
+   "signal": "VERIFIED",
+   "buyer": "VERIFIED",
+   "restriction": "USW Local 5852 plant: check subcontracting terms",
+   "company": "CP Industries"
+  },
+  "parts": [
+   17,
+   5,
+   6,
+   13,
+   3
+  ],
+  "score": 44,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "CONDITIONAL",
+  "readiness": "COMPLIANCE / PROCUREMENT REVIEW"
+ },
+ {
+  "name": "Omega Industries",
+  "facts": {
+   "business": "end_employer",
+   "trade": "inferred",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "PARTIAL",
+   "company": "Omega Industries"
+  },
+  "parts": [
+   13,
+   5,
+   8,
+   6,
+   8
+  ],
+  "score": 40,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "CONDITIONAL",
+  "readiness": "SIGNAL VERIFICATION REQUIRED"
+ },
+ {
+  "name": "Pierre Guerin",
+  "facts": {
+   "business": "end_employer",
+   "trade": "inferred",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "NOT_FOUND",
+   "company": "Pierre Guerin"
+  },
+  "parts": [
+   15,
+   7,
+   9,
+   2,
+   7
+  ],
+  "score": 40,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "CONDITIONAL",
+  "readiness": "SIGNAL VERIFICATION REQUIRED"
+ },
+ {
+  "name": "Goldhofer",
+  "facts": {
+   "business": "end_employer",
+   "trade": "inferred",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "VERIFIED",
+   "company": "Goldhofer"
+  },
+  "parts": [
+   13,
+   5,
+   4,
+   9,
+   8
+  ],
+  "score": 39,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "CONDITIONAL",
+  "readiness": "SIGNAL VERIFICATION REQUIRED"
+ },
+ {
+  "name": "Hyundai Translead",
+  "facts": {
+   "business": "end_employer",
+   "trade": "inferred",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "NOT_SITE_CONNECTED",
+   "restriction": "CEO pledged all but 20 of 2,475 hires local, tied to about $104M in incentives: confirm contract labor is compatible",
+   "company": "Hyundai Translead"
+  },
+  "parts": [
+   19,
+   5,
+   10,
+   2,
+   3
+  ],
+  "score": 39,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "CONDITIONAL",
+  "readiness": "COMPLIANCE / PROCUREMENT REVIEW"
+ },
+ {
+  "name": "INNIO Group",
+  "facts": {
+   "business": "end_employer",
+   "trade": "established",
+   "access": "union_unknown",
+   "signal": "VERIFIED",
+   "buyer": "PARTIAL",
+   "restriction": "IAM District 10 represented hourly employees as of about 2019: confirm current status",
+   "company": "INNIO Group"
+  },
+  "parts": [
+   17,
+   5,
+   6,
+   7,
+   4
+  ],
+  "score": 39,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "CONDITIONAL",
+  "readiness": "COMPLIANCE / PROCUREMENT REVIEW"
+ },
+ {
+  "name": "Cenovus Energy",
+  "facts": {
+   "business": "end_employer",
+   "trade": "established",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "PARTIAL",
+   "signal_current": false,
+   "company": "Cenovus Energy"
+  },
+  "parts": [
+   7,
+   15,
+   3,
+   8,
+   5
+  ],
+  "score": 38,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "QUALIFIED",
+  "readiness": "SIGNAL VERIFICATION REQUIRED"
+ },
+ {
+  "name": "The Whiskey Project Group",
+  "facts": {
+   "business": "end_employer",
+   "trade": "inferred",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "PARTIAL",
+   "company": "The Whiskey Project Group"
+  },
+  "parts": [
+   12,
+   6,
+   10,
+   4,
+   6
+  ],
+  "score": 38,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "CONDITIONAL",
+  "readiness": "SIGNAL VERIFICATION REQUIRED"
+ },
+ {
+  "name": "SubSea Craft",
+  "facts": {
+   "business": "end_employer",
+   "trade": "inferred",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "NOT_FOUND",
+   "company": "SubSea Craft"
+  },
+  "parts": [
+   15,
+   6,
+   9,
+   2,
+   5
+  ],
+  "score": 37,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "CONDITIONAL",
+  "readiness": "SIGNAL VERIFICATION REQUIRED"
+ },
+ {
+  "name": "Doncasters Group",
+  "facts": {
+   "business": "end_employer",
+   "trade": "inferred",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "NOT_FOUND",
+   "company": "Doncasters Group"
+  },
+  "parts": [
+   15,
+   5,
+   7,
+   3,
+   6
+  ],
+  "score": 36,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "CONDITIONAL",
+  "readiness": "SIGNAL VERIFICATION REQUIRED"
+ },
+ {
+  "name": "Hammond Power Solutions",
+  "facts": {
+   "business": "end_employer",
+   "trade": "inferred",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "NOT_SITE_CONNECTED",
+   "company": "Hammond Power Solutions"
+  },
+  "parts": [
+   14,
+   6,
+   5,
+   3,
+   7
+  ],
+  "score": 35,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "CONDITIONAL",
+  "readiness": "SIGNAL VERIFICATION REQUIRED"
+ },
+ {
+  "name": "Brunk Industries",
+  "facts": {
+   "business": "end_employer",
+   "trade": "inferred",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "NOT_FOUND",
+   "company": "Brunk Industries"
+  },
+  "parts": [
+   14,
+   4,
+   6,
+   2,
+   7
+  ],
+  "score": 33,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "CONDITIONAL",
+  "readiness": "SIGNAL VERIFICATION REQUIRED"
+ },
+ {
+  "name": "Westwin Elements",
+  "facts": {
+   "business": "end_employer",
+   "trade": "inferred",
+   "access": "open",
+   "signal": "POTENTIAL",
+   "buyer": "VERIFIED",
+   "early_stage": true,
+   "company": "Westwin Elements"
+  },
+  "parts": [
+   10,
+   6,
+   2,
+   9,
+   5
+  ],
+  "score": 32,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "CONDITIONAL",
+  "readiness": "HOLD"
+ },
+ {
+  "name": "Fairbanks Morse Defense",
+  "facts": {
+   "business": "end_employer",
+   "trade": "inferred",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "NOT_SITE_CONNECTED",
+   "restriction": "Facility Security Officer posted for the site: confirm clearance needs for any Navy propeller work",
+   "company": "Fairbanks Morse Defense"
+  },
+  "parts": [
+   14,
+   5,
+   4,
+   2,
+   3
+  ],
+  "score": 28,
+  "priority": "NURTURE / RESEARCH",
+  "eligibility": "CONDITIONAL",
+  "readiness": "COMPLIANCE / PROCUREMENT REVIEW"
+ },
+ {
+  "name": "Arc Solutions",
+  "facts": {
+   "business": "service_no_crafts",
+   "trade": "none",
+   "access": "open",
+   "signal": "VERIFIED",
+   "buyer": "NOT_FOUND",
+   "company": "Arc Solutions"
+  },
+  "parts": null,
+  "score": null,
+  "priority": "NOT SCORED (EXCLUDED)",
+  "eligibility": "EXCLUDED",
+  "readiness": "HOLD"
+ },
+ {
+  "name": "Tennessee Valley Authority",
+  "facts": {
+   "business": "end_employer",
+   "trade": "established",
+   "access": "binding_agreement",
+   "signal": "VERIFIED",
+   "buyer": "NOT_FOUND",
+   "company": "Tennessee Valley Authority"
+  },
+  "parts": null,
+  "score": null,
+  "priority": "NOT SCORED (EXCLUDED)",
+  "eligibility": "EXCLUDED",
+  "readiness": "HOLD"
+ }
+]

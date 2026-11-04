@@ -1,0 +1,2678 @@
+{
+ "schema": "jole_regression_38_v1",
+ "policy_version": "4.0.0",
+ "built": "2026-11-03",
+ "note": "Facts are the November 2026 research findings. Expected decisions are recomputed by the reference logic; a difference from v3 needs a change_reason. Historical scores are not ground truth.",
+ "source_files": [
+  "Downloads/Jole_38_Requalified_Companies.csv",
+  "tests/history_38_v3.json"
+ ],
+ "companies": [
+  {
+   "name": "Conrad Shipyard",
+   "key": "conradindustries.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER VERIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Conrad Shipyard",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "DIRECT"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "active"
+      }
+     ],
+     "parts": {
+      "signal": 28,
+      "external": 23,
+      "timing": 19
+     },
+     "outside_labor": "DOCUMENTED",
+     "window": "active"
+    },
+    "feasibility": {
+     "flags": [
+      "navy_work"
+     ],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "QUALIFIED",
+    "signal": "VERIFIED CURRENT SIGNAL",
+    "priority": "PRIORITY A",
+    "demand_score": 70,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER VERIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "SOURCE CONTACT"
+   },
+   "v3": {
+    "eligibility": "QUALIFIED",
+    "score": 89,
+    "priority": "PRIORITY A",
+    "readiness": "CONTACT VERIFICATION REQUIRED",
+    "parts": [
+     28,
+     23,
+     19,
+     12,
+     7
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "East Coast Repair & Fabrication / S23 Holdings",
+   "key": "ecrfab.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER VERIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "East Coast Repair & Fabrication / S23 Holdings",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "DIRECT"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "active"
+      }
+     ],
+     "parts": {
+      "signal": 27,
+      "external": 18,
+      "timing": 15
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "active"
+    },
+    "feasibility": {
+     "flags": [
+      "navy_work"
+     ],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "QUALIFIED",
+    "signal": "VERIFIED CURRENT SIGNAL",
+    "priority": "PRIORITY B",
+    "demand_score": 60,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER VERIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "SOURCE CONTACT"
+   },
+   "v3": {
+    "eligibility": "QUALIFIED",
+    "score": 79,
+    "priority": "PRIORITY B",
+    "readiness": "CONTACT VERIFICATION REQUIRED",
+    "parts": [
+     27,
+     18,
+     15,
+     13,
+     6
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "Sterling Shipyard",
+   "key": "sterlingshipyard.net",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER VERIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Sterling Shipyard",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "DIRECT"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "active"
+      }
+     ],
+     "parts": {
+      "signal": 25,
+      "external": 14,
+      "timing": 18
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "active"
+    },
+    "feasibility": {
+     "flags": [],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "QUALIFIED",
+    "signal": "VERIFIED CURRENT SIGNAL",
+    "priority": "PRIORITY B",
+    "demand_score": 57,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER VERIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "SOURCE CONTACT"
+   },
+   "v3": {
+    "eligibility": "QUALIFIED",
+    "score": 79,
+    "priority": "PRIORITY B",
+    "readiness": "CONTACT VERIFICATION REQUIRED",
+    "parts": [
+     25,
+     14,
+     18,
+     14,
+     8
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "SAFE Boats International",
+   "key": "safeboats.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER VERIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "SAFE Boats International",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "DIRECT"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "active"
+      }
+     ],
+     "parts": {
+      "signal": 26,
+      "external": 13,
+      "timing": 17
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "active"
+    },
+    "feasibility": {
+     "flags": [
+      "navy_work"
+     ],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "QUALIFIED",
+    "signal": "VERIFIED CURRENT SIGNAL",
+    "priority": "PRIORITY B",
+    "demand_score": 56,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER VERIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "SOURCE CONTACT"
+   },
+   "v3": {
+    "eligibility": "QUALIFIED",
+    "score": 76,
+    "priority": "PRIORITY B",
+    "readiness": "CONTACT VERIFICATION REQUIRED",
+    "parts": [
+     26,
+     13,
+     17,
+     13,
+     7
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "Metal Shark",
+   "key": "metalsharkboats.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER VERIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Metal Shark",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "DIRECT"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "active"
+      }
+     ],
+     "parts": {
+      "signal": 25,
+      "external": 14,
+      "timing": 16
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "active"
+    },
+    "feasibility": {
+     "flags": [
+      "navy_work"
+     ],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "QUALIFIED",
+    "signal": "VERIFIED CURRENT SIGNAL",
+    "priority": "PRIORITY B",
+    "demand_score": 55,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER VERIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "SOURCE CONTACT"
+   },
+   "v3": {
+    "eligibility": "QUALIFIED",
+    "score": 74,
+    "priority": "PRIORITY B",
+    "readiness": "CONTACT VERIFICATION REQUIRED",
+    "parts": [
+     25,
+     14,
+     16,
+     13,
+     6
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "Leading Edge Manufacturing",
+   "key": "unknown",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER VERIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Leading Edge Manufacturing",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "DIRECT"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "active"
+      }
+     ],
+     "parts": {
+      "signal": 22,
+      "external": 12,
+      "timing": 16
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "active"
+    },
+    "feasibility": {
+     "flags": [],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "QUALIFIED",
+    "signal": "VERIFIED CURRENT SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 50,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER VERIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "SOURCE CONTACT"
+   },
+   "v3": {
+    "eligibility": "QUALIFIED",
+    "score": 72,
+    "priority": "PRIORITY B",
+    "readiness": "CONTACT VERIFICATION REQUIRED",
+    "parts": [
+     22,
+     12,
+     16,
+     13,
+     9
+    ]
+   },
+   "change_reason": {
+    "priority": "v3's 72 included 13 buyer and 9 procurement points. Priority is now demand-only: 50 of 75, below PRIORITY B (53). The verified buyer is still recorded under buyer."
+   }
+  },
+  {
+   "name": "Detyens Shipyards",
+   "key": "detyens.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER PARTIAL",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Detyens Shipyards",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "DIRECT"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "active"
+      }
+     ],
+     "parts": {
+      "signal": 25,
+      "external": 14,
+      "timing": 17
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "active"
+    },
+    "feasibility": {
+     "flags": [
+      "navy_work"
+     ],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "QUALIFIED",
+    "signal": "VERIFIED CURRENT SIGNAL",
+    "priority": "PRIORITY B",
+    "demand_score": 56,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER PARTIAL",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH BUYER"
+   },
+   "v3": {
+    "eligibility": "QUALIFIED",
+    "score": 72,
+    "priority": "PRIORITY B",
+    "readiness": "BUYER RESEARCH REQUIRED",
+    "parts": [
+     25,
+     14,
+     17,
+     9,
+     7
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "Walashek Industrial & Marine",
+   "key": "walashek.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER VERIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Walashek Industrial & Marine",
+     "business": "contractor",
+     "operations": "VERIFIED",
+     "craft_fit": "DIRECT"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "active"
+      }
+     ],
+     "parts": {
+      "signal": 24,
+      "external": 13,
+      "timing": 14
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "active"
+    },
+    "feasibility": {
+     "flags": [
+      "navy_work"
+     ],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "QUALIFIED",
+    "signal": "VERIFIED CURRENT SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 51,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER VERIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "SOURCE CONTACT"
+   },
+   "v3": {
+    "eligibility": "QUALIFIED",
+    "score": 71,
+    "priority": "PRIORITY B",
+    "readiness": "CONTACT VERIFICATION REQUIRED",
+    "parts": [
+     24,
+     13,
+     14,
+     14,
+     6
+    ]
+   },
+   "change_reason": {
+    "priority": "v3's 71 included 14 buyer and 6 procurement points. Demand alone is 51 of 75 (contract active, outside labor undocumented), below PRIORITY B. The verified buyer is still recorded under buyer."
+   }
+  },
+  {
+   "name": "Premium Plate (TF Warren)",
+   "key": "premiumplatesupply.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER VERIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Premium Plate (TF Warren)",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "DIRECT"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "within_90"
+      }
+     ],
+     "parts": {
+      "signal": 17,
+      "external": 7,
+      "timing": 18
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "within_90"
+    },
+    "feasibility": {
+     "flags": [],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "QUALIFIED",
+    "signal": "VERIFIED CURRENT SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 42,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER VERIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "SOURCE CONTACT"
+   },
+   "v3": {
+    "eligibility": "QUALIFIED",
+    "score": 64,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "CONTACT VERIFICATION REQUIRED",
+    "parts": [
+     17,
+     7,
+     18,
+     14,
+     8
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "Westerman, Inc.",
+   "key": "westermaninc.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER VERIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Westerman, Inc.",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "DIRECT"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "unknown"
+      }
+     ],
+     "parts": {
+      "signal": 24,
+      "external": 13,
+      "timing": 10
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "unknown"
+    },
+    "feasibility": {
+     "flags": [
+      "new_owner",
+      "nuclear_qualification"
+     ],
+     "requirements": [
+      {
+       "trigger": "new_owner",
+       "kind": "TERMS UNKNOWN"
+      },
+      {
+       "trigger": "nuclear_qualification",
+       "kind": "TERMS UNKNOWN"
+      }
+     ],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "QUALIFIED",
+    "signal": "VERIFIED FUTURE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 47,
+    "feasibility": "UNKNOWN",
+    "buyer": "BUYER VERIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH FEASIBILITY"
+   },
+   "v3": {
+    "eligibility": "QUALIFIED",
+    "score": 63,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "COMPLIANCE / PROCUREMENT REVIEW",
+    "parts": [
+     24,
+     13,
+     10,
+     12,
+     4
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "Derecktor Shipyards",
+   "key": "derecktor.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER PARTIAL",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Derecktor Shipyards",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "DIRECT"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "active"
+      }
+     ],
+     "parts": {
+      "signal": 18,
+      "external": 10,
+      "timing": 17
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "active"
+    },
+    "feasibility": {
+     "flags": [],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "QUALIFIED",
+    "signal": "VERIFIED CURRENT SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 45,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER PARTIAL",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH BUYER"
+   },
+   "v3": {
+    "eligibility": "QUALIFIED",
+    "score": 60,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "BUYER RESEARCH REQUIRED",
+    "parts": [
+     18,
+     10,
+     17,
+     7,
+     8
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "Virginia Steel & Fabrication",
+   "key": "unknown",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER PARTIAL",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Virginia Steel & Fabrication",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "DIRECT"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "unknown"
+      }
+     ],
+     "parts": {
+      "signal": 21,
+      "external": 12,
+      "timing": 9
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "unknown"
+    },
+    "feasibility": {
+     "flags": [],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "QUALIFIED",
+    "signal": "VERIFIED FUTURE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 42,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER PARTIAL",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH BUYER"
+   },
+   "v3": {
+    "eligibility": "QUALIFIED",
+    "score": 58,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "BUYER RESEARCH REQUIRED",
+    "parts": [
+     21,
+     12,
+     9,
+     8,
+     8
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "Shintech Louisiana",
+   "key": "unknown",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER PARTIAL",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Shintech Louisiana",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "DIRECT"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "later"
+      }
+     ],
+     "parts": {
+      "signal": 19,
+      "external": 18,
+      "timing": 4
+     },
+     "outside_labor": "DOCUMENTED",
+     "window": "later"
+    },
+    "feasibility": {
+     "flags": [],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "QUALIFIED",
+    "signal": "VERIFIED FUTURE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 41,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER PARTIAL",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH BUYER"
+   },
+   "v3": {
+    "eligibility": "QUALIFIED",
+    "score": 56,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "BUYER RESEARCH REQUIRED",
+    "parts": [
+     19,
+     18,
+     4,
+     10,
+     5
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "Quality Companies",
+   "key": "qualitycompanies.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER VERIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Quality Companies",
+     "business": "mixed_contractor",
+     "operations": "VERIFIED",
+     "craft_fit": "DIRECT"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "unknown"
+      }
+     ],
+     "parts": {
+      "signal": 23,
+      "external": 9,
+      "timing": 9
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "unknown"
+    },
+    "feasibility": {
+     "flags": [],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "CONDITIONAL",
+    "signal": "VERIFIED FUTURE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 41,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER VERIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "REVIEW"
+   },
+   "v3": {
+    "eligibility": "CONDITIONAL",
+    "score": 56,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "COMPLIANCE / PROCUREMENT REVIEW",
+    "parts": [
+     23,
+     9,
+     9,
+     12,
+     3
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "Gradian Thermal Solutions",
+   "key": "gradiansolutions.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER PARTIAL",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Gradian Thermal Solutions",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "UNCLEAR"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "active"
+      }
+     ],
+     "parts": {
+      "signal": 19,
+      "external": 8,
+      "timing": 16
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "active"
+    },
+    "feasibility": {
+     "flags": [],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "CONDITIONAL",
+    "signal": "VERIFIED CURRENT SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 43,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER PARTIAL",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH FIT"
+   },
+   "v3": {
+    "eligibility": "CONDITIONAL",
+    "score": 56,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "SIGNAL VERIFICATION REQUIRED",
+    "parts": [
+     19,
+     8,
+     16,
+     6,
+     7
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "The Conair Group",
+   "key": "conairgroup.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER PARTIAL",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "The Conair Group",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "DIRECT"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "unknown"
+      }
+     ],
+     "parts": {
+      "signal": 20,
+      "external": 7,
+      "timing": 10
+     },
+     "outside_labor": "CONTRA-INDICATED",
+     "window": "unknown"
+    },
+    "feasibility": {
+     "flags": [],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "QUALIFIED",
+    "signal": "VERIFIED FUTURE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 37,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER PARTIAL",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH BUYER"
+   },
+   "v3": {
+    "eligibility": "QUALIFIED",
+    "score": 53,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "BUYER RESEARCH REQUIRED",
+    "parts": [
+     20,
+     7,
+     10,
+     8,
+     8
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "Atlantic Alumina (Atalco)",
+   "key": "atalco.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER PARTIAL",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Atlantic Alumina (Atalco)",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "DIRECT"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "active"
+      }
+     ],
+     "parts": {
+      "signal": 20,
+      "external": 11,
+      "timing": 10
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "active"
+    },
+    "feasibility": {
+     "flags": [
+      "union_in_plant"
+     ],
+     "requirements": [
+      {
+       "trigger": "union_in_plant",
+       "kind": "TERMS UNKNOWN"
+      }
+     ],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "QUALIFIED",
+    "signal": "VERIFIED CURRENT SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 41,
+    "feasibility": "UNKNOWN",
+    "buyer": "BUYER PARTIAL",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH FEASIBILITY"
+   },
+   "v3": {
+    "eligibility": "CONDITIONAL",
+    "score": 53,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "COMPLIANCE / PROCUREMENT REVIEW",
+    "parts": [
+     20,
+     11,
+     10,
+     8,
+     4
+    ]
+   },
+   "change_reason": {
+    "icp": "v3 treated unknown USW subcontracting terms as an ICP gap. In 4.0.0 union terms are a feasibility question (UNKNOWN); the crafts were already established, so fit is QUALIFIED."
+   }
+  },
+  {
+   "name": "Metallus",
+   "key": "metallus.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER PARTIAL",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Metallus",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "DIRECT"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "later"
+      }
+     ],
+     "parts": {
+      "signal": 19,
+      "external": 14,
+      "timing": 8
+     },
+     "outside_labor": "DOCUMENTED",
+     "window": "later"
+    },
+    "feasibility": {
+     "flags": [
+      "union_in_plant"
+     ],
+     "requirements": [
+      {
+       "trigger": "union_in_plant",
+       "kind": "VERIFIED REQUIREMENT"
+      }
+     ],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "QUALIFIED",
+    "signal": "VERIFIED FUTURE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 41,
+    "feasibility": "FEASIBLE WITH CONDITIONS",
+    "buyer": "BUYER PARTIAL",
+    "dedupe": "NET NEW",
+    "next_action": "REVIEW"
+   },
+   "v3": {
+    "eligibility": "QUALIFIED",
+    "score": 51,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "COMPLIANCE / PROCUREMENT REVIEW",
+    "parts": [
+     19,
+     14,
+     8,
+     7,
+     3
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "V&S Schuler Tubular Products",
+   "key": "unknown",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER NOT SITE-CONNECTED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "V&S Schuler Tubular Products",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "DIRECT"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "unknown"
+      }
+     ],
+     "parts": {
+      "signal": 20,
+      "external": 11,
+      "timing": 9
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "unknown"
+    },
+    "feasibility": {
+     "flags": [],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "QUALIFIED",
+    "signal": "VERIFIED FUTURE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 40,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER NOT SITE-CONNECTED",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH BUYER"
+   },
+   "v3": {
+    "eligibility": "QUALIFIED",
+    "score": 50,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "BUYER RESEARCH REQUIRED",
+    "parts": [
+     20,
+     11,
+     9,
+     3,
+     7
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "QT Corporation",
+   "key": "unknown",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER VERIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "QT Corporation",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "UNCLEAR"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "unknown"
+      }
+     ],
+     "parts": {
+      "signal": 16,
+      "external": 6,
+      "timing": 8
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "unknown"
+    },
+    "feasibility": {
+     "flags": [],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "CONDITIONAL",
+    "signal": "VERIFIED FUTURE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 30,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER VERIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH FIT"
+   },
+   "v3": {
+    "eligibility": "CONDITIONAL",
+    "score": 50,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "SIGNAL VERIFICATION REQUIRED",
+    "parts": [
+     16,
+     6,
+     8,
+     13,
+     7
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "Niagara Power Transformer",
+   "key": "niagarapowertransformer.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER VERIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Niagara Power Transformer",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "UNCLEAR"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "unknown"
+      }
+     ],
+     "parts": {
+      "signal": 20,
+      "external": 4,
+      "timing": 9
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "unknown"
+    },
+    "feasibility": {
+     "flags": [
+      "union_in_plant"
+     ],
+     "requirements": [
+      {
+       "trigger": "union_in_plant",
+       "kind": "TERMS UNKNOWN"
+      }
+     ],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "CONDITIONAL",
+    "signal": "VERIFIED FUTURE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 33,
+    "feasibility": "UNKNOWN",
+    "buyer": "BUYER VERIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH FIT"
+   },
+   "v3": {
+    "eligibility": "CONDITIONAL",
+    "score": 49,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "COMPLIANCE / PROCUREMENT REVIEW",
+    "parts": [
+     20,
+     4,
+     9,
+     13,
+     3
+    ]
+   },
+   "change_reason": {
+    "next_action": "v3 reported the compliance gate first. 4.0.0 resolves the cheaper fit gap (does the plant use Jole crafts?) before reading IBEW terms; feasibility stays UNKNOWN."
+   }
+  },
+  {
+   "name": "Defense Maritime Solutions",
+   "key": "dmsamerica.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER VERIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Defense Maritime Solutions",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "UNCLEAR"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "unknown"
+      }
+     ],
+     "parts": {
+      "signal": 18,
+      "external": 6,
+      "timing": 8
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "unknown"
+    },
+    "feasibility": {
+     "flags": [
+      "navy_work"
+     ],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "CONDITIONAL",
+    "signal": "VERIFIED FUTURE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 32,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER VERIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH FIT"
+   },
+   "v3": {
+    "eligibility": "CONDITIONAL",
+    "score": 48,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "SIGNAL VERIFICATION REQUIRED",
+    "parts": [
+     18,
+     6,
+     8,
+     13,
+     3
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "CP Industries",
+   "key": "cpindustries.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER VERIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "CP Industries",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "UNCLEAR"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "later"
+      }
+     ],
+     "parts": {
+      "signal": 17,
+      "external": 5,
+      "timing": 6
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "later"
+    },
+    "feasibility": {
+     "flags": [
+      "union_in_plant"
+     ],
+     "requirements": [
+      {
+       "trigger": "union_in_plant",
+       "kind": "TERMS UNKNOWN"
+      }
+     ],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "CONDITIONAL",
+    "signal": "VERIFIED FUTURE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 28,
+    "feasibility": "UNKNOWN",
+    "buyer": "BUYER VERIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH FIT"
+   },
+   "v3": {
+    "eligibility": "CONDITIONAL",
+    "score": 44,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "COMPLIANCE / PROCUREMENT REVIEW",
+    "parts": [
+     17,
+     5,
+     6,
+     13,
+     3
+    ]
+   },
+   "change_reason": {
+    "next_action": "v3 reported the compliance gate first. 4.0.0 resolves the cheaper fit gap (welding share at McKeesport) before reading USW terms; feasibility stays UNKNOWN."
+   }
+  },
+  {
+   "name": "Omega Industries",
+   "key": "unknown",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER PARTIAL",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Omega Industries",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "UNCLEAR"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "unknown"
+      }
+     ],
+     "parts": {
+      "signal": 13,
+      "external": 5,
+      "timing": 8
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "unknown"
+    },
+    "feasibility": {
+     "flags": [],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "CONDITIONAL",
+    "signal": "VERIFIED FUTURE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 26,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER PARTIAL",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH FIT"
+   },
+   "v3": {
+    "eligibility": "CONDITIONAL",
+    "score": 40,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "SIGNAL VERIFICATION REQUIRED",
+    "parts": [
+     13,
+     5,
+     8,
+     6,
+     8
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "Pierre Guerin",
+   "key": "unknown",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER NOT IDENTIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Pierre Guerin",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "UNCLEAR"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "later"
+      }
+     ],
+     "parts": {
+      "signal": 15,
+      "external": 7,
+      "timing": 9
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "later"
+    },
+    "feasibility": {
+     "flags": [],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "CONDITIONAL",
+    "signal": "VERIFIED FUTURE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 31,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER NOT IDENTIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH FIT"
+   },
+   "v3": {
+    "eligibility": "CONDITIONAL",
+    "score": 40,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "SIGNAL VERIFICATION REQUIRED",
+    "parts": [
+     15,
+     7,
+     9,
+     2,
+     7
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "Goldhofer",
+   "key": "goldhofer.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER VERIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Goldhofer",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "UNCLEAR"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "later"
+      }
+     ],
+     "parts": {
+      "signal": 13,
+      "external": 5,
+      "timing": 4
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "later"
+    },
+    "feasibility": {
+     "flags": [],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "CONDITIONAL",
+    "signal": "VERIFIED FUTURE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 22,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER VERIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH FIT"
+   },
+   "v3": {
+    "eligibility": "CONDITIONAL",
+    "score": 39,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "SIGNAL VERIFICATION REQUIRED",
+    "parts": [
+     13,
+     5,
+     4,
+     9,
+     8
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "Hyundai Translead",
+   "key": "hyundaitranslead.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER NOT SITE-CONNECTED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Hyundai Translead",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "PROCESS"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "unknown"
+      }
+     ],
+     "parts": {
+      "signal": 19,
+      "external": 5,
+      "timing": 10
+     },
+     "outside_labor": "CONTRA-INDICATED",
+     "window": "unknown"
+    },
+    "feasibility": {
+     "flags": [
+      "local_hire_pledge"
+     ],
+     "requirements": [
+      {
+       "trigger": "local_hire_pledge",
+       "kind": "TERMS UNKNOWN"
+      }
+     ],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "QUALIFIED",
+    "signal": "VERIFIED FUTURE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 34,
+    "feasibility": "UNKNOWN",
+    "buyer": "BUYER NOT SITE-CONNECTED",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH FEASIBILITY"
+   },
+   "v3": {
+    "eligibility": "CONDITIONAL",
+    "score": 39,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "COMPLIANCE / PROCUREMENT REVIEW",
+    "parts": [
+     19,
+     5,
+     10,
+     2,
+     3
+    ]
+   },
+   "change_reason": {
+    "icp": "Trailer manufacturing is listed heavy fabrication and cannot run without welders and fabricators (PROCESS craft fit, MEDIUM confidence). The open items were the Joliet job mix, a priority question, and the local-hire pledge, now feasibility UNKNOWN."
+   }
+  },
+  {
+   "name": "INNIO Group",
+   "key": "innio.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER PARTIAL",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "INNIO Group",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "DIRECT"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "unknown"
+      }
+     ],
+     "parts": {
+      "signal": 17,
+      "external": 5,
+      "timing": 6
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "unknown"
+    },
+    "feasibility": {
+     "flags": [
+      "union_in_plant"
+     ],
+     "requirements": [
+      {
+       "trigger": "union_in_plant",
+       "kind": "TERMS UNKNOWN"
+      }
+     ],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "QUALIFIED",
+    "signal": "VERIFIED FUTURE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 28,
+    "feasibility": "UNKNOWN",
+    "buyer": "BUYER PARTIAL",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH FEASIBILITY"
+   },
+   "v3": {
+    "eligibility": "CONDITIONAL",
+    "score": 39,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "COMPLIANCE / PROCUREMENT REVIEW",
+    "parts": [
+     17,
+     5,
+     6,
+     7,
+     4
+    ]
+   },
+   "change_reason": {
+    "icp": "v3 treated the IAM status as an ICP gap. In 4.0.0 it is a feasibility question (UNKNOWN); the machinists are named by the company, so fit is QUALIFIED."
+   }
+  },
+  {
+   "name": "Cenovus Energy",
+   "key": "cenovus.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER PARTIAL",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Cenovus Energy",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "DIRECT"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "passed"
+      }
+     ],
+     "parts": {
+      "signal": 7,
+      "external": 15,
+      "timing": 3
+     },
+     "outside_labor": "DOCUMENTED",
+     "window": "passed"
+    },
+    "feasibility": {
+     "flags": [],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "QUALIFIED",
+    "signal": "CONTRADICTORY / STALE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 25,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER PARTIAL",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH BUYER"
+   },
+   "v3": {
+    "eligibility": "QUALIFIED",
+    "score": 38,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "SIGNAL VERIFICATION REQUIRED",
+    "parts": [
+     7,
+     15,
+     3,
+     8,
+     5
+    ]
+   },
+   "change_reason": {
+    "next_action": "v3 put SIGNAL VERIFICATION first. A passed signal now lowers priority but does not block free buyer research on a qualified company."
+   }
+  },
+  {
+   "name": "The Whiskey Project Group",
+   "key": "unknown",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER PARTIAL",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "The Whiskey Project Group",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "UNCLEAR"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "active"
+      }
+     ],
+     "parts": {
+      "signal": 12,
+      "external": 6,
+      "timing": 10
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "active"
+    },
+    "feasibility": {
+     "flags": [
+      "navy_work"
+     ],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "CONDITIONAL",
+    "signal": "VERIFIED CURRENT SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 28,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER PARTIAL",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH FIT"
+   },
+   "v3": {
+    "eligibility": "CONDITIONAL",
+    "score": 38,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "SIGNAL VERIFICATION REQUIRED",
+    "parts": [
+     12,
+     6,
+     10,
+     4,
+     6
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "SubSea Craft",
+   "key": "subseacraft.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER NOT IDENTIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "SubSea Craft",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "UNCLEAR"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "later"
+      }
+     ],
+     "parts": {
+      "signal": 15,
+      "external": 6,
+      "timing": 9
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "later"
+    },
+    "feasibility": {
+     "flags": [
+      "navy_work"
+     ],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "CONDITIONAL",
+    "signal": "VERIFIED FUTURE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 30,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER NOT IDENTIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH FIT"
+   },
+   "v3": {
+    "eligibility": "CONDITIONAL",
+    "score": 37,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "SIGNAL VERIFICATION REQUIRED",
+    "parts": [
+     15,
+     6,
+     9,
+     2,
+     5
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "Doncasters Group",
+   "key": "doncasters.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER NOT IDENTIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Doncasters Group",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "UNCLEAR"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "unknown"
+      }
+     ],
+     "parts": {
+      "signal": 15,
+      "external": 5,
+      "timing": 7
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "unknown"
+    },
+    "feasibility": {
+     "flags": [],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "CONDITIONAL",
+    "signal": "VERIFIED FUTURE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 27,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER NOT IDENTIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH FIT"
+   },
+   "v3": {
+    "eligibility": "CONDITIONAL",
+    "score": 36,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "SIGNAL VERIFICATION REQUIRED",
+    "parts": [
+     15,
+     5,
+     7,
+     3,
+     6
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "Hammond Power Solutions",
+   "key": "hammondpowersolutions.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER NOT SITE-CONNECTED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Hammond Power Solutions",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "UNCLEAR"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "later"
+      }
+     ],
+     "parts": {
+      "signal": 14,
+      "external": 6,
+      "timing": 5
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "later"
+    },
+    "feasibility": {
+     "flags": [],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "CONDITIONAL",
+    "signal": "VERIFIED FUTURE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 25,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER NOT SITE-CONNECTED",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH FIT"
+   },
+   "v3": {
+    "eligibility": "CONDITIONAL",
+    "score": 35,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "SIGNAL VERIFICATION REQUIRED",
+    "parts": [
+     14,
+     6,
+     5,
+     3,
+     7
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "Brunk Industries",
+   "key": "brunk.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER NOT IDENTIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Brunk Industries",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "UNCLEAR"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "unknown"
+      }
+     ],
+     "parts": {
+      "signal": 14,
+      "external": 4,
+      "timing": 6
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "unknown"
+    },
+    "feasibility": {
+     "flags": [],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "CONDITIONAL",
+    "signal": "VERIFIED FUTURE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 24,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER NOT IDENTIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH FIT"
+   },
+   "v3": {
+    "eligibility": "CONDITIONAL",
+    "score": 33,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "SIGNAL VERIFICATION REQUIRED",
+    "parts": [
+     14,
+     4,
+     6,
+     2,
+     7
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "Westwin Elements",
+   "key": "westwinelements.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER VERIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Westwin Elements",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "UNCLEAR",
+     "hold": "early_stage"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "POTENTIAL",
+       "window": "later"
+      }
+     ],
+     "parts": {
+      "signal": 10,
+      "external": 6,
+      "timing": 2
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "later"
+    },
+    "feasibility": {
+     "flags": [],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "CONDITIONAL",
+    "signal": "POTENTIAL SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 18,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER VERIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "HOLD"
+   },
+   "v3": {
+    "eligibility": "CONDITIONAL",
+    "score": 32,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "HOLD",
+    "parts": [
+     10,
+     6,
+     2,
+     9,
+     5
+    ]
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "Fairbanks Morse Defense",
+   "key": "fairbanksmorsedefense.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER NOT SITE-CONNECTED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Fairbanks Morse Defense",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "UNCLEAR"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "later"
+      }
+     ],
+     "parts": {
+      "signal": 14,
+      "external": 5,
+      "timing": 4
+     },
+     "outside_labor": "PLAUSIBLE",
+     "window": "later"
+    },
+    "feasibility": {
+     "flags": [
+      "clearance"
+     ],
+     "requirements": [
+      {
+       "trigger": "clearance",
+       "kind": "TERMS UNKNOWN"
+      }
+     ],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "CONDITIONAL",
+    "signal": "VERIFIED FUTURE SIGNAL",
+    "priority": "NURTURE / RESEARCH",
+    "demand_score": 23,
+    "feasibility": "UNKNOWN",
+    "buyer": "BUYER NOT SITE-CONNECTED",
+    "dedupe": "NET NEW",
+    "next_action": "RESEARCH FIT"
+   },
+   "v3": {
+    "eligibility": "CONDITIONAL",
+    "score": 28,
+    "priority": "NURTURE / RESEARCH",
+    "readiness": "COMPLIANCE / PROCUREMENT REVIEW",
+    "parts": [
+     14,
+     5,
+     4,
+     2,
+     3
+    ]
+   },
+   "change_reason": {
+    "next_action": "v3 reported the compliance gate first. 4.0.0 resolves the cheaper fit gap (which crafts the site uses) before confirming clearance needs; feasibility stays UNKNOWN."
+   }
+  },
+  {
+   "name": "Arc Solutions",
+   "key": "arcsolinc.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER NOT IDENTIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Arc Solutions",
+     "business": "service_no_crafts",
+     "operations": "VERIFIED",
+     "craft_fit": "NONE"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "unknown"
+      }
+     ]
+    },
+    "feasibility": {
+     "flags": [],
+     "requirements": [],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "EXCLUDED",
+    "signal": "NOT EVALUATED",
+    "priority": "NOT EVALUATED",
+    "demand_score": null,
+    "feasibility": "NOT EVALUATED",
+    "buyer": "BUYER NOT IDENTIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "STOP"
+   },
+   "v3": {
+    "eligibility": "EXCLUDED",
+    "score": null,
+    "priority": "NOT SCORED (EXCLUDED)",
+    "readiness": "HOLD",
+    "parts": null
+   },
+   "change_reason": {}
+  },
+  {
+   "name": "Tennessee Valley Authority",
+   "key": "tva.com",
+   "facts": {
+    "prior": {
+     "dedupe": {
+      "decision": "NET NEW",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     },
+     "buyer": {
+      "decision": "BUYER NOT IDENTIFIED",
+      "date": "2026-11-02",
+      "version": "1.0.0"
+     }
+    },
+    "icp": {
+     "company": "Tennessee Valley Authority",
+     "business": "end_employer",
+     "operations": "VERIFIED",
+     "craft_fit": "DIRECT"
+    },
+    "signals": {
+     "signals": [
+      {
+       "level": "VERIFIED",
+       "window": "active"
+      }
+     ]
+    },
+    "feasibility": {
+     "flags": [
+      "project_labor_agreement"
+     ],
+     "requirements": [
+      {
+       "trigger": "project_labor_agreement",
+       "kind": "VERIFIED BLOCK",
+       "clause": "TVA PMMA Art. I (signatories and on-site subcontractors sign; specialty, incidental and subcontracts of $100,000 or less excepted) and Art. III (Council is exclusive representative; union referral; any-source hiring only after 48 hours)"
+      }
+     ],
+     "open_conditions": true
+    }
+   },
+   "expect": {
+    "icp": "QUALIFIED",
+    "signal": "NOT EVALUATED",
+    "priority": "NOT EVALUATED",
+    "demand_score": null,
+    "feasibility": "BLOCKED BY VERIFIED REQUIREMENT",
+    "buyer": "BUYER NOT IDENTIFIED",
+    "dedupe": "NET NEW",
+    "next_action": "STOP"
+   },
+   "v3": {
+    "eligibility": "EXCLUDED",
+    "score": null,
+    "priority": "NOT SCORED (EXCLUDED)",
+    "readiness": "HOLD",
+    "parts": null
+   },
+   "change_reason": {
+    "icp": "v3 made the binding project agreement an ICP exclusion. 4.0.0 records fit and access separately: TVA has Jole crafts at its sites, so fit is QUALIFIED, and the PMMA is a verified feasibility block (Articles I and III). The outcome, no pursuit of covered work, is unchanged."
+   }
+  }
+ ]
+}

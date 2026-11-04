@@ -1,0 +1,41 @@
+{
+  "schema": "jole_feasibility_fixtures_v1",
+  "skill_version": "1.0.1",
+  "cases": [
+    {"id": "P01", "title": "Project labor agreement binding suppliers, union referral (TVA pattern)",
+     "requirements": [{"trigger": "project_labor_agreement", "kind": "VERIFIED BLOCK", "clause": "PMMA Art. I flowdown; Art. III exclusive representation and referral, any-source after 48 hours"}],
+     "expect": "BLOCKED BY VERIFIED REQUIREMENT"},
+    {"id": "P02", "title": "In-plant union, subcontracting terms unknown",
+     "requirements": [{"trigger": "union_in_plant", "kind": "TERMS UNKNOWN"}], "expect": "UNKNOWN"},
+    {"id": "P03", "title": "In-plant union, outside contractors documented (Metallus pattern)",
+     "requirements": [{"trigger": "union_in_plant", "kind": "VERIFIED REQUIREMENT"}], "expect": "FEASIBLE WITH CONDITIONS"},
+    {"id": "P04", "title": "Navy repair yard, only possible per-contract checks",
+     "requirements": [{"trigger": "installation_access", "kind": "POSSIBLE CHECK"}, {"trigger": "citizenship_export", "kind": "POSSIBLE CHECK"}],
+     "expect": "FEASIBLE"},
+    {"id": "P05", "title": "Navy contract with a verified installation-access credential requirement",
+     "requirements": [{"trigger": "installation_access", "kind": "VERIFIED REQUIREMENT"}], "expect": "FEASIBLE WITH CONDITIONS"},
+    {"id": "P06", "title": "Unknown procurement arrangement at a new owner (Westerman pattern)",
+     "requirements": [{"trigger": "new_owner", "kind": "TERMS UNKNOWN"}, {"trigger": "nuclear_qualification", "kind": "TERMS UNKNOWN"}],
+     "expect": "UNKNOWN"},
+    {"id": "P07", "title": "Local-hire pledge tied to incentives",
+     "requirements": [{"trigger": "local_hire_pledge", "kind": "TERMS UNKNOWN"}], "expect": "UNKNOWN"},
+    {"id": "P08", "title": "Owner buys through a named EPC",
+     "requirements": [{"trigger": "owner_buys_via_epc", "kind": "VERIFIED REQUIREMENT"}], "expect": "FEASIBLE WITH CONDITIONS"},
+    {"id": "P09", "title": "Certified welders required: Jole must confirm",
+     "requirements": [{"trigger": "certification", "kind": "VERIFIED REQUIREMENT"}], "expect": "FEASIBLE WITH CONDITIONS"},
+    {"id": "P10", "title": "Trigger checked, nothing found",
+     "requirements": [], "expect": "FEASIBLE"},
+    {"id": "P11", "title": "A block claimed without reading the agreement is not a block",
+     "requirements": [{"trigger": "union_in_plant", "kind": "VERIFIED BLOCK", "clause": ""}], "expect": "UNKNOWN", "problems": true},
+    {"id": "P12", "title": "Defense capability alone cannot block",
+     "requirements": [{"trigger": "defense_capability", "kind": "VERIFIED BLOCK", "clause": "defense contractor"}], "expect": "FEASIBLE", "problems": true}
+  ],
+  "triggers": [
+    {"flags": ["union_in_plant"], "expect": true},
+    {"flags": ["project_labor_agreement"], "expect": true},
+    {"flags": ["navy_work"], "expect": false},
+    {"flags": ["defense_capability"], "expect": false},
+    {"flags": [], "expect": false},
+    {"flags": ["clearance", "navy_work"], "expect": true}
+  ]
+}
