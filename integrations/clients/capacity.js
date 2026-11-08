@@ -25,6 +25,7 @@
 const { getClient, listClients, resolveClientId } = require('./registry');
 const { clientSendBlock } = require('./send-policy');
 const { tenantOf } = require('./email-scope');
+const { effectiveClientCapacity } = require('./sender-delegation');
 
 const SUCCESSFUL_SEND_EVENTS = Object.freeze(['initial_email_sent', 'follow_up_sent', 'sequence_step_sent', 'booking_link_sent', 'placement_test_sent']);
 const metadataClient = row => { try { return String(JSON.parse(row.metadata || '{}').clientId || ''); } catch (_) { return ''; } };
@@ -69,7 +70,7 @@ function createClientCapacityState({
   globalDailyLimit, globalWindowLimit, sentTodayByClient = new Map(), configs = null, env = process.env,
   sendBlock = clientSendBlock,
 } = {}) {
-  const capacities = new Map(listClients().map(client => [client.id, { ...client.capacity }]));
+  const capacities = new Map(listClients().map(client => [client.id, { ...effectiveClientCapacity(client, env) }]));
   if (configs) for (const [id, cfg] of configs) capacities.set(id, { ...capacities.get(id), ...cfg });
   const dailyUsed = new Map([...sentTodayByClient].map(([id, n]) => [id, Number(n) || 0]));
   return {

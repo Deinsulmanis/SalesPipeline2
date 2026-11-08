@@ -10,6 +10,7 @@ const { planOutboundActivity } = require('./human-outbound');
 const { providerMessageId } = require('./canonical-sends');
 const { resolveLeadClient } = require('./clients/ownership');
 const { getClient } = require('./clients/registry');
+const { delegatedMailbox } = require('./clients/sender-delegation');
 const { managedReplyNeedsHandler } = require('./clients/reply-pipeline');
 const { DELIVERY_CLASS, LATER_TOUCH_BLOCKING_CLASSES, DELIVERY_DEFERRED_EVENT, DELIVERY_FAILED_EVENT } = require('./delivery-status');
 const norm = value => String(value || '').trim().toLowerCase();
@@ -149,7 +150,20 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
     const matched = matchMailboxMessages([message], { leads: matchLeads, activities, senderInboxId, senderEmail });
     const authFailures = matched.senderAuthFailures || new Map();
     const deliveryNotices = matched.deliveryNotices || new Map();
-    if (!matched.replies.size && !matched.bounces.size && !authFailures.size && !deliveryNotices.size) { ignored.push({ id: message.id, reason: 'unmatched_or_irrelevant' }); continue; }
+    if (!matched.replies.size && !matched.bounces.size && !authFailures.size && !deliveryNotices.size) {
+      if (delegatedMailbox({ id: senderInboxId, email: senderEmail }) && from && from !== norm(senderEmail)
+        && !/mailer-daemon|postmaster|no-?reply|do-?not-?reply/i.test(from)) {
+        // Metadata-only operator review. Never expose an unowned message body,
+        // email or candidate lead in either tenant's inbox or report.
+        add({ eventId: `gmail-ownership-review:${senderInboxId}:${message.id}`, leadId: '', sourceLeadId: '',
+          email: '', company: '', eventType: 'gmail_ownership_review', occurredAt, subject: '', content: '',
+          metadata: JSON.stringify({ provider: 'gmail', senderInboxId, gmailMessageId: message.id,
+            gmailThreadId: message.threadId, reason: 'conversation_owner_unresolved',
+            operatorOnly: true, requiresHumanAttention: true, autoSendAllowed: false }) });
+      }
+      ignored.push({ id: message.id, reason: 'unmatched_or_irrelevant' });
+      continue;
+    }
     // Our domain failed SPF/DKIM/DMARC: an infrastructure fact about the sender.
     // No suppression — the recipient is not disproven and stays recoverable.
     for (const [leadId, { verdict }] of authFailures) {
@@ -208,10 +222,12 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
       const evaluated = inboundAlreadyEvaluated(activities, message.id);
       const historical = observation.recovered || new Date(now).getTime() - at > 90 * 60000;
       if (!already) {
+        const owner = resolveLeadClient(lead);
         const event = { eventId, leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email, company: lead.company,
           eventType: canonical.reason === 'unsubscribe_request' ? 'unsubscribe_reply' : eventTypeFor(canonical.state), occurredAt,
           subject: headerValue(message.payload,'Subject'), content: text.slice(0, 1500),
           metadata: JSON.stringify({ provider: 'gmail', senderInboxId, gmailMessageId: message.id,
+            ...(owner.ok ? { clientId: owner.clientId, campaignId: lead.intendedCampaignVersion || lead.campaign || '', ownershipBasis: 'matched_conversation' } : {}),
             gmailThreadId: message.threadId, rfcMessageId, from, matchedColdEmailId: lead.id, receivedAt: occurredAt,
             canonicalState: canonical.state, subtype: canonical.subtype, reason: canonical.reason,
             genuineHuman: canonical.genuineHuman, confidence: canonical.confidence, classifierVersion: canonical.classifierVersion,

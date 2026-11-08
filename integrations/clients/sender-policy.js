@@ -28,6 +28,7 @@
 const { DEFAULT_CLIENT_ID, getClient, listClients, resolveClientId } = require('./registry');
 const { clientCampaign } = require('./campaigns');
 const { clientSendBlock, clientPreparationBlock } = require('./send-policy');
+const { delegatedMailbox } = require('./sender-delegation');
 
 const text = value => String(value == null ? '' : value).trim();
 const domainOf = email => text(email).toLowerCase().split('@')[1] || '';
@@ -81,7 +82,7 @@ function policyBlockersWith(sender, clientGate, describe) {
   if (!policy) return blockers;
   if (policy.protectedDomains.includes(domain)) {
     blockers.push(`${domain} is ${owner.displayName}'s protected domain and is never a cold sender`);
-  } else if (!policy.outboundDomains.includes(domain)) {
+  } else if (!policy.outboundDomains.includes(domain) && !(owner.id === 'jole' && delegatedMailbox(sender))) {
     blockers.push(`${domain || 'a blank domain'} is not an approved ${owner.displayName} outbound domain`);
   }
   const outside = senderAllowedCampaigns(sender).filter(id => !policy.allowedCampaignIds.includes(id));

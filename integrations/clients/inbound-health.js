@@ -11,6 +11,8 @@
 const { observerHealth } = require('../gmail-observer-health');
 const { getClient } = require('./registry');
 const { REPLY_EVENT_TYPE, replyEventId } = require('./reply-pipeline');
+const { clientActivityScope, metadata } = require('../mailbox-conversation-ownership');
+const { resolveSenderClient } = require('./ownership');
 
 function parseMeta(row = {}) {
   try {
@@ -29,10 +31,12 @@ function inboundMessageId(row = {}) {
 }
 
 function clientInboundHealth({
-  clientId, senders = [], observerRows = [], activities = [], now = new Date(),
+  clientId, senders = [], observerRows = [], activities = [], leads = [], now = new Date(),
 } = {}) {
   const client = getClient(clientId);
-  const mine = (senders || []).filter(sender => String(sender.clientId || '') === client.id);
+  activities = clientActivityScope(activities, client.id, { leads, senders });
+  const historicalIds = new Set(activities.map(row => String(metadata(row).senderInboxId || '')).filter(Boolean));
+  const mine = (senders || []).filter(sender => resolveSenderClient(sender).clientId === client.id || historicalIds.has(sender.id));
   // observerHealth reports every mailbox it has a row for; this answer covers
   // this client's inboxes only. Another client's inbound was never ours to handle.
   const mineIds = new Set(mine.map(sender => sender.id));
@@ -51,7 +55,7 @@ function clientInboundHealth({
       if (String(row.eventType || '') === REPLY_EVENT_TYPE) return false;
       const id = inboundMessageId(row);
       if (!id) return false;
-      return !activities.some(item => String(item.eventId || '') === replyEventId(client.id, id)
+      return client.replyPolicy.mode === 'managed' && !activities.some(item => String(item.eventId || '') === replyEventId(client.id, id)
         || (String(item.eventType || '') === REPLY_EVENT_TYPE
           && parseMeta(item).gmailMessageId === id
           && (!parseMeta(item).clientId || parseMeta(item).clientId === client.id)));

@@ -30,7 +30,7 @@ test('pin: the final gate reads the client suppression list for the one lead bei
 });
 
 test('pin: every reply resolves its client context before any legacy handler runs', () => {
-  const contextAt = agent.indexOf('const replyContext = resolveReplyClientContext({ senderInboxId: sender.id, lead, senders: GMAIL_SENDERS });');
+  const contextAt = agent.indexOf('const replyContext = resolveReplyClientContext({ senderInboxId: sender.id, lead, senders: GMAIL_SENDERS, activities: activitiesForCycle });');
   const roofingAt = agent.indexOf('if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE) {', contextAt);
   const classifyAt = agent.indexOf('const canonicalReply = classifyReplyText(replyText', contextAt);
   assert.ok(contextAt > 0 && roofingAt > contextAt && classifyAt > contextAt);
@@ -47,10 +47,12 @@ test('pin: Jole inbound health is a read-only operator signal', () => {
   assert.match(agent, /managedReplyNeedsHandler\(activitiesForCycle, inboundId, managedContext\.clientId\)/);
 });
 
-test('pin: observers match only their own client\'s leads and route negative suppression by scope', () => {
-  assert.match(agent, /const senderLeads = senderClient\.ok \? leadsInEmailScope\(candidates, senderClient\.clientId\) : candidates;/);
-  // The legacy human-outbound scan correlates addresses inside the mailbox's client only.
-  assert.match(agent, /if \(mailboxClient\.ok\) leads = leadsInEmailScope\(leads, mailboxClient\.clientId\);/);
+test('pin: observer and optional outbound scan share historical mailbox ownership and scoped suppression', () => {
+  assert.match(agent, /const senderLeads = mailboxLeadScope\(candidates, sender, activitiesForCycle \|\| \[\]\);/);
+  assert.match(agent, /leads = mailboxLeadScope\(leads, sender, activitiesForCycle \|\| \[\]\);/);
+  const historicalScope = read('integrations/mailbox-conversation-ownership.js');
+  assert.match(historicalScope, /if \(!delegatedMailbox\(sender\)\) return leadsInEmailScope\(leads, owner\.clientId\);/);
+  assert.match(historicalScope, /proven\.has\(String\(lead\.id\)\)/);
   assert.match(agent, /suppress: item => withAuth\(\(\) => routeObserverSuppression\(item, senderLeads\)\)/);
   assert.doesNotMatch(agent, /suppress: item => withAuth\(\(\) => addSuppression\(item\.email, item\.reason, item\.company, 'gmail-observer'\)\)/);
 });

@@ -122,7 +122,7 @@ function candidateIndexes(leads, activities, senderInboxId) {
   }
   for (const row of activities || []) {
     let metadata;
-    try { metadata = JSON.parse(row.metadata || '{}'); } catch (_) { continue; }
+    try { metadata = typeof row.metadata === 'object' ? row.metadata || {} : JSON.parse(row.metadata || '{}'); } catch (_) { continue; }
     if (norm(metadata.senderInboxId) !== norm(senderInboxId)) continue;
     const threadId = String(metadata.gmailThreadId || '').trim();
     const sourceLeadId = String(row.sourceLeadId || '').trim() || String(row.leadId || '').replace(/^CE-/, '');
@@ -139,10 +139,10 @@ function candidateIndexes(leads, activities, senderInboxId) {
   }
   for (const threadId of conflicts) byThread.delete(threadId);
   for (const rfc of rfcConflicts) byRfc.delete(rfc);
-  return { byEmail, byThread, byRfc };
+  return { byEmail, byThread, byRfc, conflicts, rfcConflicts };
 }
 
-function leadFromRfcHeaders(payload, byRfc) {
+function leadFromRfcHeaders(payload, byRfc, conflicts = new Set()) {
   const ids = [
     ...rfcIdsFromValue(headerValue(payload, 'In-Reply-To')),
     ...rfcIdsFromValue(headerValue(payload, 'References')),
@@ -150,6 +150,7 @@ function leadFromRfcHeaders(payload, byRfc) {
   const matched = [];
   const seen = new Set();
   for (const id of ids) {
+    if (conflicts.has(id)) return { conflict: true };
     const lead = byRfc.get(id);
     if (lead && !seen.has(lead.id)) {
       seen.add(lead.id);
@@ -161,7 +162,7 @@ function leadFromRfcHeaders(payload, byRfc) {
 }
 
 function matchMailboxMessages(messages, { leads = [], activities = [], senderInboxId, senderEmail }) {
-  const { byEmail, byThread, byRfc } = candidateIndexes(leads, activities, senderInboxId);
+  const { byEmail, byThread, byRfc, conflicts, rfcConflicts } = candidateIndexes(leads, activities, senderInboxId);
   const replies = new Map();
   const bounces = new Map();
   const bounceVerdicts = new Map();
@@ -178,7 +179,17 @@ function matchMailboxMessages(messages, { leads = [], activities = [], senderInb
     const daemonNotice = DAEMON_FROM.test(fromAddr);
     const gatewayNotice = !daemonNotice && isDeliveryNotice(message.payload, fromAddr) && leads.some(isManagedLead);
     if (daemonNotice || gatewayNotice) {
-      for (const lead of leads) {
+      const candidates = leads.filter(lead => {
+        const after = Date.parse(lead.lastEmailedAt || '');
+        return Number.isFinite(after) && occurredMs > after && bounceMentionsRecipient(allText, norm(lead.email));
+      });
+      for (const lead of candidates) {
+        const sameAddress = candidates.filter(other => norm(other.email) === norm(lead.email));
+        if (sameAddress.length > 1) {
+          const threadLead = byThread.get(message.threadId);
+          if (!threadLead || conflicts.has(message.threadId)) throw new Error(`Ambiguous delivery CRM identity for Gmail message ${message.id}`);
+          if (threadLead.id !== lead.id) continue;
+        }
         const email = norm(lead.email);
         const afterMs = Date.parse(lead.lastEmailedAt || '');
         if (!email || !Number.isFinite(afterMs) || occurredMs <= afterMs || !bounceMentionsRecipient(allText, email)) continue;
@@ -195,12 +206,16 @@ function matchMailboxMessages(messages, { leads = [], activities = [], senderInb
       continue;
     }
     const direct = byEmail.get(fromAddr) || [];
-    if (direct.length > 1) throw new Error(`Ambiguous inbound CRM identity for Gmail message ${message.id}`);
-    const rfcMatch = leadFromRfcHeaders(message.payload, byRfc);
+    if (conflicts.has(message.threadId)) throw new Error(`Conflicting inbound CRM thread for Gmail message ${message.id}`);
+    const rfcMatch = leadFromRfcHeaders(message.payload, byRfc, rfcConflicts);
     if (rfcMatch.conflict) throw new Error(`Ambiguous inbound CRM RFC identity for Gmail message ${message.id}`);
     const threadLead = byThread.get(message.threadId) || null;
     const rfcLead = rfcMatch.lead || null;
-    const emailLead = direct.length === 1 ? direct[0] : null;
+    const strongLead = threadLead || rfcLead;
+    if (direct.length > 1 && (!strongLead || !direct.some(lead => lead.id === strongLead.id))) {
+      throw new Error(`Ambiguous inbound CRM identity for Gmail message ${message.id}`);
+    }
+    const emailLead = direct.length === 1 ? direct[0] : (strongLead && direct.find(lead => lead.id === strongLead.id)) || null;
     if (threadLead && emailLead && threadLead.id !== emailLead.id) {
       throw new Error(`Conflicting inbound CRM thread for Gmail message ${message.id}`);
     }

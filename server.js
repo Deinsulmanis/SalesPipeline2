@@ -37,6 +37,7 @@ const { parseRegistry: parseGmailInboxRegistry,
   credentialsFor: gmailInboxCredentialsFor, withDefaultInboxes, parseRuntimeOverlay,
   verifyInbox: verifyGmailInbox, verifyMailboxAccess, isStaffingOnlySender } = require('./integrations/gmail-inbox-registry');
 const { configuredSenders, observableSenders, senderCountsToday, successfulSendCountToday } = require('./integrations/gmail-sender-routing');
+const { mailboxLeadScope } = require('./integrations/mailbox-conversation-ownership');
 const { capacityFromEnv, DEFAULT_INBOX_PER_RUN_LIMIT, MAX_INBOX_PER_RUN_LIMIT } = require('./integrations/gmail-sender-capacity');
 const { appendLeadsRow } = require('./integrations/leads-sheet-append');
 const {
@@ -1940,7 +1941,7 @@ function logManagedClientReadiness() {
     const copyEnv = client.copyEnv || {};
     console.log(JSON.stringify({
       event: 'client_readiness', client_id: client.id, sending: clientSendState(client.id).sendingEnabled,
-      ledger_available: Boolean(store?.enabled), capacity_daily: client.capacity.dailyCap,
+      ledger_available: Boolean(store?.enabled), capacity_daily: require('./integrations/clients/sender-delegation').effectiveClientCapacity(client).dailyCap,
       senders: mine.length, senders_eligible: mine.filter(sender => sender.sendEligible).length,
       landing_page_configured: Boolean(copyEnv.landingPageUrl && process.env[copyEnv.landingPageUrl]),
       mailing_address_configured: Boolean(copyEnv.mailingAddress && process.env[copyEnv.mailingAddress]),
@@ -2028,9 +2029,9 @@ app.get('/api/send-lock/health', requireAuth, async (_req, res) => {
   }
 });
 
-app.get('/api/send-lock/reservations', requireAuth, async (_req, res) => {
+app.get('/api/send-lock/reservations', requireAuth, async (req, res) => {
   try {
-    const listed = await listUnresolvedReservations();
+    const listed = await listUnresolvedReservations(process.env, { includeActive: req.query.includeActive === 'true' });
     const publicRow = row => operatorRow(row);
     res.json({
       enabled: listed.enabled !== false,
@@ -6442,7 +6443,7 @@ async function gmailInboxStatus() {
     });
     inboundHealth = {
       jole: clientInboundHealth({
-        clientId: 'jole', senders, observerRows: dataset.mailboxObservationState || [],
+        clientId: 'jole', senders, leads: dataset.leads || [], observerRows: dataset.mailboxObservationState || [],
         activities: dataset.activities || [],
       }),
     };
@@ -6501,7 +6502,12 @@ app.get('/api/integrations/gmail-inboxes', requireAuth, async (req, res) => {
     if (req.query.client !== undefined) {
       const client = resolveClientId(req.query.client);
       if (!client.ok) return res.status(400).json({ error: client.reason, code: client.code });
-      return res.json({ ...status, inboxes: filterInboxesForClient(status.inboxes, client.clientId) });
+      const inboxes = filterInboxesForClient(status.inboxes, client.clientId);
+      const limits = status.capacity.clientLimits[client.clientId] || { daily: 0, perRun: 0 };
+      return res.json({ inboxes, capacity: { activeSenders: inboxes.filter(item => item.sendEligible).length,
+        globalDailyLimit: limits.daily, globalPerRunLimit: limits.perRun,
+        clientLimits: { [client.clientId]: limits } },
+        inboundHealth: status.inboundHealth?.[client.clientId] ? { [client.clientId]: status.inboundHealth[client.clientId] } : {} });
     }
     res.json(status);
   } catch (error) { res.status(500).json({ error: error.message }); }
@@ -6972,10 +6978,26 @@ app.get('/api/ops/jole-inbound-health', requireAuth, async (_req, res) => {
     const senders = configuredSenders();
     const dataset = await getOutreachDataset({ force: true });
     res.json(clientInboundHealth({
-      clientId: 'jole', senders, observerRows: dataset.mailboxObservationState || [],
+      clientId: 'jole', senders, leads: dataset.leads || [], observerRows: dataset.mailboxObservationState || [],
       activities: dataset.activities || [],
     }));
   } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// Unowned inbound evidence belongs to the operator, never to a tenant. No
+// message body or prospect identity is returned before ownership is resolved.
+app.get('/api/ops/mailbox-ownership-review', requireAuth, async (_req, res) => {
+  try {
+    const dataset = await getOutreachDataset();
+    const records = (dataset.activities || []).filter(row => row.eventType === 'gmail_ownership_review')
+      .map(row => {
+        let data;
+        try { data = typeof row.metadata === 'object' ? row.metadata : JSON.parse(row.metadata || '{}'); } catch (_) { data = {}; }
+        return { eventId: row.eventId, occurredAt: row.occurredAt, senderInboxId: data.senderInboxId,
+          gmailMessageId: data.gmailMessageId, gmailThreadId: data.gmailThreadId, reason: data.reason };
+      }).sort((a, b) => String(b.occurredAt || '').localeCompare(String(a.occurredAt || '')));
+    res.json({ operatorOnly: true, total: records.length, records: records.slice(0, 200) });
+  } catch (_) { res.status(503).json({ error: 'Mailbox ownership review is unavailable' }); }
 });
 
 // Read-only: how this client's mail is failing, by class, inbox and domain, from
@@ -6985,7 +7007,7 @@ app.get('/api/ops/client-delivery-health', requireAuth, async (req, res) => {
     const client = resolveClientId(req.query.client);
     if (!client.ok) return res.status(422).json({ error: client.reason });
     const dataset = await getOutreachDataset();
-    res.json(clientDeliveryHealth({ clientId: client.clientId, senders: configuredSenders(), activities: dataset.activities || [] }));
+    res.json(clientDeliveryHealth({ clientId: client.clientId, senders: configuredSenders(), leads: dataset.leads || [], activities: dataset.activities || [] }));
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
@@ -6998,10 +7020,8 @@ app.get('/api/ops/mailbox-diagnostic', requireAuth, async (req, res) => {
       const row = (dataset.mailboxObservationState || []).find(row => row[0] === sender.id) || [];
       const trace = [];
       try {
-        // Same client scope as the agent's observer: an inbox never matches
-        // another client's leads.
-        const owner = require('./integrations/clients/ownership').resolveSenderClient(sender);
-        const scopedLeads = owner.ok ? leadsInEmailScope(dataset.leads, owner.clientId) : dataset.leads;
+        // Use the same proven historical-conversation scope as the observer.
+        const scopedLeads = mailboxLeadScope(dataset.leads, sender, dataset.activities || []);
         const observation = await observeMailbox({ ...mailbox, senderInboxId: sender.id, senderEmail: mailbox.email,
           leads: scopedLeads, activities: dataset.activities, historyId: row[1] || null,
           lastSuccessfulObservationAt: row[2] || null, previousHealth: row[5] || null,
@@ -7272,7 +7292,15 @@ app.post('/api/integrations/gmail-inboxes/:id/verify', requireAuth, async (req, 
       return res.status(404).json({ error: 'Gmail inbox is not registered' });
     }
     res.json(await verifyGmailInbox(entry));
-  } catch (error) { res.status(422).json({ error: error.message }); }
+  } catch (error) {
+    const workspaceReviewRequired = /access_not_configured|admin_policy_enforced/i.test(String(error.message || ''));
+    res.status(422).json({ error: error.message,
+      ...(workspaceReviewRequired ? { actionRequired: 'workspace_admin_app_access',
+        // OAuth client IDs are public identifiers, not credentials. Never return
+        // the client secret, token, request config or raw provider response.
+        oauthClientId: req.params.id === 'primary' ? process.env.GOOGLE_CLIENT_ID : process.env.GMAIL_SECONDARY_GOOGLE_CLIENT_ID,
+        requiredScope: 'https://www.googleapis.com/auth/gmail.modify' } : {}) });
+  }
 });
 
 function senderById(id) {
@@ -7395,6 +7423,19 @@ app.get('/api/ops/send-quota', requireAuth, async (_req, res) => {
       })),
     });
   } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/api/ops/send-quota-state', requireAuth, async (_req, res) => {
+  let pool;
+  try {
+    const { sendLockDatabaseUrl, sendLockEnabled } = require('./integrations/send-lock-config');
+    if (!sendLockEnabled() || !sendLockDatabaseUrl()) return res.status(503).json({ error: 'Send quota database is unavailable' });
+    const { Pool } = require('pg');
+    pool = new Pool({ connectionString: sendLockDatabaseUrl(), max: 1, connectionTimeoutMillis: 4000 });
+    const dayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+    res.json(await require('./integrations/send-quota-inspection').inspectSendQuota(pool, dayKey));
+  } catch (_) { res.status(503).json({ error: 'Send quota state could not be read' }); }
+  finally { if (pool) await pool.end().catch(() => {}); }
 });
 
 // Token-protected, read-only production diagnostic. It cannot send or mutate

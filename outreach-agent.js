@@ -108,13 +108,14 @@ const {
 const { routedLeadReady } = require('./integrations/campaign-routing');
 const { outreachBlockForLead, isArchivedLead, archiveReasonFromNotes, ARCHIVED_REPLY_EVENT_TYPE } = require('./integrations/lead-archive');
 // Managed clients: ownership travels with every send action and reply.
-const { actionOwnership, resolveSenderClient, resolveLeadClient } = require('./integrations/clients/ownership');
+const { actionOwnership, resolveLeadClient } = require('./integrations/clients/ownership');
 const { resolveReplyClientContext } = require('./integrations/clients/reply-policy');
 const { handleManagedClientReply, managedReplyNeedsHandler } = require('./integrations/clients/reply-pipeline');
 const { buildClientSuppression } = require('./integrations/clients/suppression');
 const { getClient: getManagedClient } = require('./integrations/clients/registry');
 const { getLedgerStore } = require('./integrations/clients/ledger-store');
 const { leadsInEmailScope, tenantOf } = require('./integrations/clients/email-scope');
+const { mailboxLeadScope } = require('./integrations/mailbox-conversation-ownership');
 const {
   createClientCapacityState, clientSendCountsToday, clientCapacityVerdict, recordClientSend, clientCapacitySnapshot,
 } = require('./integrations/clients/capacity');
@@ -1291,6 +1292,7 @@ function withClientCopyVersion(attribution, copyVersion, personalization = null,
 }
 
 function fromNameForSender(sender) {
+  if (sender?.delegatedFromClientId && sender.fromName) return sender.fromName;
   const clientId = String(sender?.clientId || '').trim();
   if (!clientId) return FROM_NAME;
   const client = getManagedClient(clientId);
@@ -3148,11 +3150,9 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     !senderIds || senderIds.has(item.id))) {
     // Include every CRM identity: an already-replied lead can write again, and
     // an unknown legacy sender is evidence to observe, never a default inbox.
-    // Client isolation: an inbox never matches a lead that definitively belongs
-    // to another client. A lead whose own fields conflict stays visible to
-    // every inbox, so an opt-out or bounce from it is still applied.
-    const senderClient = resolveSenderClient(sender);
-    const senderLeads = senderClient.ok ? leadsInEmailScope(candidates, senderClient.clientId) : candidates;
+    // A transferred mailbox observes only conversations with confirmed physical
+    // mailbox history. Each conversation keeps its original client ownership.
+    const senderLeads = mailboxLeadScope(candidates, sender, activitiesForCycle || []);
     const log = (state, details) => console.log(`[GmailObserver:${sender.id}] ${state} ${JSON.stringify(details)}`);
     const backoff = getMailboxBackoff(sender.id);
     if (backoff) {
@@ -3309,7 +3309,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       // must replay here — including CHECK_ONLY and after a long outage.
       const inboundId = metadata.gmailMessageId || inboundMessageIdOf(row);
       const managedContext = resolveReplyClientContext({
-        senderInboxId: metadata.senderInboxId || lead.senderInboxId, lead, senders: GMAIL_SENDERS,
+        senderInboxId: metadata.senderInboxId || lead.senderInboxId, lead, senders: GMAIL_SENDERS, activities: activitiesForCycle,
       });
       if (!(managedContext.ok && managedContext.policyMode === 'managed'
         && managedReplyNeedsHandler(activitiesForCycle, inboundId, managedContext.clientId))) continue;
@@ -3358,10 +3358,9 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     const replyText      = stripQuotedReply(message.body || message.snippet || '');
     const historical     = Boolean(rawMessage.historical || rawMessage.terminalReplay);
     const maySend        = !CHECK_ONLY && !historical;
-    // Client isolation: the receiving inbox, the lead and its campaign must
-    // belong to one client, or this reply is not applied to this lead. An
+    // Resolve the original conversation owner before applying a reply. An
     // explicit opt-out is still honoured — refusing to protect is never safe.
-    const replyContext = resolveReplyClientContext({ senderInboxId: sender.id, lead, senders: GMAIL_SENDERS });
+    const replyContext = resolveReplyClientContext({ senderInboxId: sender.id, lead, senders: GMAIL_SENDERS, activities: activitiesForCycle });
     if (!replyContext.ok) {
       console.error(JSON.stringify({
         event: 'client_reply_isolation_blocked', lead_id: lead.id, sender_inbox_id: sender.id,
@@ -4744,9 +4743,8 @@ async function runHumanOutboundPass(leads, activitiesForCycle, sender = null, { 
     return { ok: true, written: 0, inspected: 0, skipped };
   }
   const mailbox = gmailForSender(sender, { feature: 'human_outbound' });
-  // An inbox only ever correlates its own client's leads by address.
-  const mailboxClient = resolveSenderClient(sender);
-  if (mailboxClient.ok) leads = leadsInEmailScope(leads, mailboxClient.clientId);
+  // Include proven historical conversations after exclusive reassignment.
+  leads = mailboxLeadScope(leads, sender, activitiesForCycle || []);
   const leadsByEmail = new Map();
   for (const lead of leads) {
     const email = String(lead.email || '').trim().toLowerCase();
@@ -4877,6 +4875,7 @@ function coldSendGate(lead, context = null) {
     const followUp = observerFollowUpVerdict({
       lead,
       senderResolved: Boolean(senderId),
+      requireHealthyFirstTouch: Boolean(GMAIL_SENDERS.find(sender => sender.id === senderId)?.delegatedFromClientId),
       observer: {
         health: ready ? 'healthy' : (stored.health || 'unavailable'),
         checkpointAgeMinutes: ready ? (stored.checkpointAgeMinutes ?? 0) : (stored.checkpointAgeMinutes ?? null),

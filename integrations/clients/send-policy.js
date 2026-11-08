@@ -28,6 +28,9 @@ function clientSendBlock(clientId, env = process.env) {
   const resolved = resolveClientId(clientId);
   if (!resolved.ok) return { code: resolved.code, reason: resolved.reason };
   const client = getClient(resolved.clientId);
+  if (String(env.CLIENT_SENDING_PAUSED || '').split(',').map(value => value.trim().toLowerCase()).includes(client.id)) {
+    return { code: 'client_sending_paused', reason: `${client.displayName} outbound is paused` };
+  }
   if (!client.active) {
     return { code: 'client_inactive', reason: `${client.displayName} is not an active client (lifecycle: ${client.lifecycleStatus})` };
   }

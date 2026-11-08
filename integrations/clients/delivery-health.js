@@ -13,6 +13,8 @@
  */
 
 const { getClient } = require('./registry');
+const { clientActivityScope, metadata } = require('../mailbox-conversation-ownership');
+const { resolveSenderClient } = require('./ownership');
 const { retractedBounceEventIds, DELIVERY_DEFERRED_EVENT, DELIVERY_FAILED_EVENT, DELIVERY_CLASS } = require('../delivery-status');
 
 // The lines in the Jole rollout plan. A rate over a line is a flag for a person;
@@ -41,9 +43,11 @@ function rollingRate(cohort, days) {
     flag: !enough ? 'too_few_first_touches' : rate > REDUCE_RATE ? 'over_reduce_line' : rate > FREEZE_RATE ? 'over_freeze_line' : 'clear' };
 }
 
-function clientDeliveryHealth({ clientId, senders = [], activities = [] } = {}) {
+function clientDeliveryHealth({ clientId, senders = [], activities = [], leads = [] } = {}) {
   const client = getClient(clientId);
-  const mine = (senders || []).filter(sender => String(sender.clientId || '') === client.id);
+  activities = clientActivityScope(activities, client.id, { leads, senders });
+  const historicalIds = new Set(activities.map(row => String(metadata(row).senderInboxId || '')).filter(Boolean));
+  const mine = (senders || []).filter(sender => resolveSenderClient(sender).clientId === client.id || historicalIds.has(sender.id));
   const ids = new Set(mine.map(sender => sender.id));
   const domainOf = id => String(mine.find(sender => sender.id === id)?.email || '').split('@')[1] || 'unknown';
   const dayOf = at => new Date(at).toLocaleDateString('en-CA', { timeZone: client.timezone || 'America/Vancouver' });

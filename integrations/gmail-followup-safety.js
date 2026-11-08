@@ -23,16 +23,19 @@ function observerIsFresh(observer = {}, { now = new Date(), maxAgeMinutes = DEFA
 function observerFollowUpVerdict({
   lead = {}, observer = null, now = new Date(),
   maxAgeMinutes = DEFAULT_MAX_AGE_MINUTES, senderResolved = true,
+  requireHealthyFirstTouch = false,
 } = {}) {
   const kind = classifyOutboundTouch(lead);
   const fresh = senderResolved && observerIsFresh(observer || {}, { now, maxAgeMinutes });
   if (fresh) return { allowed: true, kind, code: 'observer_healthy', reason: 'mailbox observer is fresh' };
-  if (kind === 'first_touch') {
+  if (kind === 'first_touch' && !requireHealthyFirstTouch) {
     return {
       allowed: true, kind, code: 'first_touch_allowed_observer_stale',
       reason: 'first-touch safety does not depend on detecting a previous reply',
     };
   }
+  if (kind === 'first_touch') return { allowed: false, kind, code: 'observer_stale_first_touch',
+    reason: 'delegated mailbox first touch requires a healthy, current observer' };
   // An unknown owning mailbox is NOT a freshness problem, and saying it is sent
   // operators to look at Gmail health that was fine all along. There is no
   // mailbox to measure, so this fails closed for its own reason: the follow-up

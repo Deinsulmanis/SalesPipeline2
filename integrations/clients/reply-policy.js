@@ -3,9 +3,9 @@
 /**
  * Client-aware reply policy.
  *
- * Every reply resolves   sender → client → campaign → lead → policy
- * and the chain must agree (resolveReplyClientContext). A reply whose inbox
- * belongs to one client and whose lead belongs to another is never applied.
+ * A reply resolves its conversation owner from the lead/campaign and physical
+ * mailbox evidence. Exclusive outbound reassignment never changes this owner.
+ * Dedicated mailboxes retain the strict sender/client consistency check.
  *
  * Two policy modes:
  *
@@ -24,6 +24,8 @@
 const { classifyReplyText, REPLY_STATE, NEEDS_HUMAN_REASON } = require('../canonical-reply');
 const { getClient } = require('./registry');
 const { checkClientConsistency } = require('./ownership');
+const { hasMailboxEvidence } = require('../mailbox-conversation-ownership');
+const { delegatedMailbox } = require('./sender-delegation');
 
 const WORKFLOW_STATE = Object.freeze({
   POSITIVE_INTEREST: 'positive_interest',
@@ -151,14 +153,20 @@ function classifyClientReply({ clientId, campaignId = '', text = '', subject = '
 }
 
 /**
- * sender → client → campaign → lead. All must agree, or the reply is not
- * applied to that lead. Returns { ok, clientId, campaignId, policyMode } or a
+ * Lead and campaign ownership must agree. A reassigned physical mailbox also
+ * needs confirmed historical send evidence. Returns the original client or a
  * refusal carrying the mismatch.
  */
-function resolveReplyClientContext({ senderInboxId, lead, senders } = {}) {
+function resolveReplyClientContext({ senderInboxId, lead, senders, activities = [] } = {}) {
   if (!lead) return { ok: false, code: 'reply_lead_missing', reason: 'reply has no lead' };
   if (!String(senderInboxId || '').trim()) return { ok: false, code: 'reply_sender_missing', reason: 'reply has no receiving inbox' };
-  const verdict = checkClientConsistency({ lead, senderInboxId, senders });
+  let verdict = checkClientConsistency({ lead, senderInboxId, senders });
+  const sender = (senders || []).find(item => item.id === senderInboxId);
+  if (!verdict.ok && sender && delegatedMailbox(sender) && hasMailboxEvidence(lead, senderInboxId, activities)) {
+    // Historical evidence is mandatory. This exception handles inbound only;
+    // it cannot authorize an outbound send through the reassigned mailbox.
+    verdict = checkClientConsistency({ lead: { ...lead, senderInboxId: '' }, senders });
+  }
   if (!verdict.ok) return { ok: false, code: verdict.code, reason: `reply isolation: ${verdict.reason}`, parts: verdict.parts };
   const client = getClient(verdict.clientId);
   return {

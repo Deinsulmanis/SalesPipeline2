@@ -197,7 +197,7 @@ function publicClient(config) {
       acceptedUseCases: [...(config.qualification.acceptedUseCases || [])],
     } : null,
     billing: { ...config.billing },
-    capacity: { ...config.capacity },
+    capacity: { ...require('./sender-delegation').effectiveClientCapacity(config) },
     senderPolicy: config.senderPolicy ? {
       outboundDomains: [...config.senderPolicy.outboundDomains],
       protectedDomains: [...config.senderPolicy.protectedDomains],

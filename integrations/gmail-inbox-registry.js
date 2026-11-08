@@ -4,6 +4,7 @@ const { google } = require('googleapis');
 const { DEFAULT_INBOX_DAILY_LIMIT, DEFAULT_INBOX_PER_RUN_LIMIT } = require('./gmail-sender-capacity');
 const { DEFAULT_CLIENT_ID, resolveClientId } = require('./clients/registry');
 const { senderPolicyBlockers, senderPreparationBlockers, cappedDailyLimit } = require('./clients/sender-policy');
+const { delegatedMailbox } = require('./clients/sender-delegation');
 
 const STATUSES = new Set(['warming', 'ready', 'active', 'paused', 'error']);
 
@@ -14,6 +15,7 @@ const STAFFING_ONLY_SENDER_IDS = Object.freeze(['scalelabaiteam']);
 const STAFFING_ONLY_SENDER_EMAILS = Object.freeze(['deins@scalelabaiteam.com']);
 
 function isStaffingOnlySender(sender = {}) {
+  if (sender.clientId === 'jole' && delegatedMailbox(sender)) return false;
   return sender?.staffingOnly === true
     || STAFFING_ONLY_SENDER_IDS.includes(String(sender?.id || '').trim())
     || STAFFING_ONLY_SENDER_EMAILS.includes(String(sender?.email || '').trim().toLowerCase());
@@ -103,7 +105,8 @@ function parseEntry(entry, index, seenIds, seenEmails, env = process.env) {
     if (!resolved.ok) throw new Error(`Gmail inbox ${id} names an unknown client`);
     clientId = resolved.clientId;
   }
-  if (staffingOnly && clientId && clientId !== DEFAULT_CLIENT_ID) throw new Error(`Gmail inbox ${id} cannot be staffing-only for another client`);
+  if (id === 'primary') throw new Error('The primary Gmail sender cannot be duplicated in the secondary registry');
+  if (staffingOnly && clientId && clientId !== DEFAULT_CLIENT_ID && !(clientId === 'jole' && delegatedMailbox({ id, email }))) throw new Error(`Gmail inbox ${id} cannot be staffing-only for another client`);
   if (seenIds.has(id) || seenEmails.has(email)) throw new Error(`Duplicate Gmail inbox entry: ${id}`);
   seenIds.add(id); seenEmails.add(email);
   // A managed client's sender: campaign allowlist, per-inbox hard ceiling and

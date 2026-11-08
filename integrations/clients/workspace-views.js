@@ -12,6 +12,7 @@ const { clientSendState } = require('./send-policy');
 const { REPLY_EVENT_TYPE } = require('./reply-pipeline');
 const { createClientCapacityState, clientCapacityVerdict, clientSendCountsToday } = require('./capacity');
 const { activityLeadId } = require('./reporting');
+const { effectiveClientCapacity } = require('./sender-delegation');
 
 const text = value => String(value == null ? '' : value).trim();
 function meta(row) {
@@ -81,6 +82,7 @@ function buildClientSettings({ clientId, leads = [], activities = [], inboxes = 
     sentTodayByClient, env,
   });
   const verdict = clientCapacityVerdict(capacityState, client.id);
+  const capacity = effectiveClientCapacity(client, env);
   const clientInboxes = filterInboxesForClient(inboxes, client.id).map(inbox => ({
     id: inbox.id, email: inbox.email, domain: text(inbox.email).split('@')[1] || '',
     clientId: client.id, status: inbox.status, sendEligible: Boolean(inbox.sendEligible),
@@ -103,7 +105,7 @@ function buildClientSettings({ clientId, leads = [], activities = [], inboxes = 
     },
     sending: clientSendState(client.id, env),
     capacity: {
-      dailyCap: client.capacity.dailyCap, windowCap: client.capacity.windowCap,
+      dailyCap: capacity.dailyCap, windowCap: capacity.windowCap,
       reservedDaily: client.capacity.reservedDaily, reservedWindow: client.capacity.reservedWindow,
       sentToday: sentTodayByClient.get(client.id) || 0,
       remainingToday: verdict.allowed ? (verdict.remaining === Infinity ? null : verdict.remaining) : 0,
