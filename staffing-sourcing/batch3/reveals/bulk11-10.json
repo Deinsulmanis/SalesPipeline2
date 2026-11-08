@@ -1,0 +1,452 @@
+{
+  "credits_consumed": 10,
+  "total_requested_enrichments": 10,
+  "unique_enriched_records": 10,
+  "missing_records": 0,
+  "request_id": 5139094791809251695,
+  "status": "success",
+  "matches": [
+    {
+      "id": "66fdc294a94ead00014111b7",
+      "first_name": "Kimberly",
+      "last_name": "Crew",
+      "name": "Kimberly Crew",
+      "title": "President & CEO",
+      "linkedin_url": "http://www.linkedin.com/in/kimberlycrew",
+      "email": "kimberly@cssstaffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "West Chester",
+      "state": "Pennsylvania",
+      "organization": {
+        "id": "54a12b1669702db648e95a02",
+        "name": "CSS Staffing",
+        "website_url": "http://www.cssstaffing.com",
+        "primary_domain": "cssstaffing.com",
+        "city": "West Chester",
+        "state": "Pennsylvania",
+        "country": "United States",
+        "estimated_num_employees": 48,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "561320",
+          "561311"
+        ],
+        "keywords": [
+          "contract",
+          "contract to hire",
+          "permanent staffing",
+          "payrolling services",
+          "temporary help services",
+          "aerospace and defense",
+          "manufacturing",
+          "contingent staffing",
+          "it staffing",
+          "temporary employees",
+          "services",
+          "staff augmentation"
+        ]
+      }
+    },
+    {
+      "id": "62dc4decfe277d000136b270",
+      "first_name": "Stan",
+      "last_name": "Lyskowski",
+      "name": "Stan Lyskowski",
+      "title": "President & CEO",
+      "linkedin_url": "http://www.linkedin.com/in/stan-lyskowski-ba800a15",
+      "email": "stan.lyskowski@delta-staffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Flemington",
+      "state": "New Jersey",
+      "organization": {
+        "id": "54a139b769702d267a8b8300",
+        "name": "Delta Staffing",
+        "website_url": "http://www.delta-staffing.com",
+        "primary_domain": "delta-staffing.com",
+        "city": "Clarkston",
+        "state": "Michigan",
+        "country": "United States",
+        "estimated_num_employees": 44,
+        "sic_codes": [
+          "7361",
+          "7363"
+        ],
+        "naics_codes": [
+          "561311",
+          "561320"
+        ],
+        "keywords": [
+          "engineering",
+          "professional",
+          "quality",
+          "safety",
+          "automotive",
+          "automation",
+          "energy",
+          "precision hiring system",
+          "industry-focused staffing",
+          "recruitment services",
+          "recruitment process automation",
+          "staffing project management"
+        ]
+      }
+    },
+    {
+      "id": "68a6e8058e554600017355ce",
+      "first_name": "Maria",
+      "last_name": "Correa",
+      "name": "Maria Correa",
+      "title": "Branch Manager",
+      "linkedin_url": "http://www.linkedin.com/in/maria-correa-7450a62ba",
+      "email": "maria.correa@primary-staffing.net",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Chicago",
+      "state": "Illinois",
+      "organization": {
+        "id": "62eb5a7d4db0eb0001236beb",
+        "name": "Primary Staffing Inc.",
+        "website_url": "http://www.primary-staffing.net",
+        "primary_domain": "primary-staffing.net",
+        "city": "Oak Lawn",
+        "state": "Illinois",
+        "country": "United States",
+        "estimated_num_employees": 110,
+        "sic_codes": [
+          "7363",
+          "7361"
+        ],
+        "naics_codes": [
+          "561311",
+          "561320"
+        ],
+        "keywords": [
+          "recruiting firm",
+          "on-site coordinators",
+          "administrative staffing",
+          "chicago staffing",
+          "temporary staffing",
+          "staffing",
+          "b2b",
+          "hr consulting",
+          "manufacturing",
+          "candidate screening",
+          "talent acquisition",
+          "recruitment services"
+        ]
+      }
+    },
+    {
+      "id": "5d41029fa3ae6144a36b3039",
+      "first_name": "Whitney",
+      "last_name": "Cuzelis",
+      "name": "Whitney Cuzelis",
+      "title": "Branch Manager",
+      "linkedin_url": "http://www.linkedin.com/in/whitney-cuzelis-46231959",
+      "email": "whitney@c3workforce.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Northville",
+      "state": "Michigan",
+      "organization": {
+        "id": "55f8d10df3e5bb15ef005de8",
+        "name": "C3 Workforce Inc.",
+        "website_url": "http://www.c3workforce.com",
+        "primary_domain": "c3workforce.com",
+        "city": "Livonia",
+        "state": "Michigan",
+        "country": "United States",
+        "estimated_num_employees": 33,
+        "sic_codes": [
+          "7361",
+          "7363"
+        ],
+        "naics_codes": [
+          "561320",
+          "561311"
+        ],
+        "keywords": [
+          "staffing",
+          "labor",
+          "technical recruiting",
+          "direct placement",
+          "sourcing",
+          "human resources",
+          "affordable care act",
+          "contract labor",
+          "automotive engineering",
+          "executive search",
+          "staffing for warehouse roles",
+          "long-term track record"
+        ]
+      }
+    },
+    {
+      "id": "57dd4140a6da987b156679b3",
+      "first_name": "Dawn",
+      "last_name": "True",
+      "name": "Dawn True",
+      "title": "Branch Manager",
+      "linkedin_url": "http://www.linkedin.com/in/dawn-true-a3714150",
+      "email": "dawnt@capitalareastaffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Augusta",
+      "state": "Maine",
+      "organization": {
+        "id": "54a1284369702db878e4d300",
+        "name": "Capital Area Staffing Solutions, Inc.",
+        "website_url": "http://www.capitalareastaffing.com",
+        "primary_domain": "capitalareastaffing.com",
+        "city": "Augusta",
+        "state": "Maine",
+        "country": "United States",
+        "estimated_num_employees": 3,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "56131"
+        ],
+        "keywords": [
+          "administrative",
+          "accountingfinance",
+          "legalmedical office",
+          "executive level placements",
+          "construction staffing",
+          "payroll services",
+          "staffing services",
+          "staffing and recruitment",
+          "healthcare staffing",
+          "office support staffing",
+          "staffing solutions",
+          "staffing agency"
+        ]
+      }
+    },
+    {
+      "id": "60f5dfe87520ef00018dc505",
+      "first_name": "Jennifer",
+      "last_name": "Quinn",
+      "name": "Jennifer Quinn",
+      "title": "President",
+      "linkedin_url": "http://www.linkedin.com/in/jennifer-quinn-9161b247",
+      "email": "jennifer@jqstaffingservices.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Philadelphia",
+      "state": "Pennsylvania",
+      "organization": {
+        "id": "5e55d5726c942d0001ff9d88",
+        "name": "JQ Staffing Services",
+        "website_url": "http://www.jqstaffingservices.com",
+        "primary_domain": "jqstaffingservices.com",
+        "city": "Philadelphia",
+        "state": "Pennsylvania",
+        "country": "United States",
+        "estimated_num_employees": 19,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "561320",
+          "561311"
+        ],
+        "keywords": [
+          "temp-to-hire",
+          "hr duties management",
+          "job fairs",
+          "customized staffing",
+          "industry compliance",
+          "workforce management",
+          "transportation & logistics",
+          "employee screening",
+          "reducing workers compensation rates",
+          "staff retention programs",
+          "industry-specific staffing",
+          "staffing and employment services"
+        ]
+      }
+    },
+    {
+      "id": "5c63c95a80f93e530ae8a133",
+      "first_name": "Joe",
+      "last_name": "Ascioti",
+      "name": "Joe Ascioti",
+      "title": "President",
+      "linkedin_url": "http://www.linkedin.com/in/joe-ascioti-22396a14",
+      "email": "ja@reliabletemps.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Agawam",
+      "state": "Massachusetts",
+      "organization": {
+        "id": "55922c8d736964191e88af00",
+        "name": "Reliable Temps Inc.",
+        "website_url": "http://www.reliabletemps.com",
+        "primary_domain": "reliabletemps.com",
+        "city": "Agawam",
+        "state": "Massachusetts",
+        "country": "United States",
+        "estimated_num_employees": 22,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "561311",
+          "561320"
+        ],
+        "keywords": [
+          "job placement",
+          "human resource services",
+          "staffing solutions",
+          "employment resources",
+          "recruitment",
+          "staffing agency",
+          "temporary staffing",
+          "temp-to-hire",
+          "direct hire",
+          "employee placement",
+          "job recruitment",
+          "local business"
+        ]
+      }
+    },
+    {
+      "id": "685f9b1e2aed710001688425",
+      "first_name": "Gary",
+      "last_name": "Carter",
+      "name": "Gary Carter",
+      "title": "Chief CEO",
+      "linkedin_url": "http://www.linkedin.com/in/gary-carter-6465a5212",
+      "email": "gcarter@1ststatestaffingsolutions.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Middletown",
+      "state": "Delaware",
+      "organization": {
+        "id": "62fe020d38a70100f532b6b6",
+        "name": "1st State Staffing Solutions",
+        "website_url": "http://www.1ststatestaffingsolutions.com",
+        "primary_domain": "1ststatestaffingsolutions.com",
+        "city": "Wilmington",
+        "state": "Delaware",
+        "country": "United States",
+        "estimated_num_employees": 9,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "56131"
+        ],
+        "keywords": [
+          "temp to hire",
+          "hiring veterans",
+          "substitute teachers",
+          "clevel executive search",
+          "direct hire placements",
+          "executive coaching",
+          "staffing services",
+          "support personnel recruitment",
+          "staff recruitment",
+          "support personnel management",
+          "c-level executive search",
+          "educational staffing"
+        ]
+      }
+    },
+    {
+      "id": "66e43717b77b810001db805c",
+      "first_name": "Edgar",
+      "last_name": "Romero",
+      "name": "Edgar Romero",
+      "title": "Sales Director",
+      "linkedin_url": "http://www.linkedin.com/in/edgar-romero-ma",
+      "email": "edgarr@rmpersonnel.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "El Paso",
+      "state": "Texas",
+      "organization": {
+        "id": "54a1a4337468695475ddfc03",
+        "name": "RMPersonnel, Inc.",
+        "website_url": "http://www.rmpersonnel.com",
+        "primary_domain": "rmpersonnel.com",
+        "city": "El Paso",
+        "state": "Texas",
+        "country": "United States",
+        "estimated_num_employees": 67,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "561320",
+          "561311",
+          "561330"
+        ],
+        "keywords": [
+          "staffing",
+          "human resources outsourcing",
+          "recruitment",
+          "payroll",
+          "diversity employment",
+          "workforce staffing",
+          "job fairs el paso",
+          "talent acquisition",
+          "workforce solutions",
+          "hr consulting",
+          "temp-to-hire",
+          "employment solutions"
+        ]
+      }
+    },
+    {
+      "id": "54a8f5ba7468693399cf9c09",
+      "first_name": "Neila",
+      "last_name": "Romero",
+      "name": "Neila Romero",
+      "title": "President",
+      "linkedin_url": "http://www.linkedin.com/in/neila-romero-0251a751",
+      "email": "neila@newvisionstaffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Fullerton",
+      "state": "California",
+      "organization": {
+        "id": "5b84cf69324d4471813e93fc",
+        "name": "NEW VISION STAFFING / CA",
+        "website_url": "http://www.newvisionstaffing.com",
+        "primary_domain": "newvisionstaffing.com",
+        "city": "Fullerton",
+        "state": "California",
+        "country": "United States",
+        "estimated_num_employees": 25,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "561311",
+          "561320"
+        ],
+        "keywords": [
+          "safety training",
+          "customer service",
+          "employment",
+          "human resources",
+          "payroll processing",
+          "staffing agency",
+          "light industrial staffing",
+          "temporary placements",
+          "recruiting",
+          "employee relations",
+          "hazard communication",
+          "staffing partner"
+        ]
+      }
+    }
+  ]
+}

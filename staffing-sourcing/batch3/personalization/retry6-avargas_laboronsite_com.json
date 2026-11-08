@@ -1,0 +1,90 @@
+{
+  "firstName": "Amiel",
+  "lastName": "Vargas",
+  "fullName": "Amiel Vargas",
+  "jobTitle": "President",
+  "company": "Labor On Site",
+  "companyWebsite": "http://www.laboronsite.com",
+  "companyDomain": "laboronsite.com",
+  "companyCity": "Lawrence",
+  "companyState": "Massachusetts",
+  "companySizeCategory": "11-50",
+  "staffingLane": "A",
+  "staffingSpecialization": "logistics; distribution; construction; industrial",
+  "emailStatus": "verified (NOT catch-all) — Tier 1 send-ready",
+  "sourceEvidence": "Apollo people search + website ICP; keywords=construction,industrial labor,human capital solutions,cleaning services,temporary labor,temporary help services,logistics & transportation,staffing solutions",
+  "apolloVerifiedEmail": "avargas@laboronsite.com",
+  "buyerTier": "Tier 1",
+  "emailCatchAll": "false",
+  "emailVerificationStatus": "verified",
+  "apolloPersonId": "64f4d7284e2c220001b4a056",
+  "apolloAccountId": "61ec514a0285230001521cbd",
+  "linkedinUrl": "http://www.linkedin.com/in/laboronsite",
+  "source": "apollo_batch3",
+  "notes": "",
+  "personCity": "Boston",
+  "personState": "Massachusetts",
+  "estimatedEmployees": "12",
+  "sicCodes": "7363",
+  "naicsCodes": "561320,561330",
+  "campaign": "Industrial Staffing Agency",
+  "campaignId": "industrial_staffing_employer_acquisition_v1",
+  "strategy": "staffing_market_evidence_v1",
+  "model": "claude-haiku-4-5",
+  "generatedAt": "2026-09-18T01:16:00.614Z",
+  "research": {
+    "pages": [],
+    "failures": [
+      "unusable_or_blocked_page"
+    ],
+    "reviewRequired": true,
+    "retrieval": {
+      "homepageFailed": true,
+      "alternateCompanyPageAttempted": false,
+      "domainIdentityVerified": false,
+      "usableAlternateEvidence": false,
+      "attempts": [
+        {
+          "url": "http://www.laboronsite.com",
+          "homepage": true,
+          "ok": false,
+          "status": null,
+          "reason": "unusable_or_blocked_page"
+        }
+      ]
+    }
+  },
+  "retrieval": {
+    "homepageFailed": true,
+    "alternateCompanyPageAttempted": false,
+    "domainIdentityVerified": false,
+    "usableAlternateEvidence": false,
+    "attempts": [
+      {
+        "url": "http://www.laboronsite.com",
+        "homepage": true,
+        "ok": false,
+        "status": null,
+        "reason": "unusable_or_blocked_page"
+      }
+    ]
+  },
+  "icpFit": "UNKNOWN",
+  "hyperPersonalizedOpening": "",
+  "confidence": "RETRY_REQUIRED",
+  "classification": "RETRY_REQUIRED",
+  "safeToSend": false,
+  "reviewFlag": true,
+  "primaryReason": "RETRIEVAL_UNUSABLE",
+  "supportingReasons": [],
+  "reviewReasons": [
+    "RETRIEVAL_UNUSABLE"
+  ],
+  "facts": [],
+  "sourceURL_or_sourceDescription": "",
+  "emailPreview": null,
+  "previewOnly": true,
+  "elapsedMs": 132,
+  "catchAllSource": false,
+  "retryPass": "phase1-infra-retry"
+}

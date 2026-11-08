@@ -1,0 +1,152 @@
+[
+  {
+    "company": "Spak Staffing, LLC",
+    "class": "generic_staffing",
+    "person_id": "68e3df6e03905200019ede1d",
+    "first_name": "Shana",
+    "title": "Owner/Founder",
+    "title_rank": 0,
+    "has_email": true,
+    "src": "people/manufacturing-staffing-strict-p3.json"
+  },
+  {
+    "company": "Talent Guide USA",
+    "class": "unclear",
+    "person_id": "66f87bf38dcef0000150408d",
+    "first_name": "Ken",
+    "title": "Owner & Founder",
+    "title_rank": 0,
+    "has_email": true,
+    "src": "people/manufacturing-staffing-strict-p3.json"
+  },
+  {
+    "company": "Alava Consulting",
+    "class": "unclear",
+    "person_id": "60fd8a97946b85000122107a",
+    "first_name": "Jason",
+    "title": "Managing Partner",
+    "title_rank": 3,
+    "has_email": true,
+    "src": "people/industrial-staffing-strict-p4.json"
+  },
+  {
+    "company": "Connected Systems Partners, Inc.",
+    "class": "unclear",
+    "person_id": "54a1c5a574686942d33fd60f",
+    "first_name": "Matt",
+    "title": "Managing Partner",
+    "title_rank": 3,
+    "has_email": true,
+    "src": "people/manufacturing-staffing-strict-p3.json"
+  },
+  {
+    "company": "Connexion Systems and Engineering, Inc.",
+    "class": "unclear",
+    "person_id": "54a51933746869320921537c",
+    "first_name": "Dan",
+    "title": "Managing Partner",
+    "title_rank": 3,
+    "has_email": true,
+    "src": "people/manufacturing-staffing-strict-p3.json"
+  },
+  {
+    "company": "Evrhire",
+    "class": "unclear",
+    "person_id": "611d71a6f1378c0001529257",
+    "first_name": "Thomas",
+    "title": "Managing Partner",
+    "title_rank": 3,
+    "has_email": true,
+    "src": "people/manufacturing-staffing-strict-p3.json"
+  },
+  {
+    "company": "First Interview Network",
+    "class": "unclear",
+    "person_id": "57dfd3b9a6da980b658b97ed",
+    "first_name": "Brett",
+    "title": "Managing Partner",
+    "title_rank": 3,
+    "has_email": true,
+    "src": "people/manufacturing-staffing-strict-p3.json"
+  },
+  {
+    "company": "Flex Employee Services",
+    "class": "unclear",
+    "person_id": "54a6f2e674686975f8722307",
+    "first_name": "Giovanni",
+    "title": "Managing Partner",
+    "title_rank": 3,
+    "has_email": true,
+    "src": "people/manufacturing-staffing-strict-p3.json"
+  },
+  {
+    "company": "IT Connect, LLC",
+    "class": "unclear",
+    "person_id": "604bd90d8cca1e000169847d",
+    "first_name": "Eric",
+    "title": "Managing Partner",
+    "title_rank": 3,
+    "has_email": true,
+    "src": "people/manufacturing-staffing-strict-p3.json"
+  },
+  {
+    "company": "JTL Services, Inc.",
+    "class": "unclear",
+    "person_id": "60cf5f136667000001bdcf1e",
+    "first_name": "Jeff",
+    "title": "Managing Partner",
+    "title_rank": 3,
+    "has_email": true,
+    "src": "people/manufacturing-staffing-strict-p3.json"
+  },
+  {
+    "company": "M-Works Search",
+    "class": "unclear",
+    "person_id": "66f319c436c9a60001e2d2d2",
+    "first_name": "Cliff",
+    "title": "Managing Partner",
+    "title_rank": 3,
+    "has_email": true,
+    "src": "people/manufacturing-staffing-strict-p3.json"
+  },
+  {
+    "company": "StaffMode",
+    "class": "unclear",
+    "person_id": "61034eb39f3d890001d91985",
+    "first_name": "Kyle",
+    "title": "Managing Partner",
+    "title_rank": 3,
+    "has_email": true,
+    "src": "people/manufacturing-staffing-strict-p3.json"
+  },
+  {
+    "company": "Sterling Recruiting Services LLC",
+    "class": "unclear",
+    "person_id": "60054cba0a0c6e00011b809d",
+    "first_name": "Julie",
+    "title": "Managing Partner",
+    "title_rank": 3,
+    "has_email": true,
+    "src": "people/manufacturing-staffing-strict-p3.json"
+  },
+  {
+    "company": "TriTek Staffing, Inc.",
+    "class": "generic_staffing",
+    "person_id": "557146767369642c09b71c00",
+    "first_name": "Rob",
+    "title": "Managing Partner",
+    "title_rank": 3,
+    "has_email": true,
+    "src": "people/manufacturing-staffing-strict-p3.json"
+  },
+  {
+    "company": "Minute Men Staffing Illinois",
+    "class": "generic_staffing",
+    "person_id": "681a5b2f67ac1f000194232e",
+    "first_name": "Elizabeth",
+    "title": "Branch Manager",
+    "title_rank": 7,
+    "has_email": true,
+    "src": "people/industrial-staffing-strict-p4.json"
+  }
+]

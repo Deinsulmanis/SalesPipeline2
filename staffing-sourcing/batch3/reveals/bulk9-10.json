@@ -1,0 +1,461 @@
+{
+  "credits_consumed": 10,
+  "total_requested_enrichments": 10,
+  "unique_enriched_records": 10,
+  "missing_records": 0,
+  "request_id": -5338390397549166507,
+  "status": "success",
+  "matches": [
+    {
+      "id": "66ff64dbc672d90001a64a7e",
+      "first_name": "Adilene",
+      "last_name": "Mendoza",
+      "name": "Adilene Mendoza",
+      "title": "Branch Manager",
+      "linkedin_url": "http://www.linkedin.com/in/adilene-mendoza-190898215",
+      "email": "amendoza@slsinc.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Chicago",
+      "state": "Illinois",
+      "country": "United States",
+      "organization": {
+        "id": "556cfb007369641226626200",
+        "name": "Strategic Labor Solutions, Inc.",
+        "website_url": "http://www.slsinc.com",
+        "primary_domain": "slsinc.com",
+        "city": "Aurora",
+        "state": "Illinois",
+        "country": "United States",
+        "estimated_num_employees": 8,
+        "sic_codes": [
+          "7363"
+        ],
+        "naics_codes": [
+          "561320"
+        ],
+        "keywords": [
+          "industrial staffing",
+          "industrial staffing network",
+          "manufacturing workforce",
+          "staffing industry",
+          "managed staffing services",
+          "customer service",
+          "employee benefits",
+          "industry-specific staffing",
+          "staffing agency",
+          "general labor staffing",
+          "staffing services",
+          "industrial labor supply"
+        ]
+      }
+    },
+    {
+      "id": "67a5931296962300014b8bec",
+      "first_name": "Lilia",
+      "last_name": "Fregoso",
+      "name": "Lilia Fregoso",
+      "title": "President",
+      "linkedin_url": "http://www.linkedin.com/in/lilia-fregoso-5b0510159",
+      "email": "lilia@csi-staffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Elmwood Park",
+      "state": "Illinois",
+      "country": "United States",
+      "organization": {
+        "id": "5da4ee52c47b5b000138c373",
+        "name": "CSI Staffing",
+        "website_url": "http://www.csi-staffing.com",
+        "primary_domain": "csi-staffing.com",
+        "city": "Chicago",
+        "state": "Illinois",
+        "country": "United States",
+        "estimated_num_employees": 14,
+        "sic_codes": [
+          "7363",
+          "7361"
+        ],
+        "naics_codes": [
+          "561311",
+          "561320"
+        ],
+        "keywords": [
+          "staffing",
+          "recruiting",
+          "job readiness",
+          "workforce solutions",
+          "candidate sourcing",
+          "temp-to-hire",
+          "temporary staffing",
+          "staffing agency",
+          "candidate screening",
+          "job placement",
+          "specialized staffing",
+          "warehouse inventory"
+        ]
+      }
+    },
+    {
+      "id": "54a1d8537468695c8279b614",
+      "first_name": "Brooke",
+      "last_name": "McAlpin",
+      "name": "Brooke McAlpin",
+      "title": "President",
+      "linkedin_url": "http://www.linkedin.com/in/brooke-mcalpin-5859379",
+      "email": "brooke@cornerstonestaffinginc.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Omaha",
+      "state": "Nebraska",
+      "country": "United States",
+      "organization": {
+        "id": "54a242677468693cdd49bf1a",
+        "name": "Cornerstone Staffing, Inc",
+        "website_url": "http://www.cornerstonestaffinginc.com",
+        "primary_domain": "cornerstonestaffinginc.com",
+        "city": "Omaha",
+        "state": "Nebraska",
+        "country": "United States",
+        "estimated_num_employees": 37,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "561311"
+        ],
+        "keywords": [
+          "administrativeclerical",
+          "finance accounting",
+          "sales marketing",
+          "human resources",
+          "customer service",
+          "it",
+          "executive placement",
+          "staffing agency",
+          "screening",
+          "human resources services",
+          "accounting",
+          "employment background checks"
+        ]
+      }
+    },
+    {
+      "id": "60726322a2b28500017982f4",
+      "first_name": "Carrie",
+      "last_name": "Veitz",
+      "name": "Carrie Veitz",
+      "title": "Branch Manager",
+      "linkedin_url": "http://www.linkedin.com/in/carrie-veitz-54b0b375",
+      "email": "carrie.v@psucp.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Minot",
+      "state": "North Dakota",
+      "country": "United States",
+      "organization": {
+        "id": "5a9e5cc2a6da98d970156995",
+        "name": "UCP Staffing",
+        "website_url": "http://www.ucpstaffing.com",
+        "primary_domain": "ucpstaffing.com",
+        "city": "Saint George",
+        "state": "Utah",
+        "country": "United States",
+        "estimated_num_employees": 67,
+        "sic_codes": [
+          "7363",
+          "7361"
+        ],
+        "naics_codes": [
+          "561311",
+          "561320"
+        ],
+        "keywords": [
+          "staffing services",
+          "employment opportunities",
+          "payrollpersonnel services",
+          "employment agency",
+          "staffing management",
+          "employment solutions",
+          "restoration staffing",
+          "staffing firm",
+          "staffing consultancy",
+          "staffing company",
+          "staffing operations",
+          "staffing provider"
+        ]
+      }
+    },
+    {
+      "id": "66f8dc718dcef0000165fa54",
+      "first_name": "Jeff",
+      "last_name": "Chaponick",
+      "name": "Jeff Chaponick",
+      "title": "CEO",
+      "linkedin_url": "http://www.linkedin.com/in/macrecruiters",
+      "email": "jeff@macrecruiters.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Frisco",
+      "state": "Texas",
+      "country": "United States",
+      "organization": {
+        "id": "5f4dc11919f964000189dfce",
+        "name": "MAC Staffing Group",
+        "website_url": "http://www.macstaffinggroup.com",
+        "primary_domain": "macstaffinggroup.com",
+        "city": "Frisco",
+        "state": "Texas",
+        "country": "United States",
+        "estimated_num_employees": 13,
+        "sic_codes": [
+          "7361",
+          "7363"
+        ],
+        "naics_codes": [
+          "561311",
+          "561320"
+        ],
+        "keywords": [
+          "mechanical engineering",
+          "career opportunities",
+          "hr specialists",
+          "electrical engineering",
+          "civil engineering",
+          "it/systems specialists",
+          "accountants",
+          "industry-specific recruitment",
+          "payroll administrators",
+          "energy and utilities",
+          "temporary staffing",
+          "candidate evaluation"
+        ]
+      }
+    },
+    {
+      "id": "609ebf63b0d8aa0001687d78",
+      "first_name": "Linda",
+      "last_name": "Callari",
+      "name": "Linda Callari",
+      "title": "President",
+      "linkedin_url": "http://www.linkedin.com/in/linda-callari-7b5ba48",
+      "email": "lcallari@arrowstaffinginc.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Marlboro Township",
+      "state": "New Jersey",
+      "country": "United States",
+      "organization": {
+        "id": "5e5629a037cf0d00018cd149",
+        "name": "Arrow Staffing Inc.",
+        "website_url": "http://www.arrowstaffinginc.com",
+        "primary_domain": "arrowstaffinginc.com",
+        "city": "Matawan",
+        "state": "New Jersey",
+        "country": "United States",
+        "estimated_num_employees": 7,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "561320",
+          "561311"
+        ],
+        "keywords": [
+          "full service firm",
+          "custom staffing solutions",
+          "staffing and recruitment",
+          "talent acquisition",
+          "staffing solutions",
+          "candidate sourcing",
+          "temporary staffing",
+          "permanent talent",
+          "employee benefits",
+          "background checks",
+          "candidate screening",
+          "payrolling services"
+        ]
+      }
+    },
+    {
+      "id": "54a4290f7468692fa2bc2c31",
+      "first_name": "Will",
+      "last_name": "Roth",
+      "name": "Will Roth",
+      "title": "President",
+      "linkedin_url": "http://www.linkedin.com/in/will-roth-1899473",
+      "email": "wroth@addtemps.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": null,
+      "state": "Rhode Island",
+      "country": "United States",
+      "organization": {
+        "id": "5ed95bb75fc88a0001e0e6b1",
+        "name": "Add Temps",
+        "website_url": "http://www.addtemps.com",
+        "primary_domain": "addtemps.com",
+        "city": "Pawtucket",
+        "state": "Rhode Island",
+        "country": "United States",
+        "estimated_num_employees": 12,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "56132"
+        ],
+        "keywords": [
+          "pharmaceutical staffing",
+          "light industrial staffing",
+          "hospitality",
+          "temporary help services",
+          "staffing solutions",
+          "services",
+          "w2 assistance",
+          "staffing and recruiting",
+          "candidate matching",
+          "payroll processing",
+          "job placement",
+          "skills coaching"
+        ]
+      }
+    },
+    {
+      "id": "670e93bd4c568c000164aad8",
+      "first_name": "Brian",
+      "last_name": "Cantrell",
+      "name": "Brian Cantrell",
+      "title": "Vice President Operations",
+      "linkedin_url": "http://www.linkedin.com/in/brian-cantrell-234a81299",
+      "email": "brian.cantrell@xanderstaffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Waxahachie",
+      "state": "Texas",
+      "country": "United States",
+      "organization": {
+        "id": "5da4a428ddc6320001346bc3",
+        "name": "Xander Staffing",
+        "website_url": "http://www.xanderstaffing.com",
+        "primary_domain": "xanderstaffing.com",
+        "city": "Dallas",
+        "state": "Texas",
+        "country": "United States",
+        "estimated_num_employees": 55,
+        "sic_codes": [
+          "7363",
+          "7361"
+        ],
+        "naics_codes": [
+          "561320",
+          "561311"
+        ],
+        "keywords": [
+          "industrial staffing",
+          "distribution center staffing",
+          "recruiting",
+          "warehouse labor",
+          "transportation & logistics",
+          "project management",
+          "recruiting solutions",
+          "long-term employment",
+          "skilled employees",
+          "job fair",
+          "professional services",
+          "outside the box sourcing"
+        ]
+      }
+    },
+    {
+      "id": "54a2ece27468693fdae81247",
+      "first_name": "Anthony",
+      "last_name": "Cuffia",
+      "name": "Anthony Cuffia",
+      "title": "Managing Partner",
+      "linkedin_url": "http://www.linkedin.com/in/anthony-cuffia-77021111",
+      "email": "anthony@lonewolfstaffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Los Angeles",
+      "state": "California",
+      "country": "United States",
+      "organization": {
+        "id": "654b34a47c7c57000149a30b",
+        "name": "Lone Wolf Staffing",
+        "website_url": "http://www.lonewolfstaffing.com",
+        "primary_domain": "lonewolfstaffing.com",
+        "city": "Avondale",
+        "state": "Arizona",
+        "country": "United States",
+        "estimated_num_employees": 3,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "56132"
+        ],
+        "keywords": [
+          "construction",
+          "warehouse",
+          "light industrial",
+          "electrical",
+          "janitorial",
+          "direct hire",
+          "temp to perm",
+          "contract",
+          "temporary",
+          "general labor",
+          "administrative",
+          "manufacturing"
+        ]
+      }
+    },
+    {
+      "id": "66f295d862bbc9000190c36c",
+      "first_name": "Robin",
+      "last_name": "Pickering",
+      "name": "Robin Pickering",
+      "title": "Vice President of Sales",
+      "linkedin_url": "http://www.linkedin.com/in/robinpickering",
+      "email": "robin.pickering@ossistaff.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Milwaukee",
+      "state": "Wisconsin",
+      "country": "United States",
+      "organization": {
+        "id": "54a1d39b74686945fa223914",
+        "name": "One Source Staffing",
+        "website_url": "http://www.milwaukeestaffing.com",
+        "primary_domain": "milwaukeestaffing.com",
+        "city": "Milwaukee",
+        "state": "Wisconsin",
+        "country": "United States",
+        "estimated_num_employees": 57,
+        "sic_codes": [
+          "7361",
+          "7363"
+        ],
+        "naics_codes": [
+          "561320",
+          "561311"
+        ],
+        "keywords": [
+          "staffing",
+          "recruiting",
+          "job placement",
+          "consulting",
+          "staffing partner",
+          "regulatory compliance",
+          "alchemy training platform",
+          "milwaukee staffing",
+          "direct hire",
+          "safety and injury prevention training",
+          "custom staffing plans",
+          "staffing solutions"
+        ]
+      }
+    }
+  ]
+}

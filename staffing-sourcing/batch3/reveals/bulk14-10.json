@@ -1,0 +1,386 @@
+{
+  "status": "success",
+  "total_requested_enrichments": 10,
+  "unique_enriched_records": 10,
+  "missing_records": 0,
+  "credits_consumed": 10,
+  "request_id": -8344847451867451123,
+  "matches": [
+    {
+      "id": "54a80d4774686975f88c715e",
+      "first_name": "Sean",
+      "last_name": "Switzer",
+      "name": "Sean Switzer",
+      "title": "Co-Owner",
+      "linkedin_url": "http://www.linkedin.com/in/sean-switzer-4084795",
+      "email": "sean@rampuplabor.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Kansas City",
+      "state": "Missouri",
+      "organization": {
+        "id": "556cfb8e73696411ec846a00",
+        "name": "RampUp Labor",
+        "website_url": "http://www.rampuplabor.com",
+        "primary_domain": "rampuplabor.com",
+        "city": "Kansas City",
+        "state": "Kansas",
+        "estimated_num_employees": 25,
+        "sic_codes": [
+          "7363",
+          "7361"
+        ],
+        "naics_codes": [
+          "561320",
+          "561311"
+        ],
+        "keywords": [
+          "staffing",
+          "skilled trades",
+          "construction labor",
+          "construction staffing",
+          "industrial projects",
+          "welders",
+          "labor staffing"
+        ]
+      }
+    },
+    {
+      "id": "66f4e55a150b4f0001faece1",
+      "first_name": "Christopher",
+      "last_name": "Linton",
+      "name": "Christopher Linton",
+      "title": "Chief Executive Officer",
+      "linkedin_url": "http://www.linkedin.com/in/christopher-linton-278678247",
+      "email": "chris.linton@lonestarlabormgt.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Houston",
+      "state": "Texas",
+      "organization": {
+        "id": "5e57f35861258d0001812451",
+        "name": "LoneStar Labor Management",
+        "website_url": "http://www.lonestarlabormgt.com",
+        "primary_domain": "lonestarlabormgt.com",
+        "city": "Houston",
+        "state": "Texas",
+        "estimated_num_employees": 15,
+        "sic_codes": [
+          "7361",
+          "8742"
+        ],
+        "naics_codes": [
+          "561311",
+          "541612"
+        ],
+        "keywords": [
+          "staffing agency",
+          "manufacturing",
+          "food manufacturing",
+          "food processing",
+          "labor force management",
+          "staffing for manufacturing plants"
+        ]
+      }
+    },
+    {
+      "id": "54a43c197468693676dc3137",
+      "first_name": "Jeffrey",
+      "last_name": "Muntz",
+      "name": "Jeffrey Muntz",
+      "title": "Vice President Operations",
+      "linkedin_url": "http://www.linkedin.com/in/jwmuntz",
+      "email": "jmuntz@fundamentallabor.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Perkasie",
+      "state": "Pennsylvania",
+      "organization": {
+        "id": "55f5a6f0f3e5bb5d9600427d",
+        "name": "Fundamental Labor Strategies, Inc.",
+        "website_url": "http://www.fundamentallabor.com",
+        "primary_domain": "fundamentallabor.com",
+        "city": "New Hope",
+        "state": "Pennsylvania",
+        "estimated_num_employees": 46,
+        "sic_codes": [
+          "4731",
+          "7363"
+        ],
+        "naics_codes": [
+          "561320"
+        ],
+        "keywords": [
+          "driver staffing",
+          "transportation staffing",
+          "cdl driver staffing",
+          "distribution",
+          "truck driver staffing solutions"
+        ]
+      }
+    },
+    {
+      "id": "6364f1ca568a0b00012596dd",
+      "first_name": "Tradeslabor",
+      "last_name": "Auburn",
+      "name": "Tradeslabor Auburn",
+      "title": "Branch Manager",
+      "linkedin_url": "http://www.linkedin.com/in/tradeslabor-auburn-80bb0a13b",
+      "email": "auburn@tradeslabor.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Auburn",
+      "state": "Washington",
+      "organization": {
+        "id": "5a9cfa8da6da98d95ff79164",
+        "name": "Trades Labor Corporation",
+        "website_url": "http://www.tradeslabor.com",
+        "primary_domain": "tradeslabor.com",
+        "city": "Seattle",
+        "state": "Washington",
+        "estimated_num_employees": 84,
+        "sic_codes": [
+          "7363",
+          "7361"
+        ],
+        "naics_codes": [
+          "561311",
+          "561320"
+        ],
+        "keywords": [
+          "construction",
+          "warehousing staffing",
+          "industrial staffing",
+          "manufacturing staffing",
+          "construction staffing",
+          "blue-collar staffing"
+        ]
+      }
+    },
+    {
+      "id": "67000421b8ea050001da2b0d",
+      "first_name": "Tom",
+      "last_name": "Van Oevelen",
+      "name": "Tom Van Oevelen",
+      "title": "VP Sales & Marketing",
+      "linkedin_url": "http://www.linkedin.com/in/tomvanoevelen",
+      "email": "tom@regalstaffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Dallas",
+      "state": "Texas",
+      "organization": {
+        "id": "5e5788951e1aa100014b445c",
+        "name": "Regal Staffing Services",
+        "website_url": "http://www.regalstaffing.com",
+        "primary_domain": "regalstaffing.com",
+        "city": "Fort Worth",
+        "state": "Texas",
+        "estimated_num_employees": 150,
+        "sic_codes": [
+          "7361",
+          "7363"
+        ],
+        "naics_codes": [
+          "561311",
+          "561320"
+        ],
+        "keywords": [
+          "temporary staffing",
+          "staffing",
+          "light industrial",
+          "vendor-on-premises programs",
+          "workforce solutions"
+        ]
+      }
+    },
+    {
+      "id": "64eec1c47a9eae00012b09cd",
+      "first_name": "Lisa",
+      "last_name": "Zand",
+      "name": "Lisa Zand",
+      "title": "President",
+      "linkedin_url": "http://www.linkedin.com/in/lisa-m-zand-cpc-041212bb",
+      "email": "lisa@apsemploymentservices.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Bay City",
+      "state": "Michigan",
+      "organization": {
+        "id": "5f360f8c75a037014c1a1987",
+        "name": "APS Employment Services, Inc.",
+        "website_url": "http://www.apsemploymentservices.com",
+        "primary_domain": "apsemploymentservices.com",
+        "city": "Saginaw",
+        "state": "Michigan",
+        "estimated_num_employees": 14,
+        "sic_codes": [
+          "7361",
+          "7363"
+        ],
+        "naics_codes": [
+          "561311",
+          "561320"
+        ],
+        "keywords": [
+          "light industrial staffing",
+          "warehouse staffing",
+          "manufacturing staffing",
+          "healthcare staffing",
+          "professional staffing",
+          "clerical jobs"
+        ]
+      }
+    },
+    {
+      "id": "54c1aea27468691639530b35",
+      "first_name": "Meggie",
+      "last_name": "Diaz",
+      "name": "Meggie Diaz",
+      "title": "Branch Manager",
+      "linkedin_url": "http://www.linkedin.com/in/meggie-diaz-99b295b",
+      "email": "mdiaz@arrowstaffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Fontana",
+      "state": "California",
+      "organization": {
+        "id": "54a1a9a274686940120cd005",
+        "name": "Arrow Staffing",
+        "website_url": "http://www.arrowstaffing.com",
+        "primary_domain": "arrowstaffing.com",
+        "city": "Redlands",
+        "state": "California",
+        "estimated_num_employees": 68,
+        "sic_codes": [
+          "7363",
+          "7361"
+        ],
+        "naics_codes": [
+          "561320",
+          "561311"
+        ],
+        "keywords": [
+          "light industrial",
+          "forklift",
+          "warehouse",
+          "machinist",
+          "administrative staffing",
+          "staffing"
+        ]
+      }
+    },
+    {
+      "id": "61e4ee2766cab10001d81a77",
+      "first_name": "Candace",
+      "last_name": "Feldman",
+      "name": "Candace Feldman",
+      "title": "Managing Director",
+      "linkedin_url": "http://www.linkedin.com/in/candace-feldman-397029225",
+      "email": "cfeldman@accessstaffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Roslyn Heights",
+      "state": "New York",
+      "organization": {
+        "id": "5f48a43235662800014537c4",
+        "name": "ACCESS STAFFING: Recruiting Experts in Manufacturing & Engineering, Nationwide",
+        "website_url": "http://www.makinghires.com",
+        "primary_domain": "makinghires.com",
+        "city": "Dayton",
+        "state": "Ohio",
+        "estimated_num_employees": 5,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "561312"
+        ],
+        "keywords": [
+          "executive search",
+          "engineering recruiting",
+          "manufacturing recruiting",
+          "information technology",
+          "medical/healthcare staffing"
+        ]
+      }
+    },
+    {
+      "id": "66fb91c4cdf5110001201554",
+      "first_name": "Patricia",
+      "last_name": "Fusco",
+      "name": "Patricia Fusco",
+      "title": "President & CEO",
+      "linkedin_url": "http://www.linkedin.com/in/patriciafusco",
+      "email": "patty@fuscopersonnel.net",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Albany",
+      "state": "New York",
+      "organization": {
+        "id": "54a129d469702d979cc6dd01",
+        "name": "Fusco Personnel, Inc.",
+        "website_url": "http://www.fuscopersonnel.net",
+        "primary_domain": "fuscopersonnel.net",
+        "city": "Latham",
+        "state": "New York",
+        "estimated_num_employees": 24,
+        "sic_codes": [
+          "7361",
+          "7363"
+        ],
+        "naics_codes": [
+          "561312",
+          "561320"
+        ],
+        "keywords": [
+          "information technology",
+          "healthcare",
+          "engineering",
+          "accounting",
+          "finance",
+          "legal",
+          "manufacturing"
+        ]
+      }
+    },
+    {
+      "id": "57db1213a6da9853e9fd2d10",
+      "first_name": "Brian",
+      "last_name": "Rosner",
+      "name": "Brian Rosner",
+      "title": "President",
+      "linkedin_url": "http://www.linkedin.com/in/brian-rosner-6b8939119",
+      "email": "brosner@bestpersonnelinc.net",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Philadelphia",
+      "state": "Pennsylvania",
+      "organization": {
+        "id": "5fc93b01cf8ad500014600a1",
+        "name": "Best Personnel",
+        "website_url": "http://www.bestpersonnelinc.net",
+        "primary_domain": "bestpersonnelinc.net",
+        "city": "Philadelphia",
+        "state": "Pennsylvania",
+        "estimated_num_employees": 180,
+        "sic_codes": [
+          "7361",
+          "7363"
+        ],
+        "naics_codes": [
+          "561311",
+          "561320"
+        ],
+        "keywords": [
+          "industrial staffing",
+          "light industrial workers",
+          "event staffing",
+          "hospitality staffing",
+          "food service staffing",
+          "clerical staffing"
+        ]
+      }
+    }
+  ]
+}

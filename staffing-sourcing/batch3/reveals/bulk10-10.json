@@ -1,0 +1,452 @@
+{
+  "credits_consumed": 10,
+  "total_requested_enrichments": 10,
+  "unique_enriched_records": 10,
+  "missing_records": 0,
+  "request_id": 4628264913213014386,
+  "status": "success",
+  "matches": [
+    {
+      "id": "5d51e3dcf651255ca2503596",
+      "first_name": "Colleen",
+      "last_name": "Wilson",
+      "name": "Colleen Wilson",
+      "title": "Vice President of Operations",
+      "linkedin_url": "http://www.linkedin.com/in/colleen-wilson-b8096517b",
+      "email": "cwilson@mcmstaffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Detroit",
+      "state": "Michigan",
+      "organization": {
+        "id": "5f48bd526ea2bf0001a97b7e",
+        "name": "MCM Staffing, LLC",
+        "website_url": null,
+        "primary_domain": null,
+        "city": "Madison Heights",
+        "state": "Michigan",
+        "country": "United States",
+        "estimated_num_employees": 110,
+        "sic_codes": [
+          "7361",
+          "7363"
+        ],
+        "naics_codes": [
+          "561311",
+          "561320"
+        ],
+        "keywords": [
+          "temporary staffing",
+          "recruiting",
+          "hospitality",
+          "call center",
+          "industrial",
+          "payroll",
+          "skilled trade",
+          "welders",
+          "forklift",
+          "temporary industrial workers",
+          "hospital staffing",
+          "custom staffing solutions"
+        ]
+      }
+    },
+    {
+      "id": "66f730de37ec0400018cb3e8",
+      "first_name": "Kim",
+      "last_name": "Osburn",
+      "name": "Kim Osburn",
+      "title": "Owner",
+      "linkedin_url": "http://www.linkedin.com/in/dedicatedpersonnel",
+      "email": "kimo@dedicatedpersonnel.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Birmingham",
+      "state": "Alabama",
+      "organization": {
+        "id": "5f3e24b634652000016148da",
+        "name": "Dedicated Personnel Inc.",
+        "website_url": "http://www.dedicatedpersonnel.com",
+        "primary_domain": "dedicatedpersonnel.com",
+        "city": "Hoover",
+        "state": "Alabama",
+        "country": "United States",
+        "estimated_num_employees": 33,
+        "sic_codes": [
+          "7361",
+          "7363"
+        ],
+        "naics_codes": [
+          "561320"
+        ],
+        "keywords": [
+          "temp-to-hire programs",
+          "information management system",
+          "skills assessment",
+          "on-site employee check-ins",
+          "training and assessment",
+          "interviewing and screening",
+          "temporary staffing",
+          "light industrial staffing",
+          "customer relationship management",
+          "payroll management",
+          "operational efficiency",
+          "recruitment"
+        ]
+      }
+    },
+    {
+      "id": "66fc80290cbf9000015fd6de",
+      "first_name": "Larry",
+      "last_name": "Flight",
+      "name": "Larry Flight",
+      "title": "Co-Founder and President",
+      "linkedin_url": "http://www.linkedin.com/in/larry-flight-93533490",
+      "email": "larry@staffingauthority.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Las Vegas",
+      "state": "Nevada",
+      "organization": {
+        "id": "5b85ca28f874f76b0ba01610",
+        "name": "Staffing Authority, LLC",
+        "website_url": "http://www.staffingauthorityllc.com",
+        "primary_domain": "staffingauthorityllc.com",
+        "city": "Las Vegas",
+        "state": "Nevada",
+        "country": "United States",
+        "estimated_num_employees": 26,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "561311",
+          "561312"
+        ],
+        "keywords": [
+          "staffing recruiting",
+          "staffing",
+          "recruitment",
+          "employment",
+          "temporary staffing",
+          "permanent staffing",
+          "light industrial",
+          "call center",
+          "administrative positions",
+          "legal staffing",
+          "accounting jobs",
+          "c-level positions"
+        ]
+      }
+    },
+    {
+      "id": "60b70fae3c497d00015d5135",
+      "first_name": "Carlos",
+      "last_name": "Thompson",
+      "name": "Carlos Thompson",
+      "title": "Chief Executive Officer",
+      "linkedin_url": "http://www.linkedin.com/in/carlos-thompson-4a133876",
+      "email": "carlos@kingsstaffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Philadelphia",
+      "state": "Pennsylvania",
+      "organization": {
+        "id": "5b134de7a6da98dce2e85ecf",
+        "name": "Kings Staffing LLC.",
+        "website_url": "http://www.kingsstaffing.com",
+        "primary_domain": "kingsstaffing.com",
+        "city": "Philadelphia",
+        "state": "Pennsylvania",
+        "country": "United States",
+        "estimated_num_employees": 9,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "561311"
+        ],
+        "keywords": [
+          "recruiting",
+          "staffing",
+          "education",
+          "human resources",
+          "professional staffing",
+          "executive staffing",
+          "tailored workforce solutions",
+          "nationwide staffing",
+          "employment process management",
+          "industry-specific staffing",
+          "temporary employment",
+          "professional placement in education"
+        ]
+      }
+    },
+    {
+      "id": "66f57ec7afed8100017fc93d",
+      "first_name": "Todd",
+      "last_name": "Kennedy",
+      "name": "Todd Kennedy",
+      "title": "President and CEO",
+      "linkedin_url": "http://www.linkedin.com/in/toddkennedy",
+      "email": "tkennedy@accuratestaffinginc.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Akron",
+      "state": "Ohio",
+      "organization": {
+        "id": "5f3fe70e610ea800dabef475",
+        "name": "Accurate Staffing",
+        "website_url": "http://www.accuratestaffinginc.com",
+        "primary_domain": "accuratestaffinginc.com",
+        "city": "Akron",
+        "state": "Ohio",
+        "country": "United States",
+        "estimated_num_employees": 45,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "561320",
+          "561311",
+          "561330"
+        ],
+        "keywords": [
+          "manufacturing",
+          "warehouse",
+          "medical",
+          "customer service",
+          "clerical",
+          "factory",
+          "home health",
+          "cdl driving",
+          "general labor",
+          "production",
+          "payrolling",
+          "technical professional placements"
+        ]
+      }
+    },
+    {
+      "id": "66fa78d971e7d600015287f7",
+      "first_name": "Kristen",
+      "last_name": "Heck",
+      "name": "Kristen Heck",
+      "title": "CEO/Owner",
+      "linkedin_url": "http://www.linkedin.com/in/kristenheck",
+      "email": "kristenheck@lcstaffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Kalispell",
+      "state": "Montana",
+      "organization": {
+        "id": "54a13b5069702d2bfd7a7901",
+        "name": "LC Staffing",
+        "website_url": "http://www.lcstaffing.com",
+        "primary_domain": "lcstaffing.com",
+        "city": "Kalispell",
+        "state": "Montana",
+        "country": "United States",
+        "estimated_num_employees": 76,
+        "sic_codes": [
+          "7361",
+          "7363"
+        ],
+        "naics_codes": [
+          "561311",
+          "561312",
+          "561320"
+        ],
+        "keywords": [
+          "engineering",
+          "salesmarketing",
+          "accountingfinance",
+          "healthcare",
+          "manufacturing",
+          "customerservice",
+          "temporary permanent",
+          "hr consulting",
+          "recruiting",
+          "staffing",
+          "employment solutions",
+          "technical"
+        ]
+      }
+    },
+    {
+      "id": "659668a28ec88a0001c3d19c",
+      "first_name": "Sarah",
+      "last_name": "Cullins",
+      "name": "Sarah Cullins",
+      "title": "President",
+      "linkedin_url": "http://www.linkedin.com/in/sarah-cullins-csp-26938a9",
+      "email": "sarah@roadwarriorstaffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Perris",
+      "state": "California",
+      "organization": {
+        "id": "5f48a060b7ed2f0001bb92b8",
+        "name": "Road Warrior Staffing",
+        "website_url": "http://www.roadwarriorstaffing.com",
+        "primary_domain": "roadwarriorstaffing.com",
+        "city": "Los Angeles",
+        "state": "California",
+        "country": "United States",
+        "estimated_num_employees": 11,
+        "sic_codes": [
+          "4731",
+          "7361"
+        ],
+        "naics_codes": [
+          "561311"
+        ],
+        "keywords": [
+          "recruiting",
+          "staffing",
+          "employment",
+          "truck drivers",
+          "transportation",
+          "dot compliant",
+          "truckers",
+          "cdl drivers",
+          "nationally recognized",
+          "sourcing",
+          "excellence",
+          "placement"
+        ]
+      }
+    },
+    {
+      "id": "5f5d77a73ae9ec0001592c27",
+      "first_name": "Stephen",
+      "last_name": "Hammond",
+      "name": "Stephen Hammond",
+      "title": "Branch Manager",
+      "linkedin_url": "http://www.linkedin.com/in/stephen-hammond-5359ba192",
+      "email": "shammond@dbwell.net",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Austin",
+      "state": "Texas",
+      "organization": {
+        "id": "5ed03494e2912e0001ff9fb1",
+        "name": "DB WELL STAFFING",
+        "website_url": "http://www.dbwell.net",
+        "primary_domain": "dbwell.net",
+        "city": "San Antonio",
+        "state": "Texas",
+        "country": "United States",
+        "estimated_num_employees": 10,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "56132"
+        ],
+        "keywords": [
+          "recruitment",
+          "temporary help services",
+          "health insurance",
+          "services",
+          "staffing and recruiting",
+          "construction",
+          "workforce management",
+          "staffing agency",
+          "compliance",
+          "workforce solutions",
+          "b2b",
+          "hassle-free staffing"
+        ]
+      }
+    },
+    {
+      "id": "60eaf0c4ca618100012b89f6",
+      "first_name": "Amber",
+      "last_name": "O'Donnell",
+      "name": "Amber O'Donnell",
+      "title": "Branch Manager",
+      "linkedin_url": "http://www.linkedin.com/in/amber-o-donnell-355551164",
+      "email": "aodonnell@optistaffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Estacada",
+      "state": "Oregon",
+      "organization": {
+        "id": "5dc46a570dd22d0098b9abe4",
+        "name": "Opti Staffing Group",
+        "website_url": "http://www.optistaffing.com",
+        "primary_domain": "optistaffing.com",
+        "city": "Tacoma",
+        "state": "Washington",
+        "country": "United States",
+        "estimated_num_employees": 150,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "561311",
+          "561312",
+          "561320"
+        ],
+        "keywords": [
+          "accounting",
+          "finance",
+          "administrative",
+          "skilled trades",
+          "engineers",
+          "project managers",
+          "sales",
+          "management",
+          "operations",
+          "human resources",
+          "marketing",
+          "direct hire"
+        ]
+      }
+    },
+    {
+      "id": "67c3402f69c7db0001034aaa",
+      "first_name": "Beth",
+      "last_name": "Hanuka",
+      "name": "Beth Hanuka",
+      "title": "Vice President of Workforce Solutions",
+      "linkedin_url": "http://www.linkedin.com/in/bethhanuka",
+      "email": "bhanuka@gotworxstaffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Fort Lauderdale",
+      "state": "Florida",
+      "organization": {
+        "id": "5f290ed2c1553a00be4a21d9",
+        "name": "GotWorX Staffing, Inc.",
+        "website_url": "http://www.gotworxstaffing.com",
+        "primary_domain": "gotworxstaffing.com",
+        "city": "Freehold Township",
+        "state": "New Jersey",
+        "country": "United States",
+        "estimated_num_employees": 60,
+        "sic_codes": [
+          "7363"
+        ],
+        "naics_codes": [
+          "561320"
+        ],
+        "keywords": [
+          "vendor-on-premises",
+          "light industrial staffing",
+          "vop program",
+          "staffing process automation",
+          "staffing and recruitment",
+          "staffing firm",
+          "staffing solutions",
+          "temporary help services",
+          "services",
+          "workforce management",
+          "staffing agency",
+          "staffing for large-scale projects"
+        ]
+      }
+    }
+  ]
+}

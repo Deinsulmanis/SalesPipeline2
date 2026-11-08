@@ -1,0 +1,91 @@
+{
+  "firstName": "Dawn",
+  "lastName": "True",
+  "fullName": "Dawn True",
+  "jobTitle": "Branch Manager",
+  "company": "Capital Area Staffing Solutions, Inc.",
+  "companyWebsite": "http://www.capitalareastaffing.com",
+  "companyDomain": "capitalareastaffing.com",
+  "companyCity": "Augusta",
+  "companyState": "Maine",
+  "companySizeCategory": "1-10",
+  "staffingLane": "B",
+  "staffingSpecialization": "construction",
+  "emailStatus": "verified (NOT catch-all) — Tier 1 send-ready",
+  "sourceEvidence": "Apollo people search + website ICP; keywords=administrative,accountingfinance,legalmedical office,executive level placements,construction staffing,payroll services,staffing services,staffing and recruitment",
+  "apolloVerifiedEmail": "dawnt@capitalareastaffing.com",
+  "buyerTier": "Tier 1",
+  "emailCatchAll": "false",
+  "emailVerificationStatus": "verified",
+  "apolloPersonId": "57dd4140a6da987b156679b3",
+  "apolloAccountId": "54a1284369702db878e4d300",
+  "linkedinUrl": "http://www.linkedin.com/in/dawn-true-a3714150",
+  "source": "apollo_batch3",
+  "notes": "",
+  "personCity": "Augusta",
+  "personState": "Maine",
+  "estimatedEmployees": "3",
+  "sicCodes": "7361",
+  "naicsCodes": "56131",
+  "campaign": "Industrial Staffing Agency",
+  "campaignId": "industrial_staffing_employer_acquisition_v1",
+  "strategy": "staffing_market_evidence_v1",
+  "model": "claude-haiku-4-5",
+  "generatedAt": "2026-09-18T01:05:53.572Z",
+  "research": {
+    "pages": [],
+    "failures": [
+      "Request failed with status code 403"
+    ],
+    "reviewRequired": true,
+    "retrieval": {
+      "homepageFailed": true,
+      "alternateCompanyPageAttempted": false,
+      "domainIdentityVerified": false,
+      "usableAlternateEvidence": false,
+      "attempts": [
+        {
+          "url": "http://www.capitalareastaffing.com",
+          "homepage": true,
+          "ok": false,
+          "status": 403,
+          "reason": "Request failed with status code 403"
+        }
+      ]
+    }
+  },
+  "retrieval": {
+    "homepageFailed": true,
+    "alternateCompanyPageAttempted": false,
+    "domainIdentityVerified": false,
+    "usableAlternateEvidence": false,
+    "attempts": [
+      {
+        "url": "http://www.capitalareastaffing.com",
+        "homepage": true,
+        "ok": false,
+        "status": 403,
+        "reason": "Request failed with status code 403"
+      }
+    ]
+  },
+  "icpFit": "UNKNOWN",
+  "hyperPersonalizedOpening": "",
+  "confidence": "RETRY_REQUIRED",
+  "classification": "RETRY_REQUIRED",
+  "safeToSend": false,
+  "reviewFlag": true,
+  "primaryReason": "RETRIEVAL_BLOCKED_403",
+  "supportingReasons": [],
+  "reviewReasons": [
+    "RETRIEVAL_BLOCKED_403"
+  ],
+  "facts": [],
+  "sourceURL_or_sourceDescription": "",
+  "emailPreview": null,
+  "previewOnly": true,
+  "codeDigest": "0caa20fc47f4e8a1de14eb6ec20905530f960d9e7c89aac76bf051fdcbb19bb8",
+  "liveCommit": "732e215",
+  "elapsedMs": 24,
+  "catchAllSource": false
+}

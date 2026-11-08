@@ -1,0 +1,366 @@
+{
+  "credits_consumed": 8,
+  "total_requested_enrichments": 8,
+  "unique_enriched_records": 8,
+  "missing_records": 0,
+  "request_id": 8060186785235711339,
+  "status": "success",
+  "matches": [
+    {
+      "id": "5cd3a666f3e5bb1841af5c76",
+      "first_name": "Jeanette",
+      "last_name": "Padron",
+      "name": "Jeanette Padron",
+      "title": "Branch Manager",
+      "linkedin_url": "http://www.linkedin.com/in/jeanette-padron-07b68199",
+      "email": "jpadron@staffingspecifix.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Miami",
+      "state": "Florida",
+      "organization": {
+        "id": "5d09ec52f65125dbb910939b",
+        "name": "STAFFING SPECIFIX",
+        "website_url": "http://www.staffingspecifix.com",
+        "primary_domain": "staffingspecifix.com",
+        "city": "Miami",
+        "state": "Florida",
+        "country": "United States",
+        "estimated_num_employees": 20,
+        "sic_codes": [
+          "7361",
+          "7363"
+        ],
+        "naics_codes": [
+          "561311",
+          "561312",
+          "561320"
+        ],
+        "keywords": [
+          "onsite service",
+          "executive search",
+          "temp to hire",
+          "temporary hire",
+          "event staffing",
+          "direct hire",
+          "payroll service",
+          "law firm staffing",
+          "industry-specific recruiters",
+          "talent acquisition",
+          "management recruitment",
+          "office staffing"
+        ]
+      }
+    },
+    {
+      "id": "54a220f2746869331860f00e",
+      "first_name": "Travis",
+      "last_name": "Hunt",
+      "name": "Travis Hunt",
+      "title": "President",
+      "linkedin_url": "http://www.linkedin.com/in/travis-hunt-50432221",
+      "email": "trav@equitysg.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Englewood",
+      "state": "Colorado",
+      "organization": {
+        "id": "54a1a6eb74686945facee504",
+        "name": "Equity Staffing Group",
+        "website_url": "http://www.equitystaffing.com",
+        "primary_domain": "equitystaffing.com",
+        "city": "Englewood",
+        "state": "Colorado",
+        "country": "United States",
+        "estimated_num_employees": 120,
+        "sic_codes": [
+          "7361",
+          "7363"
+        ],
+        "naics_codes": [
+          "561311",
+          "561320"
+        ],
+        "keywords": [
+          "information technology",
+          "professional services",
+          "healthcare",
+          "finance accounting",
+          "compliance risk management",
+          "payroll services",
+          "call center",
+          "customer service",
+          "government",
+          "oil gas",
+          "engineering",
+          "manufacturing"
+        ]
+      }
+    },
+    {
+      "id": "6091ba8c7b3fcf0001faa587",
+      "first_name": "P",
+      "last_name": "Damon",
+      "name": "P Damon",
+      "title": "President",
+      "linkedin_url": "http://www.linkedin.com/in/p-deniece-damon-a15595169",
+      "email": "pdamon@postaffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "New York",
+      "state": "New York",
+      "organization": {
+        "id": "57c4a552a6da982c173a2088",
+        "name": "PO Staffing Inc.",
+        "website_url": "http://www.postaffing.com",
+        "primary_domain": "postaffing.com",
+        "city": "New York",
+        "state": "New York",
+        "country": "United States",
+        "estimated_num_employees": 3,
+        "sic_codes": [
+          "7363"
+        ],
+        "naics_codes": [
+          "56132"
+        ],
+        "keywords": [
+          "manufacturing jobs",
+          "light industrial staffing",
+          "recruitment",
+          "ongoing support",
+          "operational efficiency",
+          "staffing solutions",
+          "staffing and recruitment",
+          "temporary help services",
+          "fast response",
+          "services",
+          "job seekers",
+          "staffing agency"
+        ]
+      }
+    },
+    {
+      "id": "5adbf30ba6da98622d49a678",
+      "first_name": "Cindy",
+      "last_name": "Cook",
+      "name": "Cindy Cook",
+      "title": "President",
+      "linkedin_url": "http://www.linkedin.com/in/cindy-cook-b8048730",
+      "email": "cindy@pinpointpersonnel.com",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Tulsa",
+      "state": "Oklahoma",
+      "organization": {
+        "id": "54a1f8d57468693fdaecf101",
+        "name": "Pinpoint Personnel",
+        "website_url": "http://www.pinpointpersonnel.com",
+        "primary_domain": "pinpointpersonnel.com",
+        "city": "Tulsa",
+        "state": "Oklahoma",
+        "country": "United States",
+        "estimated_num_employees": 38,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "561311",
+          "561320"
+        ],
+        "keywords": [
+          "employement agency",
+          "payroll",
+          "staffing",
+          "direct hire recruitment",
+          "client services",
+          "employment services",
+          "background checks",
+          "human resource exam",
+          "food service staffing",
+          "industrial workers",
+          "skill testing",
+          "talent management"
+        ]
+      }
+    },
+    {
+      "id": "66fa829ef9bde30001f0961d",
+      "first_name": "James",
+      "last_name": "Judge",
+      "name": "James Judge",
+      "title": "Branch Manager",
+      "linkedin_url": "http://www.linkedin.com/in/james-judge-b078a619",
+      "email": "jamesj@certifiedemployment.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Campbell",
+      "state": "California",
+      "organization": {
+        "id": "54a1285b69702db8785ae300",
+        "name": "Certified Employment Group",
+        "website_url": "http://www.certifiedemployment.com",
+        "primary_domain": "certifiedemployment.com",
+        "city": "Emeryville",
+        "state": "California",
+        "country": "United States",
+        "estimated_num_employees": 70,
+        "sic_codes": [
+          "7361",
+          "7363"
+        ],
+        "naics_codes": [
+          "561311",
+          "561320"
+        ],
+        "keywords": [
+          "direct hire staffing",
+          "onsite management",
+          "human resources",
+          "temporary staffing",
+          "payroll staffing service",
+          "staffing",
+          "distribution",
+          "employee placement",
+          "workforce management",
+          "staffing solutions",
+          "long-term placements",
+          "talent acquisition"
+        ]
+      }
+    },
+    {
+      "id": "63c961cfe030490001174f3e",
+      "first_name": "Alice",
+      "last_name": "Rainer",
+      "name": "Alice Rainer",
+      "title": "Vice President",
+      "linkedin_url": "http://www.linkedin.com/in/alice-rainer-080202b0",
+      "email": "arainer@careerpersonnel.org",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Montgomery",
+      "state": "Alabama",
+      "organization": {
+        "id": "54a24168746869331835f219",
+        "name": "Career Personnel",
+        "website_url": "http://www.careerpersonnel.com",
+        "primary_domain": "careerpersonnel.com",
+        "city": "Augusta",
+        "state": "Georgia",
+        "country": "United States",
+        "estimated_num_employees": 50,
+        "sic_codes": [
+          "7361",
+          "7363"
+        ],
+        "naics_codes": [
+          "561311",
+          "561320"
+        ],
+        "keywords": [
+          "staffing",
+          "recruitment",
+          "hiring",
+          "job training",
+          "drug screening",
+          "safety training",
+          "customized invoicing",
+          "services",
+          "staffing and employment services",
+          "dot qualifications verification",
+          "woman-owned business",
+          "vendor on site"
+        ]
+      }
+    },
+    {
+      "id": "6129c4c03f7bc6000103cb8c",
+      "first_name": "Yuriana",
+      "last_name": "Arias",
+      "name": "Yuriana Arias",
+      "title": "President",
+      "linkedin_url": "http://www.linkedin.com/in/yuriana-arias-7449111a2",
+      "email": "yarias@xy-staffing.com",
+      "email_status": "verified",
+      "email_domain_catchall": false,
+      "city": "Albuquerque",
+      "state": "New Mexico",
+      "organization": {
+        "id": "6492a03cd4cabe01a51a7296",
+        "name": "XY Staffing, LLC",
+        "website_url": "http://www.xy-staffing.com",
+        "primary_domain": "xy-staffing.com",
+        "city": "Albuquerque",
+        "state": "New Mexico",
+        "country": "United States",
+        "estimated_num_employees": 1,
+        "sic_codes": [
+          "7361"
+        ],
+        "naics_codes": [
+          "56131"
+        ],
+        "keywords": [
+          "hotels",
+          "casino resorts",
+          "manufacturing",
+          "warehouse",
+          "staffing",
+          "contracting",
+          "employment agency",
+          "long term staffing",
+          "construction",
+          "post construction cleaning",
+          "distribution center logistics",
+          "admin staffing"
+        ]
+      }
+    },
+    {
+      "id": "60252ef04d187e0001dd3b14",
+      "first_name": "Vincent",
+      "last_name": "Pennix",
+      "name": "Vincent Pennix",
+      "title": "President",
+      "linkedin_url": "http://www.linkedin.com/in/vincent-pennix-99394251",
+      "email": "vincentp@interfuse-staffing.org",
+      "email_status": "verified",
+      "email_domain_catchall": true,
+      "city": "Miami",
+      "state": "Florida",
+      "organization": {
+        "id": "60af31006efd910001aa4208",
+        "name": "Interfuse Staffing",
+        "website_url": "http://www.interfuse-staffing.com",
+        "primary_domain": "interfuse-staffing.com",
+        "city": "Miami",
+        "state": "Florida",
+        "country": "United States",
+        "estimated_num_employees": 6,
+        "sic_codes": [
+          "7361",
+          "7363"
+        ],
+        "naics_codes": [
+          "561311",
+          "561312"
+        ],
+        "keywords": [
+          "staffing",
+          "recruiting",
+          "information technology",
+          "manufacturing",
+          "logistics",
+          "transportation",
+          "employment placement agencies and executive search services",
+          "time-to-fill",
+          "candidate sourcing",
+          "operations talent",
+          "talent acquisition",
+          "manufacturing staffing"
+        ]
+      }
+    }
+  ]
+}

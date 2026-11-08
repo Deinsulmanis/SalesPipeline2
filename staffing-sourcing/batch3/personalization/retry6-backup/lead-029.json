@@ -1,0 +1,91 @@
+{
+  "firstName": "Brittany",
+  "lastName": "Flores",
+  "fullName": "Brittany Flores",
+  "jobTitle": "CEO and Founder",
+  "company": "Skilled Trades Staffing",
+  "companyWebsite": "http://www.st-staffing.com",
+  "companyDomain": "st-staffing.com",
+  "companyCity": "Sacramento",
+  "companyState": "California",
+  "companySizeCategory": "1-10",
+  "staffingLane": "A",
+  "staffingSpecialization": "manufacturing; warehouse; construction; skilled trades",
+  "emailStatus": "verified (catch-all) — admitted per Batch 3 email policy",
+  "sourceEvidence": "Apollo people search + website ICP; keywords=construction staffing,warehouse staffing,skilled trades,manufacturing,healthcare staffing",
+  "apolloVerifiedEmail": "bflores@st-staffing.com",
+  "buyerTier": "Tier 2",
+  "emailCatchAll": "true",
+  "emailVerificationStatus": "verified",
+  "apolloPersonId": "66f8db7f8dcef0000165b3cf",
+  "apolloAccountId": "6642fbb8a6ad3e00015d42b4",
+  "linkedinUrl": "http://www.linkedin.com/in/brittany-flores-51863560",
+  "source": "apollo_batch3",
+  "notes": "",
+  "personCity": "Sacramento",
+  "personState": "California",
+  "estimatedEmployees": "3",
+  "sicCodes": "7361",
+  "naicsCodes": "56132",
+  "campaign": "Industrial Staffing Agency",
+  "campaignId": "industrial_staffing_employer_acquisition_v1",
+  "strategy": "staffing_market_evidence_v1",
+  "model": "claude-haiku-4-5",
+  "generatedAt": "2026-09-18T01:05:53.475Z",
+  "research": {
+    "pages": [],
+    "failures": [
+      "Request failed with status code 409"
+    ],
+    "reviewRequired": true,
+    "retrieval": {
+      "homepageFailed": true,
+      "alternateCompanyPageAttempted": false,
+      "domainIdentityVerified": false,
+      "usableAlternateEvidence": false,
+      "attempts": [
+        {
+          "url": "http://www.st-staffing.com",
+          "homepage": true,
+          "ok": false,
+          "status": 409,
+          "reason": "Request failed with status code 409"
+        }
+      ]
+    }
+  },
+  "retrieval": {
+    "homepageFailed": true,
+    "alternateCompanyPageAttempted": false,
+    "domainIdentityVerified": false,
+    "usableAlternateEvidence": false,
+    "attempts": [
+      {
+        "url": "http://www.st-staffing.com",
+        "homepage": true,
+        "ok": false,
+        "status": 409,
+        "reason": "Request failed with status code 409"
+      }
+    ]
+  },
+  "icpFit": "UNKNOWN",
+  "hyperPersonalizedOpening": "",
+  "confidence": "RETRY_REQUIRED",
+  "classification": "RETRY_REQUIRED",
+  "safeToSend": false,
+  "reviewFlag": true,
+  "primaryReason": "RETRIEVAL_UNUSABLE",
+  "supportingReasons": [],
+  "reviewReasons": [
+    "RETRIEVAL_UNUSABLE"
+  ],
+  "facts": [],
+  "sourceURL_or_sourceDescription": "",
+  "emailPreview": null,
+  "previewOnly": true,
+  "codeDigest": "0caa20fc47f4e8a1de14eb6ec20905530f960d9e7c89aac76bf051fdcbb19bb8",
+  "liveCommit": "732e215",
+  "elapsedMs": 13,
+  "catchAllSource": true
+}

@@ -1,0 +1,90 @@
+{
+  "firstName": "Joe",
+  "lastName": "Marotta",
+  "fullName": "Joe Marotta",
+  "jobTitle": "Director of Business Development",
+  "company": "Action Labor and Staffing Connection",
+  "companyWebsite": "http://www.actionlabor.com",
+  "companyDomain": "actionlabor.com",
+  "companyCity": "West Palm Beach",
+  "companyState": "Florida",
+  "companySizeCategory": "51-200",
+  "staffingLane": "A",
+  "staffingSpecialization": "manufacturing; logistics; distribution; construction",
+  "emailStatus": "verified (NOT catch-all) — Tier 1 send-ready",
+  "sourceEvidence": "Apollo people search + website ICP; keywords=employee recruiting,staffing,labor,temporary staffing,unskilled labor,semi skilled labor,skilled labor,background checks",
+  "apolloVerifiedEmail": "jmarotta@actionlabor.com",
+  "buyerTier": "Tier 1",
+  "emailCatchAll": "false",
+  "emailVerificationStatus": "verified",
+  "apolloPersonId": "54a502b77468692abf5a7375",
+  "apolloAccountId": "5da6d2a222c3a40001c7883c",
+  "linkedinUrl": "http://www.linkedin.com/in/marottajoe",
+  "source": "apollo_batch3",
+  "notes": "",
+  "personCity": "West Palm Beach",
+  "personState": "Florida",
+  "estimatedEmployees": "100",
+  "sicCodes": "7363",
+  "naicsCodes": "561320",
+  "campaign": "Industrial Staffing Agency",
+  "campaignId": "industrial_staffing_employer_acquisition_v1",
+  "strategy": "staffing_market_evidence_v1",
+  "model": "claude-haiku-4-5",
+  "generatedAt": "2026-09-18T01:16:00.470Z",
+  "research": {
+    "pages": [],
+    "failures": [
+      "unable to verify the first certificate"
+    ],
+    "reviewRequired": true,
+    "retrieval": {
+      "homepageFailed": true,
+      "alternateCompanyPageAttempted": false,
+      "domainIdentityVerified": false,
+      "usableAlternateEvidence": false,
+      "attempts": [
+        {
+          "url": "http://www.actionlabor.com",
+          "homepage": true,
+          "ok": false,
+          "status": null,
+          "reason": "unable to verify the first certificate"
+        }
+      ]
+    }
+  },
+  "retrieval": {
+    "homepageFailed": true,
+    "alternateCompanyPageAttempted": false,
+    "domainIdentityVerified": false,
+    "usableAlternateEvidence": false,
+    "attempts": [
+      {
+        "url": "http://www.actionlabor.com",
+        "homepage": true,
+        "ok": false,
+        "status": null,
+        "reason": "unable to verify the first certificate"
+      }
+    ]
+  },
+  "icpFit": "UNKNOWN",
+  "hyperPersonalizedOpening": "",
+  "confidence": "RETRY_REQUIRED",
+  "classification": "RETRY_REQUIRED",
+  "safeToSend": false,
+  "reviewFlag": true,
+  "primaryReason": "RETRIEVAL_UNUSABLE",
+  "supportingReasons": [],
+  "reviewReasons": [
+    "RETRIEVAL_UNUSABLE"
+  ],
+  "facts": [],
+  "sourceURL_or_sourceDescription": "",
+  "emailPreview": null,
+  "previewOnly": true,
+  "elapsedMs": 606,
+  "catchAllSource": false,
+  "retryPass": "phase1-infra-retry"
+}
