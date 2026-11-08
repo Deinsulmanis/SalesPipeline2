@@ -12,6 +12,7 @@ const { senderServesCampaign } = require('./clients/sender-policy');
 const { activityBelongsToLead } = require('./lead-activity');
 const { applyColdInboxCap } = require('./cold-delivery-policy');
 const { applyExclusiveAssignment } = require('./clients/sender-delegation');
+const { clientSendBlock } = require('./clients/send-policy');
 const { senderPolicyBlockers, senderPreparationBlockers, cappedDailyLimit } = require('./clients/sender-policy');
 
 function parseMetadata(value) {
@@ -47,7 +48,8 @@ function configuredSenders(env = process.env) {
     }
     return {
       ...sender,
-      sendEligible: sender.status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured && !sender.policyBlockers?.length,
+      sendEligible: sender.status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured && !sender.policyBlockers?.length
+        && !clientSendBlock(sender.clientId || 'scalelab', env),
       ...(sender.preparationBlockers ? {
         preparationReady: sender.status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured && !sender.preparationBlockers.length,
       } : {}),

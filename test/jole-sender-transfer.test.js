@@ -77,6 +77,11 @@ test('cutover refuses an unexpected mailbox binding instead of creating a second
 test('client pause is independent of Jole authorization and cannot enable another client', () => {
   assert.equal(clientSendBlock('scalelab', environment()).code, 'client_sending_paused');
   assert.equal(clientSendBlock('jole', environment()), null);
+  const beforeTransfer = configuredSenders(environment(false));
+  assert.equal(beforeTransfer.filter(sender => sender.sendEligible && sender.clientId !== 'jole').length, 0);
+  assert.deepEqual(capacityFromEnv(beforeTransfer, environment(false)).clientLimits, {
+    scalelab: { daily: 0, perRun: 0 }, jole: { daily: 105, perRun: 12 } });
+  assert.equal(beforeTransfer.filter(sender => sender.observerEnabled).length, 11);
 });
 
 for (const transfer of [true, false]) test(`historical replies retain their owner with transfer=${transfer}, including rollback`, () => {
