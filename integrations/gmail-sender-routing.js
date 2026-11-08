@@ -48,15 +48,17 @@ function configuredSenders(env = process.env) {
     }
     return {
       ...sender,
-      sendEligible: sender.status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured && !sender.policyBlockers?.length
-        && !clientSendBlock(sender.clientId || 'scalelab', env),
+      sendEligible: sender.status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured && !sender.policyBlockers?.length,
       ...(sender.preparationBlockers ? {
         preparationReady: sender.status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured && !sender.preparationBlockers.length,
       } : {}),
     };
   });
   // Temporary per-inbox ceiling (cold-delivery-policy.js): lowers, never raises.
-  return applyColdInboxCap(applySenderRuntime(senders, parseRuntimeOverlay(env.GMAIL_SENDER_RUNTIME_JSON || '[]')), env);
+  const runtime = applyColdInboxCap(applySenderRuntime(senders, parseRuntimeOverlay(env.GMAIL_SENDER_RUNTIME_JSON || '[]')), env);
+  // A runtime status edit cannot bypass a client pause or restore its capacity.
+  return runtime.map(sender => clientSendBlock(sender.clientId || 'scalelab', env)
+    ? { ...sender, sendEligible: false } : sender);
 }
 
 function observableSenders(senders = []) {

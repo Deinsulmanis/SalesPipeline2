@@ -82,6 +82,8 @@ test('client pause is independent of Jole authorization and cannot enable anothe
   assert.deepEqual(capacityFromEnv(beforeTransfer, environment(false)).clientLimits, {
     scalelab: { daily: 0, perRun: 0 }, jole: { daily: 105, perRun: 12 } });
   assert.equal(beforeTransfer.filter(sender => sender.observerEnabled).length, 11);
+  const runtimeActive = { ...environment(false), GMAIL_SENDER_RUNTIME_JSON: JSON.stringify(MAILBOXES.map(row => ({ id: row.id, status: 'active' }))) };
+  assert.equal(configuredSenders(runtimeActive).filter(sender => sender.sendEligible && sender.clientId !== 'jole').length, 0);
 });
 
 for (const transfer of [true, false]) test(`historical replies retain their owner with transfer=${transfer}, including rollback`, () => {
