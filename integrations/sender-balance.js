@@ -45,6 +45,7 @@ const { sendSuppressionReason } = require('./pipeline-state');
 const { NON_COLD_STAGES } = require('./automation-ownership');
 const { outreachBlockForLead } = require('./lead-archive');
 const { isFollowUpDue } = require('./sequence-timing');
+const { resolveLeadClient, resolveSenderClient } = require('./clients/ownership');
 
 const DEFAULT_BUFFER_RATIO = 0.15;
 const QUEUE_STAGE = 'Queued';
@@ -77,6 +78,8 @@ function routeInboxes(senders) {
   return senders.map(sender => ({
     id: sender.id, email: sender.email || sender.id, sendEligible: Boolean(sender.sendEligible),
     deliveryImplemented: true, staffingOnly: isStaffingOnlySender(sender),
+    ...(sender.clientId ? { clientId: sender.clientId } : {}),
+    ...(sender.allowedCampaignIds ? { allowedCampaignIds: [...sender.allowedCampaignIds] } : {}),
     ...(sender.preparationReady !== undefined ? { preparationReady: sender.preparationReady === true } : {}),
   }));
 }
@@ -142,6 +145,7 @@ function firstTouchMovability(lead, ctx) {
 function projectedFollowUps({ leads, activitiesByLead, senders, suppressedEmails, horizon }) {
   const counts = new Map(senders.map(sender => [sender.id, 0]));
   const ids = new Set(senders.map(sender => sender.id));
+  const byId = new Map(senders.map(sender => [sender.id, sender]));
   for (const lead of leads) {
     if (lead.emailStatus !== 'emailed') continue;
     if (NON_COLD_STAGES.includes(text(lead.stage).toLowerCase())) continue;
@@ -157,6 +161,11 @@ function projectedFollowUps({ leads, activitiesByLead, senders, suppressedEmails
     // unproven legacy ownership is refused at send time, so it is no workload.
     const owners = sentSenderEvidence(lead, mine);
     if (owners.length !== 1 || !ids.has(owners[0])) continue;
+    // Historical inbound ownership does not make an old client's follow-up
+    // sendable through the mailbox's new outbound assignment.
+    const leadOwner = resolveLeadClient(lead);
+    const senderOwner = resolveSenderClient(byId.get(owners[0]));
+    if (!leadOwner.ok || !senderOwner.ok || leadOwner.clientId !== senderOwner.clientId) continue;
     counts.set(owners[0], counts.get(owners[0]) + 1);
   }
   return counts;

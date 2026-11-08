@@ -202,3 +202,23 @@ test('quota inspection failure rolls back and releases its read-only connection'
   await assert.rejects(require('../integrations/send-quota-inspection').inspectSendQuota({ connect: async () => client }, '2026-11-08'), /offline/);
   assert.equal(queries.at(-1), 'ROLLBACK'); assert.equal(released, true);
 });
+
+test('queue assignment accepts Jole on every transferred mailbox, including the former staffing-only inbox', () => {
+  const { assignNewLeads } = require('../integrations/sender-balance');
+  const senders = configuredSenders(environment());
+  const lead = jole({ stage: 'Queued', emailStatus: '', emailStep: '', lastEmailedAt: '' });
+  for (const mailbox of MAILBOXES) {
+    const result = assignNewLeads({ batch: [lead], senders: [senders.find(row => row.id === mailbox.id)] });
+    assert.equal(result.assignments.get(lead.id), mailbox.id);
+    assert.deepEqual(result.refused, []);
+  }
+});
+
+test('old ScaleLab follow-ups never consume Jole refill workload after the mailbox transfer', () => {
+  const { senderWorkload } = require('../integrations/sender-balance');
+  const sender = configuredSenders(environment()).find(row => row.id === 'scalelabaiteam');
+  const leads = [scale({ senderInboxId: sender.id }), jole({ senderInboxId: sender.id })];
+  const workload = senderWorkload({ senders: [sender], leads, activities: leads.map(lead => sent(lead)),
+    horizon: Date.parse('2026-11-09T20:00:00Z') });
+  assert.equal(workload.senders[0].followUps, 1);
+});

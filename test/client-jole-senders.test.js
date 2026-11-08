@@ -180,11 +180,16 @@ test('11. an active Jole row is prepared but non-sending until CLIENT_SENDING_AU
   assert.equal(clientSendState('jole', { CLIENT_SENDING_AUTHORIZED: 'jole' }).sendingEnabled, true);
 });
 
-test('12-13. client activation queues and assigns nothing: Jole leads are not routable, movable or assignable', () => {
+test('12-13. explicit preparation can plan an assignment while Jole remains unable to send', () => {
   assert.equal(routedLeadReady(joleLead()).ok, false);
   assert.equal(routedLeadReady(joleLead({ senderInboxId: 'jole_team1' })).ok, false);
   const senders = configuredSenders(withJole([joleRow('jole_team1', 'a@jolebtxteam.com', { status: 'active' })]));
-  assert.equal(assignNewLeads({ batch: [joleLead()], senders }).assignments.size, 0);
+  const lead = joleLead();
+  const assignments = assignNewLeads({ batch: [lead], senders }).assignments;
+  assert.equal(assignments.get(lead.id), 'jole_team1');
+  assert.equal(lead.senderInboxId, '', 'planning never queues or changes the lead');
+  assert.equal(senders.find(sender => sender.id === 'jole_team1').sendEligible, false);
+  assert.equal(allowedForLead(senders.find(sender => sender.id === 'jole_team1'), lead), false);
 });
 
 test('14. the corporate jolebtx.com is never a cold sender, and Jole domains are unusable by anyone else', () => {

@@ -83,7 +83,7 @@ function templateById(id) {
 
 // Every route names one client end to end: the lead's own fields, the sender,
 // the template and the campaign. The inbox rows callers pass may omit clientId
-// (sender-balance strips it), so the sender is resolved by id from the
+// (legacy callers may omit it), so the sender is resolved by id from the
 // configured registry in that case, never assumed.
 function routeClientVerdict({ lead = null, niche, inbox, emailTemplateId, campaignVersionId }) {
   const hasClient = inbox && Object.prototype.hasOwnProperty.call(inbox, 'clientId');
