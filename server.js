@@ -6385,6 +6385,7 @@ function gmailInboxOptions() {
     clientId: sender.clientId || DEFAULT_CLIENT_ID,
     ...(sender.allowedCampaignIds ? { allowedCampaignIds: [...sender.allowedCampaignIds] } : {}),
     ...(sender.configuredDailyLimit !== undefined ? { configuredDailyLimit: sender.configuredDailyLimit } : {}),
+    ...(sender.hardDailyCap !== undefined ? { hardDailyCap: sender.hardDailyCap } : {}),
     ...(sender.policyBlockers?.length ? { policyBlockers: [...sender.policyBlockers] } : {}),
     // Managed inboxes: operational readiness and send authority, kept apart.
     ...(sender.preparationBlockers ? {

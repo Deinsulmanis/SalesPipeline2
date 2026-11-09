@@ -59,19 +59,23 @@ test('all five transfer together with stable identities, credentials, quotas and
     assert.equal(sender.oauthClient, old.oauthClient);
     assert.equal(sender.clientId, 'jole');
     if (MAILBOXES.some(row => row.id === sender.id)) {
-      assert.equal(sender.dailyLimit, sender.id === 'scalelabaiteam' ? 15 : 20);
+      assert.equal(sender.dailyLimit, { primary: 45, tryscalelabai: 20, scalelabaiteam: 15, deniels: 30, deniels_tryscalelabai: 20 }[sender.id]);
       assert.equal(sender.perRunLimit, 2);
       assert.equal(sender.sendEligible, true);
       assert.match(sender.fromName, /on behalf of Jole BTX LLC/);
     } else assert.deepEqual(sender, old);
   }
   assert.deepEqual(capacityFromEnv(after, environment()).clientLimits, {
-    scalelab: { daily: 0, perRun: 0 }, jole: { daily: 200, perRun: 22 } });
+    scalelab: { daily: 0, perRun: 0 }, jole: { daily: 235, perRun: 22 } });
 });
 
 test('cutover refuses an unexpected mailbox binding instead of creating a second sender', () => {
   const env = environment(); env.FROM_EMAIL = 'somebody@scalelabai.ca';
   assert.throws(() => configuredSenders(env), /original unique mailbox primary/);
+  const { cappedDailyLimit } = require('../integrations/clients/sender-policy');
+  assert.equal(cappedDailyLimit({ id: 'jole_team_jorge', email: 'jorge@jolebtxteam.com', clientId: 'jole' }, 60), 20);
+  assert.equal(cappedDailyLimit({ id: 'primary', email: 'wrong@scalelabai.ca', clientId: 'jole', delegatedFromClientId: 'scalelab' }, 60), 20);
+  assert.equal(cappedDailyLimit({ id: 'primary', email: MAILBOXES[0].email, clientId: 'jole' }, 60), 20);
 });
 
 test('client pause is independent of Jole authorization and cannot enable another client', () => {

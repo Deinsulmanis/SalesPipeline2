@@ -97,7 +97,10 @@ function policyBlockersWith(sender, clientGate, describe) {
 
 /** The daily limit after the client's per-inbox hard ceiling (unchanged for the default client). */
 function cappedDailyLimit(sender = {}, dailyLimit = sender.dailyLimit) {
-  const ceiling = senderOwner(sender)?.senderPolicy?.maxDailyPerInbox;
+  const owner = senderOwner(sender);
+  const delegated = owner?.id === 'jole' && sender.delegatedFromClientId === 'scalelab'
+    ? delegatedMailbox(sender) : null;
+  const ceiling = delegated ? delegated.dailyLimit : owner?.senderPolicy?.maxDailyPerInbox;
   return Number.isInteger(ceiling) ? Math.min(Number(dailyLimit) || 0, ceiling) : dailyLimit;
 }
 

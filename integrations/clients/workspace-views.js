@@ -92,7 +92,7 @@ function buildClientSettings({ clientId, leads = [], activities = [], inboxes = 
     lastObserverSuccessAt: inbox.observer?.lastSuccessfulAt || null, observerError: inbox.observer?.lastError || null,
     activationBlockers: inbox.controls?.activationBlockers || [],
     allowedCampaignIds: inbox.allowedCampaignIds || (client.senderPolicy ? [...client.senderPolicy.allowedCampaignIds] : null),
-    hardDailyCap: client.senderPolicy?.maxDailyPerInbox ?? null,
+    hardDailyCap: inbox.hardDailyCap ?? client.senderPolicy?.maxDailyPerInbox ?? null,
     configuredDailyLimit: inbox.configuredDailyLimit ?? null,
     policyBlockers: inbox.policyBlockers || [],
   }));
