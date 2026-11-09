@@ -60,13 +60,13 @@ test('all five transfer together with stable identities, credentials, quotas and
     assert.equal(sender.clientId, 'jole');
     if (MAILBOXES.some(row => row.id === sender.id)) {
       assert.equal(sender.dailyLimit, { primary: 45, tryscalelabai: 20, scalelabaiteam: 15, deniels: 30, deniels_tryscalelabai: 20 }[sender.id]);
-      assert.equal(sender.perRunLimit, 2);
+      assert.equal(sender.perRunLimit, { primary: 5, deniels: 3 }[sender.id] || 2);
       assert.equal(sender.sendEligible, true);
       assert.match(sender.fromName, /on behalf of Jole BTX LLC/);
     } else assert.deepEqual(sender, old);
   }
   assert.deepEqual(capacityFromEnv(after, environment()).clientLimits, {
-    scalelab: { daily: 0, perRun: 0 }, jole: { daily: 235, perRun: 22 } });
+    scalelab: { daily: 0, perRun: 0 }, jole: { daily: 235, perRun: 26 } });
 });
 
 test('cutover refuses an unexpected mailbox binding instead of creating a second sender', () => {

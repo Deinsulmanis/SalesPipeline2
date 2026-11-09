@@ -7,22 +7,22 @@ to `jole-btx-employer-acquisition` when `JOLE_SCALELAB_SENDERS_ENABLED=true`.
 
 ## Current limits
 
-Updated at the user's request on 8 November: primary 45/day and deniels 30/day.
+Updated at the user's request on 8 November: primary 45/day and 5/window;
+deniels 30/day and 3/window.
 
 | Physical sender ID | Daily ceiling | Per scheduled window |
 | --- | ---: | ---: |
-| primary | 45 | 2 |
+| primary | 45 | 5 |
 | tryscalelabai | 20 | 2 |
 | scalelabaiteam | 15 | 2 |
-| deniels | 30 | 2 |
+| deniels | 30 | 3 |
 | deniels_tryscalelabai | 20 | 2 |
 
 These ceilings can only lower existing configured/runtime limits. The six
 existing Jole inboxes retain their configuration. Their current effective total
 is 105/day, and the five transferred inboxes add a daily ceiling of 130. Effective Jole
-client capacity becomes 235/day and 22/window while enabled. With two per window
-and ten normal daily windows, each inbox still sends at most 20/day; raising the
-daily ceiling alone does not increase that schedule limit. Actual sends still
+client capacity becomes 235/day and 26/window while enabled. The window ceilings
+allow the requested daily amounts across the ten normal windows. Actual sends still
 depend on normal windows, eligible leads, deliverability gates and quota holds.
 
 `CLIENT_SENDING_PAUSED=scalelab` independently blocks ScaleLab at its final client
@@ -62,7 +62,7 @@ and From email addresses remain in use.
 6. Once Google access and complete observer checkpoints are healthy, enable the
    exclusive assignment and existing concurrent sender lanes. All five move in
    one configuration change. Verify physical IDs/emails are unique and the
-   effective client totals are Jole 235/22 and ScaleLab zero.
+   effective client totals are Jole 235/26 and ScaleLab zero.
 7. Preview then apply the existing Jole sender balancing operation for eligible,
    unsent, unreserved leads only. Existing sent follow-ups remain pinned.
 8. Verify production SHA, boot, canonical-store health, observers, quota state,

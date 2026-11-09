@@ -5,18 +5,18 @@
 const ENABLED_VAR = 'JOLE_SCALELAB_SENDERS_ENABLED';
 const CAMPAIGN_ID = 'jole-btx-employer-acquisition';
 const MAILBOXES = Object.freeze([
-  ['primary', 'deins@scalelabai.ca', 'GMAIL_TOKEN_JSON', 45, 'Deins Ulmanis'],
+  ['primary', 'deins@scalelabai.ca', 'GMAIL_TOKEN_JSON', 45, 'Deins Ulmanis', 5],
   ['tryscalelabai', 'deins@tryscalelabai.ca', 'GMAIL_TRYSCALELABAI_TOKEN_JSON', 20, 'Deins Ulmanis'],
   ['scalelabaiteam', 'deins@scalelabaiteam.com', 'GMAIL_SCALELABAITEAM_TOKEN_JSON', 15, 'Deins Ulmanis'],
-  ['deniels', 'deniels@scalelabai.ca', 'GMAIL_DENIELS_TOKEN_JSON', 30, 'Deniels'],
+  ['deniels', 'deniels@scalelabai.ca', 'GMAIL_DENIELS_TOKEN_JSON', 30, 'Deniels', 3],
   ['deniels_tryscalelabai', 'deniels@tryscalelabai.ca', 'GMAIL_DENIELS_TRYSCALELABAI_TOKEN_JSON', 20, 'Deniels'],
-].map(([id, email, tokenEnv, dailyLimit, name]) => Object.freeze({ id, email, tokenEnv, dailyLimit, name })));
+].map(([id, email, tokenEnv, dailyLimit, name, perRunLimit = 2]) => Object.freeze({ id, email, tokenEnv, dailyLimit, name, perRunLimit })));
 
 const norm = value => String(value || '').trim().toLowerCase();
 const delegationEnabled = (env = process.env) => env[ENABLED_VAR] === 'true';
 function effectiveClientCapacity(client, env = process.env) {
   return client.id === 'jole' && delegationEnabled(env)
-    ? { ...client.capacity, dailyCap: 235, windowCap: 22 } : client.capacity;
+    ? { ...client.capacity, dailyCap: 235, windowCap: 26 } : client.capacity;
 }
 function delegatedMailbox(sender = {}) {
   return MAILBOXES.find(row => row.id === sender.id && row.email === norm(sender.email)) || null;
@@ -35,7 +35,7 @@ function applyExclusiveAssignment(senders, env = process.env) {
     if (!mailbox) return sender;
     return { ...sender, clientId: 'jole', allowedCampaignIds: [CAMPAIGN_ID], staffingOnly: false,
       dailyLimit: Math.min(Number(sender.dailyLimit) || 0, mailbox.dailyLimit),
-      perRunLimit: Math.min(Number(sender.perRunLimit) || 0, 2),
+      perRunLimit: Math.min(Number(sender.perRunLimit) || 0, mailbox.perRunLimit),
       delegatedFromClientId: 'scalelab',
       hardDailyCap: mailbox.dailyLimit,
       fromName: `${mailbox.name}, on behalf of Jole BTX LLC` };
