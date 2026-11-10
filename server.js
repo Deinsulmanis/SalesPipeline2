@@ -5136,7 +5136,7 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
       // state loadState() just read, plus the durable send lock's open rows.
       assignSenders: senderInboxId === AUTO_SENDER ? (batch, state) => (state.lockedLeadIds instanceof Set
         ? assignBatch({ batch, input: { ...state, senders: configuredSenders(), lockedLeadIds: state.lockedLeadIds,
-          horizon: nextSendDayHorizon(new Date()), env: process.env } })
+          horizon: nextSendDayHorizon(new Date()), now: Date.now(), env: process.env } })
         : { assignments: new Map(), refused: [{ leadId: batch[0]?.id || '',
           reason: 'automatic sender assignment requires Supabase canonical state and the durable send lock' }] })
         : undefined,
@@ -5222,15 +5222,18 @@ async function loadSenderBalanceInput() {
     leads: corpus.leads, activities: dataset.activities || [], boardLeads: dataset.boardLeads || [],
     suppressedEmails: dataset.suppressedEmails || new Set(),
     lockedLeadIds: await unresolvedReservationLeadIds(),
-    senders: configuredSenders(), horizon: nextSendDayHorizon(new Date()), env: process.env,
+    senders: configuredSenders(), horizon: nextSendDayHorizon(new Date()), now: Date.now(), env: process.env,
   };
 }
 
-// 06:55–12:00 Pacific on weekdays: the send windows and their passes.
-function insideSendWindow(now = new Date()) {
+// Protect Jole's earlier first window too. A scoped, idle-only Jole refill is
+// allowed between normal runs; ordinary and cross-client operator calls are not.
+function insideSendWindow(now = new Date(), client) {
   const pacific = new Date(now.toLocaleString('en-US', { timeZone: 'America/Vancouver' }));
   const minutes = pacific.getHours() * 60 + pacific.getMinutes();
-  return ![0, 6].includes(pacific.getDay()) && minutes >= 6 * 60 + 55 && minutes < 12 * 60;
+  const start = client === 'scalelab' ? 6 * 60 + 55 : 4 * 60 + 55;
+  const end = client === 'jole' ? 10 * 60 : 12 * 60;
+  return ![0, 6].includes(pacific.getDay()) && minutes >= start && minutes < end;
 }
 
 const SENDER_REBALANCE_MAX_MOVES = 400;
@@ -5239,25 +5242,29 @@ let senderRebalanceInFlight = false;
 function senderBalanceView(plan) {
   return {
     horizon: new Date(plan.horizon).toISOString(), bufferRatio: plan.bufferRatio,
-    formula: 'load = pinned follow-ups due by horizon + assigned movable step-1; phase A fills every inbox to dailyLimit (donors keep dailyLimit); phase B fills to target = dailyLimit + ceil(dailyLimit × bufferRatio) (donors keep target)',
+    formula: 'load = pinned follow-ups due by horizon + assigned movable step-1; remainingCapacity = min(dailyLimit - successful physical-mailbox sends on planning day, remaining normal windows × per-window cap); phase A fills remainingCapacity; phase B fills remainingCapacity plus buffer; donors keep the same phase floor',
     before: plan.before, after: plan.after, hardShortages: plan.hardShortages, shortages: plan.shortages, excluded: plan.excluded,
     moves: plan.moves.map(({ leadId, from, to, niche }) => ({ leadId, from, to, niche })),
   };
 }
 
-async function runSenderRebalance({ trigger, apply, client, bufferRatio }) {
+async function runSenderRebalance({ trigger, apply, client, bufferRatio, allowBetweenRuns = false }) {
   if (senderRebalanceInFlight) return { status: 409, error: 'A sender rebalance is already running' };
   if (apply && (agentState.running || automationLaunchReserved)) {
     return { status: 409, error: 'An agent pass is active or launching; sender assignments are not changed beside it' };
   }
-  if (apply && insideSendWindow()) {
-    return { status: 409, error: 'Sender assignments are not changed between 06:55 and 12:00 Pacific on weekdays' };
+  if (apply && insideSendWindow(new Date(), client) && !(client === 'jole' && allowBetweenRuns === true)) {
+    return { status: 409, error: 'Sender assignments are not changed during sending hours without a scoped idle-only Jole refill' };
   }
   senderRebalanceInFlight = true;
   // Holding the launch reservation keeps any agent pass from starting while
   // assignments are being written; the refill runs well clear of a send tick.
   if (apply) automationLaunchReserved = true;
   try {
+    if (apply) {
+      const { assertSendQuotaIdle } = require('./integrations/send-quota-inspection');
+      assertSendQuotaIdle(await readSendQuotaState());
+    }
     const input = scopedBalanceInput(await withAuth(() => loadSenderBalanceInput()), { client, bufferRatio });
     const plan = planSenderRebalance(input);
     const view = senderBalanceView(plan);
@@ -5332,7 +5339,7 @@ app.get('/api/ops/sender-balance', requireAuth, async (req, res) => {
 app.post('/api/ops/sender-balance', requireAuth, async (req, res) => {
   try {
     const result = await runSenderRebalance({ trigger: 'ops_manual', apply: true,
-      client: req.query.client, bufferRatio: req.query.bufferRatio });
+      client: req.query.client, bufferRatio: req.query.bufferRatio, allowBetweenRuns: req.body?.allowBetweenRuns === true });
     res.status(result.status).json(result);
   } catch (error) {
     if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
@@ -7426,17 +7433,22 @@ app.get('/api/ops/send-quota', requireAuth, async (_req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-app.get('/api/ops/send-quota-state', requireAuth, async (_req, res) => {
+async function readSendQuotaState() {
   let pool;
   try {
     const { sendLockDatabaseUrl, sendLockEnabled } = require('./integrations/send-lock-config');
-    if (!sendLockEnabled() || !sendLockDatabaseUrl()) return res.status(503).json({ error: 'Send quota database is unavailable' });
+    if (!sendLockEnabled() || !sendLockDatabaseUrl()) throw new Error('Send quota database is unavailable');
     const { Pool } = require('pg');
     pool = new Pool({ connectionString: sendLockDatabaseUrl(), max: 1, connectionTimeoutMillis: 4000 });
     const dayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
-    res.json(await require('./integrations/send-quota-inspection').inspectSendQuota(pool, dayKey));
-  } catch (_) { res.status(503).json({ error: 'Send quota state could not be read' }); }
+    return await require('./integrations/send-quota-inspection').inspectSendQuota(pool, dayKey);
+  }
   finally { if (pool) await pool.end().catch(() => {}); }
+}
+
+app.get('/api/ops/send-quota-state', requireAuth, async (_req, res) => {
+  try { res.json(await readSendQuotaState()); }
+  catch (_) { res.status(503).json({ error: 'Send quota state could not be read' }); }
 });
 
 // Token-protected, read-only production diagnostic. It cannot send or mutate
@@ -7944,11 +7956,26 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   // inbox's day, and leads routed by hand. It moves unsent unowned step-1 leads
   // only, and does nothing when every inbox already holds its day's target.
   cron.schedule('40,50 6 * * 1-5', () => {
-    runSenderRebalance({ trigger: 'scheduled_pre_window', apply: true })
+    runSenderRebalance({ trigger: 'scheduled_pre_window', apply: true, client: 'scalelab' })
       .then(result => { if (result.status !== 200) console.warn(`[sender-balance] scheduled refill skipped: ${result.error}`); })
       .catch(error => console.error('[sender-balance] scheduled refill failed:', error.message));
   }, { timezone: 'America/Vancouver' });
   console.log('[cron] Sender refill scheduled: 06:40 and 06:50 Pacific, Mon–Fri (unsent step-1 leads only; the second run is a no-op once balanced)');
+
+  // Jole starts at 05:00 Pacific (07:00 Chicago), before the legacy refill.
+  cron.schedule('40,50 4 * * 1-5', () => {
+    runSenderRebalance({ trigger: 'scheduled_jole_pre_window', apply: true, client: 'jole' })
+      .then(result => { if (result.status !== 200) console.warn(`[sender-balance] Jole pre-window refill skipped: ${result.error}`); })
+      .catch(error => console.error('[sender-balance] Jole pre-window refill failed:', error.message));
+  }, { timezone: 'America/Vancouver' });
+  // Reclaim genuinely unsent supply from capped inboxes before subsequent
+  // normal windows. Busy runs/lanes refuse the refill; nothing replays a tick.
+  cron.schedule('24,54 5-9 * * 1-5', () => {
+    runSenderRebalance({ trigger: 'scheduled_jole_between_runs', apply: true, client: 'jole', allowBetweenRuns: true })
+      .then(result => { if (result.status !== 200) console.warn(`[sender-balance] Jole between-run refill skipped: ${result.error}`); })
+      .catch(error => console.error('[sender-balance] Jole between-run refill failed:', error.message));
+  }, { timezone: 'America/Vancouver' });
+  console.log('[cron] Jole sender refill: 04:40/04:50 and idle-only :24/:54, 05–09 Pacific, Mon–Fri');
 
   // Daily digest — 18:00 America/Vancouver. getOrCreateDigest is idempotent, so
   // a restart, a re-fire, or a dashboard load on the same day all reuse the

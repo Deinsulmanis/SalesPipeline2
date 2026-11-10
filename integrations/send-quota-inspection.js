@@ -26,4 +26,15 @@ async function inspectSendQuota(pool, dayKey) {
   } finally { client.release(); }
 }
 
-module.exports = { inspectSendQuota };
+function assertSendQuotaIdle(snapshot) {
+  if (!snapshot || snapshot.readOnly !== true
+    || !['activeRuns', 'laneOwners', 'unresolved'].every(key => Array.isArray(snapshot[key]))) {
+    throw new Error('Send quota state is unavailable; sender assignments are unchanged');
+  }
+  if (snapshot.activeRuns.length || snapshot.laneOwners.length
+    || snapshot.unresolved.some(action => action.status !== 'ambiguous')) {
+    throw new Error('A durable send run, lane or provider attempt is active; sender assignments are unchanged');
+  }
+}
+
+module.exports = { inspectSendQuota, assertSendQuotaIdle };
