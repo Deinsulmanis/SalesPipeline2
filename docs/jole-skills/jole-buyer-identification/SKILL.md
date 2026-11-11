@@ -1,14 +1,14 @@
 ---
 name: jole-buyer-identification
-description: Jole BTX buyer selection (v1.0.1). Identifies who is the most relevant person to approach about additional skilled labor at a qualified company - yard or plant GM, operations, project, construction, turnaround, maintenance or fabrication leaders, owners at small firms, procurement where supplier approval is required, HR for permanent hires - tied to the actual facility or project. Applies the site-connection rule, returns BUYER VERIFIED, BUYER PARTIAL, BUYER NOT SITE-CONNECTED or BUYER NOT IDENTIFIED, never invents a name and never spends Apollo credits. Load it directly, without the orchestrator, when the buyer is the only question. Requires the jolesbtxicpskill shared policy.
-version: 1.0.1
+description: Jole BTX buyer selection (v1.1.0). Identifies who is the most relevant person to approach about additional skilled labor at a qualified company - yard or plant GM, operations, project, construction, turnaround, maintenance or fabrication leaders, owners at small firms, procurement where supplier approval is required, HR for permanent hires - tied to the actual facility or project. Applies the site-connection rule, returns BUYER VERIFIED, BUYER PARTIAL, BUYER NOT SITE-CONNECTED or BUYER NOT IDENTIFIED, never invents a name and never spends Apollo credits. Load it directly, without the orchestrator, when the buyer is the only question. Requires the jolesbtxicpskill shared policy.
+version: 1.1.0
 ---
 
 # Jole buyer identification
 
 **Question: who is the most relevant person to approach about additional skilled labor?**
 
-Version 1.0.1, 2026-11-03. Load the shared policy first (skill `jolesbtxicpskill`). Apollo credit rules are in its section 8.
+Version 1.1.0, 2026-11-10. Load the shared policy first (skill `jolesbtxicpskill`). Apollo credit rules are in its section 8.
 
 ## Use it when
 
@@ -52,6 +52,8 @@ Prioritize authority over seniority: the person who decides how a site's craft w
 | Permanent-hire need | Site HR or talent acquisition lead | The operating manager |
 
 **Weak buyer roles (hold):** engineering managers with no workforce ownership, production supervisors, TA coordinators, and vague titles ("Manager", "Assistant Manager", "Plant Lead").
+
+**Company heads at smaller companies.** At a company of 1 to 1,000 staff, with the size taken from a recorded source, the head of the company is a strong buyer role on title alone: the President, CEO, Owner, COO or the company's General Manager. Do not also require evidence that the title "manages operations", and read their authority as company-wide. Identity (a dated source within 12 months), current employment and the site gate still apply. This does not cover founder-only titles; Vice, Assistant or Deputy titles; division, regional or segment heads; or companies of 1,001+ or unknown size. When a company also has a site or operations leader who qualifies on their own role, keep that person as the primary.
 
 ## Site-connection gate
 
@@ -122,6 +124,8 @@ Envelope from `jolesbtxicpskill/CONTRACT.md`, decision = the primary buyer's sta
 |---|---|---|
 | 5,000-employee company, plant in Tennessee; only the CFO at an out-of-state HQ found | BUYER NOT SITE-CONNECTED; ICP unchanged | Contacting the CFO, or failing the company |
 | 40-person fabrication shop; owner confirmed on the company site | BUYER VERIFIED (company-level buyer passes) | Rejected for not being at "the site" |
+| 600-person manufacturer; "President" listed on the live leadership page, nothing more about duties | BUYER VERIFIED (company head at a company of 1,000 or fewer staff) | BUYER PARTIAL because the title does not describe managing operations |
+| 5,000-person company; President named in a 2026 release, no tie to the plant | BUYER NOT SITE-CONNECTED (the company-head rule stops at 1,000 staff) | BUYER VERIFIED as a company head |
 | Large shipyard with a verified contract; Operations Manager named in a 2026 press release at the yard | BUYER VERIFIED; contact verification is separate | Treating the buyer as a ready contact |
 | Strong demand, nobody found yet | BUYER NOT IDENTIFIED, target role recorded | A guessed name |
 | Apollo preview shows "Plant Manager" with a masked surname | BUYER PARTIAL | BUYER VERIFIED |
@@ -131,6 +135,8 @@ Envelope from `jolesbtxicpskill/CONTRACT.md`, decision = the primary buyer's sta
 `python tests/test_buyer.py` from this folder. `tests/buyer_logic.py` restates the mechanical rules; this file wins any disagreement.
 
 ## Change log
+
+**1.1.0 (2026-11-10).** Approved by the user. Company heads (President, CEO, Owner, COO, company General Manager) at companies of 1 to 1,000 staff, with a recorded size source, are strong buyer roles on title alone, with company-wide authority. *Why:* on 2026-11-10 Jev-scored verification failed real heads of 40- to 600-person firms only because a bare "President" or "CEO" does not describe managing operations. Identity, freshness and the site gate are unchanged. *Effect that day:* 16 more companies with a verified buyer across the 82, 38 and 156 lists.
 
 **1.0.1 (2026-11-03).** The description now says to load this skill directly for a buyer-only question. Added the shared 30-day re-confirmation before any reveal or import.
 
