@@ -1,6 +1,6 @@
 {
   "schema": "jole_buyer_fixtures_v1",
-  "skill_version": "1.0.1",
+  "skill_version": "1.1.0",
   "cases": [
     {"id": "B01", "title": "Large multi-site employer: only an unrelated HQ CFO",
      "candidate": {"name": "Pat Doe", "role_strength": "WEAK", "source": "company", "current": true, "size": "1001+", "relation": "hq_unrelated"},
@@ -30,6 +30,24 @@
      "expect": "BUYER VERIFIED"},
     {"id": "B10", "title": "Undated LinkedIn headline only",
      "candidate": {"name": "Rob Diaz", "role_strength": "STRONG", "source": "undated", "current": null, "size": "1-1000", "relation": "at_site"},
+     "expect": "BUYER PARTIAL"},
+    {"id": "B11", "title": "600-person company: President on the live leadership page, duties not described",
+     "candidate": {"name": "Dale Ross", "title": "President", "role_strength": "UNCLEAR", "source": "company", "current": true, "size": "1-1000", "relation": "hq_company_level"},
+     "expect": "BUYER VERIFIED"},
+    {"id": "B12", "title": "1,001+ company: President at headquarters with no plant tie",
+     "candidate": {"name": "Gail Moss", "title": "President", "role_strength": "UNCLEAR", "source": "public_dated", "current": true, "size": "1001+", "relation": "hq_unrelated"},
+     "expect": "BUYER NOT SITE-CONNECTED"},
+    {"id": "B13", "title": "Small company: Vice President of Operations is not a company head",
+     "candidate": {"name": "Ray Holt", "title": "Vice President of Operations", "role_strength": "UNCLEAR", "source": "company", "current": true, "size": "1-1000", "relation": "hq_company_level"},
+     "expect": "BUYER PARTIAL"},
+    {"id": "B14", "title": "Small company: founder-only title",
+     "candidate": {"name": "Ed Kerr", "title": "Co-Founder", "role_strength": "UNCLEAR", "source": "company", "current": true, "size": "1-1000", "relation": "hq_company_level"},
+     "expect": "BUYER PARTIAL"},
+    {"id": "B15", "title": "Small company: CEO named only in an undated listing",
+     "candidate": {"name": "Ann Vale", "title": "CEO", "role_strength": "UNCLEAR", "source": "undated", "current": null, "size": "1-1000", "relation": "hq_company_level"},
+     "expect": "BUYER PARTIAL"},
+    {"id": "B16", "title": "Unknown size: company General Manager does not get the company-head rule",
+     "candidate": {"name": "Tom Reyes", "title": "General Manager", "role_strength": "UNCLEAR", "source": "company", "current": true, "size": "unknown", "relation": "at_site"},
      "expect": "BUYER PARTIAL"}
   ],
   "roles": [

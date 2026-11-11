@@ -9,7 +9,7 @@ Part of shared policy 4.1.0 (2026-11-03). This page maps the eight Jole skills: 
 | `jolesbtxicpskill` | 4.1.0 | Shared policy: capabilities, hard exclusions, safety, labels, precedence, evidence and freshness standards | `~/.claude/skills/jolesbtxicpskill/` |
 | `jole-icp-qualification` | 1.1.0 | Can Jole realistically provide industrial skilled labor to this company? | `~/.claude/skills/jole-icp-qualification/` |
 | `jole-buying-signals` | 1.1.0 | What evidence suggests the employer may need more skilled workers, and when? | `~/.claude/skills/jole-buying-signals/` |
-| `jole-buyer-identification` | 1.0.1 | Who is the most relevant person to approach? | `~/.claude/skills/jole-buyer-identification/` |
+| `jole-buyer-identification` | 1.1.0 | Who is the most relevant person to approach? | `~/.claude/skills/jole-buyer-identification/` |
 | `jole-site-labor-feasibility` | 1.0.1 | Is there a practical commercial path to supply workers to this operation? | `~/.claude/skills/jole-site-labor-feasibility/` |
 | `jole-dedupe-suppression` | 1.0.1 | Is this account or contact net-new and allowed? | `~/.claude/skills/jole-dedupe-suppression/` |
 | `jole-contact-deliverability` | 1.0.1 | Is the recipient's email suitable for outbound? | `~/.claude/skills/jole-contact-deliverability/` |
