@@ -19,7 +19,7 @@ const { getClient } = require('./registry');
 const { clientTemplate, clientCampaign } = require('./campaigns');
 const { readLeadProfile } = require('./lead-profile');
 const { JOLE_COPY_VERSIONS, resolveJoleCopyVersion } = require('./jole-copy');
-const { jolePersonalizationFor, joleSelectionHold, joleFollowUpHold, joleDeliverabilityHold } = require('./jole-personalization');
+const { jolePersonalizationFor, joleClassificationFor, joleSelectionHold, joleFollowUpHold, joleDeliverabilityHold } = require('./jole-personalization');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -32,6 +32,7 @@ const RENDERERS = Object.freeze({
   'jole-industrial-employer-v1': Object.freeze({
     versions: JOLE_COPY_VERSIONS, resolveVersion: resolveJoleCopyVersion,
     personalizationFor: jolePersonalizationFor, selectionHold: joleSelectionHold, followUpHold: joleFollowUpHold, deliverabilityHold: joleDeliverabilityHold,
+    classificationFor: joleClassificationFor,
   }),
 });
 
@@ -63,7 +64,7 @@ const fail = (code, message) => Object.assign(new Error(message), { code });
 /** Personalization inputs for a lead, or throws with the reason it is not ready. */
 // enforceEvidenceAge: the campaign-wide evidence age gate. Evidence-aware
 // copy (v4) applies its own per-mode 30-day rule instead.
-function personalizationFor(lead, { now = Date.now(), enforceEvidenceAge = true } = {}) {
+function personalizationFor(lead, { now = Date.now(), enforceEvidenceAge = true, activities = [] } = {}) {
   const template = clientTemplate(lead.emailTemplateId);
   if (!template || !RENDERERS[template.id]) throw fail('template_unknown', `no client renderer for ${lead.emailTemplateId || '(blank)'}`);
   const campaign = clientCampaign(lead.intendedCampaignVersion || lead.campaign);
@@ -72,7 +73,17 @@ function personalizationFor(lead, { now = Date.now(), enforceEvidenceAge = true 
   if (!profile) throw fail('profile_missing', 'lead has no stored research profile');
   if (profile.clientId && profile.clientId !== campaign.clientId) throw fail('profile_client_mismatch', 'lead profile belongs to another client');
   const personalization = profile.personalization || {};
-  if (personalization.status !== 'ready') throw fail('needs_review', `personalization needs review: ${personalization.reason || 'not approved'}`);
+  const renderer = RENDERERS[template.id];
+  // A manually reviewed neutral message makes no hiring claim. Only the
+  // importer's two automatic hiring-input failures may be resolved this way;
+  // buyer/manual holds, unclassified leads and stale exact-mode fallbacks may
+  // not use it. Resolve the actual thread mode too, preserving pinned claims.
+  const reviewedNeutral = !enforceEvidenceAge && personalization.status === 'needs_review'
+    && ['no hiring location', 'no posting title reduces to a usable trade'].includes(personalization.reason)
+    && !lead.emailStatus && !Number(lead.emailStep || 0) && !lead.lastEmailedAt
+    && renderer.classificationFor?.(lead)?.mode === 'general_craft'
+    && renderer.personalizationFor(lead, activities, { now }).mode === 'general_craft';
+  if (personalization.status !== 'ready' && !reviewedNeutral) throw fail('needs_review', `personalization needs review: ${personalization.reason || 'not approved'}`);
   // "Is hiring X" must still be true: evidence older than the campaign allows is re-verified first.
   const maxAge = campaign.personalization?.maxEvidenceAgeDays;
   const verifiedAt = Date.parse(profile.hiring?.verifiedAt || '');
@@ -81,7 +92,8 @@ function personalizationFor(lead, { now = Date.now(), enforceEvidenceAge = true 
     if (now - verifiedAt > maxAge * DAY_MS) throw fail('evidence_stale', `hiring evidence verified ${profile.hiring.verifiedAt} is older than ${maxAge} days; re-verify the posting`);
   }
   const firstName = profile.contact?.firstName || String(lead.contactName || '').trim().split(/\s+/)[0] || '';
-  return { profile, campaign, template, firstName, roles: personalization.roles || [], location: personalization.location || '' };
+  return { profile, campaign, template, firstName, roles: reviewedNeutral ? [] : personalization.roles || [],
+    location: reviewedNeutral ? '' : personalization.location || '' };
 }
 
 /**
@@ -92,7 +104,7 @@ function personalizationFor(lead, { now = Date.now(), enforceEvidenceAge = true 
 function renderClientLeadEmail(lead = {}, step = 1, { env = process.env, now = Date.now(), activities = [] } = {}) {
   const version = clientCopyVersionFor(lead, { activities, step });
   const renderer = RENDERERS[String(lead.emailTemplateId || '').trim()];
-  const inputs = personalizationFor(lead, { now, enforceEvidenceAge: campaignEvidenceAgeApplies(version, renderer.versions) });
+  const inputs = personalizationFor(lead, { now, enforceEvidenceAge: campaignEvidenceAgeApplies(version, renderer.versions), activities });
   const client = getClient(inputs.campaign.clientId);
   const copyEnv = client.copyEnv || {};
   // A lead on the deliverability hold never renders Touch 1, so the queue
