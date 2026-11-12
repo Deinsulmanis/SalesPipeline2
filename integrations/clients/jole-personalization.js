@@ -43,7 +43,10 @@ const LEGACY_SUBJECTS = Object.freeze({
   [COPY_VERSION_V3]: (role, location) => `${role} | ${location}`,
 });
 
-const LEADS = Object.freeze(DATA.leads || {});
+// Reviewed waves imported after the 2026-10-21 audit. Each is its own data file
+// (one entry per lead id, no contact details); the audit file wins on any id.
+const WAVES = Object.freeze([require('./data/jole-personalization-groupa-20261112.json')]);
+const LEADS = Object.freeze(Object.assign({}, ...WAVES.map(wave => wave.leads || {}), DATA.leads || {}));
 const FRESHNESS_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FOLLOW_UP_HOLDS = Object.freeze(DATA.followUpHolds || {});
