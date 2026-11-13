@@ -44,8 +44,12 @@ const LEGACY_SUBJECTS = Object.freeze({
 });
 
 // Reviewed waves imported after the 2026-10-21 audit. Each is its own data file
-// (one entry per lead id, no contact details); the audit file wins on any id.
-const WAVES = Object.freeze([require('./data/jole-personalization-groupa-20261112.json')]);
+// (one entry per lead id, no contact details); a later wave wins over an
+// earlier one, and the audit file wins on any id.
+const WAVES = Object.freeze([
+  require('./data/jole-personalization-groupa-20261112.json'),
+  require('./data/jole-personalization-groupa-hiring-20261112.json'),
+]);
 const LEADS = Object.freeze(Object.assign({}, ...WAVES.map(wave => wave.leads || {}), DATA.leads || {}));
 const FRESHNESS_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;

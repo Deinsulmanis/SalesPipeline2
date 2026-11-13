@@ -74,16 +74,29 @@ function personalizationFor(lead, { now = Date.now(), enforceEvidenceAge = true,
   if (profile.clientId && profile.clientId !== campaign.clientId) throw fail('profile_client_mismatch', 'lead profile belongs to another client');
   const personalization = profile.personalization || {};
   const renderer = RENDERERS[template.id];
-  // A manually reviewed neutral message makes no hiring claim. Only the
-  // importer's two automatic hiring-input failures may be resolved this way;
-  // buyer/manual holds, unclassified leads and stale exact-mode fallbacks may
-  // not use it. Resolve the actual thread mode too, preserving pinned claims.
-  const reviewedNeutral = !enforceEvidenceAge && personalization.status === 'needs_review'
-    && ['no hiring location', 'no posting title reduces to a usable trade'].includes(personalization.reason)
-    && !lead.emailStatus && !Number(lead.emailStep || 0) && !lead.lastEmailedAt
-    && renderer.classificationFor?.(lead)?.mode === 'general_craft'
-    && renderer.personalizationFor(lead, activities, { now }).mode === 'general_craft';
-  if (personalization.status !== 'ready' && !reviewedNeutral) throw fail('needs_review', `personalization needs review: ${personalization.reason || 'not approved'}`);
+  // Evidence-aware copy names only what the reviewed classification (or the
+  // thread's first send) supports, so an import profile that lacked hiring
+  // inputs may still render in two cases. Only the importer's two automatic
+  // hiring-input failures qualify; buyer/manual holds, unclassified leads and
+  // stale exact-mode fallbacks on an untouched lead never do.
+  //   neutral: the thread mode is general_craft, and either the lead is
+  //            classified general_craft or its first send recorded general_craft
+  //            (a started neutral thread continues on its later touches).
+  //   hiring:  the thread mode is exact or role_only and the lead's reviewed
+  //            classification entry carries its own evidence (a cited posting
+  //            re-opened on its public page) in that same mode; on Touch 1 the
+  //            evidence must also be within the 30-day rule (personalizationFor
+  //            falls a stale entry to general_craft, which is then refused).
+  const importGap = !enforceEvidenceAge && personalization.status === 'needs_review'
+    && ['no hiring location', 'no posting title reduces to a usable trade'].includes(personalization.reason);
+  const resolved = importGap ? renderer.personalizationFor(lead, activities, { now }) : null;
+  const entry = importGap ? renderer.classificationFor?.(lead) : null;
+  const classified = entry?.mode || null;
+  const pinned = resolved?.source === 'ledger';
+  const ownEvidence = Boolean(entry?.evidenceUrl && entry?.publicPageChecked === true && entry?.evidenceCheckedAt);
+  const reviewedNeutral = importGap && resolved.mode === 'general_craft' && (classified === 'general_craft' || pinned);
+  const reviewedHiring = importGap && ['exact', 'role_only'].includes(resolved.mode) && classified === resolved.mode && ownEvidence;
+  if (personalization.status !== 'ready' && !reviewedNeutral && !reviewedHiring) throw fail('needs_review', `personalization needs review: ${personalization.reason || 'not approved'}`);
   // "Is hiring X" must still be true: evidence older than the campaign allows is re-verified first.
   const maxAge = campaign.personalization?.maxEvidenceAgeDays;
   const verifiedAt = Date.parse(profile.hiring?.verifiedAt || '');
@@ -92,8 +105,9 @@ function personalizationFor(lead, { now = Date.now(), enforceEvidenceAge = true,
     if (now - verifiedAt > maxAge * DAY_MS) throw fail('evidence_stale', `hiring evidence verified ${profile.hiring.verifiedAt} is older than ${maxAge} days; re-verify the posting`);
   }
   const firstName = profile.contact?.firstName || String(lead.contactName || '').trim().split(/\s+/)[0] || '';
-  return { profile, campaign, template, firstName, roles: reviewedNeutral ? [] : personalization.roles || [],
-    location: reviewedNeutral ? '' : personalization.location || '' };
+  const fromClassification = reviewedNeutral || reviewedHiring;
+  return { profile, campaign, template, firstName, roles: fromClassification ? [] : personalization.roles || [],
+    location: fromClassification ? '' : personalization.location || '' };
 }
 
 /**

@@ -1,0 +1,291 @@
+{
+ "schema": "jole_personalization_wave",
+ "wave": "group A hiring update 2026-11-12",
+ "decidedAt": "2026-11-12",
+ "source": "jole-buying-signals 1.1.0 demand pass; LinkedIn public postings and employer boards re-opened 2026-11-12",
+ "supersedes": "jole-personalization-groupa-20261112.json for these lead ids (general_craft -> hiring mode)",
+ "counts": {
+  "exact": 9,
+  "role_only": 2
+ },
+ "leads": {
+  "mwd7zq8jf58dfa671d5d": {
+   "mode": "exact",
+   "role": "CNC Machinists",
+   "location": "Newburyport, MA",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.linkedin.com/jobs/view/cnc-machinist-1st-shift-at-vulcanforms-inc-4450664072",
+   "evidenceCheckedAt": "2026-11-12",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-12",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "LinkedIn CNC Machinist postings in Newburyport, MA (2026-10-26, 2026-10-30) re-opened 2026-11-12, accepting applications",
+   "unsupportedRoles": [
+    "CNC Machinist",
+    "CNC Machinist - 1st Shift",
+    "CNC Machinist / Operator",
+    "CNC Machinists"
+   ],
+   "unsupportedLocations": [
+    "Ayer, MA",
+    "Devens, MA",
+    "Newburyport, MA"
+   ],
+   "company": "VulcanForms"
+  },
+  "mwd7zq8je60a4daa3cfa": {
+   "mode": "exact",
+   "role": "Welders and Fitters",
+   "location": "Ashland City, TN",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.linkedin.com/jobs/view/welder-1st-shift-at-nabrico-marine-products-4487796105",
+   "evidenceCheckedAt": "2026-11-12",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-12",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "LinkedIn Welder (2026-11-05) and Fitter (2026-11-02) postings in Ashland City, TN re-opened 2026-11-12, accepting applications",
+   "unsupportedRoles": [
+    "Fitter",
+    "Fitter- 1st Shift",
+    "Fitters",
+    "Welder",
+    "Welder - 1st Shift",
+    "Welders",
+    "Welders and Fitters"
+   ],
+   "unsupportedLocations": [
+    "Ashland City, TN",
+    "Caruthersville, MO"
+   ],
+   "company": "NABRICO Marine Products"
+  },
+  "mwd7zq8ja783d8d2fe5c": {
+   "mode": "exact",
+   "role": "Welders",
+   "location": "Braddock, PA",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.linkedin.com/jobs/view/experienced-tig-welder-at-phillips-tank-structure-4485534326",
+   "evidenceCheckedAt": "2026-11-12",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-12",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "LinkedIn TIG and pipe welder postings in Braddock, PA (2026-10-22 to 2026-11-04) re-opened 2026-11-12, accepting applications",
+   "unsupportedRoles": [
+    "Experienced TIG Welder",
+    "Shop Welder",
+    "TIG / Pipe Welder",
+    "Welder",
+    "Welders"
+   ],
+   "unsupportedLocations": [
+    "Braddock, PA",
+    "Buffalo, NY",
+    "Wheeling, WV"
+   ],
+   "company": "Phillips Tank & Structure"
+  },
+  "mwd7zq8j7858d4ca4fdc": {
+   "mode": "exact",
+   "role": "Machinists",
+   "location": "Wilmington, OH",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.linkedin.com/jobs/view/machinist-at-airborne-maintenance-and-engineering-services-4477325003",
+   "evidenceCheckedAt": "2026-11-12",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-12",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "LinkedIn Machinist posting in Wilmington, OH (2026-10-15) re-opened 2026-11-12, accepting applications",
+   "unsupportedRoles": [
+    "Machinist",
+    "Machinists"
+   ],
+   "unsupportedLocations": [
+    "Tampa, FL",
+    "Wilmington, OH"
+   ],
+   "company": "Airborne Maintenance and Engineering Services"
+  },
+  "mwd7zq8jb1bf4610ca8a": {
+   "mode": "role_only",
+   "role": "Welders",
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.linkedin.com/jobs/view/welder-at-alcom-llc-4483666061",
+   "evidenceCheckedAt": "2026-11-12",
+   "publicPageChecked": true,
+   "siteCheckedAt": null,
+   "siteSource": null,
+   "roleSource": "posting_title",
+   "evidenceStatus": "role_verified_site_differs_from_buyer",
+   "reason": "LinkedIn Welder postings in Sioux Falls, SD and Bonner, MT (2026-10-26/27) re-opened 2026-11-12; buyer is at the Winslow, ME head office, so no site is named",
+   "unsupportedRoles": [
+    "Welder",
+    "Welders"
+   ],
+   "unsupportedLocations": [
+    "Bonner-West Riverside, MT",
+    "Sioux Falls, SD",
+    "Winslow, ME"
+   ],
+   "company": "ALCOM"
+  },
+  "mwd7zq8jbc378f5e8a26": {
+   "mode": "exact",
+   "role": "CNC Machinists",
+   "location": "Cypress, TX",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.linkedin.com/jobs/view/cnc-machinist-1st-shift-mill-doosan-at-drake-plastics-ltd-co-4488603584",
+   "evidenceCheckedAt": "2026-11-12",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-12",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "LinkedIn CNC Machinist postings (1st and 2nd shift) in Cypress, TX (2026-11-10) re-opened 2026-11-12, accepting applications",
+   "unsupportedRoles": [
+    "CNC Machinist",
+    "CNC Machinist - 1st Shift (Mill / Doosan)",
+    "CNC Machinist - 2nd Shift (Mazak / Doosan)",
+    "CNC Machinists"
+   ],
+   "unsupportedLocations": [
+    "Cypress, TX"
+   ],
+   "company": "Drake Plastics Ltd. Co"
+  },
+  "mwd7zq8je3dd7ebaaaac": {
+   "mode": "exact",
+   "role": "Welders",
+   "location": "Quincy, IL",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.linkedin.com/jobs/view/manchester-tank-quincy-welder-at-manchester-tank-and-equipment-4478275879",
+   "evidenceCheckedAt": "2026-11-12",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-12",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "LinkedIn Welder and Weld Specialist postings in Quincy, IL (2026-10-19) re-opened 2026-11-12, accepting applications",
+   "unsupportedRoles": [
+    "Manchester Tank Quincy Weld Specialist",
+    "Manchester Tank Quincy Welder",
+    "Welder",
+    "Welders"
+   ],
+   "unsupportedLocations": [
+    "Quincy, IL"
+   ],
+   "company": "Manchester Tank and Equipment"
+  },
+  "mwd7zq8jab3833badaa8": {
+   "mode": "exact",
+   "role": "Structural Welders",
+   "location": "Houma, LA",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.linkedin.com/jobs/view/structural-welder-at-morrison-energy-4479237424",
+   "evidenceCheckedAt": "2026-11-12",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-12",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "LinkedIn Structural Welder posting in Houma, LA (2026-10-14) re-opened 2026-11-12, accepting applications; posting is 29 days old",
+   "unsupportedRoles": [
+    "Structural Fitter",
+    "Structural Welder",
+    "Structural Welders",
+    "Welder"
+   ],
+   "unsupportedLocations": [
+    "Harvey, LA",
+    "Houma, LA"
+   ],
+   "company": "Morrison Energy"
+  },
+  "mwd7zq8j8b0f75553025": {
+   "mode": "exact",
+   "role": "Welders",
+   "location": "Anaheim, CA",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.linkedin.com/jobs/view/entry-level-welder-at-power-plus-4486497207",
+   "evidenceCheckedAt": "2026-11-12",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-12",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "LinkedIn Entry Level Welder posting in Anaheim, CA (2026-11-03) re-opened 2026-11-12, accepting applications",
+   "unsupportedRoles": [
+    "Entry Level Welder",
+    "Welder",
+    "Welders"
+   ],
+   "unsupportedLocations": [
+    "Anaheim, CA",
+    "Detroit, MI",
+    "Grand Prairie, TX",
+    "Los Angeles, CA",
+    "Phoenix, AZ",
+    "Tacoma, WA"
+   ],
+   "company": "Power Plus"
+  },
+  "mwd7zq8j6c0ae4fa4698": {
+   "mode": "exact",
+   "role": "Welders",
+   "location": "St. Cloud, MN",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.northernmetalproducts.com/careers",
+   "evidenceCheckedAt": "2026-11-12",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-12",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "Employer careers page (checked 2026-11-12) says it is currently seeking Welders at its St. Cloud, MN plant; Lead Welder listing dated 2026-11-06",
+   "unsupportedRoles": [
+    "Lead Welder",
+    "Welder",
+    "Welders"
+   ],
+   "unsupportedLocations": [
+    "Saint Cloud, MN",
+    "St. Cloud, MN"
+   ],
+   "company": "Northern Metal Products"
+  },
+  "mwd7zq8jc32676723b93": {
+   "mode": "role_only",
+   "role": "Welders",
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": "https://jobs.dayforcehcm.com/en-US/nwpx/CANDIDATEPORTAL/jobs/2075",
+   "evidenceCheckedAt": "2026-11-12",
+   "publicPageChecked": true,
+   "siteCheckedAt": null,
+   "siteSource": null,
+   "roleSource": "posting_title",
+   "evidenceStatus": "role_verified_site_not_claimed",
+   "reason": "Employer Dayforce board: Welder II-III posted 2026-11-03, no expiry (checked 2026-11-12); site not claimed in copy",
+   "unsupportedRoles": [
+    "Senior Welder",
+    "Welder",
+    "Welder II-III",
+    "Welders"
+   ],
+   "unsupportedLocations": [
+    "Adelanto, CA",
+    "Salt Lake City, UT"
+   ],
+   "company": "Northwest Pipe Company"
+  }
+ }
+}
