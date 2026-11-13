@@ -163,6 +163,7 @@ const { clientSendState, clientSendBlock } = require('./integrations/clients/sen
 const { JOLE_EARLY_CRON, clientSendWindowVerdict } = require('./integrations/clients/send-windows');
 const { PLACEMENT_TEST_CLIENT, PLACEMENT_TEST_CONFIRM, PLACEMENT_TEST_RECIPIENTS, validPlacementLabel } = require('./integrations/placement-test');
 const { getLedgerStore } = require('./integrations/clients/ledger-store');
+const { createClientCalendarSync } = require('./integrations/clients/client-calendar');
 const { emailUniquenessMode, leadsInEmailScope, leadsForCalendarMatching } = require('./integrations/clients/email-scope');
 const { filterInboxesForClient } = require('./integrations/clients/workspace-views');
 const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE, qualifyLead: qualifyRoofingLead } = require('./integrations/roofing-survey-profile');
@@ -1919,6 +1920,7 @@ registerClientRoutes(app, {
   },
   importLeads: options => importManagedClientLeads(options),
   importBatches: () => clientImportBatchStore,
+  calendarSyncFor: clientId => clientCalendarSyncs.get(clientId) || null,
 });
 
 // ── MANAGED-CLIENT IMPORT BATCHES + READINESS ───────────────────────────────
@@ -3857,6 +3859,37 @@ async function writeCalendarSyncState(state) {
   await upsertIntegrationRow(CALENDAR_SYNC_SHEET, CALENDAR_SYNC_HEADER, 'key',
     { key: 'state', value: JSON.stringify(state), updatedAt: now });
 }
+
+// ── MANAGED-CLIENT CALENDARS ────────────────────────────────────────────────
+// A managed client's own calendar (Jole: Jorge's) feeds that client's meeting
+// ledger, read-only, through client-calendar.js. Separate checkpoint sheet from
+// ScaleLab's CalendarSync, one row per client, and its own flag per client
+// (JOLE_CALENDAR_SYNC_ENABLED), so neither sync can disturb the other.
+const CLIENT_CALENDAR_SYNC_SHEET = 'ClientCalendarSync';
+const CLIENT_CALENDAR_SYNC_HEADER = ['clientId', 'state', 'updatedAt'];
+
+async function readClientCalendarState(clientId) {
+  const rows = await readIntegrationRows(CLIENT_CALENDAR_SYNC_SHEET, CLIENT_CALENDAR_SYNC_HEADER);
+  const row = rows.find(item => item.clientId === clientId);
+  if (!row || !row.state) return {};
+  // A corrupt checkpoint must stop the sync, never silently restart it.
+  return JSON.parse(row.state);
+}
+
+async function writeClientCalendarState(clientId, state) {
+  await upsertIntegrationRow(CLIENT_CALENDAR_SYNC_SHEET, CLIENT_CALENDAR_SYNC_HEADER, 'clientId',
+    { clientId, state: JSON.stringify(state), updatedAt: new Date().toISOString() });
+}
+
+const clientCalendarSyncs = new Map(['jole'].map(clientId => [clientId, createClientCalendarSync({
+  clientId,
+  fetchChanges: params => fetchCalendarChanges(params),
+  readState: () => withAuth(() => readClientCalendarState(clientId)),
+  writeState: state => withAuth(() => writeClientCalendarState(clientId, state)),
+  loadLeads: async () => (await withAuth(() => getOutreachDataset())).leads || [],
+  getStore: () => getLedgerStore(),
+  log: console,
+})]));
 
 /**
  * One page-walk of the Calendar API. Returns a result shaped for nextSyncState,
@@ -7927,6 +7960,24 @@ if (process.env.RAILWAY_ENVIRONMENT) {
       .catch(error => console.error('[Calendar sync] unhandled failure:', error.message));
   }, { timezone: 'America/Vancouver' });
   console.log('[cron] Google Calendar booking sync scheduled every 5 minutes (feature-gated)');
+
+  // Managed-client calendars → client ledgers. Each service returns before any
+  // read while its own flag is off. Offset from the ScaleLab sync above.
+  let clientCalendarInFlight = false;
+  cron.schedule('3,8,13,18,23,28,33,38,43,48,53,58 * * * *', () => {
+    if (clientCalendarInFlight) return;
+    clientCalendarInFlight = true;
+    Promise.all([...clientCalendarSyncs.entries()].map(([clientId, service]) => service.run({ apply: true })
+      .then(result => {
+        if (!result.skipped && (result.mutations || !result.ok)) {
+          console.log(`[Client calendar:${clientId}] ${result.ok ? 'complete' : 'failed'} — ${result.mutations || 0} mutation(s), `
+            + `${result.events || 0} event(s), ${result.review ?? 0} awaiting review${result.reason ? ` (${result.reason})` : ''}`);
+        }
+      })
+      .catch(error => console.error(`[Client calendar:${clientId}] unhandled failure:`, error.message))))
+      .finally(() => { clientCalendarInFlight = false; });
+  }, { timezone: 'America/Vancouver' });
+  console.log('[cron] Managed-client calendar sync scheduled every 5 minutes (per-client flag)');
 
   // Staffing landing attribution: backfill issuances from the activity ledger,
   // link early sessions, daily retention. Supabase landing functions only; the

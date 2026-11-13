@@ -2082,6 +2082,9 @@
   @media(prefers-reduced-motion:reduce){.archive-row{transition:none}.archive-row:hover{transform:none}}
   .analytics-scope-note{font-size:12px;color:var(--text-secondary);padding:8px 12px;margin:0 28px 10px;border:1px solid var(--border);border-left:3px solid var(--primary);border-radius:7px;background:var(--tint-faint)}.analytics-scope-note b{color:var(--text);margin-right:6px}.analytics-scope-note[data-scope="historical"]{border-left-color:var(--text-muted);margin:0 0 12px}
   .sender-table{width:100%;border-collapse:collapse;font-size:12px}.sender-table th,.sender-table td{padding:7px 8px;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap}.sender-table th:first-child,.sender-table td:first-child{text-align:left}.sender-table th{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);font-weight:700}.sender-table tfoot td{font-weight:700;color:var(--text)}.sender-table-wrap{overflow-x:auto}.sender-tag{display:inline-block;margin-left:6px;font-size:10px;padding:1px 6px;border-radius:999px;background:var(--primary-bg);color:var(--primary)}
+  .calendar-status{display:flex;justify-content:space-between;align-items:center;gap:16px;margin:0 0 16px;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface);font-size:12px;color:var(--text-secondary)}.calendar-status[data-state="error"]{border-color:var(--danger,#b91c1c)}.calendar-status .btn-save-notes{margin-top:0;min-height:44px}
+  .calendar-review{margin:0 0 20px}.calendar-review h4{margin:0 0 4px;font-size:14px}.calendar-review .client-note{margin:0 0 10px}.calendar-review-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}.calendar-review-actions button{min-height:44px}
+  @media(max-width:700px){.calendar-status{flex-direction:column;align-items:flex-start}.calendar-review-actions{justify-content:flex-start}}
   .booking-list,.sequence-list{display:grid;gap:9px}.operational-row{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:13px 15px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}.operational-row b{font-size:13px}.operational-row small{display:block;color:var(--text-muted);font-size:11px;margin-top:3px}.operational-row-meta{text-align:right;font-size:12px;color:var(--text-secondary)}
   @media(max-width:980px){body.workspace-ready{grid-template-columns:72px minmax(0,1fr)}.crm-sidebar{padding-inline:8px}.crm-brand{padding-inline:8px}.crm-brand-copy,.crm-nav-btn span,.crm-nav-group,.crm-sidebar-foot{display:none}.crm-nav-btn{justify-content:center;padding:9px}.crm-nav-btn svg{width:19px;height:19px}.crm-workspace{padding:18px}.inbox-row{grid-template-columns:minmax(160px,.7fr) minmax(230px,1.3fr)}}
   @media(max-width:700px){html.workspace-ready{height:auto;overflow:visible}body.workspace-ready{display:block;padding-top:64px;height:auto;overflow:visible}#workspace-stage{overflow:visible}.crm-sidebar{position:fixed;left:0;top:0;width:224px;transform:translateX(-100%);transition:transform 180ms;z-index:100}.crm-sidebar.open{transform:translateX(0)}.crm-brand-copy,.crm-nav-btn span,.crm-nav-group,.crm-sidebar-foot{display:block}.crm-nav-btn{justify-content:flex-start}.sidebar-toggle{display:grid;place-items:center}body.workspace-ready>header{position:fixed;left:0;right:0;top:0;height:64px;padding:0 16px}.crm-workspace{padding:14px}.header-right .search-wrap{display:none}.inbox-row{grid-template-columns:1fr;gap:9px}.inbox-action{padding-top:8px;border-top:1px solid var(--border)}.workspace-intro{align-items:flex-start}.operational-row{align-items:flex-start}.operational-row-meta{max-width:45%}}
@@ -8511,6 +8514,10 @@ async function renderManagedBookings(client) {
     if (error.code === 'ledger_unavailable') return badges + emptyState('Meeting ledger unavailable', error.message, 'calendar');
     throw error;
   }
+  // The calendar panel is optional: a client without calendar sync, or a
+  // failing read, still shows its ledger.
+  const calendar = await clientApi('/calendar').catch(error => (error.status === 404 ? null : { error: error.message }));
+  const calendarPanel = renderManagedCalendarPanel(client, calendar);
   const employerByLead = new Map(opportunities.map(row => [row.lead_id, row.employer]));
   const status = value => meetings.filter(row => row.meeting_status === value).length;
   const summary = `<div class="client-metrics">
@@ -8523,15 +8530,62 @@ async function renderManagedBookings(client) {
     ${metricCard('Accrued', clientMoney(billing.accruedCents, billing.currency))}
   </div>`;
   if (!meetings.length) {
-    return badges + summary + renderRevenuePanel(client, meetings, billing) + emptyState(`No ${client.displayName} meetings yet`, onboardingPending(client)
+    return badges + summary + calendarPanel + renderRevenuePanel(client, meetings, billing) + emptyState(`No ${client.displayName} meetings yet`, onboardingPending(client)
       ? `Meetings are recorded here after ${client.displayName} is activated and employers book. A meeting bills only when it is held and qualified.`
       : 'Meetings appear here when they are booked. A meeting bills only when it is held and qualified.', 'calendar');
   }
   const revenue = renderRevenuePanel(client, meetings, billing);
-  return badges + summary + revenue + `<div class="booking-list">${meetings.map(meeting => `<div class="operational-row">
+  return badges + summary + calendarPanel + revenue + `<div class="booking-list">${meetings.map(meeting => `<div class="operational-row">
       <span><b>${esc(employerByLead.get(meeting.lead_id) || meeting.lead_id)}</b><small>${esc([meeting.attendee_name, meeting.attendee_title].filter(Boolean).join(' · ') || 'Attendee not recorded')} · ${esc(meeting.campaign_id ? campaignName(meeting.campaign_id) : '')}</small></span>
       <span class="operational-row-meta"><b>${esc(meeting.meeting_status.replace(/_/g, ' '))}</b><small>${esc(meeting.scheduled_for ? new Date(meeting.scheduled_for).toLocaleString() : 'Not scheduled')} · ${meeting.billable ? esc('Billable ' + clientMoney(meeting.performance_fee_cents, meeting.currency)) : esc('Not billable')}</small></span>
     </div>`).join('')}</div>`;
+}
+
+/** The client's calendar connection and the calendar events waiting for a decision. */
+function renderManagedCalendarPanel(client, calendar) {
+  if (!calendar) return '';
+  if (calendar.error) return `<p class="client-note calendar-status" data-state="error">Calendar status unavailable: ${esc(calendar.error)}</p>`;
+  const owner = calendar.meetingWith || client.displayName;
+  const synced = calendar.lastSyncAt ? `last checked ${new Date(calendar.lastSyncAt).toLocaleString()}` : 'not checked yet';
+  const line = calendar.ready
+    ? `${esc(owner)}'s Google Calendar is connected (read-only) · ${esc(synced)}${calendar.lastError ? ` · <b>last error: ${esc(calendar.lastError)}</b>` : ''}`
+    : `${esc(owner)}'s Google Calendar is not connected: ${esc(calendar.reason || 'sync is off')}. Meetings can still be recorded by hand.`;
+  const status = `<div class="calendar-status" data-state="${calendar.ready ? (calendar.lastError ? 'error' : 'ok') : 'off'}">
+      <span>${line}</span>
+      ${calendar.ready ? '<button type="button" class="btn-save-notes" data-action="sync" onclick="managedCalendarAction(this.dataset.action)">Check now</button>' : ''}
+    </div>`;
+  const review = calendar.review || [];
+  if (!review.length) return status;
+  const rows = review.map(item => {
+    const when = item.startAt ? new Date(item.startAt).toLocaleString() : 'No start time';
+    const people = item.candidates.map(c => [c.name || c.email, c.company].filter(Boolean).join(' · ')).join(' / ');
+    const confirms = item.candidates.length > 1
+      ? item.candidates.map(c => `<button type="button" class="btn-save" data-event="${escAttr(item.eventId)}" data-lead="${escAttr(c.leadId)}" onclick="managedCalendarAction('confirm', this.dataset.event, this.dataset.lead)">Meeting with ${esc(c.name || c.email)}</button>`).join('')
+      : `<button type="button" class="btn-save" data-event="${escAttr(item.eventId)}" onclick="managedCalendarAction('confirm', this.dataset.event)">Confirm meeting</button>`;
+    return `<div class="operational-row calendar-review-row">
+      <span><b>${esc(people)}</b><small>${esc(item.summary || 'Untitled event')} · ${esc(when)}</small><small>${esc(item.reason)}</small></span>
+      <span class="calendar-review-actions">${confirms}<button type="button" class="btn-cancel" data-event="${escAttr(item.eventId)}" onclick="managedCalendarAction('dismiss', this.dataset.event)">Not a lead meeting</button></span>
+    </div>`;
+  }).join('');
+  return status + `<section class="calendar-review" aria-label="Calendar meetings to confirm">
+      <h4>Calendar meetings to confirm (${review.length})</h4>
+      <p class="client-note">These events on ${esc(owner)}'s calendar include one of this client's leads but were not booked through the booking page, so they are not counted until you confirm them.</p>
+      <div class="booking-list">${rows}</div>
+    </section>`;
+}
+
+async function managedCalendarAction(action, eventId = '', leadId = '') {
+  const base = `/api/clients/${encodeURIComponent(activeClientId)}/calendar`;
+  const url = action === 'sync' ? `${base}/sync` : `${base}/review/${encodeURIComponent(eventId)}/${action}`;
+  try {
+    const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(leadId ? { leadId } : {}) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) throw new Error(data.error || data.reason || `HTTP ${response.status}`);
+    showToast(action === 'confirm' ? 'Meeting recorded from the calendar' : action === 'dismiss' ? 'Event dismissed' : `Calendar checked: ${data.mutations || 0} change(s)`, 'success');
+  } catch (error) {
+    showToast(`Calendar: ${error.message}`, 'error');
+  }
+  loadManagedWorkspace('bookings');
 }
 
 async function renderManagedCampaigns(client) {

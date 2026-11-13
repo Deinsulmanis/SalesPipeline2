@@ -46,6 +46,8 @@ function registerClientRoutes(app, {
   // Import batches store (import-batches.js); absent, the imports view is empty.
   importBatches = () => null,
   reportStore = null, startReportScheduler = true,
+  // clientId → client-calendar.js service, or null when the client has none.
+  calendarSyncFor = () => null,
 }) {
   const router = express.Router();
   router.use(requireAuth);
@@ -294,6 +296,30 @@ function registerClientRoutes(app, {
       attendee: req.body?.attendee || {}, notes: req.body?.notes, by: operator(req),
     }));
   }));
+  // ── Client calendar (read-only Google Calendar → this client's ledger) ─────
+  const withCalendar = handler => async (req, res) => {
+    const service = calendarSyncFor(req.client.id);
+    if (!service) return res.status(404).json({ error: `${req.client.displayName} has no calendar sync`, code: 'calendar_not_supported' });
+    try { return await handler(req, res, service); } catch (error) { return fail(res, error); }
+  };
+  router.get('/:clientId/calendar', clientParam, withCalendar(async (req, res, service) => {
+    res.json(await service.status());
+  }));
+  // Shows what a sync WOULD do. Writes nothing, not even the checkpoint.
+  router.get('/:clientId/calendar/dry-run', clientParam, withCalendar(async (req, res, service) => {
+    res.json(await service.run({ apply: false }));
+  }));
+  // A sync pass now. Still refuses while the client's sync flag is off.
+  router.post('/:clientId/calendar/sync', clientParam, withCalendar(async (req, res, service) => {
+    res.json(await service.run({ apply: true }));
+  }));
+  router.post('/:clientId/calendar/review/:eventId/confirm', clientParam, withCalendar(async (req, res, service) => {
+    res.json(await service.confirm(req.params.eventId, { leadId: req.body?.leadId, by: operator(req) }));
+  }));
+  router.post('/:clientId/calendar/review/:eventId/dismiss', clientParam, withCalendar(async (req, res, service) => {
+    res.json(await service.dismiss(req.params.eventId, { by: operator(req) }));
+  }));
+
   router.post('/:clientId/meetings/:meetingId/transition', clientParam, withStore(async (req, res, store) => {
     res.json(await ledger.updateMeeting(store, {
       clientId: req.client.id, meetingId: req.params.meetingId, toStatus: String(req.body?.toStatus || ''),

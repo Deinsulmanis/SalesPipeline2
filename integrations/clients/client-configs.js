@@ -160,11 +160,20 @@ const JOLE = Object.freeze({
     handOffOnPositiveReply: false,
   }),
   booking: Object.freeze({
-    // Meetings are recorded by a ScaleLab operator into the ledger. Jole's
-    // calendar is not connected to this system.
+    // Meetings live in the client ledger, never on ScaleLab's board, so the
+    // ScaleLab booking sync (mode google_calendar_sync) never matches Jole leads.
+    // Jorge's own calendar feeds the ledger through client-calendar.js, read-only
+    // and off until JOLE_CALENDAR_SYNC_ENABLED=true; an operator can still record
+    // a meeting by hand.
     mode: 'operator_recorded',
     meetingWith: 'Jorge Guerrero',
-    calendarConnected: false,
+    calendarSync: Object.freeze({
+      provider: 'google_calendar',
+      enabledEnv: 'JOLE_CALENDAR_SYNC_ENABLED',
+      calendarIdEnv: 'JOLE_BOOKING_CALENDAR_ID',
+      scheduleIdEnv: 'JOLE_BOOKING_APPOINTMENT_SCHEDULE_ID',
+      ownerEmailsEnv: 'JOLE_CALENDAR_OWNER_EMAILS',
+    }),
   }),
   qualification: Object.freeze({
     requireIcpFit: true,
