@@ -207,8 +207,13 @@ function renderJoleEmployerStepV3({ step, firstName, company, roles = [], locati
  * Same dash rule, link rule, footer and cadence as v3.
  */
 const COPY_VERSION_V4 = 'jole_industrial_employer_v4';
-const PERSONALIZATION_MODES = Object.freeze(['exact', 'role_only', 'general_craft', 'hold']);
-const SENDABLE_MODES = Object.freeze(['exact', 'role_only', 'general_craft']);
+// v5 (2026-11-13) adds two demand-signal modes. Their verified event rides in
+// the role/location slots so the ledger pins it like a hiring claim:
+//   award      role = the contract or project as the source names it, location = its short form
+//   expansion  role = the expansion as the news names it, location = its short form
+const SIGNAL_MODES = Object.freeze(['award', 'expansion']);
+const PERSONALIZATION_MODES = Object.freeze(['exact', 'role_only', 'general_craft', ...SIGNAL_MODES, 'hold']);
+const SENDABLE_MODES = Object.freeze(['exact', 'role_only', 'general_craft', ...SIGNAL_MODES]);
 
 const V4_T2_CONTEXT = 'Just to give you some context, Jole has supported industrial employers with skilled trade labor for about 25 years and works with roughly 800 workers a year.';
 const V4_T2_OVERVIEW = `Here's a quick overview of Jole:\n${JOLE_V3_OVERVIEW_URL}`;
@@ -259,6 +264,15 @@ const fail = (code, message) => Object.assign(new Error(message), { code });
 function v4ModeProblem(email, { mode, role = '', location = '', company = '', forbiddenRoles = [], forbiddenLocations = [] } = {}) {
   const copy = `${email.subject || ''}\n${email.coreBody || ''}`;
   const has = text => Boolean(text) && copy.toLowerCase().includes(String(text).toLowerCase());
+  if (SIGNAL_MODES.includes(mode)) {
+    // Names its own verified event (full or short form) and nothing else: no
+    // opening, no role, no "City, ST" outside the event's own wording.
+    if (!has(role) && !has(location)) return `${mode} copy must name its verified event`;
+    if (/\bhiring\b|\bopenings?\b|\bposting\b/i.test(copy)) return `${mode} copy must not claim a current opening`;
+    const rest = [company, role, location].filter(Boolean).reduce((text, value) => text.split(value).join(' '), copy);
+    if (CITY_STATE.test(rest)) return `${mode} copy must not name a location outside its event`;
+    return '';
+  }
   if (mode === 'exact') return has(role) && has(location) ? '' : 'exact copy must name its verified role and site';
   // Neither lower mode may place the company anywhere ("Acme, LP" is a name, not a place).
   const withoutCompany = company ? copy.split(company).join(' ') : copy;
@@ -291,6 +305,7 @@ function renderJoleEmployerStepV4({ step, firstName, company, mailingAddress, pe
   if (mode === 'hold') throw fail('personalization_hold', `Jole personalization hold: ${personalization.reason || 'held for review'}`);
   if (!SENDABLE_MODES.includes(mode)) throw fail('personalization_mode_missing', `no Jole personalization mode for this lead (${mode || 'unclassified'})`);
   const template = V4_COPY[mode];
+  if (!template) throw fail('personalization_mode_missing', `Jole v4 has no copy for mode ${mode}`);
   const vars = { first_name: cleanVariable(firstName, 'first_name'), company: cleanVariable(companyWithoutDashSuffix(company), 'company') };
   if (mode === 'exact' || mode === 'role_only') vars.role = cleanVariable(personalization.role, 'role');
   if (mode === 'exact') {
@@ -330,6 +345,8 @@ const COPY_VERSION_V5 = 'jole_industrial_employer_v5';
 
 const V5_T1_OFFER = "Jole supplies contract skilled tradespeople to industrial sites. If that's an option, I can check whether we could cover the role and how quickly someone could realistically start.";
 const V5_T2_OFFER = "I help industrial sites with both contract crews and permanent skilled trade hires.\n\nIf useful, I can send over the trades I typically help with.";
+const V5_SIGNAL_T1_OFFER = "Jole supplies contract skilled tradespeople to industrial sites. If that's an option, I can check whether we could cover it and how quickly someone could realistically start.";
+const V5_EXPANSION_T1_OFFER = "Jole supplies contract skilled tradespeople to industrial sites. If that's an option, I can check which trades we could cover and how quickly someone could realistically start.";
 const V5_T3 = 'Hi {{first_name}},\n\nQuick question, are you the one who handles bringing in outside tradespeople, or does someone else on your team take care of that?\n\nJorge';
 const V5_COPY = Object.freeze({
   exact: Object.freeze({
@@ -353,6 +370,24 @@ const V5_COPY = Object.freeze({
     bodies: Object.freeze([
       "Hi {{first_name}},\n\nWhen a skilled trade position comes up at {{company}}, is it strictly a permanent hire, or would bringing in contract labor help in the meantime?\n\nJole supplies contract skilled tradespeople to industrial sites. If that's ever an option, I can check whether we could cover it and how quickly someone could realistically start.\n\nJorge",
       `Hi {{first_name}},\n\nWhen {{company}} brings on skilled trades, is it usually for a specific project, or to grow your crew long term?\n\n${V5_T2_OFFER}\n\nJorge`,
+      V5_T3,
+    ]),
+  }),
+  // Demand-signal modes (approved 2026-11-13): a verified contract/project award
+  // or a verified expansion, confirmed within 30 days when Touch 1 renders.
+  award: Object.freeze({
+    subject: '{{event_short}}',
+    bodies: Object.freeze([
+      `Hi {{first_name}},\n\nSaw {{company}} picked up {{event}}.\n\nWill your own crew cover that work, or would contract tradespeople help during the peak?\n\n${V5_SIGNAL_T1_OFFER}\n\nJorge`,
+      `Hi {{first_name}},\n\nAs {{event_short}} ramps up, are you planning to add to your crew, or cover the peak with outside help?\n\n${V5_T2_OFFER}\n\nJorge`,
+      V5_T3,
+    ]),
+  }),
+  expansion: Object.freeze({
+    subject: '{{event_short}}',
+    bodies: Object.freeze([
+      `Hi {{first_name}},\n\nSaw the news on {{event}}.\n\nAs that comes online, is the plan to hire permanently, or would contract tradespeople help while you build out the crew?\n\n${V5_EXPANSION_T1_OFFER}\n\nJorge`,
+      `Hi {{first_name}},\n\nWith {{event_short}}, are you adding skilled trades for a specific phase, or growing the crew long term?\n\n${V5_T2_OFFER}\n\nJorge`,
       V5_T3,
     ]),
   }),
@@ -403,6 +438,10 @@ function renderJoleEmployerStepV5({ step, firstName, company, mailingAddress, pe
   const vars = { first_name: cleanVariable(firstName, 'first_name'), company: cleanVariable(companyWithoutDashSuffix(company), 'company') };
   if (mode === 'exact' || mode === 'role_only') vars.role = cleanVariable(personalization.role, 'role');
   if (mode === 'exact') vars.location = cleanVariable(personalization.location, 'location');
+  if (SIGNAL_MODES.includes(mode)) {
+    vars.event = cleanVariable(personalization.role, 'event');
+    vars.event_short = cleanVariable(personalization.location, 'event_short');
+  }
   const fill = text => text.replace(/{{(\w+)}}/g, (_, key) => {
     if (!vars[key]) throw fail('invalid_variable', `Jole copy variable ${key} is missing`);
     return vars[key];
@@ -504,7 +543,7 @@ module.exports = {
   JOLE_INDUSTRIAL_EMPLOYER_COPY_V3, COPY_VERSION_V3, JOLE_V3_OVERVIEW_URL,
   renderJoleEmployerStepV3, validateJoleEmployerEmailV3, companyWithoutDashSuffix,
   JOLE_COPY_VERSIONS, CURRENT_COPY_VERSION, LEGACY_COPY_VERSION, resolveJoleCopyVersion,
-  JOLE_INDUSTRIAL_EMPLOYER_COPY_V4, COPY_VERSION_V4, PERSONALIZATION_MODES, SENDABLE_MODES,
+  JOLE_INDUSTRIAL_EMPLOYER_COPY_V4, COPY_VERSION_V4, PERSONALIZATION_MODES, SENDABLE_MODES, SIGNAL_MODES,
   renderJoleEmployerStepV4, validateJoleEmployerEmailV4, v4ModeProblem,
   JOLE_INDUSTRIAL_EMPLOYER_COPY_V5, COPY_VERSION_V5, renderJoleEmployerStepV5, validateJoleEmployerEmailV5, v5ModeProblem,
   joleThreadCopyVersion,

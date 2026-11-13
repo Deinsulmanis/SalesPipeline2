@@ -82,9 +82,9 @@ function personalizationFor(lead, { now = Date.now(), enforceEvidenceAge = true,
   //   neutral: the thread mode is general_craft, and either the lead is
   //            classified general_craft or its first send recorded general_craft
   //            (a started neutral thread continues on its later touches).
-  //   hiring:  the thread mode is exact or role_only and the lead's reviewed
-  //            classification entry carries its own evidence (a cited posting
-  //            re-opened on its public page) in that same mode; on Touch 1 the
+  //   claim:   the thread mode is exact, role_only, award or expansion and the lead's reviewed
+  //            classification entry carries its own evidence (a cited posting,
+  //            award record or news item re-opened at its source) in that same mode; on Touch 1 the
   //            evidence must also be within the 30-day rule (personalizationFor
   //            falls a stale entry to general_craft, which is then refused).
   const importGap = !enforceEvidenceAge && personalization.status === 'needs_review'
@@ -95,7 +95,7 @@ function personalizationFor(lead, { now = Date.now(), enforceEvidenceAge = true,
   const pinned = resolved?.source === 'ledger';
   const ownEvidence = Boolean(entry?.evidenceUrl && entry?.publicPageChecked === true && entry?.evidenceCheckedAt);
   const reviewedNeutral = importGap && resolved.mode === 'general_craft' && (classified === 'general_craft' || pinned);
-  const reviewedHiring = importGap && ['exact', 'role_only'].includes(resolved.mode) && classified === resolved.mode && ownEvidence;
+  const reviewedHiring = importGap && ['exact', 'role_only', 'award', 'expansion'].includes(resolved.mode) && classified === resolved.mode && ownEvidence;
   if (personalization.status !== 'ready' && !reviewedNeutral && !reviewedHiring) throw fail('needs_review', `personalization needs review: ${personalization.reason || 'not approved'}`);
   // "Is hiring X" must still be true: evidence older than the campaign allows is re-verified first.
   const maxAge = campaign.personalization?.maxEvidenceAgeDays;

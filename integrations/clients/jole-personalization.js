@@ -7,8 +7,9 @@
  * source-controlled data built from the 2026-10-21 1,000-lead re-audit. One
  * entry per lead id, no contact details:
  *
- *   mode               exact | role_only | general_craft | hold
+ *   mode               exact | role_only | general_craft | award | expansion | hold
  *   role, location     the verified values the mode may name (null otherwise)
+ *   event, eventShort  award/expansion only: the verified event, full and short form
  *   evidenceUrl, evidenceCheckedAt, evidenceStatus, reason
  *
  * followUpHolds names already-contacted leads (any copy version) whose next
@@ -32,7 +33,9 @@
 
 const DATA = require('./data/jole-personalization-v4.json');
 const DELIVERABILITY_DATA = require('./data/jole-deliverability-holds.json');
-const { COPY_VERSION, COPY_VERSION_V3, COPY_VERSION_V4, COPY_VERSION_V5, SENDABLE_MODES, PERSONALIZATION_MODES } = require('./jole-copy');
+const { COPY_VERSION, COPY_VERSION_V3, COPY_VERSION_V4, COPY_VERSION_V5, SENDABLE_MODES, PERSONALIZATION_MODES, SIGNAL_MODES } = require('./jole-copy');
+// Modes whose Touch 1 makes a dated claim (an opening, an award, an expansion): 30-day evidence rule.
+const CLAIM_MODES = Object.freeze(['exact', 'role_only', ...SIGNAL_MODES]);
 const { readLeadProfile } = require('./lead-profile');
 
 // Versions whose sends record a personalization mode (v5 reuses v4's classification).
@@ -49,6 +52,7 @@ const LEGACY_SUBJECTS = Object.freeze({
 const WAVES = Object.freeze([
   require('./data/jole-personalization-groupa-20261112.json'),
   require('./data/jole-personalization-groupa-hiring-20261112.json'),
+  require('./data/jole-personalization-buyers102-20261113.json'),
 ]);
 const LEADS = Object.freeze(Object.assign({}, ...WAVES.map(wave => wave.leads || {}), DATA.leads || {}));
 const FRESHNESS_DAYS = 30;
@@ -144,17 +148,19 @@ function jolePersonalizationFor(lead = {}, activities = [], { now = Date.now() }
   if (pinned) return pinned;
   const entry = joleClassificationFor(lead);
   if (!entry) return { mode: 'hold', role: null, location: null, secondaryRole: null, source: 'none', reason: 'not classified for Jole v4 personalization' };
-  // Fail downward: a current-hiring claim needs evidence checked within 30 days.
-  const stale = ['exact', 'role_only'].includes(entry.mode) && !evidenceFresh(entry, now);
+  // Fail downward: a hiring, award or expansion claim needs evidence checked within 30 days.
+  const stale = CLAIM_MODES.includes(entry.mode) && !evidenceFresh(entry, now);
   const mode = stale ? 'general_craft' : entry.mode;
+  const signal = SIGNAL_MODES.includes(mode);
   return {
-    mode, role: ['exact', 'role_only'].includes(mode) ? entry.role || null : null,
-    location: mode === 'exact' ? entry.location || null : null,
+    // A signal mode's event rides in role (full wording) and location (short form).
+    mode, role: signal ? entry.event || null : ['exact', 'role_only'].includes(mode) ? entry.role || null : null,
+    location: signal ? entry.eventShort || null : mode === 'exact' ? entry.location || null : null,
     secondaryRole: mode === 'exact' ? entry.secondaryRole || null : null, source: 'classification',
     reason: stale ? `evidence checked ${entry.evidenceCheckedAt || 'never'} is older than ${FRESHNESS_DAYS} days; ${entry.mode} fell to general_craft` : entry.reason || '',
     // Strings the lower modes must never print (the claims the evidence cannot support).
-    forbiddenRoles: mode === 'general_craft' ? [...new Set([...(entry.unsupportedRoles || []), entry.role].filter(Boolean))] : [],
-    forbiddenLocations: mode === 'exact' ? [] : [...new Set([...(entry.unsupportedLocations || []), entry.location].filter(Boolean))],
+    forbiddenRoles: mode === 'general_craft' ? [...new Set([...(entry.unsupportedRoles || []), entry.role, entry.event].filter(Boolean))] : [],
+    forbiddenLocations: mode === 'exact' || signal ? [] : [...new Set([...(entry.unsupportedLocations || []), entry.location, entry.eventShort].filter(Boolean))],
   };
 }
 

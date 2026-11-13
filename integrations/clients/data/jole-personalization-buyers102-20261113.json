@@ -1,0 +1,1282 @@
+{
+ "schema": "jole_personalization_wave",
+ "copyVersion": "jole_industrial_employer_v5",
+ "decidedAt": "2026-11-13",
+ "source": {
+  "wave": "Jole buyers-102 contacts 2026-11-13 (218 + 215 lists)",
+  "import": "POST /api/clients/jole/leads/import 2026-11-13, 86 written",
+  "demand": "free demand pass 2026-11-13 (LinkedIn, employer ATS and careers pages, USAspending, news re-opened at the publisher)",
+  "review": "JoleBTXLeadSample/Buyers102_Contacts_2026-11-13 (operator files, not in the repository)"
+ },
+ "counts": {
+  "general_craft": 62,
+  "exact": 17,
+  "role_only": 4,
+  "award": 1,
+  "expansion": 2
+ },
+ "leads": {
+  "mwel7ptp9c57afb6dd58": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptp2af66ffa8faf": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptp4439ee2c43b7": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptp4151d2416a67": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptp17601895593d": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptp18be7f00c655": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptp9df96cb0c464": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptp236ea5843fba": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptp237ffda16778": {
+   "mode": "exact",
+   "role": "CNC Machinists",
+   "location": "Chattanooga, TN",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.linkedin.com/jobs/view/cnc-machinist-at-card-monroe-corp-4485662873",
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-13",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "3 craft posting(s) re-opened 2026-11-13: CNC Machinist (Ringgold, GA, 2026-10-30, LinkedIn (re-opened, accepting applications)); Senior CNC Machinist (Hixson, TN, 2026-11-01, LinkedIn (re-opened, accepting applications)); Senior CNC Machinist (Chattanooga, TN, 2026-10-30, LinkedIn (re-opened, accepting applications))",
+   "unsupportedRoles": [
+    "CNC Machinist",
+    "Senior CNC Machinist"
+   ],
+   "unsupportedLocations": [
+    "Chattanooga, TN",
+    "Hixson, TN",
+    "Ringgold, GA"
+   ],
+   "company": "Card-Monroe"
+  },
+  "mwel7ptpd6f05107f92d": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptqf5b54a61e2b6": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptqd1dde62b4bad": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptqba9661599633": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptqe4fb775be28b": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq8524bffaca5b": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq288287440398": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq2a14e1c80a90": {
+   "mode": "exact",
+   "role": "TIG Welders",
+   "location": "Fremont, NE",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.linkedin.com/jobs/view/tig-stainless-welder-fabricator-at-elemetal-fabrication-%2B-machine-4479271968",
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-13",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "1 craft posting(s) re-opened 2026-11-13: TIG Stainless Welder / Fabricator (Fremont, NE, 2026-10-14, LinkedIn (re-opened, accepting applications))",
+   "unsupportedRoles": [
+    "TIG Stainless Welder / Fabricator"
+   ],
+   "unsupportedLocations": [
+    "Fremont, NE"
+   ],
+   "company": "EleMETAL Fabrication + Machine"
+  },
+  "mwel7ptqcdc404014946": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptqc990fa94d267": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq97bcb0dced9b": {
+   "mode": "role_only",
+   "role": "CNC Machinists",
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": "https://hexagonmachine.com/careers/",
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "siteCheckedAt": null,
+   "siteSource": null,
+   "roleSource": "posting_title",
+   "evidenceStatus": "role_verified",
+   "reason": "1 craft posting(s) re-opened 2026-11-13: Lead Machinist (CNC mill and lathe) (site not stated, 2026-11-07, Live employer careers page)",
+   "unsupportedRoles": [
+    "Lead Machinist (CNC mill and lathe)"
+   ],
+   "unsupportedLocations": [],
+   "company": "Hexagon Machine & MFG"
+  },
+  "mwel7ptq8eed90e229fb": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq5cc10fd721fc": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptqc177770cc74e": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq004ca6079445": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptqe3e6b542f8b9": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq0b19fdb3da86": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq9615a58f04ce": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq27cdc72d0153": {
+   "mode": "exact",
+   "role": "CNC Machine Operators",
+   "location": "Elyria, OH",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.paycomonline.net/v4/ats/web.php/portal/1B358219E7C82F45D23C44BBA0FB0EDD/jobs/377229",
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-13",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "1 craft posting(s) re-opened 2026-11-13: CNC Machine Operator - 3rd Shift (Elyria, OH 44035, 2026-11-04, Employer ATS (Paycom))",
+   "unsupportedRoles": [
+    "CNC Machine Operator - 3rd Shift"
+   ],
+   "unsupportedLocations": [
+    "Elyria, OH 44035"
+   ],
+   "company": "Multilink"
+  },
+  "mwel7ptq4bf623fcb22c": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq863bf0247e78": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq78646037e4f4": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptqf40a6338fac9": {
+   "mode": "exact",
+   "role": "CNC Machinists",
+   "location": "Everett, WA",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.paycomonline.net/v4/ats/web.php/portal/2B46FE49283DE87C11B9E9F23739AA8E/jobs/172081",
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-13",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "2 craft posting(s) re-opened 2026-11-13: CNC Machinist (Everett, WA 98204, 2026-11-11, Employer ATS (Paycom)); CNC Machinist Swing (Everett, WA 98204, 2026-11-11, Employer ATS (Paycom))",
+   "unsupportedRoles": [
+    "CNC Machinist",
+    "CNC Machinist Swing"
+   ],
+   "unsupportedLocations": [
+    "Everett, WA 98204"
+   ],
+   "company": "Pathfinder Manufacturing"
+  },
+  "mwel7ptqf8f8b5db7e51": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq5f2789ee7a07": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptqfbf4a900b5f1": {
+   "mode": "exact",
+   "role": "Machinists",
+   "location": "Grove City, PA",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.linkedin.com/jobs/view/machinist-at-pine-electronics-inc-4479131536",
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-13",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "1 craft posting(s) re-opened 2026-11-13: Machinist (Grove City, PA, 2026-10-15, LinkedIn (re-opened, accepting applications))",
+   "unsupportedRoles": [
+    "Machinist"
+   ],
+   "unsupportedLocations": [
+    "Grove City, PA"
+   ],
+   "company": "Pine Electronics"
+  },
+  "mwel7ptq338ef126aa37": {
+   "mode": "exact",
+   "role": "CNC Machine Operators",
+   "location": "Harwood Heights, IL",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.linkedin.com/jobs/view/cnc-machine-operator-2nd-shift-at-qcc-llc-4482162457",
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-13",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "1 craft posting(s) re-opened 2026-11-13: CNC Machine Operator - 2nd Shift (Harwood Heights, IL, 2026-10-21, LinkedIn (re-opened, accepting applications))",
+   "unsupportedRoles": [
+    "CNC Machine Operator - 2nd Shift"
+   ],
+   "unsupportedLocations": [
+    "Harwood Heights, IL"
+   ],
+   "company": "QCC"
+  },
+  "mwel7ptq3232b28abcda": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq97cb6d4f1a5a": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptqc965818580df": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptqe8c2cf0ba33d": {
+   "mode": "award",
+   "event": "the Army Corps tainter gate and sector gate fabrication work",
+   "eventShort": "the Corps gate work",
+   "evidenceUrl": "https://www.usaspending.gov/award/CONT_AWD_W912EK25C0018_9700_-NONE-_-NONE-",
+   "reason": "USAspending (API, checked 2026-11-13): four active Army Corps awards to Sealevel Construction for tainter gate, sector gate and bulkhead fabrication (W912EE23C0005 $35.3M to 2027-02; W912P825C0031 $6.1M to 2028-03; W912EK25C0018 $4.9M to 2029-01; W912EK25CA017 $1.3M to 2027-03)",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "evidenceStatus": "event_verified",
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "company": "Sealevel Construction"
+  },
+  "mwel7ptqa596da899ef9": {
+   "mode": "exact",
+   "role": "CNC Machine Operators",
+   "location": "Reno, NV",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.linkedin.com/jobs/view/cnc-finishing-technician-weekday-swing-shift-at-sendcutsend-4486456769",
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-13",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "12 craft posting(s) re-opened 2026-11-13: CNC Finishing Technician - Weekday Swing Shift (Reno, NV, 2026-11-02, LinkedIn (re-opened, accepting applications)); CNC Machine Operator - Weekday Day Shift (Reno, NV, 2026-11-06, LinkedIn (re-opened, accepting applications)); CNC Finishing Technician - Weekend Night Shift (Reno, NV, 2026-11-02, LinkedIn (re-opened, accepting applications))",
+   "unsupportedRoles": [
+    "CNC Finishing Technician - Weekday Swing Shift",
+    "CNC Finishing Technician - Weekend Night Shift",
+    "CNC Laser Operator - Weekday Day Shift",
+    "CNC Laser Operator - Weekday Swing Shift",
+    "CNC Machine Operator - Weekday Day Shift",
+    "CNC Machine Operator - Weekend Day Shift",
+    "CNC Machine Operator - Weekend Night Shift",
+    "CNC Press Brake Operator - Weekday Swing Shift",
+    "DFM - CNC Machining (5-axis Milling Estimators)",
+    "Powder Coating Technician - Weekend Night Shift"
+   ],
+   "unsupportedLocations": [
+    "Arlington, TX",
+    "Pittston, PA",
+    "Reno, NV"
+   ],
+   "company": "SendCutSend"
+  },
+  "mwel7ptqa248bdc13c47": {
+   "mode": "exact",
+   "role": "CNC Machinists",
+   "location": "Manchester, NH",
+   "secondaryRole": null,
+   "evidenceUrl": "https://100hires.com/j/GiE9tGE",
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-13",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "1 craft posting(s) re-opened 2026-11-13: CNC Machinist (Manchester, NH, 2026-10-29, Employer job page on 100hires (TEMCO named))",
+   "unsupportedRoles": [
+    "CNC Machinist"
+   ],
+   "unsupportedLocations": [
+    "Manchester, NH"
+   ],
+   "company": "TEMCO Precision Machining"
+  },
+  "mwel7ptqe6320cd7b85e": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq5d70f559158b": {
+   "mode": "exact",
+   "role": "Welders",
+   "location": "Adel, GA",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.vulcansteel.com/careers/",
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-13",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "1 craft posting(s) re-opened 2026-11-13: Welders (careers page hiring list; GetLeads Welder/Fitter posted 2026-11-04) (Adel, GA, 2026-11-04, Live employer careers page)",
+   "unsupportedRoles": [
+    "Welders (careers page hiring list; GetLeads Welder/Fitter posted 2026-11-04)"
+   ],
+   "unsupportedLocations": [
+    "Adel, GA"
+   ],
+   "company": "Vulcan Steel Structures"
+  },
+  "mwel7ptq90e94c6f4c4b": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq97b3cd6428a2": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptqe32757a77925": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptqe8a5c572e802": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq758ca5d0a924": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq143b812b4c68": {
+   "mode": "exact",
+   "role": "Sheet Metal Fabricators",
+   "location": "Manvel, TX",
+   "secondaryRole": null,
+   "evidenceUrl": "https://100hires.com/j/7d7FRez",
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-13",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "1 craft posting(s) re-opened 2026-11-13: Sheet Metal GTAW/GMAW Fabrication Technician (Manvel, TX, 2026-11-10, Employer job page on 100hires (Amtex named))",
+   "unsupportedRoles": [
+    "Sheet Metal GTAW/GMAW Fabrication Technician"
+   ],
+   "unsupportedLocations": [
+    "Manvel, TX"
+   ],
+   "company": "Amtex Precision Fabrication"
+  },
+  "mwel7ptq6da5dce49256": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq37d2b77d255a": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq74a465f10d70": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq312884f5feb5": {
+   "mode": "role_only",
+   "role": "CNC Machinists",
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": "https://cnc-mfg.net/careers/",
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "siteCheckedAt": null,
+   "siteSource": null,
+   "roleSource": "posting_title",
+   "evidenceStatus": "role_verified",
+   "reason": "2 craft posting(s) re-opened 2026-11-13: Machinist CNC Lathe (Coatesville, PA 19320, 2026-10-22, Live employer careers page); Machinist CNC Mill (Coatesville, PA 19320, 2026-10-22, Live employer careers page)",
+   "unsupportedRoles": [
+    "Machinist CNC Lathe",
+    "Machinist CNC Mill"
+   ],
+   "unsupportedLocations": [
+    "Coatesville, PA 19320"
+   ],
+   "company": "CNC Manufacturing"
+  },
+  "mwel7ptq310363e31ca6": {
+   "mode": "role_only",
+   "role": "CNC Machinists",
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.coleys.com/careers/",
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "siteCheckedAt": null,
+   "siteSource": null,
+   "roleSource": "posting_title",
+   "evidenceStatus": "role_verified",
+   "reason": "2 craft posting(s) re-opened 2026-11-13: CNC Machinist - 1st Shift (Mansfield, OH, 2026-11-04, Live employer careers page); CNC Machinist - 2nd Shift (Mansfield, OH, 2026-11-04, Live employer careers page)",
+   "unsupportedRoles": [
+    "CNC Machinist - 1st Shift",
+    "CNC Machinist - 2nd Shift"
+   ],
+   "unsupportedLocations": [
+    "Mansfield, OH"
+   ],
+   "company": "Coleys CNC Machining"
+  },
+  "mwel7ptqa3f7ffae4ff0": {
+   "mode": "expansion",
+   "event": "the new crane model Cranemasters is building at its Chesterfield plant",
+   "eventShort": "the new crane build",
+   "evidenceUrl": "https://richmondbizsense.com/2026/10/29/railroad-contractor-cranemasters-building-new-crane-model-at-local-manufacturing-plant/",
+   "reason": "Richmond BizSense (2026-10-29, re-opened 2026-11-13): production started on a new crane model at the Chesterfield plant",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "evidenceStatus": "event_verified",
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "company": "Cranemasters"
+  },
+  "mwel7ptqebecee76e224": {
+   "mode": "exact",
+   "role": "CNC Machinists",
+   "location": "Easton, PA",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.linkedin.com/jobs/view/4489459134",
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-13",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "1 craft posting(s) re-opened 2026-11-13: CNC Machinist (Easton, PA, 2026-11-11, LinkedIn (re-opened))",
+   "unsupportedRoles": [
+    "CNC Machinist"
+   ],
+   "unsupportedLocations": [
+    "Easton, PA"
+   ],
+   "company": "D. Gillette Industrial Services"
+  },
+  "mwel7ptq76c8ca1b4544": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptqcd748ddbcae2": {
+   "mode": "role_only",
+   "role": "Welders",
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": "https://recruiting.paylocity.com/recruiting/jobs/All/2f904dfe-07fd-4922-80dd-2afc8eefc2f7/DeWys-Metal-Solutions",
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "siteCheckedAt": null,
+   "siteSource": null,
+   "roleSource": "posting_title",
+   "evidenceStatus": "role_verified",
+   "reason": "2 craft posting(s) re-opened 2026-11-13: Welder - 2nd Shift (ReFab Metal Fab) (West Michigan, 2026-11-02, Employer ATS (Paylocity live list)); Welder/Fabricator - 2nd Shift (DeWys Manufacturing) (West Michigan, 2026-10-27, Employer ATS (Paylocity live list))",
+   "unsupportedRoles": [
+    "Welder - 2nd Shift (ReFab Metal Fab)",
+    "Welder/Fabricator - 2nd Shift (DeWys Manufacturing)"
+   ],
+   "unsupportedLocations": [],
+   "company": "DeWys Metal Solutions"
+  },
+  "mwel7ptq98cf38c5415c": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq1670a818edda": {
+   "mode": "exact",
+   "role": "Fabricators",
+   "location": "Traverse City, MI",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.linkedin.com/jobs/view/cnc-cutting-operator-at-great-lakes-stainless-inc-4489416007",
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-13",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "3 craft posting(s) re-opened 2026-11-13: CNC Cutting Operator (Traverse City, MI, 2026-10-16, LinkedIn (re-opened, accepting applications)); Assembler / Fabricator / Finisher / Basic Welder (Traverse City, MI, 2026-10-16, LinkedIn (re-opened, accepting applications)); Detailer / Packer / Cleaner / Assembler (Custom Fabricated Cabinets) (Traverse City, MI, 2026-10-16, LinkedIn (re-opened, accepting applications))",
+   "unsupportedRoles": [
+    "Assembler / Fabricator / Finisher / Basic Welder",
+    "CNC Cutting Operator",
+    "Detailer / Packer / Cleaner / Assembler (Custom Fabricated Cabinets)"
+   ],
+   "unsupportedLocations": [
+    "Traverse City, MI"
+   ],
+   "company": "Great Lakes Stainless"
+  },
+  "mwel7ptqd1cc01820035": {
+   "mode": "exact",
+   "role": "CNC Operators",
+   "location": "Greenwood, SC",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.linkedin.com/jobs/view/cnc-operator-2nd-shift-monday-thursday-3-00-pm-1-00-am-at-greenwood-fabricating-plating-llc-4483354228",
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-13",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "4 craft posting(s) re-opened 2026-11-13: CNC Operator 2nd shift (Monday-Thursday 3:00 PM-1:00 AM) (Greenwood, SC, 2026-10-24, LinkedIn (re-opened, accepting applications)); Shift Supervisor (Fabrication), First Shift (Greenwood, SC, 2026-10-21, LinkedIn (re-opened, accepting applications)); Industrial Maintenance Mechanic, 1st Shift (Greenwood, SC, 2026-11-10, Employer ATS (iSolvedHire))",
+   "unsupportedRoles": [
+    "CNC Operator 2nd shift (Monday-Thursday 3:00 PM-1:00 AM)",
+    "CNC Punch-Bend Operator 3rd shift",
+    "Industrial Maintenance Mechanic, 1st Shift",
+    "Shift Supervisor (Fabrication), First Shift"
+   ],
+   "unsupportedLocations": [
+    "Greenwood, SC"
+   ],
+   "company": "Greenwood Fabricating & Plating"
+  },
+  "mwel7ptq86cd2d4a32bc": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptqbcfd7e28d2e9": {
+   "mode": "exact",
+   "role": "CNC Machinists",
+   "location": "Erie, PA",
+   "secondaryRole": null,
+   "evidenceUrl": "https://ismerie.bamboohr.com/careers/59",
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-13",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "5 craft posting(s) re-opened 2026-11-13: CNC Operator/Machinist 1st & 2nd Shift (Erie, PA, 2026-10-19, Employer ATS (BambooHR live list)); CNC Machinist / Programmer (5-Axis and Mill Turn) (Erie, PA, 2026-10-19, Employer ATS (BambooHR live list)); Industrial Machining Maintenance Technician (Erie, PA, 2026-10-19, Employer ATS (BambooHR live list))",
+   "unsupportedRoles": [
+    "CNC Machinist / Programmer (5-Axis and Mill Turn)",
+    "CNC Operator/Machinist 1st & 2nd Shift",
+    "Fabricator/Brake Press Operator 1st & 2nd Shift",
+    "Industrial Machining Maintenance Technician",
+    "Utility Maintenance Technician"
+   ],
+   "unsupportedLocations": [
+    "Erie, PA"
+   ],
+   "company": "Industrial Sales and Manufacturing"
+  },
+  "mwel7ptqdd2d7d9825a9": {
+   "mode": "exact",
+   "role": "CNC Machinists and Welders",
+   "location": "Newport News, VA",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.innovatedmachine.com/employment/",
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-13",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "3 craft posting(s) re-opened 2026-11-13: CNC Machinist (employment page: NOW HIRING) (Newport News, VA, 2026-11-05, Live employer careers page); Welder (employment page: NOW HIRING) (Newport News, VA, 2026-11-05, Live employer careers page); Maintenance Mechanic (employment page) (Newport News, VA, 2026-11-05, Live employer careers page)",
+   "unsupportedRoles": [
+    "CNC Machinist (employment page: NOW HIRING)",
+    "Maintenance Mechanic (employment page)",
+    "Welder (employment page: NOW HIRING)"
+   ],
+   "unsupportedLocations": [
+    "Newport News, VA"
+   ],
+   "company": "Innovated Machine & Tool"
+  },
+  "mwel7ptq52231c7e3d25": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq822c71b3196a": {
+   "mode": "exact",
+   "role": "CNC Machinists",
+   "location": "Chaska, MN",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.linkedin.com/jobs/view/cnc-horizontal-milling-machinists-all-shifts-at-jonaco-machine-4485627409",
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-13",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "5 craft posting(s) re-opened 2026-11-13: CNC Horizontal Milling Machinists-All Shifts (Chaska, MN, 2026-10-30, LinkedIn (re-opened, accepting applications)); Manual Milling Machinist (Chaska, MN, 2026-10-30, LinkedIn (re-opened, accepting applications)); CNC Turning and Milling Machinists Needed ***HIRING BONUSES*** (Chaska, MN, 2026-10-30, LinkedIn (re-opened, accepting applications))",
+   "unsupportedRoles": [
+    "CNC Horizontal Milling Machinists-All Shifts",
+    "CNC Turning Machinists ( Aerospace) $4000- $5000 Hiring Bonus!!",
+    "CNC Turning and Milling Machinists Needed ***HIRING BONUSES***",
+    "Horizontal Milling Machinists Level 3",
+    "Manual Milling Machinist"
+   ],
+   "unsupportedLocations": [
+    "Chaska, MN"
+   ],
+   "company": "Jonaco Machine"
+  },
+  "mwel7ptq7a757f01b9e2": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq80f11c0f904b": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq0fe9f2ad4e62": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq3160afb9ff09": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptqe1078a272557": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq470f61669660": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq7d41cc166f3e": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq0665d08ed249": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptqa719b460068a": {
+   "mode": "expansion",
+   "event": "Sargent Metal's $9 million Anderson expansion",
+   "eventShort": "the Anderson expansion",
+   "evidenceUrl": "https://www.andersoncountysc.org/sargent-metal-fabricators-inc-expanding-operations-in-anderson-county/",
+   "reason": "Anderson County announcement (2025-11-14, re-opened 2026-11-13): $9M expansion adding 20 jobs, to be completed over the next few years",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "evidenceStatus": "event_verified",
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "company": "Sargent Metal Fabricators"
+  },
+  "mwel7ptqf99004ebe4d6": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq50c095581fbd": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq0e4130f00a85": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq9457dde69f2f": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptqf8e564944f7d": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq58d6b4cf1dda": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq1d321a9ebd93": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptq6abfc3750c9e": {
+   "mode": "exact",
+   "role": "Electricians",
+   "location": "Winooski, VT",
+   "secondaryRole": null,
+   "evidenceUrl": "https://www.linkedin.com/jobs/view/electrician-at-vhv-company-4480924019",
+   "evidenceCheckedAt": "2026-11-13",
+   "publicPageChecked": true,
+   "siteCheckedAt": "2026-11-13",
+   "siteSource": "posting_location",
+   "roleSource": "posting_title",
+   "evidenceStatus": "site_and_role_verified",
+   "reason": "1 craft posting(s) re-opened 2026-11-13: Electrician (Winooski, VT, 2026-10-18, LinkedIn (re-opened, accepting applications))",
+   "unsupportedRoles": [
+    "Electrician"
+   ],
+   "unsupportedLocations": [
+    "Winooski, VT"
+   ],
+   "company": "VHV Company"
+  },
+  "mwel7ptq12d132d64b73": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  },
+  "mwel7ptqfd1cd3390600": {
+   "mode": "general_craft",
+   "role": null,
+   "location": null,
+   "secondaryRole": null,
+   "evidenceUrl": null,
+   "evidenceCheckedAt": null,
+   "unsupportedRoles": [],
+   "unsupportedLocations": [],
+   "evidenceStatus": "no_posting_claim",
+   "reason": "Buyers-102 wave 2026-11-13: ICP-qualified industrial employer, buyer verified, Apollo-verified work email; no verified craft posting, award or expansion, so neutral copy only."
+  }
+ }
+}
