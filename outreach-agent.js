@@ -114,6 +114,9 @@ const { handleManagedClientReply, managedReplyNeedsHandler } = require('./integr
 const { buildClientSuppression } = require('./integrations/clients/suppression');
 const { getClient: getManagedClient } = require('./integrations/clients/registry');
 const { getLedgerStore } = require('./integrations/clients/ledger-store');
+const { loadClientMeetingHolds, clientMeetingHoldReason, describeClientMeetingHolds } = require('./integrations/clients/meeting-hold');
+// Loaded once per send run (see run()). null = not loaded, which holds nothing.
+let CLIENT_MEETING_HOLDS = null;
 const { leadsInEmailScope, tenantOf } = require('./integrations/clients/email-scope');
 const { mailboxLeadScope } = require('./integrations/mailbox-conversation-ownership');
 const {
@@ -4937,6 +4940,9 @@ function coldFollowUpBlockReason(lead) {
   // touch would repeat a claim its evidence audit found false).
   const clientHold = isClientTemplateId(lead.emailTemplateId) ? clientFollowUpHold(lead) : '';
   if (clientHold) return clientHold;
+  // A managed-client lead with a ledger meeting has left the cold sequence.
+  const meetingHold = clientMeetingHoldReason(lead, CLIENT_MEETING_HOLDS);
+  if (meetingHold) return meetingHold;
   const family = familyForLead(lead);
   if (family === CAMPAIGN_FAMILY.UNROUTED) return 'unknown or ambiguous niche';
   if (isManagedFamily(family) !== isClientTemplateId(lead.emailTemplateId)) return 'client template and campaign family disagree';
@@ -4958,6 +4964,7 @@ function selectQueued(leads) {
   // one warning per lead per window.
   const clientHeld = new Map();
   const personalizationHeld = new Map();
+  const meetingHeld = new Map();
   const selected = leads.filter(l => {
     if (l.stage !== QUEUE_STAGE) return false;   // you queued it
     if (!isValidEmail(l.email)) return false;    // sendable address
@@ -4985,6 +4992,11 @@ function selectQueued(leads) {
       personalizationHeld.set(client, (personalizationHeld.get(client) || 0) + 1);
       return false;
     }
+    if (clientMeetingHoldReason(l, CLIENT_MEETING_HOLDS)) {
+      const client = tenantOf(l);
+      meetingHeld.set(client, (meetingHeld.get(client) || 0) + 1);
+      return false;
+    }
     // Global suppression list (durable, survives row deletion / re-import) —
     // first-line exclusion; suppressionReason() is the last-line guard at send.
     if (SUPPRESSED_EMAILS.has(normEmail(l.email))) {
@@ -5008,6 +5020,9 @@ function selectQueued(leads) {
   for (const [client, count] of personalizationHeld) {
     console.log(`[client-hold] ${count} queued ${client} lead(s) held: personalization is on hold or not classified`);
   }
+  for (const [client, count] of meetingHeld) {
+    console.log(`[client-hold] ${count} queued ${client} lead(s) held: a meeting is booked, or the meeting ledger is unreadable`);
+  }
   return selected;
 }
 
@@ -5022,8 +5037,15 @@ function routedLeadCanUseCurrentSender(lead) {
 // + 3 days, Touch 3 at MAX(Touch 1 + 7 days, Touch 2 + 3 days).
 function selectFollowUps(leads, activities = []) {
   const now = Date.now();
+  const meetingHeld = new Map();
   const due = leads.filter(l => {
     if (l.emailStatus !== 'emailed') return false;
+    // A managed-client lead who booked a meeting gets no further cold touch.
+    if (clientMeetingHoldReason(l, CLIENT_MEETING_HOLDS)) {
+      const client = tenantOf(l);
+      meetingHeld.set(client, (meetingHeld.get(client) || 0) + 1);
+      return false;
+    }
     // A lead with a recorded, never-delivered demo pair (retired voice demo)
     // stays out of ordinary cold cadence, as it always has.
     if (hasUndeliveredDemoPair(l, activities)) return false;
@@ -5046,6 +5068,9 @@ function selectFollowUps(leads, activities = []) {
     // a next step the ledger already shows delivered are all "not due".
     return isFollowUpDue(l, now, { activities });
   });
+  for (const [client, count] of meetingHeld) {
+    console.log(`[client-hold] ${count} ${client} follow-up(s) held: a meeting is booked, or the meeting ledger is unreadable`);
+  }
   return oldestDueFirst(due, activities);
 }
 
@@ -5821,6 +5846,11 @@ async function runInner() {
   }
   todaySent = quotaState.globalCount;
   dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
+
+  // Managed-client meetings, read once for this run's selection and send gates.
+  // A failed read holds that client's cold sends for the run, nothing else.
+  CLIENT_MEETING_HOLDS = await loadClientMeetingHolds({ store: getLedgerStore() });
+  for (const line of describeClientMeetingHolds(CLIENT_MEETING_HOLDS)) console.log(JSON.stringify(line));
 
   // Phase 1 — new sends (stage === QUEUE_STAGE, never emailed)
   const queued = selectQueued(all);

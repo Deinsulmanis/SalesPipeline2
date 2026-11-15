@@ -570,6 +570,8 @@ async function schedulerRun(leads, env, { stopAtProvider = false } = {}) {
       const sandbox = {
         QUEUE_STAGE: 'Queued', routedLeadReady, tenantOf, DEFAULT_CLIENT_ID, SUPPRESSED_EMAILS: new Set(),
         isClientTemplateId: clientEmail.isClientTemplateId, clientSelectionHold: clientEmail.clientSelectionHold,
+        // No ledger meetings loaded for this pass: the meeting hold is covered in client-meeting-hold.test.js.
+        clientMeetingHoldReason: require('../integrations/clients/meeting-hold').clientMeetingHoldReason, CLIENT_MEETING_HOLDS: null,
         normEmail: e => (e || '').toLowerCase().trim(), classifyLeadEmail: classify,
         console: { log: capture, warn: capture, error: capture },
       };
