@@ -131,8 +131,11 @@ function renderClientLeadEmail(lead = {}, step = 1, { env = process.env, now = D
   const followUpHold = Number(step) > 1 ? renderer.followUpHold?.(lead) : '';
   if (followUpHold) throw fail('followup_hold', followUpHold);
   const personalization = version.evidenceAware ? renderer.personalizationFor(lead, activities, { now }) : undefined;
+  // A reviewed classification entry may carry the company's display name (for a lead
+  // imported under a raw legal name); every touch then prints the same name.
+  const displayCompany = String(renderer.classificationFor?.(lead)?.displayCompany || '').trim();
   const email = version.render({
-    step, firstName: inputs.firstName, company: lead.company, roles: inputs.roles, location: inputs.location,
+    step, firstName: inputs.firstName, company: displayCompany || lead.company, roles: inputs.roles, location: inputs.location,
     landingPageUrl: env[copyEnv.landingPageUrl] || '', bookingLink: env[copyEnv.bookingLink] || '',
     mailingAddress: env[copyEnv.mailingAddress] || '', personalization,
   });

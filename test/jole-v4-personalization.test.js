@@ -227,7 +227,7 @@ test('the classification covers the 902 untouched leads and 50 contacted holds, 
   assert.equal(entries.length, 902, '846 Queued + 56 Import untouched leads');
   const count = mode => entries.filter(([, entry]) => entry.mode === mode).length;
   assert.deepEqual({ exact: count('exact'), role_only: count('role_only'), general_craft: count('general_craft'), hold: count('hold') },
-    { exact: 463, role_only: 241, general_craft: 131, hold: 67 });
+    { exact: 463, role_only: 241, general_craft: 135, hold: 63 });
   const firstWindow = Date.parse('2026-10-22T12:00:00.000Z');
   for (const [id, entry] of entries) {
     if (entry.mode === 'exact') {
@@ -249,12 +249,37 @@ test('the classification covers the 902 untouched leads and 50 contacted holds, 
     assert.equal(entry.secondaryRole, null, `${id}: no second role was independently verified`);
     assert.ok(entry.evidenceStatus && entry.reason, id);
   }
-  // Every Import lead keeps its existing hold.
-  assert.equal(entries.filter(([, entry]) => entry.evidenceStatus === 'import_hold' && entry.mode === 'hold').length, 56);
+  // Every Import lead keeps its existing hold, except 4 released to neutral copy after the
+  // 2026-11-14 re-check (buyer re-verified, no CRM or suppression conflict).
+  assert.equal(entries.filter(([, entry]) => entry.evidenceStatus === 'import_hold' && entry.mode === 'hold').length, 52);
+  const released = entries.filter(([, entry]) => entry.evidenceStatus === 'import_hold_released');
+  assert.equal(released.length, 4);
+  for (const [id, entry] of released) assert.ok(entry.mode === 'general_craft' && entry.role === null && entry.location === null, id);
+  for (const [id, entry] of released) assert.match(entry.displayCompany, /^[A-Z][A-Za-z&. ]+$/, id);
   // Contacted threads: 50 held, none of them re-routed into v4.
   const holds = Object.keys(DATA.followUpHolds);
   assert.equal(holds.length, 50);
   for (const id of holds) assert.equal(DATA.leads[id], undefined, id);
   // No contact details are stored with the classification.
   assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '..', 'integrations', 'clients', 'data', 'jole-personalization-v4.json'), 'utf8'), /@[a-z0-9-]+\.[a-z]/i);
+});
+
+test('a released Import lead prints its reviewed display name on every touch', () => {
+  const { renderClientLeadEmail } = require('../integrations/clients/client-email');
+  const { buildLeadProfile, profileFromResearchRow, serializeLeadProfile } = require('../integrations/clients/lead-profile');
+  const lead = { id: 'mvcyikhf337e7c7f022f', company: 'ANDREW TOOL & MACHINING COMPANY, INC', contactName: 'Pat Rivera', email: 'pat@example.org',
+    clientId: 'jole', stage: 'Queued', emailStatus: '', emailStep: '', emailTemplateId: 'jole-industrial-employer-v1',
+    intendedCampaignVersion: 'jole-btx-employer-acquisition', campaign: 'jole-btx-employer-acquisition', leadNiche: 'jole_employer',
+    campaign_notes: serializeLeadProfile(buildLeadProfile({ clientId: 'jole', profile: profileFromResearchRow({
+      first_name: 'Pat', last_name: 'Rivera', title: 'President', buyer_type: 'Owner / executive', company_domain: 'example.org',
+      sector: 'Industrial fabrication / machinery', site_tie: 'REGION', hiring_site: 'Plymouth, MN',
+    }) })) };
+  const env = { ...process.env, JOLE_COMMERCIAL_MAILING_ADDRESS: '1200 Main Street, Suite 400, Houston, TX 77002', STAFFING_COMMERCIAL_MAILING_ADDRESS: '1200 Main Street, Suite 400, Houston, TX 77002' };
+  for (const step of [1, 2, 3]) {
+    const email = renderClientLeadEmail(lead, step, { env, now: Date.parse('2026-11-16T15:00:00Z') });
+    const text = `${email.subject}
+${email.body}`;
+    assert.doesNotMatch(text, /ANDREW TOOL|COMPANY, INC/, `step ${step}`);
+    if (step === 1) assert.match(text, /Andrew Tool & Machining/);
+  }
 });
