@@ -22,6 +22,7 @@ const { resolveSenderClient } = require('./ownership');
 const { clientCampaign } = require('./campaigns');
 const { readLeadProfile } = require('./lead-profile');
 const { REPLY_EVENT_TYPE } = require('./reply-pipeline');
+const { EVENT_TYPE: JOLE_AGENT_EVENT_TYPE } = require('./jole-conversation-agent');
 const { PIPELINE_STAGES, pipelineStageFor } = require('./pipeline');
 const { CLARIFICATION_STATUS } = require('./ledger');
 const { evaluateScopedSuppression } = require('./suppression');
@@ -245,6 +246,19 @@ function buildClientConversationDetail({
     })
     .sort((a, b) => Date.parse(b.receivedAt || 0) - Date.parse(a.receivedAt || 0));
 
+  // Conversation agent drafts (or escalations), newest first. An operator
+  // reviews and sends a draft by hand; nothing here or in the agent sends.
+  const agentDrafts = mine
+    .filter(row => text(row.eventType) === JOLE_AGENT_EVENT_TYPE)
+    .map(row => ({ row, data: meta(row) }))
+    .filter(({ data }) => !data.clientId || data.clientId === client.id)
+    .map(({ row, data }) => ({
+      createdAt: iso(row.occurredAt), subject: text(row.subject), draft: String(row.content == null ? '' : row.content),
+      recommendedAction: text(data.recommendedAction), replyGoal: text(data.replyGoal), status: text(data.status),
+      reason: text(data.reason), escalationReason: text(data.escalationReason), workflowState: text(data.workflowState),
+    }))
+    .sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0));
+
   const confirmedSends = mine
     .filter(row => classifySendEvent(row) === 'confirmed')
     .map(row => ({
@@ -288,6 +302,7 @@ function buildClientConversationDetail({
       companyDomain: text(company.domain), companySize: text(company.size), buyerType: text(contact.buyerType),
     },
     replies: replies.slice(0, 10),
+    agentDrafts: agentDrafts.slice(0, 5),
     sender,
     sequence,
     campaign: buildCampaign(lead, profile),

@@ -8442,6 +8442,17 @@ function renderClientConversation(d) {
       </article>`;
   }).join('');
 
+  const draftHtml = (d.agentDrafts || []).map(item => {
+    const label = item.recommendedAction === 'SEND_REPLY' ? 'Draft ready for review'
+      : item.recommendedAction === 'NO_REPLY' ? 'No reply needed' : 'Needs a person';
+    const tone = item.recommendedAction === 'SEND_REPLY' ? 'positive' : item.recommendedAction === 'NO_REPLY' ? '' : 'warn';
+    return `<article class="cd-reply">
+        <div class="cd-badges"><span class="cd-badge" data-tone="${escAttr(tone)}">${esc(label)}</span>${item.replyGoal && item.replyGoal !== 'NONE' ? `<span class="cd-badge">${esc(cdWords(item.replyGoal.toLowerCase()))}</span>` : ''}</div>
+        <span class="cd-meta">${esc(cdTime(item.createdAt) || '')}${item.escalationReason ? ' · ' + esc(item.escalationReason) : item.reason ? ' · ' + esc(item.reason) : ''}</span>
+        ${item.draft ? `<div class="cd-reply-body">${esc(item.draft)}</div><span class="cd-meta">Not sent. Review it, then send it from the Jole inbox by hand.</span>` : ''}
+      </article>`;
+  }).join('');
+
   const stepsHtml = (sequence.steps || []).length ? `<div class="cd-steps">${sequence.steps.map(step => `<div class="cd-step" data-state="${escAttr(step.state)}">
         <span class="cd-step-dot" aria-hidden="true">${CD_STEP_DOT[step.state] || '○'}</span>
         <span><span class="cd-step-label">Step ${esc(step.step)} — ${esc(step.label)}</span>
@@ -8493,6 +8504,7 @@ function renderClientConversation(d) {
   document.getElementById('cd-body').innerHTML = [
     cdSection('Contact', contactHtml ? `<div class="detail-fields">${contactHtml}</div>` : ''),
     cdSection(replies.length > 1 ? `Replies (${replies.length})` : 'Reply', replyHtml),
+    cdSection('Suggested reply (conversation agent)', draftHtml),
     cdSection('Sending inbox', cdSenderHtml(d.sender, client.displayName)),
     cdSection('Email sequence', stepsHtml),
     cdSection('Campaign context', campaignHtml ? `<div class="detail-fields">${campaignHtml}</div>` : ''),

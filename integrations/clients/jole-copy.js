@@ -362,7 +362,7 @@ module.exports = {
   JOLE_INDUSTRIAL_EMPLOYER_COPY, COPY_VERSION,
   renderJoleEmployerStep, validateJoleEmployerEmail, joleLandingPageUrl, joleBookingLink, joleFooter,
   JOLE_INDUSTRIAL_EMPLOYER_COPY_V3, COPY_VERSION_V3, JOLE_V3_OVERVIEW_URL,
-  renderJoleEmployerStepV3, validateJoleEmployerEmailV3, companyWithoutDashSuffix,
+  renderJoleEmployerStepV3, validateJoleEmployerEmailV3, companyWithoutDashSuffix, DASH_PUNCTUATION,
   JOLE_COPY_VERSIONS, CURRENT_COPY_VERSION, LEGACY_COPY_VERSION, resolveJoleCopyVersion,
   JOLE_INDUSTRIAL_EMPLOYER_COPY_V4, COPY_VERSION_V4, PERSONALIZATION_MODES, SENDABLE_MODES,
   renderJoleEmployerStepV4, validateJoleEmployerEmailV4, v4ModeProblem,

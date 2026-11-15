@@ -111,6 +111,7 @@ const { outreachBlockForLead, isArchivedLead, archiveReasonFromNotes, ARCHIVED_R
 const { actionOwnership, resolveSenderClient, resolveLeadClient } = require('./integrations/clients/ownership');
 const { resolveReplyClientContext } = require('./integrations/clients/reply-policy');
 const { handleManagedClientReply, managedReplyNeedsHandler } = require('./integrations/clients/reply-pipeline');
+const { runJoleConversationAgent, joleConversationAgentConfig, draftActivity: joleDraftActivity } = require('./integrations/clients/jole-conversation-agent');
 const { buildClientSuppression } = require('./integrations/clients/suppression');
 const { getClient: getManagedClient } = require('./integrations/clients/registry');
 const { getLedgerStore } = require('./integrations/clients/ledger-store');
@@ -899,6 +900,24 @@ function buildPitch(lead, opener, link, structuredPersonalization = null) {
     approvedGuarantee: offer,
     personalizationMetadata: null,
   };
+}
+
+/**
+ * Jole conversation agent: a reply draft (or escalation) for the operator,
+ * recorded beside the managed reply. Drafts only; nothing here sends. Off
+ * unless JOLE_CONVERSATION_AGENT_ENABLED=true.
+ */
+async function draftJoleReply({ lead, message, replyText, verdict, activities }) {
+  if (!joleConversationAgentConfig().enabled) return null;
+  const result = await runJoleConversationAgent({
+    lead, message, replyText, activities,
+    workflowState: verdict.workflowState, clarificationTopics: verdict.clarification?.topics || [],
+  });
+  console.log(JSON.stringify({
+    event: 'jole_agent_draft', lead_id: lead.id, message_id: message.messageId || '',
+    action: result.recommendedAction, status: result.status, reason: result.escalationReason || result.reason,
+  }));
+  return joleDraftActivity({ lead, message, workflowState: verdict.workflowState, result });
 }
 
 // Inbound late replies use strict append semantics: if the activity write
@@ -3388,6 +3407,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
           addGlobalSuppression: (target, reason) => addSuppression(target.email, reason, target.company, 'client-reply-auto'),
           store: getLedgerStore(),
           activities: activitiesForCycle || [],
+          draftReply: replyContext.clientId === 'jole' ? draftJoleReply : null,
         }));
       } catch (error) {
         console.error(JSON.stringify({

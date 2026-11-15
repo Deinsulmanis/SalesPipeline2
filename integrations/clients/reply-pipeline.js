@@ -20,6 +20,9 @@
  *   4. ledger       opportunity status and any clarification. Best effort: the
  *                   lead is already human-owned, and the evidence row keeps
  *                   everything needed to rebuild the ledger entry.
+ *   5. draft        optional: the client's conversation agent records a reply
+ *                   draft (or an escalation) for an operator. It never sends,
+ *                   and nothing above depends on it.
  */
 
 const { classifyClientReply, WORKFLOW_STATE } = require('./reply-policy');
@@ -71,6 +74,7 @@ async function handleManagedClientReply({ lead, message = {}, replyText = '', co
   const {
     recordActivity, applyLeadChange, applyGlobalUnsubscribe, addGlobalSuppression,
     store = null, activities = [], log = console, now = () => new Date().toISOString(),
+    draftReply = null,
   } = deps;
   if (!context?.ok || context.policyMode !== 'managed') throw new Error('handleManagedClientReply requires a resolved managed-client reply context');
   const clientId = context.clientId;
@@ -159,8 +163,24 @@ async function handleManagedClientReply({ lead, message = {}, replyText = '', co
     }
   }
 
-  log.log(JSON.stringify({ event: 'client_reply_handled', ...audit, sentiment: verdict.sentiment, suppression, ledger }));
-  return { handled: true, eventId, verdict, suppression, ledger };
+  // 5. Draft. Runs last so a slow or failing agent can never leave the lead in
+  // the cold cadence or skip its suppression.
+  let draft = 'skipped';
+  if (typeof draftReply === 'function' && state !== WORKFLOW_STATE.AUTOMATED) {
+    try {
+      const row = await draftReply({ lead, message, replyText, verdict, activities });
+      if (row) {
+        await recordActivity(row);
+        draft = 'recorded';
+      }
+    } catch (error) {
+      draft = 'failed';
+      log.error(JSON.stringify({ event: 'client_reply_draft_failed', ...audit, error: error.message }));
+    }
+  }
+
+  log.log(JSON.stringify({ event: 'client_reply_handled', ...audit, sentiment: verdict.sentiment, suppression, ledger, draft }));
+  return { handled: true, eventId, verdict, suppression, ledger, draft };
 }
 
 module.exports = { REPLY_EVENT_TYPE, replyEventId, handleManagedClientReply, managedReplyNeedsHandler };

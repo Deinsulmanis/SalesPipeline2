@@ -86,6 +86,7 @@ slot synchronously). `/api/agent/status` shows `running`.
 | Client send switch | `integrations/clients/send-policy.js`: `lifecycleStatus`/`active` (else `client_inactive`) → `sending.enabled` + `CLIENT_SENDING_AUTHORIZED` (else `client_sending_disabled`); also enforced at `withGmailProviderSend` |
 | Suppression scopes | `integrations/clients/suppression.js` (global → client), `ledger-store.js` `client_suppressions` |
 | Managed replies / clarifications / meetings | `reply-policy.js`, `reply-pipeline.js`, `ledger.js` |
+| Jole conversation agent (drafts only) | `integrations/clients/jole-conversation-agent.js` reads `.claude/skills/jole-btx-conversation/SKILL.md`; step 5 of `handleManagedClientReply`; `jole_agent_draft` rows shown in the conversation drawer; pricing escalates with no model call; `JOLE_CONVERSATION_AGENT_ENABLED` |
 | Explicit owner | `outreach_leads.client_id` / ColdEmail column Y (`clientId`); inference only for blank legacy rows |
 | Tenant-scoped email | `integrations/clients/email-scope.js` (`leadsInEmailScope`, `leadsForCalendarMatching`, `OUTREACH_EMAIL_UNIQUENESS`) |
 | Client capacity | `integrations/clients/capacity.js`; `[client-cap]` log line per send pass |
