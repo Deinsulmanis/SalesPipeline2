@@ -63,10 +63,12 @@ test('pricing: rate, cost, quote and rate-sheet questions are recognised', () =>
     'If I need one welder/fabricator for one week to help finish a project what would that rate look like?',
     'How much for two pipefitters?', 'Can you send a quote?', 'What is your markup?', 'Do you pay per diem?',
     'What would that cost us?', 'Is $45 an hour doable?',
+    'Could you cover 4 pipefitters in Port Arthur next month? What would you charge per hour?',
+    'What do you charge for a welder?', 'Are your guys hourly or day rate?',
   ]) assert.equal(isPricingRequest(text), true, text);
   for (const text of [
     'We do have an occasional need for temporary contract labor', "I'm in charge of hiring at the plant",
-    'What trades do you cover?', 'Can you staff a shutdown in March?',
+    'What trades do you cover?', 'Can you staff a shutdown in March?', 'Sarah is in charge of contractor services.',
   ]) assert.equal(isPricingRequest(text), false, text);
 });
 
@@ -88,8 +90,16 @@ test('states: opt-outs, rejections, outside ICP and auto replies get NO_REPLY wi
   for (const workflowState of [WORKFLOW_STATE.UNSUBSCRIBE, WORKFLOW_STATE.NOT_INTERESTED, WORKFLOW_STATE.OUTSIDE_ICP, WORKFLOW_STATE.AUTOMATED]) {
     assert.equal((await run({ createMessage, workflowState })).recommendedAction, 'NO_REPLY', workflowState);
   }
-  assert.equal((await run({ createMessage, workflowState: WORKFLOW_STATE.WRONG_CONTACT })).recommendedAction, 'ESCALATE_HUMAN');
   assert.equal(calls.length, 0);
+});
+
+test('states: a wrong-contact reply reaches the model for the referral ask', async () => {
+  const ask = "Hi Mike,\n\nThanks for pointing me in the right direction. Would you be willing to introduce me to Sarah?\n\nJorge";
+  const { calls, createMessage } = spy(modelReply({ recommendedAction: 'SEND_REPLY', replyGoal: 'REFERRAL_ASK', reason: 'referral', escalationReason: '', replyDraft: ask }));
+  const result = await run({ createMessage, workflowState: WORKFLOW_STATE.WRONG_CONTACT, replyText: "I'm not the right person. Sarah Lin is in charge of contractor services." });
+  assert.equal(calls.length, 1);
+  assert.equal(result.recommendedAction, 'SEND_REPLY');
+  assert.equal(result.replyGoal, 'REFERRAL_ASK');
 });
 
 test('config: off unless JOLE_CONVERSATION_AGENT_ENABLED=true; a missing key escalates', async () => {

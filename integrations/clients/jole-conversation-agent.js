@@ -46,13 +46,16 @@ const ZERO_AUTHORITY = Object.freeze({ send: false, crm: false, suppression: fal
 const NO_REPLY_STATES = new Set([
   WORKFLOW_STATE.UNSUBSCRIBE, WORKFLOW_STATE.NOT_INTERESTED, WORKFLOW_STATE.OUTSIDE_ICP, WORKFLOW_STATE.AUTOMATED,
 ]);
-// Someone else should be contacted: a person decides who and how.
-const ESCALATE_STATES = new Set([WORKFLOW_STATE.WRONG_CONTACT]);
+// Nothing is escalated on the classifier state alone: a wrong-contact reply
+// gets the skill's referral ask (an introduction request to the person who
+// replied; the named colleague is never emailed).
+const ESCALATE_STATES = new Set([]);
 
 // The client's own "rates" clarification topic, plus the pricing words it does
-// not cover. "charge" is left out: "I'm in charge of hiring" is not pricing.
+// not cover. "charge" counts except in "in charge of" ("I'm in charge of
+// hiring" is not pricing).
 const RATES_TOPIC = JOLE.replyPolicy.clarificationTopics.find(topic => topic.id === 'rates').pattern;
-const PRICING_EXTRA = /\b(?:rate ?sheets?|quotes?|quotation|budget\w*|per ?diem|invoic\w*|billing|bill out)\b|\$\s?\d/i;
+const PRICING_EXTRA = /\b(?:rate ?sheets?|quotes?|quotation|budget\w*|per ?diem|invoic\w*|billing|bill out|per hour|an hour|hourly|charg(?:e|es|ed|ing)\b(?!\s+of\b))|\$\s?\d/i;
 
 // What a draft may never say. Matching any of these escalates instead.
 const DRAFT_PRICING = /\$|\b\d+(?:\.\d+)?\s*(?:\/\s*h(?:ou)?r|per hour|an hour)\b|\b(?:rates?|pricing|priced?|costs?|markup|mark-up|fees?|quotes?|rate sheet)\b/i;
