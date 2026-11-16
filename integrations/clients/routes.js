@@ -48,6 +48,8 @@ function registerClientRoutes(app, {
   reportStore = null, startReportScheduler = true,
   // clientId → client-calendar.js service, or null when the client has none.
   calendarSyncFor = () => null,
+  // billing.js service (Stripe invoices for qualified held meetings), or null.
+  billing = null,
 }) {
   const router = express.Router();
   router.use(requireAuth);
@@ -330,6 +332,33 @@ function registerClientRoutes(app, {
     res.json(await ledger.setInvoiceStatus(store, {
       clientId: req.client.id, meetingId: req.params.meetingId, invoiceStatus: String(req.body?.invoiceStatus || ''), by: operator(req),
     }));
+  }));
+
+  // ── Billing (Stripe) ──────────────────────────────────────────────────────
+  // Every route that creates or sends an invoice is an explicit operator POST;
+  // nothing here runs on a page load. Sending refuses while billing is off.
+  const withBilling = handler => async (req, res) => {
+    if (!billing) return res.status(404).json({ error: 'billing is not available', code: 'billing_not_supported' });
+    try { return await handler(req, res); } catch (error) { return fail(res, error); }
+  };
+  router.get('/:clientId/billing', clientParam, withBilling(async (req, res) => {
+    res.json(await billing.status(req.client.id));
+  }));
+  router.post('/:clientId/billing/drafts', clientParam, withBilling(async (req, res) => {
+    const meetingIds = Array.isArray(req.body?.meetingIds) && req.body.meetingIds.length ? req.body.meetingIds.map(String) : null;
+    res.json(await billing.createDraft({ clientId: req.client.id, meetingIds, by: operator(req) }));
+  }));
+  router.post('/:clientId/billing/invoices/:invoiceId/send', clientParam, withBilling(async (req, res) => {
+    res.json(await billing.send({ clientId: req.client.id, invoiceId: req.params.invoiceId, by: operator(req) }));
+  }));
+  router.post('/:clientId/billing/invoices/:invoiceId/discard', clientParam, withBilling(async (req, res) => {
+    res.json(await billing.discard({ clientId: req.client.id, invoiceId: req.params.invoiceId, by: operator(req) }));
+  }));
+  router.post('/:clientId/billing/invoices/:invoiceId/refresh', clientParam, withBilling(async (req, res) => {
+    res.json(await billing.reconcile({ clientId: req.client.id, invoiceId: req.params.invoiceId }));
+  }));
+  router.post('/:clientId/meetings/:meetingId/invoice-now', clientParam, withBilling(async (req, res) => {
+    res.json(await billing.invoiceNow({ clientId: req.client.id, meetingId: req.params.meetingId, by: operator(req) }));
   }));
 
   router.get('/:clientId/clarifications', clientParam, withStore(async (req, res, store) => {

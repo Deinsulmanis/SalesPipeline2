@@ -164,6 +164,8 @@ const { JOLE_EARLY_CRON, clientSendWindowVerdict } = require('./integrations/cli
 const { PLACEMENT_TEST_CLIENT, PLACEMENT_TEST_CONFIRM, PLACEMENT_TEST_RECIPIENTS, validPlacementLabel } = require('./integrations/placement-test');
 const { getLedgerStore } = require('./integrations/clients/ledger-store');
 const { createClientCalendarSync } = require('./integrations/clients/client-calendar');
+const { createBillingService } = require('./integrations/clients/billing');
+const { createStripeClient, verifyWebhook: verifyStripeWebhook } = require('./integrations/clients/stripe-api');
 const { emailUniquenessMode, leadsInEmailScope, leadsForCalendarMatching } = require('./integrations/clients/email-scope');
 const { filterInboxesForClient } = require('./integrations/clients/workspace-views');
 const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE, qualifyLead: qualifyRoofingLead } = require('./integrations/roofing-survey-profile');
@@ -238,6 +240,10 @@ const app = express();
 // Smartlead signs the exact request bytes. This public route must be registered
 // before the global JSON parser and dashboard authentication middleware.
 app.post('/api/webhooks/smartlead', express.raw({ type: 'application/json', limit: '1mb' }), handleSmartleadWebhook);
+// Stripe signs the exact request bytes too (STRIPE_WEBHOOK_SECRET). Public,
+// before the JSON parser and dashboard auth. Only invoices this pipeline
+// created are acted on; anything else is acknowledged and ignored.
+app.post('/api/webhooks/stripe', express.raw({ type: 'application/json', limit: '1mb' }), handleStripeWebhook);
 // Staffing landing-page collector (public, Netlify-signed, 2 KB text body).
 // Also before the JSON parser and dashboard auth; a no-op 204 unless
 // LANDING_COLLECTOR_ENABLED is exactly "true".
@@ -1907,6 +1913,36 @@ app.get('/api/coldemail', requireAuth, async (req, res) => {
   }
 });
 
+// ── MANAGED-CLIENT BILLING (Stripe) ─────────────────────────────────────────
+// Qualified held meetings → Stripe invoices (integrations/clients/billing.js).
+// Off unless STRIPE_BILLING_ENABLED=true with STRIPE_SECRET_KEY (a restricted
+// key) and the client's Stripe customer id; drafts are never sent without an
+// operator's click.
+const billingService = createBillingService({
+  stripe: createStripeClient({ secretKey: process.env.STRIPE_SECRET_KEY }),
+  getStore: () => getLedgerStore(),
+  log: console,
+});
+
+async function handleStripeWebhook(req, res) {
+  let event;
+  try {
+    event = verifyStripeWebhook(req.body, req.headers['stripe-signature'], process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (error) {
+    console.warn(`[Stripe webhook] rejected: ${error.message}`);
+    return res.status(400).json({ error: 'invalid signature' });
+  }
+  try {
+    const result = await billingService.handleEvent(event);
+    if (!result.ignored) console.log(`[Stripe webhook] ${event.type} ${result.invoiceId}: ${result.status}`);
+    return res.json({ received: true });
+  } catch (error) {
+    // 500 makes Stripe retry; the hourly reconcile is the second safety net.
+    console.error(`[Stripe webhook] ${event.type} failed: ${error.message}`);
+    return res.status(500).json({ error: 'processing failed' });
+  }
+}
+
 registerClientRoutes(app, {
   requireAuth,
   loadDataset: options => withAuth(() => getOutreachDataset(options)),
@@ -1921,6 +1957,7 @@ registerClientRoutes(app, {
   importLeads: options => importManagedClientLeads(options),
   importBatches: () => clientImportBatchStore,
   calendarSyncFor: clientId => clientCalendarSyncs.get(clientId) || null,
+  billing: billingService,
 });
 
 // ── MANAGED-CLIENT IMPORT BATCHES + READINESS ───────────────────────────────
@@ -7978,6 +8015,22 @@ if (process.env.RAILWAY_ENVIRONMENT) {
       .finally(() => { clientCalendarInFlight = false; });
   }, { timezone: 'America/Vancouver' });
   console.log('[cron] Managed-client calendar sync scheduled every 5 minutes (per-client flag)');
+
+  // Billing: on the 1st and 15th a DRAFT invoice per billing client (never
+  // sent automatically), and every hour a re-read of drafts and open invoices
+  // so a missed Stripe webhook cannot leave the ledger stale. Both return
+  // without any read while billing is not configured.
+  let billingCronInFlight = false;
+  cron.schedule('20 * * * *', () => {
+    if (billingCronInFlight) return;
+    billingCronInFlight = true;
+    billingService.runScheduled()
+      .then(results => { for (const r of results) if (r.drafted) console.log(`[billing:${r.clientId}] drafted ${r.drafted} — ${r.meetings} meeting(s), ${r.amountCents} cents; waiting for Send`); })
+      .then(() => billingService.reconcileOpen())
+      .catch(error => console.error('[billing] scheduled pass failed:', error.message))
+      .finally(() => { billingCronInFlight = false; });
+  }, { timezone: 'America/Vancouver' });
+  console.log('[cron] Billing drafts (1st/15th) and Stripe reconcile scheduled hourly at :20 (feature-gated)');
 
   // Staffing landing attribution: backfill issuances from the activity ledger,
   // link early sessions, daily retention. Supabase landing functions only; the

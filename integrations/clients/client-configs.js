@@ -194,6 +194,18 @@ const JOLE = Object.freeze({
     currency: 'USD',
     // The setup fee is billed outside this operational ledger.
     setupFee: 'tracked_outside_ledger',
+    // Stripe invoicing (integrations/clients/billing.js). Off unless
+    // STRIPE_BILLING_ENABLED=true and the customer is configured. Agreement:
+    // Jorge is invoiced on the 1st and 15th (drafts the operator sends), or
+    // per meeting on demand; payment due in 7 days; no tax.
+    stripe: Object.freeze({
+      customerIdEnv: 'JOLE_STRIPE_CUSTOMER_ID',
+      productIdEnv: 'JOLE_STRIPE_PRODUCT_ID',
+      schedule: 'semi_monthly',          // drafts on the 1st and 15th, America/Vancouver
+      draftsRequireSend: true,           // a scheduled draft is never sent automatically
+      daysUntilDue: 7,
+      lineLabel: 'Qualified meeting',
+    }),
   }),
   reporting: Object.freeze({ ledger: true }),
   campaignDefaults: Object.freeze({ leadType: 'jole_employer', sequenceSteps: 3 }),

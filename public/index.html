@@ -2085,6 +2085,9 @@
   .calendar-status{display:flex;justify-content:space-between;align-items:center;gap:16px;margin:0 0 16px;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface);font-size:12px;color:var(--text-secondary)}.calendar-status[data-state="error"]{border-color:var(--danger,#b91c1c)}.calendar-status .btn-save-notes{margin-top:0;min-height:44px}
   .calendar-review{margin:0 0 20px}.calendar-review h4{margin:0 0 4px;font-size:14px}.calendar-review .client-note{margin:0 0 10px}.calendar-review-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}.calendar-review-actions button{min-height:44px}
   @media(max-width:700px){.calendar-status{flex-direction:column;align-items:flex-start}.calendar-review-actions{justify-content:flex-start}}
+  .meeting-row{flex-wrap:wrap}.meeting-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;flex-basis:100%}.meeting-actions button,.meeting-actions a{min-height:44px;margin-top:0;display:inline-flex;align-items:center;text-decoration:none}.meeting-invoice-state{font-size:12px;color:var(--text-secondary);align-self:center}
+  .billing-panel{margin:0 0 20px}.billing-panel h4{margin:0 0 8px;font-size:14px}.billing-panel h5{margin:16px 0 8px;font-size:13px;color:var(--text-secondary)}.billing-mode{padding:2px 6px;border-radius:4px;border:1px solid var(--border);margin-right:6px;font-size:11px}
+  .meeting-dialog{max-width:520px;width:calc(100% - 32px);border:1px solid var(--border);border-radius:10px;background:var(--surface);color:inherit;padding:20px}.meeting-dialog::backdrop{background:rgba(0,0,0,.5)}.meeting-dialog form{display:grid;gap:8px}.meeting-dialog h3{margin:0}.meeting-dialog label{font-size:12px;font-weight:600}.meeting-dialog input,.meeting-dialog select,.meeting-dialog textarea{min-height:44px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:inherit;font:inherit}.meeting-dialog fieldset{border:1px solid var(--border);border-radius:6px;display:flex;flex-wrap:wrap;gap:8px 16px;padding:10px}.meeting-dialog .md-check{font-weight:400;display:flex;gap:6px;align-items:center;min-height:32px}.md-error{color:var(--danger);font-size:12px;margin:0}.md-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
   .booking-list,.sequence-list{display:grid;gap:9px}.operational-row{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:13px 15px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}.operational-row b{font-size:13px}.operational-row small{display:block;color:var(--text-muted);font-size:11px;margin-top:3px}.operational-row-meta{text-align:right;font-size:12px;color:var(--text-secondary)}
   @media(max-width:980px){body.workspace-ready{grid-template-columns:72px minmax(0,1fr)}.crm-sidebar{padding-inline:8px}.crm-brand{padding-inline:8px}.crm-brand-copy,.crm-nav-btn span,.crm-nav-group,.crm-sidebar-foot{display:none}.crm-nav-btn{justify-content:center;padding:9px}.crm-nav-btn svg{width:19px;height:19px}.crm-workspace{padding:18px}.inbox-row{grid-template-columns:minmax(160px,.7fr) minmax(230px,1.3fr)}}
   @media(max-width:700px){html.workspace-ready{height:auto;overflow:visible}body.workspace-ready{display:block;padding-top:64px;height:auto;overflow:visible}#workspace-stage{overflow:visible}.crm-sidebar{position:fixed;left:0;top:0;width:224px;transform:translateX(-100%);transition:transform 180ms;z-index:100}.crm-sidebar.open{transform:translateX(0)}.crm-brand-copy,.crm-nav-btn span,.crm-nav-group,.crm-sidebar-foot{display:block}.crm-nav-btn{justify-content:flex-start}.sidebar-toggle{display:grid;place-items:center}body.workspace-ready>header{position:fixed;left:0;right:0;top:0;height:64px;padding:0 16px}.crm-workspace{padding:14px}.header-right .search-wrap{display:none}.inbox-row{grid-template-columns:1fr;gap:9px}.inbox-action{padding-top:8px;border-top:1px solid var(--border)}.workspace-intro{align-items:flex-start}.operational-row{align-items:flex-start}.operational-row-meta{max-width:45%}}
@@ -8518,6 +8521,9 @@ async function renderManagedBookings(client) {
   // failing read, still shows its ledger.
   const calendar = await clientApi('/calendar').catch(error => (error.status === 404 ? null : { error: error.message }));
   const calendarPanel = renderManagedCalendarPanel(client, calendar);
+  // Billing is optional the same way: no Stripe setup, no panel, ledger intact.
+  const billingStatus = await clientApi('/billing').catch(error => (error.status === 404 ? null : { error: error.message }));
+  const billingPanel = renderManagedBillingPanel(client, billingStatus);
   const employerByLead = new Map(opportunities.map(row => [row.lead_id, row.employer]));
   const status = value => meetings.filter(row => row.meeting_status === value).length;
   const summary = `<div class="client-metrics">
@@ -8530,15 +8536,198 @@ async function renderManagedBookings(client) {
     ${metricCard('Accrued', clientMoney(billing.accruedCents, billing.currency))}
   </div>`;
   if (!meetings.length) {
-    return badges + summary + calendarPanel + renderRevenuePanel(client, meetings, billing) + emptyState(`No ${client.displayName} meetings yet`, onboardingPending(client)
+    return badges + summary + calendarPanel + billingPanel + renderRevenuePanel(client, meetings, billing) + emptyState(`No ${client.displayName} meetings yet`, onboardingPending(client)
       ? `Meetings are recorded here after ${client.displayName} is activated and employers book. A meeting bills only when it is held and qualified.`
       : 'Meetings appear here when they are booked. A meeting bills only when it is held and qualified.', 'calendar');
   }
   const revenue = renderRevenuePanel(client, meetings, billing);
-  return badges + summary + calendarPanel + revenue + `<div class="booking-list">${meetings.map(meeting => `<div class="operational-row">
+  return badges + summary + calendarPanel + billingPanel + revenue + `<div class="booking-list">${meetings.map(meeting => `<div class="operational-row meeting-row">
       <span><b>${esc(employerByLead.get(meeting.lead_id) || meeting.lead_id)}</b><small>${esc([meeting.attendee_name, meeting.attendee_title].filter(Boolean).join(' · ') || 'Attendee not recorded')} · ${esc(meeting.campaign_id ? campaignName(meeting.campaign_id) : '')}</small></span>
       <span class="operational-row-meta"><b>${esc(meeting.meeting_status.replace(/_/g, ' '))}</b><small>${esc(meeting.scheduled_for ? new Date(meeting.scheduled_for).toLocaleString() : 'Not scheduled')} · ${meeting.billable ? esc('Billable ' + clientMoney(meeting.performance_fee_cents, meeting.currency)) : esc('Not billable')}</small></span>
+      ${meetingActionsHtml(meeting, billingStatus)}
     </div>`).join('')}</div>`;
+}
+
+// ── Meeting outcomes and billing (managed clients) ──────────────────────────
+const MEETING_ACTION_LABELS = { HELD: 'Mark held', NO_SHOW: 'No-show', CANCELLED: 'Cancelled' };
+
+/** What an operator can do next with this meeting, as buttons. */
+function meetingActionsHtml(meeting, billingStatus) {
+  const id = escAttr(meeting.meeting_id);
+  const btn = (label, action, cls = 'btn-save-notes') => `<button type="button" class="${cls}" data-meeting="${id}" data-action="${action}" onclick="managedMeetingAction(this.dataset.meeting, this.dataset.action)">${esc(label)}</button>`;
+  const state = label => `<span class="meeting-invoice-state">${esc(label)}</span>`;
+  let html = '';
+  if (['BOOKED', 'RESCHEDULED'].includes(meeting.meeting_status)) html = ['HELD', 'NO_SHOW', 'CANCELLED'].map(to => btn(MEETING_ACTION_LABELS[to], to)).join('');
+  else if (meeting.meeting_status === 'HELD') html = btn('Qualify…', 'qualify', 'btn-save') + btn('Not qualified…', 'disqualify');
+  else if (meeting.meeting_status === 'QUALIFIED_HELD') {
+    if (meeting.invoice_status === 'paid') html = state('Paid');
+    else if (meeting.invoice_status === 'invoiced') html = state('Invoiced');
+    else if (meeting.stripe_invoice_id) html = state('On a draft invoice');
+    else if (billingStatus && billingStatus.ready && meeting.billable) html = btn('Invoice now', 'invoice-now', 'btn-save');
+    else if (meeting.billable) html = state('Billable, not invoiced');
+  }
+  return html ? `<span class="meeting-actions">${html}</span>` : '';
+}
+
+function managedMeetingAction(meetingId, action) {
+  if (action === 'qualify' || action === 'disqualify') return openMeetingDialog(meetingId, action);
+  if (action === 'invoice-now') {
+    const client = activeClient();
+    if (!window.confirm(`Invoice this meeting now? Stripe will email the invoice to ${client.displayName}'s billing contact immediately.`)) return null;
+    return managedPost(`/meetings/${encodeURIComponent(meetingId)}/invoice-now`, {}, 'Invoice sent');
+  }
+  const patch = action === 'HELD' ? { held_at: new Date().toISOString() } : {};
+  return managedPost(`/meetings/${encodeURIComponent(meetingId)}/transition`, { toStatus: action, patch }, `Meeting marked ${MEETING_ACTION_LABELS[action].toLowerCase()}`);
+}
+
+async function managedPost(path, body, okMessage) {
+  try {
+    const response = await fetch(`/api/clients/${encodeURIComponent(activeClientId)}${path}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    showToast(okMessage, 'success');
+    loadManagedWorkspace('bookings');
+    return data;
+  } catch (error) {
+    showToast(error.message, 'error');
+    return null;
+  }
+}
+
+/** Qualify / disqualify a held meeting. Labels sit outside the fields; errors show in the dialog. */
+function openMeetingDialog(meetingId, mode) {
+  const client = activeClient();
+  const q = client.qualification || {};
+  const nice = value => String(value).replace(/_/g, ' ');
+  document.getElementById('meeting-dialog')?.remove();
+  const dialog = document.createElement('dialog');
+  dialog.id = 'meeting-dialog';
+  dialog.className = 'meeting-dialog';
+  const qualifyFields = `
+    <label for="md-title">Attendee title</label>
+    <input id="md-title" name="attendee_title" type="text" autocomplete="off">
+    <label for="md-status">Decision-maker?</label>
+    <select id="md-status" name="attendee_status">
+      <option value="decision_maker">Yes, a decision-maker</option><option value="not_decision_maker">No</option><option value="unknown" selected>Unknown</option>
+    </select>
+    <label for="md-fit">Employer inside the target market?</label>
+    <select id="md-fit" name="employer_fit">
+      <option value="fit">Yes</option><option value="out_of_icp">No</option><option value="unknown" selected>Unknown</option>
+    </select>
+    <fieldset><legend>Attendee is responsible for</legend>
+      ${(q.decisionMakerAreas || []).map(area => `<label class="md-check"><input type="checkbox" name="decision_areas" value="${escAttr(area)}"> ${esc(nice(area))}</label>`).join('')}
+    </fieldset>
+    <label for="md-use">Staffing use case</label>
+    <select id="md-use" name="use_case">
+      <option value="">Choose…</option>${(q.acceptedUseCases || []).map(u => `<option value="${escAttr(u)}">${esc(nice(u))}</option>`).join('')}
+    </select>`;
+  dialog.innerHTML = `<form novalidate>
+      <h3>${mode === 'qualify' ? 'Qualify this held meeting' : 'Meeting did not qualify'}</h3>
+      <p class="client-note">${mode === 'qualify' ? 'Billing starts only when every criterion is met. Anything missing is listed below.' : 'Record why. A not-qualified meeting is never billed.'}</p>
+      ${mode === 'qualify' ? qualifyFields : ''}
+      <label for="md-basis">${mode === 'qualify' ? 'Why it qualifies' : 'Why it did not qualify'}</label>
+      <textarea id="md-basis" name="qualification_basis" rows="3"></textarea>
+      <p class="md-error" role="alert" hidden></p>
+      <div class="md-actions">
+        <button type="button" class="btn-cancel md-cancel">Cancel</button>
+        <button type="submit" class="btn-save">${mode === 'qualify' ? 'Qualify meeting' : 'Save'}</button>
+      </div>
+    </form>`;
+  document.body.appendChild(dialog);
+  const form = dialog.querySelector('form');
+  const error = dialog.querySelector('.md-error');
+  dialog.querySelector('.md-cancel').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('close', () => dialog.remove());
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const data = new FormData(form);
+    const patch = { qualification_basis: String(data.get('qualification_basis') || '').trim() };
+    if (!patch.qualification_basis) { error.textContent = 'Write down the reason first.'; error.hidden = false; return; }
+    if (mode === 'qualify') {
+      Object.assign(patch, {
+        attendee_title: String(data.get('attendee_title') || '').trim(),
+        attendee_status: data.get('attendee_status'), employer_fit: data.get('employer_fit'),
+        decision_areas: data.getAll('decision_areas'), use_case: data.get('use_case') || '',
+      });
+    }
+    const toStatus = mode === 'qualify' ? 'QUALIFIED_HELD' : 'DISQUALIFIED_HELD';
+    const response = await fetch(`/api/clients/${encodeURIComponent(activeClientId)}/meetings/${encodeURIComponent(meetingId)}/transition`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ toStatus, patch }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) { error.textContent = body.error || `HTTP ${response.status}`; error.hidden = false; return; }
+    dialog.close();
+    showToast(mode === 'qualify' ? 'Meeting qualified' : 'Meeting recorded as not qualified', 'success');
+    loadManagedWorkspace('bookings');
+  });
+  dialog.showModal();
+}
+
+/** Stripe billing: what is ready to bill, drafts waiting for Send, and invoices. */
+function renderManagedBillingPanel(client, b) {
+  if (!b) return '';
+  if (b.error) return `<p class="client-note calendar-status" data-state="error">Billing status unavailable: ${esc(b.error)}</p>`;
+  if (!b.configured) return `<div class="calendar-status" data-state="off"><span>Stripe billing is not set up: ${esc(b.reason)}.</span></div>`;
+  const cur = (b.currency || 'usd').toUpperCase();
+  const money = cents => clientMoney(cents, cur);
+  const day = iso => (iso ? new Date(iso).toLocaleDateString() : '—');
+  const mode = b.mode === 'live' ? 'LIVE' : b.mode === 'test' ? 'TEST MODE' : String(b.mode || '').toUpperCase();
+  const header = `<div class="calendar-status" data-state="${b.ready ? (b.webhookConfigured ? 'ok' : 'error') : 'off'}">
+      <span><b class="billing-mode" data-mode="${escAttr(b.mode)}">${esc(mode)}</b> Stripe billing ${b.ready ? 'on' : `off (${esc(b.reason)})`} · drafts on the 1st and 15th · due in ${esc(b.daysUntilDue)} days${b.webhookConfigured ? '' : ' · <b>payment updates are not connected (webhook secret missing)</b>'}</span>
+    </div>`;
+  const t = b.totals || {};
+  const unbilled = b.unbilled || [];
+  const metrics = `<div class="client-metrics">
+      ${metricCard('Ready to bill', money(t.unbilledCents), `${unbilled.length} meeting(s)`)}
+      ${metricCard('Drafts', money(t.draftCents), 'Waiting for Send')}
+      ${metricCard('Outstanding', money(t.outstandingCents))}
+      ${metricCard('Overdue', money(t.overdueCents))}
+      ${metricCard('Paid', money(t.paidCents))}
+    </div>`;
+  const ready = unbilled.length ? `<div class="booking-list">${unbilled.map(item => `<div class="operational-row">
+      <span><b>${esc(item.employer || item.leadId)}</b><small>${esc(item.description)}</small></span>
+      <span class="operational-row-meta"><b>${esc(money(item.amountCents))}</b></span>
+    </div>`).join('')}</div>
+    ${b.ready ? `<div class="md-actions"><button type="button" class="btn-save" data-action="draft" onclick="managedBillingAction(this.dataset.action)">Create draft invoice now (${unbilled.length}, ${esc(money(t.unbilledCents))})</button></div>` : ''}`
+    : '<p class="client-note">No qualified meetings are waiting to be invoiced.</p>';
+  const kindLabel = row => (row.kind === 'period' ? `Period from ${row.period_key}` : row.kind === 'single' ? 'Single meeting' : 'Drafted by hand');
+  const invoices = (b.invoices || []).map(row => {
+    const id = escAttr(row.invoice_id);
+    const status = row.overdue ? 'overdue' : row.status;
+    const actions = row.status === 'draft'
+      ? `<button type="button" class="btn-save" data-invoice="${id}" data-action="send" data-amount="${escAttr(money(row.amount_cents))}" onclick="managedBillingAction(this.dataset.action, this.dataset.invoice, this.dataset.amount)">Send invoice</button>
+         <button type="button" class="btn-cancel" data-invoice="${id}" data-action="discard" onclick="managedBillingAction(this.dataset.action, this.dataset.invoice)">Discard</button>`
+      : `${row.hosted_invoice_url ? `<a class="btn-save-notes" href="${escAttr(row.hosted_invoice_url)}" target="_blank" rel="noopener noreferrer">View invoice</a>` : ''}
+         ${['open', 'uncollectible'].includes(row.status) ? `<button type="button" class="btn-save-notes" data-invoice="${id}" data-action="refresh" onclick="managedBillingAction(this.dataset.action, this.dataset.invoice)">Refresh</button>` : ''}`;
+    return `<div class="operational-row meeting-row">
+      <span><b>${esc(row.invoice_number || 'Draft')} · ${esc(kindLabel(row))}</b><small>${esc((row.meeting_ids || []).length)} meeting(s) · created ${esc(day(row.created_at))}${row.due_at ? ` · due ${esc(day(row.due_at))}` : ''}${row.paid_at ? ` · paid ${esc(day(row.paid_at))}` : ''}${row.last_error ? ` · ${esc(row.last_error)}` : ''}</small></span>
+      <span class="operational-row-meta"><b>${esc(money(row.amount_cents))}</b><small><span class="status-pill" data-status="${escAttr(status)}">${esc(status)}</span></small></span>
+      <span class="meeting-actions">${actions}</span>
+    </div>`;
+  }).join('');
+  return `<section class="billing-panel" aria-label="Invoices and payments">
+      <h4>Invoices and payments</h4>
+      ${header}${metrics}
+      <h5>Ready to bill</h5>${ready}
+      ${invoices ? `<h5>Invoices</h5><div class="booking-list">${invoices}</div>` : ''}
+    </section>`;
+}
+
+async function managedBillingAction(action, invoiceId = '', amount = '') {
+  const client = activeClient();
+  if (action === 'draft') return managedPost('/billing/drafts', {}, 'Draft invoice created; review it, then Send');
+  if (action === 'send') {
+    if (!window.confirm(`Send this invoice for ${amount} now? Stripe will email it to ${client.displayName}'s billing contact, due in the agreed terms.`)) return null;
+    return managedPost(`/billing/invoices/${encodeURIComponent(invoiceId)}/send`, {}, 'Invoice sent');
+  }
+  if (action === 'discard') {
+    if (!window.confirm('Discard this draft? Its meetings go back to "ready to bill".')) return null;
+    return managedPost(`/billing/invoices/${encodeURIComponent(invoiceId)}/discard`, {}, 'Draft discarded');
+  }
+  if (action === 'refresh') return managedPost(`/billing/invoices/${encodeURIComponent(invoiceId)}/refresh`, {}, 'Invoice refreshed from Stripe');
+  return null;
 }
 
 /** The client's calendar connection and the calendar events waiting for a decision. */
