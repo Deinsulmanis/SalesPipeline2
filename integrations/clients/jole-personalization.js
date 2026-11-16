@@ -54,6 +54,7 @@ const WAVES = Object.freeze([
   require('./data/jole-personalization-groupa-hiring-20261112.json'),
   require('./data/jole-personalization-buyers102-20261113.json'),
   require('./data/jole-personalization-v8-20261113.json'),
+  require('./data/jole-personalization-v9-20261116.json'),
 ]);
 const LEADS = Object.freeze(Object.assign({}, ...WAVES.map(wave => wave.leads || {}), DATA.leads || {}));
 const FRESHNESS_DAYS = 30;

@@ -1,0 +1,51 @@
+'use strict';
+
+// The V9 classification wave (2026-11-16): 99 imported leads, each with
+// a mode its evidence supports. Hiring and signal entries carry their own
+// re-opened evidence; everything else is neutral.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const WAVE = require('../integrations/clients/data/jole-personalization-v9-20261116.json');
+const { joleClassificationFor, jolePersonalizationFor } = require('../integrations/clients/jole-personalization');
+
+const entries = Object.entries(WAVE.leads);
+const NOW = Date.parse('2026-11-17T13:00:00Z');
+
+test('wave shape and counts', () => {
+  assert.equal(WAVE.schema, 'jole_personalization_wave');
+  assert.equal(entries.length, 99);
+  const counts = {};
+  for (const [, e] of entries) counts[e.mode] = (counts[e.mode] || 0) + 1;
+  assert.deepEqual(counts, WAVE.counts);
+  assert.deepEqual(counts, { general_craft: 98, expansion: 1 });
+});
+
+test('every claim entry carries its own re-opened evidence', () => {
+  for (const [id, e] of entries) {
+    if (e.mode === 'general_craft') { assert.equal(e.evidenceUrl, null, id); continue; }
+    assert.match(e.evidenceUrl, /^https:\/\//, id);
+    assert.equal(e.publicPageChecked, true, id);
+    assert.equal(e.evidenceCheckedAt, '2026-11-16', id);
+    if (e.mode === 'exact') assert.match(e.location, /^[A-Z][A-Za-z.' ]+, [A-Z]{2}$/, id);
+    if (e.mode === 'role_only') assert.equal(e.location, null, id);
+    if (['award', 'expansion'].includes(e.mode)) { assert.ok(e.event && e.eventShort, id); assert.equal(e.role, null, id); }
+  }
+});
+
+test('the live classification resolves these leads to their wave modes', () => {
+  for (const [id, e] of entries) {
+    assert.equal(joleClassificationFor({ id }).mode, e.mode, id);
+    const resolved = jolePersonalizationFor({ id }, [], { now: NOW });
+    assert.equal(resolved.mode, e.mode, id);
+    if (['award', 'expansion'].includes(e.mode)) { assert.equal(resolved.role, e.event); assert.equal(resolved.location, e.eventShort); }
+  }
+});
+
+test('claims fall to general_craft after 30 days', () => {
+  const later = Date.parse('2026-12-18T13:00:00Z');
+  for (const [id, e] of entries.filter(([, x]) => x.mode !== 'general_craft')) {
+    assert.equal(jolePersonalizationFor({ id }, [], { now: later }).mode, 'general_craft', id);
+  }
+});
