@@ -3086,6 +3086,8 @@ let activeFilter = 'all';
 // rules, so a card and the drawer cannot disagree.
 let nextActions = new Map();
 let nextActionSummary = null;
+let nextActionsToken = 0;        // only the latest started request may write nextActions
+let nextActionsInFlight = null;  // shared by ensureNextActions() so a lazy view never doubles the read
 let actionFilter = 'none';   // 'none' shows the Kanban; anything else shows the queue
 let formType    = 'trade';
 let savingCount = 0;
@@ -3095,15 +3097,25 @@ let savingTimer;
 // ============================================================
 // SHEET OPERATIONS
 // ============================================================
-async function loadLeads() {
+async function loadLeads({ awaitNextActions = true } = {}) {
+  // Next Actions travel with the board so cards and the queue reflect the same
+  // derivation. Both reads start together: next-actions is a multi-sheet read
+  // that takes longer than the board itself, so waiting for one before starting
+  // the other added its whole duration to every board load. Failure is
+  // non-fatal: the board renders without them.
+  const pendingNextActions = loadNextActions();
   const resp = await fetch('/api/leads');
   if (!resp.ok) throw new Error('leads fetch failed: ' + resp.status);
   leads = await resp.json();
   rowMap.clear();
   leads.forEach((lead, idx) => { if (lead.id) rowMap.set(lead.id, idx + 2); });
-  // Next Actions travel with the board so cards and the queue reflect the same
-  // derivation. Failure is non-fatal: the board renders without them.
-  await loadNextActions();
+  // Startup does not wait: the board and the workspace render now, and the
+  // board repaints once next-actions arrive (see init). Every other caller
+  // reloads after a change and needs both before it renders.
+  if (awaitNextActions) await pendingNextActions;
+  // Wrapped: an async function that returned the promise itself would adopt it,
+  // and the caller's await would wait for next-actions after all.
+  return { pendingNextActions };
 }
 
 async function syncLead(lead) {
@@ -3278,13 +3290,30 @@ const NA_OWNER_LABEL = {
 };
 
 async function loadNextActions() {
-  try {
-    const resp = await fetch('/api/leads/next-actions');
-    if (!resp.ok) return;
-    const data = await resp.json();
-    nextActions = new Map((data.entries || []).map(entry => [entry.id, entry]));
-    nextActionSummary = data.summary || null;
-  } catch (_) { /* additive: the board still works without it */ }
+  const token = ++nextActionsToken;
+  const pending = (async () => {
+    try {
+      const resp = await fetch('/api/leads/next-actions');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      // A slower, older response never overwrites one started after it (e.g.
+      // the startup read finishing after a reload that followed a stage change).
+      if (token !== nextActionsToken) return;
+      nextActions = new Map((data.entries || []).map(entry => [entry.id, entry]));
+      nextActionSummary = data.summary || null;
+    } catch (_) { /* additive: the board still works without it */ }
+  })();
+  nextActionsInFlight = pending;
+  pending.finally(() => { if (nextActionsInFlight === pending) nextActionsInFlight = null; });
+  return pending;
+}
+
+// For views that only need next-actions to exist: reuse a read already in
+// flight instead of starting a second one. Anything that just changed a lead
+// calls loadNextActions() directly so it always reads fresh state.
+function ensureNextActions() {
+  if (nextActions.size) return Promise.resolve();
+  return nextActionsInFlight || loadNextActions();
 }
 
 // Short, human due text for a card. Uses the business calendar so "Today"
@@ -7886,7 +7915,11 @@ async function loadWorkspace(name) {
   const shared = typeof WorkspaceShared !== 'undefined' && WorkspaceShared.usesSharedWorkspace(name);
   if (activeClientIsManaged() && name !== 'clients' && !shared) return loadManagedWorkspace(name);
   if (name === 'pipeline') {
-    if (!activeClientIsManaged() && !leads.length) { await loadLeads(); renderBoard(); }
+    if (!activeClientIsManaged() && !leads.length) {
+      const { pendingNextActions } = await loadLeads({ awaitNextActions: false });
+      renderBoard();
+      pendingNextActions.then(() => { if (nextActions.size) renderBoard(); });
+    }
     return;
   }
   if (['outreach','campaigns','analytics','inbox'].includes(name)) await ensureOutreachReadModel();
@@ -9051,7 +9084,7 @@ function renderInboxWorkspace() {
 }
 
 async function loadSequencesWorkspace() {
-  const [statusResponse] = await Promise.all([fetch('/api/crm/ui-status'), nextActions.size ? Promise.resolve() : loadNextActions()]);
+  const [statusResponse] = await Promise.all([fetch('/api/crm/ui-status'), ensureNextActions()]);
   const status = statusResponse.ok ? await statusResponse.json() : {};
   const enabled = Boolean(status.stageSequences?.enabled);
   const sequenceRows = [...nextActions.values()].filter(entry => entry.nextAction?.sequenceState);
@@ -9327,7 +9360,7 @@ async function confirmArchiveRestore() {
 }
 
 async function loadBookingsWorkspace() {
-  if (!nextActions.size) await loadNextActions();
+  await ensureNextActions();
   const rows = [...nextActions.values()].filter(entry => entry.nextAction?.callState || entry.stage === 'call_booked');
   const host = document.getElementById('bookings-content');
   if (!rows.length) { host.className = 'workspace-empty'; host.innerHTML = '<strong>No current calls</strong>There are no Call Booked opportunities or unresolved meeting outcomes.'; return; }
@@ -9516,10 +9549,13 @@ async function init() {
   const initial = location.hash ? clientId : (knownClient(storedClientId) ? storedClientId : defaultClientId());
   if (initial === defaultClientId()) {
     showLoadingOverlay('Loading your leads…');
-    try { await loadLeads(); }
+    let pendingNextActions = null;
+    try { ({ pendingNextActions } = await loadLeads({ awaitNextActions: false })); }
     catch(e) { showToast('Could not load leads: ' + e.message, 'error'); }
     hideLoadingOverlay();
     renderBoard();
+    // Cards, the action queue and its counters fill in when next-actions land.
+    if (pendingNextActions) pendingNextActions.then(() => { if (nextActions.size) renderBoard(); });
   }
   await switchClient(initial, { workspace, replace: true });
 }

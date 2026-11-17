@@ -1491,6 +1491,13 @@ async function loadOutreachDataset() {
     'ProposalOpens!A:F', 'ProposalEngaged!A:F', AGENT_READ_RANGE,
     mailboxCheckpointRange(), 'Suppression!A:A',
   ];
+  // The Supabase corpus and the Sheets snapshot are independent reads, so the
+  // corpus starts now and is awaited where it is used below. readOutreachCorpus
+  // reports failure as { ok: false } rather than throwing; the no-op catch only
+  // keeps an unexpected rejection from going unhandled if batchGet throws first,
+  // and the await below still rethrows it.
+  const pendingCorpus = ceFromSupabase ? readOutreachCorpus() : null;
+  if (pendingCorpus) pendingCorpus.catch(() => {});
   const snapshot = await sheets().spreadsheets.values.batchGet({
     spreadsheetId: SPREADSHEET_ID, ranges: snapshotRanges,
   });
@@ -1529,7 +1536,7 @@ async function loadOutreachDataset() {
   // every page from the old store.
   let leadSource = 'sheets';
   if (ceFromSupabase) {
-    const corpus = await readOutreachCorpus();
+    const corpus = await pendingCorpus;
     if (corpus.ok) {
       // The Sheets dashboard read deliberately omits column P, so the browser has
       // never received siteContext here. The mirror HAS it, so it is blanked to
