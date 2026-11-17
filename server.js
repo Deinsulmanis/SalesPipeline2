@@ -582,6 +582,10 @@ function sheets() {
       if (ranges.some(range => range.includes(CE_SHEET_NAME) || range.includes(`${SHEET_NAME}!`)
         || range.includes(COLD_CALL_ACTIVITY_SHEET))) invalidateOutreachCache(`write:${method}`);
       if (ranges.some(range => /ProposalOpens|ProposalEngaged/.test(range))) invalidateOutreachCache(`write:${method}`);
+      // The next-action view also reads Suppression and the Gmail observer state.
+      if (ranges.some(range => range.includes('Suppression!') || range.includes(GMAIL_OBSERVATION_STATE_SHEET))) {
+        nextActionsCache.invalidate();
+      }
       return original(params);
     };
   }
@@ -1358,9 +1362,18 @@ function currentOutreachCache() {
   return outreachDatasetCache.peek();
 }
 
+// Same TTL and the same invalidation as the dataset: whatever drops the
+// dataset drops the next-action view too (loadNextActionsView, below).
+const NEXT_ACTIONS_CACHE_TTL_MS = OUTREACH_CACHE_TTL_MS;
+const nextActionsCache = createOutreachCache({
+  load: () => loadNextActionsView(),
+  ttlMs: NEXT_ACTIONS_CACHE_TTL_MS,
+});
+
 function invalidateOutreachCache(reason) {
   if (currentOutreachCache()) console.log(`[outreach-cache] invalidated (${reason})`);
   outreachDatasetCache.invalidate();
+  nextActionsCache.invalidate();
 }
 
 const CE_LIGHT_FIELDS = [
@@ -2173,13 +2186,14 @@ app.get('/api/coldemail/funnel', requireAuth, async (req, res) => {
 app.get('/api/crm/health', requireAuth, async (req, res) => {
   try {
     const startedAt = process.hrtime.bigint();
-    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
-    // The sender's OWN suppression rule, bound to the live suppression list, so
+    // Three independent reads, run together rather than one after another.
+    // The suppression list is the sender's OWN rule, bound to the live list, so
     // health cannot disagree with what the sender would actually do.
-    const suppressedEmails = await loadSuppressedEmails();
-    const calendarSyncState = CALENDAR_SYNC_ENABLED
-      ? await readCalendarSyncState().catch(() => null)
-      : null;
+    const [dataset, suppressedEmails, calendarSyncState] = await Promise.all([
+      withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' })),
+      loadSuppressedEmails(),
+      CALENDAR_SYNC_ENABLED ? readCalendarSyncState().catch(() => null) : null,
+    ]);
     // The funnel is CONSUMED, never rebuilt: reconciliation has one owner.
     const funnel = buildFunnelAnalytics({
       leads: activeLeadsOf(dataset), boardLeads: dataset.boardLeads, activities: dataset.activities,
@@ -3128,73 +3142,85 @@ app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
 // One Next Action for every board lead, derived from the same shared engine the
 // drawer uses. Read-only: three sheet reads, no writes, no send path. This is
 // what turns the board into a work queue and what the leak audit runs against.
-app.get('/api/leads/next-actions', requireAuth, async (_req, res) => {
+//
+// The board's next-action read model. One five-range Sheets read plus the
+// derivation, ~2 s, and every board load asks for it. It shares the Outreach
+// dataset's freshness policy: computed at most once per NEXT_ACTIONS_CACHE_TTL_MS,
+// and dropped the moment this process writes a tab it reads (see sheets() and
+// invalidateOutreachCache), so a reload after a change is always fresh.
+async function loadNextActionsView() {
+  const snapshot = await sheets().spreadsheets.values.batchGet({ spreadsheetId: SPREADSHEET_ID,
+    ranges: [AGENT_READ_RANGE, CE_COL_RANGE, `${COLD_CALL_ACTIVITY_SHEET}!A:J`,
+      `${GMAIL_OBSERVATION_STATE_SHEET}!A:I`, 'Suppression!A:A'] });
+  const [boardResponse, ceResponse, activityResponse, observerResponse, suppressionResponse] =
+    snapshot.data.valueRanges.map(data => ({ data }));
+
+  const leads = (boardResponse.data.values || []).slice(1).map(row => {
+    const lead = {};
+    COLUMNS.forEach((col, i) => { lead[col] = row[i] || ''; });
+    AGENT_COLS.forEach((col, i) => { lead[col] = row[17 + i] || ''; });
+    CALL_DETAIL_COLS.forEach((col, i) => { lead[col] = row[20 + i] || ''; });
+    return lead;
+  }).filter(lead => lead.id);
+
+  // Index the ColdEmail twins once by id and by email — the same two keys
+  // findColdEmailTwins matches on, without a read per lead.
+  const twinsById = new Map();
+  const twinsByEmail = new Map();
+  for (const row of (ceResponse.data.values || []).slice(1)) {
+    const twin = {
+      id: row[0] || '', company: row[1] || '', email: row[3] || '',
+      stage: row[7] || '', emailStatus: row[8] || '', lastEmailedAt: row[9] || '',
+      emailStep: row[10] || '', notes: row[11] || '', senderInboxId: row[20] || '',
+    };
+    if (twin.id && !twinsById.has(twin.id)) twinsById.set(twin.id, twin);
+    // Board cards are ScaleLab's; another client's row is never an email twin.
+    const full = Object.fromEntries(CE_COLUMNS.map((field, i) => [field, row[i] || '']));
+    const key = leadDefinitelyOtherClient(full, DEFAULT_CLIENT_ID) ? '' : normalizeEmail(twin.email);
+    if (key && !twinsByEmail.has(key)) twinsByEmail.set(key, twin);
+  }
+
+  const activitiesByKey = new Map();
+  for (const row of (activityResponse.data.values || []).slice(1)) {
+    const event = Object.fromEntries(COLD_CALL_ACTIVITY_HEADER.map((field, i) => [field, row[i] || '']));
+    for (const key of [event.leadId, normalizeEmail(event.email)]) {
+      if (!key) continue;
+      const rows = activitiesByKey.get(key) || [];
+      rows.push(event);
+      activitiesByKey.set(key, rows);
+    }
+  }
+
+  const now = new Date();
+  const observers = observerHealth(observerResponse.data.values || [], { now,
+    senderIds: observableSenders(configuredSenders()).map(item => item.id) });
+  const suppressedEmails = new Set((suppressionResponse.data.values || []).slice(1).map(row => normalizeEmail(row[0])));
+  const entries = leads.map(lead => {
+    const email = normalizeEmail(lead.email);
+    const twin = twinsById.get(String(lead.id).replace(/^CE-/, '')) || twinsByEmail.get(email) || null;
+    const activities = [
+      ...(activitiesByKey.get(lead.id) || []),
+      ...(email ? activitiesByKey.get(email) || [] : []),
+    ];
+    return {
+      id: lead.id,
+      name: `${lead.first || ''} ${lead.last || ''}`.trim() || lead.company || lead.email || lead.id,
+      company: lead.company || '',
+      stage: displayStageFor(lead.stage),
+      nextAction: deriveNextAction(lead, twin, { activities, now, observers, suppressedEmails,
+        sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true' }),
+    };
+  });
+
+  entries.sort((a, b) => compareNextActions(a.nextAction, b.nextAction));
+  // `at` is the cache's clock (createOutreachCache reads it); the route strips it.
+  return { at: Date.now(), generatedAt: now.toISOString(), summary: summarizeNextActions(entries), entries };
+}
+
+app.get('/api/leads/next-actions', requireAuth, async (req, res) => {
   try {
-    const snapshot = await sheets().spreadsheets.values.batchGet({ spreadsheetId: SPREADSHEET_ID,
-      ranges: [AGENT_READ_RANGE, CE_COL_RANGE, `${COLD_CALL_ACTIVITY_SHEET}!A:J`,
-        `${GMAIL_OBSERVATION_STATE_SHEET}!A:I`, 'Suppression!A:A'] });
-    const [boardResponse, ceResponse, activityResponse, observerResponse, suppressionResponse] =
-      snapshot.data.valueRanges.map(data => ({ data }));
-
-    const leads = (boardResponse.data.values || []).slice(1).map(row => {
-      const lead = {};
-      COLUMNS.forEach((col, i) => { lead[col] = row[i] || ''; });
-      AGENT_COLS.forEach((col, i) => { lead[col] = row[17 + i] || ''; });
-      CALL_DETAIL_COLS.forEach((col, i) => { lead[col] = row[20 + i] || ''; });
-      return lead;
-    }).filter(lead => lead.id);
-
-    // Index the ColdEmail twins once by id and by email — the same two keys
-    // findColdEmailTwins matches on, without a read per lead.
-    const twinsById = new Map();
-    const twinsByEmail = new Map();
-    for (const row of (ceResponse.data.values || []).slice(1)) {
-      const twin = {
-        id: row[0] || '', company: row[1] || '', email: row[3] || '',
-        stage: row[7] || '', emailStatus: row[8] || '', lastEmailedAt: row[9] || '',
-        emailStep: row[10] || '', notes: row[11] || '', senderInboxId: row[20] || '',
-      };
-      if (twin.id && !twinsById.has(twin.id)) twinsById.set(twin.id, twin);
-      // Board cards are ScaleLab's; another client's row is never an email twin.
-      const full = Object.fromEntries(CE_COLUMNS.map((field, i) => [field, row[i] || '']));
-      const key = leadDefinitelyOtherClient(full, DEFAULT_CLIENT_ID) ? '' : normalizeEmail(twin.email);
-      if (key && !twinsByEmail.has(key)) twinsByEmail.set(key, twin);
-    }
-
-    const activitiesByKey = new Map();
-    for (const row of (activityResponse.data.values || []).slice(1)) {
-      const event = Object.fromEntries(COLD_CALL_ACTIVITY_HEADER.map((field, i) => [field, row[i] || '']));
-      for (const key of [event.leadId, normalizeEmail(event.email)]) {
-        if (!key) continue;
-        const rows = activitiesByKey.get(key) || [];
-        rows.push(event);
-        activitiesByKey.set(key, rows);
-      }
-    }
-
-    const now = new Date();
-    const observers = observerHealth(observerResponse.data.values || [], { now,
-      senderIds: observableSenders(configuredSenders()).map(item => item.id) });
-    const suppressedEmails = new Set((suppressionResponse.data.values || []).slice(1).map(row => normalizeEmail(row[0])));
-    const entries = leads.map(lead => {
-      const email = normalizeEmail(lead.email);
-      const twin = twinsById.get(String(lead.id).replace(/^CE-/, '')) || twinsByEmail.get(email) || null;
-      const activities = [
-        ...(activitiesByKey.get(lead.id) || []),
-        ...(email ? activitiesByKey.get(email) || [] : []),
-      ];
-      return {
-        id: lead.id,
-        name: `${lead.first || ''} ${lead.last || ''}`.trim() || lead.company || lead.email || lead.id,
-        company: lead.company || '',
-        stage: displayStageFor(lead.stage),
-        nextAction: deriveNextAction(lead, twin, { activities, now, observers, suppressedEmails,
-          sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true' }),
-      };
-    });
-
-    entries.sort((a, b) => compareNextActions(a.nextAction, b.nextAction));
-    res.json({ generatedAt: now.toISOString(), summary: summarizeNextActions(entries), entries });
+    const { at: _cachedAt, ...view } = await nextActionsCache.get({ force: req.query.refresh === '1' });
+    res.json(view);
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
     console.error('[Next Actions GET]', e.message);
@@ -5172,9 +5198,12 @@ const { staffingLaunchState } = require('./integrations/staffing-launch-gate');
 app.get('/api/staffing/launch-readiness', requireAuth, async (_req, res) => {
   const { STAFFING_CAMPAIGN, LOCKED_EMAILS, BOLD_PHRASES } = require('./integrations/staffing-campaign');
   const { staffingReadinessReport, staffingSequenceDiff } = require('./integrations/staffing-readiness');
-  const corpus = await readOutreachCorpus();
+  // Independent reads, so they run together. The corpus stays a fresh read.
+  const [corpus, dataset] = await Promise.all([
+    readOutreachCorpus(),
+    getOutreachDataset({ force: false }).catch(() => ({ activities: [], boardLeads: [], suppression: [] })),
+  ]);
   if (!corpus.ok) return res.status(503).json({ error: 'Canonical staffing state unavailable' });
-  const dataset = await getOutreachDataset({ force: false }).catch(() => ({ activities: [], boardLeads: [], suppression: [] }));
   const suppressed = new Set((dataset.suppression || []).map(row => String(row.email || row[0] || '').trim().toLowerCase()).filter(Boolean));
   const report = staffingReadinessReport({
     leads: corpus.leads, activities: dataset.activities || [], boardLeads: dataset.boardLeads || [],

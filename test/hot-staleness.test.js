@@ -266,8 +266,13 @@ test('29. the human-response event is recorded once, and records only', () => {
 // ── 30–31. Performance and UI wiring ────────────────────────────────────────
 
 test('30. Hot state adds no per-card sheet read', () => {
-  const queue = server.slice(server.indexOf("app.get('/api/leads/next-actions'"));
-  const body = queue.slice(0, queue.indexOf('\n});'));
+  // The read model lives in loadNextActionsView (the route serves it through a
+  // cache), so the pin follows it there.
+  const route = server.slice(server.indexOf("app.get('/api/leads/next-actions'"));
+  assert.match(route.slice(0, route.indexOf('\n});')), /nextActionsCache\.get\(/);
+  const queue = server.slice(server.indexOf('async function loadNextActionsView() {'));
+  const body = queue.slice(0, queue.indexOf('\n}\n'));
+  assert.ok(body.length > 500, 'loadNextActionsView found');
   assert.ok(!/for\s*\([^)]*\)\s*\{[^}]*await[^}]*spreadsheets/.test(body), 'no per-lead await');
   assert.equal((body.match(/spreadsheets\.values\.get/g) || []).length, 0, 'no individual reads');
   assert.equal((body.match(/spreadsheets\.values\.batchGet/g) || []).length, 1, 'one fixed snapshot for all cards and observer health');
