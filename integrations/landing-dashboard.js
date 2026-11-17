@@ -313,14 +313,23 @@ async function selectRows(table, query, { env, fetchImpl, maxRows = MAX_ROWS, ti
   return { ok: true, rows, truncated: true };
 }
 
+// Chunks read ID_CHUNK_CONCURRENCY at a time. Results are walked in chunk
+// order, so the rows and the first failure reported are the ones the
+// one-at-a-time loop produced.
+const ID_CHUNK_CONCURRENCY = 4;
+
 async function selectByIds(table, columns, key, ids, extra, options) {
   const rows = [];
   let truncated = false;
-  for (const chunk of chunks([...new Set(ids)].filter(Boolean), ID_CHUNK)) {
-    const result = await selectRows(table, `select=${columns}&${key}=${inList(chunk)}${extra}`, options);
-    if (!result.ok) return result;
-    rows.push(...result.rows);
-    truncated = truncated || result.truncated;
+  const all = chunks([...new Set(ids)].filter(Boolean), ID_CHUNK);
+  for (let i = 0; i < all.length; i += ID_CHUNK_CONCURRENCY) {
+    const results = await Promise.all(all.slice(i, i + ID_CHUNK_CONCURRENCY)
+      .map(chunk => selectRows(table, `select=${columns}&${key}=${inList(chunk)}${extra}`, options)));
+    for (const result of results) {
+      if (!result.ok) return result;
+      rows.push(...result.rows);
+      truncated = truncated || result.truncated;
+    }
   }
   return { ok: true, rows, truncated };
 }
@@ -331,23 +340,34 @@ async function loadStaffingFunnel({ query = {}, env = process.env, fetchImpl = f
   const from = encodeURIComponent(filters.from);
   const to = encodeURIComponent(filters.to);
 
-  const issuances = await selectRows('landing_link_issuances',
-    `select=${ISSUANCE_COLUMNS}&sent_at=gte.${from}&sent_at=lt.${to}${filters.includeTest ? '' : '&is_test=is.false'}&order=sent_at.desc`, options);
+  // Two phases instead of five sequential round trips: issuances, bookings and
+  // the monitor depend on nothing; sessions need the issuances, and leads need
+  // the issuances and the bookings. The queries are unchanged, and failures are
+  // reported in the original order (issuances, sessions, bookings, monitor,
+  // leads), so the same failure wins as before.
+  const [issuances, bookings, monitored] = await Promise.all([
+    selectRows('landing_link_issuances',
+      `select=${ISSUANCE_COLUMNS}&sent_at=gte.${from}&sent_at=lt.${to}${filters.includeTest ? '' : '&is_test=is.false'}&order=sent_at.desc`, options),
+    selectRows('landing_booking_attribution', `select=${BOOKING_COLUMNS}&booked_at=gte.${from}&order=booked_at.desc`, options),
+    filters.includeInternal
+      ? selectRows('landing_sessions',
+        `select=${MONITOR_COLUMNS}&started_at=gte.${from}&started_at=lt.${to}&or=(is_internal.is.true,is_debug.is.true,resolution.eq.pending)`, options)
+      : Promise.resolve(null),
+  ]);
   if (!issuances.ok) return { ok: false, error: issuances.error };
-  const sessions = await selectByIds('landing_session_facts', SESSION_COLUMNS, 'issuance_id',
-    issuances.rows.map(row => row.issuance_id), '&is_internal=is.false&is_debug=is.false', options);
+  const leadsNeeded = bookings.ok && (!monitored || monitored.ok);
+  const [sessions, leads] = await Promise.all([
+    selectByIds('landing_session_facts', SESSION_COLUMNS, 'issuance_id',
+      issuances.rows.map(row => row.issuance_id), '&is_internal=is.false&is_debug=is.false', options),
+    leadsNeeded
+      ? selectByIds('outreach_leads', LEAD_COLUMNS, 'lead_id',
+        [...issuances.rows.map(row => row.lead_id), ...bookings.rows.map(row => row.lead_id)], '', options)
+      : Promise.resolve(null),
+  ]);
   if (!sessions.ok) return { ok: false, error: sessions.error };
-  const bookings = await selectRows('landing_booking_attribution', `select=${BOOKING_COLUMNS}&booked_at=gte.${from}&order=booked_at.desc`, options);
   if (!bookings.ok) return { ok: false, error: bookings.error };
-  let monitor = null;
-  if (filters.includeInternal) {
-    const monitored = await selectRows('landing_sessions',
-      `select=${MONITOR_COLUMNS}&started_at=gte.${from}&started_at=lt.${to}&or=(is_internal.is.true,is_debug.is.true,resolution.eq.pending)`, options);
-    if (!monitored.ok) return { ok: false, error: monitored.error };
-    monitor = monitored.rows;
-  }
-  const leads = await selectByIds('outreach_leads', LEAD_COLUMNS, 'lead_id',
-    [...issuances.rows.map(row => row.lead_id), ...bookings.rows.map(row => row.lead_id)], '', options);
+  if (monitored && !monitored.ok) return { ok: false, error: monitored.error };
+  const monitor = monitored ? monitored.rows : null;
   if (!leads.ok) return { ok: false, error: leads.error };
 
   return {

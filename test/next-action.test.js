@@ -323,7 +323,11 @@ test('25. no derivation can cause a send: the engine has no outbound path', () =
 
 test('26. no derivation can change a stage: the queue endpoint only reads', () => {
   const handler = server.slice(server.indexOf("app.get('/api/leads/next-actions'"));
-  const body = handler.slice(0, handler.indexOf('\napp.'));
+  // The route serves loadNextActionsView through a cache; both are checked.
+  const view = server.slice(server.indexOf('async function loadNextActionsView() {'));
+  const viewBody = view.slice(0, view.indexOf('\n}\n'));
+  assert.ok(viewBody.length > 500, 'loadNextActionsView found');
+  const body = handler.slice(0, handler.indexOf('\napp.')) + viewBody;
   assert.ok(!/values\.(update|append|batchUpdate|clear)/.test(body), 'no sheet writes');
   assert.ok(!/applyManualHold|sendEmail|moveLead/.test(body));
   assert.match(server, /app\.get\('\/api\/leads\/next-actions', requireAuth/);
