@@ -385,14 +385,16 @@ test('dashboard: a conversation with no optional data renders without empty N/A 
   assert.match(body, /Unknown/);
 });
 
-test('ScaleLab drawer and ScaleLab Inbox are byte-for-byte unchanged from production', () => {
+test('ScaleLab drawer and the ScaleLab Inbox loader are byte-for-byte unchanged from production', () => {
+  // The ScaleLab Inbox list (renderInboxWorkspace) was deliberately redesigned
+  // on 2026-11-18: one row per conversation with summary cards. Its rows still
+  // open this drawer, and the loader and drawer stay pinned.
   const prod = execFileSync('git', ['show', '6982754:public/index.html'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   const slice = (source, from, to) => { const start = source.indexOf(from); return source.slice(start, source.indexOf(to, start)); };
   for (const [from, to] of [
     ['function openCeDetail(id) {', '\n// Table cell text'],
     ['function closeCeDetail(e) {', '\nasync function loadCeActivity'],
     ['async function loadCeActivity(id) {', '\nfunction openCeDetail'],
-    ['function renderInboxWorkspace() {', '\nasync function loadSequencesWorkspace'],
     ['async function loadInboxWorkspace() {', '\nfunction inboxActionFor'],
     ['<div class="detail-overlay" id="ce-detail-overlay"', '<!-- A managed client'],
   ]) {

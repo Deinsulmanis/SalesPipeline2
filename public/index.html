@@ -2064,6 +2064,8 @@
   .sidebar-toggle{display:none;width:44px;height:44px;border:0;background:transparent;color:var(--text);border-radius:8px;cursor:pointer}
   #workspace-stage{grid-column:2;grid-row:2;position:relative;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--border-hover) transparent}.crm-workspace{display:none;min-height:100%;padding:22px 24px 40px}.crm-workspace.active{display:block}.workspace-intro{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:0 0 16px}.workspace-intro h2{font-size:20px;letter-spacing:-.025em;margin:0;color:var(--text)}.workspace-intro p{font-size:12px;color:var(--text-muted);margin:4px 0 0;max-width:720px}.workspace-eyebrow{font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--primary);font-weight:750}
   body.workspace-ready .motion-nav{display:none!important}body.workspace-ready .stats-bar,body.workspace-ready .filter-bar,body.workspace-ready .main,body.workspace-ready #ce-section{margin-left:0;margin-right:0}
+  /* ScaleLab's board in the managed-client look: summary cards replace the stats strip. */
+  #ws-pipeline>.stats-bar{display:none!important}#ws-pipeline>.pipeline-metrics{width:100%}#ws-pipeline>.main .col{width:240px}
   #ws-pipeline>.stats-bar,#ws-pipeline>.filter-bar,#ws-pipeline>.main{width:100%}#ws-pipeline>.stats-bar{border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden}#ws-pipeline>.filter-bar{padding-left:0;padding-right:0;background:transparent;border:0}#ws-pipeline>.main{padding:0}
   #ws-outreach #ce-section{display:block!important}#ws-outreach .ce-filter-bar{border:1px solid var(--border);border-radius:9px;background:var(--surface);margin-bottom:12px}#ws-outreach .stats-bar{margin:14px 0}#ws-outreach .ce-master-filters,#ws-outreach .ce-quick-views,#ws-outreach #ce-current-campaign,#ws-outreach #ce-result-info{padding-left:0!important;padding-right:0!important}
   .workspace-surface{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px}.workspace-empty{padding:42px 20px;text-align:center;color:var(--text-muted);border:1px dashed var(--border);border-radius:9px;background:var(--tint-faint)}.workspace-empty strong{display:block;color:var(--text);font-size:14px;margin-bottom:5px}
@@ -2086,7 +2088,7 @@
   .calendar-review{margin:0 0 20px}.calendar-review h4{margin:0 0 4px;font-size:14px}.calendar-review .client-note{margin:0 0 10px}.calendar-review-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}.calendar-review-actions button{min-height:44px}
   @media(max-width:700px){.calendar-status{flex-direction:column;align-items:flex-start}.calendar-review-actions{justify-content:flex-start}}
   .meeting-row{flex-wrap:wrap}.meeting-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;flex-basis:100%}.meeting-actions button,.meeting-actions a{min-height:44px;margin-top:0;display:inline-flex;align-items:center;text-decoration:none}.meeting-invoice-state{font-size:12px;color:var(--text-secondary);align-self:center}
-  .billing-panel{margin:0 0 20px}.billing-panel h4{margin:0 0 8px;font-size:14px}.billing-panel h5{margin:16px 0 8px;font-size:13px;color:var(--text-secondary)}.billing-mode{padding:2px 6px;border-radius:4px;border:1px solid var(--border);margin-right:6px;font-size:11px}
+  .bookings-heading{margin:18px 0 8px;font-size:13px;color:var(--text-secondary)}.meeting-dialog .md-check input{min-height:auto}.billing-panel{margin:0 0 20px}.billing-panel h4{margin:0 0 8px;font-size:14px}.billing-panel h5{margin:16px 0 8px;font-size:13px;color:var(--text-secondary)}.billing-mode{padding:2px 6px;border-radius:4px;border:1px solid var(--border);margin-right:6px;font-size:11px}
   .meeting-dialog{max-width:520px;width:calc(100% - 32px);border:1px solid var(--border);border-radius:10px;background:var(--surface);color:inherit;padding:20px}.meeting-dialog::backdrop{background:rgba(0,0,0,.5)}.meeting-dialog form,.meeting-dialog .md-form{display:grid;gap:8px}.billing-card{margin-top:-8px}.meeting-dialog h3{margin:0}.meeting-dialog label{font-size:12px;font-weight:600}.meeting-dialog input,.meeting-dialog select,.meeting-dialog textarea{min-height:44px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:inherit;font:inherit}.meeting-dialog fieldset{border:1px solid var(--border);border-radius:6px;display:flex;flex-wrap:wrap;gap:8px 16px;padding:10px}.meeting-dialog .md-check{font-weight:400;display:flex;gap:6px;align-items:center;min-height:32px}.md-error{color:var(--danger);font-size:12px;margin:0}.md-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
   .booking-list,.sequence-list{display:grid;gap:9px}.operational-row{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:13px 15px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}.operational-row b{font-size:13px}.operational-row small{display:block;color:var(--text-muted);font-size:11px;margin-top:3px}.operational-row-meta{text-align:right;font-size:12px;color:var(--text-secondary)}
   @media(max-width:980px){body.workspace-ready{grid-template-columns:72px minmax(0,1fr)}.crm-sidebar{padding-inline:8px}.crm-brand{padding-inline:8px}.crm-brand-copy,.crm-nav-btn span,.crm-nav-group,.crm-sidebar-foot{display:none}.crm-nav-btn{justify-content:center;padding:9px}.crm-nav-btn svg{width:19px;height:19px}.crm-workspace{padding:18px}.inbox-row{grid-template-columns:minmax(160px,.7fr) minmax(230px,1.3fr)}}
@@ -2141,6 +2143,8 @@
   body[data-client-mode="managed"] #ce-leads-panel #crm-health-panel{display:none!important}
   body[data-client-mode="managed"] #ws-settings #agent-panel{display:none!important}
   body[data-client-mode="managed"] #smartlead-health{display:none!important}
+  body[data-client-mode="managed"] #settings-system-details{display:none!important}
+  .settings-system-details{margin-top:14px}.settings-system-details summary{cursor:pointer;font-weight:650;min-height:44px;display:flex;align-items:center}.settings-system-details .status-grid{margin:10px 0 14px}
   body:not([data-client-mode="managed"]) .ce-extra-col{display:none}
   body[data-client-mode="managed"] .ce-sl-only{display:none}
   .lead-status-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:10px;margin:0 0 14px;padding:0 28px}
@@ -2326,6 +2330,9 @@
   </div>
 </div>
 
+<!-- SUMMARY CARDS (same cards as a client's Pipeline; filled by renderBoard) -->
+<div class="client-metrics pipeline-metrics" id="pipeline-metrics" aria-label="Pipeline summary"></div>
+
 <!-- FILTER TABS -->
 <div class="filter-bar">
   <span class="filter-label">View:</span>
@@ -2403,7 +2410,7 @@
     <div class="ce-master-filters" aria-label="Master prospect filters">
       <select id="ce-reply-filter" aria-label="Reply category" onchange="setCeMasterFilter('reply',this.value)"><option value="">All replies</option><option value="positive">Positive</option><option value="negative">Negative</option><option value="needs_human">Needs Human</option><option value="unclassified">Unclassified</option><option value="none">No Reply</option></select>
       <select id="ce-pipeline-filter" aria-label="Sales Pipeline presence" onchange="setCeMasterFilter('presence',this.value)"><option value="">All pipeline relationships</option><option value="in">In Sales Pipeline</option><option value="out">Not in Sales Pipeline</option><option value="conflict">Mapping conflict</option></select>
-      <select id="ce-pipeline-stage-filter" aria-label="Sales Pipeline stage" onchange="setCeMasterFilter('pipelineStage',this.value)"><option value="">All pipeline stages</option><option value="follow_up">Follow Up</option><option value="hot">Hot</option><option value="call_booked">Call Booked</option><option value="closed_won">Closed / Won</option><option value="closed_lost">Closed / Lost</option></select>
+      <select id="ce-pipeline-stage-filter" aria-label="Sales Pipeline stage" onchange="setCeMasterFilter('pipelineStage',this.value)"><option value="">All pipeline stages</option><option value="follow_up">Follow Up</option><option value="hot">Hot</option><option value="call_booked">Call Booked</option><option value="call_held">Call Held</option><option value="proposal_sent">Proposal / Agreement Sent</option><option value="closed_won">Client Signed + Tech Fee Paid</option><option value="closed_lost">Closed / Lost</option></select>
       <select id="ce-sequence-filter" aria-label="Sequence state" onchange="setCeMasterFilter('sequence',this.value)"><option value="">All sequence states</option><option value="active">Active sequence</option><option value="complete">Sequence complete</option><option value="queued">Queued</option><option value="not_started">Not started</option></select>
       <select id="ce-version-filter" aria-label="Campaign version" onchange="setCeMasterFilter('campaignVersion',this.value)"><option value="">All campaign versions</option></select>
       <select id="ce-sender-filter" aria-label="Sending inbox" onchange="setCeMasterFilter('senderInbox',this.value)"><option value="">All inboxes</option></select>
@@ -2660,7 +2667,9 @@
             <option value="follow_up">Follow Up</option>
             <option value="hot">Hot</option>
             <option value="call_booked">Call Booked</option>
-            <option value="closed_won">Closed / Won</option>
+            <option value="call_held">Call Held</option>
+            <option value="proposal_sent">Proposal / Agreement Sent</option>
+            <option value="closed_won">Client Signed + Tech Fee Paid</option>
             <option value="closed_lost">Closed / Lost</option>
           </select>
         </div>
@@ -2907,7 +2916,7 @@
     <div style="padding:16px 18px">
       <div id="promotion-context" class="react-facts"></div>
       <label for="promotion-stage" style="display:block;margin-top:14px">Sales Pipeline stage</label>
-      <select id="promotion-stage" onchange="renderManualPromotionFields()" style="width:100%;min-height:44px"><option value="">Choose a stage…</option><option value="follow_up">Follow Up</option><option value="hot">Hot</option><option value="call_booked">Call Booked</option><option value="closed_won">Closed / Won</option><option value="closed_lost">Closed / Lost</option></select>
+      <select id="promotion-stage" onchange="renderManualPromotionFields()" style="width:100%;min-height:44px"><option value="">Choose a stage…</option><option value="follow_up">Follow Up</option><option value="hot">Hot</option><option value="call_booked">Call Booked</option><option value="call_held">Call Held</option><option value="proposal_sent">Proposal / Agreement Sent</option><option value="closed_won">Client Signed + Tech Fee Paid</option><option value="closed_lost">Closed / Lost</option></select>
       <div id="promotion-extra"></div>
       <div class="react-reassure" style="margin-top:14px">Adding this lead to the Sales Pipeline does not resume cold-email automation. Human-owned stages keep the existing manual-hold safeguard.</div>
       <div class="form-actions" style="margin-top:14px"><button type="button" class="btn-cancel" onclick="closeManualPromotion()">Cancel</button><button type="button" class="btn-save" onclick="submitManualPromotion()">Save to Pipeline</button></div>
@@ -3054,11 +3063,13 @@ const COLUMNS = [
 const COL_RANGE = `${GOOGLE_CONFIG.SHEET_NAME}!A:Q`;
 
 const STAGES = [
-  { id: 'follow_up',   label: 'Follow Up',     color: 'var(--primary)', rule: 'Manual, or a dated recontact reply' },
-  { id: 'hot',         label: 'Hot',           color: 'var(--danger)',  rule: 'Auto: positive email reply' },
-  { id: 'call_booked', label: 'Call Booked',   color: 'var(--violet)',  rule: 'Meeting time required' },
-  { id: 'closed_won',  label: 'Closed / Won',  color: 'var(--success)', rule: 'Won — set by hand' },
-  { id: 'closed_lost', label: 'Closed / Lost', color: 'var(--lost)',    rule: 'Final outcome required' },
+  { id: 'follow_up',     label: 'Follow Up',                     color: 'var(--primary)', rule: 'Manual, or a dated recontact reply' },
+  { id: 'hot',           label: 'Hot (replied)',                 color: 'var(--danger)',  rule: 'Auto: positive email reply' },
+  { id: 'call_booked',   label: 'Call Booked',                   color: 'var(--violet)',  rule: 'Meeting time required' },
+  { id: 'call_held',     label: 'Call Held',                     color: 'var(--violet)',  rule: 'Call happened — set by hand' },
+  { id: 'proposal_sent', label: 'Proposal / Agreement Sent',     color: 'var(--warn)',    rule: 'Waiting on signature and tech fee' },
+  { id: 'closed_won',    label: 'Client Signed + Tech Fee Paid', color: 'var(--success)', rule: 'Signed and paid — set by hand' },
+  { id: 'closed_lost',   label: 'Closed / Lost',                 color: 'var(--lost)',    rule: 'Final outcome required' },
 ];
 
 // Deliberately unchanged by the closed_won addition. 'closed' keeps pointing at
@@ -3506,6 +3517,21 @@ function renderBoard() {
   document.getElementById('stat-booked').textContent      = leads.filter(l => displayStageFor(l.stage) === 'call_booked').length;
   document.getElementById('stat-closed-lost').textContent = leads.filter(l => displayStageFor(l.stage) === 'closed_lost').length;
   document.getElementById('stat-closed-won').textContent  = leads.filter(l => displayStageFor(l.stage) === 'closed_won').length;
+
+  // Summary cards in the managed-client style. Counts are of the whole board,
+  // so a search or filter never makes the totals look smaller than they are.
+  const metricsHost = document.getElementById('pipeline-metrics');
+  if (metricsHost) {
+    const inStage = (...ids) => leads.filter(l => ids.includes(displayStageFor(l.stage))).length;
+    metricsHost.innerHTML = [
+      metricCard('Open opportunities', inStage('follow_up', 'hot', 'call_booked', 'call_held', 'proposal_sent')),
+      metricCard('Hot (replied)', inStage('hot')),
+      metricCard('Calls', inStage('call_booked', 'call_held'), `${inStage('call_booked')} booked · ${inStage('call_held')} held`),
+      metricCard('Proposals out', inStage('proposal_sent'), 'Waiting on signature and tech fee'),
+      metricCard('Signed + tech fee paid', inStage('closed_won')),
+      metricCard('Closed / Lost', inStage('closed_lost')),
+    ].join('');
+  }
 
   // Work-queue counters, derived from the shared engine's output.
   const queueCount = f => [...nextActions.values()].filter(e => naMatchesFilter(e.nextAction, f)).length;
@@ -7770,12 +7796,12 @@ const WORKSPACES = Object.freeze({
   pipeline:  ['Pipeline', 'Active opportunities and what happens next'],
   outreach:  ['Outreach', 'The complete prospect directory and outreach state'],
   archive:   ['Archive', 'Archived leads with their complete history — nothing here can send'],
-  inbox:     ['Inbox', 'Replies and conversations that need a human decision'],
+  inbox:     ['Inbox', 'Conversations by lead, the latest reply first, and what each needs next'],
   campaigns: ['Campaigns', 'Measured campaign versions and outbound context'],
   analytics: ['Analytics', 'Funnel performance, engagement, and sending activity'],
   staffing:  ['Staffing Funnel', 'Tracked staffing links, landing-page visits and assisted bookings'],
   sequences: ['Sequences', 'Stage follow-up enrollment and delivery state'],
-  bookings:  ['Bookings', 'Scheduled calls and explicit meeting outcomes'],
+  bookings:  ['Bookings', 'Every meeting, upcoming and past; bill the tech fee and send onboarding documents after the call'],
   health:    ['CRM Health', 'Automation risk, data quality, and operational backlog'],
   settings:  ['Settings', 'Read-only production configuration and provider status'],
   clients:   ['Client Ops', 'Managed-client outreach, conversations, meetings and billing'],
@@ -7843,10 +7869,10 @@ function installWorkspaceShell() {
   const ce = document.getElementById('ce-section');
   outreach.appendChild(ce);
 
-  inbox.insertAdjacentHTML('beforeend', '<div class="inbox-toolbar" id="inbox-toolbar"></div><p id="inbox-note" style="color:var(--text-muted);font-size:12px;margin:0 0 10px">An operational queue over the same canonical reply records Analytics measures — not a second count. Every inbound message appears here, including the automated and unattributable ones that Analytics deliberately keeps out of reply rates, so <b>All replies</b> equals <b>Inbound Messages</b> and is larger than <b>Genuine Replies</b>. Filters overlap: a message can be both Positive and Needs response.</p><div id="inbox-content" class="workspace-empty"><strong>Loading the reply queue…</strong>Canonical reply evidence is being prepared.</div>');
+  inbox.insertAdjacentHTML('beforeend', '<div class="client-metrics" id="inbox-metrics" aria-label="Inbox summary"></div><div class="inbox-toolbar" id="inbox-toolbar"></div><p id="inbox-note" style="color:var(--text-muted);font-size:12px;margin:0 0 10px">One row per conversation, showing its latest reply. Open a row for the full thread and every reply action. Filters overlap: a conversation can be both Positive and Needs response.</p><div id="inbox-content" class="workspace-empty"><strong>Loading the reply queue…</strong>Canonical reply evidence is being prepared.</div>');
   sequences.insertAdjacentHTML('beforeend', '<div id="sequences-status" class="workspace-surface">Loading sequence status…</div>');
   staffing.insertAdjacentHTML('beforeend', '<div id="staffing-funnel-content" aria-live="polite"><div class="workspace-empty"><strong>Loading the staffing funnel…</strong>Reading tracked links, landing-page sessions and bookings.</div></div>');
-  bookings.insertAdjacentHTML('beforeend', '<div id="bookings-content" class="workspace-empty"><strong>Loading call lifecycle…</strong>Current meeting state is being prepared.</div>');
+  bookings.insertAdjacentHTML('beforeend', '<div id="bookings-content" class="workspace-empty"><strong>Loading meetings…</strong>Reading meeting times and billing status.</div>');
   settings.insertAdjacentHTML('afterbegin', '<div id="settings-status" class="status-grid" style="margin-bottom:14px"></div><div id="settings-inbox-routing" class="workspace-surface" aria-live="polite"><div class="workspace-empty"><strong>Loading sender routing…</strong>Reading configured Gmail inbox status.</div></div>');
 
   document.body.appendChild(stage);
@@ -7860,6 +7886,16 @@ function installWorkspaceShell() {
   move('ce-opens-panel', 'ws-analytics');
   move('ce-campaigns-panel', 'ws-campaigns');
   move('agent-panel', 'ws-settings');
+  // The simpler Outreach (as a client's): the lead directory and its status
+  // cards. The sending and reply totals, with their drill-downs, lead the
+  // Analytics page instead; launch readiness sits with Campaigns.
+  const analyticsHost = document.getElementById('ws-analytics');
+  const analyticsFirst = document.getElementById('ce-funnel-analytics');
+  for (const id of ['ce-stat-scope', 'ce-stats-bar', 'ce-reply-metrics', 'ce-digest-card']) {
+    const node = document.getElementById(id);
+    if (node && analyticsHost) analyticsHost.insertBefore(node, analyticsFirst && analyticsFirst.parentNode === analyticsHost ? analyticsFirst : null);
+  }
+  move('staffing-launch-panel', 'ws-campaigns');
   // A managed client's workspaces render into these; ScaleLab's content stays untouched.
   for (const id of ['pipeline', 'inbox', 'bookings', 'campaigns', 'analytics', 'settings']) {
     document.getElementById(`ws-${id}`).insertAdjacentHTML('beforeend', `<div class="client-view" id="client-view-${id}" aria-live="polite"></div>`);
@@ -9375,29 +9411,62 @@ function inboxMatches(record, action) {
   return Boolean(action?.needsAttention && action.owner === 'human');
 }
 
+/**
+ * The reply records as conversations, the way a client's Inbox shows them:
+ * one per lead, represented by its latest reply, with every reply counted.
+ */
+function inboxConversations() {
+  const byLead = new Map();
+  for (const record of rdRecords) {
+    const key = record.leadId || record.email || record.eventId;
+    const entry = byLead.get(key);
+    const time = Date.parse(record.occurredAt || 0) || 0;
+    if (!entry) byLead.set(key, { latest: record, latestAt: time, count: 1 });
+    else {
+      entry.count += 1;
+      if (time >= entry.latestAt) { entry.latest = record; entry.latestAt = time; }
+    }
+  }
+  return [...byLead.values()].sort((a, b) => b.latestAt - a.latestAt);
+}
+
 function renderInboxWorkspace() {
+  const conversations = inboxConversations();
+  const matching = id => conversations.filter(c => { const previous = inboxFilter; inboxFilter = id; const match = inboxMatches(c.latest, inboxActionFor(c.latest)); inboxFilter = previous; return match; });
+  // Summary cards first, like a client's Inbox.
+  const metricsHost = document.getElementById('inbox-metrics');
+  if (metricsHost) {
+    metricsHost.innerHTML = [
+      metricCard('Conversations', conversations.length),
+      metricCard('Needs response', matching('attention').length, 'A person owes the next move'),
+      metricCard('Positive', matching('positive').length),
+      metricCard('Needs a person', matching('needs_human').length),
+      metricCard('Revisit later', matching('revisit').length),
+    ].join('');
+  }
   // Each filter shows the count it would actually render, computed with the
   // same predicate the list uses, so a tab can never promise rows it cannot show.
-  document.getElementById('inbox-toolbar').innerHTML = INBOX_FILTERS.map(([id,label]) => {
-    const count = rdRecords.filter(record => { const previous = inboxFilter; inboxFilter = id; const match = inboxMatches(record, inboxActionFor(record)); inboxFilter = previous; return match; }).length;
-    return `<button class="inbox-filter${inboxFilter === id ? ' active' : ''}" type="button" onclick="setInboxFilter('${id}')">${esc(label)} <b>${count}</b></button>`;
-  }).join('');
-  const rows = rdRecords.filter(record => inboxMatches(record, inboxActionFor(record)));
+  document.getElementById('inbox-toolbar').innerHTML = INBOX_FILTERS.map(([id,label]) =>
+    `<button class="inbox-filter${inboxFilter === id ? ' active' : ''}" type="button" onclick="setInboxFilter('${id}')">${esc(label)} <b>${matching(id).length}</b></button>`).join('');
+  const rows = matching(inboxFilter);
   const host = document.getElementById('inbox-content');
-  if (!rows.length) { host.className = 'workspace-empty'; host.innerHTML = '<strong>Nothing in this view</strong>No replies currently match this operational filter.'; return; }
+  if (!rows.length) { host.className = 'workspace-empty'; host.innerHTML = '<strong>Nothing in this view</strong>No conversations currently match this filter.'; return; }
   host.className = 'inbox-list';
-  host.innerHTML = rows.map(record => {
+  host.innerHTML = rows.map(({ latest: record, count }) => {
     const action = inboxActionFor(record);
     const body = record.hasText ? record.replyText : 'Reply text unavailable — historical body was not stored.';
+    const excerpt = body.length > 260 ? `${body.slice(0, 257)}…` : body;
     const category = RD_CATEGORY_LABEL[record.category] || record.category;
     const ooo = !action && record.oooPause ? OOO_PAUSE_LABEL[record.oooPause.status] : null;
     const actionLabel = action?.label || (ooo ? ooo[0] : record.category === 'automated_reply' ? 'No human response required' : record.pipelinePresence ? 'Review reply' : 'Review before promotion');
     const owner = action?.owner ? (NA_OWNER_LABEL[action.owner] || action.owner) : (ooo ? ooo[1] : record.category === 'automated_reply' ? 'Waiting' : 'Human');
     const dueAt = action?.dueAt || (ooo && record.oooPause.resumeAt ? record.oooPause.resumeAt : '');
-    return `<button type="button" class="inbox-row" onclick="openCeDetail('${escAttr(record.leadId)}')">
-      <span class="inbox-person"><b>${esc(record.company || 'Unknown company')}</b><small>${esc([record.contactName,record.email].filter(Boolean).join(' · '))}</small><small>${esc(rdFormatTime(record.occurredAt))}</small></span>
-      <span class="inbox-message"><span class="inbox-state">${esc(category)}</span><p>${esc(body)}</p><small>What they said · ${esc(record.reason || record.subtype || 'No additional reason stored')}</small></span>
-      <span class="inbox-action"><b>${esc(actionLabel)}</b><small>${esc(owner)}${action?.waitingOn ? ` · ${HOT_WAITING_LABEL[action.waitingOn] || action.waitingOn}` : ''}</small><small>${dueAt ? `${ooo ? 'Resume' : 'Due'} ${esc(rdFormatTime(dueAt))}` : 'No invented due date'}</small></span>
+    const when = dueAt ? `${ooo ? 'Resume' : 'Due'} ${rdFormatTime(dueAt)}` : `Last reply ${rdFormatTime(record.occurredAt)}`;
+    // Each row opens the lead's conversation panel: full thread and every reply action.
+    return `<button type="button" class="inbox-row" data-lead-id="${escAttr(record.leadId)}" onclick="openCeDetail(this.dataset.leadId)" aria-haspopup="dialog">
+      <span class="inbox-person"><b>${esc(record.company || 'Unknown company')}</b><small>${esc([record.contactName,record.email].filter(Boolean).join(' · '))}</small></span>
+      <span class="inbox-message"><span class="client-badge">${esc(category)}</span>${count > 1 ? ` <small class="inbox-count">${esc(count)} replies</small>` : ''}<p class="client-note">${esc(excerpt)}</p></span>
+      <span class="inbox-action"><b>${esc(actionLabel)}</b><small>${esc(owner)}${action?.waitingOn ? ` · ${HOT_WAITING_LABEL[action.waitingOn] || action.waitingOn}` : ''}</small><small>${esc(when)}</small></span>
     </button>`;
   }).join('');
 }
@@ -9678,13 +9747,219 @@ async function confirmArchiveRestore() {
   }
 }
 
+// ── BOOKINGS: ScaleLab's meeting tracker ────────────────────────────────────
+// Every Pipeline lead with a meeting time, upcoming and past. Once a meeting
+// is over, the client can be billed the tech fee (Stripe: email an invoice, or
+// save a card and charge it) and sent their onboarding documents from the main
+// mailbox. Each of those is an operator click with a confirmation; nothing
+// here moves a stage, places a hold or touches outreach sending.
+let scalelabBillingOverview = null;
+
 async function loadBookingsWorkspace() {
-  await ensureNextActions();
-  const rows = [...nextActions.values()].filter(entry => entry.nextAction?.callState || entry.stage === 'call_booked');
   const host = document.getElementById('bookings-content');
-  if (!rows.length) { host.className = 'workspace-empty'; host.innerHTML = '<strong>No current calls</strong>There are no Call Booked opportunities or unresolved meeting outcomes.'; return; }
-  host.className = 'booking-list';
-  host.innerHTML = rows.map(entry => { const call = entry.nextAction.callState || {}; return `<button type="button" class="operational-row" onclick="openDetail('${escAttr(entry.id)}')"><span><b>${esc(entry.company || entry.name)}</b><small>${esc(call.status || 'Outcome needed')}</small></span><span class="operational-row-meta">${esc(entry.nextAction.label)}<small>${esc(call.meetingAt ? rdFormatTime(call.meetingAt) : naDueText(entry.nextAction))}</small></span></button>`; }).join('');
+  if (!leads.length) await loadLeads({ awaitNextActions: false });
+  await ensureNextActions();
+  scalelabBillingOverview = await fetch('/api/scalelab-billing/overview').then(r => (r.ok ? r.json() : null)).catch(() => null);
+  const now = Date.now();
+  const meetings = leads
+    .map(lead => ({ lead, at: Date.parse(lead.meetingAt || '') }))
+    .filter(item => Number.isFinite(item.at));
+  const upcoming = meetings.filter(item => item.at > now).sort((a, b) => a.at - b.at);
+  const past = meetings.filter(item => item.at <= now).sort((a, b) => b.at - a.at);
+  const billingLeads = (scalelabBillingOverview && scalelabBillingOverview.leads) || {};
+  const paid = Object.values(billingLeads).flatMap(entry => entry.invoices || []).filter(inv => inv.status === 'paid');
+  const paidByCurrency = paid.reduce((acc, inv) => ({ ...acc, [inv.currency]: (acc[inv.currency] || 0) + inv.amountCents }), {});
+  const paidText = Object.entries(paidByCurrency).map(([cur, cents]) => clientMoney(cents, cur.toUpperCase())).join(' · ') || '—';
+  const metrics = `<div class="client-metrics">
+      ${metricCard('Upcoming meetings', upcoming.length)}
+      ${metricCard('Past meetings', past.length)}
+      ${metricCard('Meetings this month', meetings.filter(item => new Date(item.at).toISOString().slice(0, 7) === new Date().toISOString().slice(0, 7)).length)}
+      ${metricCard('Tech fees paid', paid.length, paidText)}
+      ${metricCard('Cards on file', Object.values(billingLeads).filter(entry => entry.card).length)}
+    </div>`;
+  const billingNote = !scalelabBillingOverview
+    ? '<p class="client-note">Billing status unavailable right now; meetings are still listed.</p>'
+    : (scalelabBillingOverview.ready ? '' : `<p class="client-note">Stripe billing is off (${esc(scalelabBillingOverview.reason || '')}); billing buttons appear once it is on.</p>`);
+  if (!meetings.length) {
+    host.className = '';
+    host.innerHTML = metrics + billingNote + '<div class="workspace-empty"><strong>No meetings yet</strong>Meetings appear here as soon as a Pipeline lead has a meeting time (booked through your calendar or set on the lead).</div>';
+    return;
+  }
+  const section = (title, items, isPast) => items.length ? `<h4 class="bookings-heading">${esc(title)} (${items.length})</h4>
+    <div class="booking-list">${items.map(item => bookingRowHtml(item.lead, item.at, isPast, billingLeads[item.lead.id])).join('')}</div>` : '';
+  host.className = '';
+  host.innerHTML = metrics + billingNote + section('Upcoming', upcoming, false) + section('Past', past, true);
+}
+
+function bookingRowHtml(lead, at, isPast, billing) {
+  const id = escAttr(lead.id);
+  const call = nextActions.get(lead.id)?.nextAction?.callState || null;
+  const callStatus = call && call.status ? (CALL_STATUS_LABEL[call.status] || call.status.replace(/_/g, ' ')) : '';
+  const name = [lead.first, lead.last].filter(Boolean).join(' ');
+  const invoices = (billing && billing.invoices) || [];
+  const lastInvoice = invoices[0];
+  const billingText = [
+    billing && billing.card ? `Card on file: ${billing.card.brand.toUpperCase()} ••${billing.card.last4}` : '',
+    lastInvoice ? `${lastInvoice.description || 'Invoice'} ${clientMoney(lastInvoice.amountCents, lastInvoice.currency.toUpperCase())} · ${lastInvoice.status}` : '',
+  ].filter(Boolean).join(' · ');
+  const billingReady = scalelabBillingOverview && scalelabBillingOverview.ready;
+  const action = (label, fn, cls = 'btn-save-notes') => `<button type="button" class="${cls}" data-lead="${id}" onclick="${fn}(this.dataset.lead)">${esc(label)}</button>`;
+  return `<div class="operational-row meeting-row">
+      <span><b>${esc(lead.company || name || lead.email || lead.id)}</b><small>${esc([name, lead.email].filter(Boolean).join(' · ') || 'No contact recorded')}</small><small>${esc(stageLabel(displayStageFor(lead.stage)))}${callStatus ? ` · ${esc(callStatus)}` : ''}</small></span>
+      <span class="operational-row-meta"><b>${esc(callWhen(new Date(at).toISOString()))}</b><small>${esc(billingText || (isPast ? 'Not billed yet' : ''))}</small></span>
+      <span class="meeting-actions">
+        ${action('Open lead', 'openDetail')}
+        ${isPast && billingReady ? action('Bill tech fee', 'openTechFeeDialog', 'btn-save') : ''}
+        ${isPast ? action('Send onboarding docs', 'openOnboardingDialog') : ''}
+        ${lastInvoice && lastInvoice.hostedUrl ? `<a class="btn-save-notes" href="${escAttr(lastInvoice.hostedUrl)}" target="_blank" rel="noopener noreferrer">View invoice</a>` : ''}
+      </span>
+    </div>`;
+}
+
+function bookingLead(leadId) { return leads.find(item => String(item.id) === String(leadId)) || null; }
+
+function openOperatorDialog(id, html) {
+  document.getElementById(id)?.remove();
+  const dialog = document.createElement('dialog');
+  dialog.id = id;
+  dialog.className = 'meeting-dialog';
+  dialog.innerHTML = html;
+  document.body.appendChild(dialog);
+  dialog.addEventListener('close', () => dialog.remove());
+  dialog.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', () => dialog.close()));
+  dialog.showModal();
+  return dialog;
+}
+
+function showCopyLinkDialog(title, note, url) {
+  const dialog = openOperatorDialog('copy-link-dialog', `<div class="md-form">
+      <h3>${esc(title)}</h3><p class="client-note">${esc(note)}</p>
+      <label for="copy-link-url">Link</label><input id="copy-link-url" type="text" readonly value="${escAttr(url)}">
+      <p class="client-note" id="copy-link-done" role="status" hidden>Copied.</p>
+      <div class="md-actions"><button type="button" class="btn-cancel" data-close>Close</button><button type="button" class="btn-save" id="copy-link-btn">Copy link</button></div>
+    </div>`);
+  dialog.querySelector('#copy-link-btn').addEventListener('click', async () => {
+    const input = dialog.querySelector('#copy-link-url');
+    try { await navigator.clipboard.writeText(input.value); } catch (_) { input.select(); document.execCommand('copy'); }
+    dialog.querySelector('#copy-link-done').hidden = false;
+  });
+}
+
+/** Bill a client the tech fee: email an invoice, save a card, or charge the saved card. */
+async function openTechFeeDialog(leadId) {
+  const lead = bookingLead(leadId);
+  if (!lead) return showToast('Lead not found; reload the page', 'error');
+  const billing = (scalelabBillingOverview && scalelabBillingOverview.leads || {})[leadId] || null;
+  let prices = [];
+  try {
+    const response = await fetch('/api/scalelab-billing/prices');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    prices = data.prices || [];
+  } catch (error) { return showToast(`Could not load Stripe prices: ${error.message}`, 'error'); }
+  if (!prices.length) return showToast('No active one-time prices in Stripe. Add the tech fee product there first.', 'error');
+  const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const card = billing && billing.card;
+  const money = price => clientMoney(price.amountCents, price.currency.toUpperCase());
+  const dialog = openOperatorDialog('tech-fee-dialog', `<form class="md-form" novalidate>
+      <h3>Bill ${esc(lead.company || 'this client')}</h3>
+      <p class="client-note">${card ? `Card on file: ${esc(card.brand.toUpperCase())} ending ${esc(card.last4)}.` : 'No card on file yet.'} Nothing is charged or sent until you confirm.</p>
+      <label for="tf-price">What to bill</label>
+      <select id="tf-price" name="price">${prices.map(p => `<option value="${escAttr(p.priceId)}">${esc(p.productName)} — ${esc(money(p))}</option>`).join('')}</select>
+      <label for="tf-email">Client billing email</label>
+      <input id="tf-email" name="email" type="email" value="${escAttr(billing?.email || lead.email || '')}" ${billing ? 'readonly' : ''}>
+      <fieldset><legend>How to collect</legend>
+        <label class="md-check"><input type="radio" name="method" value="invoice" checked> Email an invoice to pay</label>
+        <label class="md-check"><input type="radio" name="method" value="charge" ${card ? '' : 'disabled'}> Charge the saved card now${card ? '' : ' (no card yet)'}</label>
+      </fieldset>
+      <label for="tf-days">Days to pay (emailed invoice)</label>
+      <input id="tf-days" name="days" type="number" min="1" max="60" value="7">
+      <p class="md-error" role="alert" hidden></p>
+      <div class="md-actions">
+        <button type="button" class="btn-save-notes" id="tf-card-link">Create card setup link</button>
+        <button type="button" class="btn-cancel" data-close>Cancel</button>
+        <button type="submit" class="btn-save">Continue</button>
+      </div>
+    </form>`);
+  const form = dialog.querySelector('form');
+  const error = dialog.querySelector('.md-error');
+  const post = async (path, body) => {
+    const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    return data;
+  };
+  dialog.querySelector('#tf-card-link').addEventListener('click', async () => {
+    try {
+      const data = await post(`/api/scalelab-billing/${encodeURIComponent(leadId)}/card-link`, { email: form.email.value });
+      dialog.close();
+      showCopyLinkDialog(`Card setup link for ${lead.company || 'this client'}`,
+        `Send this to the client. They save a card on a secure Stripe page and agree to future charges; nothing is charged now. The link works until ${data.expiresAt ? new Date(data.expiresAt).toLocaleString() : '24 hours from now'}.`, data.url);
+    } catch (e) { error.textContent = e.message; error.hidden = false; }
+  });
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const price = prices.find(p => p.priceId === form.price.value);
+    const method = form.method.value;
+    const prompt = method === 'charge'
+      ? `Charge ${lead.company || 'this client'}'s ${card.brand.toUpperCase()} ending ${card.last4} ${money(price)} for "${price.productName}" now?\n\nThe card is charged immediately and Stripe emails the paid invoice.`
+      : `Email ${form.email.value} an invoice for ${money(price)} ("${price.productName}"), due in ${form.days.value} days?`;
+    if (!window.confirm(prompt)) return;
+    try {
+      const path = `/api/scalelab-billing/${encodeURIComponent(leadId)}/${method === 'charge' ? 'charge' : 'invoice'}`;
+      await post(path, { priceId: price.priceId, email: form.email.value, daysUntilDue: Number(form.days.value), nonce });
+      dialog.close();
+      showToast(method === 'charge' ? 'Card charged; paid invoice emailed' : 'Invoice emailed', 'success');
+      loadBookingsWorkspace();
+    } catch (e) { error.textContent = e.message; error.hidden = false; }
+  });
+}
+
+/**
+ * A Gmail compose URL for the main mailbox, prefilled. Pure. Nothing is sent
+ * or saved by the app: Gmail opens in the browser and the operator attaches the
+ * client's documents and presses Send there.
+ */
+function gmailComposeUrl({ mailbox = '', to = '', cc = '', subject = '', body = '' }) {
+  const params = new URLSearchParams({ view: 'cm', fs: '1', to, su: subject, body });
+  if (cc) params.set('cc', cc);
+  if (mailbox) params.set('authuser', mailbox);
+  return `https://mail.google.com/mail/?${params.toString()}`;
+}
+
+/** Onboarding documents: open a prefilled Gmail compose window in the main mailbox. */
+function openOnboardingDialog(leadId) {
+  const lead = bookingLead(leadId);
+  if (!lead) return showToast('Lead not found; reload the page', 'error');
+  const first = String(lead.first || '').trim();
+  const mailbox = (scalelabBillingOverview && scalelabBillingOverview.mainMailbox) || '';
+  const dialog = openOperatorDialog('onboarding-dialog', `<form class="md-form" novalidate>
+      <h3>Send onboarding documents</h3>
+      <p class="client-note">Opens Gmail${mailbox ? ` as ${esc(mailbox)}` : ''} with this email filled in. Attach this client's documents there and press Send. Nothing is sent from here.</p>
+      <label for="ob-to">To</label><input id="ob-to" name="to" type="email" value="${escAttr(lead.email || '')}">
+      <label for="ob-cc">Cc (optional)</label><input id="ob-cc" name="cc" type="text" placeholder="name@company.com, other@company.com">
+      <label for="ob-subject">Subject</label><input id="ob-subject" name="subject" type="text" value="Welcome to ScaleLab AI — your onboarding documents">
+      <label for="ob-body">Message</label>
+      <textarea id="ob-body" name="body" rows="7">Hi ${esc(first || 'there')},
+
+Great speaking with you. Attached are your onboarding documents. Please review them and send them back when you're ready, and let me know if you have any questions.
+
+Thanks,
+Deins</textarea>
+      <p class="md-error" role="alert" hidden></p>
+      <div class="md-actions"><button type="button" class="btn-cancel" data-close>Cancel</button><button type="submit" class="btn-save">Open in Gmail</button></div>
+    </form>`);
+  const form = dialog.querySelector('form');
+  const error = dialog.querySelector('.md-error');
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.to.value.trim())) { error.textContent = 'Add the client\'s email address.'; error.hidden = false; return; }
+    const url = gmailComposeUrl({ mailbox, to: form.to.value.trim(), cc: form.cc.value.trim(), subject: form.subject.value, body: form.body.value });
+    const tab = window.open(url, '_blank', 'noopener');
+    if (!tab) { error.textContent = 'Your browser blocked the new tab; allow pop-ups for this site and try again.'; error.hidden = false; return; }
+    dialog.close();
+    showToast('Gmail opened: attach the documents and press Send', 'success');
+  });
 }
 
 async function loadSettingsWorkspace() {
@@ -9707,11 +9982,42 @@ async function loadSettingsWorkspace() {
       ['Smartlead integration', data.smartlead.enabled, data.smartlead.liveMutations ? 'Enabled with live mutations' : 'Read-only or disabled'],
       ['Roofing reply flow', data.roofingReplyFlow.enabled, data.roofingReplyFlow.enabled ? 'Enabled' : 'Disabled'],
     ];
+    settingsSystemCards = cards;
     host.innerHTML = cards.map(([label,on,copy]) => `<div class="status-card"><div class="status-card-head"><b>${esc(label)}</b><span class="state-pill" data-on="${on}">${on ? 'Enabled' : 'Off'}</span></div><p>${esc(copy)}</p></div>`).join('');
   }
   renderSettingsInboxRouting(inboxData || null);
   renderLandingInternalMark();
   document.getElementById('agent-panel').style.display = 'block';
+  if (!activeClientIsManaged()) simplifyScaleLabSettings();
+}
+
+// ScaleLab's Settings in the client layout: sending and connected inboxes up
+// front; every other system card, the agent panel and "mark this browser
+// internal" stay one click away under System details. Display only.
+let settingsSystemCards = [];
+function simplifyScaleLabSettings() {
+  const host = document.getElementById('settings-status');
+  const inboxHost = document.getElementById('settings-inbox-routing');
+  if (!host || !inboxHost) return;
+  const inboxCount = inboxHost.querySelectorAll('.inbox-sender-card').length;
+  const activeCount = inboxHost.querySelectorAll('.inbox-sender-card:not(.warming)').length;
+  const card = ([label, on, copy]) => `<div class="status-card"><div class="status-card-head"><b>${esc(label)}</b><span class="state-pill" data-on="${on}">${on ? 'On' : 'Off'}</span></div><p>${esc(copy)}</p></div>`;
+  const [sending, ...rest] = settingsSystemCards;
+  if (sending) host.innerHTML = card(sending) + card(['Connected inboxes', inboxCount > 0, `${inboxCount} connected · ${activeCount} active`]);
+  let details = document.getElementById('settings-system-details');
+  if (!details) {
+    details = document.createElement('details');
+    details.id = 'settings-system-details';
+    details.className = 'workspace-surface settings-system-details';
+    details.innerHTML = '<summary>System details</summary><div class="status-grid" id="settings-system-cards"></div><div id="settings-system-extra"></div>';
+    inboxHost.parentNode.insertBefore(details, inboxHost.nextSibling);
+  }
+  document.getElementById('settings-system-cards').innerHTML = rest.map(card).join('');
+  const extra = document.getElementById('settings-system-extra');
+  for (const id of ['settings-landing-internal', 'agent-panel']) {
+    const node = document.getElementById(id);
+    if (node && node.parentNode !== extra) extra.appendChild(node);
+  }
 }
 
 function decorateManagedSettings() {

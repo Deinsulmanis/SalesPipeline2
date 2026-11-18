@@ -2,11 +2,18 @@
 
 const { activeDemoPairEvents } = require('./demo-intent-state');
 
+// ScaleLab's sales stages. call_held and proposal_sent (2026-11-18) are
+// human-owned like call_booked: entering them places the manual hold, no
+// automated journey is defined for them, and promotion never moves a lead out
+// of them. closed_won keeps its id; the end of ScaleLab's process is a signed
+// client whose tech fee is paid.
 const COLD_CALL_STAGES = Object.freeze([
   { id: 'follow_up', label: 'Follow Up' },
-  { id: 'hot', label: 'Hot' },
+  { id: 'hot', label: 'Hot (replied)' },
   { id: 'call_booked', label: 'Call Booked' },
-  { id: 'closed_won', label: 'Closed / Won' },
+  { id: 'call_held', label: 'Call Held' },
+  { id: 'proposal_sent', label: 'Proposal / Agreement Sent' },
+  { id: 'closed_won', label: 'Client Signed + Tech Fee Paid' },
   { id: 'closed_lost', label: 'Closed / Lost' },
 ]);
 

@@ -91,6 +91,11 @@ function createStripeClient({ secretKey, fetchImpl = fetch, timeoutMs = REQUEST_
     // agrees to future charges. Nothing is charged here.
     createSetupCheckout: (params, opts) => request('POST', '/v1/checkout/sessions', params, opts),
     getSetupIntent: id => request('GET', `/v1/setup_intents/${encodeURIComponent(id)}`),
+    // ScaleLab's own prospects (integrations/scalelab-billing.js).
+    listPrices: () => request('GET', '/v1/prices', { active: true, limit: 100, expand: ['data.product'] }),
+    searchCustomers: query => request('GET', '/v1/customers/search', { query, limit: 100, expand: ['data.invoice_settings.default_payment_method'] }),
+    createCustomer: (params, opts) => request('POST', '/v1/customers', params, opts),
+    listInvoices: customerId => request('GET', '/v1/invoices', { customer: customerId, limit: 20 }),
     updateInvoice: (id, params, opts) => request('POST', `/v1/invoices/${encodeURIComponent(id)}`, params, opts),
     payInvoice: (id, opts) => request('POST', `/v1/invoices/${encodeURIComponent(id)}/pay`, {}, opts),
     voidInvoice: (id, opts) => request('POST', `/v1/invoices/${encodeURIComponent(id)}/void`, {}, opts),

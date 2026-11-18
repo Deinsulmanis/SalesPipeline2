@@ -166,6 +166,7 @@ const { getLedgerStore } = require('./integrations/clients/ledger-store');
 const { createClientCalendarSync } = require('./integrations/clients/client-calendar');
 const { createBillingService } = require('./integrations/clients/billing');
 const { createStripeClient, verifyWebhook: verifyStripeWebhook } = require('./integrations/clients/stripe-api');
+const { createScaleLabBilling } = require('./integrations/scalelab-billing');
 const { emailUniquenessMode, leadsInEmailScope, leadsForCalendarMatching } = require('./integrations/clients/email-scope');
 const { filterInboxesForClient } = require('./integrations/clients/workspace-views');
 const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE, qualifyLead: qualifyRoofingLead } = require('./integrations/roofing-survey-profile');
@@ -1956,6 +1957,47 @@ const billingService = createBillingService({
   log: console,
 });
 
+// ScaleLab's own clients: the tech fee from the Bookings tracker. Operator
+// actions only; nothing here touches the outreach sender, its caps, sequences,
+// stages or holds. (Onboarding documents are written in Gmail itself: the
+// tracker only opens a prefilled Gmail compose window in the browser.)
+const scalelabBilling = createScaleLabBilling({
+  stripe: createStripeClient({ secretKey: process.env.STRIPE_SECRET_KEY }),
+  findLead: async leadId => {
+    const dataset = await withAuth(() => getOutreachDataset());
+    return (dataset.boardLeads || []).find(lead => String(lead.id) === String(leadId)) || null;
+  },
+  log: console,
+});
+const operatorFail = (res, error, label) => {
+  const status = /not_found$/.test(error.code || '') ? 404
+    : ['billing_disabled', 'billing_not_configured', 'mailbox_unavailable'].includes(error.code) ? 503
+      : error.code ? 422 : 500;
+  if (status === 500) console.error(`[${label}]`, error.message);
+  return res.status(status).json({ error: error.message, code: error.code || 'error' });
+};
+app.get('/api/scalelab-billing/overview', requireAuth, async (_req, res) => {
+  try { res.json({ ...(await scalelabBilling.overview()), mainMailbox: String(process.env.FROM_EMAIL || '').toLowerCase() }); }
+  catch (error) { operatorFail(res, error, 'scalelab-billing'); }
+});
+app.get('/api/scalelab-billing/prices', requireAuth, async (_req, res) => {
+  try { res.json({ prices: await scalelabBilling.prices() }); } catch (error) { operatorFail(res, error, 'scalelab-billing'); }
+});
+app.post('/api/scalelab-billing/:leadId/invoice', requireAuth, async (req, res) => {
+  try {
+    res.json(await scalelabBilling.emailInvoice({ leadId: req.params.leadId, priceId: req.body?.priceId,
+      daysUntilDue: req.body?.daysUntilDue, email: req.body?.email, nonce: req.body?.nonce }));
+  } catch (error) { operatorFail(res, error, 'scalelab-billing'); }
+});
+app.post('/api/scalelab-billing/:leadId/card-link', requireAuth, async (req, res) => {
+  try { res.json(await scalelabBilling.cardSetupLink({ leadId: req.params.leadId, email: req.body?.email })); }
+  catch (error) { operatorFail(res, error, 'scalelab-billing'); }
+});
+app.post('/api/scalelab-billing/:leadId/charge', requireAuth, async (req, res) => {
+  try { res.json(await scalelabBilling.chargeCard({ leadId: req.params.leadId, priceId: req.body?.priceId, nonce: req.body?.nonce })); }
+  catch (error) { operatorFail(res, error, 'scalelab-billing'); }
+});
+
 async function handleStripeWebhook(req, res) {
   let event;
   try {
@@ -1965,6 +2007,11 @@ async function handleStripeWebhook(req, res) {
     return res.status(400).json({ error: 'invalid signature' });
   }
   try {
+    const own = await scalelabBilling.handleEvent(event);
+    if (!own.ignored) {
+      console.log(`[Stripe webhook] ${event.type}: card saved for ScaleLab lead ${own.leadId || ''}`);
+      return res.json({ received: true });
+    }
     const result = await billingService.handleEvent(event);
     if (!result.ignored) console.log(`[Stripe webhook] ${event.type} ${result.invoiceId}: ${result.status}`);
     return res.json({ received: true });

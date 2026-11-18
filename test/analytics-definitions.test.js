@@ -342,13 +342,16 @@ test('23. provider-reported campaign rows are marked as provider counts', () => 
   assert.ok(browser.includes('Smartlead counts'), 'a provider-sourced row must say so rather than pass as canonical');
 });
 
-test('24. the Inbox states that it counts every inbound message, not genuine replies', () => {
+test('24. the Inbox states what it counts: one row per conversation, its latest reply', () => {
+  // Since 2026-11-18 the ScaleLab Inbox lists conversations (as a client's
+  // Inbox does), not individual messages; the note says so.
   const note = browser.slice(browser.indexOf('id="inbox-note"'), browser.indexOf('id="inbox-note"') + 700);
-  assert.ok(/Inbound Messages/.test(note) && /Genuine Replies/.test(note));
+  assert.ok(/One row per conversation/.test(note) && /latest reply/.test(note));
   // Inbox filter counts must come from the same predicate the list renders.
   const body = sliceFn(browser, 'renderInboxWorkspace');
-  assert.ok(body.includes('inboxMatches(record, inboxActionFor(record))'));
-  assert.ok(/INBOX_FILTERS\.map[\s\S]{0,400}inboxMatches/.test(body), 'tab counts must use the render predicate');
+  assert.ok(body.includes('inboxMatches(c.latest, inboxActionFor(c.latest))'));
+  assert.ok(/INBOX_FILTERS\.map[\s\S]{0,400}matching\(id\)\.length/.test(body), 'tab counts must use the render predicate');
+  assert.ok(body.includes('const rows = matching(inboxFilter);'), 'the list renders the same predicate');
 });
 
 test('25. the Settings agent summary uses the same names as the analytics surfaces', () => {

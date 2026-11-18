@@ -20,7 +20,9 @@ const PROMOTION_TRIGGER = Object.freeze({
   QUEUED: 'queued',
 });
 
-const AUTO_STAGE_RANK = Object.freeze({ follow_up: 1, hot: 2, call_booked: 3, closed_won: 4, closed_lost: 4 });
+// call_held and proposal_sent rank with call_booked: a reply or a new booking
+// never moves a lead backwards out of them.
+const AUTO_STAGE_RANK = Object.freeze({ follow_up: 1, hot: 2, call_booked: 3, call_held: 3, proposal_sent: 3, closed_won: 4, closed_lost: 4 });
 
 function promotionSuppressionReason(lead = {}, suppressedEmails = new Set()) {
   // An archived lead is never promoted back onto the board by a reply or a

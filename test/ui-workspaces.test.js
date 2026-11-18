@@ -50,7 +50,7 @@ test('Settings exposes only non-secret status', () => {
 
 test('Sequences and Bookings have intentional disabled and empty states', () => {
   assert.match(html, /Stage sequences are \$\{enabled \? 'enabled' : 'disabled'\}/);
-  assert.match(html, /No current calls/);
+  assert.match(html, /<strong>No meetings yet<\/strong>/);
   assert.match(html, /No pipeline lead currently has a visible stage-sequence action/);
 });
 
