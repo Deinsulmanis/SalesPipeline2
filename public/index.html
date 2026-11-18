@@ -2087,7 +2087,7 @@
   @media(max-width:700px){.calendar-status{flex-direction:column;align-items:flex-start}.calendar-review-actions{justify-content:flex-start}}
   .meeting-row{flex-wrap:wrap}.meeting-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;flex-basis:100%}.meeting-actions button,.meeting-actions a{min-height:44px;margin-top:0;display:inline-flex;align-items:center;text-decoration:none}.meeting-invoice-state{font-size:12px;color:var(--text-secondary);align-self:center}
   .billing-panel{margin:0 0 20px}.billing-panel h4{margin:0 0 8px;font-size:14px}.billing-panel h5{margin:16px 0 8px;font-size:13px;color:var(--text-secondary)}.billing-mode{padding:2px 6px;border-radius:4px;border:1px solid var(--border);margin-right:6px;font-size:11px}
-  .meeting-dialog{max-width:520px;width:calc(100% - 32px);border:1px solid var(--border);border-radius:10px;background:var(--surface);color:inherit;padding:20px}.meeting-dialog::backdrop{background:rgba(0,0,0,.5)}.meeting-dialog form{display:grid;gap:8px}.meeting-dialog h3{margin:0}.meeting-dialog label{font-size:12px;font-weight:600}.meeting-dialog input,.meeting-dialog select,.meeting-dialog textarea{min-height:44px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:inherit;font:inherit}.meeting-dialog fieldset{border:1px solid var(--border);border-radius:6px;display:flex;flex-wrap:wrap;gap:8px 16px;padding:10px}.meeting-dialog .md-check{font-weight:400;display:flex;gap:6px;align-items:center;min-height:32px}.md-error{color:var(--danger);font-size:12px;margin:0}.md-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+  .meeting-dialog{max-width:520px;width:calc(100% - 32px);border:1px solid var(--border);border-radius:10px;background:var(--surface);color:inherit;padding:20px}.meeting-dialog::backdrop{background:rgba(0,0,0,.5)}.meeting-dialog form,.meeting-dialog .md-form{display:grid;gap:8px}.billing-card{margin-top:-8px}.meeting-dialog h3{margin:0}.meeting-dialog label{font-size:12px;font-weight:600}.meeting-dialog input,.meeting-dialog select,.meeting-dialog textarea{min-height:44px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:inherit;font:inherit}.meeting-dialog fieldset{border:1px solid var(--border);border-radius:6px;display:flex;flex-wrap:wrap;gap:8px 16px;padding:10px}.meeting-dialog .md-check{font-weight:400;display:flex;gap:6px;align-items:center;min-height:32px}.md-error{color:var(--danger);font-size:12px;margin:0}.md-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
   .booking-list,.sequence-list{display:grid;gap:9px}.operational-row{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:13px 15px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}.operational-row b{font-size:13px}.operational-row small{display:block;color:var(--text-muted);font-size:11px;margin-top:3px}.operational-row-meta{text-align:right;font-size:12px;color:var(--text-secondary)}
   @media(max-width:980px){body.workspace-ready{grid-template-columns:72px minmax(0,1fr)}.crm-sidebar{padding-inline:8px}.crm-brand{padding-inline:8px}.crm-brand-copy,.crm-nav-btn span,.crm-nav-group,.crm-sidebar-foot{display:none}.crm-nav-btn{justify-content:center;padding:9px}.crm-nav-btn svg{width:19px;height:19px}.crm-workspace{padding:18px}.inbox-row{grid-template-columns:minmax(160px,.7fr) minmax(230px,1.3fr)}}
   @media(max-width:700px){html.workspace-ready{height:auto;overflow:visible}body.workspace-ready{display:block;padding-top:64px;height:auto;overflow:visible}#workspace-stage{overflow:visible}.crm-sidebar{position:fixed;left:0;top:0;width:224px;transform:translateX(-100%);transition:transform 180ms;z-index:100}.crm-sidebar.open{transform:translateX(0)}.crm-brand-copy,.crm-nav-btn span,.crm-nav-group,.crm-sidebar-foot{display:block}.crm-nav-btn{justify-content:flex-start}.sidebar-toggle{display:grid;place-items:center}body.workspace-ready>header{position:fixed;left:0;right:0;top:0;height:64px;padding:0 16px}.crm-workspace{padding:14px}.header-right .search-wrap{display:none}.inbox-row{grid-template-columns:1fr;gap:9px}.inbox-action{padding-top:8px;border-top:1px solid var(--border)}.workspace-intro{align-items:flex-start}.operational-row{align-items:flex-start}.operational-row-meta{max-width:45%}}
@@ -8596,8 +8596,12 @@ function meetingActionsHtml(meeting, billingStatus) {
     if (meeting.invoice_status === 'paid') html = state('Paid');
     else if (meeting.invoice_status === 'invoiced') html = state('Invoiced');
     else if (meeting.stripe_invoice_id) html = state('On a draft invoice');
-    else if (billingStatus && billingStatus.ready && meeting.billable) html = btn('Invoice now', 'invoice-now', 'btn-save');
-    else if (meeting.billable) html = state('Billable, not invoiced');
+    else if (billingStatus && billingStatus.ready && meeting.billable) {
+      // With a card on file the primary action charges it; emailing an invoice stays available.
+      html = billingStatus.card
+        ? btn('Charge now', 'charge-now', 'btn-save') + btn('Email invoice', 'invoice-now')
+        : btn('Invoice now', 'invoice-now', 'btn-save');
+    } else if (meeting.billable) html = state('Billable, not invoiced');
   }
   return html ? `<span class="meeting-actions">${html}</span>` : '';
 }
@@ -8606,8 +8610,15 @@ function managedMeetingAction(meetingId, action) {
   if (action === 'qualify' || action === 'disqualify') return openMeetingDialog(meetingId, action);
   if (action === 'invoice-now') {
     const client = activeClient();
-    if (!window.confirm(`Invoice this meeting now? Stripe will email the invoice to ${client.displayName}'s billing contact immediately.`)) return null;
-    return managedPost(`/meetings/${encodeURIComponent(meetingId)}/invoice-now`, {}, 'Invoice sent');
+    if (!window.confirm(`Email an invoice for this meeting now? Stripe will email it to ${client.displayName}'s billing contact to pay.`)) return null;
+    return managedPost(`/meetings/${encodeURIComponent(meetingId)}/invoice-now`, {}, 'Invoice emailed');
+  }
+  if (action === 'charge-now') {
+    const client = activeClient();
+    const card = managedBillingCard;
+    const cardText = card ? `${card.brand.toUpperCase()} ending ${card.last4}` : 'the card on file';
+    if (!window.confirm(`Charge ${client.displayName}'s ${cardText} for this meeting now?\n\nThe card is charged immediately and Stripe emails the paid invoice.`)) return null;
+    return managedPost(`/meetings/${encodeURIComponent(meetingId)}/charge-now`, {}, 'Card charged; paid invoice emailed');
   }
   const patch = action === 'HELD' ? { held_at: new Date().toISOString() } : {};
   return managedPost(`/meetings/${encodeURIComponent(meetingId)}/transition`, { toStatus: action, patch }, `Meeting marked ${MEETING_ACTION_LABELS[action].toLowerCase()}`);
@@ -8707,14 +8718,23 @@ function renderManagedBillingPanel(client, b) {
   const money = cents => clientMoney(cents, cur);
   const day = iso => (iso ? new Date(iso).toLocaleDateString() : '—');
   const mode = b.mode === 'live' ? 'LIVE' : b.mode === 'test' ? 'TEST MODE' : String(b.mode || '').toUpperCase();
+  managedBillingCard = b.card || null;
+  const charging = b.collection === 'charge_card';
   const header = `<div class="calendar-status" data-state="${b.ready ? (b.webhookConfigured ? 'ok' : 'error') : 'off'}">
-      <span><b class="billing-mode" data-mode="${escAttr(b.mode)}">${esc(mode)}</b> Stripe billing ${b.ready ? 'on' : `off (${esc(b.reason)})`} · drafts on the 1st and 15th · due in ${esc(b.daysUntilDue)} days${b.webhookConfigured ? '' : ' · <b>payment updates are not connected (webhook secret missing)</b>'}</span>
+      <span><b class="billing-mode" data-mode="${escAttr(b.mode)}">${esc(mode)}</b> Stripe billing ${b.ready ? 'on' : `off (${esc(b.reason)})`} · drafts on the 1st and 15th · ${charging ? 'charged to the card on file, invoice emailed after' : `due in ${esc(b.daysUntilDue)} days`}${b.webhookConfigured ? '' : ' · <b>payment updates are not connected (webhook secret missing)</b>'}</span>
+    </div>`;
+  const cardLine = b.card
+    ? `Card on file: <b>${esc(b.card.brand.toUpperCase())} ending ${esc(b.card.last4)}</b> (expires ${esc(String(b.card.expMonth).padStart(2, '0'))}/${esc(String(b.card.expYear).slice(-2))})`
+    : `<b>No card on file.</b> Send ${esc(client.displayName)} a card setup link; charges are possible once the card is saved.`;
+  const cardPanel = `<div class="calendar-status billing-card" data-state="${b.card ? 'ok' : 'off'}">
+      <span>${cardLine}${b.cardError ? ` · card status unavailable: ${esc(b.cardError)}` : ''}</span>
+      ${b.ready ? `<button type="button" class="btn-save-notes" data-action="card-link" onclick="managedBillingAction(this.dataset.action)">${b.card ? 'New card setup link' : 'Create card setup link'}</button>` : ''}
     </div>`;
   const t = b.totals || {};
   const unbilled = b.unbilled || [];
   const metrics = `<div class="client-metrics">
       ${metricCard('Ready to bill', money(t.unbilledCents), `${unbilled.length} meeting(s)`)}
-      ${metricCard('Drafts', money(t.draftCents), 'Waiting for Send')}
+      ${metricCard('Drafts', money(t.draftCents), charging ? 'Waiting for Charge' : 'Waiting for Send')}
       ${metricCard('Outstanding', money(t.outstandingCents))}
       ${metricCard('Overdue', money(t.overdueCents))}
       ${metricCard('Paid', money(t.paidCents))}
@@ -8728,12 +8748,19 @@ function renderManagedBillingPanel(client, b) {
   const kindLabel = row => (row.kind === 'period' ? `Period from ${row.period_key}` : row.kind === 'single' ? 'Single meeting' : 'Drafted by hand');
   const invoices = (b.invoices || []).map(row => {
     const id = escAttr(row.invoice_id);
-    const status = row.overdue ? 'overdue' : row.status;
-    const actions = row.status === 'draft'
-      ? `<button type="button" class="btn-save" data-invoice="${id}" data-action="send" data-amount="${escAttr(money(row.amount_cents))}" onclick="managedBillingAction(this.dataset.action, this.dataset.invoice, this.dataset.amount)">Send invoice</button>
-         <button type="button" class="btn-cancel" data-invoice="${id}" data-action="discard" onclick="managedBillingAction(this.dataset.action, this.dataset.invoice)">Discard</button>`
-      : `${row.hosted_invoice_url ? `<a class="btn-save-notes" href="${escAttr(row.hosted_invoice_url)}" target="_blank" rel="noopener noreferrer">View invoice</a>` : ''}
-         ${['open', 'uncollectible'].includes(row.status) ? `<button type="button" class="btn-save-notes" data-invoice="${id}" data-action="refresh" onclick="managedBillingAction(this.dataset.action, this.dataset.invoice)">Refresh</button>` : ''}`;
+    const failedCharge = row.status === 'open' && row.collection_method === 'charge_automatically';
+    const status = failedCharge ? 'charge failed' : row.overdue ? 'overdue' : row.status;
+    const act = (label, action, cls = 'btn-save-notes') => `<button type="button" class="${cls}" data-invoice="${id}" data-action="${action}" data-amount="${escAttr(money(row.amount_cents))}" onclick="managedBillingAction(this.dataset.action, this.dataset.invoice, this.dataset.amount)">${esc(label)}</button>`;
+    const view = row.hosted_invoice_url ? `<a class="btn-save-notes" href="${escAttr(row.hosted_invoice_url)}" target="_blank" rel="noopener noreferrer">View invoice</a>` : '';
+    let actions;
+    if (row.status === 'draft') {
+      actions = (charging && b.card ? act(`Charge card (${money(row.amount_cents)})`, 'charge', 'btn-save') + act('Email invoice instead', 'send') : act('Send invoice', 'send', 'btn-save'))
+        + act('Discard', 'discard', 'btn-cancel');
+    } else if (failedCharge) {
+      actions = view + (b.card ? act('Retry charge', 'charge', 'btn-save') : '') + act('Email invoice instead', 'email-instead') + act('Void', 'void', 'btn-cancel');
+    } else {
+      actions = view + (['open', 'uncollectible'].includes(row.status) ? act('Refresh', 'refresh') : '');
+    }
     return `<div class="operational-row meeting-row">
       <span><b>${esc(row.invoice_number || 'Draft')} · ${esc(kindLabel(row))}</b><small>${esc((row.meeting_ids || []).length)} meeting(s) · created ${esc(day(row.created_at))}${row.due_at ? ` · due ${esc(day(row.due_at))}` : ''}${row.paid_at ? ` · paid ${esc(day(row.paid_at))}` : ''}${row.last_error ? ` · ${esc(row.last_error)}` : ''}</small></span>
       <span class="operational-row-meta"><b>${esc(money(row.amount_cents))}</b><small><span class="status-pill" data-status="${escAttr(status)}">${esc(status)}</span></small></span>
@@ -8742,17 +8769,66 @@ function renderManagedBillingPanel(client, b) {
   }).join('');
   return `<section class="billing-panel" aria-label="Invoices and payments">
       <h4>Invoices and payments</h4>
-      ${header}${metrics}
+      ${header}${cardPanel}${metrics}
       <h5>Ready to bill</h5>${ready}
       ${invoices ? `<h5>Invoices</h5><div class="booking-list">${invoices}</div>` : ''}
     </section>`;
 }
 
+/** Create a Stripe card setup link and show it to copy into an email to the client. */
+async function openCardSetupLink() {
+  const client = activeClient();
+  const data = await managedPost('/billing/card-setup-link', {}, 'Card setup link created');
+  if (!data || !data.url) return;
+  document.getElementById('card-link-dialog')?.remove();
+  const dialog = document.createElement('dialog');
+  dialog.id = 'card-link-dialog';
+  dialog.className = 'meeting-dialog';
+  const expires = data.expiresAt ? new Date(data.expiresAt).toLocaleString() : 'in 24 hours';
+  dialog.innerHTML = `<div class="md-form">
+      <h3>Card setup link for ${esc(client.displayName)}</h3>
+      <p class="client-note">Send this link to ${esc(client.displayName)}. It opens a secure Stripe page where they save a card and agree to future charges. Nothing is charged now. The link works until ${esc(expires)}.</p>
+      <label for="card-link-url">Link</label>
+      <input id="card-link-url" type="text" readonly value="${escAttr(data.url)}">
+      <p class="client-note" id="card-link-copied" role="status" hidden>Copied.</p>
+      <div class="md-actions">
+        <button type="button" class="btn-cancel" id="card-link-close">Close</button>
+        <button type="button" class="btn-save" id="card-link-copy">Copy link</button>
+      </div>
+    </div>`;
+  document.body.appendChild(dialog);
+  dialog.querySelector('#card-link-close').addEventListener('click', () => dialog.close());
+  dialog.querySelector('#card-link-copy').addEventListener('click', async () => {
+    const input = dialog.querySelector('#card-link-url');
+    try { await navigator.clipboard.writeText(input.value); } catch (_) { input.select(); document.execCommand('copy'); }
+    dialog.querySelector('#card-link-copied').hidden = false;
+  });
+  dialog.addEventListener('close', () => dialog.remove());
+  dialog.showModal();
+}
+
+// The card on file from the last billing status read, for confirmation prompts.
+let managedBillingCard = null;
+
 async function managedBillingAction(action, invoiceId = '', amount = '') {
   const client = activeClient();
-  if (action === 'draft') return managedPost('/billing/drafts', {}, 'Draft invoice created; review it, then Send');
+  const cardText = managedBillingCard ? `${managedBillingCard.brand.toUpperCase()} ending ${managedBillingCard.last4}` : 'the card on file';
+  if (action === 'draft') return managedPost('/billing/drafts', {}, 'Draft invoice created; review it, then charge or send it');
+  if (action === 'card-link') return openCardSetupLink();
+  if (action === 'charge') {
+    if (!window.confirm(`Charge ${client.displayName}'s ${cardText} ${amount} now?\n\nThe card is charged immediately and Stripe emails the paid invoice.`)) return null;
+    return managedPost(`/billing/invoices/${encodeURIComponent(invoiceId)}/charge`, {}, 'Card charged; paid invoice emailed');
+  }
+  if (action === 'email-instead') {
+    if (!window.confirm(`Void this failed charge and email ${client.displayName} a ${amount} invoice to pay instead?`)) return null;
+    return managedPost(`/billing/invoices/${encodeURIComponent(invoiceId)}/email-instead`, {}, 'Invoice emailed');
+  }
+  if (action === 'void') {
+    if (!window.confirm('Void this unpaid invoice? Its meetings go back to "ready to bill".')) return null;
+    return managedPost(`/billing/invoices/${encodeURIComponent(invoiceId)}/void`, {}, 'Invoice voided');
+  }
   if (action === 'send') {
-    if (!window.confirm(`Send this invoice for ${amount} now? Stripe will email it to ${client.displayName}'s billing contact, due in the agreed terms.`)) return null;
+    if (!window.confirm(`Email this ${amount} invoice now? Stripe will email it to ${client.displayName}'s billing contact, due in the agreed terms.`)) return null;
     return managedPost(`/billing/invoices/${encodeURIComponent(invoiceId)}/send`, {}, 'Invoice sent');
   }
   if (action === 'discard') {

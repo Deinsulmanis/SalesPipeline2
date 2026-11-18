@@ -58,7 +58,11 @@ function clientBillingConfig(clientId, env = process.env) {
     enabled, configured: missing.length === 0, ready: enabled && missing.length === 0, missing,
     mode: key.includes('_test_') ? 'test' : key.includes('_live_') ? 'live' : (key ? 'unknown' : 'none'),
     webhookConfigured: Boolean(text(env.STRIPE_WEBHOOK_SECRET)),
-    customerId, productId: text(env[spec.productIdEnv]),
+    customerId, productId: text(env[spec.productIdEnv]), priceId: text(env[spec.priceIdEnv]),
+    // charge_card: drafts are charged to the saved card on the operator's click;
+    // send_invoice: drafts are emailed for the customer to pay.
+    collection: spec.collection === 'charge_card' ? 'charge_card' : 'send_invoice',
+    appUrl: text(env.PUBLIC_APP_URL || 'https://salespipeline2-production.up.railway.app').replace(/\/+$/, ''),
     currency: text(client.billing.currency || 'USD').toLowerCase(),
     feeCents: client.billing.performanceFeeCents,
     schedule: spec.schedule || 'none', draftsRequireSend: spec.draftsRequireSend !== false,
@@ -123,7 +127,15 @@ function invoiceFields(invoice) {
     paid_at: isoFromUnix(invoice.status_transitions?.paid_at),
     voided_at: isoFromUnix(invoice.status_transitions?.voided_at),
     livemode: Boolean(invoice.livemode),
+    ...(invoice.collection_method ? { collection_method: text(invoice.collection_method) } : {}),
   };
+}
+
+/** The saved card as the Bookings view shows it, or null. Pure. */
+function cardSummary(customer) {
+  const pm = customer?.invoice_settings?.default_payment_method;
+  if (!pm || typeof pm !== 'object' || !pm.card) return null;
+  return { id: pm.id, brand: text(pm.card.brand), last4: text(pm.card.last4), expMonth: pm.card.exp_month, expYear: pm.card.exp_year };
 }
 
 // ── SERVICE ─────────────────────────────────────────────────────────────────
@@ -183,7 +195,18 @@ function createBillingService({ env = process.env, stripe, getStore, now = () =>
     }));
   }
 
-  async function createDraftLocked({ clientId, meetingIds = null, kind, periodKey = '', by }) {
+  // The saved card, read from Stripe and cached briefly (the Bookings view and
+  // every charge ask for it).
+  const cardCache = new Map();
+  async function cardOnFile(cfg, { fresh = false } = {}) {
+    const hit = cardCache.get(cfg.customerId);
+    if (!fresh && hit && Date.now() - hit.at < 60000) return hit.card;
+    const card = cardSummary(await stripe.getCustomer(cfg.customerId));
+    cardCache.set(cfg.customerId, { at: Date.now(), card });
+    return card;
+  }
+
+  async function createDraftLocked({ clientId, meetingIds = null, kind, periodKey = '', by, collection: forced = '' }) {
     const { cfg, client } = ready(clientId);
     const s = store();
     let items = await unbilled(cfg.clientId);
@@ -201,8 +224,12 @@ function createBillingService({ env = process.env, stripe, getStore, now = () =>
     const prior = (await s.listInvoices(cfg.clientId)).filter(row => ['deleted', 'void'].includes(row.status)
       && (row.meeting_ids || []).some(id => ids.includes(id))).length;
     const key = `sp2:inv:${cfg.clientId}:${kind}:${periodKey || ids[0]}:${sha(ids.join(','))}:${prior}`;
+    const collection = (forced || cfg.collection) === 'charge_card'
+      ? { collection_method: 'charge_automatically' }
+      : { collection_method: 'send_invoice', days_until_due: cfg.daysUntilDue };
     const invoice = await stripe.createInvoice({
-      customer: cfg.customerId, collection_method: 'send_invoice', days_until_due: cfg.daysUntilDue,
+      customer: cfg.customerId, ...collection,
+      // auto_advance false: Stripe never finalizes, charges or retries on its own.
       currency: cfg.currency, auto_advance: false, pending_invoice_items_behavior: 'exclude',
       description: kind === 'period'
         ? `Qualified meetings — invoice for the period starting ${periodKey}`
@@ -216,7 +243,7 @@ function createBillingService({ env = process.env, stripe, getStore, now = () =>
       currency: cfg.currency, amount_cents: items.reduce((sum, item) => sum + item.amountCents, 0), meeting_ids: ids,
       invoice_number: '', hosted_invoice_url: '', due_at: null, sent_at: null, paid_at: null, voided_at: null,
       livemode: Boolean(invoice.livemode), created_by: text(by) || 'system', sent_by: '', last_error: '',
-      created_at: at, updated_at: at,
+      collection_method: collection.collection_method, created_at: at, updated_at: at,
     };
     const existing = await s.getInvoice(cfg.clientId, invoice.id);
     if (!existing) await s.insertInvoice(row);
@@ -224,8 +251,12 @@ function createBillingService({ env = process.env, stripe, getStore, now = () =>
     for (const item of items) {
       const m = item.meeting;
       await stripe.createInvoiceItem({
-        customer: cfg.customerId, invoice: invoice.id, currency: cfg.currency, description: item.description,
-        ...(cfg.productId ? { price_data: { currency: cfg.currency, product: cfg.productId, unit_amount: item.amountCents } } : { amount: item.amountCents }),
+        customer: cfg.customerId, invoice: invoice.id, description: item.description,
+        // The catalogue price when the fee is the standard one; otherwise the
+        // exact amount (a fee snapshotted at qualification never changes).
+        ...(cfg.priceId && item.amountCents === cfg.feeCents
+          ? { price: cfg.priceId, quantity: 1 }
+          : { amount: item.amountCents, currency: cfg.currency }),
         metadata: { source: 'salespipeline2', client_id: cfg.clientId, meeting_id: m.meeting_id, lead_id: m.lead_id },
       }, { idempotencyKey: `sp2:ii:${invoice.id}:${m.meeting_id}` });
       await setMeeting(s, client, m, { stripe_invoice_id: invoice.id });
@@ -241,18 +272,30 @@ function createBillingService({ env = process.env, stripe, getStore, now = () =>
     return saved;
   }
 
-  async function sendLocked({ clientId, invoiceId, by }) {
-    const { cfg, client } = ready(clientId);
-    const s = store();
+  /** The draft's row and its meetings, re-checked against the ledger right now. */
+  async function liveDraft(s, cfg, client, invoiceId) {
     const row = await s.getInvoice(cfg.clientId, invoiceId);
     if (!row) fail('invoice_not_found', `invoice ${invoiceId} is not a ${cfg.displayName} invoice`);
     if (row.status !== 'draft') fail('invoice_not_draft', `invoice is ${row.status}, not a draft`);
-    // Re-check every line against the ledger at the moment of sending.
     const meetings = (await s.listMeetings(cfg.clientId)).filter(m => (row.meeting_ids || []).includes(m.meeting_id));
     const stale = meetings.filter(m => m.stripe_invoice_id !== invoiceId || m.meeting_status !== 'QUALIFIED_HELD'
       || !ledger.withBilling(m, client).billable);
     if (stale.length || meetings.length !== (row.meeting_ids || []).length) {
       fail('invoice_stale', 'a meeting on this draft is no longer billable or no longer linked to it; discard the draft and create a new one');
+    }
+    return { row, meetings };
+  }
+
+  /** Email the invoice for the customer to pay (the original flow, and the fallback). */
+  async function sendLocked({ clientId, invoiceId, by }) {
+    const { cfg, client } = ready(clientId);
+    const s = store();
+    const { row: draftRow, meetings } = await liveDraft(s, cfg, client, invoiceId);
+    let row = draftRow;
+    // A draft made for card charging is switched to pay-by-invoice first.
+    if (row.collection_method === 'charge_automatically') {
+      await stripe.updateInvoice(invoiceId, { collection_method: 'send_invoice', days_until_due: cfg.daysUntilDue });
+      row = { ...row, collection_method: 'send_invoice' };
     }
     await stripe.finalizeInvoice(invoiceId, { idempotencyKey: `sp2:fin:${invoiceId}` });
     const sent = await stripe.sendInvoice(invoiceId, { idempotencyKey: `sp2:send:${invoiceId}` });
@@ -262,6 +305,117 @@ function createBillingService({ env = process.env, stripe, getStore, now = () =>
     for (const m of meetings) await setMeeting(s, client, m, { invoice_status: 'invoiced', invoiced_at: at });
     await audit(s, cfg.clientId, invoiceId, 'invoice_sent', { amountCents: saved.amount_cents, by: saved.sent_by });
     return saved;
+  }
+
+  /**
+   * Charge the saved card for a draft, or retry a failed charge on an open
+   * invoice. Stripe emails the paid invoice afterwards (receipt setting).
+   * A decline is recorded on the invoice and reported, never retried here.
+   */
+  async function chargeLocked({ clientId, invoiceId, by }) {
+    const { cfg, client } = ready(clientId);
+    const s = store();
+    const card = await cardOnFile(cfg, { fresh: true });
+    if (!card) fail('no_card_on_file', `${cfg.displayName} has no card on file; send the card setup link first`);
+    let row = await s.getInvoice(cfg.clientId, invoiceId);
+    if (!row) fail('invoice_not_found', `invoice ${invoiceId} is not a ${cfg.displayName} invoice`);
+    let meetings;
+    if (row.status === 'draft') {
+      ({ row, meetings } = await liveDraft(s, cfg, client, invoiceId));
+      if (row.collection_method !== 'charge_automatically') {
+        await stripe.updateInvoice(invoiceId, { collection_method: 'charge_automatically' });
+        row = { ...row, collection_method: 'charge_automatically' };
+      }
+      const finalized = await stripe.finalizeInvoice(invoiceId, { idempotencyKey: `sp2:fin:${invoiceId}` });
+      row = { ...row, ...invoiceFields(finalized) };
+    } else if (row.status === 'open' && row.collection_method === 'charge_automatically') {
+      meetings = (await s.listMeetings(cfg.clientId)).filter(m => m.stripe_invoice_id === invoiceId);
+    } else {
+      fail('invoice_not_chargeable', `invoice is ${row.status}${row.collection_method === 'send_invoice' ? ' and was emailed for payment' : ''}; it cannot be charged`);
+    }
+    const at = now();
+    const attempt = (Number(String(row.last_error).match(/attempt (\d+)/)?.[1]) || 0) + 1;
+    try {
+      const paid = await stripe.payInvoice(invoiceId, { idempotencyKey: `sp2:pay:${invoiceId}:${attempt}` });
+      const saved = { ...row, ...invoiceFields(paid), sent_at: row.sent_at || at, sent_by: `charge:${text(by) || 'operator'}`, last_error: '', updated_at: at };
+      await s.updateInvoice(saved);
+      for (const m of meetings) {
+        await setMeeting(s, client, m, { invoice_status: saved.status === 'paid' ? 'paid' : 'invoiced', invoiced_at: m.invoiced_at || at, ...(saved.status === 'paid' ? { paid_at: saved.paid_at || at } : {}) });
+      }
+      await audit(s, cfg.clientId, invoiceId, 'invoice_charged', { amountCents: saved.amount_cents, card: `${card.brand} ${card.last4}`, by: text(by) || 'operator' });
+      return { ...saved, card };
+    } catch (error) {
+      const message = `charge failed (attempt ${attempt}): ${error.message.replace(/^Stripe POST \S+ failed: /, '')}`;
+      const fresh = await stripe.getInvoice(invoiceId).catch(() => null);
+      const saved = { ...row, ...(fresh ? invoiceFields(fresh) : {}), sent_at: row.sent_at || at, sent_by: `charge:${text(by) || 'operator'}`, last_error: message, updated_at: at };
+      await s.updateInvoice(saved);
+      for (const m of meetings) if (m.invoice_status !== 'invoiced') await setMeeting(s, client, m, { invoice_status: 'invoiced', invoiced_at: m.invoiced_at || at });
+      await audit(s, cfg.clientId, invoiceId, 'invoice_charge_failed', { error: message, by: text(by) || 'operator' });
+      fail('charge_failed', message);
+    }
+  }
+
+  /** Void an open invoice (a failed charge, or one sent in error). Its meetings become billable again. */
+  async function voidLocked({ clientId, invoiceId, by }) {
+    const { cfg, client } = ready(clientId, { requireEnabled: false });
+    const s = store();
+    const row = await s.getInvoice(cfg.clientId, invoiceId);
+    if (!row) fail('invoice_not_found', `invoice ${invoiceId} is not a ${cfg.displayName} invoice`);
+    if (!['open', 'uncollectible'].includes(row.status)) fail('invoice_not_voidable', `only an unpaid sent invoice can be voided; this one is ${row.status}`);
+    const voided = await stripe.voidInvoice(invoiceId, { idempotencyKey: `sp2:void:${invoiceId}` });
+    const saved = { ...row, ...invoiceFields(voided), updated_at: now() };
+    await s.updateInvoice(saved);
+    await unlinkMeetings(s, client, cfg.clientId, invoiceId);
+    await audit(s, cfg.clientId, invoiceId, 'invoice_voided', { by: text(by) || 'operator' });
+    return saved;
+  }
+
+  /** After a failed charge: void it and email a pay-by-invoice for the same meetings. */
+  async function emailInsteadLocked({ clientId, invoiceId, by }) {
+    const { cfg } = ready(clientId);
+    const s = store();
+    const row = await s.getInvoice(cfg.clientId, invoiceId);
+    if (!row) fail('invoice_not_found', `invoice ${invoiceId} is not a ${cfg.displayName} invoice`);
+    if (row.status === 'draft') return sendLocked({ clientId, invoiceId, by });
+    if (row.status !== 'open' || row.collection_method !== 'charge_automatically') {
+      fail('invoice_not_chargeable', `invoice is ${row.status}; nothing to switch`);
+    }
+    await voidLocked({ clientId, invoiceId, by });
+    const draft = await createDraftLocked({ clientId, meetingIds: row.meeting_ids, kind: 'single', by, collection: 'send_invoice' });
+    return sendLocked({ clientId, invoiceId: draft.invoice_id, by });
+  }
+
+  /**
+   * A Stripe-hosted page where the client saves a card and agrees to future
+   * charges. The link is good for 24 hours; nothing is charged.
+   */
+  async function cardSetupLink({ clientId, by }) {
+    const { cfg } = ready(clientId);
+    const session = await stripe.createSetupCheckout({
+      mode: 'setup', customer: cfg.customerId, currency: cfg.currency, payment_method_types: ['card'],
+      success_url: `${cfg.appUrl}/billing/card-saved`, cancel_url: `${cfg.appUrl}/billing/card-saved?cancelled=1`,
+      metadata: { source: 'salespipeline2', client_id: cfg.clientId, purpose: 'card_on_file' },
+      setup_intent_data: { metadata: { source: 'salespipeline2', client_id: cfg.clientId }, description: `${cfg.displayName}: card on file for qualified meetings` },
+    });
+    const s = store();
+    await audit(s, cfg.clientId, session.id, 'card_setup_link_created', { by: text(by) || 'operator' });
+    return { url: session.url, expiresAt: isoFromUnix(session.expires_at) };
+  }
+
+  /** checkout.session.completed (setup): make the new card the default for invoices. */
+  async function cardSavedLocked(session) {
+    const clientId = text(session.metadata?.client_id);
+    const { cfg } = ready(clientId, { requireEnabled: false });
+    if (text(session.customer) !== cfg.customerId) return { ok: true, ignored: true, reason: 'checkout session is for another customer' };
+    const intentId = typeof session.setup_intent === 'string' ? session.setup_intent : session.setup_intent?.id;
+    if (!intentId) return { ok: true, ignored: true, reason: 'checkout session has no setup intent' };
+    const intent = await stripe.getSetupIntent(intentId);
+    const pm = typeof intent.payment_method === 'string' ? intent.payment_method : intent.payment_method?.id;
+    if (intent.status !== 'succeeded' || !pm) return { ok: true, ignored: true, reason: `setup intent is ${intent.status}` };
+    await stripe.setDefaultPaymentMethod(cfg.customerId, pm);
+    cardCache.delete(cfg.customerId);
+    await audit(store(), cfg.clientId, intentId, 'card_saved', { paymentMethod: pm });
+    return { ok: true, clientId: cfg.clientId, cardSaved: true };
   }
 
   async function discardLocked({ clientId, invoiceId, by }) {
@@ -328,10 +482,23 @@ function createBillingService({ env = process.env, stripe, getStore, now = () =>
     discard: args => exclusive(() => discardLocked(args)),
     reconcile: args => exclusive(() => reconcileLocked(args)),
 
-    /** One meeting, invoiced and emailed now (operator action). */
+    charge: args => exclusive(() => chargeLocked(args)),
+    voidInvoice: args => exclusive(() => voidLocked(args)),
+    emailInstead: args => exclusive(() => emailInsteadLocked(args)),
+    cardSetupLink: args => exclusive(() => cardSetupLink(args)),
+
+    /** One meeting, invoiced and emailed now (operator action; the no-card fallback). */
     invoiceNow: ({ clientId, meetingId, by }) => exclusive(async () => {
-      const draft = await createDraftLocked({ clientId, meetingIds: [meetingId], kind: 'single', by });
+      const draft = await createDraftLocked({ clientId, meetingIds: [meetingId], kind: 'single', by, collection: 'send_invoice' });
       return sendLocked({ clientId, invoiceId: draft.invoice_id, by });
+    }),
+
+    /** One meeting, charged to the saved card now (operator action). */
+    chargeNow: ({ clientId, meetingId, by }) => exclusive(async () => {
+      const { cfg } = ready(clientId);
+      if (!(await cardOnFile(cfg, { fresh: true }))) fail('no_card_on_file', `${cfg.displayName} has no card on file; send the card setup link first`);
+      const draft = await createDraftLocked({ clientId, meetingIds: [meetingId], kind: 'single', by, collection: 'charge_card' });
+      return chargeLocked({ clientId, invoiceId: draft.invoice_id, by });
     }),
 
     /** Status for the Bookings view. Reads only. */
@@ -343,9 +510,15 @@ function createBillingService({ env = process.env, stripe, getStore, now = () =>
         currency: cfg.currency || '', daysUntilDue: cfg.daysUntilDue || 0, schedule: cfg.schedule || 'none',
         nextPeriodKey: cfg.supported ? periodKeyFor(at, cfg.timezone) : '',
       };
-      if (!cfg.supported || !cfg.configured) return { ...base, unbilled: [], invoices: [], totals: {} };
+      if (!cfg.supported || !cfg.configured) return { ...base, collection: cfg.collection || 'send_invoice', card: null, unbilled: [], invoices: [], totals: {} };
       const s = store();
-      const [pending, invoices] = await Promise.all([unbilled(cfg.clientId), s.listInvoices(cfg.clientId)]);
+      const [pending, invoices, cardResult] = await Promise.all([
+        unbilled(cfg.clientId), s.listInvoices(cfg.clientId),
+        cardOnFile(cfg).then(card => ({ card }), error => ({ card: null, cardError: error.message })),
+      ]);
+      base.collection = cfg.collection;
+      base.card = cardResult.card;
+      if (cardResult.cardError) base.cardError = cardResult.cardError;
       const nowMs = Date.parse(at);
       const live = invoices.filter(row => row.status !== 'deleted');
       const sum = rows => rows.reduce((total, row) => total + (Number(row.amount_cents) || 0), 0);
@@ -404,6 +577,13 @@ function createBillingService({ env = process.env, stripe, getStore, now = () =>
     /** A verified Stripe event. Only invoices this pipeline created are acted on. */
     handleEvent: event => exclusive(async () => {
       const type = text(event?.type);
+      if (type === 'checkout.session.completed') {
+        const session = event.data?.object || {};
+        if (session.mode !== 'setup' || session.metadata?.source !== 'salespipeline2' || !billingClientIds().includes(text(session.metadata?.client_id))) {
+          return { ok: true, ignored: true, reason: 'checkout session was not a card setup from this pipeline' };
+        }
+        return cardSavedLocked(session);
+      }
       if (!type.startsWith('invoice.')) return { ok: true, ignored: true, reason: `event ${type || 'unknown'} is not an invoice event` };
       const invoice = event.data?.object || {};
       const clientId = text(invoice.metadata?.client_id);

@@ -360,6 +360,23 @@ function registerClientRoutes(app, {
   router.post('/:clientId/meetings/:meetingId/invoice-now', clientParam, withBilling(async (req, res) => {
     res.json(await billing.invoiceNow({ clientId: req.client.id, meetingId: req.params.meetingId, by: operator(req) }));
   }));
+  // Card on file: a setup link the client opens to save a card (nothing is
+  // charged), then charges made only by these operator POSTs.
+  router.post('/:clientId/billing/card-setup-link', clientParam, withBilling(async (req, res) => {
+    res.json(await billing.cardSetupLink({ clientId: req.client.id, by: operator(req) }));
+  }));
+  router.post('/:clientId/billing/invoices/:invoiceId/charge', clientParam, withBilling(async (req, res) => {
+    res.json(await billing.charge({ clientId: req.client.id, invoiceId: req.params.invoiceId, by: operator(req) }));
+  }));
+  router.post('/:clientId/billing/invoices/:invoiceId/email-instead', clientParam, withBilling(async (req, res) => {
+    res.json(await billing.emailInstead({ clientId: req.client.id, invoiceId: req.params.invoiceId, by: operator(req) }));
+  }));
+  router.post('/:clientId/billing/invoices/:invoiceId/void', clientParam, withBilling(async (req, res) => {
+    res.json(await billing.voidInvoice({ clientId: req.client.id, invoiceId: req.params.invoiceId, by: operator(req) }));
+  }));
+  router.post('/:clientId/meetings/:meetingId/charge-now', clientParam, withBilling(async (req, res) => {
+    res.json(await billing.chargeNow({ clientId: req.client.id, meetingId: req.params.meetingId, by: operator(req) }));
+  }));
 
   router.get('/:clientId/clarifications', clientParam, withStore(async (req, res, store) => {
     res.json({ clientId: req.client.id, clarifications: await store.listClarifications(req.client.id, { status: req.query.status || undefined }) });

@@ -84,7 +84,16 @@ function createStripeClient({ secretKey, fetchImpl = fetch, timeoutMs = REQUEST_
 
   return {
     configured: Boolean(key), mode,
-    getCustomer: id => request('GET', `/v1/customers/${encodeURIComponent(id)}`),
+    getCustomer: id => request('GET', `/v1/customers/${encodeURIComponent(id)}`, { expand: ['invoice_settings.default_payment_method'] }),
+    setDefaultPaymentMethod: (customerId, paymentMethodId) => request('POST', `/v1/customers/${encodeURIComponent(customerId)}`,
+      { invoice_settings: { default_payment_method: paymentMethodId } }),
+    // Card setup: a Stripe-hosted page where the customer saves a card and
+    // agrees to future charges. Nothing is charged here.
+    createSetupCheckout: (params, opts) => request('POST', '/v1/checkout/sessions', params, opts),
+    getSetupIntent: id => request('GET', `/v1/setup_intents/${encodeURIComponent(id)}`),
+    updateInvoice: (id, params, opts) => request('POST', `/v1/invoices/${encodeURIComponent(id)}`, params, opts),
+    payInvoice: (id, opts) => request('POST', `/v1/invoices/${encodeURIComponent(id)}/pay`, {}, opts),
+    voidInvoice: (id, opts) => request('POST', `/v1/invoices/${encodeURIComponent(id)}/void`, {}, opts),
     createInvoice: (params, opts) => request('POST', '/v1/invoices', params, opts),
     createInvoiceItem: (params, opts) => request('POST', '/v1/invoiceitems', params, opts),
     getInvoice: id => request('GET', `/v1/invoices/${encodeURIComponent(id)}`),

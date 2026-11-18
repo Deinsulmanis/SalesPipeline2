@@ -198,9 +198,14 @@ const JOLE = Object.freeze({
     // STRIPE_BILLING_ENABLED=true and the customer is configured. Agreement:
     // Jorge is invoiced on the 1st and 15th (drafts the operator sends), or
     // per meeting on demand; payment due in 7 days; no tax.
+    // Since 2026-11-17 Jorge saves a card once and ScaleLab charges it on its
+    // own click (1st/15th draft or per meeting); Stripe emails the paid
+    // invoice after. Emailing a pay-by-invoice stays as the fallback.
     stripe: Object.freeze({
       customerIdEnv: 'JOLE_STRIPE_CUSTOMER_ID',
       productIdEnv: 'JOLE_STRIPE_PRODUCT_ID',
+      priceIdEnv: 'JOLE_STRIPE_PRICE_ID',
+      collection: 'charge_card',
       schedule: 'semi_monthly',          // drafts on the 1st and 15th, America/Vancouver
       draftsRequireSend: true,           // a scheduled draft is never sent automatically
       daysUntilDue: 7,

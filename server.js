@@ -244,6 +244,18 @@ app.post('/api/webhooks/smartlead', express.raw({ type: 'application/json', limi
 // before the JSON parser and dashboard auth. Only invoices this pipeline
 // created are acted on; anything else is acknowledged and ignored.
 app.post('/api/webhooks/stripe', express.raw({ type: 'application/json', limit: '1mb' }), handleStripeWebhook);
+// Where a client lands after saving a card on Stripe's setup page. Public and
+// static: it shows no account data, and the card itself is confirmed by the
+// signed webhook, never by this page.
+app.get('/billing/card-saved', (req, res) => {
+  const cancelled = req.query.cancelled === '1';
+  res.set('Cache-Control', 'no-store').type('html').send(`<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>${cancelled ? 'Card not saved' : 'Card saved'}</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#f8fafc;color:#1e293b}
+main{max-width:420px;padding:32px 24px;text-align:center}h1{font-size:22px;margin:0 0 12px}p{line-height:1.5;margin:0}</style></head>
+<body><main><h1>${cancelled ? 'Your card was not saved' : 'Thank you, your card is saved'}</h1>
+<p>${cancelled ? 'No card was added. If this was a mistake, please use the link you were sent again.' : 'You will receive an invoice by email after each charge. You can close this page.'}</p></main></body></html>`);
+});
 // Staffing landing-page collector (public, Netlify-signed, 2 KB text body).
 // Also before the JSON parser and dashboard auth; a no-op 204 unless
 // LANDING_COLLECTOR_ENABLED is exactly "true".

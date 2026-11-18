@@ -40,25 +40,48 @@ async function qualifiedMeeting(store, leadId) {
 }
 
 /** A Stripe stand-in that keeps invoices the way Stripe does. */
-function fakeStripe() {
+function fakeStripe({ card = null, decline = false } = {}) {
   const invoices = new Map();
   const calls = [];
   const byKey = new Map();
   let n = 0;
+  const state = { card, decline, defaultPm: card ? 'pm_saved' : null };
   const api = {
-    calls, invoices,
+    calls, invoices, state,
     async createInvoice(params, { idempotencyKey } = {}) {
       calls.push(['createInvoice', params, idempotencyKey]);
       if (byKey.has(idempotencyKey)) return { ...invoices.get(byKey.get(idempotencyKey)) };
-      const inv = { id: `in_${++n}`, status: 'draft', total: 0, livemode: false, currency: params.currency, metadata: params.metadata, lines: [] };
+      const inv = { id: `in_${++n}`, status: 'draft', total: 0, livemode: false, currency: params.currency, metadata: params.metadata,
+        collection_method: params.collection_method, lines: [] };
       invoices.set(inv.id, inv); byKey.set(idempotencyKey, inv.id);
       return { ...inv };
     },
     async createInvoiceItem(params, { idempotencyKey } = {}) {
       calls.push(['createInvoiceItem', params, idempotencyKey]);
       const inv = invoices.get(params.invoice);
-      if (!inv.lines.includes(idempotencyKey)) { inv.lines.push(idempotencyKey); inv.total += params.amount ?? params.price_data.unit_amount; }
+      if (!inv.lines.includes(idempotencyKey)) { inv.lines.push(idempotencyKey); inv.total += params.amount ?? 35000 * (params.quantity || 1); }
       return { id: `ii_${inv.lines.length}` };
+    },
+    async updateInvoice(id, params) { calls.push(['updateInvoice', id, params]); Object.assign(invoices.get(id), params); return { ...invoices.get(id) }; },
+    async payInvoice(id, { idempotencyKey } = {}) {
+      calls.push(['payInvoice', id, idempotencyKey]);
+      if (state.decline) {
+        Object.assign(invoices.get(id), { attempted: true });
+        throw Object.assign(new Error(`Stripe POST /v1/invoices/${id}/pay failed: Your card was declined.`), { code: 'card_declined', status: 402 });
+      }
+      Object.assign(invoices.get(id), { status: 'paid', status_transitions: { paid_at: 1795100000 } });
+      return { ...invoices.get(id) };
+    },
+    async voidInvoice(id) { calls.push(['voidInvoice', id]); Object.assign(invoices.get(id), { status: 'void', status_transitions: { voided_at: 1795100000 } }); return { ...invoices.get(id) }; },
+    async getCustomer() {
+      return { id: 'cus_jorge', invoice_settings: { default_payment_method: state.card ? { id: state.defaultPm, card: state.card } : null } };
+    },
+    async createSetupCheckout(params) { calls.push(['createSetupCheckout', params]); return { id: 'cs_1', url: 'https://checkout.stripe.test/cs_1', expires_at: 1795200000 }; },
+    async getSetupIntent(id) { return { id, status: 'succeeded', payment_method: 'pm_new' }; },
+    async setDefaultPaymentMethod(customerId, pm) {
+      calls.push(['setDefaultPaymentMethod', customerId, pm]);
+      state.defaultPm = pm; state.card = { brand: 'visa', last4: '4242', exp_month: 12, exp_year: 2030 };
+      return { id: customerId };
     },
     async getInvoice(id) {
       if (!invoices.has(id)) throw Object.assign(new Error('No such invoice'), { code: 'resource_missing' });
@@ -77,9 +100,9 @@ function fakeStripe() {
   return api;
 }
 
-function harness(env = ENV) {
+function harness(env = ENV, stripeOptions = {}) {
   const store = createMemoryLedgerStore();
-  const stripe = fakeStripe();
+  const stripe = fakeStripe(stripeOptions);
   const billing = createBillingService({ env, stripe, getStore: () => store, now: () => '2026-11-16T23:00:00.000Z', log: { warn() {}, info() {} } });
   return { store, stripe, billing };
 }
@@ -152,8 +175,9 @@ test('draft → send → paid: lines, links and statuses follow Stripe', async (
   assert.equal(draft.amount_cents, 35000);
   assert.deepEqual(draft.meeting_ids, [m.meeting_id]);
   const created = stripe.calls.find(c => c[0] === 'createInvoice')[1];
-  assert.equal(created.collection_method, 'send_invoice');
-  assert.equal(created.days_until_due, 7);
+  // Jole drafts are made for charging the saved card; "send" switches to pay-by-invoice.
+  assert.equal(created.collection_method, 'charge_automatically');
+  assert.equal(created.days_until_due, undefined);
   assert.equal(created.auto_advance, false);
   assert.equal(created.pending_invoice_items_behavior, 'exclude');
   assert.equal(created.metadata.source, 'salespipeline2');
@@ -170,6 +194,8 @@ test('draft → send → paid: lines, links and statuses follow Stripe', async (
   const sent = await billing.send({ clientId: 'jole', invoiceId: draft.invoice_id, by: 'deins' });
   assert.equal(sent.status, 'open');
   assert.equal(sent.invoice_number, 'ABCD-0001');
+  assert.equal(sent.collection_method, 'send_invoice');
+  assert.deepEqual(stripe.calls.find(c => c[0] === 'updateInvoice')[2], { collection_method: 'send_invoice', days_until_due: 7 });
   assert.equal((await store.getMeeting('jole', m.meeting_id)).invoice_status, 'invoiced');
 
   stripe.pay(draft.invoice_id);
@@ -258,4 +284,103 @@ test('send refuses a stale draft', async () => {
   const row = await store.getMeeting('jole', m.meeting_id);
   await store.updateMeeting({ ...row, stripe_invoice_id: null });
   await assert.rejects(billing.send({ clientId: 'jole', invoiceId: draft.invoice_id }), { code: 'invoice_stale' });
+});
+
+// ── card on file ─────────────────────────────────────────────────────────────
+
+const VISA = { brand: 'visa', last4: '4242', exp_month: 12, exp_year: 2030 };
+
+test('card setup: a Stripe setup page for this customer; nothing is charged', async () => {
+  const { stripe, billing } = harness();
+  const link = await billing.cardSetupLink({ clientId: 'jole', by: 'deins' });
+  assert.equal(link.url, 'https://checkout.stripe.test/cs_1');
+  const params = stripe.calls.find(c => c[0] === 'createSetupCheckout')[1];
+  assert.equal(params.mode, 'setup');
+  assert.equal(params.customer, 'cus_jorge');
+  assert.equal(params.metadata.client_id, 'jole');
+  assert.match(params.success_url, /\/billing\/card-saved$/);
+  assert.equal(stripe.calls.some(c => ['payInvoice', 'createInvoice'].includes(c[0])), false);
+});
+
+test('card saved: the webhook makes the new card the default and status shows it', async () => {
+  const { stripe, billing } = harness();
+  assert.equal((await billing.status('jole')).card, null);
+  const result = await billing.handleEvent({ type: 'checkout.session.completed', data: { object: {
+    id: 'cs_1', mode: 'setup', customer: 'cus_jorge', setup_intent: 'seti_1', metadata: { source: 'salespipeline2', client_id: 'jole' },
+  } } });
+  assert.equal(result.cardSaved, true);
+  assert.deepEqual(stripe.calls.find(c => c[0] === 'setDefaultPaymentMethod').slice(1), ['cus_jorge', 'pm_new']);
+  const status = await billing.status('jole');
+  assert.equal(status.card.last4, '4242');
+  assert.equal(status.collection, 'charge_card');
+  // Someone else's checkout is ignored.
+  assert.equal((await billing.handleEvent({ type: 'checkout.session.completed', data: { object: { mode: 'payment', metadata: {} } } })).ignored, true);
+});
+
+test('charge: a draft is finalized and charged to the saved card; meetings are paid', async () => {
+  const { store, stripe, billing } = harness(ENV, { card: VISA });
+  const m = await qualifiedMeeting(store, 'card-1');
+  const draft = await billing.createDraft({ clientId: 'jole' });
+  const charged = await billing.charge({ clientId: 'jole', invoiceId: draft.invoice_id, by: 'deins' });
+  assert.equal(charged.status, 'paid');
+  assert.equal(charged.card.last4, '4242');
+  assert.ok(stripe.calls.findIndex(c => c[0] === 'finalizeInvoice') < stripe.calls.findIndex(c => c[0] === 'payInvoice'));
+  assert.equal(stripe.calls.some(c => c[0] === 'sendInvoice'), false, 'a charged invoice is not emailed for payment');
+  const paid = await store.getMeeting('jole', m.meeting_id);
+  assert.equal(paid.invoice_status, 'paid');
+});
+
+test('charge refuses without a card on file', async () => {
+  const { store, stripe, billing } = harness();
+  await qualifiedMeeting(store, 'card-2');
+  const draft = await billing.createDraft({ clientId: 'jole' });
+  await assert.rejects(billing.charge({ clientId: 'jole', invoiceId: draft.invoice_id }), { code: 'no_card_on_file' });
+  const someMeeting = (await store.listMeetings('jole'))[0];
+  await assert.rejects(billing.chargeNow({ clientId: 'jole', meetingId: someMeeting.meeting_id }), { code: 'no_card_on_file' });
+  assert.equal(stripe.calls.some(c => c[0] === 'payInvoice'), false);
+});
+
+test('a declined card is recorded, can be retried, or switched to an emailed invoice', async () => {
+  const { store, stripe, billing } = harness(ENV, { card: VISA, decline: true });
+  const m = await qualifiedMeeting(store, 'card-3');
+  const draft = await billing.createDraft({ clientId: 'jole' });
+  await assert.rejects(billing.charge({ clientId: 'jole', invoiceId: draft.invoice_id }), error => error.code === 'charge_failed' && /declined/.test(error.message));
+  let row = await store.getInvoice('jole', draft.invoice_id);
+  assert.equal(row.status, 'open');
+  assert.match(row.last_error, /attempt 1\): Your card was declined/);
+  assert.equal((await store.getMeeting('jole', m.meeting_id)).invoice_status, 'invoiced');
+
+  // Retry uses a new idempotency key so Stripe really tries again.
+  await assert.rejects(billing.charge({ clientId: 'jole', invoiceId: draft.invoice_id }), { code: 'charge_failed' });
+  const keys = stripe.calls.filter(c => c[0] === 'payInvoice').map(c => c[2]);
+  assert.equal(new Set(keys).size, 2);
+
+  // Email instead: the failed invoice is voided and a pay-by-invoice goes out for the same meeting.
+  const emailed = await billing.emailInstead({ clientId: 'jole', invoiceId: draft.invoice_id, by: 'deins' });
+  row = await store.getInvoice('jole', draft.invoice_id);
+  assert.equal(row.status, 'void');
+  assert.notEqual(emailed.invoice_id, draft.invoice_id);
+  assert.equal(emailed.collection_method, 'send_invoice');
+  assert.deepEqual(emailed.meeting_ids, [m.meeting_id]);
+  assert.equal((await store.getMeeting('jole', m.meeting_id)).stripe_invoice_id, emailed.invoice_id);
+});
+
+test('void: an unpaid invoice is voided and its meetings are billable again', async () => {
+  const { store, billing } = harness(ENV, { card: VISA, decline: true });
+  await qualifiedMeeting(store, 'card-4');
+  const draft = await billing.createDraft({ clientId: 'jole' });
+  await billing.charge({ clientId: 'jole', invoiceId: draft.invoice_id }).catch(() => {});
+  await billing.voidInvoice({ clientId: 'jole', invoiceId: draft.invoice_id });
+  assert.equal((await billing.unbilled('jole')).length, 1);
+});
+
+test('charge now: one meeting drafted and charged in one action; the standard fee uses the catalogue price', async () => {
+  const { store, stripe, billing } = harness({ ...ENV, JOLE_STRIPE_PRICE_ID: 'price_350' }, { card: VISA });
+  const m = await qualifiedMeeting(store, 'card-5');
+  const charged = await billing.chargeNow({ clientId: 'jole', meetingId: m.meeting_id, by: 'deins' });
+  assert.equal(charged.status, 'paid');
+  assert.equal(charged.kind, 'single');
+  const line = stripe.calls.find(c => c[0] === 'createInvoiceItem')[1];
+  assert.equal(line.price, 'price_350');
+  assert.equal(line.amount, undefined);
 });
