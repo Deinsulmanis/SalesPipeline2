@@ -60,7 +60,7 @@ Pass each skill only what it needs:
   "dimensions": {
     "icp":         {"decision": "QUALIFIED", "skill": "jole-icp-qualification@1.1.0", "date": "2026-11-03", "confidence": "HIGH"},
     "signal":      {"decision": "VERIFIED CURRENT SIGNAL", "priority": "PRIORITY A", "demand_score": 70, "skill": "jole-buying-signals@1.1.0", "date": "..."},
-    "buyer":       {"decision": "BUYER VERIFIED", "skill": "jole-buyer-identification@1.0.1", "date": "..."},
+    "buyer":       {"decision": "BUYER VERIFIED", "skill": "jole-buyer-identification@1.1.0", "date": "..."},
     "feasibility": {"decision": "NOT EVALUATED", "reason": "no trigger"},
     "dedupe":      {"decision": "NET NEW", "skill": "jole-dedupe-suppression@1.0.1", "date": "...", "live": true},
     "contact":     {"decision": "NOT EVALUATED", "reason": "no contact data"},

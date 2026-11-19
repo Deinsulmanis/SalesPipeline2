@@ -30,6 +30,8 @@ REQUIRED = [
     'Shipyard General Manager', 'Plant Manager', 'Operations Director', 'Construction Manager', 'Project Director',
     'Turnaround or Outage Manager', 'Maintenance Manager', 'Fabrication or Production Manager', 'Craft Workforce Manager',
     'Owner, CEO or President', 'Procurement or subcontracts leader', 'Site HR or talent acquisition lead',
+    'the head of the company is a strong buyer role on title alone',
+    'This does not cover founder-only titles',
 ]
 
 
