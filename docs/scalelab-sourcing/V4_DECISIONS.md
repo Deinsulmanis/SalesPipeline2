@@ -58,9 +58,28 @@
 - No queue, cap change or send without explicit authorization.
 - See `.claude/skills/salespipeline2-outreach-safety/`.
 
+## Tool connection status (updated 2026-11-19)
+
+| Tool | Status | How to use it |
+|---|---|---|
+| **Adyntel** | Connected through **cloud environment variables** `ADYNTEL_EMAIL` and `ADYNTEL_API_KEY` (environment "SalesPipline2"). The claude.ai connector (`mcp.adyntel.com`) failed: claude.ai demanded OAuth, which Adyntel's server does not offer. Do not retry the connector. | Call Adyntel's REST API directly. Auth is `email` + `api_key` **in the request body/params**, not a header. Endpoint docs: https://docs.adyntel.com/llms.txt (Google, Meta, LinkedIn and TikTok ad libraries; credit balance). Load the variables in memory only. Never print, log or commit them. **First call: the credit-balance check.** No paid lookups until the run budget is approved. |
+| **Jev / TypeSafe** | **Not connected yet.** The owner connects it when ready. | Until then, the ICP gate (Stage 2) and scoring (Stage 5) fail closed. Do not substitute `research_icp`, Firecrawl or any other model or vendor. |
+| **GetLeads** | Available as an MCP connector (`mcp__GetLeads_MCP__*`). | Company discovery only at Stage 1. Check `get_fair_use` and balance before batches. |
+| **Apollo** | Available as an MCP connector (`mcp__Apollo_io__*`). | Selective contact reveals at Stage 6 only, within an approved credit budget. Check `apollo_usage_stats_credit_usage_stats` first. |
+| **Firecrawl** | Available. It also lists an "adyntel" provider. | Do **not** use it as an Adyntel substitute without owner approval: it bills through Firecrawl, not the owner's Adyntel account. |
+
 ## First-run checklist (when the owner says go)
 
-1. Confirm the run scope: count, geography and credit budgets. Default: a read-only pilot of up to 100 companies with zero paid reveals.
-2. Confirm Jev and Adyntel are connected. Check GetLeads and Apollo balances.
-3. Run the playbook pipeline in order and stop at the review artifacts (playbook §5).
-4. Build the V4 campaign, profile and import path only when authorized. Copy waits for the owner.
+1. Read the playbook and this file.
+2. Confirm the run scope: count, geography and credit budgets. Default: a read-only pilot of up to 100 companies with zero paid reveals.
+3. Confirm tool status. Run the free Adyntel credit-balance check, and check GetLeads and Apollo balances. If Jev is not connected, say so and stop before Stage 2.
+4. Run the playbook pipeline in order and stop at the review artifacts (playbook §5):
+   - `run-report.md`
+   - `company-qualification.csv`
+   - `ad-intent-and-signals.csv`
+   - `ranked-companies.csv`
+   - `approved-contacts.csv`
+   - `review-holds.csv`
+
+   Each lead carries the V4 tag and its full score breakdown.
+5. Build the V4 campaign, profile and import path only when authorized. Copy waits for the owner. Never import, queue or send without explicit authorization in the current task.
