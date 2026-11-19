@@ -3,7 +3,7 @@
 **Recorded:** 2026-11-18
 **Reference:** [`ScaleLab_AI_Industrial_Staffing_ICP_and_Sourcing_Playbook.md`](ScaleLab_AI_Industrial_Staffing_ICP_and_Sourcing_Playbook.md) (v1.0). It is the default operating reference for every new ScaleLab lead-sourcing task. Read it first.
 
-**Status:** Docs only. No V4 code, campaign registration, import path, lead, credit spend, queue or send exists yet. Leads are first sourced on 2026-11-19 at the earliest.
+**Status (2026-11-19):** Adyntel and Jev are connected (see the tool table). Docs only otherwise. No V4 code, campaign registration, import path, lead, credit spend, queue or send exists yet. Leads are first sourced on 2026-11-19 at the earliest.
 
 ## Owner decisions (2026-11-18)
 
@@ -63,7 +63,7 @@
 | Tool | Status | How to use it |
 |---|---|---|
 | **Adyntel** | Connected through **cloud environment variables** `ADYNTEL_EMAIL` and `ADYNTEL_API_KEY` (environment "SalesPipline2"). The claude.ai connector (`mcp.adyntel.com`) failed: claude.ai demanded OAuth, which Adyntel's server does not offer. Do not retry the connector. | Call Adyntel's REST API directly. Auth is `email` + `api_key` **in the request body/params**, not a header. Endpoint docs: https://docs.adyntel.com/llms.txt (Google, Meta, LinkedIn and TikTok ad libraries; credit balance). Load the variables in memory only. Never print, log or commit them. **First call: the credit-balance check.** No paid lookups until the run budget is approved. |
-| **Jev / TypeSafe** | **Not connected yet.** The owner connects it when ready. | Until then, the ICP gate (Stage 2) and scoring (Stage 5) fail closed. Do not substitute `research_icp`, Firecrawl or any other model or vendor. |
+| **Jev (TypeSafe AI)** | **Connected 2026-11-19** as a **network secret** for `api.typesafe.ai` on environment "SalesPipline2". The proxy injects `Authorization: Bearer <key>`. No env var holds it; code that wants `TYPESAFE_API_KEY` gets the placeholder `proxy-injected`. `GET /v1/models` answered 200 (models `jev-latest`, `jev-preview`). Key validity is not yet proven by a scored call. | `POST https://api.typesafe.ai/v1/systemone` with `model`, `state` (the evidence only) and `questions` (`choice` / `score` / `noul`). Docs: https://docs.typesafe.ai. Use it for the Stage 2 ICP gate and Stage 5 scoring. Pin the model version used in each run's report. Jev returns confidences: keep classification confidence separate from evidence coverage, and keep exact calculations (point totals, buckets) in code. Do not substitute `research_icp`, Firecrawl or another model. |
 | **GetLeads** | Available as an MCP connector (`mcp__GetLeads_MCP__*`). | Company discovery only at Stage 1. Check `get_fair_use` and balance before batches. |
 | **Apollo** | Available as an MCP connector (`mcp__Apollo_io__*`). | Selective contact reveals at Stage 6 only, within an approved credit budget. Check `apollo_usage_stats_credit_usage_stats` first. |
 | **Firecrawl** | Available. It also lists an "adyntel" provider. | Do **not** use it as an Adyntel substitute without owner approval: it bills through Firecrawl, not the owner's Adyntel account. |
@@ -72,7 +72,7 @@
 
 1. Read the playbook and this file.
 2. Confirm the run scope: count, geography and credit budgets. Default: a read-only pilot of up to 100 companies with zero paid reveals.
-3. Confirm tool status. Run the free Adyntel credit-balance check, and check GetLeads and Apollo balances. If Jev is not connected, say so and stop before Stage 2.
+3. Confirm tool status. Run the free Adyntel credit-balance check, check GetLeads and Apollo balances, and run Jev `GET /v1/models`. If any tool fails, say so and stop before the stage that needs it.
 4. Run the playbook pipeline in order and stop at the review artifacts (playbook §5):
    - `run-report.md`
    - `company-qualification.csv`

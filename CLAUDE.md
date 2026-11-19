@@ -11,7 +11,7 @@ Key points (the files above are authoritative):
 
 - **ScaleLab prospects are US industrial and skilled-trades staffing agencies.** They are not Jole BTX's industrial employers. Never mix the two campaigns' data, suppressions, senders or copy.
 - **Pipeline order:** GetLeads (companies) → Jev ICP PASS/HOLD/REJECT → Adyntel ad evidence → other signals → Jev score (40/25/15/10/10) → buyer (playbook order, no randomization) → verify → personalization → review artifacts.
-- **Adyntel** is reached through the env vars `ADYNTEL_EMAIL` / `ADYNTEL_API_KEY` (REST API, body auth). **Jev** is not connected until the owner says so. Fail closed, never substitute.
+- **Adyntel** is reached through the env vars `ADYNTEL_EMAIL` / `ADYNTEL_API_KEY` (REST API, body auth). **Jev** (TypeSafe, `api.typesafe.ai`) is a proxy-injected network secret: send `Authorization: Bearer proxy-injected`. If a tool fails, fail closed and never substitute.
 - **No paid credits, imports, queueing, cap changes or sends** without explicit authorization in the current task. The owner writes V4 copy after seeing the leads.
 
 ## Safety
