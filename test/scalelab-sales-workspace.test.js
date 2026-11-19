@@ -174,6 +174,34 @@ test('dashboard: board summary cards, conversation inbox and meeting tracker are
   for (const id of ['call_held', 'proposal_sent']) assert.match(html, new RegExp(`id: '${id}'`));
 });
 
+test('bookings: Closed / Lost meetings are not listed, and a signed client is never offered a tech fee', () => {
+  const html = fs.readFileSync(require.resolve('../public/index.html'), 'utf8');
+  const loader = html.slice(html.indexOf('async function loadBookingsWorkspace()'), html.indexOf('function bookingRowHtml('));
+  assert.match(loader, /\.filter\(lead => displayStageFor\(lead\.stage\) !== 'closed_lost'\)\s*\n\s*\.map\(lead => \(\{ lead, at: Date\.parse\(lead\.meetingAt/);
+
+  // Run the real row renderer.
+  const start = html.indexOf('function bookingRowHtml(');
+  const rowSource = html.slice(start, html.indexOf('\n}\n', start) + 2);
+  const bookingRowHtml = new Function('ctx', `
+    const { esc, escAttr, nextActions, CALL_STATUS_LABEL, clientMoney, stageLabel, displayStageFor, callWhen } = ctx;
+    let scalelabBillingOverview = ctx.overview;
+    ${rowSource}
+    return bookingRowHtml;`)({
+    esc: v => String(v), escAttr: v => String(v), nextActions: new Map(), CALL_STATUS_LABEL: {},
+    clientMoney: c => `$${c / 100}`, stageLabel: s => s, displayStageFor: s => s, callWhen: iso => iso,
+    overview: { ready: true },
+  });
+  const at = Date.parse('2026-10-02T23:30:00Z');
+  const prospect = bookingRowHtml({ id: 'L1', company: 'Prospect Co', stage: 'call_held' }, at, true, null);
+  assert.match(prospect, />Bill tech fee</);
+  assert.match(prospect, /Not billed yet/);
+  const client = bookingRowHtml({ id: 'L2', company: 'Signed Co', stage: 'closed_won' }, at, true, null);
+  assert.doesNotMatch(client, /Bill tech fee/, 'a signed client has already paid');
+  assert.doesNotMatch(client, /Not billed yet/);
+  assert.match(client, /Client · tech fee paid/);
+  assert.match(client, />Send onboarding docs</, 'onboarding documents stay available');
+});
+
 test('dashboard: the board summary cards move into the Pipeline workspace, never left on <body>', () => {
   // Left as a body child, the cards broke the workspace shell and the board
   // collapsed to a sliver, so the dashboard looked like nothing had loaded.

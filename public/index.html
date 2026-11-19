@@ -9625,7 +9625,9 @@ async function loadBookingsWorkspace() {
   await ensureNextActions();
   scalelabBillingOverview = await fetch('/api/scalelab-billing/overview').then(r => (r.ok ? r.json() : null)).catch(() => null);
   const now = Date.now();
+  // Closed / Lost leads are finished; their old meetings are not tracked here.
   const meetings = leads
+    .filter(lead => displayStageFor(lead.stage) !== 'closed_lost')
     .map(lead => ({ lead, at: Date.parse(lead.meetingAt || '') }))
     .filter(item => Number.isFinite(item.at));
   const upcoming = meetings.filter(item => item.at > now).sort((a, b) => a.at - b.at);
@@ -9667,13 +9669,15 @@ function bookingRowHtml(lead, at, isPast, billing) {
     lastInvoice ? `${lastInvoice.description || 'Invoice'} ${clientMoney(lastInvoice.amountCents, lastInvoice.currency.toUpperCase())} · ${lastInvoice.status}` : '',
   ].filter(Boolean).join(' · ');
   const billingReady = scalelabBillingOverview && scalelabBillingOverview.ready;
+  // A signed client has already paid the tech fee, so there is nothing to bill.
+  const signedClient = displayStageFor(lead.stage) === 'closed_won';
   const action = (label, fn, cls = 'btn-save-notes') => `<button type="button" class="${cls}" data-lead="${id}" onclick="${fn}(this.dataset.lead)">${esc(label)}</button>`;
   return `<div class="operational-row meeting-row">
       <span><b>${esc(lead.company || name || lead.email || lead.id)}</b><small>${esc([name, lead.email].filter(Boolean).join(' · ') || 'No contact recorded')}</small><small>${esc(stageLabel(displayStageFor(lead.stage)))}${callStatus ? ` · ${esc(callStatus)}` : ''}</small></span>
-      <span class="operational-row-meta"><b>${esc(callWhen(new Date(at).toISOString()))}</b><small>${esc(billingText || (isPast ? 'Not billed yet' : ''))}</small></span>
+      <span class="operational-row-meta"><b>${esc(callWhen(new Date(at).toISOString()))}</b><small>${esc(billingText || (signedClient ? 'Client · tech fee paid' : (isPast ? 'Not billed yet' : '')))}</small></span>
       <span class="meeting-actions">
         ${action('Open lead', 'openDetail')}
-        ${isPast && billingReady ? action('Bill tech fee', 'openTechFeeDialog', 'btn-save') : ''}
+        ${isPast && billingReady && !signedClient ? action('Bill tech fee', 'openTechFeeDialog', 'btn-save') : ''}
         ${isPast ? action('Send onboarding docs', 'openOnboardingDialog') : ''}
         ${lastInvoice && lastInvoice.hostedUrl ? `<a class="btn-save-notes" href="${escAttr(lastInvoice.hostedUrl)}" target="_blank" rel="noopener noreferrer">View invoice</a>` : ''}
       </span>
