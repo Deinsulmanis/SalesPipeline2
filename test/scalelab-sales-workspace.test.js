@@ -202,6 +202,25 @@ test('bookings: Closed / Lost meetings are not listed, and a signed client is ne
   assert.match(client, />Send onboarding docs</, 'onboarding documents stay available');
 });
 
+test('inbox: the client Inbox layout, a read-only conversation drawer, and reply actions one click away', () => {
+  const html = fs.readFileSync(require.resolve('../public/index.html'), 'utf8');
+  const render = html.slice(html.indexOf('function renderInboxWorkspace() {'), html.indexOf('// ── SCALELAB CONVERSATION DRAWER'));
+  assert.match(render, /clientStatusBadges\(client, client\.sending\)/, 'status badges like a client Inbox');
+  for (const card of ['Conversations', 'Needs response', 'Positive', 'Needs review']) assert.match(render, new RegExp(`metricCard\\('${card}'`));
+  assert.doesNotMatch(html, /id="inbox-toolbar"|INBOX_FILTERS|setInboxFilter/, 'no filter tabs, as in a client Inbox');
+  assert.match(render, /onclick="openScaleLabConversation\(this\.dataset\.leadId\)"/);
+  const drawer = html.slice(html.indexOf('// ── SCALELAB CONVERSATION DRAWER'), html.indexOf('async function loadSequencesWorkspace() {'));
+  // It reads ScaleLab's own lead activity, refuses an answer for another lead, and writes nothing.
+  assert.match(drawer, /fetch\(`\/api\/coldemail\/\$\{encodeURIComponent\(leadId\)\}\/activity\?client=\$\{encodeURIComponent\(clientId\)\}`\)/);
+  assert.match(drawer, /String\(data\.lead\.id\) !== String\(leadId\)/);
+  assert.doesNotMatch(drawer, /method:\s*'(?:POST|PUT|PATCH|DELETE)'/);
+  // Same sections as the managed drawer, plus the way to the full lead's actions.
+  for (const section of ['Contact', 'Sending inbox', 'Email sequence', 'Campaign context', 'Pipeline & next action', 'Activity']) {
+    assert.ok(drawer.includes(`cdSection('${section}'`), section);
+  }
+  assert.match(drawer, /function openFullLeadFromConversation\(leadId\) \{[\s\S]*openCeDetail\(leadId\);/);
+});
+
 test('dashboard: staffing only — no dental, roofing or trades choices are offered', () => {
   const html = fs.readFileSync(require.resolve('../public/index.html'), 'utf8');
   assert.doesNotMatch(html, /<option value="(?:dental|roofing)">/, 'no dental or roofing filter or campaign option');

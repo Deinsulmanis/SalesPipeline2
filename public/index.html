@@ -7863,7 +7863,7 @@ function installWorkspaceShell() {
   const ce = document.getElementById('ce-section');
   outreach.appendChild(ce);
 
-  inbox.insertAdjacentHTML('beforeend', '<div class="client-metrics" id="inbox-metrics" aria-label="Inbox summary"></div><div class="inbox-toolbar" id="inbox-toolbar"></div><p id="inbox-note" style="color:var(--text-muted);font-size:12px;margin:0 0 10px">One row per conversation, showing its latest reply. Open a row for the full thread and every reply action. Filters overlap: a conversation can be both Positive and Needs response.</p><div id="inbox-content" class="workspace-empty"><strong>Loading the reply queue…</strong>Canonical reply evidence is being prepared.</div>');
+  inbox.insertAdjacentHTML('beforeend', '<div id="inbox-badges"></div><div class="client-metrics" id="inbox-metrics" aria-label="Inbox summary"></div><div id="inbox-content" class="workspace-empty"><strong>Loading the reply queue…</strong>Canonical reply evidence is being prepared.</div>');
   sequences.insertAdjacentHTML('beforeend', '<div id="sequences-status" class="workspace-surface">Loading sequence status…</div>');
   bookings.insertAdjacentHTML('beforeend', '<div id="bookings-content" class="workspace-empty"><strong>Loading meetings…</strong>Reading meeting times and billing status.</div>');
   settings.insertAdjacentHTML('afterbegin', '<div id="settings-status" class="status-grid" style="margin-bottom:14px"></div><div id="settings-inbox-routing" class="workspace-surface" aria-live="polite"><div class="workspace-empty"><strong>Loading sender routing…</strong>Reading configured Gmail inbox status.</div></div>');
@@ -9221,14 +9221,6 @@ async function answerClientClarification(event) {
 }
 
 
-const INBOX_FILTERS = Object.freeze([
-  ['attention','Needs response'],['positive','Positive / evaluation'],['needs_human','Needs Human'],
-  ['revisit','Revisit later'],['decision_maker','Decision maker'],['contact_change_review','Contact review'],
-  ['automated_reply','Automated / OOO'],['unknown','Unknown / investigate'],['all','All replies'],
-]);
-
-function setInboxFilter(value) { inboxFilter = value; renderInboxWorkspace(); }
-
 // An automated reply's OOO state (server: integrations/ooo-pause.js). A lead
 // with no reliable return date waits for a person; nothing invents a date.
 const OOO_PAUSE_LABEL = Object.freeze({
@@ -9291,45 +9283,182 @@ function inboxConversations() {
   return [...byLead.values()].sort((a, b) => b.latestAt - a.latestAt);
 }
 
+// The ScaleLab Inbox in the same layout as a managed client's Inbox
+// (renderManagedInbox): status badges, summary cards, then one row per
+// conversation, newest first. A row opens the conversation drawer; replying,
+// correcting a classification and setting the next action stay on the full
+// lead panel, one click away from the drawer.
 function renderInboxWorkspace() {
   const conversations = inboxConversations();
   const matching = id => conversations.filter(c => { const previous = inboxFilter; inboxFilter = id; const match = inboxMatches(c.latest, inboxActionFor(c.latest)); inboxFilter = previous; return match; });
-  // Summary cards first, like a client's Inbox.
+  const client = activeClient();
+  const badgesHost = document.getElementById('inbox-badges');
+  if (badgesHost) badgesHost.innerHTML = client ? clientStatusBadges(client, client.sending) : '';
   const metricsHost = document.getElementById('inbox-metrics');
   if (metricsHost) {
+    const review = conversations.filter(c => ['needs_human', 'unknown', 'contact_change_review'].includes(c.latest.category));
     metricsHost.innerHTML = [
       metricCard('Conversations', conversations.length),
       metricCard('Needs response', matching('attention').length, 'A person owes the next move'),
       metricCard('Positive', matching('positive').length),
-      metricCard('Needs a person', matching('needs_human').length),
-      metricCard('Revisit later', matching('revisit').length),
+      metricCard('Needs review', review.length),
     ].join('');
   }
-  // Each filter shows the count it would actually render, computed with the
-  // same predicate the list uses, so a tab can never promise rows it cannot show.
-  document.getElementById('inbox-toolbar').innerHTML = INBOX_FILTERS.map(([id,label]) =>
-    `<button class="inbox-filter${inboxFilter === id ? ' active' : ''}" type="button" onclick="setInboxFilter('${id}')">${esc(label)} <b>${matching(id).length}</b></button>`).join('');
-  const rows = matching(inboxFilter);
   const host = document.getElementById('inbox-content');
-  if (!rows.length) { host.className = 'workspace-empty'; host.innerHTML = '<strong>Nothing in this view</strong>No conversations currently match this filter.'; return; }
+  if (!conversations.length) {
+    host.className = '';
+    host.innerHTML = emptyState('No conversations yet', 'Replies to your staffing outreach appear here as they arrive.', 'inbox');
+    return;
+  }
   host.className = 'inbox-list';
-  host.innerHTML = rows.map(({ latest: record, count }) => {
+  host.innerHTML = conversations.map(({ latest: record }) => {
     const action = inboxActionFor(record);
-    const body = record.hasText ? record.replyText : 'Reply text unavailable — historical body was not stored.';
+    const body = record.hasText ? record.replyText : (record.replySubject || 'Reply text unavailable — historical body was not stored.');
     const excerpt = body.length > 260 ? `${body.slice(0, 257)}…` : body;
-    const category = RD_CATEGORY_LABEL[record.category] || record.category;
+    const category = RD_CATEGORY_LABEL[record.category] || record.category || 'unclassified';
     const ooo = !action && record.oooPause ? OOO_PAUSE_LABEL[record.oooPause.status] : null;
-    const actionLabel = action?.label || (ooo ? ooo[0] : record.category === 'automated_reply' ? 'No human response required' : record.pipelinePresence ? 'Review reply' : 'Review before promotion');
-    const owner = action?.owner ? (NA_OWNER_LABEL[action.owner] || action.owner) : (ooo ? ooo[1] : record.category === 'automated_reply' ? 'Waiting' : 'Human');
-    const dueAt = action?.dueAt || (ooo && record.oooPause.resumeAt ? record.oooPause.resumeAt : '');
-    const when = dueAt ? `${ooo ? 'Resume' : 'Due'} ${rdFormatTime(dueAt)}` : `Last reply ${rdFormatTime(record.occurredAt)}`;
-    // Each row opens the lead's conversation panel: full thread and every reply action.
-    return `<button type="button" class="inbox-row" data-lead-id="${escAttr(record.leadId)}" onclick="openCeDetail(this.dataset.leadId)" aria-haspopup="dialog">
-      <span class="inbox-person"><b>${esc(record.company || 'Unknown company')}</b><small>${esc([record.contactName,record.email].filter(Boolean).join(' · '))}</small></span>
-      <span class="inbox-message"><span class="client-badge">${esc(category)}</span>${count > 1 ? ` <small class="inbox-count">${esc(count)} replies</small>` : ''}<p class="client-note">${esc(excerpt)}</p></span>
-      <span class="inbox-action"><b>${esc(actionLabel)}</b><small>${esc(owner)}${action?.waitingOn ? ` · ${HOT_WAITING_LABEL[action.waitingOn] || action.waitingOn}` : ''}</small><small>${esc(when)}</small></span>
+    const status = action?.label || (ooo ? ooo[0] : record.category === 'automated_reply' ? 'No human response required' : record.pipelinePresence ? 'Review reply' : 'Review before promotion');
+    const received = record.occurredAt ? new Date(record.occurredAt).toLocaleString() : '';
+    return `<button type="button" class="inbox-row" data-lead-id="${escAttr(record.leadId)}" onclick="openScaleLabConversation(this.dataset.leadId)" aria-haspopup="dialog">
+      <span class="inbox-person"><b>${esc(record.company || record.email || 'Unknown company')}</b><small>${esc([record.contactName, record.email].filter(Boolean).join(' · '))}</small></span>
+      <span class="inbox-message"><span class="client-badge">${esc(category)}</span><p class="client-note">${esc(excerpt)}</p></span>
+      <span class="inbox-action"><b>${esc(status)}</b><small>${esc(record.campaign ? campaignName(record.campaign) : '')}${received ? ' · ' + esc(received) : ''}</small></span>
     </button>`;
   }).join('');
+}
+
+// ── SCALELAB CONVERSATION DRAWER ────────────────────────────────────────────
+// The managed-client conversation drawer's frame and sections, filled from
+// ScaleLab's own read-only lead activity (/api/coldemail/:id/activity). It
+// reads only; every change happens on the full lead panel.
+const SL_REPLY_SENTIMENT = { positive: 'positive', negative: 'negative', unsubscribe: 'unsubscribe' };
+const SL_SEND_TYPES = new Set(['initial_email_sent', 'follow_up_sent', 'sequence_step_sent']);
+const SL_SEQUENCE_TEXT = { active: 'Sequence active', complete: 'Sequence complete', replied: 'Stopped by reply', queued: 'Queued — nothing sent yet', not_started: 'Not started' };
+
+function openScaleLabConversation(leadId) {
+  const overlay = document.getElementById('client-detail-overlay');
+  if (!overlay || !leadId) return;
+  clientDetailLeadId = String(leadId);
+  clientDetailReturnFocus = document.activeElement;
+  document.getElementById('cd-name').textContent = 'Loading conversation…';
+  document.getElementById('cd-sub').textContent = '';
+  document.getElementById('cd-body').innerHTML = '<div class="activity-empty">Reading this conversation from the server…</div>';
+  overlay.classList.add('open');
+  document.getElementById('cd-close').focus();
+  loadScaleLabConversation(clientDetailLeadId);
+}
+
+async function loadScaleLabConversation(leadId) {
+  const clientId = activeClientId;
+  const token = clientViewToken;
+  const current = () => leadId === clientDetailLeadId && token === clientViewToken && clientId === activeClientId;
+  try {
+    const response = await fetch(`/api/coldemail/${encodeURIComponent(leadId)}/activity?client=${encodeURIComponent(clientId)}`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    if (!current()) return;
+    if (!data.lead || String(data.lead.id) !== String(leadId)) throw new Error('the server answered for a different lead');
+    renderScaleLabConversation(data, rdRecords.find(record => String(record.leadId) === String(leadId)) || null);
+  } catch (error) {
+    if (!current()) return;
+    document.getElementById('cd-name').textContent = 'Conversation unavailable';
+    document.getElementById('cd-body').innerHTML = `<div class="activity-empty">This conversation could not be loaded (${esc(error.message)}). Nothing was changed.</div>`;
+  }
+}
+
+function openFullLeadFromConversation(leadId) {
+  const overlay = document.getElementById('client-detail-overlay');
+  if (overlay) overlay.classList.remove('open');
+  clientDetailLeadId = '';
+  clientDetailReturnFocus = null;
+  openCeDetail(leadId);
+}
+
+function renderScaleLabConversation(data, record) {
+  const lead = data.lead || {};
+  const pipeline = data.pipeline || {};
+  const events = data.activities || [];
+  document.getElementById('cd-name').textContent = lead.company || lead.email || 'Conversation';
+  document.getElementById('cd-sub').textContent = [lead.contactName, lead.city].filter(Boolean).join(' · ');
+
+  const actionsHtml = `<div class="cd-next"><b>Reply, correct the classification or set the next action</b>
+      <span class="cd-meta">Those controls are on the full lead.</span>
+      <button type="button" class="btn-save" style="margin-top:8px;align-self:flex-start" data-lead="${escAttr(lead.id)}" onclick="openFullLeadFromConversation(this.dataset.lead)">Open full lead</button></div>`;
+
+  const contactHtml = [
+    cdField('Name', esc(lead.contactName)),
+    cdField('Email', lead.email ? `<a href="mailto:${escAttr(lead.email)}">${esc(lead.email)}</a>` : ''),
+    cdField('Company', esc(lead.company)),
+    cdField('Location', esc(lead.city)),
+    cdField('Website', cdLink(lead.website)),
+  ].join('');
+
+  // Replies are the timeline's classified inbound events, newest first.
+  let replies = events.filter(event => event.classification).map(event => ({
+    workflowState: event.classification, sentiment: SL_REPLY_SENTIMENT[event.classification] || '',
+    receivedAt: event.occurredAt, subject: event.subject, body: event.content, late: event.late,
+  }));
+  if (!replies.length && record) {
+    replies = [{ workflowState: record.category, sentiment: SL_REPLY_SENTIMENT[record.category] || '', receivedAt: record.occurredAt,
+      subject: record.replySubject, body: record.hasText ? record.replyText : '', late: record.late }];
+  }
+  const replyHtml = replies.map(reply => `<article class="cd-reply">
+      <div class="cd-badges"><span class="cd-badge" data-tone="${escAttr(cdTone(reply))}">${esc(RD_CATEGORY_LABEL[reply.workflowState] || cdWords(reply.workflowState) || 'unclassified')}</span>${reply.late ? '<span class="cd-badge">late reply</span>' : ''}</div>
+      <span class="cd-meta">${esc(cdTime(reply.receivedAt) || 'Date unknown')}${reply.subject ? ' · ' + esc(reply.subject) : ''}</span>
+      <div class="cd-reply-body">${reply.body ? esc(reply.body) : '<span style="color:var(--text-muted)">Reply text was not stored.</span>'}</div>
+    </article>`).join('');
+
+  const sends = events.filter(event => SL_SEND_TYPES.has(event.type)).slice().reverse();
+  const firstSend = sends[0] || null;
+  const lastSend = sends[sends.length - 1] || null;
+  const proofSend = sends.find(event => event.sender && event.sender.senderId && event.sender.senderId === lead.senderInboxId) || null;
+  const sender = lead.senderState ? {
+    state: lead.senderState, label: lead.senderLabel, email: lead.senderEmail, senderId: lead.senderInboxId,
+    stateLabel: lead.senderStateLabel, detail: lead.senderDetail,
+    proof: proofSend ? { step: proofSend.metadata?.step || proofSend.metadata?.sequenceStep || (proofSend.type === 'initial_email_sent' ? 1 : ''),
+      sentAt: proofSend.occurredAt, providerMessageId: proofSend.metadata?.gmailMessageId || '' } : null,
+  } : null;
+
+  const stepsHtml = sends.length ? `<div class="cd-steps">${sends.map((event, index) => {
+      const step = event.metadata?.step || event.metadata?.sequenceStep || index + 1;
+      return `<div class="cd-step" data-state="sent"><span class="cd-step-dot" aria-hidden="true">●</span>
+        <span><span class="cd-step-label">Step ${esc(step)} — ${esc(event.type === 'initial_email_sent' ? 'Initial email' : 'Follow-up')}</span>
+          <small class="cd-meta">Sent · ${esc(cdTime(event.occurredAt))}${event.subject ? ' · ' + esc(event.subject) : ''}</small></span></div>`;
+    }).join('')}</div>${lead.sequenceState ? `<div class="cd-badges"><span class="cd-badge">${esc(SL_SEQUENCE_TEXT[lead.sequenceState] || cdWords(lead.sequenceState))}</span></div>` : ''}` : '';
+
+  const campaignHtml = [
+    cdField('Campaign', lead.campaign ? esc(campaignName(lead.campaign)) : ''),
+    cdField('Campaign version', lead.campaignVersion && lead.campaignVersion !== 'legacy_unknown' ? `<span class="cd-mono">${esc(lead.campaignVersion)}</span>` : ''),
+  ].join('');
+
+  const next = pipeline.nextAction;
+  const nextHtml = next ? `<div class="cd-next"><b>${esc(next.label)}</b>
+      <span class="cd-meta">${esc(NA_OWNER_LABEL[next.owner] || next.owner || '')}${next.dueAt ? ' · ' + esc(cdTime(next.dueAt)) : ''}</span>
+      ${next.detail || next.reason ? `<span class="cd-meta">${esc(next.detail || next.reason)}</span>` : ''}</div>` : '';
+  const pipelineHtml = nextHtml + `<div class="detail-fields">
+      ${cdField('Stage', esc(pipeline.presence ? stageLabel(pipeline.stage) : 'Not in the Sales Pipeline'))}
+      ${cdField('Reply classification', esc(RD_CATEGORY_LABEL[lead.replyCategory] || cdWords(lead.replyCategory)))}
+      ${cdField('Automation', esc(cdWords(pipeline.automation?.state)))}
+      ${cdField('Suppression', lead.suppressed ? 'Suppressed — nothing more is sent' : 'Not suppressed')}
+    </div>`;
+
+  const latestReply = replies[0] || null;
+  const activityHtml = [
+    cdField('First outreach sent', esc(cdTime(firstSend?.occurredAt))),
+    cdField('Most recent outreach', esc(cdTime(lastSend?.occurredAt || lead.lastEmailedAt))),
+    cdField('Reply received', esc(cdTime(latestReply?.receivedAt))),
+  ].join('');
+
+  document.getElementById('cd-body').innerHTML = [
+    actionsHtml,
+    cdSection('Contact', contactHtml ? `<div class="detail-fields">${contactHtml}</div>` : ''),
+    cdSection(replies.length > 1 ? `Replies (${replies.length})` : 'Reply', replyHtml),
+    cdSection('Sending inbox', cdSenderHtml(sender, 'ScaleLab')),
+    cdSection('Email sequence', stepsHtml),
+    cdSection('Campaign context', campaignHtml ? `<div class="detail-fields">${campaignHtml}</div>` : ''),
+    cdSection('Pipeline & next action', pipelineHtml),
+    cdSection('Activity', activityHtml ? `<div class="detail-fields">${activityHtml}</div>` : ''),
+  ].join('');
 }
 
 async function loadSequencesWorkspace() {
