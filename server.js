@@ -41,6 +41,8 @@ const { configuredSenders, observableSenders, senderCountsToday, successfulSendC
 const { mailboxLeadScope } = require('./integrations/mailbox-conversation-ownership');
 const { capacityFromEnv, DEFAULT_INBOX_PER_RUN_LIMIT, MAX_INBOX_PER_RUN_LIMIT } = require('./integrations/gmail-sender-capacity');
 const { appendLeadsRow } = require('./integrations/leads-sheet-append');
+const { scaleLabOwner } = require('./integrations/scalelab-response-classification');
+const { routingConfig: scaleLabRoutingConfig } = require('./integrations/scalelab-reply-router');
 const {
   markWarmupReady, activateSender, pauseSender, activationBlockers,
 } = require('./integrations/gmail-sender-lifecycle');
@@ -4228,8 +4230,10 @@ async function applyCalendarPlanItem(item, context) {
       };
       // Human-owned stage safety is fail-closed: hold before creating the card.
       if (stageRequiresHold('call_booked')) await withAuth(() => applyManualHold(boardId, boardLead.email));
-      await withAuth(() => appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: SHEET_NAME,
+      const atomicIdentity = scaleLabOwner(ceLead) && scaleLabRoutingConfig()?.mode === 'apply';
+      const write = await withAuth(() => appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: SHEET_NAME, atomicIdentity,
         values: [...COLUMNS.map(field => String(boardLead[field] ?? '')), '', '', '', meetingAt, '', ''] }));
+      if (atomicIdentity && write.duplicate) return { ok: false, error: 'Pipeline card changed during booking; refresh and retry' };
       createdBoard = true;
       context.boardLeads.push(boardLead);
       const promotionEventId = stableActivityId('pipeline-promotion', [ceLead.id, boardId, 'call_booked', PROMOTION_TRIGGER.MEETING_BOOKED]);
@@ -6441,8 +6445,11 @@ app.post('/api/coldemail/:id/promote', requireAuth, rejectArchived('coldemail'),
         valueInputOption: 'RAW', requestBody: { values: [[meetingAt || identity.boardLead.meetingAt || '', outcome || identity.boardLead.outcome || '']] },
       }));
     } else {
-      await withAuth(() => appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: SHEET_NAME,
-        values: [...COLUMNS.map(field => String(boardLead[field] ?? '')), '', '', '', meetingAt, outcome, String(req.body?.conversationContext || '').trim().slice(0, 10000)] }));
+      const atomicIdentity = scaleLabOwner(ceLead) && scaleLabRoutingConfig()?.mode === 'apply';
+      const write = await withAuth(() => appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: SHEET_NAME,
+        values: [...COLUMNS.map(field => String(boardLead[field] ?? '')), '', '', '', meetingAt, outcome, String(req.body?.conversationContext || '').trim().slice(0, 10000)],
+        atomicIdentity }));
+      if (atomicIdentity && write.duplicate) return res.status(409).json({ error: 'Pipeline card changed during promotion; refresh and retry.' });
     }
 
     const eventId = stableActivityId('pipeline-promotion', [ceLead.id, boardId, decision.targetStage, PROMOTION_TRIGGER.MANUAL]);

@@ -1,4 +1,5 @@
 'use strict';
+const { createHash } = require('node:crypto');
 /**
  * leads-sheet-append.js — the one way a new card is added to the Leads board.
  *
@@ -56,7 +57,7 @@ async function rowsWithId(sheets, spreadsheetId, sheetName, id) {
  * @returns { appended, duplicate, row } — row is the 1-based sheet row holding
  *          the id (the existing one when duplicate is true)
  */
-function appendLeadsRow({ sheets, spreadsheetId, sheetName = 'Leads', values } = {}) {
+function appendLeadsRow({ sheets, spreadsheetId, sheetName = 'Leads', values, atomicIdentity = false } = {}) {
   if (!sheets || !spreadsheetId) return Promise.reject(new Error('appendLeadsRow requires a Sheets client and spreadsheetId'));
   if (!Array.isArray(values) || !values.length) return Promise.reject(new Error('appendLeadsRow requires a row of values'));
   if (values.length > COLUMN_LIMIT) return Promise.reject(new Error(`a Leads row has at most ${COLUMN_LIMIT} values (A:W)`));
@@ -70,10 +71,26 @@ function appendLeadsRow({ sheets, spreadsheetId, sheetName = 'Leads', values } =
       const text = value === null || value === undefined ? '' : String(value);
       return text === '' ? {} : { userEnteredValue: { stringValue: text } };
     });
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId,
-      requestBody: { requests: [{ appendCells: { sheetId, rows: [{ values: cells }], fields: 'userEnteredValue' } }] },
-    });
+    const requests = [{ appendCells: { sheetId, rows: [{ values: cells }], fields: 'userEnteredValue' } }];
+    if (atomicIdentity) {
+      // Sheets validates the entire batch. The spreadsheet-wide unique
+      // metadata ID makes a concurrent/retried append for this key fail as a
+      // unit. A hash collision also fails closed, until inspected by a human.
+      const hash = createHash('sha256').update(sheetName + '\0' + id).digest();
+      const metadataId = (hash.readUInt32BE() & 0x7fffffff) || 1;
+      requests.unshift({ createDeveloperMetadata: { developerMetadata: {
+        metadataId, metadataKey: 'scalelab_reply_append', metadataValue: sheetName + ':' + id,
+        location: { spreadsheet: true }, visibility: 'DOCUMENT',
+      } } });
+    }
+    try {
+      await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });
+    } catch (error) {
+      if (!atomicIdentity) throw error;
+      const confirmed = await rowsWithId(sheets, spreadsheetId, sheetName, id);
+      if (confirmed.length === 1) return { appended: false, duplicate: true, row: confirmed[0] };
+      throw error;
+    }
     const rows = await rowsWithId(sheets, spreadsheetId, sheetName, id);
     return { appended: true, duplicate: false, row: rows.length ? rows[rows.length - 1] : null };
   });

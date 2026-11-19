@@ -480,6 +480,16 @@ async function getOutreachLeadByEmail(email, options = {}) {
   return { ...result, lead: result.ok ? (result.leads[0] || null) : null };
 }
 
+// This is a canonical, opt-in routing read. An email shared by multiple CRM
+// rows is ambiguous, even when one row has the requested client ID.
+async function readCanonicalOutreachRecipient(email, { env = process.env } = {}) {
+  if (outreachStateMode(env) !== 'primary' || outreachWriteAuthority(env) !== 'supabase') {
+    return { ok: false, lead: null, reason: 'canonical outreach authority required' };
+  }
+  if (!String(email || '').trim()) return { ok: false, lead: null, reason: 'recipient missing' };
+  return getOutreachLeadByEmail(email, { env });
+}
+
 /** One request for many leads, so a directory page is never N queries. */
 async function batchGetOutreachLeads(ids, options = {}) {
   const list = [...new Set((ids || []).map(id => String(id || '').trim()).filter(Boolean))];
@@ -1490,7 +1500,7 @@ module.exports = {
   mirrorOutreachLeads, mirrorOutreachLeadFields,
   mirrorOutreachLeadsInBackground, mirrorOutreachLeadFieldsInBackground,
   snapshotMirrorAllowed, mirrorCycleSnapshotInBackground,
-  getOutreachLeadById, getOutreachLeadByEmail, batchGetOutreachLeads,
+  getOutreachLeadById, getOutreachLeadByEmail, readCanonicalOutreachRecipient, batchGetOutreachLeads,
   listOutreachLeads, countOutreachLeads, compareOutreachLead,
   applyLeadChange, applyLeadChanges, columnLetterFor,
   applyCanonicalChange, conflictRefusal, readCanonicalLead, MAX_CAS_ATTEMPTS,

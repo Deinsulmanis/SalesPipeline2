@@ -1304,6 +1304,28 @@ function deriveNextAction(boardLead, twin, context = {}) {
     return nothing(ACTION_TYPE.NONE_LOST, 'None — suppressed',
       `suppressed (${permanentSuppression}); no sales follow-up applies`);
   }
+  // A ScaleLab reply task is advisory human work. The board, a later reply,
+  // or the operator's own follow-up choice always takes precedence.
+  if (stage === 'follow_up' && twin?.clientId === 'scalelab' && !manualDate && !overrides.action
+      && !permanentLoss && hasManualHold(twin.notes) && !manualHoldReleased(twin.notes, now)) {
+    const newestTask = activities.filter(row => row.eventType === 'scalelab_reply_follow_up_task'
+      && row.leadId === lead.id && row.sourceLeadId === twin.id)
+      .sort((a, b) => String(b.occurredAt).localeCompare(String(a.occurredAt)))[0];
+    if (newestTask) {
+      const taskAt = Date.parse(newestTask.occurredAt);
+      const superseded = activities.some(row => row.sourceLeadId === twin.id
+        && Date.parse(row.occurredAt) > taskAt
+        && (row.eventType === 'human_response_sent' || String(row.eventId || '').startsWith('gmail-reply:')));
+      let task;
+      try { task = JSON.parse(newestTask.metadata || '{}'); } catch { task = null; }
+      if (!superseded && task?.clientId === 'scalelab' && task.owner === 'human' && task.autoSendAllowed === false
+          && Number.isFinite(Date.parse(task.dueAt))) {
+        return buildAction({ type: ACTION_TYPE.MANUAL_FOLLOW_UP, owner: ACTION_OWNER.HUMAN,
+          label: 'Follow up with prospect', dueAt: task.dueAt, source: 'scalelab-reply-routing',
+          reason: 'Verified prospect reply requires human follow-up', needsAttention: true, now });
+      }
+    }
+  }
   const operational = deriveOperationalAction(twin || lead, {
     activities, boardLead: lead,
     manualOverride: overrides.classification,

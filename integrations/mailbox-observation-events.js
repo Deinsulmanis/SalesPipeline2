@@ -13,6 +13,8 @@ const { getClient } = require('./clients/registry');
 const { delegatedMailbox } = require('./clients/sender-delegation');
 const { managedReplyNeedsHandler } = require('./clients/reply-pipeline');
 const { DELIVERY_CLASS, LATER_TOUCH_BLOCKING_CLASSES, DELIVERY_DEFERRED_EVENT, DELIVERY_FAILED_EVENT } = require('./delivery-status');
+const { classifyDeliveryStatus, isDeliveryNotice } = require('./delivery-status');
+const { scaleLabOwner, classifyScaleLabReply, verifiedContext, observationForIntent } = require('./scalelab-response-classification');
 const norm = value => String(value || '').trim().toLowerCase();
 
 const HUMAN_REPLY_TEXT_LIMIT = 1500;
@@ -69,7 +71,8 @@ function humanReplyText(payload) {
 const meta = row => { try { return typeof row.metadata === 'object' ? row.metadata : JSON.parse(row.metadata || '{}'); } catch (_) { return {}; } };
 const addresses = text => String(text || '').split(',').map(parseAddr).filter(Boolean);
 
-async function planMailboxEvents({ observation, gmail, leads, activities, senderInboxId, senderEmail, now = new Date() }) {
+async function planMailboxEvents({ observation, gmail, leads, activities, senderInboxId, senderEmail, now = new Date(),
+  scaleLab = null }) {
   const events = [];
   const suppressions = [];
   const replies = [];
@@ -150,6 +153,40 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
     const matched = matchMailboxMessages([message], { leads: matchLeads, activities, senderInboxId, senderEmail });
     const authFailures = matched.senderAuthFailures || new Map();
     const deliveryNotices = matched.deliveryNotices || new Map();
+    const subject = headerValue(message.payload, 'Subject');
+    const scaleLabVerdicts = new Map();
+    if (scaleLab && at >= scaleLab.since && message.threadId) {
+      const selected = new Set([...matched.replies.keys(), ...matched.bounces.keys(),
+        ...authFailures.keys(), ...deliveryNotices.keys()]);
+      for (const leadId of selected) {
+        const lead = byId.get(String(leadId));
+        if (!scaleLabOwner(lead) || !scaleLab.owns(lead)) continue;
+        const context = verifiedContext([...(existingActivitiesByLead.get(leadId) || []), ...events],
+          { leadId, threadId: message.threadId, senderInboxId, messageId: message.id, occurredAt });
+        const providerNotice = isDeliveryNotice(message.payload, from);
+        if (!context.length && (!providerNotice || selected.size !== 1)) continue;
+        const verdict = classifyScaleLabReply({ text: ownReplyText(message.payload, message.snippet),
+          currentEmail: lead.email, subject, occurredAt, context, delivery: providerNotice,
+          autoSubmitted: headerValue(message.payload, 'Auto-Submitted') });
+        scaleLabVerdicts.set(leadId, verdict);
+        if (verdict.intent !== 'delivery_failure') continue;
+        const transport = classifyDeliveryStatus(message.payload, { recipient: lead.email, subject });
+        if (scaleLab.mode === 'apply') {
+          matched.replies.delete(leadId);
+          if (transport.category !== DELIVERY_CLASS.RECIPIENT_INVALID) matched.bounces.delete(leadId);
+          if (!authFailures.has(leadId) && !matched.bounces.has(leadId)) deliveryNotices.set(leadId, { message, verdict: transport });
+        }
+        // Use a field that cannot put this advisory row into the canonical
+        // provider ID index. Apply mode writes the normal delivery event too.
+        add({ eventId: `scalelab-delivery-review:${senderInboxId}:${message.id}:${leadId}`, sourceLeadId: leadId,
+          leadId: `CE-${leadId}`, email: lead.email, company: lead.company, occurredAt, subject,
+          content: '', eventType: 'scalelab_delivery_review',
+          metadata: JSON.stringify({ clientId: 'scalelab', scopedMessageId: message.id, senderInboxId,
+            gmailThreadId: message.threadId, matchedColdEmailId: leadId, scalelabReply: verdict,
+            scalelabMode: scaleLab.mode, category: transport.category, enhancedCode: transport.enhancedCode,
+            recoveredDuringOutage: Boolean(observation.recovered), autoSendAllowed: false }) });
+      }
+    }
     if (!matched.replies.size && !matched.bounces.size && !authFailures.size && !deliveryNotices.size) {
       if (delegatedMailbox({ id: senderInboxId, email: senderEmail }) && from && from !== norm(senderEmail)
         && !/mailer-daemon|postmaster|no-?reply|do-?not-?reply/i.test(from)) {
@@ -214,9 +251,14 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
     for (const [leadId] of matched.replies) {
       const lead = byId.get(String(leadId));
       const text = ownReplyText(message.payload, message.snippet);
-      const canonical = classifyReplyText(text, { currentEmail: lead.email, subject: headerValue(message.payload,'Subject'), now: occurredAt, year: new Date(at).getUTCFullYear() });
+      const baseline = classifyReplyText(text, { currentEmail: lead.email, subject, now: occurredAt, year: new Date(at).getUTCFullYear() });
+      const verdict = scaleLabVerdicts.get(leadId);
+      const canonical = verdict && scaleLab.mode === 'apply' ? observationForIntent(verdict, baseline) : baseline;
+      const ownsHumanWork = verdict && scaleLab.mode === 'apply'
+        && !['opt_out', 'explicit_rejection', 'out_of_office'].includes(verdict.intent);
       const suppression = suppressionForCanonical(canonical, lead);
-      if (suppression) suppressions.push(suppression);
+      if (suppression) suppressions.push(verdict && scaleLab.mode === 'apply'
+        ? { ...suppression, scaleLabLeadId: lead.id } : suppression);
       const eventId = `gmail-reply:${message.id}`;
       const already = existing.has(eventId) || activities.some(row => meta(row).gmailMessageId === message.id && /reply|meeting_requested/.test(row.eventType));
       const evaluated = inboundAlreadyEvaluated(activities, message.id);
@@ -229,12 +271,13 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
           metadata: JSON.stringify({ provider: 'gmail', senderInboxId, gmailMessageId: message.id,
             ...(owner.ok ? { clientId: owner.clientId, campaignId: lead.intendedCampaignVersion || lead.campaign || '', ownershipBasis: 'matched_conversation' } : {}),
             gmailThreadId: message.threadId, rfcMessageId, from, matchedColdEmailId: lead.id, receivedAt: occurredAt,
+            ...(verdict ? { scalelabReply: verdict, scalelabMode: scaleLab.mode } : {}),
             canonicalState: canonical.state, subtype: canonical.subtype, reason: canonical.reason,
             genuineHuman: canonical.genuineHuman, confidence: canonical.confidence, classifierVersion: canonical.classifierVersion,
             returnDate: canonical.returnDate, revisitDate: canonical.revisitDate, proposedEmail: canonical.proposedEmail,
             suppliedContact: canonical.suppliedContact || null,
-            recoveredDuringOutage: historical, responsePending: !historical,
-            requiresHumanAttention: historical && canonical.genuineHuman !== false,
+            recoveredDuringOutage: historical, responsePending: !historical && !ownsHumanWork,
+            requiresHumanAttention: Boolean((historical || ownsHumanWork) && canonical.genuineHuman !== false),
             autoSendAllowed: false, identityMutationAllowed: false }) };
         add(event);
       }

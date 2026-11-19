@@ -166,6 +166,11 @@ const {
 } = require('./integrations/campaign-versions');
 const { findOriginalSentThread, resolveColdFollowUpThread } = require('./integrations/gmail-threading');
 const { appendLeadsRow } = require('./integrations/leads-sheet-append');
+const { readCanonicalOutreachRecipient } = require('./integrations/outreach-state');
+const { scaleLabOwner, observationForIntent } = require('./integrations/scalelab-response-classification');
+const { routingConfig } = require('./integrations/scalelab-reply-router');
+const { createScaleLabReplyActionStore } = require('./integrations/scalelab-reply-action-store');
+const { activityMetadata, laterEvidence, runScaleLabReplyRouting, ownsActionMessage } = require('./integrations/scalelab-reply-pass');
 const gmailMailboxObserver = require('./integrations/gmail-mailbox-observer');
 const { DELIVERY_CLASS, classifyDeliveryStatus } = require('./integrations/delivery-status');
 const { planMailboxEvents, commitObservation, ownReplyText } = require('./integrations/mailbox-observation-events');
@@ -460,6 +465,7 @@ async function upsertColdCallLeadFromEvent(lead, stage, note, options = {}) {
       followup: new Date().toISOString().split('T')[0], notes: note || '', created: new Date().toISOString(),
     };
     await appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: LEADS_SHEET,
+      atomicIdentity: scaleLabOwner(lead) && routingConfig()?.mode === 'apply',
       values: LEADS_COLUMNS.map(col => String(promotedLead[col] ?? '')) });
     return targetId;
   } catch (error) {
@@ -2729,6 +2735,12 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
   const candidates = leads.filter(l => isValidEmail(l.email) && (l.lastEmailedAt || Number(l.emailStep) > 0));
   const candidatesById = new Map(candidates.map(item => [item.id, item]));
   activitiesForCycle = activitiesForCycle || await withAuth(() => readColdCallActivities());
+  const scaleLab = !DRY_RUN && advanceCheckpoint ? routingConfig() : null;
+  const ownsScaleLab = (lead, senderInboxId, activities = activitiesForCycle) => {
+    if (!scaleLabOwner(lead)) return false;
+    const owner = resolveReplyClientContext({ senderInboxId, lead, senders: GMAIL_SENDERS, activities });
+    return owner.ok && owner.clientId === 'scalelab';
+  };
   console.log(`[ReplyCheck] Checking ${candidates.length} emailed lead${candidates.length === 1 ? '' : 's'} for replies...`);
 
   let found = 0;
@@ -2743,6 +2755,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
   // Genuine-human staffing replies decided in THIS pass, for the Agent v2
   // shadow. Collected only after the authoritative decision is persisted.
   const agentV2ShadowCandidates = [];
+  const scaleLabDrafts = [];
   const bouncesByLead = new Map();
   const pendingHistory = new Map();
   const observedStateBySender = new Map();
@@ -2778,7 +2791,8 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
         knownMessageIds: persistedGmailMessageIds(activitiesForCycle || []),
       })));
       const plan = await planMailboxEvents({ observation: observed, gmail: gmailForSender(sender, { instrument: false }),
-        leads: senderLeads, activities: activitiesForCycle, senderInboxId: sender.id, senderEmail: sender.email });
+        leads: senderLeads, activities: activitiesForCycle, senderInboxId: sender.id, senderEmail: sender.email,
+        scaleLab: scaleLab ? { ...scaleLab, owns: lead => ownsScaleLab(lead, sender.id) } : null });
       if (!DRY_RUN) {
         await commitObservation({ observation: observed, plan, activities: activitiesForCycle,
           appendEvents: events => withAuth(() => recordMailboxActivities(events)),
@@ -3028,6 +3042,20 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     const canonicalReply = classifyReplyText(replyText, {
       subject: message.subject || '', currentEmail: lead.email, now: message.occurredAt || null,
     });
+    const scaleLabAction = ownsActionMessage(activitiesForCycle, lead, message.messageId, scaleLab);
+    const terminalScaleLab = scaleLabAction && ['opt_out', 'explicit_rejection'].includes(scaleLabAction.verdict.intent);
+    // Apply-mode evidence belongs to the new route. It must not also promote
+    // to legacy Hot or enter an automated response handler.
+    if (scaleLabAction && !terminalScaleLab && scaleLabAction.verdict.intent !== 'out_of_office') {
+      if (scaleLab.draftsEnabled && !scaleLabAction.historical
+          && ['interest', 'information_request', 'pricing_request', 'meeting_request'].includes(scaleLabAction.verdict.intent)) {
+        const draft = shadowCandidate({ lead, message, decision: { route: 'scalelab_human_review' },
+          internalDomains: GMAIL_SENDERS.map(item => String(item.email || '').split('@')[1]).filter(Boolean) });
+        if (draft.eligible) scaleLabDrafts.push({ id: scaleLabAction.id, item: draft.item });
+      }
+      continue;
+    }
+    if (scaleLabAction) Object.assign(canonicalReply, observationForIntent(scaleLabAction.verdict, canonicalReply));
     if (alreadyEvaluated && skipHandlerForEvaluatedMessage({
       alreadyEvaluated, classification: priorClassification, lead, suppressedEmails: SUPPRESSED_EMAILS,
     }) && canonicalReply.reason !== 'unsubscribe_request' && canonicalReply.reason !== 'explicit_rejection') {
@@ -3052,7 +3080,9 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       lead, message, replyText, ruleCanonical: canonicalReply, maySend,
       reviewIfNoSend: CHECK_ONLY && !historical,
       ruleCategory: deterministicReplyCategory,
-      classify: () => classifyReplyWithProvenance(lead.company, replyText, {
+      classify: () => scaleLabAction?.verdict.intent === 'out_of_office'
+        ? Promise.resolve({ classification: 'OUT_OF_OFFICE', source: 'rule', ruleClassification: 'OUT_OF_OFFICE' })
+        : classifyReplyWithProvenance(lead.company, replyText, {
         subject: message.subject, email: lead.email, leadId: lead.id,
         campaign: { id: lead.campaign || lead.intendedCampaignVersion || '', name: lead.campaign || '' },
         messageId: message.messageId, threadId: message.threadId,
@@ -3190,6 +3220,18 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     }
   }
 
+  if (scaleLab) {
+    try {
+      const records = await withAuth(() => runScaleLabReplyCycle({ config: scaleLab, activities: activitiesForCycle,
+        leads, owns: ownsScaleLab, failedSenderIds }));
+      for (const draft of scaleLabDrafts) {
+        if (records.get(draft.id)?.step === 'complete') agentV2ShadowCandidates.push(draft.item);
+      }
+    } catch (error) {
+      console.warn('[scalelab-reply] routing ledger unavailable', error.message);
+    }
+  }
+
   const LABELS = {
     INTERESTED:     'Interested (auto-promoted)',
     NOT_INTERESTED: 'Not Interested',
@@ -3232,6 +3274,73 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
   // a crash between reply and bounce processing replayable and idempotent.
   return { ok: failedSenderIds.size === 0, failedSenderIds, bouncesByLead,
     pendingHistory, observedStateBySender };
+}
+
+async function runScaleLabReplyCycle({ config, activities, leads, owns, failedSenderIds }) {
+  if (config.mode === 'apply' && (outreachWriteAuthority() !== 'supabase' || outreachStateMode() !== 'primary')) {
+    throw new Error('ScaleLab apply requires canonical compare-and-set outreach writes');
+  }
+  const store = createScaleLabReplyActionStore();
+  const readSheets = async () => {
+    const response = await sheets().spreadsheets.values.batchGet({ spreadsheetId: SPREADSHEET_ID,
+      ranges: [LEADS_RANGE, `${COLD_CALL_ACTIVITY_SHEET}!A:J`, `${SUPPRESSION_SHEET}!A:A`] });
+    const [board, activityRows, suppression] = (response.data.valueRanges || []).map(range => range.values || []);
+    if (!board?.length || !activityRows?.length || !suppression?.length) throw new Error('ScaleLab routing snapshot incomplete');
+    return { board, activityRows, suppression };
+  };
+  let shadowSnapshot;
+  const readState = async candidate => {
+    const observedLead = leads.find(item => item.id === candidate.leadId);
+    const canonical = config.mode === 'apply' ? await readCanonicalOutreachRecipient(observedLead?.email) : null;
+    const lead = canonical ? canonical.lead : observedLead;
+    const snapshot = config.mode === 'apply' ? await readSheets() : (shadowSnapshot ||= await readSheets());
+    const boards = await readBoardLeads(snapshot.board);
+    const freshEvents = await readColdCallActivities(snapshot.activityRows);
+    const board = boards?.find(item => item.id === 'CE-' + candidate.leadId
+      || (lead?.email && normEmail(item.email) === normEmail(lead.email)));
+    const suppressed = new Set(snapshot.suppression.slice(1).map(row => normEmail(row[0])));
+    const same = freshEvents.find(row => row.eventId === candidate.eventId && row.sourceLeadId === candidate.leadId);
+    const metadata = activityMetadata(same);
+    const identified = lead?.id === candidate.leadId && same && normEmail(same.email) === normEmail(lead.email)
+      && metadata.senderInboxId === candidate.senderInboxId && metadata.gmailThreadId === candidate.threadId
+      && metadata.clientId === 'scalelab' && metadata.scalelabMode === config.mode
+      && metadata.scalelabReply?.intent === candidate.verdict.intent;
+    const lostCard = !board && freshEvents.some(row => row.sourceLeadId === candidate.leadId && row.eventType === 'pipeline_promoted');
+    const unsafe = (canonical && !canonical.ok) || !identified
+      || !owns(lead, candidate.senderInboxId, freshEvents) ? 'fresh_identity_unproven'
+        : lostCard ? 'previously_promoted_card_missing' : null;
+    return { lead, boards, suppressed, unsafe, newer: laterEvidence(freshEvents, candidate, board),
+      twins: canonical ? (canonical.ambiguous ? 2 : 1) : coldEmailTwinCount(leads, lead?.email) };
+  };
+  const hold = async lead => {
+    const row = await resolveRow(lead.id);
+    if (!row) throw new Error('ScaleLab lead row missing');
+    await applyLeadChange(lead.id, { notes: applyHoldToNotes(lead.notes), emailStatus: 'replied' }, {
+      row, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID,
+      expectedState: { email: lead.email, clientId: lead.clientId, stage: lead.stage, notes: lead.notes, emailStatus: lead.emailStatus },
+    });
+  };
+  const appendCard = async (lead, boardId) => {
+    const [first = '', ...rest] = String(lead.contactName || '').trim().split(/\s+/);
+    const card = { id: boardId, type: 'trade', first, last: rest.join(' '), tradeType: lead.tradeType,
+      company: lead.company, city: lead.city, cityTrade: lead.city, email: lead.email,
+      website: lead.website, stage: 'follow_up', priority: 'warm', created: new Date().toISOString() };
+    await appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: LEADS_SHEET,
+      atomicIdentity: true, values: LEADS_COLUMNS.map(field => String(card[field] || '')) });
+  };
+  const publishTask = async event => {
+    await appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: COLD_CALL_ACTIVITY_SHEET,
+      atomicIdentity: true, values: COLD_CALL_ACTIVITY_HEADER.map(key => String(event[key] ?? '')) });
+    const rows = (await readColdCallActivities()).filter(row => row.eventId === event.eventId);
+    if (rows.length !== 1 || rows[0].eventType !== event.eventType || rows[0].sourceLeadId !== event.sourceLeadId
+        || rows[0].metadata !== event.metadata) throw new Error('ScaleLab human task commitment not verified');
+    if (!activities.some(row => row.eventId === event.eventId)) activities.push(event);
+    mirrorEventsInBackground([event]);
+  };
+  return runScaleLabReplyRouting({ config, activities: [...activities], leads, store, readState,
+    owns: (lead, senderInboxId) => !failedSenderIds.has(senderInboxId) && owns(lead, senderInboxId),
+    hold, appendCard, publishTask, onError: (id, error) =>
+      console.warn('[scalelab-reply] action pending', id, error.message) });
 }
 
 async function observeAgentV2Shadows(candidates = []) {
@@ -4261,6 +4370,24 @@ async function addSuppression(email, reason, company, source) {
 // lead row still carries its sticky reply tag; the failure is logged for an
 // operator rather than thrown, so the mailbox cursor is not held back.
 async function routeObserverSuppression(item, leads = []) {
+  if (item.scaleLabLeadId) {
+    const lead = leads.find(candidate => candidate.id === item.scaleLabLeadId);
+    if (!scaleLabOwner(lead) || normEmail(lead.email) !== normEmail(item.email)) throw new Error('ScaleLab suppression identity changed');
+    const hasEntry = async () => {
+      const response = await sheets().spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID, range: `${SUPPRESSION_SHEET}!A:A`,
+      });
+      return (response.data.values || []).slice(1).some(row => normEmail(row[0]) === normEmail(item.email));
+    };
+    if (!(await hasEntry())) {
+      SUPPRESSED_EMAILS.delete(normEmail(item.email));
+      try { await addSuppression(item.email, item.reason, item.company, 'scalelab-reply-observer'); }
+      catch (error) { if (!(await hasEntry())) throw error; }
+      if (!(await hasEntry())) throw new Error('ScaleLab suppression commitment not verified');
+    }
+    SUPPRESSED_EMAILS.add(normEmail(item.email));
+    return;
+  }
   if (item.reason === 'not_interested') {
     const lead = leads.find(candidate => normEmail(candidate.email) === normEmail(item.email));
     const owner = lead ? resolveLeadClient(lead) : null;
