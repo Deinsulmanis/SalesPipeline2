@@ -10,7 +10,8 @@ const { wrapSheetsReadClient } = require('../integrations/google-sheets-resilien
 const { senderEvidence, SENDER_ATTRIBUTED_EVENTS } = require('../integrations/gmail-sender-routing');
 const { NON_COLD_STAGES } = require('../integrations/automation-ownership');
 const { routedLeadReady } = require('../integrations/campaign-routing');
-const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE } = require('../integrations/roofing-survey-profile');
+// The retired roofing survey's template id (its copy module was removed).
+const ROOFING_SURVEY_TEMPLATE = 'roofing-survey-v1';
 const { isFollowUpDue } = require('../integrations/sequence-timing');
 
 const DATE = (process.argv.find(arg => arg.startsWith('--date=')) || '').slice(7)

@@ -238,11 +238,6 @@ const {
   canonicalCta,
   validateFinalEmail,
 } = require('./integrations/final-email');
-const { buildDentalPersonalization } = require('./integrations/dental-personalization');
-const { buildDentalSubject } = require('./integrations/dental-subject');
-const {
-  COLD_SUBJECTS, coldSubjectIndex, coldSubjectFor, buildDentalColdEmail,
-} = require('./integrations/dental-email');
 const {
   COLD_CALL_ACTIVITY_SHEET,
   COLD_CALL_ACTIVITY_HEADER,
@@ -255,16 +250,11 @@ const {
   existingLateReplyEventIds,
   processLateReply,
 } = require('./integrations/late-reply');
-const {
-  PROFILE_ID: ROOFING_SURVEY_PROFILE,
-  TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE,
-  renderInitialEmail: renderRoofingSurveyInitial,
-  validateInitialEmail: validateRoofingSurveyInitial,
-  qualifyLead: qualifyRoofingLead,
-  classifyReply: classifyRoofingReply,
-  renderPositiveReply: renderRoofingSurveyReply,
-  renderQuestionDraft: renderRoofingQuestionDraft,
-} = require('./integrations/roofing-survey-profile');
+// Email templates of retired offers (lead-archive RETIRED_OFFERS). Their copy
+// was removed; a lead still carrying one of these ids can never be sent to, and
+// is excluded from cold follow-up selection.
+const RETIRED_EMAIL_TEMPLATE_IDS = new Set(['dental-guarantee-v1', 'roofing-survey-v1']);
+const RETIRED_ROOFING_TEMPLATE_ID = 'roofing-survey-v1';
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 
@@ -323,9 +313,6 @@ const SIGNATURE_SITE    = process.env.SIGNATURE_SITE    || 'scalelabai.ca';
 const SIGNATURE_PHONE   = process.env.SIGNATURE_PHONE   || '604 836 9902';
 const EMAIL_SIGNATURE   = `— ${SIGNATURE_NAME}\n${SIGNATURE_COMPANY}\n${SIGNATURE_SITE}\n${SIGNATURE_PHONE}`;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const ROOFING_SURVEY_REPLY_FLOW_ENABLED = process.env.ROOFING_SURVEY_REPLY_FLOW_ENABLED === 'true';
-const ROOFING_SURVEY_AUTO_REPLY_ENABLED = process.env.ROOFING_SURVEY_AUTO_REPLY_ENABLED === 'true';
-const ROOFING_SURVEY_URL = String(process.env.ROOFING_SURVEY_URL || '').trim();
 // Optional safety scope for controlled owned-address tests. When set, every
 // detection and send phase is restricted to this one durable lead ID. Normal
 // scheduled runs leave it unset and retain their existing behavior.
@@ -467,7 +454,7 @@ async function upsertColdCallLeadFromEvent(lead, stage, note, options = {}) {
     const parts = String(lead.contactName || '').trim().split(/\s+/).filter(Boolean);
     const promotedLead = {
       id: targetId, type: 'trade', first: parts[0] || '', last: parts.slice(1).join(' '),
-      brokerage: '', tradeType: lead.tradeType || 'Dental', company: lead.company || '',
+      brokerage: '', tradeType: lead.tradeType || '', company: lead.company || '',
       city: lead.city || '', cityTrade: lead.city || '', phone: '', email: lead.email || '',
       website: lead.website || '', stage: decision.targetStage, priority: decision.targetStage === 'hot' ? 'hot' : 'warm',
       followup: new Date().toISOString().split('T')[0], notes: note || '', created: new Date().toISOString(),
@@ -615,59 +602,10 @@ function senderForPersistedLead(lead) {
   return sender;
 }
 
-// ── FOLLOW-UP SEQUENCE (Phase 3) ──────────────────────────────────────────────
-// Index 0 = step-2 body, index 1 = step-3 body. Max 3 steps total. WHEN each
-// step is due lives only in integrations/sequence-timing.js; these entries
-// carry copy, never timing. Staffing renders its own locked copy instead.
-// Same invitation/sample-demo thread as step 1 (buildPitch) and the same
-// single-CTA-reply rule — no longer tier-branched, since the old busy/medium
-// split existed to continue the old "after-hours calls" angle that step 1 no
-// longer opens with.
-const FOLLOW_UP_SEQUENCE = [
-  {
-    body: (lead) => {
-      const link    = buildProposalLink(lead);
-      const name    = salutationName(lead);
-      const company = cleanCompanyName(lead.company) || 'your business';
-      const casl    = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.  ·  Ref: SL-${refCode(lead)}`;
-
-      return `Hi ${name},
-
-Just following up on the 24/7 answering and booking software demo I mentioned for ${company} — still happy to build it if you'd like to hear it.
-
-→ Here's a sample so you know what it sounds like: ${link}
-
-No pressure either way — just reply if you'd like yours.
-
-${EMAIL_SIGNATURE}
-
-${casl}`;
-    },
-  },
-  {
-    body: (lead) => {
-      const link    = buildProposalLink(lead);
-      const name    = salutationName(lead);
-      const company = cleanCompanyName(lead.company) || 'your business';
-      const casl    = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.  ·  Ref: SL-${refCode(lead)}`;
-
-      return `Hi ${name},
-
-Last note from me on this.
-
-If a free 24/7 answering and booking software demo for ${company} isn't useful right now, no worries — I'll leave it here. If it is, here's the sample again: ${link}
-
-Just reply and I'll build yours.
-
-${EMAIL_SIGNATURE}
-
-${casl}`;
-    },
-  },
-];
-if (FOLLOW_UP_SEQUENCE.length !== FOLLOW_UP_STEP_COUNT) {
-  throw new Error('FOLLOW_UP_SEQUENCE must have one body per follow-up step in integrations/sequence-timing.js');
-}
+// ── FOLLOW-UP COPY ────────────────────────────────────────────────────────────
+// Follow-ups render only staffing or managed-client copy (WHEN each step is due
+// lives in integrations/sequence-timing.js). The retired offers' follow-up copy
+// was removed; a lead without staffing or client copy is deferred, never sent.
 
 // ── EMAIL TEMPLATE ────────────────────────────────────────────────────────────
 
@@ -704,62 +642,6 @@ function cleanCompanyName(raw) {
     if (idx !== -1) cutAt = Math.min(cutAt, idx);
   }
   return raw.slice(0, cutAt).trim() || raw.trim();
-}
-
-// ── NICHE CONFIG ──────────────────────────────────────────────────────────────
-// Every niche-specific word choice in the Haiku opener prompt and the email
-// templates comes from here. Adding a third vertical is adding one entry to
-// this array — never edit generateOpener()/buildPitch()/the follow-up bodies
-// to special-case a new industry.
-//
-// `match` is tested against lead.tradeType (case-insensitive), entries checked
-// in order, first hit wins. The last entry (`match: null`) is the fallback for
-// any tradeType that matches nothing above it — keep it last.
-const NICHE_CONFIG = [
-  {
-    key: 'dental',
-    match: /dent(?:ist|al)/i,
-    label: 'dental practice',
-    labelPlural: 'dental practices',
-    person: 'patients',
-    booking: 'appointments',
-    place: 'practice',
-    openerFewShot: [
-      '• Dentist in Surrey → "Came across Fraser Family Dental while looking at dental practices in Surrey."',
-      '• Dental clinic, no city → "Noticed Bright Smile Dental while looking into local dental practices."',
-    ],
-  },
-  {
-    key: 'medspa',
-    match: /med.?spa|\bspa\b|skin.?care|laser.*hair|esthetic|dermat|wellness.?cent|massage|beauty.?salon|cosmetic/i,
-    label: 'med spa',
-    labelPlural: 'med spas',
-    person: 'clients',
-    booking: 'bookings',
-    place: 'clinic',
-    openerFewShot: [
-      '• Med spa in Vancouver → "Came across Glow Aesthetics while looking at med spas in Vancouver."',
-      '• Skin clinic, no city → "Noticed Bright Skin Studio while looking into local skin clinics."',
-    ],
-  },
-  {
-    key: 'default',
-    match: null,
-    label: 'business',
-    labelPlural: 'businesses',
-    person: 'customers',
-    booking: 'appointments',
-    place: 'business',
-    openerFewShot: [
-      '• HVAC company in Vancouver → "Came across Peak Climate HVAC while looking at HVAC contractors in Vancouver."',
-      '• Plumber in Calgary → "Saw Mountain Plumbing while browsing plumbers around Calgary."',
-    ],
-  },
-];
-
-function nicheFor(tradeType) {
-  const t = (tradeType || '').trim();
-  return NICHE_CONFIG.find(c => c.match && c.match.test(t)) || NICHE_CONFIG[NICHE_CONFIG.length - 1];
 }
 
 // ── RECIPIENT TYPE ────────────────────────────────────────────────────────────
@@ -851,66 +733,6 @@ function buildProposalLink(lead) {
   return `${PROPOSAL_BASE}/?${qs}`;
 }
 
-// Builds the step-1 subject + body — the invitation offer. Niche-aware via
-// NICHE_CONFIG; no longer tier-branched (the old "busy vs medium" pitch split
-// belonged to the old offer's after-hours-calls angle, which this replaces).
-// buildEmail() still computes/returns pitchTier separately for dry-run logging
-// — it no longer changes which copy goes out, so buildPitch doesn't need it.
-// Dental leads take the structured renderer in integrations/dental-email.js.
-// Other niches retain the established opener path below. Both paths insert the
-// guarantee verbatim from guarantee.js and pass through validateColdEmail().
-function buildPitch(lead, opener, link, structuredPersonalization = null) {
-  const type    = recipientType(lead);
-  const name    = salutationName(lead);
-  const company = cleanCompanyName(lead.company) || '';
-  const niche   = nicheFor(lead.tradeType);
-
-  if (structuredPersonalization) {
-    return buildDentalColdEmail({
-      lead, name, company, recipientType: type, link,
-      personalization: structuredPersonalization,
-      mailingAddress: MAILING_ADDRESS,
-      signature: EMAIL_SIGNATURE,
-      reference: `SL-${refCode(lead)}`,
-    });
-  }
-
-  const offer = guaranteeFor(company);
-  const productContext = `24/7 answering and booking software for dental practices that handles missed calls and helps turn them into booked patients. I configure it with ${company}'s actual ${niche.booking} and services, so when a ${niche.person.replace(/s$/, '')} calls it already sounds like it works there. It never touches your real phone line, so there's nothing to switch over to try it.`;
-  const casl = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply with\n"unsubscribe" and I'll remove you immediately — no hard feelings.  ·  Ref: SL-${refCode(lead)}`;
-  const personalizationBlocks = dedupePersonalizationBlocks(
-    splitPersonalization(opener).map(text => ({ text, sourceField: 'siteContext' })),
-    { entityHint: company },
-  );
-  const demoIncluded = Boolean(link);
-  const cta = canonicalCta({ demoIncluded, recipientType: type });
-  const demoBlock = demoIncluded
-    ? `→ Here's one I already built, so you can hear it:\n${link}`
-    : '';
-  const bodyBlocks = [
-    `Hi ${name},`, offer, ...personalizationBlocks.map(block => block.text),
-    productContext, demoBlock, cta, EMAIL_SIGNATURE, casl,
-  ];
-
-  return {
-    subject: coldSubjectFor(lead, company),
-    body: assembleFinalEmail(bodyBlocks),
-    cta,
-    personalizationBlocks,
-    demoIncluded,
-    requiredBlocks: [offer, productContext, demoBlock, EMAIL_SIGNATURE, casl],
-    personalizationClaims: [],
-    verifiedFactIds: [],
-    demoCta: null,
-    approvedGuarantee: offer,
-    personalizationMetadata: null,
-  };
-}
-
-// Inbound late replies use strict append semantics: if the activity write
-// fails, the next daily pass must retry instead of silently losing the event.
-// Outbound activity remains best-effort so a logging failure cannot cause a
-// successfully sent email to be retried.
 async function recordColdCallActivityStrict(record) {
   await ensureColdCallActivitySheet();
   const complete = { eventId: crypto.randomUUID(), occurredAt: new Date().toISOString(), ...record };
@@ -1108,126 +930,6 @@ async function writeSiteContext(lead, text) {
   }
   await applyLeadChange(lead.id, { siteContext: text },
     { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
-}
-
-// Phase 2: calls Haiku to generate one specific opening sentence.
-// Graceful: on any error returns null and the caller falls back to a generic line.
-async function generateOpener(lead, siteText) {
-  if (!ANTHROPIC_API_KEY) return null;
-  try {
-    const niche = nicheFor(lead.tradeType);
-    let prompt;
-    // scrapeSite already caps at 1500 chars. Bound again so a pasted or
-    // inherited siteContext cannot silently expand the opener prompt.
-    const boundedSite = String(siteText || '').slice(0, 1500);
-
-    if (boundedSite) {
-      // Tier-2: reference ONE concrete detail from the scraped page
-      const cleanCo = cleanCompanyName(lead.company);
-      const facts = [
-        cleanCo        && `company: "${cleanCo}"`,
-        lead.city      && `city: ${lead.city}`,
-        lead.tradeType && `trade: ${lead.tradeType}`,
-      ].filter(Boolean).join(' | ');
-
-      prompt = [
-        `Write ONE opening sentence for a cold email to the owner or manager of a ${niche.label}.`,
-        'You have scraped text from their website. Find EXACTLY ONE specific, concrete detail that literally appears in the text.',
-        '',
-        `Known facts: ${facts || '(none)'}`,
-        '',
-        'Website text (extracted from their homepage — use ONLY what is explicitly stated here):',
-        '---',
-        boundedSite,
-        '---',
-        '',
-        'Rules:',
-        '- Reference exactly ONE verifiable detail from the text: a specific service they list, an area they serve, a stated value like "family-owned", or years in business ONLY if explicitly stated.',
-        '- If you cannot find a clear, specific, verifiable detail, fall back to the Tier-1 style below instead — do NOT force a vague or invented detail.',
-        '- NEVER infer, assume, or embellish. If it is not literally in the text, do not say it.',
-        '- One sentence only, max 18 words, plain English, no em-dashes, no marketer voice.',
-        '',
-        'Tier-1 fallback (use when no clear site detail found):',
-        ...niche.openerFewShot,
-        '',
-        'Output only the sentence.',
-      ].join('\n');
-    } else {
-      // Tier-1: company + city + trade only
-      const cleanCo = cleanCompanyName(lead.company);
-      const details = [
-        cleanCo        && `company: "${cleanCo}"`,
-        lead.city      && `city: ${lead.city}`,
-        lead.tradeType && `trade: ${lead.tradeType}`,
-        lead.website   && `website: ${lead.website}`,
-      ].filter(Boolean).join(' | ');
-
-      prompt = [
-        `Write ONE opening sentence for a cold email to the owner or manager of a ${niche.label}.`,
-        'Use ONLY the facts listed below — never invent or assume anything about their operations, reviews, call volume, customers, or projects.',
-        details ? `Known facts: ${details}` : `Known facts: (none — use generic company reference only)`,
-        '',
-        'Rules:',
-        '- One sentence only, max 18 words, plain English, no em-dashes',
-        '- Sound like a real person who glanced at their public listing — casual and honest',
-        '- Reference city and trade if provided; if missing, just use the company name naturally',
-        '- No invented pain points, no "this is costing you", no assumptions about their business',
-        '',
-        'Examples of the correct style (do not copy — just match the tone):',
-        ...niche.openerFewShot,
-        '',
-        'Output only the sentence.',
-      ].join('\n');
-    }
-
-    const msg = await anthropicClient.messages.create({
-      model: 'claude-haiku-4-5',
-      max_tokens: 60,
-      messages: [{ role: 'user', content: prompt }],
-    }, {
-      feature: ANTHROPIC_FEATURES.cold_personalization,
-      operation: 'opener',
-      campaign: lead.campaign || lead.intendedCampaignVersion || '',
-      leadId: lead.id || '',
-    });
-    return msg.content[0]?.text?.trim() || null;
-  } catch (e) {
-    console.warn(`[Opener] API error for ${lead.email} — using fallback: ${e.message}`);
-    return null;
-  }
-}
-
-async function buildEmail(lead) {
-  // Resolve site context: cached value → skip scrape; empty + website → scrape once
-  let siteText = '';
-  if (lead.siteContext && lead.siteContext !== SCRAPE_SKIP) {
-    siteText = lead.siteContext;
-  } else if (!lead.siteContext && lead.website) {
-    console.log(`[Scrape] Fetching ${lead.website} for ${lead.email}...`);
-    siteText = await scrapeSite(lead.website);
-    if (!DRY_RUN) {
-      await withAuth(() => writeSiteContext(lead, siteText || SCRAPE_SKIP));
-    }
-    if (!siteText) console.log(`[Scrape] No usable text from ${lead.website} — using Tier-1`);
-  }
-
-  const openerTier = siteText ? 'SITE' : 'TIER-1';
-  const company    = cleanCompanyName(lead.company) || 'your business';
-  const isDental = nicheFor(lead.tradeType).key === 'dental';
-  const structuredPersonalization = isDental
-    ? buildDentalPersonalization({ ...lead, company }, { siteText })
-    : null;
-  const opener = structuredPersonalization
-    ? structuredPersonalization.personalizationBlocks.join('\n\n')
-    : await generateOpener(lead, siteText) || `I noticed ${company} and wanted to reach out.`;
-
-  const pitchTier = lead.tier === 'busy' ? 'busy' : 'medium';
-  const link      = buildProposalLink(lead);
-
-  const assembled = buildPitch(lead, opener, link, structuredPersonalization);
-  const { subject, body } = assembled;
-
-  return { ...assembled, subject, body, link, opener, openerTier, pitchTier };
 }
 
 // RFC 2047 encoded-word for a header value containing non-ASCII characters
@@ -2142,7 +1844,7 @@ async function recordSendActivity(lead, step, sendMeta, sentAt) {
 // log "Failed", which is false — the send succeeded.
 async function markSent(lead, step, sendMeta = null) {
   const now = sendMeta?.occurredAt || new Date().toISOString();
-  const isLastStep = step > FOLLOW_UP_SEQUENCE.length;
+  const isLastStep = step > FOLLOW_UP_STEP_COUNT;
   const status = isLastStep ? 'done' : 'emailed';
   const stageValue = isLastStep ? 'Done' : SENT_STAGE;
   const retryDelays = [5000, 15000, 40000];
@@ -3017,108 +2719,6 @@ async function handleNeedsHuman(lead, fromAddr) {
   console.log(`  ⚑ ${lead.company} — needs human review${differs ? ` (replied from ${from})` : ''}`);
 }
 
-const ROOFING_LINK_SENT_TAG = '[ROOFING_SURVEY_LINK_SENT]';
-const ROOFING_DRAFTED_TAG = '[ROOFING_SURVEY_DRAFTED]';
-
-async function markRoofingReplyState(lead, stage, status, tag) {
-  const rowNum = await resolveRow(lead.id);
-  if (!rowNum) return;
-  const notes = prependNote(lead.notes, tag);
-  await applyLeadChange(lead.id, { stage, emailStatus: status, notes }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
-  lead.notes = notes;
-}
-
-async function handleRoofingSurveyReply(lead, message, replyText, todaySent, activities = [], outboundObservationOk = true) {
-  const sender = GMAIL_SENDERS.find(item => item.id === String(message.senderInboxId || lead.senderInboxId || 'primary')) || PRIMARY_GMAIL_SENDER;
-  if (!ROOFING_SURVEY_REPLY_FLOW_ENABLED) {
-    await handleNeedsHuman(lead, message.fromAddr);
-    return 'flow_disabled';
-  }
-  const classification = await classifyRoofingReply({
-    replyText,
-    createMessage: anthropicClient
-      ? wrapCreateMessage(anthropicClient.messages.create, {
-          feature: ANTHROPIC_FEATURES.roofing_reply_classification,
-          operation: 'classify',
-          campaign: lead.campaign || lead.intendedCampaignVersion || '',
-          leadId: lead.id || '',
-          messageId: message.messageId || '',
-          threadId: message.threadId || '',
-        })
-      : null,
-  });
-  console.log(`  [roofing-reply] profile=${ROOFING_SURVEY_PROFILE} classification=${classification.category} reason=${classification.reason_code}`);
-  const roofingEventType = classification.category === 'positive' ? 'positive_reply'
-    : classification.category === 'negative' ? 'negative_reply'
-      : classification.category === 'unsubscribe' ? 'unsubscribe_reply'
-        : classification.category === 'wrong_person' ? 'wrong_person_reply'
-          : ['out_of_office', 'automated'].includes(classification.category) ? 'out_of_office_reply'
-            : 'needs_human_reply';
-  await recordColdCallActivityStrict({
-    eventId: message.messageId ? `gmail-reply:${message.messageId}` : `${lead.id}:reply:${message.occurredAt || Date.now()}`,
-    leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email,
-    company: cleanCompanyName(lead.company) || lead.company || '', eventType: roofingEventType,
-    occurredAt: message.occurredAt || new Date().toISOString(), subject: message.subject || '',
-    content: String(replyText || message.snippet || '').slice(0, 1500),
-    metadata: JSON.stringify({
-      classification: classification.category, reasonCode: classification.reason_code,
-      campaignProfile: ROOFING_SURVEY_PROFILE, gmailMessageId: message.messageId || '',
-      gmailThreadId: message.threadId || '', rfcMessageId: message.rfcMessageId || '', detectedAfterSequence: false,
-      provider: 'gmail', senderInboxId: sender.id,
-      requiresHumanAttention: classification.requires_human_review === true,
-    }),
-  });
-  if (classification.category === 'unsubscribe') { await handleUnsubscribe(lead); return classification.category; }
-  if (classification.category === 'negative') { await handleNotInterested(lead); return classification.category; }
-  if (classification.category === 'wrong_person') { await handleWrongPerson(lead); return classification.category; }
-  if (['out_of_office','automated'].includes(classification.category)) { await markRoofingReplyState(lead, 'Done', 'done', `[ROOFING_SURVEY: ${classification.category}]`); return classification.category; }
-  if (classification.category === 'already_completed') { await markRoofingReplyState(lead, 'Done', 'done', '[ROOFING_SURVEY: already completed]'); return classification.category; }
-
-  if (classification.category === 'positive' && classification.should_send_survey && !classification.requires_human_review && classification.confidence >= ANSWER_CONFIDENCE_FLOOR / 100) {
-    if ((lead.notes || '').includes(ROOFING_LINK_SENT_TAG) || (lead.notes || '').includes(ROOFING_DRAFTED_TAG)) return 'duplicate_blocked';
-    let body = '';
-    try { body = renderRoofingSurveyReply(lead, ROOFING_SURVEY_URL, { mailingAddress: MAILING_ADDRESS, reference: `SL-${refCode(lead)}` }); }
-    catch (_) {
-      await queueDraft(lead, { body: '', confidence: classification.confidence, reason: 'roofing survey URL is missing or invalid', campaignProfile: ROOFING_SURVEY_PROFILE, classification: classification.category, reasonCode: 'missing_survey_url' });
-      await markRoofingReplyState(lead, 'Review', 'replied', ROOFING_DRAFTED_TAG);
-      return 'missing_url';
-    }
-    if (!ROOFING_SURVEY_AUTO_REPLY_ENABLED) {
-      await queueDraft(lead, { body, confidence: classification.confidence, reason: 'roofing survey response requires approval', campaignProfile: ROOFING_SURVEY_PROFILE, classification: classification.category, reasonCode: classification.reason_code });
-      await markRoofingReplyState(lead, 'Review', 'replied', ROOFING_DRAFTED_TAG);
-      return 'drafted';
-    }
-    const humanTouchAt = latestHumanOutboundAt(activities);
-    const blocked = (CHECK_ONLY && 'CHECK_ONLY is observation-only and cannot send')
-      || (!outboundObservationOk && 'manual outbound observation failed, so mailbox state may be stale')
-      || (humanTouchAt && `a human response was already observed at ${humanTouchAt}`)
-      || suppressionReason(lead) || (!SENDING_ENABLED && 'sending disabled') || (todaySent >= DAILY_SEND_LIMIT && 'daily limit reached');
-    if (blocked) {
-      await queueDraft(lead, { body, confidence: classification.confidence, reason: `roofing survey auto-reply blocked: ${blocked}`, campaignProfile: ROOFING_SURVEY_PROFILE, classification: classification.category, reasonCode: 'send_gate_blocked' });
-      await markRoofingReplyState(lead, 'Review', 'replied', ROOFING_DRAFTED_TAG);
-      return 'blocked';
-    }
-    const delivered = await deliverHardenedWarmReply({ lead, message,
-      action: REPLY_RESPONSE_ACTION.AUTO_QUESTION_RESPONSE, body,
-      subject: 'Re: quick roofing question', activities, classification: 'ROOFING_POSITIVE' });
-    if (!delivered.delivered) {
-      await queueDraft(lead, { body, confidence: classification.confidence,
-        reason: `roofing survey hardened delivery blocked: ${delivered.code}`,
-        campaignProfile: ROOFING_SURVEY_PROFILE, classification: classification.category,
-        reasonCode: 'hardened_delivery_blocked' });
-      await markRoofingReplyState(lead, 'Review', 'replied', ROOFING_DRAFTED_TAG);
-      return 'blocked';
-    }
-    await markRoofingReplyState(lead, 'Replied', 'replied', ROOFING_LINK_SENT_TAG);
-    return 'sent';
-  }
-
-  const body = classification.category === 'question' ? renderRoofingQuestionDraft(lead) : '';
-  await queueDraft(lead, { body, confidence: classification.confidence, reason: 'roofing survey reply requires human review', campaignProfile: ROOFING_SURVEY_PROFILE, classification: classification.category, reasonCode: classification.reason_code });
-  await markRoofingReplyState(lead, 'Review', 'replied', ROOFING_DRAFTED_TAG);
-  return 'review';
-}
-
 // ── REPLY-CHECK PASS ─────────────────────────────────────────────────────────
 // Runs unconditionally on every agent invocation — independent of whether there
 // are queued sends or follow-ups due. Fetches each emailed lead's reply body,
@@ -3415,13 +3015,12 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       }
       continue;
     }
-    if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE) {
+    // A lead on the retired roofing survey that is somehow not archived goes to
+    // a person, exactly as it did while the roofing reply flow was switched off.
+    if (lead.emailTemplateId === RETIRED_ROOFING_TEMPLATE_ID) {
       lead.emailStatus = 'replied';
-      if (!DRY_RUN) {
-        if (!attributionActivities) attributionActivities = activitiesForCycle || await withAuth(() => readColdCallActivities());
-        await withAuth(() => handleRoofingSurveyReply(lead, message, replyText, replyPassTodaySent, attributionActivities, outboundObservationOk));
-      }
-      else console.log(`  ↩ Roofing survey reply from ${lead.email} (${company}) — no writes in dry run`);
+      if (!DRY_RUN) await withAuth(() => handleNeedsHuman(lead, message.fromAddr));
+      else console.log(`  ↩ retired-offer reply from ${lead.email} (${company}) — no writes in dry run`);
       continue;
     }
     const alreadyEvaluated = inboundAlreadyEvaluated(activitiesForCycle, message.messageId);
@@ -4583,7 +4182,7 @@ function isValidEmail(e) {
 // or terminal stage (Hot / Call Booked / Closed Won / Closed Lost). Adding it
 // here is the entire agent-side change: suppressionReason() is the single guard
 // every send loop already calls, so one tag closes new sends, warm follow-ups,
-// standard follow-ups, intent emails, auto-answers and the roofing path at once.
+// standard follow-ups, intent emails and auto-answers at once.
 // This can only ever REMOVE a lead from a send — it can never cause one.
 const MANUAL_HOLD_TAG = '[MANUAL HOLD]';
 // The tag list itself now lives in pipeline-state as SEND_SUPPRESSION_TAGS,
@@ -5057,7 +4656,7 @@ function selectFollowUps(leads, activities = []) {
     // The hold remains a second, independent safety tag; this no longer depends
     // on anyone having remembered to add it.
     if (NON_COLD_STAGES.includes(String(l.stage || '').trim().toLowerCase())) return false;
-    if (l.emailTemplateId === ROOFING_SURVEY_TEMPLATE) return false;
+    if (RETIRED_EMAIL_TEMPLATE_IDS.has(String(l.emailTemplateId || ''))) return false;
     const ownership = authoritativeProvider({
       lead: l, campaignProviders: CAMPAIGN_PROVIDERS, mappings: liveSmartleadMappings(l),
     });
@@ -5894,7 +5493,7 @@ async function runInner() {
   // normal five-send batch first scans oldest-due follow-ups until four have
   // actually succeeded, then gives initials their reserved position. Refused
   // candidates consume no allocation, and either pool may refill unused space.
-  // Staffing and dental share `primary`. Queued order is sheet order, so
+  // Several campaigns share `primary`. Queued order is sheet order, so
   // without this the niche sitting earlier in the sheet consumed the whole
   // five-success bucket and the other was deferred with "assigned sender
   // scheduled-window limit reached". Reorder each sender's slice to the 3:2
@@ -5955,7 +5554,6 @@ async function runInner() {
 
     const currentStep = parseInt(lead.emailStep, 10);
     const nextStepNum = currentStep + 1;
-    const template = FOLLOW_UP_SEQUENCE[currentStep - 1];
     const blocked = coldFollowUpBlockReason(lead);
     if (blocked) {
       console.warn(`⏸️  follow-up deferred → ${lead.email} (${blocked})`);
@@ -5963,15 +5561,15 @@ async function runInner() {
     }
     // Staffing follow-ups use their own locked copy; the cadence, sender,
     // thread and every safety gate below remain the shared ones.
-    // Only the staffing branch is guarded: dental and roofing keep their exact
-    // previous behaviour, including how a copy failure propagates.
+    // A lead without staffing or managed-client copy is deferred: the retired
+    // offers' follow-up copy was removed.
     let body;
     let clientCopyVersion = '';
     let clientPersonalization = null;
     let clientCopyAudit = null;
     if (isClientTemplateId(lead.emailTemplateId)) {
       // A managed client's follow-up: its own copy, or a deferral — never the
-      // dental follow-up sequence. The ledger pins the version of an attempted
+      // staffing follow-up sequence. The ledger pins the version of an attempted
       // step and the claims its thread began with.
       try {
         const email = renderClientLeadEmail(lead, nextStepNum, { activities: ownershipActivities });
@@ -5992,7 +5590,8 @@ async function runInner() {
         return false;
       }
     } else {
-      body = template.body(lead);
+      console.warn(`⏸️  follow-up deferred → ${lead.email} (no follow-up copy exists for this lead)`);
+      return false;
     }
     const preview = body.split('\n')[2] || '';
     // Client capacity before any sender is considered: a client at its cap (or
@@ -6110,26 +5709,19 @@ async function runInner() {
       } catch (e) { console.error(`❌ Smartlead enqueue failed → ${lead.email}: ${e.message}`); }
       return;
     }
-    // buildEmail can THROW rather than emit a half-merged guarantee (see
+    // Building step 1 can THROW rather than emit a half-merged email (see
     // guaranteeFor). That must become a draft for review, not an unhandled
     // error or a "send failed" log line — the lead is fine, the data isn't.
     let built;
     try {
       if (isManagedFamily(familyForLead(lead))) {
         // A managed client's lead sends its client's copy or nothing: never
-        // ScaleLab's dental/staffing copy. The opener was researched and
+        // ScaleLab's staffing copy. The opener was researched and
         // stored at import; the renderer only merges it, and throws (draft
         // for review) when it is missing, unreviewed or stale.
         if (!isClientTemplateId(lead.emailTemplateId)) throw new Error('managed client lead has no client template');
         const email = renderClientLeadEmail(lead, 1, { activities: ownershipActivities });
         built = { subject: email.subject, body: email.body, link: '', opener: 'stored client personalization', openerTier: 'LOCKED', pitchTier: familyForLead(lead), copyVersion: email.copyVersion, clientPersonalization: email.personalization || null, clientCopyAudit: { threadCopyVersion: email.threadCopyVersion, copyVersionReason: email.copyVersionReason } };
-      } else if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE) {
-        const qualification = qualifyRoofingLead(lead);
-        if (!qualification.ok) throw new Error(`roofing lead qualification failed (${qualification.reasonCode})`);
-        const email = renderRoofingSurveyInitial(lead, { mailingAddress: MAILING_ADDRESS, reference: `SL-${refCode(lead)}` });
-        const invalid = validateRoofingSurveyInitial(email);
-        if (invalid) throw new Error(invalid);
-        built = { ...email, link: '', opener: 'locked roofing survey copy', openerTier: 'LOCKED', pitchTier: ROOFING_SURVEY_PROFILE };
       } else if (isStaffingTemplateId(lead.emailTemplateId)) {
         if (familyForLead(lead) !== CAMPAIGN_FAMILY.STAFFING) {
           throw new Error('staffing template cannot send for a non-staffing family');
@@ -6141,10 +5733,11 @@ async function runInner() {
         if (bad) throw new Error(bad);
         built = { ...email, link: '', opener: 'approved staffing opening', openerTier: 'LOCKED', pitchTier: 'industrial_staffing' };
       } else {
-        if (familyForLead(lead) === CAMPAIGN_FAMILY.STAFFING) {
-          throw new Error('staffing lead cannot use dental cold copy');
-        }
-        built = await buildEmail(lead);
+        // Only staffing and managed-client copy exists. The retired offers'
+        // cold copy was removed, so any other lead becomes a draft for review.
+        throw new Error(familyForLead(lead) === CAMPAIGN_FAMILY.STAFFING
+          ? 'staffing lead has no staffing template'
+          : 'no email copy exists for this lead (only staffing and managed-client copy can send)');
       }
     } catch (e) {
       console.error(`✎ [draft] could not build step 1 → ${lead.email} — ${e.message}`);
@@ -6165,8 +5758,6 @@ async function runInner() {
     // same normalized value; live runs fail closed and preserve the lead.
     const invalid = isClientTemplateId(lead.emailTemplateId)
       ? validateClientLeadEmail(lead, { subject, body, copyVersion: built.copyVersion, ...(built.clientPersonalization ? { personalization: built.clientPersonalization } : {}) }, 1, { activities: ownershipActivities })
-      : lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE
-      ? validateRoofingSurveyInitial({ subject, body })
       : isStaffingTemplateId(lead.emailTemplateId)
       ? validateStaffingEmail({ subject, body, campaignId: staffingCampaignFor(lead)?.id }, 1)
       : validateColdEmail(lead, subject, body, link, {
@@ -6204,7 +5795,7 @@ async function runInner() {
       console.log(`   Pitch:   ${pitchTier}`);
       const subjectLabel = subjectMetadata
         ? `level ${subjectMetadata.level}, ${subjectMetadata.angleId}`
-        : `variant ${coldSubjectIndex(lead) + 1}/${COLD_SUBJECTS.length}`;
+        : 'locked template subject';
       console.log(`   Subject: ${subject}  [${subjectLabel}]`);
       console.log(`   Opener:  ${opener}  [${openerTier}]`);
       console.log(`   Link:    ${link}`);
@@ -6296,7 +5887,6 @@ async function runInner() {
 
     const currentStep = parseInt(lead.emailStep, 10);
     const nextStepNum = currentStep + 1;
-    const template = FOLLOW_UP_SEQUENCE[currentStep - 1];
     const blocked = coldFollowUpBlockReason(lead);
     if (blocked) {
       console.warn(`⏸️  follow-up deferred → ${lead.email} (${blocked})`);
@@ -6304,8 +5894,8 @@ async function runInner() {
     }
     // Staffing follow-ups use their own locked copy; the cadence, sender,
     // thread and every safety gate below remain the shared ones.
-    // Only the staffing branch is guarded: dental and roofing keep their exact
-    // previous behaviour, including how a copy failure propagates.
+    // A lead without staffing or managed-client copy is deferred: the retired
+    // offers' follow-up copy was removed.
     let body;
     if (isStaffingTemplateId(lead.emailTemplateId)) {
       try { body = staffingFollowUpBody(lead, nextStepNum, ownershipActivities); }
@@ -6314,7 +5904,8 @@ async function runInner() {
         continue;
       }
     } else {
-      body = template.body(lead);
+      console.warn(`⏸️  follow-up deferred → ${lead.email} (no follow-up copy exists for this lead)`);
+      continue;
     }
     const preview     = body.split('\n')[2] || '';
     // Client capacity before any sender is considered: a client at its cap (or

@@ -157,14 +157,11 @@ test('12. compliance footer does not affect subject or thread identity', () => {
   assert.match(agent, /if \(isStaffingTemplateId\(lead\.emailTemplateId\)\) \{\n\s*try \{ body = staffingFollowUpBody\(lead, nextStepNum, ownershipActivities\); \}/);
 });
 
-test('13. dental campaign templates are not modified', () => {
-  const dental = read('integrations/dental-email.js');
-  const dentalSubject = read('integrations/dental-subject.js');
-  assert.doesNotMatch(dental, /SA-48271|STAFFING_REF_LINE|industrial staffing/);
-  assert.doesNotMatch(dentalSubject, /SA-48271/);
-  assert.match(dental, /Reply with\\n"unsubscribe" and I'll remove you immediately/);
-  assert.match(dental, /Ref: \$\{reference\}/);
-  assert.equal(fs.readFileSync(path.join(root, 'integrations/dental-email.js'), 'utf8').includes('SA-48271'), false);
+test('13. the retired dental copy is gone, so no staffing text can leak into it', () => {
+  // Removed 2026-11-19: ScaleLab only contacts staffing agencies.
+  for (const file of ['integrations/dental-email.js', 'integrations/dental-subject.js', 'integrations/dental-personalization.js']) {
+    assert.equal(fs.existsSync(path.join(root, file)), false, `${file} was removed`);
+  }
 });
 
 test('14. fail-closed mailing address, global send-lock, and Gmail body preservation', () => {

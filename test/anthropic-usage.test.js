@@ -14,7 +14,6 @@ const {
 } = require('../integrations/anthropic-usage');
 const { registerAnthropicUsageRoutes } = require('../integrations/anthropic-usage-route');
 const { classifyReply } = require('../integrations/reply-classifier');
-const { classifyReply: classifyRoofingReply } = require('../integrations/roofing-survey-profile');
 const { personalizeStaffingLead } = require('../integrations/staffing-personalization');
 const { STAFFING_CAMPAIGN } = require('../integrations/staffing-campaign');
 
@@ -215,12 +214,6 @@ test('11. reply safety still works when Claude is unavailable or over budget', a
     plainTextReply: 'Please unsubscribe me',
     createMessage,
   }), 'UNSUBSCRIBE');
-  const roofing = await classifyRoofingReply({
-    replyText: 'Hard to say',
-    createMessage,
-  });
-  assert.equal(roofing.category, 'ambiguous');
-  assert.equal(roofing.requires_human_review, true);
   assert.equal(calls, 0);
 });
 
@@ -314,7 +307,6 @@ test('every production Anthropic call site is tracked with an explicit feature',
     'outreach-agent.js',
     'integrations/reply-classifier.js',
     'integrations/staffing-personalization.js',
-    'integrations/roofing-survey-profile.js',
     'integrations/staffing-conversation-agent.js',
     'enrich-names.js',
   ];
@@ -324,9 +316,10 @@ test('every production Anthropic call site is tracked with an explicit feature',
     assert.match(src, /FEATURES/, `${file} must tag a feature`);
   }
   const agent = read('outreach-agent.js');
-  assert.match(agent, /ANTHROPIC_FEATURES\.cold_personalization/);
+  // The dental cold opener (ANTHROPIC_FEATURES.cold_personalization) was removed
+  // with the dental offer; the agent no longer calls Claude for cold copy.
+  assert.doesNotMatch(agent, /ANTHROPIC_FEATURES\.cold_personalization/);
   assert.match(agent, /ANTHROPIC_FEATURES\.reply_question_answer/);
-  assert.match(agent, /boundedSite = String\(siteText \|\| ''\)\.slice\(0, 1500\)/);
   assert.match(agent, /createTrackedAnthropic/);
   assert.match(agent, /messageId: message\.messageId/);
   assert.match(agent, /threadId: message\.threadId/);

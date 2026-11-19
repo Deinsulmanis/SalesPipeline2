@@ -146,7 +146,7 @@ const { staffingHoldStatus } = require('./integrations/staffing-hold');
 const { EMAIL_TEMPLATES, LEAD_TYPES, LEAD_TYPE_IDS, normalizeNiche, leadTypeLabel, isKnownLeadType, campaignVersionsForRoute, validateCampaignVersionRoute, validateRoute, routedLeadReady } = require('./integrations/campaign-routing');
 const {
   ARCHIVE_MARKER_PREFIX, ARCHIVE_EVENT_TYPE, ARCHIVED_REPLY_EVENT_TYPE, ARCHIVE_REASONS, ARCHIVE_REASON_LABELS,
-  isArchivedLead, archiveReasonFromNotes, retiredOfferBlock, retiredOfferById, currentArchiveRecord, isProtectedRecord,
+  isArchivedLead, archiveReasonFromNotes, retiredOfferBlock, retiredOfferById, retiredOfferFor, currentArchiveRecord, isProtectedRecord,
   planLeadArchive, planBoardArchive, planLeadRestore, planBoardRestore, completedCampaigns, completedCampaignByLabel,
 } = require('./integrations/lead-archive');
 const { planOfferRetirement } = require('./integrations/offer-retirement');
@@ -170,7 +170,6 @@ const { createStripeClient, verifyWebhook: verifyStripeWebhook } = require('./in
 const { createScaleLabBilling } = require('./integrations/scalelab-billing');
 const { emailUniquenessMode, leadsInEmailScope, leadsForCalendarMatching } = require('./integrations/clients/email-scope');
 const { filterInboxesForClient } = require('./integrations/clients/workspace-views');
-const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE, qualifyLead: qualifyRoofingLead } = require('./integrations/roofing-survey-profile');
 const {
   COLD_CALL_ACTIVITY_SHEET,
   COLD_CALL_ACTIVITY_HEADER,
@@ -2120,7 +2119,6 @@ app.get('/api/crm/ui-status', requireAuth, (_req, res) => {
     stageSequences: { enabled: enabled(process.env.STAGE_SEQUENCES_ENABLED) },
     calendarSync: { enabled: enabled(process.env.GOOGLE_CALENDAR_BOOKING_SYNC_ENABLED), configured: Boolean(process.env.GOOGLE_BOOKING_CALENDAR_ID) },
     smartlead: { enabled: enabled(process.env.SMARTLEAD_INTEGRATION_ENABLED), liveMutations: enabled(process.env.SMARTLEAD_LIVE_MUTATIONS_ENABLED) },
-    roofingReplyFlow: { enabled: enabled(process.env.ROOFING_SURVEY_REPLY_FLOW_ENABLED) },
     deployment: { sha: String(process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT_SHA || '').trim() || null },
   });
 });
@@ -5349,7 +5347,6 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
         if (!route.ok) return route;
         const versionRoute = validateCampaignVersionRoute({ niche: lead.leadNiche || lead.tradeType, emailTemplateId, campaignVersionId });
         if (!versionRoute.ok) return versionRoute;
-        if (emailTemplateId === ROOFING_SURVEY_TEMPLATE && !qualifyRoofingLead(lead).ok) return { ok: false, reason: 'Insufficient roofing-business evidence' };
         return { ok: true };
       },
       applyChanges: async changes => {
@@ -7909,7 +7906,10 @@ async function handleSmartleadWebhook(req, res) {
 
 async function reconcileSmartlead() {
   if (!smartleadClient.integrationEnabled) return { skipped: true };
-  const mappings = (await readIntegrationRows(CAMPAIGN_INTEGRATIONS_SHEET, CAMPAIGN_INTEGRATIONS_HEADER)).filter(row => row.provider === 'smartlead' && row.externalCampaignId);
+  // Campaigns of retired offers (e.g. the old dental test campaign) are not
+  // reconciled: nothing of theirs can send, and their mapping only failed hourly.
+  const mappings = (await readIntegrationRows(CAMPAIGN_INTEGRATIONS_SHEET, CAMPAIGN_INTEGRATIONS_HEADER))
+    .filter(row => row.provider === 'smartlead' && row.externalCampaignId && !retiredOfferFor({ campaign: row.internalCampaignId }));
   const startedAt = new Date().toISOString();
   const result = { attempted: mappings.length, successful: 0, failed: 0, pages: 0, leads: 0, errors: [] };
   for (const mapping of mappings) {

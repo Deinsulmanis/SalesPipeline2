@@ -178,9 +178,9 @@ test('send: a fully personalised, approved Jole lead with a sender is still refu
 test('agent: managed leads render client copy before any ScaleLab branch, defer follow-ups, skip intent mail, send as Jorge', () => {
   const agent = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
   const managed = agent.indexOf('if (isManagedFamily(familyForLead(lead))) {');
-  const roofing = agent.indexOf('} else if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE) {');
-  const dental = agent.indexOf('built = await buildEmail(lead);');
-  assert.ok(managed > 0 && managed < roofing && roofing < dental, 'managed branch comes first; buildEmail is unreachable for a managed lead');
+  const staffing = agent.indexOf('} else if (isStaffingTemplateId(lead.emailTemplateId)) {', managed);
+  const noCopy = agent.indexOf('no email copy exists for this lead', managed);
+  assert.ok(managed > 0 && managed < staffing && staffing < noCopy, 'managed branch comes first; anything else without copy never sends');
   assert.match(agent, /if \(isClientTemplateId\(lead\.emailTemplateId\)\) \{\s*\/\/ A managed client's follow-up/);
   // Intent mail is skipped for every lead now: the demo-intent pass is retired.
   assert.doesNotMatch(agent, /runIntentTriggerPass/);

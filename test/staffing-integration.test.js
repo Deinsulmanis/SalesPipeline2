@@ -186,9 +186,10 @@ test('M/N. staffing reuses the shared sender, thread and follow-up machinery', (
   // Follow-up bodies branch on the template; sender/thread selection does not.
   assert.match(agent, /if \(isStaffingTemplateId\(lead\.emailTemplateId\)\) \{\n\s*try \{ body = staffingFollowUpBody\(lead, nextStepNum, ownershipActivities\); \}/);
   assert.equal(agent.split('staffingFollowUpBody(lead, nextStepNum, ownershipActivities)').length - 1, 2, 'both follow-up sites are covered');
-  // Dental and roofing keep the original unguarded call, so their behaviour is
-  // provably unchanged by the staffing branch.
-  assert.equal(agent.split('      body = template.body(lead);').length - 1, 2, 'both non-staffing paths are untouched');
+  // The retired offers' follow-up copy was removed: a lead without staffing or
+  // client copy is deferred at both sites, never sent other copy.
+  assert.equal(agent.split('(no follow-up copy exists for this lead)').length - 1, 2, 'both non-staffing paths defer');
+  assert.doesNotMatch(agent, /template\.body\(lead\)|FOLLOW_UP_SEQUENCE/);
   // chooseSender / resolveColdFollowUpThread stay on the shared path.
   assert.match(agent, /thread = await resolveColdFollowUpThread\(/);
   // Same cadence as the ordinary sequence, by reference — not a copy.
@@ -276,7 +277,9 @@ test('V. dental and roofing behaviour is unchanged by the staffing integration',
   assert.equal(offerForLead(dentalLead).id, 'dental_pay_per_booking_v1');
   assert.equal(offerForLead(dentalLead).targetCustomer, 'dental practices');
   assert.equal(familyForLead(dentalLead), 'dental_ai_receptionist');
-  // The agent still routes roofing and generic dental exactly as before.
-  assert.match(agent, /if \(lead\.emailTemplateId === ROOFING_SURVEY_TEMPLATE\) \{/);
-  assert.match(agent, /built = await buildEmail\(lead\);/);
+  // Their copy was removed (2026-11-19): step 1 for any lead without staffing
+  // or client copy throws into a draft for review, and follow-ups defer.
+  assert.doesNotMatch(agent, /buildEmail\(|buildPitch\(|generateOpener\(|roofing-survey-profile|dental-email/);
+  assert.match(agent, /no email copy exists for this lead \(only staffing and managed-client copy can send\)/);
+  assert.match(agent, /const RETIRED_EMAIL_TEMPLATE_IDS = new Set\(\['dental-guarantee-v1', 'roofing-survey-v1'\]\);/);
 });

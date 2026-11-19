@@ -31,7 +31,7 @@ test('pin: the final gate reads the client suppression list for the one lead bei
 
 test('pin: every reply resolves its client context before any legacy handler runs', () => {
   const contextAt = agent.indexOf('const replyContext = resolveReplyClientContext({ senderInboxId: sender.id, lead, senders: GMAIL_SENDERS, activities: activitiesForCycle });');
-  const roofingAt = agent.indexOf('if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE) {', contextAt);
+  const roofingAt = agent.indexOf('if (lead.emailTemplateId === RETIRED_ROOFING_TEMPLATE_ID) {', contextAt);
   const classifyAt = agent.indexOf('const canonicalReply = classifyReplyText(replyText', contextAt);
   assert.ok(contextAt > 0 && roofingAt > contextAt && classifyAt > contextAt);
   const block = agent.slice(contextAt, roofingAt);
