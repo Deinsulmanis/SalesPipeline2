@@ -1,4 +1,5 @@
 'use strict';
+const { randomUUID } = require('node:crypto');
 const { mirrorConfig } = require('./supabase-mirror');
 const { loadRoutingPolicy } = require('./scalelab-reply-router');
 
@@ -8,8 +9,8 @@ function createScaleLabReplyActionStore({ env = process.env, fetchImpl = global.
   const endpoint = config.url + '/rest/v1/scalelab_reply_actions';
   const headers = { apikey: config.key, Authorization: 'Bearer ' + config.key, 'Content-Type': 'application/json' };
   const policy = loadRoutingPolicy();
-  async function request(method, query, body, prefer) {
-    const response = await fetchImpl(endpoint + '?' + new URLSearchParams(query), {
+  async function request(method, query, body, prefer, target = endpoint) {
+    const response = await fetchImpl(target + '?' + new URLSearchParams(query), {
       method, headers: { ...headers, ...(prefer ? { Prefer: prefer } : {}) },
       signal: AbortSignal.timeout(5000), ...(body ? { body: JSON.stringify(body) } : {}),
     });
@@ -19,8 +20,31 @@ function createScaleLabReplyActionStore({ env = process.env, fetchImpl = global.
     return rows;
   }
   const get = async id => (await request('GET', { action_id: 'eq.' + id, limit: '1' }))[0] || null;
+  const classificationTable = config.url + '/rest/v1/scalelab_reply_classifications';
+  const getClassification = async id => (await request('GET', { decision_id: 'eq.' + id, limit: '1' },
+    null, null, classificationTable))[0] || null;
   return {
     get,
+    async claimClassification(id, candidate, now) {
+      const claim = randomUUID();
+      const [row] = await request('POST', { on_conflict: 'decision_id' }, {
+        decision_id: id, client_id: 'scalelab', lead_id: candidate.leadId,
+        mailbox_id: candidate.senderInboxId, message_id: candidate.messageId,
+        claim_id: claim, started_at: now.toISOString(), status: 'pending',
+      }, 'resolution=ignore-duplicates,return=representation', classificationTable);
+      const saved = row || await getClassification(id);
+      if (!saved || saved.decision_id !== id || saved.client_id !== 'scalelab'
+          || saved.lead_id !== candidate.leadId || saved.mailbox_id !== candidate.senderInboxId
+          || saved.message_id !== candidate.messageId) throw new Error('ScaleLab classification claim not verified');
+      return { acquired: Boolean(row && saved.claim_id === claim && saved.status === 'pending'), record: saved };
+    },
+    async finishClassification(record, verdict) {
+      const [row] = await request('PATCH', { decision_id: 'eq.' + record.decision_id, status: 'eq.pending',
+        claim_id: 'eq.' + record.claim_id }, { status: 'finished', verdict }, 'return=representation', classificationTable);
+      const saved = row || await getClassification(record.decision_id);
+      if (!saved || saved.status !== 'finished' || !saved.verdict) throw new Error('ScaleLab classification result not verified');
+      return saved.verdict;
+    },
     async listSince(mode, since) {
       const all = [];
       for (let offset = 0; ; offset += 500) {

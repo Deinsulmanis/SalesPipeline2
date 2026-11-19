@@ -33,7 +33,8 @@ function verifiedContext(activities, { leadId, threadId, senderInboxId, messageI
         || (meta.clientId && meta.clientId !== SCOPE) || meta.gmailMessageId === messageId) return [];
     if (!['human_response_sent', 'initial_email_sent', 'follow_up_sent'].includes(row.eventType)
         && !String(row.eventId).startsWith('gmail-reply:')) return [];
-    return [{ id: row.eventId, at: row.occurredAt, text: stripQuotedReply(row.content || '').slice(0, 500) }];
+    return [{ id: row.eventId, at: row.occurredAt, actor: row.eventId.startsWith('gmail-reply:') ? 'prospect' : 'scalelab',
+      text: stripQuotedReply(row.content || '').slice(0, 500) }];
   }).sort((a, b) => a.at.localeCompare(b.at)).slice(-4);
 }
 
@@ -109,6 +110,11 @@ function classifyScaleLabReply({ text = '', subject = '', autoSubmitted = '', de
 }
 
 function observationForIntent(verdict, base) {
+  // Unresolved human inbound owns the conversation and blocks cold cadence
+  // even if its model evaluation never finishes.
+  if (verdict.requiresModel) return { ...base, state: REPLY_STATE.NEEDS_HUMAN,
+    reason: 'scalelab_interpretation_pending', genuineHuman: true, subtype: null,
+    confidence: 'low', classifierVersion: VERSION };
   const changes = {
     opt_out: [REPLY_STATE.NEGATIVE, 'unsubscribe_request', true],
     explicit_rejection: [REPLY_STATE.NEGATIVE, 'explicit_rejection', true],

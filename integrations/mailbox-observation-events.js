@@ -15,6 +15,7 @@ const { managedReplyNeedsHandler } = require('./clients/reply-pipeline');
 const { DELIVERY_CLASS, LATER_TOUCH_BLOCKING_CLASSES, DELIVERY_DEFERRED_EVENT, DELIVERY_FAILED_EVENT } = require('./delivery-status');
 const { classifyDeliveryStatus, isDeliveryNotice } = require('./delivery-status');
 const { scaleLabOwner, classifyScaleLabReply, verifiedContext, observationForIntent } = require('./scalelab-response-classification');
+const { needsScaleLabModel } = require('./scalelab-reply-haiku');
 const norm = value => String(value || '').trim().toLowerCase();
 
 const HUMAN_REPLY_TEXT_LIMIT = 1500;
@@ -165,9 +166,11 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
           { leadId, threadId: message.threadId, senderInboxId, messageId: message.id, occurredAt });
         const providerNotice = isDeliveryNotice(message.payload, from);
         if (!context.length && (!providerNotice || selected.size !== 1)) continue;
-        const verdict = classifyScaleLabReply({ text: ownReplyText(message.payload, message.snippet),
+        const text = ownReplyText(message.payload, message.snippet);
+        const verdict = classifyScaleLabReply({ text,
           currentEmail: lead.email, subject, occurredAt, context, delivery: providerNotice,
           autoSubmitted: headerValue(message.payload, 'Auto-Submitted') });
+        verdict.requiresModel = needsScaleLabModel(verdict, text);
         scaleLabVerdicts.set(leadId, verdict);
         if (verdict.intent !== 'delivery_failure') continue;
         const transport = classifyDeliveryStatus(message.payload, { recipient: lead.email, subject });
@@ -255,7 +258,7 @@ async function planMailboxEvents({ observation, gmail, leads, activities, sender
       const verdict = scaleLabVerdicts.get(leadId);
       const canonical = verdict && scaleLab.mode === 'apply' ? observationForIntent(verdict, baseline) : baseline;
       const ownsHumanWork = verdict && scaleLab.mode === 'apply'
-        && !['opt_out', 'explicit_rejection', 'out_of_office'].includes(verdict.intent);
+        && (verdict.requiresModel || !['opt_out', 'explicit_rejection', 'out_of_office'].includes(verdict.intent));
       const suppression = suppressionForCanonical(canonical, lead);
       if (suppression) suppressions.push(verdict && scaleLab.mode === 'apply'
         ? { ...suppression, scaleLabLeadId: lead.id } : suppression);

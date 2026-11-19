@@ -23,3 +23,21 @@ CREATE INDEX scalelab_reply_actions_mode_received_at
 ALTER TABLE public.scalelab_reply_actions ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.scalelab_reply_actions FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE ON public.scalelab_reply_actions TO service_role;
+
+-- Classification claims are independent of route mode and pin one paid attempt to an inbound.
+CREATE TABLE public.scalelab_reply_classifications (
+  decision_id text PRIMARY KEY CHECK (decision_id ~ '^[0-9a-f]{64}$'),
+  client_id text NOT NULL CHECK (client_id = 'scalelab'),
+  lead_id text NOT NULL,
+  mailbox_id text NOT NULL,
+  message_id text NOT NULL,
+  claim_id uuid NOT NULL,
+  started_at timestamptz NOT NULL,
+  status text NOT NULL CHECK (status IN ('pending', 'finished')),
+  verdict jsonb,
+  UNIQUE (client_id, mailbox_id, message_id, lead_id),
+  CHECK ((status = 'pending' AND verdict IS NULL) OR (status = 'finished' AND verdict IS NOT NULL))
+);
+ALTER TABLE public.scalelab_reply_classifications ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.scalelab_reply_classifications FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, UPDATE ON public.scalelab_reply_classifications TO service_role;

@@ -167,7 +167,7 @@ const {
 const { findOriginalSentThread, resolveColdFollowUpThread } = require('./integrations/gmail-threading');
 const { appendLeadsRow } = require('./integrations/leads-sheet-append');
 const { readCanonicalOutreachRecipient } = require('./integrations/outreach-state');
-const { scaleLabOwner, observationForIntent } = require('./integrations/scalelab-response-classification');
+const { scaleLabOwner, observationForIntent, verifiedContext } = require('./integrations/scalelab-response-classification');
 const { routingConfig } = require('./integrations/scalelab-reply-router');
 const { createScaleLabReplyActionStore } = require('./integrations/scalelab-reply-action-store');
 const { activityMetadata, laterEvidence, runScaleLabReplyRouting, ownsActionMessage } = require('./integrations/scalelab-reply-pass');
@@ -3043,7 +3043,8 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       subject: message.subject || '', currentEmail: lead.email, now: message.occurredAt || null,
     });
     const scaleLabAction = ownsActionMessage(activitiesForCycle, lead, message.messageId, scaleLab);
-    const terminalScaleLab = scaleLabAction && ['opt_out', 'explicit_rejection'].includes(scaleLabAction.verdict.intent);
+    const terminalScaleLab = scaleLabAction && !scaleLabAction.verdict.requiresModel
+      && ['opt_out', 'explicit_rejection'].includes(scaleLabAction.verdict.intent);
     // Apply-mode evidence belongs to the new route. It must not also promote
     // to legacy Hot or enter an automated response handler.
     if (scaleLabAction && !terminalScaleLab && scaleLabAction.verdict.intent !== 'out_of_office') {
@@ -3304,13 +3305,15 @@ async function runScaleLabReplyCycle({ config, activities, leads, owns, failedSe
     const identified = lead?.id === candidate.leadId && same && normEmail(same.email) === normEmail(lead.email)
       && metadata.senderInboxId === candidate.senderInboxId && metadata.gmailThreadId === candidate.threadId
       && metadata.clientId === 'scalelab' && metadata.scalelabMode === config.mode
-      && metadata.scalelabReply?.intent === candidate.verdict.intent;
+      && Boolean(metadata.scalelabReply);
     const lostCard = !board && freshEvents.some(row => row.sourceLeadId === candidate.leadId && row.eventType === 'pipeline_promoted');
     const unsafe = (canonical && !canonical.ok) || !identified
       || !owns(lead, candidate.senderInboxId, freshEvents) ? 'fresh_identity_unproven'
         : lostCard ? 'previously_promoted_card_missing' : null;
     return { lead, boards, suppressed, unsafe, newer: laterEvidence(freshEvents, candidate, board),
-      twins: canonical ? (canonical.ambiguous ? 2 : 1) : coldEmailTwinCount(leads, lead?.email) };
+      twins: canonical ? (canonical.ambiguous ? 2 : 1) : coldEmailTwinCount(leads, lead?.email),
+      current: identified ? same.content : '', subject: identified ? same.subject : '',
+      context: identified ? verifiedContext(freshEvents, { ...candidate, occurredAt: candidate.at }) : [] };
   };
   const hold = async lead => {
     const row = await resolveRow(lead.id);

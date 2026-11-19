@@ -17,4 +17,6 @@ Allowed intents: opt_out, delivery_failure, calendar_notice, automated_acknowled
 
 Confidence helps prioritize review. It confers no update or send permission. Use only approved offer facts for drafts, especially for pricing and booking details.
 
+Clear outcomes use deterministic rules. In apply mode, complex human replies with verified thread history use Haiku 4.5 for one structured assessment. A reviewable assessment identifies the intent, confidence, buyer signal, suggested action, and literal evidence from the inbound message and relevant verified turns. If the evidence is incomplete or contradictory, the date is unproven, or the assessment cannot be completed, preserve the human-reply protection and route to human review.
+
 Historical ScaleLab examples: Orion's standalone “stop” is opt-out. A2Z's access-denied report is a delivery notice. EMI offering the sender a rate is a reverse pitch. Talon's “pass on your services for now” declines the offer. An early reply in the Jole Enterprise thread requested information and quoted the sender's opt-out footer. Its canonical client is ScaleLab.
