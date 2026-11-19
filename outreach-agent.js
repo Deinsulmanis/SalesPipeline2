@@ -1004,6 +1004,10 @@ function withClientCopyVersion(attribution, copyVersion, personalization = null,
 
 function fromNameForSender(sender) {
   if (sender?.delegatedFromClientId && sender.fromName) return sender.fromName;
+  // A ScaleLab inbox may carry its own display name in the registry
+  // (e.g. the outreachplateau.co inboxes send as Deins Ulmanis).
+  const ownClient = String(sender?.clientId || '').trim();
+  if (sender?.fromName && (!ownClient || getManagedClient(ownClient).isDefault)) return sender.fromName;
   const clientId = String(sender?.clientId || '').trim();
   if (!clientId) return FROM_NAME;
   const client = getManagedClient(clientId);

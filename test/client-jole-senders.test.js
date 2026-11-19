@@ -213,7 +213,9 @@ test('a Jole sender on another Jole campaign is refused at the shared consistenc
 });
 
 test('15. ScaleLab senders are byte-for-byte unchanged: same caps, statuses, eligibility, no new fields', () => {
-  const senders = configuredSenders(PROD_ENV).filter(sender => (sender.clientId || 'scalelab') === 'scalelab');
+  // The outreachplateau.co inboxes (added 2026-11-19) are new and covered by
+  // test/outreachplateau-inboxes.test.js; every pre-existing ScaleLab sender is unchanged.
+  const senders = configuredSenders(PROD_ENV).filter(sender => (sender.clientId || 'scalelab') === 'scalelab' && !sender.id.startsWith('outreachplateau_'));
   assert.deepEqual(senders.map(sender => [sender.id, sender.email, sender.status, sender.dailyLimit, sender.perRunLimit, sender.sendEligible, sender.clientId || 'scalelab']), [
     ['primary', 'deins@scalelabai.ca', 'active', 60, 6, true, 'scalelab'],
     ['tryscalelabai', 'deins@tryscalelabai.ca', 'active', 60, 6, true, 'scalelab'],
@@ -228,7 +230,7 @@ test('15. ScaleLab senders are byte-for-byte unchanged: same caps, statuses, eli
   assert.deepEqual(DEFAULT_SECONDARY_INBOXES.filter(row => !row.clientId).map(row => [row.id, row.status, row.dailyLimit, row.perRunLimit]), [
     ['scalelabaiteam', 'warming', 40, 5], ['deniels', 'warming', 20, 2], ['deniels_tryscalelabai', 'warming', 20, 2],
   ]);
-  assert.deepEqual(DEFAULT_SECONDARY_INBOXES.filter(row => row.clientId).map(row => [row.clientId, row.status, row.dailyLimit, row.perRunLimit]),
+  assert.deepEqual(DEFAULT_SECONDARY_INBOXES.filter(row => row.clientId === 'jole').map(row => [row.clientId, row.status, row.dailyLimit, row.perRunLimit]),
     Array(6).fill(['jole', 'warming', 20, 2]));
   // A malformed Jole row never takes the ScaleLab registry down with it.
   const mixed = configuredSenders(withJole([joleRow('jole_bad', 'x@jolebtx.com', { status: 'active', dailyLimit: 999 })]));

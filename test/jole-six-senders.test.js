@@ -354,7 +354,8 @@ test('duplicate-send protection: one action id delivers at most once through a J
 // ── ScaleLab unaffected ─────────────────────────────────────────────────────
 
 test('ScaleLab is unaffected: same roster, caps, capacity and provider verdicts', async () => {
-  const withoutJole = configuredSenders(PROD_ENV).filter(isScaleLab);
+  // (the outreachplateau.co inboxes added 2026-11-19 are covered by outreachplateau-inboxes.test.js)
+  const withoutJole = configuredSenders(PROD_ENV).filter(s => isScaleLab(s) && !s.id.startsWith('outreachplateau_'));
   assert.deepEqual(withoutJole.map(s => [s.id, s.status, s.dailyLimit, s.perRunLimit, s.sendEligible]), [
     ['primary', 'active', 50, 6, true], ['tryscalelabai', 'active', 30, 6, true], ['scalelabaiteam', 'paused', 30, 5, false],
     ['deniels', 'active', 45, 3, true], ['deniels_tryscalelabai', 'active', 45, 3, true],

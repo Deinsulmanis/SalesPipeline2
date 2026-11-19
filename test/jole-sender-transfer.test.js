@@ -48,8 +48,9 @@ const inbound = (lead, extra = {}) => ({ id: 'in1', threadId: lead.id, internalD
     headers: [{ name: 'From', value: lead.email }, { name: 'Message-ID', value: '<incoming@test>' }] }, ...extra });
 
 test('all five transfer together with stable identities, credentials, quotas and unchanged six Jole inboxes', () => {
-  const before = configuredSenders(environment(false));
-  const after = configuredSenders(environment());
+  // (the outreachplateau.co inboxes added 2026-11-19 are covered by outreachplateau-inboxes.test.js)
+  const before = configuredSenders(environment(false)).filter(row => !row.id.startsWith('outreachplateau_'));
+  const after = configuredSenders(environment()).filter(row => !row.id.startsWith('outreachplateau_'));
   assert.equal(after.length, 11);
   assert.equal(new Set(after.map(row => row.id)).size, 11);
   assert.equal(new Set(after.map(row => row.email)).size, 11);
@@ -85,7 +86,7 @@ test('client pause is independent of Jole authorization and cannot enable anothe
   assert.equal(beforeTransfer.filter(sender => sender.sendEligible && sender.clientId !== 'jole').length, 0);
   assert.deepEqual(capacityFromEnv(beforeTransfer, environment(false)).clientLimits, {
     scalelab: { daily: 0, perRun: 0 }, jole: { daily: 105, perRun: 12 } });
-  assert.equal(beforeTransfer.filter(sender => sender.observerEnabled).length, 11);
+  assert.equal(beforeTransfer.filter(sender => sender.observerEnabled && !sender.id.startsWith('outreachplateau_')).length, 11);
   const runtimeActive = { ...environment(false), GMAIL_SENDER_RUNTIME_JSON: JSON.stringify(MAILBOXES.map(row => ({ id: row.id, status: 'active' }))) };
   assert.equal(configuredSenders(runtimeActive).filter(sender => sender.sendEligible && sender.clientId !== 'jole').length, 0);
 });

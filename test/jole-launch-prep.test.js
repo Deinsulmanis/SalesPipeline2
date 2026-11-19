@@ -483,7 +483,8 @@ test('capacity at launch: ScaleLab 170/22 + Jole 120/12 = physical 290/34, each 
 // ── Requirement 7: ScaleLab unchanged ────────────────────────────────────────
 
 test('ScaleLab roster is byte-identical with Jole prepared or launched', () => {
-  const view = env => configuredSenders(env).filter(isScaleLab);
+  // (the outreachplateau.co inboxes added 2026-11-19 are covered by outreachplateau-inboxes.test.js)
+  const view = env => configuredSenders(env).filter(s => isScaleLab(s) && !s.id.startsWith('outreachplateau_'));
   const before = JSON.stringify(view(SCALELAB_ENV));
   assert.equal(JSON.stringify(view(HELD_ENV)), before);
   assert.equal(JSON.stringify(view(LAUNCH_ENV)), before);
