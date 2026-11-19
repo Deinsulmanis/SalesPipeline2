@@ -2334,10 +2334,6 @@
   <button class="filter-tab active" data-f="all" onclick="setFilter('all')">
     All Leads <span class="tab-count" id="tab-all">0</span>
   </button>
-  <button class="filter-tab" data-f="trade" onclick="setFilter('trade')">
-    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-    Trades <span class="tab-count" id="tab-trade">0</span>
-  </button>
   <span class="filter-label" style="margin-left:14px">Work queue:</span>
   <button class="filter-tab" data-a="overdue" onclick="setActionFilter('overdue')">
     Overdue <span class="tab-count" id="tab-overdue">0</span>
@@ -2376,7 +2372,7 @@
     <button class="ce-tab"        data-ce="Promoted"     onclick="setCeFilter('Promoted')">Promoted</button>
     <button class="ce-tab"        data-ce="Unsubscribed" onclick="setCeFilter('Unsubscribed')">Unsub</button>
     <div class="ce-actions">
-      <select id="ce-niche-filter" class="ce-sl-only" aria-label="Filter by lead type" onchange="setCeNicheFilter(this.value)" style="width:auto;min-width:118px;padding:7px 10px"><option value="all">All lead types</option><option value="dental">Dental</option><option value="roofing">Roofing</option><option value="industrial_staffing">Staffing Agency</option></select>
+      <select id="ce-niche-filter" class="ce-sl-only" aria-label="Filter by lead type" onchange="setCeNicheFilter(this.value)" style="width:auto;min-width:118px;padding:7px 10px"><option value="all">All lead types</option><option value="industrial_staffing">Staffing Agency</option></select>
       <div class="ce-search-wrap">
         <svg class="ce-search-icon" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
         <input type="text" id="ce-search" placeholder="Search leads…" oninput="onCeSearch(this.value)">
@@ -2538,7 +2534,7 @@
   <!-- Opens panel (proposal opens log) -->
   <div id="ce-opens-panel" style="display:none">
     <div style="padding:20px 28px">
-      <div class="analytics-scope-note" data-scope="historical"><b>Retired offers · historical</b> Proposal telemetry from the dental and med spa receptionist offers, kept for history. Nothing here describes the active staffing campaign.</div>
+      <div class="analytics-scope-note" data-scope="historical"><b>Retired offers · historical</b> Proposal telemetry from earlier offers, kept for history. Nothing here describes the active staffing campaign.</div>
       <table class="ce-table">
         <thead>
           <tr>
@@ -2628,11 +2624,7 @@
         <div class="form-group" id="field-trade-type">
           <label>Industry / lead type</label>
           <select id="f-trade-type">
-            <option value="">Select trade…</option>
-            <option>Electrician</option><option>Plumber</option><option>HVAC</option>
-            <option>Roofer</option><option>Landscaper</option><option>General Contractor</option>
-            <option>Painter</option><option>Concrete</option><option>Flooring</option>
-            <option>Carpenter</option><option>Pest Control</option>
+            <option value="">Select lead type…</option>
             <option>Staffing Agency</option><option>Other</option>
           </select>
         </div>
@@ -2779,7 +2771,7 @@
       </div>
       <div class="form-group full">
         <label for="campaign-niche-input">Lead type <span style="color:var(--hot)">*</span></label>
-        <select id="campaign-niche-input"><option value="">Choose lead type…</option><option value="dental">Dental</option><option value="roofing">Roofing</option><option value="industrial_staffing">Staffing Agency</option></select>
+        <select id="campaign-niche-input"><option value="">Choose lead type…</option><option value="industrial_staffing">Staffing Agency</option></select>
         <div style="font-size:11px;color:var(--text-muted)">This keeps imports separated and limits which email copy can be selected later.</div>
       </div>
       <div class="form-group full">
@@ -2826,7 +2818,7 @@
       <div id="smartlead-mapping-fields" class="form-group full">
         <label for="smartlead-campaign-id">Smartlead Campaign ID</label><input id="smartlead-campaign-id" inputmode="numeric" placeholder="e.g. 123456">
         <div style="font-size:11px;color:var(--text-muted);margin-top:6px">Create the campaign and sequence in Smartlead first. Testing never uploads a lead.</div>
-        <label for="smartlead-sending-pool" style="margin-top:14px">Mailbox Pool / Niche</label><input id="smartlead-sending-pool" placeholder="e.g. dental-ca">
+        <label for="smartlead-sending-pool" style="margin-top:14px">Mailbox Pool / Niche</label><input id="smartlead-sending-pool" placeholder="e.g. staffing-us">
         <div style="margin-top:14px;padding:10px 12px;border-left:3px solid var(--accent);background:var(--wash-1);font-size:12px;color:var(--text-secondary)">Variables: contact name, company, city, website, niche, research first line, service reference, and lead score.</div>
       </div>
       <div id="provider-test-result" class="form-group full" role="status" style="min-height:18px;font-size:12px;color:var(--text-secondary)"></div>
@@ -3505,7 +3497,8 @@ function renderBoard() {
   });
 
   document.getElementById('tab-all').textContent     = leads.length;
-  document.getElementById('tab-trade').textContent   = leads.filter(l => l.type === 'trade').length;
+  const tradeTab = document.getElementById('tab-trade');
+  if (tradeTab) tradeTab.textContent = leads.filter(l => l.type === 'trade').length;
   document.getElementById('stat-total').textContent    = leads.length;
   document.getElementById('stat-trades').textContent   = leads.filter(l => l.type === 'trade').length;
   document.getElementById('stat-hot').textContent         = leads.filter(l => displayStageFor(l.stage) === 'hot').length;
@@ -5991,10 +5984,14 @@ async function loadCeLeads() {
       const registry = await versionsResp.json();
       if (!current()) return;
       completedCampaignList = registry.completedCampaigns || [];
-      const liveVersion = registry.active?.dental_ai_receptionist || '—';
+      // ScaleLab only runs the staffing offer now; retired offers' versions
+      // (dental, roofing) are not offered as filters or named as current.
+      const liveVersion = registry.active?.industrial_staffing || '—';
       document.getElementById('ce-current-campaign').textContent = `Current campaign: ${liveVersion}`;
       const select = document.getElementById('ce-version-filter');
-      select.innerHTML = '<option value="">All campaign versions</option>' + Object.keys(registry.versions || {}).concat(['legacy_unknown'])
+      const staffingVersions = Object.entries(registry.versions || {})
+        .filter(([, version]) => version && version.family === 'industrial_staffing').map(([id]) => id);
+      select.innerHTML = '<option value="">All campaign versions</option>' + staffingVersions.concat(['legacy_unknown'])
         .map(id => `<option value="${escAttr(id)}">${esc(id)}</option>`).join('');
       select.value = ceCampaignVersionFilter;
     }
@@ -9848,7 +9845,6 @@ async function loadSettingsWorkspace() {
       ['Stage sequences', data.stageSequences.enabled, data.stageSequences.enabled ? 'Enabled with canonical sender gates' : 'Disabled; no recovery sequence can send'],
       ['Google Calendar sync', data.calendarSync.enabled, data.calendarSync.enabled ? 'Enabled' : 'Disabled; booking lifecycle remains available manually'],
       ['Smartlead integration', data.smartlead.enabled, data.smartlead.liveMutations ? 'Enabled with live mutations' : 'Read-only or disabled'],
-      ['Roofing reply flow', data.roofingReplyFlow.enabled, data.roofingReplyFlow.enabled ? 'Enabled' : 'Disabled'],
     ];
     settingsSystemCards = cards;
     host.innerHTML = cards.map(([label,on,copy]) => `<div class="status-card"><div class="status-card-head"><b>${esc(label)}</b><span class="state-pill" data-on="${on}">${on ? 'Enabled' : 'Off'}</span></div><p>${esc(copy)}</p></div>`).join('');
@@ -10000,7 +9996,7 @@ function renderSettingsInboxRouting(payload) {
   const current = inboxes.find(inbox => inbox.sendEligible);
   host.innerHTML = `<div class="status-card-head"><div><div class="workspace-eyebrow">Sender routing</div><h3 style="margin:4px 0">Configured Gmail senders</h3></div><span class="state-pill" data-on="${Boolean(current)}">${capacity ? `${capacity.activeSenders} active · ${capacity.globalDailyLimit}/day` : (current ? 'Configured' : 'Unavailable')}</span></div>
     <p style="color:var(--text-muted);font-size:12px;margin:6px 0 14px">Cold sending membership is explicit. Marking warmup ready does not activate a sender. Activation does not send mail or change the schedule.</p>
-    <div class="form-group" style="margin-bottom:12px"><label for="settings-inbox-select">Configured sending accounts</label><select id="settings-inbox-select" disabled>${inboxes.length ? inboxes.map(inbox => `<option value="${escAttr(inbox.id)}">${esc(inbox.email)} — ${inbox.sendEligible && inbox.deliveryImplemented ? 'Delivery enabled' : inbox.status}</option>`).join('') : '<option>No configured inboxes</option>'}</select><div style="font-size:11px;color:var(--text-muted);margin-top:6px">Dental sender eligibility is configured server-side. Follow-ups remain pinned to the inbox and Gmail thread that sent Email 1. Global live cap follows active inboxes only.</div></div>
+    <div class="form-group" style="margin-bottom:12px"><label for="settings-inbox-select">Configured sending accounts</label><select id="settings-inbox-select" disabled>${inboxes.length ? inboxes.map(inbox => `<option value="${escAttr(inbox.id)}">${esc(inbox.email)} — ${inbox.sendEligible && inbox.deliveryImplemented ? 'Delivery enabled' : inbox.status}</option>`).join('') : '<option>No configured inboxes</option>'}</select><div style="font-size:11px;color:var(--text-muted);margin-top:6px">Sender eligibility is configured server-side. Follow-ups remain pinned to the inbox and Gmail thread that sent Email 1. Global live cap follows active inboxes only.</div></div>
     <div class="inbox-route-shell"><div class="inbox-route-head"><span class="inbox-route-kicker">Available accounts</span><span class="inbox-route-readonly">Operator controls</span></div></div>
     ${inboxes.length ? inboxes.map(inbox => {
       const controls = inbox.controls || {};

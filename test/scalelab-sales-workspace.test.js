@@ -202,6 +202,16 @@ test('bookings: Closed / Lost meetings are not listed, and a signed client is ne
   assert.match(client, />Send onboarding docs</, 'onboarding documents stay available');
 });
 
+test('dashboard: staffing only — no dental, roofing or trades choices are offered', () => {
+  const html = fs.readFileSync(require.resolve('../public/index.html'), 'utf8');
+  assert.doesNotMatch(html, /<option value="(?:dental|roofing)">/, 'no dental or roofing filter or campaign option');
+  assert.doesNotMatch(html, /<option>Roofer<\/option>/, 'the lead form offers staffing lead types');
+  assert.doesNotMatch(html, /Roofing reply flow|Dental sender eligibility|e\.g\. dental-ca|dental and med spa/);
+  assert.doesNotMatch(html, /data-f="trade" onclick="setFilter\('trade'\)"/, 'the Trades board tab is gone');
+  assert.match(html, /const liveVersion = registry\.active\?\.industrial_staffing \|\| '—';/);
+  assert.match(html, /\.filter\(\(\[, version\]\) => version && version\.family === 'industrial_staffing'\)/);
+});
+
 test('dashboard: the board summary cards move into the Pipeline workspace, never left on <body>', () => {
   // Left as a body child, the cards broke the workspace shell and the board
   // collapsed to a sliver, so the dashboard looked like nothing had loaded.

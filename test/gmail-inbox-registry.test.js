@@ -96,7 +96,7 @@ test('Settings shows server-side delivery state without inventing an inbox switc
   // Scoped to the client in view, so a client's rail lists only its own inboxes.
   assert.match(source, /fetch\(`\/api\/integrations\/gmail-inboxes\?client=\$\{encodeURIComponent\(clientId\)\}`\)/);
   assert.match(source, /id="settings-inbox-select" disabled/);
-  assert.match(source, /Dental sender eligibility is configured server-side/);
+  assert.match(source, /Sender eligibility is configured server-side/);
   assert.match(source, /Follow-ups remain pinned/);
   assert.doesNotMatch(source, /fetch\(`?['"]\/api\/integrations\/gmail-inboxes\/switch/);
 });
