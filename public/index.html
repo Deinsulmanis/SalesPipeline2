@@ -7860,9 +7860,13 @@ function installWorkspaceShell() {
   clientsWs.insertAdjacentHTML('beforeend', '<div id="client-ops-content" aria-live="polite"><div class="workspace-empty"><strong>Loading client operations…</strong>Reading the selected client.</div></div>');
 
   const pipelineStats = document.querySelector('body > .stats-bar');
+  const pipelineMetrics = document.querySelector('body > #pipeline-metrics');
   const pipelineFilters = document.querySelector('body > .filter-bar');
   const boardMain = document.querySelector('body > .main');
   if (pipelineStats) pipeline.appendChild(pipelineStats);
+  // The summary cards sit between the stats strip and the filters in the page;
+  // left behind as a body child they break the shell and the board collapses.
+  if (pipelineMetrics) pipeline.appendChild(pipelineMetrics);
   if (pipelineFilters) pipeline.appendChild(pipelineFilters);
   if (boardMain) pipeline.appendChild(boardMain);
 

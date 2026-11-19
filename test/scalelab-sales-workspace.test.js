@@ -173,3 +173,11 @@ test('dashboard: board summary cards, conversation inbox and meeting tracker are
   assert.match(html, /function simplifyScaleLabSettings\(\)/);
   for (const id of ['call_held', 'proposal_sent']) assert.match(html, new RegExp(`id: '${id}'`));
 });
+
+test('dashboard: the board summary cards move into the Pipeline workspace, never left on <body>', () => {
+  // Left as a body child, the cards broke the workspace shell and the board
+  // collapsed to a sliver, so the dashboard looked like nothing had loaded.
+  const html = fs.readFileSync(require.resolve('../public/index.html'), 'utf8');
+  assert.match(html, /const pipelineMetrics = document\.querySelector\('body > #pipeline-metrics'\);/);
+  assert.match(html, /if \(pipelineMetrics\) pipeline\.appendChild\(pipelineMetrics\);/);
+});
