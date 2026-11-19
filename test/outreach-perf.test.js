@@ -189,7 +189,7 @@ test('12. no endpoint on the Outreach load path performs a per-lead read', () =>
 
 test('the Outreach endpoints share one snapshot instead of re-reading', () => {
   for (const route of ['/api/coldemail', '/api/coldemail/stats', '/api/coldemail/replies']) {
-    assert.match(handler(route), /getOutreachDataset\(/, `${route} uses the shared snapshot`);
+    assert.match(handler(route), /getOutreachDataset(?:ForDisplay)?\(/, `${route} uses the shared snapshot`);
   }
   // ColdEmail is fetched in exactly one place now.
   // Three now: the definition, the protected routing simulation, and the Stage 3E

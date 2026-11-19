@@ -27,6 +27,7 @@ const {
 } = require('./integrations/send-reconciliation');
 const { parseGoogleServiceAccountJson } = require('./integrations/google-service-account');
 const { createOutreachCache } = require('./integrations/outreach-cache');
+const { calendarDay } = require('./integrations/day-key');
 const { classifyReply: classifyProviderReply, CLASSIFICATION_TO_STATUS } = require('./integrations/reply-classifier');
 const {
   buildReplyMetrics, buildStoredClassificationMap,
@@ -1366,9 +1367,25 @@ async function readColdEmailDashboardRows() {
 // hides changes made OUTSIDE this process — e.g. someone editing the sheet by
 // hand or the agent writing from its own process.
 const OUTREACH_CACHE_TTL_MS = 30000;
+// Refresh-ahead for the read-only dashboard views: a view served a snapshot
+// older than this starts the next load in the background, so a person moving
+// between pages finds the next snapshot ready (or already loading) instead of
+// waiting for a full rebuild. Nothing older than the 30-second TTL is served,
+// and writes still drop the snapshot at once.
+const OUTREACH_REFRESH_AHEAD_MS = 20000;
+const logBackgroundRefreshError = name => error =>
+  console.warn(`[outreach-cache] background ${name} refresh failed: ${error && error.message}`);
 const outreachDatasetCache = createOutreachCache({
-  load: () => loadOutreachDataset(),
+  // One line per rebuild, so the dashboard's load cost stays visible in the logs.
+  load: async () => {
+    const startedAt = Date.now();
+    const dataset = await loadOutreachDataset();
+    console.log(`[outreach-cache] snapshot built in ${Date.now() - startedAt}ms (${(dataset.leads || []).length} leads, ${(dataset.activities || []).length} activity rows)`);
+    return dataset;
+  },
   ttlMs: OUTREACH_CACHE_TTL_MS,
+  refreshAheadMs: OUTREACH_REFRESH_AHEAD_MS,
+  onBackgroundError: logBackgroundRefreshError('dataset'),
 });
 
 function currentOutreachCache() {
@@ -1381,6 +1398,8 @@ const NEXT_ACTIONS_CACHE_TTL_MS = OUTREACH_CACHE_TTL_MS;
 const nextActionsCache = createOutreachCache({
   load: () => loadNextActionsView(),
   ttlMs: NEXT_ACTIONS_CACHE_TTL_MS,
+  refreshAheadMs: OUTREACH_REFRESH_AHEAD_MS,
+  onBackgroundError: logBackgroundRefreshError('next-actions'),
 });
 
 function invalidateOutreachCache(reason) {
@@ -1718,9 +1737,14 @@ async function loadOutreachDataset() {
   });
   const rows = allRows.filter(row => !row.archived);
   const archivedRows = allRows.filter(row => row.archived);
+  // A card already represented by an archived row (same CE id or same
+  // normalized email) is not counted twice. Looked up in sets built once rather
+  // than by rescanning every archived row for every card.
+  const archivedRowIds = new Set(archivedRows.map(row => `CE-${row.id}`));
+  const archivedRowEmails = new Set(archivedRows.map(row => normalizeEmail(row.email)));
   counts.total = rows.length;
-  counts.archived = archivedRows.length + archivedBoardLeads.filter(card => !archivedRows
-    .some(row => `CE-${row.id}` === card.id || normalizeEmail(row.email) === normalizeEmail(card.email))).length;
+  counts.archived = archivedRows.length + archivedBoardLeads.filter(card => !(archivedRowIds.has(card.id)
+    || archivedRowEmails.has(normalizeEmail(card.email)))).length;
 
   // Opens remain passive telemetry.
   // These headline numbers used to be computed in the browser from the full
@@ -1838,6 +1862,14 @@ async function getOutreachDataset({ force = false } = {}) {
   return outreachDatasetCache.get({ force });
 }
 
+// For read-only dashboard views: the same 30-second snapshot as every other
+// caller, plus refresh-ahead (see OUTREACH_REFRESH_AHEAD_MS). ?refresh=1 still
+// forces a fresh read.
+async function getOutreachDatasetForDisplay(query = {}) {
+  if (query.refresh === '1') return outreachDatasetCache.get({ force: true });
+  return outreachDatasetCache.get({ refreshAhead: true });
+}
+
 const DEFAULT_CE_PAGE = 100;
 const MAX_CE_PAGE = 500;
 
@@ -1911,7 +1943,7 @@ function filterOutreachRows(rows, query) {
 // panel, which genuinely aggregates across the whole set.
 app.get('/api/coldemail', requireAuth, async (req, res) => {
   try {
-    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const dataset = await withAuth(() => getOutreachDatasetForDisplay(req.query));
     // Client scope is applied on the server. A missing query selects ScaleLab.
     const scope = outreachClientView(dataset, req.query);
     if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
@@ -2172,7 +2204,7 @@ app.get('/api/send-lock/reservations', requireAuth, async (req, res) => {
 app.get('/api/coldemail/funnel', requireAuth, async (req, res) => {
   try {
     const startedAt = process.hrtime.bigint();
-    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const dataset = await withAuth(() => getOutreachDatasetForDisplay(req.query));
     const clientScope = outreachClientView(dataset, req.query);
     if (!clientScope.ok) return res.status(400).json({ error: clientScope.reason, code: clientScope.code });
     const view = clientScope.view;
@@ -2249,7 +2281,7 @@ app.get('/api/crm/health', requireAuth, async (req, res) => {
     // The suppression list is the sender's OWN rule, bound to the live list, so
     // health cannot disagree with what the sender would actually do.
     const [dataset, suppressedEmails, calendarSyncState] = await Promise.all([
-      withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' })),
+      withAuth(() => getOutreachDatasetForDisplay(req.query)),
       loadSuppressedEmails(),
       CALENDAR_SYNC_ENABLED ? readCalendarSyncState().catch(() => null) : null,
     ]);
@@ -2285,7 +2317,7 @@ app.get('/api/crm/health', requireAuth, async (req, res) => {
     const dayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
     const metadataOf = row => { try { return JSON.parse(row.metadata || '{}'); } catch (_) { return {}; } };
     const activityToday = (dataset.activities || []).filter(row => row.occurredAt
-      && new Date(row.occurredAt).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' }) === dayKey);
+      && calendarDay(row.occurredAt, 'America/Vancouver') === dayKey);
     // Reply rows as production decided them, so a reply the model or staffing
     // overlay classified positive counts as positive here too.
     const repliesToday = applyReplyDecisionsToReplyEvidence(activityToday)
@@ -2393,8 +2425,7 @@ const DIGEST_HEADER = ['date','generatedAt','payload'];
 
 // Every date comparison in the digest uses the Vancouver calendar day, not UTC,
 // or an evening event would land in tomorrow's summary.
-const vanDay = (d = new Date()) =>
-  new Date(d).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+const vanDay = (d = new Date()) => calendarDay(d, 'America/Vancouver');
 
 async function ensureDigestSheet() {
   const s  = sheets();
@@ -2527,7 +2558,7 @@ app.get('/api/proposalOpens', requireAuth, async (_req, res) => {
   try {
     // Annotated once inside the shared snapshot, so the Opens panel and the
     // Opens/Warm cards can never disagree about what counts as a real open.
-    const dataset = await getOutreachDataset();
+    const dataset = await getOutreachDatasetForDisplay(_req.query);
     const scope = outreachClientView(dataset, _req.query);
     if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
     res.json(scope.view?.opens || dataset.annotatedOpens);
@@ -3278,7 +3309,7 @@ async function loadNextActionsView() {
 
 app.get('/api/leads/next-actions', requireAuth, async (req, res) => {
   try {
-    const { at: _cachedAt, ...view } = await nextActionsCache.get({ force: req.query.refresh === '1' });
+    const { at: _cachedAt, ...view } = await nextActionsCache.get(req.query.refresh === '1' ? { force: true } : { refreshAhead: true });
     res.json(view);
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
@@ -5680,7 +5711,7 @@ function archiveFacets(rows) {
 
 app.get('/api/archive', requireAuth, async (req, res) => {
   try {
-    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const dataset = await withAuth(() => getOutreachDatasetForDisplay(req.query));
     const scope = outreachClientView(dataset, req.query);
     if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
     let unresolved = null;
@@ -6023,7 +6054,7 @@ function scopedOutreachStats(dataset, view) {
 
 app.get('/api/coldemail/stats', requireAuth, async (req, res) => {
   try {
-    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const dataset = await withAuth(() => getOutreachDatasetForDisplay(req.query));
     const scope = outreachClientView(dataset, req.query);
     if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
     if (scope.view) return res.json(scopedOutreachStats(dataset, scope.view));
@@ -6048,7 +6079,7 @@ app.get('/api/coldemail/stats', requireAuth, async (req, res) => {
 // Alias under the newer naming. Same shared snapshot, same numbers.
 app.get('/api/coldemail/summary', requireAuth, async (req, res) => {
   try {
-    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const dataset = await withAuth(() => getOutreachDatasetForDisplay(req.query));
     const scope = outreachClientView(dataset, req.query);
     if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
     if (scope.view) return res.json(scopedOutreachStats(dataset, scope.view));
@@ -6073,7 +6104,7 @@ app.get('/api/coldemail/summary', requireAuth, async (req, res) => {
 // so opening a drill-down costs no sheet read at all.
 app.get('/api/coldemail/replies', requireAuth, async (req, res) => {
   try {
-    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const dataset = await withAuth(() => getOutreachDatasetForDisplay(req.query));
     const scope = outreachClientView(dataset, req.query);
     if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
     const view = scope.view || dataset;

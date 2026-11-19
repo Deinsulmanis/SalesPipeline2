@@ -1,5 +1,7 @@
 'use strict';
 
+const { calendarDay } = require('./day-key');
+
 /**
  * analytics-scope.js — which records an analytics number is allowed to count.
  * PURE. The one place "active" and "historical" are defined for reporting.
@@ -84,7 +86,7 @@ function safePercent(numerator, denominator) {
 
 function vancouverDay(value) {
   const at = new Date(value || '');
-  return Number.isFinite(at.getTime()) ? at.toLocaleDateString('en-CA', { timeZone: REPORTING_TIMEZONE }) : '';
+  return Number.isFinite(at.getTime()) ? calendarDay(at, REPORTING_TIMEZONE) : '';
 }
 
 const COLD_SEND_TYPES = new Set(['initial_email_sent', 'follow_up_sent']);

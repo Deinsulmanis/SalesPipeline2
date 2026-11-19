@@ -1,5 +1,7 @@
 'use strict';
 
+const { calendarDay } = require('./day-key');
+
 const { LEGACY_UNKNOWN, parseMetadata, attributionFromActivity } = require('./campaign-versions');
 const { applyReplyDecisionsToReplyEvidence } = require('./reply-decision');
 
@@ -54,7 +56,7 @@ function sendMatches(attribution, filters) {
 
 function vancouverDay(value) {
   const at = validTime(value);
-  return at === null ? '' : new Date(at).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+  return at === null ? '' : calendarDay(at, 'America/Vancouver');
 }
 
 function withinCohort(row, filters) {

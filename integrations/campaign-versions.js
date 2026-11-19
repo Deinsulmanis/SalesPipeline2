@@ -364,10 +364,37 @@ function promotionAttribution(touch = {}, existing = {}) {
   };
 }
 
+// A lead's rows are those whose sourceLeadId is the lead id or whose leadId is
+// `CE-<id>` (strict equality, as always). They used to be found by scanning the
+// whole activity log once per lead: 4,800 leads x 25,000 rows took seconds of
+// every dashboard snapshot. The outbound rows are now indexed once under both
+// keys and merged back in log order, so latestSendAttribution sees exactly the
+// rows, in exactly the order, it saw before.
 function buildCampaignVersionIndex(leads = [], activities = []) {
+  const bySourceLeadId = new Map();
+  const byLeadKey = new Map();
+  const add = (map, key, entry) => {
+    const bucket = map.get(key);
+    if (bucket) bucket.push(entry); else map.set(key, [entry]);
+  };
+  activities.forEach((row, index) => {
+    if (!OUTBOUND_TYPES.has(String(row.eventType || ''))) return;
+    const entry = { row, index };
+    add(bySourceLeadId, row.sourceLeadId, entry);
+    add(byLeadKey, row.leadId, entry);
+  });
   const byLeadId = new Map();
   for (const lead of leads) {
-    const mine = activities.filter(row => row.sourceLeadId === lead.id || row.leadId === `CE-${lead.id}`);
+    const a = bySourceLeadId.get(lead.id) || [];
+    const b = byLeadKey.get(`CE-${lead.id}`) || [];
+    const mine = [];
+    let i = 0;
+    let j = 0;
+    while (i < a.length || j < b.length) {
+      if (j >= b.length || (i < a.length && a[i].index < b[j].index)) mine.push(a[i++].row);
+      else if (i >= a.length || b[j].index < a[i].index) mine.push(b[j++].row);
+      else { mine.push(a[i].row); i++; j++; } // the same row matched both keys
+    }
     byLeadId.set(lead.id, latestSendAttribution(mine));
   }
   return byLeadId;

@@ -1,5 +1,7 @@
 'use strict';
 
+const { calendarDay } = require('../day-key');
+
 // Build every shared Outreach response from one server-side client projection.
 // A missing client query is resolved to ScaleLab by the route, never all tenants.
 const { leadsForClient, resolveSenderClient } = require('./ownership');
@@ -13,7 +15,7 @@ const key = value => String(value || '').trim().toLowerCase();
 const companyKey = value => key(value).split(/\s(?:-|•|·|–|—)\s|\|/)[0].replace(/[^a-z0-9]/g, '');
 const day = (value, timezone) => {
   const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date.toLocaleDateString('en-CA', { timeZone: timezone }) : '';
+  return Number.isFinite(date.getTime()) ? calendarDay(date, timezone) : '';
 };
 const count = (rows, field) => rows.reduce((out, row) => {
   const value = String(row[field] || '').trim();

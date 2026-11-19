@@ -1,5 +1,7 @@
 'use strict';
 
+const { calendarDay } = require('../day-key');
+
 /**
  * Operator answer: how is this client's mail failing, by inbox and by domain?
  *
@@ -50,7 +52,7 @@ function clientDeliveryHealth({ clientId, senders = [], activities = [], leads =
   const mine = (senders || []).filter(sender => resolveSenderClient(sender).clientId === client.id || historicalIds.has(sender.id));
   const ids = new Set(mine.map(sender => sender.id));
   const domainOf = id => String(mine.find(sender => sender.id === id)?.email || '').split('@')[1] || 'unknown';
-  const dayOf = at => new Date(at).toLocaleDateString('en-CA', { timeZone: client.timezone || 'America/Vancouver' });
+  const dayOf = at => calendarDay(at, client.timezone || 'America/Vancouver');
   const totals = emptyCounts();
   const inboxes = new Map(mine.map(sender => [sender.id, emptyCounts()]));
   const domains = new Map([...new Set(mine.map(sender => domainOf(sender.id)))].map(domain => [domain, emptyCounts()]));

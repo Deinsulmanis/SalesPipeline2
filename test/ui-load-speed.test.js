@@ -349,7 +349,9 @@ test('next-actions is served from a cache that every dataset invalidation also d
   const server = readSource('server.js');
   const route = server.slice(server.indexOf("app.get('/api/leads/next-actions'"));
   const routeBody = route.slice(0, route.indexOf('\n});'));
-  assert.match(routeBody, /const \{ at: _cachedAt, \.\.\.view \} = await nextActionsCache\.get\(\{ force: req\.query\.refresh === '1' \}\);/);
+  // refresh=1 still forces a fresh read; otherwise the read may start the next
+  // load early (refresh-ahead) but is never served anything older than the TTL.
+  assert.match(routeBody, /const \{ at: _cachedAt, \.\.\.view \} = await nextActionsCache\.get\(req\.query\.refresh === '1' \? \{ force: true \} : \{ refreshAhead: true \}\);/);
   assert.match(routeBody, /res\.json\(view\);/, 'the browser payload keeps its shape');
   // The cache decides freshness from `at` on the cached value; without it nothing is ever reused.
   const view = server.slice(server.indexOf('async function loadNextActionsView() {'));
