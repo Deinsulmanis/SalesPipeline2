@@ -259,46 +259,14 @@ test('server.js registers the funnel route after dashboard auth', () => {
   assert.ok(auth > 0 && route > auth);
 });
 
-// ── Frontend: the real renderer from public/index.html ──────────────────────
+// ── Frontend: the Staffing Funnel page was removed (2026-11-18) ─────────────
+// The landing page is no longer used for tracking, so the dashboard no longer
+// shows the section. The read-only /api/landing/funnel route above remains.
 const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8').replace(/\r\n/g, '\n');
-function extract(startMarker, endMarker) {
-  const start = html.indexOf(startMarker);
-  const end = html.indexOf(endMarker, start);
-  assert.ok(start > 0 && end > start, startMarker);
-  return html.slice(start, end);
-}
-const helpers = extract('function escAttr(s) {', '\nfunction toggleCeRow');
-const renderer = extract('function renderStaffingFunnel(data) {', '\nconst INBOX_FILTERS');
-const renderStaffingFunnel = new Function(`${helpers}\n${renderer}\nreturn renderStaffingFunnel;`)();
 
-test('dashboard: workspace is wired into navigation and loading', () => {
-  assert.match(html, /data-workspace="staffing" onclick="setWorkspace\('staffing'\)"/);
-  assert.match(html, /staffing:\s+\['Staffing Funnel',/);
-  assert.match(html, /make\('staffing', workspaceIntro\(/);
-  assert.match(html, /if \(name === 'staffing'\) return loadStaffingFunnel\(\);/);
-  assert.match(html, /fetch\('\/api\/landing\/funnel\?' \+ params\.toString\(\)\)/);
-});
-
-test('dashboard: renders counts, grains, labels and escaped lead links', () => {
-  const out = renderStaffingFunnel(build());
-  for (const text of ['Tracked links sent', 'Assisted bookings', 'Follow-up #2', 'Positive reply', 'Page-assisted', 'Visited before booking',
-    'per links sent', 'per sessions', 'per leads', '75.0%', '3 / 4', '66.7%', 'Highest tier reached', 'Link tracking off']) {
-    assert.ok(out.includes(text), text);
-  }
-  assert.ok(out.includes('Acme &lt;script&gt;alert(1)&lt;/script&gt; Staffing'));
-  assert.equal(out.includes('<script>alert(1)'), false, 'company names are escaped');
-  assert.ok(out.includes(`openCeDetail('L1')`) && out.includes(`openCeDetail('L9')`), 'rows open the existing lead drawer');
-  assert.equal(/NaN|undefined|\[object Object\]/.test(out), false);
-  assert.equal(HEX64.test(out) || /token/i.test(out), false);
-});
-
-test('dashboard: empty state renders cleanly with zero data', () => {
-  const out = renderStaffingFunnel(buildStaffingFunnel({ filters: parseFunnelFilters({}, NOW), env: ENV, now: NOW }));
-  assert.ok(out.includes('No tracked links were sent in this period'));
-  assert.ok(out.includes('Link tracking is off, so this stays empty until it is switched on.'));
-  assert.ok(out.includes('No bookings in this period'));
-  assert.ok(out.includes('No sessions yet'));
-  assert.equal(/NaN|undefined|\[object Object\]/.test(out), false);
-  const monitored = renderStaffingFunnel(build({ includeInternal: '1' }));
-  assert.equal(monitored.includes('Internal and debug traffic'), false, 'no monitor block without monitor data');
+test('dashboard: the Staffing Funnel section is gone from navigation and the page', () => {
+  assert.doesNotMatch(html, /data-workspace="staffing"/);
+  assert.doesNotMatch(html, /Staffing Funnel/);
+  assert.doesNotMatch(html, /staffing-funnel-content|loadStaffingFunnel|renderStaffingFunnel/);
+  assert.doesNotMatch(html, /\/api\/landing\/funnel/);
 });
