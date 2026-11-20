@@ -30,7 +30,7 @@ ICP decisions: 63 PASS, 104 HOLD (dead, blocked or thin sites; ambiguous; identi
 | GetLeads | 100 | **90** | `creditsRemaining` 9,845 → 9,755 |
 | Adyntel | 200 | **171** | `credits_check` 5,001 → 4,830: intent lane 10, per-domain 145, text extraction + 2 late PASS 16 |
 | Jev | $0.25 | **≈ $0.021** (502k input tokens) | `usage.input_tokens` |
-| Apollo | 60 | **26** | `credit_usage_stats` 1,906 → 1,880 (OpSource unmatched, no charge) |
+| Apollo | 60 | **31** (26 standard reveal + 5 waterfall for 3 advertisers) | `credit_usage_stats` 1,906 → 1,875 |
 
 Cost per review-ready contact: about 1.2 Apollo, 7.8 Adyntel, 4.1 GetLeads credits.
 
@@ -64,6 +64,18 @@ Checks applied: identity, title, email domain, MX gateway, catch-all, and dedupe
 - **Proofpoint without catch-all (3):** kept and flagged.
 - **Low-confidence Apollo matches (2: SCI, CPI):** kept with a caution, because the people are named on the companies' own team pages.
 - **Global Suppression sheet:** still not checked (not readable from this cloud session). It must be checked at import.
+
+
+## Follow-up: waterfall for employer-advertisers (2026-11-20)
+
+The owner approved waterfall enrichment for the buyers of the advertisers that had no email on file. It cost 5 credits.
+
+- **TPI Staffing (Founder/Owner):** verified (ZeroBounce valid, Icypeas ultra_sure), not catch-all. **Approved, score 50, STANDARD.** The V1 "TPI Staffing Group" (tpistaffing.net) is a different NH/VT company.
+- **AMMON Staffing (President):** verified, not catch-all. **NEEDS_EVIDENCE.** The legal name "Capital City Staffing, LLC" resembles the V1 lead "Capital City Staffing Solutions" (capcitystaffing.com, site returns 403). It is a possible affiliate collision and the owner must check it.
+- **Aventure (founder named on its site):** rejected. Apollo matched an unrelated "Aventure IT" (Sri Lanka) and returned an extrapolated email that ZeroBounce marked invalid.
+- **Power Labor and A Better Choice:** not attempted. No playbook buyer was found in a broader free Apollo search or on their sites.
+
+The master list now holds 33 rows: **32 READY_FOR_REVIEW** (3 STANDARD, 29 LOW_SIGNAL) plus 1 NEEDS_EVIDENCE (AMMON).
 
 ## Lessons
 
