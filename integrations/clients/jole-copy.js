@@ -207,8 +207,13 @@ function renderJoleEmployerStepV3({ step, firstName, company, roles = [], locati
  * Same dash rule, link rule, footer and cadence as v3.
  */
 const COPY_VERSION_V4 = 'jole_industrial_employer_v4';
-const PERSONALIZATION_MODES = Object.freeze(['exact', 'role_only', 'general_craft', 'hold']);
-const SENDABLE_MODES = Object.freeze(['exact', 'role_only', 'general_craft']);
+// v5 (2026-11-13) adds two demand-signal modes. Their verified event rides in
+// the role/location slots so the ledger pins it like a hiring claim:
+//   award      role = the contract or project as the source names it, location = its short form
+//   expansion  role = the expansion as the news names it, location = its short form
+const SIGNAL_MODES = Object.freeze(['award', 'expansion']);
+const PERSONALIZATION_MODES = Object.freeze(['exact', 'role_only', 'general_craft', ...SIGNAL_MODES, 'hold']);
+const SENDABLE_MODES = Object.freeze(['exact', 'role_only', 'general_craft', ...SIGNAL_MODES]);
 
 const V4_T2_CONTEXT = 'Just to give you some context, Jole has supported industrial employers with skilled trade labor for about 25 years and works with roughly 800 workers a year.';
 const V4_T2_OVERVIEW = `Here's a quick overview of Jole:\n${JOLE_V3_OVERVIEW_URL}`;
@@ -259,6 +264,15 @@ const fail = (code, message) => Object.assign(new Error(message), { code });
 function v4ModeProblem(email, { mode, role = '', location = '', company = '', forbiddenRoles = [], forbiddenLocations = [] } = {}) {
   const copy = `${email.subject || ''}\n${email.coreBody || ''}`;
   const has = text => Boolean(text) && copy.toLowerCase().includes(String(text).toLowerCase());
+  if (SIGNAL_MODES.includes(mode)) {
+    // Names its own verified event (full or short form) and nothing else: no
+    // opening, no role, no "City, ST" outside the event's own wording.
+    if (!has(role) && !has(location)) return `${mode} copy must name its verified event`;
+    if (/\bhiring\b|\bopenings?\b|\bposting\b/i.test(copy)) return `${mode} copy must not claim a current opening`;
+    const rest = [company, role, location].filter(Boolean).reduce((text, value) => text.split(value).join(' '), copy);
+    if (CITY_STATE.test(rest)) return `${mode} copy must not name a location outside its event`;
+    return '';
+  }
   if (mode === 'exact') return has(role) && has(location) ? '' : 'exact copy must name its verified role and site';
   // Neither lower mode may place the company anywhere ("Acme, LP" is a name, not a place).
   const withoutCompany = company ? copy.split(company).join(' ') : copy;
@@ -291,6 +305,7 @@ function renderJoleEmployerStepV4({ step, firstName, company, mailingAddress, pe
   if (mode === 'hold') throw fail('personalization_hold', `Jole personalization hold: ${personalization.reason || 'held for review'}`);
   if (!SENDABLE_MODES.includes(mode)) throw fail('personalization_mode_missing', `no Jole personalization mode for this lead (${mode || 'unclassified'})`);
   const template = V4_COPY[mode];
+  if (!template) throw fail('personalization_mode_missing', `Jole v4 has no copy for mode ${mode}`);
   const vars = { first_name: cleanVariable(firstName, 'first_name'), company: cleanVariable(companyWithoutDashSuffix(company), 'company') };
   if (mode === 'exact' || mode === 'role_only') vars.role = cleanVariable(personalization.role, 'role');
   if (mode === 'exact') {
@@ -313,49 +328,213 @@ function renderJoleEmployerStepV4({ step, firstName, company, mailingAddress, pe
   return email;
 }
 
+/**
+ * Jole BTX employer-acquisition copy, v5 (2026-10-27): the approved
+ * three-touch sequence, evidence-aware like v4 and on the same
+ * classification, mode pinning, cadence and footer. `exact` is the approved
+ * copy word for word. `role_only` drops only the location references.
+ * `general_craft` names no role, no place and no current opening.
+ *
+ * Unlike every earlier version, v5 is the copy of a lead's NEXT UNSENT touch
+ * whatever version its thread began on (resolveJoleCopyVersion): an open v2,
+ * v3 or v4 thread continues with the v5 follow-up for its current step, and
+ * keeps the claims its first email made (jole-personalization.js). No touch
+ * carries a link.
+ */
+const COPY_VERSION_V5 = 'jole_industrial_employer_v5';
+
+const V5_T1_OFFER = "Jole supplies contract skilled tradespeople to industrial sites. If that's an option, I can check whether we could cover the role and how quickly someone could realistically start.";
+const V5_T2_OFFER = "I help industrial sites with both contract crews and permanent skilled trade hires.\n\nIf useful, I can send over the trades I typically help with.";
+const V5_SIGNAL_T1_OFFER = "Jole supplies contract skilled tradespeople to industrial sites. If that's an option, I can check whether we could cover it and how quickly someone could realistically start.";
+const V5_EXPANSION_T1_OFFER = "Jole supplies contract skilled tradespeople to industrial sites. If that's an option, I can check which trades we could cover and how quickly someone could realistically start.";
+const V5_T3 = 'Hi {{first_name}},\n\nQuick question, are you the one who handles bringing in outside tradespeople, or does someone else on your team take care of that?\n\nJorge';
+const V5_COPY = Object.freeze({
+  exact: Object.freeze({
+    subject: '{{role}} in {{location}}',
+    bodies: Object.freeze([
+      `Hi {{first_name}},\n\nSaw you were hiring {{role}} in {{location}}.\n\nIs that strictly a permanent hire, or would bringing in contract labor help in the meantime?\n\n${V5_T1_OFFER}\n\nJorge`,
+      `Hi {{first_name}},\n\nWas the {{role}} opening in {{location}} for a specific project, or are you looking to grow your crew long term?\n\n${V5_T2_OFFER}\n\nJorge`,
+      V5_T3,
+    ]),
+  }),
+  role_only: Object.freeze({
+    subject: '{{role}}',
+    bodies: Object.freeze([
+      `Hi {{first_name}},\n\nSaw you were hiring {{role}}.\n\nIs that strictly a permanent hire, or would bringing in contract labor help in the meantime?\n\n${V5_T1_OFFER}\n\nJorge`,
+      `Hi {{first_name}},\n\nWas the {{role}} opening for a specific project, or are you looking to grow your crew long term?\n\n${V5_T2_OFFER}\n\nJorge`,
+      V5_T3,
+    ]),
+  }),
+  general_craft: Object.freeze({
+    subject: 'contract tradespeople',
+    bodies: Object.freeze([
+      "Hi {{first_name}},\n\nWhen a skilled trade position comes up at {{company}}, is it strictly a permanent hire, or would bringing in contract labor help in the meantime?\n\nJole supplies contract skilled tradespeople to industrial sites. If that's ever an option, I can check whether we could cover it and how quickly someone could realistically start.\n\nJorge",
+      `Hi {{first_name}},\n\nWhen {{company}} brings on skilled trades, is it usually for a specific project, or to grow your crew long term?\n\n${V5_T2_OFFER}\n\nJorge`,
+      V5_T3,
+    ]),
+  }),
+  // Demand-signal modes (approved 2026-11-13): a verified contract/project award
+  // or a verified expansion, confirmed within 30 days when Touch 1 renders.
+  award: Object.freeze({
+    subject: '{{event_short}}',
+    bodies: Object.freeze([
+      `Hi {{first_name}},\n\nSaw {{company}} picked up {{event}}.\n\nWill your own crew cover that work, or would contract tradespeople help during the peak?\n\n${V5_SIGNAL_T1_OFFER}\n\nJorge`,
+      `Hi {{first_name}},\n\nAs {{event_short}} ramps up, are you planning to add to your crew, or cover the peak with outside help?\n\n${V5_T2_OFFER}\n\nJorge`,
+      V5_T3,
+    ]),
+  }),
+  expansion: Object.freeze({
+    subject: '{{event_short}}',
+    bodies: Object.freeze([
+      `Hi {{first_name}},\n\nSaw the news on {{event}}.\n\nAs that comes online, is the plan to hire permanently, or would contract tradespeople help while you build out the crew?\n\n${V5_EXPANSION_T1_OFFER}\n\nJorge`,
+      `Hi {{first_name}},\n\nWith {{event_short}}, are you adding skilled trades for a specific phase, or growing the crew long term?\n\n${V5_T2_OFFER}\n\nJorge`,
+      V5_T3,
+    ]),
+  }),
+});
+
+const JOLE_INDUSTRIAL_EMPLOYER_COPY_V5 = Object.freeze({
+  copyVersion: COPY_VERSION_V5, sender: SENDER, modes: V5_COPY,
+  steps: JOLE_INDUSTRIAL_EMPLOYER_COPY_V4.steps,
+  requiredConfig: Object.freeze(['JOLE_COMMERCIAL_MAILING_ADDRESS']),
+  cadence: JOLE_INDUSTRIAL_EMPLOYER_COPY.cadence,
+  footer: JOLE_INDUSTRIAL_EMPLOYER_COPY.footer,
+  linkPolicy: 'no touch carries a link',
+});
+
+/**
+ * v4's claim rules, except that a touch which names neither role nor place
+ * (every Touch 3) need not repeat the claims its mode may make.
+ */
+function v5ModeProblem(email, personalization = {}, step) {
+  if (Number(step) === 3 && personalization.mode !== 'general_craft') {
+    const asNeutral = { ...personalization, mode: 'general_craft', role: '', forbiddenRoles: [personalization.role].filter(Boolean) };
+    return v4ModeProblem(email, asNeutral) ? `${personalization.mode} touch 3 must not name a role or place` : '';
+  }
+  return v4ModeProblem(email, personalization);
+}
+
+function validateJoleEmployerEmailV5(email = {}, step, personalization) {
+  const { subject, body } = email;
+  const text = `${subject || ''}\n${body || ''}`;
+  if (!String(body || '').trim() || /{{|}}/.test(text)) return 'copy is empty or contains a raw placeholder';
+  if (/scalelab|employer meetings|meeting fees?|receptionist|calendar link|dental|roofing/i.test(text)) return 'copy contains another campaign\'s offer';
+  const footerAt = String(body).indexOf(`\n\n${SENDER.name}\n${SENDER.title}\n`);
+  const copy = footerAt === -1 ? String(body) : `${String(body).slice(0, footerAt)}\n${String(body).split('\n').slice(-1)[0]}`;
+  if (DASH_PUNCTUATION.test(`${subject || ''}\n${copy}`)) return 'copy contains dash punctuation';
+  if (/https?:\/\/|www\./i.test(String(body))) return 'v5 copy carries no link';
+  if (!personalization) return '';
+  return v5ModeProblem({ ...email, coreBody: email.coreBody ?? String(body || '').split(`\n\n${SENDER.name}\n${SENDER.title}\n`)[0] }, personalization, step);
+}
+
+/** Render one v5 touch; the same contract as renderJoleEmployerStepV4. */
+function renderJoleEmployerStepV5({ step, firstName, company, mailingAddress, personalization = {} } = {}, { withFooter = true } = {}) {
+  const definition = JOLE_INDUSTRIAL_EMPLOYER_COPY_V5.steps.find(item => item.step === Number(step));
+  if (!definition) throw fail('invalid_step', `invalid Jole step ${step}`);
+  const mode = String(personalization.mode || '');
+  if (mode === 'hold') throw fail('personalization_hold', `Jole personalization hold: ${personalization.reason || 'held for review'}`);
+  if (!SENDABLE_MODES.includes(mode)) throw fail('personalization_mode_missing', `no Jole personalization mode for this lead (${mode || 'unclassified'})`);
+  const template = V5_COPY[mode];
+  const vars = { first_name: cleanVariable(firstName, 'first_name'), company: cleanVariable(companyWithoutDashSuffix(company), 'company') };
+  if (mode === 'exact' || mode === 'role_only') vars.role = cleanVariable(personalization.role, 'role');
+  if (mode === 'exact') vars.location = cleanVariable(personalization.location, 'location');
+  if (SIGNAL_MODES.includes(mode)) {
+    vars.event = cleanVariable(personalization.role, 'event');
+    vars.event_short = cleanVariable(personalization.location, 'event_short');
+  }
+  const fill = text => text.replace(/{{(\w+)}}/g, (_, key) => {
+    if (!vars[key]) throw fail('invalid_variable', `Jole copy variable ${key} is missing`);
+    return vars[key];
+  });
+  const coreBody = fill(template.bodies[definition.step - 1]);
+  const body = withFooter ? `${coreBody}\n\n${joleFooter(mailingAddress)}` : coreBody;
+  const email = {
+    step: definition.step, variant: mode, subject: definition.step === 1 ? fill(template.subject) : null,
+    coreBody, body, copyVersion: COPY_VERSION_V5, personalizationMode: mode,
+  };
+  const problem = validateJoleEmployerEmailV5(email, definition.step, { ...personalization, mode, company: vars.company });
+  if (problem) throw fail('invalid_copy', `Jole copy refused: ${problem}`);
+  return email;
+}
+
 // Every Jole copy version that has ever sent, by the id its sends record.
+// v2, v3 and v4 stay renderable for audit, reconstruction and rollback; only
+// CURRENT_COPY_VERSION is ever selected for a touch not yet attempted.
 const JOLE_COPY_VERSIONS = Object.freeze({
   [COPY_VERSION]: Object.freeze({ copy: JOLE_INDUSTRIAL_EMPLOYER_COPY, render: renderJoleEmployerStep, validate: validateJoleEmployerEmail }),
   [COPY_VERSION_V3]: Object.freeze({ copy: JOLE_INDUSTRIAL_EMPLOYER_COPY_V3, render: renderJoleEmployerStepV3, validate: validateJoleEmployerEmailV3 }),
   [COPY_VERSION_V4]: Object.freeze({ copy: JOLE_INDUSTRIAL_EMPLOYER_COPY_V4, render: renderJoleEmployerStepV4, validate: validateJoleEmployerEmailV4, evidenceAware: true }),
+  [COPY_VERSION_V5]: Object.freeze({ copy: JOLE_INDUSTRIAL_EMPLOYER_COPY_V5, render: renderJoleEmployerStepV5, validate: validateJoleEmployerEmailV5, evidenceAware: true }),
 });
-// What a never-contacted lead starts on, and what a lead whose send evidence
-// predates version stamping (every send before v3) continues on.
-const CURRENT_COPY_VERSION = COPY_VERSION_V4;
+// The copy of every touch not yet attempted, and the version a thread whose
+// first send recorded no version (every send before v3) began on.
+const CURRENT_COPY_VERSION = COPY_VERSION_V5;
 const LEGACY_COPY_VERSION = COPY_VERSION;
 
 // The same outbound evidence outreach-queue.js refuses a re-queue on: sends,
 // reservations (resolved or not) and uncertain deliveries.
 const OUTBOUND_EVIDENCE = /(?:email_sent|follow_up_sent|sequence_step_sent|booking_link_sent|human_response_sent|send_reserved|send_uncertain)/;
+const SEND_EVENTS = Object.freeze(['initial_email_sent', 'follow_up_sent']);
 const metadataOf = row => {
   if (row?.metadata && typeof row.metadata === 'object') return row.metadata;
   try { return JSON.parse(row?.metadata || '{}') || {}; } catch (_) { return {}; }
 };
 const normalizeEmail = value => String(value || '').trim().toLowerCase();
+const isLeadRow = (lead, row) => (row.sourceLeadId ? row.sourceLeadId === lead.id
+  : row.leadId ? [lead.id, `CE-${lead.id}`].includes(row.leadId) : normalizeEmail(row.email) === normalizeEmail(lead.email));
+const byTime = (a, b) => (Date.parse(a.occurredAt) || 0) - (Date.parse(b.occurredAt) || 0);
+const recordedVersion = row => {
+  const recorded = String(metadataOf(row).copyVersion || '');
+  return Object.hasOwn(JOLE_COPY_VERSIONS, recorded) ? recorded : LEGACY_COPY_VERSION;
+};
+const stepOfRow = row => (row.eventType === 'initial_email_sent' ? 1 : Number(metadataOf(row).step ?? metadataOf(row).sequenceStep));
+
+/** Outbound ledger rows for this lead that still count: a reservation whose failure was recorded does not. */
+function liveOutboundRows(lead, activities) {
+  const rows = (Array.isArray(activities) ? activities : []).filter(row => isLeadRow(lead, row));
+  const failed = new Set(rows.filter(row => /_send_failed$/.test(String(row.eventType || '')))
+    .map(row => metadataOf(row).reservationEventId).filter(Boolean));
+  return rows.filter(row => OUTBOUND_EVIDENCE.test(String(row.eventType || '')) && !failed.has(row.eventId)).sort(byTime);
+}
 
 /**
- * Which Jole copy a lead's sequence uses. A lead stays on the version its
- * FIRST outbound evidence (send, reservation or uncertain send, from the
- * activity ledger) recorded; evidence that recorded no version is the legacy
- * v2 sequence. With no ledger evidence, a lead row that shows any send (step,
- * status or last-emailed time) also stays on v2. Only a lead with no evidence
- * anywhere starts v3. Pure.
+ * The version a lead's thread began on (what its first outbound evidence
+ * recorded), or null for a lead never attempted. History only: it decides
+ * which claims a later touch must keep, never which copy that touch uses.
  */
-function resolveJoleCopyVersion(lead = {}, activities = []) {
-  const mine = (Array.isArray(activities) ? activities : []).filter(row => (row.sourceLeadId ? row.sourceLeadId === lead.id
-    : row.leadId ? [lead.id, `CE-${lead.id}`].includes(row.leadId) : normalizeEmail(row.email) === normalizeEmail(lead.email))
-    && OUTBOUND_EVIDENCE.test(String(row.eventType || '')));
-  if (mine.length) {
-    const first = mine.slice().sort((a, b) => (Date.parse(a.occurredAt) || 0) - (Date.parse(b.occurredAt) || 0))[0];
-    const recorded = String(metadataOf(first).copyVersion || '');
-    return Object.hasOwn(JOLE_COPY_VERSIONS, recorded)
-      ? { copyVersion: recorded, reason: 'first_outbound_recorded_version' }
-      : { copyVersion: LEGACY_COPY_VERSION, reason: 'outbound_evidence_predates_version' };
-  }
-  if (Number(lead.emailStep) > 0 || String(lead.emailStatus || '').trim() || String(lead.lastEmailedAt || '').trim()) {
-    return { copyVersion: LEGACY_COPY_VERSION, reason: 'lead_row_shows_prior_send' };
-  }
-  return { copyVersion: CURRENT_COPY_VERSION, reason: 'no_outbound_evidence' };
+function joleThreadCopyVersion(lead = {}, activities = []) {
+  const all = (Array.isArray(activities) ? activities : []).filter(row => isLeadRow(lead, row)
+    && OUTBOUND_EVIDENCE.test(String(row.eventType || ''))).sort(byTime);
+  if (all.length) return recordedVersion(all[0]);
+  if (Number(lead.emailStep) > 0 || String(lead.emailStatus || '').trim() || String(lead.lastEmailedAt || '').trim()) return LEGACY_COPY_VERSION;
+  return null;
+}
+
+/**
+ * Which Jole copy renders `step` of this lead (default: its next step).
+ *
+ *   1. A step the ledger shows SENT renders as the version that send recorded
+ *      (no version recorded: legacy v2), so a delivered email is never
+ *      re-described in another version.
+ *   2. A step with a live (not failed) reservation or uncertain delivery keeps
+ *      the version that attempt recorded, so the reservation, the delivery
+ *      re-check and a provider recovery all agree on the copy.
+ *   3. Every other step is a touch not yet attempted: CURRENT_COPY_VERSION
+ *      (v5), whatever version the thread began on.
+ *
+ * threadCopyVersion is history only. Pure.
+ */
+function resolveJoleCopyVersion(lead = {}, activities = [], { step } = {}) {
+  const target = Number(step) || (Number(lead.emailStep) || 0) + 1;
+  const threadCopyVersion = joleThreadCopyVersion(lead, activities);
+  const forStep = liveOutboundRows(lead, activities).filter(row => stepOfRow(row) === target);
+  const sent = forStep.find(row => SEND_EVENTS.includes(row.eventType));
+  if (sent) return { copyVersion: recordedVersion(sent), threadCopyVersion, step: target, reason: 'step_sent_recorded_version' };
+  if (forStep.length) return { copyVersion: recordedVersion(forStep[0]), threadCopyVersion, step: target, reason: 'step_attempt_recorded_version' };
+  return {
+    copyVersion: CURRENT_COPY_VERSION, threadCopyVersion, step: target,
+    reason: threadCopyVersion ? 'v5_rollout_next_unsent_step' : 'no_outbound_evidence',
+  };
 }
 
 module.exports = {
@@ -364,6 +543,8 @@ module.exports = {
   JOLE_INDUSTRIAL_EMPLOYER_COPY_V3, COPY_VERSION_V3, JOLE_V3_OVERVIEW_URL,
   renderJoleEmployerStepV3, validateJoleEmployerEmailV3, companyWithoutDashSuffix,
   JOLE_COPY_VERSIONS, CURRENT_COPY_VERSION, LEGACY_COPY_VERSION, resolveJoleCopyVersion,
-  JOLE_INDUSTRIAL_EMPLOYER_COPY_V4, COPY_VERSION_V4, PERSONALIZATION_MODES, SENDABLE_MODES,
+  JOLE_INDUSTRIAL_EMPLOYER_COPY_V4, COPY_VERSION_V4, PERSONALIZATION_MODES, SENDABLE_MODES, SIGNAL_MODES,
   renderJoleEmployerStepV4, validateJoleEmployerEmailV4, v4ModeProblem,
+  JOLE_INDUSTRIAL_EMPLOYER_COPY_V5, COPY_VERSION_V5, renderJoleEmployerStepV5, validateJoleEmployerEmailV5, v5ModeProblem,
+  joleThreadCopyVersion,
 };

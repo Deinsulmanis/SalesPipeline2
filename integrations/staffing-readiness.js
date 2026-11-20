@@ -13,6 +13,46 @@ const { deriveSequenceState } = require('./stage-sequences');
 const { describeSequence, NOMINAL_TOUCH_DAYS, FOLLOW_UP_STEP_COUNT } = require('./sequence-timing');
 const { isValidCommercialMailingAddress, looksLikeTestFixtureMailingAddress } = require('./staffing-compliance');
 
+// ── Per-report lookup indexes ───────────────────────────────────────────────
+// The report visits every staffing lead. Filtering the whole activity log, the
+// whole corpus and the board once per lead made a single report tens of
+// millions of comparisons (6-17 s in production). These indexes are built once
+// per report and hand each lead a SUPERSET of the rows any per-lead filter
+// below can select, in their original order. Every filter still runs, unchanged,
+// on that subset, so each lead sees exactly the rows it saw before.
+
+const normalizeKey = value => String(value || '').trim().toLowerCase();
+
+/** key → ascending row positions. Keys are used verbatim (blank included). */
+function positionsBy(rows, keyOf) {
+  const index = new Map();
+  rows.forEach((row, position) => {
+    const key = keyOf(row);
+    const list = index.get(key);
+    if (list) list.push(position); else index.set(key, [position]);
+  });
+  return index;
+}
+
+/** The rows at the union of several position lists, deduplicated, in original order. */
+function rowsAt(rows, ...lists) {
+  const positions = new Set();
+  for (const list of lists) if (list) for (const position of list) positions.add(position);
+  return [...positions].sort((a, b) => a - b).map(position => rows[position]);
+}
+
+function readinessIndexes({ leads, activities, boardLeads }) {
+  return {
+    leadsById: positionsBy(leads, lead => lead.id),
+    leadsByEmail: positionsBy(leads, lead => normalizeKey(lead.email)),
+    activitiesBySourceLeadId: positionsBy(activities, row => row.sourceLeadId),
+    activitiesByLeadId: positionsBy(activities, row => row.leadId),
+    activitiesByEmail: positionsBy(activities, row => normalizeKey(row.email)),
+    boardById: positionsBy(boardLeads, row => row.id),
+    boardByEmail: positionsBy(boardLeads, row => normalizeKey(row.email)),
+  };
+}
+
 function hasManualHold(lead = {}) {
   return String(lead.notes || '').includes('[MANUAL HOLD]');
 }
@@ -44,11 +84,14 @@ function staffingReadinessReport({
     campaignVersions: {}, providers: { gmail: 0, smartlead: 0, ambiguous: 0, none: 0 },
   };
   const rows = [];
+  const index = readinessIndexes({ leads, activities, boardLeads });
 
   for (const lead of staffingLeads) {
     counts.totalStaffing += 1;
     const resolved = resolveLeadFamily(lead);
-    const mine = activities.filter(row => row.sourceLeadId === lead.id || row.leadId === `CE-${lead.id}`);
+    const ceId = `CE-${lead.id}`;
+    const mine = rowsAt(activities, index.activitiesBySourceLeadId.get(lead.id), index.activitiesByLeadId.get(ceId))
+      .filter(row => row.sourceLeadId === lead.id || row.leadId === ceId);
     const ownership = authoritativeProvider({ lead, mappings, campaignProviders, activities: mine });
     counts.providers[ownership.provider] = (counts.providers[ownership.provider] || 0) + 1;
     if (!ownership.ok) counts.ambiguousProvider += 1;
@@ -69,7 +112,18 @@ function staffingReadinessReport({
     }
 
     const route = routedLeadReady(lead, env);
-    const preflight = queueEligibility(lead, { leads, activities, boardLeads, suppressedEmails });
+    // queueEligibility matches leads by id and by email, activities by
+    // sourceLeadId, by leadId (bare or CE-) or by email, and board cards by id
+    // (bare or CE-) or by email. It receives every row that could match any of
+    // those and applies its own rules to them.
+    const email = normalizeKey(lead.email);
+    const preflight = queueEligibility(lead, {
+      leads: rowsAt(leads, index.leadsById.get(lead.id), index.leadsByEmail.get(email)),
+      activities: rowsAt(activities, index.activitiesBySourceLeadId.get(lead.id),
+        index.activitiesByLeadId.get(lead.id), index.activitiesByLeadId.get(ceId), index.activitiesByEmail.get(email)),
+      boardLeads: rowsAt(boardLeads, index.boardById.get(lead.id), index.boardById.get(ceId), index.boardByEmail.get(email)),
+      suppressedEmails,
+    });
     const automation = deriveAutomationOwnership({ ...lead, stage: lead.stage || 'Queued' }, {
       activities: mine, coldCadenceDue: true, sendingEnabled: true,
       suppressionReason: item => sendSuppressionReason(item, { suppressedEmails }),

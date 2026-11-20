@@ -208,7 +208,7 @@ test('17. no N+1 read returned with the fix', () => {
   for (const route of ['/api/coldemail', '/api/coldemail/stats', '/api/coldemail/replies', '/api/proposalOpens']) {
     const body = handler(route);
     assert.ok(!/for\s*\([^)]*\)\s*\{[^}]*await[^}]*spreadsheets/.test(body), `${route} has no per-lead read`);
-    assert.match(body, /getOutreachDataset\(/, `${route} uses the shared snapshot`);
+    assert.match(body, /getOutreachDataset(?:ForDisplay)?\(/, `${route} uses the shared snapshot`);
   }
 });
 

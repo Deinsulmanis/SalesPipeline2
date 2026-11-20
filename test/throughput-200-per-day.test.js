@@ -80,7 +80,7 @@ test('rollout steps: each sender change is visible alone while the 15 ceiling st
 
 test('final configuration: 21 per window, 200 per day, daily caps sum to exactly 200', () => {
   const { senders, capacity, buckets: open } = windowFor(FINAL);
-  assert.deepEqual(senders.filter(s => (s.clientId || 'scalelab') === 'scalelab').map(s => [s.id, s.sendEligible, s.dailyLimit, s.perRunLimit]), [
+  assert.deepEqual(senders.filter(s => (s.clientId || 'scalelab') === 'scalelab' && !s.id.startsWith('outreachplateau_')).map(s => [s.id, s.sendEligible, s.dailyLimit, s.perRunLimit]), [
     ['primary', true, 60, 6], ['tryscalelabai', true, 60, 6], ['scalelabaiteam', true, 40, 5],
     ['deniels', true, 20, 2], ['deniels_tryscalelabai', true, 20, 2],
   ]);
@@ -88,7 +88,8 @@ test('final configuration: 21 per window, 200 per day, daily caps sum to exactly
   assert.equal(capacity.perRunSum, 21);
   assert.equal(capacity.globalPerRunLimit, 21);
   assert.equal(capacity.dailySum, 200);
-  assert.equal(capacity.globalDailyLimit, 200);
+  // Since 2026-10-23 the ScaleLab aggregate is held to 170/day.
+  assert.equal(capacity.globalDailyLimit, 170);
   // Ten windows × 21 = 210 slots; the 200 ceiling is the hard stop, and every
   // inbox can reach its own day inside ten windows.
   const slots = (server.match(/cron\.schedule\('0,30 7-11 \* \* 1-5'/) ? 10 : 0);

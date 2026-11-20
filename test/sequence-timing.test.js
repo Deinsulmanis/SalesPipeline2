@@ -236,7 +236,7 @@ test('Touch 3 requires a delivered Touch 2: a step-1 lead is only ever offered s
   // emailStep only advances after a provider-confirmed send (markSent), which
   // is also where step 3 marks the lead done so nothing follows it.
   const markSent = agent.slice(agent.indexOf('async function markSent('), agent.indexOf('async function markSent(') + 600);
-  assert.match(markSent, /const isLastStep = step > FOLLOW_UP_SEQUENCE\.length;/);
+  assert.match(markSent, /const isLastStep = step > FOLLOW_UP_STEP_COUNT;/);
   assert.match(markSent, /const status = isLastStep \? 'done' : 'emailed';/);
 });
 

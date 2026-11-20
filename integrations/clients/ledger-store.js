@@ -30,6 +30,8 @@ const ENABLE_VAR = 'CLIENT_LEDGER_ENABLED';
 const TABLES = Object.freeze({
   opportunities: 'client_opportunities', meetings: 'client_meetings', clarifications: 'client_clarifications',
   suppressions: 'client_suppressions', events: 'client_ledger_events',
+  // supabase/migrations/20261116000000_client_billing.sql
+  invoices: 'client_invoices',
 });
 
 class LedgerStoreError extends Error {
@@ -117,6 +119,10 @@ function createSupabaseLedgerStore({ env = process.env, fetchImpl = fetch, timeo
       `${opportunityId ? `&opportunity_id=${eq(opportunityId)}` : ''}${status ? `&status=${eq(status)}` : ''}&order=created_at.desc&limit=1000`),
     appendEvent: row => request('POST', TABLES.events, 'on_conflict=event_id', [row], 'resolution=ignore-duplicates,return=minimal'),
     listEvents: (clientId, { limit = 200 } = {}) => select(TABLES.events, clientId, `&order=occurred_at.desc&limit=${Math.min(Number(limit) || 200, 1000)}`),
+    getInvoice: (clientId, id) => getOne(TABLES.invoices, 'invoice_id', clientId, id),
+    insertInvoice: row => insert(TABLES.invoices, row),
+    updateInvoice: row => patch(TABLES.invoices, 'invoice_id', row),
+    listInvoices: clientId => select(TABLES.invoices, clientId, '&order=created_at.desc&limit=500'),
 
     /**
      * Client suppression entries that could match this lead. Never throws:
@@ -148,7 +154,7 @@ function createSupabaseLedgerStore({ env = process.env, fetchImpl = fetch, timeo
 function createMemoryLedgerStore({ available = true } = {}) {
   const tables = {
     opportunities: new Map(), meetings: new Map(), clarifications: new Map(),
-    suppressions: new Map(), events: new Map(),
+    suppressions: new Map(), events: new Map(), invoices: new Map(),
   };
   const clone = row => (row ? JSON.parse(JSON.stringify(row)) : null);
   const scoped = (map, clientId) => [...map.values()].filter(row => row.client_id === requireClientId(clientId)).map(clone);
@@ -208,6 +214,24 @@ function createMemoryLedgerStore({ available = true } = {}) {
     },
     async appendEvent(row) { guardUnavailable(); requireClientId(row.client_id); if (!tables.events.has(row.event_id)) tables.events.set(row.event_id, clone(row)); },
     async listEvents(clientId) { guardUnavailable(); return scoped(tables.events, clientId); },
+    async getInvoice(clientId, id) { guardUnavailable(); return getScoped(tables.invoices, clientId, id); },
+    async insertInvoice(row) {
+      guardUnavailable(); requireClientId(row.client_id);
+      if (tables.invoices.has(row.invoice_id)) throw new LedgerStoreError('ledger_conflict', 'invoice already exists');
+      // client_invoices_one_live_period
+      if (row.kind === 'period' && [...tables.invoices.values()].some(other => other.client_id === row.client_id
+        && other.kind === 'period' && other.period_key === row.period_key && !['deleted', 'void'].includes(other.status))) {
+        throw new LedgerStoreError('ledger_conflict', 'a live invoice already exists for this period');
+      }
+      tables.invoices.set(row.invoice_id, clone(row));
+    },
+    async updateInvoice(row) {
+      guardUnavailable();
+      const existing = tables.invoices.get(row.invoice_id);
+      if (!existing || existing.client_id !== row.client_id) throw new LedgerStoreError('client_isolation_violation', 'invoice belongs to another client');
+      tables.invoices.set(row.invoice_id, clone(row));
+    },
+    async listInvoices(clientId) { guardUnavailable(); return scoped(tables.invoices, clientId); },
     async clientSuppressionsFor(clientId, lead) {
       if (!available) return { available: false, reason: 'client ledger is disabled' };
       const keys = suppressionKeys(lead);

@@ -169,7 +169,7 @@ function createMemorySendReservationStore({ now = () => new Date(), leaseSeconds
         return { ok: true, reservation: write(row) };
       });
     },
-    async listUnresolved() {
+    async listUnresolved({ includeActive = false } = {}) {
       return exclusive(async () => {
         const at = current();
         const all = [...rows.values()].map(row => rowView({ ...row }));
@@ -177,8 +177,8 @@ function createMemorySendReservationStore({ now = () => new Date(), leaseSeconds
         return {
           sentUnconfirmed: all.filter(row => row.status === STATUS.SENT_UNCONFIRMED),
           reconciliationRequired: all.filter(row => row.status === STATUS.RECONCILIATION_REQUIRED),
-          staleReserved: all.filter(row => row.status === STATUS.RESERVED && expired(row)),
-          expiredSending: all.filter(row => row.status === STATUS.SENDING && expired(row)),
+          staleReserved: all.filter(row => row.status === STATUS.RESERVED && (includeActive || expired(row))),
+          expiredSending: all.filter(row => row.status === STATUS.SENDING && (includeActive || expired(row))),
         };
       });
     },

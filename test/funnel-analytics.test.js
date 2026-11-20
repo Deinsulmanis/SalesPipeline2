@@ -217,9 +217,10 @@ test('the funnel module contains no write or send path whatsoever', () => {
   // module the send path uses rather than keeping a second copy that could
   // drift. Both dependencies are pure rule modules with no IO of their own, and
   // every IO name above still fails this test. reply-decision supplies the
-  // final production state of a decided reply; it too is pure.
+  // final production state of a decided reply; it too is pure. day-key only
+  // formats calendar days with a cached Intl formatter.
   const requires = [...src.matchAll(/require\('([^']+)'\)/g)].map(match => match[1]).sort();
-  assert.deepEqual(requires, ['./campaign-versions', './reply-decision'],
+  assert.deepEqual(requires, ['./campaign-versions', './day-key', './reply-decision'],
     'funnel analytics may depend only on pure local rule modules');
 });
 

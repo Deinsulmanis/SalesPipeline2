@@ -483,7 +483,8 @@ test('capacity at launch: ScaleLab 170/22 + Jole 120/12 = physical 290/34, each 
 // ── Requirement 7: ScaleLab unchanged ────────────────────────────────────────
 
 test('ScaleLab roster is byte-identical with Jole prepared or launched', () => {
-  const view = env => configuredSenders(env).filter(isScaleLab);
+  // (the outreachplateau.co inboxes added 2026-11-19 are covered by outreachplateau-inboxes.test.js)
+  const view = env => configuredSenders(env).filter(s => isScaleLab(s) && !s.id.startsWith('outreachplateau_'));
   const before = JSON.stringify(view(SCALELAB_ENV));
   assert.equal(JSON.stringify(view(HELD_ENV)), before);
   assert.equal(JSON.stringify(view(LAUNCH_ENV)), before);
@@ -570,6 +571,8 @@ async function schedulerRun(leads, env, { stopAtProvider = false } = {}) {
       const sandbox = {
         QUEUE_STAGE: 'Queued', routedLeadReady, tenantOf, DEFAULT_CLIENT_ID, SUPPRESSED_EMAILS: new Set(),
         isClientTemplateId: clientEmail.isClientTemplateId, clientSelectionHold: clientEmail.clientSelectionHold,
+        // No ledger meetings loaded for this pass: the meeting hold is covered in client-meeting-hold.test.js.
+        clientMeetingHoldReason: require('../integrations/clients/meeting-hold').clientMeetingHoldReason, CLIENT_MEETING_HOLDS: null,
         normEmail: e => (e || '').toLowerCase().trim(), classifyLeadEmail: classify,
         console: { log: capture, warn: capture, error: capture },
       };

@@ -111,9 +111,10 @@ test('registry documents an explicit clean activation boundary', () => {
   assert.equal(CAMPAIGN_VERSIONS.dental_v3_pay_per_booking.retiredAt, '2026-09-30');
 });
 test('active prospect-facing dental sources no longer lead with AI receptionist terminology', () => {
-  const files = ['guarantee.js', 'product-facts.js', 'outreach-agent.js',
-    path.join('integrations', 'dental-email.js'), path.join('integrations', 'dental-personalization.js')];
+  const files = ['guarantee.js', 'product-facts.js', 'outreach-agent.js'];
   const copy = files.map(file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8')).join('\n');
   assert.doesNotMatch(copy, /\bAI receptionist\b/i);
-  assert.match(copy, /24\/7 answering and booking software for dental practices that handles missed calls and helps turn them into booked patients\./);
+  // The dental cold copy itself was removed with the offer (2026-11-19).
+  assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8'),
+    /24\/7 answering and booking software for dental practices/);
 });

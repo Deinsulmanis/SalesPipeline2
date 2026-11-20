@@ -423,15 +423,22 @@ function mirrorCycleSnapshotInBackground(leads, options = {}) {
 
 // ── reads (parity only until a cutover is approved) ─────────────────────────
 
-async function selectLeads(query, { env = process.env, timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
+async function selectLeads(query, { env = process.env, timeoutMs = REQUEST_TIMEOUT_MS, withTotal = false } = {}) {
   const config = mirrorConfig(env);
   if (!config.enabled) return { ok: false, leads: [], rows: [], reason: config.reason };
   try {
     const response = await request(`${config.url}/rest/v1/${TABLE}?${query}`,
-      { headers: headersFor(config) }, timeoutMs);
+      { headers: headersFor(config, withTotal ? { Prefer: 'count=exact' } : {}) }, timeoutMs);
     if (!response.ok) return { ok: false, leads: [], rows: [], reason: `HTTP ${response.status}` };
     const rows = await response.json();
-    return { ok: true, leads: rows.map(fromOutreachLeadRow), rows, reason: 'ok' };
+    const result = { ok: true, leads: rows.map(fromOutreachLeadRow), rows, reason: 'ok' };
+    // "0-999/4769": the table's row count when this page was read. Absent or
+    // "*" leaves total null, and the caller pages one request at a time.
+    if (withTotal) {
+      const total = Number(String(response.headers?.get?.('content-range') || '').split('/')[1]);
+      result.total = Number.isInteger(total) && total >= 0 ? total : null;
+    }
+    return result;
   } catch (error) {
     const reason = error && error.name === 'AbortError' ? 'timeout' : (error && error.message) || 'unreachable';
     return { ok: false, leads: [], rows: [], reason };
@@ -473,6 +480,16 @@ async function getOutreachLeadByEmail(email, options = {}) {
   return { ...result, lead: result.ok ? (result.leads[0] || null) : null };
 }
 
+// This is a canonical, opt-in routing read. An email shared by multiple CRM
+// rows is ambiguous, even when one row has the requested client ID.
+async function readCanonicalOutreachRecipient(email, { env = process.env } = {}) {
+  if (outreachStateMode(env) !== 'primary' || outreachWriteAuthority(env) !== 'supabase') {
+    return { ok: false, lead: null, reason: 'canonical outreach authority required' };
+  }
+  if (!String(email || '').trim()) return { ok: false, lead: null, reason: 'recipient missing' };
+  return getOutreachLeadByEmail(email, { env });
+}
+
 /** One request for many leads, so a directory page is never N queries. */
 async function batchGetOutreachLeads(ids, options = {}) {
   const list = [...new Set((ids || []).map(id => String(id || '').trim()).filter(Boolean))];
@@ -491,6 +508,10 @@ async function listOutreachLeads({ limit = 1000, offset = 0, ...options } = {}) 
   return selectLeads(`select=*&order=lead_id.asc&limit=${size}&offset=${from}`,
     { ...options, timeoutMs: 20000 });
 }
+
+// Pages of the corpus read at once after the first. Bounded so a larger
+// corpus becomes more waves, never a burst of requests against Supabase.
+const CORPUS_PAGE_CONCURRENCY = 4;
 
 async function countOutreachLeads({ env = process.env } = {}) {
   const config = mirrorConfig(env);
@@ -531,9 +552,36 @@ async function readOutreachCorpus({ env = process.env, pageSize = 1000 } = {}) {
   return result;
 }
 
+// Same pages, same requests, same bytes as reading them one after another:
+// the first page also returns the table's row count, so the pages that count
+// implies are read CORPUS_PAGE_CONCURRENCY at a time and kept in offset order.
+// Five sequential round trips were most of a cold dashboard load. A page that
+// fails fails the whole read, exactly as before. If rows were added while the
+// pages were in flight (the last page came back full), paging continues one
+// request at a time from there, as it always did.
 async function readOutreachCorpusPages({ env, pageSize }) {
-  const leads = [];
-  for (let offset = 0; ; offset += pageSize) {
+  const first = await listOutreachLeads({ limit: pageSize, offset: 0, env, withTotal: true });
+  if (!first.ok) return { ok: false, leads: [], reason: first.reason };
+  const leads = [...first.leads];
+  if (first.leads.length < pageSize) return { ok: true, leads, reason: 'ok' };
+
+  let offset = pageSize;
+  let lastFull = true;
+  if (Number.isInteger(first.total) && first.total > pageSize) {
+    const offsets = [];
+    for (let at = pageSize; at < first.total; at += pageSize) offsets.push(at);
+    for (let i = 0; i < offsets.length && lastFull; i += CORPUS_PAGE_CONCURRENCY) {
+      const wave = offsets.slice(i, i + CORPUS_PAGE_CONCURRENCY);
+      const pages = await Promise.all(wave.map(at => listOutreachLeads({ limit: pageSize, offset: at, env })));
+      for (const page of pages) {
+        if (!page.ok) return { ok: false, leads: [], reason: page.reason };
+        for (const lead of page.leads) leads.push(lead);
+        if (page.leads.length < pageSize) { lastFull = false; break; }
+      }
+      offset = wave[wave.length - 1] + pageSize;
+    }
+  }
+  for (; lastFull; offset += pageSize) {
     const page = await listOutreachLeads({ limit: pageSize, offset, env });
     if (!page.ok) return { ok: false, leads: [], reason: page.reason };
     for (const lead of page.leads) leads.push(lead);
@@ -1452,7 +1500,7 @@ module.exports = {
   mirrorOutreachLeads, mirrorOutreachLeadFields,
   mirrorOutreachLeadsInBackground, mirrorOutreachLeadFieldsInBackground,
   snapshotMirrorAllowed, mirrorCycleSnapshotInBackground,
-  getOutreachLeadById, getOutreachLeadByEmail, batchGetOutreachLeads,
+  getOutreachLeadById, getOutreachLeadByEmail, readCanonicalOutreachRecipient, batchGetOutreachLeads,
   listOutreachLeads, countOutreachLeads, compareOutreachLead,
   applyLeadChange, applyLeadChanges, columnLetterFor,
   applyCanonicalChange, conflictRefusal, readCanonicalLead, MAX_CAS_ATTEMPTS,

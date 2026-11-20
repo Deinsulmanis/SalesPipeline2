@@ -39,7 +39,7 @@ const {
 const { latestResponseAt, isResponseEvidence, isProspectFacingResponse } = require('./prospect-response');
 const { displayStageFor } = require('./cold-call-pipeline');
 const { familyForLead, CAMPAIGN_FAMILY, CAMPAIGN_VERSIONS } = require('./campaign-versions');
-const { isStaffingCampaign, BOLD_PHRASES, STAFFING_CAMPAIGN_V2 } = require('./staffing-campaign');
+const { isStaffingCampaign, BOLD_PHRASES, STAFFING_CAMPAIGN_V2, STAFFING_CAMPAIGN_2 } = require('./staffing-campaign');
 const {
   STAFFING_NOTE, STAFFING_MARKET_MARKERS, STAFFING_SEND_INFO_MARKERS, CANDIDATE_SIDE_MARKERS,
   NOT_QUALIFIED_MARKERS, EMPLOYER_SIDE_MARKERS, isPricingQuestion, staffingHumanTouchBlock,
@@ -109,8 +109,9 @@ const PRIORITY_QUESTION_ANCHOR = String(BOLD_PHRASES[2] || '').split('{{')[0].tr
 // event, never from text: a step-3 send recorded under V2's campaign version
 // and V2's follow-up copy version. Reworded copy gets a new copy version
 // (campaign-versions.js), so it cannot be mistaken for this one.
+// Campaign 2 sends the same V2 Touch 3 under its own campaign version.
 const V2_PRIORITY_ASK = Object.freeze({
-  campaignVersion: STAFFING_CAMPAIGN_V2.id,
+  campaignVersions: Object.freeze([STAFFING_CAMPAIGN_V2.id, STAFFING_CAMPAIGN_2.id]),
   copyVersion: CAMPAIGN_VERSIONS[STAFFING_CAMPAIGN_V2.id].followUpCopyVersion,
 });
 
@@ -652,7 +653,7 @@ function buildQualification({ lead, turns, notes, family, rows = [] }) {
   const rowsById = new Map(rows.map(row => [row.eventId, row]));
   const isV2PriorityAsk = turn => turn.sourceEventIds.some(id => {
     const meta = (rowsById.get(id) || {}).metadata || {};
-    return Number(meta.step) === 3 && meta.campaignVersion === V2_PRIORITY_ASK.campaignVersion
+    return Number(meta.step) === 3 && V2_PRIORITY_ASK.campaignVersions.includes(meta.campaignVersion)
       && meta.copyVersion === V2_PRIORITY_ASK.copyVersion;
   });
   const priorityAsks = automated.filter(turn => turn.actionType === 'cold_step_3'

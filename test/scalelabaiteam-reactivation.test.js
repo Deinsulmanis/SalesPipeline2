@@ -185,17 +185,18 @@ test('7. Jole effective capacity remains 60/day (12/window)', () => {
 test('8. aggregate capacity grows by exactly 15/day (and 5/window) with no double count', () => {
   const before = capacity(BEFORE_ENV);
   const after = capacity(AFTER_ENV);
-  assert.deepEqual(after.clientLimits.scalelab, { daily: 185, perRun: 27 });
-  assert.equal(after.globalDailyLimit, before.globalDailyLimit + 15);
-  assert.equal(after.globalDailyLimit, 245);
+  // Since 2026-10-23 the ScaleLab aggregate is held to 170/day, whatever the
+  // inbox caps and ceiling add up to; the window capacity still grows by 5.
+  assert.deepEqual(after.clientLimits.scalelab, { daily: 170, perRun: 27 });
+  assert.equal(after.globalDailyLimit, 170 + after.clientLimits.jole.daily);
   assert.equal(after.globalPerRunLimit, before.globalPerRunLimit + 5);
   assert.equal(after.globalPerRunLimit, 39);
-  // The ceiling equals the eligible sum exactly: nothing spare, nothing blocked.
+  // The inbox caps still sum to 185; nothing about any one inbox changes.
   assert.equal(after.dailySum - after.clientLimits.jole.daily, 185);
-  // Without the ceiling raise the new inbox would be blocked by the old 170.
   assert.equal(capacity({ ...AFTER_ENV, GMAIL_GLOBAL_DAILY_CEILING: '170' }).clientLimits.scalelab.daily, 170);
-  // Without the 15/day cap the raised ceiling still bounds ScaleLab at 185, never 200.
-  assert.equal(capacity({ ...AFTER_ENV, COLD_INBOX_DAILY_CAPS: LIVE_CAPS }).clientLimits.scalelab.daily, 185);
+  // A lower ceiling still wins; a higher one never lifts ScaleLab past 170.
+  assert.equal(capacity({ ...AFTER_ENV, GMAIL_GLOBAL_DAILY_CEILING: '120' }).clientLimits.scalelab.daily, 120);
+  assert.equal(capacity({ ...AFTER_ENV, COLD_INBOX_DAILY_CAPS: LIVE_CAPS }).clientLimits.scalelab.daily, 170);
 });
 
 test('9. suppression and recipient-provider gates still apply to scalelabaiteam', async () => {

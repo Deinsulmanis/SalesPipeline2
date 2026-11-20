@@ -113,13 +113,13 @@ test('every send loop consults suppressionReason, so one tag covers them all', (
 // ── 2. CRM SIDE: which stages apply the hold ────────────────────────────────
 
 test('every human-owned stage applies the hold; active stages do not', () => {
-  for (const stage of ['hot', 'call_booked', 'closed_won', 'closed_lost']) {
+  for (const stage of ['hot', 'call_booked', 'call_held', 'proposal_sent', 'closed_won', 'closed_lost']) {
     assert.equal(stageRequiresHold(stage), true, stage + ' must apply a hold');
   }
   assert.equal(stageRequiresHold('follow_up'), false);
   assert.equal(stageRequiresHold(''), false);
   // the list is derived from the canonical stages, not hardcoded twice
-  assert.deepEqual([...HUMAN_OWNED_STAGES].sort(), ['call_booked', 'closed_lost', 'closed_won', 'hot']);
+  assert.deepEqual([...HUMAN_OWNED_STAGES].sort(), ['call_booked', 'call_held', 'closed_lost', 'closed_won', 'hot', 'proposal_sent']);
 });
 
 test('legacy raw stage values map through displayStageFor before the hold decision', () => {

@@ -1,5 +1,7 @@
 'use strict';
 
+const { calendarDay } = require('./day-key');
+
 /**
  * Canonical send / reply / bounce / digest counting.
  *
@@ -37,7 +39,7 @@ const DIGEST_REPLY_LABELS = Object.freeze({
 function vancouverDay(value) {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return '';
-  return date.toLocaleDateString('en-CA', { timeZone: REPORTING_TIMEZONE });
+  return calendarDay(date, REPORTING_TIMEZONE);
 }
 
 function eventKey(row) {
@@ -399,7 +401,7 @@ function recentReportingDays(now = Date.now(), { completeBusinessDays = 3 } = {}
   const days = [];
   const seen = new Set();
   const push = date => {
-    const day = date.toLocaleDateString('en-CA', { timeZone: REPORTING_TIMEZONE });
+    const day = calendarDay(date, REPORTING_TIMEZONE);
     if (seen.has(day)) return;
     seen.add(day);
     const weekday = new Date(`${day}T12:00:00-07:00`).toLocaleDateString('en-US', { weekday: 'short', timeZone: REPORTING_TIMEZONE });
@@ -412,7 +414,7 @@ function recentReportingDays(now = Date.now(), { completeBusinessDays = 3 } = {}
   let complete = 0;
   while (complete < completeBusinessDays) {
     const weekday = cursor.toLocaleDateString('en-US', { weekday: 'short', timeZone: REPORTING_TIMEZONE });
-    const day = cursor.toLocaleDateString('en-CA', { timeZone: REPORTING_TIMEZONE });
+    const day = calendarDay(cursor, REPORTING_TIMEZONE);
     if (weekday !== 'Sat' && weekday !== 'Sun') {
       if (!seen.has(day)) complete++;
       push(cursor);

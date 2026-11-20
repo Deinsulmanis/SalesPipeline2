@@ -2,6 +2,7 @@
 
 const { MODEL, ACTION_IDS, HANDOFF_CODES, SLOT_IDS, OBJECTION_TYPES,
   TEMPLATE_IDS, REASON_CODES, TOOL_SCHEMA } = require('./agent-v2-contract');
+const { loadClassificationSkill } = require('./scalelab-response-classification');
 
 const SYSTEM_PROMPT = `You are Agent v2, a shadow-only analyst for an industrial/skilled-trades staffing offer.
 The Phase 1 conversation state in the user payload is the only conversation memory. Its recorded
@@ -69,8 +70,11 @@ async function runAgentV2Model(input, { createMessage, apiKey = '', AnthropicImp
       const client = new Anthropic({ apiKey, maxRetries: 0, timeout: 20000 });
       send = payload => client.messages.create(payload, { signal });
     }
+    const scaleLabReference = input?.client?.clientId === 'scalelab' && input.client.campaignAuthorized
+      && process.env.SCALELAB_REPLY_DRAFTS_ENABLED === 'true' && process.env.AGENT_V2_EXECUTION_ENABLED !== 'true'
+      ? '\n\nScaleLab interpretation reference:\n' + loadClassificationSkill() : '';
     const message = await send({ model: MODEL, max_tokens: 400, temperature: 0,
-      system: SYSTEM_PROMPT, messages: [{ role: 'user', content: JSON.stringify(input) }],
+      system: SYSTEM_PROMPT + scaleLabReference, messages: [{ role: 'user', content: JSON.stringify(input) }],
       tools: [{ name: 'record_shadow_decision', description: 'Record one advisory decision with no execution authority.',
         input_schema: TOOL_SCHEMA }],
       tool_choice: { type: 'tool', name: 'record_shadow_decision' },

@@ -82,7 +82,7 @@ const { buildSendRunPlan } = require('./integrations/send-run-plan');
 const { createPgSendQuotaStore } = require('./integrations/send-quota-store');
 const { createSendQuotaCoordinator, preDeliveryRefusal } = require('./integrations/send-quota-coordinator');
 const { createSenderPacer } = require('./integrations/sender-pacer');
-const { runSenderLanes, concurrentSenderLanesEnabled } = require('./integrations/sender-lanes');
+const { runSenderLanes, runClientOverlappedSenderLanes, concurrentSenderLanesEnabled } = require('./integrations/sender-lanes');
 // Stage 3D: dual-read measurement only. No decision below reads its result.
 const { probeOutreachParity, formatProbeLine } = require('./integrations/outreach-dual-read');
 const { normalizeEmail, buildMappingKey, ACTIVE_STATUSES } = require('./integrations/smartlead-safety');
@@ -108,17 +108,22 @@ const {
 const { routedLeadReady } = require('./integrations/campaign-routing');
 const { outreachBlockForLead, isArchivedLead, archiveReasonFromNotes, ARCHIVED_REPLY_EVENT_TYPE } = require('./integrations/lead-archive');
 // Managed clients: ownership travels with every send action and reply.
-const { actionOwnership, resolveSenderClient, resolveLeadClient } = require('./integrations/clients/ownership');
+const { actionOwnership, resolveLeadClient } = require('./integrations/clients/ownership');
 const { resolveReplyClientContext } = require('./integrations/clients/reply-policy');
 const { handleManagedClientReply, managedReplyNeedsHandler } = require('./integrations/clients/reply-pipeline');
 const { buildClientSuppression } = require('./integrations/clients/suppression');
 const { getClient: getManagedClient } = require('./integrations/clients/registry');
 const { getLedgerStore } = require('./integrations/clients/ledger-store');
+const { loadClientMeetingHolds, clientMeetingHoldReason, describeClientMeetingHolds } = require('./integrations/clients/meeting-hold');
+// Loaded once per send run (see run()). null = not loaded, which holds nothing.
+let CLIENT_MEETING_HOLDS = null;
 const { leadsInEmailScope, tenantOf } = require('./integrations/clients/email-scope');
+const { mailboxLeadScope } = require('./integrations/mailbox-conversation-ownership');
 const {
   createClientCapacityState, clientSendCountsToday, clientCapacityVerdict, recordClientSend, clientCapacitySnapshot,
 } = require('./integrations/clients/capacity');
 const { DEFAULT_CLIENT_ID } = require('./integrations/clients/registry');
+const { PLACEMENT_TEST_EVENT, PLACEMENT_TEST_CLIENT, PLACEMENT_TEST_RECIPIENTS, validPlacementLabel, placementMessage, placementSenders, runPlacementTest } = require('./integrations/placement-test');
 const { clientSendBlock } = require('./integrations/clients/send-policy');
 const { clientSendWindowVerdict } = require('./integrations/clients/send-windows');
 // Staffing supplies its own locked copy only. Sender selection, thread pinning,
@@ -161,6 +166,11 @@ const {
 } = require('./integrations/campaign-versions');
 const { findOriginalSentThread, resolveColdFollowUpThread } = require('./integrations/gmail-threading');
 const { appendLeadsRow } = require('./integrations/leads-sheet-append');
+const { readCanonicalOutreachRecipient } = require('./integrations/outreach-state');
+const { scaleLabOwner, observationForIntent, verifiedContext } = require('./integrations/scalelab-response-classification');
+const { routingConfig } = require('./integrations/scalelab-reply-router');
+const { createScaleLabReplyActionStore } = require('./integrations/scalelab-reply-action-store');
+const { activityMetadata, laterEvidence, runScaleLabReplyRouting, ownsActionMessage } = require('./integrations/scalelab-reply-pass');
 const gmailMailboxObserver = require('./integrations/gmail-mailbox-observer');
 const { DELIVERY_CLASS, classifyDeliveryStatus } = require('./integrations/delivery-status');
 const { planMailboxEvents, commitObservation, ownReplyText } = require('./integrations/mailbox-observation-events');
@@ -233,11 +243,6 @@ const {
   canonicalCta,
   validateFinalEmail,
 } = require('./integrations/final-email');
-const { buildDentalPersonalization } = require('./integrations/dental-personalization');
-const { buildDentalSubject } = require('./integrations/dental-subject');
-const {
-  COLD_SUBJECTS, coldSubjectIndex, coldSubjectFor, buildDentalColdEmail,
-} = require('./integrations/dental-email');
 const {
   COLD_CALL_ACTIVITY_SHEET,
   COLD_CALL_ACTIVITY_HEADER,
@@ -250,16 +255,11 @@ const {
   existingLateReplyEventIds,
   processLateReply,
 } = require('./integrations/late-reply');
-const {
-  PROFILE_ID: ROOFING_SURVEY_PROFILE,
-  TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE,
-  renderInitialEmail: renderRoofingSurveyInitial,
-  validateInitialEmail: validateRoofingSurveyInitial,
-  qualifyLead: qualifyRoofingLead,
-  classifyReply: classifyRoofingReply,
-  renderPositiveReply: renderRoofingSurveyReply,
-  renderQuestionDraft: renderRoofingQuestionDraft,
-} = require('./integrations/roofing-survey-profile');
+// Email templates of retired offers (lead-archive RETIRED_OFFERS). Their copy
+// was removed; a lead still carrying one of these ids can never be sent to, and
+// is excluded from cold follow-up selection.
+const RETIRED_EMAIL_TEMPLATE_IDS = new Set(['dental-guarantee-v1', 'roofing-survey-v1']);
+const RETIRED_ROOFING_TEMPLATE_ID = 'roofing-survey-v1';
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 
@@ -273,6 +273,7 @@ const DRY_RUN          = process.env.DRY_RUN !== 'false';          // default TR
 // skips the writes. Used by the 30-minute cron for near-real-time detection.
 const CHECK_ONLY       = process.env.CHECK_ONLY === 'true';
 const SCHEDULED_CLIENT_SCOPE = process.env.SCHEDULED_CLIENT_SCOPE === 'jole' ? 'jole' : '';
+const PLACEMENT_TEST_LABEL = String(process.env.PLACEMENT_TEST_LABEL || '').trim();
 // Terminal leads are checked only when the existing check-only scheduler
 // explicitly enables this flag for its once-daily window.
 const LATE_REPLY_CHECK = process.env.LATE_REPLY_CHECK === 'true';
@@ -317,9 +318,6 @@ const SIGNATURE_SITE    = process.env.SIGNATURE_SITE    || 'scalelabai.ca';
 const SIGNATURE_PHONE   = process.env.SIGNATURE_PHONE   || '604 836 9902';
 const EMAIL_SIGNATURE   = `— ${SIGNATURE_NAME}\n${SIGNATURE_COMPANY}\n${SIGNATURE_SITE}\n${SIGNATURE_PHONE}`;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const ROOFING_SURVEY_REPLY_FLOW_ENABLED = process.env.ROOFING_SURVEY_REPLY_FLOW_ENABLED === 'true';
-const ROOFING_SURVEY_AUTO_REPLY_ENABLED = process.env.ROOFING_SURVEY_AUTO_REPLY_ENABLED === 'true';
-const ROOFING_SURVEY_URL = String(process.env.ROOFING_SURVEY_URL || '').trim();
 // Optional safety scope for controlled owned-address tests. When set, every
 // detection and send phase is restricted to this one durable lead ID. Normal
 // scheduled runs leave it unset and retain their existing behavior.
@@ -461,12 +459,13 @@ async function upsertColdCallLeadFromEvent(lead, stage, note, options = {}) {
     const parts = String(lead.contactName || '').trim().split(/\s+/).filter(Boolean);
     const promotedLead = {
       id: targetId, type: 'trade', first: parts[0] || '', last: parts.slice(1).join(' '),
-      brokerage: '', tradeType: lead.tradeType || 'Dental', company: lead.company || '',
+      brokerage: '', tradeType: lead.tradeType || '', company: lead.company || '',
       city: lead.city || '', cityTrade: lead.city || '', phone: '', email: lead.email || '',
       website: lead.website || '', stage: decision.targetStage, priority: decision.targetStage === 'hot' ? 'hot' : 'warm',
       followup: new Date().toISOString().split('T')[0], notes: note || '', created: new Date().toISOString(),
     };
     await appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: LEADS_SHEET,
+      atomicIdentity: scaleLabOwner(lead) && routingConfig()?.mode === 'apply',
       values: LEADS_COLUMNS.map(col => String(promotedLead[col] ?? '')) });
     return targetId;
   } catch (error) {
@@ -609,59 +608,10 @@ function senderForPersistedLead(lead) {
   return sender;
 }
 
-// ── FOLLOW-UP SEQUENCE (Phase 3) ──────────────────────────────────────────────
-// Index 0 = step-2 body, index 1 = step-3 body. Max 3 steps total. WHEN each
-// step is due lives only in integrations/sequence-timing.js; these entries
-// carry copy, never timing. Staffing renders its own locked copy instead.
-// Same invitation/sample-demo thread as step 1 (buildPitch) and the same
-// single-CTA-reply rule — no longer tier-branched, since the old busy/medium
-// split existed to continue the old "after-hours calls" angle that step 1 no
-// longer opens with.
-const FOLLOW_UP_SEQUENCE = [
-  {
-    body: (lead) => {
-      const link    = buildProposalLink(lead);
-      const name    = salutationName(lead);
-      const company = cleanCompanyName(lead.company) || 'your business';
-      const casl    = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.  ·  Ref: SL-${refCode(lead)}`;
-
-      return `Hi ${name},
-
-Just following up on the 24/7 answering and booking software demo I mentioned for ${company} — still happy to build it if you'd like to hear it.
-
-→ Here's a sample so you know what it sounds like: ${link}
-
-No pressure either way — just reply if you'd like yours.
-
-${EMAIL_SIGNATURE}
-
-${casl}`;
-    },
-  },
-  {
-    body: (lead) => {
-      const link    = buildProposalLink(lead);
-      const name    = salutationName(lead);
-      const company = cleanCompanyName(lead.company) || 'your business';
-      const casl    = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply "unsubscribe" and I'll remove you immediately.  ·  Ref: SL-${refCode(lead)}`;
-
-      return `Hi ${name},
-
-Last note from me on this.
-
-If a free 24/7 answering and booking software demo for ${company} isn't useful right now, no worries — I'll leave it here. If it is, here's the sample again: ${link}
-
-Just reply and I'll build yours.
-
-${EMAIL_SIGNATURE}
-
-${casl}`;
-    },
-  },
-];
-if (FOLLOW_UP_SEQUENCE.length !== FOLLOW_UP_STEP_COUNT) {
-  throw new Error('FOLLOW_UP_SEQUENCE must have one body per follow-up step in integrations/sequence-timing.js');
-}
+// ── FOLLOW-UP COPY ────────────────────────────────────────────────────────────
+// Follow-ups render only staffing or managed-client copy (WHEN each step is due
+// lives in integrations/sequence-timing.js). The retired offers' follow-up copy
+// was removed; a lead without staffing or client copy is deferred, never sent.
 
 // ── EMAIL TEMPLATE ────────────────────────────────────────────────────────────
 
@@ -698,62 +648,6 @@ function cleanCompanyName(raw) {
     if (idx !== -1) cutAt = Math.min(cutAt, idx);
   }
   return raw.slice(0, cutAt).trim() || raw.trim();
-}
-
-// ── NICHE CONFIG ──────────────────────────────────────────────────────────────
-// Every niche-specific word choice in the Haiku opener prompt and the email
-// templates comes from here. Adding a third vertical is adding one entry to
-// this array — never edit generateOpener()/buildPitch()/the follow-up bodies
-// to special-case a new industry.
-//
-// `match` is tested against lead.tradeType (case-insensitive), entries checked
-// in order, first hit wins. The last entry (`match: null`) is the fallback for
-// any tradeType that matches nothing above it — keep it last.
-const NICHE_CONFIG = [
-  {
-    key: 'dental',
-    match: /dent(?:ist|al)/i,
-    label: 'dental practice',
-    labelPlural: 'dental practices',
-    person: 'patients',
-    booking: 'appointments',
-    place: 'practice',
-    openerFewShot: [
-      '• Dentist in Surrey → "Came across Fraser Family Dental while looking at dental practices in Surrey."',
-      '• Dental clinic, no city → "Noticed Bright Smile Dental while looking into local dental practices."',
-    ],
-  },
-  {
-    key: 'medspa',
-    match: /med.?spa|\bspa\b|skin.?care|laser.*hair|esthetic|dermat|wellness.?cent|massage|beauty.?salon|cosmetic/i,
-    label: 'med spa',
-    labelPlural: 'med spas',
-    person: 'clients',
-    booking: 'bookings',
-    place: 'clinic',
-    openerFewShot: [
-      '• Med spa in Vancouver → "Came across Glow Aesthetics while looking at med spas in Vancouver."',
-      '• Skin clinic, no city → "Noticed Bright Skin Studio while looking into local skin clinics."',
-    ],
-  },
-  {
-    key: 'default',
-    match: null,
-    label: 'business',
-    labelPlural: 'businesses',
-    person: 'customers',
-    booking: 'appointments',
-    place: 'business',
-    openerFewShot: [
-      '• HVAC company in Vancouver → "Came across Peak Climate HVAC while looking at HVAC contractors in Vancouver."',
-      '• Plumber in Calgary → "Saw Mountain Plumbing while browsing plumbers around Calgary."',
-    ],
-  },
-];
-
-function nicheFor(tradeType) {
-  const t = (tradeType || '').trim();
-  return NICHE_CONFIG.find(c => c.match && c.match.test(t)) || NICHE_CONFIG[NICHE_CONFIG.length - 1];
 }
 
 // ── RECIPIENT TYPE ────────────────────────────────────────────────────────────
@@ -845,66 +739,6 @@ function buildProposalLink(lead) {
   return `${PROPOSAL_BASE}/?${qs}`;
 }
 
-// Builds the step-1 subject + body — the invitation offer. Niche-aware via
-// NICHE_CONFIG; no longer tier-branched (the old "busy vs medium" pitch split
-// belonged to the old offer's after-hours-calls angle, which this replaces).
-// buildEmail() still computes/returns pitchTier separately for dry-run logging
-// — it no longer changes which copy goes out, so buildPitch doesn't need it.
-// Dental leads take the structured renderer in integrations/dental-email.js.
-// Other niches retain the established opener path below. Both paths insert the
-// guarantee verbatim from guarantee.js and pass through validateColdEmail().
-function buildPitch(lead, opener, link, structuredPersonalization = null) {
-  const type    = recipientType(lead);
-  const name    = salutationName(lead);
-  const company = cleanCompanyName(lead.company) || '';
-  const niche   = nicheFor(lead.tradeType);
-
-  if (structuredPersonalization) {
-    return buildDentalColdEmail({
-      lead, name, company, recipientType: type, link,
-      personalization: structuredPersonalization,
-      mailingAddress: MAILING_ADDRESS,
-      signature: EMAIL_SIGNATURE,
-      reference: `SL-${refCode(lead)}`,
-    });
-  }
-
-  const offer = guaranteeFor(company);
-  const productContext = `24/7 answering and booking software for dental practices that handles missed calls and helps turn them into booked patients. I configure it with ${company}'s actual ${niche.booking} and services, so when a ${niche.person.replace(/s$/, '')} calls it already sounds like it works there. It never touches your real phone line, so there's nothing to switch over to try it.`;
-  const casl = `---\n${MAILING_ADDRESS}\nYou're receiving this because your business is publicly listed. Reply with\n"unsubscribe" and I'll remove you immediately — no hard feelings.  ·  Ref: SL-${refCode(lead)}`;
-  const personalizationBlocks = dedupePersonalizationBlocks(
-    splitPersonalization(opener).map(text => ({ text, sourceField: 'siteContext' })),
-    { entityHint: company },
-  );
-  const demoIncluded = Boolean(link);
-  const cta = canonicalCta({ demoIncluded, recipientType: type });
-  const demoBlock = demoIncluded
-    ? `→ Here's one I already built, so you can hear it:\n${link}`
-    : '';
-  const bodyBlocks = [
-    `Hi ${name},`, offer, ...personalizationBlocks.map(block => block.text),
-    productContext, demoBlock, cta, EMAIL_SIGNATURE, casl,
-  ];
-
-  return {
-    subject: coldSubjectFor(lead, company),
-    body: assembleFinalEmail(bodyBlocks),
-    cta,
-    personalizationBlocks,
-    demoIncluded,
-    requiredBlocks: [offer, productContext, demoBlock, EMAIL_SIGNATURE, casl],
-    personalizationClaims: [],
-    verifiedFactIds: [],
-    demoCta: null,
-    approvedGuarantee: offer,
-    personalizationMetadata: null,
-  };
-}
-
-// Inbound late replies use strict append semantics: if the activity write
-// fails, the next daily pass must retry instead of silently losing the event.
-// Outbound activity remains best-effort so a logging failure cannot cause a
-// successfully sent email to be retried.
 async function recordColdCallActivityStrict(record) {
   await ensureColdCallActivitySheet();
   const complete = { eventId: crypto.randomUUID(), occurredAt: new Date().toISOString(), ...record };
@@ -1104,126 +938,6 @@ async function writeSiteContext(lead, text) {
     { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
 }
 
-// Phase 2: calls Haiku to generate one specific opening sentence.
-// Graceful: on any error returns null and the caller falls back to a generic line.
-async function generateOpener(lead, siteText) {
-  if (!ANTHROPIC_API_KEY) return null;
-  try {
-    const niche = nicheFor(lead.tradeType);
-    let prompt;
-    // scrapeSite already caps at 1500 chars. Bound again so a pasted or
-    // inherited siteContext cannot silently expand the opener prompt.
-    const boundedSite = String(siteText || '').slice(0, 1500);
-
-    if (boundedSite) {
-      // Tier-2: reference ONE concrete detail from the scraped page
-      const cleanCo = cleanCompanyName(lead.company);
-      const facts = [
-        cleanCo        && `company: "${cleanCo}"`,
-        lead.city      && `city: ${lead.city}`,
-        lead.tradeType && `trade: ${lead.tradeType}`,
-      ].filter(Boolean).join(' | ');
-
-      prompt = [
-        `Write ONE opening sentence for a cold email to the owner or manager of a ${niche.label}.`,
-        'You have scraped text from their website. Find EXACTLY ONE specific, concrete detail that literally appears in the text.',
-        '',
-        `Known facts: ${facts || '(none)'}`,
-        '',
-        'Website text (extracted from their homepage — use ONLY what is explicitly stated here):',
-        '---',
-        boundedSite,
-        '---',
-        '',
-        'Rules:',
-        '- Reference exactly ONE verifiable detail from the text: a specific service they list, an area they serve, a stated value like "family-owned", or years in business ONLY if explicitly stated.',
-        '- If you cannot find a clear, specific, verifiable detail, fall back to the Tier-1 style below instead — do NOT force a vague or invented detail.',
-        '- NEVER infer, assume, or embellish. If it is not literally in the text, do not say it.',
-        '- One sentence only, max 18 words, plain English, no em-dashes, no marketer voice.',
-        '',
-        'Tier-1 fallback (use when no clear site detail found):',
-        ...niche.openerFewShot,
-        '',
-        'Output only the sentence.',
-      ].join('\n');
-    } else {
-      // Tier-1: company + city + trade only
-      const cleanCo = cleanCompanyName(lead.company);
-      const details = [
-        cleanCo        && `company: "${cleanCo}"`,
-        lead.city      && `city: ${lead.city}`,
-        lead.tradeType && `trade: ${lead.tradeType}`,
-        lead.website   && `website: ${lead.website}`,
-      ].filter(Boolean).join(' | ');
-
-      prompt = [
-        `Write ONE opening sentence for a cold email to the owner or manager of a ${niche.label}.`,
-        'Use ONLY the facts listed below — never invent or assume anything about their operations, reviews, call volume, customers, or projects.',
-        details ? `Known facts: ${details}` : `Known facts: (none — use generic company reference only)`,
-        '',
-        'Rules:',
-        '- One sentence only, max 18 words, plain English, no em-dashes',
-        '- Sound like a real person who glanced at their public listing — casual and honest',
-        '- Reference city and trade if provided; if missing, just use the company name naturally',
-        '- No invented pain points, no "this is costing you", no assumptions about their business',
-        '',
-        'Examples of the correct style (do not copy — just match the tone):',
-        ...niche.openerFewShot,
-        '',
-        'Output only the sentence.',
-      ].join('\n');
-    }
-
-    const msg = await anthropicClient.messages.create({
-      model: 'claude-haiku-4-5',
-      max_tokens: 60,
-      messages: [{ role: 'user', content: prompt }],
-    }, {
-      feature: ANTHROPIC_FEATURES.cold_personalization,
-      operation: 'opener',
-      campaign: lead.campaign || lead.intendedCampaignVersion || '',
-      leadId: lead.id || '',
-    });
-    return msg.content[0]?.text?.trim() || null;
-  } catch (e) {
-    console.warn(`[Opener] API error for ${lead.email} — using fallback: ${e.message}`);
-    return null;
-  }
-}
-
-async function buildEmail(lead) {
-  // Resolve site context: cached value → skip scrape; empty + website → scrape once
-  let siteText = '';
-  if (lead.siteContext && lead.siteContext !== SCRAPE_SKIP) {
-    siteText = lead.siteContext;
-  } else if (!lead.siteContext && lead.website) {
-    console.log(`[Scrape] Fetching ${lead.website} for ${lead.email}...`);
-    siteText = await scrapeSite(lead.website);
-    if (!DRY_RUN) {
-      await withAuth(() => writeSiteContext(lead, siteText || SCRAPE_SKIP));
-    }
-    if (!siteText) console.log(`[Scrape] No usable text from ${lead.website} — using Tier-1`);
-  }
-
-  const openerTier = siteText ? 'SITE' : 'TIER-1';
-  const company    = cleanCompanyName(lead.company) || 'your business';
-  const isDental = nicheFor(lead.tradeType).key === 'dental';
-  const structuredPersonalization = isDental
-    ? buildDentalPersonalization({ ...lead, company }, { siteText })
-    : null;
-  const opener = structuredPersonalization
-    ? structuredPersonalization.personalizationBlocks.join('\n\n')
-    : await generateOpener(lead, siteText) || `I noticed ${company} and wanted to reach out.`;
-
-  const pitchTier = lead.tier === 'busy' ? 'busy' : 'medium';
-  const link      = buildProposalLink(lead);
-
-  const assembled = buildPitch(lead, opener, link, structuredPersonalization);
-  const { subject, body } = assembled;
-
-  return { ...assembled, subject, body, link, opener, openerTier, pitchTier };
-}
-
 // RFC 2047 encoded-word for a header value containing non-ASCII characters
 // (em dash, bullet, curly quotes, etc. from cleanCompanyName/company names).
 // Header field bodies are US-ASCII per RFC 5322 — raw UTF-8 bytes dropped
@@ -1270,18 +984,30 @@ function clientDeliveryCopyProblem(lead, step, body, activities = []) {
 }
 
 // A managed client's send records the copy version it actually rendered (a
-// lead's sequence keeps the version of its first send), and for an
+// sent step keeps the version it recorded; an unsent one renders the current
+// version), and for an
 // evidence-aware version the personalization mode, role and site it used.
+// audit: the version the lead's thread began on and why this touch uses
+// copyVersion (clients/jole-copy.js resolveJoleCopyVersion), when known.
 // ScaleLab attribution is returned untouched.
-function withClientCopyVersion(attribution, copyVersion, personalization = null) {
+function withClientCopyVersion(attribution, copyVersion, personalization = null, audit = {}) {
   if (!copyVersion) return attribution;
+  const rollout = {
+    ...(audit?.threadCopyVersion ? { threadCopyVersion: audit.threadCopyVersion } : {}),
+    ...(audit?.copyVersionReason ? { copyVersionReason: audit.copyVersionReason } : {}),
+  };
   return personalization?.mode ? {
-    ...attribution, copyVersion, personalizationMode: personalization.mode,
+    ...attribution, copyVersion, ...rollout, personalizationMode: personalization.mode,
     personalizationRole: personalization.role || '', personalizationSite: personalization.location || '',
-  } : { ...attribution, copyVersion };
+  } : { ...attribution, copyVersion, ...rollout };
 }
 
 function fromNameForSender(sender) {
+  if (sender?.delegatedFromClientId && sender.fromName) return sender.fromName;
+  // A ScaleLab inbox may carry its own display name in the registry
+  // (e.g. the outreachplateau.co inboxes send as Deins Ulmanis).
+  const ownClient = String(sender?.clientId || '').trim();
+  if (sender?.fromName && (!ownClient || getManagedClient(ownClient).isDefault)) return sender.fromName;
   const clientId = String(sender?.clientId || '').trim();
   if (!clientId) return FROM_NAME;
   const client = getManagedClient(clientId);
@@ -1348,14 +1074,20 @@ async function sendEmail({ lead, to, subject, body, html, threadId, inReplyTo, r
           throw preDeliveryRefusal('sender_or_window_closed', finalWindow.reason || 'sender is no longer eligible');
         }
         await markProviderStart();
-        const provider = new GmailOutreachProvider({ send: message => runWithGmailFeature('send_provider', () => gmailForSender(sender, { feature: 'send_provider' }).users.messages.send({
-          userId: 'me',
-          requestBody: { raw: toRawMessage({ ...message, fromEmail: sender.email, fromName: fromNameForSender(sender), extraHeaders }), ...(message.threadId ? { threadId: message.threadId } : {}) },
-        })) });
-        return provider.sendEmail({ to, subject, body, html, threadId, inReplyTo, references, messageId });
+        return gmailProviderSend(sender, { to, subject, body, html, threadId, inReplyTo, references, messageId }, extraHeaders);
       },
     }),
   }));
+}
+
+// The one Gmail provider call. Both callers arrive here through the quota
+// coordinator and a durable reservation.
+function gmailProviderSend(sender, payload, extraHeaders = []) {
+  const provider = new GmailOutreachProvider({ send: message => runWithGmailFeature('send_provider', () => gmailForSender(sender, { feature: 'send_provider' }).users.messages.send({
+    userId: 'me',
+    requestBody: { raw: toRawMessage({ ...message, fromEmail: sender.email, fromName: fromNameForSender(sender), extraHeaders }), ...(message.threadId ? { threadId: message.threadId } : {}) },
+  })) });
+  return provider.sendEmail(payload);
 }
 
 async function loadOutreachProviderState(campaignRowsOverride = null, mappingRowsOverride = null) {
@@ -2122,7 +1854,7 @@ async function recordSendActivity(lead, step, sendMeta, sentAt) {
 // log "Failed", which is false — the send succeeded.
 async function markSent(lead, step, sendMeta = null) {
   const now = sendMeta?.occurredAt || new Date().toISOString();
-  const isLastStep = step > FOLLOW_UP_SEQUENCE.length;
+  const isLastStep = step > FOLLOW_UP_STEP_COUNT;
   const status = isLastStep ? 'done' : 'emailed';
   const stageValue = isLastStep ? 'Done' : SENT_STAGE;
   const retryDelays = [5000, 15000, 40000];
@@ -2303,6 +2035,7 @@ async function deliverOrdinaryColdStep({
       // A managed client's copy version, so even an unconfirmed attempt pins
       // the lead's sequence (clients/jole-copy.js resolveJoleCopyVersion).
       ...(isClientTemplateId(lead.emailTemplateId) && attribution?.copyVersion ? { copyVersion: attribution.copyVersion } : {}),
+      ...(isClientTemplateId(lead.emailTemplateId) && attribution?.threadCopyVersion ? { threadCopyVersion: attribution.threadCopyVersion } : {}),
       ...(isClientTemplateId(lead.emailTemplateId) && attribution?.personalizationMode ? {
         personalizationMode: attribution.personalizationMode, personalizationRole: attribution.personalizationRole,
         personalizationSite: attribution.personalizationSite,
@@ -2996,108 +2729,6 @@ async function handleNeedsHuman(lead, fromAddr) {
   console.log(`  ⚑ ${lead.company} — needs human review${differs ? ` (replied from ${from})` : ''}`);
 }
 
-const ROOFING_LINK_SENT_TAG = '[ROOFING_SURVEY_LINK_SENT]';
-const ROOFING_DRAFTED_TAG = '[ROOFING_SURVEY_DRAFTED]';
-
-async function markRoofingReplyState(lead, stage, status, tag) {
-  const rowNum = await resolveRow(lead.id);
-  if (!rowNum) return;
-  const notes = prependNote(lead.notes, tag);
-  await applyLeadChange(lead.id, { stage, emailStatus: status, notes }, { row: rowNum, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
-  lead.notes = notes;
-}
-
-async function handleRoofingSurveyReply(lead, message, replyText, todaySent, activities = [], outboundObservationOk = true) {
-  const sender = GMAIL_SENDERS.find(item => item.id === String(message.senderInboxId || lead.senderInboxId || 'primary')) || PRIMARY_GMAIL_SENDER;
-  if (!ROOFING_SURVEY_REPLY_FLOW_ENABLED) {
-    await handleNeedsHuman(lead, message.fromAddr);
-    return 'flow_disabled';
-  }
-  const classification = await classifyRoofingReply({
-    replyText,
-    createMessage: anthropicClient
-      ? wrapCreateMessage(anthropicClient.messages.create, {
-          feature: ANTHROPIC_FEATURES.roofing_reply_classification,
-          operation: 'classify',
-          campaign: lead.campaign || lead.intendedCampaignVersion || '',
-          leadId: lead.id || '',
-          messageId: message.messageId || '',
-          threadId: message.threadId || '',
-        })
-      : null,
-  });
-  console.log(`  [roofing-reply] profile=${ROOFING_SURVEY_PROFILE} classification=${classification.category} reason=${classification.reason_code}`);
-  const roofingEventType = classification.category === 'positive' ? 'positive_reply'
-    : classification.category === 'negative' ? 'negative_reply'
-      : classification.category === 'unsubscribe' ? 'unsubscribe_reply'
-        : classification.category === 'wrong_person' ? 'wrong_person_reply'
-          : ['out_of_office', 'automated'].includes(classification.category) ? 'out_of_office_reply'
-            : 'needs_human_reply';
-  await recordColdCallActivityStrict({
-    eventId: message.messageId ? `gmail-reply:${message.messageId}` : `${lead.id}:reply:${message.occurredAt || Date.now()}`,
-    leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email,
-    company: cleanCompanyName(lead.company) || lead.company || '', eventType: roofingEventType,
-    occurredAt: message.occurredAt || new Date().toISOString(), subject: message.subject || '',
-    content: String(replyText || message.snippet || '').slice(0, 1500),
-    metadata: JSON.stringify({
-      classification: classification.category, reasonCode: classification.reason_code,
-      campaignProfile: ROOFING_SURVEY_PROFILE, gmailMessageId: message.messageId || '',
-      gmailThreadId: message.threadId || '', rfcMessageId: message.rfcMessageId || '', detectedAfterSequence: false,
-      provider: 'gmail', senderInboxId: sender.id,
-      requiresHumanAttention: classification.requires_human_review === true,
-    }),
-  });
-  if (classification.category === 'unsubscribe') { await handleUnsubscribe(lead); return classification.category; }
-  if (classification.category === 'negative') { await handleNotInterested(lead); return classification.category; }
-  if (classification.category === 'wrong_person') { await handleWrongPerson(lead); return classification.category; }
-  if (['out_of_office','automated'].includes(classification.category)) { await markRoofingReplyState(lead, 'Done', 'done', `[ROOFING_SURVEY: ${classification.category}]`); return classification.category; }
-  if (classification.category === 'already_completed') { await markRoofingReplyState(lead, 'Done', 'done', '[ROOFING_SURVEY: already completed]'); return classification.category; }
-
-  if (classification.category === 'positive' && classification.should_send_survey && !classification.requires_human_review && classification.confidence >= ANSWER_CONFIDENCE_FLOOR / 100) {
-    if ((lead.notes || '').includes(ROOFING_LINK_SENT_TAG) || (lead.notes || '').includes(ROOFING_DRAFTED_TAG)) return 'duplicate_blocked';
-    let body = '';
-    try { body = renderRoofingSurveyReply(lead, ROOFING_SURVEY_URL, { mailingAddress: MAILING_ADDRESS, reference: `SL-${refCode(lead)}` }); }
-    catch (_) {
-      await queueDraft(lead, { body: '', confidence: classification.confidence, reason: 'roofing survey URL is missing or invalid', campaignProfile: ROOFING_SURVEY_PROFILE, classification: classification.category, reasonCode: 'missing_survey_url' });
-      await markRoofingReplyState(lead, 'Review', 'replied', ROOFING_DRAFTED_TAG);
-      return 'missing_url';
-    }
-    if (!ROOFING_SURVEY_AUTO_REPLY_ENABLED) {
-      await queueDraft(lead, { body, confidence: classification.confidence, reason: 'roofing survey response requires approval', campaignProfile: ROOFING_SURVEY_PROFILE, classification: classification.category, reasonCode: classification.reason_code });
-      await markRoofingReplyState(lead, 'Review', 'replied', ROOFING_DRAFTED_TAG);
-      return 'drafted';
-    }
-    const humanTouchAt = latestHumanOutboundAt(activities);
-    const blocked = (CHECK_ONLY && 'CHECK_ONLY is observation-only and cannot send')
-      || (!outboundObservationOk && 'manual outbound observation failed, so mailbox state may be stale')
-      || (humanTouchAt && `a human response was already observed at ${humanTouchAt}`)
-      || suppressionReason(lead) || (!SENDING_ENABLED && 'sending disabled') || (todaySent >= DAILY_SEND_LIMIT && 'daily limit reached');
-    if (blocked) {
-      await queueDraft(lead, { body, confidence: classification.confidence, reason: `roofing survey auto-reply blocked: ${blocked}`, campaignProfile: ROOFING_SURVEY_PROFILE, classification: classification.category, reasonCode: 'send_gate_blocked' });
-      await markRoofingReplyState(lead, 'Review', 'replied', ROOFING_DRAFTED_TAG);
-      return 'blocked';
-    }
-    const delivered = await deliverHardenedWarmReply({ lead, message,
-      action: REPLY_RESPONSE_ACTION.AUTO_QUESTION_RESPONSE, body,
-      subject: 'Re: quick roofing question', activities, classification: 'ROOFING_POSITIVE' });
-    if (!delivered.delivered) {
-      await queueDraft(lead, { body, confidence: classification.confidence,
-        reason: `roofing survey hardened delivery blocked: ${delivered.code}`,
-        campaignProfile: ROOFING_SURVEY_PROFILE, classification: classification.category,
-        reasonCode: 'hardened_delivery_blocked' });
-      await markRoofingReplyState(lead, 'Review', 'replied', ROOFING_DRAFTED_TAG);
-      return 'blocked';
-    }
-    await markRoofingReplyState(lead, 'Replied', 'replied', ROOFING_LINK_SENT_TAG);
-    return 'sent';
-  }
-
-  const body = classification.category === 'question' ? renderRoofingQuestionDraft(lead) : '';
-  await queueDraft(lead, { body, confidence: classification.confidence, reason: 'roofing survey reply requires human review', campaignProfile: ROOFING_SURVEY_PROFILE, classification: classification.category, reasonCode: classification.reason_code });
-  await markRoofingReplyState(lead, 'Review', 'replied', ROOFING_DRAFTED_TAG);
-  return 'review';
-}
-
 // ── REPLY-CHECK PASS ─────────────────────────────────────────────────────────
 // Runs unconditionally on every agent invocation — independent of whether there
 // are queued sends or follow-ups due. Fetches each emailed lead's reply body,
@@ -3108,6 +2739,12 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
   const candidates = leads.filter(l => isValidEmail(l.email) && (l.lastEmailedAt || Number(l.emailStep) > 0));
   const candidatesById = new Map(candidates.map(item => [item.id, item]));
   activitiesForCycle = activitiesForCycle || await withAuth(() => readColdCallActivities());
+  const scaleLab = !DRY_RUN && advanceCheckpoint ? routingConfig() : null;
+  const ownsScaleLab = (lead, senderInboxId, activities = activitiesForCycle) => {
+    if (!scaleLabOwner(lead)) return false;
+    const owner = resolveReplyClientContext({ senderInboxId, lead, senders: GMAIL_SENDERS, activities });
+    return owner.ok && owner.clientId === 'scalelab';
+  };
   console.log(`[ReplyCheck] Checking ${candidates.length} emailed lead${candidates.length === 1 ? '' : 's'} for replies...`);
 
   let found = 0;
@@ -3122,6 +2759,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
   // Genuine-human staffing replies decided in THIS pass, for the Agent v2
   // shadow. Collected only after the authoritative decision is persisted.
   const agentV2ShadowCandidates = [];
+  const scaleLabDrafts = [];
   const bouncesByLead = new Map();
   const pendingHistory = new Map();
   const observedStateBySender = new Map();
@@ -3132,11 +2770,9 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     !senderIds || senderIds.has(item.id))) {
     // Include every CRM identity: an already-replied lead can write again, and
     // an unknown legacy sender is evidence to observe, never a default inbox.
-    // Client isolation: an inbox never matches a lead that definitively belongs
-    // to another client. A lead whose own fields conflict stays visible to
-    // every inbox, so an opt-out or bounce from it is still applied.
-    const senderClient = resolveSenderClient(sender);
-    const senderLeads = senderClient.ok ? leadsInEmailScope(candidates, senderClient.clientId) : candidates;
+    // A transferred mailbox observes only conversations with confirmed physical
+    // mailbox history. Each conversation keeps its original client ownership.
+    const senderLeads = mailboxLeadScope(candidates, sender, activitiesForCycle || []);
     const log = (state, details) => console.log(`[GmailObserver:${sender.id}] ${state} ${JSON.stringify(details)}`);
     const backoff = getMailboxBackoff(sender.id);
     if (backoff) {
@@ -3159,7 +2795,8 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
         knownMessageIds: persistedGmailMessageIds(activitiesForCycle || []),
       })));
       const plan = await planMailboxEvents({ observation: observed, gmail: gmailForSender(sender, { instrument: false }),
-        leads: senderLeads, activities: activitiesForCycle, senderInboxId: sender.id, senderEmail: sender.email });
+        leads: senderLeads, activities: activitiesForCycle, senderInboxId: sender.id, senderEmail: sender.email,
+        scaleLab: scaleLab ? { ...scaleLab, owns: lead => ownsScaleLab(lead, sender.id) } : null });
       if (!DRY_RUN) {
         await commitObservation({ observation: observed, plan, activities: activitiesForCycle,
           appendEvents: events => withAuth(() => recordMailboxActivities(events)),
@@ -3293,7 +2930,7 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       // must replay here — including CHECK_ONLY and after a long outage.
       const inboundId = metadata.gmailMessageId || inboundMessageIdOf(row);
       const managedContext = resolveReplyClientContext({
-        senderInboxId: metadata.senderInboxId || lead.senderInboxId, lead, senders: GMAIL_SENDERS,
+        senderInboxId: metadata.senderInboxId || lead.senderInboxId, lead, senders: GMAIL_SENDERS, activities: activitiesForCycle,
       });
       if (!(managedContext.ok && managedContext.policyMode === 'managed'
         && managedReplyNeedsHandler(activitiesForCycle, inboundId, managedContext.clientId))) continue;
@@ -3342,10 +2979,9 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     const replyText      = stripQuotedReply(message.body || message.snippet || '');
     const historical     = Boolean(rawMessage.historical || rawMessage.terminalReplay);
     const maySend        = !CHECK_ONLY && !historical;
-    // Client isolation: the receiving inbox, the lead and its campaign must
-    // belong to one client, or this reply is not applied to this lead. An
+    // Resolve the original conversation owner before applying a reply. An
     // explicit opt-out is still honoured — refusing to protect is never safe.
-    const replyContext = resolveReplyClientContext({ senderInboxId: sender.id, lead, senders: GMAIL_SENDERS });
+    const replyContext = resolveReplyClientContext({ senderInboxId: sender.id, lead, senders: GMAIL_SENDERS, activities: activitiesForCycle });
     if (!replyContext.ok) {
       console.error(JSON.stringify({
         event: 'client_reply_isolation_blocked', lead_id: lead.id, sender_inbox_id: sender.id,
@@ -3397,13 +3033,12 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       }
       continue;
     }
-    if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE) {
+    // A lead on the retired roofing survey that is somehow not archived goes to
+    // a person, exactly as it did while the roofing reply flow was switched off.
+    if (lead.emailTemplateId === RETIRED_ROOFING_TEMPLATE_ID) {
       lead.emailStatus = 'replied';
-      if (!DRY_RUN) {
-        if (!attributionActivities) attributionActivities = activitiesForCycle || await withAuth(() => readColdCallActivities());
-        await withAuth(() => handleRoofingSurveyReply(lead, message, replyText, replyPassTodaySent, attributionActivities, outboundObservationOk));
-      }
-      else console.log(`  ↩ Roofing survey reply from ${lead.email} (${company}) — no writes in dry run`);
+      if (!DRY_RUN) await withAuth(() => handleNeedsHuman(lead, message.fromAddr));
+      else console.log(`  ↩ retired-offer reply from ${lead.email} (${company}) — no writes in dry run`);
       continue;
     }
     const alreadyEvaluated = inboundAlreadyEvaluated(activitiesForCycle, message.messageId);
@@ -3411,6 +3046,21 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     const canonicalReply = classifyReplyText(replyText, {
       subject: message.subject || '', currentEmail: lead.email, now: message.occurredAt || null,
     });
+    const scaleLabAction = ownsActionMessage(activitiesForCycle, lead, message.messageId, scaleLab);
+    const terminalScaleLab = scaleLabAction && !scaleLabAction.verdict.requiresModel
+      && ['opt_out', 'explicit_rejection'].includes(scaleLabAction.verdict.intent);
+    // Apply-mode evidence belongs to the new route. It must not also promote
+    // to legacy Hot or enter an automated response handler.
+    if (scaleLabAction && !terminalScaleLab && scaleLabAction.verdict.intent !== 'out_of_office') {
+      if (scaleLab.draftsEnabled && !scaleLabAction.historical
+          && ['interest', 'information_request', 'pricing_request', 'meeting_request'].includes(scaleLabAction.verdict.intent)) {
+        const draft = shadowCandidate({ lead, message, decision: { route: 'scalelab_human_review' },
+          internalDomains: GMAIL_SENDERS.map(item => String(item.email || '').split('@')[1]).filter(Boolean) });
+        if (draft.eligible) scaleLabDrafts.push({ id: scaleLabAction.id, item: draft.item });
+      }
+      continue;
+    }
+    if (scaleLabAction) Object.assign(canonicalReply, observationForIntent(scaleLabAction.verdict, canonicalReply));
     if (alreadyEvaluated && skipHandlerForEvaluatedMessage({
       alreadyEvaluated, classification: priorClassification, lead, suppressedEmails: SUPPRESSED_EMAILS,
     }) && canonicalReply.reason !== 'unsubscribe_request' && canonicalReply.reason !== 'explicit_rejection') {
@@ -3435,7 +3085,9 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       lead, message, replyText, ruleCanonical: canonicalReply, maySend,
       reviewIfNoSend: CHECK_ONLY && !historical,
       ruleCategory: deterministicReplyCategory,
-      classify: () => classifyReplyWithProvenance(lead.company, replyText, {
+      classify: () => scaleLabAction?.verdict.intent === 'out_of_office'
+        ? Promise.resolve({ classification: 'OUT_OF_OFFICE', source: 'rule', ruleClassification: 'OUT_OF_OFFICE' })
+        : classifyReplyWithProvenance(lead.company, replyText, {
         subject: message.subject, email: lead.email, leadId: lead.id,
         campaign: { id: lead.campaign || lead.intendedCampaignVersion || '', name: lead.campaign || '' },
         messageId: message.messageId, threadId: message.threadId,
@@ -3573,6 +3225,18 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
     }
   }
 
+  if (scaleLab) {
+    try {
+      const records = await withAuth(() => runScaleLabReplyCycle({ config: scaleLab, activities: activitiesForCycle,
+        leads, owns: ownsScaleLab, failedSenderIds }));
+      for (const draft of scaleLabDrafts) {
+        if (records.get(draft.id)?.step === 'complete') agentV2ShadowCandidates.push(draft.item);
+      }
+    } catch (error) {
+      console.warn('[scalelab-reply] routing ledger unavailable', error.message);
+    }
+  }
+
   const LABELS = {
     INTERESTED:     'Interested (auto-promoted)',
     NOT_INTERESTED: 'Not Interested',
@@ -3615,6 +3279,75 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
   // a crash between reply and bounce processing replayable and idempotent.
   return { ok: failedSenderIds.size === 0, failedSenderIds, bouncesByLead,
     pendingHistory, observedStateBySender };
+}
+
+async function runScaleLabReplyCycle({ config, activities, leads, owns, failedSenderIds }) {
+  if (config.mode === 'apply' && (outreachWriteAuthority() !== 'supabase' || outreachStateMode() !== 'primary')) {
+    throw new Error('ScaleLab apply requires canonical compare-and-set outreach writes');
+  }
+  const store = createScaleLabReplyActionStore();
+  const readSheets = async () => {
+    const response = await sheets().spreadsheets.values.batchGet({ spreadsheetId: SPREADSHEET_ID,
+      ranges: [LEADS_RANGE, `${COLD_CALL_ACTIVITY_SHEET}!A:J`, `${SUPPRESSION_SHEET}!A:A`] });
+    const [board, activityRows, suppression] = (response.data.valueRanges || []).map(range => range.values || []);
+    if (!board?.length || !activityRows?.length || !suppression?.length) throw new Error('ScaleLab routing snapshot incomplete');
+    return { board, activityRows, suppression };
+  };
+  let shadowSnapshot;
+  const readState = async candidate => {
+    const observedLead = leads.find(item => item.id === candidate.leadId);
+    const canonical = config.mode === 'apply' ? await readCanonicalOutreachRecipient(observedLead?.email) : null;
+    const lead = canonical ? canonical.lead : observedLead;
+    const snapshot = config.mode === 'apply' ? await readSheets() : (shadowSnapshot ||= await readSheets());
+    const boards = await readBoardLeads(snapshot.board);
+    const freshEvents = await readColdCallActivities(snapshot.activityRows);
+    const board = boards?.find(item => item.id === 'CE-' + candidate.leadId
+      || (lead?.email && normEmail(item.email) === normEmail(lead.email)));
+    const suppressed = new Set(snapshot.suppression.slice(1).map(row => normEmail(row[0])));
+    const same = freshEvents.find(row => row.eventId === candidate.eventId && row.sourceLeadId === candidate.leadId);
+    const metadata = activityMetadata(same);
+    const identified = lead?.id === candidate.leadId && same && normEmail(same.email) === normEmail(lead.email)
+      && metadata.senderInboxId === candidate.senderInboxId && metadata.gmailThreadId === candidate.threadId
+      && metadata.clientId === 'scalelab' && metadata.scalelabMode === config.mode
+      && Boolean(metadata.scalelabReply);
+    const lostCard = !board && freshEvents.some(row => row.sourceLeadId === candidate.leadId && row.eventType === 'pipeline_promoted');
+    const unsafe = (canonical && !canonical.ok) || !identified
+      || !owns(lead, candidate.senderInboxId, freshEvents) ? 'fresh_identity_unproven'
+        : lostCard ? 'previously_promoted_card_missing' : null;
+    return { lead, boards, suppressed, unsafe, newer: laterEvidence(freshEvents, candidate, board),
+      twins: canonical ? (canonical.ambiguous ? 2 : 1) : coldEmailTwinCount(leads, lead?.email),
+      current: identified ? same.content : '', subject: identified ? same.subject : '',
+      context: identified ? verifiedContext(freshEvents, { ...candidate, occurredAt: candidate.at }) : [] };
+  };
+  const hold = async lead => {
+    const row = await resolveRow(lead.id);
+    if (!row) throw new Error('ScaleLab lead row missing');
+    await applyLeadChange(lead.id, { notes: applyHoldToNotes(lead.notes), emailStatus: 'replied' }, {
+      row, sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID,
+      expectedState: { email: lead.email, clientId: lead.clientId, stage: lead.stage, notes: lead.notes, emailStatus: lead.emailStatus },
+    });
+  };
+  const appendCard = async (lead, boardId) => {
+    const [first = '', ...rest] = String(lead.contactName || '').trim().split(/\s+/);
+    const card = { id: boardId, type: 'trade', first, last: rest.join(' '), tradeType: lead.tradeType,
+      company: lead.company, city: lead.city, cityTrade: lead.city, email: lead.email,
+      website: lead.website, stage: 'follow_up', priority: 'warm', created: new Date().toISOString() };
+    await appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: LEADS_SHEET,
+      atomicIdentity: true, values: LEADS_COLUMNS.map(field => String(card[field] || '')) });
+  };
+  const publishTask = async event => {
+    await appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: COLD_CALL_ACTIVITY_SHEET,
+      atomicIdentity: true, values: COLD_CALL_ACTIVITY_HEADER.map(key => String(event[key] ?? '')) });
+    const rows = (await readColdCallActivities()).filter(row => row.eventId === event.eventId);
+    if (rows.length !== 1 || rows[0].eventType !== event.eventType || rows[0].sourceLeadId !== event.sourceLeadId
+        || rows[0].metadata !== event.metadata) throw new Error('ScaleLab human task commitment not verified');
+    if (!activities.some(row => row.eventId === event.eventId)) activities.push(event);
+    mirrorEventsInBackground([event]);
+  };
+  return runScaleLabReplyRouting({ config, activities: [...activities], leads, store, readState,
+    owns: (lead, senderInboxId) => !failedSenderIds.has(senderInboxId) && owns(lead, senderInboxId),
+    hold, appendCard, publishTask, onError: (id, error) =>
+      console.warn('[scalelab-reply] action pending', id, error.message) });
 }
 
 async function observeAgentV2Shadows(candidates = []) {
@@ -4498,7 +4231,7 @@ async function checkForBounce(lead) {
       if (!gmailMailboxObserver.bounceMentionsRecipient(body, lowerEmail)) continue;
       const verdict = classifyDeliveryStatus(full.data.payload, { recipient: lowerEmail,
         subject: gmailMailboxObserver.headerValue(full.data.payload, 'Subject') });
-      if (verdict.category === DELIVERY_CLASS.RECIPIENT_INVALID) return true;
+      if (tenantOf(lead) === DEFAULT_CLIENT_ID ? verdict.legacyBounce : verdict.suppress) return true;
       if (verdict.category !== DELIVERY_CLASS.UNKNOWN) {
         console.log(`  ⏳ ${lead.email} — ${verdict.category}, not marking bounced`);
       }
@@ -4565,7 +4298,7 @@ function isValidEmail(e) {
 // or terminal stage (Hot / Call Booked / Closed Won / Closed Lost). Adding it
 // here is the entire agent-side change: suppressionReason() is the single guard
 // every send loop already calls, so one tag closes new sends, warm follow-ups,
-// standard follow-ups, intent emails, auto-answers and the roofing path at once.
+// standard follow-ups, intent emails and auto-answers at once.
 // This can only ever REMOVE a lead from a send — it can never cause one.
 const MANUAL_HOLD_TAG = '[MANUAL HOLD]';
 // The tag list itself now lives in pipeline-state as SEND_SUPPRESSION_TAGS,
@@ -4644,6 +4377,24 @@ async function addSuppression(email, reason, company, source) {
 // lead row still carries its sticky reply tag; the failure is logged for an
 // operator rather than thrown, so the mailbox cursor is not held back.
 async function routeObserverSuppression(item, leads = []) {
+  if (item.scaleLabLeadId) {
+    const lead = leads.find(candidate => candidate.id === item.scaleLabLeadId);
+    if (!scaleLabOwner(lead) || normEmail(lead.email) !== normEmail(item.email)) throw new Error('ScaleLab suppression identity changed');
+    const hasEntry = async () => {
+      const response = await sheets().spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID, range: `${SUPPRESSION_SHEET}!A:A`,
+      });
+      return (response.data.values || []).slice(1).some(row => normEmail(row[0]) === normEmail(item.email));
+    };
+    if (!(await hasEntry())) {
+      SUPPRESSED_EMAILS.delete(normEmail(item.email));
+      try { await addSuppression(item.email, item.reason, item.company, 'scalelab-reply-observer'); }
+      catch (error) { if (!(await hasEntry())) throw error; }
+      if (!(await hasEntry())) throw new Error('ScaleLab suppression commitment not verified');
+    }
+    SUPPRESSED_EMAILS.add(normEmail(item.email));
+    return;
+  }
   if (item.reason === 'not_interested') {
     const lead = leads.find(candidate => normEmail(candidate.email) === normEmail(item.email));
     const owner = lead ? resolveLeadClient(lead) : null;
@@ -4728,9 +4479,8 @@ async function runHumanOutboundPass(leads, activitiesForCycle, sender = null, { 
     return { ok: true, written: 0, inspected: 0, skipped };
   }
   const mailbox = gmailForSender(sender, { feature: 'human_outbound' });
-  // An inbox only ever correlates its own client's leads by address.
-  const mailboxClient = resolveSenderClient(sender);
-  if (mailboxClient.ok) leads = leadsInEmailScope(leads, mailboxClient.clientId);
+  // Include proven historical conversations after exclusive reassignment.
+  leads = mailboxLeadScope(leads, sender, activitiesForCycle || []);
   const leadsByEmail = new Map();
   for (const lead of leads) {
     const email = String(lead.email || '').trim().toLowerCase();
@@ -4861,6 +4611,7 @@ function coldSendGate(lead, context = null) {
     const followUp = observerFollowUpVerdict({
       lead,
       senderResolved: Boolean(senderId),
+      requireHealthyFirstTouch: Boolean(GMAIL_SENDERS.find(sender => sender.id === senderId)?.delegatedFromClientId),
       observer: {
         health: ready ? 'healthy' : (stored.health || 'unavailable'),
         checkpointAgeMinutes: ready ? (stored.checkpointAgeMinutes ?? 0) : (stored.checkpointAgeMinutes ?? null),
@@ -4922,6 +4673,9 @@ function coldFollowUpBlockReason(lead) {
   // touch would repeat a claim its evidence audit found false).
   const clientHold = isClientTemplateId(lead.emailTemplateId) ? clientFollowUpHold(lead) : '';
   if (clientHold) return clientHold;
+  // A managed-client lead with a ledger meeting has left the cold sequence.
+  const meetingHold = clientMeetingHoldReason(lead, CLIENT_MEETING_HOLDS);
+  if (meetingHold) return meetingHold;
   const family = familyForLead(lead);
   if (family === CAMPAIGN_FAMILY.UNROUTED) return 'unknown or ambiguous niche';
   if (isManagedFamily(family) !== isClientTemplateId(lead.emailTemplateId)) return 'client template and campaign family disagree';
@@ -4943,6 +4697,7 @@ function selectQueued(leads) {
   // one warning per lead per window.
   const clientHeld = new Map();
   const personalizationHeld = new Map();
+  const meetingHeld = new Map();
   const selected = leads.filter(l => {
     if (l.stage !== QUEUE_STAGE) return false;   // you queued it
     if (!isValidEmail(l.email)) return false;    // sendable address
@@ -4970,6 +4725,11 @@ function selectQueued(leads) {
       personalizationHeld.set(client, (personalizationHeld.get(client) || 0) + 1);
       return false;
     }
+    if (clientMeetingHoldReason(l, CLIENT_MEETING_HOLDS)) {
+      const client = tenantOf(l);
+      meetingHeld.set(client, (meetingHeld.get(client) || 0) + 1);
+      return false;
+    }
     // Global suppression list (durable, survives row deletion / re-import) —
     // first-line exclusion; suppressionReason() is the last-line guard at send.
     if (SUPPRESSED_EMAILS.has(normEmail(l.email))) {
@@ -4993,6 +4753,9 @@ function selectQueued(leads) {
   for (const [client, count] of personalizationHeld) {
     console.log(`[client-hold] ${count} queued ${client} lead(s) held: personalization is on hold or not classified`);
   }
+  for (const [client, count] of meetingHeld) {
+    console.log(`[client-hold] ${count} queued ${client} lead(s) held: a meeting is booked, or the meeting ledger is unreadable`);
+  }
   return selected;
 }
 
@@ -5007,8 +4770,15 @@ function routedLeadCanUseCurrentSender(lead) {
 // + 3 days, Touch 3 at MAX(Touch 1 + 7 days, Touch 2 + 3 days).
 function selectFollowUps(leads, activities = []) {
   const now = Date.now();
+  const meetingHeld = new Map();
   const due = leads.filter(l => {
     if (l.emailStatus !== 'emailed') return false;
+    // A managed-client lead who booked a meeting gets no further cold touch.
+    if (clientMeetingHoldReason(l, CLIENT_MEETING_HOLDS)) {
+      const client = tenantOf(l);
+      meetingHeld.set(client, (meetingHeld.get(client) || 0) + 1);
+      return false;
+    }
     // A lead with a recorded, never-delivered demo pair (retired voice demo)
     // stays out of ordinary cold cadence, as it always has.
     if (hasUndeliveredDemoPair(l, activities)) return false;
@@ -5020,7 +4790,7 @@ function selectFollowUps(leads, activities = []) {
     // The hold remains a second, independent safety tag; this no longer depends
     // on anyone having remembered to add it.
     if (NON_COLD_STAGES.includes(String(l.stage || '').trim().toLowerCase())) return false;
-    if (l.emailTemplateId === ROOFING_SURVEY_TEMPLATE) return false;
+    if (RETIRED_EMAIL_TEMPLATE_IDS.has(String(l.emailTemplateId || ''))) return false;
     const ownership = authoritativeProvider({
       lead: l, campaignProviders: CAMPAIGN_PROVIDERS, mappings: liveSmartleadMappings(l),
     });
@@ -5031,6 +4801,9 @@ function selectFollowUps(leads, activities = []) {
     // a next step the ledger already shows delivered are all "not due".
     return isFollowUpDue(l, now, { activities });
   });
+  for (const [client, count] of meetingHeld) {
+    console.log(`[client-hold] ${count} ${client} follow-up(s) held: a meeting is booked, or the meeting ledger is unreadable`);
+  }
   return oldestDueFirst(due, activities);
 }
 
@@ -5523,6 +5296,50 @@ async function runStageSequencePass(allLeads, {
   return sent;
 }
 
+// A controlled inbox-placement test (integrations/placement-test.js). Only the
+// operator route starts this. It reads no prospect, shares every send gate
+// except the client's window: it refuses to run inside that window, so it never
+// competes with a scheduled send for a lane.
+async function runPlacementTestPass() {
+  if (DRY_RUN || CHECK_ONLY) throw new Error('a placement test is a live run');
+  if (!validPlacementLabel(PLACEMENT_TEST_LABEL)) throw new Error('placement test label is invalid');
+  assertSendAuthorized();
+  if (!sendLockEnabled()) throw new Error('durable action reservation is required for a placement test');
+  await assertSendLockReady();
+  const blocked = clientSendBlock(PLACEMENT_TEST_CLIENT);
+  if (blocked) throw new Error(`client send authority: ${blocked.reason}`);
+  if (clientSendWindowVerdict(PLACEMENT_TEST_CLIENT).allowed) throw new Error('refused: the client send window is open');
+  await withAuth(ensureAgentHeaders);
+  const snapshot = await withAuth(loadAgentSnapshot);
+  const activities = await readColdCallActivities(snapshot.activityRows);
+  const senders = placementSenders(GMAIL_SENDERS, { mayStillSend: senderMayStillSend });
+  const dayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+  const sentTodayBySender = senderCountsToday(activities, dayKey);
+  const sentTodayGlobal = successfulSendCountToday(activities, dayKey);
+  // Every send of this client carries one of these inboxes, so no corpus read is needed.
+  const sentTodayByClient = new Map([[PLACEMENT_TEST_CLIENT, senders.reduce((sum, sender) => sum + (sentTodayBySender.get(sender.id) || 0), 0)]]);
+  const plan = buildSendRunPlan({ senders, capacity: SENDER_CAPACITY, sentTodayBySender, sentTodayByClient, sentTodayGlobal,
+    perInboxRunCap: PLACEMENT_TEST_RECIPIENTS.length });
+  activeSendQuotaStore = createPgSendQuotaStore({ connectionString: process.env.SEND_LOCK_DATABASE_URL });
+  const quota = createSendQuotaCoordinator({ store: activeSendQuotaStore, runId: crypto.randomUUID(), dayKey, plan,
+    scheduledTickAt: new Date().toISOString(), deadlineAt: new Date(Date.now() + 25 * 60000).toISOString(),
+    baselines: { global: sentTodayGlobal, clients: sentTodayByClient, senders: sentTodayBySender } });
+  await quota.start();
+  activeSendQuota = quota;
+  const mailingAddress = process.env[getManagedClient(PLACEMENT_TEST_CLIENT).copyEnv?.mailingAddress] || '';
+  const results = await runPlacementTest({ label: PLACEMENT_TEST_LABEL, senders, quota, reserve: withOutboundReservation,
+    deliver: (sender, message) => gmailProviderSend(sender, message),
+    messageFor: ({ label, sender, recipient }) => placementMessage({ label, sender, recipient, senderName: fromNameForSender(sender), mailingAddress }),
+    between: () => new Promise(resolve => setTimeout(resolve, 20000)),
+    record: async ({ actionId, sender, recipient, message, label, gmailMessageId, gmailThreadId }) => {
+      await recordColdCallActivityStrict({ eventId: actionId, leadId: '', sourceLeadId: '', email: recipient.email, company: '',
+        eventType: PLACEMENT_TEST_EVENT, subject: message.subject, content: '', metadata: JSON.stringify({ provider: 'gmail', clientId: sender.clientId,
+          senderInboxId: sender.id, recipientId: recipient.id, recipientProvider: recipient.provider, label, gmailMessageId, gmailThreadId, autoSendAllowed: false }) });
+      await confirmOutboundReservation(actionId).catch(error => console.warn(`[placement-test] reservation confirm: ${error.message}`));
+    } });
+  console.log(JSON.stringify({ event: 'placement_test_finished', label: PLACEMENT_TEST_LABEL, results }));
+}
+
 async function runInner() {
   if (!SPREADSHEET_ID) throw new Error('SPREADSHEET_ID missing from .env');
   if (!DRY_RUN && !CHECK_ONLY && !FROM_EMAIL) throw new Error('FROM_EMAIL missing from .env (required to send)');
@@ -5763,6 +5580,11 @@ async function runInner() {
   todaySent = quotaState.globalCount;
   dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
 
+  // Managed-client meetings, read once for this run's selection and send gates.
+  // A failed read holds that client's cold sends for the run, nothing else.
+  CLIENT_MEETING_HOLDS = await loadClientMeetingHolds({ store: getLedgerStore() });
+  for (const line of describeClientMeetingHolds(CLIENT_MEETING_HOLDS)) console.log(JSON.stringify(line));
+
   // Phase 1 — new sends (stage === QUEUE_STAGE, never emailed)
   const queued = selectQueued(all);
 
@@ -5805,7 +5627,7 @@ async function runInner() {
   // normal five-send batch first scans oldest-due follow-ups until four have
   // actually succeeded, then gives initials their reserved position. Refused
   // candidates consume no allocation, and either pool may refill unused space.
-  // Staffing and dental share `primary`. Queued order is sheet order, so
+  // Several campaigns share `primary`. Queued order is sheet order, so
   // without this the niche sitting earlier in the sheet consumed the whole
   // five-success bucket and the other was deferred with "assigned sender
   // scheduled-window limit reached". Reorder each sender's slice to the 3:2
@@ -5866,7 +5688,6 @@ async function runInner() {
 
     const currentStep = parseInt(lead.emailStep, 10);
     const nextStepNum = currentStep + 1;
-    const template = FOLLOW_UP_SEQUENCE[currentStep - 1];
     const blocked = coldFollowUpBlockReason(lead);
     if (blocked) {
       console.warn(`⏸️  follow-up deferred → ${lead.email} (${blocked})`);
@@ -5874,14 +5695,16 @@ async function runInner() {
     }
     // Staffing follow-ups use their own locked copy; the cadence, sender,
     // thread and every safety gate below remain the shared ones.
-    // Only the staffing branch is guarded: dental and roofing keep their exact
-    // previous behaviour, including how a copy failure propagates.
+    // A lead without staffing or managed-client copy is deferred: the retired
+    // offers' follow-up copy was removed.
     let body;
     let clientCopyVersion = '';
     let clientPersonalization = null;
+    let clientCopyAudit = null;
     if (isClientTemplateId(lead.emailTemplateId)) {
       // A managed client's follow-up: its own copy, or a deferral — never the
-      // dental follow-up sequence. The ledger pins the version its thread began on.
+      // staffing follow-up sequence. The ledger pins the version of an attempted
+      // step and the claims its thread began with.
       try {
         const email = renderClientLeadEmail(lead, nextStepNum, { activities: ownershipActivities });
         const bad = validateClientLeadEmail(lead, email, nextStepNum);
@@ -5889,6 +5712,7 @@ async function runInner() {
         body = email.body;
         clientCopyVersion = email.copyVersion;
         clientPersonalization = email.personalization || null;
+        clientCopyAudit = { threadCopyVersion: email.threadCopyVersion, copyVersionReason: email.copyVersionReason };
       } catch (error) {
         console.warn(`⏸️  follow-up deferred → ${lead.email} (${error.message})`);
         return false;
@@ -5900,7 +5724,8 @@ async function runInner() {
         return false;
       }
     } else {
-      body = template.body(lead);
+      console.warn(`⏸️  follow-up deferred → ${lead.email} (no follow-up copy exists for this lead)`);
+      return false;
     }
     const preview = body.split('\n')[2] || '';
     // Client capacity before any sender is considered: a client at its cap (or
@@ -5948,7 +5773,7 @@ async function runInner() {
     }
 
     try {
-      const attribution = withClientCopyVersion(coldSendAttribution(lead, nextStepNum), clientCopyVersion, clientPersonalization);
+      const attribution = withClientCopyVersion(coldSendAttribution(lead, nextStepNum), clientCopyVersion, clientPersonalization, clientCopyAudit);
       const delivery = await deliverOrdinaryColdStep({
         lead, step: nextStepNum, sender: selectedSender, subject, body, attribution,
         activitiesForCycle: ownershipActivities, thread,
@@ -6018,26 +5843,19 @@ async function runInner() {
       } catch (e) { console.error(`❌ Smartlead enqueue failed → ${lead.email}: ${e.message}`); }
       return;
     }
-    // buildEmail can THROW rather than emit a half-merged guarantee (see
+    // Building step 1 can THROW rather than emit a half-merged email (see
     // guaranteeFor). That must become a draft for review, not an unhandled
     // error or a "send failed" log line — the lead is fine, the data isn't.
     let built;
     try {
       if (isManagedFamily(familyForLead(lead))) {
         // A managed client's lead sends its client's copy or nothing: never
-        // ScaleLab's dental/staffing copy. The opener was researched and
+        // ScaleLab's staffing copy. The opener was researched and
         // stored at import; the renderer only merges it, and throws (draft
         // for review) when it is missing, unreviewed or stale.
         if (!isClientTemplateId(lead.emailTemplateId)) throw new Error('managed client lead has no client template');
         const email = renderClientLeadEmail(lead, 1, { activities: ownershipActivities });
-        built = { subject: email.subject, body: email.body, link: '', opener: 'stored client personalization', openerTier: 'LOCKED', pitchTier: familyForLead(lead), copyVersion: email.copyVersion, clientPersonalization: email.personalization || null };
-      } else if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE) {
-        const qualification = qualifyRoofingLead(lead);
-        if (!qualification.ok) throw new Error(`roofing lead qualification failed (${qualification.reasonCode})`);
-        const email = renderRoofingSurveyInitial(lead, { mailingAddress: MAILING_ADDRESS, reference: `SL-${refCode(lead)}` });
-        const invalid = validateRoofingSurveyInitial(email);
-        if (invalid) throw new Error(invalid);
-        built = { ...email, link: '', opener: 'locked roofing survey copy', openerTier: 'LOCKED', pitchTier: ROOFING_SURVEY_PROFILE };
+        built = { subject: email.subject, body: email.body, link: '', opener: 'stored client personalization', openerTier: 'LOCKED', pitchTier: familyForLead(lead), copyVersion: email.copyVersion, clientPersonalization: email.personalization || null, clientCopyAudit: { threadCopyVersion: email.threadCopyVersion, copyVersionReason: email.copyVersionReason } };
       } else if (isStaffingTemplateId(lead.emailTemplateId)) {
         if (familyForLead(lead) !== CAMPAIGN_FAMILY.STAFFING) {
           throw new Error('staffing template cannot send for a non-staffing family');
@@ -6049,10 +5867,11 @@ async function runInner() {
         if (bad) throw new Error(bad);
         built = { ...email, link: '', opener: 'approved staffing opening', openerTier: 'LOCKED', pitchTier: 'industrial_staffing' };
       } else {
-        if (familyForLead(lead) === CAMPAIGN_FAMILY.STAFFING) {
-          throw new Error('staffing lead cannot use dental cold copy');
-        }
-        built = await buildEmail(lead);
+        // Only staffing and managed-client copy exists. The retired offers'
+        // cold copy was removed, so any other lead becomes a draft for review.
+        throw new Error(familyForLead(lead) === CAMPAIGN_FAMILY.STAFFING
+          ? 'staffing lead has no staffing template'
+          : 'no email copy exists for this lead (only staffing and managed-client copy can send)');
       }
     } catch (e) {
       console.error(`✎ [draft] could not build step 1 → ${lead.email} — ${e.message}`);
@@ -6073,8 +5892,6 @@ async function runInner() {
     // same normalized value; live runs fail closed and preserve the lead.
     const invalid = isClientTemplateId(lead.emailTemplateId)
       ? validateClientLeadEmail(lead, { subject, body, copyVersion: built.copyVersion, ...(built.clientPersonalization ? { personalization: built.clientPersonalization } : {}) }, 1, { activities: ownershipActivities })
-      : lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE
-      ? validateRoofingSurveyInitial({ subject, body })
       : isStaffingTemplateId(lead.emailTemplateId)
       ? validateStaffingEmail({ subject, body, campaignId: staffingCampaignFor(lead)?.id }, 1)
       : validateColdEmail(lead, subject, body, link, {
@@ -6112,7 +5929,7 @@ async function runInner() {
       console.log(`   Pitch:   ${pitchTier}`);
       const subjectLabel = subjectMetadata
         ? `level ${subjectMetadata.level}, ${subjectMetadata.angleId}`
-        : `variant ${coldSubjectIndex(lead) + 1}/${COLD_SUBJECTS.length}`;
+        : 'locked template subject';
       console.log(`   Subject: ${subject}  [${subjectLabel}]`);
       console.log(`   Opener:  ${opener}  [${openerTier}]`);
       console.log(`   Link:    ${link}`);
@@ -6132,7 +5949,7 @@ async function runInner() {
     }
 
     try {
-      const attribution = withClientCopyVersion(coldSendAttribution(lead, 1, { personalizationMetadata: validatedPersonalizationMetadata }), built.copyVersion, built.clientPersonalization);
+      const attribution = withClientCopyVersion(coldSendAttribution(lead, 1, { personalizationMetadata: validatedPersonalizationMetadata }), built.copyVersion, built.clientPersonalization, built.clientCopyAudit);
       const delivery = await deliverOrdinaryColdStep({
         lead, step: 1, sender: selectedSender, subject, body, attribution,
         personalizationMetadata: validatedPersonalizationMetadata,
@@ -6182,7 +5999,7 @@ async function runInner() {
   }
   const eligibleLanes = GMAIL_SENDERS.filter(item => item.sendEligible
     && (!activeSendQuota || activeSendQuota.canStart(item.id)));
-  const outcomes = await runSenderLanes(eligibleLanes, runSenderLane,
+  const outcomes = await runClientOverlappedSenderLanes(eligibleLanes, runSenderLane,
     { parallel: Boolean(activeSendQuota) && concurrentSenderLanesEnabled() });
   const failures = outcomes.filter(outcome => outcome.status === 'rejected');
   for (const outcome of failures) console.error(`[sender-lane] worker failed: ${outcome.reason?.message || outcome.reason}`);
@@ -6204,7 +6021,6 @@ async function runInner() {
 
     const currentStep = parseInt(lead.emailStep, 10);
     const nextStepNum = currentStep + 1;
-    const template = FOLLOW_UP_SEQUENCE[currentStep - 1];
     const blocked = coldFollowUpBlockReason(lead);
     if (blocked) {
       console.warn(`⏸️  follow-up deferred → ${lead.email} (${blocked})`);
@@ -6212,8 +6028,8 @@ async function runInner() {
     }
     // Staffing follow-ups use their own locked copy; the cadence, sender,
     // thread and every safety gate below remain the shared ones.
-    // Only the staffing branch is guarded: dental and roofing keep their exact
-    // previous behaviour, including how a copy failure propagates.
+    // A lead without staffing or managed-client copy is deferred: the retired
+    // offers' follow-up copy was removed.
     let body;
     if (isStaffingTemplateId(lead.emailTemplateId)) {
       try { body = staffingFollowUpBody(lead, nextStepNum, ownershipActivities); }
@@ -6222,7 +6038,8 @@ async function runInner() {
         continue;
       }
     } else {
-      body = template.body(lead);
+      console.warn(`⏸️  follow-up deferred → ${lead.email} (no follow-up copy exists for this lead)`);
+      continue;
     }
     const preview     = body.split('\n')[2] || '';
     // Client capacity before any sender is considered: a client at its cap (or
@@ -6293,7 +6110,8 @@ async function runInner() {
 
 async function run() {
   let terminationReason = 'complete';
-  try { await runInner(); }
+  try { if (PLACEMENT_TEST_LABEL) await runPlacementTestPass();
+  else await runInner(); }
   catch (error) { terminationReason = 'fatal'; throw error; }
   finally {
     if (activeSendQuota) {

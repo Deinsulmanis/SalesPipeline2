@@ -342,13 +342,18 @@ test('23. provider-reported campaign rows are marked as provider counts', () => 
   assert.ok(browser.includes('Smartlead counts'), 'a provider-sourced row must say so rather than pass as canonical');
 });
 
-test('24. the Inbox states that it counts every inbound message, not genuine replies', () => {
-  const note = browser.slice(browser.indexOf('id="inbox-note"'), browser.indexOf('id="inbox-note"') + 700);
-  assert.ok(/Inbound Messages/.test(note) && /Genuine Replies/.test(note));
-  // Inbox filter counts must come from the same predicate the list renders.
+test('24. the Inbox states what it counts: one row per conversation, its latest reply', () => {
+  // Since 2026-11-19 the ScaleLab Inbox has a managed client's layout: status
+  // badges, summary cards and one row per conversation (its latest reply), with
+  // no filter tabs. Every conversation is listed, so the cards count from the
+  // same records the list renders.
   const body = sliceFn(browser, 'renderInboxWorkspace');
-  assert.ok(body.includes('inboxMatches(record, inboxActionFor(record))'));
-  assert.ok(/INBOX_FILTERS\.map[\s\S]{0,400}inboxMatches/.test(body), 'tab counts must use the render predicate');
+  assert.ok(body.includes('const conversations = inboxConversations();'), 'one row per conversation');
+  assert.ok(body.includes('host.innerHTML = conversations.map(({ latest: record })'), 'the list renders every conversation by its latest reply');
+  assert.ok(body.includes("metricCard('Conversations', conversations.length)"), 'the headline count is the rows shown');
+  assert.ok(body.includes('inboxMatches(c.latest, inboxActionFor(c.latest))'), 'card counts use the canonical predicate');
+  const conversations = sliceFn(browser, 'inboxConversations');
+  assert.ok(/latestAt/.test(conversations) && /count \+= 1/.test(conversations), 'a conversation is represented by its latest reply');
 });
 
 test('25. the Settings agent summary uses the same names as the analytics surfaces', () => {

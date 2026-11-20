@@ -22,22 +22,23 @@
 //
 // WORKLOAD MODEL (per active, send-eligible inbox)
 //
-//   target      = dailyLimit + ceil(dailyLimit × bufferRatio)   (soft)
+//   remainingCapacity = min(daily headroom, remaining normal windows × perRunLimit)
+//   target      = remainingCapacity + ceil(remainingCapacity × bufferRatio)   (soft)
 //   followUps   = pinned follow-ups that will be due by the planning horizon
 //   firstTouch  = step-1 leads already assigned to it that are safely movable
 //   load        = followUps + firstTouch
-//   hardDeficit = max(0, dailyLimit − load)
+//   hardDeficit = max(0, remainingCapacity − load)
 //   deficit     = max(0, target − load)
 //
 // The refill fills in two phases. Phase A brings every inbox up to its
-// dailyLimit, taking only from inboxes above their own dailyLimit. Phase B then
+// remainingCapacity, taking only from inboxes above that floor. Phase B then
 // fills toward the buffered target, taking only from inboxes above their own
 // target. The buffer is resilience, never a reason to leave send capacity idle.
 //
 // Follow-ups are counted, never moved: a follow-up belongs to the mailbox that
 // sent step 1, and that is decided by delivered-message evidence elsewhere.
 
-const { allowedForLead, sentSenderEvidence } = require('./gmail-sender-routing');
+const { allowedForLead, sentSenderEvidence, senderCountsToday } = require('./gmail-sender-routing');
 const { isStaffingOnlySender } = require('./gmail-inbox-registry');
 const { normalizeNiche, validateRoute, routedLeadReady } = require('./campaign-routing');
 const { queueEligibility } = require('./outreach-queue');
@@ -45,6 +46,7 @@ const { sendSuppressionReason } = require('./pipeline-state');
 const { NON_COLD_STAGES } = require('./automation-ownership');
 const { outreachBlockForLead } = require('./lead-archive');
 const { isFollowUpDue } = require('./sequence-timing');
+const { resolveLeadClient, resolveSenderClient } = require('./clients/ownership');
 
 const DEFAULT_BUFFER_RATIO = 0.15;
 const QUEUE_STAGE = 'Queued';
@@ -77,6 +79,8 @@ function routeInboxes(senders) {
   return senders.map(sender => ({
     id: sender.id, email: sender.email || sender.id, sendEligible: Boolean(sender.sendEligible),
     deliveryImplemented: true, staffingOnly: isStaffingOnlySender(sender),
+    ...(sender.clientId ? { clientId: sender.clientId } : {}),
+    ...(sender.allowedCampaignIds ? { allowedCampaignIds: [...sender.allowedCampaignIds] } : {}),
     ...(sender.preparationReady !== undefined ? { preparationReady: sender.preparationReady === true } : {}),
   }));
 }
@@ -142,6 +146,7 @@ function firstTouchMovability(lead, ctx) {
 function projectedFollowUps({ leads, activitiesByLead, senders, suppressedEmails, horizon }) {
   const counts = new Map(senders.map(sender => [sender.id, 0]));
   const ids = new Set(senders.map(sender => sender.id));
+  const byId = new Map(senders.map(sender => [sender.id, sender]));
   for (const lead of leads) {
     if (lead.emailStatus !== 'emailed') continue;
     if (NON_COLD_STAGES.includes(text(lead.stage).toLowerCase())) continue;
@@ -157,6 +162,11 @@ function projectedFollowUps({ leads, activitiesByLead, senders, suppressedEmails
     // unproven legacy ownership is refused at send time, so it is no workload.
     const owners = sentSenderEvidence(lead, mine);
     if (owners.length !== 1 || !ids.has(owners[0])) continue;
+    // Historical inbound ownership does not make an old client's follow-up
+    // sendable through the mailbox's new outbound assignment.
+    const leadOwner = resolveLeadClient(lead);
+    const senderOwner = resolveSenderClient(byId.get(owners[0]));
+    if (!leadOwner.ok || !senderOwner.ok || leadOwner.clientId !== senderOwner.clientId) continue;
     counts.set(owners[0], counts.get(owners[0]) + 1);
   }
   return counts;
@@ -175,6 +185,29 @@ function planContext(input) {
   };
 }
 
+function remainingWindowCapacity(sender, planningDayKey, now) {
+  // Offline forecasts may omit a clock. Live callers provide one so an idle
+  // late-day refill never protects more supply than an inbox can still send.
+  if (now === undefined) return Infinity;
+  const date = new Date(now);
+  if (!Number.isFinite(date.getTime())) throw new Error('invalid sender planning clock');
+  const today = date.toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+  if (planningDayKey > today) return Infinity;
+  if (planningDayKey < today) return 0;
+  const owner = resolveSenderClient(sender);
+  if (!owner.ok) throw new Error('sender planning client is unresolved');
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: owner.clientId === 'jole' ? 'America/Chicago' : 'America/Vancouver',
+    weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(date).filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
+  if (['Sat', 'Sun'].includes(parts.weekday)) return 0;
+  const minute = Number(parts.hour) * 60 + Number(parts.minute);
+  const windows = Array.from({ length: 10 }, (_, index) => 7 * 60 + 30 * index);
+  const perRun = Number(sender.perRunLimit);
+  if (!Number.isFinite(perRun) || perRun <= 0) throw new Error('sender planning per-window cap is unavailable');
+  return windows.filter(slot => slot > minute).length * perRun;
+}
+
 /**
  * Per-inbox workload snapshot. `horizon` is the instant by which counted
  * follow-ups must be due (normally the end of the next sending day).
@@ -185,6 +218,11 @@ function senderWorkload(input) {
   const ctx = planContext(input);
   const inboxes = routeInboxes(senders);
   const horizon = Number(input.horizon ?? Date.now());
+  const planningDayKey = new Date(horizon).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+  // Keep the full activity snapshot: a mailbox's usage is shared across clients.
+  // A future planning day naturally starts at zero; today's usage must not
+  // strand uncontacted leads on an inbox that has already reached its cap.
+  const used = senderCountsToday(input.activities || [], planningDayKey);
   const followUps = projectedFollowUps({ ...ctx, senders, horizon });
   const byId = new Map(senders.map(sender => [sender.id, sender]));
 
@@ -206,11 +244,14 @@ function senderWorkload(input) {
   const rows = senders.map(sender => {
     const firstTouch = movable.filter(item => item.current === sender.id).length;
     const load = followUps.get(sender.id) + firstTouch;
-    const target = targetFor(sender, bufferRatio);
+    const sentInPlanningDay = used.get(sender.id) || 0;
+    const remainingDaily = Math.max(0, Number(sender.dailyLimit) - sentInPlanningDay);
+    const remainingCapacity = Math.min(remainingDaily, remainingWindowCapacity(sender, planningDayKey, input.now));
+    const target = targetFor({ dailyLimit: remainingCapacity }, bufferRatio);
     return {
       id: sender.id, dailyLimit: Number(sender.dailyLimit), staffingOnly: isStaffingOnlySender(sender),
-      target, followUps: followUps.get(sender.id), firstTouch, load,
-      hardDeficit: Math.max(0, Number(sender.dailyLimit) - load),
+      sentInPlanningDay, remainingDaily, remainingCapacity, target, followUps: followUps.get(sender.id), firstTouch, load,
+      hardDeficit: Math.max(0, remainingCapacity - load),
       deficit: Math.max(0, target - load), giveable: Math.min(firstTouch, Math.max(0, load - target)),
     };
   });
@@ -225,6 +266,24 @@ const unfilledShare = row => (row.target - row.load) / row.dailyLimit;
  * The refill plan. Pure and deterministic: the same inputs always produce the
  * same moves, and a plan applied and re-planned produces no moves.
  */
+function scopedBalanceInput(input, { client, bufferRatio } = {}) {
+  if (bufferRatio !== undefined) {
+    const ratio = Number(bufferRatio);
+    if (!client || !Number.isFinite(ratio) || ratio < 0 || ratio > 8) {
+      throw new Error('bufferRatio requires a client and must be between 0 and 8');
+    }
+    input = { ...input, bufferRatio: ratio };
+  }
+  if (!client) return input;
+  const { resolveClientId, DEFAULT_CLIENT_ID } = require('./clients/registry');
+  const resolved = resolveClientId(client);
+  if (!resolved.ok) throw new Error(resolved.reason);
+  // Keep the full corpus and activity history for duplicate/suppression checks;
+  // only the sender pool is scoped, so no other client's lead can be moved.
+  return { ...input, senders: input.senders.filter(sender =>
+    (sender.clientId || DEFAULT_CLIENT_ID) === resolved.clientId) };
+}
+
 function planSenderRebalance(input) {
   const workload = senderWorkload(input);
   const rows = new Map(workload.senders.map(row => [row.id, { ...row }]));
@@ -286,15 +345,15 @@ function planSenderRebalance(input) {
   }
 
   // Phase A — hard daily capacity. Idle send capacity is the real loss, so
-  // every inbox is first brought up to its dailyLimit, with donors held at
-  // their own dailyLimit (never below what they can send themselves).
-  fill(row => row.dailyLimit);
+  // every inbox is first brought up to its remainingCapacity, with donors held
+  // at that same floor (never below what they can still send themselves).
+  fill(row => row.remainingCapacity);
   // Phase B — resilience. Only then fill toward the buffered target, with
   // donors held at their own buffered target, exactly as before.
   fill(row => row.target);
 
   const after = [...rows.values()].map(row => ({ ...row,
-    hardDeficit: Math.max(0, row.dailyLimit - row.load), deficit: Math.max(0, row.target - row.load),
+    hardDeficit: Math.max(0, row.remainingCapacity - row.load), deficit: Math.max(0, row.target - row.load),
     giveable: Math.min(row.firstTouch, Math.max(0, row.load - row.target)) }));
   return {
     before: workload.senders,
@@ -374,5 +433,5 @@ function nextSendDayHorizon(now = new Date()) {
 module.exports = {
   DEFAULT_BUFFER_RATIO, BLOCKING_ACTIVITY, balancingSenders, targetFor, senderCompatible,
   firstTouchMovability, projectedFollowUps, senderWorkload, planSenderRebalance, assignNewLeads,
-  assignBatch, nextSendDayHorizon,
+  assignBatch, nextSendDayHorizon, scopedBalanceInput,
 };

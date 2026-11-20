@@ -19,7 +19,10 @@ const { activationBlockers, activateSender } = require('../integrations/gmail-se
 const SEND_ENV = Object.freeze({
   SENDING_ENABLED: 'true', SEND_AUTHORIZED_ENV: 'test', RAILWAY_ENVIRONMENT: 'test',
   SEND_AUTHORIZED_TOKEN: 'token', SEND_WORKER_ROLE: 'outreach-sender', SEND_LOCK_ENABLED: 'true',
+  // google_only is retired as the default (2026-10-23); these tests cover it as the explicit opt-in.
+  RECIPIENT_PROVIDER_POLICY: 'google_only',
 });
+process.env.RECIPIENT_PROVIDER_POLICY = 'google_only';
 const GOOGLE = Object.freeze({ provider: PROVIDER.GOOGLE, domain: 'acme.com', reason: 'google_mx' });
 const MICROSOFT = Object.freeze({ provider: PROVIDER.MICROSOFT, domain: 'corp.com', reason: 'microsoft_mx' });
 const COM = Object.freeze({ id: 'scalelabaiteam', status: 'active', sendEligible: true });
@@ -150,7 +153,7 @@ test('22/23. a provider hold leaves sequence position untouched and is never a s
   const held = Object.freeze(lead({ email: 'pat@outlook.com', emailStep: '2' }));
   const before = JSON.stringify(held);
   const classifier = createProviderClassifier({ resolveMx: async () => [], logger: { log() {} }, env: {} });
-  const admission = await admitByRecipientProvider([held], classifier, {});
+  const admission = await admitByRecipientProvider([held], classifier, SEND_ENV);
   assert.equal(admission.allowed.size, 0);
   assert.equal(admission.held[0].holdReason, HOLD_REASON.MICROSOFT);
   assert.equal(JSON.stringify(held), before);

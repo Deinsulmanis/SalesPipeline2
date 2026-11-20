@@ -471,7 +471,7 @@ function deriveAutomationState(twin, now = Date.now()) {
 
 // Board stages that mean a human has committed to this lead. Automation running
 // underneath any of these is the leak the audit was looking for.
-const HUMAN_OWNED_STAGES = Object.freeze(['hot', 'call_booked', 'closed_won', 'closed_lost']);
+const HUMAN_OWNED_STAGES = Object.freeze(['hot', 'call_booked', 'call_held', 'proposal_sent', 'closed_won', 'closed_lost']);
 
 /**
  * The P0 check: is a human-owned lead still being mailed by the machine?
@@ -1256,6 +1256,17 @@ function deriveNextAction(boardLead, twin, context = {}) {
 
   // ── Call Booked — the call lifecycle is the authority ────────────────────
   if (stage === 'call_booked') return callNextAction(lead, { activities, now });
+
+  // ── Call Held / Proposal Sent — a person closes the deal ─────────────────
+  // No automated journey exists for these stages; the next move is always
+  // a person's, dated only when someone set a follow-up date.
+  if (stage === 'call_held' || stage === 'proposal_sent') {
+    const label = stage === 'call_held' ? 'Send the proposal / agreement' : 'Follow up on the proposal / agreement';
+    return withManual(label) || buildAction({ type: ACTION_TYPE.MANUAL_FOLLOW_UP, label, dueAt: null,
+      owner: ACTION_OWNER.HUMAN, status: ACTION_STATUS.WAITING, source: 'stage',
+      reason: stage === 'call_held' ? 'the call was held; the proposal or agreement goes out next'
+        : 'the proposal or agreement is out; waiting on the client to sign and pay the tech fee', now });
+  }
   if (hasUndeliveredDemoPair(twin || lead, activities)
     && ['scheduled', 'rescheduled', 'outcome_pending'].includes(callState.status)) {
     return callNextAction(lead, { activities, now });
@@ -1292,6 +1303,28 @@ function deriveNextAction(boardLead, twin, context = {}) {
   if (permanentLoss && reply) {
     return nothing(ACTION_TYPE.NONE_LOST, 'None — suppressed',
       `suppressed (${permanentSuppression}); no sales follow-up applies`);
+  }
+  // A ScaleLab reply task is advisory human work. The board, a later reply,
+  // or the operator's own follow-up choice always takes precedence.
+  if (stage === 'follow_up' && twin?.clientId === 'scalelab' && !manualDate && !overrides.action
+      && !permanentLoss && hasManualHold(twin.notes) && !manualHoldReleased(twin.notes, now)) {
+    const newestTask = activities.filter(row => row.eventType === 'scalelab_reply_follow_up_task'
+      && row.leadId === lead.id && row.sourceLeadId === twin.id)
+      .sort((a, b) => String(b.occurredAt).localeCompare(String(a.occurredAt)))[0];
+    if (newestTask) {
+      const taskAt = Date.parse(newestTask.occurredAt);
+      const superseded = activities.some(row => row.sourceLeadId === twin.id
+        && Date.parse(row.occurredAt) > taskAt
+        && (row.eventType === 'human_response_sent' || String(row.eventId || '').startsWith('gmail-reply:')));
+      let task;
+      try { task = JSON.parse(newestTask.metadata || '{}'); } catch { task = null; }
+      if (!superseded && task?.clientId === 'scalelab' && task.owner === 'human' && task.autoSendAllowed === false
+          && Number.isFinite(Date.parse(task.dueAt))) {
+        return buildAction({ type: ACTION_TYPE.MANUAL_FOLLOW_UP, owner: ACTION_OWNER.HUMAN,
+          label: 'Follow up with prospect', dueAt: task.dueAt, source: 'scalelab-reply-routing',
+          reason: 'Verified prospect reply requires human follow-up', needsAttention: true, now });
+      }
+    }
   }
   const operational = deriveOperationalAction(twin || lead, {
     activities, boardLead: lead,

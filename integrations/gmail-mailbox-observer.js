@@ -4,12 +4,20 @@ const {
   providerRead, isRateLimited, statusOf, persistedGmailMessageIds,
   getMailboxBackoff, signalMailboxBackoff, QUOTA_RETRY_DELAYS_MS,
 } = require('./gmail-api-guard');
-const { DELIVERY_CLASS, classifyDeliveryStatus } = require('./delivery-status');
+const { DELIVERY_CLASS, classifyDeliveryStatus, isDeliveryNotice } = require('./delivery-status');
+const { resolveLeadClient } = require('./clients/ownership');
+const { DEFAULT_CLIENT_ID } = require('./clients/registry');
 
 const DAEMON_FROM = /mailer-daemon|postmaster/i;
 const AUTOMATED_FROM = /mailer-daemon|postmaster|no-?reply|do-?not-?reply/i;
 
 const norm = value => String(value || '').trim().toLowerCase();
+// Gateway notice detection and the finer delivery classes apply to managed
+// clients. ScaleLab's inboxes keep the rules they have always had.
+const isManagedLead = lead => {
+  const owner = resolveLeadClient(lead);
+  return owner.ok && owner.clientId !== DEFAULT_CLIENT_ID;
+};
 const OVERLAP_MS = 5 * 60 * 1000;
 const STALE_MS = 90 * 60 * 1000;
 
@@ -114,7 +122,7 @@ function candidateIndexes(leads, activities, senderInboxId) {
   }
   for (const row of activities || []) {
     let metadata;
-    try { metadata = JSON.parse(row.metadata || '{}'); } catch (_) { continue; }
+    try { metadata = typeof row.metadata === 'object' ? row.metadata || {} : JSON.parse(row.metadata || '{}'); } catch (_) { continue; }
     if (norm(metadata.senderInboxId) !== norm(senderInboxId)) continue;
     const threadId = String(metadata.gmailThreadId || '').trim();
     const sourceLeadId = String(row.sourceLeadId || '').trim() || String(row.leadId || '').replace(/^CE-/, '');
@@ -131,10 +139,10 @@ function candidateIndexes(leads, activities, senderInboxId) {
   }
   for (const threadId of conflicts) byThread.delete(threadId);
   for (const rfc of rfcConflicts) byRfc.delete(rfc);
-  return { byEmail, byThread, byRfc };
+  return { byEmail, byThread, byRfc, conflicts, rfcConflicts };
 }
 
-function leadFromRfcHeaders(payload, byRfc) {
+function leadFromRfcHeaders(payload, byRfc, conflicts = new Set()) {
   const ids = [
     ...rfcIdsFromValue(headerValue(payload, 'In-Reply-To')),
     ...rfcIdsFromValue(headerValue(payload, 'References')),
@@ -142,6 +150,7 @@ function leadFromRfcHeaders(payload, byRfc) {
   const matched = [];
   const seen = new Set();
   for (const id of ids) {
+    if (conflicts.has(id)) return { conflict: true };
     const lead = byRfc.get(id);
     if (lead && !seen.has(lead.id)) {
       seen.add(lead.id);
@@ -153,37 +162,60 @@ function leadFromRfcHeaders(payload, byRfc) {
 }
 
 function matchMailboxMessages(messages, { leads = [], activities = [], senderInboxId, senderEmail }) {
-  const { byEmail, byThread, byRfc } = candidateIndexes(leads, activities, senderInboxId);
+  const { byEmail, byThread, byRfc, conflicts, rfcConflicts } = candidateIndexes(leads, activities, senderInboxId);
   const replies = new Map();
   const bounces = new Map();
+  const bounceVerdicts = new Map();
   // Sender-side authentication failures: recorded, never a recipient bounce.
   const senderAuthFailures = new Map();
+  // Delays, temporary failures and policy rejections: recorded, never suppressed.
+  const deliveryNotices = new Map();
   for (const message of messages || []) {
     if ((message.labelIds || []).includes('SENT')) continue;
     const fromAddr = parseAddr(headerValue(message.payload, 'From'));
     if (!fromAddr || fromAddr === norm(senderEmail)) continue;
     const occurredMs = Number(message.internalDate || 0);
     const allText = decodeBodies(message.payload);
-    if (DAEMON_FROM.test(fromAddr)) {
-      for (const lead of leads) {
+    const daemonNotice = DAEMON_FROM.test(fromAddr);
+    const gatewayNotice = !daemonNotice && isDeliveryNotice(message.payload, fromAddr) && leads.some(isManagedLead);
+    if (daemonNotice || gatewayNotice) {
+      const candidates = leads.filter(lead => {
+        const after = Date.parse(lead.lastEmailedAt || '');
+        return Number.isFinite(after) && occurredMs > after && bounceMentionsRecipient(allText, norm(lead.email));
+      });
+      for (const lead of candidates) {
+        const sameAddress = candidates.filter(other => norm(other.email) === norm(lead.email));
+        if (sameAddress.length > 1) {
+          const threadLead = byThread.get(message.threadId);
+          if (!threadLead || conflicts.has(message.threadId)) throw new Error(`Ambiguous delivery CRM identity for Gmail message ${message.id}`);
+          if (threadLead.id !== lead.id) continue;
+        }
         const email = norm(lead.email);
         const afterMs = Date.parse(lead.lastEmailedAt || '');
         if (!email || !Number.isFinite(afterMs) || occurredMs <= afterMs || !bounceMentionsRecipient(allText, email)) continue;
-        // Only positive recipient-side evidence is a bounce. A delay notice or
-        // an SPF/DKIM/DMARC rejection of OUR domain never suppresses a prospect.
+        const managed = isManagedLead(lead);
+        if (gatewayNotice && !managed) continue;
+        // Only positive recipient-side evidence is a bounce. A delay notice, a
+        // policy refusal or an SPF/DKIM/DMARC rejection of OUR domain never
+        // suppresses a prospect.
         const verdict = classifyDeliveryStatus(message.payload, { recipient: email, subject: headerValue(message.payload, 'Subject') });
-        if (verdict.category === DELIVERY_CLASS.RECIPIENT_INVALID) bounces.set(lead.id, message);
-        else if (verdict.category === DELIVERY_CLASS.SENDER_AUTH_FAILURE) senderAuthFailures.set(lead.id, { message, verdict });
+        if (verdict.category === DELIVERY_CLASS.SENDER_AUTH_FAILURE) senderAuthFailures.set(lead.id, { message, verdict });
+        else if (managed ? verdict.suppress : verdict.legacyBounce) { bounces.set(lead.id, message); bounceVerdicts.set(lead.id, verdict); }
+        else if (managed && verdict.category !== DELIVERY_CLASS.UNKNOWN) deliveryNotices.set(lead.id, { message, verdict });
       }
       continue;
     }
     const direct = byEmail.get(fromAddr) || [];
-    if (direct.length > 1) throw new Error(`Ambiguous inbound CRM identity for Gmail message ${message.id}`);
-    const rfcMatch = leadFromRfcHeaders(message.payload, byRfc);
+    if (conflicts.has(message.threadId)) throw new Error(`Conflicting inbound CRM thread for Gmail message ${message.id}`);
+    const rfcMatch = leadFromRfcHeaders(message.payload, byRfc, rfcConflicts);
     if (rfcMatch.conflict) throw new Error(`Ambiguous inbound CRM RFC identity for Gmail message ${message.id}`);
     const threadLead = byThread.get(message.threadId) || null;
     const rfcLead = rfcMatch.lead || null;
-    const emailLead = direct.length === 1 ? direct[0] : null;
+    const strongLead = threadLead || rfcLead;
+    if (direct.length > 1 && (!strongLead || !direct.some(lead => lead.id === strongLead.id))) {
+      throw new Error(`Ambiguous inbound CRM identity for Gmail message ${message.id}`);
+    }
+    const emailLead = direct.length === 1 ? direct[0] : (strongLead && direct.find(lead => lead.id === strongLead.id)) || null;
     if (threadLead && emailLead && threadLead.id !== emailLead.id) {
       throw new Error(`Conflicting inbound CRM thread for Gmail message ${message.id}`);
     }
@@ -201,7 +233,7 @@ function matchMailboxMessages(messages, { leads = [], activities = [], senderInb
     const prior = replies.get(lead.id);
     if (!prior || Number(prior.internalDate || 0) < occurredMs) replies.set(lead.id, message);
   }
-  return { replies, bounces, senderAuthFailures };
+  return { replies, bounces, bounceVerdicts, senderAuthFailures, deliveryNotices };
 }
 
 async function listChangedIds(gmail, { historyId, maxPages = 20, readOpts } = {}) {
@@ -453,6 +485,6 @@ async function observeMailbox({ gmail, leads = [], activities = [], senderInboxI
 }
 
 module.exports = { headerValue, parseAddr, decodeBodies, firstPlainText, firstHtmlText, matchMailboxMessages,
-  bounceMentionsRecipient, extractedEmails, listChangedIds, listCatchup, observeMailbox, providerRead, isRateLimited,
+  isManagedLead, bounceMentionsRecipient, extractedEmails, listChangedIds, listCatchup, observeMailbox, providerRead, isRateLimited,
   OVERLAP_MS, STALE_MS, RECOVERY_READ_BUDGET, byIdAscending, persistedGmailMessageIds,
   normalizeRfcId, rfcIdsFromValue };

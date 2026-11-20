@@ -110,5 +110,6 @@ test('deliverHardenedWarmReply: issuance is the last gate before the reservation
   }
   // Every other caller keeps the default null plan.
   assert.equal((agent.match(/landingPlan \}\);/g) || []).length, 1);
-  assert.equal((agent.match(/await deliverHardenedWarmReply\(/g) || []).length >= 3, true);
+  // Question and positive replies (the roofing survey path was removed).
+  assert.equal((agent.match(/await deliverHardenedWarmReply\(/g) || []).length >= 2, true);
 });

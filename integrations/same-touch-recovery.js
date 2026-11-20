@@ -26,6 +26,8 @@
 // that sends. SAME_TOUCH_RECOVERY_ENABLED (default off) is reported by the plan
 // so a future executor has one switch to read; flipping it alone sends nothing.
 
+const { DELIVERY_FAILED_EVENT } = require('./delivery-status');
+
 const FAILED_TOUCH_EVENT = 'sender_auth_failed_touch_reconciled';
 const SENDER_AUTH_FAILURE_EVENT = 'sender_auth_delivery_failure';
 const RECOVERY_AUTHORIZED_EVENT = 'same_touch_recovery_authorized';
@@ -103,6 +105,18 @@ function provenFailedTouches(activities = [], leadId) {
     if (m.finalFailure !== true) continue;
     if (reconciledDsnIds.has(String(m.gmailMessageId || ''))) continue;
     out.push({ step: null, originalGmailMessageId: '', originalGmailThreadId: '', originalSendAt: '',
+      senderInboxId: String(m.senderInboxId || ''), dsnMessageId: String(m.gmailMessageId || ''),
+      dsnStatus: m.dsnStatus || '', deliveryClass: m.deliveryClass || '', eventId: row.eventId, reconciled: false });
+  }
+  // A policy refusal or a gateway's code-less "could not be delivered": the
+  // address is not disproven, but the next touch would chase a lost email.
+  for (const row of rows) {
+    if (row.eventType !== DELIVERY_FAILED_EVENT) continue;
+    const m = meta(row);
+    if (m.finalFailure !== true || m.blocksLaterTouches !== true) continue;
+    const step = Number(m.step);
+    out.push({ step: Number.isInteger(step) && step >= 1 ? step : null, originalGmailMessageId: String(m.originalGmailMessageId || ''),
+      originalGmailThreadId: String(m.originalGmailThreadId || ''), originalSendAt: m.originalSendAt || '',
       senderInboxId: String(m.senderInboxId || ''), dsnMessageId: String(m.gmailMessageId || ''),
       dsnStatus: m.dsnStatus || '', deliveryClass: m.deliveryClass || '', eventId: row.eventId, reconciled: false });
   }

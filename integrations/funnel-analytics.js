@@ -1,5 +1,7 @@
 'use strict';
 
+const { calendarDay } = require('./day-key');
+
 const { LEGACY_UNKNOWN, parseMetadata, attributionFromActivity } = require('./campaign-versions');
 const { applyReplyDecisionsToReplyEvidence } = require('./reply-decision');
 
@@ -54,7 +56,7 @@ function sendMatches(attribution, filters) {
 
 function vancouverDay(value) {
   const at = validTime(value);
-  return at === null ? '' : new Date(at).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+  return at === null ? '' : calendarDay(at, 'America/Vancouver');
 }
 
 function withinCohort(row, filters) {
@@ -263,11 +265,11 @@ function buildFunnelAnalytics(input = {}, query = {}) {
       // funnel step that never happened. Hot therefore needs either a stage
       // that IS Hot-or-beyond, or an explicit transition recorded in activity.
       if (['lifetime', LEGACY_UNKNOWN].includes(version)) {
-        const reachedHotByStage = ['hot', 'call_booked', 'closed_won'].includes(stage);
+        const reachedHotByStage = ['hot', 'call_booked', 'call_held', 'proposal_sent', 'closed_won'].includes(stage);
         const reachedHotByEvent = rows.some(row => row.eventType === 'stage_changed'
           && String(parseMetadata(row.metadata).toStage || '').toLowerCase() === 'hot');
         if (reachedHotByStage || reachedHotByEvent) stageSets.hot.add(id);
-        if (['call_booked', 'closed_won', 'closed_lost', 'closed', 'lost'].includes(stage) && board.meetingAt) stageSets.callBooked.add(id);
+        if (['call_booked', 'call_held', 'proposal_sent', 'closed_won', 'closed_lost', 'closed', 'lost'].includes(stage) && board.meetingAt) stageSets.callBooked.add(id);
       }
     }
   }

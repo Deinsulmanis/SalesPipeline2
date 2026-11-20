@@ -129,7 +129,7 @@ test('Jole inbound path does not call Anthropic and does not send', () => {
   const agent = fs.readFileSync(path.join(__dirname, '../outreach-agent.js'), 'utf8');
   assert.doesNotMatch(pipeline, /anthropic|classifyReplyWithProvenance|sendEmail\(/i);
   assert.doesNotMatch(policy, /anthropic|sendEmail\(/i);
-  const managed = agent.slice(agent.indexOf("if (replyContext.policyMode === 'managed')"), agent.indexOf('if (lead.emailTemplateId === ROOFING_SURVEY_TEMPLATE)'));
+  const managed = agent.slice(agent.indexOf("if (replyContext.policyMode === 'managed')"), agent.indexOf('if (lead.emailTemplateId === RETIRED_ROOFING_TEMPLATE_ID)'));
   assert.match(managed, /handleManagedClientReply/);
   assert.doesNotMatch(managed, /sendEmail\(|deliverOrdinaryColdStep\(|guardProviderSend\(/);
   assert.match(agent, /managedReplyNeedsHandler\(activitiesForCycle, inboundId, managedContext\.clientId\)/);

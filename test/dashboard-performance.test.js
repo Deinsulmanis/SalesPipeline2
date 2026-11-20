@@ -32,7 +32,8 @@ test('engagement lookup no longer costs a second ColdEmail read', () => {
   // are annotated once inside the snapshot and simply served from it.
   const handler = server.slice(server.indexOf("app.get('/api/proposalOpens'"));
   const body = handler.slice(0, handler.indexOf('\n});'));
-  assert.match(body, /const dataset = await getOutreachDataset\(\);/);
+  // The display read is the same shared snapshot (refresh-ahead, same TTL).
+  assert.match(body, /const dataset = await getOutreachDatasetForDisplay\(_req\.query\);/);
   assert.match(body, /res\.json\(scope\.view\?\.opens \|\| dataset\.annotatedOpens\)/);
   assert.ok(!/spreadsheets\.values\.get/.test(body), 'the opens route reads no sheet of its own');
 });

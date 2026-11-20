@@ -8,7 +8,7 @@ const { checkClientConsistency, resolveLeadClient } = require('./clients/ownersh
 const { clientSendBlock } = require('./clients/send-policy');
 const { evaluateScopedSuppression } = require('./clients/suppression');
 const { outreachBlockForLead } = require('./lead-archive');
-const { providerVerdict, coldDeliveryVerdict, isProspectingSend } = require('./cold-delivery-policy');
+const { providerVerdict, coldDeliveryVerdict, isProspectingSend, recipientValidityVerdict } = require('./cold-delivery-policy');
 
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
@@ -185,6 +185,10 @@ async function coldDeliveryGate(lead, deps, options, env, safety) {
   try {
     classification = typeof deps.classifyRecipient === 'function' ? await deps.classifyRecipient(lead.email) : null;
   } catch (_) { classification = null; }
+  const validity = recipientValidityVerdict(lead.email, classification);
+  if (!validity.allowed) {
+    return { allowed: false, code: validity.code, reason: validity.reason, layer: 'recipient', domain: classification?.domain || '' };
+  }
   const verdict = options.coldSender
     ? coldDeliveryVerdict({ sender: options.coldSender, classification, env })
     : providerVerdict(classification, env);

@@ -214,6 +214,8 @@ function eventPresentation(row, metadata, context = {}) {
       return { title: metadata.outcome ? `Closed Lost — ${outcome}` : 'Closed Lost',
         summary: fromCloseAction ? 'Stage moved to Closed Lost' : '' };
     }
+    case 'email_delivery_deferred': return { title: 'Delivery delayed', summary: [metadata.enhancedCode, metadata.diagnostic].filter(Boolean).join(' — ') };
+    case 'email_delivery_failed': return { title: 'Delivery failed', summary: [metadata.enhancedCode, metadata.diagnostic].filter(Boolean).join(' — ') };
     default: return { title: row.subject || prettyStage(type) };
   }
 }

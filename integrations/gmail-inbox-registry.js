@@ -4,6 +4,7 @@ const { google } = require('googleapis');
 const { DEFAULT_INBOX_DAILY_LIMIT, DEFAULT_INBOX_PER_RUN_LIMIT } = require('./gmail-sender-capacity');
 const { DEFAULT_CLIENT_ID, resolveClientId } = require('./clients/registry');
 const { senderPolicyBlockers, senderPreparationBlockers, cappedDailyLimit } = require('./clients/sender-policy');
+const { delegatedMailbox } = require('./clients/sender-delegation');
 
 const STATUSES = new Set(['warming', 'ready', 'active', 'paused', 'error']);
 
@@ -14,6 +15,7 @@ const STAFFING_ONLY_SENDER_IDS = Object.freeze(['scalelabaiteam']);
 const STAFFING_ONLY_SENDER_EMAILS = Object.freeze(['deins@scalelabaiteam.com']);
 
 function isStaffingOnlySender(sender = {}) {
+  if (sender.clientId === 'jole' && delegatedMailbox(sender)) return false;
   return sender?.staffingOnly === true
     || STAFFING_ONLY_SENDER_IDS.includes(String(sender?.id || '').trim())
     || STAFFING_ONLY_SENDER_EMAILS.includes(String(sender?.email || '').trim().toLowerCase());
@@ -55,6 +57,23 @@ const DEFAULT_SECONDARY_INBOXES = Object.freeze([
     perRunLimit: 2,
     observerEnabled: true,
   }),
+  // ScaleLab's three pre-warmed Zapmail inboxes on outreachplateau.co
+  // (connected 2026-11-19). Explicitly ScaleLab's, sending as Deins Ulmanis.
+  // Warm-up is complete, so they register as `ready` at 20/day and 2 per
+  // window (10 windows x 2 = 20). Ready is not active: nothing sends until each
+  // is activated, which re-checks credential and observer health first.
+  // The observer starts "from now onward", so the warm-up history already in
+  // these mailboxes is never read as prospect replies.
+  ...[
+    ['outreachplateau_zoe', 'zoe@outreachplateau.co'],
+    ['outreachplateau_merrick', 'merrick@outreachplateau.co'],
+    ['outreachplateau_dave', 'dave@outreachplateau.co'],
+  ].map(([id, email]) => Object.freeze({
+    id, email, clientId: 'scalelab', status: 'ready',
+    tokenEnv: `GMAIL_${id.toUpperCase()}_TOKEN_JSON`,
+    dailyLimit: 20, perRunLimit: 2, observerEnabled: true,
+    fromName: 'Deins Ulmanis',
+  })),
   // Jole BTX LLC's six cold-sending mailboxes (client `jole`), scoped to
   // Jole's one campaign, at Jole's launch capacity: 20/day (the client's hard
   // per-inbox ceiling) and 2 per scheduled window. Readiness is the runtime
@@ -86,6 +105,8 @@ function parseEntry(entry, index, seenIds, seenEmails, env = process.env) {
   const perRunLimit = Number(entry?.perRunLimit ?? DEFAULT_INBOX_PER_RUN_LIMIT);
   const observerEnabled = entry?.observerEnabled !== false;
   const staffingOnly = entry?.staffingOnly === true;
+  // Optional per-inbox sender display name (the From name). Plain text only.
+  const fromName = String(entry?.fromName ?? '').replace(/[\r\n"<>]/g, '').trim().slice(0, 80);
   // The managed client this inbox serves. Omitted means the default client,
   // which is every inbox that existed before clients did. An unknown client is
   // a configuration error, never a silent default.
@@ -103,7 +124,8 @@ function parseEntry(entry, index, seenIds, seenEmails, env = process.env) {
     if (!resolved.ok) throw new Error(`Gmail inbox ${id} names an unknown client`);
     clientId = resolved.clientId;
   }
-  if (staffingOnly && clientId && clientId !== DEFAULT_CLIENT_ID) throw new Error(`Gmail inbox ${id} cannot be staffing-only for another client`);
+  if (id === 'primary') throw new Error('The primary Gmail sender cannot be duplicated in the secondary registry');
+  if (staffingOnly && clientId && clientId !== DEFAULT_CLIENT_ID && !(clientId === 'jole' && delegatedMailbox({ id, email }))) throw new Error(`Gmail inbox ${id} cannot be staffing-only for another client`);
   if (seenIds.has(id) || seenEmails.has(email)) throw new Error(`Duplicate Gmail inbox entry: ${id}`);
   seenIds.add(id); seenEmails.add(email);
   // A managed client's sender: campaign allowlist, per-inbox hard ceiling and
@@ -123,6 +145,7 @@ function parseEntry(entry, index, seenIds, seenEmails, env = process.env) {
   return Object.freeze({
     id, email, status, tokenEnv, dailyLimit: effectiveDailyLimit, perRunLimit, observerEnabled, provider: 'gmail',
     ...(staffingOnly ? { staffingOnly } : {}),
+    ...(fromName ? { fromName } : {}),
     ...(clientId ? { clientId } : {}),
     ...(allowedCampaignIds ? { allowedCampaignIds } : {}),
     ...(effectiveDailyLimit !== dailyLimit ? { configuredDailyLimit: dailyLimit } : {}),

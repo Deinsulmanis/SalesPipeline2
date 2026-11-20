@@ -147,6 +147,10 @@ function transitionMeeting(meeting, toStatus, patch = {}, { client, now = new Da
   if ([INVOICE_STATUS.INVOICED, INVOICE_STATUS.PAID].includes(meeting.invoice_status)) {
     fail('meeting_invoiced', 'an invoiced meeting cannot change state; void the invoice first');
   }
+  // On a Stripe draft not yet sent: the draft would bill a verdict that changed.
+  if (text(meeting.stripe_invoice_id)) {
+    fail('meeting_on_invoice', 'this meeting is on an unsent invoice draft; discard the draft before changing the meeting');
+  }
   const next = { ...meeting, meeting_status: toStatus, updated_at: now };
   if (toStatus === 'RESCHEDULED') {
     const scheduled = isoOrNull(patch.scheduled_for);
@@ -298,6 +302,8 @@ async function setInvoiceStatus(store, { clientId, meetingId, invoiceStatus, by 
   const meeting = assertRowClient(await store.getMeeting(client.id, meetingId), client.id, 'meeting');
   if (!meeting) fail('meeting_not_found', `meeting ${meetingId} does not exist for ${client.displayName}`);
   if (!Object.values(INVOICE_STATUS).includes(invoiceStatus)) fail('invalid_invoice_status', 'invalid invoice status');
+  // Stripe owns the status of a meeting it is invoicing (billing.js reconcile).
+  if (text(meeting.stripe_invoice_id)) fail('meeting_on_stripe_invoice', `meeting is on Stripe invoice ${meeting.stripe_invoice_id}; its status follows Stripe`);
   const billing = deriveMeetingBilling(meeting, client);
   if (!billing.billable && [INVOICE_STATUS.PENDING, INVOICE_STATUS.INVOICED, INVOICE_STATUS.PAID].includes(invoiceStatus)) {
     fail('meeting_not_billable', `meeting is not billable: ${billing.billable_reason}`);

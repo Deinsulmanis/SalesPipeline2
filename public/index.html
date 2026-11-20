@@ -2017,10 +2017,6 @@
   .funnel-kpis{display:grid;grid-template-columns:repeat(7,minmax(92px,1fr));gap:8px;margin:16px 0}.funnel-kpi{padding:11px;background:var(--tint-faint);border:1px solid var(--border);border-radius:var(--radius-sm)}.funnel-kpi strong{display:block;font-size:20px}.funnel-kpi span{font-size:11px;color:var(--text-muted)}
   .funnel-flow{display:grid;grid-template-columns:repeat(8,minmax(88px,1fr));gap:7px}.funnel-step{appearance:none;text-align:left;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:11px;min-height:82px;cursor:pointer}.funnel-step:hover{border-color:var(--border-hover);transform:translateY(-2px)}.funnel-step b{display:block;font-size:21px}.funnel-step small{display:block;color:var(--text-muted);margin-top:3px}
   .funnel-secondary{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px}.funnel-mini-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.funnel-mini{padding:8px;border-radius:var(--radius-sm);background:var(--tint-faint);font-size:12px}.funnel-mini b{display:block;font-size:16px}
-  .sf-toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px}.sf-field{display:grid;gap:4px;font-size:11px;color:var(--text-muted)}.sf-field select,.sf-field input[type=date]{width:auto;min-width:130px;padding:7px 9px}.sf-check{display:flex;gap:6px;align-items:center;font-size:12px;color:var(--text-secondary);min-height:44px}
-  .sf-note{font-size:12px;color:var(--text-muted);margin:4px 0 0}.sf-section{margin-top:16px}.sf-section h3{margin:0 0 8px;font-size:15px}.sf-kpis{grid-template-columns:repeat(4,minmax(120px,1fr))}.sf-table-wrap{overflow-x:auto}.sf-table-wrap .funnel-table{min-width:640px}.sf-table-wrap .funnel-table td.num,.sf-table-wrap .funnel-table th.num{text-align:right;font-variant-numeric:tabular-nums}
-  .sf-link{appearance:none;background:none;border:0;padding:0;color:var(--primary);cursor:pointer;font:inherit;text-align:left;min-height:28px}.sf-link:hover{text-decoration:underline}.sf-bar{height:6px;border-radius:3px;background:var(--tint-faint);overflow:hidden;min-width:80px}.sf-bar i{display:block;height:100%;background:var(--primary)}
-  @media(max-width:700px){.sf-kpis{grid-template-columns:repeat(2,1fr)}.sf-field,.sf-field select,.sf-field input[type=date]{width:100%;min-width:100%}}
   .funnel-analytics details{margin-top:16px}.funnel-analytics summary{cursor:pointer;color:var(--primary)}.funnel-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:12px}.funnel-table th,.funnel-table td{padding:7px;border-bottom:1px solid var(--border);text-align:left}
   .health-panel{margin:18px 28px;padding:16px 20px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-lg)}
   .health-head{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;cursor:pointer}
@@ -2064,6 +2060,8 @@
   .sidebar-toggle{display:none;width:44px;height:44px;border:0;background:transparent;color:var(--text);border-radius:8px;cursor:pointer}
   #workspace-stage{grid-column:2;grid-row:2;position:relative;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--border-hover) transparent}.crm-workspace{display:none;min-height:100%;padding:22px 24px 40px}.crm-workspace.active{display:block}.workspace-intro{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:0 0 16px}.workspace-intro h2{font-size:20px;letter-spacing:-.025em;margin:0;color:var(--text)}.workspace-intro p{font-size:12px;color:var(--text-muted);margin:4px 0 0;max-width:720px}.workspace-eyebrow{font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--primary);font-weight:750}
   body.workspace-ready .motion-nav{display:none!important}body.workspace-ready .stats-bar,body.workspace-ready .filter-bar,body.workspace-ready .main,body.workspace-ready #ce-section{margin-left:0;margin-right:0}
+  /* ScaleLab's board in the managed-client look: summary cards replace the stats strip. */
+  #ws-pipeline>.stats-bar{display:none!important}#ws-pipeline>.pipeline-metrics{width:100%}#ws-pipeline>.main .col{width:240px}
   #ws-pipeline>.stats-bar,#ws-pipeline>.filter-bar,#ws-pipeline>.main{width:100%}#ws-pipeline>.stats-bar{border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden}#ws-pipeline>.filter-bar{padding-left:0;padding-right:0;background:transparent;border:0}#ws-pipeline>.main{padding:0}
   #ws-outreach #ce-section{display:block!important}#ws-outreach .ce-filter-bar{border:1px solid var(--border);border-radius:9px;background:var(--surface);margin-bottom:12px}#ws-outreach .stats-bar{margin:14px 0}#ws-outreach .ce-master-filters,#ws-outreach .ce-quick-views,#ws-outreach #ce-current-campaign,#ws-outreach #ce-result-info{padding-left:0!important;padding-right:0!important}
   .workspace-surface{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px}.workspace-empty{padding:42px 20px;text-align:center;color:var(--text-muted);border:1px dashed var(--border);border-radius:9px;background:var(--tint-faint)}.workspace-empty strong{display:block;color:var(--text);font-size:14px;margin-bottom:5px}
@@ -2082,6 +2080,12 @@
   @media(prefers-reduced-motion:reduce){.archive-row{transition:none}.archive-row:hover{transform:none}}
   .analytics-scope-note{font-size:12px;color:var(--text-secondary);padding:8px 12px;margin:0 28px 10px;border:1px solid var(--border);border-left:3px solid var(--primary);border-radius:7px;background:var(--tint-faint)}.analytics-scope-note b{color:var(--text);margin-right:6px}.analytics-scope-note[data-scope="historical"]{border-left-color:var(--text-muted);margin:0 0 12px}
   .sender-table{width:100%;border-collapse:collapse;font-size:12px}.sender-table th,.sender-table td{padding:7px 8px;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap}.sender-table th:first-child,.sender-table td:first-child{text-align:left}.sender-table th{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);font-weight:700}.sender-table tfoot td{font-weight:700;color:var(--text)}.sender-table-wrap{overflow-x:auto}.sender-tag{display:inline-block;margin-left:6px;font-size:10px;padding:1px 6px;border-radius:999px;background:var(--primary-bg);color:var(--primary)}
+  .calendar-status{display:flex;justify-content:space-between;align-items:center;gap:16px;margin:0 0 16px;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface);font-size:12px;color:var(--text-secondary)}.calendar-status[data-state="error"]{border-color:var(--danger,#b91c1c)}.calendar-status .btn-save-notes{margin-top:0;min-height:44px}
+  .calendar-review{margin:0 0 20px}.calendar-review h4{margin:0 0 4px;font-size:14px}.calendar-review .client-note{margin:0 0 10px}.calendar-review-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}.calendar-review-actions button{min-height:44px}
+  @media(max-width:700px){.calendar-status{flex-direction:column;align-items:flex-start}.calendar-review-actions{justify-content:flex-start}}
+  .meeting-row{flex-wrap:wrap}.meeting-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;flex-basis:100%}.meeting-actions button,.meeting-actions a{min-height:44px;margin-top:0;display:inline-flex;align-items:center;text-decoration:none}.meeting-invoice-state{font-size:12px;color:var(--text-secondary);align-self:center}
+  .bookings-heading{margin:18px 0 8px;font-size:13px;color:var(--text-secondary)}.meeting-dialog .md-check input{min-height:auto}.billing-panel{margin:0 0 20px}.billing-panel h4{margin:0 0 8px;font-size:14px}.billing-panel h5{margin:16px 0 8px;font-size:13px;color:var(--text-secondary)}.billing-mode{padding:2px 6px;border-radius:4px;border:1px solid var(--border);margin-right:6px;font-size:11px}
+  .meeting-dialog{max-width:520px;width:calc(100% - 32px);border:1px solid var(--border);border-radius:10px;background:var(--surface);color:inherit;padding:20px}.meeting-dialog::backdrop{background:rgba(0,0,0,.5)}.meeting-dialog form,.meeting-dialog .md-form{display:grid;gap:8px}.billing-card{margin-top:-8px}.meeting-dialog h3{margin:0}.meeting-dialog label{font-size:12px;font-weight:600}.meeting-dialog input,.meeting-dialog select,.meeting-dialog textarea{min-height:44px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:inherit;font:inherit}.meeting-dialog fieldset{border:1px solid var(--border);border-radius:6px;display:flex;flex-wrap:wrap;gap:8px 16px;padding:10px}.meeting-dialog .md-check{font-weight:400;display:flex;gap:6px;align-items:center;min-height:32px}.md-error{color:var(--danger);font-size:12px;margin:0}.md-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
   .booking-list,.sequence-list{display:grid;gap:9px}.operational-row{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:13px 15px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}.operational-row b{font-size:13px}.operational-row small{display:block;color:var(--text-muted);font-size:11px;margin-top:3px}.operational-row-meta{text-align:right;font-size:12px;color:var(--text-secondary)}
   @media(max-width:980px){body.workspace-ready{grid-template-columns:72px minmax(0,1fr)}.crm-sidebar{padding-inline:8px}.crm-brand{padding-inline:8px}.crm-brand-copy,.crm-nav-btn span,.crm-nav-group,.crm-sidebar-foot{display:none}.crm-nav-btn{justify-content:center;padding:9px}.crm-nav-btn svg{width:19px;height:19px}.crm-workspace{padding:18px}.inbox-row{grid-template-columns:minmax(160px,.7fr) minmax(230px,1.3fr)}}
   @media(max-width:700px){html.workspace-ready{height:auto;overflow:visible}body.workspace-ready{display:block;padding-top:64px;height:auto;overflow:visible}#workspace-stage{overflow:visible}.crm-sidebar{position:fixed;left:0;top:0;width:224px;transform:translateX(-100%);transition:transform 180ms;z-index:100}.crm-sidebar.open{transform:translateX(0)}.crm-brand-copy,.crm-nav-btn span,.crm-nav-group,.crm-sidebar-foot{display:block}.crm-nav-btn{justify-content:flex-start}.sidebar-toggle{display:grid;place-items:center}body.workspace-ready>header{position:fixed;left:0;right:0;top:0;height:64px;padding:0 16px}.crm-workspace{padding:14px}.header-right .search-wrap{display:none}.inbox-row{grid-template-columns:1fr;gap:9px}.inbox-action{padding-top:8px;border-top:1px solid var(--border)}.workspace-intro{align-items:flex-start}.operational-row{align-items:flex-start}.operational-row-meta{max-width:45%}}
@@ -2135,6 +2139,8 @@
   body[data-client-mode="managed"] #ce-leads-panel #crm-health-panel{display:none!important}
   body[data-client-mode="managed"] #ws-settings #agent-panel{display:none!important}
   body[data-client-mode="managed"] #smartlead-health{display:none!important}
+  body[data-client-mode="managed"] #settings-system-details{display:none!important}
+  .settings-system-details{margin-top:14px}.settings-system-details summary{cursor:pointer;font-weight:650;min-height:44px;display:flex;align-items:center}.settings-system-details .status-grid{margin:10px 0 14px}
   body:not([data-client-mode="managed"]) .ce-extra-col{display:none}
   body[data-client-mode="managed"] .ce-sl-only{display:none}
   .lead-status-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:10px;margin:0 0 14px;padding:0 28px}
@@ -2218,7 +2224,6 @@
     <button class="crm-nav-btn" data-workspace="archive" onclick="setWorkspace('archive')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"/></svg><span>Archive</span></button>
     <button class="crm-nav-btn" data-workspace="campaigns" onclick="setWorkspace('campaigns')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 19V9m6 10V5m6 14v-7m4 7V3"/></svg><span>Campaigns</span></button>
     <button class="crm-nav-btn" data-workspace="analytics" onclick="setWorkspace('analytics')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 19V5m0 14h16"/><path d="m7 15 4-4 3 2 5-7"/></svg><span>Analytics</span></button>
-    <button class="crm-nav-btn" data-workspace="staffing" onclick="setWorkspace('staffing')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 4h18l-7 8v6l-4 2v-8L3 4Z"/></svg><span>Staffing Funnel</span></button>
     <button class="crm-nav-btn" data-workspace="sequences" onclick="setWorkspace('sequences')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M5 6h14M5 12h10M5 18h6"/><path d="m17 15 3 3-3 3"/></svg><span>Sequences</span></button>
     <div class="crm-nav-group">System</div>
     <button class="crm-nav-btn" data-workspace="health" onclick="setWorkspace('health')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-5"/></svg><span>CRM Health</span></button>
@@ -2320,15 +2325,14 @@
   </div>
 </div>
 
+<!-- SUMMARY CARDS (same cards as a client's Pipeline; filled by renderBoard) -->
+<div class="client-metrics pipeline-metrics" id="pipeline-metrics" aria-label="Pipeline summary"></div>
+
 <!-- FILTER TABS -->
 <div class="filter-bar">
   <span class="filter-label">View:</span>
   <button class="filter-tab active" data-f="all" onclick="setFilter('all')">
     All Leads <span class="tab-count" id="tab-all">0</span>
-  </button>
-  <button class="filter-tab" data-f="trade" onclick="setFilter('trade')">
-    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-    Trades <span class="tab-count" id="tab-trade">0</span>
   </button>
   <span class="filter-label" style="margin-left:14px">Work queue:</span>
   <button class="filter-tab" data-a="overdue" onclick="setActionFilter('overdue')">
@@ -2368,7 +2372,7 @@
     <button class="ce-tab"        data-ce="Promoted"     onclick="setCeFilter('Promoted')">Promoted</button>
     <button class="ce-tab"        data-ce="Unsubscribed" onclick="setCeFilter('Unsubscribed')">Unsub</button>
     <div class="ce-actions">
-      <select id="ce-niche-filter" class="ce-sl-only" aria-label="Filter by lead type" onchange="setCeNicheFilter(this.value)" style="width:auto;min-width:118px;padding:7px 10px"><option value="all">All lead types</option><option value="dental">Dental</option><option value="roofing">Roofing</option><option value="industrial_staffing">Staffing Agency</option></select>
+      <select id="ce-niche-filter" class="ce-sl-only" aria-label="Filter by lead type" onchange="setCeNicheFilter(this.value)" style="width:auto;min-width:118px;padding:7px 10px"><option value="all">All lead types</option><option value="industrial_staffing">Staffing Agency</option></select>
       <div class="ce-search-wrap">
         <svg class="ce-search-icon" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
         <input type="text" id="ce-search" placeholder="Search leads…" oninput="onCeSearch(this.value)">
@@ -2397,7 +2401,7 @@
     <div class="ce-master-filters" aria-label="Master prospect filters">
       <select id="ce-reply-filter" aria-label="Reply category" onchange="setCeMasterFilter('reply',this.value)"><option value="">All replies</option><option value="positive">Positive</option><option value="negative">Negative</option><option value="needs_human">Needs Human</option><option value="unclassified">Unclassified</option><option value="none">No Reply</option></select>
       <select id="ce-pipeline-filter" aria-label="Sales Pipeline presence" onchange="setCeMasterFilter('presence',this.value)"><option value="">All pipeline relationships</option><option value="in">In Sales Pipeline</option><option value="out">Not in Sales Pipeline</option><option value="conflict">Mapping conflict</option></select>
-      <select id="ce-pipeline-stage-filter" aria-label="Sales Pipeline stage" onchange="setCeMasterFilter('pipelineStage',this.value)"><option value="">All pipeline stages</option><option value="follow_up">Follow Up</option><option value="hot">Hot</option><option value="call_booked">Call Booked</option><option value="closed_won">Closed / Won</option><option value="closed_lost">Closed / Lost</option></select>
+      <select id="ce-pipeline-stage-filter" aria-label="Sales Pipeline stage" onchange="setCeMasterFilter('pipelineStage',this.value)"><option value="">All pipeline stages</option><option value="follow_up">Follow Up</option><option value="hot">Hot</option><option value="call_booked">Call Booked</option><option value="call_held">Call Held</option><option value="proposal_sent">Proposal / Agreement Sent</option><option value="closed_won">Client Signed + Tech Fee Paid</option><option value="closed_lost">Closed / Lost</option></select>
       <select id="ce-sequence-filter" aria-label="Sequence state" onchange="setCeMasterFilter('sequence',this.value)"><option value="">All sequence states</option><option value="active">Active sequence</option><option value="complete">Sequence complete</option><option value="queued">Queued</option><option value="not_started">Not started</option></select>
       <select id="ce-version-filter" aria-label="Campaign version" onchange="setCeMasterFilter('campaignVersion',this.value)"><option value="">All campaign versions</option></select>
       <select id="ce-sender-filter" aria-label="Sending inbox" onchange="setCeMasterFilter('senderInbox',this.value)"><option value="">All inboxes</option></select>
@@ -2530,7 +2534,7 @@
   <!-- Opens panel (proposal opens log) -->
   <div id="ce-opens-panel" style="display:none">
     <div style="padding:20px 28px">
-      <div class="analytics-scope-note" data-scope="historical"><b>Retired offers · historical</b> Proposal telemetry from the dental and med spa receptionist offers, kept for history. Nothing here describes the active staffing campaign.</div>
+      <div class="analytics-scope-note" data-scope="historical"><b>Retired offers · historical</b> Proposal telemetry from earlier offers, kept for history. Nothing here describes the active staffing campaign.</div>
       <table class="ce-table">
         <thead>
           <tr>
@@ -2620,11 +2624,7 @@
         <div class="form-group" id="field-trade-type">
           <label>Industry / lead type</label>
           <select id="f-trade-type">
-            <option value="">Select trade…</option>
-            <option>Electrician</option><option>Plumber</option><option>HVAC</option>
-            <option>Roofer</option><option>Landscaper</option><option>General Contractor</option>
-            <option>Painter</option><option>Concrete</option><option>Flooring</option>
-            <option>Carpenter</option><option>Pest Control</option>
+            <option value="">Select lead type…</option>
             <option>Staffing Agency</option><option>Other</option>
           </select>
         </div>
@@ -2654,7 +2654,9 @@
             <option value="follow_up">Follow Up</option>
             <option value="hot">Hot</option>
             <option value="call_booked">Call Booked</option>
-            <option value="closed_won">Closed / Won</option>
+            <option value="call_held">Call Held</option>
+            <option value="proposal_sent">Proposal / Agreement Sent</option>
+            <option value="closed_won">Client Signed + Tech Fee Paid</option>
             <option value="closed_lost">Closed / Lost</option>
           </select>
         </div>
@@ -2769,7 +2771,7 @@
       </div>
       <div class="form-group full">
         <label for="campaign-niche-input">Lead type <span style="color:var(--hot)">*</span></label>
-        <select id="campaign-niche-input"><option value="">Choose lead type…</option><option value="dental">Dental</option><option value="roofing">Roofing</option><option value="industrial_staffing">Staffing Agency</option></select>
+        <select id="campaign-niche-input"><option value="">Choose lead type…</option><option value="industrial_staffing">Staffing Agency</option></select>
         <div style="font-size:11px;color:var(--text-muted)">This keeps imports separated and limits which email copy can be selected later.</div>
       </div>
       <div class="form-group full">
@@ -2816,7 +2818,7 @@
       <div id="smartlead-mapping-fields" class="form-group full">
         <label for="smartlead-campaign-id">Smartlead Campaign ID</label><input id="smartlead-campaign-id" inputmode="numeric" placeholder="e.g. 123456">
         <div style="font-size:11px;color:var(--text-muted);margin-top:6px">Create the campaign and sequence in Smartlead first. Testing never uploads a lead.</div>
-        <label for="smartlead-sending-pool" style="margin-top:14px">Mailbox Pool / Niche</label><input id="smartlead-sending-pool" placeholder="e.g. dental-ca">
+        <label for="smartlead-sending-pool" style="margin-top:14px">Mailbox Pool / Niche</label><input id="smartlead-sending-pool" placeholder="e.g. staffing-us">
         <div style="margin-top:14px;padding:10px 12px;border-left:3px solid var(--accent);background:var(--wash-1);font-size:12px;color:var(--text-secondary)">Variables: contact name, company, city, website, niche, research first line, service reference, and lead score.</div>
       </div>
       <div id="provider-test-result" class="form-group full" role="status" style="min-height:18px;font-size:12px;color:var(--text-secondary)"></div>
@@ -2901,7 +2903,7 @@
     <div style="padding:16px 18px">
       <div id="promotion-context" class="react-facts"></div>
       <label for="promotion-stage" style="display:block;margin-top:14px">Sales Pipeline stage</label>
-      <select id="promotion-stage" onchange="renderManualPromotionFields()" style="width:100%;min-height:44px"><option value="">Choose a stage…</option><option value="follow_up">Follow Up</option><option value="hot">Hot</option><option value="call_booked">Call Booked</option><option value="closed_won">Closed / Won</option><option value="closed_lost">Closed / Lost</option></select>
+      <select id="promotion-stage" onchange="renderManualPromotionFields()" style="width:100%;min-height:44px"><option value="">Choose a stage…</option><option value="follow_up">Follow Up</option><option value="hot">Hot</option><option value="call_booked">Call Booked</option><option value="call_held">Call Held</option><option value="proposal_sent">Proposal / Agreement Sent</option><option value="closed_won">Client Signed + Tech Fee Paid</option><option value="closed_lost">Closed / Lost</option></select>
       <div id="promotion-extra"></div>
       <div class="react-reassure" style="margin-top:14px">Adding this lead to the Sales Pipeline does not resume cold-email automation. Human-owned stages keep the existing manual-hold safeguard.</div>
       <div class="form-actions" style="margin-top:14px"><button type="button" class="btn-cancel" onclick="closeManualPromotion()">Cancel</button><button type="button" class="btn-save" onclick="submitManualPromotion()">Save to Pipeline</button></div>
@@ -3048,11 +3050,13 @@ const COLUMNS = [
 const COL_RANGE = `${GOOGLE_CONFIG.SHEET_NAME}!A:Q`;
 
 const STAGES = [
-  { id: 'follow_up',   label: 'Follow Up',     color: 'var(--primary)', rule: 'Manual, or a dated recontact reply' },
-  { id: 'hot',         label: 'Hot',           color: 'var(--danger)',  rule: 'Auto: positive email reply' },
-  { id: 'call_booked', label: 'Call Booked',   color: 'var(--violet)',  rule: 'Meeting time required' },
-  { id: 'closed_won',  label: 'Closed / Won',  color: 'var(--success)', rule: 'Won — set by hand' },
-  { id: 'closed_lost', label: 'Closed / Lost', color: 'var(--lost)',    rule: 'Final outcome required' },
+  { id: 'follow_up',     label: 'Follow Up',                     color: 'var(--primary)', rule: 'Manual, or a dated recontact reply' },
+  { id: 'hot',           label: 'Hot (replied)',                 color: 'var(--danger)',  rule: 'Auto: positive email reply' },
+  { id: 'call_booked',   label: 'Call Booked',                   color: 'var(--violet)',  rule: 'Meeting time required' },
+  { id: 'call_held',     label: 'Call Held',                     color: 'var(--violet)',  rule: 'Call happened — set by hand' },
+  { id: 'proposal_sent', label: 'Proposal / Agreement Sent',     color: 'var(--warn)',    rule: 'Waiting on signature and tech fee' },
+  { id: 'closed_won',    label: 'Client Signed + Tech Fee Paid', color: 'var(--success)', rule: 'Signed and paid — set by hand' },
+  { id: 'closed_lost',   label: 'Closed / Lost',                 color: 'var(--lost)',    rule: 'Final outcome required' },
 ];
 
 // Deliberately unchanged by the closed_won addition. 'closed' keeps pointing at
@@ -3086,6 +3090,8 @@ let activeFilter = 'all';
 // rules, so a card and the drawer cannot disagree.
 let nextActions = new Map();
 let nextActionSummary = null;
+let nextActionsToken = 0;        // only the latest started request may write nextActions
+let nextActionsInFlight = null;  // shared by ensureNextActions() so a lazy view never doubles the read
 let actionFilter = 'none';   // 'none' shows the Kanban; anything else shows the queue
 let formType    = 'trade';
 let savingCount = 0;
@@ -3095,15 +3101,25 @@ let savingTimer;
 // ============================================================
 // SHEET OPERATIONS
 // ============================================================
-async function loadLeads() {
+async function loadLeads({ awaitNextActions = true } = {}) {
+  // Next Actions travel with the board so cards and the queue reflect the same
+  // derivation. Both reads start together: next-actions is a multi-sheet read
+  // that takes longer than the board itself, so waiting for one before starting
+  // the other added its whole duration to every board load. Failure is
+  // non-fatal: the board renders without them.
+  const pendingNextActions = loadNextActions();
   const resp = await fetch('/api/leads');
   if (!resp.ok) throw new Error('leads fetch failed: ' + resp.status);
   leads = await resp.json();
   rowMap.clear();
   leads.forEach((lead, idx) => { if (lead.id) rowMap.set(lead.id, idx + 2); });
-  // Next Actions travel with the board so cards and the queue reflect the same
-  // derivation. Failure is non-fatal: the board renders without them.
-  await loadNextActions();
+  // Startup does not wait: the board and the workspace render now, and the
+  // board repaints once next-actions arrive (see init). Every other caller
+  // reloads after a change and needs both before it renders.
+  if (awaitNextActions) await pendingNextActions;
+  // Wrapped: an async function that returned the promise itself would adopt it,
+  // and the caller's await would wait for next-actions after all.
+  return { pendingNextActions };
 }
 
 async function syncLead(lead) {
@@ -3278,13 +3294,30 @@ const NA_OWNER_LABEL = {
 };
 
 async function loadNextActions() {
-  try {
-    const resp = await fetch('/api/leads/next-actions');
-    if (!resp.ok) return;
-    const data = await resp.json();
-    nextActions = new Map((data.entries || []).map(entry => [entry.id, entry]));
-    nextActionSummary = data.summary || null;
-  } catch (_) { /* additive: the board still works without it */ }
+  const token = ++nextActionsToken;
+  const pending = (async () => {
+    try {
+      const resp = await fetch('/api/leads/next-actions');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      // A slower, older response never overwrites one started after it (e.g.
+      // the startup read finishing after a reload that followed a stage change).
+      if (token !== nextActionsToken) return;
+      nextActions = new Map((data.entries || []).map(entry => [entry.id, entry]));
+      nextActionSummary = data.summary || null;
+    } catch (_) { /* additive: the board still works without it */ }
+  })();
+  nextActionsInFlight = pending;
+  pending.finally(() => { if (nextActionsInFlight === pending) nextActionsInFlight = null; });
+  return pending;
+}
+
+// For views that only need next-actions to exist: reuse a read already in
+// flight instead of starting a second one. Anything that just changed a lead
+// calls loadNextActions() directly so it always reads fresh state.
+function ensureNextActions() {
+  if (nextActions.size) return Promise.resolve();
+  return nextActionsInFlight || loadNextActions();
 }
 
 // Short, human due text for a card. Uses the business calendar so "Today"
@@ -3464,13 +3497,29 @@ function renderBoard() {
   });
 
   document.getElementById('tab-all').textContent     = leads.length;
-  document.getElementById('tab-trade').textContent   = leads.filter(l => l.type === 'trade').length;
+  const tradeTab = document.getElementById('tab-trade');
+  if (tradeTab) tradeTab.textContent = leads.filter(l => l.type === 'trade').length;
   document.getElementById('stat-total').textContent    = leads.length;
   document.getElementById('stat-trades').textContent   = leads.filter(l => l.type === 'trade').length;
   document.getElementById('stat-hot').textContent         = leads.filter(l => displayStageFor(l.stage) === 'hot').length;
   document.getElementById('stat-booked').textContent      = leads.filter(l => displayStageFor(l.stage) === 'call_booked').length;
   document.getElementById('stat-closed-lost').textContent = leads.filter(l => displayStageFor(l.stage) === 'closed_lost').length;
   document.getElementById('stat-closed-won').textContent  = leads.filter(l => displayStageFor(l.stage) === 'closed_won').length;
+
+  // Summary cards in the managed-client style. Counts are of the whole board,
+  // so a search or filter never makes the totals look smaller than they are.
+  const metricsHost = document.getElementById('pipeline-metrics');
+  if (metricsHost) {
+    const inStage = (...ids) => leads.filter(l => ids.includes(displayStageFor(l.stage))).length;
+    metricsHost.innerHTML = [
+      metricCard('Open opportunities', inStage('follow_up', 'hot', 'call_booked', 'call_held', 'proposal_sent')),
+      metricCard('Hot (replied)', inStage('hot')),
+      metricCard('Calls', inStage('call_booked', 'call_held'), `${inStage('call_booked')} booked · ${inStage('call_held')} held`),
+      metricCard('Proposals out', inStage('proposal_sent'), 'Waiting on signature and tech fee'),
+      metricCard('Signed + tech fee paid', inStage('closed_won')),
+      metricCard('Closed / Lost', inStage('closed_lost')),
+    ].join('');
+  }
 
   // Work-queue counters, derived from the shared engine's output.
   const queueCount = f => [...nextActions.values()].filter(e => naMatchesFilter(e.nextAction, f)).length;
@@ -5935,10 +5984,14 @@ async function loadCeLeads() {
       const registry = await versionsResp.json();
       if (!current()) return;
       completedCampaignList = registry.completedCampaigns || [];
-      const liveVersion = registry.active?.dental_ai_receptionist || '—';
+      // ScaleLab only runs the staffing offer now; retired offers' versions
+      // (dental, roofing) are not offered as filters or named as current.
+      const liveVersion = registry.active?.industrial_staffing || '—';
       document.getElementById('ce-current-campaign').textContent = `Current campaign: ${liveVersion}`;
       const select = document.getElementById('ce-version-filter');
-      select.innerHTML = '<option value="">All campaign versions</option>' + Object.keys(registry.versions || {}).concat(['legacy_unknown'])
+      const staffingVersions = Object.entries(registry.versions || {})
+        .filter(([, version]) => version && version.family === 'industrial_staffing').map(([id]) => id);
+      select.innerHTML = '<option value="">All campaign versions</option>' + staffingVersions.concat(['legacy_unknown'])
         .map(id => `<option value="${escAttr(id)}">${esc(id)}</option>`).join('');
       select.value = ceCampaignVersionFilter;
     }
@@ -7735,12 +7788,11 @@ const WORKSPACES = Object.freeze({
   pipeline:  ['Pipeline', 'Active opportunities and what happens next'],
   outreach:  ['Outreach', 'The complete prospect directory and outreach state'],
   archive:   ['Archive', 'Archived leads with their complete history — nothing here can send'],
-  inbox:     ['Inbox', 'Replies and conversations that need a human decision'],
+  inbox:     ['Inbox', 'Conversations by lead, the latest reply first, and what each needs next'],
   campaigns: ['Campaigns', 'Measured campaign versions and outbound context'],
   analytics: ['Analytics', 'Funnel performance, engagement, and sending activity'],
-  staffing:  ['Staffing Funnel', 'Tracked staffing links, landing-page visits and assisted bookings'],
   sequences: ['Sequences', 'Stage follow-up enrollment and delivery state'],
-  bookings:  ['Bookings', 'Scheduled calls and explicit meeting outcomes'],
+  bookings:  ['Bookings', 'Every meeting, upcoming and past; bill the tech fee and send onboarding documents after the call'],
   health:    ['CRM Health', 'Automation risk, data quality, and operational backlog'],
   settings:  ['Settings', 'Read-only production configuration and provider status'],
   clients:   ['Client Ops', 'Managed-client outreach, conversations, meetings and billing'],
@@ -7790,7 +7842,6 @@ function installWorkspaceShell() {
   const campaigns = make('campaigns', workspaceIntro('Attribution', 'Campaigns', 'Measured campaign versions remain separate from legacy activity with unknown attribution.'));
   const analytics = make('analytics', workspaceIntro('Performance', 'Analytics', 'Campaign funnel, replies, engagement signals, and daily sending activity.'));
   analytics.insertAdjacentHTML('beforeend', '<div id="jole-report-launcher" class="jole-report-tools"><button type="button" onclick="showJoleDailyReport()">Open Jole Daily Report</button></div><div id="jole-report-view" aria-live="polite"></div>');
-  const staffing = make('staffing', workspaceIntro('Outreach links', 'Staffing Funnel', 'What happened after a tracked staffing link was sent: visits, engagement tiers, video, booking clicks and assisted bookings.'));
   const sequences = make('sequences', workspaceIntro('Automation', 'Sequences', 'Explicit stage-sequence enrollment, current step, and next scheduled action.'));
   const bookings = make('bookings', workspaceIntro('Call lifecycle', 'Bookings', 'Upcoming calls, outcome-needed meetings, cancellations, and no-shows.'));
   const health = make('health', workspaceIntro('System status', 'CRM Health', 'Active automation risk is separated from operational backlog and historical debt.'));
@@ -7799,19 +7850,22 @@ function installWorkspaceShell() {
   clientsWs.insertAdjacentHTML('beforeend', '<div id="client-ops-content" aria-live="polite"><div class="workspace-empty"><strong>Loading client operations…</strong>Reading the selected client.</div></div>');
 
   const pipelineStats = document.querySelector('body > .stats-bar');
+  const pipelineMetrics = document.querySelector('body > #pipeline-metrics');
   const pipelineFilters = document.querySelector('body > .filter-bar');
   const boardMain = document.querySelector('body > .main');
   if (pipelineStats) pipeline.appendChild(pipelineStats);
+  // The summary cards sit between the stats strip and the filters in the page;
+  // left behind as a body child they break the shell and the board collapses.
+  if (pipelineMetrics) pipeline.appendChild(pipelineMetrics);
   if (pipelineFilters) pipeline.appendChild(pipelineFilters);
   if (boardMain) pipeline.appendChild(boardMain);
 
   const ce = document.getElementById('ce-section');
   outreach.appendChild(ce);
 
-  inbox.insertAdjacentHTML('beforeend', '<div class="inbox-toolbar" id="inbox-toolbar"></div><p id="inbox-note" style="color:var(--text-muted);font-size:12px;margin:0 0 10px">An operational queue over the same canonical reply records Analytics measures — not a second count. Every inbound message appears here, including the automated and unattributable ones that Analytics deliberately keeps out of reply rates, so <b>All replies</b> equals <b>Inbound Messages</b> and is larger than <b>Genuine Replies</b>. Filters overlap: a message can be both Positive and Needs response.</p><div id="inbox-content" class="workspace-empty"><strong>Loading the reply queue…</strong>Canonical reply evidence is being prepared.</div>');
+  inbox.insertAdjacentHTML('beforeend', '<div id="inbox-badges"></div><div class="client-metrics" id="inbox-metrics" aria-label="Inbox summary"></div><div id="inbox-content" class="workspace-empty"><strong>Loading the reply queue…</strong>Canonical reply evidence is being prepared.</div>');
   sequences.insertAdjacentHTML('beforeend', '<div id="sequences-status" class="workspace-surface">Loading sequence status…</div>');
-  staffing.insertAdjacentHTML('beforeend', '<div id="staffing-funnel-content" aria-live="polite"><div class="workspace-empty"><strong>Loading the staffing funnel…</strong>Reading tracked links, landing-page sessions and bookings.</div></div>');
-  bookings.insertAdjacentHTML('beforeend', '<div id="bookings-content" class="workspace-empty"><strong>Loading call lifecycle…</strong>Current meeting state is being prepared.</div>');
+  bookings.insertAdjacentHTML('beforeend', '<div id="bookings-content" class="workspace-empty"><strong>Loading meetings…</strong>Reading meeting times and billing status.</div>');
   settings.insertAdjacentHTML('afterbegin', '<div id="settings-status" class="status-grid" style="margin-bottom:14px"></div><div id="settings-inbox-routing" class="workspace-surface" aria-live="polite"><div class="workspace-empty"><strong>Loading sender routing…</strong>Reading configured Gmail inbox status.</div></div>');
 
   document.body.appendChild(stage);
@@ -7825,6 +7879,16 @@ function installWorkspaceShell() {
   move('ce-opens-panel', 'ws-analytics');
   move('ce-campaigns-panel', 'ws-campaigns');
   move('agent-panel', 'ws-settings');
+  // The simpler Outreach (as a client's): the lead directory and its status
+  // cards. The sending and reply totals, with their drill-downs, lead the
+  // Analytics page instead; launch readiness sits with Campaigns.
+  const analyticsHost = document.getElementById('ws-analytics');
+  const analyticsFirst = document.getElementById('ce-funnel-analytics');
+  for (const id of ['ce-stat-scope', 'ce-stats-bar', 'ce-reply-metrics', 'ce-digest-card']) {
+    const node = document.getElementById(id);
+    if (node && analyticsHost) analyticsHost.insertBefore(node, analyticsFirst && analyticsFirst.parentNode === analyticsHost ? analyticsFirst : null);
+  }
+  move('staffing-launch-panel', 'ws-campaigns');
   // A managed client's workspaces render into these; ScaleLab's content stays untouched.
   for (const id of ['pipeline', 'inbox', 'bookings', 'campaigns', 'analytics', 'settings']) {
     document.getElementById(`ws-${id}`).insertAdjacentHTML('beforeend', `<div class="client-view" id="client-view-${id}" aria-live="polite"></div>`);
@@ -7886,7 +7950,11 @@ async function loadWorkspace(name) {
   const shared = typeof WorkspaceShared !== 'undefined' && WorkspaceShared.usesSharedWorkspace(name);
   if (activeClientIsManaged() && name !== 'clients' && !shared) return loadManagedWorkspace(name);
   if (name === 'pipeline') {
-    if (!activeClientIsManaged() && !leads.length) { await loadLeads(); renderBoard(); }
+    if (!activeClientIsManaged() && !leads.length) {
+      const { pendingNextActions } = await loadLeads({ awaitNextActions: false });
+      renderBoard();
+      pendingNextActions.then(() => { if (nextActions.size) renderBoard(); });
+    }
     return;
   }
   if (['outreach','campaigns','analytics','inbox'].includes(name)) await ensureOutreachReadModel();
@@ -7898,7 +7966,6 @@ async function loadWorkspace(name) {
   }
   if (name === 'health') { await loadCrmHealth(); document.getElementById('crm-health-body').hidden = false; document.getElementById('crm-health-toggle').setAttribute('aria-expanded','true'); return; }
   if (name === 'sequences') return loadSequencesWorkspace();
-  if (name === 'staffing') return loadStaffingFunnel();
   if (name === 'bookings') return loadBookingsWorkspace();
   if (name === 'archive') return loadArchiveWorkspace();
   if (name === 'settings') {
@@ -8511,6 +8578,13 @@ async function renderManagedBookings(client) {
     if (error.code === 'ledger_unavailable') return badges + emptyState('Meeting ledger unavailable', error.message, 'calendar');
     throw error;
   }
+  // The calendar panel is optional: a client without calendar sync, or a
+  // failing read, still shows its ledger.
+  const calendar = await clientApi('/calendar').catch(error => (error.status === 404 ? null : { error: error.message }));
+  const calendarPanel = renderManagedCalendarPanel(client, calendar);
+  // Billing is optional the same way: no Stripe setup, no panel, ledger intact.
+  const billingStatus = await clientApi('/billing').catch(error => (error.status === 404 ? null : { error: error.message }));
+  const billingPanel = renderManagedBillingPanel(client, billingStatus);
   const employerByLead = new Map(opportunities.map(row => [row.lead_id, row.employer]));
   const status = value => meetings.filter(row => row.meeting_status === value).length;
   const summary = `<div class="client-metrics">
@@ -8523,15 +8597,321 @@ async function renderManagedBookings(client) {
     ${metricCard('Accrued', clientMoney(billing.accruedCents, billing.currency))}
   </div>`;
   if (!meetings.length) {
-    return badges + summary + renderRevenuePanel(client, meetings, billing) + emptyState(`No ${client.displayName} meetings yet`, onboardingPending(client)
+    return badges + summary + calendarPanel + billingPanel + renderRevenuePanel(client, meetings, billing) + emptyState(`No ${client.displayName} meetings yet`, onboardingPending(client)
       ? `Meetings are recorded here after ${client.displayName} is activated and employers book. A meeting bills only when it is held and qualified.`
       : 'Meetings appear here when they are booked. A meeting bills only when it is held and qualified.', 'calendar');
   }
   const revenue = renderRevenuePanel(client, meetings, billing);
-  return badges + summary + revenue + `<div class="booking-list">${meetings.map(meeting => `<div class="operational-row">
+  return badges + summary + calendarPanel + billingPanel + revenue + `<div class="booking-list">${meetings.map(meeting => `<div class="operational-row meeting-row">
       <span><b>${esc(employerByLead.get(meeting.lead_id) || meeting.lead_id)}</b><small>${esc([meeting.attendee_name, meeting.attendee_title].filter(Boolean).join(' · ') || 'Attendee not recorded')} · ${esc(meeting.campaign_id ? campaignName(meeting.campaign_id) : '')}</small></span>
       <span class="operational-row-meta"><b>${esc(meeting.meeting_status.replace(/_/g, ' '))}</b><small>${esc(meeting.scheduled_for ? new Date(meeting.scheduled_for).toLocaleString() : 'Not scheduled')} · ${meeting.billable ? esc('Billable ' + clientMoney(meeting.performance_fee_cents, meeting.currency)) : esc('Not billable')}</small></span>
+      ${meetingActionsHtml(meeting, billingStatus)}
     </div>`).join('')}</div>`;
+}
+
+// ── Meeting outcomes and billing (managed clients) ──────────────────────────
+const MEETING_ACTION_LABELS = { HELD: 'Mark held', NO_SHOW: 'No-show', CANCELLED: 'Cancelled' };
+
+/** What an operator can do next with this meeting, as buttons. */
+function meetingActionsHtml(meeting, billingStatus) {
+  const id = escAttr(meeting.meeting_id);
+  const btn = (label, action, cls = 'btn-save-notes') => `<button type="button" class="${cls}" data-meeting="${id}" data-action="${action}" onclick="managedMeetingAction(this.dataset.meeting, this.dataset.action)">${esc(label)}</button>`;
+  const state = label => `<span class="meeting-invoice-state">${esc(label)}</span>`;
+  let html = '';
+  if (['BOOKED', 'RESCHEDULED'].includes(meeting.meeting_status)) html = ['HELD', 'NO_SHOW', 'CANCELLED'].map(to => btn(MEETING_ACTION_LABELS[to], to)).join('');
+  else if (meeting.meeting_status === 'HELD') html = btn('Qualify…', 'qualify', 'btn-save') + btn('Not qualified…', 'disqualify');
+  else if (meeting.meeting_status === 'QUALIFIED_HELD') {
+    if (meeting.invoice_status === 'paid') html = state('Paid');
+    else if (meeting.invoice_status === 'invoiced') html = state('Invoiced');
+    else if (meeting.stripe_invoice_id) html = state('On a draft invoice');
+    else if (billingStatus && billingStatus.ready && meeting.billable) {
+      // With a card on file the primary action charges it; emailing an invoice stays available.
+      html = billingStatus.card
+        ? btn('Charge now', 'charge-now', 'btn-save') + btn('Email invoice', 'invoice-now')
+        : btn('Invoice now', 'invoice-now', 'btn-save');
+    } else if (meeting.billable) html = state('Billable, not invoiced');
+  }
+  return html ? `<span class="meeting-actions">${html}</span>` : '';
+}
+
+function managedMeetingAction(meetingId, action) {
+  if (action === 'qualify' || action === 'disqualify') return openMeetingDialog(meetingId, action);
+  if (action === 'invoice-now') {
+    const client = activeClient();
+    if (!window.confirm(`Email an invoice for this meeting now? Stripe will email it to ${client.displayName}'s billing contact to pay.`)) return null;
+    return managedPost(`/meetings/${encodeURIComponent(meetingId)}/invoice-now`, {}, 'Invoice emailed');
+  }
+  if (action === 'charge-now') {
+    const client = activeClient();
+    const card = managedBillingCard;
+    const cardText = card ? `${card.brand.toUpperCase()} ending ${card.last4}` : 'the card on file';
+    if (!window.confirm(`Charge ${client.displayName}'s ${cardText} for this meeting now?\n\nThe card is charged immediately and Stripe emails the paid invoice.`)) return null;
+    return managedPost(`/meetings/${encodeURIComponent(meetingId)}/charge-now`, {}, 'Card charged; paid invoice emailed');
+  }
+  const patch = action === 'HELD' ? { held_at: new Date().toISOString() } : {};
+  return managedPost(`/meetings/${encodeURIComponent(meetingId)}/transition`, { toStatus: action, patch }, `Meeting marked ${MEETING_ACTION_LABELS[action].toLowerCase()}`);
+}
+
+async function managedPost(path, body, okMessage) {
+  try {
+    const response = await fetch(`/api/clients/${encodeURIComponent(activeClientId)}${path}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    showToast(okMessage, 'success');
+    loadManagedWorkspace('bookings');
+    return data;
+  } catch (error) {
+    showToast(error.message, 'error');
+    return null;
+  }
+}
+
+/** Qualify / disqualify a held meeting. Labels sit outside the fields; errors show in the dialog. */
+function openMeetingDialog(meetingId, mode) {
+  const client = activeClient();
+  const q = client.qualification || {};
+  const nice = value => String(value).replace(/_/g, ' ');
+  document.getElementById('meeting-dialog')?.remove();
+  const dialog = document.createElement('dialog');
+  dialog.id = 'meeting-dialog';
+  dialog.className = 'meeting-dialog';
+  const qualifyFields = `
+    <label for="md-title">Attendee title</label>
+    <input id="md-title" name="attendee_title" type="text" autocomplete="off">
+    <label for="md-status">Decision-maker?</label>
+    <select id="md-status" name="attendee_status">
+      <option value="decision_maker">Yes, a decision-maker</option><option value="not_decision_maker">No</option><option value="unknown" selected>Unknown</option>
+    </select>
+    <label for="md-fit">Employer inside the target market?</label>
+    <select id="md-fit" name="employer_fit">
+      <option value="fit">Yes</option><option value="out_of_icp">No</option><option value="unknown" selected>Unknown</option>
+    </select>
+    <fieldset><legend>Attendee is responsible for</legend>
+      ${(q.decisionMakerAreas || []).map(area => `<label class="md-check"><input type="checkbox" name="decision_areas" value="${escAttr(area)}"> ${esc(nice(area))}</label>`).join('')}
+    </fieldset>
+    <label for="md-use">Staffing use case</label>
+    <select id="md-use" name="use_case">
+      <option value="">Choose…</option>${(q.acceptedUseCases || []).map(u => `<option value="${escAttr(u)}">${esc(nice(u))}</option>`).join('')}
+    </select>`;
+  dialog.innerHTML = `<form novalidate>
+      <h3>${mode === 'qualify' ? 'Qualify this held meeting' : 'Meeting did not qualify'}</h3>
+      <p class="client-note">${mode === 'qualify' ? 'Billing starts only when every criterion is met. Anything missing is listed below.' : 'Record why. A not-qualified meeting is never billed.'}</p>
+      ${mode === 'qualify' ? qualifyFields : ''}
+      <label for="md-basis">${mode === 'qualify' ? 'Why it qualifies' : 'Why it did not qualify'}</label>
+      <textarea id="md-basis" name="qualification_basis" rows="3"></textarea>
+      <p class="md-error" role="alert" hidden></p>
+      <div class="md-actions">
+        <button type="button" class="btn-cancel md-cancel">Cancel</button>
+        <button type="submit" class="btn-save">${mode === 'qualify' ? 'Qualify meeting' : 'Save'}</button>
+      </div>
+    </form>`;
+  document.body.appendChild(dialog);
+  const form = dialog.querySelector('form');
+  const error = dialog.querySelector('.md-error');
+  dialog.querySelector('.md-cancel').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('close', () => dialog.remove());
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const data = new FormData(form);
+    const patch = { qualification_basis: String(data.get('qualification_basis') || '').trim() };
+    if (!patch.qualification_basis) { error.textContent = 'Write down the reason first.'; error.hidden = false; return; }
+    if (mode === 'qualify') {
+      Object.assign(patch, {
+        attendee_title: String(data.get('attendee_title') || '').trim(),
+        attendee_status: data.get('attendee_status'), employer_fit: data.get('employer_fit'),
+        decision_areas: data.getAll('decision_areas'), use_case: data.get('use_case') || '',
+      });
+    }
+    const toStatus = mode === 'qualify' ? 'QUALIFIED_HELD' : 'DISQUALIFIED_HELD';
+    const response = await fetch(`/api/clients/${encodeURIComponent(activeClientId)}/meetings/${encodeURIComponent(meetingId)}/transition`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ toStatus, patch }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) { error.textContent = body.error || `HTTP ${response.status}`; error.hidden = false; return; }
+    dialog.close();
+    showToast(mode === 'qualify' ? 'Meeting qualified' : 'Meeting recorded as not qualified', 'success');
+    loadManagedWorkspace('bookings');
+  });
+  dialog.showModal();
+}
+
+/** Stripe billing: what is ready to bill, drafts waiting for Send, and invoices. */
+function renderManagedBillingPanel(client, b) {
+  if (!b) return '';
+  if (b.error) return `<p class="client-note calendar-status" data-state="error">Billing status unavailable: ${esc(b.error)}</p>`;
+  if (!b.configured) return `<div class="calendar-status" data-state="off"><span>Stripe billing is not set up: ${esc(b.reason)}.</span></div>`;
+  const cur = (b.currency || 'usd').toUpperCase();
+  const money = cents => clientMoney(cents, cur);
+  const day = iso => (iso ? new Date(iso).toLocaleDateString() : '—');
+  const mode = b.mode === 'live' ? 'LIVE' : b.mode === 'test' ? 'TEST MODE' : String(b.mode || '').toUpperCase();
+  managedBillingCard = b.card || null;
+  const charging = b.collection === 'charge_card';
+  const header = `<div class="calendar-status" data-state="${b.ready ? (b.webhookConfigured ? 'ok' : 'error') : 'off'}">
+      <span><b class="billing-mode" data-mode="${escAttr(b.mode)}">${esc(mode)}</b> Stripe billing ${b.ready ? 'on' : `off (${esc(b.reason)})`} · drafts on the 1st and 15th · ${charging ? 'charged to the card on file, invoice emailed after' : `due in ${esc(b.daysUntilDue)} days`}${b.webhookConfigured ? '' : ' · <b>payment updates are not connected (webhook secret missing)</b>'}</span>
+    </div>`;
+  const cardLine = b.card
+    ? `Card on file: <b>${esc(b.card.brand.toUpperCase())} ending ${esc(b.card.last4)}</b> (expires ${esc(String(b.card.expMonth).padStart(2, '0'))}/${esc(String(b.card.expYear).slice(-2))})`
+    : `<b>No card on file.</b> Send ${esc(client.displayName)} a card setup link; charges are possible once the card is saved.`;
+  const cardPanel = `<div class="calendar-status billing-card" data-state="${b.card ? 'ok' : 'off'}">
+      <span>${cardLine}${b.cardError ? ` · card status unavailable: ${esc(b.cardError)}` : ''}</span>
+      ${b.ready ? `<button type="button" class="btn-save-notes" data-action="card-link" onclick="managedBillingAction(this.dataset.action)">${b.card ? 'New card setup link' : 'Create card setup link'}</button>` : ''}
+    </div>`;
+  const t = b.totals || {};
+  const unbilled = b.unbilled || [];
+  const metrics = `<div class="client-metrics">
+      ${metricCard('Ready to bill', money(t.unbilledCents), `${unbilled.length} meeting(s)`)}
+      ${metricCard('Drafts', money(t.draftCents), charging ? 'Waiting for Charge' : 'Waiting for Send')}
+      ${metricCard('Outstanding', money(t.outstandingCents))}
+      ${metricCard('Overdue', money(t.overdueCents))}
+      ${metricCard('Paid', money(t.paidCents))}
+    </div>`;
+  const ready = unbilled.length ? `<div class="booking-list">${unbilled.map(item => `<div class="operational-row">
+      <span><b>${esc(item.employer || item.leadId)}</b><small>${esc(item.description)}</small></span>
+      <span class="operational-row-meta"><b>${esc(money(item.amountCents))}</b></span>
+    </div>`).join('')}</div>
+    ${b.ready ? `<div class="md-actions"><button type="button" class="btn-save" data-action="draft" onclick="managedBillingAction(this.dataset.action)">Create draft invoice now (${unbilled.length}, ${esc(money(t.unbilledCents))})</button></div>` : ''}`
+    : '<p class="client-note">No qualified meetings are waiting to be invoiced.</p>';
+  const kindLabel = row => (row.kind === 'period' ? `Period from ${row.period_key}` : row.kind === 'single' ? 'Single meeting' : 'Drafted by hand');
+  const invoices = (b.invoices || []).map(row => {
+    const id = escAttr(row.invoice_id);
+    const failedCharge = row.status === 'open' && row.collection_method === 'charge_automatically';
+    const status = failedCharge ? 'charge failed' : row.overdue ? 'overdue' : row.status;
+    const act = (label, action, cls = 'btn-save-notes') => `<button type="button" class="${cls}" data-invoice="${id}" data-action="${action}" data-amount="${escAttr(money(row.amount_cents))}" onclick="managedBillingAction(this.dataset.action, this.dataset.invoice, this.dataset.amount)">${esc(label)}</button>`;
+    const view = row.hosted_invoice_url ? `<a class="btn-save-notes" href="${escAttr(row.hosted_invoice_url)}" target="_blank" rel="noopener noreferrer">View invoice</a>` : '';
+    let actions;
+    if (row.status === 'draft') {
+      actions = (charging && b.card ? act(`Charge card (${money(row.amount_cents)})`, 'charge', 'btn-save') + act('Email invoice instead', 'send') : act('Send invoice', 'send', 'btn-save'))
+        + act('Discard', 'discard', 'btn-cancel');
+    } else if (failedCharge) {
+      actions = view + (b.card ? act('Retry charge', 'charge', 'btn-save') : '') + act('Email invoice instead', 'email-instead') + act('Void', 'void', 'btn-cancel');
+    } else {
+      actions = view + (['open', 'uncollectible'].includes(row.status) ? act('Refresh', 'refresh') : '');
+    }
+    return `<div class="operational-row meeting-row">
+      <span><b>${esc(row.invoice_number || 'Draft')} · ${esc(kindLabel(row))}</b><small>${esc((row.meeting_ids || []).length)} meeting(s) · created ${esc(day(row.created_at))}${row.due_at ? ` · due ${esc(day(row.due_at))}` : ''}${row.paid_at ? ` · paid ${esc(day(row.paid_at))}` : ''}${row.last_error ? ` · ${esc(row.last_error)}` : ''}</small></span>
+      <span class="operational-row-meta"><b>${esc(money(row.amount_cents))}</b><small><span class="status-pill" data-status="${escAttr(status)}">${esc(status)}</span></small></span>
+      <span class="meeting-actions">${actions}</span>
+    </div>`;
+  }).join('');
+  return `<section class="billing-panel" aria-label="Invoices and payments">
+      <h4>Invoices and payments</h4>
+      ${header}${cardPanel}${metrics}
+      <h5>Ready to bill</h5>${ready}
+      ${invoices ? `<h5>Invoices</h5><div class="booking-list">${invoices}</div>` : ''}
+    </section>`;
+}
+
+/** Create a Stripe card setup link and show it to copy into an email to the client. */
+async function openCardSetupLink() {
+  const client = activeClient();
+  const data = await managedPost('/billing/card-setup-link', {}, 'Card setup link created');
+  if (!data || !data.url) return;
+  document.getElementById('card-link-dialog')?.remove();
+  const dialog = document.createElement('dialog');
+  dialog.id = 'card-link-dialog';
+  dialog.className = 'meeting-dialog';
+  const expires = data.expiresAt ? new Date(data.expiresAt).toLocaleString() : 'in 24 hours';
+  dialog.innerHTML = `<div class="md-form">
+      <h3>Card setup link for ${esc(client.displayName)}</h3>
+      <p class="client-note">Send this link to ${esc(client.displayName)}. It opens a secure Stripe page where they save a card and agree to future charges. Nothing is charged now. The link works until ${esc(expires)}.</p>
+      <label for="card-link-url">Link</label>
+      <input id="card-link-url" type="text" readonly value="${escAttr(data.url)}">
+      <p class="client-note" id="card-link-copied" role="status" hidden>Copied.</p>
+      <div class="md-actions">
+        <button type="button" class="btn-cancel" id="card-link-close">Close</button>
+        <button type="button" class="btn-save" id="card-link-copy">Copy link</button>
+      </div>
+    </div>`;
+  document.body.appendChild(dialog);
+  dialog.querySelector('#card-link-close').addEventListener('click', () => dialog.close());
+  dialog.querySelector('#card-link-copy').addEventListener('click', async () => {
+    const input = dialog.querySelector('#card-link-url');
+    try { await navigator.clipboard.writeText(input.value); } catch (_) { input.select(); document.execCommand('copy'); }
+    dialog.querySelector('#card-link-copied').hidden = false;
+  });
+  dialog.addEventListener('close', () => dialog.remove());
+  dialog.showModal();
+}
+
+// The card on file from the last billing status read, for confirmation prompts.
+let managedBillingCard = null;
+
+async function managedBillingAction(action, invoiceId = '', amount = '') {
+  const client = activeClient();
+  const cardText = managedBillingCard ? `${managedBillingCard.brand.toUpperCase()} ending ${managedBillingCard.last4}` : 'the card on file';
+  if (action === 'draft') return managedPost('/billing/drafts', {}, 'Draft invoice created; review it, then charge or send it');
+  if (action === 'card-link') return openCardSetupLink();
+  if (action === 'charge') {
+    if (!window.confirm(`Charge ${client.displayName}'s ${cardText} ${amount} now?\n\nThe card is charged immediately and Stripe emails the paid invoice.`)) return null;
+    return managedPost(`/billing/invoices/${encodeURIComponent(invoiceId)}/charge`, {}, 'Card charged; paid invoice emailed');
+  }
+  if (action === 'email-instead') {
+    if (!window.confirm(`Void this failed charge and email ${client.displayName} a ${amount} invoice to pay instead?`)) return null;
+    return managedPost(`/billing/invoices/${encodeURIComponent(invoiceId)}/email-instead`, {}, 'Invoice emailed');
+  }
+  if (action === 'void') {
+    if (!window.confirm('Void this unpaid invoice? Its meetings go back to "ready to bill".')) return null;
+    return managedPost(`/billing/invoices/${encodeURIComponent(invoiceId)}/void`, {}, 'Invoice voided');
+  }
+  if (action === 'send') {
+    if (!window.confirm(`Email this ${amount} invoice now? Stripe will email it to ${client.displayName}'s billing contact, due in the agreed terms.`)) return null;
+    return managedPost(`/billing/invoices/${encodeURIComponent(invoiceId)}/send`, {}, 'Invoice sent');
+  }
+  if (action === 'discard') {
+    if (!window.confirm('Discard this draft? Its meetings go back to "ready to bill".')) return null;
+    return managedPost(`/billing/invoices/${encodeURIComponent(invoiceId)}/discard`, {}, 'Draft discarded');
+  }
+  if (action === 'refresh') return managedPost(`/billing/invoices/${encodeURIComponent(invoiceId)}/refresh`, {}, 'Invoice refreshed from Stripe');
+  return null;
+}
+
+/** The client's calendar connection and the calendar events waiting for a decision. */
+function renderManagedCalendarPanel(client, calendar) {
+  if (!calendar) return '';
+  if (calendar.error) return `<p class="client-note calendar-status" data-state="error">Calendar status unavailable: ${esc(calendar.error)}</p>`;
+  const owner = calendar.meetingWith || client.displayName;
+  const synced = calendar.lastSyncAt ? `last checked ${new Date(calendar.lastSyncAt).toLocaleString()}` : 'not checked yet';
+  const line = calendar.ready
+    ? `${esc(owner)}'s Google Calendar is connected (read-only) · ${esc(synced)}${calendar.lastError ? ` · <b>last error: ${esc(calendar.lastError)}</b>` : ''}`
+    : `${esc(owner)}'s Google Calendar is not connected: ${esc(calendar.reason || 'sync is off')}. Meetings can still be recorded by hand.`;
+  const status = `<div class="calendar-status" data-state="${calendar.ready ? (calendar.lastError ? 'error' : 'ok') : 'off'}">
+      <span>${line}</span>
+      ${calendar.ready ? '<button type="button" class="btn-save-notes" data-action="sync" onclick="managedCalendarAction(this.dataset.action)">Check now</button>' : ''}
+    </div>`;
+  const review = calendar.review || [];
+  if (!review.length) return status;
+  const rows = review.map(item => {
+    const when = item.startAt ? new Date(item.startAt).toLocaleString() : 'No start time';
+    const people = item.candidates.map(c => [c.name || c.email, c.company].filter(Boolean).join(' · ')).join(' / ');
+    const confirms = item.candidates.length > 1
+      ? item.candidates.map(c => `<button type="button" class="btn-save" data-event="${escAttr(item.eventId)}" data-lead="${escAttr(c.leadId)}" onclick="managedCalendarAction('confirm', this.dataset.event, this.dataset.lead)">Meeting with ${esc(c.name || c.email)}</button>`).join('')
+      : `<button type="button" class="btn-save" data-event="${escAttr(item.eventId)}" onclick="managedCalendarAction('confirm', this.dataset.event)">Confirm meeting</button>`;
+    return `<div class="operational-row calendar-review-row">
+      <span><b>${esc(people)}</b><small>${esc(item.summary || 'Untitled event')} · ${esc(when)}</small><small>${esc(item.reason)}</small></span>
+      <span class="calendar-review-actions">${confirms}<button type="button" class="btn-cancel" data-event="${escAttr(item.eventId)}" onclick="managedCalendarAction('dismiss', this.dataset.event)">Not a lead meeting</button></span>
+    </div>`;
+  }).join('');
+  return status + `<section class="calendar-review" aria-label="Calendar meetings to confirm">
+      <h4>Calendar meetings to confirm (${review.length})</h4>
+      <p class="client-note">These events on ${esc(owner)}'s calendar include one of this client's leads but were not booked through the booking page, so they are not counted until you confirm them.</p>
+      <div class="booking-list">${rows}</div>
+    </section>`;
+}
+
+async function managedCalendarAction(action, eventId = '', leadId = '') {
+  const base = `/api/clients/${encodeURIComponent(activeClientId)}/calendar`;
+  const url = action === 'sync' ? `${base}/sync` : `${base}/review/${encodeURIComponent(eventId)}/${action}`;
+  try {
+    const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(leadId ? { leadId } : {}) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) throw new Error(data.error || data.reason || `HTTP ${response.status}`);
+    showToast(action === 'confirm' ? 'Meeting recorded from the calendar' : action === 'dismiss' ? 'Event dismissed' : `Calendar checked: ${data.mutations || 0} change(s)`, 'success');
+  } catch (error) {
+    showToast(`Calendar: ${error.message}`, 'error');
+  }
+  loadManagedWorkspace('bookings');
 }
 
 async function renderManagedCampaigns(client) {
@@ -8841,145 +9221,6 @@ async function answerClientClarification(event) {
 }
 
 
-// ============================================================
-// STAFFING LANDING FUNNEL — first-party attribution for tracked staffing links.
-// Read-only. Tiers and booking labels come from SQL; this only renders them.
-// Internal, debug and test traffic are excluded unless asked for.
-// ============================================================
-let staffingFunnelFilters = { range: '30d', from: '', to: '', source: '', campaign: '', sender: '', template: '', includeTest: false, includeInternal: false };
-
-async function loadStaffingFunnel() {
-  const host = document.getElementById('staffing-funnel-content');
-  if (!host) return;
-  host.innerHTML = '<div class="workspace-empty"><strong>Loading the staffing funnel…</strong>Reading tracked links, landing-page sessions and bookings.</div>';
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(staffingFunnelFilters)) {
-    if (value === true) params.set(key, '1');
-    else if (value) params.set(key, value);
-  }
-  try {
-    const response = await fetch('/api/landing/funnel?' + params.toString());
-    if (!response.ok) throw new Error('HTTP ' + response.status);
-    host.innerHTML = renderStaffingFunnel(await response.json());
-  } catch (_) {
-    host.innerHTML = '<div class="workspace-empty"><strong>Staffing funnel unavailable</strong>The landing attribution data could not be loaded. Nothing was changed; try again shortly.</div>';
-  }
-}
-
-function setStaffingFunnelFilter(key, value) {
-  staffingFunnelFilters = { ...staffingFunnelFilters, [key]: value };
-  if (key === 'range' && value === 'custom' && !(staffingFunnelFilters.from && staffingFunnelFilters.to)) {
-    const day = offset => new Date(Date.now() - offset * 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
-    staffingFunnelFilters = { ...staffingFunnelFilters, from: day(29), to: day(0) };
-  }
-  loadStaffingFunnel();
-}
-
-function renderStaffingFunnel(data) {
-  const f = data.filters || {};
-  const o = data.options || {};
-  const s = data.summary || {};
-  const n = value => (Number.isFinite(value) ? value.toLocaleString('en-CA') : '0');
-  const pct = value => (value === null || value === undefined ? '—' : `${(value * 100).toFixed(1)}%`);
-  const when = iso => (iso ? new Date(iso).toLocaleString('en-CA', { timeZone: 'America/Vancouver', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—');
-  const SOURCE = { followup_2: 'Follow-up #2', positive_reply: 'Positive reply' };
-  const GRAIN = { links: 'links sent', sessions: 'sessions', leads: 'leads' };
-  const TIER = { none: 'Link sent, no visit', raw: 'Raw', visible: 'Visible', engaged: 'Engaged', interacted: 'Interacted', intent: 'Intent' };
-  const LABEL = { page_assisted: 'Page-assisted', visited_before_booking: 'Visited before booking', link_sent_no_visit: 'Link sent, no visit', no_link_issued: 'No link issued' };
-  const LABEL_HELP = {
-    page_assisted: 'A booking click or dialog on their link within 2 hours before booking.',
-    visited_before_booking: 'An engaged visit on their link within 30 days before booking.',
-    link_sent_no_visit: 'A link was sent before the booking, with no engaged visit.',
-    no_link_issued: 'No tracked link was sent before the booking.',
-  };
-  const VIDEO = { playing: 'Played', 25: '25%', 50: '50%', 75: '75%', complete: 'Completed' };
-  const choice = (key, label, values, render = value => value) => `<label class="sf-field"><span>${esc(label)}</span><select onchange="setStaffingFunnelFilter('${key}', this.value)"><option value="">All</option>${(values || []).map(value => `<option value="${escAttr(value)}"${f[key] === value ? ' selected' : ''}>${esc(render(value))}</option>`).join('')}</select></label>`;
-  const table = (head, rows, empty) => rows.length
-    ? `<div class="sf-table-wrap"><table class="funnel-table"><thead><tr>${head.map(([text, cls]) => `<th${cls ? ` class="${cls}"` : ''}>${esc(text)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`
-    : `<div class="workspace-empty">${empty}</div>`;
-
-  const toolbar = `<div class="sf-toolbar" role="group" aria-label="Staffing funnel filters">
-    <label class="sf-field"><span>Links sent in</span><select onchange="setStaffingFunnelFilter('range', this.value)">${[['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['90d', 'Last 90 days'], ['custom', 'Custom dates']].map(([value, label]) => `<option value="${value}"${f.range === value ? ' selected' : ''}>${label}</option>`).join('')}</select></label>
-    ${f.range === 'custom' ? `<label class="sf-field"><span>From</span><input type="date" value="${escAttr(f.fromDay || '')}" onchange="setStaffingFunnelFilter('from', this.value)"></label><label class="sf-field"><span>To</span><input type="date" value="${escAttr(f.toDay || '')}" onchange="setStaffingFunnelFilter('to', this.value)"></label>` : ''}
-    ${choice('source', 'Source', o.sources, value => SOURCE[value] || value)}
-    ${choice('campaign', 'Campaign', o.campaigns)}
-    ${choice('sender', 'Sender inbox', o.senders)}
-    ${choice('template', 'Template version', o.templates)}
-    <label class="sf-check"><input type="checkbox"${f.includeTest ? ' checked' : ''} onchange="setStaffingFunnelFilter('includeTest', this.checked)"> Include test links</label>
-    <label class="sf-check"><input type="checkbox"${f.includeInternal ? ' checked' : ''} onchange="setStaffingFunnelFilter('includeInternal', this.checked)"> Show internal/debug counts</label>
-  </div>
-  <p class="sf-note">Links sent ${esc(when(f.from))} – ${esc(when(f.to))} (Pacific). ${f.includeTest ? '<b>Test links are included.</b> ' : 'Test links are excluded. '}Internal and debug browsers are always left out of these numbers.
-  ${data.status && data.status.trackingEnabled === false ? ' <span class="state-pill" data-on="false">Link tracking off</span> New emails carry the plain URL, so only links already sent can change.' : ''}</p>
-  ${data.truncated ? '<p class="sf-note"><b>Showing the first 5,000 rows of a table.</b> Narrow the dates for exact totals.</p>' : ''}`;
-
-  const kpis = [
-    ['Tracked links sent', s.linksSent, 'Tracked staffing links sent in the period.'],
-    ['Leads sent a link', s.leadsReached, 'Distinct leads who received at least one tracked link.'],
-    ['Raw sessions', s.rawSessions, 'The page reported with the link. Not proof of a person.'],
-    ['Visible sessions', s.visibleSessions, 'The page was visible on screen.'],
-    ['Engaged sessions', s.engagedSessions, 'Visible and (10 s visible, real input, video, or booking click/dialog).'],
-    ['Interacted sessions', s.interactedSessions, 'Real pointer, touch, key or wheel input, or real scrolling.'],
-    ['Intent sessions', s.intentSessions, 'Video playing, a real booking click, or the booking dialog opened.'],
-    ['Video plays', s.videoPlays, 'Sessions where the explainer actually played.'],
-    ['Video 25%', s.video25, 'Sessions that watched a quarter of the video.'],
-    ['Video 50%', s.video50, 'Sessions that watched half of the video.'],
-    ['Video 75%', s.video75, 'Sessions that watched three quarters.'],
-    ['Video completes', s.videoCompletes, 'Sessions that watched to the end.'],
-    ['Meeting section views', s.meetingSectionViews, 'Half the qualified-meeting card in view for a second.'],
-    ['Booking clicks', s.bookingCtaClicks, 'Sessions with a real click on a booking button.'],
-    ['Booking dialogs', s.bookingDialogsOpened, 'Sessions where the scheduler dialog opened.'],
-    ['Assisted bookings', s.assistedBookings, 'Bookings labelled page-assisted or visited-before-booking. Assisted, not caused.'],
-  ];
-  const kpiHtml = `<div class="funnel-kpis sf-kpis">${kpis.map(([label, value, help]) => `<div class="funnel-kpi" title="${escAttr(help)}"><strong>${esc(n(value))}</strong><span>${esc(label)}</span></div>`).join('')}</div>`;
-
-  const rates = table([['Step'], ['Rate', 'num'], ['Count', 'num'], ['Denominator']],
-    (data.rates || []).map(r => `<tr><td>${esc(r.label)}</td><td class="num"><b>${esc(pct(r.value))}</b></td><td class="num">${esc(n(r.numerator))} / ${esc(n(r.denominator))}</td><td>per ${esc(GRAIN[r.grain] || r.grain)}</td></tr>`),
-    '<strong>No conversion data yet</strong>');
-
-  const sources = table([['Source'], ['Links', 'num'], ['Leads', 'num'], ['Raw', 'num'], ['Engaged', 'num'], ['Interacted', 'num'], ['Intent', 'num'], ['Video plays', 'num'], ['Booking clicks', 'num'], ['Assisted bookings', 'num'], ['Links engaged', 'num']],
-    (data.bySource || []).map(entry => { const c = entry.counts || {}; const engaged = (entry.rates || []).find(r => r.key === 'link_to_engaged'); return `<tr><td>${esc(SOURCE[entry.source] || entry.source)}</td><td class="num">${esc(n(c.linksSent))}</td><td class="num">${esc(n(c.leadsReached))}</td><td class="num">${esc(n(c.rawSessions))}</td><td class="num">${esc(n(c.engagedSessions))}</td><td class="num">${esc(n(c.interactedSessions))}</td><td class="num">${esc(n(c.intentSessions))}</td><td class="num">${esc(n(c.videoPlays))}</td><td class="num">${esc(n(c.bookingCtaClicks))}</td><td class="num">${esc(n(c.assistedBookings))}</td><td class="num">${esc(pct(engaged && engaged.value))}</td></tr>`; }),
-    '<strong>No sources yet</strong>');
-
-  const b = data.bookings || { byLabel: {}, rows: [], total: 0 };
-  const bookingCards = `<div class="funnel-kpis sf-kpis">${Object.keys(LABEL).map(key => `<div class="funnel-kpi" title="${escAttr(LABEL_HELP[key])}"><strong>${esc(n((b.byLabel || {})[key] || 0))}</strong><span>${esc(LABEL[key])}</span></div>`).join('')}</div>`;
-  const bookingRows = table([['Lead'], ['Booked'], ['Meeting'], ['Assist label'], ['Link source']],
-    (b.rows || []).map(row => `<tr><td><button type="button" class="sf-link" onclick="openCeDetail('${escAttr(row.leadId)}')">${esc(row.company || row.leadId)}</button></td><td>${esc(when(row.bookedAt))}</td><td>${esc(when(row.meetingAt))}</td><td title="${escAttr(LABEL_HELP[row.assistLabel] || '')}">${esc(LABEL[row.assistLabel] || row.assistLabel)}</td><td>${esc(SOURCE[row.source] || '—')}</td></tr>`),
-    '<strong>No bookings in this period</strong>Bookings recorded by the Calendar sync appear here with their assist label.');
-
-  const q = data.quality || { tiers: {}, signals: {} };
-  const sessionsTotal = Object.values(q.tiers || {}).reduce((sum, value) => sum + (value || 0), 0);
-  const tierRows = ['intent', 'interacted', 'engaged', 'visible', 'raw'].map(key => { const count = (q.tiers || {})[key] || 0; const share = sessionsTotal ? count / sessionsTotal : 0; return `<tr><td>${esc(TIER[key])}${key === 'raw' ? ' only' : ''}</td><td class="num">${esc(n(count))}</td><td class="num">${esc(pct(sessionsTotal ? share : null))}</td><td><div class="sf-bar" aria-hidden="true"><i style="width:${(share * 100).toFixed(1)}%"></i></div></td></tr>`; });
-  const signals = q.signals || {};
-  const signalRows = [['Browser automation flag (webdriver)', signals.webdriver], ['Headless browser user agent', signals.headless], ['Self-declared bot user agent', signals.declaredBot], ['Opened within a minute of sending', signals.openedWithinMinuteOfSend], ['Instant scroll jump', signals.instantScrollJump], ['Never visible', signals.neverVisible]]
-    .map(([label, value]) => `<tr><td>${esc(label)}</td><td class="num">${esc(n(value || 0))}</td></tr>`);
-  const quality = `<p class="sf-note">Each session is counted once, at the highest tier it reached. The signals are shown only to help explain patterns: none of them proves a visitor is or isn't a person.</p>
-    ${table([['Highest tier reached'], ['Sessions', 'num'], ['Share', 'num'], ['']], sessionsTotal ? tierRows : [], '<strong>No sessions yet</strong>')}
-    ${sessionsTotal ? table([['Supporting signal'], ['Sessions', 'num']], signalRows, '') : ''}`;
-
-  const leads = data.leads || { rows: [], total: 0 };
-  const leadRows = table([['Company'], ['Contact'], ['Source'], ['Link sent'], ['Latest visit'], ['Highest tier'], ['Video'], ['Booking button'], ['Meeting']],
-    (leads.rows || []).map(row => `<tr><td><button type="button" class="sf-link" onclick="openCeDetail('${escAttr(row.leadId)}')">${esc(row.company || row.email || row.leadId)}</button>${row.isTest ? ' <span class="state-pill">Test</span>' : ''}</td><td>${esc(row.contact || '')}<br><small style="color:var(--text-muted)">${esc(row.email || '')}</small></td><td>${esc(SOURCE[row.source] || row.source)}</td><td>${esc(when(row.linkSentAt))}</td><td>${esc(when(row.latestVisitAt))}</td><td>${esc(TIER[row.highestTier] || row.highestTier)}</td><td>${esc(row.videoFurthest ? VIDEO[row.videoFurthest] : '—')}</td><td>${row.bookingCtaClicked ? (row.bookingDialogOpened ? 'Clicked · dialog' : 'Clicked') : (row.bookingDialogOpened ? 'Dialog' : '—')}</td><td>${row.booking ? `${esc(when(row.booking.meetingAt || row.booking.bookedAt))}<br><small style="color:var(--text-muted)">${esc(LABEL[row.booking.assistLabel] || row.booking.assistLabel)}</small>` : '—'}</td></tr>`),
-    `<strong>No tracked links were sent in this period</strong>${data.status && data.status.trackingEnabled === false ? 'Link tracking is off, so this stays empty until it is switched on.' : 'Widen the dates or clear a filter.'}`);
-
-  const monitor = data.monitor ? `<div class="sf-section"><h3>Internal and debug traffic</h3><p class="sf-note">Kept out of every number above. Unresolved sessions carried a link code that matched no sent link.</p><div class="funnel-kpis sf-kpis"><div class="funnel-kpi"><strong>${esc(n(data.monitor.internalSessions))}</strong><span>Internal sessions</span></div><div class="funnel-kpi"><strong>${esc(n(data.monitor.debugSessions))}</strong><span>Debug sessions</span></div><div class="funnel-kpi"><strong>${esc(n(data.monitor.unresolvedSessions))}</strong><span>Unresolved sessions</span></div></div></div>` : '';
-
-  return `<div class="workspace-surface">${toolbar}${kpiHtml}
-    <div class="sf-section"><h3>Conversion</h3><p class="sf-note">Each rate names its denominator. Links, leads and sessions are different counts and are never mixed.</p>${rates}</div>
-    <div class="sf-section"><h3>By source</h3>${sources}</div>
-    <div class="sf-section"><h3>Bookings</h3><p class="sf-note">From the Google Calendar sync, matched to a lead by exact attendee email. Labels describe assistance, not causation.</p>${bookingCards}${bookingRows}</div>
-    <div class="sf-section"><h3>Visit quality</h3>${quality}</div>
-    <div class="sf-section"><h3>Lead activity${leads.total > (leads.rows || []).length ? ` <small style="color:var(--text-muted);font-weight:400">(showing ${esc(n((leads.rows || []).length))} of ${esc(n(leads.total))})</small>` : ''}</h3>${leadRows}</div>
-    ${monitor}</div>`;
-}
-
-const INBOX_FILTERS = Object.freeze([
-  ['attention','Needs response'],['positive','Positive / evaluation'],['needs_human','Needs Human'],
-  ['revisit','Revisit later'],['decision_maker','Decision maker'],['contact_change_review','Contact review'],
-  ['automated_reply','Automated / OOO'],['unknown','Unknown / investigate'],['all','All replies'],
-]);
-
-function setInboxFilter(value) { inboxFilter = value; renderInboxWorkspace(); }
-
 // An automated reply's OOO state (server: integrations/ooo-pause.js). A lead
 // with no reliable return date waits for a person; nothing invents a date.
 const OOO_PAUSE_LABEL = Object.freeze({
@@ -9023,35 +9264,205 @@ function inboxMatches(record, action) {
   return Boolean(action?.needsAttention && action.owner === 'human');
 }
 
+/**
+ * The reply records as conversations, the way a client's Inbox shows them:
+ * one per lead, represented by its latest reply, with every reply counted.
+ */
+function inboxConversations() {
+  const byLead = new Map();
+  for (const record of rdRecords) {
+    const key = record.leadId || record.email || record.eventId;
+    const entry = byLead.get(key);
+    const time = Date.parse(record.occurredAt || 0) || 0;
+    if (!entry) byLead.set(key, { latest: record, latestAt: time, count: 1 });
+    else {
+      entry.count += 1;
+      if (time >= entry.latestAt) { entry.latest = record; entry.latestAt = time; }
+    }
+  }
+  return [...byLead.values()].sort((a, b) => b.latestAt - a.latestAt);
+}
+
+// The ScaleLab Inbox in the same layout as a managed client's Inbox
+// (renderManagedInbox): status badges, summary cards, then one row per
+// conversation, newest first. A row opens the conversation drawer; replying,
+// correcting a classification and setting the next action stay on the full
+// lead panel, one click away from the drawer.
 function renderInboxWorkspace() {
-  // Each filter shows the count it would actually render, computed with the
-  // same predicate the list uses, so a tab can never promise rows it cannot show.
-  document.getElementById('inbox-toolbar').innerHTML = INBOX_FILTERS.map(([id,label]) => {
-    const count = rdRecords.filter(record => { const previous = inboxFilter; inboxFilter = id; const match = inboxMatches(record, inboxActionFor(record)); inboxFilter = previous; return match; }).length;
-    return `<button class="inbox-filter${inboxFilter === id ? ' active' : ''}" type="button" onclick="setInboxFilter('${id}')">${esc(label)} <b>${count}</b></button>`;
-  }).join('');
-  const rows = rdRecords.filter(record => inboxMatches(record, inboxActionFor(record)));
+  const conversations = inboxConversations();
+  const matching = id => conversations.filter(c => { const previous = inboxFilter; inboxFilter = id; const match = inboxMatches(c.latest, inboxActionFor(c.latest)); inboxFilter = previous; return match; });
+  const client = activeClient();
+  const badgesHost = document.getElementById('inbox-badges');
+  if (badgesHost) badgesHost.innerHTML = client ? clientStatusBadges(client, client.sending) : '';
+  const metricsHost = document.getElementById('inbox-metrics');
+  if (metricsHost) {
+    const review = conversations.filter(c => ['needs_human', 'unknown', 'contact_change_review'].includes(c.latest.category));
+    metricsHost.innerHTML = [
+      metricCard('Conversations', conversations.length),
+      metricCard('Needs response', matching('attention').length, 'A person owes the next move'),
+      metricCard('Positive', matching('positive').length),
+      metricCard('Needs review', review.length),
+    ].join('');
+  }
   const host = document.getElementById('inbox-content');
-  if (!rows.length) { host.className = 'workspace-empty'; host.innerHTML = '<strong>Nothing in this view</strong>No replies currently match this operational filter.'; return; }
+  if (!conversations.length) {
+    host.className = '';
+    host.innerHTML = emptyState('No conversations yet', 'Replies to your staffing outreach appear here as they arrive.', 'inbox');
+    return;
+  }
   host.className = 'inbox-list';
-  host.innerHTML = rows.map(record => {
+  host.innerHTML = conversations.map(({ latest: record }) => {
     const action = inboxActionFor(record);
-    const body = record.hasText ? record.replyText : 'Reply text unavailable — historical body was not stored.';
-    const category = RD_CATEGORY_LABEL[record.category] || record.category;
+    const body = record.hasText ? record.replyText : (record.replySubject || 'Reply text unavailable — historical body was not stored.');
+    const excerpt = body.length > 260 ? `${body.slice(0, 257)}…` : body;
+    const category = RD_CATEGORY_LABEL[record.category] || record.category || 'unclassified';
     const ooo = !action && record.oooPause ? OOO_PAUSE_LABEL[record.oooPause.status] : null;
-    const actionLabel = action?.label || (ooo ? ooo[0] : record.category === 'automated_reply' ? 'No human response required' : record.pipelinePresence ? 'Review reply' : 'Review before promotion');
-    const owner = action?.owner ? (NA_OWNER_LABEL[action.owner] || action.owner) : (ooo ? ooo[1] : record.category === 'automated_reply' ? 'Waiting' : 'Human');
-    const dueAt = action?.dueAt || (ooo && record.oooPause.resumeAt ? record.oooPause.resumeAt : '');
-    return `<button type="button" class="inbox-row" onclick="openCeDetail('${escAttr(record.leadId)}')">
-      <span class="inbox-person"><b>${esc(record.company || 'Unknown company')}</b><small>${esc([record.contactName,record.email].filter(Boolean).join(' · '))}</small><small>${esc(rdFormatTime(record.occurredAt))}</small></span>
-      <span class="inbox-message"><span class="inbox-state">${esc(category)}</span><p>${esc(body)}</p><small>What they said · ${esc(record.reason || record.subtype || 'No additional reason stored')}</small></span>
-      <span class="inbox-action"><b>${esc(actionLabel)}</b><small>${esc(owner)}${action?.waitingOn ? ` · ${HOT_WAITING_LABEL[action.waitingOn] || action.waitingOn}` : ''}</small><small>${dueAt ? `${ooo ? 'Resume' : 'Due'} ${esc(rdFormatTime(dueAt))}` : 'No invented due date'}</small></span>
+    const status = action?.label || (ooo ? ooo[0] : record.category === 'automated_reply' ? 'No human response required' : record.pipelinePresence ? 'Review reply' : 'Review before promotion');
+    const received = record.occurredAt ? new Date(record.occurredAt).toLocaleString() : '';
+    return `<button type="button" class="inbox-row" data-lead-id="${escAttr(record.leadId)}" onclick="openScaleLabConversation(this.dataset.leadId)" aria-haspopup="dialog">
+      <span class="inbox-person"><b>${esc(record.company || record.email || 'Unknown company')}</b><small>${esc([record.contactName, record.email].filter(Boolean).join(' · '))}</small></span>
+      <span class="inbox-message"><span class="client-badge">${esc(category)}</span><p class="client-note">${esc(excerpt)}</p></span>
+      <span class="inbox-action"><b>${esc(status)}</b><small>${esc(record.campaign ? campaignName(record.campaign) : '')}${received ? ' · ' + esc(received) : ''}</small></span>
     </button>`;
   }).join('');
 }
 
+// ── SCALELAB CONVERSATION DRAWER ────────────────────────────────────────────
+// The managed-client conversation drawer's frame and sections, filled from
+// ScaleLab's own read-only lead activity (/api/coldemail/:id/activity). It
+// reads only; every change happens on the full lead panel.
+const SL_REPLY_SENTIMENT = { positive: 'positive', negative: 'negative', unsubscribe: 'unsubscribe' };
+const SL_SEND_TYPES = new Set(['initial_email_sent', 'follow_up_sent', 'sequence_step_sent']);
+const SL_SEQUENCE_TEXT = { active: 'Sequence active', complete: 'Sequence complete', replied: 'Stopped by reply', queued: 'Queued — nothing sent yet', not_started: 'Not started' };
+
+function openScaleLabConversation(leadId) {
+  const overlay = document.getElementById('client-detail-overlay');
+  if (!overlay || !leadId) return;
+  clientDetailLeadId = String(leadId);
+  clientDetailReturnFocus = document.activeElement;
+  document.getElementById('cd-name').textContent = 'Loading conversation…';
+  document.getElementById('cd-sub').textContent = '';
+  document.getElementById('cd-body').innerHTML = '<div class="activity-empty">Reading this conversation from the server…</div>';
+  overlay.classList.add('open');
+  document.getElementById('cd-close').focus();
+  loadScaleLabConversation(clientDetailLeadId);
+}
+
+async function loadScaleLabConversation(leadId) {
+  const clientId = activeClientId;
+  const token = clientViewToken;
+  const current = () => leadId === clientDetailLeadId && token === clientViewToken && clientId === activeClientId;
+  try {
+    const response = await fetch(`/api/coldemail/${encodeURIComponent(leadId)}/activity?client=${encodeURIComponent(clientId)}`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    if (!current()) return;
+    if (!data.lead || String(data.lead.id) !== String(leadId)) throw new Error('the server answered for a different lead');
+    renderScaleLabConversation(data, rdRecords.find(record => String(record.leadId) === String(leadId)) || null);
+  } catch (error) {
+    if (!current()) return;
+    document.getElementById('cd-name').textContent = 'Conversation unavailable';
+    document.getElementById('cd-body').innerHTML = `<div class="activity-empty">This conversation could not be loaded (${esc(error.message)}). Nothing was changed.</div>`;
+  }
+}
+
+function openFullLeadFromConversation(leadId) {
+  const overlay = document.getElementById('client-detail-overlay');
+  if (overlay) overlay.classList.remove('open');
+  clientDetailLeadId = '';
+  clientDetailReturnFocus = null;
+  openCeDetail(leadId);
+}
+
+function renderScaleLabConversation(data, record) {
+  const lead = data.lead || {};
+  const pipeline = data.pipeline || {};
+  const events = data.activities || [];
+  document.getElementById('cd-name').textContent = lead.company || lead.email || 'Conversation';
+  document.getElementById('cd-sub').textContent = [lead.contactName, lead.city].filter(Boolean).join(' · ');
+
+  const actionsHtml = `<div class="cd-next"><b>Reply, correct the classification or set the next action</b>
+      <span class="cd-meta">Those controls are on the full lead.</span>
+      <button type="button" class="btn-save" style="margin-top:8px;align-self:flex-start" data-lead="${escAttr(lead.id)}" onclick="openFullLeadFromConversation(this.dataset.lead)">Open full lead</button></div>`;
+
+  const contactHtml = [
+    cdField('Name', esc(lead.contactName)),
+    cdField('Email', lead.email ? `<a href="mailto:${escAttr(lead.email)}">${esc(lead.email)}</a>` : ''),
+    cdField('Company', esc(lead.company)),
+    cdField('Location', esc(lead.city)),
+    cdField('Website', cdLink(lead.website)),
+  ].join('');
+
+  // Replies are the timeline's classified inbound events, newest first.
+  let replies = events.filter(event => event.classification).map(event => ({
+    workflowState: event.classification, sentiment: SL_REPLY_SENTIMENT[event.classification] || '',
+    receivedAt: event.occurredAt, subject: event.subject, body: event.content, late: event.late,
+  }));
+  if (!replies.length && record) {
+    replies = [{ workflowState: record.category, sentiment: SL_REPLY_SENTIMENT[record.category] || '', receivedAt: record.occurredAt,
+      subject: record.replySubject, body: record.hasText ? record.replyText : '', late: record.late }];
+  }
+  const replyHtml = replies.map(reply => `<article class="cd-reply">
+      <div class="cd-badges"><span class="cd-badge" data-tone="${escAttr(cdTone(reply))}">${esc(RD_CATEGORY_LABEL[reply.workflowState] || cdWords(reply.workflowState) || 'unclassified')}</span>${reply.late ? '<span class="cd-badge">late reply</span>' : ''}</div>
+      <span class="cd-meta">${esc(cdTime(reply.receivedAt) || 'Date unknown')}${reply.subject ? ' · ' + esc(reply.subject) : ''}</span>
+      <div class="cd-reply-body">${reply.body ? esc(reply.body) : '<span style="color:var(--text-muted)">Reply text was not stored.</span>'}</div>
+    </article>`).join('');
+
+  const sends = events.filter(event => SL_SEND_TYPES.has(event.type)).slice().reverse();
+  const firstSend = sends[0] || null;
+  const lastSend = sends[sends.length - 1] || null;
+  const proofSend = sends.find(event => event.sender && event.sender.senderId && event.sender.senderId === lead.senderInboxId) || null;
+  const sender = lead.senderState ? {
+    state: lead.senderState, label: lead.senderLabel, email: lead.senderEmail, senderId: lead.senderInboxId,
+    stateLabel: lead.senderStateLabel, detail: lead.senderDetail,
+    proof: proofSend ? { step: proofSend.metadata?.step || proofSend.metadata?.sequenceStep || (proofSend.type === 'initial_email_sent' ? 1 : ''),
+      sentAt: proofSend.occurredAt, providerMessageId: proofSend.metadata?.gmailMessageId || '' } : null,
+  } : null;
+
+  const stepsHtml = sends.length ? `<div class="cd-steps">${sends.map((event, index) => {
+      const step = event.metadata?.step || event.metadata?.sequenceStep || index + 1;
+      return `<div class="cd-step" data-state="sent"><span class="cd-step-dot" aria-hidden="true">●</span>
+        <span><span class="cd-step-label">Step ${esc(step)} — ${esc(event.type === 'initial_email_sent' ? 'Initial email' : 'Follow-up')}</span>
+          <small class="cd-meta">Sent · ${esc(cdTime(event.occurredAt))}${event.subject ? ' · ' + esc(event.subject) : ''}</small></span></div>`;
+    }).join('')}</div>${lead.sequenceState ? `<div class="cd-badges"><span class="cd-badge">${esc(SL_SEQUENCE_TEXT[lead.sequenceState] || cdWords(lead.sequenceState))}</span></div>` : ''}` : '';
+
+  const campaignHtml = [
+    cdField('Campaign', lead.campaign ? esc(campaignName(lead.campaign)) : ''),
+    cdField('Campaign version', lead.campaignVersion && lead.campaignVersion !== 'legacy_unknown' ? `<span class="cd-mono">${esc(lead.campaignVersion)}</span>` : ''),
+  ].join('');
+
+  const next = pipeline.nextAction;
+  const nextHtml = next ? `<div class="cd-next"><b>${esc(next.label)}</b>
+      <span class="cd-meta">${esc(NA_OWNER_LABEL[next.owner] || next.owner || '')}${next.dueAt ? ' · ' + esc(cdTime(next.dueAt)) : ''}</span>
+      ${next.detail || next.reason ? `<span class="cd-meta">${esc(next.detail || next.reason)}</span>` : ''}</div>` : '';
+  const pipelineHtml = nextHtml + `<div class="detail-fields">
+      ${cdField('Stage', esc(pipeline.presence ? stageLabel(pipeline.stage) : 'Not in the Sales Pipeline'))}
+      ${cdField('Reply classification', esc(RD_CATEGORY_LABEL[lead.replyCategory] || cdWords(lead.replyCategory)))}
+      ${cdField('Automation', esc(cdWords(pipeline.automation?.state)))}
+      ${cdField('Suppression', lead.suppressed ? 'Suppressed — nothing more is sent' : 'Not suppressed')}
+    </div>`;
+
+  const latestReply = replies[0] || null;
+  const activityHtml = [
+    cdField('First outreach sent', esc(cdTime(firstSend?.occurredAt))),
+    cdField('Most recent outreach', esc(cdTime(lastSend?.occurredAt || lead.lastEmailedAt))),
+    cdField('Reply received', esc(cdTime(latestReply?.receivedAt))),
+  ].join('');
+
+  document.getElementById('cd-body').innerHTML = [
+    actionsHtml,
+    cdSection('Contact', contactHtml ? `<div class="detail-fields">${contactHtml}</div>` : ''),
+    cdSection(replies.length > 1 ? `Replies (${replies.length})` : 'Reply', replyHtml),
+    cdSection('Sending inbox', cdSenderHtml(sender, 'ScaleLab')),
+    cdSection('Email sequence', stepsHtml),
+    cdSection('Campaign context', campaignHtml ? `<div class="detail-fields">${campaignHtml}</div>` : ''),
+    cdSection('Pipeline & next action', pipelineHtml),
+    cdSection('Activity', activityHtml ? `<div class="detail-fields">${activityHtml}</div>` : ''),
+  ].join('');
+}
+
 async function loadSequencesWorkspace() {
-  const [statusResponse] = await Promise.all([fetch('/api/crm/ui-status'), nextActions.size ? Promise.resolve() : loadNextActions()]);
+  const [statusResponse] = await Promise.all([fetch('/api/crm/ui-status'), ensureNextActions()]);
   const status = statusResponse.ok ? await statusResponse.json() : {};
   const enabled = Boolean(status.stageSequences?.enabled);
   const sequenceRows = [...nextActions.values()].filter(entry => entry.nextAction?.sequenceState);
@@ -9326,13 +9737,223 @@ async function confirmArchiveRestore() {
   }
 }
 
+// ── BOOKINGS: ScaleLab's meeting tracker ────────────────────────────────────
+// Every Pipeline lead with a meeting time, upcoming and past. Once a meeting
+// is over, the client can be billed the tech fee (Stripe: email an invoice, or
+// save a card and charge it) and sent their onboarding documents from the main
+// mailbox. Each of those is an operator click with a confirmation; nothing
+// here moves a stage, places a hold or touches outreach sending.
+let scalelabBillingOverview = null;
+
 async function loadBookingsWorkspace() {
-  if (!nextActions.size) await loadNextActions();
-  const rows = [...nextActions.values()].filter(entry => entry.nextAction?.callState || entry.stage === 'call_booked');
   const host = document.getElementById('bookings-content');
-  if (!rows.length) { host.className = 'workspace-empty'; host.innerHTML = '<strong>No current calls</strong>There are no Call Booked opportunities or unresolved meeting outcomes.'; return; }
-  host.className = 'booking-list';
-  host.innerHTML = rows.map(entry => { const call = entry.nextAction.callState || {}; return `<button type="button" class="operational-row" onclick="openDetail('${escAttr(entry.id)}')"><span><b>${esc(entry.company || entry.name)}</b><small>${esc(call.status || 'Outcome needed')}</small></span><span class="operational-row-meta">${esc(entry.nextAction.label)}<small>${esc(call.meetingAt ? rdFormatTime(call.meetingAt) : naDueText(entry.nextAction))}</small></span></button>`; }).join('');
+  if (!leads.length) await loadLeads({ awaitNextActions: false });
+  await ensureNextActions();
+  scalelabBillingOverview = await fetch('/api/scalelab-billing/overview').then(r => (r.ok ? r.json() : null)).catch(() => null);
+  const now = Date.now();
+  // Closed / Lost leads are finished; their old meetings are not tracked here.
+  const meetings = leads
+    .filter(lead => displayStageFor(lead.stage) !== 'closed_lost')
+    .map(lead => ({ lead, at: Date.parse(lead.meetingAt || '') }))
+    .filter(item => Number.isFinite(item.at));
+  const upcoming = meetings.filter(item => item.at > now).sort((a, b) => a.at - b.at);
+  const past = meetings.filter(item => item.at <= now).sort((a, b) => b.at - a.at);
+  const billingLeads = (scalelabBillingOverview && scalelabBillingOverview.leads) || {};
+  const paid = Object.values(billingLeads).flatMap(entry => entry.invoices || []).filter(inv => inv.status === 'paid');
+  const paidByCurrency = paid.reduce((acc, inv) => ({ ...acc, [inv.currency]: (acc[inv.currency] || 0) + inv.amountCents }), {});
+  const paidText = Object.entries(paidByCurrency).map(([cur, cents]) => clientMoney(cents, cur.toUpperCase())).join(' · ') || '—';
+  const metrics = `<div class="client-metrics">
+      ${metricCard('Upcoming meetings', upcoming.length)}
+      ${metricCard('Past meetings', past.length)}
+      ${metricCard('Meetings this month', meetings.filter(item => new Date(item.at).toISOString().slice(0, 7) === new Date().toISOString().slice(0, 7)).length)}
+      ${metricCard('Tech fees paid', paid.length, paidText)}
+      ${metricCard('Cards on file', Object.values(billingLeads).filter(entry => entry.card).length)}
+    </div>`;
+  const billingNote = !scalelabBillingOverview
+    ? '<p class="client-note">Billing status unavailable right now; meetings are still listed.</p>'
+    : (scalelabBillingOverview.ready ? '' : `<p class="client-note">Stripe billing is off (${esc(scalelabBillingOverview.reason || '')}); billing buttons appear once it is on.</p>`);
+  if (!meetings.length) {
+    host.className = '';
+    host.innerHTML = metrics + billingNote + '<div class="workspace-empty"><strong>No meetings yet</strong>Meetings appear here as soon as a Pipeline lead has a meeting time (booked through your calendar or set on the lead).</div>';
+    return;
+  }
+  const section = (title, items, isPast) => items.length ? `<h4 class="bookings-heading">${esc(title)} (${items.length})</h4>
+    <div class="booking-list">${items.map(item => bookingRowHtml(item.lead, item.at, isPast, billingLeads[item.lead.id])).join('')}</div>` : '';
+  host.className = '';
+  host.innerHTML = metrics + billingNote + section('Upcoming', upcoming, false) + section('Past', past, true);
+}
+
+function bookingRowHtml(lead, at, isPast, billing) {
+  const id = escAttr(lead.id);
+  const call = nextActions.get(lead.id)?.nextAction?.callState || null;
+  const callStatus = call && call.status ? (CALL_STATUS_LABEL[call.status] || call.status.replace(/_/g, ' ')) : '';
+  const name = [lead.first, lead.last].filter(Boolean).join(' ');
+  const invoices = (billing && billing.invoices) || [];
+  const lastInvoice = invoices[0];
+  const billingText = [
+    billing && billing.card ? `Card on file: ${billing.card.brand.toUpperCase()} ••${billing.card.last4}` : '',
+    lastInvoice ? `${lastInvoice.description || 'Invoice'} ${clientMoney(lastInvoice.amountCents, lastInvoice.currency.toUpperCase())} · ${lastInvoice.status}` : '',
+  ].filter(Boolean).join(' · ');
+  const billingReady = scalelabBillingOverview && scalelabBillingOverview.ready;
+  // A signed client has already paid the tech fee, so there is nothing to bill.
+  const signedClient = displayStageFor(lead.stage) === 'closed_won';
+  const action = (label, fn, cls = 'btn-save-notes') => `<button type="button" class="${cls}" data-lead="${id}" onclick="${fn}(this.dataset.lead)">${esc(label)}</button>`;
+  return `<div class="operational-row meeting-row">
+      <span><b>${esc(lead.company || name || lead.email || lead.id)}</b><small>${esc([name, lead.email].filter(Boolean).join(' · ') || 'No contact recorded')}</small><small>${esc(stageLabel(displayStageFor(lead.stage)))}${callStatus ? ` · ${esc(callStatus)}` : ''}</small></span>
+      <span class="operational-row-meta"><b>${esc(callWhen(new Date(at).toISOString()))}</b><small>${esc(billingText || (signedClient ? 'Client · tech fee paid' : (isPast ? 'Not billed yet' : '')))}</small></span>
+      <span class="meeting-actions">
+        ${action('Open lead', 'openDetail')}
+        ${isPast && billingReady && !signedClient ? action('Bill tech fee', 'openTechFeeDialog', 'btn-save') : ''}
+        ${isPast ? action('Send onboarding docs', 'openOnboardingDialog') : ''}
+        ${lastInvoice && lastInvoice.hostedUrl ? `<a class="btn-save-notes" href="${escAttr(lastInvoice.hostedUrl)}" target="_blank" rel="noopener noreferrer">View invoice</a>` : ''}
+      </span>
+    </div>`;
+}
+
+function bookingLead(leadId) { return leads.find(item => String(item.id) === String(leadId)) || null; }
+
+function openOperatorDialog(id, html) {
+  document.getElementById(id)?.remove();
+  const dialog = document.createElement('dialog');
+  dialog.id = id;
+  dialog.className = 'meeting-dialog';
+  dialog.innerHTML = html;
+  document.body.appendChild(dialog);
+  dialog.addEventListener('close', () => dialog.remove());
+  dialog.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', () => dialog.close()));
+  dialog.showModal();
+  return dialog;
+}
+
+function showCopyLinkDialog(title, note, url) {
+  const dialog = openOperatorDialog('copy-link-dialog', `<div class="md-form">
+      <h3>${esc(title)}</h3><p class="client-note">${esc(note)}</p>
+      <label for="copy-link-url">Link</label><input id="copy-link-url" type="text" readonly value="${escAttr(url)}">
+      <p class="client-note" id="copy-link-done" role="status" hidden>Copied.</p>
+      <div class="md-actions"><button type="button" class="btn-cancel" data-close>Close</button><button type="button" class="btn-save" id="copy-link-btn">Copy link</button></div>
+    </div>`);
+  dialog.querySelector('#copy-link-btn').addEventListener('click', async () => {
+    const input = dialog.querySelector('#copy-link-url');
+    try { await navigator.clipboard.writeText(input.value); } catch (_) { input.select(); document.execCommand('copy'); }
+    dialog.querySelector('#copy-link-done').hidden = false;
+  });
+}
+
+/** Bill a client the tech fee: email an invoice, save a card, or charge the saved card. */
+async function openTechFeeDialog(leadId) {
+  const lead = bookingLead(leadId);
+  if (!lead) return showToast('Lead not found; reload the page', 'error');
+  const billing = (scalelabBillingOverview && scalelabBillingOverview.leads || {})[leadId] || null;
+  let prices = [];
+  try {
+    const response = await fetch('/api/scalelab-billing/prices');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    prices = data.prices || [];
+  } catch (error) { return showToast(`Could not load Stripe prices: ${error.message}`, 'error'); }
+  if (!prices.length) return showToast('No active one-time prices in Stripe. Add the tech fee product there first.', 'error');
+  const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const card = billing && billing.card;
+  const money = price => clientMoney(price.amountCents, price.currency.toUpperCase());
+  const dialog = openOperatorDialog('tech-fee-dialog', `<form class="md-form" novalidate>
+      <h3>Bill ${esc(lead.company || 'this client')}</h3>
+      <p class="client-note">${card ? `Card on file: ${esc(card.brand.toUpperCase())} ending ${esc(card.last4)}.` : 'No card on file yet.'} Nothing is charged or sent until you confirm.</p>
+      <label for="tf-price">What to bill</label>
+      <select id="tf-price" name="price">${prices.map(p => `<option value="${escAttr(p.priceId)}">${esc(p.productName)} — ${esc(money(p))}</option>`).join('')}</select>
+      <label for="tf-email">Client billing email</label>
+      <input id="tf-email" name="email" type="email" value="${escAttr(billing?.email || lead.email || '')}" ${billing ? 'readonly' : ''}>
+      <fieldset><legend>How to collect</legend>
+        <label class="md-check"><input type="radio" name="method" value="invoice" checked> Email an invoice to pay</label>
+        <label class="md-check"><input type="radio" name="method" value="charge" ${card ? '' : 'disabled'}> Charge the saved card now${card ? '' : ' (no card yet)'}</label>
+      </fieldset>
+      <label for="tf-days">Days to pay (emailed invoice)</label>
+      <input id="tf-days" name="days" type="number" min="1" max="60" value="7">
+      <p class="md-error" role="alert" hidden></p>
+      <div class="md-actions">
+        <button type="button" class="btn-save-notes" id="tf-card-link">Create card setup link</button>
+        <button type="button" class="btn-cancel" data-close>Cancel</button>
+        <button type="submit" class="btn-save">Continue</button>
+      </div>
+    </form>`);
+  const form = dialog.querySelector('form');
+  const error = dialog.querySelector('.md-error');
+  const post = async (path, body) => {
+    const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    return data;
+  };
+  dialog.querySelector('#tf-card-link').addEventListener('click', async () => {
+    try {
+      const data = await post(`/api/scalelab-billing/${encodeURIComponent(leadId)}/card-link`, { email: form.email.value });
+      dialog.close();
+      showCopyLinkDialog(`Card setup link for ${lead.company || 'this client'}`,
+        `Send this to the client. They save a card on a secure Stripe page and agree to future charges; nothing is charged now. The link works until ${data.expiresAt ? new Date(data.expiresAt).toLocaleString() : '24 hours from now'}.`, data.url);
+    } catch (e) { error.textContent = e.message; error.hidden = false; }
+  });
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const price = prices.find(p => p.priceId === form.price.value);
+    const method = form.method.value;
+    const prompt = method === 'charge'
+      ? `Charge ${lead.company || 'this client'}'s ${card.brand.toUpperCase()} ending ${card.last4} ${money(price)} for "${price.productName}" now?\n\nThe card is charged immediately and Stripe emails the paid invoice.`
+      : `Email ${form.email.value} an invoice for ${money(price)} ("${price.productName}"), due in ${form.days.value} days?`;
+    if (!window.confirm(prompt)) return;
+    try {
+      const path = `/api/scalelab-billing/${encodeURIComponent(leadId)}/${method === 'charge' ? 'charge' : 'invoice'}`;
+      await post(path, { priceId: price.priceId, email: form.email.value, daysUntilDue: Number(form.days.value), nonce });
+      dialog.close();
+      showToast(method === 'charge' ? 'Card charged; paid invoice emailed' : 'Invoice emailed', 'success');
+      loadBookingsWorkspace();
+    } catch (e) { error.textContent = e.message; error.hidden = false; }
+  });
+}
+
+/**
+ * A Gmail compose URL for the main mailbox, prefilled. Pure. Nothing is sent
+ * or saved by the app: Gmail opens in the browser and the operator attaches the
+ * client's documents and presses Send there.
+ */
+function gmailComposeUrl({ mailbox = '', to = '', cc = '', subject = '', body = '' }) {
+  const params = new URLSearchParams({ view: 'cm', fs: '1', to, su: subject, body });
+  if (cc) params.set('cc', cc);
+  if (mailbox) params.set('authuser', mailbox);
+  return `https://mail.google.com/mail/?${params.toString()}`;
+}
+
+/** Onboarding documents: open a prefilled Gmail compose window in the main mailbox. */
+function openOnboardingDialog(leadId) {
+  const lead = bookingLead(leadId);
+  if (!lead) return showToast('Lead not found; reload the page', 'error');
+  const first = String(lead.first || '').trim();
+  const mailbox = (scalelabBillingOverview && scalelabBillingOverview.mainMailbox) || '';
+  const dialog = openOperatorDialog('onboarding-dialog', `<form class="md-form" novalidate>
+      <h3>Send onboarding documents</h3>
+      <p class="client-note">Opens Gmail${mailbox ? ` as ${esc(mailbox)}` : ''} with this email filled in. Attach this client's documents there and press Send. Nothing is sent from here.</p>
+      <label for="ob-to">To</label><input id="ob-to" name="to" type="email" value="${escAttr(lead.email || '')}">
+      <label for="ob-cc">Cc (optional)</label><input id="ob-cc" name="cc" type="text" placeholder="name@company.com, other@company.com">
+      <label for="ob-subject">Subject</label><input id="ob-subject" name="subject" type="text" value="Welcome to ScaleLab AI — your onboarding documents">
+      <label for="ob-body">Message</label>
+      <textarea id="ob-body" name="body" rows="7">Hi ${esc(first || 'there')},
+
+Great speaking with you. Attached are your onboarding documents. Please review them and send them back when you're ready, and let me know if you have any questions.
+
+Thanks,
+Deins</textarea>
+      <p class="md-error" role="alert" hidden></p>
+      <div class="md-actions"><button type="button" class="btn-cancel" data-close>Cancel</button><button type="submit" class="btn-save">Open in Gmail</button></div>
+    </form>`);
+  const form = dialog.querySelector('form');
+  const error = dialog.querySelector('.md-error');
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.to.value.trim())) { error.textContent = 'Add the client\'s email address.'; error.hidden = false; return; }
+    const url = gmailComposeUrl({ mailbox, to: form.to.value.trim(), cc: form.cc.value.trim(), subject: form.subject.value, body: form.body.value });
+    const tab = window.open(url, '_blank', 'noopener');
+    if (!tab) { error.textContent = 'Your browser blocked the new tab; allow pop-ups for this site and try again.'; error.hidden = false; return; }
+    dialog.close();
+    showToast('Gmail opened: attach the documents and press Send', 'success');
+  });
 }
 
 async function loadSettingsWorkspace() {
@@ -9353,13 +9974,43 @@ async function loadSettingsWorkspace() {
       ['Stage sequences', data.stageSequences.enabled, data.stageSequences.enabled ? 'Enabled with canonical sender gates' : 'Disabled; no recovery sequence can send'],
       ['Google Calendar sync', data.calendarSync.enabled, data.calendarSync.enabled ? 'Enabled' : 'Disabled; booking lifecycle remains available manually'],
       ['Smartlead integration', data.smartlead.enabled, data.smartlead.liveMutations ? 'Enabled with live mutations' : 'Read-only or disabled'],
-      ['Roofing reply flow', data.roofingReplyFlow.enabled, data.roofingReplyFlow.enabled ? 'Enabled' : 'Disabled'],
     ];
+    settingsSystemCards = cards;
     host.innerHTML = cards.map(([label,on,copy]) => `<div class="status-card"><div class="status-card-head"><b>${esc(label)}</b><span class="state-pill" data-on="${on}">${on ? 'Enabled' : 'Off'}</span></div><p>${esc(copy)}</p></div>`).join('');
   }
   renderSettingsInboxRouting(inboxData || null);
   renderLandingInternalMark();
   document.getElementById('agent-panel').style.display = 'block';
+  if (!activeClientIsManaged()) simplifyScaleLabSettings();
+}
+
+// ScaleLab's Settings in the client layout: sending and connected inboxes up
+// front; every other system card, the agent panel and "mark this browser
+// internal" stay one click away under System details. Display only.
+let settingsSystemCards = [];
+function simplifyScaleLabSettings() {
+  const host = document.getElementById('settings-status');
+  const inboxHost = document.getElementById('settings-inbox-routing');
+  if (!host || !inboxHost) return;
+  const inboxCount = inboxHost.querySelectorAll('.inbox-sender-card').length;
+  const activeCount = inboxHost.querySelectorAll('.inbox-sender-card:not(.warming)').length;
+  const card = ([label, on, copy]) => `<div class="status-card"><div class="status-card-head"><b>${esc(label)}</b><span class="state-pill" data-on="${on}">${on ? 'On' : 'Off'}</span></div><p>${esc(copy)}</p></div>`;
+  const [sending, ...rest] = settingsSystemCards;
+  if (sending) host.innerHTML = card(sending) + card(['Connected inboxes', inboxCount > 0, `${inboxCount} connected · ${activeCount} active`]);
+  let details = document.getElementById('settings-system-details');
+  if (!details) {
+    details = document.createElement('details');
+    details.id = 'settings-system-details';
+    details.className = 'workspace-surface settings-system-details';
+    details.innerHTML = '<summary>System details</summary><div class="status-grid" id="settings-system-cards"></div><div id="settings-system-extra"></div>';
+    inboxHost.parentNode.insertBefore(details, inboxHost.nextSibling);
+  }
+  document.getElementById('settings-system-cards').innerHTML = rest.map(card).join('');
+  const extra = document.getElementById('settings-system-extra');
+  for (const id of ['settings-landing-internal', 'agent-panel']) {
+    const node = document.getElementById(id);
+    if (node && node.parentNode !== extra) extra.appendChild(node);
+  }
 }
 
 function decorateManagedSettings() {
@@ -9474,7 +10125,7 @@ function renderSettingsInboxRouting(payload) {
   const current = inboxes.find(inbox => inbox.sendEligible);
   host.innerHTML = `<div class="status-card-head"><div><div class="workspace-eyebrow">Sender routing</div><h3 style="margin:4px 0">Configured Gmail senders</h3></div><span class="state-pill" data-on="${Boolean(current)}">${capacity ? `${capacity.activeSenders} active · ${capacity.globalDailyLimit}/day` : (current ? 'Configured' : 'Unavailable')}</span></div>
     <p style="color:var(--text-muted);font-size:12px;margin:6px 0 14px">Cold sending membership is explicit. Marking warmup ready does not activate a sender. Activation does not send mail or change the schedule.</p>
-    <div class="form-group" style="margin-bottom:12px"><label for="settings-inbox-select">Configured sending accounts</label><select id="settings-inbox-select" disabled>${inboxes.length ? inboxes.map(inbox => `<option value="${escAttr(inbox.id)}">${esc(inbox.email)} — ${inbox.sendEligible && inbox.deliveryImplemented ? 'Delivery enabled' : inbox.status}</option>`).join('') : '<option>No configured inboxes</option>'}</select><div style="font-size:11px;color:var(--text-muted);margin-top:6px">Dental sender eligibility is configured server-side. Follow-ups remain pinned to the inbox and Gmail thread that sent Email 1. Global live cap follows active inboxes only.</div></div>
+    <div class="form-group" style="margin-bottom:12px"><label for="settings-inbox-select">Configured sending accounts</label><select id="settings-inbox-select" disabled>${inboxes.length ? inboxes.map(inbox => `<option value="${escAttr(inbox.id)}">${esc(inbox.email)} — ${inbox.sendEligible && inbox.deliveryImplemented ? 'Delivery enabled' : inbox.status}</option>`).join('') : '<option>No configured inboxes</option>'}</select><div style="font-size:11px;color:var(--text-muted);margin-top:6px">Sender eligibility is configured server-side. Follow-ups remain pinned to the inbox and Gmail thread that sent Email 1. Global live cap follows active inboxes only.</div></div>
     <div class="inbox-route-shell"><div class="inbox-route-head"><span class="inbox-route-kicker">Available accounts</span><span class="inbox-route-readonly">Operator controls</span></div></div>
     ${inboxes.length ? inboxes.map(inbox => {
       const controls = inbox.controls || {};
@@ -9516,10 +10167,13 @@ async function init() {
   const initial = location.hash ? clientId : (knownClient(storedClientId) ? storedClientId : defaultClientId());
   if (initial === defaultClientId()) {
     showLoadingOverlay('Loading your leads…');
-    try { await loadLeads(); }
+    let pendingNextActions = null;
+    try { ({ pendingNextActions } = await loadLeads({ awaitNextActions: false })); }
     catch(e) { showToast('Could not load leads: ' + e.message, 'error'); }
     hideLoadingOverlay();
     renderBoard();
+    // Cards, the action queue and its counters fill in when next-actions land.
+    if (pendingNextActions) pendingNextActions.then(() => { if (nextActions.size) renderBoard(); });
   }
   await switchClient(initial, { workspace, replace: true });
 }

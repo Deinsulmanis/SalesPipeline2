@@ -319,7 +319,7 @@ test('14. Jole BTX copy and modules are untouched by V4', () => {
   for (const file of fs.readdirSync(clients, { recursive: true })) {
     const full = path.join(clients, file);
     if (!fs.statSync(full).isFile()) continue;
-    assert.doesNotMatch(fs.readFileSync(full, 'utf8'), /staffing-v4|STAFFING_CAMPAIGN_V4|industrial_staffing_employer_acquisition_v4/, file);
+    assert.doesNotMatch(fs.readFileSync(full, 'utf8'), /staffing-v4|STAFFING_CAMPAIGN_V4|industrial_staffing_campaign_3|Industrial Campaign 3/, file);
   }
   assert.doesNotMatch(JSON.stringify(CAMPAIGN_VERSIONS[STAFFING_CAMPAIGN_V4.id]), /jole/i);
 });
@@ -334,7 +334,9 @@ test('15. V1 and V2 copy, identity and routing are unchanged', () => {
   assert.equal(render(v1, 1).subject, 'employer accounts');
   assert.equal(isStaffingV4Marked(v1), false);
   assert.equal(staffingV4SendBlock(v1), null);
-  assert.equal(campaignVersionsForRoute({ niche: 'industrial_staffing' }).length, 1, 'V4 is not a selectable route while draft');
+  assert.ok(campaignVersionsForRoute({ niche: 'industrial_staffing' }).some(v => v.id === STAFFING_CAMPAIGN_V4.id), 'Campaign 3 is a selectable route');
+  assert.equal(STAFFING_CAMPAIGN_V4.name, 'Industrial Campaign 3');
+  assert.equal(STAFFING_CAMPAIGN_V4.id, 'industrial_staffing_campaign_3');
 });
 
 // ── 16/17. Plain text + HTML, footer intact ─────────────────────────────────
@@ -361,18 +363,25 @@ test('17. the existing ScaleLab compliance footer, address, website and unsubscr
 
 // ── 18. No sends without authorization ──────────────────────────────────────
 
-test('18. V4 is draft: nothing can queue, route, attribute or pass the final gate', async () => {
+test('18. Campaign 3 is live, but only a SEND_READY lead under an activated staffing launch can send', async () => {
   const lead = v4Lead();
-  assert.equal(CAMPAIGN_VERSIONS[STAFFING_CAMPAIGN_V4.id].status, 'draft');
-  assert.equal(templateById(STAFFING_CAMPAIGN_V4.emailTemplateId).ready, false);
-  assert.throws(() => activeVersionForLead(lead), /not active/);
-  assert.throws(() => coldSendAttribution(lead, 1), /not active/);
+  assert.equal(CAMPAIGN_VERSIONS[STAFFING_CAMPAIGN_V4.id].status, 'approved', 'live, awaiting the shared staffing activation in tests');
+  assert.equal(templateById(STAFFING_CAMPAIGN_V4.emailTemplateId).ready, true);
+  assert.throws(() => activeVersionForLead(lead), /not active/, 'no staffing activation in this process');
   assert.match(staffingV4SendBlock(lead), /REVIEW READY, not SEND READY/);
-  assert.match(staffingSendBlockReason(lead, ACTIVATED), /REVIEW READY/, 'held at the final gate even with staffing activated');
+  assert.match(staffingSendBlockReason(lead, ACTIVATED), /REVIEW READY/, 'a REVIEW_READY lead is held at the final gate even with staffing activated');
   assert.equal(routedLeadReady(lead, ACTIVATED).ok, false);
-  // Even a SEND_READY profile is held until V4 is live.
   const sendReady = v4Lead(evidence(), { review: 'SEND_READY' });
+  assert.equal(staffingV4SendBlock(sendReady), null);
+  assert.match(staffingSendBlockReason(sendReady, {}), /paused/, 'without STAFFING_LAUNCH_ACTIVATED_AT nothing sends');
+  assert.equal(staffingSendBlockReason(sendReady, ACTIVATED), '');
+  // The kill switch: STAFFING_V4_LIVE = false holds every Campaign 3 lead again.
+  setStaffingV4LiveForTests(false);
   assert.match(staffingV4SendBlock(sendReady), /not live yet/);
+  setStaffingV4LiveForTests(null);
+  // A held contact (NEEDS_EVIDENCE) can never be SEND_READY-sendable.
+  const needs = v4Lead(evidence({ contactStatus: 'NEEDS_EVIDENCE', employerAds: [employerAd()] }), { review: 'SEND_READY' });
+  assert.match(staffingV4SendBlock(needs), /on hold/);
   // The queue refuses before any write.
   let wrote = false;
   const result = await queueSelectedLeads({ ids: [lead.id], senderInboxId: 'primary', emailTemplateId: STAFFING_CAMPAIGN_V4.emailTemplateId, campaignVersionId: STAFFING_CAMPAIGN_V4.id }, {
@@ -428,4 +437,51 @@ test('20. an out-of-office resume adds the shared line to a follow-up only', () 
   assert.ok(resumed.body.startsWith("Hi Dana,\n\nCircling back now that you're back in the office.\n\nWe focus specifically"));
   assert.equal(validateStaffingEmail(resumed, 2), null);
   assert.throws(() => render(lead, 1, { oooResumeContext: true }), /only a staffing follow-up/);
+});
+
+// ── Campaign 3 import ───────────────────────────────────────────────────────
+
+const { evaluateCampaign3Import, IMPORT_SCHEMA } = require('../integrations/staffing-campaign-3-import');
+const record = (extra = {}, ev = {}) => ({
+  row: { company_name: 'Tradeco Staffing, Inc.', company_domain: 'tradecostaffing.com', email: 'dana@tradecostaffing.com',
+    v4_tag: 'V4|PASS|LOW_SIGNAL|NO_ADS_OBSERVED|COPY_TIER_PENDING', demand_score: '0', signal_priority: 'LOW_SIGNAL',
+    ad_class: 'NO_ADS_OBSERVED', contact_status: 'READY_FOR_REVIEW', ...extra },
+  evidence: evidence(ev),
+});
+const payload = (records, extra = {}) => ({ schema: IMPORT_SCHEMA, sourcing_run_id: 'v4-test', records, ...extra });
+let n = 0;
+const ids = { newId: () => `new${++n}`, now: () => '2026-11-20T07:00:00.000Z' };
+
+test('21. the import selects the variant server side and seals SEND_READY only with owner approval', () => {
+  const approved = evaluateCampaign3Import(payload([record({}, { candidateAds: [candidateAd()] })], { owner_approved_send_ready: true }), {}, ids);
+  assert.equal(approved.accepted.length, 1);
+  const lead = approved.accepted[0].lead;
+  assert.equal(lead.campaign, 'Industrial Campaign 3');
+  assert.equal(lead.intendedCampaignVersion, 'industrial_staffing_campaign_3');
+  assert.equal(lead.emailTemplateId, 'industrial-staffing-campaign-3');
+  assert.equal(lead.stage, 'Import', 'the import never queues');
+  assert.equal(lead.senderInboxId, '', 'no sender at import');
+  const profile = profileLib.readStaffingV4Profile(lead).profile;
+  assert.equal(profile.copy_variant, 'COPY_B');
+  assert.equal(profile.review_status, 'SEND_READY');
+  assert.equal(render({ ...lead, routingRequired: 'true' }, 1).copyVariant, 'COPY_B');
+  const notApproved = evaluateCampaign3Import(payload([record()]), {}, ids);
+  assert.equal(profileLib.readStaffingV4Profile(notApproved.accepted[0].lead).profile.review_status, 'REVIEW_READY');
+});
+
+test('22. the import refuses suppressed, duplicate, previously contacted and held leads', () => {
+  const corpus = {
+    leads: [{ id: 'old', email: 'owner@contactedstaffing.com', website: 'https://contactedstaffing.com', campaign: 'Industrial Staffing Agency', clientId: '' }],
+    suppressedEmails: new Set(['stop@optoutstaffing.com']),
+  };
+  const result = evaluateCampaign3Import(payload([
+    record({ email: 'stop@optoutstaffing.com', company_domain: 'optoutstaffing.com' }),
+    record({ email: 'owner@contactedstaffing.com', company_domain: 'contactedstaffing.com' }),
+    record({ email: 'new@contactedstaffing.com', company_domain: 'contactedgroup.com' }),
+    record({ email: 'rick@heldstaffing.com', company_domain: 'heldstaffing.com', contact_status: 'NEEDS_EVIDENCE' }, { contactStatus: 'NEEDS_EVIDENCE' }),
+    record({ email: 'x@nospecstaffing.com', company_domain: 'nospecstaffing.com' }, { specialization: null }),
+    record({ email: 'someone@gmail.com', company_domain: 'gmail.com' }),
+  ], { owner_approved_send_ready: true }), corpus, ids);
+  assert.equal(result.accepted.length, 0);
+  assert.deepEqual(result.refusals.map(r => r.code), ['suppressed', 'duplicate_email', 'duplicate_company', 'held', 'held', 'personal_mailbox']);
 });

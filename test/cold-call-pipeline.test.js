@@ -16,8 +16,13 @@ const agent = fs.readFileSync(path.join(root, 'outreach-agent.js'), 'utf8');
 const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 const browser = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
 
-test('cold-call pipeline has exactly five stages and legacy rows remain visible without migration', () => {
-  assert.deepEqual(COLD_CALL_STAGES.map(stage => stage.id), ['follow_up', 'hot', 'call_booked', 'closed_won', 'closed_lost']);
+test('cold-call pipeline has its seven stages and legacy rows remain visible without migration', () => {
+  assert.deepEqual(COLD_CALL_STAGES.map(stage => stage.id),
+    ['follow_up', 'hot', 'call_booked', 'call_held', 'proposal_sent', 'closed_won', 'closed_lost']);
+  assert.equal(COLD_CALL_STAGES.find(stage => stage.id === 'closed_won').label, 'Client Signed + Tech Fee Paid');
+  // The new stages are themselves, never silently read as Follow Up.
+  assert.equal(displayStageFor('call_held'), 'call_held');
+  assert.equal(displayStageFor('proposal_sent'), 'proposal_sent');
   assert.equal(displayStageFor('new'), 'follow_up');
   assert.equal(displayStageFor('proposal'), 'call_booked');
   assert.equal(displayStageFor('lost'), 'closed_lost');

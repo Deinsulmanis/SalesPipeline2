@@ -71,6 +71,7 @@ const record = (extra = {}) => ({
   reveal_attempted: 'Y', reveal_attempted_at: '2026-10-20T15:04:05Z', reveal_result: 'MATCHED_EMAIL',
   duplicate_status: 'CLEAR', suppression_status: 'CLEAR',
   campaign_id: V2_ID, template_id: V2_TEMPLATE,
+  icp_tier: 'TIER_A', lead_tag: 'ICP_TIER_A', copy_variant: 'STAFFING_V2_TIER_A_SPECIFIC',
   ...extra,
 });
 const payload = (records = [record()], run = {}, extra = {}) => ({

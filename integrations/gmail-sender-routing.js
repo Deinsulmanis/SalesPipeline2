@@ -11,6 +11,9 @@ const { checkClientConsistency } = require('./clients/ownership');
 const { senderServesCampaign } = require('./clients/sender-policy');
 const { activityBelongsToLead } = require('./lead-activity');
 const { applyColdInboxCap } = require('./cold-delivery-policy');
+const { applyExclusiveAssignment } = require('./clients/sender-delegation');
+const { clientSendBlock } = require('./clients/send-policy');
+const { senderPolicyBlockers, senderPreparationBlockers, cappedDailyLimit } = require('./clients/sender-policy');
 
 function parseMetadata(value) {
   try { return value && typeof value === 'object' ? value : JSON.parse(String(value || '{}')); }
@@ -36,17 +39,26 @@ function configuredSenders(env = process.env) {
     observerEnabled: entry.observerEnabled !== false,
     credentialConfigured: Boolean(env[entry.tokenEnv]),
   }));
-  const senders = [primary, ...secondary].map(sender => ({
-    ...sender,
-    sendEligible: sender.status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured && !sender.policyBlockers?.length,
-    // Managed inboxes only: operationally ready (may be assigned and queued
-    // leads) without implying send authority. ScaleLab rows carry no new field.
-    ...(sender.preparationBlockers ? {
-      preparationReady: sender.status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured && !sender.preparationBlockers.length,
-    } : {}),
-  }));
+  const senders = applyExclusiveAssignment([primary, ...secondary], env).map(sender => {
+    if (sender.delegatedFromClientId) {
+      const policyBlockers = senderPolicyBlockers(sender, env);
+      sender = { ...sender, dailyLimit: cappedDailyLimit(sender, sender.dailyLimit), policyBlockers,
+        preparationBlockers: senderPreparationBlockers(sender),
+        clientAuthorized: !policyBlockers.some(reason => reason.startsWith('client sending is not authorized')) };
+    }
+    return {
+      ...sender,
+      sendEligible: sender.status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured && !sender.policyBlockers?.length,
+      ...(sender.preparationBlockers ? {
+        preparationReady: sender.status === 'active' && sender.dailyLimit > 0 && sender.credentialConfigured && !sender.preparationBlockers.length,
+      } : {}),
+    };
+  });
   // Temporary per-inbox ceiling (cold-delivery-policy.js): lowers, never raises.
-  return applyColdInboxCap(applySenderRuntime(senders, parseRuntimeOverlay(env.GMAIL_SENDER_RUNTIME_JSON || '[]')), env);
+  const runtime = applyColdInboxCap(applySenderRuntime(senders, parseRuntimeOverlay(env.GMAIL_SENDER_RUNTIME_JSON || '[]')), env);
+  // A runtime status edit cannot bypass a client pause or restore its capacity.
+  return runtime.map(sender => clientSendBlock(sender.clientId || 'scalelab', env)
+    ? { ...sender, sendEligible: false } : sender);
 }
 
 function observableSenders(senders = []) {
@@ -176,7 +188,7 @@ function chooseSender({
 }
 
 const SUCCESSFUL_SEND_EVENTS = Object.freeze([
-  'initial_email_sent', 'follow_up_sent', 'sequence_step_sent', 'booking_link_sent',
+  'initial_email_sent', 'follow_up_sent', 'sequence_step_sent', 'booking_link_sent', 'placement_test_sent',
 ]);
 
 function senderCountsToday(activities = [], dayKey) {

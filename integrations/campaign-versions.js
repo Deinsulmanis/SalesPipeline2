@@ -7,10 +7,16 @@
  * without an explicit stored version remain legacy_unknown regardless of date.
  */
 const LEGACY_UNKNOWN = 'legacy_unknown';
-const { staffingLaunchState } = require('./staffing-launch-gate');
-const { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_V2, staffingV2Live, isStaffingV2Marked,
-  STAFFING_CAMPAIGN_V4, staffingV4Live, isStaffingV4Marked } = require('./staffing-campaign');
+const { staffingLaunchState, staffingCampaign2Open, STAFFING_CAMPAIGN_2_SEND_NOT_BEFORE } = require('./staffing-launch-gate');
+const {
+  STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_2, STAFFING_CAMPAIGN_V2, staffingV2Live, isStaffingV2Marked,
+  STAFFING_CAMPAIGN_V4, staffingV4Live, isStaffingV4Marked,
+} = require('./staffing-campaign');
 const { readStaffingV4Profile } = require('./staffing-v4-profile');
+function staffingCampaign2Status() {
+  const launch = staffingLaunchState().status;
+  return launch === 'active' && !staffingCampaign2Open() ? 'approved' : launch;
+}
 const CAMPAIGN_VERSIONS = Object.freeze({
   [STAFFING_CAMPAIGN.id]: Object.freeze({
     id: STAFFING_CAMPAIGN.id, label: STAFFING_CAMPAIGN.name, niche: STAFFING_CAMPAIGN.niche,
@@ -20,6 +26,18 @@ const CAMPAIGN_VERSIONS = Object.freeze({
     get status() { return staffingLaunchState().status; },
     get activatedAt() { return staffingLaunchState().activatedAt; },
     meaning: 'Approved employer-meeting copy and personalization. Queueing is permitted; delivery requires separate explicit staffing activation.',
+  }),
+  // Campaign 2 sends V2's locked copy (Tier A / Tier B Touch 1, V2 Touches 2
+  // and 3), so its copy versions are V2's; the campaign version tells it apart.
+  [STAFFING_CAMPAIGN_2.id]: Object.freeze({
+    id: STAFFING_CAMPAIGN_2.id, label: STAFFING_CAMPAIGN_2.name, niche: STAFFING_CAMPAIGN_2.niche,
+    emailTemplateId: STAFFING_CAMPAIGN_2.emailTemplateId, family: 'industrial_staffing',
+    copyVersion: 'staffing_locked_v2', followUpCopyVersion: 'industrial_staffing_follow_up_v2',
+    personalizationStrategy: STAFFING_CAMPAIGN_2.personalizationStrategy,
+    subjectStrategy: 'employer_accounts_locked_v1', offerVersion: 'employer_meetings_performance_v1',
+    get status() { return staffingCampaign2Status(); },
+    get activatedAt() { return staffingCampaign2Status() === 'active' ? STAFFING_CAMPAIGN_2_SEND_NOT_BEFORE : null; },
+    meaning: 'Staffing Outreach Campaign 2: the Industrial Staffing V2 locked copy (Tier A roles-and-market or Tier B positioning Touch 1, V2 Touches 2 and 3, V2 footer), V1 subjects, cadence and offer, attributed separately. No touch may send before 2026-10-23 07:00 America/Vancouver.',
   }),
   // V2 has its own copy for every touch: Email 1 records staffing_locked_v2,
   // Emails 2 and 3 industrial_staffing_follow_up_v2. Same subjects, cadence and
@@ -35,11 +53,10 @@ const CAMPAIGN_VERSIONS = Object.freeze({
     activatedAt: null,
     meaning: 'Industrial Staffing V2: V1 targeting, offer, subjects and cadence with V2 copy: a company-named roles-and-market opening, a performance-basis Touch 2 with no landing-page link, and a short close-the-loop Touch 3.',
   }),
-  // V4: one campaign, six evidence-selected Email 1 variants, shared Emails 2
-  // and 3. Email 1 records industrial_staffing_v4_e1_<variant> (see
-  // coldSendAttribution), so every send stays attributable to its variant.
-  // Draft until staffing-campaign.js makes V4 live; live, it follows the
-  // shared staffing launch gate.
+  // Industrial Campaign 3 (internally staffing V4): one campaign, six
+  // evidence-selected Email 1 variants, shared Emails 2 and 3. Email 1 records
+  // industrial_staffing_v4_e1_<variant> (coldSendAttribution), so every send is
+  // attributable to its variant. Live, it follows the shared staffing launch gate.
   [STAFFING_CAMPAIGN_V4.id]: Object.freeze({
     id: STAFFING_CAMPAIGN_V4.id, label: STAFFING_CAMPAIGN_V4.name, niche: STAFFING_CAMPAIGN_V4.niche,
     emailTemplateId: STAFFING_CAMPAIGN_V4.emailTemplateId, family: 'industrial_staffing',
@@ -48,7 +65,7 @@ const CAMPAIGN_VERSIONS = Object.freeze({
     subjectStrategy: 'industrial_staffing_v4_variant_subject', offerVersion: 'employer_meetings_performance_v1',
     get status() { return staffingV4Live() ? staffingLaunchState().status : 'draft'; },
     activatedAt: null,
-    meaning: 'Industrial Staffing V4: one campaign whose Email 1 is chosen from six approved variants by verified evidence (employer ads, internal sales hiring, expansion, new commercial leader, candidate ads, specialization), with shared Emails 2 and 3.',
+    meaning: 'Industrial Campaign 3: one campaign whose Email 1 is chosen from six approved variants by verified evidence (employer ads, internal sales hiring, expansion, new commercial leader, candidate ads, specialization), with shared Emails 2 and 3.',
   }),
   dental_v1_measured: Object.freeze({
     id: 'dental_v1_measured',
@@ -381,10 +398,37 @@ function promotionAttribution(touch = {}, existing = {}) {
   };
 }
 
+// A lead's rows are those whose sourceLeadId is the lead id or whose leadId is
+// `CE-<id>` (strict equality, as always). They used to be found by scanning the
+// whole activity log once per lead: 4,800 leads x 25,000 rows took seconds of
+// every dashboard snapshot. The outbound rows are now indexed once under both
+// keys and merged back in log order, so latestSendAttribution sees exactly the
+// rows, in exactly the order, it saw before.
 function buildCampaignVersionIndex(leads = [], activities = []) {
+  const bySourceLeadId = new Map();
+  const byLeadKey = new Map();
+  const add = (map, key, entry) => {
+    const bucket = map.get(key);
+    if (bucket) bucket.push(entry); else map.set(key, [entry]);
+  };
+  activities.forEach((row, index) => {
+    if (!OUTBOUND_TYPES.has(String(row.eventType || ''))) return;
+    const entry = { row, index };
+    add(bySourceLeadId, row.sourceLeadId, entry);
+    add(byLeadKey, row.leadId, entry);
+  });
   const byLeadId = new Map();
   for (const lead of leads) {
-    const mine = activities.filter(row => row.sourceLeadId === lead.id || row.leadId === `CE-${lead.id}`);
+    const a = bySourceLeadId.get(lead.id) || [];
+    const b = byLeadKey.get(`CE-${lead.id}`) || [];
+    const mine = [];
+    let i = 0;
+    let j = 0;
+    while (i < a.length || j < b.length) {
+      if (j >= b.length || (i < a.length && a[i].index < b[j].index)) mine.push(a[i++].row);
+      else if (i >= a.length || b[j].index < a[i].index) mine.push(b[j++].row);
+      else { mine.push(a[i].row); i++; j++; } // the same row matched both keys
+    }
     byLeadId.set(lead.id, latestSendAttribution(mine));
   }
   return byLeadId;

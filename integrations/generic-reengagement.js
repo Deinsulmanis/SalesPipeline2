@@ -184,6 +184,9 @@ function genericEligibility(input = {}) {
     || ['closed_won', 'closed_lost', 'won', 'lost'].includes(norm(twin.stage))) {
     blockers.push('the opportunity is closed');
   }
+  if (['call_held', 'proposal_sent'].includes(boardStage)) {
+    blockers.push('a person is closing this opportunity (call held / proposal sent)');
+  }
 
   // ── no other journey may already own this lead ───────────────────────────
   const state = sequenceState || deriveSequenceState(activities);

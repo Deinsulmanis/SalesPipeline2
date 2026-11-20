@@ -1,5 +1,7 @@
 'use strict';
 
+const { calendarDay } = require('./day-key');
+
 /**
  * analytics-scope.js — which records an analytics number is allowed to count.
  * PURE. The one place "active" and "historical" are defined for reporting.
@@ -17,7 +19,7 @@
  * the active scope.
  */
 
-const { outreachBlockForLead, RETIRED_OFFERS } = require('./lead-archive');
+const { outreachBlockForLead, RETIRED_OFFERS, completedCampaigns } = require('./lead-archive');
 const { CAMPAIGN_VERSIONS } = require('./campaign-versions');
 const { retractedBounceEventIds } = require('./delivery-status');
 
@@ -58,8 +60,10 @@ function activitiesForLeads(activities = [], leads = []) {
  */
 function liveCampaignVersions() {
   const retiredFamilies = new Set(RETIRED_OFFERS.map(offer => offer.family));
+  const completed = new Set(completedCampaigns().map(campaign => campaign.id));
   return Object.values(CAMPAIGN_VERSIONS)
-    .filter(version => ['active', 'approved'].includes(version.status) && !retiredFamilies.has(version.family))
+    .filter(version => ['active', 'approved'].includes(version.status) && !retiredFamilies.has(version.family)
+      && !completed.has(version.id))
     .map(version => version.id);
 }
 
@@ -82,7 +86,7 @@ function safePercent(numerator, denominator) {
 
 function vancouverDay(value) {
   const at = new Date(value || '');
-  return Number.isFinite(at.getTime()) ? at.toLocaleDateString('en-CA', { timeZone: REPORTING_TIMEZONE }) : '';
+  return Number.isFinite(at.getTime()) ? calendarDay(at, REPORTING_TIMEZONE) : '';
 }
 
 const COLD_SEND_TYPES = new Set(['initial_email_sent', 'follow_up_sent']);

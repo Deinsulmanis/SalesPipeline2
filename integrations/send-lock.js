@@ -295,13 +295,13 @@ async function markReservationReconciliationRequired(actionId, lastError, env = 
   return store.markReconciliationRequired(actionId, lastError);
 }
 
-async function listUnresolvedReservations(env = process.env) {
+async function listUnresolvedReservations(env = process.env, options = {}) {
   if (!sendLockEnabled(env) && !injectedStore) {
     return { enabled: false, sentUnconfirmed: [], reconciliationRequired: [], staleReserved: [], expiredSending: [] };
   }
   await assertSendLockReady(env);
   const store = await getStore(env);
-  const listed = await store.listUnresolved();
+  const listed = await store.listUnresolved(options);
   return {
     enabled: true,
     sentUnconfirmed: listed.sentUnconfirmed || [],

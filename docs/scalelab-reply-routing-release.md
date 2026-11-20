@@ -1,0 +1,28 @@
+# ScaleLab reply routing release procedure
+
+## Release controls
+
+- Default: leave `SCALELAB_REPLY_ROUTING_MODE` and `SCALELAB_REPLY_ROUTING_SINCE` unset. The new observer classification, decisions and CRM writers are inactive.
+- Shadow: set `SCALELAB_REPLY_ROUTING_MODE=shadow` and set `SCALELAB_REPLY_ROUTING_SINCE` to an explicit current UTC ISO instant. The observer and action ledger record proposed decisions for new messages. Existing classifications, suppression and CRM/reply handling follow their current paths.
+- Apply: set `SCALELAB_REPLY_ROUTING_MODE=apply` with a **new** UTC cutover instant. Only later inbound events classified in apply mode qualify for this workflow. Require `SUPABASE_OUTREACH_MODE=primary` and `SUPABASE_OUTREACH_WRITES=supabase` before apply. The service uses its existing server-side Supabase key. Do not change operational authority as part of this release if that prerequisite is missing.
+- Leave `SCALELAB_REPLY_DRAFTS_ENABLED` unset and `AGENT_V2_EXECUTION_ENABLED=false` through the routing pilot. Draft proposals are a separate optional activation. To activate proposals after approval, set `SCALELAB_REPLY_DRAFTS_ENABLED=true` and retain the existing authorized Agent v2 shadow credentials and execution-disabled setting. This can incur existing model charges. Review the shadow ledger and wording through existing Agent v2 inspection. No delivery API is invoked by the new drafting hook.
+
+## Deployment, after explicit approval
+
+1. Fetch `origin/fix/send-throughput-20261020` and verify live Railway production and the remote branch both match the candidate parent. Stop if either differs. Confirm a clean worktree and inspect the exact candidate diff.
+2. In a disposable staging workbook verify that the same developer metadata ID rejects a competing batch append and that a lost response reads back the single exact card. Verify staging Postgres constraints and exercise shadow and apply with mocked Gmail. Do not use a production email, reservation, or synthetic production CRM mutation to test the feature.
+
+   Test the configured `ANTHROPIC_API_KEY` against `claude-haiku-4-5` using synthetic evidence and local usage tracking. Confirm a grounded positive result and a human-review result before apply. Authentication failure or lack of a verified successful classification blocks activation.
+3. Apply only `supabase/migrations/20261119070000_scalelab_reply_actions.sql` through the project's approved migration workflow in Supabase project `lasyefxhuwysjebasdbf`. Verify table constraints, RLS and grants. Avoid a blanket migration push that includes unrelated files.
+4. With routing and new draft variables unset, push the reviewed fast-forward candidate to the Railway-connected production branch. From the candidate worktree use `git push origin HEAD:refs/heads/fix/send-throughput-20261020`. Verify the running deployment SHA and normal observer and sending health using read-only checks.
+5. On separate approval set the shadow variables on the production service. Observe natural traffic and inspect `scalelab_reply_actions` rows for the expected single scoped action per inbound, confirmed classifications, and unchanged CRM outcomes. Check mailbox cursor health, ownership conflicts, and the two suppression and delivery cases using offline replay. Stop on a repeated error, an unsafe classification, or unexplained quota growth.
+6. On separate approval enable apply and set a fresh cutoff. Observe the natural cohort. Check one action/card/task for each eligible new opportunity, original board state preserved on advanced cards, and the cold hold proven before a task or card was created. Verify protected or conflicting records show review reasons. Sample later responses, suppression and delivery failures. Inspect new task and action rows with read-only diagnostics.
+7. To stop new routing, unset `SCALELAB_REPLY_ROUTING_MODE` and `SCALELAB_REPLY_DRAFTS_ENABLED`. Keep existing holds, suppressions, task receipts and pending action records. Apply-mode inbound work is not made eligible for a legacy warm-response retry. Reinspect pending actions before reactivating. A former cutoff can be reused only with explicit permission to resume that pending scope. Review Orion, A2Z and Crew Staffing separately if historical corrections are desired.
+
+## Recovery invariants
+
+The provider append token and row land in one atomic Sheets request. All cooperating ScaleLab linked-card creators use the same token in apply mode. On ambiguous acknowledgement, confirm the expected identity before continuing. A token collision, removed card, or duplicate existing rows require review. Direct spreadsheet edits and older deployments do not participate in this protocol, so avoid concurrent direct card creation and verify every live service instance is on the reviewed code before apply.
+
+The opt-out observer verifies durable suppression before checkpoint commit for the new ScaleLab path. The route planner can retry from persisted observation and action receipts without refetching Gmail. Reads recheck live identity, suppression, newer reply/human evidence, and stage. The workflow may add a human task to an advanced card. It never writes an existing board stage or adds sequence enrollment. Postgres integration tests requiring external URLs are conditionally skipped when no test database is configured.
+
+Inspect `scalelab_reply_classifications` for the model attempt and verified outcome. A unique claim prevents a second paid call on replay. A pending claim that expires without a verified result becomes human review. Inspect `scalelab_reply_actions` for the separate deterministic route and write receipts.

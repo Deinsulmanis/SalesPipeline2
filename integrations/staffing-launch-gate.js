@@ -12,22 +12,47 @@ function staffingLaunchState(env = process.env, now = Date.now()) {
     activatedAt: sendable ? value : null, activationVariable: ACTIVATION_VARIABLE,
     reason: sendable ? '' : 'Staffing sending is paused; explicit launch approval is required' };
 }
+
+// Staffing Outreach Campaign 2 is approved to send from its first ScaleLab send
+// window on 2026-10-23 (07:00 America/Vancouver, PDT). Before that instant no
+// Campaign 2 touch may reach a provider, whatever the staffing activation says.
+// Its identity lives here, not in staffing-campaign.js, so this gate stays a leaf.
+const STAFFING_CAMPAIGN_2_ID = 'industrial_staffing_outreach_campaign_2';
+const STAFFING_CAMPAIGN_2_NAME = 'Staffing Outreach Campaign 2';
+const STAFFING_CAMPAIGN_2_SEND_NOT_BEFORE = '2026-10-23T14:00:00.000Z';
+function isStaffingCampaign2Lead(lead = {}) {
+  return String(lead.campaign || '').trim() === STAFFING_CAMPAIGN_2_NAME
+    || [lead.campaign, lead.campaignId, lead.intendedCampaignVersion]
+      .some(value => String(value || '').trim() === STAFFING_CAMPAIGN_2_ID);
+}
+function staffingCampaign2Open(now = Date.now()) {
+  return now >= Date.parse(STAFFING_CAMPAIGN_2_SEND_NOT_BEFORE);
+}
+
 function isStaffingLead(lead = {}) {
   return [lead.leadNiche, lead.tradeType, lead.emailTemplateId, lead.intendedCampaignVersion,
     lead.campaignId, lead.campaign, lead.campaignFamily].some(value => /staffing/i.test(String(value || '')));
 }
-function staffingSendBlockReason(lead, env = process.env) {
+function staffingSendBlockReason(lead, env = process.env, now = Date.now()) {
   if (!isStaffingLead(lead)) return '';
-  // Industrial Staffing V4 is held at the final gate too (send-safety-revalidate
-  // and the provider call both read this): a V4 lead that is not SEND_READY
-  // under a live V4 is refused even if the shared staffing launch is active.
-  // Lazy require: staffing-campaign loads modules that load this file.
+  // Industrial Campaign 3 (staffing V4) is also held at the final gate
+  // (send-safety-revalidate and the provider call both read this): a V4 lead
+  // whose sealed profile is not SEND_READY is refused. Lazy require:
+  // staffing-campaign loads modules that load this file.
   const v4Block = require('./staffing-campaign').staffingV4SendBlock(lead);
-  return v4Block || staffingLaunchState(env).reason;
+  if (v4Block) return v4Block;
+  const launch = staffingLaunchState(env, now).reason;
+  if (launch) return launch;
+  if (isStaffingCampaign2Lead(lead) && !staffingCampaign2Open(now)) {
+    return `${STAFFING_CAMPAIGN_2_NAME} may not send before ${STAFFING_CAMPAIGN_2_SEND_NOT_BEFORE}`;
+  }
+  return '';
 }
-function assertStaffingSendAllowed(lead, env = process.env) {
+function assertStaffingSendAllowed(lead, env = process.env, now = Date.now()) {
   if (!lead) throw new Error('Provider delivery requires lead context');
-  const reason = staffingSendBlockReason(lead, env);
+  const reason = staffingSendBlockReason(lead, env, now);
   if (reason) throw new Error(reason);
 }
-module.exports = { ACTIVATION_VARIABLE, staffingLaunchState, isStaffingLead, staffingSendBlockReason, assertStaffingSendAllowed };
+module.exports = { ACTIVATION_VARIABLE, staffingLaunchState, isStaffingLead, staffingSendBlockReason, assertStaffingSendAllowed,
+  STAFFING_CAMPAIGN_2_ID, STAFFING_CAMPAIGN_2_NAME, STAFFING_CAMPAIGN_2_SEND_NOT_BEFORE,
+  isStaffingCampaign2Lead, staffingCampaign2Open };

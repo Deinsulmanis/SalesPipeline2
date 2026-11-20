@@ -180,11 +180,16 @@ test('11. an active Jole row is prepared but non-sending until CLIENT_SENDING_AU
   assert.equal(clientSendState('jole', { CLIENT_SENDING_AUTHORIZED: 'jole' }).sendingEnabled, true);
 });
 
-test('12-13. client activation queues and assigns nothing: Jole leads are not routable, movable or assignable', () => {
+test('12-13. explicit preparation can plan an assignment while Jole remains unable to send', () => {
   assert.equal(routedLeadReady(joleLead()).ok, false);
   assert.equal(routedLeadReady(joleLead({ senderInboxId: 'jole_team1' })).ok, false);
   const senders = configuredSenders(withJole([joleRow('jole_team1', 'a@jolebtxteam.com', { status: 'active' })]));
-  assert.equal(assignNewLeads({ batch: [joleLead()], senders }).assignments.size, 0);
+  const lead = joleLead();
+  const assignments = assignNewLeads({ batch: [lead], senders }).assignments;
+  assert.equal(assignments.get(lead.id), 'jole_team1');
+  assert.equal(lead.senderInboxId, '', 'planning never queues or changes the lead');
+  assert.equal(senders.find(sender => sender.id === 'jole_team1').sendEligible, false);
+  assert.equal(allowedForLead(senders.find(sender => sender.id === 'jole_team1'), lead), false);
 });
 
 test('14. the corporate jolebtx.com is never a cold sender, and Jole domains are unusable by anyone else', () => {
@@ -208,7 +213,9 @@ test('a Jole sender on another Jole campaign is refused at the shared consistenc
 });
 
 test('15. ScaleLab senders are byte-for-byte unchanged: same caps, statuses, eligibility, no new fields', () => {
-  const senders = configuredSenders(PROD_ENV).filter(sender => (sender.clientId || 'scalelab') === 'scalelab');
+  // The outreachplateau.co inboxes (added 2026-11-19) are new and covered by
+  // test/outreachplateau-inboxes.test.js; every pre-existing ScaleLab sender is unchanged.
+  const senders = configuredSenders(PROD_ENV).filter(sender => (sender.clientId || 'scalelab') === 'scalelab' && !sender.id.startsWith('outreachplateau_'));
   assert.deepEqual(senders.map(sender => [sender.id, sender.email, sender.status, sender.dailyLimit, sender.perRunLimit, sender.sendEligible, sender.clientId || 'scalelab']), [
     ['primary', 'deins@scalelabai.ca', 'active', 60, 6, true, 'scalelab'],
     ['tryscalelabai', 'deins@tryscalelabai.ca', 'active', 60, 6, true, 'scalelab'],
@@ -223,7 +230,7 @@ test('15. ScaleLab senders are byte-for-byte unchanged: same caps, statuses, eli
   assert.deepEqual(DEFAULT_SECONDARY_INBOXES.filter(row => !row.clientId).map(row => [row.id, row.status, row.dailyLimit, row.perRunLimit]), [
     ['scalelabaiteam', 'warming', 40, 5], ['deniels', 'warming', 20, 2], ['deniels_tryscalelabai', 'warming', 20, 2],
   ]);
-  assert.deepEqual(DEFAULT_SECONDARY_INBOXES.filter(row => row.clientId).map(row => [row.clientId, row.status, row.dailyLimit, row.perRunLimit]),
+  assert.deepEqual(DEFAULT_SECONDARY_INBOXES.filter(row => row.clientId === 'jole').map(row => [row.clientId, row.status, row.dailyLimit, row.perRunLimit]),
     Array(6).fill(['jole', 'warming', 20, 2]));
   // A malformed Jole row never takes the ScaleLab registry down with it.
   const mixed = configuredSenders(withJole([joleRow('jole_bad', 'x@jolebtx.com', { status: 'active', dailyLimit: 999 })]));

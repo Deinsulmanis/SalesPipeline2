@@ -19,7 +19,7 @@ The only way an Industrial Staffing V2 lead (`industrial_staffing_employer_acqui
 
 ```json
 {
-  "schema": "staffing_v2_import_v1",
+  "schema": "staffing_v2_import_v2",
   "campaign_id": "industrial_staffing_employer_acquisition_v2",
   "template_id": "industrial-staffing-employer-v2",
   "dry_run": true,
@@ -52,7 +52,23 @@ A record uses the V2 sourcing skill's field names: its `reference.md` §1 data m
 - **`alternate_buyers`** must be an array of whole entries, each `name | title | cohort | apollo_person_id` with a buyer cohort. Pipe-separated text would split an entry into its parts, so it is refused (`invalid_buyer`).
 - **Unknown keys are refused** (`unknown_field`), never dropped silently. So a numbered run artifact (`06-v2-ready.csv` / `09-v2-import-candidate.csv`) whose columns are these field names maps 1:1: one CSV row becomes one record.
 
-**Required, with the values a V2_READY record must carry:**
+**ICP tier (schema v2):** every record names its tier, and the three tier fields must be one row of this table.
+
+| `icp_tier` | `lead_tag` | `copy_variant` | Touch 1 |
+|---|---|---|---|
+| `TIER_A` | `ICP_TIER_A` | `STAFFING_V2_TIER_A_SPECIFIC` | `Saw {{company}} places {{roles}} for {{market}}.` |
+| `TIER_B` | `ICP_TIER_B` | `STAFFING_V2_TIER_B_INDUSTRIAL` | `Saw {{company}} handles {{tier_b_positioning}}.` |
+
+- **Tier A** carries everything below: roles + market with their evidence, `copy_readiness_status` = `ROLE_MARKET_VERIFIED`, and the 100-point ICP score. Its Tier B fields are blank.
+- **Tier B** carries `tier_b_positioning` (required): a short lower-case phrase such as `light-industrial staffing`, merged as written. It may also carry `tier_b_confidence` (`HIGH` or `MEDIUM`), `tier_b_specialty`, `tier_b_evidence_url` and `tier_b_evidence_summary`.
+  - Tier B has no roles, market or role/market evidence (`tier_b_roles_market_refused`); none is ever inferred.
+  - `copy_readiness_status` = `TIER_B_POSITIONING_VERIFIED`.
+  - It is not scored on Tier A's rubric: `icp_lane`, `icp_priority_band` and every ICP score except `email_quality_score` stay blank (`tier_b_scored`). `staffing_model` and `vertical` are optional.
+  - Every other rule below (identity, buyer, email, gates, provenance, duplicates) applies to both tiers.
+- `icp_lane` (`TIER_A_STAFFING` / `TIER_B_RECRUITING`) is the sourcing skill's separate lane, not the ICP tier.
+- Touches 2 and 3 are the same for both tiers.
+
+**Required, with the values a V2_READY record must carry** (Tier B exceptions above):
 - **Identity:**
   - `campaign_id` and `template_id` (V2's), `email` (verified work email, not a personal mailbox), `company`, `first_name`, `last_name`.
   - `country` must be `US`.
@@ -90,6 +106,7 @@ A record uses the V2 sourcing skill's field names: its `reference.md` §1 data m
 
 **Refusal codes:**
 - Field rules: `unknown_field`, `campaign_identity_missing`, `v1_identity_refused`, `campaign_identity_mismatch`, `invalid_email`, `personal_email`, `company_missing`, `contact_missing`, `contact_mismatch`, `invalid_domain`, `not_us`.
+- Tier: `invalid_tier`, `invalid_copy_variant`, `copy_variant_mismatch`, `invalid_lead_tag`, `tier_b_fields_on_tier_a`, `tier_b_roles_market_refused`, `tier_b_positioning_missing`, `tier_b_positioning_invalid`, `invalid_tier_b_field`, `tier_b_scored`.
 - Touch 1 copy: `roles_missing`, `roles_invalid`, `market_missing`, `market_invalid`, `evidence_missing`.
 - Sourcing status: `not_v2_ready`, `gate_not_passed`, `status_not_ready`, `declared_duplicate`, `declared_suppressed`.
 - ICP, buyer and scores: `invalid_lane`, `invalid_band`, `invalid_icp`, `invalid_buyer`, `cohort_not_allowed`, `invalid_assignment`, `invalid_score`.
@@ -116,7 +133,7 @@ A record uses the V2 sourcing skill's field names: its `reference.md` §1 data m
 | `senderInboxId`, `emailStatus`, `emailStep`, `lastEmailedAt` | blank |
 | `tradeType`, `tier`, `siteContext`, `notes` | **blank**, because these columns carry V1 meanings |
 
-**Structured profile:** `campaign_notes` holds JSON with schema `staffing_v2_lead_profile_v1`.
+**Structured profile:** `campaign_notes` holds JSON with schema `staffing_v2_lead_profile_v2` (v2 added the tier fields; no v1 profile was ever stored, and one would be held as the wrong schema).
 - **Contents:** every record field, typed, plus `import_schema`, `import_key`, `imported_at` and `profile_digest`.
 - **Size:** at most 30,000 characters (`MAX_STAFFING_V2_PROFILE_CHARS`). A full record is about 2,600; Sheets allows 50,000 per cell.
 - **Read-only:** only the V2 import writes it, once, on a new row (see *Guards after import*).
@@ -163,10 +180,10 @@ A record uses the V2 sourcing skill's field names: its `reference.md` §1 data m
 
 | Guard | Effect |
 |---|---|
-| V2 Touch 1 | Renders `Saw {{company}} places {{roles}} for {{market}}.` from the profile's structured `roles` (joined as "a", "a and b", "a, b and c") and `market`. It never reverse-parses an opener. An unusable profile refuses to render. |
+| V2 Touch 1 | The profile's `copy_variant` picks the text. Tier A renders `Saw {{company}} places {{roles}} for {{market}}.` from the structured `roles` (joined as "a", "a and b", "a, b and c") and `market`; Tier B renders `Saw {{company}} handles {{tier_b_positioning}}.` It never reverse-parses an opener. An unusable profile refuses to render. |
 | `activeVersionForLead` | A V2-marked lead (label, template, version or profile) resolves to V2 or throws. A blank or V1 version never makes it V1. |
 | `staffingCampaignFor` | A lead with a V2 profile is V2 or nothing, whatever its other fields say. |
-| `routedLeadReady` (agent send selection, readiness) and `queueSelectedLeads` | A V2-marked lead is held unless campaign, template and version all name V2, its profile has roles + market, and V2 is live. |
+| `routedLeadReady` (agent send selection, readiness) and `queueSelectedLeads` | A V2-marked lead is held unless campaign, template and version all name V2, its profile verifies (Tier A: roles + market; Tier B: positioning), and V2 is live. |
 | `staffing-preview-route` (V1 personalization) | Refuses V2 leads, so it can never overwrite their profile or opener. |
 | `replaceStaffingReviewTag`, `withStaffingHold` | Refuse a V2 profile. |
 | Profile integrity | Every reader verifies `profile_digest`. A failed profile is held as `staffing_v2_profile_integrity_failed`, never repaired. |

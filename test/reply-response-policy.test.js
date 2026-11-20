@@ -45,9 +45,10 @@ test('unsubscribe, negative, wrong person and OOO never create an automated emai
 test('all warm prospect responses route through the hardened primitive', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'outreach-agent.js'), 'utf8');
   const question = source.slice(source.indexOf('async function handleQuestion'), source.indexOf('async function handleNeedsHuman'));
-  const roofing = source.slice(source.indexOf('async function handleRoofingSurveyReply'), source.indexOf('async function runReplyCheckPass'));
   const positive = source.slice(source.indexOf('async function handlePositiveAutomation'), source.indexOf('async function writeLateReplyNotes'));
-  for (const block of [question, roofing, positive]) {
+  // (The roofing survey's reply path was removed with the offer.)
+  assert.doesNotMatch(source, /handleRoofingSurveyReply/);
+  for (const block of [question, positive]) {
     assert.match(block, /deliverHardenedWarmReply/);
     assert.doesNotMatch(block, /await sendEmail\(/);
   }

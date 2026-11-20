@@ -27,6 +27,7 @@ const {
 } = require('./integrations/send-reconciliation');
 const { parseGoogleServiceAccountJson } = require('./integrations/google-service-account');
 const { createOutreachCache } = require('./integrations/outreach-cache');
+const { calendarDay } = require('./integrations/day-key');
 const { classifyReply: classifyProviderReply, CLASSIFICATION_TO_STATUS } = require('./integrations/reply-classifier');
 const {
   buildReplyMetrics, buildStoredClassificationMap,
@@ -37,8 +38,11 @@ const { parseRegistry: parseGmailInboxRegistry,
   credentialsFor: gmailInboxCredentialsFor, withDefaultInboxes, parseRuntimeOverlay,
   verifyInbox: verifyGmailInbox, verifyMailboxAccess, isStaffingOnlySender } = require('./integrations/gmail-inbox-registry');
 const { configuredSenders, observableSenders, senderCountsToday, successfulSendCountToday } = require('./integrations/gmail-sender-routing');
+const { mailboxLeadScope } = require('./integrations/mailbox-conversation-ownership');
 const { capacityFromEnv, DEFAULT_INBOX_PER_RUN_LIMIT, MAX_INBOX_PER_RUN_LIMIT } = require('./integrations/gmail-sender-capacity');
 const { appendLeadsRow } = require('./integrations/leads-sheet-append');
+const { scaleLabOwner } = require('./integrations/scalelab-response-classification');
+const { routingConfig: scaleLabRoutingConfig } = require('./integrations/scalelab-reply-router');
 const {
   markWarmupReady, activateSender, pauseSender, activationBlockers,
 } = require('./integrations/gmail-sender-lifecycle');
@@ -138,6 +142,7 @@ async function stage2TimelineProbe({ leadId, sourceLeadId, email, authoritative,
 }
 const { simulateRouting } = require('./integrations/gmail-routing-simulation');
 const { isStaffingV4Marked, STAFFING_CAMPAIGN_V4 } = require('./integrations/staffing-campaign');
+const { importCampaign3Leads } = require('./integrations/staffing-campaign-3-import');
 const { staffingReviewStatus, isStaffingV2Marked, STAFFING_CAMPAIGN_V2,
   staffingV2CampaignNotesRefusal, STAFFING_V2_PROFILE_READ_ONLY } = require('./integrations/staffing-campaign');
 const { importStaffingV2Leads } = require('./integrations/staffing-v2-import');
@@ -145,7 +150,7 @@ const { staffingHoldStatus } = require('./integrations/staffing-hold');
 const { EMAIL_TEMPLATES, LEAD_TYPES, LEAD_TYPE_IDS, normalizeNiche, leadTypeLabel, isKnownLeadType, campaignVersionsForRoute, validateCampaignVersionRoute, validateRoute, routedLeadReady } = require('./integrations/campaign-routing');
 const {
   ARCHIVE_MARKER_PREFIX, ARCHIVE_EVENT_TYPE, ARCHIVED_REPLY_EVENT_TYPE, ARCHIVE_REASONS, ARCHIVE_REASON_LABELS,
-  isArchivedLead, archiveReasonFromNotes, retiredOfferBlock, retiredOfferById, currentArchiveRecord, isProtectedRecord,
+  isArchivedLead, archiveReasonFromNotes, retiredOfferBlock, retiredOfferById, retiredOfferFor, currentArchiveRecord, isProtectedRecord,
   planLeadArchive, planBoardArchive, planLeadRestore, planBoardRestore, completedCampaigns, completedCampaignByLabel,
 } = require('./integrations/lead-archive');
 const { planOfferRetirement } = require('./integrations/offer-retirement');
@@ -160,11 +165,15 @@ const { leadsForClient, leadDefinitelyOtherClient, resolveLeadClient } = require
 const { clientOutreachView } = require('./integrations/clients/outreach-view');
 const { resolveClientId, DEFAULT_CLIENT_ID, listClients, getClient: getManagedClientConfig } = require('./integrations/clients/registry');
 const { clientSendState, clientSendBlock } = require('./integrations/clients/send-policy');
-const { JOLE_EARLY_CRON } = require('./integrations/clients/send-windows');
+const { JOLE_EARLY_CRON, clientSendWindowVerdict } = require('./integrations/clients/send-windows');
+const { PLACEMENT_TEST_CLIENT, PLACEMENT_TEST_CONFIRM, PLACEMENT_TEST_RECIPIENTS, validPlacementLabel } = require('./integrations/placement-test');
 const { getLedgerStore } = require('./integrations/clients/ledger-store');
+const { createClientCalendarSync } = require('./integrations/clients/client-calendar');
+const { createBillingService } = require('./integrations/clients/billing');
+const { createStripeClient, verifyWebhook: verifyStripeWebhook } = require('./integrations/clients/stripe-api');
+const { createScaleLabBilling } = require('./integrations/scalelab-billing');
 const { emailUniquenessMode, leadsInEmailScope, leadsForCalendarMatching } = require('./integrations/clients/email-scope');
 const { filterInboxesForClient } = require('./integrations/clients/workspace-views');
-const { TEMPLATE_ID: ROOFING_SURVEY_TEMPLATE, qualifyLead: qualifyRoofingLead } = require('./integrations/roofing-survey-profile');
 const {
   COLD_CALL_ACTIVITY_SHEET,
   COLD_CALL_ACTIVITY_HEADER,
@@ -184,6 +193,7 @@ const { buildConfirmedSendActivity, buildCanonicalDigest, bouncedLeadIds } = req
 const { buildCrmHealth } = require('./integrations/crm-health');
 const { observerHealth } = require('./integrations/gmail-observer-health');
 const { clientInboundHealth } = require('./integrations/clients/inbound-health');
+const { clientDeliveryHealth } = require('./integrations/clients/delivery-health');
 const { gmailUsageSnapshot } = require('./integrations/gmail-api-guard');
 const { observeMailbox } = require('./integrations/gmail-mailbox-observer');
 const { planMailboxEvents } = require('./integrations/mailbox-observation-events');
@@ -235,6 +245,22 @@ const app = express();
 // Smartlead signs the exact request bytes. This public route must be registered
 // before the global JSON parser and dashboard authentication middleware.
 app.post('/api/webhooks/smartlead', express.raw({ type: 'application/json', limit: '1mb' }), handleSmartleadWebhook);
+// Stripe signs the exact request bytes too (STRIPE_WEBHOOK_SECRET). Public,
+// before the JSON parser and dashboard auth. Only invoices this pipeline
+// created are acted on; anything else is acknowledged and ignored.
+app.post('/api/webhooks/stripe', express.raw({ type: 'application/json', limit: '1mb' }), handleStripeWebhook);
+// Where a client lands after saving a card on Stripe's setup page. Public and
+// static: it shows no account data, and the card itself is confirmed by the
+// signed webhook, never by this page.
+app.get('/billing/card-saved', (req, res) => {
+  const cancelled = req.query.cancelled === '1';
+  res.set('Cache-Control', 'no-store').type('html').send(`<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>${cancelled ? 'Card not saved' : 'Card saved'}</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#f8fafc;color:#1e293b}
+main{max-width:420px;padding:32px 24px;text-align:center}h1{font-size:22px;margin:0 0 12px}p{line-height:1.5;margin:0}</style></head>
+<body><main><h1>${cancelled ? 'Your card was not saved' : 'Thank you, your card is saved'}</h1>
+<p>${cancelled ? 'No card was added. If this was a mistake, please use the link you were sent again.' : 'You will receive an invoice by email after each charge. You can close this page.'}</p></main></body></html>`);
+});
 // Staffing landing-page collector (public, Netlify-signed, 2 KB text body).
 // Also before the JSON parser and dashboard auth; a no-op 204 unless
 // LANDING_COLLECTOR_ENABLED is exactly "true".
@@ -573,6 +599,10 @@ function sheets() {
       if (ranges.some(range => range.includes(CE_SHEET_NAME) || range.includes(`${SHEET_NAME}!`)
         || range.includes(COLD_CALL_ACTIVITY_SHEET))) invalidateOutreachCache(`write:${method}`);
       if (ranges.some(range => /ProposalOpens|ProposalEngaged/.test(range))) invalidateOutreachCache(`write:${method}`);
+      // The next-action view also reads Suppression and the Gmail observer state.
+      if (ranges.some(range => range.includes('Suppression!') || range.includes(GMAIL_OBSERVATION_STATE_SHEET))) {
+        nextActionsCache.invalidate();
+      }
       return original(params);
     };
   }
@@ -1340,18 +1370,45 @@ async function readColdEmailDashboardRows() {
 // hides changes made OUTSIDE this process — e.g. someone editing the sheet by
 // hand or the agent writing from its own process.
 const OUTREACH_CACHE_TTL_MS = 30000;
+// Refresh-ahead for the read-only dashboard views: a view served a snapshot
+// older than this starts the next load in the background, so a person moving
+// between pages finds the next snapshot ready (or already loading) instead of
+// waiting for a full rebuild. Nothing older than the 30-second TTL is served,
+// and writes still drop the snapshot at once.
+const OUTREACH_REFRESH_AHEAD_MS = 20000;
+const logBackgroundRefreshError = name => error =>
+  console.warn(`[outreach-cache] background ${name} refresh failed: ${error && error.message}`);
 const outreachDatasetCache = createOutreachCache({
-  load: () => loadOutreachDataset(),
+  // One line per rebuild, so the dashboard's load cost stays visible in the logs.
+  load: async () => {
+    const startedAt = Date.now();
+    const dataset = await loadOutreachDataset();
+    console.log(`[outreach-cache] snapshot built in ${Date.now() - startedAt}ms (${(dataset.leads || []).length} leads, ${(dataset.activities || []).length} activity rows)`);
+    return dataset;
+  },
   ttlMs: OUTREACH_CACHE_TTL_MS,
+  refreshAheadMs: OUTREACH_REFRESH_AHEAD_MS,
+  onBackgroundError: logBackgroundRefreshError('dataset'),
 });
 
 function currentOutreachCache() {
   return outreachDatasetCache.peek();
 }
 
+// Same TTL and the same invalidation as the dataset: whatever drops the
+// dataset drops the next-action view too (loadNextActionsView, below).
+const NEXT_ACTIONS_CACHE_TTL_MS = OUTREACH_CACHE_TTL_MS;
+const nextActionsCache = createOutreachCache({
+  load: () => loadNextActionsView(),
+  ttlMs: NEXT_ACTIONS_CACHE_TTL_MS,
+  refreshAheadMs: OUTREACH_REFRESH_AHEAD_MS,
+  onBackgroundError: logBackgroundRefreshError('next-actions'),
+});
+
 function invalidateOutreachCache(reason) {
   if (currentOutreachCache()) console.log(`[outreach-cache] invalidated (${reason})`);
   outreachDatasetCache.invalidate();
+  nextActionsCache.invalidate();
 }
 
 const CE_LIGHT_FIELDS = [
@@ -1492,6 +1549,13 @@ async function loadOutreachDataset() {
     'ProposalOpens!A:F', 'ProposalEngaged!A:F', AGENT_READ_RANGE,
     mailboxCheckpointRange(), 'Suppression!A:A',
   ];
+  // The Supabase corpus and the Sheets snapshot are independent reads, so the
+  // corpus starts now and is awaited where it is used below. readOutreachCorpus
+  // reports failure as { ok: false } rather than throwing; the no-op catch only
+  // keeps an unexpected rejection from going unhandled if batchGet throws first,
+  // and the await below still rethrows it.
+  const pendingCorpus = ceFromSupabase ? readOutreachCorpus() : null;
+  if (pendingCorpus) pendingCorpus.catch(() => {});
   const snapshot = await sheets().spreadsheets.values.batchGet({
     spreadsheetId: SPREADSHEET_ID, ranges: snapshotRanges,
   });
@@ -1530,7 +1594,7 @@ async function loadOutreachDataset() {
   // every page from the old store.
   let leadSource = 'sheets';
   if (ceFromSupabase) {
-    const corpus = await readOutreachCorpus();
+    const corpus = await pendingCorpus;
     if (corpus.ok) {
       // The Sheets dashboard read deliberately omits column P, so the browser has
       // never received siteContext here. The mirror HAS it, so it is blanked to
@@ -1676,9 +1740,14 @@ async function loadOutreachDataset() {
   });
   const rows = allRows.filter(row => !row.archived);
   const archivedRows = allRows.filter(row => row.archived);
+  // A card already represented by an archived row (same CE id or same
+  // normalized email) is not counted twice. Looked up in sets built once rather
+  // than by rescanning every archived row for every card.
+  const archivedRowIds = new Set(archivedRows.map(row => `CE-${row.id}`));
+  const archivedRowEmails = new Set(archivedRows.map(row => normalizeEmail(row.email)));
   counts.total = rows.length;
-  counts.archived = archivedRows.length + archivedBoardLeads.filter(card => !archivedRows
-    .some(row => `CE-${row.id}` === card.id || normalizeEmail(row.email) === normalizeEmail(card.email))).length;
+  counts.archived = archivedRows.length + archivedBoardLeads.filter(card => !(archivedRowIds.has(card.id)
+    || archivedRowEmails.has(normalizeEmail(card.email)))).length;
 
   // Opens remain passive telemetry.
   // These headline numbers used to be computed in the browser from the full
@@ -1796,6 +1865,14 @@ async function getOutreachDataset({ force = false } = {}) {
   return outreachDatasetCache.get({ force });
 }
 
+// For read-only dashboard views: the same 30-second snapshot as every other
+// caller, plus refresh-ahead (see OUTREACH_REFRESH_AHEAD_MS). ?refresh=1 still
+// forces a fresh read.
+async function getOutreachDatasetForDisplay(query = {}) {
+  if (query.refresh === '1') return outreachDatasetCache.get({ force: true });
+  return outreachDatasetCache.get({ refreshAhead: true });
+}
+
 const DEFAULT_CE_PAGE = 100;
 const MAX_CE_PAGE = 500;
 
@@ -1869,7 +1946,7 @@ function filterOutreachRows(rows, query) {
 // panel, which genuinely aggregates across the whole set.
 app.get('/api/coldemail', requireAuth, async (req, res) => {
   try {
-    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const dataset = await withAuth(() => getOutreachDatasetForDisplay(req.query));
     // Client scope is applied on the server. A missing query selects ScaleLab.
     const scope = outreachClientView(dataset, req.query);
     if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
@@ -1904,6 +1981,82 @@ app.get('/api/coldemail', requireAuth, async (req, res) => {
   }
 });
 
+// ── MANAGED-CLIENT BILLING (Stripe) ─────────────────────────────────────────
+// Qualified held meetings → Stripe invoices (integrations/clients/billing.js).
+// Off unless STRIPE_BILLING_ENABLED=true with STRIPE_SECRET_KEY (a restricted
+// key) and the client's Stripe customer id; drafts are never sent without an
+// operator's click.
+const billingService = createBillingService({
+  stripe: createStripeClient({ secretKey: process.env.STRIPE_SECRET_KEY }),
+  getStore: () => getLedgerStore(),
+  log: console,
+});
+
+// ScaleLab's own clients: the tech fee from the Bookings tracker. Operator
+// actions only; nothing here touches the outreach sender, its caps, sequences,
+// stages or holds. (Onboarding documents are written in Gmail itself: the
+// tracker only opens a prefilled Gmail compose window in the browser.)
+const scalelabBilling = createScaleLabBilling({
+  stripe: createStripeClient({ secretKey: process.env.STRIPE_SECRET_KEY }),
+  findLead: async leadId => {
+    const dataset = await withAuth(() => getOutreachDataset());
+    return (dataset.boardLeads || []).find(lead => String(lead.id) === String(leadId)) || null;
+  },
+  log: console,
+});
+const operatorFail = (res, error, label) => {
+  const status = /not_found$/.test(error.code || '') ? 404
+    : ['billing_disabled', 'billing_not_configured', 'mailbox_unavailable'].includes(error.code) ? 503
+      : error.code ? 422 : 500;
+  if (status === 500) console.error(`[${label}]`, error.message);
+  return res.status(status).json({ error: error.message, code: error.code || 'error' });
+};
+app.get('/api/scalelab-billing/overview', requireAuth, async (_req, res) => {
+  try { res.json({ ...(await scalelabBilling.overview()), mainMailbox: String(process.env.FROM_EMAIL || '').toLowerCase() }); }
+  catch (error) { operatorFail(res, error, 'scalelab-billing'); }
+});
+app.get('/api/scalelab-billing/prices', requireAuth, async (_req, res) => {
+  try { res.json({ prices: await scalelabBilling.prices() }); } catch (error) { operatorFail(res, error, 'scalelab-billing'); }
+});
+app.post('/api/scalelab-billing/:leadId/invoice', requireAuth, async (req, res) => {
+  try {
+    res.json(await scalelabBilling.emailInvoice({ leadId: req.params.leadId, priceId: req.body?.priceId,
+      daysUntilDue: req.body?.daysUntilDue, email: req.body?.email, nonce: req.body?.nonce }));
+  } catch (error) { operatorFail(res, error, 'scalelab-billing'); }
+});
+app.post('/api/scalelab-billing/:leadId/card-link', requireAuth, async (req, res) => {
+  try { res.json(await scalelabBilling.cardSetupLink({ leadId: req.params.leadId, email: req.body?.email })); }
+  catch (error) { operatorFail(res, error, 'scalelab-billing'); }
+});
+app.post('/api/scalelab-billing/:leadId/charge', requireAuth, async (req, res) => {
+  try { res.json(await scalelabBilling.chargeCard({ leadId: req.params.leadId, priceId: req.body?.priceId, nonce: req.body?.nonce })); }
+  catch (error) { operatorFail(res, error, 'scalelab-billing'); }
+});
+
+async function handleStripeWebhook(req, res) {
+  let event;
+  try {
+    event = verifyStripeWebhook(req.body, req.headers['stripe-signature'], process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (error) {
+    console.warn(`[Stripe webhook] rejected: ${error.message}`);
+    return res.status(400).json({ error: 'invalid signature' });
+  }
+  try {
+    const own = await scalelabBilling.handleEvent(event);
+    if (!own.ignored) {
+      console.log(`[Stripe webhook] ${event.type}: card saved for ScaleLab lead ${own.leadId || ''}`);
+      return res.json({ received: true });
+    }
+    const result = await billingService.handleEvent(event);
+    if (!result.ignored) console.log(`[Stripe webhook] ${event.type} ${result.invoiceId}: ${result.status}`);
+    return res.json({ received: true });
+  } catch (error) {
+    // 500 makes Stripe retry; the hourly reconcile is the second safety net.
+    console.error(`[Stripe webhook] ${event.type} failed: ${error.message}`);
+    return res.status(500).json({ error: 'processing failed' });
+  }
+}
+
 registerClientRoutes(app, {
   requireAuth,
   loadDataset: options => withAuth(() => getOutreachDataset(options)),
@@ -1917,6 +2070,8 @@ registerClientRoutes(app, {
   },
   importLeads: options => importManagedClientLeads(options),
   importBatches: () => clientImportBatchStore,
+  calendarSyncFor: clientId => clientCalendarSyncs.get(clientId) || null,
+  billing: billingService,
 });
 
 // ── MANAGED-CLIENT IMPORT BATCHES + READINESS ───────────────────────────────
@@ -1939,7 +2094,7 @@ function logManagedClientReadiness() {
     const copyEnv = client.copyEnv || {};
     console.log(JSON.stringify({
       event: 'client_readiness', client_id: client.id, sending: clientSendState(client.id).sendingEnabled,
-      ledger_available: Boolean(store?.enabled), capacity_daily: client.capacity.dailyCap,
+      ledger_available: Boolean(store?.enabled), capacity_daily: require('./integrations/clients/sender-delegation').effectiveClientCapacity(client).dailyCap,
       senders: mine.length, senders_eligible: mine.filter(sender => sender.sendEligible).length,
       landing_page_configured: Boolean(copyEnv.landingPageUrl && process.env[copyEnv.landingPageUrl]),
       mailing_address_configured: Boolean(copyEnv.mailingAddress && process.env[copyEnv.mailingAddress]),
@@ -1968,7 +2123,6 @@ app.get('/api/crm/ui-status', requireAuth, (_req, res) => {
     stageSequences: { enabled: enabled(process.env.STAGE_SEQUENCES_ENABLED) },
     calendarSync: { enabled: enabled(process.env.GOOGLE_CALENDAR_BOOKING_SYNC_ENABLED), configured: Boolean(process.env.GOOGLE_BOOKING_CALENDAR_ID) },
     smartlead: { enabled: enabled(process.env.SMARTLEAD_INTEGRATION_ENABLED), liveMutations: enabled(process.env.SMARTLEAD_LIVE_MUTATIONS_ENABLED) },
-    roofingReplyFlow: { enabled: enabled(process.env.ROOFING_SURVEY_REPLY_FLOW_ENABLED) },
     deployment: { sha: String(process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT_SHA || '').trim() || null },
   });
 });
@@ -2027,9 +2181,9 @@ app.get('/api/send-lock/health', requireAuth, async (_req, res) => {
   }
 });
 
-app.get('/api/send-lock/reservations', requireAuth, async (_req, res) => {
+app.get('/api/send-lock/reservations', requireAuth, async (req, res) => {
   try {
-    const listed = await listUnresolvedReservations();
+    const listed = await listUnresolvedReservations(process.env, { includeActive: req.query.includeActive === 'true' });
     const publicRow = row => operatorRow(row);
     res.json({
       enabled: listed.enabled !== false,
@@ -2052,7 +2206,7 @@ app.get('/api/send-lock/reservations', requireAuth, async (_req, res) => {
 app.get('/api/coldemail/funnel', requireAuth, async (req, res) => {
   try {
     const startedAt = process.hrtime.bigint();
-    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const dataset = await withAuth(() => getOutreachDatasetForDisplay(req.query));
     const clientScope = outreachClientView(dataset, req.query);
     if (!clientScope.ok) return res.status(400).json({ error: clientScope.reason, code: clientScope.code });
     const view = clientScope.view;
@@ -2125,13 +2279,14 @@ app.get('/api/coldemail/funnel', requireAuth, async (req, res) => {
 app.get('/api/crm/health', requireAuth, async (req, res) => {
   try {
     const startedAt = process.hrtime.bigint();
-    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
-    // The sender's OWN suppression rule, bound to the live suppression list, so
+    // Three independent reads, run together rather than one after another.
+    // The suppression list is the sender's OWN rule, bound to the live list, so
     // health cannot disagree with what the sender would actually do.
-    const suppressedEmails = await loadSuppressedEmails();
-    const calendarSyncState = CALENDAR_SYNC_ENABLED
-      ? await readCalendarSyncState().catch(() => null)
-      : null;
+    const [dataset, suppressedEmails, calendarSyncState] = await Promise.all([
+      withAuth(() => getOutreachDatasetForDisplay(req.query)),
+      loadSuppressedEmails(),
+      CALENDAR_SYNC_ENABLED ? readCalendarSyncState().catch(() => null) : null,
+    ]);
     // The funnel is CONSUMED, never rebuilt: reconciliation has one owner.
     const funnel = buildFunnelAnalytics({
       leads: activeLeadsOf(dataset), boardLeads: dataset.boardLeads, activities: dataset.activities,
@@ -2164,7 +2319,7 @@ app.get('/api/crm/health', requireAuth, async (req, res) => {
     const dayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
     const metadataOf = row => { try { return JSON.parse(row.metadata || '{}'); } catch (_) { return {}; } };
     const activityToday = (dataset.activities || []).filter(row => row.occurredAt
-      && new Date(row.occurredAt).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' }) === dayKey);
+      && calendarDay(row.occurredAt, 'America/Vancouver') === dayKey);
     // Reply rows as production decided them, so a reply the model or staffing
     // overlay classified positive counts as positive here too.
     const repliesToday = applyReplyDecisionsToReplyEvidence(activityToday)
@@ -2272,8 +2427,7 @@ const DIGEST_HEADER = ['date','generatedAt','payload'];
 
 // Every date comparison in the digest uses the Vancouver calendar day, not UTC,
 // or an evening event would land in tomorrow's summary.
-const vanDay = (d = new Date()) =>
-  new Date(d).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+const vanDay = (d = new Date()) => calendarDay(d, 'America/Vancouver');
 
 async function ensureDigestSheet() {
   const s  = sheets();
@@ -2406,7 +2560,7 @@ app.get('/api/proposalOpens', requireAuth, async (_req, res) => {
   try {
     // Annotated once inside the shared snapshot, so the Opens panel and the
     // Opens/Warm cards can never disagree about what counts as a real open.
-    const dataset = await getOutreachDataset();
+    const dataset = await getOutreachDatasetForDisplay(_req.query);
     const scope = outreachClientView(dataset, _req.query);
     if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
     res.json(scope.view?.opens || dataset.annotatedOpens);
@@ -2531,6 +2685,38 @@ function importManagedClientLeads({ clientId, campaignId, rows, dryRun }) {
 // Import-stage leads through the same primitives as the managed-client import —
 // one ColdEmail append, then the background outreach_leads mirror — and does
 // nothing else: no queue, sender, reservation, schedule or V2 activation.
+// Industrial Campaign 3 (staffing V4): new Import-stage leads with a sealed,
+// server-selected variant profile. Dry run unless dry_run is false. Never queues.
+app.post('/api/staffing/campaign-3/leads/import', requireAuth, async (req, res) => {
+  const body = req.body || {};
+  const dryRun = body.dry_run !== false;
+  try {
+    const result = await withAuth(() => importCampaign3Leads({
+      payload: body, dryRun,
+      readCorpus: readClientImportCorpus,
+      appendLeads: async leads => {
+        await sheets().spreadsheets.values.append({
+          spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+          requestBody: { values: leads.map(lead => CE_COLUMNS.map(col => String(lead[col] ?? ''))) },
+        });
+        ceRowMap.clear();
+      },
+      mirrorLeads: async leads => {
+        if (outreachStateMode() !== 'off') mirrorOutreachLeadsInBackground(leads);
+        return { scheduled: outreachStateMode() !== 'off', leads: leads.length };
+      },
+      newId: () => Date.now().toString(36) + crypto.randomBytes(6).toString('hex'),
+    }));
+    res.json(result);
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    if (e.code === 'invalid_payload') return res.status(422).json({ error: e.message, code: e.code });
+    if (e.code === 'corpus_unavailable') return res.status(503).json({ error: e.message, code: e.code });
+    console.error('[Campaign 3 Import]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/staffing/v2/leads/import', requireAuth, async (req, res) => {
   const body = req.body || {};
   const dryRun = body.dry_run !== false;
@@ -2571,11 +2757,10 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
     || String(campaign).trim() === STAFFING_CAMPAIGN_V2.emailTemplateId) {
     return res.status(422).json({ error: 'Industrial Staffing V2 leads use POST /api/staffing/v2/leads/import', code: 'use_staffing_v2_import' });
   }
-  // Industrial Staffing V4 has no import yet: its leads stay REVIEW READY
-  // outside the CRM until the owner approves enrollment. Never a flat import.
+  // Industrial Campaign 3 enters only through its own import, with its sealed profile.
   if (isStaffingV4Marked({ campaign: String(campaign).trim(), campaign_notes })
     || String(campaign).trim() === STAFFING_CAMPAIGN_V4.emailTemplateId) {
-    return res.status(422).json({ error: 'Industrial Staffing V4 leads are not imported until the owner approves enrollment', code: 'staffing_v4_import_not_enabled' });
+    return res.status(422).json({ error: 'Industrial Campaign 3 leads use POST /api/staffing/campaign-3/leads/import', code: 'use_campaign_3_import' });
   }
   const leadNiche = normalizeNiche(lead_niche);
   if (!leadNiche) return res.status(422).json({ error: 'Lead niche is required' });
@@ -3086,73 +3271,85 @@ app.get('/api/leads/:id/activity', requireAuth, async (req, res) => {
 // One Next Action for every board lead, derived from the same shared engine the
 // drawer uses. Read-only: three sheet reads, no writes, no send path. This is
 // what turns the board into a work queue and what the leak audit runs against.
-app.get('/api/leads/next-actions', requireAuth, async (_req, res) => {
+//
+// The board's next-action read model. One five-range Sheets read plus the
+// derivation, ~2 s, and every board load asks for it. It shares the Outreach
+// dataset's freshness policy: computed at most once per NEXT_ACTIONS_CACHE_TTL_MS,
+// and dropped the moment this process writes a tab it reads (see sheets() and
+// invalidateOutreachCache), so a reload after a change is always fresh.
+async function loadNextActionsView() {
+  const snapshot = await sheets().spreadsheets.values.batchGet({ spreadsheetId: SPREADSHEET_ID,
+    ranges: [AGENT_READ_RANGE, CE_COL_RANGE, `${COLD_CALL_ACTIVITY_SHEET}!A:J`,
+      `${GMAIL_OBSERVATION_STATE_SHEET}!A:I`, 'Suppression!A:A'] });
+  const [boardResponse, ceResponse, activityResponse, observerResponse, suppressionResponse] =
+    snapshot.data.valueRanges.map(data => ({ data }));
+
+  const leads = (boardResponse.data.values || []).slice(1).map(row => {
+    const lead = {};
+    COLUMNS.forEach((col, i) => { lead[col] = row[i] || ''; });
+    AGENT_COLS.forEach((col, i) => { lead[col] = row[17 + i] || ''; });
+    CALL_DETAIL_COLS.forEach((col, i) => { lead[col] = row[20 + i] || ''; });
+    return lead;
+  }).filter(lead => lead.id);
+
+  // Index the ColdEmail twins once by id and by email — the same two keys
+  // findColdEmailTwins matches on, without a read per lead.
+  const twinsById = new Map();
+  const twinsByEmail = new Map();
+  for (const row of (ceResponse.data.values || []).slice(1)) {
+    const twin = {
+      id: row[0] || '', company: row[1] || '', email: row[3] || '',
+      stage: row[7] || '', emailStatus: row[8] || '', lastEmailedAt: row[9] || '',
+      emailStep: row[10] || '', notes: row[11] || '', senderInboxId: row[20] || '',
+    };
+    if (twin.id && !twinsById.has(twin.id)) twinsById.set(twin.id, twin);
+    // Board cards are ScaleLab's; another client's row is never an email twin.
+    const full = Object.fromEntries(CE_COLUMNS.map((field, i) => [field, row[i] || '']));
+    const key = leadDefinitelyOtherClient(full, DEFAULT_CLIENT_ID) ? '' : normalizeEmail(twin.email);
+    if (key && !twinsByEmail.has(key)) twinsByEmail.set(key, twin);
+  }
+
+  const activitiesByKey = new Map();
+  for (const row of (activityResponse.data.values || []).slice(1)) {
+    const event = Object.fromEntries(COLD_CALL_ACTIVITY_HEADER.map((field, i) => [field, row[i] || '']));
+    for (const key of [event.leadId, normalizeEmail(event.email)]) {
+      if (!key) continue;
+      const rows = activitiesByKey.get(key) || [];
+      rows.push(event);
+      activitiesByKey.set(key, rows);
+    }
+  }
+
+  const now = new Date();
+  const observers = observerHealth(observerResponse.data.values || [], { now,
+    senderIds: observableSenders(configuredSenders()).map(item => item.id) });
+  const suppressedEmails = new Set((suppressionResponse.data.values || []).slice(1).map(row => normalizeEmail(row[0])));
+  const entries = leads.map(lead => {
+    const email = normalizeEmail(lead.email);
+    const twin = twinsById.get(String(lead.id).replace(/^CE-/, '')) || twinsByEmail.get(email) || null;
+    const activities = [
+      ...(activitiesByKey.get(lead.id) || []),
+      ...(email ? activitiesByKey.get(email) || [] : []),
+    ];
+    return {
+      id: lead.id,
+      name: `${lead.first || ''} ${lead.last || ''}`.trim() || lead.company || lead.email || lead.id,
+      company: lead.company || '',
+      stage: displayStageFor(lead.stage),
+      nextAction: deriveNextAction(lead, twin, { activities, now, observers, suppressedEmails,
+        sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true' }),
+    };
+  });
+
+  entries.sort((a, b) => compareNextActions(a.nextAction, b.nextAction));
+  // `at` is the cache's clock (createOutreachCache reads it); the route strips it.
+  return { at: Date.now(), generatedAt: now.toISOString(), summary: summarizeNextActions(entries), entries };
+}
+
+app.get('/api/leads/next-actions', requireAuth, async (req, res) => {
   try {
-    const snapshot = await sheets().spreadsheets.values.batchGet({ spreadsheetId: SPREADSHEET_ID,
-      ranges: [AGENT_READ_RANGE, CE_COL_RANGE, `${COLD_CALL_ACTIVITY_SHEET}!A:J`,
-        `${GMAIL_OBSERVATION_STATE_SHEET}!A:I`, 'Suppression!A:A'] });
-    const [boardResponse, ceResponse, activityResponse, observerResponse, suppressionResponse] =
-      snapshot.data.valueRanges.map(data => ({ data }));
-
-    const leads = (boardResponse.data.values || []).slice(1).map(row => {
-      const lead = {};
-      COLUMNS.forEach((col, i) => { lead[col] = row[i] || ''; });
-      AGENT_COLS.forEach((col, i) => { lead[col] = row[17 + i] || ''; });
-      CALL_DETAIL_COLS.forEach((col, i) => { lead[col] = row[20 + i] || ''; });
-      return lead;
-    }).filter(lead => lead.id);
-
-    // Index the ColdEmail twins once by id and by email — the same two keys
-    // findColdEmailTwins matches on, without a read per lead.
-    const twinsById = new Map();
-    const twinsByEmail = new Map();
-    for (const row of (ceResponse.data.values || []).slice(1)) {
-      const twin = {
-        id: row[0] || '', company: row[1] || '', email: row[3] || '',
-        stage: row[7] || '', emailStatus: row[8] || '', lastEmailedAt: row[9] || '',
-        emailStep: row[10] || '', notes: row[11] || '', senderInboxId: row[20] || '',
-      };
-      if (twin.id && !twinsById.has(twin.id)) twinsById.set(twin.id, twin);
-      // Board cards are ScaleLab's; another client's row is never an email twin.
-      const full = Object.fromEntries(CE_COLUMNS.map((field, i) => [field, row[i] || '']));
-      const key = leadDefinitelyOtherClient(full, DEFAULT_CLIENT_ID) ? '' : normalizeEmail(twin.email);
-      if (key && !twinsByEmail.has(key)) twinsByEmail.set(key, twin);
-    }
-
-    const activitiesByKey = new Map();
-    for (const row of (activityResponse.data.values || []).slice(1)) {
-      const event = Object.fromEntries(COLD_CALL_ACTIVITY_HEADER.map((field, i) => [field, row[i] || '']));
-      for (const key of [event.leadId, normalizeEmail(event.email)]) {
-        if (!key) continue;
-        const rows = activitiesByKey.get(key) || [];
-        rows.push(event);
-        activitiesByKey.set(key, rows);
-      }
-    }
-
-    const now = new Date();
-    const observers = observerHealth(observerResponse.data.values || [], { now,
-      senderIds: observableSenders(configuredSenders()).map(item => item.id) });
-    const suppressedEmails = new Set((suppressionResponse.data.values || []).slice(1).map(row => normalizeEmail(row[0])));
-    const entries = leads.map(lead => {
-      const email = normalizeEmail(lead.email);
-      const twin = twinsById.get(String(lead.id).replace(/^CE-/, '')) || twinsByEmail.get(email) || null;
-      const activities = [
-        ...(activitiesByKey.get(lead.id) || []),
-        ...(email ? activitiesByKey.get(email) || [] : []),
-      ];
-      return {
-        id: lead.id,
-        name: `${lead.first || ''} ${lead.last || ''}`.trim() || lead.company || lead.email || lead.id,
-        company: lead.company || '',
-        stage: displayStageFor(lead.stage),
-        nextAction: deriveNextAction(lead, twin, { activities, now, observers, suppressedEmails,
-          sequencesEnabled: process.env.STAGE_SEQUENCES_ENABLED === 'true' }),
-      };
-    });
-
-    entries.sort((a, b) => compareNextActions(a.nextAction, b.nextAction));
-    res.json({ generatedAt: now.toISOString(), summary: summarizeNextActions(entries), entries });
+    const { at: _cachedAt, ...view } = await nextActionsCache.get(req.query.refresh === '1' ? { force: true } : { refreshAhead: true });
+    res.json(view);
   } catch (e) {
     if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
     console.error('[Next Actions GET]', e.message);
@@ -3862,6 +4059,37 @@ async function writeCalendarSyncState(state) {
     { key: 'state', value: JSON.stringify(state), updatedAt: now });
 }
 
+// ── MANAGED-CLIENT CALENDARS ────────────────────────────────────────────────
+// A managed client's own calendar (Jole: Jorge's) feeds that client's meeting
+// ledger, read-only, through client-calendar.js. Separate checkpoint sheet from
+// ScaleLab's CalendarSync, one row per client, and its own flag per client
+// (JOLE_CALENDAR_SYNC_ENABLED), so neither sync can disturb the other.
+const CLIENT_CALENDAR_SYNC_SHEET = 'ClientCalendarSync';
+const CLIENT_CALENDAR_SYNC_HEADER = ['clientId', 'state', 'updatedAt'];
+
+async function readClientCalendarState(clientId) {
+  const rows = await readIntegrationRows(CLIENT_CALENDAR_SYNC_SHEET, CLIENT_CALENDAR_SYNC_HEADER);
+  const row = rows.find(item => item.clientId === clientId);
+  if (!row || !row.state) return {};
+  // A corrupt checkpoint must stop the sync, never silently restart it.
+  return JSON.parse(row.state);
+}
+
+async function writeClientCalendarState(clientId, state) {
+  await upsertIntegrationRow(CLIENT_CALENDAR_SYNC_SHEET, CLIENT_CALENDAR_SYNC_HEADER, 'clientId',
+    { clientId, state: JSON.stringify(state), updatedAt: new Date().toISOString() });
+}
+
+const clientCalendarSyncs = new Map(['jole'].map(clientId => [clientId, createClientCalendarSync({
+  clientId,
+  fetchChanges: params => fetchCalendarChanges(params),
+  readState: () => withAuth(() => readClientCalendarState(clientId)),
+  writeState: state => withAuth(() => writeClientCalendarState(clientId, state)),
+  loadLeads: async () => (await withAuth(() => getOutreachDataset())).leads || [],
+  getStore: () => getLedgerStore(),
+  log: console,
+})]));
+
 /**
  * One page-walk of the Calendar API. Returns a result shaped for nextSyncState,
  * so a failure or an expired token can never advance the checkpoint.
@@ -4041,8 +4269,10 @@ async function applyCalendarPlanItem(item, context) {
       };
       // Human-owned stage safety is fail-closed: hold before creating the card.
       if (stageRequiresHold('call_booked')) await withAuth(() => applyManualHold(boardId, boardLead.email));
-      await withAuth(() => appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: SHEET_NAME,
+      const atomicIdentity = scaleLabOwner(ceLead) && scaleLabRoutingConfig()?.mode === 'apply';
+      const write = await withAuth(() => appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: SHEET_NAME, atomicIdentity,
         values: [...COLUMNS.map(field => String(boardLead[field] ?? '')), '', '', '', meetingAt, '', ''] }));
+      if (atomicIdentity && write.duplicate) return { ok: false, error: 'Pipeline card changed during booking; refresh and retry' };
       createdBoard = true;
       context.boardLeads.push(boardLead);
       const promotionEventId = stableActivityId('pipeline-promotion', [ceLead.id, boardId, 'call_booked', PROMOTION_TRIGGER.MEETING_BOOKED]);
@@ -5093,15 +5323,18 @@ const {
 // Temporary recipient-provider gate: one domain-level MX cache for the server.
 const recipientProviderClassifier = createProviderClassifier();
 const {
-  assignBatch, planSenderRebalance, nextSendDayHorizon,
+  assignBatch, planSenderRebalance, nextSendDayHorizon, scopedBalanceInput,
 } = require('./integrations/sender-balance');
 const { staffingLaunchState } = require('./integrations/staffing-launch-gate');
 app.get('/api/staffing/launch-readiness', requireAuth, async (_req, res) => {
   const { STAFFING_CAMPAIGN, LOCKED_EMAILS, BOLD_PHRASES } = require('./integrations/staffing-campaign');
   const { staffingReadinessReport, staffingSequenceDiff } = require('./integrations/staffing-readiness');
-  const corpus = await readOutreachCorpus();
+  // Independent reads, so they run together. The corpus stays a fresh read.
+  const [corpus, dataset] = await Promise.all([
+    readOutreachCorpus(),
+    getOutreachDataset({ force: false }).catch(() => ({ activities: [], boardLeads: [], suppression: [] })),
+  ]);
   if (!corpus.ok) return res.status(503).json({ error: 'Canonical staffing state unavailable' });
-  const dataset = await getOutreachDataset({ force: false }).catch(() => ({ activities: [], boardLeads: [], suppression: [] }));
   const suppressed = new Set((dataset.suppression || []).map(row => String(row.email || row[0] || '').trim().toLowerCase()).filter(Boolean));
   const report = staffingReadinessReport({
     leads: corpus.leads, activities: dataset.activities || [], boardLeads: dataset.boardLeads || [],
@@ -5140,7 +5373,7 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
       // state loadState() just read, plus the durable send lock's open rows.
       assignSenders: senderInboxId === AUTO_SENDER ? (batch, state) => (state.lockedLeadIds instanceof Set
         ? assignBatch({ batch, input: { ...state, senders: configuredSenders(), lockedLeadIds: state.lockedLeadIds,
-          horizon: nextSendDayHorizon(new Date()), env: process.env } })
+          horizon: nextSendDayHorizon(new Date()), now: Date.now(), env: process.env } })
         : { assignments: new Map(), refused: [{ leadId: batch[0]?.id || '',
           reason: 'automatic sender assignment requires Supabase canonical state and the durable send lock' }] })
         : undefined,
@@ -5157,7 +5390,6 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
         if (!route.ok) return route;
         const versionRoute = validateCampaignVersionRoute({ niche: lead.leadNiche || lead.tradeType, emailTemplateId, campaignVersionId });
         if (!versionRoute.ok) return versionRoute;
-        if (emailTemplateId === ROOFING_SURVEY_TEMPLATE && !qualifyRoofingLead(lead).ok) return { ok: false, reason: 'Insufficient roofing-business evidence' };
         return { ok: true };
       },
       applyChanges: async changes => {
@@ -5207,7 +5439,8 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
 // else, one compare-and-set per lead, and never runs beside a send pass.
 
 async function unresolvedReservationLeadIds() {
-  const listed = await listUnresolvedReservations();
+  // Balancing must also exclude fresh reservations, not only expired leases.
+  const listed = await listUnresolvedReservations(process.env, { includeActive: true });
   if (listed.enabled === false) throw new Error('Durable send lock is disabled; sender balancing refuses to run without it');
   return new Set(['sentUnconfirmed', 'reconciliationRequired', 'staleReserved', 'expiredSending']
     .flatMap(key => listed[key] || [])
@@ -5225,15 +5458,18 @@ async function loadSenderBalanceInput() {
     leads: corpus.leads, activities: dataset.activities || [], boardLeads: dataset.boardLeads || [],
     suppressedEmails: dataset.suppressedEmails || new Set(),
     lockedLeadIds: await unresolvedReservationLeadIds(),
-    senders: configuredSenders(), horizon: nextSendDayHorizon(new Date()), env: process.env,
+    senders: configuredSenders(), horizon: nextSendDayHorizon(new Date()), now: Date.now(), env: process.env,
   };
 }
 
-// 06:55–12:00 Pacific on weekdays: the send windows and their passes.
-function insideSendWindow(now = new Date()) {
+// Protect Jole's earlier first window too. A scoped, idle-only Jole refill is
+// allowed between normal runs; ordinary and cross-client operator calls are not.
+function insideSendWindow(now = new Date(), client) {
   const pacific = new Date(now.toLocaleString('en-US', { timeZone: 'America/Vancouver' }));
   const minutes = pacific.getHours() * 60 + pacific.getMinutes();
-  return ![0, 6].includes(pacific.getDay()) && minutes >= 6 * 60 + 55 && minutes < 12 * 60;
+  const start = client === 'scalelab' ? 6 * 60 + 55 : 4 * 60 + 55;
+  const end = client === 'jole' ? 10 * 60 : 12 * 60;
+  return ![0, 6].includes(pacific.getDay()) && minutes >= start && minutes < end;
 }
 
 const SENDER_REBALANCE_MAX_MOVES = 400;
@@ -5242,26 +5478,30 @@ let senderRebalanceInFlight = false;
 function senderBalanceView(plan) {
   return {
     horizon: new Date(plan.horizon).toISOString(), bufferRatio: plan.bufferRatio,
-    formula: 'load = pinned follow-ups due by horizon + assigned movable step-1; phase A fills every inbox to dailyLimit (donors keep dailyLimit); phase B fills to target = dailyLimit + ceil(dailyLimit × bufferRatio) (donors keep target)',
+    formula: 'load = pinned follow-ups due by horizon + assigned movable step-1; remainingCapacity = min(dailyLimit - successful physical-mailbox sends on planning day, remaining normal windows × per-window cap); phase A fills remainingCapacity; phase B fills remainingCapacity plus buffer; donors keep the same phase floor',
     before: plan.before, after: plan.after, hardShortages: plan.hardShortages, shortages: plan.shortages, excluded: plan.excluded,
     moves: plan.moves.map(({ leadId, from, to, niche }) => ({ leadId, from, to, niche })),
   };
 }
 
-async function runSenderRebalance({ trigger, apply }) {
+async function runSenderRebalance({ trigger, apply, client, bufferRatio, allowBetweenRuns = false }) {
   if (senderRebalanceInFlight) return { status: 409, error: 'A sender rebalance is already running' };
   if (apply && (agentState.running || automationLaunchReserved)) {
     return { status: 409, error: 'An agent pass is active or launching; sender assignments are not changed beside it' };
   }
-  if (apply && insideSendWindow()) {
-    return { status: 409, error: 'Sender assignments are not changed between 06:55 and 12:00 Pacific on weekdays' };
+  if (apply && insideSendWindow(new Date(), client) && !(client === 'jole' && allowBetweenRuns === true)) {
+    return { status: 409, error: 'Sender assignments are not changed during sending hours without a scoped idle-only Jole refill' };
   }
   senderRebalanceInFlight = true;
   // Holding the launch reservation keeps any agent pass from starting while
   // assignments are being written; the refill runs well clear of a send tick.
   if (apply) automationLaunchReserved = true;
   try {
-    const input = await withAuth(() => loadSenderBalanceInput());
+    if (apply) {
+      const { assertSendQuotaIdle } = require('./integrations/send-quota-inspection');
+      assertSendQuotaIdle(await readSendQuotaState());
+    }
+    const input = scopedBalanceInput(await withAuth(() => loadSenderBalanceInput()), { client, bufferRatio });
     const plan = planSenderRebalance(input);
     const view = senderBalanceView(plan);
     if (!apply) return { status: 200, applied: false, ...view };
@@ -5320,9 +5560,10 @@ async function runSenderRebalance({ trigger, apply }) {
 }
 
 // Read-only plan: what the refill would move right now, and why.
-app.get('/api/ops/sender-balance', requireAuth, async (_req, res) => {
+app.get('/api/ops/sender-balance', requireAuth, async (req, res) => {
   try {
-    const result = await runSenderRebalance({ trigger: 'ops_plan', apply: false });
+    const result = await runSenderRebalance({ trigger: 'ops_plan', apply: false,
+      client: req.query.client, bufferRatio: req.query.bufferRatio });
     res.status(result.status).json(result);
   } catch (error) {
     if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
@@ -5331,9 +5572,10 @@ app.get('/api/ops/sender-balance', requireAuth, async (_req, res) => {
   }
 });
 
-app.post('/api/ops/sender-balance', requireAuth, async (_req, res) => {
+app.post('/api/ops/sender-balance', requireAuth, async (req, res) => {
   try {
-    const result = await runSenderRebalance({ trigger: 'ops_manual', apply: true });
+    const result = await runSenderRebalance({ trigger: 'ops_manual', apply: true,
+      client: req.query.client, bufferRatio: req.query.bufferRatio, allowBetweenRuns: req.body?.allowBetweenRuns === true });
     res.status(result.status).json(result);
   } catch (error) {
     if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
@@ -5509,7 +5751,7 @@ function archiveFacets(rows) {
 
 app.get('/api/archive', requireAuth, async (req, res) => {
   try {
-    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const dataset = await withAuth(() => getOutreachDatasetForDisplay(req.query));
     const scope = outreachClientView(dataset, req.query);
     if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
     let unresolved = null;
@@ -5852,7 +6094,7 @@ function scopedOutreachStats(dataset, view) {
 
 app.get('/api/coldemail/stats', requireAuth, async (req, res) => {
   try {
-    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const dataset = await withAuth(() => getOutreachDatasetForDisplay(req.query));
     const scope = outreachClientView(dataset, req.query);
     if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
     if (scope.view) return res.json(scopedOutreachStats(dataset, scope.view));
@@ -5877,7 +6119,7 @@ app.get('/api/coldemail/stats', requireAuth, async (req, res) => {
 // Alias under the newer naming. Same shared snapshot, same numbers.
 app.get('/api/coldemail/summary', requireAuth, async (req, res) => {
   try {
-    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const dataset = await withAuth(() => getOutreachDatasetForDisplay(req.query));
     const scope = outreachClientView(dataset, req.query);
     if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
     if (scope.view) return res.json(scopedOutreachStats(dataset, scope.view));
@@ -5902,7 +6144,7 @@ app.get('/api/coldemail/summary', requireAuth, async (req, res) => {
 // so opening a drill-down costs no sheet read at all.
 app.get('/api/coldemail/replies', requireAuth, async (req, res) => {
   try {
-    const dataset = await withAuth(() => getOutreachDataset({ force: req.query.refresh === '1' }));
+    const dataset = await withAuth(() => getOutreachDatasetForDisplay(req.query));
     const scope = outreachClientView(dataset, req.query);
     if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
     const view = scope.view || dataset;
@@ -5959,7 +6201,7 @@ app.post('/api/coldemail', requireAuth, async (req, res) => {
   }
   if (isStaffingV4Marked({ ...lead, campaign: String(lead.campaign || '').trim() })
     || String(lead.campaign || '').trim() === STAFFING_CAMPAIGN_V4.emailTemplateId) {
-    return res.status(422).json({ error: 'Industrial Staffing V4 leads are not imported until the owner approves enrollment', code: 'staffing_v4_import_not_enabled' });
+    return res.status(422).json({ error: 'Industrial Campaign 3 leads use POST /api/staffing/campaign-3/leads/import', code: 'use_campaign_3_import' });
   }
   // Same choke point as the CSV import: validate format and reject junk,
   // then dedupe against the sheet — this path previously had neither, so a
@@ -6246,8 +6488,11 @@ app.post('/api/coldemail/:id/promote', requireAuth, rejectArchived('coldemail'),
         valueInputOption: 'RAW', requestBody: { values: [[meetingAt || identity.boardLead.meetingAt || '', outcome || identity.boardLead.outcome || '']] },
       }));
     } else {
-      await withAuth(() => appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: SHEET_NAME,
-        values: [...COLUMNS.map(field => String(boardLead[field] ?? '')), '', '', '', meetingAt, outcome, String(req.body?.conversationContext || '').trim().slice(0, 10000)] }));
+      const atomicIdentity = scaleLabOwner(ceLead) && scaleLabRoutingConfig()?.mode === 'apply';
+      const write = await withAuth(() => appendLeadsRow({ sheets: sheets(), spreadsheetId: SPREADSHEET_ID, sheetName: SHEET_NAME,
+        values: [...COLUMNS.map(field => String(boardLead[field] ?? '')), '', '', '', meetingAt, outcome, String(req.body?.conversationContext || '').trim().slice(0, 10000)],
+        atomicIdentity }));
+      if (atomicIdentity && write.duplicate) return res.status(409).json({ error: 'Pipeline card changed during promotion; refresh and retry.' });
     }
 
     const eventId = stableActivityId('pipeline-promotion', [ceLead.id, boardId, decision.targetStage, PROMOTION_TRIGGER.MANUAL]);
@@ -6390,6 +6635,7 @@ function gmailInboxOptions() {
     clientId: sender.clientId || DEFAULT_CLIENT_ID,
     ...(sender.allowedCampaignIds ? { allowedCampaignIds: [...sender.allowedCampaignIds] } : {}),
     ...(sender.configuredDailyLimit !== undefined ? { configuredDailyLimit: sender.configuredDailyLimit } : {}),
+    ...(sender.hardDailyCap !== undefined ? { hardDailyCap: sender.hardDailyCap } : {}),
     ...(sender.policyBlockers?.length ? { policyBlockers: [...sender.policyBlockers] } : {}),
     // Managed inboxes: operational readiness and send authority, kept apart.
     ...(sender.preparationBlockers ? {
@@ -6448,7 +6694,7 @@ async function gmailInboxStatus() {
     });
     inboundHealth = {
       jole: clientInboundHealth({
-        clientId: 'jole', senders, observerRows: dataset.mailboxObservationState || [],
+        clientId: 'jole', senders, leads: dataset.leads || [], observerRows: dataset.mailboxObservationState || [],
         activities: dataset.activities || [],
       }),
     };
@@ -6507,7 +6753,12 @@ app.get('/api/integrations/gmail-inboxes', requireAuth, async (req, res) => {
     if (req.query.client !== undefined) {
       const client = resolveClientId(req.query.client);
       if (!client.ok) return res.status(400).json({ error: client.reason, code: client.code });
-      return res.json({ ...status, inboxes: filterInboxesForClient(status.inboxes, client.clientId) });
+      const inboxes = filterInboxesForClient(status.inboxes, client.clientId);
+      const limits = status.capacity.clientLimits[client.clientId] || { daily: 0, perRun: 0 };
+      return res.json({ inboxes, capacity: { activeSenders: inboxes.filter(item => item.sendEligible).length,
+        globalDailyLimit: limits.daily, globalPerRunLimit: limits.perRun,
+        clientLimits: { [client.clientId]: limits } },
+        inboundHealth: status.inboundHealth?.[client.clientId] ? { [client.clientId]: status.inboundHealth[client.clientId] } : {} });
     }
     res.json(status);
   } catch (error) { res.status(500).json({ error: error.message }); }
@@ -6522,7 +6773,11 @@ app.get('/api/ops/send-audit', requireAuth, (req, res) => {
   const date = String(req.query.date || '').trim()
     || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(422).json({ error: 'date must be YYYY-MM-DD' });
-  const child = spawn('node', ['scripts/audit-gmail-crm-sends.js', `--date=${date}`], {
+  // ?client= audits one managed client's inboxes. Its absence is the ScaleLab audit.
+  const client = req.query.client === undefined ? null : resolveClientId(req.query.client);
+  if (client && !client.ok) return res.status(422).json({ error: client.reason });
+  const scoped = client && client.clientId !== DEFAULT_CLIENT_ID ? [`--client=${client.clientId}`] : [];
+  const child = spawn('node', ['scripts/audit-gmail-crm-sends.js', `--date=${date}`, ...scoped], {
     cwd: __dirname, env: process.env,
   });
   let stdout = '', stderr = '';
@@ -6974,9 +7229,36 @@ app.get('/api/ops/jole-inbound-health', requireAuth, async (_req, res) => {
     const senders = configuredSenders();
     const dataset = await getOutreachDataset({ force: true });
     res.json(clientInboundHealth({
-      clientId: 'jole', senders, observerRows: dataset.mailboxObservationState || [],
+      clientId: 'jole', senders, leads: dataset.leads || [], observerRows: dataset.mailboxObservationState || [],
       activities: dataset.activities || [],
     }));
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// Unowned inbound evidence belongs to the operator, never to a tenant. No
+// message body or prospect identity is returned before ownership is resolved.
+app.get('/api/ops/mailbox-ownership-review', requireAuth, async (_req, res) => {
+  try {
+    const dataset = await getOutreachDataset();
+    const records = (dataset.activities || []).filter(row => row.eventType === 'gmail_ownership_review')
+      .map(row => {
+        let data;
+        try { data = typeof row.metadata === 'object' ? row.metadata : JSON.parse(row.metadata || '{}'); } catch (_) { data = {}; }
+        return { eventId: row.eventId, occurredAt: row.occurredAt, senderInboxId: data.senderInboxId,
+          gmailMessageId: data.gmailMessageId, gmailThreadId: data.gmailThreadId, reason: data.reason };
+      }).sort((a, b) => String(b.occurredAt || '').localeCompare(String(a.occurredAt || '')));
+    res.json({ operatorOnly: true, total: records.length, records: records.slice(0, 200) });
+  } catch (_) { res.status(503).json({ error: 'Mailbox ownership review is unavailable' }); }
+});
+
+// Read-only: how this client's mail is failing, by class, inbox and domain, from
+// the activity ledger. No Gmail call, no send, no write.
+app.get('/api/ops/client-delivery-health', requireAuth, async (req, res) => {
+  try {
+    const client = resolveClientId(req.query.client);
+    if (!client.ok) return res.status(422).json({ error: client.reason });
+    const dataset = await getOutreachDataset();
+    res.json(clientDeliveryHealth({ clientId: client.clientId, senders: configuredSenders(), leads: dataset.leads || [], activities: dataset.activities || [] }));
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
@@ -6989,10 +7271,8 @@ app.get('/api/ops/mailbox-diagnostic', requireAuth, async (req, res) => {
       const row = (dataset.mailboxObservationState || []).find(row => row[0] === sender.id) || [];
       const trace = [];
       try {
-        // Same client scope as the agent's observer: an inbox never matches
-        // another client's leads.
-        const owner = require('./integrations/clients/ownership').resolveSenderClient(sender);
-        const scopedLeads = owner.ok ? leadsInEmailScope(dataset.leads, owner.clientId) : dataset.leads;
+        // Use the same proven historical-conversation scope as the observer.
+        const scopedLeads = mailboxLeadScope(dataset.leads, sender, dataset.activities || []);
         const observation = await observeMailbox({ ...mailbox, senderInboxId: sender.id, senderEmail: mailbox.email,
           leads: scopedLeads, activities: dataset.activities, historyId: row[1] || null,
           lastSuccessfulObservationAt: row[2] || null, previousHealth: row[5] || null,
@@ -7263,7 +7543,15 @@ app.post('/api/integrations/gmail-inboxes/:id/verify', requireAuth, async (req, 
       return res.status(404).json({ error: 'Gmail inbox is not registered' });
     }
     res.json(await verifyGmailInbox(entry));
-  } catch (error) { res.status(422).json({ error: error.message }); }
+  } catch (error) {
+    const workspaceReviewRequired = /access_not_configured|admin_policy_enforced/i.test(String(error.message || ''));
+    res.status(422).json({ error: error.message,
+      ...(workspaceReviewRequired ? { actionRequired: 'workspace_admin_app_access',
+        // OAuth client IDs are public identifiers, not credentials. Never return
+        // the client secret, token, request config or raw provider response.
+        oauthClientId: req.params.id === 'primary' ? process.env.GOOGLE_CLIENT_ID : process.env.GMAIL_SECONDARY_GOOGLE_CLIENT_ID,
+        requiredScope: 'https://www.googleapis.com/auth/gmail.modify' } : {}) });
+  }
 });
 
 function senderById(id) {
@@ -7341,6 +7629,25 @@ app.post('/api/integrations/gmail-inboxes/:id/pause', requireAuth, async (req, r
   } catch (error) { res.status(422).json({ error: error.message }); }
 });
 
+// Starts one controlled inbox-placement test (integrations/placement-test.js).
+// The agent process does the sending, behind the same authorization, reservation
+// and quota as a scheduled run. Owned mailboxes only; a repeated label sends nothing.
+app.post('/api/ops/placement-test', requireAuth, (req, res) => {
+  const label = String(req.body?.label || '').trim();
+  if (req.body?.confirm !== PLACEMENT_TEST_CONFIRM || !validPlacementLabel(label)) {
+    return res.status(422).json({ error: 'label and confirmation are required', sends: 0 });
+  }
+  if (clientSendWindowVerdict(PLACEMENT_TEST_CLIENT).allowed) {
+    return res.status(409).json({ error: 'refused: the client send window is open', sends: 0 });
+  }
+  if (agentState.running || automationLaunchReserved) {
+    return res.status(409).json({ error: 'refused: an automation run is active', sends: 0 });
+  }
+  spawnAgent(false, { PLACEMENT_TEST_LABEL: label });
+  res.status(202).json({ started: true, label, recipients: PLACEMENT_TEST_RECIPIENTS.map(item => item.id) });
+});
+// End placement test route
+
 app.get('/api/ops/send-quota', requireAuth, async (_req, res) => {
   try {
     const senders = configuredSenders();
@@ -7367,6 +7674,24 @@ app.get('/api/ops/send-quota', requireAuth, async (_req, res) => {
       })),
     });
   } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+async function readSendQuotaState() {
+  let pool;
+  try {
+    const { sendLockDatabaseUrl, sendLockEnabled } = require('./integrations/send-lock-config');
+    if (!sendLockEnabled() || !sendLockDatabaseUrl()) throw new Error('Send quota database is unavailable');
+    const { Pool } = require('pg');
+    pool = new Pool({ connectionString: sendLockDatabaseUrl(), max: 1, connectionTimeoutMillis: 4000 });
+    const dayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+    return await require('./integrations/send-quota-inspection').inspectSendQuota(pool, dayKey);
+  }
+  finally { if (pool) await pool.end().catch(() => {}); }
+}
+
+app.get('/api/ops/send-quota-state', requireAuth, async (_req, res) => {
+  try { res.json(await readSendQuotaState()); }
+  catch (_) { res.status(503).json({ error: 'Send quota state could not be read' }); }
 });
 
 // Token-protected, read-only production diagnostic. It cannot send or mutate
@@ -7631,7 +7956,10 @@ async function handleSmartleadWebhook(req, res) {
 
 async function reconcileSmartlead() {
   if (!smartleadClient.integrationEnabled) return { skipped: true };
-  const mappings = (await readIntegrationRows(CAMPAIGN_INTEGRATIONS_SHEET, CAMPAIGN_INTEGRATIONS_HEADER)).filter(row => row.provider === 'smartlead' && row.externalCampaignId);
+  // Campaigns of retired offers (e.g. the old dental test campaign) are not
+  // reconciled: nothing of theirs can send, and their mapping only failed hourly.
+  const mappings = (await readIntegrationRows(CAMPAIGN_INTEGRATIONS_SHEET, CAMPAIGN_INTEGRATIONS_HEADER))
+    .filter(row => row.provider === 'smartlead' && row.externalCampaignId && !retiredOfferFor({ campaign: row.internalCampaignId }));
   const startedAt = new Date().toISOString();
   const result = { attempted: mappings.length, successful: 0, failed: 0, pages: 0, leads: 0, errors: [] };
   for (const mapping of mappings) {
@@ -7846,6 +8174,40 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   }, { timezone: 'America/Vancouver' });
   console.log('[cron] Google Calendar booking sync scheduled every 5 minutes (feature-gated)');
 
+  // Managed-client calendars → client ledgers. Each service returns before any
+  // read while its own flag is off. Offset from the ScaleLab sync above.
+  let clientCalendarInFlight = false;
+  cron.schedule('3,8,13,18,23,28,33,38,43,48,53,58 * * * *', () => {
+    if (clientCalendarInFlight) return;
+    clientCalendarInFlight = true;
+    Promise.all([...clientCalendarSyncs.entries()].map(([clientId, service]) => service.run({ apply: true })
+      .then(result => {
+        if (!result.skipped && (result.mutations || !result.ok)) {
+          console.log(`[Client calendar:${clientId}] ${result.ok ? 'complete' : 'failed'} — ${result.mutations || 0} mutation(s), `
+            + `${result.events || 0} event(s), ${result.review ?? 0} awaiting review${result.reason ? ` (${result.reason})` : ''}`);
+        }
+      })
+      .catch(error => console.error(`[Client calendar:${clientId}] unhandled failure:`, error.message))))
+      .finally(() => { clientCalendarInFlight = false; });
+  }, { timezone: 'America/Vancouver' });
+  console.log('[cron] Managed-client calendar sync scheduled every 5 minutes (per-client flag)');
+
+  // Billing: on the 1st and 15th a DRAFT invoice per billing client (never
+  // sent automatically), and every hour a re-read of drafts and open invoices
+  // so a missed Stripe webhook cannot leave the ledger stale. Both return
+  // without any read while billing is not configured.
+  let billingCronInFlight = false;
+  cron.schedule('20 * * * *', () => {
+    if (billingCronInFlight) return;
+    billingCronInFlight = true;
+    billingService.runScheduled()
+      .then(results => { for (const r of results) if (r.drafted) console.log(`[billing:${r.clientId}] drafted ${r.drafted} — ${r.meetings} meeting(s), ${r.amountCents} cents; waiting for Send`); })
+      .then(() => billingService.reconcileOpen())
+      .catch(error => console.error('[billing] scheduled pass failed:', error.message))
+      .finally(() => { billingCronInFlight = false; });
+  }, { timezone: 'America/Vancouver' });
+  console.log('[cron] Billing drafts (1st/15th) and Stripe reconcile scheduled hourly at :20 (feature-gated)');
+
   // Staffing landing attribution: backfill issuances from the activity ledger,
   // link early sessions, daily retention. Supabase landing functions only; the
   // first line returns unless LANDING_RECONCILER_ENABLED is exactly "true".
@@ -7874,11 +8236,26 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   // inbox's day, and leads routed by hand. It moves unsent unowned step-1 leads
   // only, and does nothing when every inbox already holds its day's target.
   cron.schedule('40,50 6 * * 1-5', () => {
-    runSenderRebalance({ trigger: 'scheduled_pre_window', apply: true })
+    runSenderRebalance({ trigger: 'scheduled_pre_window', apply: true, client: 'scalelab' })
       .then(result => { if (result.status !== 200) console.warn(`[sender-balance] scheduled refill skipped: ${result.error}`); })
       .catch(error => console.error('[sender-balance] scheduled refill failed:', error.message));
   }, { timezone: 'America/Vancouver' });
   console.log('[cron] Sender refill scheduled: 06:40 and 06:50 Pacific, Mon–Fri (unsent step-1 leads only; the second run is a no-op once balanced)');
+
+  // Jole starts at 05:00 Pacific (07:00 Chicago), before the legacy refill.
+  cron.schedule('40,50 4 * * 1-5', () => {
+    runSenderRebalance({ trigger: 'scheduled_jole_pre_window', apply: true, client: 'jole' })
+      .then(result => { if (result.status !== 200) console.warn(`[sender-balance] Jole pre-window refill skipped: ${result.error}`); })
+      .catch(error => console.error('[sender-balance] Jole pre-window refill failed:', error.message));
+  }, { timezone: 'America/Vancouver' });
+  // Reclaim genuinely unsent supply from capped inboxes before subsequent
+  // normal windows. Busy runs/lanes refuse the refill; nothing replays a tick.
+  cron.schedule('24,54 5-9 * * 1-5', () => {
+    runSenderRebalance({ trigger: 'scheduled_jole_between_runs', apply: true, client: 'jole', allowBetweenRuns: true })
+      .then(result => { if (result.status !== 200) console.warn(`[sender-balance] Jole between-run refill skipped: ${result.error}`); })
+      .catch(error => console.error('[sender-balance] Jole between-run refill failed:', error.message));
+  }, { timezone: 'America/Vancouver' });
+  console.log('[cron] Jole sender refill: 04:40/04:50 and idle-only :24/:54, 05–09 Pacific, Mon–Fri');
 
   // Daily digest — 18:00 America/Vancouver. getOrCreateDigest is idempotent, so
   // a restart, a re-fire, or a dashboard load on the same day all reuse the

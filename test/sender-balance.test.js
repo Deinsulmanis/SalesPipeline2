@@ -68,6 +68,47 @@ const applyMoves = (leads, plan) => {
   return leads.map(lead => (to.has(lead.id) ? { ...lead, senderInboxId: to.get(lead.id), revision: lead.revision + 1 } : lead));
 };
 
+test('refill uses remaining physical capacity, including sends for another client', () => {
+  const used = (id, count, clientId) => Array.from({ length: count }, (_, i) => ({
+    eventId: `${id}-${i}`, eventType: 'initial_email_sent', occurredAt: new Date(NOW).toISOString(),
+    metadata: JSON.stringify({ senderInboxId: id, clientId }),
+  }));
+  const events = [...used('primary', 24, 'scalelab'), ...used('tryscalelabai', 20, 'jole')];
+  const leads = Array.from({ length: 30 }, () => staffing('tryscalelabai'));
+  const plan = planSenderRebalance(input(leads, { senders: [sender('primary', 45), sender('tryscalelabai', 20)],
+    activities: [...events, events[0]], horizon: NOW, bufferRatio: 0 }));
+  assert.equal(row(plan, 'primary').sentInPlanningDay, 24, 'duplicate events count once and physical usage crosses client boundaries');
+  assert.equal(row(plan, 'primary').remainingCapacity, 21);
+  assert.equal(row(plan, 'tryscalelabai').remainingCapacity, 0);
+  assert.equal(plan.moves.length, 21, 'a capped inbox can spare its queued leads for the remaining gap');
+  assert.ok(plan.moves.every(move => move.to === 'primary'));
+  assert.deepEqual(plan.hardShortages, []);
+  assert.equal(planSenderRebalance(input(applyMoves(leads, plan), { senders: [sender('primary', 45), sender('tryscalelabai', 20)],
+    activities: events, horizon: NOW, bufferRatio: 0 })).moves.length, 0, 'refill is idempotent');
+});
+
+test('tomorrow refill does not subtract today sends and capped inboxes have no buffer deficit', () => {
+  const activities = [{ eventId: 'sent', eventType: 'initial_email_sent', occurredAt: new Date(NOW).toISOString(),
+    metadata: JSON.stringify({ senderInboxId: 'primary' }) }];
+  const today = senderWorkload(input([], { senders: [sender('primary', 1)], activities, horizon: NOW }));
+  assert.equal(today.senders[0].target, 0);
+  assert.equal(today.senders[0].hardDeficit, 0);
+  const tomorrow = senderWorkload(input([], { senders: [sender('primary', 1)], activities, horizon: NOW + DAY }));
+  assert.equal(tomorrow.senders[0].remainingCapacity, 1);
+  assert.equal(tomorrow.senders[0].target, 2);
+});
+
+test('live refill also respects the remaining normal windows for each client', () => {
+  const now = Date.parse('2026-11-10T15:40:00.000Z'); // 07:40 Pacific / 09:40 Chicago
+  const senders = [sender('primary', 45, { clientId: 'jole', perRunLimit: 5 }),
+    sender('deniels', 30, { clientId: 'jole', perRunLimit: 3 }),
+    sender('tryscalelabai', 60, { clientId: 'scalelab', perRunLimit: 6 })];
+  const workload = senderWorkload(input([], { senders, now, horizon: now, bufferRatio: 0 }));
+  assert.deepEqual(workload.senders.map(row => row.remainingCapacity), [20, 12, 48]);
+  const tomorrow = senderWorkload(input([], { senders, now, horizon: now + DAY, bufferRatio: 0 }));
+  assert.deepEqual(tomorrow.senders.map(row => row.remainingCapacity), [45, 30, 60]);
+});
+
 // 1 ────────────────────────────────────────────────────────────────────────
 test('staffing first-touch fills every eligible inbox to its own capacity target', () => {
   const leads = Array.from({ length: 300 }, () => staffing('primary'));
@@ -403,15 +444,20 @@ test('concurrent applies cannot reassign the same lead twice (compare-and-set)',
   for (const move of planA.moves) assert.equal(store.get(move.leadId).revision, 2);
 });
 
-test('the refill is serialised and never runs beside an agent pass or inside the send window', () => {
+test('the refill is serialised; only scoped idle-proven Jole refills may run between send windows', () => {
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   const body = server.slice(server.indexOf('async function runSenderRebalance'), server.indexOf("app.get('/api/ops/sender-balance'"));
   assert.match(body, /if \(senderRebalanceInFlight\) return \{ status: 409/);
   assert.match(body, /agentState\.running \|\| automationLaunchReserved/);
-  assert.match(body, /insideSendWindow\(\)/);
+  assert.match(body, /insideSendWindow\(new Date\(\), client\) && !\(client === 'jole' && allowBetweenRuns === true\)/);
+  assert.match(body, /assertSendQuotaIdle\(await readSendQuotaState\(\)\)/);
+  assert.ok(body.indexOf('automationLaunchReserved = true') < body.indexOf('assertSendQuotaIdle('));
+  assert.ok(body.indexOf('assertSendQuotaIdle(') < body.indexOf('loadSenderBalanceInput()'));
   assert.match(body, /patch: \{ senderInboxId: move\.to \}, row: rowsById\.get\(move\.leadId\)\[0\], expectedState: move\.expectedState/,
     'writes only senderInboxId, compare-and-set against the planned state');
   assert.match(server, /cron\.schedule\('40,50 6 \* \* 1-5'/);
+  assert.match(server, /cron\.schedule\('40,50 4 \* \* 1-5'/);
+  assert.match(server, /cron\.schedule\('24,54 5-9 \* \* 1-5'/);
 });
 
 // 12 ───────────────────────────────────────────────────────────────────────

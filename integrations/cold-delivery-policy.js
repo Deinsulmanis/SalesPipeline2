@@ -21,10 +21,16 @@
  * Classification fails closed: a lookup error, timeout, missing MX, gateway or
  * anything ambiguous is UNKNOWN, and UNKNOWN is never GOOGLE.
  *
- * Configuration (the provider and pool defaults ARE the temporary policy; the
- * cap is applied only when COLD_INBOX_DAILY_CAP is set):
- *   RECIPIENT_PROVIDER_POLICY   google_only (default) | off
- *                               any other value → google_only (fails closed)
+ * 2026-10-23: the recipient-provider restriction is retired. ScaleLab no longer
+ * restricts cold recipients by mailbox provider, so the recipient side defaults
+ * to off and admits Google, Microsoft and other providers alike. google_only
+ * survives only as an explicit opt-in. Suppression, bounce, validity, role
+ * mailbox, duplicate, cap and window protections live elsewhere and still apply.
+ *
+ * Configuration (the pool default is the temporary sender policy; the cap is
+ * applied only when COLD_INBOX_DAILY_CAP is set):
+ *   RECIPIENT_PROVIDER_POLICY   off (default) | google_only (explicit opt-in)
+ *                               any other value → off
  *   COLD_SENDER_POOL            comma-separated inbox ids
  *                               default primary,scalelabaiteam
  *                               "all" → no pool restriction
@@ -103,7 +109,7 @@ const OTHER_MX = /(?:^|\.)(?:secureserver\.net|zoho\.(?:com|eu|in)|zohomail\.com
 const norm = value => String(value || '').trim().toLowerCase();
 
 function recipientProviderPolicy(env = process.env) {
-  return norm(env.RECIPIENT_PROVIDER_POLICY) === POLICY.OFF ? POLICY.OFF : POLICY.GOOGLE_ONLY;
+  return norm(env.RECIPIENT_PROVIDER_POLICY) === POLICY.GOOGLE_ONLY ? POLICY.GOOGLE_ONLY : POLICY.OFF;
 }
 
 function coldSenderPool(env = process.env) {
@@ -279,6 +285,20 @@ function isProspectingSend(purpose) {
   return norm(purpose) !== 'warm';
 }
 
+const RECIPIENT_INVALID = 'recipient_invalid';
+/**
+ * Provider-independent recipient validity, whatever the provider policy: a
+ * malformed address, or a domain known to accept no mail (no MX / null MX), is
+ * refused. An address not yet classified is not refused here. PURE.
+ */
+function recipientValidityVerdict(email, classification) {
+  if (!recipientDomain(email)) return { allowed: false, code: RECIPIENT_INVALID, reason: 'recipient address is malformed' };
+  if (classification?.reason === 'no_mx') {
+    return { allowed: false, code: RECIPIENT_INVALID, reason: `recipient domain ${classification.domain || ''} accepts no mail (no MX)` };
+  }
+  return { allowed: true, code: '' };
+}
+
 /** Recipient side of the policy. PURE. */
 function providerVerdict(classification, env = process.env) {
   if (recipientProviderPolicy(env) === POLICY.OFF) return { allowed: true, code: '', policy: POLICY.OFF, provider: classification?.provider || PROVIDER.UNKNOWN };
@@ -342,7 +362,11 @@ async function admitByRecipientProvider(leads, classifier, env = process.env) {
   const allowed = new Set();
   const held = [];
   if (recipientProviderPolicy(env) === POLICY.OFF) {
-    for (const lead of leads || []) allowed.add(lead.id);
+    for (const lead of leads || []) {
+      const validity = recipientValidityVerdict(lead.email, null);
+      if (validity.allowed) allowed.add(lead.id);
+      else held.push({ leadId: lead.id, domain: '', provider: PROVIDER.UNKNOWN, holdReason: validity.code, classification: 'malformed_address' });
+    }
     return { allowed, held };
   }
   const byEmail = new Map();
@@ -367,5 +391,6 @@ module.exports = {
   DEFAULT_COLD_INBOX_DAILY_CAP, recipientProviderPolicy, coldSenderPool, coldSenderHolds, coldInboxDailyCap,
   coldInboxDailyCaps, senderDailyCeiling, applyColdInboxCap,
   recipientDomain, classifyMxHosts, createProviderClassifier, isProspectingSend, providerVerdict,
+  RECIPIENT_INVALID, recipientValidityVerdict,
   coldSenderVerdict, coldDeliveryVerdict, describeColdDeliveryPolicy, admitByRecipientProvider,
 };

@@ -160,11 +160,20 @@ const JOLE = Object.freeze({
     handOffOnPositiveReply: false,
   }),
   booking: Object.freeze({
-    // Meetings are recorded by a ScaleLab operator into the ledger. Jole's
-    // calendar is not connected to this system.
+    // Meetings live in the client ledger, never on ScaleLab's board, so the
+    // ScaleLab booking sync (mode google_calendar_sync) never matches Jole leads.
+    // Jorge's own calendar feeds the ledger through client-calendar.js, read-only
+    // and off until JOLE_CALENDAR_SYNC_ENABLED=true; an operator can still record
+    // a meeting by hand.
     mode: 'operator_recorded',
     meetingWith: 'Jorge Guerrero',
-    calendarConnected: false,
+    calendarSync: Object.freeze({
+      provider: 'google_calendar',
+      enabledEnv: 'JOLE_CALENDAR_SYNC_ENABLED',
+      calendarIdEnv: 'JOLE_BOOKING_CALENDAR_ID',
+      scheduleIdEnv: 'JOLE_BOOKING_APPOINTMENT_SCHEDULE_ID',
+      ownerEmailsEnv: 'JOLE_CALENDAR_OWNER_EMAILS',
+    }),
   }),
   qualification: Object.freeze({
     requireIcpFit: true,
@@ -185,6 +194,23 @@ const JOLE = Object.freeze({
     currency: 'USD',
     // The setup fee is billed outside this operational ledger.
     setupFee: 'tracked_outside_ledger',
+    // Stripe invoicing (integrations/clients/billing.js). Off unless
+    // STRIPE_BILLING_ENABLED=true and the customer is configured. Agreement:
+    // Jorge is invoiced on the 1st and 15th (drafts the operator sends), or
+    // per meeting on demand; payment due in 7 days; no tax.
+    // Since 2026-11-17 Jorge saves a card once and ScaleLab charges it on its
+    // own click (1st/15th draft or per meeting); Stripe emails the paid
+    // invoice after. Emailing a pay-by-invoice stays as the fallback.
+    stripe: Object.freeze({
+      customerIdEnv: 'JOLE_STRIPE_CUSTOMER_ID',
+      productIdEnv: 'JOLE_STRIPE_PRODUCT_ID',
+      priceIdEnv: 'JOLE_STRIPE_PRICE_ID',
+      collection: 'charge_card',
+      schedule: 'semi_monthly',          // drafts on the 1st and 15th, America/Vancouver
+      draftsRequireSend: true,           // a scheduled draft is never sent automatically
+      daysUntilDue: 7,
+      lineLabel: 'Qualified meeting',
+    }),
   }),
   reporting: Object.freeze({ ledger: true }),
   campaignDefaults: Object.freeze({ leadType: 'jole_employer', sequenceSteps: 3 }),

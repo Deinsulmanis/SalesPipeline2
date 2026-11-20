@@ -218,10 +218,8 @@ test('outbound observation precedes reply auto-response and recorded human touch
   assert.match(question, /if \(!outboundObservationOk\)/);
   assert.ok(question.indexOf('humanTouchAt') < question.indexOf('deliverHardenedWarmReply'));
 
-  const roofing = agent.slice(agent.indexOf('async function handleRoofingSurveyReply'), agent.indexOf('// ── REPLY-CHECK PASS'));
-  assert.match(roofing, /const humanTouchAt = latestHumanOutboundAt\(activities\)/);
-  assert.match(roofing, /!outboundObservationOk/);
-  assert.ok(roofing.indexOf('humanTouchAt') < roofing.indexOf('deliverHardenedWarmReply'));
+  // The roofing survey's automatic reply path was removed with the offer.
+  assert.doesNotMatch(agent, /handleRoofingSurveyReply/);
 });
 
 test('outbound observation runs before stage sequences and protects both send systems in the same cycle', () => {

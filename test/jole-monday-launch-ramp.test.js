@@ -200,9 +200,10 @@ test('7. Jole sends only weekdays 07:00–11:59 America/Chicago', () => {
 
 test('8–10. v2 renders: role — location subject, optional second role, both Touch 2 URLs, Jole\'s address only', () => {
   const one = joleLead(3);
-  // Monday's leads began their sequences on v2 (their Touch 1 recorded v2), so they keep v2.
-  const v2Began = lead => [{ eventType: 'initial_email_sent', sourceLeadId: lead.id, occurredAt: '2026-10-19T14:00:00.000Z',
-    metadata: JSON.stringify({ copyVersion: 'jole_industrial_employer_v2' }) }];
+  // Monday's touches were sent on v2 and recorded v2, so each one still reconstructs as v2
+  // (an unsent touch renders v5 since 2026-10-27; jole-v5-copy.test.js).
+  const v2Began = lead => [1, 2, 3].map(step => ({ eventType: step === 1 ? 'initial_email_sent' : 'follow_up_sent', sourceLeadId: lead.id,
+    occurredAt: `2026-10-${18 + step}T14:00:00.000Z`, metadata: JSON.stringify({ copyVersion: 'jole_industrial_employer_v2', step }) }));
   const e1 = renderClientLeadEmail(one, 1, { env: MONDAY_ENV, now: MONDAY_0900_CT, activities: v2Began(one) });
   assert.equal(e1.copyVersion, 'jole_industrial_employer_v2');
   assert.equal(e1.subject, 'Millwrights — Mont Belvieu, TX');
