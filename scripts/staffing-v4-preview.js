@@ -22,6 +22,7 @@ const profileLib = require('../integrations/staffing-v4-profile');
 const { STAFFING_CAMPAIGN_V4, renderStaffingEmail, validateStaffingEmail, staffingV4SendBlock } = require('../integrations/staffing-campaign');
 const { appendStaffingComplianceFooter, staffingSenderIdentity } = require('../integrations/staffing-compliance');
 const { PRODUCTION_STAFFING_RENDER_OPTIONS: OPTIONS } = require('../test-support/staffing-mail');
+const { recipientProviderPolicy, POLICY } = require('../integrations/cold-delivery-policy');
 
 const [, , evidencePath, outDir] = process.argv;
 if (!evidencePath || !outDir) {
@@ -32,11 +33,16 @@ if (!evidencePath || !outDir) {
 const SELECTED_AT = '2026-11-20T00:00:00.000Z';
 const records = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
 
+// The recipient-provider policy the production code applies, from the same
+// RECIPIENT_PROVIDER_POLICY setting (default off). Production is off as of
+// 2026-11-20; set RECIPIENT_PROVIDER_POLICY=google_only to preview that policy.
+const PROVIDER_POLICY = recipientProviderPolicy(process.env);
 function admission(row) {
-  const gateway = String(row.mail_gateway || '').toLowerCase();
+  const gateway = String(row.mail_gateway || '').toLowerCase() || 'unknown';
+  if (PROVIDER_POLICY !== POLICY.GOOGLE_ONLY) return `ADMITTED (RECIPIENT_PROVIDER_POLICY=${PROVIDER_POLICY}; mailbox host: ${gateway})`;
   return gateway === 'google'
     ? 'ADMITTED under RECIPIENT_PROVIDER_POLICY=google_only'
-    : `HELD under RECIPIENT_PROVIDER_POLICY=google_only (mailbox host: ${gateway || 'unknown'})`;
+    : `HELD under RECIPIENT_PROVIDER_POLICY=google_only (mailbox host: ${gateway})`;
 }
 
 const results = records.map(({ row, evidence }) => {
@@ -96,7 +102,9 @@ const summary = {
   generatedFrom: path.basename(evidencePath), leads: results.length,
   byStatus: count('status'),
   byVariant: results.reduce((acc, r) => { const k = r.status === 'SELECTED' ? r.variant : `HOLD${r.variant ? ` (evidence: ${r.variant})` : ''}`; acc[k] = (acc[k] || 0) + 1; return acc; }, {}),
-  googleAdmitted: results.filter(r => String(r.gateway).toLowerCase() === 'google').length,
+  providerPolicy: PROVIDER_POLICY,
+  admitted: results.filter(r => r.admission.startsWith('ADMITTED')).length,
+  googleHosted: results.filter(r => String(r.gateway).toLowerCase() === 'google').length,
   sendable: results.filter(r => !r.sendBlock).length,
   renderProblems: results.reduce((n, r) => n + r.problems.length, 0),
 };

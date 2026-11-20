@@ -5323,7 +5323,7 @@ const {
 // Temporary recipient-provider gate: one domain-level MX cache for the server.
 const recipientProviderClassifier = createProviderClassifier();
 const {
-  assignBatch, planSenderRebalance, nextSendDayHorizon, scopedBalanceInput,
+  assignBatch, planSenderRebalance, nextSendDayHorizon, scopedBalanceInput, coldAssignableSenders,
 } = require('./integrations/sender-balance');
 const { staffingLaunchState } = require('./integrations/staffing-launch-gate');
 app.get('/api/staffing/launch-readiness', requireAuth, async (_req, res) => {
@@ -5372,7 +5372,7 @@ app.post('/api/coldemail/queue', requireAuth, async (req, res) => {
       // 'auto': one capacity-weighted inbox per lead, from the same canonical
       // state loadState() just read, plus the durable send lock's open rows.
       assignSenders: senderInboxId === AUTO_SENDER ? (batch, state) => (state.lockedLeadIds instanceof Set
-        ? assignBatch({ batch, input: { ...state, senders: configuredSenders(), lockedLeadIds: state.lockedLeadIds,
+        ? assignBatch({ batch, input: { ...state, senders: coldAssignableSenders(configuredSenders()), lockedLeadIds: state.lockedLeadIds,
           horizon: nextSendDayHorizon(new Date()), now: Date.now(), env: process.env } })
         : { assignments: new Map(), refused: [{ leadId: batch[0]?.id || '',
           reason: 'automatic sender assignment requires Supabase canonical state and the durable send lock' }] })
@@ -5458,7 +5458,8 @@ async function loadSenderBalanceInput() {
     leads: corpus.leads, activities: dataset.activities || [], boardLeads: dataset.boardLeads || [],
     suppressedEmails: dataset.suppressedEmails || new Set(),
     lockedLeadIds: await unresolvedReservationLeadIds(),
-    senders: configuredSenders(), horizon: nextSendDayHorizon(new Date()), now: Date.now(), env: process.env,
+    // Never plan a move onto a cold-held or out-of-pool inbox (coldAssignableSenders).
+    senders: coldAssignableSenders(configuredSenders()), horizon: nextSendDayHorizon(new Date()), now: Date.now(), env: process.env,
   };
 }
 
