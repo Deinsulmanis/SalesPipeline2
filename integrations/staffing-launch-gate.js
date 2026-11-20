@@ -35,6 +35,12 @@ function isStaffingLead(lead = {}) {
 }
 function staffingSendBlockReason(lead, env = process.env, now = Date.now()) {
   if (!isStaffingLead(lead)) return '';
+  // Industrial Campaign 3 (staffing V4) is also held at the final gate
+  // (send-safety-revalidate and the provider call both read this): a V4 lead
+  // whose sealed profile is not SEND_READY is refused. Lazy require:
+  // staffing-campaign loads modules that load this file.
+  const v4Block = require('./staffing-campaign').staffingV4SendBlock(lead);
+  if (v4Block) return v4Block;
   const launch = staffingLaunchState(env, now).reason;
   if (launch) return launch;
   if (isStaffingCampaign2Lead(lead) && !staffingCampaign2Open(now)) {

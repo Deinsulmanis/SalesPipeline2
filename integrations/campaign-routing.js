@@ -2,7 +2,8 @@
 
 const { CAMPAIGN_VERSIONS, CAMPAIGN_FAMILY, resolveLeadFamily } = require('./campaign-versions');
 const { staffingSendBlockReason, isStaffingLead } = require('./staffing-launch-gate');
-const { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_2, STAFFING_CAMPAIGN_V2, isStaffingCampaignVersionId, staffingV2SendBlock } = require('./staffing-campaign');
+const { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_2, STAFFING_CAMPAIGN_V2, STAFFING_CAMPAIGN_V4, isStaffingCampaignVersionId,
+  staffingV2SendBlock, staffingV4SendBlock } = require('./staffing-campaign');
 const { hasStaffingHoldMarker } = require('./staffing-hold');
 const { isStaffingOnlySender } = require('./gmail-inbox-registry');
 const { getClient } = require('./clients/registry');
@@ -23,6 +24,11 @@ const EMAIL_TEMPLATES = Object.freeze([
     niche: STAFFING_CAMPAIGN_V2.niche, sequenceSteps: 3,
     get ready() { return STAFFING_CAMPAIGN_V2.ready; },
     get reason() { return STAFFING_CAMPAIGN_V2.ready ? '' : `${STAFFING_CAMPAIGN_V2.name} is registered but not live yet`; } }),
+  // Staffing V4's copy: ready only once V4 is live (staffing-campaign.js).
+  Object.freeze({ id: STAFFING_CAMPAIGN_V4.emailTemplateId, name: STAFFING_CAMPAIGN_V4.name,
+    niche: STAFFING_CAMPAIGN_V4.niche, sequenceSteps: 3,
+    get ready() { return STAFFING_CAMPAIGN_V4.ready; },
+    get reason() { return STAFFING_CAMPAIGN_V4.ready ? '' : `${STAFFING_CAMPAIGN_V4.name} is registered but not live yet`; } }),
   // Retired with the dental offer (lead-archive RETIRED_OFFERS). Kept registered
   // so historical sends still resolve their copy; never ready again.
   Object.freeze({ id: 'dental-guarantee-v1', name: 'Dental guarantee pitch', niche: 'dental', ready: false, sequenceSteps: 3,
@@ -210,6 +216,9 @@ function routedLeadReady(lead, env = process.env, { preparation = false } = {}) 
   // roles + market; anything less is held here, never re-routed to V1.
   const v2Block = staffingV2SendBlock(lead);
   if (v2Block) return { ok: false, reason: v2Block };
+  // Likewise V4: a sealed, SEND_READY profile with a selected variant, V4 live.
+  const v4Block = staffingV4SendBlock(lead);
+  if (v4Block) return { ok: false, reason: v4Block };
   return { ok: true, legacy: false, template };
 }
 

@@ -5,6 +5,12 @@ const {
   SCHEMA_MARKER: STAFFING_V2_PROFILE_MARKER, PROFILE_INTEGRITY_FAILED, TIER_RULES, hasStaffingV2ProfileMarker,
   readStaffingV2Profile, staffingV2RolesText,
 } = require('./staffing-v2-profile');
+// A V4 lead's sealed profile (tag, demand score, review status, selected variant).
+const {
+  SCHEMA_MARKER: STAFFING_V4_PROFILE_MARKER, PROFILE_INTEGRITY_FAILED: V4_PROFILE_INTEGRITY_FAILED,
+  hasStaffingV4ProfileMarker, readStaffingV4Profile,
+} = require('./staffing-v4-profile');
+const { renderV4Copy, v4CopyProblem, FOLLOW_UPS: V4_FOLLOW_UPS } = require('./staffing-v4-copy');
 
 // Approved locked copy. Readiness permits queueing; staffing-launch-gate separately controls delivery.
 const STAFFING_CAMPAIGN = Object.freeze({
@@ -74,7 +80,41 @@ const STAFFING_CAMPAIGN_2 = Object.freeze({
   ready: true,
 });
 
-const STAFFING_CAMPAIGNS = Object.freeze([STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_2, STAFFING_CAMPAIGN_V2]);
+
+// Industrial Campaign 3 (internally "staffing V4", 2026-11-20): ONE campaign,
+// owned by ScaleLab AI, whose Email 1 is one of six evidence-selected variants
+// (staffing-v4-copy.js) and whose Emails 2 and 3 are shared and threaded under
+// Email 1's subject. Cadence, sender assignment, caps, threading, reservations
+// and every safety gate are the existing ones.
+//
+// Live (owner approval 2026-11-20): a lead may be queued and sent only when its
+// sealed profile holds a selected variant, a clean contact QC status and an
+// explicit SEND_READY review status (staffingV4SendBlock), and the shared
+// staffing launch gate is active. STAFFING_V4_LIVE = false stops it again.
+const STAFFING_V4_LIVE = true;
+let staffingV4LiveOverride = null;
+function staffingV4Live() {
+  return staffingV4LiveOverride === null ? STAFFING_V4_LIVE : staffingV4LiveOverride;
+}
+/** Tests only: model Campaign 3 live (true) or locked (false); null restores the source value. */
+function setStaffingV4LiveForTests(value) {
+  staffingV4LiveOverride = value === null ? null : Boolean(value);
+}
+
+const STAFFING_CAMPAIGN_V4 = Object.freeze({
+  id: 'industrial_staffing_campaign_3',
+  name: 'Industrial Campaign 3',
+  legacyNames: Object.freeze([]),
+  niche: STAFFING_CAMPAIGN.niche,
+  emailTemplateId: 'industrial-staffing-campaign-3',
+  personalizationStrategy: 'staffing_v4_evidence_variant_v1',
+  model: null, // locked copy; selection and rendering make no model call
+  owner: 'scalelab',
+  get status() { return staffingV4Live() ? 'approved' : 'draft'; },
+  get ready() { return staffingV4Live(); },
+});
+
+const STAFFING_CAMPAIGNS = Object.freeze([STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_2, STAFFING_CAMPAIGN_V2, STAFFING_CAMPAIGN_V4]);
 
 // Every campaign label that identifies this campaign: the current name, the id,
 // and any name it was stored under previously.
@@ -93,6 +133,8 @@ const usesV2Copy = campaign => V2_COPY_CAMPAIGNS.includes(campaign);
 function matchesStaffingCampaign(lead, campaign) {
   // A lead carrying a V2 sourcing profile is V2 or Campaign 2, never V1.
   if (!usesV2Copy(campaign) && hasStaffingV2ProfileMarker(lead)) return false;
+  // Likewise a lead carrying a Campaign 3 (V4) profile is Campaign 3 or nothing.
+  if (campaign !== STAFFING_CAMPAIGN_V4 && hasStaffingV4ProfileMarker(lead)) return false;
   const labels = labelsOf(campaign);
   const ids = [lead.campaignId, lead.intendedCampaignVersion].filter(Boolean);
   const matches = labels.includes(lead.campaign) || ids.includes(campaign.id);
@@ -171,6 +213,42 @@ function staffingCampaign2SendBlock(lead = {}) {
 }
 
 /**
+ * Does anything on this lead name Industrial Staffing V4: its campaign label or
+ * id, template, version, or a V4 profile? Such a lead is V4 or nothing: never
+ * routed, attributed or rendered as V1 or V2.
+ */
+function isStaffingV4Marked(lead = {}) {
+  return labelsOf(STAFFING_CAMPAIGN_V4).includes(lead.campaign)
+    || [lead.campaignId, lead.intendedCampaignVersion].includes(STAFFING_CAMPAIGN_V4.id)
+    || lead.emailTemplateId === STAFFING_CAMPAIGN_V4.emailTemplateId
+    || hasStaffingV4ProfileMarker(lead);
+}
+
+/**
+ * Why a V4-marked lead may not be queued or sent, or null (null for every
+ * non-V4 lead). Every identifier must name V4, the sealed profile must verify,
+ * hold a selected variant, a clean contact QC status and an explicit
+ * SEND_READY review status, and V4 must be live. A refusal is a hold: nothing
+ * here selects another campaign or another variant.
+ */
+function staffingV4SendBlock(lead = {}) {
+  if (!isStaffingV4Marked(lead)) return null;
+  if (staffingCampaignFor(lead) !== STAFFING_CAMPAIGN_V4) return 'staffing V4 lead has conflicting campaign identity';
+  if (!labelsOf(STAFFING_CAMPAIGN_V4).includes(lead.campaign)
+    || lead.emailTemplateId !== STAFFING_CAMPAIGN_V4.emailTemplateId
+    || String(lead.intendedCampaignVersion || '').trim() !== STAFFING_CAMPAIGN_V4.id) {
+    return 'staffing V4 lead requires its explicit V4 campaign, template and version';
+  }
+  const read = readStaffingV4Profile(lead);
+  if (!read.ok) return read.reason === V4_PROFILE_INTEGRITY_FAILED ? V4_PROFILE_INTEGRITY_FAILED : `staffing V4 lead is not sendable: ${read.reason}`;
+  if (read.profile.copy_status !== 'SELECTED') return `staffing V4 lead is on hold: ${read.profile.hold_reasons.join('; ') || 'no variant selected'}`;
+  if (read.profile.contact_status !== 'READY_FOR_REVIEW') return `staffing V4 contact status is ${read.profile.contact_status || '(blank)'}`;
+  if (read.profile.review_status !== 'SEND_READY') return 'staffing V4 lead is REVIEW READY, not SEND READY';
+  if (!staffingV4Live()) return `${STAFFING_CAMPAIGN_V4.name} is registered but not live yet`;
+  return null;
+}
+
+/**
  * Why a V2-marked lead may not be queued or sent, or null (and null for every
  * non-V2 lead). Every identifier must name V2, the lead's sourcing profile must
  * carry structured roles + market, and V2 must be live. A refusal is a hold:
@@ -220,11 +298,30 @@ function campaign2AdoptionAllowed(current, next) {
 function staffingV2CampaignNotesRefusal(current = {}, nextNotes) {
   const next = String(nextNotes ?? '');
   if (next === String(current.campaign_notes ?? current.campaignNotes ?? '')) return null;
+  // Campaign 3 (V4) profiles are read-only through every write path.
+  const v4 = staffingV4CampaignNotesRefusal(current, nextNotes);
+  if (v4) return v4;
   if (isStaffingV2Marked(current) || hasStaffingV2ProfileMarker(current)) {
     return `${STAFFING_V2_PROFILE_READ_ONLY}: a staffing V2 lead's campaign_notes is its imported profile; only the V2 import writes it`;
   }
   if (next.includes(STAFFING_V2_PROFILE_MARKER) && !campaign2AdoptionAllowed(current, next)) {
     return `${STAFFING_V2_PROFILE_READ_ONLY}: a staffing V2 profile is written only by the V2 import or Campaign 2 adoption`;
+  }
+  return null;
+}
+
+// A V4 lead's campaign_notes is its sealed profile, written once by a V4 import
+// on a new row. No other writer may change it or put a V4 profile on a lead,
+// so the selected variant stays stable for the whole sequence.
+const STAFFING_V4_PROFILE_READ_ONLY = 'staffing_v4_profile_read_only';
+function staffingV4CampaignNotesRefusal(current = {}, nextNotes) {
+  const next = String(nextNotes ?? '');
+  if (next === String(current.campaign_notes ?? current.campaignNotes ?? '')) return null;
+  if (isStaffingV4Marked(current)) {
+    return `${STAFFING_V4_PROFILE_READ_ONLY}: a staffing V4 lead's campaign_notes is its sealed profile and selected variant; it is never rewritten`;
+  }
+  if (next.includes(STAFFING_V4_PROFILE_MARKER)) {
+    return `${STAFFING_V4_PROFILE_READ_ONLY}: a staffing V4 profile is written only by the V4 import`;
   }
   return null;
 }
@@ -280,6 +377,7 @@ const REVIEW_PERSONALIZATION = Object.freeze(['SPECIFIC_HIGH', 'BROAD_MEDIUM', '
 function replaceStaffingReviewTag(campaignNotes, { fit, personalization, routingReady }) {
   // A V2 lead's campaign_notes is its typed sourcing profile; a V1 review tag appended to it would corrupt it.
   if (String(campaignNotes || '').includes(STAFFING_V2_PROFILE_MARKER)) throw new Error('a staffing V2 profile is not a V1 review record');
+  if (String(campaignNotes || '').includes(STAFFING_V4_PROFILE_MARKER)) throw new Error('a staffing V4 profile is not a V1 review record');
   if (!['ICP_CONFIRMED', 'ICP_REJECT', 'ICP_UNRESOLVED'].includes(fit)) throw new Error('invalid staffing review fit');
   if (!REVIEW_PERSONALIZATION.includes(personalization)) throw new Error('invalid staffing review personalization');
   const tag = `[STAFFING_REVIEW_V1 fit=${fit};personalization=${personalization};routing_ready=${routingReady ? 'true' : 'false'}]`;
@@ -378,10 +476,36 @@ const {
   appendStaffingV2Footer, staffingV2ComplianceError, STAFFING_CAMPAIGN_REF,
 } = require('./staffing-compliance');
 
+// V4: the sealed profile's selected variant and validated variables, merged
+// into the approved copy, with the existing ScaleLab compliance footer. Throws
+// on anything unresolved; there is no model-written opener to fall back on.
+function renderStaffingV4(lead, step, options = {}) {
+  if (options.landingPageUrl) throw new Error('staffing V4 copy carries no landing-page URL');
+  if (options.oooResumeContext && step === 1) throw new Error('only a staffing follow-up can resume after an out-of-office reply');
+  const read = readStaffingV4Profile(lead);
+  if (!read.ok) throw new Error(`staffing V4 Email ${step} refused: ${read.reason}${read.detail ? ` (${read.detail})` : ''}`);
+  if (read.profile.copy_status !== 'SELECTED') throw new Error(`staffing V4 Email ${step} refused: lead is on hold (${read.profile.hold_reasons.join('; ') || 'no variant'})`);
+  const identity = staffingSenderIdentity(options.env || process.env, options);
+  const rendered = renderV4Copy({
+    variant: read.profile.copy_variant, step, vars: read.vars,
+    resumeLine: options.oooResumeContext ? OOO_RESUME_CONTEXT_LINE : '',
+    appendFooter: text => appendStaffingComplianceFooter(text, identity),
+  });
+  // Follow-ups keep the Email 1 thread subject ("Re: ..."), exactly as every
+  // staffing version does, so Gmail threading holds. The approved standalone
+  // subject is reported for review only.
+  return { subject: step === 1 ? rendered.subject : null, approvedSubject: rendered.subject,
+    body: rendered.body, html: rendered.html, step, campaignId: STAFFING_CAMPAIGN_V4.id,
+    copyVariant: read.profile.copy_variant };
+}
+
 function renderStaffingPreview(lead, result, step = 1, options = {}) {
   const campaign = staffingCampaignFor(lead);
   if (!campaign) throw new Error('Staffing campaign assignment required');
   if (![1, 2, 3].includes(step)) throw new Error('Invalid staffing sequence step');
+  if (campaign === STAFFING_CAMPAIGN_V4) {
+    try { return { ...renderStaffingV4(lead, step, options), previewOnly: true }; } catch (_) { return null; }
+  }
   const v2 = usesV2Copy(campaign);
   const copy = copyFor(campaign);
   // V1's no-personalization Email 1 has no V2 counterpart: V2 Email 1 needs roles + market.
@@ -446,8 +570,17 @@ function staffingOpeningFor(lead = {}) {
  */
 function renderStaffingEmail(lead = {}, step = 1, options = {}) {
   const campaign = staffingCampaignFor(lead);
-  if (!campaign) throw new Error('Staffing campaign assignment required');
+  if (!campaign) {
+    // A V4-marked lead whose identifiers disagree is held, never rendered as V1/V2.
+    if (isStaffingV4Marked(lead)) throw new Error('staffing V4 lead has conflicting campaign identity');
+    throw new Error('Staffing campaign assignment required');
+  }
   if (![1, 2, 3].includes(step)) throw new Error('Invalid staffing sequence step');
+  if (campaign === STAFFING_CAMPAIGN_V4) {
+    const email = renderStaffingV4(lead, step, options);
+    return { subject: email.subject, body: email.body, html: email.html, step,
+      campaignId: email.campaignId, copyVariant: email.copyVariant };
+  }
   const opening = staffingOpeningFor(lead);
   const structuredV2 = usesV2Copy(campaign) && hasStaffingV2ProfileMarker(lead);
   if (campaign === STAFFING_CAMPAIGN_2 && !structuredV2) {
@@ -476,8 +609,12 @@ function validateStaffingEmail({ subject, body, leadId, campaignId } = {}, step 
   if (!text.trim()) return 'staffing body is empty';
   if (/{{|}}/.test(text)) return 'staffing body still contains an unmerged placeholder';
   if (String(subject || '').includes(STAFFING_CAMPAIGN_REF)) return 'staffing subject must not contain the campaign reference';
-  if (step === 1 && String(subject || '').trim() !== 'employer accounts') return 'staffing step 1 subject must be the locked subject';
+  if (step === 1 && campaignId !== STAFFING_CAMPAIGN_V4.id && String(subject || '').trim() !== 'employer accounts') return 'staffing step 1 subject must be the locked subject';
   if (step !== 1 && String(subject || '').trim()) return 'staffing follow-up must keep the original thread subject';
+  if (campaignId === STAFFING_CAMPAIGN_V4.id) {
+    if (/receptionist|missed calls?|dental|patients?|clinic/i.test(text)) return 'staffing body contains non-staffing offer language';
+    return v4CopyProblem({ body: text, subject }, step) || staffingComplianceError(text, { leadId });
+  }
   // Dental/receptionist language must never reach a staffing prospect.
   if (/receptionist|missed calls?|dental|patients?|clinic/i.test(text)) return 'staffing body contains non-staffing offer language';
   // Anchor on the literal text BEFORE the first placeholder: the merged body
@@ -503,4 +640,6 @@ module.exports = { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_LABELS, isStaffingCampai
   staffingV2Live, setStaffingV2LiveForTests,
   isStaffingV2Marked, staffingV2SendBlock, staffingV2Parts, staffingV2Touch1,
   isStaffingCampaign2Marked, staffingCampaign2SendBlock, STAFFING_CAMPAIGN_2_ADOPTION_SCHEMA, usesV2Copy,
-  STAFFING_V2_PROFILE_READ_ONLY, staffingV2CampaignNotesRefusal };
+  STAFFING_V2_PROFILE_READ_ONLY, staffingV2CampaignNotesRefusal,
+  STAFFING_CAMPAIGN_V4, staffingV4Live, setStaffingV4LiveForTests, isStaffingV4Marked, staffingV4SendBlock,
+  STAFFING_V4_PROFILE_READ_ONLY, staffingV4CampaignNotesRefusal, V4_FOLLOW_UPS };

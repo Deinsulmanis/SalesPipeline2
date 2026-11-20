@@ -301,7 +301,12 @@ test('8. ScaleLab copy and campaign registries are byte-identical to production 
   assert.equal(sha(LOCKED_EMAILS), 'a5b4edf21580ddd4534617c51240e5e1fa26efb1fe243a870dd360ea43cc5397');
   assert.equal(sha(LOCKED_EMAILS_V2), '700d17e34c9d30446f786f378d6ac6876597e95a8d79cdf86e6c207961225fd1');
   // Updated 2026-10-23 for the Staffing Outreach Campaign 2 version (V2 copy versions); LOCKED_EMAILS and LOCKED_EMAILS_V2 are unchanged.
-  assert.equal(sha(CAMPAIGN_VERSIONS), '3bd7bb7a0a9b4524b8ad54df4ca38c827361375e8f5ee432c87abdc34981609a');
+  // Every version that existed before 2026-11-20 is byte-identical. Industrial
+  // Campaign 3 is the one sanctioned addition: a ScaleLab version with no Jole copy.
+  const { industrial_staffing_campaign_3: campaign3, ...existingVersions } = CAMPAIGN_VERSIONS;
+  assert.equal(sha(existingVersions), '3bd7bb7a0a9b4524b8ad54df4ca38c827361375e8f5ee432c87abdc34981609a');
+  assert.deepEqual(Object.keys(CAMPAIGN_VERSIONS).filter(id => !(id in existingVersions)), ['industrial_staffing_campaign_3']);
+  assert.doesNotMatch(JSON.stringify(campaign3), /jole/i);
   // Jole v2 is also unchanged, for the 98 threads already on it.
   assert.equal(COPY_VERSION, 'jole_industrial_employer_v2');
   assert.equal(JOLE_INDUSTRIAL_EMPLOYER_COPY.steps[0].subject, '{{role}} — {{location}}');

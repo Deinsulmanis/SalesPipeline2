@@ -141,6 +141,8 @@ async function stage2TimelineProbe({ leadId, sourceLeadId, email, authoritative,
   }
 }
 const { simulateRouting } = require('./integrations/gmail-routing-simulation');
+const { isStaffingV4Marked, STAFFING_CAMPAIGN_V4 } = require('./integrations/staffing-campaign');
+const { importCampaign3Leads } = require('./integrations/staffing-campaign-3-import');
 const { staffingReviewStatus, isStaffingV2Marked, STAFFING_CAMPAIGN_V2,
   staffingV2CampaignNotesRefusal, STAFFING_V2_PROFILE_READ_ONLY } = require('./integrations/staffing-campaign');
 const { importStaffingV2Leads } = require('./integrations/staffing-v2-import');
@@ -2683,6 +2685,38 @@ function importManagedClientLeads({ clientId, campaignId, rows, dryRun }) {
 // Import-stage leads through the same primitives as the managed-client import —
 // one ColdEmail append, then the background outreach_leads mirror — and does
 // nothing else: no queue, sender, reservation, schedule or V2 activation.
+// Industrial Campaign 3 (staffing V4): new Import-stage leads with a sealed,
+// server-selected variant profile. Dry run unless dry_run is false. Never queues.
+app.post('/api/staffing/campaign-3/leads/import', requireAuth, async (req, res) => {
+  const body = req.body || {};
+  const dryRun = body.dry_run !== false;
+  try {
+    const result = await withAuth(() => importCampaign3Leads({
+      payload: body, dryRun,
+      readCorpus: readClientImportCorpus,
+      appendLeads: async leads => {
+        await sheets().spreadsheets.values.append({
+          spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+          requestBody: { values: leads.map(lead => CE_COLUMNS.map(col => String(lead[col] ?? ''))) },
+        });
+        ceRowMap.clear();
+      },
+      mirrorLeads: async leads => {
+        if (outreachStateMode() !== 'off') mirrorOutreachLeadsInBackground(leads);
+        return { scheduled: outreachStateMode() !== 'off', leads: leads.length };
+      },
+      newId: () => Date.now().toString(36) + crypto.randomBytes(6).toString('hex'),
+    }));
+    res.json(result);
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    if (e.code === 'invalid_payload') return res.status(422).json({ error: e.message, code: e.code });
+    if (e.code === 'corpus_unavailable') return res.status(503).json({ error: e.message, code: e.code });
+    console.error('[Campaign 3 Import]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/staffing/v2/leads/import', requireAuth, async (req, res) => {
   const body = req.body || {};
   const dryRun = body.dry_run !== false;
@@ -2722,6 +2756,11 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
   if (isStaffingV2Marked({ campaign: String(campaign).trim(), campaign_notes })
     || String(campaign).trim() === STAFFING_CAMPAIGN_V2.emailTemplateId) {
     return res.status(422).json({ error: 'Industrial Staffing V2 leads use POST /api/staffing/v2/leads/import', code: 'use_staffing_v2_import' });
+  }
+  // Industrial Campaign 3 enters only through its own import, with its sealed profile.
+  if (isStaffingV4Marked({ campaign: String(campaign).trim(), campaign_notes })
+    || String(campaign).trim() === STAFFING_CAMPAIGN_V4.emailTemplateId) {
+    return res.status(422).json({ error: 'Industrial Campaign 3 leads use POST /api/staffing/campaign-3/leads/import', code: 'use_campaign_3_import' });
   }
   const leadNiche = normalizeNiche(lead_niche);
   if (!leadNiche) return res.status(422).json({ error: 'Lead niche is required' });
@@ -6159,6 +6198,10 @@ app.post('/api/coldemail', requireAuth, async (req, res) => {
   if (isStaffingV2Marked({ ...lead, campaign: String(lead.campaign || '').trim() })
     || String(lead.campaign || '').trim() === STAFFING_CAMPAIGN_V2.emailTemplateId) {
     return res.status(422).json({ error: 'Industrial Staffing V2 leads use POST /api/staffing/v2/leads/import', code: 'use_staffing_v2_import' });
+  }
+  if (isStaffingV4Marked({ ...lead, campaign: String(lead.campaign || '').trim() })
+    || String(lead.campaign || '').trim() === STAFFING_CAMPAIGN_V4.emailTemplateId) {
+    return res.status(422).json({ error: 'Industrial Campaign 3 leads use POST /api/staffing/campaign-3/leads/import', code: 'use_campaign_3_import' });
   }
   // Same choke point as the CSV import: validate format and reject junk,
   // then dedupe against the sheet — this path previously had neither, so a
