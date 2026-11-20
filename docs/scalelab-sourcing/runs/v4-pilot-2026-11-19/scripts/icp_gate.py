@@ -55,9 +55,22 @@ def build_evidence(c):
     def rk(z):
         t = z["tags"]
         return (0 if "industrial" in t and "employer_facing" in t else 1 if "industrial" in t else 2 if "employer_facing" in t else 3 if "excluded_vertical" in t else 4)
+    # pass-2 additions: short service-menu lines naming placement models, and US phone numbers
+    for p in pages:
+        shorts = [ln.strip() for ln in (p.get("text") or "").split("\n") if 3 <= len(ln.strip()) < 25]
+        menu = [ln for ln in shorts if re.fullmatch(r"(?i)(direct[- ]hire|temporary|temp(orary)?[- ]to[- ]hire|contract(-to-hire)?|seasonal|payroll(ing)?|temp staffing|contract staffing)", ln)]
+        if len(menu) >= 2:
+            line = "Services listed: " + " | ".join(dict.fromkeys(menu))
+            if line.lower() not in seen:
+                seen.add(line.lower()); ex.append({"url": p.get("final_url") or p.get("url"), "excerpt": line, "tags": ["employer_facing", "model_menu"], "observed_at": TODAY})
+        for m in re.finditer(r"\(?\b[2-9]\d{2}\)?[-. ]\d{3}[-. ]\d{4}\b", p.get("text") or ""):
+            line = "Contact phone on site: " + m.group(0)
+            if line.lower() not in seen and len([z for z in ex if "phone" in z["tags"]]) < 2:
+                seen.add(line.lower()); ex.append({"url": p.get("final_url") or p.get("url"), "excerpt": line, "tags": ["geo", "phone"], "observed_at": TODAY})
     ex.sort(key=rk)
+    keep = [z for z in ex if "model_menu" in z["tags"] or "phone" in z["tags"]]
     geo_only = [z for z in ex if z["tags"] == ["geo"]][:6]
-    ex = [z for z in ex if z["tags"] != ["geo"]][:40] + geo_only
+    ex = [z for z in ex if z["tags"] != ["geo"] and z not in keep][:40] + geo_only + keep
     # footer/contact addresses: also scan raw page text for "City, ST 12345" patterns
     for p in pages:
         for m in re.finditer(r"[A-Z][A-Za-z .'-]{2,30},? (?:A[LKZR]|C[AOT]|D[EC]|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|PA|RI|S[CD]|T[NX]|UT|V[AT]|W[AIVY]) \d{5}", p["text"]):

@@ -37,6 +37,14 @@ AD_NOTES = {
         "ad_class": "CANDIDATE_RECRUITMENT", "employer_facing_ads": 0, "sustained_employer_ads": 0,
         "why_ads": "4 Meta + 4 LinkedIn ads, all job ads to workers (e.g. '$65/hour + $150 per diem... hiring licensed Low Voltage Electricians', CTA 'Apply now'). Candidate-only -> 0 points.",
         "why_sustained": "Candidate-only.", "status": "FOUND", "platforms": ["Meta", "LinkedIn"], "freshness": "CURRENT"},
+    "partnerspersonnel.com": {
+        "ad_class": "EMPLOYER_ACQUISITION", "employer_facing_ads": 0, "sustained_employer_ads": 0,
+        "why_ads": "9 LinkedIn ads promoting a workforce-compliance webinar to employers ('Audits are never convenient... Join us Dec. 4'), creatives uploaded 2025-11-17; 5 Google text ads (advertiser 'Partners Personnel Management Services LLC') last seen 2026-04-15, text not extracted. All outside the 30-day window -> STALE, 0 points.",
+        "why_sustained": "Stale; not current.", "status": "FOUND", "platforms": ["LinkedIn", "Google"], "freshness": "STALE"},
+    "equiliem.com": {
+        "ad_class": "UNRELATED_OR_UNCLEAR", "employer_facing_ads": 0, "sustained_employer_ads": 0,
+        "why_ads": "2 Google text ads under advertiser 'Industrial Staffing Services Inc.' (the pre-rebrand name), 2025-11-01 to 2025-12-04; 1 LinkedIn ad with no text. Text not extracted; stale -> 0 points.",
+        "why_sustained": "Stale; not current.", "status": "FOUND", "platforms": ["Google", "LinkedIn"], "freshness": "STALE"},
 }
 
 
@@ -97,6 +105,13 @@ EXTRA_FOUND = {
     "savvystaffing.com": "Laborer only; Apollo 'Proprietor' match belongs to a different company (Talent Savvy)",
     "action-tech.com": "Apollo/GetLeads: 'Company Owner' record is a role mailbox; 'VP & CFO' and generic VPs (finance/operations, not commercial)",
 }
+PENDING_REVEAL = {
+    "balancestaffingne.com": "Apollo shows CEO (has email); alternates President, Co-Owner, Business Owner, Director of BD. Not yet revealed - needs owner approval (Apollo).",
+    "condustrial.com": "Apollo shows President (has email); alternate Corporate Director of Business Development & Marketing. Not yet revealed - needs owner approval (Apollo).",
+    "partnerspersonnel.com": "Apollo shows CEO (has email); alternates President, Co-Founder, SVP Sales. Large multi-region firm (30+ regional VP/managing partner records) - size preference note. Not yet revealed.",
+    "equiliem.com": "Apollo shows three different 'President/CEO' records (conflict to resolve on reveal); most recently refreshed one has email; alternate Executive Director of Sales. Not yet revealed.",
+    "hiresync.com": "No tier 1-3 buyer in Apollo; GetLeads has 1 C-level/VP/Director contact with email (not bought: GetLeads cap of 155 reached).",
+}
 contact_rows, holds_contact = {}, {}
 by_dom = {}
 for c in contacts:
@@ -109,6 +124,9 @@ for r in ranked:
         cands.append((tier(c), 0 if c["email_status"] == "VALID" else 1, iss, c))
     elig = sorted([z for z in cands if not z[2] and z[0] <= 3], key=lambda z: (z[0], z[1]))
     if not elig:
+        if d in PENDING_REVEAL:
+            holds_contact[d] = "PENDING REVEAL (pass 2, 2026-11-20): " + PENDING_REVEAL[d]
+            continue
         why = "No eligible senior commercial buyer in GetLeads (2 searches) or Apollo (strict-title and seniority searches)"
         if d in EXTRA_FOUND:
             why += ". Found but not eligible: " + EXTRA_FOUND[d]
@@ -233,7 +251,7 @@ for d, x in dec.items():
 for r in ranked:
     d = r["domain"]; cr = contact_rows.get(d)
     if d in holds_contact:
-        hrows.append({"level": "contact", "company_name": r["company_name"], "company_domain": d, "decision": "PASS company / HOLD contact", "reason_code": "NO_ELIGIBLE_BUYER",
+        hrows.append({"level": "contact", "company_name": r["company_name"], "company_domain": d, "decision": "PASS company / HOLD contact", "reason_code": "PENDING_REVEAL" if holds_contact[d].startswith("PENDING") else "NO_ELIGIBLE_BUYER",
                       "reason": holds_contact[d], "evidence_that_would_resolve": "Authorized Apollo reveal (or manual research) of a current Owner/President/CEO or VP/Director of Sales/BD with a verified business email"})
     elif cr and cr["contact_status"] != "READY_FOR_REVIEW":
         b = cr["buyer"]

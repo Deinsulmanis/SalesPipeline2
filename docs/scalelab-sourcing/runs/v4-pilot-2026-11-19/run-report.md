@@ -22,30 +22,51 @@ The owner asked why only 7 of the 20 PASS companies produced a contact. They rai
 - **New dedupe catch:** Lone Star's buyer email is on `fullsteamstaffing.com`. **Full Steam Staffing was contacted in V1** (lead `mtwgdei1wdveq37dwal`, stage Done). Lone Star is part of "The Full Steam Staffing Family of Companies" with shared leadership, so it moves **PASS → HOLD (affiliate duplicate)**. The first dedupe matched only Lone Star's own domain and missed the parent; 2 Apollo credits went on a contact that won't be used. Future runs should dedupe parent and affiliate domains named on first-party sites **before** paid reveals.
 - **Net:** 9 review-ready contacts out of 19 PASS companies. 3 hold on evidence conflicts and 7 have no eligible buyer in either GetLeads or Apollo. No PASS company has a current employer-facing ad any more (Lone Star had the only one), so all 19 are LOW_SIGNAL.
 
+## 0b. HOLD re-run, pass 2 (2026-11-20)
+
+The owner asked for a re-run of the 15 most recoverable HOLDs plus the 4 rebranded companies. Method: a plain headless-browser re-crawl with longer waits and more pages, including contact and location pages. Evidence extraction now also captures service menus and phone numbers. The same Jev questions and code thresholds were used.
+
+- No attempt was made to bypass bot checks. A first version of the crawler used anti-detection settings; the permission system blocked it and it was replaced with a plain browser.
+
+| Result | Companies |
+|---|---|
+| **New PASS (5)** | **Balance Staffing Partners**: the homepage menu lists Direct Hire, Temporary, Temporary to hire. The name resembles V1's "Balance Staffing Company" (balancestaffing.com), but there's no shared domain, region or branding, so it isn't treated as a duplicate; owner may override. **Condustrial** (GetLeads called it "Able Body Labor"): skilled construction, industrial and marine staffing, offices in SC/NC/MD. **Partners Personnel** (GetLeads called it "Chartwell Staffing Solutions"): light industrial, logistics and manufacturing; a large multi-region firm. **Equiliem** (formerly Industrial Staffing Services Inc; its Google ads still run under that name). **Hire Sync**: US evidence is thin, a 216 phone number and "nationwide"; US p = 0.70, exactly at the threshold. |
+| REJECT, duplicate (2) | Lingo Staffing (formerly Flex-Team) is V1 lead `mtwgdei1a84im6tni7k`; TEC Group (formerly ASI) is Campaign 2 lead `mvkj6i5mvbevs8tqie` |
+| REJECT, no industrial line (1) | Andover Personnel (formerly All Star Staffing) |
+| Still HOLD (11) | MTM (no US evidence); IPG (industrial line unclear: automotive engineering-tech job posts only); Selectek (engineering/tech staffing); bot check or blank page after re-crawl: Add On, GreyStone, HYUR, Medical Careers, Staff Works, Staffmasters; Bas Technologies (domain listed for sale); City & National ("site not available") |
+
+- **Ads (Adyntel, 12 credits):**
+  - Partners Personnel: employer-facing compliance-webinar LinkedIn ads from Nov 2025, plus Google ads last seen Apr 2026. STALE.
+  - Equiliem: Google ads from Nov–Dec 2025. STALE.
+  - Balance (both domains), Condustrial and Hire Sync: no ads.
+  - All 5 score 0 (LOW_SIGNAL).
+- **Buyers:** Apollo search (free) shows tier-1 buyers with emails at Balance (CEO), Condustrial (President), Partners Personnel (CEO) and Equiliem (three conflicting "President/CEO" records). Hire Sync has no Apollo buyer; GetLeads has one senior contact. **Nothing revealed yet:** waiting for owner approval. GetLeads is at its 155 cap and 8 Apollo credits remain of the 20.
+
 ## 1. Headline numbers
 
 | Stage | Result |
 |---|---|
 | Companies discovered (GetLeads) | **104** rows |
 | Duplicates of ScaleLab history or this batch (REJECT) | 20 |
-| ICP **PASS** | **19** (Lone Star moved to HOLD as an affiliate duplicate) |
-| ICP **HOLD** | 57 |
-| ICP **REJECT** (all reasons) | 28 |
+| ICP **PASS** | **24** (19 after the buyer follow-up, + 5 from the HOLD re-run) |
+| ICP **HOLD** | 49 |
+| ICP **REJECT** (all reasons) | 31 |
 | PASS companies with ads found (Adyntel) | 2 (1 employer-facing but stale, 1 candidate-only). Lone Star's current employer-facing ads no longer count because it's on HOLD. |
-| Signal priority | 19 LOW_SIGNAL, 0 STANDARD, 0 HIGH_PRIORITY |
+| Signal priority | 24 LOW_SIGNAL, 0 STANDARD, 0 HIGH_PRIORITY |
 | Contacts **READY_FOR_REVIEW** | **9** |
 | PASS companies with a buyer held for an evidence conflict | 3 |
 | PASS companies with no eligible buyer (GetLeads + Apollo) | 7 |
+| PASS companies with buyer found, reveal pending owner approval | 5 |
 
-Yield: 104 discovered → 19 ICP PASS (18%) → 9 review-ready contacts (8.7% of discovered).
+Yield: 104 discovered → 24 ICP PASS (23%) → 9 review-ready contacts so far (8.7% of discovered), with up to 4–5 more pending reveal.
 
 ## 2. Credits and cost
 
 | Tool | Cap | Used | How measured |
 |---|---|---|---|
 | GetLeads | 155 credits | **155** (104 company rows + 33 + 18 contact rows) | Tool responses: `creditsRemaining` went from 10,000 to 9,845 |
-| Adyntel | 300 credits | **37** | Free `credits_check` before and after: 5,050 → 5,013. Empty (204) responses were not charged. |
-| Jev (TypeSafe) | $0.50 | **≈ $0.011** (259,060 input tokens over 90 calls at $0.042 per Mtok) | `usage.input_tokens` summed from every response |
+| Adyntel | 300 credits | **49** (37 pass 1 + 12 pass 2) | Free `credits_check`: 5,050 → 5,001. Empty (204) responses were not charged. |
+| Jev (TypeSafe) | $0.50 | **≈ $0.014** (322,345 input tokens at $0.042 per Mtok) | `usage.input_tokens` summed from every response |
 | Apollo | 20 credits | **12** (waterfall: 2 for Lone Star's CEO, then 10 for 4 people) | `credits_consumed` in each waterfall result. Searches were free. |
 | Firecrawl | none | 0 | Not called |
 
