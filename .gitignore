@@ -12,3 +12,6 @@ leads-*.txt
 # ScaleLab sourcing runs: contact-level files hold prospect names/emails; never commit them (public repo)
 docs/scalelab-sourcing/runs/*/approved-contacts.csv
 docs/scalelab-sourcing/runs/*/review-holds.csv
+
+# V4 master contact list (prospect names/emails)
+docs/scalelab-sourcing/runs/V4_APPROVED_CONTACTS_MASTER.csv
