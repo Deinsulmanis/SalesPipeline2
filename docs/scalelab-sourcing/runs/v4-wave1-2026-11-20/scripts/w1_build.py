@@ -42,16 +42,16 @@ short = json.load(open(f"{W}/buyer_shortfalls.json"))
 rows = [l.rstrip("\n").split("|") for l in open(f"{W}/reveal/all.rows") if l.count("|") > 5]
 
 HOLDS = {
-    "flexbluestaffing.com": "Apollo resolved Brandon Smith to a different current employer (techservjobs.com) with no email - buyer may have left; no valid contact",
+    "flexbluestaffing.com": "Apollo resolved the buyer to a different current employer (techservjobs.com) with no email - buyer may have left; no valid contact",
     "equitystaffing.com": "Buyer email is on equitysg.com: Microsoft MX exists and matches the company initials, but the domain has no website and is not used on equitystaffing.com - relation unproven",
-    "resourceemployment.com": "CEO Sam Rossa is listed on resourceemployment.com, but the Apollo email is at True PEO (his current Apollo employer since 2025-01); no on-site link between the two - unrelated domain",
+    "resourceemployment.com": "The CEO is listed on resourceemployment.com, but the Apollo email is at True PEO (his current Apollo employer since 2025-01); no on-site link between the two - unrelated domain",
     "motiveworkforce.com": "Buyer email is on motivecompanies.com: motivecompanies.com redirects to motiveone.com (near-empty page); no on-site link to Motive Workforce - relation unproven",
     "opsourcestaffing.com": "Apollo returned no match for the Director of Sales and Marketing (no credit charged)",
 }
 CAUTION = {
     "cs-recruiting.com": "Company name reads 'a Hirewell company' - acquired by Hirewell; confirm the founder still owns buying decisions",
     "sci-staffing.com": "Apollo match LOW CONFIDENCE (title 'Executive'); person is named Founder & CEO on the company's own team page",
-    "cpi-group.com": "Apollo match LOW CONFIDENCE; 'Mark Smith, President' is named on the company's own site",
+    "cpi-group.com": "Apollo match LOW CONFIDENCE; the President is named on the company's own site",
     "labordepotllc.com": "President since 2025-11 (new in role; LinkedIn headline 'President & Majority Owner')",
     "simplydrivensearch.com": "Email domain simplydriven.com redirects to simplydrivensearch.com (related)",
     "ameriforce.com": "Also CEO of Kairos Group Holdings (employee-owned holding company)",

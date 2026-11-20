@@ -124,23 +124,23 @@ Campaign 3 uses the shared schedule and gates. Nothing about timing is specific 
 ## 7. Adding the next wave of leads
 
 1. **Source** with [`V4_SEND_READY_PIPELINE.md`](V4_SEND_READY_PIPELINE.md). Add the new rows to `runs/V4_APPROVED_CONTACTS_MASTER.csv` with their V4 tags.
-2. **Build the evidence file.** The first argument is the folder holding the run's stored ad and site data:
+2. **Build the evidence file** from every run folder whose leads are in the master (toolkit: [`tools/README.md`](tools/README.md)):
    ```bash
-   python3 -I docs/scalelab-sourcing/runs/v4-copy-2026-11-20/scripts/build_evidence.py <run-data-dir> docs/scalelab-sourcing/runs/V4_APPROVED_CONTACTS_MASTER.csv <evidence.json>
+   python3 -I docs/scalelab-sourcing/tools/build_evidence.py docs/scalelab-sourcing/runs/V4_APPROVED_CONTACTS_MASTER.csv <evidence.json> <run-dir> [<run-dir> ...]
    ```
    For a COPY_B lead, add its ad to `CANDIDATE_ADS` in that script: the domain, a phrase that matches the ad text, the role, and "City, ST". The selector re-checks that the role and location appear in the ad's own text.
 3. **Preview** every lead's three emails, read only:
    ```bash
    node scripts/staffing-v4-preview.js <evidence.json> <out-dir>
    ```
-   Open `<out-dir>/v4-preview.html` and check the variants, evidence and holds.
+   Open `<out-dir>/v4-preview.html` and check the variants, evidence and holds. Admission is shown under the same `RECIPIENT_PROVIDER_POLICY` the server applies (default `off`). Every preview lead shows "REVIEW READY, not SEND READY", because the preview never marks a lead send ready; only the import does, with the owner's approval.
 4. **Dry-run the import.** The dashboard uses Basic auth. Body:
    `{"schema":"industrial_campaign_3_import_v1","sourcing_run_id":"<run id>","owner_approved_send_ready":true,"records":[{row, evidence}, ...]}`.
    With no `dry_run` field, the call writes nothing and reports accepted, refused (by code) and the variant counts.
 5. **Import for real** with the same body plus `"dry_run": false`. Repeating the call is a safe no-op: it reports `alreadyImported`. Leads land in stage `Import`, unrouted.
 6. **Queue** with `POST /api/coldemail/queue`, one call per mailbox:
    `{"ids":[...],"senderInboxId":"<inbox id>","emailTemplateId":"industrial-staffing-campaign-3","campaignVersionId":"industrial_staffing_campaign_3"}`.
-   The whole selection is validated before anything is written. Use only inboxes that `/api/ops/cold-delivery-gate` shows as in the cold pool with no `coldHold`. On 2026-11-20 those were `primary`, `deniels`, `outreachplateau_zoe`, `outreachplateau_merrick` and `outreachplateau_dave`.
+   The whole selection is validated before anything is written. Read `/api/ops/cold-delivery-gate` **fresh** and use only inboxes in the cold pool with no `coldHold`. On 2026-11-20 those were `primary`, `deniels`, `outreachplateau_zoe`, `outreachplateau_merrick` and `outreachplateau_dave`. `"auto"` also skips held and out-of-pool inboxes now (`coldAssignableSenders`), but explicit routing stays the safest path.
 7. **Verify** read only:
    - `/api/staffing/launch-readiness` should show `wouldSendIfSendingEnabled: true` for each new lead.
    - `/api/ops/sender-balance?client=scalelab` should plan no unexpected moves.
@@ -173,7 +173,7 @@ Production runs from Railway's `SalesPipeline2` service on branch `fix/send-thro
 
 ## 10. Known issues
 
-- **Automatic mailbox routing can pick a held inbox.** `senderInboxId: "auto"` chose `scalelabaiteam`, which is on the cold hold list. The queue refused and wrote nothing. Route explicitly per inbox (section 7, step 6) until the auto-assigner skips held inboxes.
+- **Automatic mailbox routing (fixed 2026-11-20).** `senderInboxId: "auto"` had chosen `scalelabaiteam`, which is on the cold hold list; the queue refused and wrote nothing. Automatic assignment and the 06:40 refill now take their senders from `coldAssignableSenders` (cold pool, no hold). Still check `/api/ops/cold-delivery-gate` before queueing.
 - **Microsoft deliverability.** Microsoft earlier junked ScaleLab senders, and 20 of the first 33 sourced buyers use Microsoft mailboxes. Watch opens and replies by provider.
 - **AMMON Staffing** is not imported. Its legal name may collide with a V1 lead (Capital City Staffing). Resolve that, change its `contact_status` to READY_FOR_REVIEW, and import it on its own.
 - **COPY_D, COPY_E and COPY_F are unused** until sourcing researches those signals.
@@ -190,5 +190,6 @@ Production runs from Railway's `SalesPipeline2` service on branch `fix/send-thro
 | `integrations/campaign-routing.js`, `integrations/outreach-queue.js`, `integrations/staffing-launch-gate.js` | Template registration, queue and final-gate checks |
 | `server.js` | `POST /api/staffing/campaign-3/leads/import`; flat imports refuse Campaign 3 leads |
 | `scripts/staffing-v4-preview.js` | Read-only preview generator |
-| `docs/scalelab-sourcing/runs/v4-copy-2026-11-20/` | Evidence builder and variant-count README (evidence and preview files are git-ignored) |
+| `docs/scalelab-sourcing/tools/` | Reusable, env-configured sourcing toolkit, including the evidence builder ([README](tools/README.md)) |
+| `docs/scalelab-sourcing/runs/v4-copy-2026-11-20/` | Variant-count README and the historical evidence builder (evidence and preview files are git-ignored) |
 | `test/staffing-v4-campaign.test.js` | 28 tests: copy, precedence, holds, scheduling, gates, import |

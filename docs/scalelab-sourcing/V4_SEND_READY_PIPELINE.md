@@ -1,6 +1,7 @@
-# ScaleLab V4: send-ready lead pipeline (PROPOSED)
+# ScaleLab V4: send-ready lead pipeline
 
-**Status:** proposal for owner review, 2026-11-20. Not yet approved. No runs until the owner says go.
+**Status (updated 2026-11-20):** approved and in use. The pilot and wave 1 ran on it. Its leads feed **Industrial Campaign 3**, which is live in production; see [`INDUSTRIAL_CAMPAIGN_3_WORKFLOW.md`](INDUSTRIAL_CAMPAIGN_3_WORKFLOW.md) for everything after the review files (import, queue, sending).
+**Scripts:** the reusable, env-configured toolkit is [`tools/`](tools/README.md). The `runs/*/scripts/` folders are the historical record of what each run executed; do not edit or rerun them.
 **Based on:**
 - The owner's generic `send-ready-lead-pipeline` skill (tool order).
 - `ScaleLab_AI_Exact_ICP_Qualification_Spec.md` (ICP, buyer and scoring rules).
@@ -20,7 +21,7 @@
 | 51 GetLeads credits on contacts for about 2 buyers | Paid contact search by title | **No paid buyer search.** Buyers come from site team pages plus free Apollo people search; paid **reveal only for a named buyer** |
 | Apollo waterfall cost 2 credits per person | Waterfall is on by default | **Standard reveal, waterfall off:** 1 credit per match |
 | 1 of 24 PASS companies had current employer-facing ads | Ads checked only after random discovery | The intent lane finds **advertisers first**, so the 40-point signal is concentrated in the candidate pool |
-| Global Suppression sheet never checked | No Google service account in the cloud session | Prerequisite: run on the owner's machine, or add the service-account credential (§ Prerequisites) |
+| Global Suppression sheet never checked | No Google service account in the cloud session | Resolved: the Campaign 3 import checks the global Suppression sheet server side, in production, before writing any lead |
 
 ## Pipeline
 
@@ -99,7 +100,7 @@ Decisions are made in code with the pilot's fixed thresholds. A **recovery pass*
 - **Identity and title:** name, employer and title against the site or Apollo search pick. Hold real conflicts.
 - **Email domain:** must be the company domain, or a related domain proven by redirect or on-site use. Otherwise reject.
 - **MX:** `nslookup -type=mx` per domain. Proofpoint plus catch-all → HOLD. Other catch-alls are kept, flagged and queued last.
-- **Live dedupe:** email, domain and name against ScaleLab `outreach_leads`, plus the **global Suppression tab**.
+- **Live dedupe:** email, domain and name against ScaleLab `outreach_leads` (read-only SQL; see `tools/README.md`) and the V4 master. The global Suppression tab is checked again by the Campaign 3 import.
 - Never use personal emails (aol, gmail and so on) unless on-site evidence ties them to the agency (V4 decision 7).
 
 ### 9. Wave files (one script)
@@ -107,14 +108,14 @@ Decisions are made in code with the pilot's fixed thresholds. A **recovery pass*
 - Contact files are never committed; the repository is public.
 - The copy tier stays `COPY_TIER_PENDING` until the owner's V4 copy exists.
 
-### 10–14. Import, copy wave, deploy, queue, verify (BLOCKED for V4)
-The owner's generic skill imports through `/api/clients/<client>/leads/import`. That is the **managed-client** path (Jole). ScaleLab V4 is ScaleLab's own campaign and must not use it. Before these steps can run, a separately authorized task has to deliver:
-- the V4 campaign id `industrial_staffing_employer_acquisition_v4` (registered, not live);
-- a V4 profile and import path;
-- personalization without the V1 ICP gate (see `V4_DECISIONS.md`);
-- the owner's copy.
+### 10–14. Import, queue, verify (live: Industrial Campaign 3)
+These steps are implemented and live. Follow [`INDUSTRIAL_CAMPAIGN_3_WORKFLOW.md`](INDUSTRIAL_CAMPAIGN_3_WORKFLOW.md) §7:
+- evidence file and read-only preview (`tools/build_evidence.py`, `scripts/staffing-v4-preview.js`);
+- dry-run, then real import via `POST /api/staffing/campaign-3/leads/import`. The server selects the copy variant and checks suppression and dedupe;
+- queue via `POST /api/coldemail/queue`, one call per freshly checked, cold-eligible ScaleLab mailbox (see §10 of that doc);
+- verify via `/api/staffing/launch-readiness`.
 
-After that, the generic skill's dry-run import, worktree from the production head, full test suite, fast-forward deploy, auto-routed queue (non-catch-all first) and render check apply. Each one is a **[STOP]**.
+Never use the managed-client import (`/api/clients/<client>/leads/import`); that is Jole's path. Import and queue each need the owner's explicit go-ahead in the current task. No deploy is needed to add leads.
 
 ## Expected funnel and cost per 600 discovered (estimate, not measured)
 
@@ -135,8 +136,9 @@ After that, the generic skill's dry-run import, worktree from the production hea
 
 | Need | Status in a cloud session | Option |
 |---|---|---|
-| Global Suppression tab (Google Sheets) | Not readable (no service account; the Drive connector can't see the sheet) | Run on the owner's machine (`.env` service account), or add the credential to the cloud environment |
+| Global Suppression tab (Google Sheets) | Checked server side by the Campaign 3 import (dry run shows `suppressed` refusals) | — |
 | Supabase reads | Available through the Supabase connector (read-only SQL) | — |
 | Apollo, GetLeads, Adyntel, Jev | Connected | — |
-| Import / deploy credentials | Not in the cloud session | Only needed once V4 import exists |
+| Dashboard API (import, queue, readiness) | Basic auth to `receptionist.scalelabai.ca`. In the Claude cloud environment it is a saved network secret; elsewhere use the dashboard login | — |
+| Private run data (master CSV, evidence, run working folders) | Git-ignored (public repo). Delivered to the owner as `scalelab-v4-private-<date>.tar.gz`; unpack at the repo root to resume (see `tools/README.md`) | — |
 | OneDrive deliverables folder | Local only | Cloud runs deliver to the run folder plus files in chat; local runs use OneDrive |

@@ -47,6 +47,7 @@ const { NON_COLD_STAGES } = require('./automation-ownership');
 const { outreachBlockForLead } = require('./lead-archive');
 const { isFollowUpDue } = require('./sequence-timing');
 const { resolveLeadClient, resolveSenderClient } = require('./clients/ownership');
+const { coldSenderPool, coldSenderHolds } = require('./cold-delivery-policy');
 
 const DEFAULT_BUFFER_RATIO = 0.15;
 const QUEUE_STAGE = 'Queued';
@@ -64,6 +65,19 @@ const text = value => String(value == null ? '' : value).trim();
 // included: assignment is preparation, and the send path still requires
 // sendEligible. ScaleLab inboxes carry no preparationReady, so their set is
 // exactly the send-eligible one.
+/**
+ * Senders that may be ASSIGNED new cold work: in the cold sender pool and not
+ * on the cold sender hold list (cold-delivery-policy.js). The final send gate
+ * already refuses a cold send from any other inbox, so assigning a lead to one
+ * only strands it. Both the queue's automatic assignment and the scheduled
+ * refill take their senders from here. Pure for a given env.
+ */
+function coldAssignableSenders(senders = [], env = process.env) {
+  const pool = coldSenderPool(env);
+  const holds = coldSenderHolds(env);
+  return senders.filter(sender => sender && (!pool || pool.has(sender.id)) && !holds.has(sender.id));
+}
+
 function balancingSenders(senders = []) {
   return senders.filter(sender => sender && sender.status === 'active'
     && (sender.sendEligible === true || sender.preparationReady === true)
@@ -431,7 +445,7 @@ function nextSendDayHorizon(now = new Date()) {
 }
 
 module.exports = {
-  DEFAULT_BUFFER_RATIO, BLOCKING_ACTIVITY, balancingSenders, targetFor, senderCompatible,
+  DEFAULT_BUFFER_RATIO, BLOCKING_ACTIVITY, balancingSenders, coldAssignableSenders, targetFor, senderCompatible,
   firstTouchMovability, projectedFollowUps, senderWorkload, planSenderRebalance, assignNewLeads,
   assignBatch, nextSendDayHorizon, scopedBalanceInput,
 };
