@@ -137,6 +137,7 @@ async function stage2TimelineProbe({ leadId, sourceLeadId, email, authoritative,
   }
 }
 const { simulateRouting } = require('./integrations/gmail-routing-simulation');
+const { isStaffingV4Marked, STAFFING_CAMPAIGN_V4 } = require('./integrations/staffing-campaign');
 const { staffingReviewStatus, isStaffingV2Marked, STAFFING_CAMPAIGN_V2,
   staffingV2CampaignNotesRefusal, STAFFING_V2_PROFILE_READ_ONLY } = require('./integrations/staffing-campaign');
 const { importStaffingV2Leads } = require('./integrations/staffing-v2-import');
@@ -2569,6 +2570,12 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
   if (isStaffingV2Marked({ campaign: String(campaign).trim(), campaign_notes })
     || String(campaign).trim() === STAFFING_CAMPAIGN_V2.emailTemplateId) {
     return res.status(422).json({ error: 'Industrial Staffing V2 leads use POST /api/staffing/v2/leads/import', code: 'use_staffing_v2_import' });
+  }
+  // Industrial Staffing V4 has no import yet: its leads stay REVIEW READY
+  // outside the CRM until the owner approves enrollment. Never a flat import.
+  if (isStaffingV4Marked({ campaign: String(campaign).trim(), campaign_notes })
+    || String(campaign).trim() === STAFFING_CAMPAIGN_V4.emailTemplateId) {
+    return res.status(422).json({ error: 'Industrial Staffing V4 leads are not imported until the owner approves enrollment', code: 'staffing_v4_import_not_enabled' });
   }
   const leadNiche = normalizeNiche(lead_niche);
   if (!leadNiche) return res.status(422).json({ error: 'Lead niche is required' });
@@ -5949,6 +5956,10 @@ app.post('/api/coldemail', requireAuth, async (req, res) => {
   if (isStaffingV2Marked({ ...lead, campaign: String(lead.campaign || '').trim() })
     || String(lead.campaign || '').trim() === STAFFING_CAMPAIGN_V2.emailTemplateId) {
     return res.status(422).json({ error: 'Industrial Staffing V2 leads use POST /api/staffing/v2/leads/import', code: 'use_staffing_v2_import' });
+  }
+  if (isStaffingV4Marked({ ...lead, campaign: String(lead.campaign || '').trim() })
+    || String(lead.campaign || '').trim() === STAFFING_CAMPAIGN_V4.emailTemplateId) {
+    return res.status(422).json({ error: 'Industrial Staffing V4 leads are not imported until the owner approves enrollment', code: 'staffing_v4_import_not_enabled' });
   }
   // Same choke point as the CSV import: validate format and reject junk,
   // then dedupe against the sheet — this path previously had neither, so a

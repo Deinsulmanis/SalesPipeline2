@@ -6,7 +6,7 @@ const { leadHasReply } = require('./reply-analytics');
 const { deriveAutomationOwnership } = require('./automation-ownership');
 const { resolveLeadClient } = require('./clients/ownership');
 const {
-  isStaffingCampaign, staffingReviewStatus, renderStaffingEmail, validateStaffingEmail, staffingV2SendBlock,
+  isStaffingCampaign, staffingReviewStatus, renderStaffingEmail, validateStaffingEmail, staffingV2SendBlock, staffingV4SendBlock,
 } = require('./staffing-campaign');
 const { hasStaffingHoldMarker } = require('./staffing-hold');
 const { isClientTemplateId, renderClientLeadEmail, validateClientLeadEmail } = require('./clients/client-email');
@@ -138,6 +138,11 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
     // version, structured roles + market, and V2 live. A refusal writes nothing.
     const v2Block = staffingV2SendBlock({ ...lead, emailTemplateId, intendedCampaignVersion: campaignVersionId });
     if (v2Block) return { status: 422, error: `${lead.company || lead.id}: ${v2Block}` };
+    // A V4 lead is queued only as itself: V4 identity, sealed SEND_READY
+    // profile with a selected variant, and V4 live. All 33 sourced V4 leads
+    // are REVIEW READY, so none can be queued by this path today.
+    const v4Block = staffingV4SendBlock({ ...lead, emailTemplateId, intendedCampaignVersion: campaignVersionId });
+    if (v4Block) return { status: 422, error: `${lead.company || lead.id}: ${v4Block}` };
   }
   const patchFor = lead => ({ stage: 'Queued', senderInboxId: senderFor(lead), emailTemplateId, routingRequired: 'true', intendedCampaignVersion: campaignVersionId });
 

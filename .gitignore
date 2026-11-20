@@ -15,3 +15,6 @@ docs/scalelab-sourcing/runs/*/review-holds.csv
 
 # V4 master contact list (prospect names/emails)
 docs/scalelab-sourcing/runs/V4_APPROVED_CONTACTS_MASTER.csv
+# V4 copy evidence and per-lead previews name buyers and emails (PII): never commit.
+docs/scalelab-sourcing/runs/v4-copy-2026-11-20/v4-copy-evidence.json
+docs/scalelab-sourcing/runs/v4-copy-2026-11-20/preview/

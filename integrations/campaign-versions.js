@@ -8,7 +8,9 @@
  */
 const LEGACY_UNKNOWN = 'legacy_unknown';
 const { staffingLaunchState } = require('./staffing-launch-gate');
-const { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_V2, staffingV2Live, isStaffingV2Marked } = require('./staffing-campaign');
+const { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_V2, staffingV2Live, isStaffingV2Marked,
+  STAFFING_CAMPAIGN_V4, staffingV4Live, isStaffingV4Marked } = require('./staffing-campaign');
+const { readStaffingV4Profile } = require('./staffing-v4-profile');
 const CAMPAIGN_VERSIONS = Object.freeze({
   [STAFFING_CAMPAIGN.id]: Object.freeze({
     id: STAFFING_CAMPAIGN.id, label: STAFFING_CAMPAIGN.name, niche: STAFFING_CAMPAIGN.niche,
@@ -32,6 +34,21 @@ const CAMPAIGN_VERSIONS = Object.freeze({
     get status() { return staffingV2Live() ? staffingLaunchState().status : 'draft'; },
     activatedAt: null,
     meaning: 'Industrial Staffing V2: V1 targeting, offer, subjects and cadence with V2 copy: a company-named roles-and-market opening, a performance-basis Touch 2 with no landing-page link, and a short close-the-loop Touch 3.',
+  }),
+  // V4: one campaign, six evidence-selected Email 1 variants, shared Emails 2
+  // and 3. Email 1 records industrial_staffing_v4_e1_<variant> (see
+  // coldSendAttribution), so every send stays attributable to its variant.
+  // Draft until staffing-campaign.js makes V4 live; live, it follows the
+  // shared staffing launch gate.
+  [STAFFING_CAMPAIGN_V4.id]: Object.freeze({
+    id: STAFFING_CAMPAIGN_V4.id, label: STAFFING_CAMPAIGN_V4.name, niche: STAFFING_CAMPAIGN_V4.niche,
+    emailTemplateId: STAFFING_CAMPAIGN_V4.emailTemplateId, family: 'industrial_staffing',
+    copyVersion: 'industrial_staffing_v4_e1', followUpCopyVersion: 'industrial_staffing_v4_follow_up',
+    personalizationStrategy: STAFFING_CAMPAIGN_V4.personalizationStrategy,
+    subjectStrategy: 'industrial_staffing_v4_variant_subject', offerVersion: 'employer_meetings_performance_v1',
+    get status() { return staffingV4Live() ? staffingLaunchState().status : 'draft'; },
+    activatedAt: null,
+    meaning: 'Industrial Staffing V4: one campaign whose Email 1 is chosen from six approved variants by verified evidence (employer ads, internal sales hiring, expansion, new commercial leader, candidate ads, specialization), with shared Emails 2 and 3.',
   }),
   dental_v1_measured: Object.freeze({
     id: 'dental_v1_measured',
@@ -219,6 +236,9 @@ function activeVersionForLead(lead = {}, { evidenceOnly = false } = {}) {
   if (family === CAMPAIGN_FAMILY.STAFFING && isStaffingV2Marked(lead) && version.id !== STAFFING_CAMPAIGN_V2.id) {
     throw new Error(`staffing V2 lead requires campaign version ${STAFFING_CAMPAIGN_V2.id}; it never falls back to V1`);
   }
+  if (family === CAMPAIGN_FAMILY.STAFFING && isStaffingV4Marked(lead) && version.id !== STAFFING_CAMPAIGN_V4.id) {
+    throw new Error(`staffing V4 lead requires campaign version ${STAFFING_CAMPAIGN_V4.id}; it never falls back to V1 or V2`);
+  }
   return version;
 }
 
@@ -244,6 +264,21 @@ function coldSendAttribution(lead = {}, step = 1, sendMeta = {}, { evidenceOnly 
   const version = activeVersionForLead(lead, { evidenceOnly });
   const personalization = sendMeta.personalizationMetadata || {};
   const initial = Number(step) === 1;
+  if (version.id === STAFFING_CAMPAIGN_V4.id) {
+    // The sealed profile's variant; an unreadable profile cannot be attributed (or sent).
+    const read = readStaffingV4Profile(lead);
+    if (!read.ok || read.profile.copy_status !== 'SELECTED') throw new Error('staffing V4 send has no sealed copy variant');
+    const variant = read.profile.copy_variant;
+    return {
+      campaignVersion: version.id, campaignFamily: version.family, sequenceId: `${version.family}_cold`,
+      sequenceStep: Number(step),
+      copyVersion: initial ? `${version.copyVersion}_${variant.toLowerCase()}` : version.followUpCopyVersion,
+      subjectStrategy: initial ? version.subjectStrategy : 'thread_follow_up_v1',
+      personalizationStrategy: version.personalizationStrategy,
+      personalizationLevel: null, personalizationAngle: variant, copyVariant: variant,
+      offerVersion: version.offerVersion,
+    };
+  }
   return {
     campaignVersion: version.id,
     campaignFamily: version.family,

@@ -17,7 +17,13 @@ function isStaffingLead(lead = {}) {
     lead.campaignId, lead.campaign, lead.campaignFamily].some(value => /staffing/i.test(String(value || '')));
 }
 function staffingSendBlockReason(lead, env = process.env) {
-  return isStaffingLead(lead) ? staffingLaunchState(env).reason : '';
+  if (!isStaffingLead(lead)) return '';
+  // Industrial Staffing V4 is held at the final gate too (send-safety-revalidate
+  // and the provider call both read this): a V4 lead that is not SEND_READY
+  // under a live V4 is refused even if the shared staffing launch is active.
+  // Lazy require: staffing-campaign loads modules that load this file.
+  const v4Block = require('./staffing-campaign').staffingV4SendBlock(lead);
+  return v4Block || staffingLaunchState(env).reason;
 }
 function assertStaffingSendAllowed(lead, env = process.env) {
   if (!lead) throw new Error('Provider delivery requires lead context');
