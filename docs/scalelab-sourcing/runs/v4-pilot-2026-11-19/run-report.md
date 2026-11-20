@@ -155,6 +155,8 @@ Buyer names and emails are kept out of this committed report because the reposit
 
 ## Files
 
+All `.csv` outputs are excluded from git by the repository's existing `*.csv` ignore rule, plus explicit rules for the contact files. They exist only in the run folder of the session that produced them; only this report and `scripts/` are committed.
+
 | File | Contents |
 |---|---|
 | `company-qualification.csv` | All 104 companies: decision, reason, first-party evidence URLs and excerpts, Jev answers |
