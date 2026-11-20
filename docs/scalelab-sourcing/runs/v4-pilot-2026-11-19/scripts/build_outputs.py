@@ -88,6 +88,15 @@ def disq(c, company_domain):
     return issues
 
 
+EXTRA_FOUND = {
+    "clarkpersonnel.com": "Billy Boswell - 'VP' (generic VP title, no email in Apollo, UNKNOWN in GetLeads); other GetLeads rows are laborer/housekeeper/legal/photographer",
+    "hirekeystaff.com": "Jasmin Bejar - 'Director of Growth & Partnerships' (verified email; title not in the playbook buyer list -> HOLD; owner may approve as Director of BD equivalent)",
+    "revereit.com": "Swetha C - 'Head of Sales & Recruiting' (GetLeads, email UNKNOWN; title not in buyer list)",
+    "paramount-tradesolutions.com": "James Taylor - 'Director of Back Office Operations' (not commercial)",
+    "championeg.com": "Controller/Internal Auditor and field electricians only",
+    "savvystaffing.com": "Laborer only; Apollo 'Proprietor' match belongs to a different company (Talent Savvy)",
+    "action-tech.com": "Apollo/GetLeads: 'Company Owner' record is a role mailbox; 'VP & CFO' and generic VPs (finance/operations, not commercial)",
+}
 contact_rows, holds_contact = {}, {}
 by_dom = {}
 for c in contacts:
@@ -100,7 +109,9 @@ for r in ranked:
         cands.append((tier(c), 0 if c["email_status"] == "VALID" else 1, iss, c))
     elig = sorted([z for z in cands if not z[2] and z[0] <= 3], key=lambda z: (z[0], z[1]))
     if not elig:
-        why = "No eligible senior commercial buyer in GetLeads data"
+        why = "No eligible senior commercial buyer in GetLeads (2 searches) or Apollo (strict-title and seniority searches)"
+        if d in EXTRA_FOUND:
+            why += ". Found but not eligible: " + EXTRA_FOUND[d]
         if cands:
             why += " (found: " + "; ".join(f"{z[3]['name']} - {z[3]['title']}" + (f" [{', '.join(z[2])}]" if z[2] else " [tier 4 title: HOLD]") for z in cands) + ")"
         if d == "lonestarstaffing.biz":
@@ -109,10 +120,16 @@ for r in ranked:
         continue
     t, _, _, c = elig[0]
     status, missing = "READY_FOR_REVIEW", []
+    if c.get("conflict") and c["email_status"] == "CONFLICTING":
+        pass
     edom = c["email"].split("@")[1].lower()
     if c["email_status"] != "VALID":
-        status = "NEEDS_EVIDENCE"; missing.append(f"email status {c['email_status']} in GetLeads (not verified deliverable); no paid verification authorized")
-    if edom != d and not d.endswith(edom):
+        status = "NEEDS_EVIDENCE"; missing.append(f"email status {c['email_status']} (not verified deliverable)")
+    if c.get("conflict"):
+        status = "NEEDS_EVIDENCE"; missing.append(c["conflict"])
+    if c.get("review_note"):
+        missing.append(c["review_note"])
+    if edom != d and not d.endswith(edom) and edom != c.get("domain_alias"):
         status = "NEEDS_EVIDENCE"; missing.append(f"email domain {edom} differs from company website domain {d}")
     if d == "imperialdesign.com":
         missing.append("GetLeads lists 4 'Owner' records at Imperial Design; one (Brian Dowdy) belongs to another firm. Confirm which owner is current decision-maker")
@@ -196,7 +213,7 @@ for r in ranked:
         continue
     b = cr["buyer"]
     crows.append({"company_name": r["company_name"], "company_domain": r["domain"], "v4_tag": tag(r), "signal_priority": r["priority"], "total_score": r["signals"]["total"],
-                  "buyer_name": b["name"], "buyer_title": b["title"], "buyer_tier": cr["tier"], "email": b["email"], "email_status_source": f"GetLeads {b['email_status']}",
+                  "buyer_name": b["name"], "buyer_title": b["title"], "buyer_tier": cr["tier"], "email": b["email"], "email_status_source": b.get("source") or f"GetLeads {b['email_status']}",
                   "linkedin_url": b.get("linkedin", ""), "role_start": b.get("role_start") or "", "contact_source": "GetLeads search_contacts", "contact_observed_at": RUN_DATE,
                   "employment_check": "GetLeads current_employer matches company" + ("; LinkedIn headline present" if b.get("linkedin") else "; no LinkedIn"),
                   "dedupe_status": "CHECKED (company domain + email vs ScaleLab Supabase leads)",

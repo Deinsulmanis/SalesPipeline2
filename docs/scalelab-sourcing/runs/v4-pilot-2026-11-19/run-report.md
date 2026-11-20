@@ -3,8 +3,24 @@
 **Run date:** 2026-11-19 (UTC)
 **Campaign:** ScaleLab AI's own customer acquisition (US industrial/skilled-trades staffing agencies). Not Jole BTX. No Jole data, suppressions, senders or copy were used.
 **Rules applied:** `ScaleLab_AI_Exact_ICP_Qualification_Spec.md` v1.0 (attached by the owner and saved next to the playbook), the playbook v1.0 and `V4_DECISIONS.md`.
-**Authorized budget:** Adyntel ≤ 300 credits, Jev ≤ $0.50, GetLeads ≤ 150 credits. Apollo: none authorized, so none used.
+**Authorized budget:** Adyntel ≤ 300 credits, Jev ≤ $0.50, GetLeads ≤ 150 credits, later raised by the owner to 155. Apollo: waterfall email enrichment ≤ 20 credits, approved 2026-11-20 for the buyer follow-up.
+**Updated 2026-11-20:** after the buyer follow-up (see §0). Tables below show the final state.
 **Production side effects:** none. Nothing was written to Supabase, Sheets or the CRM. Nothing was imported, queued or sent, and no caps changed. Supabase was only read (SELECT).
+
+## 0. Buyer follow-up (2026-11-20)
+
+The owner asked why only 7 of the 20 PASS companies produced a contact. They raised the GetLeads cap to 155 and approved Apollo waterfall up to 20 credits.
+
+- **GetLeads round 2** (18 credits): C-level, VP and Director contacts with emails at the 9 companies with no buyer. My first search used an exact title list and had missed variant titles. GetLeads' seniority labels proved noisy (laborers and electricians tagged "director"). One new buyer: **MCG Workforce, President** (verified email).
+- **Apollo search** (free): strict titles, then a seniority-based search. Real buyers appeared only at **Full Steam Staffing**, the parent of Lone Star. The other agencies showed only generic VPs, a CFO, a role mailbox, back-office staff, or a different company.
+- **Apollo waterfall** (12 credits, 5 people):
+  - Lone Star's CEO: verified email.
+  - **Maxum:** owner's email verified, so it's **review-ready**.
+  - **Holi Services:** HOLD. Apollo says verified, ZeroBounce says invalid.
+  - **Millwrights4hire:** HOLD. The verified email is on the first-party domain `mw4h.com`, but GetLeads says President and Apollo says "Business Manager".
+  - **Career Personnel:** HOLD. Verified `.org` email, but the company's own site lists a different President and only `.com` staff addresses.
+- **New dedupe catch:** Lone Star's buyer email is on `fullsteamstaffing.com`. **Full Steam Staffing was contacted in V1** (lead `mtwgdei1wdveq37dwal`, stage Done). Lone Star is part of "The Full Steam Staffing Family of Companies" with shared leadership, so it moves **PASS → HOLD (affiliate duplicate)**. The first dedupe matched only Lone Star's own domain and missed the parent; 2 Apollo credits went on a contact that won't be used. Future runs should dedupe parent and affiliate domains named on first-party sites **before** paid reveals.
+- **Net:** 9 review-ready contacts out of 19 PASS companies. 3 hold on evidence conflicts and 7 have no eligible buyer in either GetLeads or Apollo. No PASS company has a current employer-facing ad any more (Lone Star had the only one), so all 19 are LOW_SIGNAL.
 
 ## 1. Headline numbers
 
@@ -12,25 +28,25 @@
 |---|---|
 | Companies discovered (GetLeads) | **104** rows |
 | Duplicates of ScaleLab history or this batch (REJECT) | 20 |
-| ICP **PASS** | **20** |
-| ICP **HOLD** | 56 |
+| ICP **PASS** | **19** (Lone Star moved to HOLD as an affiliate duplicate) |
+| ICP **HOLD** | 57 |
 | ICP **REJECT** (all reasons) | 28 |
-| PASS companies with ads found (Adyntel) | 3 (1 employer-facing and current, 1 employer-facing but stale, 1 candidate-only) |
-| Signal priority | 1 STANDARD, 19 LOW_SIGNAL, 0 HIGH_PRIORITY |
-| Contacts **READY_FOR_REVIEW** | **7** |
-| PASS companies with a buyer whose email needs evidence | 4 |
-| PASS companies with no eligible buyer in GetLeads | 9 |
+| PASS companies with ads found (Adyntel) | 2 (1 employer-facing but stale, 1 candidate-only). Lone Star's current employer-facing ads no longer count because it's on HOLD. |
+| Signal priority | 19 LOW_SIGNAL, 0 STANDARD, 0 HIGH_PRIORITY |
+| Contacts **READY_FOR_REVIEW** | **9** |
+| PASS companies with a buyer held for an evidence conflict | 3 |
+| PASS companies with no eligible buyer (GetLeads + Apollo) | 7 |
 
-Yield: 104 discovered → 20 ICP PASS (19%) → 7 review-ready contacts (6.7% of discovered).
+Yield: 104 discovered → 19 ICP PASS (18%) → 9 review-ready contacts (8.7% of discovered).
 
 ## 2. Credits and cost
 
 | Tool | Cap | Used | How measured |
 |---|---|---|---|
-| GetLeads | 150 credits | **137** (104 company rows + 33 contact rows) | Tool responses: `creditsRemaining` went from 10,000 to 9,863 |
+| GetLeads | 155 credits | **155** (104 company rows + 33 + 18 contact rows) | Tool responses: `creditsRemaining` went from 10,000 to 9,845 |
 | Adyntel | 300 credits | **37** | Free `credits_check` before and after: 5,050 → 5,013. Empty (204) responses were not charged. |
 | Jev (TypeSafe) | $0.50 | **≈ $0.011** (259,060 input tokens over 90 calls at $0.042 per Mtok) | `usage.input_tokens` summed from every response |
-| Apollo | none | 0 | Not called |
+| Apollo | 20 credits | **12** (waterfall: 2 for Lone Star's CEO, then 10 for 4 people) | `credits_consumed` in each waterfall result. Searches were free. |
 | Firecrawl | none | 0 | Not called |
 
 Jev model pinned: `jev-1.14.0` (`jev-latest` currently points to it).
@@ -90,14 +106,14 @@ Scoring version `initial-2026-11-18` (40/25/15/10/10). The active-ad window was 
 
 | Company | Ad class | Evidence | Points |
 |---|---|---|---|
-| Lone Star Staffing (lonestarstaffing.biz) | MIXED | 27 Google text ads; 18 distinct after collapsing duplicates. Run under parent account "Full Steam Staffing, LLC"; the first-party site says "The Full Steam Staffing Family of Companies". Employer-facing creatives live through 2026-11-19, e.g. "We Focus on Providing Clerical and Light Industrial Staffing Solutions to Manufacturers". Running since 2023-06. | 40 + 10 sustained = **50, STANDARD** |
+| Lone Star Staffing (lonestarstaffing.biz) | MIXED | 27 Google text ads; 18 distinct after collapsing duplicates. Run under parent account "Full Steam Staffing, LLC"; the first-party site says "The Full Steam Staffing Family of Companies". Employer-facing creatives live through 2026-11-19, e.g. "We Focus on Providing Clerical and Light Industrial Staffing Solutions to Manufacturers". Running since 2023-06. | Would be 40 + 10 = 50, STANDARD. **Not scored: company moved to HOLD (affiliate of V1's Full Steam Staffing).** |
 | Clark Personnel (clarkpersonnel.com) | EMPLOYER_ACQUISITION, **STALE** | 3 LinkedIn creatives offering skilled professionals to businesses ("cut production unit costs"). Present in Adyntel's `year` filter, absent from `last30d`; all uploaded 2026-01-15. | 0, LOW_SIGNAL |
 | PRT Staffing (prtstaffing.com) | CANDIDATE_RECRUITMENT | 4 Meta and 4 LinkedIn job ads ("$65/hour + $150 per diem… Low Voltage Electricians", CTA "Apply now") | 0, LOW_SIGNAL |
 | 17 others | NO_ADS_OBSERVED | None on Google, Meta or LinkedIn (US) | 0, LOW_SIGNAL: the no-ad control group |
 
 No ad spend was inferred: `verified_ad_spend_usd` is empty for every company. Evidence coverage is **PARTIAL** for every company, because BD hiring, expansion and leadership were only checked on cached first-party pages.
 
-## 6. Review-ready contacts (7)
+## 6. Review-ready contacts (9)
 
 All email statuses are GetLeads `VALID`, all contacts are tier 1 or tier 2 buyers, and all are clear of ScaleLab Supabase leads at both domain and email level.
 
@@ -112,8 +128,10 @@ Buyer names and emails are kept out of this committed report because the reposit
 | FINITETEK INC | Sr VP Sales & Operations | 0 | Construction, manufacturing and oil & gas staffing. The site also has a Canada page; US operations corroborated. |
 | Imperial Design (Personnel) | Owner | 0 | GetLeads lists 4 "Owner" records and one belongs to another firm. Confirm the current decision-maker. |
 | RPM Staffing Professionals (hiringpartners.com) | President | 0 | Thin first-party site (1 page). No LinkedIn to corroborate employment. |
+| MCG Workforce Solutions | President | 0 | Added 2026-11-20 (GetLeads round 2). GetLeads' title field says 'Member' (an industry association); LinkedIn headline says 'President MCG Workforce'. |
+| Maxum Industries | Owner | 0 | Added 2026-11-20 (Apollo waterfall, verified). Apollo match confidence was low; GetLeads LinkedIn headline says 'Owner, Maxum Industries, LLC'. |
 
-**Every contact carries one outstanding check: the global Suppression sheet (Google Sheets) was not read.** The Drive connector can't see it; it's probably owned by the app's service account. It must be checked at import. All seven are LOW_SIGNAL (no observed ads), so they serve as the no-ad comparison cohort. The single STANDARD company, Lone Star Staffing, has no revealed buyer email yet: its first-party site names a VP of Sales.
+**Every contact carries one outstanding check: the global Suppression sheet (Google Sheets) was not read.** The Drive connector can't see it; it's probably owned by the app's service account. It must be checked at import. All nine are LOW_SIGNAL (no current employer-facing ads), so they serve as the no-ad comparison cohort. Lone Star Staffing, the only company with current employer-facing ads, was moved to HOLD as an affiliate of V1's Full Steam Staffing.
 
 ## 7. Decision thresholds (fixed in code)
 
@@ -149,7 +167,7 @@ Buyer names and emails are kept out of this committed report because the reposit
 ## 10. Smallest safe next steps (each needs the owner's go-ahead)
 
 1. Check the 7 contacts against the global Suppression sheet.
-2. Authorize Apollo, with a credit cap, for the 13 PASS companies without a review-ready buyer. That includes Lone Star Staffing's VP of Sales.
+2. Done 2026-11-20 (§0). Still open: owner decisions on Key Staffing's 'Director of Growth & Partnerships' and on the 3 evidence conflicts (Holi, Millwrights4hire, Career Personnel); manual research for the 7 companies with no eligible buyer.
 3. Decide on the HOLD categories: national chains and franchises, the 4 possible affiliates of history, and identity conflicts. The last group could be fixed by looking up the correct domain.
 4. Widen discovery (size bands 1–10 and 201–500, more trade keywords, the Construction industry tag) to test supply.
 
