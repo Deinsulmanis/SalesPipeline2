@@ -8,3 +8,7 @@ public/*.json
 .vscode/
 enrich-output.txt
 leads-*.txt
+
+# ScaleLab sourcing runs: contact-level files hold prospect names/emails; never commit them (public repo)
+docs/scalelab-sourcing/runs/*/approved-contacts.csv
+docs/scalelab-sourcing/runs/*/review-holds.csv
