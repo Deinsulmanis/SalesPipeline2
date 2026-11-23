@@ -10,6 +10,8 @@ each value comes from an environment variable, with a safe default.
 
   JEV_MODEL          TypeSafe model id. Default: "jev-1.14.0" (pin the model used in each run report).
   JEV_URL            Default: "https://api.typesafe.ai/v1/systemone".
+  V4_JEV_BUDGET_USD  Hard Jev budget for the run, in USD (qualify.py never starts a request that could
+                     cross it). V4_JEV_USD_PER_MTOK sets the price per million tokens (default 0.042).
   TYPESAFE_API_KEY   Jev key. In the Claude cloud environment the proxy injects the real key, so
                      leave this unset (the header is sent as "Bearer proxy-injected"). Anywhere
                      else (Codex, a laptop), export your own key here.
@@ -27,6 +29,9 @@ AD_WINDOW_DAYS = int(os.environ.get("V4_AD_WINDOW_DAYS") or 30)
 
 JEV_MODEL = os.environ.get("JEV_MODEL") or "jev-1.14.0"
 JEV_URL = os.environ.get("JEV_URL") or "https://api.typesafe.ai/v1/systemone"
+# Hard Jev budget for the run (qualify.py stops before crossing it); unset = no cap.
+JEV_BUDGET_USD = float(os.environ["V4_JEV_BUDGET_USD"]) if os.environ.get("V4_JEV_BUDGET_USD") else None
+JEV_USD_PER_MTOK = float(os.environ.get("V4_JEV_USD_PER_MTOK") or 0.042)
 
 
 def jev_headers():

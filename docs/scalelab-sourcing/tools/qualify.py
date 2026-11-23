@@ -64,6 +64,48 @@ def buyer_candidates(domain):
     return out[:8]
 
 
+import threading
+_budget_lock = threading.Lock()
+
+
+def _spent_usd():
+    """Jev spend recorded in this run's jev_usage.jsonl (input + output tokens), in USD."""
+    path = os.path.join(RUN, "jev_usage.jsonl")
+    tokens = 0
+    if os.path.exists(path):
+        for line in open(path):
+            try:
+                u = json.loads(line).get("usage") or {}
+            except ValueError:
+                continue
+            tokens += int(u.get("input_tokens") or 0) + int(u.get("output_tokens") or 0)
+    return tokens * v4config.JEV_USD_PER_MTOK / 1e6
+
+
+_SPENT = [None]
+
+
+def budget_allows(next_tokens=6000):
+    """Hard stop at V4_JEV_BUDGET_USD: never start a request that could cross it."""
+    if v4config.JEV_BUDGET_USD is None:
+        return True
+    with _budget_lock:
+        if _SPENT[0] is None:
+            _SPENT[0] = _spent_usd()
+        if _SPENT[0] + next_tokens * v4config.JEV_USD_PER_MTOK / 1e6 > v4config.JEV_BUDGET_USD:
+            return False
+        _SPENT[0] += next_tokens * v4config.JEV_USD_PER_MTOK / 1e6  # reserve; corrected after the call
+        return True
+
+
+def budget_settle(reserved_tokens, usage):
+    if v4config.JEV_BUDGET_USD is None:
+        return
+    used = int((usage or {}).get("input_tokens") or 0) + int((usage or {}).get("output_tokens") or 0)
+    with _budget_lock:
+        _SPENT[0] += (used - reserved_tokens) * v4config.JEV_USD_PER_MTOK / 1e6
+
+
 def jev(state, questions):
     body = json.dumps({"model": MODEL, "state": state, "questions": questions}).encode()
     req = urllib.request.Request(v4config.JEV_URL, data=body, method="POST", headers=v4config.jev_headers())
@@ -107,7 +149,10 @@ def one(c):
     if c.get("intent_ads"):
         st["meta_ads"] = [{"title": a.get("title"), "text": a.get("text"), "cta": a.get("cta"), "active": a.get("active")} for a in c["intent_ads"]["ads"]][:8]
         qs.update(ADQ)
+    if not budget_allows():
+        return d, "budget_stop", cands, None
     res = jev(st, qs)
+    budget_settle(6000, res.get("usage"))
     json.dump(res, open(out, "w"), indent=1)
     supp = {"model": res.get("model"), "answers": {k: res["answers"][k] for k in SUPP}, "usage": {"note": "same request as main ICP call"}}
     json.dump(supp, open(os.path.join(RUN, "jev_icp", d + ".supp.json"), "w"))
@@ -122,6 +167,7 @@ if __name__ == "__main__":
     buyers = {}
     usage = open(os.path.join(RUN, "jev_usage.jsonl"), "a")
     fails = 0
+    stopped = False
 
     def run(c):
         try:
@@ -135,8 +181,10 @@ if __name__ == "__main__":
                 usage.write(json.dumps({"stage": "w1_fanout", "domain": d, "model": res.get("model"), "usage": res.get("usage")}) + "\n")
             if status.startswith("FAIL"):
                 fails += 1
+            if status == "budget_stop":
+                stopped = True
             print(d, status, len(cands), flush=True)
     json.dump(buyers, open(os.path.join(RUN, "buyers_site.json"), "w"), indent=1)
-    print("fails", fails)
+    print("fails", fails, "| budget_stop", stopped, "| spent_usd", round(_spent_usd(), 4), "| cap", v4config.JEV_BUDGET_USD)
     if fails:
         sys.exit(2)
