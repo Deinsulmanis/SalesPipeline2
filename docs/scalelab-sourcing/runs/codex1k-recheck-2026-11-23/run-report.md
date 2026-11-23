@@ -120,3 +120,72 @@ Not pursued (credit rule): about 130 Codex PASS companies with no senior buyer e
 - `ad-intent-and-signals.csv` (empty: no ad lookups)
 - `v4-copy-evidence.json`
 - `preview/v4-preview.html` (all 48 master leads)
+
+## Follow-up (2026-11-23): 34 more reveals, Codex's 48, import and queue
+
+The owner approved revealing the 34 pending buyers, adding them and Codex's 48 send-ready contacts to the master, then importing and queueing them all into Industrial Campaign 3.
+
+**Spend:** Apollo **34** more credits (840 → 874, standard reveal). Total for this run: **53 Apollo credits**, Jev $0.087, Adyntel 0, GetLeads 0.
+
+**Reveal QC (34):**
+
+- All 34 matched with verified emails at the right organization.
+- 2 held because the email domain is unproven: one domain has no mail server, the other isn't referenced on the company site.
+- 1 differing email domain was proven by redirect and 1 by an on-site reference.
+- Result: 32 READY_FOR_REVIEW.
+
+**Codex's 48 send-ready contacts:**
+
+- All 48 email domains match the company domain.
+- Mail-host check: no Proofpoint plus catch-all and no missing MX, so none held.
+- Sites crawled (headless fallback for 4) so each specialty line is backed by a first-party quote.
+- Codex's one COPY_A and one COPY_B fall back to COPY_C. The file has only an ad-library link, with no ad dates or text to verify a current ad.
+
+**Master:** 128 rows (the original 33, 47 from this re-check, Codex's 48).
+
+**Copy selection (read-only preview):**
+
+| Variant | Count |
+|---|---|
+| COPY_A | 3 |
+| COPY_B | 3 |
+| COPY_C | 115 |
+| HOLD | 7 |
+
+The 7 holds:
+
+| Reason | Count | Detail |
+|---|---|---|
+| No first-party specialty line | 3 | JF4: family labor outsourcing, site names no industrial line. Work4ce and S&A: generic recruitment sites |
+| Site blocks automated reading | 2 | RWDY, Renegade Group |
+| Apollo first name stored as "Stacy?" | 1 | — |
+| AMMON (NEEDS_EVIDENCE) | 1 | — |
+
+Display names taken from first-party site titles: "Southland Employment Services", "ACT Auto Staffing", "Optimum Personnel Services" (the original contains a "|", which the copy check refuses).
+
+**Import (production):**
+
+| Result | Count |
+|---|---|
+| Accepted and written (all COPY_C, SEND_READY) | **89** |
+| Already imported | 30 |
+| Refused: held | 7 |
+| Refused: on the global suppression list | 2 |
+
+The 2 suppression refusals (Imperial Design, MAXUM Industries) are existing Campaign 3 leads that opted out after their Email 1. The final send gate stops any further touch.
+
+A repeat call is a no-op. The Supabase mirror shows all 89 at stage Import with a SEND_READY profile.
+
+**Queue:** explicit routing to the freshly checked cold-eligible ScaleLab inboxes, split by daily capacity. `"auto"` routing was not used.
+
+| Inbox | Leads |
+|---|---|
+| primary | 29 |
+| deniels | 26 |
+| outreachplateau_zoe | 12 |
+| outreachplateau_merrick | 11 |
+| outreachplateau_dave | 11 |
+
+Live readiness shows `wouldSendIfSendingEnabled: true` for all 89. The refill plan shows 0 moves.
+
+**Industrial Campaign 3 now holds 121 leads:** 32 in sequence and 89 queued for Email 1.
