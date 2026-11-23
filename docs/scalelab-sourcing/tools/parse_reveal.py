@@ -22,5 +22,5 @@ for k, t in enumerate(T[s:s + len(ms)]):
     if t["domain"] not in (od, edom) and not (edom and t["domain"].endswith(edom)): flags.append("DOMAIN MISMATCH")
     if t["first"].lower() not in (m.get("first_name") or "").lower(): flags.append("WRONG PERSON")
     if m.get("match_confidence") == "low": flags.append("LOW CONFIDENCE")
-    print("|".join(str(x) for x in [s+k, t["domain"], f"{t['first']} {t['last']}".strip(), m.get("id"), m.get("name"), m.get("title"), email, es,
+    print("|".join(str(x).replace("|", "/") for x in [s+k, t["domain"], f"{t['first']} {t['last']}".strip(), m.get("id"), m.get("name"), m.get("title"), email, es,
           m.get("email_domain_catchall"), m.get("linkedin_url"), cur.get("start_date"), ", ".join(x for x in [m.get("city"), m.get("state")] if x), od, ";".join(flags) or "OK"]))

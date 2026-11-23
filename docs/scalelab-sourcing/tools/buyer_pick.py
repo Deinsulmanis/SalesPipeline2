@@ -12,7 +12,8 @@ domain ({"JCS Family": "jobconnectionservices.com"}); contact QC still checks th
 
 Buyer order (playbook): tier 1 owner / founder / president / CEO / managing partner; tier 2 CRO /
 VP sales or business development / senior commercial executive (COO, CMO and an unqualified VP
-rank after the commercial titles). Directors are tier 3 and not searched here. Managing directors,
+rank after the commercial titles; a bare "Partner" ranks there too, while "Talent Partner" or
+"Business Partner" style recruiter titles are never picked). Directors are tier 3 and not searched here. Managing directors,
 finance, technology, HR, operations-only and recruiting titles are never picked.
 
 Writes:
@@ -28,18 +29,23 @@ import sys
 RUN = sys.argv[1]
 PARTS = sys.argv[2:]
 
-T1 = [(0, r"\b(owner|co-?owner|founder|co-?founder|proprietor)\b"),
+T1 = [(0, r"(?<!product )(?<!process )\b(owner|co-?owner|founder|co-?founder|proprietor)\b"),
       (1, r"(?<!vice )\bpresident\b|\bceo\b|chief executive"),
-      (2, r"managing partner|\bprincipal\b")]
+      (2, r"managing partner|managing principal|^principal$|principal (and|&|/) ?(owner|founder)")]
 T2 = [(0, r"chief revenue|\bcro\b|chief sales|chief commercial|chief growth|chief business development"),
       (1, r"(vp|vice president|svp|evp)\b.*\b(sales|business development|growth|revenue|commercial|client|account)"),
-      (2, r"\bcoo\b|chief operating|\bcmo\b|chief marketing|^(vp|vice president|svp|evp)$|\bpartner\b")]
+      (2, r"\bcoo\b|chief operating|\bcmo\b|chief marketing|^(vp|vice president|svp|evp)$|^(senior |founding |equity )?partner$")]
 NEVER = r"managing director|\bcfo\b|financ|account(ing|ant)|controller|\bcto\b|\bcio\b|technolog|information|\bhr\b|human|people|talent acq|recruit|payroll|compliance|legal|counsel|\bit\b|engineer|operations manager|branch|office manager|assistant|board member|advisor|investor|retired|former"
 
 
 def tier(title):
     t = (title or "").lower().strip()
-    if not t or re.search(NEVER, t):
+    if not t:
+        return None
+    # Ownership titles win even when combined with a functional one ("Recruitment Specialist and Co-Founder").
+    if re.search(T1[0][1], t):
+        return (1, 0)
+    if re.search(NEVER, t):
         return None
     for rank, pat in T1:
         if re.search(pat, t):
