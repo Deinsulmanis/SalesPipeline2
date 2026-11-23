@@ -7,7 +7,8 @@ For each part P (e.g. P1), reads <run>/buyers/P_batches.json (array of domain ba
 apollo_mixed_people_api_search) and <run>/buyers/P.txt, one line per person:
     batch_index|organization_name|person_id|first_name|last_name_obfuscated|title|has_email
 The person's organization name is matched to a domain in its own batch (Apollo names, same source
-as companies.json).
+as companies.json). Optional <run>/buyers/org_alias.json maps a reviewed parent/brand name to its
+domain ({"JCS Family": "jobconnectionservices.com"}); contact QC still checks the email domain.
 
 Buyer order (playbook): tier 1 owner / founder / president / CEO / managing partner; tier 2 CRO /
 VP sales or business development / senior commercial executive (COO, CMO and an unqualified VP
@@ -55,6 +56,8 @@ def norm(name):
 
 def main():
     names = {c["domain"]: c["company_name"] for c in json.load(open(os.path.join(RUN, "companies.json")))}
+    alias_path = os.path.join(RUN, "buyers", "org_alias.json")
+    alias = {norm(k): v for k, v in json.load(open(alias_path)).items()} if os.path.exists(alias_path) else {}
     people, unmapped = {}, []
     searched = set()
     for part in PARTS:
@@ -74,7 +77,8 @@ def main():
             except (ValueError, IndexError):
                 unmapped.append(line.strip()); continue
             n = norm(org)
-            dom = next((d for d in batch if norm(names.get(d)) == n), None)
+            dom = alias.get(n) if alias.get(n) in batch else None
+            dom = dom or next((d for d in batch if norm(names.get(d)) == n), None)
             if not dom:  # Apollo sometimes trims suffixes: fall back to a prefix match within the batch
                 dom = next((d for d in batch if norm(names.get(d)) and (norm(names.get(d)).startswith(n) or n.startswith(norm(names.get(d))))), None)
             if not dom:

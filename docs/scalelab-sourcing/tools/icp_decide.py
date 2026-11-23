@@ -2,6 +2,7 @@
 
 Usage: python3 -I icp_decide.py <run_dir>
 Writes icp_decisions.json. Thresholds are recorded in the run report.
+Optional <run>/manual_review.json holds reviewer overrides; they can only tighten a decision.
 """
 import json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -121,6 +122,17 @@ def main():
         r["staffing_models"] = ev["keyword_models"]
         r["icp_evidence"] = [{"url": z["url"], "excerpt": z["excerpt"], "observed_at": z["observed_at"], "published_at": None} for z in (ind_ex[:4] + [z for z in ev["excerpts"] if "employer_facing" in z["tags"] and z not in ind_ex][:2] + [z for z in ev["excerpts"] if "geo" in z["tags"]][:1])]
         out.append(r)
+    # Reviewer overrides (playbook manual review): <run>/manual_review.json {domain: {"decision": "HOLD"|"REJECT", "reason": "..."}}.
+    # Only ever tightens a decision (PASS -> HOLD/REJECT, HOLD -> REJECT); it never promotes a company to PASS.
+    mr_path = os.path.join(RUN, "manual_review.json")
+    if os.path.exists(mr_path):
+        mr = json.load(open(mr_path))
+        rank = {"PASS": 0, "HOLD": 1, "REJECT": 2}
+        for r in out:
+            m = mr.get(r["domain"])
+            if m and rank.get(m["decision"], 0) > rank.get(r["company_icp"], 0):
+                r.update(company_icp=m["decision"], icp_reason_code="MANUAL_REVIEW", reason="Manual review: " + m["reason"],
+                         decided_by="manual review (after Jev + code)")
     json.dump(out, open(os.path.join(RUN, "icp_decisions.json"), "w"), indent=1)
     from collections import Counter
     print(Counter((x["company_icp"], x["icp_reason_code"]) for x in out))
