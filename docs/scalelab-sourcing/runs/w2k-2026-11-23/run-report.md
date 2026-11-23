@@ -210,3 +210,20 @@ The owner had already approved deploying the routing fix (`44679ab`, on the prod
 | **Send ready** (will receive their next email) | **215** |
 
 The eligible ScaleLab inboxes send about 155 per day, so the Email 1 queue drains over about two weekday send days, with catch-alls last.
+
+## Follow-up (2026-11-23): outreachplateau inbox limits raised
+
+At the owner's request, zoe@, merrick@ and dave@outreachplateau.co went from 20/day at 2 per window to **25/day at 3 per window**. With ten send windows a day, 2 per window would have held each inbox at 20.
+
+- Commit `47ba175` on the production branch, fast-forward from `44679ab`.
+- Full suite: the same 4 date-dependent failures as the previous build, nothing new. Deployed outside the send windows with no pass running.
+
+**Live check:** all three show 25/3, active, send-eligible, observers healthy.
+
+| Check | Result |
+|---|---|
+| ScaleLab cold-eligible capacity | **170/day** (primary 50, deniels 45, 3 × 25), equal to the ScaleLab ceiling (`SCALELAB_MAX_DAILY`) |
+| Refill plan | 3 moves from primary/deniels onto the outreachplateau inboxes; none into a held inbox |
+| Send-lock and caps | Send-lock ok; no other caps changed |
+
+The same morning, tryscalelabai and deniels_tryscalelabai were paused from the dashboard in a browser. That was not part of this change. Both were already on cold hold (Gmail access not configured), so cold capacity is unchanged.
