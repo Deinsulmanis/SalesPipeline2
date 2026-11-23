@@ -5,7 +5,7 @@ const run = process.argv[2]; const doms = process.argv.slice(3);
 const KEY = /(employer|client|business|service|industr|staffing|solution|about|trade|skilled|manufactur|construction|workforce|labor|who-we|what-we|location)/i;
 (async () => {
   const b = await chromium.launch();
-  const ctx = await b.newContext({ userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36' });
+  const ctx = await b.newContext();
   for (const d of doms) {
     const rec = { domain: d, pages: [], error: null, renderer: 'playwright' };
     const p = await ctx.newPage();
