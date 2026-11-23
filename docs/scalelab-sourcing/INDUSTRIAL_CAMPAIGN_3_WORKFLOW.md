@@ -1,6 +1,6 @@
 # Industrial Campaign 3: email workflow
 
-**Status:** live in production since 2026-11-20 (commit `bf9ed96`). The first wave of 32 leads was queued for the first send window on Friday 2026-11-20.
+**Status:** live in production since 2026-11-20 (commit `bf9ed96`). The first wave of 32 leads was queued for the first send window on Friday 2026-11-20. Since 2026-11-23 production runs `44679ab`: automatic queue assignment and the scheduled sender refill never pick a held cold inbox.
 
 This document covers what happens to a lead after sourcing: how its email variant is chosen, how it enters the CRM, how it is routed and sent, and how to pause or extend the campaign. For sourcing (finding and qualifying leads), see [`V4_SEND_READY_PIPELINE.md`](V4_SEND_READY_PIPELINE.md).
 

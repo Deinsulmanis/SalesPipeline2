@@ -161,3 +161,52 @@ Dedupe at the email level: no revealed email domain is in production or earlier 
 - `preview/v4-preview.html` (all 228 master leads)
 - Master: `docs/scalelab-sourcing/runs/V4_APPROVED_CONTACTS_MASTER.csv`, now 228 rows
 - Working folder: `runs-private/w2k/` (local only)
+
+## Follow-up (2026-11-23): import and queue
+
+The owner approved importing and queueing the 96 copy-selected leads, routed explicitly to the eligible inboxes, with catch-alls last.
+
+**Pre-checks (read only):**
+
+- Cold-delivery gate: policy off, pool all. Eligible ScaleLab inboxes: `primary`, `deniels`, `outreachplateau_zoe`, `outreachplateau_merrick`, `outreachplateau_dave`.
+- No agent pass running.
+- 00:40 Pacific, outside the send windows.
+
+**Import (production):** two calls so that catch-alls sort last. The send cron reads queued leads in `lead_id` order, and an id starts with the import time.
+
+| Call | Received | Accepted and written | Refused | Variants |
+|---|---|---|---|---|
+| Non-catch-all | 69 | 69 | 0 | 68 COPY_C, 1 COPY_A |
+| Catch-all | 27 | 27 | 0 | 26 COPY_C, 1 COPY_A |
+
+Every catch-all id sorts after every non-catch-all id (checked). Both dry runs matched the live result.
+
+**Queue:** explicit per-inbox calls, the non-catch-alls first. The split keeps each inbox's total load in line with its daily limit. All 96 queued: 0 refused, 0 conflicts, 0 failures.
+
+| Inbox | Non-catch-all | Catch-all | Total new |
+|---|---|---|---|
+| primary | 24 | 9 | 33 |
+| deniels | 21 | 9 | 30 |
+| outreachplateau_zoe | 7 | 3 | 10 |
+| outreachplateau_merrick | 8 | 3 | 11 |
+| outreachplateau_dave | 9 | 3 | 12 |
+
+**Post-checks:** live readiness shows `wouldSendIfSendingEnabled: true` for all 96.
+
+**Refill fix deployed:** after queueing, the refill planner on `bf9ed96` proposed 60 moves into the three held inboxes (`tryscalelabai`, `scalelabaiteam`, `deniels_tryscalelabai`). The final gate would have blocked those sends, so the leads would have sat unsent. The scheduled refill applies its plan at 06:40 Pacific on weekdays.
+
+The owner had already approved deploying the routing fix (`44679ab`, on the production branch). The deploy followed runbook §6:
+
+- Railway was live on `bf9ed96`, the base of the fix.
+- Full suite: 3,553 pass and 4 fail, all time-dependent and failing on `bf9ed96` too: 2 DST round-trips, the live-refill window, and a Jole fixture whose evidence date passed 45 days on 2026-11-23.
+- Railway was re-pinned to `44679ab`. Deployment SUCCESS: all crons scheduled, send-lock enabled, refill plan 0 moves, eligible inboxes healthy, caps unchanged (ScaleLab 170/day).
+
+**Industrial Campaign 3 after this run:** 217 leads (Supabase).
+
+| State | Count |
+|---|---|
+| Queued for Email 1, all send ready | 185 (89 from the Codex re-check and 96 from this run) |
+| In sequence after Email 1 | 32 (2 opted out and are stopped by the global suppression list) |
+| **Send ready** (will receive their next email) | **215** |
+
+The eligible ScaleLab inboxes send about 155 per day, so the Email 1 queue drains over about two weekday send days, with catch-alls last.
