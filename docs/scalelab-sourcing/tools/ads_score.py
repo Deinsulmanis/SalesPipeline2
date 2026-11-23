@@ -132,6 +132,11 @@ if __name__ == "__main__":
         elif ads:
             info["freshness"] = "CURRENT" if any(a["current"] for a in ads) else "STALE"
             info["why"] = f"{len(ads)} ads, text not extracted (stale or advertiser mismatch) -> not scored"
+        # A company whose ads were never looked up (e.g. no confirmed buyer, so no ad credits spent on it)
+        # is NOT_CHECKED, never "no ads observed": build_outputs then labels it INSUFFICIENT_EVIDENCE, not LOW_SIGNAL.
+        if not ads and not comps[d].get("intent_ads") and not any(
+                os.path.exists(f"{RUN}/ads/{d}.{p}.json") for p in ("google", "meta", "linkedin")):
+            info.update(ad_class="NOT_CHECKED", not_checked=True, why="ads not looked up in this run")
         s["total"] = sum(s.values())
         scores[d] = {"signals": s, "ads": info}
         print(d, s["total"], info["ad_class"], info["why"][:120])

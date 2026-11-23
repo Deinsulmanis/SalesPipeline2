@@ -71,7 +71,7 @@ if __name__ == "__main__":
                 print("CAP REACHED - stopping", used); sys.exit(0)
             t0 = time.time()
             st, res = post(path, mk(d))
-            charged = 0 if st in (400, 401, 402, 422) else 1
+            charged = 0 if st in (204, 400, 401, 402, 422) else 1  # 204 = no content, not billed (balance-verified 2026-11-23)
             used += charged
             json.dump({"status": st, "request": {k: v for k, v in mk(d).items()}, "observed_at": time.strftime("%Y-%m-%d"), "response": res}, open(out, "w"))
             n = None
