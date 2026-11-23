@@ -47,8 +47,11 @@ def main():
         d = c["domain"]
         r = {"domain": d, "company_name": c["company_name"], "dedupe_status": c["dedupe_status"]}
         if c["pre_gate"]:
-            r.update(company_icp=c["pre_gate"], icp_reason_code="DUPLICATE" if c["pre_gate"] == "REJECT" else ("UNVERIFIED" if not d else "DUPLICATE"),
-                     reason=c["pre_reason"], decided_by="dedupe (code)")
+            # pre_gate holds a reason ("REJECT", or "<CODE>: <why>" for a hold); the decision is REJECT or HOLD.
+            code = c["pre_gate"].split(":")[0].strip()
+            r.update(company_icp="REJECT" if c["pre_gate"] == "REJECT" else "HOLD",
+                     icp_reason_code="DUPLICATE" if code in ("REJECT", "HOLD") else code,
+                     reason=c.get("pre_reason") or c["pre_gate"], decided_by="dedupe (code)")
             if c["pre_gate"] == "HOLD" and d:
                 r["icp_reason_code"] = "DUPLICATE"  # possible affiliate collision; needs human review
             out.append(r); continue

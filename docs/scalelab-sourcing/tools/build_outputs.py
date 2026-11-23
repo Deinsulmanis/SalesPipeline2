@@ -26,7 +26,10 @@ TODAY = v4config.RUN_DATE
 WAVE = v4config.WAVE
 
 
-def bucket(t):
+def bucket(t, ads=None):
+    # A run that did not check ads (scores.json "not_checked") cannot call a company low-signal.
+    if ads and ads.get("not_checked"):
+        return "INSUFFICIENT_EVIDENCE"
     return "HIGH_PRIORITY" if t >= 60 else "STANDARD" if t >= 20 else "LOW_SIGNAL"
 
 
@@ -40,7 +43,8 @@ def mx_gateway(dom, cache={}):
     return g
 
 
-def w(path, rows, cols):
+def w(path, rows, cols=None):
+    cols = cols or (list(rows[0].keys()) if rows else ["note"])
     with open(path, "w", newline="") as f:
         wr = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
         wr.writeheader()
@@ -91,10 +95,10 @@ for r in rows:
     w1_contacts.append({
         "wave": WAVE, "company_name": x["company_name"], "company_domain": dom,
         "buyer_name": name, "buyer_title": title, "buyer_tier": t["tier"], "email": email, "email_status": f"Apollo {est}", "catch_all": catch == "True", "mail_gateway": gw,
-        "demand_score": tot, "signal_priority": bucket(tot), "ad_class": ai["ad_class"],
+        "demand_score": tot, "signal_priority": bucket(tot, ai), "ad_class": ai["ad_class"],
         "employer_facing_ads": sc["employer_facing_ads"], "own_company_bd_hiring": sc["own_company_bd_hiring"], "market_expansion": sc["market_expansion"],
         "sustained_employer_ads": sc["sustained_employer_ads"], "other_commercial_growth": sc["other_commercial_growth"], "scoring_version": VERSION,
-        "v4_tag": f"V4|PASS|{bucket(tot)}|{ai['ad_class']}|COPY_TIER_PENDING", "copy_tier": "PENDING_OWNER_COPY",
+        "v4_tag": f"V4|PASS|{bucket(tot, ai)}|{ai['ad_class']}|COPY_TIER_PENDING", "copy_tier": "PENDING_OWNER_COPY",
         "contact_status": "READY_FOR_REVIEW", "qc_flags": "; ".join(flags), "linkedin_url": r[9], "role_start": "" if r[10] == "None" else r[10], "location": r[11],
         "buyer_source": t["source"], "apollo_id": r[3], "icp_evidence_url": (x.get("icp_evidence") or [{}])[0].get("url", ""), "ad_summary": ai.get("why", ""),
         "dedupe_status": "CHECKED (domain + email vs ScaleLab Supabase leads and the V4 master)",
@@ -117,22 +121,22 @@ for x in dec:
                   "jev_model": x.get("jev_model", ""), "jev_identity_p": j.get("identity_match", ""), "jev_business_type": j.get("business_type", ""), "jev_industrial_line": j.get("industrial_line", ""),
                   "jev_service_model": j.get("service_model", ""), "jev_us_p": j.get("us_operations", ""), "jev_chain_p": j.get("large_national_chain", ""), "jev_hands_on_p": j.get("hands_on_workers", "")})
 qrows.sort(key=lambda r: ({"PASS": 0, "HOLD": 1, "REJECT": 2}[r["company_icp"]], r["company_name"]))
-w(f"{OUT}/company-qualification.csv", qrows, list(qrows[0].keys()))
+w(f"{OUT}/company-qualification.csv", qrows)
 rr = []
 for d, s in sorted(scores.items(), key=lambda kv: -kv[1]["signals"]["total"]):
     x = next(z for z in dec if z["domain"] == d)
-    rr.append({"company_name": x["company_name"], "company_domain": d, **s["signals"], "scoring_version": VERSION, "evidence_coverage": "PARTIAL", "signal_priority": bucket(s["signals"]["total"]),
+    rr.append({"company_name": x["company_name"], "company_domain": d, **s["signals"], "scoring_version": VERSION, "evidence_coverage": "PARTIAL", "signal_priority": bucket(s["signals"]["total"], s["ads"]),
                "ad_class": s["ads"]["ad_class"], "ad_freshness": s["ads"].get("freshness") or "", "attribution_p": s["ads"].get("attribution_p") or "", "score_reason": s["ads"].get("why", ""),
-               "v4_tag": f"V4|PASS|{bucket(s['signals']['total'])}|{s['ads']['ad_class']}|COPY_TIER_PENDING", "has_review_ready_buyer": "YES" if any(c["company_domain"] == d for c in w1_contacts) else "NO"})
-w(f"{OUT}/ranked-companies.csv", rr, list(rr[0].keys()))
+               "v4_tag": f"V4|PASS|{bucket(s['signals']['total'], s['ads'])}|{s['ads']['ad_class']}|COPY_TIER_PENDING", "has_review_ready_buyer": "YES" if any(c["company_domain"] == d for c in w1_contacts) else "NO"})
+w(f"{OUT}/ranked-companies.csv", rr)
 arows = []
 for d, v in adcls.items():
     for a in v["ads"]:
         arows.append({"company_domain": d, "platform": a["platform"], "advertiser": a.get("advertiser"), "start": a.get("start"), "last_seen": a.get("last_seen"), "current": a.get("current"),
                       "employer_facing_p": a.get("employer_p"), "text": a["text"], "url": a.get("url"), "observed_at": TODAY})
-w(f"{OUT}/ad-intent-and-signals.csv", arows, list(arows[0].keys()))
+w(f"{OUT}/ad-intent-and-signals.csv", arows)
 holds = w1_holds + [{"level": "company", "company_name": x["company_name"], "company_domain": x["domain"], "decision": x["company_icp"], "reason_code": x["icp_reason_code"], "reason": x["reason"], "evidence_that_would_resolve": ""} for x in dec if x["company_icp"] != "PASS"]
-w(f"{OUT}/review-holds.csv", holds, list(holds[0].keys()))
+w(f"{OUT}/review-holds.csv", holds)
 cols = list(w1_contacts[0].keys())
 w(f"{OUT}/approved-contacts.csv", w1_contacts, cols)
 

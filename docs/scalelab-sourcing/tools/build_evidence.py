@@ -53,7 +53,8 @@ def day(v):
 
 def display_name(name):
     n = re.split(r"\s+\(|,\s+a\s+|,\s+formerly\s+|\s+-\s+|,\s+Personnel Response", name)[0]
-    n = re.sub(r",?\s+(?:Inc\.?|INC\.?|LLC\.?|L\.L\.C\.|Corp\.?)$", "", n.strip()).strip().rstrip(",")
+    n = re.sub(r"\s*/.*$", "", n)  # "ACT Staffing /actstaffing.com" -> "ACT Staffing"
+    n = re.sub(r",?\s+(?:Inc\.?|INC\.?|LLC\.?|L\.L\.C\.|Corp\.?)(?:\s+[A-Z][a-z]+)?$", "", n.strip()).strip().rstrip(",")  # also "Inc. Iowa"
     # Brand casing is kept as sourced (AMMON, FINITETEK, MAXUM); only the
     # lower-cased initialism "Hl" is restored. The preview flags every change.
     return " ".join("HL" if w == "Hl" else w for w in n.split())

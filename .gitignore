@@ -21,3 +21,7 @@ docs/scalelab-sourcing/runs/v4-copy-2026-11-20/preview/
 
 # Python bytecode
 __pycache__/
+# Every run's copy evidence and per-lead previews name buyers and emails (PII): never commit.
+docs/scalelab-sourcing/runs/*/v4-copy-evidence.json
+docs/scalelab-sourcing/runs/*/preview/
+docs/scalelab-sourcing/runs/*/preview-summary.json
