@@ -1,6 +1,6 @@
 """Stage 2: merge crawl caches, extract team-page buyer candidates, ONE fan-out Jev request per company.
 
-Usage: python3 -I w1_qualify.py <run_dir>
+Usage: python3 -I qualify.py <run_dir> [--only @domains.json]
 Writes evidence/, jev_icp/<d>.json (+ .supp.json so icp_decide does not re-call), buyers_site.json, jev_usage.jsonl
 """
 import json, os, re, sys, time, urllib.request, urllib.error
@@ -24,8 +24,11 @@ def merge_caches():
         return
     for f in os.listdir(pw):
         a_path = os.path.join(RUN, "sitecache", f)
-        b = json.load(open(os.path.join(pw, f)))
-        a = json.load(open(a_path)) if os.path.exists(a_path) else {"pages": []}
+        try:  # pw_fetch.js may still be writing this file; it is merged on the next run
+            b = json.load(open(os.path.join(pw, f)))
+            a = json.load(open(a_path)) if os.path.exists(a_path) else {"pages": []}
+        except ValueError:
+            continue
         ta = sum(len(p.get("text") or "") for p in a["pages"])
         tb = sum(len(p.get("text") or "") for p in b["pages"])
         if tb > ta:
@@ -164,7 +167,12 @@ if __name__ == "__main__":
     os.makedirs(os.path.join(RUN, "evidence"), exist_ok=True)
     merge_caches()
     comps = [c for c in json.load(open(os.path.join(RUN, "companies.json"))) if c["pre_gate"] is None]
-    buyers = {}
+    if "--only" in sys.argv:  # --only @domains.json: e.g. readable sites first, thin ones after the headless retry
+        arg = sys.argv[sys.argv.index("--only") + 1]
+        only = set(json.load(open(arg[1:])) if arg.startswith("@") else arg.split(","))
+        comps = [c for c in comps if c["domain"] in only]
+    bpath = os.path.join(RUN, "buyers_site.json")
+    buyers = json.load(open(bpath)) if os.path.exists(bpath) else {}  # merged across --only passes
     usage = open(os.path.join(RUN, "jev_usage.jsonl"), "a")
     fails = 0
     stopped = False
