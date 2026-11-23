@@ -94,7 +94,7 @@ for r in rows:
     tot = sc["total"]
     w1_contacts.append({
         "wave": WAVE, "company_name": x["company_name"], "company_domain": dom,
-        "buyer_name": name, "buyer_title": title, "buyer_tier": t["tier"], "email": email, "email_status": f"Apollo {est}", "catch_all": catch == "True", "mail_gateway": gw,
+        "buyer_name": name, "buyer_title": title, "buyer_tier": t["tier"], "email": email, "email_status": f"{'GetLeads' if str(t.get('source', '')).startswith('getleads') else 'Apollo'} {est}", "catch_all": catch == "True", "mail_gateway": gw,
         "demand_score": tot, "signal_priority": bucket(tot, ai), "ad_class": ai["ad_class"],
         "employer_facing_ads": sc["employer_facing_ads"], "own_company_bd_hiring": sc["own_company_bd_hiring"], "market_expansion": sc["market_expansion"],
         "sustained_employer_ads": sc["sustained_employer_ads"], "other_commercial_growth": sc["other_commercial_growth"], "scoring_version": VERSION,
