@@ -59,9 +59,11 @@ const DEFAULT_SECONDARY_INBOXES = Object.freeze([
   }),
   // ScaleLab's three pre-warmed Zapmail inboxes on outreachplateau.co
   // (connected 2026-11-19). Explicitly ScaleLab's, sending as Deins Ulmanis.
-  // Warm-up is complete, so they register as `ready` at 20/day and 2 per
-  // window (10 windows x 2 = 20). Ready is not active: nothing sends until each
-  // is activated, which re-checks credential and observer health first.
+  // Warm-up is complete, so they register as `ready`. Raised 2026-11-23 at the
+  // owner's request from 20/day at 2 per window to 25/day at 3 per window
+  // (10 windows x 3 = 30, so the 25/day limit binds; at 2 per window the
+  // windows alone would cap them at 20). Ready is not active: nothing sends
+  // until each is activated, which re-checks credential and observer health first.
   // The observer starts "from now onward", so the warm-up history already in
   // these mailboxes is never read as prospect replies.
   ...[
@@ -71,7 +73,7 @@ const DEFAULT_SECONDARY_INBOXES = Object.freeze([
   ].map(([id, email]) => Object.freeze({
     id, email, clientId: 'scalelab', status: 'ready',
     tokenEnv: `GMAIL_${id.toUpperCase()}_TOKEN_JSON`,
-    dailyLimit: 20, perRunLimit: 2, observerEnabled: true,
+    dailyLimit: 25, perRunLimit: 3, observerEnabled: true,
     fromName: 'Deins Ulmanis',
   })),
   // Jole BTX LLC's six cold-sending mailboxes (client `jole`), scoped to
