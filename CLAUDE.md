@@ -7,6 +7,8 @@ For any ScaleLab prospect-sourcing task, read these two files **before doing any
 1. [`docs/scalelab-sourcing/ScaleLab_AI_Industrial_Staffing_ICP_and_Sourcing_Playbook.md`](docs/scalelab-sourcing/ScaleLab_AI_Industrial_Staffing_ICP_and_Sourcing_Playbook.md): the approved ICP, workflow and scoring.
 2. [`docs/scalelab-sourcing/V4_DECISIONS.md`](docs/scalelab-sourcing/V4_DECISIONS.md): the owner's decisions for the new V4 campaign, current tool connection status, and the first-run checklist.
 
+The step-by-step run workflow (discovery to import and queue, with commands, caps and lessons learned) is the project skill [`.claude/skills/scalelab-lead-sourcing/SKILL.md`](.claude/skills/scalelab-lead-sourcing/SKILL.md).
+
 Key points (the files above are authoritative):
 
 - **ScaleLab prospects are US industrial and skilled-trades staffing agencies.** They are not Jole BTX's industrial employers. Never mix the two campaigns' data, suppressions, senders or copy.
