@@ -77,7 +77,10 @@ def crawl(domain):
             rec["error"] = f"{type(e).__name__}: {str(e)[:120]} at {start}"
     if home_html:
         rec["error"] = None
-        cand = links(home_html, home_url)
+        try:
+            cand = links(home_html, home_url)
+        except ValueError:  # a malformed href (e.g. "http://[button_link]") breaks urllib parsing
+            cand = []
         # prioritise employer/service/industry/about pages
         pri = sorted(cand, key=lambda u: (0 if re.search(r"employer|client|business|service|industr|solution|trade|skilled|manufactur|construction|light", u, re.I) else 1 if re.search(r"about|who-we|what-we|location|branch|team|leadership|our-people|contact", u, re.I) else 2 if re.search(r"news|blog", u, re.I) else 3))
         for u in pri[:8]:
@@ -93,9 +96,21 @@ def crawl(domain):
     return domain, rec["error"] or f"{len(rec['pages'])} pages"
 
 
+def safe_crawl(domain):
+    """One malformed site (e.g. a link urllib cannot parse) must not stop the whole crawl."""
+    try:
+        return crawl(domain)
+    except Exception as e:
+        err = f"{type(e).__name__}: {str(e)[:120]}"
+        path = os.path.join(OUT, domain + ".json")
+        if not os.path.exists(path):
+            json.dump({"domain": domain, "pages": [], "error": err}, open(path, "w"))
+        return domain, err
+
+
 if __name__ == "__main__":
     comps = json.load(open(os.path.join(RUN, "companies.json")))
     doms = [c["domain"] for c in comps if c["pre_gate"] is None]
     with cf.ThreadPoolExecutor(24) as ex:
-        for d, s in ex.map(crawl, doms):
+        for d, s in ex.map(safe_crawl, doms):
             print(d, "->", s, flush=True)

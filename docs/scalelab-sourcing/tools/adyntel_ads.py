@@ -1,6 +1,6 @@
 """V4 Stage 3: Adyntel ad lookups for ICP PASS companies only, with a hard credit cap.
 
-Usage: python3 -I adyntel_ads.py <run_dir> <cap_credits> [--only dom1,dom2]
+Usage: python3 -I adyntel_ads.py <run_dir> <cap_credits> [--only dom1,dom2 | --only @domains.json] [--platforms google,meta]
 Credentials: ADYNTEL_EMAIL / ADYNTEL_API_KEY from env, sent in the JSON body, never printed.
 Each request costs 1 credit (Adyntel bills per request). First page only, no extract-text, no all_ads.
 Writes ads/<domain>.<platform>.json and adyntel_ledger.jsonl.
@@ -10,7 +10,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import v4config  # noqa: E402  run settings (env-driven)
 
 RUN, CAP = sys.argv[1], int(sys.argv[2])
-ONLY = set(sys.argv[sys.argv.index("--only") + 1].split(",")) if "--only" in sys.argv else None
+_only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
+ONLY = (set(json.load(open(_only[1:]))) if _only.startswith("@") else set(_only.split(","))) if _only else None
 E, K = v4config.adyntel_credentials()
 if not E or not K:
     print("Adyntel credentials missing - fail closed"); sys.exit(2)
@@ -45,6 +46,12 @@ PLATFORMS = [
     ("meta", "facebook", lambda d: {"company_domain": d, "country_code": "US", "active_status": "all"}),
     ("linkedin", "linkedin", lambda d: {"company_domain": d, "country": "US"}),
 ]
+# --platforms google,meta limits the lookups (and the credits) to those platforms.
+if "--platforms" in sys.argv:
+    _want = set(sys.argv[sys.argv.index("--platforms") + 1].split(","))
+    PLATFORMS = [p for p in PLATFORMS if p[0] in _want]
+    if not PLATFORMS:
+        raise SystemExit("--platforms matched nothing (use google, meta, linkedin)")
 
 if __name__ == "__main__":
     dec = json.load(open(os.path.join(RUN, "icp_decisions.json")))
