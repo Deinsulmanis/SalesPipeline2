@@ -96,9 +96,14 @@ def _text(content):
 
 
 def _load_result(t):
-    m = re.search(r"saved to (/\S+\.txt)", t)
+    m = re.search(r"saved to:? (/\S+\.(?:txt|json))", t)
     if m and os.path.exists(m.group(1)):
         t = open(m.group(1)).read()
+        if t.lstrip().startswith("["):  # a saved list of content blocks: [{"type": "text", "text": "..."}]
+            try:
+                t = _text(json.loads(t))
+            except ValueError:
+                pass
     t = t.strip()
     if not t.startswith("{"):
         return None

@@ -307,6 +307,34 @@ The import refuses an address or company that already has a ScaleLab row (`dupli
 5. **Check:** snapshot the rows first (md5 of notes, campaign notes and identity, plus revision). Afterwards only those fields may differ and revision is up by one. A repeat call returns `alreadyConverted`.
 6. **Queue:** as in step 12, non-catch-alls first. Converted rows keep their old ids, which sort **before** newly imported ones, so they cannot be forced to the end of the queue. Keep each inbox inside one day's capacity if catch-alls must go last.
 
+### Job-posting evidence and job-board discovery (owner decision 2026-11-24)
+
+**Rule:** the agency itself has 2+ postings in the last 60 days for hands-on industrial or trades roles, and those make up at least 1/3 of its postings. Postings must be the agency's own (matched by `company_domain`).
+- It meets check 3 (industrial line) and check 8 (hands-on), and with them checks 7 and 9.
+- It meets check 4 only when 2+ hands-on postings say temporary, contract, temp-to-hire or contract-to-hire.
+- Checks 1, 2, 5 and 6 are unchanged.
+- Code: `jobs_rule.py`, then `icp_decide.py <run> --jobs <run>/jobs_evidence.json`. Every decision records `evidence_basis`.
+
+**Postings come from GetLeads only (free jobs quota, no plan credits).**
+- Discovery: `search_jobs` with country US, `group_by: company`, the three industrial functions and a company-name keyword, paged to the end. Parse with `jobs_discover.py`, then run `discover_merge.py` as usual.
+- Per-company counts and titles: `enrich_company_jobs`, 50 companies per call, with owner approval on 2026-11-24:
+  1. counts with `include_postings: false` (all functions);
+  2. industrial-function counts in batches of 25;
+  3. titles (`roles_per_company: 10`, industrial functions, batches of 10) only for companies with 2+ industrial postings.
+- Check 4 for job-qualified companies whose site shows no placement model: read descriptions with `search_jobs`, limit 10.
+
+**Run the calls through helper agents and parse their transcripts.** Every agent's raw tool results sit in `/tmp/claude-0/.../tasks/<agentId>.output` (and the session's `subagents/` folder):
+- job lookups: `jobs_rule.py collect <out.json> <transcripts...>`;
+- free Apollo search: `apollo_lines.py`;
+- 6b lookups: `gl_lines.py`.
+
+So agents only make calls; nothing is transcribed by hand.
+
+**Yield (2026-11-24):**
+- Keywords "staffing" and "personnel" passed at 38–48% of readable sites; "recruiting" and "resources" at 3–6%.
+- Overall 58 PASS from 251 readable (23%).
+- Re-gating old low-confidence HOLDs with job evidence promoted only 5 of 551: most leftovers have no postings of their own.
+
 ## Benchmarks (for estimates)
 
 | Stage | 2026-11-23 run (2,000 companies) | Wave 1 / Codex re-check |
@@ -343,4 +371,10 @@ The import refuses an address or company that already has a ScaleLab row (`dupli
 - **Shadow pre-filter (2026-11-24):** Apollo's free lookup has no description or keywords. A Jev score from the name, tag group and off-ICP tags kept only 27% of PASS companies at its own cut-off, and 80% only by saving half the crawl. Do not skip crawls on it.
 - **Thin sites and qualify:** run `qualify.py --only @readable.json` before the headless retry and the rest after. A site between 800 and 1,500 characters judged early is cached and never re-judged.
 - **GetLeads verification:** jobs either start and finish in 5–15 minutes, or fail at a sweep about 23 minutes after submission (refunded). Space the three polls across about 20 minutes, not back to back. Use `contact_qc.py` for section-9 QC across the Apollo, GetLeads and owner-gap paths.
+- **GetLeads job search throughput (2026-11-24):** the MCP serves one `search_jobs` request at a time across every agent, at about 8–11 calls a minute. Under load, grouped keyword pages over ~500 companies time out at 60 seconds, and `enrich_company_jobs` with titles for 50 companies times out too.
+  - Run big discovery pages when nothing else is calling, and drop to 50 or 25 per page.
+  - Use counts first and titles in batches of 10.
+  - A name-match fallback (`company_name`) returned 2 rows and 0 usable matches in 30 tries; don't use it.
+- **Worker restarts during paid calls:** after a restart, read the vendor balance before retrying anything that costs credits. A call reported as "did not run" really hadn't run (Apollo 1,056 = exactly the earlier batch). Reveal one batch per call so a restart loses at most one.
+- **owner_gap.py overwrites** `owner_gap/candidates.json` and `picks.json` on each run. Copy them aside before a second round and restore afterwards.
 - **Tests:** the full suite has date-dependent failures (DST, the live-refill window, a Jole fixture past its 45-day evidence age). Compare against the live commit before calling a failure new.

@@ -106,6 +106,10 @@ for r in rows:
         "v4_tag": f"V4|PASS|{bucket(tot, ai)}|{ai['ad_class']}|COPY_TIER_PENDING", "copy_tier": "PENDING_OWNER_COPY",
         "contact_status": "READY_FOR_REVIEW", "qc_flags": "; ".join(flags), "linkedin_url": r[9], "role_start": "" if r[10] == "None" else r[10], "location": r[11],
         "buyer_source": t["source"], "apollo_id": r[3], "icp_evidence_url": (x.get("icp_evidence") or [{}])[0].get("url", ""), "ad_summary": ai.get("why", ""),
+        # 2026-11-24: explicit tags for the per-path / per-discovery-source report (run CSVs only; the master keeps its columns)
+        "source_path": "owner-gap" if "owner_gap" in str(t.get("source")) else "getleads" if str(t.get("source")).startswith("getleads") else "apollo",
+        "discovery_source": os.environ.get("V4_DISCOVERY_SOURCE") or WAVE.rsplit("-", 3)[0],
+        "icp_evidence_basis": x.get("evidence_basis") or "website",
         "dedupe_status": "CHECKED (domain + email vs ScaleLab Supabase leads and the V4 master)",
         "suppression_status": "CLEAR in Supabase ScaleLab leads; the Campaign 3 import checks the global Suppression sheet", "observed_at": TODAY})
 for d in [x["domain"] for x in dec if x["company_icp"] == "PASS"]:
