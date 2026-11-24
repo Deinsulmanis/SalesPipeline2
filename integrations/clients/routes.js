@@ -92,7 +92,9 @@ function registerClientRoutes(app, {
 
   router.get('/', (_req, res) => {
     res.json({
-      clients: listClients().map(config => ({ ...publicClient(config), sending: clientSendState(config.id, env),
+      // An offboarded client's workspace is retired: it is not listed (its
+      // records stay readable by id for billing and history).
+      clients: listClients().filter(config => config.lifecycleStatus !== 'offboarded').map(config => ({ ...publicClient(config), sending: clientSendState(config.id, env),
         // The dashboard shows the daily report from this flag, never from a client name.
         dailyReport: config.id === DAILY_REPORT_CLIENT_ID })),
     });

@@ -2061,7 +2061,11 @@
   #workspace-stage{grid-column:2;grid-row:2;position:relative;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--border-hover) transparent}.crm-workspace{display:none;min-height:100%;padding:22px 24px 40px}.crm-workspace.active{display:block}.workspace-intro{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:0 0 16px}.workspace-intro h2{font-size:20px;letter-spacing:-.025em;margin:0;color:var(--text)}.workspace-intro p{font-size:12px;color:var(--text-muted);margin:4px 0 0;max-width:720px}.workspace-eyebrow{font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--primary);font-weight:750}
   body.workspace-ready .motion-nav{display:none!important}body.workspace-ready .stats-bar,body.workspace-ready .filter-bar,body.workspace-ready .main,body.workspace-ready #ce-section{margin-left:0;margin-right:0}
   /* ScaleLab's board in the managed-client look: summary cards replace the stats strip. */
-  #ws-pipeline>.stats-bar{display:none!important}#ws-pipeline>.pipeline-metrics{width:100%}#ws-pipeline>.main .col{width:240px}
+  .pipeline-unboarded{margin:0 0 14px;padding:12px 14px;border:1px solid var(--warn);background:var(--warn-bg);border-radius:var(--radius-sm)}
+  .pipeline-unboarded .unboarded-head{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
+  .pipeline-unboarded .unboarded-head small,.pipeline-unboarded .unboarded-row small{display:block;color:var(--text-secondary);font-size:11px}
+  .pipeline-unboarded .unboarded-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 0;border-top:1px solid var(--border)}
+  #ws-pipeline>.stats-bar{display:none!important}#ws-pipeline>.pipeline-metrics{width:100%}#ws-pipeline>.pipeline-unboarded{width:100%;box-sizing:border-box}#ws-pipeline>.main .col{width:240px}
   #ws-pipeline>.stats-bar,#ws-pipeline>.filter-bar,#ws-pipeline>.main{width:100%}#ws-pipeline>.stats-bar{border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden}#ws-pipeline>.filter-bar{padding-left:0;padding-right:0;background:transparent;border:0}#ws-pipeline>.main{padding:0}
   #ws-outreach #ce-section{display:block!important}#ws-outreach .ce-filter-bar{border:1px solid var(--border);border-radius:9px;background:var(--surface);margin-bottom:12px}#ws-outreach .stats-bar{margin:14px 0}#ws-outreach .ce-master-filters,#ws-outreach .ce-quick-views,#ws-outreach #ce-current-campaign,#ws-outreach #ce-result-info{padding-left:0!important;padding-right:0!important}
   .workspace-surface{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px}.workspace-empty{padding:42px 20px;text-align:center;color:var(--text-muted);border:1px dashed var(--border);border-radius:9px;background:var(--tint-faint)}.workspace-empty strong{display:block;color:var(--text);font-size:14px;margin-bottom:5px}
@@ -2327,6 +2331,8 @@
 
 <!-- SUMMARY CARDS (same cards as a client's Pipeline; filled by renderBoard) -->
 <div class="client-metrics pipeline-metrics" id="pipeline-metrics" aria-label="Pipeline summary"></div>
+<!-- Replies a person must act on that have no Pipeline card (ScaleLab only; filled by refreshUnboardedReplies) -->
+<div id="pipeline-unboarded" class="pipeline-unboarded" style="display:none" aria-live="polite"></div>
 
 <!-- FILTER TABS -->
 <div class="filter-bar">
@@ -3101,6 +3107,40 @@ let savingTimer;
 // ============================================================
 // SHEET OPERATIONS
 // ============================================================
+// A positive or needs-a-human reply with no Pipeline card is invisible on the
+// board, so the Pipeline shows it as a strip until someone adds it. ScaleLab
+// only (a managed client's Pipeline comes from its own ledger). Read-only: the
+// button opens the existing manual promotion dialog, nothing moves on its own.
+const UNBOARDED_REPLY_CATEGORIES = new Set(['positive', 'needs_human']);
+let unboardedReplies = [];
+async function refreshUnboardedReplies() {
+  const host = document.getElementById('pipeline-unboarded');
+  if (!host) return;
+  if (activeClientIsManaged()) { host.style.display = 'none'; host.innerHTML = ''; return; }
+  try {
+    const resp = await fetch('/api/coldemail/replies?category=all&client=' + encodeURIComponent(activeClientId));
+    if (!resp.ok) return;
+    const data = await resp.json();
+    unboardedReplies = (data.records || []).filter(record => UNBOARDED_REPLY_CATEGORIES.has(record.category)
+      && !record.pipelinePresence && record.mappingStatus !== 'conflict');
+  } catch (_) { return; }
+  if (!unboardedReplies.length) { host.style.display = 'none'; host.innerHTML = ''; return; }
+  host.style.display = 'block';
+  host.innerHTML = `<div class="unboarded-head"><b>${unboardedReplies.length} repl${unboardedReplies.length === 1 ? 'y needs' : 'ies need'} a Pipeline card</b><small>Positive or needs-a-human replies that are not on the board yet.</small></div>`
+    + unboardedReplies.map(record => `<div class="unboarded-row"><span><b>${esc(record.company || record.email)}</b><small>${esc(RD_CATEGORY_LABEL[record.category] || record.category)} · ${esc(record.occurredAt ? new Date(record.occurredAt).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }) : '')}</small></span><button type="button" class="btn-promote" onclick="promoteUnboardedReply('${escAttr(record.leadId)}')">Add to Pipeline…</button></div>`).join('');
+}
+function promoteUnboardedReply(leadId) {
+  const record = unboardedReplies.find(item => item.leadId === leadId);
+  if (!record) return;
+  // The promotion dialog reads Outreach rows; give it this reply's row if the
+  // Outreach table has not loaded it.
+  if (!ceLeads.some(lead => lead.id === leadId)) {
+    ceLeads.push({ id: leadId, company: record.company, email: record.email, stage: record.stage, replyCategory: record.category,
+      pipelinePresence: false, pipelineStage: '', mappingStatus: record.mappingStatus || '' });
+  }
+  openManualPromotion(leadId);
+}
+
 async function loadLeads({ awaitNextActions = true } = {}) {
   // Next Actions travel with the board so cards and the queue reflect the same
   // derivation. Both reads start together: next-actions is a multi-sheet read
@@ -3111,6 +3151,7 @@ async function loadLeads({ awaitNextActions = true } = {}) {
   const resp = await fetch('/api/leads');
   if (!resp.ok) throw new Error('leads fetch failed: ' + resp.status);
   leads = await resp.json();
+  refreshUnboardedReplies();
   rowMap.clear();
   leads.forEach((lead, idx) => { if (lead.id) rowMap.set(lead.id, idx + 2); });
   // Startup does not wait: the board and the workspace render now, and the
@@ -5986,13 +6027,14 @@ async function loadCeLeads() {
       completedCampaignList = registry.completedCampaigns || [];
       // ScaleLab only runs the staffing offer now; retired offers' versions
       // (dental, roofing) are not offered as filters or named as current.
-      const liveVersion = registry.active?.industrial_staffing || '—';
+      const liveId = registry.current?.industrial_staffing || '';
+      const liveVersion = liveId ? (registry.versions?.[liveId]?.label || liveId) : '—';
       document.getElementById('ce-current-campaign').textContent = `Current campaign: ${liveVersion}`;
       const select = document.getElementById('ce-version-filter');
       const staffingVersions = Object.entries(registry.versions || {})
         .filter(([, version]) => version && version.family === 'industrial_staffing').map(([id]) => id);
       select.innerHTML = '<option value="">All campaign versions</option>' + staffingVersions.concat(['legacy_unknown'])
-        .map(id => `<option value="${escAttr(id)}">${esc(id)}</option>`).join('');
+        .map(id => `<option value="${escAttr(id)}">${esc(id === 'legacy_unknown' ? 'Not sent yet / unattributed' : (registry.versions?.[id]?.label || id))}</option>`).join('');
       select.value = ceCampaignVersionFilter;
     }
     // Inbox filter options come down with the page, so there is no extra
@@ -7599,6 +7641,7 @@ async function submitManualPromotion() {
     closeManualPromotion();
     showToast(`${lead?.company || 'Lead'} added to the Pipeline at ${((STAGES.find(item => item.id === stage) || {}).label || stage)}. Automation was not resumed.`, 'success');
     loadCeLeads();
+    if (unboardedReplies.some(item => item.leadId === id)) loadLeads().then(renderBoard).catch(() => {});
   } catch (e) { showToast('Promotion failed: ' + e.message, 'error'); }
 }
 
@@ -7851,12 +7894,14 @@ function installWorkspaceShell() {
 
   const pipelineStats = document.querySelector('body > .stats-bar');
   const pipelineMetrics = document.querySelector('body > #pipeline-metrics');
+  const pipelineUnboarded = document.querySelector('body > #pipeline-unboarded');
   const pipelineFilters = document.querySelector('body > .filter-bar');
   const boardMain = document.querySelector('body > .main');
   if (pipelineStats) pipeline.appendChild(pipelineStats);
   // The summary cards sit between the stats strip and the filters in the page;
   // left behind as a body child they break the shell and the board collapses.
   if (pipelineMetrics) pipeline.appendChild(pipelineMetrics);
+  if (pipelineUnboarded) pipeline.appendChild(pipelineUnboarded);
   if (pipelineFilters) pipeline.appendChild(pipelineFilters);
   if (boardMain) pipeline.appendChild(boardMain);
 
@@ -8949,9 +8994,9 @@ async function renderManagedAnalytics(client) {
       const width = Math.round(((Number(value) || 0) / max) * 100);
       return `<div class="funnel-row" role="listitem" title="${escAttr(`${label}: ${value}`)}"><span>${esc(label)}</span><span class="funnel-track"><span class="funnel-bar" style="width:${width}%"></span></span><b class="funnel-value">${esc(value)}</b></div>`;
     }).join('')}</div></div>`;
-  const campaignRows = (o.campaigns || []).map(campaign => `<tr><td><b>${esc(campaign.label)}</b><div class="client-note">${esc(campaign.status)}</div></td><td>${esc(campaign.sent)}</td><td>${esc(pct(campaign.replies, campaign.sent))}</td><td>${esc(pct(campaign.meetings, campaign.sent))}</td></tr>`).join('');
+  const campaignRows = (o.campaigns || []).map(campaign => `<tr><td><b>${esc(campaign.label)}</b><div class="client-note">${esc(campaign.status)}</div></td><td>${esc(campaign.sent)}</td><td>${esc(pct(campaign.replies, campaign.deliveredLeads ?? campaign.sent))}</td><td>${esc(pct(campaign.meetings, campaign.deliveredLeads ?? campaign.sent))}</td></tr>`).join('');
   const campaignHtml = `<div class="client-card"><h3>Campaign performance</h3><div class="client-table-wrap"><table class="client-table"><thead><tr><th>Campaign</th><th>Sends</th><th>Reply rate</th><th>Meeting rate</th></tr></thead><tbody>${campaignRows || '<tr><td colspan="4">No campaigns.</td></tr>'}</tbody></table></div>
-    <p class="client-note">Client-wide: ${esc(o.deliverability.sends)} sends · reply rate ${esc(pct(o.replies.total, o.deliverability.sends))} · positive reply rate ${esc(pct(o.replies.positive, o.deliverability.sends))}. Rates show — until there are sends.</p></div>`;
+    <p class="client-note">Client-wide: ${esc(o.deliverability.sends)} sends to ${esc(o.deliverability.deliveredLeads ?? '—')} delivered leads · reply rate ${esc(pct(o.replies.total, o.deliverability.deliveredLeads ?? o.deliverability.sends))} · positive reply rate ${esc(pct(o.replies.positive, o.deliverability.deliveredLeads ?? o.deliverability.sends))}. Rates are per delivered lead and show — until there are sends.</p></div>`;
   const meetingHtml = clientCard('Meeting performance', [
     clientKv('Booked', pipeline.meetingsBooked || 0), clientKv('Held', pipeline.meetingsHeld || 0), clientKv('No-show', pipeline.noShow || 0),
     clientKv('Qualified held', pipeline.qualifiedHeld || 0), clientKv('Show rate', pct(pipeline.meetingsHeld || 0, (pipeline.meetingsHeld || 0) + (pipeline.noShow || 0))),
@@ -9969,8 +10014,11 @@ async function loadSettingsWorkspace() {
   const host = document.getElementById('settings-status');
   if (!data) host.innerHTML = '<div class="workspace-empty"><strong>Configuration unavailable</strong>The read-only status endpoint could not be loaded.</div>';
   else {
+    // The cap shown is this workspace's client cap (from the client-scoped inbox
+    // status), not the platform total across every client.
+    const clientDailyCap = inboxData?.capacity?.globalDailyLimit ?? data.sending.dailyLimit;
     const cards = [
-      ['Cold outreach sending', data.sending.enabled, data.sending.enabled ? `Enabled · daily cap ${data.sending.dailyLimit || 'configured elsewhere'}` : 'Disabled'],
+      ['Cold outreach sending', data.sending.enabled, data.sending.enabled ? `Enabled · daily cap ${clientDailyCap || 'configured elsewhere'}` : 'Disabled'],
       ['Stage sequences', data.stageSequences.enabled, data.stageSequences.enabled ? 'Enabled with canonical sender gates' : 'Disabled; no recovery sequence can send'],
       ['Google Calendar sync', data.calendarSync.enabled, data.calendarSync.enabled ? 'Enabled' : 'Disabled; booking lifecycle remains available manually'],
       ['Smartlead integration', data.smartlead.enabled, data.smartlead.liveMutations ? 'Enabled with live mutations' : 'Read-only or disabled'],
@@ -10125,7 +10173,7 @@ function renderSettingsInboxRouting(payload) {
   const current = inboxes.find(inbox => inbox.sendEligible);
   host.innerHTML = `<div class="status-card-head"><div><div class="workspace-eyebrow">Sender routing</div><h3 style="margin:4px 0">Configured Gmail senders</h3></div><span class="state-pill" data-on="${Boolean(current)}">${capacity ? `${capacity.activeSenders} active · ${capacity.globalDailyLimit}/day` : (current ? 'Configured' : 'Unavailable')}</span></div>
     <p style="color:var(--text-muted);font-size:12px;margin:6px 0 14px">Cold sending membership is explicit. Marking warmup ready does not activate a sender. Activation does not send mail or change the schedule.</p>
-    <div class="form-group" style="margin-bottom:12px"><label for="settings-inbox-select">Configured sending accounts</label><select id="settings-inbox-select" disabled>${inboxes.length ? inboxes.map(inbox => `<option value="${escAttr(inbox.id)}">${esc(inbox.email)} — ${inbox.sendEligible && inbox.deliveryImplemented ? 'Delivery enabled' : inbox.status}</option>`).join('') : '<option>No configured inboxes</option>'}</select><div style="font-size:11px;color:var(--text-muted);margin-top:6px">Sender eligibility is configured server-side. Follow-ups remain pinned to the inbox and Gmail thread that sent Email 1. Global live cap follows active inboxes only.</div></div>
+    <div class="form-group" style="margin-bottom:12px"><label for="settings-inbox-select">Configured sending accounts</label><select id="settings-inbox-select" disabled>${inboxes.length ? inboxes.map(inbox => `<option value="${escAttr(inbox.id)}">${esc(inbox.email)} — ${inbox.coldHold ? (inbox.coldHoldLabel || 'Held') : inbox.sendEligible && inbox.deliveryImplemented ? 'Delivery enabled' : inbox.status}</option>`).join('') : '<option>No configured inboxes</option>'}</select><div style="font-size:11px;color:var(--text-muted);margin-top:6px">Sender eligibility is configured server-side. Follow-ups remain pinned to the inbox and Gmail thread that sent Email 1. Global live cap follows active inboxes only.</div></div>
     <div class="inbox-route-shell"><div class="inbox-route-head"><span class="inbox-route-kicker">Available accounts</span><span class="inbox-route-readonly">Operator controls</span></div></div>
     ${inboxes.length ? inboxes.map(inbox => {
       const controls = inbox.controls || {};
@@ -10134,7 +10182,7 @@ function renderSettingsInboxRouting(payload) {
         <div class="inbox-sender-grid">
           <div>Provider: <b>Gmail</b></div>
           <div>Warmup: <b>${esc(warmupLabel(inbox.warmupStatus || inbox.status))}</b></div>
-          <div>Cold sending: <b>${inbox.sendingActive || inbox.sendEligible ? 'Active' : 'Inactive'}</b></div>
+          <div>Cold sending: <b>${inbox.coldHold ? `${esc(inbox.coldHoldLabel || 'Held')} (${esc(String(inbox.coldHold).replace(/_/g, ' '))})` : (inbox.sendingActive || inbox.sendEligible ? 'Active' : 'Inactive')}</b></div>
           ${inbox.clientAuthorized === undefined ? '' : `<div>Client send authorization: <b>${inbox.clientAuthorized ? 'Authorized' : 'Off (launch hold)'}</b> · Prepared: <b>${inbox.preparationReady ? 'Yes' : 'No'}</b></div>`}
           <div>Observer: <b>${esc(observerLabel(inbox))}</b></div>
           <div>Daily cap: <b>${esc(String(inbox.dailyLimit))}</b></div>

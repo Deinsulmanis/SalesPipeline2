@@ -158,7 +158,7 @@ test('completion is not a bulk archive: the offer-retirement migration cannot ta
 
 test('the dashboard lists completed campaigns apart from active ones, and their mapping is read-only', () => {
   const server = readSource('server.js');
-  assert.match(server, /res\.json\(\{ active: ACTIVE_CAMPAIGN_VERSION, versions: CAMPAIGN_VERSIONS, completedCampaigns: completedCampaigns\(\) \}\);/);
+  assert.match(server, /res\.json\(\{ active: ACTIVE_CAMPAIGN_VERSION, current: \{ industrial_staffing: currentLiveCampaignVersion\(\) \},\s+versions: CAMPAIGN_VERSIONS, completedCampaigns: completedCampaigns\(\) \}\);/);
   assert.match(server, /const completed = completedCampaignByLabel\(internalCampaignId\);\n  if \(completed\) return res\.status\(409\)/);
   const html = readSource('public/index.html');
   assert.match(html, /if \(completed\) \{ completedRows\.push\(\{ \.\.\.row, completed \}\); return false; \}/,

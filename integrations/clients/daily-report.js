@@ -12,6 +12,7 @@
 // the same cutoff. A snapshot, once stored, is never rewritten.
 const cron = require('node-cron');
 const { leadsForClient, resolveSenderClient } = require('./ownership');
+const { getClient } = require('./registry');
 const { clientCampaign } = require('./campaigns');
 const { canonicalSendRows, uniqueCanonicalBounces } = require('../canonical-sends');
 const { REPLY_EVENT_TYPE } = require('./reply-pipeline');
@@ -219,6 +220,7 @@ function createJoleDailyReportService({ store, loadDataset, listMeetings, sender
   async function generateIfDue() {
     const at = now();
     if (!due(at) || !store?.enabled) return null;
+    if (!getClient(CLIENT_ID).active) return null;   // offboarded: no new reports
     if (inFlight) return inFlight;
     inFlight = (async () => {
       const date = reportDate(at);

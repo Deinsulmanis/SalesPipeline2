@@ -227,7 +227,8 @@ test('dashboard: staffing only — no dental, roofing or trades choices are offe
   assert.doesNotMatch(html, /<option>Roofer<\/option>/, 'the lead form offers staffing lead types');
   assert.doesNotMatch(html, /Roofing reply flow|Dental sender eligibility|e\.g\. dental-ca|dental and med spa/);
   assert.doesNotMatch(html, /data-f="trade" onclick="setFilter\('trade'\)"/, 'the Trades board tab is gone');
-  assert.match(html, /const liveVersion = registry\.active\?\.industrial_staffing \|\| '—';/);
+  assert.match(html, /const liveId = registry\.current\?\.industrial_staffing \|\| '';/);
+  assert.match(html, /const liveVersion = liveId \? \(registry\.versions\?\.\[liveId\]\?\.label \|\| liveId\) : '—';/);
   assert.match(html, /\.filter\(\(\[, version\]\) => version && version\.family === 'industrial_staffing'\)/);
 });
 

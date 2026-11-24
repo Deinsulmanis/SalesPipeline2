@@ -46,12 +46,14 @@ const ARCHIVE_REASONS = Object.freeze({
   OFFER_RETIRED_ROOFING: 'offer_retired_roofing',
   OFFER_RETIRED_MED_SPA: 'offer_retired_med_spa',
   MANUAL: 'manual_archive',
+  CLIENT_OFFBOARDED: 'client_offboarded',
 });
 const ARCHIVE_REASON_LABELS = Object.freeze({
   [ARCHIVE_REASONS.OFFER_RETIRED_DENTAL]: 'Dental offer retired',
   [ARCHIVE_REASONS.OFFER_RETIRED_ROOFING]: 'Roofing offer retired',
   [ARCHIVE_REASONS.OFFER_RETIRED_MED_SPA]: 'Med spa offer retired',
   [ARCHIVE_REASONS.MANUAL]: 'Archived by hand',
+  [ARCHIVE_REASONS.CLIENT_OFFBOARDED]: 'Client offboarded',
 });
 
 // ── Protected client records ────────────────────────────────────────────────

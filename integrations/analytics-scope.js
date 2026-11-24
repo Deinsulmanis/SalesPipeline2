@@ -67,9 +67,18 @@ function liveCampaignVersions() {
     .map(version => version.id);
 }
 
-/** The default campaign for "Current campaign" views, or '' when none is live. */
+/**
+ * The default campaign for "Current campaign" views, or '' when none is live:
+ * the most recently activated live version (registry order breaks ties and
+ * covers versions without an activation time), so a newer campaign takes over
+ * the default as soon as it goes live.
+ */
 function currentLiveCampaignVersion() {
-  return liveCampaignVersions()[0] || '';
+  const live = liveCampaignVersions();
+  const activated = id => Date.parse(CAMPAIGN_VERSIONS[id]?.activatedAt || '');
+  const ranked = live.map((id, index) => ({ id, index, at: activated(id) }))
+    .sort((a, b) => (Number.isFinite(b.at) ? b.at : -Infinity) - (Number.isFinite(a.at) ? a.at : -Infinity) || a.index - b.index);
+  return ranked[0]?.id || '';
 }
 
 /**
@@ -111,13 +120,17 @@ function parseMetadata(value) {
  * replyCategoryByLead maps a lead to its canonical reply category so
  * genuine/positive use the same classification as every other surface.
  */
-function buildSenderAnalytics({ leads = [], activities = [], senders = [], replyCategoryByLead = new Map(), now = new Date() } = {}) {
+function buildSenderAnalytics({ leads = [], activities = [], senders = [], replyCategoryByLead = new Map(), now = new Date(), holds = new Map() } = {}) {
   const active = leads.filter(isActiveOutreachLead);
   const activeIds = new Set(active.map(lead => lead.id));
   const today = vancouverDay(now);
   const rows = new Map(senders.map(sender => [sender.id, {
     id: sender.id, email: sender.email || '', dailyLimit: Number(sender.dailyLimit) || 0,
-    staffingOnly: Boolean(sender.staffingOnly), status: sender.status || '',
+    staffingOnly: Boolean(sender.staffingOnly),
+    // A cold hold (COLD_SENDER_HOLDS) overrides the registry status: the inbox
+    // cannot cold-send, so it reads as archived / held, not active or paused.
+    status: holds.has(sender.id) ? (/archived/.test(holds.get(sender.id)) ? 'archived' : 'held') : (sender.status || ''),
+    coldHold: holds.get(sender.id) || null,
     firstSends: 0, followUps: 0, sentToday: 0,
     repliedLeads: new Set(), genuineReplyLeads: new Set(), positiveLeads: new Set(), bouncedLeads: new Set(),
     queued: 0, inSequence: 0,
@@ -157,8 +170,8 @@ function buildSenderAnalytics({ leads = [], activities = [], senders = [], reply
   const result = [...rows.values()].map(entry => {
     const sends = entry.firstSends + entry.followUps;
     return {
-      id: entry.id, email: entry.email, status: entry.status, dailyLimit: entry.dailyLimit, staffingOnly: entry.staffingOnly,
-      sentToday: entry.sentToday, remainingToday: Math.max(0, entry.dailyLimit - entry.sentToday),
+      id: entry.id, email: entry.email, status: entry.status, coldHold: entry.coldHold, dailyLimit: entry.dailyLimit, staffingOnly: entry.staffingOnly,
+      sentToday: entry.sentToday, remainingToday: entry.status === 'active' ? Math.max(0, entry.dailyLimit - entry.sentToday) : 0,
       firstSends: entry.firstSends, followUps: entry.followUps, sends,
       repliedLeads: entry.repliedLeads.size, genuineReplyLeads: entry.genuineReplyLeads.size,
       positiveLeads: entry.positiveLeads.size, bouncedLeads: entry.bouncedLeads.size,
@@ -168,8 +181,10 @@ function buildSenderAnalytics({ leads = [], activities = [], senders = [], reply
     };
   });
   const totals = result.reduce((sum, row) => {
-    for (const key of ['dailyLimit', 'sentToday', 'firstSends', 'followUps', 'sends', 'repliedLeads', 'genuineReplyLeads',
+    for (const key of ['sentToday', 'firstSends', 'followUps', 'sends', 'repliedLeads', 'genuineReplyLeads',
       'positiveLeads', 'bouncedLeads', 'queued', 'inSequence']) sum[key] = (sum[key] || 0) + row[key];
+    // Capacity counts only inboxes that can send today: active and not held.
+    sum.dailyLimit = (sum.dailyLimit || 0) + (row.status === 'active' ? row.dailyLimit : 0);
     return sum;
   }, {});
   return { scope: ANALYTICS_SCOPE.ACTIVE, day: today, senders: result, totals };

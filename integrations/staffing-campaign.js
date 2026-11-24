@@ -313,15 +313,34 @@ function staffingV2CampaignNotesRefusal(current = {}, nextNotes) {
 // A V4 lead's campaign_notes is its sealed profile, written once by a V4 import
 // on a new row. No other writer may change it or put a V4 profile on a lead,
 // so the selected variant stays stable for the whole sequence.
+//
+// One exception: Campaign 3 conversion (staffing-campaign-3-convert.js) seals a
+// V4 profile once onto an existing, never-contacted, unrouted Import-stage V1 or
+// Campaign 2 lead that carries no V2 or V4 profile. That lead's own row is why
+// the import refuses it, so conversion is the only way in without a second row.
+// The profile must verify, select a variant, carry this lead's own address and
+// the conversion provenance.
 const STAFFING_V4_PROFILE_READ_ONLY = 'staffing_v4_profile_read_only';
+const CAMPAIGN_3_CONVERSION_PREFIX = 'campaign3-convert:';
+function campaign3ConversionAllowed(current = {}, next) {
+  const source = staffingCampaignFor(current);
+  if (source !== STAFFING_CAMPAIGN && source !== STAFFING_CAMPAIGN_2) return false;
+  if (hasStaffingV2ProfileMarker(current) || isStaffingV4Marked(current)) return false;
+  if (!neverContacted(current) || String(current.senderInboxId || '').trim()) return false;
+  if (String(current.stage || '').trim() !== 'Import') return false;
+  const read = readStaffingV4Profile({ campaign_notes: next });
+  return Boolean(read.ok && read.profile.copy_status === 'SELECTED'
+    && String(read.profile.sourcing_run_id || '').startsWith(CAMPAIGN_3_CONVERSION_PREFIX)
+    && normalizedEmail(read.profile.email) === normalizedEmail(current.email));
+}
 function staffingV4CampaignNotesRefusal(current = {}, nextNotes) {
   const next = String(nextNotes ?? '');
   if (next === String(current.campaign_notes ?? current.campaignNotes ?? '')) return null;
   if (isStaffingV4Marked(current)) {
     return `${STAFFING_V4_PROFILE_READ_ONLY}: a staffing V4 lead's campaign_notes is its sealed profile and selected variant; it is never rewritten`;
   }
-  if (next.includes(STAFFING_V4_PROFILE_MARKER)) {
-    return `${STAFFING_V4_PROFILE_READ_ONLY}: a staffing V4 profile is written only by the V4 import`;
+  if (next.includes(STAFFING_V4_PROFILE_MARKER) && !campaign3ConversionAllowed(current, next)) {
+    return `${STAFFING_V4_PROFILE_READ_ONLY}: a staffing V4 profile is written only by the V4 import or Campaign 3 conversion of an untouched V1 / Campaign 2 lead`;
   }
   return null;
 }
@@ -642,4 +661,5 @@ module.exports = { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_LABELS, isStaffingCampai
   isStaffingCampaign2Marked, staffingCampaign2SendBlock, STAFFING_CAMPAIGN_2_ADOPTION_SCHEMA, usesV2Copy,
   STAFFING_V2_PROFILE_READ_ONLY, staffingV2CampaignNotesRefusal,
   STAFFING_CAMPAIGN_V4, staffingV4Live, setStaffingV4LiveForTests, isStaffingV4Marked, staffingV4SendBlock,
-  STAFFING_V4_PROFILE_READ_ONLY, staffingV4CampaignNotesRefusal, V4_FOLLOW_UPS };
+  STAFFING_V4_PROFILE_READ_ONLY, staffingV4CampaignNotesRefusal, V4_FOLLOW_UPS,
+  CAMPAIGN_3_CONVERSION_PREFIX, campaign3ConversionAllowed };
