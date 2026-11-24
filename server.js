@@ -143,6 +143,7 @@ async function stage2TimelineProbe({ leadId, sourceLeadId, email, authoritative,
 const { simulateRouting } = require('./integrations/gmail-routing-simulation');
 const { isStaffingV4Marked, STAFFING_CAMPAIGN_V4 } = require('./integrations/staffing-campaign');
 const { importCampaign3Leads } = require('./integrations/staffing-campaign-3-import');
+const { convertCampaign3Leads } = require('./integrations/staffing-campaign-3-convert');
 const { staffingReviewStatus, isStaffingV2Marked, STAFFING_CAMPAIGN_V2,
   staffingV2CampaignNotesRefusal, STAFFING_V2_PROFILE_READ_ONLY } = require('./integrations/staffing-campaign');
 const { importStaffingV2Leads } = require('./integrations/staffing-v2-import');
@@ -2713,6 +2714,62 @@ app.post('/api/staffing/campaign-3/leads/import', requireAuth, async (req, res) 
     if (e.code === 'invalid_payload') return res.status(422).json({ error: e.message, code: e.code });
     if (e.code === 'corpus_unavailable') return res.status(503).json({ error: e.message, code: e.code });
     console.error('[Campaign 3 Import]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Industrial Campaign 3 conversion (integrations/staffing-campaign-3-convert.js).
+// A never-contacted V1 / Campaign 2 Import-stage lead is refused by the import
+// because its own row already exists; conversion seals the V4 profile onto that
+// one row instead (same lead id, no second row). dry_run is the default and
+// writes nothing. A live run requires canonical (Supabase) reads and writes; each
+// lead is one compare-and-set through applyLeadChanges, mirrored to Sheets.
+async function readCampaign3ConvertCorpus() {
+  const [corpus, suppression] = await Promise.all([
+    readOutreachCorpus(),
+    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${SUPPRESSION_SHEET}!A:A` }),
+  ]);
+  if (!corpus.ok) throw Object.assign(new Error(`outreach corpus unreadable: ${corpus.reason}`), { code: 'corpus_unavailable' });
+  const suppressedEmails = new Set((suppression.data.values || []).slice(1).map(row => normalizeEmail(row[0])).filter(Boolean));
+  return { leads: corpus.leads, suppressedEmails };
+}
+
+app.post('/api/staffing/campaign-3/leads/convert', requireAuth, async (req, res) => {
+  const body = req.body || {};
+  const dryRun = body.dry_run !== false;
+  if (outreachStateMode() !== 'primary' || outreachWriteAuthority() !== 'supabase') {
+    return res.status(409).json({ error: 'Campaign 3 conversion requires Supabase primary reads and canonical writes', code: 'authority_not_canonical' });
+  }
+  try {
+    const result = await withAuth(() => convertCampaign3Leads({
+      payload: body, dryRun,
+      readCorpus: readCampaign3ConvertCorpus,
+      applyChanges: async changes => {
+        // One column read resolves every row; a lead that is not exactly one
+        // ColdEmail row fails on its own, never guessed.
+        const column = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:A` });
+        const rowsById = new Map();
+        (column.data.values || []).forEach((cells, index) => {
+          if (index > 0 && cells[0]) rowsById.set(cells[0], [...(rowsById.get(cells[0]) || []), index + 1]);
+        });
+        const resolvable = changes.filter(change => (rowsById.get(change.leadId) || []).length === 1);
+        const unresolved = changes.filter(change => !resolvable.includes(change)).map(change => ({
+          leadId: change.leadId, status: 'failed', reason: 'lead identity is not exactly one ColdEmail row' }));
+        if (!resolvable.length) return unresolved;
+        const batch = await applyLeadChanges(resolvable.map(change => ({
+          leadId: change.leadId, patch: change.patch, row: rowsById.get(change.leadId)[0],
+          expectedState: change.expectedState, releaseMarkers: change.releaseMarkers,
+        })), { sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
+        return [...unresolved, ...batch.results];
+      },
+    }));
+    if (!dryRun) { invalidateOutreachCache('campaign_3_convert'); ceRowMap.clear(); }
+    res.json(result);
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    if (e.code === 'invalid_payload') return res.status(422).json({ error: e.message, code: e.code });
+    if (e.code === 'corpus_unavailable') return res.status(503).json({ error: e.message, code: e.code });
+    console.error('[Campaign 3 Convert]', e.message);
     res.status(500).json({ error: e.message });
   }
 });
