@@ -28,7 +28,7 @@ test('exactly the three owner-archived mailboxes', () => {
 
 test('the dashboard does not list archived mailboxes', () => {
   const status = server.slice(server.indexOf('async function gmailInboxStatus'), server.indexOf("app.get('/api/integrations/gmail-inboxes'"));
-  assert.match(status, /inboxes\.filter\(inbox => !isArchivedMailbox\(inbox\)\)/);
+  assert.match(status, /inboxes: listedSenders\(inboxes\)\.map/);
   assert.match(server, /senders: listedSenders\(configuredSenders\(\)\)\.map/);
   assert.match(server, /senders: listedSenders\(view\.senderRows\)/);
   assert.match(server, /senderOptions: senderFilterOptions\(listedSenders\(/);

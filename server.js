@@ -164,6 +164,7 @@ const { importClientLeads } = require('./integrations/clients/lead-import');
 const { createImportBatchStore, processPendingImportBatches } = require('./integrations/clients/import-batches');
 const { leadsForClient, leadDefinitelyOtherClient, resolveLeadClient } = require('./integrations/clients/ownership');
 const { isArchivedMailbox, listedSenders } = require('./integrations/archived-mailboxes');
+const { planClientOffboarding } = require('./integrations/client-offboarding');
 // CRM Health reads the stored observer checkpoints (header row first, inbox id
 // in column A); an owner-archived mailbox's checkpoint is not reported.
 const listedObservationRows = (rows = []) => (rows || []).filter((row, index) => index === 0 || !isArchivedMailbox({ id: String((row || [])[0] || '') }));
@@ -6051,6 +6052,80 @@ app.post('/api/ops/offer-retirement/:offerId', requireAuth, async (req, res) => 
   }
 });
 
+// ── Client offboarding: archive every lead of an offboarded managed client ──
+// Read-only dry run, then bounded batches exactly like an offer retirement.
+// Only a client whose config says lifecycleStatus "offboarded" qualifies, and
+// only leads that resolve to that client without conflict are planned.
+function planOffboardingFrom(inputs, clientId, archivedBy, now = new Date()) {
+  return planClientOffboarding({
+    clientId, leads: inputs.leads, activities: inputs.dataset.activities || [],
+    unresolvedByLead: inputs.unresolvedByLead, archivedBy, source: 'client_offboarding', now, stableId: stableActivityId,
+  });
+}
+function offboardingClient(raw) {
+  const resolved = resolveClientId(raw);
+  if (!resolved.ok) return null;
+  const client = getManagedClientConfig(resolved.clientId);
+  return client.isDefault || client.lifecycleStatus !== 'offboarded' ? null : client;
+}
+
+app.get('/api/ops/client-offboarding/:clientId', requireAuth, async (req, res) => {
+  const client = offboardingClient(req.params.clientId);
+  if (!client) return res.status(404).json({ error: 'not an offboarded managed client' });
+  try {
+    const inputs = await loadArchiveInputs();
+    const plan = planOffboardingFrom(inputs, client.id, 'dry_run');
+    res.json({ dryRun: true, client: plan.client, summary: plan.summary, toArchive: { leads: plan.leadPlans.length } });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[client-offboarding plan]', error.message);
+    res.status(503).json({ error: 'Offboarding plan could not be computed: ' + error.message });
+  }
+});
+
+// Apply one bounded batch. Body: { by, expectedLeads, limit }. expectedLeads
+// must equal the dry run's toArchive.leads; any drift refuses. Repeat until
+// nothing is left; a repeat after completion is a no-op.
+app.post('/api/ops/client-offboarding/:clientId', requireAuth, async (req, res) => {
+  const client = offboardingClient(req.params.clientId);
+  if (!client) return res.status(404).json({ error: 'not an offboarded managed client' });
+  const by = String(req.body?.by || '').trim();
+  if (!by) return res.status(422).json({ error: 'by is required (who is archiving)' });
+  const blocked = archiveMutationBlocked();
+  if (blocked) return res.status(409).json({ error: blocked });
+  if (archiveRunInFlight) return res.status(409).json({ error: 'An archive run is already in progress' });
+  archiveRunInFlight = true;
+  automationLaunchReserved = true;
+  try {
+    const inputs = await loadArchiveInputs();
+    const plan = planOffboardingFrom(inputs, client.id, by);
+    if (Number(req.body?.expectedLeads) !== plan.leadPlans.length) {
+      return res.status(409).json({ error: 'The plan changed since it was reviewed; re-run the dry run', summary: plan.summary, toArchive: { leads: plan.leadPlans.length } });
+    }
+    const limit = Math.min(ARCHIVE_BATCH_MAX, Math.max(1, parseInt(req.body?.limit, 10) || 100));
+    const batch = plan.leadPlans.slice(0, limit);
+    const eventsAppended = await withAuth(() => appendMissingEvents(batch.map(item => item.event), inputs.dataset.activities));
+    const results = await applyArchivePlans(batch);
+    invalidateOutreachCache('client_offboarding');
+    ceRowMap.clear();
+    const count = status => results.filter(item => item.status === status).length;
+    const remainingLeads = plan.leadPlans.length - count('succeeded') - count('unchanged');
+    console.log('[client-offboarding] ' + client.id + ': ' + count('succeeded') + '/' + batch.length + ' lead(s) archived ('
+      + count('unchanged') + ' unchanged, ' + count('refused') + ' refused, ' + count('conflict') + ' conflict, '
+      + count('failed') + ' failed); events +' + eventsAppended + '; ' + remainingLeads + ' left; by ' + by);
+    res.json({ applied: true, client: plan.client, batch: batch.length, eventsAppended,
+      succeeded: count('succeeded'), unchanged: count('unchanged'), refused: count('refused'), conflict: count('conflict'), failed: count('failed'),
+      remainingLeads, results: results.filter(item => item.status !== 'succeeded') });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[client-offboarding apply]', error.message);
+    res.status(503).json({ error: 'Offboarding batch failed: ' + error.message });
+  } finally {
+    archiveRunInFlight = false;
+    automationLaunchReserved = false;
+  }
+});
+
 // Archive one lead by hand (the general feature). Body: { by, reason? }.
 app.post('/api/archive/leads/:id', requireAuth, async (req, res) => {
   const by = String(req.body?.by || '').trim();
@@ -6808,7 +6883,7 @@ async function gmailInboxStatus() {
   const holds = coldSenderHolds();
   return {
     // Owner-archived mailboxes are not listed (see archived-mailboxes.js).
-    inboxes: inboxes.filter(inbox => !isArchivedMailbox(inbox)).map(rawInbox => {
+    inboxes: listedSenders(inboxes).map(rawInbox => {
       const holdReason = holds.get(rawInbox.id) || null;
       const inbox = holdReason
         ? { ...rawInbox, sendEligible: false, sendingActive: false, coldHold: holdReason,
@@ -8293,7 +8368,9 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   cron.schedule('3,8,13,18,23,28,33,38,43,48,53,58 * * * *', () => {
     if (clientCalendarInFlight) return;
     clientCalendarInFlight = true;
-    Promise.all([...clientCalendarSyncs.entries()].map(([clientId, service]) => service.run({ apply: true })
+    // An offboarded client's calendar is no longer read.
+    Promise.all([...clientCalendarSyncs.entries()].filter(([clientId]) => getManagedClientConfig(clientId).active)
+      .map(([clientId, service]) => service.run({ apply: true })
       .then(result => {
         if (!result.skipped && (result.mutations || !result.ok)) {
           console.log(`[Client calendar:${clientId}] ${result.ok ? 'complete' : 'failed'} — ${result.mutations || 0} mutation(s), `
@@ -8357,6 +8434,7 @@ if (process.env.RAILWAY_ENVIRONMENT) {
 
   // Jole starts at 05:00 Pacific (07:00 Chicago), before the legacy refill.
   cron.schedule('40,50 4 * * 1-5', () => {
+    if (!getManagedClientConfig('jole').active) return;   // offboarded: no refill
     runSenderRebalance({ trigger: 'scheduled_jole_pre_window', apply: true, client: 'jole' })
       .then(result => { if (result.status !== 200) console.warn(`[sender-balance] Jole pre-window refill skipped: ${result.error}`); })
       .catch(error => console.error('[sender-balance] Jole pre-window refill failed:', error.message));
@@ -8364,6 +8442,7 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   // Reclaim genuinely unsent supply from capped inboxes before subsequent
   // normal windows. Busy runs/lanes refuse the refill; nothing replays a tick.
   cron.schedule('24,54 5-9 * * 1-5', () => {
+    if (!getManagedClientConfig('jole').active) return;   // offboarded: no refill
     runSenderRebalance({ trigger: 'scheduled_jole_between_runs', apply: true, client: 'jole', allowBetweenRuns: true })
       .then(result => { if (result.status !== 200) console.warn(`[sender-balance] Jole between-run refill skipped: ${result.error}`); })
       .catch(error => console.error('[sender-balance] Jole between-run refill failed:', error.message));

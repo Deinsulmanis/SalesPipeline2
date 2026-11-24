@@ -1,5 +1,7 @@
 'use strict';
 
+const { getClient } = require('./clients/registry');
+
 // Mailboxes the owner archived on 2026-11-24. Their Gmail access is gone
 // (history API "access_not_configured"); production holds them from cold
 // sending through COLD_SENDER_HOLDS. They are not listed on the dashboard
@@ -20,9 +22,16 @@ function isArchivedMailbox(sender = {}) {
   return ARCHIVED_MAILBOXES.some(row => row.id === id || (email && row.email === email));
 }
 
-/** The senders the dashboard lists: every configured sender except archived mailboxes. */
-function listedSenders(senders = []) {
-  return (senders || []).filter(sender => !isArchivedMailbox(sender));
+// An inbox of an offboarded managed client is retired with its workspace.
+function retiredClientInbox(sender = {}) {
+  const raw = String(sender.clientId || '').trim();
+  if (!raw) return false;
+  try { return getClient(raw).lifecycleStatus === 'offboarded'; } catch (_) { return false; }
 }
 
-module.exports = { ARCHIVED_MAILBOXES, isArchivedMailbox, listedSenders };
+/** The senders the dashboard lists: every configured sender except archived mailboxes and retired clients' inboxes. */
+function listedSenders(senders = []) {
+  return (senders || []).filter(sender => !isArchivedMailbox(sender) && !retiredClientInbox(sender));
+}
+
+module.exports = { ARCHIVED_MAILBOXES, isArchivedMailbox, retiredClientInbox, listedSenders };
