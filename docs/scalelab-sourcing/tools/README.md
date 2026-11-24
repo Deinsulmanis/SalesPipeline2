@@ -77,6 +77,10 @@ The run folder (e.g. `runs-private/wave2`) is the working directory for one run.
 | 10. Evidence + preview | Evidence for every master lead from all run folders, then the read-only email preview | `build_evidence.py <master.csv> <evidence.json> <run1> <run2> ...`, then `node scripts/staffing-v4-preview.js <evidence.json> <out>` |
 | 11. Import + queue | **Owner go-ahead required.** See the Campaign 3 workflow §7 | dashboard API |
 
+**Copy v2 evidence** (`copy_v2_evidence.py`, read by `build_evidence.py`):
+- `specialtyLine` (COPY_C primary) comes from the ICP excerpts.
+- COPY_B job-posting candidates come from `<run>/job_postings.json`, collected from saved GetLeads `search_jobs` results with `python3 -I copy_v2_evidence.py collect <run>/job_postings.json <result files...>` (free jobs quota).
+
 For a COPY_B lead, add its job ad to `CANDIDATE_ADS` in `build_evidence.py` (domain, a phrase matching the ad text, role, "City, ST"). The copy selector re-checks that the role and location appear in the ad's own text.
 
 ## Queueing: mailbox eligibility

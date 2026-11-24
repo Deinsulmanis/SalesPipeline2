@@ -10,7 +10,8 @@ const {
   SCHEMA_MARKER: STAFFING_V4_PROFILE_MARKER, PROFILE_INTEGRITY_FAILED: V4_PROFILE_INTEGRITY_FAILED,
   hasStaffingV4ProfileMarker, readStaffingV4Profile,
 } = require('./staffing-v4-profile');
-const { renderV4Copy, v4CopyProblem, FOLLOW_UPS: V4_FOLLOW_UPS } = require('./staffing-v4-copy');
+const { renderV4Copy, v4CopyProblem, inferV4CopyVersion, FOLLOW_UPS: V4_FOLLOW_UPS } = require('./staffing-v4-copy');
+const { resolveV4CopyVersion } = require('./staffing-v4-copy-version');
 
 // Approved locked copy. Readiness permits queueing; staffing-launch-gate separately controls delivery.
 const STAFFING_CAMPAIGN = Object.freeze({
@@ -313,15 +314,34 @@ function staffingV2CampaignNotesRefusal(current = {}, nextNotes) {
 // A V4 lead's campaign_notes is its sealed profile, written once by a V4 import
 // on a new row. No other writer may change it or put a V4 profile on a lead,
 // so the selected variant stays stable for the whole sequence.
+//
+// One exception: Campaign 3 conversion (staffing-campaign-3-convert.js) seals a
+// V4 profile once onto an existing, never-contacted, unrouted Import-stage V1 or
+// Campaign 2 lead that carries no V2 or V4 profile. That lead's own row is why
+// the import refuses it, so conversion is the only way in without a second row.
+// The profile must verify, select a variant, carry this lead's own address and
+// the conversion provenance.
 const STAFFING_V4_PROFILE_READ_ONLY = 'staffing_v4_profile_read_only';
+const CAMPAIGN_3_CONVERSION_PREFIX = 'campaign3-convert:';
+function campaign3ConversionAllowed(current = {}, next) {
+  const source = staffingCampaignFor(current);
+  if (source !== STAFFING_CAMPAIGN && source !== STAFFING_CAMPAIGN_2) return false;
+  if (hasStaffingV2ProfileMarker(current) || isStaffingV4Marked(current)) return false;
+  if (!neverContacted(current) || String(current.senderInboxId || '').trim()) return false;
+  if (String(current.stage || '').trim() !== 'Import') return false;
+  const read = readStaffingV4Profile({ campaign_notes: next });
+  return Boolean(read.ok && read.profile.copy_status === 'SELECTED'
+    && String(read.profile.sourcing_run_id || '').startsWith(CAMPAIGN_3_CONVERSION_PREFIX)
+    && normalizedEmail(read.profile.email) === normalizedEmail(current.email));
+}
 function staffingV4CampaignNotesRefusal(current = {}, nextNotes) {
   const next = String(nextNotes ?? '');
   if (next === String(current.campaign_notes ?? current.campaignNotes ?? '')) return null;
   if (isStaffingV4Marked(current)) {
     return `${STAFFING_V4_PROFILE_READ_ONLY}: a staffing V4 lead's campaign_notes is its sealed profile and selected variant; it is never rewritten`;
   }
-  if (next.includes(STAFFING_V4_PROFILE_MARKER)) {
-    return `${STAFFING_V4_PROFILE_READ_ONLY}: a staffing V4 profile is written only by the V4 import`;
+  if (next.includes(STAFFING_V4_PROFILE_MARKER) && !campaign3ConversionAllowed(current, next)) {
+    return `${STAFFING_V4_PROFILE_READ_ONLY}: a staffing V4 profile is written only by the V4 import or Campaign 3 conversion of an untouched V1 / Campaign 2 lead`;
   }
   return null;
 }
@@ -486,17 +506,21 @@ function renderStaffingV4(lead, step, options = {}) {
   if (!read.ok) throw new Error(`staffing V4 Email ${step} refused: ${read.reason}${read.detail ? ` (${read.detail})` : ''}`);
   if (read.profile.copy_status !== 'SELECTED') throw new Error(`staffing V4 Email ${step} refused: lead is on hold (${read.profile.hold_reasons.join('; ') || 'no variant'})`);
   const identity = staffingSenderIdentity(options.env || process.env, options);
+  // Copy version pinned per lead (staffing-v4-copy-version.js). The send path
+  // passes the activity ledger so a thread keeps the version its Email 1 used.
+  const pinned = resolveV4CopyVersion(lead, options.activities, { sealedCopyVersion: read.sealedCopyVersion });
   const rendered = renderV4Copy({
-    variant: read.profile.copy_variant, step, vars: read.vars,
+    variant: read.profile.copy_variant, step, vars: read.vars, copyVersion: pinned.copyVersion,
     resumeLine: options.oooResumeContext ? OOO_RESUME_CONTEXT_LINE : '',
-    appendFooter: text => appendStaffingComplianceFooter(text, identity),
+    // Campaign 3's footer has no website line (owner copy change 2026-11-24).
+    appendFooter: text => appendStaffingComplianceFooter(text, identity, { includeWebsite: false }),
   });
   // Follow-ups keep the Email 1 thread subject ("Re: ..."), exactly as every
   // staffing version does, so Gmail threading holds. The approved standalone
   // subject is reported for review only.
   return { subject: step === 1 ? rendered.subject : null, approvedSubject: rendered.subject,
     body: rendered.body, html: rendered.html, step, campaignId: STAFFING_CAMPAIGN_V4.id,
-    copyVariant: read.profile.copy_variant };
+    copyVariant: read.profile.copy_variant, copyVersion: pinned.copyVersion, copyVersionReason: pinned.reason };
 }
 
 function renderStaffingPreview(lead, result, step = 1, options = {}) {
@@ -579,7 +603,8 @@ function renderStaffingEmail(lead = {}, step = 1, options = {}) {
   if (campaign === STAFFING_CAMPAIGN_V4) {
     const email = renderStaffingV4(lead, step, options);
     return { subject: email.subject, body: email.body, html: email.html, step,
-      campaignId: email.campaignId, copyVariant: email.copyVariant };
+      campaignId: email.campaignId, copyVariant: email.copyVariant, copyVersion: email.copyVersion,
+      copyVersionReason: email.copyVersionReason };
   }
   const opening = staffingOpeningFor(lead);
   const structuredV2 = usesV2Copy(campaign) && hasStaffingV2ProfileMarker(lead);
@@ -604,7 +629,7 @@ function renderStaffingEmail(lead = {}, step = 1, options = {}) {
 }
 
 /** @returns an error string when the assembled staffing email is unsafe, else null. */
-function validateStaffingEmail({ subject, body, leadId, campaignId } = {}, step = 1) {
+function validateStaffingEmail({ subject, body, leadId, campaignId, copyVersion } = {}, step = 1) {
   const text = String(body || '');
   if (!text.trim()) return 'staffing body is empty';
   if (/{{|}}/.test(text)) return 'staffing body still contains an unmerged placeholder';
@@ -613,7 +638,10 @@ function validateStaffingEmail({ subject, body, leadId, campaignId } = {}, step 
   if (step !== 1 && String(subject || '').trim()) return 'staffing follow-up must keep the original thread subject';
   if (campaignId === STAFFING_CAMPAIGN_V4.id) {
     if (/receptionist|missed calls?|dental|patients?|clinic/i.test(text)) return 'staffing body contains non-staffing offer language';
-    return v4CopyProblem({ body: text, subject }, step) || staffingComplianceError(text, { leadId });
+    // The render names its copy version; a caller passing only the body gets
+    // it inferred from the locked text, and both versions stay strict.
+    return v4CopyProblem({ body: text, subject, copyVersion: copyVersion || inferV4CopyVersion(text, step) }, step)
+      || staffingComplianceError(text, { leadId });
   }
   // Dental/receptionist language must never reach a staffing prospect.
   if (/receptionist|missed calls?|dental|patients?|clinic/i.test(text)) return 'staffing body contains non-staffing offer language';
@@ -642,4 +670,5 @@ module.exports = { STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_LABELS, isStaffingCampai
   isStaffingCampaign2Marked, staffingCampaign2SendBlock, STAFFING_CAMPAIGN_2_ADOPTION_SCHEMA, usesV2Copy,
   STAFFING_V2_PROFILE_READ_ONLY, staffingV2CampaignNotesRefusal,
   STAFFING_CAMPAIGN_V4, staffingV4Live, setStaffingV4LiveForTests, isStaffingV4Marked, staffingV4SendBlock,
-  STAFFING_V4_PROFILE_READ_ONLY, staffingV4CampaignNotesRefusal, V4_FOLLOW_UPS };
+  STAFFING_V4_PROFILE_READ_ONLY, staffingV4CampaignNotesRefusal, V4_FOLLOW_UPS,
+  CAMPAIGN_3_CONVERSION_PREFIX, campaign3ConversionAllowed };

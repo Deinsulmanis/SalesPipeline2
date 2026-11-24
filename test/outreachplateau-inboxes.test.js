@@ -32,11 +32,11 @@ test('the three inboxes are registered once each, ScaleLab-owned, with their own
   for (const row of found) assert.equal((row.policyBlockers || []).length, 0, `${row.id} passes ScaleLab sender policy`);
 });
 
-test('ready at 20/day and 2 per window, but not send-eligible until activated', () => {
+test('ready at 25/day and 3 per window (raised 2026-11-23), but not send-eligible until activated', () => {
   for (const row of rows()) {
     assert.equal(row.status, 'ready');
-    assert.equal(row.dailyLimit, 20);
-    assert.equal(row.perRunLimit, 2);
+    assert.equal(row.dailyLimit, 25);
+    assert.equal(row.perRunLimit, 3);
     assert.equal(registry.sendEligibleFor(row, ENV), false, `${row.id} sends nothing until activated`);
     // Once activated (runtime status active) it may send, at exactly these caps.
     assert.equal(registry.sendEligibleFor({ ...row, status: 'active' }, ENV), true);

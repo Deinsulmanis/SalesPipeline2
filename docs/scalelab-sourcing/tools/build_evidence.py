@@ -11,12 +11,16 @@ Per lead it records only what the runs actually captured:
   candidateAds  current job ads where the role and location are quoted in the ad text (table below)
   specialization  a category phrase supported by a quoted first-party excerpt (rules below)
   salesHiring / expansion / leadership  empty: those signals were never searched in V4 sourcing
+  specialtyLine  copy v2 COPY_C primary: "<roles> for <client type>" from one first-party excerpt (copy_v2_evidence.py)
+  candidateAds   also the agency's own job postings within 30 days, when <run_dir>/job_postings.json exists
+                 (copy v2 COPY_B: most common hands-on title, singular, and its most common "City, ST")
 The variant itself is selected by integrations/staffing-v4-copy.js, not here.
 """
 import csv, json, os, re, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import v4config
-import jobs_rule  # noqa: E402  # noqa: E402
+import v4config  # noqa: E402
+import jobs_rule  # noqa: E402
+import copy_v2_evidence  # noqa: E402
 
 MASTER, OUT, RUNS = sys.argv[1], sys.argv[2], sys.argv[3:]
 if not RUNS:
@@ -129,7 +133,7 @@ def normalize_ad(a):
 
 
 rows = list(csv.DictReader(open(MASTER)))
-decisions, run_ads, run_scores, run_jobs = {}, {}, {}, {}
+decisions, run_ads, run_scores, run_jobs, run_postings = {}, {}, {}, {}, {}
 for run in RUNS:
     for x in load(f"{run}/icp_decisions.json") or []:
         if x.get("company_icp") == "PASS":
@@ -137,6 +141,7 @@ for run in RUNS:
     run_ads.update(load(f"{run}/ad_classification.json") or {})
     run_scores.update(load(f"{run}/scores.json") or {})
     run_jobs.update(load(f"{run}/jobs_evidence.json") or {})
+    run_postings.update(load(f"{run}/job_postings.json") or {})
 
 out = []
 for r in rows:
@@ -156,6 +161,11 @@ for r in rows:
                 cand.append({"url": a["url"], "quote": a["text"][:400], "role": spec["role"], "location": spec["location"],
                              "current": a["current"], "lastSeen": a["lastSeen"]})
                 break
+    # Copy v2 COPY_B: the agency's own postings (after any hand-listed candidate ad, which keeps priority).
+    posting = copy_v2_evidence.posting_candidate(run_postings.get(d), AS_OF)
+    if posting:
+        cand.append(posting)
+    # Fallback: the job-posting gate's evidence (jobs_evidence.json) when nothing else was found.
     if not cand:
         jp = posting_candidate_ad(run_jobs.get(d), AS_OF)
         if jp:
@@ -171,6 +181,7 @@ for r in rows:
             "emailResolved": bool(r["email"].strip()), "attributionP": attribution,
             "employerAds": emp, "candidateAds": cand, "salesHiring": [], "expansion": [], "leadership": [],
             "specialization": specialization(dec),
+            "specialtyLine": copy_v2_evidence.specialty_line(dec),
             "signalsNotSearched": ["own_company_bd_hiring", "market_expansion", "new_commercial_leader"],
         },
     })

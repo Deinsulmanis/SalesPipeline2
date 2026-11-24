@@ -289,10 +289,13 @@ function classifyProviderSendAgainstCrm(message, crmProviderIds = new Set()) {
 // apart as archivedReplies. Sends are every confirmed campaign send that day.
 function buildCanonicalDigest({ day, activities = [], leads = [], activeLeadIds = null } = {}) {
   const sends = canonicalSendRows(activities);
-  const onDay = rows => rows.filter(row => vancouverDay(row.occurredAt) === day);
-  const sentToday = onDay(sends.confirmed);
-  const allRepliesToday = onDay(canonicalReplyMessages(activities));
   const inScope = row => !activeLeadIds || activeLeadIds.has(sourceLeadId(row));
+  // With a lead scope, sends are counted for those leads only, like replies:
+  // another client's sends must not appear in this digest.
+  const onDay = rows => rows.filter(row => vancouverDay(row.occurredAt) === day);
+  const onDayInScope = rows => onDay(rows).filter(inScope);
+  const sentToday = onDayInScope(sends.confirmed);
+  const allRepliesToday = onDay(canonicalReplyMessages(activities));
   const repliesToday = allRepliesToday.filter(inScope);
   const byClassification = groupCount(repliesToday, classifyReplyEvent);
   const breakdown = {};
@@ -321,9 +324,9 @@ function buildCanonicalDigest({ day, activities = [], leads = [], activeLeadIds 
     bookings: bookingsToday.length,
     sendClasses: {
       confirmed: sentToday.length,
-      unconfirmed: onDay(sends.unconfirmed).length,
-      reserved: onDay(sends.reserved).length,
-      failed: onDay(sends.failed).length,
+      unconfirmed: onDayInScope(sends.unconfirmed).length,
+      reserved: onDayInScope(sends.reserved).length,
+      failed: onDayInScope(sends.failed).length,
     },
   };
 }

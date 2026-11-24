@@ -4,6 +4,14 @@
  * READ-ONLY Industrial Staffing V4 preview.
  *
  *   node scripts/staffing-v4-preview.js <evidence.json> <out_dir>
+ *   node scripts/staffing-v4-preview.js <sealed-leads.json> <out_dir>
+ *
+ * Copy v2 (2026-11-24): new leads are selected and sealed under the current
+ * copy version. A sealed-leads file ([{ lead, evidence? }], lead = an existing
+ * Campaign 3 row with campaign_notes) previews leads already imported: they
+ * render exactly as they will send (the pinned version, from the sealed
+ * variant and variables), and, when evidence is given, what a fresh v2
+ * selection would pick.
  *
  * For every sourced V4 lead in the evidence file (built by
  * docs/scalelab-sourcing/runs/v4-copy-2026-11-20/scripts/build_evidence.py) it
@@ -45,7 +53,39 @@ function admission(row) {
     : `HELD under RECIPIENT_PROVIDER_POLICY=google_only (mailbox host: ${gateway})`;
 }
 
-const results = records.map(({ row, evidence }) => {
+const SEALED = records.length > 0 && records.every(r => r && r.lead && r.lead.campaign_notes);
+const sealedResult = ({ lead, evidence }) => {
+  const read = profileLib.readStaffingV4Profile(lead);
+  const emails = [];
+  const problems = [];
+  let pinned = '';
+  for (const step of [1, 2, 3]) {
+    try {
+      const email = renderStaffingEmail(lead, step, OPTIONS);
+      pinned = email.copyVersion;
+      const invalid = validateStaffingEmail(email, step);
+      if (invalid) problems.push(`Email ${step}: ${invalid}`);
+      emails.push({ step, subject: email.subject || `Re: ${emails[0]?.subject || ''}`, body: email.body, html: email.html, sendable: true });
+    } catch (error) { problems.push(`Email ${step}: ${error.message}`); }
+  }
+  const fresh = evidence ? copy.selectV4Variant(evidence) : null;
+  const p = read.ok ? read.profile : {};
+  const form = p.copy_variant === 'COPY_C' && pinned === 'v2' ? (read.vars.specialty_line ? 'primary' : 'fallback') : '';
+  return {
+    company: lead.company, displayCompany: lead.company, nameChanged: false, domain: p.company_domain, wave: p.sourcing_run_id,
+    buyer: lead.contactName || lead.contact_name, title: '', email: lead.email, emailStatus: '', catchAll: '', gateway: '',
+    tag: p.v4_tag, demandScore: p.demand_score, priority: p.signal_priority, adClass: p.ad_class, copyTier: '',
+    contactStatus: p.contact_status, qcFlags: '',
+    status: read.ok && p.copy_status === 'SELECTED' ? 'SELECTED' : 'HOLD', variant: p.copy_variant || '', form, copyVersion: pinned,
+    vars: read.ok ? read.vars : {}, evidence: { url: p.evidence_url, quote: p.evidence_quote },
+    specialization: null, considered: (p.selection_considered || []).map(text => ({ variant: '', detail: text })), holds: p.hold_reasons || [],
+    signalsNotSearched: [], sendBlock: staffingV4SendBlock(lead), admission: 'already imported',
+    suppression: 'checked at import', dedupe: 'imported', emails, problems, sealed: true,
+    freshSelection: fresh ? { variant: fresh.variant, form: fresh.form, status: fresh.status, vars: fresh.vars } : null,
+  };
+};
+
+const results = SEALED ? records.map(sealedResult) : records.map(({ row, evidence }) => {
   const selection = copy.selectV4Variant(evidence);
   const profile = profileLib.buildStaffingV4Profile({
     row: { company: evidence.company, company_domain: row.company_domain, contact_name: evidence.contactName, email: row.email,
@@ -76,7 +116,8 @@ const results = records.map(({ row, evidence }) => {
     const identity = staffingSenderIdentity(OPTIONS.env, OPTIONS);
     for (const step of [1, 2, 3]) {
       try {
-        const r = copy.renderV4Copy({ variant: selection.variant, step, vars: selection.vars, appendFooter: t => appendStaffingComplianceFooter(t, identity) });
+        const r = copy.renderV4Copy({ variant: selection.variant, step, vars: selection.vars, copyVersion: selection.copyVersion,
+          appendFooter: t => appendStaffingComplianceFooter(t, identity, { includeWebsite: false }) });
         emails.push({ step, subject: step === 1 ? r.subject : `Re: ${emails[0]?.subject || ''}`, body: r.body, html: r.html, sendable: false });
       } catch (error) { problems.push(`Email ${step}: ${error.message}`); }
     }
@@ -88,7 +129,8 @@ const results = records.map(({ row, evidence }) => {
     catchAll: row.catch_all, gateway: row.mail_gateway,
     tag: row.v4_tag, demandScore: row.demand_score, priority: row.signal_priority, adClass: row.ad_class, copyTier: row.copy_tier,
     contactStatus: row.contact_status, qcFlags: row.qc_flags,
-    status: selection.status, variant: selection.variant, vars: selection.vars, evidence: selection.evidence,
+    status: selection.status, variant: selection.variant, form: selection.form, copyVersion: selection.copyVersion,
+    vars: selection.vars, evidence: selection.evidence,
     specialization: evidence.specialization, considered: selection.considered, holds: selection.holds,
     signalsNotSearched: evidence.signalsNotSearched,
     sendBlock: staffingV4SendBlock(lead), admission: admission(row),
@@ -101,7 +143,12 @@ const count = key => results.reduce((acc, r) => ({ ...acc, [r[key] || 'HOLD']: (
 const summary = {
   generatedFrom: path.basename(evidencePath), leads: results.length,
   byStatus: count('status'),
-  byVariant: results.reduce((acc, r) => { const k = r.status === 'SELECTED' ? r.variant : `HOLD${r.variant ? ` (evidence: ${r.variant})` : ''}`; acc[k] = (acc[k] || 0) + 1; return acc; }, {}),
+  byVariant: results.reduce((acc, r) => { const k = r.status === 'SELECTED' ? `${r.variant}${r.form ? ` ${r.form}` : ''}` : `HOLD${r.variant ? ` (evidence: ${r.variant})` : ''}`; acc[k] = (acc[k] || 0) + 1; return acc; }, {}),
+  byCopyVersion: count('copyVersion'),
+  copyC: { primary: results.filter(r => r.status === 'SELECTED' && r.variant === 'COPY_C' && r.form === 'primary').length,
+    fallback: results.filter(r => r.status === 'SELECTED' && r.variant === 'COPY_C' && r.form === 'fallback').length,
+    hold: results.filter(r => r.status !== 'SELECTED').length },
+  freshSelection: SEALED ? results.reduce((acc, r) => { if (!r.freshSelection) return acc; const f = r.freshSelection; const k = f.status === 'SELECTED' ? `${f.variant}${f.form ? ` ${f.form}` : ''}` : 'HOLD'; acc[k] = (acc[k] || 0) + 1; return acc; }, {}) : undefined,
   providerPolicy: PROVIDER_POLICY,
   admitted: results.filter(r => r.admission.startsWith('ADMITTED')).length,
   googleHosted: results.filter(r => String(r.gateway).toLowerCase() === 'google').length,
@@ -114,10 +161,12 @@ fs.writeFileSync(path.join(outDir, 'v4-preview.json'), JSON.stringify({ summary,
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const order = { COPY_A: 1, COPY_D: 2, COPY_E: 3, COPY_F: 4, COPY_B: 5, COPY_C: 6, '': 7 };
-const sorted = [...results].sort((a, b) => (a.status === b.status ? 0 : a.status === 'HOLD' ? 1 : -1) || order[a.variant] - order[b.variant] || a.company.localeCompare(b.company));
+const formOrder = { primary: 0, fallback: 1, '': 0 };
+const sorted = [...results].sort((a, b) => (a.status === b.status ? 0 : a.status === 'HOLD' ? 1 : -1) || order[a.variant] - order[b.variant] || formOrder[a.form || ''] - formOrder[b.form || ''] || a.company.localeCompare(b.company));
 const card = r => `
 <section class="lead ${r.status === 'HOLD' ? 'hold' : ''}">
-  <h2>${esc(r.displayCompany)} <span class="pill v">${esc(r.status === 'SELECTED' ? r.variant : `HOLD${r.variant ? ` · evidence ${r.variant}` : ''}`)}</span></h2>
+  <h2>${esc(r.displayCompany)} <span class="pill v">${esc(r.status === 'SELECTED' ? `${r.variant}${r.form ? ` ${r.form}` : ''}` : `HOLD${r.variant ? ` · evidence ${r.variant}` : ''}`)}</span> <span class="pill">copy ${esc(r.copyVersion || '?')}</span></h2>
+  ${r.sealed ? `<p class="warn">Already imported: sends its sealed variant under the pinned copy version.${r.freshSelection ? ` A fresh v2 selection would pick ${esc(r.freshSelection.status === 'SELECTED' ? `${r.freshSelection.variant}${r.freshSelection.form ? ` ${r.freshSelection.form}` : ''}` : 'HOLD')}${Object.keys(r.freshSelection.vars || {}).length ? ` (${esc(Object.entries(r.freshSelection.vars).filter(([k]) => !['first_name', 'company'].includes(k)).map(([k, v]) => `${k} = ${v}`).join(', '))})` : ''}, which only a re-import could apply.` : ''}</p>` : ''}
   <table>
     <tr><th>Company (sourced)</th><td>${esc(r.company)}${r.nameChanged ? ' <span class="warn">display name shortened: confirm</span>' : ''} · ${esc(r.domain)} · ${esc(r.wave)}</td></tr>
     <tr><th>Buyer</th><td>${esc(r.buyer)}, ${esc(r.title)} · ${esc(r.email)}</td></tr>
@@ -146,8 +195,8 @@ h1{font-size:22px}h2{font-size:18px;margin:0 0 8px}.lead{background:var(--card);
 .pill{background:var(--pill);border-radius:99px;padding:2px 10px;font-size:13px}.warn{color:var(--warn)}
 .email{border-top:1px solid var(--line);margin-top:12px;padding-top:8px}.email p{margin:0 0 10px}.email.unsendable{opacity:.75}.meta{color:var(--mut);font-size:13px;margin-bottom:6px}
 code{font-size:12px}</style></head><body>
-<h1>Industrial Staffing V4: copy preview (read only)</h1>
-<p>${esc(summary.leads)} leads · ${esc(JSON.stringify(summary.byVariant))}. Nothing here is queued or sent. All leads stay REVIEW READY; V4 is a draft campaign.</p>
+<h1>Industrial Campaign 3: copy preview (read only)</h1>
+<p>${esc(summary.leads)} leads · ${esc(JSON.stringify(summary.byVariant))} · copy ${esc(JSON.stringify(summary.byCopyVersion))}. COPY_C primary ${esc(summary.copyC.primary)}, fallback ${esc(summary.copyC.fallback)}, HOLD ${esc(summary.copyC.hold)}. Nothing here is imported, queued or sent.</p>
 ${sorted.map(card).join('\n')}
 </body></html>`;
 fs.writeFileSync(path.join(outDir, 'v4-preview.html'), html);

@@ -1929,7 +1929,9 @@ async function deliverOrdinaryColdStep({
   // row's guess; its first touch may open with one line of context.
   const oooResume = Number(step) > 1 ? oooResumeCopy(lead, activitiesForCycle || [], { step: Number(step) }) : null;
   if (oooResume?.refusal) return { delivered: false, reason: oooResume.refusal };
-  const resumeContext = oooResume?.contextLine ? { oooResumeContext: true } : {};
+  // Render options. `activities` lets Campaign 3 pin its copy version from the
+  // ledger (staffing-v4-copy-version.js); other staffing copy ignores it.
+  const resumeContext = { ...(oooResume?.contextLine ? { oooResumeContext: true } : {}), activities: activitiesForCycle || [] };
   // Staffing Follow-up #2 landing link. Pure and pinned: re-derived here from
   // the same action id and earlier attempts the caller rendered from, so the
   // locked-copy comparison below also proves the URL is unchanged. Null for
@@ -1945,9 +1947,15 @@ async function deliverOrdinaryColdStep({
   }) : null;
   // Preview HTML previously disappeared before Gmail's plain-text-only MIME
   // assembly. Preserve the approved bold phrase without changing the text.
+  // Campaign 3 pins its copy version from the ledger (staffing-v4-copy-version.js).
   const staffingEmail = isStaffingTemplateId(lead.emailTemplateId)
     ? renderStaffingEmail(lead, step, landingPlan?.tracked ? { landingPageUrl: landingPlan.url, ...resumeContext } : resumeContext) : null;
   if (staffingEmail && staffingEmail.body !== body) return { delivered: false, reason: 'staffing delivery body differs from locked copy' };
+  // Campaign 3: the attribution (recorded on the reservation and the send, and
+  // read back to pin the thread) names the copy version this render used.
+  if (staffingEmail?.copyVersion && attribution?.staffingCopyVersion !== staffingEmail.copyVersion) {
+    attribution = { ...attribution, ...coldSendAttribution(lead, step, { staffingCopyVersion: staffingEmail.copyVersion }) };
+  }
   const clientCopyProblem = clientDeliveryCopyProblem(lead, step, body, activitiesForCycle || []);
   if (clientCopyProblem) return { delivered: false, reason: clientCopyProblem };
   const mailbox = gmailForSender(sender);
@@ -2042,6 +2050,9 @@ async function deliverOrdinaryColdStep({
       // A managed client's copy version, so even an unconfirmed attempt pins
       // the lead's sequence (clients/jole-copy.js resolveJoleCopyVersion).
       ...(isClientTemplateId(lead.emailTemplateId) && attribution?.copyVersion ? { copyVersion: attribution.copyVersion } : {}),
+      // Campaign 3's copy version, so even an unconfirmed attempt pins the
+      // lead's sequence (staffing-v4-copy-version.js resolveV4CopyVersion).
+      ...(attribution?.staffingCopyVersion ? { staffingCopyVersion: attribution.staffingCopyVersion } : {}),
       ...(isClientTemplateId(lead.emailTemplateId) && attribution?.threadCopyVersion ? { threadCopyVersion: attribution.threadCopyVersion } : {}),
       ...(isClientTemplateId(lead.emailTemplateId) && attribution?.personalizationMode ? {
         personalizationMode: attribution.personalizationMode, personalizationRole: attribution.personalizationRole,
@@ -4745,7 +4756,8 @@ function staffingFollowUpBody(lead, step, activities = []) {
   // same pure decision is re-derived in deliverOrdinaryColdStep.
   const oooResume = oooResumeCopy(lead, activities, { step });
   if (oooResume.refusal) throw new Error(oooResume.refusal);
-  const resumeContext = oooResume.contextLine ? { oooResumeContext: true } : {};
+  // `activities` lets Campaign 3 pin its copy version from the ledger.
+  const resumeContext = { ...(oooResume.contextLine ? { oooResumeContext: true } : {}), activities };
   const email = renderStaffingEmail(lead, step, landingPlan?.tracked ? { landingPageUrl: landingPlan.url, ...resumeContext } : resumeContext);
   const bad = validateStaffingEmail(email, step);
   if (bad) throw new Error(bad);
@@ -5948,7 +5960,7 @@ async function runInner() {
         }
         // The opening was researched, audited and approved offline; the agent
         // only merges it. renderStaffingEmail throws when it is missing.
-        const email = renderStaffingEmail(lead, 1);
+        const email = renderStaffingEmail(lead, 1, { activities: ownershipActivities });
         const bad = validateStaffingEmail(email, 1);
         if (bad) throw new Error(bad);
         built = { ...email, link: '', opener: 'approved staffing opening', openerTier: 'LOCKED', pitchTier: 'industrial_staffing' };

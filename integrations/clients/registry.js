@@ -99,11 +99,34 @@ function validateClientConfig(config) {
   return config;
 }
 
-function buildRegistry(configs = CLIENT_CONFIGS) {
+// CLIENT_OFFBOARDED lists managed clients the owner has ended (comma-separated
+// ids). An offboarded client is inactive: no email can send for it
+// (client_inactive at every gate), sending is off, it holds no capacity, its
+// workspace is not listed and its scheduled jobs do not run. Its records stay
+// readable by id. The default client can never be offboarded. Read once at
+// load, like the rest of the registry; changing it takes a restart.
+const OFFBOARDED_CLIENTS_VAR = 'CLIENT_OFFBOARDED';
+function offboardedClientIds(env = process.env) {
+  return new Set(String(env[OFFBOARDED_CLIENTS_VAR] || '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean));
+}
+function applyOffboarding(config, offboarded) {
+  if (config.isDefault || !offboarded.has(config.id)) return config;
+  return Object.freeze({
+    ...config,
+    lifecycleStatus: 'offboarded', active: false,
+    offboarding: Object.freeze({ source: OFFBOARDED_CLIENTS_VAR }),
+    sending: Object.freeze({ ...config.sending, enabled: false }),
+    capacity: Object.freeze({ ...(config.capacity || {}), dailyCap: 0, windowCap: 0, reservedDaily: 0, reservedWindow: 0 }),
+  });
+}
+
+function buildRegistry(configs = CLIENT_CONFIGS, env = process.env) {
   const byId = new Map();
   const namespaces = new Map();
   let defaultId = '';
-  for (const config of configs) {
+  const offboarded = offboardedClientIds(env);
+  for (const original of configs) {
+    const config = applyOffboarding(original, offboarded);
     validateClientConfig(config);
     if (byId.has(config.id)) throw new Error(`Duplicate client id ${config.id}`);
     if (config.isDefault) {
@@ -211,6 +234,6 @@ function publicClient(config) {
 }
 
 module.exports = {
-  DEFAULT_CLIENT_ID, LIFECYCLE_STATUSES, ONBOARDING_ITEMS, validateClientConfig, buildRegistry, normalizeClientId, overrideClientForTests,
+  DEFAULT_CLIENT_ID, LIFECYCLE_STATUSES, ONBOARDING_ITEMS, OFFBOARDED_CLIENTS_VAR, offboardedClientIds, validateClientConfig, buildRegistry, normalizeClientId, overrideClientForTests,
   resolveClientId, isKnownClient, getClient, listClients, clientForNamespacedValue, publicClient,
 };

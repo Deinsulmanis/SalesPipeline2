@@ -27,7 +27,7 @@ const { classify } = require('../check-leads');
 const { resolveLeadClient } = require('./clients/ownership');
 const { DEFAULT_CLIENT_ID } = require('./clients/registry');
 const { STAFFING_CAMPAIGN_V4 } = require('./staffing-campaign');
-const { selectV4Variant } = require('./staffing-v4-copy');
+const { selectV4Variant, CURRENT_COPY_VERSION } = require('./staffing-v4-copy');
 const {
   buildStaffingV4Profile, serializeStaffingV4Profile, readStaffingV4Profile, hasStaffingV4ProfileMarker,
 } = require('./staffing-v4-profile');
@@ -120,7 +120,7 @@ function evaluateCampaign3Import(payload, { leads = [], suppressedEmails = new S
       return refuse('duplicate_company', 'a ScaleLab lead already exists for this company domain');
     }
     let selection;
-    try { selection = selectV4Variant(evidence); } catch (error) { return refuse('invalid_evidence', error.message); }
+    try { selection = selectV4Variant(evidence, { copyVersion: CURRENT_COPY_VERSION }); } catch (error) { return refuse('invalid_evidence', error.message); }
     if (selection.status !== 'SELECTED') return refuse('held', selection.holds.join('; ') || 'no verified variant');
     const profile = buildStaffingV4Profile({
       row: { company, company_domain: domain, contact_name: evidence.contactName, email,

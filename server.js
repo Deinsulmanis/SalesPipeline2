@@ -143,6 +143,7 @@ async function stage2TimelineProbe({ leadId, sourceLeadId, email, authoritative,
 const { simulateRouting } = require('./integrations/gmail-routing-simulation');
 const { isStaffingV4Marked, STAFFING_CAMPAIGN_V4 } = require('./integrations/staffing-campaign');
 const { importCampaign3Leads } = require('./integrations/staffing-campaign-3-import');
+const { convertCampaign3Leads } = require('./integrations/staffing-campaign-3-convert');
 const { staffingReviewStatus, isStaffingV2Marked, STAFFING_CAMPAIGN_V2,
   staffingV2CampaignNotesRefusal, STAFFING_V2_PROFILE_READ_ONLY } = require('./integrations/staffing-campaign');
 const { importStaffingV2Leads } = require('./integrations/staffing-v2-import');
@@ -162,6 +163,11 @@ const { registerClientRoutes } = require('./integrations/clients/routes');
 const { importClientLeads } = require('./integrations/clients/lead-import');
 const { createImportBatchStore, processPendingImportBatches } = require('./integrations/clients/import-batches');
 const { leadsForClient, leadDefinitelyOtherClient, resolveLeadClient } = require('./integrations/clients/ownership');
+const { isArchivedMailbox, listedSenders } = require('./integrations/archived-mailboxes');
+const { planClientOffboarding } = require('./integrations/client-offboarding');
+// CRM Health reads the stored observer checkpoints (header row first, inbox id
+// in column A); an owner-archived mailbox's checkpoint is not reported.
+const listedObservationRows = (rows = []) => (rows || []).filter((row, index) => index === 0 || !isArchivedMailbox({ id: String((row || [])[0] || '') }));
 const { clientOutreachView } = require('./integrations/clients/outreach-view');
 const { resolveClientId, DEFAULT_CLIENT_ID, listClients, getClient: getManagedClientConfig } = require('./integrations/clients/registry');
 const { clientSendState, clientSendBlock } = require('./integrations/clients/send-policy');
@@ -1734,8 +1740,12 @@ async function loadOutreachDataset() {
     Object.assign(row, pipelineIndex.byColdEmailId.get(lead.id));
     row.sequenceState = outreachSequenceState(lead);
     const automation = deriveAutomationState(lead);
-    row.automationState = automation.state;
-    row.automationReason = automation.reason;
+    // A canonical bounce suppresses the address and the send gate refuses it
+    // (sendSuppressionReason), so a bounced lead is never shown as a live
+    // sequence even while its ColdEmail row still reads emailed.
+    const bouncedStop = row.bounced && automation.state === 'active';
+    row.automationState = bouncedStop ? 'stopped' : automation.state;
+    row.automationReason = bouncedStop ? 'email bounced — address suppressed, no further sends' : automation.reason;
     return row;
   });
   const rows = allRows.filter(row => !row.archived);
@@ -1846,8 +1856,8 @@ function analyticsScopeBlocks(dataset) {
       definition: 'Leads that are not archived and whose offer is not retired, with their own activity only.' },
     senderAnalytics: buildSenderAnalytics({
       leads: active, activities: activitiesForLeads(dataset.activities || [], active),
-      senders: configuredSenders().map(sender => ({ ...sender, staffingOnly: isStaffingOnlySender(sender) })),
-      replyCategoryByLead: categoryByLead,
+      senders: listedSenders(configuredSenders()).map(sender => ({ ...sender, staffingOnly: isStaffingOnlySender(sender) })),
+      replyCategoryByLead: categoryByLead, holds: coldSenderHolds(),
     }),
     historical: {
       scope: ANALYTICS_SCOPE.HISTORICAL, includesArchived: true, archivedLeads: (dataset.archivedRows || []).length,
@@ -1969,7 +1979,7 @@ app.get('/api/coldemail', requireAuth, async (req, res) => {
       leadTypeLabels: Object.fromEntries(LEAD_TYPE_IDS.map(id => [id, leadTypeLabel(id)])),
       // The inbox filter's options, from the same identity map the rows used.
       // Address and id only — nothing about credentials travels to the browser.
-      senderOptions: senderFilterOptions(scope.view ? scope.view.senderRows : visibleSenderIdentities()),
+      senderOptions: senderFilterOptions(listedSenders(scope.view ? scope.view.senderRows : visibleSenderIdentities())),
       pipelineAudit: scope.view?.pipelineAudit || dataset.pipelineAudit,
       sendActivity: scope.view?.sendActivity || dataset.sendActivity,
       fetchedAt: new Date(dataset.at).toISOString(),
@@ -2104,7 +2114,10 @@ function logManagedClientReadiness() {
 }
 
 app.get('/api/campaign-versions', requireAuth, (req, res) => {
-  res.json({ active: ACTIVE_CAMPAIGN_VERSION, versions: CAMPAIGN_VERSIONS, completedCampaigns: completedCampaigns() });
+  // `active` is the send-routing default per family (unchanged); `current` is
+  // the live campaign the dashboard names as "Current campaign".
+  res.json({ active: ACTIVE_CAMPAIGN_VERSION, current: { industrial_staffing: currentLiveCampaignVersion() },
+    versions: CAMPAIGN_VERSIONS, completedCampaigns: completedCampaigns() });
 });
 
 // Non-secret operational configuration for the CRM Settings workspace. This
@@ -2305,14 +2318,14 @@ app.get('/api/crm/health', requireAuth, async (req, res) => {
       appointmentScheduleId: BOOKING_APPOINTMENT_SCHEDULE_ID,
       calendarSyncState,
       canonicalReplyBoundary: process.env.CANONICAL_REPLY_BOUNDARY || null,
-      mailboxObservationState: dataset.mailboxObservationState,
-      observerSenderIds: observableSenders(configuredSenders()).map(item => item.id),
+      mailboxObservationState: listedObservationRows(dataset.mailboxObservationState),
+      observerSenderIds: observableSenders(listedSenders(configuredSenders())).map(item => item.id),
       funnel,
     });
     let gmailObserver;
     try {
-      const rows = dataset.mailboxObservationState || [];
-      gmailObserver = observerHealth(rows, { senderIds: observableSenders(configuredSenders()).map(item => item.id) });
+      const rows = listedObservationRows(dataset.mailboxObservationState);
+      gmailObserver = observerHealth(rows, { senderIds: observableSenders(listedSenders(configuredSenders())).map(item => item.id) });
     } catch (error) {
       gmailObserver = [{ health: 'unavailable', lastError: `checkpoint state unavailable: ${error.message}` }];
     }
@@ -2443,7 +2456,12 @@ async function ensureDigestSheet() {
   });
 }
 
-// Computes today's numbers from the source tabs. Read-only.
+// The digest card is ScaleLab's own (the dashboard loads it only in the
+// ScaleLab workspace), so every count is scoped to ScaleLab's active leads:
+// a managed client's sends, replies and drafts never appear in it.
+const DIGEST_CLIENT_ID = 'scalelab';
+
+// Computes the day's numbers from the source tabs. Read-only.
 async function computeDigest(day) {
   const [ceR, opR, drR, actR] = await Promise.all([
     sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE }),
@@ -2454,13 +2472,16 @@ async function computeDigest(day) {
     }).catch(() => ({ data: {} })),
   ]);
 
-  const leadRows = (ceR.data.values || []).slice(1).filter(r => r[0]);
-  const leads = leadRows.map(r => Object.fromEntries(CE_COLUMNS.map((field, i) => [field, r[i] || ''])));
+  const allLeads = (ceR.data.values || []).slice(1).filter(r => r[0])
+    .map(r => Object.fromEntries(CE_COLUMNS.map((field, i) => [field, r[i] || ''])));
+  const leads = leadsForClient(allLeads, DIGEST_CLIENT_ID);
+  const clientLeadIds = new Set(leads.map(lead => lead.id));
+  const leadRows = (ceR.data.values || []).slice(1).filter(r => r[0] && clientLeadIds.has(r[0]));
   const activities = (actR.data.values || []).slice(1).map(row => Object.fromEntries(
     COLD_CALL_ACTIVITY_HEADER.map((field, i) => [field, row[i] || '']),
   ));
-  const canonical = buildCanonicalDigest({ day, activities, leads,
-    activeLeadIds: new Set(scopeLeads(leads, ANALYTICS_SCOPE.ACTIVE).map(lead => lead.id)) });
+  const activeLeadIds = new Set(scopeLeads(leads, ANALYTICS_SCOPE.ACTIVE).map(lead => lead.id));
+  const canonical = buildCanonicalDigest({ day, activities, leads, activeLeadIds });
   const isToday  = ts => { try { return ts && vanDay(new Date(ts)) === day; } catch (_e) { return false; } };
 
   // ── real opens today: the shared scanner filter, not raw rows ──
@@ -2481,7 +2502,10 @@ async function computeDigest(day) {
   const autoAnswered = leadRows.filter(r => isToday(r[9]) && /auto-answered/.test(r[11] || '')).length;
   const draftRows = (drR.data.values || []).slice(1);
   const draftsToday   = draftRows.filter(r => isToday(r[0])).length;
-  const draftsPending = draftRows.filter(r => (r[8] || 'pending').toLowerCase() === 'pending').length;
+  // Only drafts a person can still act on: pending, on an active ScaleLab lead.
+  // Drafts left on archived or retired-offer leads are not a review queue.
+  const draftsPending = draftRows.filter(r => (r[8] || 'pending').toLowerCase() === 'pending'
+    && activeLeadIds.has(String(r[1] || '').trim())).length;
 
   // ── booking links sent, by trigger ──
   const bookingByTrigger = { 'question reply': autoAnswered };
@@ -2499,10 +2523,33 @@ async function computeDigest(day) {
   };
 }
 
-// Idempotent: returns the stored digest for the day if one exists, otherwise
-// computes and stores it. `force` recomputes but still overwrites in place, so
-// there is never more than one row per date.
-async function getOrCreateDigest(day, { force = false } = {}) {
+// A stored digest is final only once its day has ended in Vancouver. A row
+// generated during the day (an early dashboard load, the 18:00 cron) is a
+// partial snapshot and is recomputed once the day is over.
+function digestRowIsFinal(day, generatedAt) {
+  const at = new Date(generatedAt || '');
+  return Number.isFinite(at.getTime()) && vanDay(at) > day;
+}
+
+// Today's digest is computed live (cached for a few minutes) and never stored,
+// so the card follows the day's sends instead of freezing at the first load.
+const DIGEST_LIVE_TTL_MS = 5 * 60 * 1000;
+let liveDigestCache = null;
+
+// Idempotent: returns the stored digest for a finished day if one exists,
+// otherwise computes and stores it. `force` recomputes but still overwrites in
+// place, so there is never more than one row per date. The current day is
+// stored only when `store` is set (the 18:00 cron), and is still recomputed
+// after the day ends.
+async function getOrCreateDigest(day, { force = false, store = false } = {}) {
+  if (day === vanDay() && !store) {
+    if (!force && liveDigestCache && liveDigestCache.day === day && Date.now() - liveDigestCache.at < DIGEST_LIVE_TTL_MS) {
+      return liveDigestCache.digest;
+    }
+    const live = await computeDigest(day);
+    liveDigestCache = { day, at: Date.now(), digest: live };
+    return live;
+  }
   await ensureDigestSheet();
   const existing = await sheets().spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID, range: `${DIGEST_SHEET}!A:C`,
@@ -2510,7 +2557,7 @@ async function getOrCreateDigest(day, { force = false } = {}) {
   const rows = existing.data.values || [];
   const idx  = rows.findIndex((r, i) => i > 0 && r[0] === day);
 
-  if (idx !== -1 && !force) {
+  if (idx !== -1 && !force && (day === vanDay() || digestRowIsFinal(day, rows[idx][1]))) {
     try { return JSON.parse(rows[idx][2]); } catch (_e) { /* corrupt row — recompute below */ }
   }
 
@@ -2713,6 +2760,62 @@ app.post('/api/staffing/campaign-3/leads/import', requireAuth, async (req, res) 
     if (e.code === 'invalid_payload') return res.status(422).json({ error: e.message, code: e.code });
     if (e.code === 'corpus_unavailable') return res.status(503).json({ error: e.message, code: e.code });
     console.error('[Campaign 3 Import]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Industrial Campaign 3 conversion (integrations/staffing-campaign-3-convert.js).
+// A never-contacted V1 / Campaign 2 Import-stage lead is refused by the import
+// because its own row already exists; conversion seals the V4 profile onto that
+// one row instead (same lead id, no second row). dry_run is the default and
+// writes nothing. A live run requires canonical (Supabase) reads and writes; each
+// lead is one compare-and-set through applyLeadChanges, mirrored to Sheets.
+async function readCampaign3ConvertCorpus() {
+  const [corpus, suppression] = await Promise.all([
+    readOutreachCorpus(),
+    sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${SUPPRESSION_SHEET}!A:A` }),
+  ]);
+  if (!corpus.ok) throw Object.assign(new Error(`outreach corpus unreadable: ${corpus.reason}`), { code: 'corpus_unavailable' });
+  const suppressedEmails = new Set((suppression.data.values || []).slice(1).map(row => normalizeEmail(row[0])).filter(Boolean));
+  return { leads: corpus.leads, suppressedEmails };
+}
+
+app.post('/api/staffing/campaign-3/leads/convert', requireAuth, async (req, res) => {
+  const body = req.body || {};
+  const dryRun = body.dry_run !== false;
+  if (outreachStateMode() !== 'primary' || outreachWriteAuthority() !== 'supabase') {
+    return res.status(409).json({ error: 'Campaign 3 conversion requires Supabase primary reads and canonical writes', code: 'authority_not_canonical' });
+  }
+  try {
+    const result = await withAuth(() => convertCampaign3Leads({
+      payload: body, dryRun,
+      readCorpus: readCampaign3ConvertCorpus,
+      applyChanges: async changes => {
+        // One column read resolves every row; a lead that is not exactly one
+        // ColdEmail row fails on its own, never guessed.
+        const column = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${CE_SHEET_NAME}!A:A` });
+        const rowsById = new Map();
+        (column.data.values || []).forEach((cells, index) => {
+          if (index > 0 && cells[0]) rowsById.set(cells[0], [...(rowsById.get(cells[0]) || []), index + 1]);
+        });
+        const resolvable = changes.filter(change => (rowsById.get(change.leadId) || []).length === 1);
+        const unresolved = changes.filter(change => !resolvable.includes(change)).map(change => ({
+          leadId: change.leadId, status: 'failed', reason: 'lead identity is not exactly one ColdEmail row' }));
+        if (!resolvable.length) return unresolved;
+        const batch = await applyLeadChanges(resolvable.map(change => ({
+          leadId: change.leadId, patch: change.patch, row: rowsById.get(change.leadId)[0],
+          expectedState: change.expectedState, releaseMarkers: change.releaseMarkers,
+        })), { sheetsClient: sheets(), spreadsheetId: SPREADSHEET_ID });
+        return [...unresolved, ...batch.results];
+      },
+    }));
+    if (!dryRun) { invalidateOutreachCache('campaign_3_convert'); ceRowMap.clear(); }
+    res.json(result);
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    if (e.code === 'invalid_payload') return res.status(422).json({ error: e.message, code: e.code });
+    if (e.code === 'corpus_unavailable') return res.status(503).json({ error: e.message, code: e.code });
+    console.error('[Campaign 3 Convert]', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -5949,6 +6052,80 @@ app.post('/api/ops/offer-retirement/:offerId', requireAuth, async (req, res) => 
   }
 });
 
+// ── Client offboarding: archive every lead of an offboarded managed client ──
+// Read-only dry run, then bounded batches exactly like an offer retirement.
+// Only a client whose config says lifecycleStatus "offboarded" qualifies, and
+// only leads that resolve to that client without conflict are planned.
+function planOffboardingFrom(inputs, clientId, archivedBy, now = new Date()) {
+  return planClientOffboarding({
+    clientId, leads: inputs.leads, activities: inputs.dataset.activities || [],
+    unresolvedByLead: inputs.unresolvedByLead, archivedBy, source: 'client_offboarding', now, stableId: stableActivityId,
+  });
+}
+function offboardingClient(raw) {
+  const resolved = resolveClientId(raw);
+  if (!resolved.ok) return null;
+  const client = getManagedClientConfig(resolved.clientId);
+  return client.isDefault || client.lifecycleStatus !== 'offboarded' ? null : client;
+}
+
+app.get('/api/ops/client-offboarding/:clientId', requireAuth, async (req, res) => {
+  const client = offboardingClient(req.params.clientId);
+  if (!client) return res.status(404).json({ error: 'not an offboarded managed client' });
+  try {
+    const inputs = await loadArchiveInputs();
+    const plan = planOffboardingFrom(inputs, client.id, 'dry_run');
+    res.json({ dryRun: true, client: plan.client, summary: plan.summary, toArchive: { leads: plan.leadPlans.length } });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[client-offboarding plan]', error.message);
+    res.status(503).json({ error: 'Offboarding plan could not be computed: ' + error.message });
+  }
+});
+
+// Apply one bounded batch. Body: { by, expectedLeads, limit }. expectedLeads
+// must equal the dry run's toArchive.leads; any drift refuses. Repeat until
+// nothing is left; a repeat after completion is a no-op.
+app.post('/api/ops/client-offboarding/:clientId', requireAuth, async (req, res) => {
+  const client = offboardingClient(req.params.clientId);
+  if (!client) return res.status(404).json({ error: 'not an offboarded managed client' });
+  const by = String(req.body?.by || '').trim();
+  if (!by) return res.status(422).json({ error: 'by is required (who is archiving)' });
+  const blocked = archiveMutationBlocked();
+  if (blocked) return res.status(409).json({ error: blocked });
+  if (archiveRunInFlight) return res.status(409).json({ error: 'An archive run is already in progress' });
+  archiveRunInFlight = true;
+  automationLaunchReserved = true;
+  try {
+    const inputs = await loadArchiveInputs();
+    const plan = planOffboardingFrom(inputs, client.id, by);
+    if (Number(req.body?.expectedLeads) !== plan.leadPlans.length) {
+      return res.status(409).json({ error: 'The plan changed since it was reviewed; re-run the dry run', summary: plan.summary, toArchive: { leads: plan.leadPlans.length } });
+    }
+    const limit = Math.min(ARCHIVE_BATCH_MAX, Math.max(1, parseInt(req.body?.limit, 10) || 100));
+    const batch = plan.leadPlans.slice(0, limit);
+    const eventsAppended = await withAuth(() => appendMissingEvents(batch.map(item => item.event), inputs.dataset.activities));
+    const results = await applyArchivePlans(batch);
+    invalidateOutreachCache('client_offboarding');
+    ceRowMap.clear();
+    const count = status => results.filter(item => item.status === status).length;
+    const remainingLeads = plan.leadPlans.length - count('succeeded') - count('unchanged');
+    console.log('[client-offboarding] ' + client.id + ': ' + count('succeeded') + '/' + batch.length + ' lead(s) archived ('
+      + count('unchanged') + ' unchanged, ' + count('refused') + ' refused, ' + count('conflict') + ' conflict, '
+      + count('failed') + ' failed); events +' + eventsAppended + '; ' + remainingLeads + ' left; by ' + by);
+    res.json({ applied: true, client: plan.client, batch: batch.length, eventsAppended,
+      succeeded: count('succeeded'), unchanged: count('unchanged'), refused: count('refused'), conflict: count('conflict'), failed: count('failed'),
+      remainingLeads, results: results.filter(item => item.status !== 'succeeded') });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[client-offboarding apply]', error.message);
+    res.status(503).json({ error: 'Offboarding batch failed: ' + error.message });
+  } finally {
+    archiveRunInFlight = false;
+    automationLaunchReserved = false;
+  }
+});
+
 // Archive one lead by hand (the general feature). Body: { by, reason? }.
 app.post('/api/archive/leads/:id', requireAuth, async (req, res) => {
   const by = String(req.body?.by || '').trim();
@@ -6081,8 +6258,8 @@ function scopedOutreachStats(dataset, view) {
     scope: { scope: 'active', activeLeads: view.rows.length, definition: 'This client only.' },
     senderAnalytics: buildSenderAnalytics({
       leads: view.leads.filter(lead => view.rows.some(row => String(row.id) === String(lead.id))),
-      activities: view.activeActivities, senders: view.senderRows,
-      replyCategoryByLead: categoryByLead,
+      activities: view.activeActivities, senders: listedSenders(view.senderRows),
+      replyCategoryByLead: categoryByLead, holds: coldSenderHolds(),
     }),
     historical: {
       scope: 'historical', includesArchived: true, archivedLeads: view.archivedRows.length,
@@ -6700,11 +6877,21 @@ async function gmailInboxStatus() {
       }),
     };
   } catch (_) { /* status-only fallback: registry remains visible */ }
+  // A cold hold (COLD_SENDER_HOLDS) stops every cold send from that inbox, so
+  // the status shows it as not sending: no eligibility, no remaining capacity,
+  // and the hold reason. Display only — the send gates read the holds directly.
+  const holds = coldSenderHolds();
   return {
-    inboxes: inboxes.map(inbox => {
+    // Owner-archived mailboxes are not listed (see archived-mailboxes.js).
+    inboxes: listedSenders(inboxes).map(rawInbox => {
+      const holdReason = holds.get(rawInbox.id) || null;
+      const inbox = holdReason
+        ? { ...rawInbox, sendEligible: false, sendingActive: false, coldHold: holdReason,
+          coldHoldLabel: /archived/.test(holdReason) ? 'Archived' : 'Held' }
+        : rawInbox;
       const observer = observers.find(item => item.senderInboxId === inbox.id) || null;
       const sent = sentToday.get(inbox.id) || 0;
-      const remaining = Math.max(0, Number(inbox.dailyLimit || 0) - sent);
+      const remaining = holdReason ? 0 : Math.max(0, Number(inbox.dailyLimit || 0) - sent);
       const auth = {
         authenticated: inbox.credentialConfigured,
         identityVerified: inbox.identityVerified,
@@ -6729,7 +6916,7 @@ async function gmailInboxStatus() {
         controls: {
           canMarkReady: inbox.status === 'warming',
           canActivate: (inbox.status === 'ready' || inbox.status === 'paused') && blockers.length === 0,
-          canPause: inbox.status === 'active',
+          canPause: inbox.status === 'active' && !holdReason,
           activationBlockers: blockers,
         },
       };
@@ -7521,7 +7708,7 @@ app.get('/api/outreach/routing-options', requireAuth, (_req, res) => {
         offerVersion: version.offerVersion, status: version.status,
       }));
     res.json({ niches: LEAD_TYPE_IDS, leadTypes: LEAD_TYPES.map(type => ({ id: type.id, label: type.label })),
-      inboxes: gmailInboxOptions(), versions, templates: EMAIL_TEMPLATES, staffingLaunch: staffingLaunchState() });
+      inboxes: listedSenders(gmailInboxOptions()), versions, templates: EMAIL_TEMPLATES, staffingLaunch: staffingLaunchState() });
   }
   catch (error) { res.status(500).json({ error: error.message }); }
 });
@@ -8181,7 +8368,9 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   cron.schedule('3,8,13,18,23,28,33,38,43,48,53,58 * * * *', () => {
     if (clientCalendarInFlight) return;
     clientCalendarInFlight = true;
-    Promise.all([...clientCalendarSyncs.entries()].map(([clientId, service]) => service.run({ apply: true })
+    // An offboarded client's calendar is no longer read.
+    Promise.all([...clientCalendarSyncs.entries()].filter(([clientId]) => getManagedClientConfig(clientId).active)
+      .map(([clientId, service]) => service.run({ apply: true })
       .then(result => {
         if (!result.skipped && (result.mutations || !result.ok)) {
           console.log(`[Client calendar:${clientId}] ${result.ok ? 'complete' : 'failed'} — ${result.mutations || 0} mutation(s), `
@@ -8260,6 +8449,7 @@ if (process.env.RAILWAY_ENVIRONMENT) {
 
   // Jole starts at 05:00 Pacific (07:00 Chicago), before the legacy refill.
   cron.schedule('40,50 4 * * 1-5', () => {
+    if (!getManagedClientConfig('jole').active) return;   // offboarded: no refill
     runSenderRebalance({ trigger: 'scheduled_jole_pre_window', apply: true, client: 'jole' })
       .then(result => { if (result.status !== 200) console.warn(`[sender-balance] Jole pre-window refill skipped: ${result.error}`); })
       .catch(error => console.error('[sender-balance] Jole pre-window refill failed:', error.message));
@@ -8267,6 +8457,7 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   // Reclaim genuinely unsent supply from capped inboxes before subsequent
   // normal windows. Busy runs/lanes refuse the refill; nothing replays a tick.
   cron.schedule('24,54 5-9 * * 1-5', () => {
+    if (!getManagedClientConfig('jole').active) return;   // offboarded: no refill
     runSenderRebalance({ trigger: 'scheduled_jole_between_runs', apply: true, client: 'jole', allowBetweenRuns: true })
       .then(result => { if (result.status !== 200) console.warn(`[sender-balance] Jole between-run refill skipped: ${result.error}`); })
       .catch(error => console.error('[sender-balance] Jole between-run refill failed:', error.message));
@@ -8278,7 +8469,7 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   // stored row rather than producing a second one.
   cron.schedule('0 18 * * *', () => {
     console.log('[cron] Generating daily digest...');
-    withAuth(() => getOrCreateDigest(vanDay()))
+    withAuth(() => getOrCreateDigest(vanDay(), { store: true }))
       .then(d => console.log(`[digest] ${d.date} — ${d.emailsSent} sent, ${d.realOpens.rows} real opens, ${d.answers.draftsPending} drafts pending review`))
       .catch(e => console.error('[digest] generation failed:', e.message));
   }, {
