@@ -49,6 +49,11 @@ sys.argv = _argv
 
 ROLE = {'info', 'office', 'sales', 'admin', 'contact', 'hr', 'jobs', 'careers', 'hello', 'support', 'staffing', 'recruiting',
         'team', 'mail', 'accounting', 'billing', 'payroll', 'service', 'inquiries', 'marketing', 'help', 'general'}
+# Second-buyer multi-site rule (owner 2026-11-24): at a 3+ branch agency a branch / area / regional manager with
+# client or sales authority is an allowed new contact, only when second_buyer_pick.py picked them for a branch.
+BRANCH_BUYER = re.compile(r'(?i)\b(branch|area|regional|district|market)\s+(manager|director|vice president|vp|leader)\b|'
+                          r'\bregional\s+(vice president|vp|director)\b|\bregional director of sales\b')
+BRANCH_NOT = re.compile(r'(?i)\bassistant\b|\bassociate\b|payroll|recruit|talent|\bhr\b|human resources|branch lead\b')
 OPS_ONLY = re.compile(r'(?i)\b(operations manager|director of operations|vp,? operations|vice president,? operations|ops)\b')
 EMP_STOP = {'inc', 'llc', 'the', 'of', 'and', 'staffing', 'services', 'group', 'solutions', 'co', 'corp', 'company', 'personnel',
             'employment', 'agency', 'resources', 'workforce', 'international', 'usa', 'ltd', 'service'}
@@ -320,7 +325,9 @@ def main():
                 why = 'NO_EMAIL: the reveal returned no email'
             elif 'WRONG PERSON' in flagset:
                 why = 'PERSON_MISMATCH: the reveal matched a different person'
-            elif title.strip().lower() not in ('', 'none', 'executive') and (not bp.tier(title) or OPS_ONLY.search(title)):
+            elif title.strip().lower() not in ('', 'none', 'executive') and (not bp.tier(title) or OPS_ONLY.search(title)) \
+                    and not (str(t.get('distinct_by') or '').startswith('branch') and BRANCH_BUYER.search(title)
+                             and not BRANCH_NOT.search(title)):
                 why = 'NOT_BUYER: revealed title is not a tier 1-2 buyer'
             else:
                 nm = (name or '').split()
