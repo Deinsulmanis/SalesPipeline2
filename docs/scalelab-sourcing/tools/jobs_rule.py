@@ -119,13 +119,41 @@ def collect(paths):
             for b in c:
                 if not isinstance(b, dict):
                     continue
-                if b.get("type") == "tool_use" and b.get("name", "").endswith("search_jobs"):
-                    uses[b["id"]] = b.get("input") or {}
+                if b.get("type") == "tool_use" and (b.get("name", "").endswith("search_jobs") or b.get("name", "").endswith("enrich_company_jobs")):
+                    uses[b["id"]] = (b.get("name", ""), b.get("input") or {})
                 elif b.get("type") == "tool_result" and b.get("tool_use_id") in uses:
+                    name, raw = uses[b["tool_use_id"]]
                     res = _load_result(_text(b.get("content")))
-                    inp = {k: v for k, v in uses[b["tool_use_id"]].items() if k not in ("context", "conversation_id")}
-                    calls.append({"input": inp, "ok": res is not None and "data" in res, "result": res, "file": os.path.basename(f)})
+                    inp = {k: v for k, v in raw.items() if k not in ("context", "conversation_id")}
+                    if name.endswith("enrich_company_jobs"):
+                        calls += _from_enrich(inp, res, os.path.basename(f))
+                    else:
+                        calls.append({"input": inp, "ok": res is not None and "data" in res, "result": res, "file": os.path.basename(f)})
     return calls
+
+
+def _from_enrich(inp, res, src):
+    """enrich_company_jobs (owner-approved fast path, 2026-11-24): up to 50 domains per call, same free jobs quota and
+    postings data. Converted per company into the search_jobs call shapes the evidence step reads:
+    include_postings=false, no functions -> g_dom_all (T); functions + postings -> g_dom_fn (F) and l_dom_fn (titles)."""
+    if not res or "companies" not in res:
+        return []
+    out = []
+    base = {"posted_since": inp.get("posted_since"), "status": inp.get("status", "any")}
+    for c in res["companies"]:
+        d = root(c.get("query"))
+        n = (c.get("total_roles") or 0) if c.get("matched") else 0
+        row = [{"company_name": c.get("company_name"), "company_domain": c.get("company_domain") or d, "role_count": n}] if n else []
+        if inp.get("job_functions"):
+            out.append({"input": dict(base, company_domain=d, job_functions=inp["job_functions"], group_by="company"), "ok": True,
+                        "result": {"data": row}, "file": src + " (enrich)"})
+            if inp.get("include_postings", True):
+                posts = [dict(p, company_domain=p.get("company_domain") or d) for p in c.get("postings") or []]
+                out.append({"input": dict(base, company_domain=d, job_functions=inp["job_functions"]), "ok": True,
+                            "result": {"data": posts, "total_results": n}, "file": src + " (enrich)"})
+        else:
+            out.append({"input": dict(base, company_domain=d, group_by="company"), "ok": True, "result": {"data": row}, "file": src + " (enrich)"})
+    return out
 
 
 def kind(inp):
