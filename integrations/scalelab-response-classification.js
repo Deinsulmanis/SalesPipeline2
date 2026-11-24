@@ -4,6 +4,7 @@ const { join } = require('node:path');
 const { resolveLeadClient } = require('./clients/ownership');
 const { classifyReplyText, REPLY_STATE } = require('./canonical-reply');
 const { stripQuotedReply, scrubOwnOutboundCopy } = require('./reply-reconciliation');
+const { INTENT: SAMPLE_LIST_INTENT, SAMPLE_OFFER, detectSampleListRequest } = require('./scalelab-sample-list');
 
 const VERSION = 'scalelab_reply_v1';
 const SCOPE = 'scalelab';
@@ -11,7 +12,7 @@ const INTENTS = Object.freeze([
   'opt_out', 'delivery_failure', 'calendar_notice', 'automated_acknowledgment', 'out_of_office',
   'contact_change', 'explicit_rejection', 'reverse_pitch', 'meeting_request', 'reschedule_request',
   'pricing_request', 'information_request', 'interest', 'future_contact', 'objection', 'referral',
-  'acknowledgment', 'unclear',
+  'acknowledgment', 'unclear', SAMPLE_LIST_INTENT,
 ]);
 const skillPath = join(__dirname, '..', 'docs', 'skills', 'scalelab-response-classification', 'SKILL.md');
 const loadClassificationSkill = () => readFileSync(skillPath, 'utf8');
@@ -33,8 +34,12 @@ function verifiedContext(activities, { leadId, threadId, senderInboxId, messageI
         || (meta.clientId && meta.clientId !== SCOPE) || meta.gmailMessageId === messageId) return [];
     if (!['human_response_sent', 'initial_email_sent', 'follow_up_sent'].includes(row.eventType)
         && !String(row.eventId).startsWith('gmail-reply:')) return [];
-    return [{ id: row.eventId, at: row.occurredAt, actor: row.eventId.startsWith('gmail-reply:') ? 'prospect' : 'scalelab',
-      text: stripQuotedReply(row.content || '').slice(0, 500) }];
+    const actor = row.eventId.startsWith('gmail-reply:') ? 'prospect' : 'scalelab';
+    const text = stripQuotedReply(row.content || '');
+    // The offer can sit past the 500-character excerpt, so it is flagged
+    // from the full text of our own turn.
+    return [{ id: row.eventId, at: row.occurredAt, actor, text: text.slice(0, 500),
+      ...(actor === 'scalelab' && SAMPLE_OFFER.test(text) ? { offersSampleList: true } : {}) }];
   }).sort((a, b) => a.at.localeCompare(b.at)).slice(-4);
 }
 
@@ -84,6 +89,10 @@ function classifyScaleLabReply({ text = '', subject = '', autoSubmitted = '', de
     return result('reverse_pitch', 'prospect_offers_own_services');
   }
   if (legacy.revisitDate) return result('future_contact', 'prospect_stated_recontact_date');
+  // A clear yes to our sample-list offer. Mixed or conditional replies fall
+  // through to the existing intents and stay with the owner.
+  const sample = detectSampleListRequest(body, context);
+  if (sample.match) return result(SAMPLE_LIST_INTENT, sample.reason);
   if (/\b(?:reschedule|move (?:the|our) (?:call|meeting))\b/i.test(body)
     || (/\b(?:can we|could we|how about)\b.{0,60}\b\d{1,2}:\d{2}\b/i.test(body)
       && context.some(turn => /\b(?:time|reschedule|call|meeting)\b/i.test(turn.text)))) {
@@ -124,6 +133,7 @@ function observationForIntent(verdict, base) {
     reverse_pitch: [REPLY_STATE.NEEDS_HUMAN, 'reverse_pitch', true],
     meeting_request: [REPLY_STATE.POSITIVE, 'explicit_evaluation_intent', true],
     reschedule_request: [REPLY_STATE.NEEDS_HUMAN, 'reschedule_request', true],
+    [SAMPLE_LIST_INTENT]: [REPLY_STATE.NEEDS_HUMAN, SAMPLE_LIST_INTENT, true],
   }[verdict.intent];
   if (!changes) return base;
   const [state, reason, genuineHuman, subtype] = changes;

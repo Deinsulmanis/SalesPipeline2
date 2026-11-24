@@ -171,6 +171,13 @@ const { scaleLabOwner, observationForIntent, verifiedContext } = require('./inte
 const { routingConfig } = require('./integrations/scalelab-reply-router');
 const { createScaleLabReplyActionStore } = require('./integrations/scalelab-reply-action-store');
 const { activityMetadata, laterEvidence, runScaleLabReplyRouting, ownsActionMessage } = require('./integrations/scalelab-reply-pass');
+const { INTENT: SAMPLE_LIST_INTENT } = require('./integrations/scalelab-sample-list');
+const { sampleListConfig, makeRecheck, draftSampleListForAction, autoSendReadyDrafts,
+  recordSentAndOutcomes } = require('./integrations/scalelab-sample-list-flow');
+const { createSampleListStore } = require('./integrations/scalelab-sample-list-store');
+const { createGetLeadsJobsClient } = require('./integrations/getleads-jobs');
+const { notifyOwner } = require('./integrations/owner-notify');
+const { appendStaffingComplianceFooter, staffingSenderIdentity } = require('./integrations/staffing-compliance');
 const gmailMailboxObserver = require('./integrations/gmail-mailbox-observer');
 const { DELIVERY_CLASS, classifyDeliveryStatus } = require('./integrations/delivery-status');
 const { planMailboxEvents, commitObservation, ownReplyText } = require('./integrations/mailbox-observation-events');
@@ -3232,6 +3239,15 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       for (const draft of scaleLabDrafts) {
         if (records.get(draft.id)?.step === 'complete') agentV2ShadowCandidates.push(draft.item);
       }
+      // Sample employer list: a Gmail DRAFT for the owner after the routing
+      // step committed the hold and the human task. Off unless enabled.
+      if (scaleLab.mode === 'apply' && sampleListConfig().enabled) {
+        try {
+          await withAuth(() => runSampleListPass({ records, activities: activitiesForCycle, leads }));
+        } catch (error) {
+          console.warn('[sample-list] pass failed closed:', error.message);
+        }
+      }
     } catch (error) {
       console.warn('[scalelab-reply] routing ledger unavailable', error.message);
     }
@@ -3348,6 +3364,76 @@ async function runScaleLabReplyCycle({ config, activities, leads, owns, failedSe
     owns: (lead, senderInboxId) => !failedSenderIds.has(senderInboxId) && owns(lead, senderInboxId),
     hold, appendCard, publishTask, onError: (id, error) =>
       console.warn('[scalelab-reply] action pending', id, error.message) });
+}
+
+// Sample employer list pass. Drafts only; nothing here sends. Auto-send (OFF
+// by default) hands a ready draft to deliverHardenedWarmReply, which applies
+// the final fresh gate, reservation and thread checks like every warm reply.
+async function runSampleListPass({ records, activities, leads, now = new Date() }) {
+  const store = createSampleListStore();
+  const recheck = makeRecheck(createGetLeadsJobsClient(), now);
+  const publishTask = async event => {
+    if (activities.some(row => row.eventId === event.eventId)) return;
+    await recordColdCallActivityStrict(event);
+    activities.push(event);
+  };
+  for (const record of records.values()) {
+    if (record.mode !== 'apply' || record.step !== 'complete' || record.verdict?.intent !== SAMPLE_LIST_INTENT) continue;
+    const inbound = activities.find(row => row.eventId === record.source_event_id && row.sourceLeadId === record.lead_id);
+    const meta = activityMetadata(inbound);
+    const sender = GMAIL_SENDERS.find(item => item.id === record.mailbox_id);
+    const observed = leads.find(item => item.id === record.lead_id);
+    try {
+      const canonical = await readCanonicalOutreachRecipient(observed?.email);
+      const lead = canonical?.ok && canonical.lead?.id === record.lead_id ? canonical.lead : null;
+      const result = await draftSampleListForAction({ now, suppressedEmails: SUPPRESSED_EMAILS, lead,
+        action: { id: record.action_id, leadId: record.lead_id, messageId: record.message_id, mailboxId: record.mailbox_id,
+          step: record.step, verdict: record.verdict, receivedAt: record.received_at },
+        inbound: inbound && meta.gmailThreadId ? { threadId: meta.gmailThreadId,
+          subject: inbound.subject || '', rfcMessageId: meta.rfcMessageId || '', text: inbound.content || '' } : null,
+        deps: { store, recheck, publishTask, log: message => console.warn('[sample-list]', message),
+          notify: message => notifyOwner(message),
+          appendFooter: text => appendStaffingComplianceFooter(text, staffingSenderIdentity()),
+          createDraft: draft => createSampleListGmailDraft({ sender, ...draft }) } });
+      if (result.status !== 'skipped' && result.status !== 'existing') {
+        console.log(`[sample-list] lead ${record.lead_id}: ${result.status}${result.reason ? ` (${result.reason})` : ''}`);
+      }
+    } catch (error) {
+      console.warn('[sample-list] draft pending', record.action_id, error.message);
+    }
+  }
+  const events = await store.listEvents({ since: new Date(now.getTime() - 60 * 86400000).toISOString() });
+  await recordSentAndOutcomes({ events, activities, store, now });
+  await autoSendReadyDrafts({ events, now, deps: { store, notify: message => notifyOwner(message),
+    deliver: row => deliverSampleListDraft(row, { activities, leads }) } });
+}
+
+async function createSampleListGmailDraft({ sender, lead, inbound, subject, body }) {
+  if (!sender) throw new Error('sample list sender inbox unavailable');
+  const raw = toRawMessage({ to: String(lead.email || '').trim(), subject, body,
+    inReplyTo: inbound.rfcMessageId || undefined, references: inbound.rfcMessageId || undefined,
+    fromEmail: sender.email, fromName: fromNameForSender(sender) });
+  const response = await runWithGmailFeature('other', () => gmailForSender(sender).users.drafts.create({
+    userId: 'me', requestBody: { message: { raw, threadId: inbound.threadId } } }));
+  return { id: response.data?.id || null };
+}
+
+async function deliverSampleListDraft(row, { activities, leads }) {
+  const sender = GMAIL_SENDERS.find(item => item.id === row.mailbox_id);
+  const observed = leads.find(item => item.id === row.lead_id);
+  const canonical = await readCanonicalOutreachRecipient(observed?.email);
+  if (!sender || !canonical?.ok || canonical.lead?.id !== row.lead_id) return { delivered: false, code: 'identity_unavailable' };
+  const inbound = activities.find(item => item.eventId === `gmail-reply:${row.message_id}`);
+  if (!inbound) return { delivered: false, code: 'inbound_unavailable' };
+  const draft = await runWithGmailFeature('other', () => gmailForSender(sender).users.drafts.get({
+    userId: 'me', id: row.gmail_draft_id, format: 'full' }));
+  const message = draft.data?.message || {};
+  const body = gmailMailboxObserver.firstPlainText(message.payload || {});
+  const subject = (message.payload?.headers || []).find(item => /^subject$/i.test(item.name))?.value || '';
+  if (!body || message.threadId !== row.thread_id) return { delivered: false, code: 'draft_changed_or_missing' };
+  return deliverHardenedWarmReply({ lead: canonical.lead, subject, body, activities, classification: 'SAMPLE_LIST_REQUEST',
+    action: 'scalelab_sample_list', message: { messageId: row.message_id, threadId: row.thread_id,
+      occurredAt: inbound.occurredAt, fromAddr: normEmail(canonical.lead.email) } });
 }
 
 async function observeAgentV2Shadows(candidates = []) {

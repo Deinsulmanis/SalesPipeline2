@@ -213,6 +213,7 @@ test('crash/retry: the existing reservation store sends a recovery action at mos
 
 // ── Observer: a vanished message can never take a reply's state with it ────
 
+const SAMPLE_LIST_DRAFT_CALL = "const response = await runWithGmailFeature('other', () => gmailForSender(sender).users.drafts.create({";
 test('production code has no Gmail call that can trash, delete or relabel mail', () => {
   const root = path.join(__dirname, '..');
   const files = ['outreach-agent.js', 'server.js',
@@ -224,10 +225,16 @@ test('production code has no Gmail call that can trash, delete or relabel mail',
     const src = fs.readFileSync(path.join(root, file), 'utf8');
     for (const line of src.split('\n')) {
       // messages.send is the one sanctioned outbound call (sendEmail).
-      if (mutation.test(line) && !/users\.messages\.send\s*\(/.test(line)) offenders.push(`${file}: ${line.trim()}`);
+      // drafts.create is sanctioned at exactly one site: the ScaleLab sample
+      // employer list draft for owner review (createSampleListGmailDraft).
+      if (mutation.test(line) && !/users\.messages\.send\s*\(/.test(line)
+          && !(file === 'outreach-agent.js' && line.trim() === SAMPLE_LIST_DRAFT_CALL)) offenders.push(`${file}: ${line.trim()}`);
     }
   }
   assert.deepEqual(offenders, []);
+  const agent = fs.readFileSync(path.join(root, 'outreach-agent.js'), 'utf8');
+  assert.equal(agent.split('\n').filter(line => line.trim() === SAMPLE_LIST_DRAFT_CALL).length, 1);
+  assert.match(agent, /async function createSampleListGmailDraft\([^)]*\) \{[\s\S]{0,600}users\.drafts\.create\(/);
 });
 
 test('deleted draft revisions in a thread are recorded as gaps while the prospect reply in that thread is still classified', async () => {

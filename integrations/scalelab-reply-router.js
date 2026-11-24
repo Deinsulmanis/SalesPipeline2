@@ -9,7 +9,8 @@ const { resolvePromotionIdentity, promotionSuppressionReason } = require('./prom
 const { hasManualHold, resumeAtFromNotes } = require('./pipeline-state');
 
 const TASK_EVENT = 'scalelab_reply_follow_up_task';
-const ROUTABLE = new Set(['interest', 'meeting_request', 'reschedule_request', 'information_request', 'pricing_request', 'future_contact']);
+const ROUTABLE = new Set(['interest', 'meeting_request', 'reschedule_request', 'information_request', 'pricing_request',
+  'future_contact', 'sample_list_request']);
 const FINAL_STEPS = new Set(['complete', 'review']);
 const POLICY_VERSION = 'scalelab_follow_up_v1';
 const skillPath = join(__dirname, '..', 'docs', 'skills', 'scalelab-crm-routing', 'SKILL.md');
