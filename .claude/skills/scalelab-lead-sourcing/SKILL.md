@@ -188,11 +188,13 @@ They write `batch_index|organization_name|person_id|first|last_obf|title|has_ema
 python3 -I docs/scalelab-sourcing/tools/buyer_pick.py runs-private/<run> P1 P2 P3 ...
 ```
 
-**Buyer order (playbook, no randomization):**
+**Buyer order (owner decision 2026-11-24; the one rule lives in `buyer_pick.py`, every tool imports it, no copies):**
 
-- **Tier 1:** owner, founder, president, CEO, managing partner.
-- **Tier 2:** CRO, VP sales/BD, then COO, CMO, an unqualified VP, or a bare "Partner".
-- **Never picked:** finance, technology, HR, recruiting ("Talent Partner"), operations-only titles, "Product Owner", managing directors.
+- **Top title wins:** owner, co-owner, founder, co-founder, proprietor, president (not vice president), CEO, chief executive are **Tier 1** even combined with an excluded word ("President and Managing Director", "Owner/CFO"); not for former / retired / past / board titles.
+- **Tier 1:** also managing partner / principal. **Tier 2:** CRO, VP sales/BD, then COO (incl. "Chief Operations Officer"), CMO, a bare VP, a bare "Partner".
+- **Tier 3** (only when the company has no Tier 1/2 candidate AND the agency has <= 200 employees, `can_pick`; unknown size = no): general manager, director of operations, director of sales / BD, sales director, head of sales / growth / BD, operations manager, branch manager.
+- **Multi-site exception (any size):** a branch / area / regional manager at a 3+ branch agency (`branch_exception`).
+- **Never picked:** everything else on the exclusion list (finance, technology, HR, recruiting, "Talent Partner", "Product Owner", managing directors, assistants ...). Tests: `tools/test_buyer_rule.py`.
 
 A reviewed parent or brand name that doesn't match the company record goes in `buyers/org_alias.json`. Expect about 55% of PASS companies to have a buyer with an email on file.
 

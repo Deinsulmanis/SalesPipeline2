@@ -83,7 +83,7 @@ def jload(p, default=None):
 
 def tier(title):
     t = bp.tier(title or '')
-    return t[0] if t and not re.search(bp.NEVER, (title or '').lower()) else None
+    return t[0] if t else None  # buyer_pick.tier is the whole rule (no second exclusion pass)
 
 
 def split_name(n):

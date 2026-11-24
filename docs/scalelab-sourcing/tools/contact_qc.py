@@ -49,12 +49,6 @@ sys.argv = _argv
 
 ROLE = {'info', 'office', 'sales', 'admin', 'contact', 'hr', 'jobs', 'careers', 'hello', 'support', 'staffing', 'recruiting',
         'team', 'mail', 'accounting', 'billing', 'payroll', 'service', 'inquiries', 'marketing', 'help', 'general'}
-# Second-buyer multi-site rule (owner 2026-11-24): at a 3+ branch agency a branch / area / regional manager with
-# client or sales authority is an allowed new contact, only when second_buyer_pick.py picked them for a branch.
-BRANCH_BUYER = re.compile(r'(?i)\b(branch|area|regional|district|market)\s+(manager|director|vice president|vp|leader)\b|'
-                          r'\bregional\s+(vice president|vp|director)\b|\bregional director of sales\b')
-BRANCH_NOT = re.compile(r'(?i)\bassistant\b|\bassociate\b|payroll|recruit|talent|\bhr\b|human resources|branch lead\b')
-OPS_ONLY = re.compile(r'(?i)\b(operations manager|director of operations|vp,? operations|vice president,? operations|ops)\b')
 EMP_STOP = {'inc', 'llc', 'the', 'of', 'and', 'staffing', 'services', 'group', 'solutions', 'co', 'corp', 'company', 'personnel',
             'employment', 'agency', 'resources', 'workforce', 'international', 'usa', 'ltd', 'service'}
 SRC = {'apollo': 'apollo_free_search', 'getleads': 'getleads_decision_makers', 'owner_gap': 'getleads_owner_gap_pattern'}
@@ -305,6 +299,14 @@ def main():
                                if val in ('catch_all', 'accept_all') or v.get('catch_all') else f'VERIFY_{val.upper() or "UNKNOWN"}: owner-gap guess')
                 break
 
+    # Tier 3 (buyer_pick.can_pick) needs the agency size: <run>/company_size.json {domain: employees}, when present
+    size = json.load(open(os.path.join(RUN, 'company_size.json'))) if os.path.exists(os.path.join(RUN, 'company_size.json')) else {}
+
+    def gl_elig(d):
+        ps = [p for p in gl[d]['people'] if bp.tier(p['title'])]
+        has12 = any(bp.tier(p['title'])[0] in (1, 2) for p in ps)
+        return sorted([p for p in ps if bp.can_pick(bp.tier(p['title'])[0], has12, size.get(d))], key=lambda p: bp.tier(p['title']))
+
     rows, targets, holds, caution, short, summ = [], [], {}, {}, {}, []
     tmap = {t['domain']: t for t in tord}
     for d in sorted(passing):
@@ -325,9 +327,9 @@ def main():
                 why = 'NO_EMAIL: the reveal returned no email'
             elif 'WRONG PERSON' in flagset:
                 why = 'PERSON_MISMATCH: the reveal matched a different person'
-            elif title.strip().lower() not in ('', 'none', 'executive') and (not bp.tier(title) or OPS_ONLY.search(title)) \
-                    and not (str(t.get('distinct_by') or '').startswith('branch') and BRANCH_BUYER.search(title)
-                             and not BRANCH_NOT.search(title)):
+            elif title.strip().lower() not in ('', 'none', 'executive') and not bp.tier(title) \
+                    and not (str(t.get('distinct_by') or '').startswith('branch') and bp.BRANCH_ROLE.search(title)
+                             and not bp.BRANCH_NOT.search(title)):
                 why = 'NOT_BUYER: revealed title is not a tier 1-2 buyer'
             else:
                 nm = (name or '').split()
@@ -343,9 +345,9 @@ def main():
                         rec['verification'] = 'catch_all' if catch else 'verified'
             rows.append(x[:14] + [''] * (14 - len(x[:14])))
             targets.append(dict(t, source=SRC['apollo']))
-        elif d in gl and any(bp.tier(p['title']) and not OPS_ONLY.search(p['title']) for p in gl[d]['people']):
+        elif d in gl and gl_elig(d):
             rec['path'] = 'getleads'
-            elig = sorted([p for p in gl[d]['people'] if bp.tier(p['title']) and not OPS_ONLY.search(p['title'])], key=lambda p: bp.tier(p['title']))
+            elig = gl_elig(d)
             p = elig[0]
             tr = bp.tier(p['title'])
             name, e = f"{p['first']} {p['last']}".strip(), p['work_email']

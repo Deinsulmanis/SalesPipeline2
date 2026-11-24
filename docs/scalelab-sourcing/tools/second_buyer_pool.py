@@ -68,8 +68,6 @@ dm = importlib.util.module_from_spec(spec2)
 spec2.loader.exec_module(dm)
 sys.argv = _argv
 
-BRANCH_ROLE = re.compile(r'(?i)\b(branch|area|regional|district|market|division)\s+(manager|director|vice president|vp|leader|lead)\b|'
-                         r'\b(vp|vice president|director)\b.*\b(region|operations|branch)')
 ADDR = re.compile(r'\b\d{1,6}\s+[A-Za-z0-9.#\' -]{2,40}?\b(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Hwy|Highway|Pkwy|'
                   r'Parkway|Way|Ln|Lane|Ct|Court|Pl|Place|Cir|Circle|Pike|Trl|Trail|Suite|Ste)\b\.?[^\n]{0,60}?,?\s+'
                   r'([A-Z][A-Za-z .\'-]{2,30}),\s*(A[LKZR]|C[AOT]|D[EC]|FL|GA|HI|I[DLNA]|K[SY]|LA|M[EDAINSOT]|N[EVHJMYCD]|'
@@ -89,7 +87,7 @@ def sheet_rows(wb, name):
 
 def tier_of(title):
     t = bp.tier(title or '')
-    return t[0] if t else (3 if BRANCH_ROLE.search(title or '') else None)
+    return t[0] if t else (3 if bp.BRANCH_ROLE.search(title or '') else None)
 
 
 def main():
@@ -255,7 +253,7 @@ def main():
                 if p.get('id') in emailed_ids or not p.get('has_email'):
                     continue
                 t = tier_of(p.get('title'))
-                if t is None or re.search(bp.NEVER, (p.get('title') or '').lower()):
+                if t is None:
                     continue
                 if (p.get('first') or '').lower() in emailed_first:
                     continue  # possibly the same person (last names are obfuscated in free search)

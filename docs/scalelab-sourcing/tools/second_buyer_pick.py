@@ -43,12 +43,16 @@ FAMILIES = [
     ('PARTNER', r'managing partner|managing principal|^principal$|^(senior |founding |equity )?partner$'),
     ('SALES', r'chief revenue|\bcro\b|chief sales|chief commercial|chief growth|chief business development|'
               r'(vp|vice president|svp|evp)\b.*\b(sales|business development|growth|revenue|commercial|client|account)'),
-    ('COO', r'\bcoo\b|chief operating'),
+    ('COO', r'\bcoo\b|chief operating|chief operations officer'),
     ('CMO', r'\bcmo\b|chief marketing'),
-    ('VP', r'^(vp|vice president|svp|evp)$'),
+    ('VP', r'^(vp|vice[- ]president|svp|evp)$'),
+    # Tier 3 roles (buyer_pick.T3) and the multi-site branch role
+    ('GM', r'\bgeneral manager\b'),
+    ('OPS_DIR', r'director of operations|operations director|director,? operations'),
+    ('SALES_DIR', r'director of (sales|business development)|(sales|business development) director|head of (sales|growth|business development)'),
+    ('OPS_MGR', r'\boperations manager\b'),
+    ('BRANCH', r'\b(branch|area|regional|district|market)\s+(sales\s+)?(manager|director|vice president|vp|leader)\b'),
 ]
-BRANCH = re.compile(r'(?i)\b(branch|area|regional|district|market)\s+(manager|director|vice president|vp|leader|lead)\b|'
-                    r'\b(vp|vice president|director)\b.*\b(region|regional|branch)')
 
 
 def families(title):
@@ -73,6 +77,7 @@ def main():
     prior = json.load(open(os.path.join(RUN, 'prior_contacts.json')))
     bpath = sys.argv[sys.argv.index('--branches') + 1] if '--branches' in sys.argv else os.path.join(RUN, 'branches.json')
     branches = json.load(open(bpath)) if os.path.exists(bpath) else {}
+    company_size = json.load(open(os.path.join(RUN, 'company_size.json'))) if os.path.exists(os.path.join(RUN, 'company_size.json')) else {}
     picks, t1, t2 = {}, [], []
     st = collections.Counter()
     for d in passing:
@@ -91,7 +96,8 @@ def main():
         prior_fam = set().union(*[p['fam'] for p in pri]) if pri else set()
         multi = (branches.get(d) or {}).get('branches', 0) >= 3
         st['multi_branch' if multi else 'single_site_or_unknown'] += 1
-        cands = []
+        size = company_size.get(d)
+        cands, t3 = [], []
         for x in ps:
             if not x.get('has_email'):
                 continue
@@ -102,17 +108,16 @@ def main():
                 continue
             title = x.get('title') or ''
             fam = families(title)
-            tr = bp.tier(title)
-            is_branch = bool(BRANCH.search(title)) and not re.search(r'(?i)recruit|talent|\bhr\b|human|payroll|finance|account', title)
-            if tr and not re.search(bp.NEVER, title.lower()):
-                if prior_fam and fam and fam & prior_fam:
-                    continue  # same buyer role as someone already emailed
-                if prior_fam and not fam:
-                    continue
-                cands.append({**x, 'fam': sorted(fam), 'tier': tr[0], 'rank': tr[1],
-                              'distinct_by': ('role:' + '/'.join(sorted(fam))) if prior_fam else 'role (prior title unknown)'})
-            elif is_branch and multi:
+            tr = bp.tier(title)  # the one buyer rule (top title wins, exclusions, Tier 3)
+            if tr and not (prior_fam and (not fam or fam & prior_fam)):
+                rec = {**x, 'fam': sorted(fam), 'tier': tr[0], 'rank': tr[1],
+                       'distinct_by': ('role:' + '/'.join(sorted(fam))) if prior_fam else 'role (prior title unknown)'}
+                (cands if tr[0] in (1, 2) else t3).append(rec)
+            elif multi and bp.branch_exception(title, (branches.get(d) or {}).get('branches', 0)):
                 cands.append({**x, 'fam': ['BRANCH'], 'tier': 3, 'rank': 0, 'distinct_by': 'branch: ' + title})
+        # Tier 3 only when the company has no Tier 1/2 candidate and the agency has <= 200 employees
+        has12 = any(c['tier'] in (1, 2) for c in cands)
+        cands += [c for c in t3 if bp.can_pick(3, has12, size)]
         cands.sort(key=lambda c: (c['tier'], c['rank']))
         chosen = []
         for c in cands:
