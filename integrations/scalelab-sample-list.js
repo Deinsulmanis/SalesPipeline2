@@ -7,6 +7,7 @@
 const INTENT = 'sample_list_request';
 const MAX_EMPLOYERS = 10;
 const MIN_IN_STATE = 5;
+const MIN_OPEN_ROLES = 2;   // owner rule 2026-11-24: only employers with 2+ open hands-on roles
 const RECHECK_AFTER_DAYS = 14;
 const STORED_FALLBACK_DAYS = 21;
 const POSTING_WINDOW_DAYS = 30;
@@ -110,7 +111,13 @@ function askLines(body) {
     lines.push(line);
     if (lines.length >= 3) break;
   }
-  return lines.join(' ').trim();
+  // An inline courtesy and name ("Yes please. Thanks, Pat") is dropped only
+  // when nothing else follows it; any other trailing text stays in the ask.
+  const ask = lines.join(' ').trim();
+  const tail = ask.match(/^(.*?\S)[\s.,!]+(?:thanks|thank you|cheers|best|regards)\b([^?]*)$/i);
+  if (tail && tail[2].trim().split(/\s+/).filter(Boolean).length <= 3 && !MIXED.test(tail[2])
+      && !/\b(?:and|also|plus|then)\b/i.test(tail[2])) return tail[1].trim();
+  return ask;
 }
 
 function offeredSampleList(context = []) {
@@ -141,7 +148,7 @@ function detectSampleListRequest(body, context = []) {
 }
 
 function stateCode(value) {
-  const text = norm(value);
+  const text = norm(value).replace(/,?\s*(?:united states(?: of america)?|usa|u\.s\.a?\.?|us)\s*$/i, '').trim();
   if (!text) return null;
   if (/^[A-Za-z]{2}$/.test(text) && STATE_NAMES[text.toUpperCase()]) return text.toUpperCase();
   const named = NAME_TO_CODE.get(text.toLowerCase());
@@ -163,8 +170,11 @@ function agencyStates(lead = {}) {
   try { notes = String(lead.campaign_notes || lead.campaignNotes || '').trim().startsWith('{')
     ? JSON.parse(lead.campaign_notes || lead.campaignNotes) : {}; } catch (_) { notes = {}; }
   const branchList = Array.isArray(notes.branch_states) ? notes.branch_states : [];
+  // Backfilled HQ/branch states (scalelab_agency_states) come after the lead
+  // record's own fields, which keep precedence.
+  const backfilled = Array.isArray(lead.agency_states) ? lead.agency_states : [];
   const candidates = [notes.hq_state, notes.state, notes.var_location, notes.location, notes.var_market,
-    notes.market, lead.state, lead.city, ...branchList];
+    notes.market, lead.state, lead.city, ...branchList, ...backfilled];
   const out = [];
   for (const value of candidates) {
     const code = stateCode(value);
@@ -183,7 +193,8 @@ const rank = (a, b) => (b.openRoles - a.openRoles)
  * the agency's states, fill from neighboring states, then the national list.
  */
 function selectSampleList({ employers = [], states = [], exclude = new Set(), max = MAX_EMPLOYERS } = {}) {
-  const hiring = employers.filter(item => item.status === 'hiring' && item.domain && !exclude.has(item.domain));
+  const hiring = employers.filter(item => item.status === 'hiring' && item.domain && !exclude.has(item.domain)
+    && Number(item.openRoles) >= MIN_OPEN_ROLES);
   const home = states.filter(code => STATE_NAMES[code]);
   const primary = home[0] || null;
   const inState = hiring.filter(item => home.includes(item.state)).sort(rank);
@@ -244,7 +255,8 @@ async function freshenEmployers({ employers, now = new Date(), recheck }) {
     }
     const checkedAt = new Date(now).toISOString();
     updates.push({ domain: item.domain, checkedAt, ...result });
-    if (!result.hiring) { dropped.push(item.domain); continue; }
+    // Still hiring but below the 2-role bar: kept as hiring in storage, not listed.
+    if (!result.hiring || result.openRoles < MIN_OPEN_ROLES) { dropped.push(item.domain); continue; }
     kept.push({ ...item, checkedAt, status: 'hiring', openRoles: result.openRoles,
       exampleRoles: result.exampleRoles.length ? result.exampleRoles : item.exampleRoles,
       newestPosting: result.newestPosting || item.newestPosting });
@@ -267,7 +279,11 @@ async function buildSampleList({ employers, lead, now = new Date(), recheck, rou
     if (fresh.status === 'review') return { status: 'review', reason: fresh.reason, detail: fresh.detail, updates: allUpdates, states };
     usedStoredFallback ||= fresh.usedStoredFallback;
     for (const item of fresh.employers) pool.set(item.domain, item);
-    for (const domain of fresh.dropped) { exclude.add(domain); pool.set(domain, { ...pool.get(domain), status: 'not_hiring' }); }
+    for (const domain of fresh.dropped) {
+      exclude.add(domain);
+      const update = fresh.updates.find(item => item.domain === domain);
+      pool.set(domain, { ...pool.get(domain), status: update?.hiring ? 'hiring' : 'not_hiring', openRoles: update?.openRoles || 0 });
+    }
     last = { ...selection, employers: fresh.employers };
     // Once GetLeads failed, stop calling it: use what the stored rules allow.
     if (!fresh.dropped.length || fresh.failure) break;
@@ -349,7 +365,7 @@ function sampleListOutcome({ sentAt, activities = [], leadId, now = new Date() }
 }
 
 module.exports = {
-  INTENT, MAX_EMPLOYERS, MIN_IN_STATE, RECHECK_AFTER_DAYS, STORED_FALLBACK_DAYS, POSTING_WINDOW_DAYS,
+  INTENT, MAX_EMPLOYERS, MIN_IN_STATE, MIN_OPEN_ROLES, RECHECK_AFTER_DAYS, STORED_FALLBACK_DAYS, POSTING_WINDOW_DAYS,
   AUTOSEND_DELAY_MS, SAMPLE_OFFER, STATE_NAMES, NEIGHBORS,
   isHandsOnTitle, cleanTitle, summarizePostings, offeredSampleList, detectSampleListRequest,
   stateCode, agencyStates, selectSampleList, freshenEmployers, buildSampleList,

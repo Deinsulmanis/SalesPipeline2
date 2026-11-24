@@ -52,3 +52,19 @@ CREATE INDEX IF NOT EXISTS scalelab_sample_list_events_lead ON public.scalelab_s
 ALTER TABLE public.scalelab_sample_list_events ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.scalelab_sample_list_events FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE ON public.scalelab_sample_list_events TO service_role;
+
+-- Prospect agency HQ/branch states for the sample list (company level, keyed
+-- by agency domain). Kept apart from outreach_leads.campaign_notes, whose V4
+-- profile is digest-sealed and must not be rewritten by other writers.
+CREATE TABLE IF NOT EXISTS public.scalelab_agency_states (
+  domain text PRIMARY KEY CHECK (domain ~ '^[a-z0-9.-]+\.[a-z]{2,}$'),
+  state text NOT NULL CHECK (state ~ '^[A-Z]{2}$'),
+  states jsonb NOT NULL CHECK (jsonb_typeof(states) = 'array' AND jsonb_array_length(states) >= 1),
+  source text NOT NULL CHECK (source IN ('lead_record', 'site_crawl', 'apollo_hq', 'manual')),
+  evidence jsonb NOT NULL DEFAULT '{}'::jsonb,
+  checked_at timestamptz NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public.scalelab_agency_states ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.scalelab_agency_states FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, UPDATE ON public.scalelab_agency_states TO service_role;

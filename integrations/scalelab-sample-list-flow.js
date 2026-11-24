@@ -11,7 +11,7 @@
 const { randomUUID } = require('node:crypto');
 const {
   INTENT, buildSampleList, renderSampleListBody, summarizePostings, autoSendDecision, sampleListOutcome,
-  STATE_NAMES, AUTOSEND_DELAY_MS,
+  STATE_NAMES, AUTOSEND_DELAY_MS, MIN_OPEN_ROLES,
 } = require('./scalelab-sample-list');
 
 const TASK_EVENT = 'scalelab_sample_list_drafted';
@@ -55,6 +55,27 @@ function draftBlockReason(lead, suppressedEmails = new Set()) {
   if (tag) return `lead_suppressed:${tag}`;
   if (suppressedEmails.has(String(lead?.email || '').trim().toLowerCase())) return 'lead_suppressed:list';
   return null;
+}
+
+function agencyDomain(lead) {
+  const notes = parseNotes(lead);
+  const fromNotes = String(notes.company_domain || '').trim().toLowerCase();
+  if (fromNotes) return fromNotes;
+  const email = String(lead.email || '').trim().toLowerCase();
+  return email.includes('@') ? email.split('@')[1] : '';
+}
+
+// Backfilled HQ/branch states by agency domain. A failed read keeps the lead
+// record's own fields; it never blocks the draft.
+async function withAgencyStates(store, lead, log = () => {}) {
+  if (typeof store.getAgencyStates !== 'function') return lead;
+  try {
+    const states = await store.getAgencyStates(agencyDomain(lead));
+    return states.length ? { ...lead, agency_states: states } : lead;
+  } catch (error) {
+    log(`agency state lookup failed: ${error.message}`);
+    return lead;
+  }
 }
 
 const reSubject = subject => (/^re:/i.test(String(subject || '').trim()) ? String(subject).trim() : `Re: ${String(subject || '').trim()}`);
@@ -111,7 +132,7 @@ async function draftSampleListForAction({ action, inbound, lead, suppressedEmail
   const blocked = draftBlockReason(lead, suppressedEmails);
   if (blocked) return toReview({ store, ids, action, reason: blocked, notify, lead, now });
 
-  const list = await buildSampleList({ employers: await store.listHiring(), lead, now, recheck });
+  const list = await buildSampleList({ employers: await store.listHiring(), lead: await withAgencyStates(store, lead, log), now, recheck });
   await persistChecks(store, list.updates, log);
   if (list.status !== 'ready') return toReview({ store, ids, action, reason: list.reason, detail: { getleads: list.detail || null }, notify, lead, now });
 
@@ -215,7 +236,7 @@ async function recordSentAndOutcomes({ events, activities, store, now = new Date
 
 /**
  * Weekly restock: re-check hiring rows older than 7 days, then top up each
- * state to `perState` still-hiring employers from unchecked (or long-ago
+ * state to `perState` still-hiring employers with 2+ open roles from unchecked (or long-ago
  * not-hiring) pool rows. One GetLeads call at a time; bounded by maxChecks.
  */
 async function restockSampleEmployers({ store, recheck, now = new Date(), perState = 10, maxChecks = 300, log = () => {} }) {
@@ -249,13 +270,14 @@ async function restockSampleEmployers({ store, recheck, now = new Date(), perSta
       const saved = await check(row);
       if (saved) current.set(row.domain, saved);
     }
-    let hiring = [...current.values()].filter(r => r.status === 'hiring' && age(r) <= 7).length;
+    const listable = row => row?.status === 'hiring' && Number(row.openRoles) >= MIN_OPEN_ROLES;
+    let hiring = [...current.values()].filter(r => listable(r) && age(r) <= 7).length;
     const candidates = rows.filter(r => r.status === 'unchecked' || (r.status === 'not_hiring' && age(r) > 30))
       .sort((a, b) => (a.status === 'unchecked' ? 0 : 1) - (b.status === 'unchecked' ? 0 : 1) || a.domain.localeCompare(b.domain));
     for (const row of candidates) {
       if (hiring >= perState || summary.checks >= maxChecks) break;
       const saved = await check(row);
-      if (saved?.status === 'hiring') hiring += 1;
+      if (listable(saved)) hiring += 1;
     }
     summary.states[state] = hiring;
     if (summary.checks >= maxChecks) break;
@@ -264,5 +286,5 @@ async function restockSampleEmployers({ store, recheck, now = new Date(), perSta
 }
 
 module.exports = { TASK_EVENT, CLAIM_STALE_MS, AUTOSEND_DELAY_MS, sampleListConfig, eventIds, greetingFor,
-  draftBlockReason, reSubject, makeRecheck, draftSampleListForAction, autoSendReadyDrafts, recordSentAndOutcomes,
+  draftBlockReason, reSubject, makeRecheck, agencyDomain, withAgencyStates, draftSampleListForAction, autoSendReadyDrafts, recordSentAndOutcomes,
   restockSampleEmployers };

@@ -6,6 +6,7 @@ const { mirrorConfig } = require('./supabase-mirror');
 
 const EMPLOYERS = 'sample_employers';
 const EVENTS = 'scalelab_sample_list_events';
+const AGENCY_STATES = 'scalelab_agency_states';
 const EVENT_KINDS = Object.freeze(['drafted', 'review', 'sent', 'autosend_refused', 'outcome']);
 
 function toEmployer(row) {
@@ -58,6 +59,12 @@ function createSampleListStore({ env = process.env, fetchImpl = global.fetch } =
       if (!row || row.domain !== domain) throw new Error('sample employer check not saved');
       return toEmployer(row);
     },
+    async getAgencyStates(domain) {
+      const key = String(domain || '').trim().toLowerCase();
+      if (!key) return [];
+      const [row] = await request(AGENCY_STATES, 'GET', { domain: 'eq.' + key, limit: '1' });
+      return row && Array.isArray(row.states) ? row.states : [];
+    },
     async getEvent(eventId) {
       return (await request(EVENTS, 'GET', { event_id: 'eq.' + eventId, limit: '1' }))[0] || null;
     },
@@ -85,4 +92,4 @@ function createSampleListStore({ env = process.env, fetchImpl = global.fetch } =
   };
 }
 
-module.exports = { createSampleListStore, toEmployer, EVENT_KINDS, EMPLOYERS, EVENTS };
+module.exports = { createSampleListStore, toEmployer, EVENT_KINDS, EMPLOYERS, EVENTS, AGENCY_STATES };

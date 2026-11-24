@@ -425,3 +425,46 @@ test('the sample-list code never sends by itself and the agent pass is feature-g
   assert.equal(flow.sampleListConfig({}).autosend, false);
   assert.equal(flow.sampleListConfig({}).restock, false);
 });
+
+test('the detector recognises the Campaign 3 copy v2 Email 2 offer as sent, footer and all', () => {
+  const copy = require('../integrations/staffing-v4-copy');
+  const email2 = Object.values(copy.FOLLOW_UPS_V2).find(item => /sample list/.test(item.body || ''));
+  assert.ok(email2, 'v2 Email 2 offers the sample list');
+  const body = appendStaffingComplianceFooter(email2.body.replace(/\{\{(\w+)\}\}/g, (m, key) => ({ first_name: 'Pat', company: 'Example Staffing' })[key] || key),
+    { companyName: 'ScaleLabAi', website: 'scalelabai.ca', mailingAddress: '100 Example Street, Suite 2, Springfield, IL 62701' });
+  const rows = [{ eventId: 'gmail:out-2', sourceLeadId: 'lead-1', eventType: 'follow_up_sent', occurredAt: daysAgo(1), content: body,
+    metadata: JSON.stringify({ gmailThreadId: 'T1', senderInboxId: 'box', gmailMessageId: 'out-2' }) }];
+  const context = verifiedContext(rows, { leadId: 'lead-1', threadId: 'T1', senderInboxId: 'box', messageId: 'in-1', occurredAt: NOW.toISOString() });
+  assert.equal(context[0].offersSampleList, true);
+  for (const text of ['Yes', 'Sure, send it over', 'Yes please. Thanks, Pat', 'What does that look like?', 'Interested in the list']) {
+    assert.equal(classifyScaleLabReply({ text, context }).intent, 'sample_list_request', text);
+  }
+  assert.equal(classifyScaleLabReply({ text: 'Yes please. Thanks but how much is it?', context }).intent, 'pricing_request');
+  assert.notEqual(classifyScaleLabReply({ text: 'Yes thanks, and can we talk Friday?', context }).intent, 'sample_list_request');
+});
+
+test('only employers with 2 or more open hands-on roles are listed', async () => {
+  const pool = [...Array.from({ length: 6 }, (_, i) => employer(i, 'TX', { openRoles: i < 2 ? 1 : 3 }))];
+  const picked = list.selectSampleList({ employers: pool, states: ['TX'] });
+  assert.ok(picked.employers.every(item => item.openRoles >= 2));
+  assert.equal(picked.employers.filter(item => item.state === 'TX').length, 4);
+  const built = await list.buildSampleList({ now: NOW, lead,
+    employers: Array.from({ length: 7 }, (_, i) => employer(i, 'TX', { openRoles: 5, checkedAt: i === 0 ? daysAgo(20) : daysAgo(1) })),
+    recheck: async () => ({ hiring: true, openRoles: 1, exampleRoles: ['Welder'], newestPosting: '2026-11-21' }) });
+  assert.equal(built.status, 'ready');
+  assert.ok(!built.employers.some(item => item.domain === 'employer0.example'));
+  assert.equal(built.updates[0].hiring, true);
+});
+
+test('backfilled agency states apply after the lead record and survive a failed lookup', async () => {
+  assert.deepEqual(list.agencyStates({ city: 'Hampton Township, Pennsylvania, United States' }), ['PA']);
+  assert.deepEqual(list.agencyStates({ campaign_notes: '{}', agency_states: ['OK', 'TX'] }), ['OK', 'TX']);
+  assert.deepEqual(list.agencyStates({ campaign_notes: JSON.stringify({ var_location: 'Plano, TX' }), agency_states: ['OK'] }), ['TX', 'OK']);
+  const bare = { ...lead, campaign_notes: JSON.stringify({ company_domain: 'agency.example', var_first_name: 'Pat' }) };
+  const seen = [];
+  const store = { getAgencyStates: async domain => { seen.push(domain); return ['NM']; } };
+  assert.deepEqual((await flow.withAgencyStates(store, bare)).agency_states, ['NM']);
+  assert.deepEqual(seen, ['agency.example']);
+  const failing = { getAgencyStates: async () => { throw new Error('down'); } };
+  assert.equal((await flow.withAgencyStates(failing, bare)).agency_states, undefined);
+});
