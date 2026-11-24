@@ -48,9 +48,14 @@ def calls(paths):
                     t = _text(b.get("content"))
                     if "saved to" in t:
                         import re
-                        m = re.search(r"saved to (/\S+\.txt)", t)
+                        m = re.search(r"saved to:? (/\S+\.(?:txt|json))", t)
                         t = open(m.group(1)).read() if m and os.path.exists(m.group(1)) else t
                     t = t.strip()
+                    if t.startswith("["):  # a saved .json holds the result's content blocks
+                        try:
+                            t = _text(json.loads(t)).strip()
+                        except ValueError:
+                            pass
                     if t.startswith("{"):
                         try:
                             out.append((uses[b["tool_use_id"]], json.loads(t)))
