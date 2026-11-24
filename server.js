@@ -1735,8 +1735,12 @@ async function loadOutreachDataset() {
     Object.assign(row, pipelineIndex.byColdEmailId.get(lead.id));
     row.sequenceState = outreachSequenceState(lead);
     const automation = deriveAutomationState(lead);
-    row.automationState = automation.state;
-    row.automationReason = automation.reason;
+    // A canonical bounce suppresses the address and the send gate refuses it
+    // (sendSuppressionReason), so a bounced lead is never shown as a live
+    // sequence even while its ColdEmail row still reads emailed.
+    const bouncedStop = row.bounced && automation.state === 'active';
+    row.automationState = bouncedStop ? 'stopped' : automation.state;
+    row.automationReason = bouncedStop ? 'email bounced — address suppressed, no further sends' : automation.reason;
     return row;
   });
   const rows = allRows.filter(row => !row.archived);
@@ -1848,7 +1852,7 @@ function analyticsScopeBlocks(dataset) {
     senderAnalytics: buildSenderAnalytics({
       leads: active, activities: activitiesForLeads(dataset.activities || [], active),
       senders: configuredSenders().map(sender => ({ ...sender, staffingOnly: isStaffingOnlySender(sender) })),
-      replyCategoryByLead: categoryByLead,
+      replyCategoryByLead: categoryByLead, holds: coldSenderHolds(),
     }),
     historical: {
       scope: ANALYTICS_SCOPE.HISTORICAL, includesArchived: true, archivedLeads: (dataset.archivedRows || []).length,
@@ -2105,7 +2109,10 @@ function logManagedClientReadiness() {
 }
 
 app.get('/api/campaign-versions', requireAuth, (req, res) => {
-  res.json({ active: ACTIVE_CAMPAIGN_VERSION, versions: CAMPAIGN_VERSIONS, completedCampaigns: completedCampaigns() });
+  // `active` is the send-routing default per family (unchanged); `current` is
+  // the live campaign the dashboard names as "Current campaign".
+  res.json({ active: ACTIVE_CAMPAIGN_VERSION, current: { industrial_staffing: currentLiveCampaignVersion() },
+    versions: CAMPAIGN_VERSIONS, completedCampaigns: completedCampaigns() });
 });
 
 // Non-secret operational configuration for the CRM Settings workspace. This
@@ -2444,7 +2451,12 @@ async function ensureDigestSheet() {
   });
 }
 
-// Computes today's numbers from the source tabs. Read-only.
+// The digest card is ScaleLab's own (the dashboard loads it only in the
+// ScaleLab workspace), so every count is scoped to ScaleLab's active leads:
+// a managed client's sends, replies and drafts never appear in it.
+const DIGEST_CLIENT_ID = 'scalelab';
+
+// Computes the day's numbers from the source tabs. Read-only.
 async function computeDigest(day) {
   const [ceR, opR, drR, actR] = await Promise.all([
     sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE }),
@@ -2455,13 +2467,16 @@ async function computeDigest(day) {
     }).catch(() => ({ data: {} })),
   ]);
 
-  const leadRows = (ceR.data.values || []).slice(1).filter(r => r[0]);
-  const leads = leadRows.map(r => Object.fromEntries(CE_COLUMNS.map((field, i) => [field, r[i] || ''])));
+  const allLeads = (ceR.data.values || []).slice(1).filter(r => r[0])
+    .map(r => Object.fromEntries(CE_COLUMNS.map((field, i) => [field, r[i] || ''])));
+  const leads = leadsForClient(allLeads, DIGEST_CLIENT_ID);
+  const clientLeadIds = new Set(leads.map(lead => lead.id));
+  const leadRows = (ceR.data.values || []).slice(1).filter(r => r[0] && clientLeadIds.has(r[0]));
   const activities = (actR.data.values || []).slice(1).map(row => Object.fromEntries(
     COLD_CALL_ACTIVITY_HEADER.map((field, i) => [field, row[i] || '']),
   ));
-  const canonical = buildCanonicalDigest({ day, activities, leads,
-    activeLeadIds: new Set(scopeLeads(leads, ANALYTICS_SCOPE.ACTIVE).map(lead => lead.id)) });
+  const activeLeadIds = new Set(scopeLeads(leads, ANALYTICS_SCOPE.ACTIVE).map(lead => lead.id));
+  const canonical = buildCanonicalDigest({ day, activities, leads, activeLeadIds });
   const isToday  = ts => { try { return ts && vanDay(new Date(ts)) === day; } catch (_e) { return false; } };
 
   // ── real opens today: the shared scanner filter, not raw rows ──
@@ -2482,7 +2497,10 @@ async function computeDigest(day) {
   const autoAnswered = leadRows.filter(r => isToday(r[9]) && /auto-answered/.test(r[11] || '')).length;
   const draftRows = (drR.data.values || []).slice(1);
   const draftsToday   = draftRows.filter(r => isToday(r[0])).length;
-  const draftsPending = draftRows.filter(r => (r[8] || 'pending').toLowerCase() === 'pending').length;
+  // Only drafts a person can still act on: pending, on an active ScaleLab lead.
+  // Drafts left on archived or retired-offer leads are not a review queue.
+  const draftsPending = draftRows.filter(r => (r[8] || 'pending').toLowerCase() === 'pending'
+    && activeLeadIds.has(String(r[1] || '').trim())).length;
 
   // ── booking links sent, by trigger ──
   const bookingByTrigger = { 'question reply': autoAnswered };
@@ -2500,10 +2518,33 @@ async function computeDigest(day) {
   };
 }
 
-// Idempotent: returns the stored digest for the day if one exists, otherwise
-// computes and stores it. `force` recomputes but still overwrites in place, so
-// there is never more than one row per date.
-async function getOrCreateDigest(day, { force = false } = {}) {
+// A stored digest is final only once its day has ended in Vancouver. A row
+// generated during the day (an early dashboard load, the 18:00 cron) is a
+// partial snapshot and is recomputed once the day is over.
+function digestRowIsFinal(day, generatedAt) {
+  const at = new Date(generatedAt || '');
+  return Number.isFinite(at.getTime()) && vanDay(at) > day;
+}
+
+// Today's digest is computed live (cached for a few minutes) and never stored,
+// so the card follows the day's sends instead of freezing at the first load.
+const DIGEST_LIVE_TTL_MS = 5 * 60 * 1000;
+let liveDigestCache = null;
+
+// Idempotent: returns the stored digest for a finished day if one exists,
+// otherwise computes and stores it. `force` recomputes but still overwrites in
+// place, so there is never more than one row per date. The current day is
+// stored only when `store` is set (the 18:00 cron), and is still recomputed
+// after the day ends.
+async function getOrCreateDigest(day, { force = false, store = false } = {}) {
+  if (day === vanDay() && !store) {
+    if (!force && liveDigestCache && liveDigestCache.day === day && Date.now() - liveDigestCache.at < DIGEST_LIVE_TTL_MS) {
+      return liveDigestCache.digest;
+    }
+    const live = await computeDigest(day);
+    liveDigestCache = { day, at: Date.now(), digest: live };
+    return live;
+  }
   await ensureDigestSheet();
   const existing = await sheets().spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID, range: `${DIGEST_SHEET}!A:C`,
@@ -2511,7 +2552,7 @@ async function getOrCreateDigest(day, { force = false } = {}) {
   const rows = existing.data.values || [];
   const idx  = rows.findIndex((r, i) => i > 0 && r[0] === day);
 
-  if (idx !== -1 && !force) {
+  if (idx !== -1 && !force && (day === vanDay() || digestRowIsFinal(day, rows[idx][1]))) {
     try { return JSON.parse(rows[idx][2]); } catch (_e) { /* corrupt row — recompute below */ }
   }
 
@@ -6139,7 +6180,7 @@ function scopedOutreachStats(dataset, view) {
     senderAnalytics: buildSenderAnalytics({
       leads: view.leads.filter(lead => view.rows.some(row => String(row.id) === String(lead.id))),
       activities: view.activeActivities, senders: view.senderRows,
-      replyCategoryByLead: categoryByLead,
+      replyCategoryByLead: categoryByLead, holds: coldSenderHolds(),
     }),
     historical: {
       scope: 'historical', includesArchived: true, archivedLeads: view.archivedRows.length,
@@ -6757,11 +6798,20 @@ async function gmailInboxStatus() {
       }),
     };
   } catch (_) { /* status-only fallback: registry remains visible */ }
+  // A cold hold (COLD_SENDER_HOLDS) stops every cold send from that inbox, so
+  // the status shows it as not sending: no eligibility, no remaining capacity,
+  // and the hold reason. Display only — the send gates read the holds directly.
+  const holds = coldSenderHolds();
   return {
-    inboxes: inboxes.map(inbox => {
+    inboxes: inboxes.map(rawInbox => {
+      const holdReason = holds.get(rawInbox.id) || null;
+      const inbox = holdReason
+        ? { ...rawInbox, sendEligible: false, sendingActive: false, coldHold: holdReason,
+          coldHoldLabel: /archived/.test(holdReason) ? 'Archived' : 'Held' }
+        : rawInbox;
       const observer = observers.find(item => item.senderInboxId === inbox.id) || null;
       const sent = sentToday.get(inbox.id) || 0;
-      const remaining = Math.max(0, Number(inbox.dailyLimit || 0) - sent);
+      const remaining = holdReason ? 0 : Math.max(0, Number(inbox.dailyLimit || 0) - sent);
       const auth = {
         authenticated: inbox.credentialConfigured,
         identityVerified: inbox.identityVerified,
@@ -6786,7 +6836,7 @@ async function gmailInboxStatus() {
         controls: {
           canMarkReady: inbox.status === 'warming',
           canActivate: (inbox.status === 'ready' || inbox.status === 'paused') && blockers.length === 0,
-          canPause: inbox.status === 'active',
+          canPause: inbox.status === 'active' && !holdReason,
           activationBlockers: blockers,
         },
       };
@@ -8320,7 +8370,7 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   // stored row rather than producing a second one.
   cron.schedule('0 18 * * *', () => {
     console.log('[cron] Generating daily digest...');
-    withAuth(() => getOrCreateDigest(vanDay()))
+    withAuth(() => getOrCreateDigest(vanDay(), { store: true }))
       .then(d => console.log(`[digest] ${d.date} — ${d.emailsSent} sent, ${d.realOpens.rows} real opens, ${d.answers.draftsPending} drafts pending review`))
       .catch(e => console.error('[digest] generation failed:', e.message));
   }, {

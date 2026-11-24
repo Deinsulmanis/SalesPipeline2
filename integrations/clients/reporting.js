@@ -20,6 +20,8 @@ const { sendSuppressionReason } = require('../pipeline-state');
 const { clientPersonalizationState } = require('./client-email');
 
 const { replyOutcomeFromEvidence, leadHasReply } = require('../reply-analytics');
+const { uniqueCanonicalBounces, deliveredLeadIds } = require('../canonical-sends');
+const { coldSenderHolds } = require('../cold-delivery-policy');
 
 const SEND_EVENTS = new Set(['initial_email_sent', 'follow_up_sent', 'sequence_step_sent']);
 // Shared analytics category -> this overview's reply buckets.
@@ -84,7 +86,12 @@ function buildClientOverview({
   const myActivities = activities.filter(row => ids.has(activityLeadId(row)));
 
   const sends = myActivities.filter(row => SEND_EVENTS.has(text(row.eventType)));
-  const bounces = myActivities.filter(row => text(row.eventType) === 'email_bounced');
+  // Canonical bounces: one per bounced message, minus bounces an audited
+  // retraction withdrew — the same count the Outreach analytics use.
+  const bounces = uniqueCanonicalBounces({ leads: mine, activities: myActivities, suppressedEmails });
+  // Per-lead rates divide by delivered LEADS (sent at least once, not bounced),
+  // never by messages, exactly like the Outreach analytics.
+  const deliveredLeads = deliveredLeadIds({ leads: mine, activities: myActivities, suppressedEmails });
   // Replying LEADS, categorised by the same helper the Outreach dashboard, the
   // funnel and the reply table use (reply-analytics), so a lead is positive on
   // every screen or on none. This used to count messages by raw event type,
@@ -110,13 +117,19 @@ function buildClientOverview({
     replies[bucket === 'negative' && unsubscribe ? 'unsubscribe' : bucket] += 1;
   }
 
+  const holds = coldSenderHolds(env);
   const clientSenders = senders.filter(sender => {
     const owner = resolveSenderClient(sender);
     return owner.ok && owner.clientId === client.id;
-  }).map(sender => ({
-    id: sender.id, email: sender.email, status: sender.status, sendEligible: Boolean(sender.sendEligible),
-    dailyLimit: sender.dailyLimit, credentialConfigured: Boolean(sender.credentialConfigured),
-  }));
+  }).map(sender => {
+    // A cold hold (COLD_SENDER_HOLDS) means the inbox cannot cold-send.
+    const hold = holds.get(sender.id) || null;
+    return {
+      id: sender.id, email: sender.email, status: hold ? (/archived/.test(hold) ? 'archived' : 'held') : sender.status,
+      sendEligible: Boolean(sender.sendEligible) && !hold, ...(hold ? { coldHold: hold } : {}),
+      dailyLimit: sender.dailyLimit, credentialConfigured: Boolean(sender.credentialConfigured),
+    };
+  });
 
   // Per-campaign performance from the same scoped leads, activities and ledger.
   const repliedLeads = new Set(myActivities.filter(row => text(row.eventType) === REPLY_EVENT_TYPE || LEGACY_REPLY_SENTIMENT[text(row.eventType)])
@@ -142,6 +155,7 @@ function buildClientOverview({
       leads: inCampaign.length,
       queued: inCampaign.filter(lead => text(lead.stage) === 'Queued' && !text(lead.emailStatus)).length,
       sent: sends.filter(row => ids.has(activityLeadId(row))).length,
+      deliveredLeads: [...deliveredLeads].filter(id => ids.has(id)).length,
       replies: [...repliedLeads].filter(id => ids.has(id)).length,
       meetings: [...meetingLeads].filter(([id]) => ids.has(id)).reduce((sum, [, n]) => sum + n, 0),
       assignedSenders: new Set(inCampaign.map(lead => text(lead.senderInboxId)).filter(Boolean)).size,
@@ -191,6 +205,7 @@ function buildClientOverview({
       bounced: bounces.length,
       // Gmail gives no delivery receipt; "delivered" is sends minus observed bounces.
       deliveredEstimate: Math.max(0, sends.length - bounces.length),
+      deliveredLeads: deliveredLeads.size,
       suppressed: mine.filter(lead => sendSuppressionReason(lead, { suppressedEmails })).length,
       senders: clientSenders,
     },

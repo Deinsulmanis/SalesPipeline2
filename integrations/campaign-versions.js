@@ -17,6 +17,8 @@ function staffingCampaign2Status() {
   const launch = staffingLaunchState().status;
   return launch === 'active' && !staffingCampaign2Open() ? 'approved' : launch;
 }
+const STAFFING_CAMPAIGN_V4_ACTIVATED_AT = '2026-11-20T15:00:00.000Z';
+
 const CAMPAIGN_VERSIONS = Object.freeze({
   [STAFFING_CAMPAIGN.id]: Object.freeze({
     id: STAFFING_CAMPAIGN.id, label: STAFFING_CAMPAIGN.name, niche: STAFFING_CAMPAIGN.niche,
@@ -64,7 +66,8 @@ const CAMPAIGN_VERSIONS = Object.freeze({
     personalizationStrategy: STAFFING_CAMPAIGN_V4.personalizationStrategy,
     subjectStrategy: 'industrial_staffing_v4_variant_subject', offerVersion: 'employer_meetings_performance_v1',
     get status() { return staffingV4Live() ? staffingLaunchState().status : 'draft'; },
-    activatedAt: null,
+    // Owner approval 2026-11-20; first Email 1 sent 2026-11-20 07:01 America/Vancouver.
+    get activatedAt() { return this.status === 'active' ? STAFFING_CAMPAIGN_V4_ACTIVATED_AT : null; },
     meaning: 'Industrial Campaign 3: one campaign whose Email 1 is chosen from six approved variants by verified evidence (employer ads, internal sales hiring, expansion, new commercial leader, candidate ads, specialization), with shared Emails 2 and 3.',
   }),
   dental_v1_measured: Object.freeze({
