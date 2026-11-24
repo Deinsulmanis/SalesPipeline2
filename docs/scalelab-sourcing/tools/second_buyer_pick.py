@@ -60,6 +60,12 @@ def first_key(s):
     return re.sub(r'[^a-z]', '', (s or '').lower())
 
 
+def last_initial(x):
+    """Search results carry the obfuscated last name as last_obf ('Ke***y'); prior contacts carry last."""
+    v = x.get('last_obf') or x.get('last') or x.get('last_name_obfuscated') or ''
+    return v[:1].lower()
+
+
 def main():
     dec = json.load(open(os.path.join(RUN, 'icp_decisions.json')))
     passing = [x['domain'] for x in dec if x['company_icp'] == 'PASS']
@@ -77,7 +83,7 @@ def main():
             if not p.get('title'):
                 st['prior_title_unknown'] += 1
                 m = [x for x in ps if first_key(x.get('first')) == first_key(p.get('first'))
-                     and (x.get('last') or ' ')[0].lower() == (p.get('last') or ' ')[0].lower()]
+                     and last_initial(x) == last_initial(p)]
                 if m and m[0].get('title'):
                     p['title'], p['fam'] = m[0]['title'], families(m[0]['title'])
                     p['title_from'] = 'apollo_free_search'
@@ -89,8 +95,9 @@ def main():
         for x in ps:
             if not x.get('has_email'):
                 continue
+            # same first name = treated as the same person unless the last initials clearly differ (conservative)
             if any(first_key(x.get('first')) == first_key(p.get('first')) and
-                   (x.get('last') or ' ')[0].lower() == (p.get('last') or ' ')[0].lower() for p in pri):
+                   (not last_initial(x) or not last_initial(p) or last_initial(x) == last_initial(p)) for p in pri):
                 st['skipped_prior_person'] += 1
                 continue
             title = x.get('title') or ''
@@ -118,9 +125,9 @@ def main():
         if not chosen:
             st['no_distinct_buyer'] += 1
             continue
-        picks[d] = [{k: c.get(k) for k in ('id', 'first', 'last', 'title', 'tier', 'fam', 'distinct_by')} for c in chosen]
+        picks[d] = [{k: c.get(k) for k in ('id', 'first', 'last_obf', 'title', 'tier', 'fam', 'distinct_by')} for c in chosen]
         for i, c in enumerate(chosen):
-            rec = {'domain': d, 'id': c['id'], 'first': c.get('first'), 'last': c.get('last'), 'title': c.get('title'),
+            rec = {'domain': d, 'id': c['id'], 'first': c.get('first'), 'last': c.get('last_obf') or c.get('last'), 'title': c.get('title'),
                    'tier': c['tier'], 'source': 'apollo_free_search', 'second_buyer': True, 'distinct_by': c['distinct_by']}
             (t1 if i == 0 else t2).append(rec)
         st['companies_with_pick'] += 1
