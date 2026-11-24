@@ -1320,8 +1320,11 @@ function deriveNextAction(boardLead, twin, context = {}) {
       try { task = JSON.parse(newestTask.metadata || '{}'); } catch { task = null; }
       if (!superseded && task?.clientId === 'scalelab' && task.owner === 'human' && task.autoSendAllowed === false
           && Number.isFinite(Date.parse(task.dueAt))) {
+        const sampleDraft = activities.some(row => row.eventType === 'scalelab_sample_list_drafted'
+          && row.sourceLeadId === twin.id && Date.parse(row.occurredAt) >= taskAt);
         return buildAction({ type: ACTION_TYPE.MANUAL_FOLLOW_UP, owner: ACTION_OWNER.HUMAN,
-          label: 'Follow up with prospect', dueAt: task.dueAt, source: 'scalelab-reply-routing',
+          label: sampleDraft ? 'Review sample list draft in Gmail' : 'Follow up with prospect',
+          dueAt: task.dueAt, source: 'scalelab-reply-routing',
           reason: 'Verified prospect reply requires human follow-up', needsAttention: true, now });
       }
     }

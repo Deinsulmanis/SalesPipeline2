@@ -11,6 +11,7 @@ Use the canonical ScaleLab client ID and verified message and lead identity.
 | --- | --- |
 | Interest, buyer pricing or information request, meeting coordination | Follow Up for a new eligible opportunity or a human task on the existing card |
 | Future contact | Follow Up with a human task at the explicitly agreed date |
+| Sample list request | Follow Up with a human task, plus a sample employer list drafted in the same thread for the owner to review |
 | Opt-out, negative | Existing suppression or rejection handler |
 | Delivery notice, calendar notice, automated acknowledgment, OOO, contact change | Transport, calendar or mailbox review rules |
 | Objection, referral, reverse pitch, unclear acknowledgment | Human review |

@@ -8398,6 +8398,21 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   }, { timezone: 'America/Vancouver' });
   console.log('[cron] Billing drafts (1st/15th) and Stripe reconcile scheduled hourly at :20 (feature-gated)');
 
+  // ScaleLab sample employer list: weekly restock, Sundays 03:17 Pacific, far
+  // from any send window. One GetLeads call at a time; writes only the
+  // sample_employers check fields. Off unless SCALELAB_SAMPLE_LIST_RESTOCK_ENABLED=true.
+  let sampleRestockInFlight = false;
+  cron.schedule('17 3 * * 0', () => {
+    if (process.env.SCALELAB_SAMPLE_LIST_RESTOCK_ENABLED !== 'true' || sampleRestockInFlight) return;
+    sampleRestockInFlight = true;
+    require('./scripts/scalelab-sample-employers-restock').runRestock()
+      .then(summary => console.log(`[sample-list] restock: ${summary.checks} checks, ${summary.nowHiring} hiring, `
+        + `${summary.dropped} dropped, ${summary.failures} failure(s)`))
+      .catch(error => console.error('[sample-list] restock failed:', error.message))
+      .finally(() => { sampleRestockInFlight = false; });
+  }, { timezone: 'America/Vancouver' });
+  console.log('[cron] Sample employer restock scheduled weekly Sun 03:17 (feature-gated)');
+
   // Staffing landing attribution: backfill issuances from the activity ledger,
   // link early sessions, daily retention. Supabase landing functions only; the
   // first line returns unless LANDING_RECONCILER_ENABLED is exactly "true".

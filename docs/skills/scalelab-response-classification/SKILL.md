@@ -11,9 +11,10 @@ Require the canonical ScaleLab client ID and an exact inbound message match. Use
 2. Honor explicit opt-out, including standalone “stop” followed by a signature. Forwarded or quoted unsubscribe text does not count.
 3. Separate out of office, automated acknowledgment, and contact change from human replies. Accept absence dates only when explicitly supported.
 4. Distinguish explicit rejection, reverse pitch, objection, referral, and a request for future contact. Do not guess a follow-up date.
-5. Separate meeting request, reschedule request, pricing request, information request, and interest. Preserve an acknowledgment as such unless earlier turns make a stronger meaning explicit. Unclear replies stay in review.
+5. A clear yes to our offer of a sample employer list ("yes", "sure", "send it", "interested in the list", "what does that look like") in a thread where our own earlier turn offered that list is a sample list request. A yes with a second question, a condition, pricing or a meeting ask is mixed and stays with the other intents.
+6. Separate meeting request, reschedule request, pricing request, information request, and interest. Preserve an acknowledgment as such unless earlier turns make a stronger meaning explicit. Unclear replies stay in review.
 
-Allowed intents: opt_out, delivery_failure, calendar_notice, automated_acknowledgment, out_of_office, contact_change, explicit_rejection, reverse_pitch, meeting_request, reschedule_request, pricing_request, information_request, interest, future_contact, objection, referral, acknowledgment, unclear.
+Allowed intents: opt_out, delivery_failure, calendar_notice, automated_acknowledgment, out_of_office, contact_change, explicit_rejection, reverse_pitch, meeting_request, reschedule_request, pricing_request, information_request, interest, future_contact, objection, referral, acknowledgment, unclear, sample_list_request.
 
 Confidence helps prioritize review. It confers no update or send permission. Use only approved offer facts for drafts, especially for pricing and booking details.
 
