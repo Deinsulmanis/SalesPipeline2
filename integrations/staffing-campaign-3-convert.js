@@ -30,7 +30,7 @@ const {
   STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_2, STAFFING_CAMPAIGN_V4, CAMPAIGN_3_CONVERSION_PREFIX,
   staffingCampaignFor, staffingV4SendBlock, staffingV2CampaignNotesRefusal,
 } = require('./staffing-campaign');
-const { selectV4Variant } = require('./staffing-v4-copy');
+const { selectV4Variant, CURRENT_COPY_VERSION } = require('./staffing-v4-copy');
 const {
   buildStaffingV4Profile, serializeStaffingV4Profile, readStaffingV4Profile, hasStaffingV4ProfileMarker,
 } = require('./staffing-v4-profile');
@@ -139,7 +139,7 @@ function planCampaign3Conversion(payload, { leads = [], suppressedEmails = new S
     const domainOthers = workDomains([domain, emailDomain(email)]).flatMap(d => byDomain.get(d) || []).filter(other => other !== lead);
     if (domainOthers.length) return refuse('duplicate_company', 'another ScaleLab lead exists for this company domain');
     let selection;
-    try { selection = selectV4Variant(evidence); } catch (error) { return refuse('invalid_evidence', error.message); }
+    try { selection = selectV4Variant(evidence, { copyVersion: CURRENT_COPY_VERSION }); } catch (error) { return refuse('invalid_evidence', error.message); }
     if (selection.status !== 'SELECTED') return refuse('held', selection.holds.join('; ') || 'no verified variant');
     const profile = buildStaffingV4Profile({
       row: { company, company_domain: domain, contact_name: text(evidence.contactName) || text(lead.contactName), email,

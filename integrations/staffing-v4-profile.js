@@ -23,18 +23,27 @@
  */
 
 const crypto = require('node:crypto');
-const { VARIANTS, VARIABLE_NAMES } = require('./staffing-v4-copy');
+const { VARIANTS, V1_VARIABLE_NAMES, V2_VARIABLE_NAMES, COPY_VERSIONS } = require('./staffing-v4-copy');
 
 const SCHEMA = 'staffing_v4_lead_profile_v1';
 const SCHEMA_MARKER = `"schema":"${SCHEMA}"`;
 const PROFILE_INTEGRITY_FAILED = 'staffing_v4_profile_integrity_failed';
 const MAX_CHARS = 20000;
 const SELECTOR_VERSION = 'v4_variant_selector_2026_11_20';
+const SELECTOR_VERSION_V2 = 'v4_variant_selector_2026_11_24_copy_v2';
 
 const REVIEW_STATUSES = Object.freeze(['REVIEW_READY', 'SEND_READY', 'HOLD']);
 const COPY_STATUSES = Object.freeze(['SELECTED', 'HOLD']);
 
-const VAR_FIELDS = Object.freeze(VARIABLE_NAMES.map(name => `var_${name}`));
+const VAR_FIELDS = Object.freeze(V1_VARIABLE_NAMES.map(name => `var_${name}`));
+// Copy v2 (2026-11-24). A profile sealed under v2 carries `copy_version` and
+// var_specialty_line. A v1 profile carries neither and verifies exactly as it
+// always has: its fields and digest are unchanged.
+const V2_FIELD_TYPES = Object.freeze({
+  copy_version: 'text',
+  ...Object.fromEntries(V2_VARIABLE_NAMES.map(name => [`var_${name}`, 'text'])),
+});
+const V2_FIELDS = Object.freeze(Object.keys(V2_FIELD_TYPES));
 const FIELD_TYPES = Object.freeze({
   company: 'text', company_domain: 'text', contact_name: 'text', email: 'text',
   v4_tag: 'text', demand_score: 'int', signal_priority: 'text', ad_class: 'text',
@@ -47,7 +56,11 @@ const FIELD_TYPES = Object.freeze({
 });
 const FIELDS = Object.freeze(Object.keys(FIELD_TYPES));
 const DIGESTED = Object.freeze(['schema', ...FIELDS].sort());
+const DIGESTED_V2 = Object.freeze(['schema', ...FIELDS, ...V2_FIELDS].sort());
 const STORED = new Set([...DIGESTED, 'profile_digest']);
+const STORED_V2 = new Set([...DIGESTED_V2, 'profile_digest']);
+const isV2Shape = profile => Object.prototype.hasOwnProperty.call(profile || {}, 'copy_version');
+const typeOf = field => FIELD_TYPES[field] || V2_FIELD_TYPES[field];
 
 const CHECKS = Object.freeze({
   text: value => typeof value === 'string',
@@ -56,7 +69,7 @@ const CHECKS = Object.freeze({
 });
 
 function profileDigest(profile) {
-  const pairs = DIGESTED.map(key => {
+  const pairs = (isV2Shape(profile) ? DIGESTED_V2 : DIGESTED).map(key => {
     if (!Object.prototype.hasOwnProperty.call(profile, key) || profile[key] === undefined) {
       throw new Error(`staffing V4 profile is missing ${key}`);
     }
@@ -83,7 +96,7 @@ function buildStaffingV4Profile({ row = {}, selection, selectedAt, sourcingRunId
     contact_status: String(row.contact_status || ''),
     review_status: selection.status === 'SELECTED' ? 'REVIEW_READY' : 'HOLD',
     copy_status: selection.status, copy_variant: selection.variant || '',
-    ...Object.fromEntries(VARIABLE_NAMES.map(name => [`var_${name}`, typeof vars[name] === 'string' ? vars[name] : ''])),
+    ...Object.fromEntries(V1_VARIABLE_NAMES.map(name => [`var_${name}`, typeof vars[name] === 'string' ? vars[name] : ''])),
     evidence_kind: selection.variant || '', evidence_url: String(evidence.url || ''),
     evidence_quote: String(evidence.quote || evidence.text || '').slice(0, 600),
     evidence_observed_at: String(evidence.lastSeen || evidence.observedAt || evidence.announcedAt || evidence.appointedAt || ''),
@@ -91,12 +104,20 @@ function buildStaffingV4Profile({ row = {}, selection, selectedAt, sourcingRunId
     hold_reasons: [...(selection.holds || [])],
     selector_version: SELECTOR_VERSION, selected_at: String(selectedAt || ''), sourcing_run_id: String(sourcingRunId || ''),
   };
+  const copyVersion = selection.copyVersion || 'v1';
+  if (!COPY_VERSIONS.includes(copyVersion)) throw new Error(`unknown V4 copy version ${copyVersion}`);
+  if (copyVersion !== 'v1') {
+    profile.copy_version = copyVersion;
+    for (const name of V2_VARIABLE_NAMES) profile[`var_${name}`] = typeof vars[name] === 'string' ? vars[name] : '';
+    profile.selector_version = SELECTOR_VERSION_V2;
+  }
   return profile;
 }
 
 function serializeStaffingV4Profile(profile) {
   const ordered = { schema: SCHEMA };
   for (const field of FIELDS) ordered[field] = profile[field];
+  if (isV2Shape(profile)) for (const field of V2_FIELDS) ordered[field] = profile[field];
   ordered.profile_digest = profileDigest(ordered);
   const json = JSON.stringify(ordered);
   if (json.length > MAX_CHARS) throw new Error(`staffing V4 profile is ${json.length} characters; the limit is ${MAX_CHARS}`);
@@ -118,11 +139,12 @@ function readStaffingV4Profile(lead = {}) {
   let parsed;
   try { parsed = JSON.parse(notes); } catch (_) { return failed('profile is not valid JSON'); }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || parsed.schema !== SCHEMA) return failed('profile has the wrong schema');
-  const unexpected = Object.keys(parsed).filter(key => !STORED.has(key));
+  const v2 = isV2Shape(parsed);
+  const unexpected = Object.keys(parsed).filter(key => !(v2 ? STORED_V2 : STORED).has(key));
   if (unexpected.length) return failed(`unexpected field(s): ${unexpected.slice(0, 5).join(', ')}`);
-  const missing = DIGESTED.filter(key => !Object.prototype.hasOwnProperty.call(parsed, key));
+  const missing = (v2 ? DIGESTED_V2 : DIGESTED).filter(key => !Object.prototype.hasOwnProperty.call(parsed, key));
   if (missing.length) return failed(`missing field(s): ${missing.slice(0, 5).join(', ')}`);
-  const mistyped = FIELDS.filter(field => !CHECKS[FIELD_TYPES[field]](parsed[field]));
+  const mistyped = [...FIELDS, ...(v2 ? V2_FIELDS : [])].filter(field => !CHECKS[typeOf(field)](parsed[field]));
   if (mistyped.length) return failed(`wrongly typed field(s): ${mistyped.slice(0, 5).join(', ')}`);
   if (!/^[0-9a-f]{64}$/.test(String(parsed.profile_digest || '')) || profileDigest(parsed) !== parsed.profile_digest) {
     return failed('profile digest does not match its contents');
@@ -130,11 +152,16 @@ function readStaffingV4Profile(lead = {}) {
   if (!REVIEW_STATUSES.includes(parsed.review_status) || !COPY_STATUSES.includes(parsed.copy_status)) return failed('profile has an unknown status');
   if (parsed.copy_status === 'SELECTED' && !VARIANTS.includes(parsed.copy_variant)) return failed('profile has an unknown copy variant');
   if (parsed.copy_status === 'HOLD' && parsed.review_status === 'SEND_READY') return failed('a held profile cannot be send ready');
-  const vars = Object.fromEntries(VARIABLE_NAMES.map(name => [name, parsed[`var_${name}`]]).filter(([, value]) => value));
-  return { ok: true, profile: parsed, vars };
+  // A stored copy_version names a later version; v1 is the absence of the field.
+  if (v2 && (parsed.copy_version === 'v1' || !COPY_VERSIONS.includes(parsed.copy_version))) return failed('profile has an unknown copy version');
+  const names = [...V1_VARIABLE_NAMES, ...(v2 ? V2_VARIABLE_NAMES : [])];
+  const vars = Object.fromEntries(names.map(name => [name, parsed[`var_${name}`]]).filter(([, value]) => value));
+  // sealedCopyVersion: what the import sealed ('' for every pre-v2 profile, whose
+  // touches follow staffing-v4-copy-version.js resolveV4CopyVersion).
+  return { ok: true, profile: parsed, vars, sealedCopyVersion: v2 ? parsed.copy_version : '' };
 }
 
 module.exports = {
-  SCHEMA, SCHEMA_MARKER, PROFILE_INTEGRITY_FAILED, SELECTOR_VERSION, REVIEW_STATUSES, COPY_STATUSES, FIELDS,
+  SCHEMA, SCHEMA_MARKER, PROFILE_INTEGRITY_FAILED, SELECTOR_VERSION, SELECTOR_VERSION_V2, REVIEW_STATUSES, COPY_STATUSES, FIELDS, V2_FIELDS,
   profileDigest, buildStaffingV4Profile, serializeStaffingV4Profile, hasStaffingV4ProfileMarker, readStaffingV4Profile,
 };

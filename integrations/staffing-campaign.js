@@ -10,7 +10,8 @@ const {
   SCHEMA_MARKER: STAFFING_V4_PROFILE_MARKER, PROFILE_INTEGRITY_FAILED: V4_PROFILE_INTEGRITY_FAILED,
   hasStaffingV4ProfileMarker, readStaffingV4Profile,
 } = require('./staffing-v4-profile');
-const { renderV4Copy, v4CopyProblem, FOLLOW_UPS: V4_FOLLOW_UPS } = require('./staffing-v4-copy');
+const { renderV4Copy, v4CopyProblem, inferV4CopyVersion, FOLLOW_UPS: V4_FOLLOW_UPS } = require('./staffing-v4-copy');
+const { resolveV4CopyVersion } = require('./staffing-v4-copy-version');
 
 // Approved locked copy. Readiness permits queueing; staffing-launch-gate separately controls delivery.
 const STAFFING_CAMPAIGN = Object.freeze({
@@ -505,17 +506,21 @@ function renderStaffingV4(lead, step, options = {}) {
   if (!read.ok) throw new Error(`staffing V4 Email ${step} refused: ${read.reason}${read.detail ? ` (${read.detail})` : ''}`);
   if (read.profile.copy_status !== 'SELECTED') throw new Error(`staffing V4 Email ${step} refused: lead is on hold (${read.profile.hold_reasons.join('; ') || 'no variant'})`);
   const identity = staffingSenderIdentity(options.env || process.env, options);
+  // Copy version pinned per lead (staffing-v4-copy-version.js). The send path
+  // passes the activity ledger so a thread keeps the version its Email 1 used.
+  const pinned = resolveV4CopyVersion(lead, options.activities, { sealedCopyVersion: read.sealedCopyVersion });
   const rendered = renderV4Copy({
-    variant: read.profile.copy_variant, step, vars: read.vars,
+    variant: read.profile.copy_variant, step, vars: read.vars, copyVersion: pinned.copyVersion,
     resumeLine: options.oooResumeContext ? OOO_RESUME_CONTEXT_LINE : '',
-    appendFooter: text => appendStaffingComplianceFooter(text, identity),
+    // Campaign 3's footer has no website line (owner copy change 2026-11-24).
+    appendFooter: text => appendStaffingComplianceFooter(text, identity, { includeWebsite: false }),
   });
   // Follow-ups keep the Email 1 thread subject ("Re: ..."), exactly as every
   // staffing version does, so Gmail threading holds. The approved standalone
   // subject is reported for review only.
   return { subject: step === 1 ? rendered.subject : null, approvedSubject: rendered.subject,
     body: rendered.body, html: rendered.html, step, campaignId: STAFFING_CAMPAIGN_V4.id,
-    copyVariant: read.profile.copy_variant };
+    copyVariant: read.profile.copy_variant, copyVersion: pinned.copyVersion, copyVersionReason: pinned.reason };
 }
 
 function renderStaffingPreview(lead, result, step = 1, options = {}) {
@@ -598,7 +603,8 @@ function renderStaffingEmail(lead = {}, step = 1, options = {}) {
   if (campaign === STAFFING_CAMPAIGN_V4) {
     const email = renderStaffingV4(lead, step, options);
     return { subject: email.subject, body: email.body, html: email.html, step,
-      campaignId: email.campaignId, copyVariant: email.copyVariant };
+      campaignId: email.campaignId, copyVariant: email.copyVariant, copyVersion: email.copyVersion,
+      copyVersionReason: email.copyVersionReason };
   }
   const opening = staffingOpeningFor(lead);
   const structuredV2 = usesV2Copy(campaign) && hasStaffingV2ProfileMarker(lead);
@@ -623,7 +629,7 @@ function renderStaffingEmail(lead = {}, step = 1, options = {}) {
 }
 
 /** @returns an error string when the assembled staffing email is unsafe, else null. */
-function validateStaffingEmail({ subject, body, leadId, campaignId } = {}, step = 1) {
+function validateStaffingEmail({ subject, body, leadId, campaignId, copyVersion } = {}, step = 1) {
   const text = String(body || '');
   if (!text.trim()) return 'staffing body is empty';
   if (/{{|}}/.test(text)) return 'staffing body still contains an unmerged placeholder';
@@ -632,7 +638,10 @@ function validateStaffingEmail({ subject, body, leadId, campaignId } = {}, step 
   if (step !== 1 && String(subject || '').trim()) return 'staffing follow-up must keep the original thread subject';
   if (campaignId === STAFFING_CAMPAIGN_V4.id) {
     if (/receptionist|missed calls?|dental|patients?|clinic/i.test(text)) return 'staffing body contains non-staffing offer language';
-    return v4CopyProblem({ body: text, subject }, step) || staffingComplianceError(text, { leadId });
+    // The render names its copy version; a caller passing only the body gets
+    // it inferred from the locked text, and both versions stay strict.
+    return v4CopyProblem({ body: text, subject, copyVersion: copyVersion || inferV4CopyVersion(text, step) }, step)
+      || staffingComplianceError(text, { leadId });
   }
   // Dental/receptionist language must never reach a staffing prospect.
   if (/receptionist|missed calls?|dental|patients?|clinic/i.test(text)) return 'staffing body contains non-staffing offer language';

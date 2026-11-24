@@ -73,17 +73,22 @@ function staffingSenderIdentity(env = process.env, overrides = {}) {
   };
 }
 
-function formatStaffingComplianceFooter(identity) {
+// Industrial Campaign 3 (owner copy change 2026-11-24) renders this footer
+// without the website line (`includeWebsite: false`). Everything else is the
+// same: company, mailing address, the commercial notice and unsubscribe line,
+// and "Ref: SA-48271" as the final line (the Gmail filter key). V1, Campaign 2
+// and Jole keep the website line.
+function formatStaffingComplianceFooter(identity, { includeWebsite = true } = {}) {
   const company = String(identity.companyName || '').trim();
   const address = String(identity.mailingAddress || '').trim();
-  const website = String(identity.website || '').trim();
+  const website = includeWebsite ? String(identity.website || '').trim() : '';
   const lines = [company, address, website].filter(Boolean);
   return `${lines.join('\n')}\n\n${STAFFING_OPT_OUT_LINE}\n\n${STAFFING_REF_LINE}`;
 }
 
-function appendStaffingComplianceFooter(body, identity) {
+function appendStaffingComplianceFooter(body, identity, options = {}) {
   const core = String(body || '').replace(/\s+$/, '');
-  const footer = formatStaffingComplianceFooter(identity);
+  const footer = formatStaffingComplianceFooter(identity, options);
   if (core.includes(STAFFING_REF_LINE) || core.includes(STAFFING_UNSUBSCRIBE_LINE)) {
     throw new Error('staffing body already contains a compliance footer');
   }

@@ -52,7 +52,7 @@ const expansion = (extra = {}) => ({ url: 'https://news.example/e1', quote: 'Tra
 const leader = (extra = {}) => ({ url: 'https://news.example/l1', quote: 'Dana Smith named Vice President of Sales.', personName: 'Dana Smith', title: 'Vice President of Sales', appointedAt: '2026-09-15', current: true, ...extra });
 
 function v4Lead(ev = evidence(), { review = 'REVIEW_READY', lead = {}, row = {} } = {}) {
-  const selection = copy.selectV4Variant(ev);
+  const selection = selectV1(ev);
   const profile = profileLib.buildStaffingV4Profile({
     row: { company: 'Tradeco Staffing', company_domain: 'tradeco.example', contact_name: 'Dana Smith', email: 'dana@tradeco.example',
       v4_tag: 'V4|PASS|STANDARD|MIXED|COPY_TIER_PENDING', demand_score: 50, signal_priority: 'STANDARD', ad_class: 'MIXED',
@@ -68,7 +68,13 @@ function v4Lead(ev = evidence(), { review = 'REVIEW_READY', lead = {}, row = {} 
     campaign_notes: profileLib.serializeStaffingV4Profile(profile), ...lead,
   };
 }
-const render = (lead, step, extra = {}) => renderStaffingEmail(lead, step, { ...OPTIONS, ...extra });
+// These tests pin copy v1 (2026-11-20). A lead whose Email 1 went out on v1
+// finishes its sequence on v1, so every render here carries a ledger showing
+// a v1 Email 1 (a Campaign 3 send from before v2 records no staffingCopyVersion).
+// Copy v2 is pinned in staffing-v4-copy-v2.test.js.
+const V1_LEDGER = Object.freeze([{ eventType: 'initial_email_sent', sourceLeadId: 'V4L1', occurredAt: '2026-11-20T15:00:00.000Z', metadata: '{}' }]);
+function selectV1(ev) { return copy.selectV4Variant(ev, { copyVersion: 'v1' }); }
+const render = (lead, step, extra = {}) => renderStaffingEmail(lead, step, { ...OPTIONS, activities: V1_LEDGER, ...extra });
 const copyOf = body => body.split('\n\nScaleLabAi\n')[0];
 
 test.afterEach(() => setStaffingV4LiveForTests(null));
@@ -133,14 +139,14 @@ test('2. Emails 2 and 3 are shared by every variant and keep the thread subject'
 
 test('3. precedence is A > D > E > F > B > C and never uses the demand score', () => {
   const all = { employerAds: [employerAd()], salesHiring: [salesHire()], expansion: [expansion()], leadership: [leader()], candidateAds: [candidateAd()] };
-  assert.equal(copy.selectV4Variant(evidence(all)).variant, 'COPY_A');
-  assert.equal(copy.selectV4Variant(evidence({ ...all, employerAds: [] })).variant, 'COPY_D');
-  assert.equal(copy.selectV4Variant(evidence({ ...all, employerAds: [], salesHiring: [] })).variant, 'COPY_E');
-  assert.equal(copy.selectV4Variant(evidence({ ...all, employerAds: [], salesHiring: [], expansion: [] })).variant, 'COPY_F');
-  assert.equal(copy.selectV4Variant(evidence({ candidateAds: [candidateAd()], leadership: [] })).variant, 'COPY_B');
-  assert.equal(copy.selectV4Variant(evidence()).variant, 'COPY_C');
+  assert.equal(selectV1(evidence(all)).variant, 'COPY_A');
+  assert.equal(selectV1(evidence({ ...all, employerAds: [] })).variant, 'COPY_D');
+  assert.equal(selectV1(evidence({ ...all, employerAds: [], salesHiring: [] })).variant, 'COPY_E');
+  assert.equal(selectV1(evidence({ ...all, employerAds: [], salesHiring: [], expansion: [] })).variant, 'COPY_F');
+  assert.equal(selectV1(evidence({ candidateAds: [candidateAd()], leadership: [] })).variant, 'COPY_B');
+  assert.equal(selectV1(evidence()).variant, 'COPY_C');
   // Demand score is not an input: a high score with no evidence is still C.
-  assert.equal(copy.selectV4Variant({ ...evidence(), demandScore: 100, signalPriority: 'HIGH_PRIORITY' }).variant, 'COPY_C');
+  assert.equal(selectV1({ ...evidence(), demandScore: 100, signalPriority: 'HIGH_PRIORITY' }).variant, 'COPY_C');
   const source = fs.readFileSync(path.join(__dirname, '..', 'integrations', 'staffing-v4-copy.js'), 'utf8');
   const selector = source.slice(source.indexOf('function selectV4Variant'), source.indexOf('// ── V4 tag'));
   assert.doesNotMatch(selector, /demand|score|priority/i, 'the selector never reads demand score or priority');
@@ -150,62 +156,62 @@ test('3. precedence is A > D > E > F > B > C and never uses the demand score', (
 
 test('4. an ad class of MIXED without a current employer-facing ad is not COPY_A', () => {
   const mixedCandidateOnly = evidence({ employerAds: [employerAd({ employerFacingP: 0.4 })], candidateAds: [candidateAd()] });
-  const result = copy.selectV4Variant(mixedCandidateOnly);
+  const result = selectV1(mixedCandidateOnly);
   assert.equal(result.variant, 'COPY_B');
   assert.match(result.considered.find(c => c.variant === 'COPY_A').detail, /MIXED alone is not evidence/);
   // Unattributed employer ads do not count either.
-  assert.equal(copy.selectV4Variant(evidence({ employerAds: [employerAd()], attributionP: 0.3 })).variant, 'COPY_C');
+  assert.equal(selectV1(evidence({ employerAds: [employerAd()], attributionP: 0.3 })).variant, 'COPY_C');
 });
 
 // ── 5. Candidate-only and 6. stale ads ──────────────────────────────────────
 
 test('5. candidate-recruitment ads give COPY_B only with a quoted role and location', () => {
-  assert.equal(copy.selectV4Variant(evidence({ candidateAds: [candidateAd()] })).vars.verified_role, 'assembler');
+  assert.equal(selectV1(evidence({ candidateAds: [candidateAd()] })).vars.verified_role, 'assembler');
   // Role not in the quote: never invented, falls back to C.
-  assert.equal(copy.selectV4Variant(evidence({ candidateAds: [candidateAd({ role: 'welder' })] })).variant, 'COPY_C');
+  assert.equal(selectV1(evidence({ candidateAds: [candidateAd({ role: 'welder' })] })).variant, 'COPY_C');
   // Location missing: falls back to C.
-  assert.equal(copy.selectV4Variant(evidence({ candidateAds: [candidateAd({ location: '' })] })).variant, 'COPY_C');
+  assert.equal(selectV1(evidence({ candidateAds: [candidateAd({ location: '' })] })).variant, 'COPY_C');
 });
 
 test('6. stale or undated ads never select A or B', () => {
   const stale = evidence({ employerAds: [employerAd({ current: false, lastSeen: '2026-06-01' })],
     candidateAds: [candidateAd({ current: false, lastSeen: '2021-08-27' })] });
-  const result = copy.selectV4Variant(stale);
+  const result = selectV1(stale);
   assert.equal(result.variant, 'COPY_C');
   assert.match(result.considered.find(c => c.variant === 'COPY_A').detail, /none is current/);
   // "current" flag with an old last-seen date is still stale.
-  assert.equal(copy.selectV4Variant(evidence({ employerAds: [employerAd({ lastSeen: '2026-09-01' })] })).variant, 'COPY_C');
+  assert.equal(selectV1(evidence({ employerAds: [employerAd({ lastSeen: '2026-09-01' })] })).variant, 'COPY_C');
   // Undated (LinkedIn) employer ads are not current.
-  assert.equal(copy.selectV4Variant(evidence({ employerAds: [employerAd({ current: false, lastSeen: null })] })).variant, 'COPY_C');
+  assert.equal(selectV1(evidence({ employerAds: [employerAd({ current: false, lastSeen: null })] })).variant, 'COPY_C');
 });
 
 // ── 7. D, E, F rules ────────────────────────────────────────────────────────
 
 test('7. D needs the agency\'s own sales team, E a recent quoted market, F the recipient now in the role', () => {
-  assert.equal(copy.selectV4Variant(evidence({ salesHiring: [salesHire({ ownCommercialTeam: false })] })).variant, 'COPY_C', 'a client\'s sales job is not D');
-  assert.equal(copy.selectV4Variant(evidence({ salesHiring: [salesHire({ salesPosition: 'Recruiter' })] })).variant, 'COPY_C', 'a recruiter role is not sales');
-  assert.equal(copy.selectV4Variant(evidence({ salesHiring: [salesHire({ observedAt: '2026-08-01' })] })).variant, 'COPY_C', 'a closed posting is not D');
-  assert.equal(copy.selectV4Variant(evidence({ expansion: [expansion({ announcedAt: '2025-01-01' })] })).variant, 'COPY_C', 'an old expansion is not E');
-  assert.equal(copy.selectV4Variant(evidence({ expansion: [expansion({ market: 'Dallas' })] })).variant, 'COPY_C', 'the market must be in the quote');
-  assert.equal(copy.selectV4Variant(evidence({ leadership: [leader({ personName: 'Pat Jones' })] })).variant, 'COPY_C', 'F only for the recipient');
-  assert.equal(copy.selectV4Variant(evidence({ leadership: [leader({ current: false })] })).variant, 'COPY_C', 'F only while in the role');
-  assert.equal(copy.selectV4Variant(evidence({ leadership: [leader({ appointedAt: '2025-11-01' })] })).variant, 'COPY_C', 'F only when recent');
-  assert.equal(copy.selectV4Variant(evidence({ leadership: [leader({ title: 'Office Coordinator' })] })).variant, 'COPY_C', 'F only for a senior commercial role');
+  assert.equal(selectV1(evidence({ salesHiring: [salesHire({ ownCommercialTeam: false })] })).variant, 'COPY_C', 'a client\'s sales job is not D');
+  assert.equal(selectV1(evidence({ salesHiring: [salesHire({ salesPosition: 'Recruiter' })] })).variant, 'COPY_C', 'a recruiter role is not sales');
+  assert.equal(selectV1(evidence({ salesHiring: [salesHire({ observedAt: '2026-08-01' })] })).variant, 'COPY_C', 'a closed posting is not D');
+  assert.equal(selectV1(evidence({ expansion: [expansion({ announcedAt: '2025-01-01' })] })).variant, 'COPY_C', 'an old expansion is not E');
+  assert.equal(selectV1(evidence({ expansion: [expansion({ market: 'Dallas' })] })).variant, 'COPY_C', 'the market must be in the quote');
+  assert.equal(selectV1(evidence({ leadership: [leader({ personName: 'Pat Jones' })] })).variant, 'COPY_C', 'F only for the recipient');
+  assert.equal(selectV1(evidence({ leadership: [leader({ current: false })] })).variant, 'COPY_C', 'F only while in the role');
+  assert.equal(selectV1(evidence({ leadership: [leader({ appointedAt: '2025-11-01' })] })).variant, 'COPY_C', 'F only when recent');
+  assert.equal(selectV1(evidence({ leadership: [leader({ title: 'Office Coordinator' })] })).variant, 'COPY_C', 'F only for a senior commercial role');
 });
 
 // ── 8. Missing variables: fall back, else HOLD ──────────────────────────────
 
 test('8. missing or unsafe variables fall back to C, else HOLD, and never render', () => {
-  const badMarket = copy.selectV4Variant(evidence({ expansion: [expansion({ market: 'Houston \u2013 TX', quote: 'Opens in Houston \u2013 TX' })] }));
+  const badMarket = selectV1(evidence({ expansion: [expansion({ market: 'Houston \u2013 TX', quote: 'Opens in Houston \u2013 TX' })] }));
   assert.equal(badMarket.variant, 'COPY_C');
   assert.ok(badMarket.considered.some(c => c.variant === 'COPY_E' && /dash/.test(c.detail)));
-  const hold = copy.selectV4Variant(evidence({ specialization: null }));
+  const hold = selectV1(evidence({ specialization: null }));
   assert.equal(hold.status, 'HOLD');
   assert.equal(hold.variant, '');
   assert.throws(() => render(v4Lead(evidence({ specialization: null })), 1), /on hold/);
-  assert.equal(renderStaffingPreview(v4Lead(evidence({ specialization: null })), null, 1, OPTIONS), null);
+  assert.equal(renderStaffingPreview(v4Lead(evidence({ specialization: null })), null, 1, { ...OPTIONS, activities: V1_LEDGER }), null);
   // No first name: hold (never "Hi there," and never "Hi undefined,").
-  const noName = copy.selectV4Variant(evidence({ firstName: '' }));
+  const noName = selectV1(evidence({ firstName: '' }));
   assert.equal(noName.status, 'HOLD');
   for (const value of [undefined, null, 'undefined', 'null', '{{first_name}}', '  Dana', 'D', 'N/A']) {
     assert.ok(copy.variableProblem('first_name', value), `${String(value)} is refused`);
@@ -216,11 +222,11 @@ test('8. missing or unsafe variables fall back to C, else HOLD, and never render
 });
 
 test('8b. a held contact (NEEDS_EVIDENCE or unresolved email) never renders', () => {
-  const needs = copy.selectV4Variant(evidence({ employerAds: [employerAd()], contactStatus: 'NEEDS_EVIDENCE' }));
+  const needs = selectV1(evidence({ employerAds: [employerAd()], contactStatus: 'NEEDS_EVIDENCE' }));
   assert.equal(needs.status, 'HOLD');
   assert.equal(needs.variant, 'COPY_A', 'the evidence-supported variant is reported for review');
   assert.throws(() => render(v4Lead(evidence({ employerAds: [employerAd()], contactStatus: 'NEEDS_EVIDENCE' })), 1), /on hold/);
-  assert.equal(copy.selectV4Variant(evidence({ emailResolved: false })).status, 'HOLD');
+  assert.equal(selectV1(evidence({ emailResolved: false })).status, 'HOLD');
 });
 
 // ── 9. Scheduling ───────────────────────────────────────────────────────────
@@ -351,10 +357,12 @@ test('16. plain text and HTML carry the same words; only the performance sentenc
   }
 });
 
-test('17. the existing ScaleLab compliance footer, address, website and unsubscribe line are intact', () => {
+test('17. the ScaleLab compliance footer, address and unsubscribe line are intact; Campaign 3 has no website line', () => {
   for (const step of [1, 2, 3]) {
     const email = render(v4Lead(), step);
-    assert.ok(email.body.endsWith('scalelabai.ca\n\nThis is a commercial email. Not relevant? Reply "unsubscribe" and I won\'t follow up again.\n\nRef: SA-48271'));
+    // Owner copy change 2026-11-24: Campaign 3 drops the website line (both copy versions).
+    assert.ok(email.body.endsWith(`\n\nScaleLabAi\n${OPTIONS.mailingAddress}\n\nThis is a commercial email. Not relevant? Reply "unsubscribe" and I won't follow up again.\n\nRef: SA-48271`));
+    assert.ok(!email.body.includes('scalelabai.ca'));
     assert.ok(email.body.includes(OPTIONS.mailingAddress));
     assert.equal(email.body.split('Deins').length - 1, 1, 'one sign-off');
     assert.equal(validateStaffingEmail({ ...email, body: email.body.replace('Ref: SA-48271', '') }, step) !== null, true);
@@ -409,10 +417,15 @@ test('18b. live and SEND_READY, V4 attributes each send to its variant', () => {
   try {
     const lead = v4Lead(evidence({ employerAds: [employerAd()] }), { review: 'SEND_READY' });
     assert.equal(staffingV4SendBlock(lead), null);
-    assert.equal(coldSendAttribution(lead, 1).copyVersion, 'industrial_staffing_v4_e1_copy_a');
-    assert.equal(coldSendAttribution(lead, 1).copyVariant, 'COPY_A');
-    assert.equal(coldSendAttribution(lead, 2).copyVersion, 'industrial_staffing_v4_follow_up');
-    assert.equal(coldSendAttribution(lead, 2).subjectStrategy, 'thread_follow_up_v1');
+    const v1 = { activities: V1_LEDGER };
+    assert.equal(coldSendAttribution(lead, 1, v1).copyVersion, 'industrial_staffing_v4_e1_copy_a');
+    assert.equal(coldSendAttribution(lead, 1, v1).copyVariant, 'COPY_A');
+    assert.equal(coldSendAttribution(lead, 1, v1).staffingCopyVersion, 'v1');
+    assert.equal(coldSendAttribution(lead, 2, v1).copyVersion, 'industrial_staffing_v4_follow_up');
+    assert.equal(coldSendAttribution(lead, 2, v1).subjectStrategy, 'thread_follow_up_v1');
+    // A lead whose Email 1 has not gone out is attributed to v2.
+    assert.equal(coldSendAttribution(lead, 1).copyVersion, 'industrial_staffing_v4_e1_v2_copy_a');
+    assert.equal(coldSendAttribution(lead, 1).staffingCopyVersion, 'v2');
   } finally {
     if (prev === undefined) delete process.env.STAFFING_LAUNCH_ACTIVATED_AT; else process.env.STAFFING_LAUNCH_ACTIVATED_AT = prev;
   }

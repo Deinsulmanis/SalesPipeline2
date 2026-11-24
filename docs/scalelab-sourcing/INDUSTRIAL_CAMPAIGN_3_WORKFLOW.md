@@ -75,6 +75,25 @@ Every variant also requires a valid `first_name` and `company`, because Emails 2
 
 The supporting excerpt and URL are stored with the lead and shown in the preview.
 
+### Copy v2 (owner-approved 2026-11-24; on branch `claude/campaign3-copy-v2-2026-11-24`, not deployed until the owner says so)
+
+- **What changed:** all six Email 1 variants and both follow-ups (`EMAIL_1_V2`, `COPY_C_V2_FALLBACK`, `FOLLOW_UPS_V2` in `integrations/staffing-v4-copy.js`). v1 stays verbatim beside it. Precedence is unchanged: A > D > E > F > B > C > HOLD.
+- **COPY_C** has a primary form, "Saw you place {{specialty_line}}.", and a fallback, "Saw {{company}} focuses on {{verified_specialization}} staffing.". `specialty_line` is "<2 or 3 plural roles> for <client type>", built from the words of one first-party excerpt (`tools/copy_v2_evidence.py`). The selector re-checks that every word is in the quote, the line is lowercase (acronyms excepted), 90 characters or less, with no trailing period. With neither form valid, HOLD.
+- **COPY_B** may also come from the agency's own job postings within 30 days (`<run>/job_postings.json`): the single most common hands-on title, singular, with at least 2 postings, and its most common "City, ST".
+- **Locked text:**
+  - Email 1: "only get paid for the meetings we book", exactly once, no bold.
+  - Email 2: "We only get paid for the qualified meetings we book.", bold.
+  - Email 3: reply "later", no bold.
+  - A body mixing v1 and v2 lines is refused.
+- **Footer:** Campaign 3 drops the website line on every touch (`appendStaffingComplianceFooter(..., { includeWebsite: false })`). "Ref: SA-48271" stays the last line.
+- **Version pin per lead** (`integrations/staffing-v4-copy-version.js`):
+  1. A profile sealed under v2 (`copy_version` in `campaign_notes`) uses v2.
+  2. Otherwise the version recorded on the lead's Email 1 in the send ledger (`staffingCopyVersion`; Campaign 3 sends from before v2 have none, so they are v1).
+  3. Otherwise a row with any send is v1, and a row never sent is v2.
+
+  So leads mid-sequence on v1 finish on v1 Emails 2 and 3, and every Email 1 sent after deploy is v2 for all three touches.
+- **Reply-rate comparison:** every send records `staffingCopyVersion`. Its `copyVersion` reads `industrial_staffing_v4_e1_copy_c` (v1) or `industrial_staffing_v4_e1_v2_copy_c` (v2), and `industrial_staffing_v4_follow_up` or `..._follow_up_v2`.
+
 ## 4. Where the variant is stored
 
 Each lead's `campaign_notes` column holds a sealed JSON profile (schema `staffing_v4_lead_profile_v1`, `integrations/staffing-v4-profile.js`). It contains:

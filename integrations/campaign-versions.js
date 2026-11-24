@@ -13,6 +13,7 @@ const {
   STAFFING_CAMPAIGN_V4, staffingV4Live, isStaffingV4Marked,
 } = require('./staffing-campaign');
 const { readStaffingV4Profile } = require('./staffing-v4-profile');
+const { resolveV4CopyVersion } = require('./staffing-v4-copy-version');
 function staffingCampaign2Status() {
   const launch = staffingLaunchState().status;
   return launch === 'active' && !staffingCampaign2Open() ? 'approved' : launch;
@@ -289,10 +290,18 @@ function coldSendAttribution(lead = {}, step = 1, sendMeta = {}, { evidenceOnly 
     const read = readStaffingV4Profile(lead);
     if (!read.ok || read.profile.copy_status !== 'SELECTED') throw new Error('staffing V4 send has no sealed copy variant');
     const variant = read.profile.copy_variant;
+    // Copy version pinned per lead (staffing-v4-copy-version.js). It is recorded
+    // on every send as staffingCopyVersion, which also pins the thread's later
+    // touches, and named in copyVersion so reply rates compare v1 vs v2 by
+    // variant: industrial_staffing_v4_e1_copy_c (v1), ..._e1_v2_copy_c (v2),
+    // industrial_staffing_v4_follow_up (v1), ..._follow_up_v2 (v2).
+    const staffingCopyVersion = sendMeta.staffingCopyVersion
+      || resolveV4CopyVersion(lead, sendMeta.activities, { sealedCopyVersion: read.sealedCopyVersion }).copyVersion;
+    const suffix = staffingCopyVersion === 'v1' ? '' : `_${staffingCopyVersion}`;
     return {
       campaignVersion: version.id, campaignFamily: version.family, sequenceId: `${version.family}_cold`,
-      sequenceStep: Number(step),
-      copyVersion: initial ? `${version.copyVersion}_${variant.toLowerCase()}` : version.followUpCopyVersion,
+      sequenceStep: Number(step), staffingCopyVersion,
+      copyVersion: initial ? `${version.copyVersion}${suffix}_${variant.toLowerCase()}` : `${version.followUpCopyVersion}${suffix}`,
       subjectStrategy: initial ? version.subjectStrategy : 'thread_follow_up_v1',
       personalizationStrategy: version.personalizationStrategy,
       personalizationLevel: null, personalizationAngle: variant, copyVariant: variant,
