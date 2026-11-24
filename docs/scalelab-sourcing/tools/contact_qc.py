@@ -196,6 +196,8 @@ def verdict(v, g):
         return 'VERIFY_INVALID: verify_emails says invalid', None, 'invalid'
     if val == 'job_failed':
         return 'VERIFY_UNKNOWN: verification batch failed twice at the provider (not charged)', None, 'unverified'
+    if val == 'not_completed':
+        return 'VERIFY_UNKNOWN: verification batch still queued at the provider after the final poll', None, 'unverified'
     return f'VERIFY_UNKNOWN: verify_emails result {val}' + (' behind Proofpoint' if pp else ''), None, 'unverified'
 
 
