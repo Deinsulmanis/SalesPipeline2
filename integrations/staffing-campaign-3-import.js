@@ -13,8 +13,19 @@
  *     the identical Campaign 3 record, which is a safe no-op;
  *   - a company domain that already has a ScaleLab lead (V1, Campaign 2, V2,
  *     anything) is refused, so no previously contacted company is re-mailed;
+ *     the one exception is an owner-approved SECOND BUYER (below);
  *   - a record whose selection is HOLD (no verified variant, unresolved email,
  *     contact QC not READY_FOR_REVIEW) is refused, never written.
+ *
+ * Second buyer (owner decision 2026-11-24): with `owner_approved_second_buyer:
+ * true` on the request, a record carrying `second_buyer.prior_lead_ids` may add a
+ * DIFFERENT person at a company ScaleLab already emailed, only when every
+ * existing ScaleLab lead at that company is declared in prior_lead_ids and each
+ * one finished or stopped its sequence at least 30 days ago with no reply (an
+ * out-of-office is not a reply), no opt-out, no non-bounce suppression, is not
+ * queued or in a pipeline stage, and the company has no Campaign 3 lead yet. The
+ * prior rows are never read for copy and never written. Anything else stays
+ * `duplicate_company` or a specific second_buyer_* refusal.
  *
  * `owner_approved_send_ready: true` records the owner's explicit approval and
  * seals review_status SEND_READY; without it the profile is REVIEW_READY and
@@ -33,6 +44,11 @@ const {
 } = require('./staffing-v4-profile');
 
 const IMPORT_SCHEMA = 'industrial_campaign_3_import_v1';
+const SECOND_BUYER_MIN_DAYS = 30;
+const SECOND_BUYER_PRIOR_STAGES = new Set(['Done', 'Contacted', 'Review', 'Archived']);
+const OPT_OUT_MARKER = /\[REPLY:\s*(?:Unsubscribed|Not Interested)/i;
+const REPLY_MARKER = /\[REPLY(?: PRIORITY)?:(?!\s*OOO)/i; // any reply marker except out-of-office
+const BOUNCE_MARKER = /\[BOUNCED/i;
 const MAX_RECORDS = 200;
 const PERSONAL_DOMAINS = new Set(['gmail.com', 'googlemail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'live.com',
   'msn.com', 'aol.com', 'icloud.com', 'me.com', 'proton.me', 'protonmail.com', 'gmx.com', 'yandex.com', 'mail.com']);
@@ -62,6 +78,7 @@ function validatePayload(payload = {}) {
   return {
     records: payload.records, sourcingRunId: text(payload.sourcing_run_id),
     sendReady: payload.owner_approved_send_ready === true,
+    secondBuyerApproved: payload.owner_approved_second_buyer === true,
   };
 }
 
@@ -77,6 +94,44 @@ function indexCorpus(leads = []) {
     }
   }
   return { byEmail, scalelabDomains };
+}
+
+/**
+ * Pure: may this record be a second buyer at a company that already has ScaleLab leads?
+ * Returns null when allowed, else { code, reason }.
+ */
+function secondBuyerRefusal(record, domainLeads, request, suppressedEmails, nowIso) {
+  const declared = new Set((Array.isArray(record?.second_buyer?.prior_lead_ids) ? record.second_buyer.prior_lead_ids : [])
+    .map(text).filter(Boolean));
+  if (!request.secondBuyerApproved || !declared.size) {
+    return { code: 'duplicate_company', reason: 'a ScaleLab lead already exists for this company domain' };
+  }
+  const priors = [...new Map(domainLeads.map(lead => [text(lead.id), lead])).values()];
+  const undeclared = priors.filter(lead => !declared.has(text(lead.id)));
+  if (undeclared.length) return { code: 'second_buyer_undeclared_prior', reason: 'the company has a ScaleLab lead that was not declared as a prior contact' };
+  const nowMs = Date.parse(nowIso);
+  for (const prior of priors) {
+    const notes = text(prior.notes);
+    const stage = text(prior.stage);
+    if (hasStaffingV4ProfileMarker(prior) || text(prior.campaign) === STAFFING_CAMPAIGN_V4.name) {
+      return { code: 'second_buyer_company_in_campaign_3', reason: 'the company already has a Campaign 3 lead' };
+    }
+    if (OPT_OUT_MARKER.test(notes) || stage === 'Unsub') return { code: 'second_buyer_prior_opted_out', reason: 'a prior contact opted out' };
+    if (REPLY_MARKER.test(notes) || text(prior.emailStatus).toLowerCase() === 'replied') {
+      return { code: 'second_buyer_prior_replied', reason: 'a prior contact replied' };
+    }
+    if (suppressedEmails.has(normalizeEmail(prior.email)) && !BOUNCE_MARKER.test(notes)) {
+      return { code: 'second_buyer_prior_suppressed', reason: 'a prior contact is suppressed for a reason other than a bounce' };
+    }
+    if (!SECOND_BUYER_PRIOR_STAGES.has(stage)) return { code: 'second_buyer_prior_active', reason: `a prior contact is in stage ${stage || 'unknown'}` };
+    const last = Date.parse(text(prior.lastEmailedAt));
+    if (!Number.isFinite(last) || !Number.isFinite(nowMs) || nowMs - last < SECOND_BUYER_MIN_DAYS * 86400000) {
+      return { code: 'second_buyer_prior_recent', reason: `a prior contact was emailed less than ${SECOND_BUYER_MIN_DAYS} days ago (or never)` };
+    }
+  }
+  const found = new Set(priors.map(lead => text(lead.id)));
+  if ([...declared].some(id => !found.has(id))) return { code: 'second_buyer_prior_mismatch', reason: 'a declared prior lead is not at this company' };
+  return null;
 }
 
 /** Pure: which records would be written, which are already imported, and why the rest are refused. */
@@ -116,8 +171,13 @@ function evaluateCampaign3Import(payload, { leads = [], suppressedEmails = new S
       const otherClient = sameEmail.some(lead => { const owner = resolveLeadClient(lead); return owner.ok && owner.clientId !== DEFAULT_CLIENT_ID; });
       return refuse(otherClient ? 'cross_client_duplicate' : 'duplicate_email', 'this address already exists in the lead database');
     }
-    if (workDomains([domain, emailDomain(email)]).some(d => index.scalelabDomains.has(d))) {
-      return refuse('duplicate_company', 'a ScaleLab lead already exists for this company domain');
+    const companyDomains = workDomains([domain, emailDomain(email)]);
+    let secondBuyer = null;
+    if (companyDomains.some(d => index.scalelabDomains.has(d))) {
+      const domainLeads = companyDomains.flatMap(d => index.scalelabDomains.get(d) || []);
+      const blocked = secondBuyerRefusal(record, domainLeads, request, suppressedEmails, now());
+      if (blocked) return refuse(blocked.code, blocked.reason);
+      secondBuyer = [...new Set(domainLeads.map(lead => text(lead.id)))];
     }
     let selection;
     try { selection = selectV4Variant(evidence, { copyVersion: CURRENT_COPY_VERSION }); } catch (error) { return refuse('invalid_evidence', error.message); }
@@ -133,11 +193,12 @@ function evaluateCampaign3Import(payload, { leads = [], suppressedEmails = new S
     const sealed = readStaffingV4Profile({ campaign_notes: campaignNotes });
     if (!sealed.ok) return refuse('profile_integrity_failed', sealed.detail || sealed.reason);
     accepted.push({
-      index: position, importKey, variant: selection.variant,
+      index: position, importKey, variant: selection.variant, secondBuyer: Boolean(secondBuyer),
       lead: {
         id: newId ? newId() : '', company, contactName: text(evidence.contactName), email, city: '',
         tradeType: '', website: `https://${domain}`,
-        stage: 'Import', emailStatus: '', lastEmailedAt: '', emailStep: '', notes: '',
+        stage: 'Import', emailStatus: '', lastEmailedAt: '', emailStep: '',
+        notes: secondBuyer ? `Second buyer; prior ScaleLab lead ids: ${secondBuyer.join(', ')}` : '',
         reviewCount: '', rating: '', tier: '', siteContext: '',
         campaign: STAFFING_CAMPAIGN_V4.name, campaign_notes: campaignNotes, enrichment_attempted: '',
         leadNiche: STAFFING_CAMPAIGN_V4.niche,
@@ -174,9 +235,10 @@ async function importCampaign3Leads({ payload, dryRun = true, readCorpus, append
     sourcingRunId: result.request.sourcingRunId, sendReady: result.request.sendReady,
     received: result.request.records.length, accepted: leads.length, alreadyImported: result.alreadyImported.length,
     refused: result.refusals.length, written, mirror, byVariant,
-    leads: result.accepted.map(item => ({ index: item.index, id: item.lead.id, email: item.lead.email, company: item.lead.company, variant: item.variant })),
+    secondBuyers: result.accepted.filter(item => item.secondBuyer).length,
+    leads: result.accepted.map(item => ({ index: item.index, id: item.lead.id, email: item.lead.email, company: item.lead.company, variant: item.variant, secondBuyer: item.secondBuyer })),
     alreadyImportedLeads: result.alreadyImported, refusals: result.refusals, refusalsByCode: result.refusalsByCode,
   };
 }
 
-module.exports = { IMPORT_SCHEMA, MAX_RECORDS, validatePayload, evaluateCampaign3Import, importCampaign3Leads, importKeyFor };
+module.exports = { IMPORT_SCHEMA, MAX_RECORDS, SECOND_BUYER_MIN_DAYS, validatePayload, evaluateCampaign3Import, importCampaign3Leads, importKeyFor };

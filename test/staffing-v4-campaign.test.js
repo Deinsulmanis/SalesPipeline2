@@ -498,3 +498,53 @@ test('22. the import refuses suppressed, duplicate, previously contacted and hel
   assert.equal(result.accepted.length, 0);
   assert.deepEqual(result.refusals.map(r => r.code), ['suppressed', 'duplicate_email', 'duplicate_company', 'held', 'held', 'personal_mailbox']);
 });
+
+// ── Campaign 3 import: owner-approved second buyer (2026-11-24) ─────────────
+
+const priorLead = (extra = {}) => ({ id: 'prior1', email: 'owner@tradecostaffing.com', website: 'https://tradecostaffing.com',
+  campaign: 'Industrial Staffing Agency', clientId: 'scalelab', stage: 'Done', emailStatus: 'done', emailStep: '3',
+  lastEmailedAt: '2026-10-10T16:00:00.000Z', notes: '', ...extra });
+const secondBuyer = (extra = {}, sb = { prior_lead_ids: ['prior1'] }) => ({ ...record({ email: 'vp@tradecostaffing.com', ...extra }), second_buyer: sb });
+const sbPayload = (records, extra = {}) => payload(records, { owner_approved_send_ready: true, owner_approved_second_buyer: true, ...extra });
+
+test('22b. a second buyer at a finished, silent company is imported; the prior row is untouched', () => {
+  const prior = priorLead();
+  const before = JSON.stringify(prior);
+  const result = evaluateCampaign3Import(sbPayload([secondBuyer()]), { leads: [prior, { ...prior }], suppressedEmails: new Set() }, ids);
+  assert.equal(result.refusals.length, 0, JSON.stringify(result.refusals));
+  assert.equal(result.accepted.length, 1);
+  assert.equal(result.accepted[0].secondBuyer, true);
+  const lead = result.accepted[0].lead;
+  assert.equal(lead.email, 'vp@tradecostaffing.com');
+  assert.equal(lead.stage, 'Import');
+  assert.equal(lead.senderInboxId, '');
+  assert.match(lead.notes, /prior ScaleLab lead ids: prior1/);
+  assert.doesNotMatch(lead.notes, /\[/, 'no bracket marker that safety parsers could read');
+  assert.equal(JSON.stringify(prior), before, 'the prior lead is never modified');
+});
+
+test('22c. second-buyer refusals carry their own codes; without owner approval it stays duplicate_company', () => {
+  const now = ids.now;
+  const run = (prior, rec = secondBuyer(), extra = {}, supp = []) =>
+    evaluateCampaign3Import(sbPayload([rec], extra), { leads: [].concat(prior), suppressedEmails: new Set(supp) }, { ...ids, now }).refusals.map(r => r.code)[0];
+  assert.equal(run(priorLead(), secondBuyer(), { owner_approved_second_buyer: false }), 'duplicate_company');
+  assert.equal(run(priorLead(), secondBuyer({}, { prior_lead_ids: [] })), 'duplicate_company');
+  assert.equal(run([priorLead(), priorLead({ id: 'other', email: 'ops@tradecostaffing.com' })]), 'second_buyer_undeclared_prior');
+  assert.equal(run(priorLead({ notes: '[REPLY: Unsubscribed]' })), 'second_buyer_prior_opted_out');
+  assert.equal(run(priorLead({ stage: 'Unsub' })), 'second_buyer_prior_opted_out');
+  assert.equal(run(priorLead({ notes: '[MANUAL HOLD] [REPLY: Needs human]' })), 'second_buyer_prior_replied');
+  assert.equal(run(priorLead({ notes: '[REPLY PRIORITY: HIGH] [REPLY: Interested]' })), 'second_buyer_prior_replied');
+  assert.equal(run(priorLead({ emailStatus: 'replied' })), 'second_buyer_prior_replied');
+  assert.equal(run(priorLead(), secondBuyer(), {}, ['owner@tradecostaffing.com']), 'second_buyer_prior_suppressed');
+  assert.equal(run(priorLead({ stage: 'Queued' })), 'second_buyer_prior_active');
+  assert.equal(run(priorLead({ lastEmailedAt: '2026-11-01T16:00:00.000Z' })), 'second_buyer_prior_recent');
+  assert.equal(run(priorLead({ lastEmailedAt: '' })), 'second_buyer_prior_recent');
+  assert.equal(run(priorLead({ campaign: 'Industrial Campaign 3' })), 'second_buyer_company_in_campaign_3');
+  assert.equal(run(priorLead(), secondBuyer({}, { prior_lead_ids: ['prior1', 'ghost'] })), 'second_buyer_prior_mismatch');
+  // allowed: out-of-office, a bounce-suppressed prior address, and a manual hold with no reply
+  assert.equal(run(priorLead({ notes: '[REPLY: OOO until 2026-10-05]' })), undefined);
+  assert.equal(run(priorLead({ notes: '[BOUNCED 2026-10-02]' }), secondBuyer(), {}, ['owner@tradecostaffing.com']), undefined);
+  assert.equal(run(priorLead({ notes: '[MANUAL HOLD]', stage: 'Contacted', emailStep: '1' })), undefined);
+  // the person already emailed can never come back as the "second buyer"
+  assert.equal(run(priorLead(), secondBuyer({ email: 'owner@tradecostaffing.com' })), 'duplicate_email');
+});
