@@ -12,7 +12,8 @@ Filters before the merge (all name/domain rules, free):
   - non-US domains (country-code TLDs other than .us);
   - public bodies, unions, workforce boards, schools and hospitals;
   - a direct employer whose name merely contains a keyword: for the weak keywords (workforce, labor, employment,
-    resources) the name or domain must also carry a staffing word; known direct employers are dropped.
+    resources) a name without a staffing word that names a non-staffing industry (energy, construction, ag...) is
+    dropped; other weak-keyword names go to the crawl and the gate (check 2 decides). Known direct employers are dropped.
 Chains, name collisions and off-ICP names are handled by discover_merge.py (held for the owner, never paid for).
 
 Usage: python3 -I jobs_discover.py <run> <transcript|dir> [...]
@@ -35,6 +36,7 @@ STAFFING_DOMAIN = re.compile(r"staff|temp|recruit|labor|labour|jobs|hire|workfor
 PUBLIC = re.compile(r"\b(department|dept|county|state of|city of|commonwealth|government|federal|union|local \d+|laborers international|"
                     r"workforce (development|investment|board|commission|alliance|connection)|development board|board of|council|"
                     r"university|college|school|academy|hospital|health system|job corps|goodwill|ymca|church|ministries)\b", re.I)
+NON_STAFFING_INDUSTRY = re.compile(r"\b(energy|oil|gas|petroleum|natural resources|mining|minerals?|utilit\w*|pipeline|midstream|exploration|agri\w*|ag|farms?|lumber|timber|water|environmental|chemicals?|steel|metals|foods?|beverage|transport\w*|trucking|freight|logistics inc|construction|builders?|roofing|flooring|electric(al)? (co|company|inc)|mechanical|plumbing|landscap\w*)\b", re.I)
 DIRECT_EMPLOYERS = {"amazon.com", "amazon.jobs", "hiring.amazon.com", "walmart.com", "target.com", "fedex.com", "ups.com", "costco.com",
                     "homedepot.com", "lowes.com", "kroger.com", "tesla.com", "usps.com", "dhl.com", "xpo.com", "gxo.com"}
 US_TLDS = {"com", "net", "org", "us", "biz", "io", "co", "jobs", "work", "info", "pro", "llc", "inc", "careers", "group", "solutions",
@@ -85,8 +87,10 @@ def main():
             why = "DIRECT_EMPLOYER"
         elif PUBLIC.search(name):
             why = "PUBLIC_BODY_UNION_OR_SCHOOL"
-        elif set(e["keywords"]) <= WEAK and not (STAFFING_WORD.search(name) or STAFFING_DOMAIN.search(d)):
-            why = "KEYWORD_ONLY_NOT_STAFFING"
+        elif set(e["keywords"]) <= WEAK and not (STAFFING_WORD.search(name) or STAFFING_DOMAIN.search(d)) and NON_STAFFING_INDUSTRY.search(name):
+            # a weak keyword in a clearly non-staffing industry name (energy, construction, ag...) is a direct employer;
+            # other weak-keyword names go on to the crawl and the gate, where check 2 decides on first-party evidence
+            why = "KEYWORD_ONLY_DIRECT_EMPLOYER"
         e["prefilter"] = why
         if why:
             drop[why] += 1
