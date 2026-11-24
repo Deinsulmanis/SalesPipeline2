@@ -163,6 +163,7 @@ const { registerClientRoutes } = require('./integrations/clients/routes');
 const { importClientLeads } = require('./integrations/clients/lead-import');
 const { createImportBatchStore, processPendingImportBatches } = require('./integrations/clients/import-batches');
 const { leadsForClient, leadDefinitelyOtherClient, resolveLeadClient } = require('./integrations/clients/ownership');
+const { isArchivedMailbox, listedSenders } = require('./integrations/archived-mailboxes');
 const { clientOutreachView } = require('./integrations/clients/outreach-view');
 const { resolveClientId, DEFAULT_CLIENT_ID, listClients, getClient: getManagedClientConfig } = require('./integrations/clients/registry');
 const { clientSendState, clientSendBlock } = require('./integrations/clients/send-policy');
@@ -1851,7 +1852,7 @@ function analyticsScopeBlocks(dataset) {
       definition: 'Leads that are not archived and whose offer is not retired, with their own activity only.' },
     senderAnalytics: buildSenderAnalytics({
       leads: active, activities: activitiesForLeads(dataset.activities || [], active),
-      senders: configuredSenders().map(sender => ({ ...sender, staffingOnly: isStaffingOnlySender(sender) })),
+      senders: listedSenders(configuredSenders()).map(sender => ({ ...sender, staffingOnly: isStaffingOnlySender(sender) })),
       replyCategoryByLead: categoryByLead, holds: coldSenderHolds(),
     }),
     historical: {
@@ -1974,7 +1975,7 @@ app.get('/api/coldemail', requireAuth, async (req, res) => {
       leadTypeLabels: Object.fromEntries(LEAD_TYPE_IDS.map(id => [id, leadTypeLabel(id)])),
       // The inbox filter's options, from the same identity map the rows used.
       // Address and id only — nothing about credentials travels to the browser.
-      senderOptions: senderFilterOptions(scope.view ? scope.view.senderRows : visibleSenderIdentities()),
+      senderOptions: senderFilterOptions(listedSenders(scope.view ? scope.view.senderRows : visibleSenderIdentities())),
       pipelineAudit: scope.view?.pipelineAudit || dataset.pipelineAudit,
       sendActivity: scope.view?.sendActivity || dataset.sendActivity,
       fetchedAt: new Date(dataset.at).toISOString(),
@@ -2314,13 +2315,13 @@ app.get('/api/crm/health', requireAuth, async (req, res) => {
       calendarSyncState,
       canonicalReplyBoundary: process.env.CANONICAL_REPLY_BOUNDARY || null,
       mailboxObservationState: dataset.mailboxObservationState,
-      observerSenderIds: observableSenders(configuredSenders()).map(item => item.id),
+      observerSenderIds: observableSenders(listedSenders(configuredSenders())).map(item => item.id),
       funnel,
     });
     let gmailObserver;
     try {
       const rows = dataset.mailboxObservationState || [];
-      gmailObserver = observerHealth(rows, { senderIds: observableSenders(configuredSenders()).map(item => item.id) });
+      gmailObserver = observerHealth(rows, { senderIds: observableSenders(listedSenders(configuredSenders())).map(item => item.id) });
     } catch (error) {
       gmailObserver = [{ health: 'unavailable', lastError: `checkpoint state unavailable: ${error.message}` }];
     }
@@ -6179,7 +6180,7 @@ function scopedOutreachStats(dataset, view) {
     scope: { scope: 'active', activeLeads: view.rows.length, definition: 'This client only.' },
     senderAnalytics: buildSenderAnalytics({
       leads: view.leads.filter(lead => view.rows.some(row => String(row.id) === String(lead.id))),
-      activities: view.activeActivities, senders: view.senderRows,
+      activities: view.activeActivities, senders: listedSenders(view.senderRows),
       replyCategoryByLead: categoryByLead, holds: coldSenderHolds(),
     }),
     historical: {
@@ -6803,7 +6804,8 @@ async function gmailInboxStatus() {
   // and the hold reason. Display only — the send gates read the holds directly.
   const holds = coldSenderHolds();
   return {
-    inboxes: inboxes.map(rawInbox => {
+    // Owner-archived mailboxes are not listed (see archived-mailboxes.js).
+    inboxes: inboxes.filter(inbox => !isArchivedMailbox(inbox)).map(rawInbox => {
       const holdReason = holds.get(rawInbox.id) || null;
       const inbox = holdReason
         ? { ...rawInbox, sendEligible: false, sendingActive: false, coldHold: holdReason,
@@ -7628,7 +7630,7 @@ app.get('/api/outreach/routing-options', requireAuth, (_req, res) => {
         offerVersion: version.offerVersion, status: version.status,
       }));
     res.json({ niches: LEAD_TYPE_IDS, leadTypes: LEAD_TYPES.map(type => ({ id: type.id, label: type.label })),
-      inboxes: gmailInboxOptions(), versions, templates: EMAIL_TEMPLATES, staffingLaunch: staffingLaunchState() });
+      inboxes: listedSenders(gmailInboxOptions()), versions, templates: EMAIL_TEMPLATES, staffingLaunch: staffingLaunchState() });
   }
   catch (error) { res.status(500).json({ error: error.message }); }
 });

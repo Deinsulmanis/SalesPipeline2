@@ -22,6 +22,7 @@ const { clientPersonalizationState } = require('./client-email');
 const { replyOutcomeFromEvidence, leadHasReply } = require('../reply-analytics');
 const { uniqueCanonicalBounces, deliveredLeadIds } = require('../canonical-sends');
 const { coldSenderHolds } = require('../cold-delivery-policy');
+const { isArchivedMailbox } = require('../archived-mailboxes');
 
 const SEND_EVENTS = new Set(['initial_email_sent', 'follow_up_sent', 'sequence_step_sent']);
 // Shared analytics category -> this overview's reply buckets.
@@ -119,6 +120,7 @@ function buildClientOverview({
 
   const holds = coldSenderHolds(env);
   const clientSenders = senders.filter(sender => {
+    if (isArchivedMailbox(sender)) return false;   // owner-archived: not listed
     const owner = resolveSenderClient(sender);
     return owner.ok && owner.clientId === client.id;
   }).map(sender => {

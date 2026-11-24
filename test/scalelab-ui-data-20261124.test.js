@@ -119,7 +119,7 @@ test('Client Ops counts canonical bounces, delivered leads and held inboxes', ()
     bounce(1, '2026-11-20T15:10:00.000Z'), bounce(2, '2026-11-20T15:11:00.000Z')];
   const senders = [
     { id: 'primary', email: 'deins@scalelabai.ca', clientId: 'scalelab', status: 'active', sendEligible: true, dailyLimit: 50, credentialConfigured: true },
-    { id: 'old', email: 'deins@scalelabaiteam.com', clientId: 'scalelab', status: 'active', sendEligible: true, dailyLimit: 15, credentialConfigured: true },
+    { id: 'old', email: 'old@scalelabai.ca', clientId: 'scalelab', status: 'active', sendEligible: true, dailyLimit: 15, credentialConfigured: true },
   ];
   const overview = buildClientOverview({ clientId: 'scalelab', leads, activities, senders,
     env: { COLD_SENDER_HOLDS: 'old:mailbox_archived_access_not_configured' }, routedLeadReady: () => true });
