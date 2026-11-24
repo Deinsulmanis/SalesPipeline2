@@ -7,7 +7,8 @@ When a prospect agency says yes to the Email 2 offer ("Want me to pull a short s
 1. **Classify.** `scalelab-response-classification.js` returns `sample_list_request` only for a clear yes ("yes", "sure", "send it", "interested in the list", "what does that look like") when our own earlier turn in the thread offered the list. Mixed, conditional, pricing, meeting or negative replies fall through to the existing intents and reach the owner as before. The result is deterministic and high confidence, with no model call.
 2. **Route.** `scalelab-reply-router.js` treats it like interest: cold hold, a Follow Up card or task, owner `human`, `autoSendAllowed: false`.
 3. **Draft.** `scalelab-sample-list-flow.js` runs after the route reaches `complete` and only when `SCALELAB_SAMPLE_LIST_ENABLED=true`:
-   - It picks up to 10 still-hiring employers in the agency's state, using the HQ or branch state from the lead record (`campaign_notes`: `hq_state`, `state`, `var_location`, `var_market`, `branch_states`; or `city`).
+   - It picks up to 10 still-hiring employers with **2 or more open hands-on roles** (owner rule 2026-11-24), aiming for 5 to 10 rows. Employers in the agency's primary state come first, then its branch states. The states come from the lead record (`campaign_notes`: `hq_state`, `state`, `var_location`, `var_market`, `branch_states`; or `city`), then from `scalelab_agency_states` (backfilled by agency domain from the agency's own site addresses and Apollo HQ location). The V4 lead profile is digest-sealed, so the backfill never writes to `campaign_notes`.
+   - The market named in the email describes the listed rows: "Texas", "Texas and nearby states", or "Texas and other U.S. markets".
    - If fewer than 5 qualify there, it fills from neighbouring states and then the national 20.
    - It re-checks anyone whose check is more than 14 days old with GetLeads `search_jobs`, one call at a time with backoff. It drops anyone no longer hiring in that state.
    - If GetLeads fails, it uses the stored list only if every unchecked employer is within 21 days. Otherwise the request goes to review and the owner is pushed.
@@ -23,6 +24,7 @@ When a prospect agency says yes to the Email 2 offer ("Want me to pull a short s
 
 ## Data
 
+- `scalelab_agency_states` holds prospect agency domain, primary state, ordered states (HQ and branches), source (`lead_record`, `site_crawl`, `apollo_hq` or `manual`) and evidence. Loaded 2026-11-24: 347 of 349 Campaign 3 agencies.
 - `sample_employers` holds company-level rows only (company, domain, city, state, industry, open roles, example roles, newest posting, `checked_at`, status, national rank). There are no contacts. It is never committed: the repo is public.
 - Migration: `supabase/migrations/20261124120000_scalelab_sample_employers.sql`. RLS is on and only `service_role` has access.
 - Load: `node scripts/load-sample-employers.js runs-private/<run>/sample_employers_load.json` is a dry run. Add `--apply` to upsert.
