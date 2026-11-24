@@ -1,8 +1,15 @@
 """V4 Stage 2 decision (run after qualify.py, which caches the supplemental answers): supplemental Jev check for tentative PASS + deterministic PASS/HOLD/REJECT in code.
 
-Usage: python3 -I icp_decide.py <run_dir>
-Writes icp_decisions.json. Thresholds are recorded in the run report.
+Usage: python3 -I icp_decide.py <run_dir> [--jobs <jobs_evidence.json>] [--out <file>]
+Writes icp_decisions.json (or --out). Thresholds are recorded in the run report.
 Optional <run>/manual_review.json holds reviewer overrides; they can only tighten a decision.
+
+--jobs (owner decision 2026-11-24, see jobs_rule.py): a company whose own job postings PROMOTE under the job-posting
+rule meets check 3 (industrial line), check 8 (hands-on workers) and with them checks 7 and 9. Check 4 (placement
+model) is met by the website as before, or by 2+ hands-on postings that say temporary / contract / temp-to-hire /
+contract-to-hire. Checks 1 (identity), 2 (employer-facing staffing), 5 (US) and 6 (not a national chain) are
+unchanged and still required. The job path can also lift a website NO_INDUSTRIAL_LINE reject, never NOT_STAFFING.
+Every decision records evidence_basis: website, job_postings or both.
 """
 import json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -10,6 +17,8 @@ import v4config  # noqa: E402
 import urllib.request, urllib.error, time
 
 RUN = sys.argv[1]
+JOBS = json.load(open(sys.argv[sys.argv.index("--jobs") + 1])) if "--jobs" in sys.argv else {}
+OUT = sys.argv[sys.argv.index("--out") + 1] if "--out" in sys.argv else os.path.join(RUN, "icp_decisions.json")
 MODEL = v4config.JEV_MODEL
 T = {"identity": 0.7, "identity_conflict": 0.5, "type": 0.7, "industrial": 0.7, "model": 0.5, "us": 0.7, "chain": 0.5, "reject": 0.8, "hands_on": 0.7, "mgmt_only": 0.5}
 
@@ -117,7 +126,29 @@ def main():
                     r.update(company_icp="HOLD", icp_reason_code="UNVERIFIED" if "chain" not in " ".join(reasons) else "OTHER", reason="; ".join(reasons))
                 else:
                     r.update(company_icp="PASS", icp_reason_code="VERIFIED_INDUSTRIAL_STAFFING", reason="First-party site shows US employer-facing staffing with a substantive industrial/skilled-trades line placing hands-on workers")
-        r["decided_by"] = "Jev answers + code thresholds"
+        # Job-posting path (--jobs): checks 1, 2, 5, 6 still required; postings meet 3/7/8/9; check 4 by site or postings.
+        je = JOBS.get(d)
+        site_pass = r.get("company_icp") == "PASS"
+        if je:
+            r["jobs"] = {k: je.get(k) for k in ("verdict", "why", "match", "F", "T", "hands_on", "share", "estimated", "temp_hands_on", "check4_by_postings", "sample_roles", "other_roles")}
+        if je and je.get("verdict") == "PROMOTE" and not site_pass and r.get("icp_reason_code") != "NOT_STAFFING":
+            miss = []
+            if identity < T["identity"]: miss.append(f"identity match weak (p={identity})")
+            if not (bt == "employer_facing_staffing" and j["business_type_p"] >= T["type"]): miss.append(f"employer-facing staffing not established ({bt}, p={j['business_type_p']})")
+            if j["us_operations"] < T["us"]: miss.append(f"US operations not corroborated (p={j['us_operations']})")
+            if j["large_national_chain"] >= T["chain"]: miss.append(f"large national chain / franchise network (p={j['large_national_chain']})")
+            c4_site = j["service_model"] in ("temporary_or_contract", "direct_hire_only") and j["service_model_p"] >= T["model"]
+            if not (c4_site or je.get("check4_by_postings")): miss.append("placement model not shown on the site, and fewer than 2 hands-on postings say temporary/contract")
+            if not miss:
+                lifted = r.get("company_icp") == "REJECT"
+                r.update(company_icp="PASS", icp_reason_code="VERIFIED_BY_JOB_POSTINGS",
+                         reason=f"Agency's own job postings: {je['why']}; checks 1, 2, 5, 6 pass on the first-party site; placement model by "
+                                + ("site" if c4_site else "postings (temporary/contract terms)") + (" (lifted a website NO_INDUSTRIAL_LINE reject)" if lifted else ""))
+            elif r.get("company_icp") == "HOLD":
+                r["reason"] += "; job postings qualify but: " + "; ".join(miss)
+        r["evidence_basis"] = ("both" if je and je.get("verdict") == "PROMOTE" else "website") if site_pass else (
+            "job_postings" if r.get("icp_reason_code") == "VERIFIED_BY_JOB_POSTINGS" else None)
+        r["decided_by"] = "Jev answers + code thresholds" + (" + job postings" if r.get("evidence_basis") in ("job_postings", "both") else "")
         r["industrial_specializations"] = ev["keyword_specializations"]
         r["staffing_models"] = ev["keyword_models"]
         r["icp_evidence"] = [{"url": z["url"], "excerpt": z["excerpt"], "observed_at": z["observed_at"], "published_at": None} for z in (ind_ex[:4] + [z for z in ev["excerpts"] if "employer_facing" in z["tags"] and z not in ind_ex][:2] + [z for z in ev["excerpts"] if "geo" in z["tags"]][:1])]
@@ -132,8 +163,8 @@ def main():
             m = mr.get(r["domain"])
             if m and rank.get(m["decision"], 0) > rank.get(r["company_icp"], 0):
                 r.update(company_icp=m["decision"], icp_reason_code="MANUAL_REVIEW", reason="Manual review: " + m["reason"],
-                         decided_by="manual review (after Jev + code)")
-    json.dump(out, open(os.path.join(RUN, "icp_decisions.json"), "w"), indent=1)
+                         decided_by="manual review (after Jev + code)", evidence_basis=None)
+    json.dump(out, open(OUT, "w"), indent=1)
     from collections import Counter
     print(Counter((x["company_icp"], x["icp_reason_code"]) for x in out))
     for x in out:
