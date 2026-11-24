@@ -35,6 +35,8 @@ test('the dashboard does not list archived mailboxes', () => {
   assert.match(server, /inboxes: listedSenders\(gmailInboxOptions\(\)\), versions/);
   assert.match(server, /function visibleSenderIdentities\(\) \{\n  return gmailInboxOptions\(\)/, 'lead history still resolves archived inboxes');
   assert.equal((server.match(/observableSenders\(listedSenders\(configuredSenders\(\)\)\)/g) || []).length, 2, 'CRM Health observers skip them');
+  assert.match(server, /mailboxObservationState: listedObservationRows\(dataset\.mailboxObservationState\)/);
+  assert.match(server, /const rows = listedObservationRows\(dataset\.mailboxObservationState\);/);
 });
 
 test('Client Ops does not list archived mailboxes', () => {

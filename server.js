@@ -164,6 +164,9 @@ const { importClientLeads } = require('./integrations/clients/lead-import');
 const { createImportBatchStore, processPendingImportBatches } = require('./integrations/clients/import-batches');
 const { leadsForClient, leadDefinitelyOtherClient, resolveLeadClient } = require('./integrations/clients/ownership');
 const { isArchivedMailbox, listedSenders } = require('./integrations/archived-mailboxes');
+// CRM Health reads the stored observer checkpoints (header row first, inbox id
+// in column A); an owner-archived mailbox's checkpoint is not reported.
+const listedObservationRows = (rows = []) => (rows || []).filter((row, index) => index === 0 || !isArchivedMailbox({ id: String((row || [])[0] || '') }));
 const { clientOutreachView } = require('./integrations/clients/outreach-view');
 const { resolveClientId, DEFAULT_CLIENT_ID, listClients, getClient: getManagedClientConfig } = require('./integrations/clients/registry');
 const { clientSendState, clientSendBlock } = require('./integrations/clients/send-policy');
@@ -2314,13 +2317,13 @@ app.get('/api/crm/health', requireAuth, async (req, res) => {
       appointmentScheduleId: BOOKING_APPOINTMENT_SCHEDULE_ID,
       calendarSyncState,
       canonicalReplyBoundary: process.env.CANONICAL_REPLY_BOUNDARY || null,
-      mailboxObservationState: dataset.mailboxObservationState,
+      mailboxObservationState: listedObservationRows(dataset.mailboxObservationState),
       observerSenderIds: observableSenders(listedSenders(configuredSenders())).map(item => item.id),
       funnel,
     });
     let gmailObserver;
     try {
-      const rows = dataset.mailboxObservationState || [];
+      const rows = listedObservationRows(dataset.mailboxObservationState);
       gmailObserver = observerHealth(rows, { senderIds: observableSenders(listedSenders(configuredSenders())).map(item => item.id) });
     } catch (error) {
       gmailObserver = [{ health: 'unavailable', lastError: `checkpoint state unavailable: ${error.message}` }];
