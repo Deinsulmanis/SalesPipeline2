@@ -47,7 +47,7 @@ HANDS_ON = re.compile(
     r"industrial maintenance|millwright|electrician|electrical apprentice|apprentice electrician|carpenter|pipefitter|"
     r"pipe fitter|plumber|ironworker|iron worker|mason|concrete|framer|drywall|roofer|hvac tech\w*|"
     r"heavy equipment operator|equipment operator|construction (worker|labou?rer|helper)|press operator|sorter|stocker|"
-    r"tool and die|sheet metal|quality inspector|qc inspector|inspector|wire harness|installer|"
+    r"tool and die|sheet metal|quality inspector|qc inspector|wire harness|installer|"
     r"(electrician|electrical|construction|plumber|plumbing|hvac|welder|carpenter) helper|mechanic)\b", re.I)
 NOT_HANDS_ON = re.compile(
     r"\b(manager|management|supervisor|superintendent|director|engineer|engineering|recruiter|coordinator|planner|"
@@ -65,10 +65,17 @@ def is_hands_on(title):
     return bool(HANDS_ON.search(t)) and not NOT_HANDS_ON.search(t)
 
 
+TITLE_TEMP = re.compile(r"\b(temp|temps|temporary|contract|contractor|temp[- ]to[- ]hire|contract[- ]to[- ]hire)\b", re.I)
+
+
 def says_temp(p):
+    """The posting itself says temporary / contract / temp-to-hire / contract-to-hire: in its employment type, anywhere
+    in its (short) title, or as a placement phrase in its description (a bare "contractor" there usually names a client)."""
     if (p.get("employment_type") or "").lower() in ("contract", "temporary"):
         return True
-    return bool(TEMP.search((p.get("title") or "") + " " + (p.get("description") or "")))
+    if TITLE_TEMP.search(p.get("title") or ""):
+        return True
+    return bool(TEMP.search(p.get("description") or ""))
 
 
 def root(d):
@@ -196,6 +203,11 @@ def evidence(run, call_files):
             # one-round mode: the listing's total_results is the industrial-function count for the domain
             ld = idx[("l_dom_fn", d)]
             gd = {"data": [{"role_count": ld.get("total_results") or 0}] if (ld.get("total_results") or 0) else []}
+        if gd is None and ("g_dom_all", d) in idx:
+            # only the all-function total is known: when it is under 2, the industrial count (<= total) is too
+            ta = sum(r.get("role_count") or 0 for r in idx[("g_dom_all", d)].get("data") or [])
+            if ta < 2:
+                gd = {"data": [{"role_count": ta}] if ta else []}
         if gd is not None:
             e["searched"].append("domain")
             F = sum(r.get("role_count") or 0 for r in gd.get("data") or [])
