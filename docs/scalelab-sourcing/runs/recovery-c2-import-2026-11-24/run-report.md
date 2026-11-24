@@ -1,6 +1,8 @@
 # Recovery of the 187 Campaign 2 / V1 Import-stage leads (2026-11-24)
 
-Run name `recovery-c2-import-2026-11-24`. The leads were held by `STAFFING_HOLD_V1` in Staffing Outreach Campaign 2 and Industrial Staffing Agency (V1). This run was read-only on production. **Nothing was imported, queued, archived, re-staged or changed.** No buyer names or emails appear here; contact-level files are git-ignored.
+Run name `recovery-c2-import-2026-11-24`. The leads were held by `STAFFING_HOLD_V1` in Staffing Outreach Campaign 2 and Industrial Staffing Agency (V1). The review below was read-only on production. No buyer names or emails appear here; contact-level files are git-ignored.
+
+> **Update, same day:** with the owner's approval, **51 recovered leads were converted in place into Industrial Campaign 3 and queued**. See [Conversion into Campaign 3](#conversion-into-campaign-3-owner-approved). Nothing was archived.
 
 ## Result
 
@@ -115,9 +117,51 @@ Each recovered lead's own Campaign 2 row triggers both. Archiving the Campaign 2
 3. **Deploy.** Follow the outreach-safety skill: push the production branch, re-pin the Railway service with the full SHA outside send windows, then verify boot, crons, send lock and caps.
 4. **Run.** Dry run on the 39 copy-ready recoveries, then a live convert. Queue with the normal queue endpoint: explicit inbox split, non-catch-alls first, the 13 catch-alls last.
 
+## Conversion into Campaign 3 (owner-approved)
+
+**Owner decisions:**
+- approve all 21 ICP_UNRESOLVED as ICP fits, but exclude 8 of them: 5 contact problems and 3 Canadian companies;
+- build the convert-in-place step, then convert and queue every eligible recovery.
+
+**Endpoint:** `POST /api/staffing/campaign-3/leads/convert` (production branch `fix/send-throughput-20261020`), with 9 new tests. Deployed by re-pinning Railway outside the send windows. Boot, crons, send lock, delivery gate and caps were verified unchanged afterwards.
+
+**Owner-approved leads (13).** The two remaining verification jobs (10 and 3 addresses) completed: 12 valid and 1 ambiguous catch-all. 8 of the 13 are catch-alls. All 13 pass contact QC and 11 get COPY_C. The other 2 are copy holds: no variant has verified evidence and complete variables.
+
+| Conversion pass | Leads | Non-catch-all | Catch-all | `[MANUAL HOLD]` released |
+|---|---|---|---|---|
+| 1. ICP_CONFIRMED copy-ready | 40 | 27 | 13 | 0 |
+| 2. Owner-approved (first verification job) | 8 | 2 | 6 | 2 |
+| 3. Owner-approved (second verification job) | 3 | 2 | 1 | 1 |
+| **Total** | **51** | **31** | **20** | **3** |
+
+- **Source campaigns:** 33 from Staffing Outreach Campaign 2 and 18 from Industrial Staffing Agency V1. All are COPY_C.
+- **Released holds:** each of the 3 `[MANUAL HOLD]` markers recorded the ICP question the owner settled ("industrial staffing fit not yet established" or `ICP_UNRESOLVED`). Only the marker was removed; the rest of each note is intact. The 3 contact-association holds among the CONFIRMED leads stay held.
+
+**How each pass ran:**
+1. Snapshot the rows first.
+2. Dry run, then live.
+3. Repeat the call: it returned `alreadyConverted` with 0 written.
+4. Supabase post-check: on every row only `campaign`, `campaign_notes`, the template, the intended version and `revision` (+1) changed, plus `notes` on the 3 released rows. Stage stayed `Import`, with no sender, step or send, and identity unchanged. All 51 writes were mirrored to Sheets.
+
+**Queue.** Explicit per-inbox split, non-catch-alls first in every pass. Final Campaign 3 queue: primary 52, deniels 47, zoe 26, merrick 26, dave 26.
+- That is about 7 over one weekday's limits, so the last few roll to the following day.
+- Converted rows keep their old lead ids, which sort ahead of newly imported ones. As a result, they cannot be forced to the end of the queue.
+
+**Post-checks:**
+- `launch-readiness` shows `wouldSendIfSendingEnabled: true` for all 51;
+- staffing queued 127 → 178, eligible 126 → 177;
+- leads blocked by manual hold 90 → 87;
+- the sender-balance plan has 0 moves and no hard shortages.
+
+**Verification spend for this run:** wallet $10.9435 → $10.8565, so **$0.087** of the $0.25 cap.
+
+**Found in passing (not changed):**
+- 3 Jole BTX leads (client `jole`) have sat in Queued on the ScaleLab `deniels` inbox since 2026-11-16;
+- 1 old Industrial Staffing Agency V1 lead has sat in Queued on `primary` since 2026-09-15. It is the 1 queued staffing lead that readiness counts as not eligible.
+
 ## What waits on the owner
 
-1. Approve building and deploying the convert-in-place step, then converting and queueing the 39 copy-ready recoveries.
+1. Decide what to do with the 3 Jole BTX leads queued on a ScaleLab inbox, and the 1 stale V1 lead queued on `primary`.
 2. Optional: approve the V4 Jev gate (about $0.03) for the 68 V4_FIT_DOUBT leads.
-3. Review the 21 UNRESOLVED and decide on archiving the 25 REJECTs.
-4. Separately: 82 new copy-ready leads from the V4 master can go through the normal import now (stage 12).
+3. Decide on archiving the 25 REJECTs.
+4. The 7 recovered copy holds need more evidence before they can get a variant.

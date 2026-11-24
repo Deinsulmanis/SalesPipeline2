@@ -296,6 +296,17 @@ Follow the outreach-safety skill. Pre-check, read only:
    - A Supabase count by stage for `campaign = 'Industrial Campaign 3'`.
 6. **Report send-ready:** queued Email 1 leads, plus contacted leads still in sequence, minus opt-outs.
 
+### 12b. Convert an existing V1 / Campaign 2 row (recovered leads)
+
+The import refuses an address or company that already has a ScaleLab row (`duplicate_email`, `duplicate_company`), so leads recovered from Staffing Outreach Campaign 2 or Industrial Staffing Agency (V1) are converted **in place**, keeping their lead id. Use this only with the owner's approval in the current task.
+
+1. **Payload:** `POST /api/staffing/campaign-3/leads/convert`, body `{"schema":"industrial_campaign_3_convert_v1","sourcing_run_id":"<run>","owner_approved_send_ready":true,"records":[{"lead_id","row","evidence"}]}`. `row` and `evidence` come from the run's `v4-copy-evidence.json`. With no `dry_run` field it writes nothing.
+2. **Held rows:** add `"release_manual_hold": true` only when the owner has approved the lead and the `[MANUAL HOLD]` reason is the question they settled (for example "industrial staffing fit not yet established"). Never for a contact-association hold.
+3. **What it refuses:** non-ScaleLab or unresolved owner, a row already in Campaign 3 or carrying a V2 profile, anything past stage `Import`, any send, step or sender, reply and bounce markers, suppression, a duplicate address or company, and evidence that is not `SELECTED`.
+4. **Write:** compare-and-set on the current state. It changes only `campaign`, `campaign_notes` (the sealed V4 profile, marked `campaign3-convert:<run>`), the template and intended version, `leadNiche` and `routingRequired`, plus `notes` when it releases a hold. Live runs need Supabase primary authority (otherwise 409 `authority_not_canonical`).
+5. **Check:** snapshot the rows first (md5 of notes, campaign notes and identity, plus revision). Afterwards only those fields may differ and revision is up by one. A repeat call returns `alreadyConverted`.
+6. **Queue:** as in step 12, non-catch-alls first. Converted rows keep their old ids, which sort **before** newly imported ones, so they cannot be forced to the end of the queue. Keep each inbox inside one day's capacity if catch-alls must go last.
+
 ## Benchmarks (for estimates)
 
 | Stage | 2026-11-23 run (2,000 companies) | Wave 1 / Codex re-check |
