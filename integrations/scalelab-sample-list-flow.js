@@ -10,7 +10,7 @@
 //  - restockSampleEmployers: weekly, one GetLeads call at a time.
 const { randomUUID } = require('node:crypto');
 const {
-  INTENT, buildSampleList, renderSampleListBody, summarizePostings, autoSendDecision, sampleListOutcome,
+  INTENT, buildSampleList, renderSampleListBody, renderSampleListHtml, summarizePostings, autoSendDecision, sampleListOutcome,
   STATE_NAMES, AUTOSEND_DELAY_MS, MIN_OPEN_ROLES,
 } = require('./scalelab-sample-list');
 
@@ -138,6 +138,8 @@ async function draftSampleListForAction({ action, inbound, lead, suppressedEmail
 
   const { firstName, company } = greetingFor(lead);
   const body = appendFooter(renderSampleListBody({ firstName, company, market: list.market, employers: list.employers }));
+  // text/html carries a simple table; the plain-text table stays as text/plain.
+  const html = renderSampleListHtml(body, list.employers);
   const claimId = randomUUID();
   const summary = { count: list.employers.length, scope: list.scope, state: list.state, market: list.market,
     usedStoredFallback: list.usedStoredFallback, agencyStateKnown: Boolean(list.state) };
@@ -149,7 +151,7 @@ async function draftSampleListForAction({ action, inbound, lead, suppressedEmail
     negativeSignal: NEGATIVE_SIGNAL.test(String(inbound.text || '')) }, occurredAt: now.toISOString() });
   if (claim?.detail?.claimId !== claimId) return { status: 'existing', row: claim };
 
-  const draft = await createDraft({ lead, inbound, mailboxId: action.mailboxId, subject: reSubject(inbound.subject), body });
+  const draft = await createDraft({ lead, inbound, mailboxId: action.mailboxId, subject: reSubject(inbound.subject), body, html });
   if (!draft?.id) throw new Error('Gmail draft id missing');
   const row = await store.updateEvent(ids.draft, { gmail_draft_id: draft.id,
     detail: { ...claim.detail, status: 'ready', draftedAt: now.toISOString() } });
@@ -161,7 +163,7 @@ async function draftSampleListForAction({ action, inbound, lead, suppressedEmail
   const where = list.state ? STATE_NAMES[list.state] : 'state unknown, national list';
   await notify({ title: 'Sample list drafted',
     message: `${company || 'Prospect'}: ${list.employers.length} employers (${where}) drafted in the Gmail thread. Review and send.` });
-  return { status: 'drafted', list, body, draftId: draft.id, row };
+  return { status: 'drafted', list, body, html, draftId: draft.id, row };
 }
 
 /** Auto-send of ready drafts. OFF by default; when on, every gate still applies. */

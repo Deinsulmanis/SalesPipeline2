@@ -480,3 +480,43 @@ test('the market label describes the listed rows and titles are tidied', () => {
   assert.equal(list.cleanTitle('Production Associate 2027'), 'Production Associate');
   assert.equal(list.cleanTitle('Welder/Fabricator - Night Shift'), 'Welder/Fabricator');
 });
+
+test('the draft carries a simple HTML table with the plain-text table as fallback', async () => {
+  const employers = [employer(1, 'TX', { company: 'Smith & Sons <Fab>', exampleRoles: ['Pipe Welder', 'Fitter – Class A'] }),
+    employer(2, 'TX', { openRolesLabel: '11+' })];
+  const text = appendStaffingComplianceFooter(list.renderSampleListBody({ firstName: 'Pat', company: 'Example Staffing', market: 'Texas', employers }),
+    { companyName: 'ScaleLabAi', website: 'scalelabai.ca', mailingAddress: '100 Example Street, Suite 2, Springfield, IL 62701' });
+  // The full-list line follows the table in the text version.
+  assert.match(text, /\| Welder, Machinist\n\nHappy to share the full list for your area on a quick call\.\n\nThese are the kinds/);
+  const html = list.renderSampleListHtml(text, employers);
+  assert.match(html, /^<p>Hi Pat,<\/p>\n<p>Here are 2 employers in Texas hiring the trades you place right now:<\/p>\n<table style="border-collapse:collapse;"><thead><tr><th[^>]*>Company<\/th><th[^>]*>City, State<\/th><th[^>]*>Open roles<\/th><th[^>]*>Example roles<\/th><\/tr><\/thead><tbody>/);
+  assert.match(html, /<td[^>]*>Smith &amp; Sons &lt;Fab&gt;<\/td><td[^>]*>Town 1, TX<\/td><td[^>]*>\d+<\/td><td[^>]*>Pipe Welder, Fitter<\/td>/);
+  assert.match(html, /<td[^>]*>11\+<\/td>/);
+  assert.match(html, /<\/table>\n<p>Happy to share the full list for your area on a quick call\.<\/p>\n<p>These are the kinds/);
+  assert.match(html, /<p>Deins<\/p>/);
+  assert.ok(html.includes('Ref: '), 'the compliance footer is in the HTML part too');
+  assert.equal(list.sampleListHtmlProblem(html), null);
+  assert.doesNotMatch(html, /<a\b|<img|href=|src=|url\(|color:|background|<style|<link/i);
+  assert.doesNotMatch(html, /Company +\|/, 'the plain-text table is not repeated in HTML');
+  for (const bad of ['<a href="x">x</a>', '<img src="x">', '<p style="color:red">x</p>', '<link rel="stylesheet">']) {
+    assert.ok(list.sampleListHtmlProblem(bad), bad);
+  }
+  const { buildMultipartAlternative } = require('../integrations/email-alternative');
+  const mime = buildMultipartAlternative(text, html);
+  assert.match(mime.contentType, /^multipart\/alternative; boundary=/);
+  assert.equal((mime.body.match(/Content-Type: text\/plain/g) || []).length, 1);
+  assert.equal((mime.body.match(/Content-Type: text\/html/g) || []).length, 1);
+  assert.doesNotMatch(mime.body, /Content-Disposition|attachment/i);
+});
+
+test('the flow hands both versions to the Gmail draft, which builds multipart/alternative', async () => {
+  const store = memoryStore(Array.from({ length: 6 }, (_, i) => employer(i, 'TX')));
+  const harness = deps(store);
+  await flow.draftSampleListForAction({ action, inbound, lead, now: NOW, deps: harness.deps });
+  const draft = harness.drafts[0];
+  assert.match(draft.body, /Happy to share the full list for your area on a quick call\./);
+  assert.match(draft.html, /<table style="border-collapse:collapse;">/);
+  assert.match(draft.html, /FOOTER<\/p>$/);
+  const agent = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'outreach-agent.js'), 'utf8');
+  assert.match(agent, /async function createSampleListGmailDraft\(\{ sender, lead, inbound, subject, body, html \}\)[\s\S]{0,300}toRawMessage\(\{ to: String\(lead\.email \|\| ''\)\.trim\(\), subject, body, html,/);
+});

@@ -13,6 +13,7 @@ const STORED_FALLBACK_DAYS = 21;
 const POSTING_WINDOW_DAYS = 30;
 const AUTOSEND_DELAY_MS = 10 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const FULL_LIST_LINE = 'Happy to share the full list for your area on a quick call.';
 
 // The offer appears in our own earlier turn ("Want me to pull a short sample
 // list of employers hiring in your market?"). Any wording of it counts.
@@ -324,12 +325,51 @@ function renderSampleListBody({ firstName, company, market, employers }) {
   const greeting = norm(firstName) ? `Hi ${noDashes(norm(firstName))},` : 'Hi there,';
   const agency = noDashes(norm(company)) || 'your agency';
   const body = `${greeting}\n\nHere are ${employers.length} employers in ${noDashes(market)} hiring the trades you place right now:\n\n`
-    + `${renderTable(employers)}\n\n`
+    + `${renderTable(employers)}\n\n${FULL_LIST_LINE}\n\n`
     + `These are the kinds of companies we'd reach and book meetings with for ${agency}.\n\n`
     + "Worth a 15-minute call to walk through how we'd approach them?\n\nDeins";
   const problem = sampleListBodyProblem(body);
   if (problem) throw new Error(problem);
   return body;
+}
+
+const escapeHtml = text => String(text).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const CELL = 'text-align:left;padding:4px 10px;';
+
+function htmlTable(employers) {
+  const head = ['Company', 'City, State', 'Open roles', 'Example roles']
+    .map(label => `<th style="${CELL}border-bottom:1px solid;">${label}</th>`).join('');
+  const rows = employers.map(item => {
+    const roles = [...new Set(item.exampleRoles.map(cleanTitle).filter(Boolean))].slice(0, 3).join(', ');
+    return '<tr>' + [item.company, `${item.city}, ${item.state}`, rolesLabel(item), roles]
+      .map(value => `<td style="${CELL}">${escapeHtml(noDashes(value))}</td>`).join('') + '</tr>';
+  }).join('');
+  return `<table style="border-collapse:collapse;"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+/**
+ * The text/html part, built from the FINAL text (footer included): every
+ * paragraph is escaped text, except the plain-text table, which becomes a
+ * simple HTML table. No links, images, colours or external CSS.
+ */
+function renderSampleListHtml(text, employers) {
+  const table = renderTable(employers);
+  const paragraphs = String(text).split('\n\n');
+  if (!paragraphs.includes(table)) throw new Error('sample list text has no table to render');
+  const html = paragraphs.map(part => (part === table ? htmlTable(employers)
+    : `<p>${escapeHtml(part).replace(/\n/g, '<br>')}</p>`)).join('\n');
+  const problem = sampleListHtmlProblem(html);
+  if (problem) throw new Error(problem);
+  return html;
+}
+
+function sampleListHtmlProblem(html) {
+  const text = String(html || '');
+  if (/<\s*(?:a|img|link|style|script|iframe|object)\b/i.test(text)) return 'sample list HTML contains a link, image or embedded resource';
+  if (/\b(?:href|src)\s*=|url\(|https?:\/\//i.test(text)) return 'sample list HTML contains a URL';
+  if (/(?:^|[;"\s])(?:color|background(?:-color)?)\s*:/i.test(text) || /\bbgcolor\b/i.test(text)) return 'sample list HTML sets a colour';
+  if (/[\u2012-\u2015\u2212]/.test(text)) return 'sample list HTML contains an en or em dash';
+  return null;
 }
 
 function sampleListBodyProblem(body) {
@@ -381,5 +421,5 @@ module.exports = {
   AUTOSEND_DELAY_MS, SAMPLE_OFFER, STATE_NAMES, NEIGHBORS,
   isHandsOnTitle, cleanTitle, summarizePostings, offeredSampleList, detectSampleListRequest,
   stateCode, agencyStates, selectSampleList, freshenEmployers, buildSampleList,
-  renderTable, renderSampleListBody, sampleListBodyProblem, autoSendDecision, sampleListOutcome, noDashes,
+  FULL_LIST_LINE, renderTable, renderSampleListBody, renderSampleListHtml, sampleListBodyProblem, sampleListHtmlProblem, autoSendDecision, sampleListOutcome, noDashes,
 };

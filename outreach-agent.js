@@ -3419,9 +3419,10 @@ async function runSampleListPass({ records, activities, leads, now = new Date() 
     deliver: row => deliverSampleListDraft(row, { activities, leads }) } });
 }
 
-async function createSampleListGmailDraft({ sender, lead, inbound, subject, body }) {
+async function createSampleListGmailDraft({ sender, lead, inbound, subject, body, html }) {
   if (!sender) throw new Error('sample list sender inbox unavailable');
-  const raw = toRawMessage({ to: String(lead.email || '').trim(), subject, body,
+  // multipart/alternative: the plain-text table is the text/plain fallback.
+  const raw = toRawMessage({ to: String(lead.email || '').trim(), subject, body, html,
     inReplyTo: inbound.rfcMessageId || undefined, references: inbound.rfcMessageId || undefined,
     fromEmail: sender.email, fromName: fromNameForSender(sender) });
   const response = await runWithGmailFeature('other', () => gmailForSender(sender).users.drafts.create({
