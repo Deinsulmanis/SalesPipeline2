@@ -259,3 +259,16 @@ Apollo-verified emails skipped verification, per the rule. No substitute verifie
   - `icp_decide.py`: `--jobs <evidence>` and `--out <file>`, plus `evidence_basis` on every decision.
   - `build_outputs.py`: run CSVs carry `source_path`, `discovery_source` and `icp_evidence_basis`.
 - **Lessons** are recorded in the skill's gotchas.
+
+## Addendum: owner decisions 2026-11-24 (counts only; no import or queue)
+
+- **Checks 4 and 5 by postings (items 2-4):** of the 24 rule-blocked companies, 7 now PASS. Still blocked: 8 on check 4, 1 on US, 1 national chain, 7 on identity or staffing type.
+- **Name collisions (item 7):** 106 triaged: 22 SAME, 28 UNSURE (held), 56 DIFFERENT. Of the 56, 1 is a redirect duplicate; 55 were gated: 19 PASS, 28 HOLD, 9 REJECT.
+- **kfistaffing.com (item 8):** same company as a domain already sourced in v4-3000-2026-11-23; HOLD.
+- **New PASS through stages 6-10:**
+  - 15 Apollo reveals, all verified: 13 pass QC (4 flagged catch-all, queue last; 2 on a site-proven alternate email domain), 1 person mismatch held, 1 Proofpoint catch-all held.
+  - 6 companies (3 GetLeads decision-makers, 3 owner-gap guesses) HOLD: GetLeads verification jobs stayed queued past the 23-minute sweep, and a single retry also stayed queued.
+  - 2 PASS companies have no eligible buyer.
+- **Contacts:** 13 new review-ready contacts (12 jobs-discovery, 1 regate-551); master now 366 rows.
+- **Copy (item 5):** evidence and preview rebuilt for all 50 (37 + 13): COPY_B 16, COPY_C 30, HOLD 4 (was COPY_B 0, COPY_C 33, HOLD 4 before postings fed COPY_B). The 13 new: COPY_B 6, COPY_C 7.
+- **Spend, combined across the task (from vendor balances):** Apollo 50 / 400; GetLeads plan 30 / 300; GetLeads wallet $0.026 / $1.00; Adyntel 125 / 500; Jev $0.046 / $1.50.
