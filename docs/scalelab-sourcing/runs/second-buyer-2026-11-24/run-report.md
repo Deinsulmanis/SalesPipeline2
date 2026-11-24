@@ -82,3 +82,19 @@ contact (checked: no "colleague" / earlier-outreach wording in any rendered emai
 1. Approve the 222 (then they go to the V4 master; import and queue only on your go-ahead).
 2. Verify to_verify.csv in GetLeads and drop the results at runs-private/second-buyer-2026-11-24/verified_results.csv.
 3. Whether to reveal the 69 multi-branch second picks (69 more Apollo credits) and look up the 37 unchecked domains.
+
+## Import and queue (owner go-ahead 2026-11-24)
+
+- Production change: the Campaign 3 import accepts an owner-approved second buyer (commit 792b055 on
+  fix/send-throughput-20261020, deployed by pinning Railway to it; boot clean, crons scheduled, send-lock enabled).
+  Without `owner_approved_second_buyer` the import is unchanged.
+- Added to the V4 master: 222 (master 588 rows).
+- Imported: 219 (156 non-catch-all, then 63 catch-all so they sort last), all COPY_C on copy v2.
+  Refused by the new rule: 2 (the prior contact is on the Suppression list for a reason other than a bounce).
+  Not sent to import: 1 copy HOLD. These 3 are marked held in the master.
+- Queued explicitly: primary 64, deniels 58, outreachplateau_zoe 33, outreachplateau_merrick 32,
+  outreachplateau_dave 32. Launch-readiness: 219 of 219 Queued, wouldSendIfSendingEnabled true. Sender balance
+  plans no moves into held inboxes.
+- Campaign 3 in Supabase: Queued 226 (219 second buyers), Contacted 341, Unsub 1.
+- Company master: 219 companies have the second buyer as their one active contact and are out of the
+  re-engage pool.
