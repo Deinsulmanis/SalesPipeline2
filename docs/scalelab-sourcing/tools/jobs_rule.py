@@ -8,8 +8,10 @@ carries no other domain. A direct employer that merely shares words of the name 
 
   - satisfies check 3 (industrial line) and check 8 (hands-on workers); the industrial excerpt (check 7) and the
     management-only check (9) are covered by the same evidence;
-  - satisfies check 4 (placement model) only when 2+ of the hands-on postings themselves say temporary, contract,
-    temp-to-hire or contract-to-hire (title, description or employment_type);
+  - satisfies check 4 (placement model) when 2+ of the hands-on postings themselves say temporary, contract,
+    temp-to-hire or contract-to-hire (title, description or employment_type), OR (owner 2026-11-24) hands-on roles are
+    at least 2/3 of the agency's postings in the window;
+  - satisfies check 5 (US) when 2+ postings are in US locations and the domain is not foreign (owner 2026-11-24);
   - checks 1, 2, 5 and 6 are unchanged and still required (icp_decide.py --jobs).
 
 Source: GetLeads search_jobs only (free jobs quota, no plan credits). Calls are made by helper agents; their raw
@@ -76,6 +78,56 @@ def says_temp(p):
     if TITLE_TEMP.search(p.get("title") or ""):
         return True
     return bool(TEMP.search(p.get("description") or ""))
+
+
+US_STATES = set("AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC".split())
+STATE_NAMES = set("alabama alaska arizona arkansas california colorado connecticut delaware florida georgia hawaii idaho illinois indiana iowa kansas "
+                  "kentucky louisiana maine maryland massachusetts michigan minnesota mississippi missouri montana nebraska nevada ohio oklahoma "
+                  "oregon pennsylvania tennessee texas utah vermont virginia washington wisconsin wyoming".split()) | {"new hampshire", "new jersey",
+                  "new mexico", "new york", "north carolina", "north dakota", "rhode island", "south carolina", "south dakota", "west virginia"}
+US_TLDS = {"com", "net", "org", "us", "biz", "io", "co", "jobs", "work", "info", "pro", "llc", "inc", "careers", "group", "solutions",
+           "services", "staffing", "agency", "company", "team", "global", "works", "site", "online", "tech", "app", "ai", "me"}
+
+
+def city_state(loc):
+    """'4130 N 5th St, North Las Vegas, NV 89032' -> ('North Las Vegas', 'NV'); None when no US city and state."""
+    parts = [x.strip() for x in str(loc or "").split(",")]
+    for i, x in enumerate(parts):
+        m = re.match(r"^([A-Z]{2})(?:\s+\d{5}(?:-\d{4})?)?$", x)
+        if m and m.group(1) in US_STATES and i > 0:
+            city = parts[i - 1]
+            if city and not re.search(r"\d", city) and len(city) <= 30:
+                return city, m.group(1)
+    return None
+
+
+def us_location(p):
+    if (p.get("geo_country_iso") or p.get("country") or "").upper() == "US":
+        return True
+    loc = str(p.get("location") or "")
+    if re.search(r"(?:^|,\s*)([A-Z]{2})(?:\s+\d{5})?$", loc) and re.search(r"([A-Z]{2})(?:\s+\d{5})?$", loc).group(1) in US_STATES:
+        return True
+    if re.match(r"^\d{5},\s*([A-Z]{2})$", loc):
+        return True
+    return loc.strip().lower() in STATE_NAMES or "united states" in loc.lower()
+
+
+def foreign_domain(d):
+    d = (d or "").lower()
+    tld = d.rsplit(".", 1)[-1]
+    return d.endswith((".co.uk", ".com.au", ".co.nz", ".com.mx", ".co.in")) or (len(tld) == 2 and tld not in ("us", "co", "io", "ai", "me")) or (len(tld) > 2 and tld not in US_TLDS)
+
+
+def posting_url(p):
+    if p.get("linkedin_job_url"):
+        return p["linkedin_job_url"]
+    for v in (p.get("job_urls") or {}).values():
+        if v:
+            return v
+    for v in (p.get("apply_urls") or {}).values():
+        if v:
+            return v
+    return ""
 
 
 def root(d):
@@ -253,14 +305,19 @@ def evidence(run, call_files):
             rows = [p for p in rows if root(p.get("company_domain")) == d]
             T = sum(r.get("role_count") or 0 for r in tot.get("data") or [])
         sample = [{"title": p.get("title") or "", "employment_type": p.get("employment_type") or "", "posted_at": (p.get("posted_at") or "")[:10],
-                   "hands_on": is_hands_on(p.get("title")), "temp": says_temp(p)} for p in rows]
+                   "hands_on": is_hands_on(p.get("title")), "temp": says_temp(p), "url": posting_url(p),
+                   "location": p.get("location") or "", "us": us_location(p)} for p in rows]
         n, h = len(sample), sum(1 for s in sample if s["hands_on"])
         H = round(F * h / n) if n and F > n else h
         T = max(T, F)
         share = H / T if T else 0.0
         temp_ho = sum(1 for s in sample if s["hands_on"] and s["temp"])
         e.update(T=T, sample=sample, hands_on=H, hands_on_observed=h, estimated=bool(n and F > n), share=round(share, 3),
-                 temp_hands_on=temp_ho, check4_by_postings=temp_ho >= 2,
+                 temp_hands_on=temp_ho,
+                 # check 4 (owner 2026-11-24 #2): temp/contract wording on 2+ hands-on postings, OR hands-on >= 2/3 of postings
+                 check4_by_postings=temp_ho >= 2 or share >= 2 / 3,
+                 # check 5 (owner 2026-11-24 #3): 2+ postings in US locations and a domain that is not foreign
+                 us_postings=sum(1 for s in sample if s["us"]), check5_by_postings=sum(1 for s in sample if s["us"]) >= 2 and not foreign_domain(d),
                  sample_roles=list(dict.fromkeys(s["title"] for s in sample if s["hands_on"]))[:5],
                  other_roles=list(dict.fromkeys(s["title"] for s in sample if not s["hands_on"]))[:5])
         if h >= 2 and H >= 2 and share >= 1 / 3:

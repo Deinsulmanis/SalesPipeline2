@@ -15,7 +15,8 @@ The variant itself is selected by integrations/staffing-v4-copy.js, not here.
 """
 import csv, json, os, re, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import v4config  # noqa: E402
+import v4config
+import jobs_rule  # noqa: E402  # noqa: E402
 
 MASTER, OUT, RUNS = sys.argv[1], sys.argv[2], sys.argv[3:]
 if not RUNS:
@@ -29,6 +30,46 @@ CANDIDATE_ADS = {
     "progroupstaffing.com": dict(match="Insert Operator", role="insert operator", location="Plano, TX"),
     "prtstaffing.com": dict(match="Low Voltage Electricians", role="low voltage electrician", location="Santa Teresa, NM"),
 }
+
+# Job postings as COPY_B evidence (owner decision 2026-11-24). Guardrails: only the agency's own postings (domain-matched in
+# <run>/jobs_evidence.json), posted within 30 days of the evidence date, hands-on industrial titles only; the quote is built
+# from the posting's role title and city/state alone, so nothing (counts, clients, pay) can be invented. The selector still
+# re-checks that the role and the city appear in the quote.
+POSTING_DAYS = 30
+ROLE_OK = re.compile(r"[A-Za-z][A-Za-z /&]{2,40}")
+
+
+def posting_role(title):
+    """A clean role phrase from a posting title ('Forklift Operator - 2nd Shift' -> 'Forklift Operator'), or None."""
+    role = re.split(r"\s+[-|:(]|[,(|:]|\s+-$", title or "")[0].strip()
+    if not ROLE_OK.fullmatch(role) or len(role.split()) > 5 or role.endswith(("/", "&")):
+        return None
+    role = re.sub(r"\s*/\s*", "/", role)
+    if role.isupper() or role.islower():
+        role = role.title()
+    return role if jobs_rule.is_hands_on(role) else None
+
+
+def posting_candidate_ad(jobs, as_of):
+    import datetime
+    best = None
+    for p in (jobs or {}).get("sample") or []:
+        if not p.get("hands_on") or not re.match(r"^https?://", p.get("url") or ""):
+            continue
+        try:
+            age = (datetime.date.fromisoformat(as_of) - datetime.date.fromisoformat(p.get("posted_at") or "")).days
+        except ValueError:
+            continue
+        cs = jobs_rule.city_state(p.get("location"))
+        role = posting_role(p.get("title"))
+        if age < 0 or age > POSTING_DAYS or not cs or not role:
+            continue
+        cand = {"url": p["url"], "quote": f"{p['title']} | {cs[0]}, {cs[1]}", "role": role, "location": f"{cs[0]}, {cs[1]}",
+                "current": True, "lastSeen": p["posted_at"], "source": "job_posting"}
+        if best is None or cand["lastSeen"] > best["lastSeen"]:
+            best = cand
+    return best
+
 
 TRADES = re.compile(r"skilled[ -]trade|skilled craft|tradespeople|\bwelders?\b|\bwelding\b|electricians?|millwrights?|pipefitters?|plumbers?|carpenters?|\bhvac\b|machinists?|construction (?:trades|workers|labor|staffing|craft)", re.I)
 LIGHT = re.compile(r"light industrial|warehouse|manufactur|production work|assembl|forklift", re.I)
@@ -88,13 +129,14 @@ def normalize_ad(a):
 
 
 rows = list(csv.DictReader(open(MASTER)))
-decisions, run_ads, run_scores = {}, {}, {}
+decisions, run_ads, run_scores, run_jobs = {}, {}, {}, {}
 for run in RUNS:
     for x in load(f"{run}/icp_decisions.json") or []:
         if x.get("company_icp") == "PASS":
             decisions[x["domain"]] = x
     run_ads.update(load(f"{run}/ad_classification.json") or {})
     run_scores.update(load(f"{run}/scores.json") or {})
+    run_jobs.update(load(f"{run}/jobs_evidence.json") or {})
 
 out = []
 for r in rows:
@@ -114,6 +156,10 @@ for r in rows:
                 cand.append({"url": a["url"], "quote": a["text"][:400], "role": spec["role"], "location": spec["location"],
                              "current": a["current"], "lastSeen": a["lastSeen"]})
                 break
+    if not cand:
+        jp = posting_candidate_ad(run_jobs.get(d), AS_OF)
+        if jp:
+            cand.append(jp)
     buyer = r["buyer_name"].split()
     out.append({
         "row": {k: r[k] for k in ("wave", "company_name", "company_domain", "buyer_title", "email", "email_status", "catch_all", "mail_gateway",

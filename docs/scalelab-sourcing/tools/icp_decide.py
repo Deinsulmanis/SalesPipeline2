@@ -7,8 +7,9 @@ Optional <run>/manual_review.json holds reviewer overrides; they can only tighte
 --jobs (owner decision 2026-11-24, see jobs_rule.py): a company whose own job postings PROMOTE under the job-posting
 rule meets check 3 (industrial line), check 8 (hands-on workers) and with them checks 7 and 9. Check 4 (placement
 model) is met by the website as before, or by 2+ hands-on postings that say temporary / contract / temp-to-hire /
-contract-to-hire. Checks 1 (identity), 2 (employer-facing staffing), 5 (US) and 6 (not a national chain) are
-unchanged and still required. The job path can also lift a website NO_INDUSTRIAL_LINE reject, never NOT_STAFFING.
+contract-to-hire, or by hands-on roles making up at least 2/3 of the agency's postings. Check 5 (US) is met by the site
+as before, or by 2+ postings in US locations on a domain that is not foreign. Checks 1 (identity), 2 (employer-facing
+staffing) and 6 (not a national chain) are unchanged and still required. The job path can also lift a website NO_INDUSTRIAL_LINE reject, never NOT_STAFFING.
 Every decision records evidence_basis: website, job_postings or both.
 """
 import json, os, sys
@@ -130,15 +131,15 @@ def main():
         je = JOBS.get(d)
         site_pass = r.get("company_icp") == "PASS"
         if je:
-            r["jobs"] = {k: je.get(k) for k in ("verdict", "why", "match", "F", "T", "hands_on", "share", "estimated", "temp_hands_on", "check4_by_postings", "sample_roles", "other_roles")}
+            r["jobs"] = {k: je.get(k) for k in ("verdict", "why", "match", "F", "T", "hands_on", "share", "estimated", "temp_hands_on", "check4_by_postings", "us_postings", "check5_by_postings", "sample_roles", "other_roles")}
         if je and je.get("verdict") == "PROMOTE" and not site_pass and r.get("icp_reason_code") != "NOT_STAFFING":
             miss = []
             if identity < T["identity"]: miss.append(f"identity match weak (p={identity})")
             if not (bt == "employer_facing_staffing" and j["business_type_p"] >= T["type"]): miss.append(f"employer-facing staffing not established ({bt}, p={j['business_type_p']})")
-            if j["us_operations"] < T["us"]: miss.append(f"US operations not corroborated (p={j['us_operations']})")
+            if j["us_operations"] < T["us"] and not je.get("check5_by_postings"): miss.append(f"US operations not corroborated (p={j['us_operations']}) and fewer than 2 postings in US locations")
             if j["large_national_chain"] >= T["chain"]: miss.append(f"large national chain / franchise network (p={j['large_national_chain']})")
             c4_site = j["service_model"] in ("temporary_or_contract", "direct_hire_only") and j["service_model_p"] >= T["model"]
-            if not (c4_site or je.get("check4_by_postings")): miss.append("placement model not shown on the site, and fewer than 2 hands-on postings say temporary/contract")
+            if not (c4_site or je.get("check4_by_postings")): miss.append("placement model not shown on the site; fewer than 2 hands-on postings say temporary/contract and hands-on share is under 2/3")
             if not miss:
                 lifted = r.get("company_icp") == "REJECT"
                 r.update(company_icp="PASS", icp_reason_code="VERIFIED_BY_JOB_POSTINGS",
