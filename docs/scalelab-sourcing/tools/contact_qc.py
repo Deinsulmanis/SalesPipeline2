@@ -84,6 +84,38 @@ def site(dom):
     return t.lower(), hosts
 
 
+_proof = {}
+
+
+def reverse_proof(edom, d):
+    """Skill section 9, redirect 'either way': the email domain's own homepage redirects to, or links to,
+    the company domain. Cached in <run>/email_domain_proof.json. Fails closed (unproven) on any error."""
+    path = os.path.join(RUN, 'email_domain_proof.json')
+    if not _proof and os.path.exists(path):
+        _proof.update(json.load(open(path)))
+    key = f'{edom}->{d}'
+    if key not in _proof:
+        ok, how = False, 'unreachable'
+        for start in (f'https://{edom}', f'https://www.{edom}', f'http://{edom}'):
+            try:
+                req = urllib.request.Request(start, headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'text/html'})
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    final = root(r.geturl())
+                    body = r.read(800_000).decode('utf-8', 'ignore').lower()
+                if final == d or final.endswith('.' + d):
+                    ok, how = True, f'redirects to {final}'
+                elif re.search(r'(https?:)?//(www\.)?' + re.escape(d) + r'\b', body):
+                    ok, how = True, 'links to the company domain'
+                else:
+                    how = f'final host {final}, no link to the company domain'
+                break
+            except Exception as e:
+                how = type(e).__name__
+        _proof[key] = {'proven': ok, 'how': how}
+        json.dump(_proof, open(path, 'w'), indent=1)
+    return _proof[key]['proven']
+
+
 def employer_matches(employer, employer_site, company_name, dom):
     if not employer:
         return True
@@ -127,6 +159,8 @@ def domain_checks(d, e, company_name, exclude, master_emails, employer=None, emp
     if edom not in related:
         if edom in text:
             flags.append(f'EMAIL_DOMAIN_DIFFERS (proven: {edom} referenced on the company site)')
+        elif reverse_proof(edom, d):
+            flags.append(f'EMAIL_DOMAIN_DIFFERS (proven: {edom} redirects or links to {d})')
         else:
             return f'DOMAIN_UNPROVEN: email on {edom}, not proven to belong to the agency', flags, None
     elif edom != d:
@@ -238,7 +272,9 @@ def main():
             elif title.strip().lower() not in ('', 'none', 'executive') and (not bp.tier(title) or OPS_ONLY.search(title)):
                 why = 'NOT_BUYER: revealed title is not a tier 1-2 buyer'
             else:
-                why, fl, g = domain_checks(d, e, names.get(d), exclude, master_emails, first=t.get('first'), last=None)
+                nm = (name or '').split()
+                why, fl, g = domain_checks(d, e, names.get(d), exclude, master_emails,
+                                           first=nm[0] if nm else t.get('first'), last=nm[-1] if len(nm) > 1 else '')
                 if not why:
                     if est != 'verified':
                         why = f'APOLLO_UNVERIFIED: Apollo email status "{est or "none"}"'
