@@ -108,7 +108,7 @@ test('fewer than five in-state: neighbors, then the national list, never more th
   assert.deepEqual(picked.employers.slice(0, 2).map(e => e.state), ['NM', 'NM']);
   assert.ok(picked.employers.slice(2, 4).every(e => ['AZ', 'TX'].includes(e.state)));
   assert.equal(picked.scope, 'state_neighbors_national');
-  assert.equal(picked.market, 'New Mexico and nearby markets');
+  assert.equal(picked.market, 'New Mexico and other U.S. markets');
 });
 
 test('unknown agency state uses the national list', () => {
@@ -179,7 +179,7 @@ test('the draft is a plain-text table with no links, no dashes and the standard 
     employer(2, 'TX', { openRolesLabel: '11+' })];
   const body = list.renderSampleListBody({ firstName: 'Pat', company: 'Example Staffing', market: 'Texas', employers });
   assert.match(body, /^Hi Pat,\n\nHere are 2 employers in Texas hiring the trades you place right now:\n\nCompany +\| City, State +\| Open roles \| Example roles\n-+\n/);
-  assert.match(body, /Alpha - Steel +\| Town 1, TX +\| \d+ +\| Pipe Welder, Fitter - Class A/);
+  assert.match(body, /Alpha - Steel +\| Town 1, TX +\| \d+ +\| Pipe Welder, Fitter$/m);
   assert.match(body, /\| 11\+ +\|/);
   assert.match(body, /These are the kinds of companies we'd reach and book meetings with for Example Staffing\.\n\nWorth a 15-minute call to walk through how we'd approach them\?\n\nDeins$/);
   assert.equal(list.sampleListBodyProblem(body), null);
@@ -467,4 +467,16 @@ test('backfilled agency states apply after the lead record and survive a failed 
   assert.deepEqual(seen, ['agency.example']);
   const failing = { getAgencyStates: async () => { throw new Error('down'); } };
   assert.equal((await flow.withAgencyStates(failing, bare)).agency_states, undefined);
+});
+
+test('the market label describes the listed rows and titles are tidied', () => {
+  const near = list.selectSampleList({ employers: [employer(1, 'NM'), employer(2, 'TX'), employer(3, 'AZ')], states: ['NM'] });
+  assert.equal(near.market, 'New Mexico and nearby states');
+  const far = list.selectSampleList({ employers: [employer(1, 'NM'), employer(2, 'FL')], states: ['NM', 'FL'] });
+  assert.equal(far.market, 'New Mexico and other U.S. markets');
+  assert.equal(far.employers[0].state, 'NM');
+  assert.equal(list.cleanTitle('Maintenance Mechanic - Bartow'), 'Maintenance Mechanic');
+  assert.equal(list.cleanTitle('Gas Turbine Mechanic- Turbine Assembly'), 'Gas Turbine Mechanic- Turbine Assembly'.replace(/- .*/, '').trim());
+  assert.equal(list.cleanTitle('Production Associate 2027'), 'Production Associate');
+  assert.equal(list.cleanTitle('Welder/Fabricator - Night Shift'), 'Welder/Fabricator');
 });

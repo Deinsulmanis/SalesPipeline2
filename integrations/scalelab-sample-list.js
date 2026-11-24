@@ -73,6 +73,7 @@ function cleanTitle(title) {
   text = text.replace(/\s*[([].*?[)\]]/g, '');
   text = text.replace(/\s+-\s+(?:\d(?:st|nd|rd|th)|first|second|third|night|day|days|weekend|[a-d]-?shift|entry).*$/i, '');
   text = text.replace(/\s*[-|,]\s*(?:\$|\d).*$/, '');
+  text = text.replace(/\s*-\s+.*$/, '').replace(/\s+(?:19|20)\d{2}$/, '');
   text = text.replace(/\b(?:1st|2nd|3rd|first|second|third|weekend|night)\s+shift\b/ig, '');
   text = text.replace(/\s+/g, ' ').replace(/^[\s\-|,]+|[\s\-|,]+$/g, '');
   if (text && text === text.toUpperCase()) text = text.toLowerCase().replace(/\b[a-z]/g, c => c.toUpperCase());
@@ -188,6 +189,18 @@ const rank = (a, b) => (b.openRoles - a.openRoles)
   || String(b.newestPosting || '').localeCompare(String(a.newestPosting || ''))
   || a.company.localeCompare(b.company);
 
+// The market named in the email must describe the rows actually listed.
+function marketLabel(picked, primary) {
+  if (!primary) return 'the U.S.';
+  const states = new Set(picked.map(item => item.state));
+  const name = STATE_NAMES[primary];
+  if ([...states].every(code => code === primary)) return name;
+  const near = new Set([primary, ...(NEIGHBORS[primary] || [])]);
+  if ([...states].every(code => near.has(code))) return `${name} and nearby states`;
+  if (!states.has(primary)) return 'the U.S.';
+  return `${name} and other U.S. markets`;
+}
+
 /**
  * Up to 10 still-hiring employers. In-state first; if fewer than 5 qualify in
  * the agency's states, fill from neighboring states, then the national list.
@@ -197,12 +210,12 @@ function selectSampleList({ employers = [], states = [], exclude = new Set(), ma
     && Number(item.openRoles) >= MIN_OPEN_ROLES);
   const home = states.filter(code => STATE_NAMES[code]);
   const primary = home[0] || null;
-  const inState = hiring.filter(item => home.includes(item.state)).sort(rank);
+  // The agency's primary state first, then its branch states.
+  const inState = hiring.filter(item => home.includes(item.state))
+    .sort((a, b) => (a.state === primary ? 0 : 1) - (b.state === primary ? 0 : 1) || rank(a, b));
   if (primary && inState.length >= MIN_IN_STATE) {
     const picked = inState.slice(0, max);
-    const allPrimary = picked.every(item => item.state === primary);
-    return { employers: picked, scope: 'state', state: primary,
-      market: allPrimary ? STATE_NAMES[primary] : `${STATE_NAMES[primary]} and nearby states` };
+    return { employers: picked, scope: 'state', state: primary, market: marketLabel(picked, primary) };
   }
   const picked = [...inState];
   const taken = () => new Set(picked.map(item => item.domain));
@@ -223,9 +236,8 @@ function selectSampleList({ employers = [], states = [], exclude = new Set(), ma
   }
   const scope = !primary ? 'national_state_unknown'
     : usedNational ? 'state_neighbors_national' : usedNeighbors ? 'state_neighbors' : 'state';
-  const market = !primary || (usedNational && !inState.length && !usedNeighbors) ? 'the U.S.'
-    : usedNational ? `${STATE_NAMES[primary]} and nearby markets` : `${STATE_NAMES[primary]} and nearby states`;
-  return { employers: picked.slice(0, max), scope, state: primary, market };
+  const final = picked.slice(0, max);
+  return { employers: final, scope, state: primary, market: marketLabel(final, primary) };
 }
 
 /**
@@ -299,7 +311,7 @@ function rolesLabel(item) {
 function renderTable(employers) {
   const rows = [['Company', 'City, State', 'Open roles', 'Example roles'],
     ...employers.map(item => [noDashes(item.company), noDashes(`${item.city}, ${item.state}`), rolesLabel(item),
-      noDashes(item.exampleRoles.slice(0, 3).join(', '))])];
+      noDashes([...new Set(item.exampleRoles.map(cleanTitle).filter(Boolean))].slice(0, 3).join(', '))])];
   const width = [0, 1, 2].map(col => Math.max(...rows.map(row => row[col].length)));
   const line = row => `${row[0].padEnd(width[0])} | ${row[1].padEnd(width[1])} | ${row[2].padEnd(width[2])} | ${row[3]}`;
   const header = line(rows[0]);
