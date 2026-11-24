@@ -32,8 +32,8 @@ PARTS = sys.argv[2:]
 # ---- Buyer rule (owner decisions 2026-11-23 / 2026-11-24). Every tool imports this module; no copies.
 # 1. TOP TITLE WINS: owner, co-owner, founder, co-founder, proprietor, president (not vice president), CEO, chief
 #    executive -> Tier 1, even combined with an excluded word ("President and Managing Director", "Owner/CFO",
-#    "President & CEO, Executive Recruiter"). Not for non-current or governance titles (former, retired, past,
-#    emeritus, board).
+#    "President & CEO, Executive Recruiter"). Not for non-current, governance or support titles (former, retired, past,
+#    emeritus, board, assistant / secretary / associate, "... to the CEO").
 # 2. Otherwise the exclusion list (NEVER) removes the title, except the two Tier 3 titles it names.
 # 3. Tier 1: managing partner / principal. Tier 2: CRO / VP sales or BD, then COO ("Chief Operations Officer" counts),
 #    CMO, a bare VP, a bare Partner.
@@ -44,11 +44,11 @@ PARTS = sys.argv[2:]
 #    branches may be an additional contact at a different branch (branch_exception).
 TOP = [(0, r"(?<!product )(?<!process )\b(owner|co-?owner|founder|co-?founder|proprietor)\b"),
        (1, r"(?<!vice )(?<!vice-)\bpresident\b|\bceo\b|chief executive")]
-TOP_GUARD = r"\b(former|retired|past|emeritus|board)\b"
+TOP_GUARD = r"\b(former|retired|past|emeritus|board|assistant|secretary|associate)\b|\bto (the )?(president|ceo|owner|founder|chief)"
 T1 = TOP + [(2, r"managing partner|managing principal|^principal$|principal (and|&|/) ?(owner|founder)")]
 T2 = [(0, r"chief revenue|\bcro\b|chief sales|chief commercial|chief growth|chief business development"),
       (1, r"(vp|vice[- ]president|svp|evp)\b.*\b(sales|business development|growth|revenue|commercial|client|account)"),
-      (2, r"\bcoo\b|chief operating|chief operations officer|\bcmo\b|chief marketing|^(vp|vice[- ]president|svp|evp)$|^(senior |founding |equity )?partner$")]
+      (2, r"\bcoo\b|chief operating|chief operations officer|\bcmo\b|chief marketing|^(vp|(executive |senior |corporate )?vice[- ]president|svp|evp)$|^(senior |founding |equity )?partner$")]
 T3 = [(0, r"\bgeneral manager\b"),
       (1, r"director of operations|operations director|director,? operations"),
       (2, r"director of (sales|business development)|(sales|business development) director|head of (sales|growth|business development)"),

@@ -27,7 +27,8 @@ class TopTitleWins(unittest.TestCase):
     def test_not_top(self):
         for title in ('Vice President', 'Vice-President', 'Product Owner', 'Process Owner'):
             self.assertNotEqual((bp.tier(title) or (None,))[0], 1, title)
-        for title in ('Former President', 'Retired Owner', 'Past President', 'HOA Board President', 'President Emeritus'):
+        for title in ('Former President', 'Retired Owner', 'Past President', 'HOA Board President', 'President Emeritus',
+                      'Executive Assistant to CEO', 'Assistant to the President', 'Executive Assistant to the Owner', 'Associate Founder'):
             self.assertIsNone(bp.tier(title), title)
 
 
@@ -37,7 +38,8 @@ class TierTwo(unittest.TestCase):
             self.assertEqual(bp.tier(title)[0], 2, title)
 
     def test_commercial(self):
-        for title in ('Chief Revenue Officer', 'VP of Sales', 'Vice President, Business Development', 'Vice President', 'Vice-President', 'Partner'):
+        for title in ('Chief Revenue Officer', 'VP of Sales', 'Vice President, Business Development', 'Vice President', 'Vice-President', 'Partner',
+                      'Executive Vice President', 'Senior Vice President', 'Corporate Vice President', 'EVP', 'SVP'):
             self.assertEqual(bp.tier(title)[0], 2, title)
 
 
