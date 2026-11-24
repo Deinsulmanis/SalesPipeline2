@@ -78,8 +78,12 @@ for r in rows:
     x = next(d for d in dec if d["domain"] == dom)
     sc = scores[dom]["signals"]; ai = scores[dom]["ads"]
     if dom in HOLDS:
-        w1_holds.append({"level": "contact", "company_name": x["company_name"], "company_domain": dom, "decision": "PASS company / HOLD contact", "reason_code": "CONTACT_QC", "reason": HOLDS[dom],
-                         "evidence_that_would_resolve": "Confirm the email domain belongs to the agency (or find the buyer's company address); re-run QC"})
+        code = HOLDS[dom].split(":")[0].strip()
+        code = code if code.replace("_", "").isalpha() and code.isupper() else "CONTACT_QC"
+        fix = ("Owner verifies the address (runs-private/<run>/to_verify.csv in GetLeads), then tools/ingest_verification.py"
+               if code == "VERIFY_PENDING" else "Confirm the email domain belongs to the agency (or find the buyer's company address); re-run QC")
+        w1_holds.append({"level": "contact", "company_name": x["company_name"], "company_domain": dom, "decision": "PASS company / HOLD contact", "reason_code": code, "reason": HOLDS[dom],
+                         "evidence_that_would_resolve": fix})
         continue
     name, title, email, est, catch = r[4], r[5], r[6], r[7], r[8]
     if "@" not in email:
@@ -146,7 +150,8 @@ for d, v in adcls.items():
 w(f"{OUT}/ad-intent-and-signals.csv", arows)
 holds = w1_holds + [{"level": "company", "company_name": x["company_name"], "company_domain": x["domain"], "decision": x["company_icp"], "reason_code": x["icp_reason_code"], "reason": x["reason"], "evidence_that_would_resolve": ""} for x in dec if x["company_icp"] != "PASS"]
 w(f"{OUT}/review-holds.csv", holds)
-cols = list(w1_contacts[0].keys())
+# An ingest round can release no contact at all; keep the master's columns then.
+cols = list(w1_contacts[0].keys()) if w1_contacts else (next(csv.reader(open(MASTER)), []) if os.path.exists(MASTER) else [])
 w(f"{OUT}/approved-contacts.csv", w1_contacts, cols)
 
 # ---------- cumulative master ----------

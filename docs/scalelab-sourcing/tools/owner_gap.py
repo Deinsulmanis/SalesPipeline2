@@ -1,7 +1,10 @@
 """Owner-gap pass (2026-11-23): for PASS companies that still have no buyer after the Apollo free search
 and the GetLeads domain lookup, find the owner/founder/president named on the company's own site and
-guess first@, first.last@ and flast@ at the company domain. Verification happens separately (GetLeads
-verify_emails); only a valid, non-catch-all address is ever used, one per person.
+guess at most TWO addresses at the company domain: round 1 first@, round 2 first.last@.
+Verification is done by the owner (owner decision 2026-11-24): contact_qc.py puts only the round-1
+address in <run>/to_verify.csv; the round-2 address goes in only after round 1 comes back invalid
+(tools/ingest_verification.py). Claude Code never submits or polls verification jobs. A guessed address
+on a catch-all domain proves nothing, so it is held, never used.
 
 Usage: V4_JEV_BUDGET_USD=<run cap> python3 -I owner_gap.py <run> @<todo domains.json> [--master <csv>]
 
@@ -11,7 +14,8 @@ decision-maker of THIS company, or none. Tier 1-2 titles only (buyer_pick.py rul
 finance and managing directors never. Title words mistaken for names ("Executive Chairman") and people
 already revealed in this run or the V4 master are dropped. Jev spend shares the run ledger and cap.
 
-Writes <run>/owner_gap/picks.json and <run>/owner_gap/candidates.json ([{domain, email, name, title, tier}]).
+Writes <run>/owner_gap/picks.json and <run>/owner_gap/candidates.json ([{domain, email, name, title, tier, guess}]),
+guess 1 = first@, guess 2 = first.last@.
 """
 import concurrent.futures as cf
 import csv
@@ -124,7 +128,8 @@ def patterns(name, dom):
     first, last = ascii_letters(toks[0]), ascii_letters(toks[-1])
     if len(first) < 2 or len(last) < 2:
         return []
-    return [f'{first}.{last}@{dom}', f'{first[0]}{last}@{dom}', f'{first}@{dom}']
+    # Never more than 2 guesses per person, in this order (owner decision 2026-11-24).
+    return [f'{first}@{dom}', f'{first}.{last}@{dom}']
 
 
 def main():
@@ -197,8 +202,8 @@ def main():
                 continue
             stats['picked'] += 1
             picks[d] = {'name': c['name'], 'title': c['title'], 'tier': tr[0], 'jev_p': (a.get('probabilities') or {}).get(ch), 'url': c['url']}
-            for e in patterns(c['name'], d):
-                out.append({'domain': d, 'email': e, 'name': c['name'], 'title': c['title'], 'tier': tr[0]})
+            for k, e in enumerate(patterns(c['name'], d), 1):
+                out.append({'domain': d, 'email': e, 'name': c['name'], 'title': c['title'], 'tier': tr[0], 'guess': k})
     json.dump(picks, open(os.path.join(OUT, 'picks.json'), 'w'), indent=1)
     json.dump(out, open(os.path.join(OUT, 'candidates.json'), 'w'), indent=1)
     stats['guesses'] = len(out)

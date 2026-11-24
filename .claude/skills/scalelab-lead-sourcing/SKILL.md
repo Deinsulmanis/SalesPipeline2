@@ -35,6 +35,7 @@ This turns a company count ("run 2,000 companies") into a reviewed list of **con
 
    Only run reports and scripts are committed.
 7. **Dedupe before any spend:** against production (all clients), the V4 master, earlier research and name collisions. Also check prior reveals: never pay to reveal a person someone already revealed.
+8. **The owner verifies emails, not Claude Code (2026-11-24).** Never submit or poll a verification job (`verify_emails`, `start_email_validation`, `check_email_validation`) and **never use Apollo email validation**. GetLeads-sourced and owner-gap addresses are held as `VERIFY_PENDING` and listed in `runs-private/<run>/to_verify.csv` (one column, header `email`, deduped, nothing else). At the end of every run, tell the owner the count and path and send the file. Apollo-revealed emails (Apollo "verified") skip this.
 
 ## Access (how each tool is reached)
 
@@ -71,6 +72,12 @@ Record each balance before any spend:
 - Adyntel `credits_check`;
 - Jev `GET /v1/models` (200 = reachable);
 - GetLeads `get_fair_use`.
+
+**Verification carry-over:** list every earlier run's addresses still waiting on the owner, so nothing is lost. Report them at the start of the run:
+
+```bash
+python3 -I docs/scalelab-sourcing/tools/ingest_verification.py --pending
+```
 
 ### 1. Exclusion set (free, read only)
 
@@ -235,12 +242,34 @@ The parser only flags a domain mismatch when Apollo's company domain also differ
 
 Also check email domains against the exclusion set and the master.
 
-Write two files:
+Run `contact_qc.py` across all three buyer paths (Apollo, GetLeads 6b, owner-gap):
 
-- `contact_qc.json`: `{"holds": {domain: reason}, "caution": {domain: flag}}`;
-- `buyer_shortfalls.json`: a reason for each PASS company with no buyer.
+```bash
+python3 -I docs/scalelab-sourcing/tools/contact_qc.py runs-private/<run> --master docs/scalelab-sourcing/runs/V4_APPROVED_CONTACTS_MASTER.csv
+```
 
-Then set `targets.json` to the revealed list.
+It writes `contact_qc.json` (`{"holds": {domain: reason}, "caution": {domain: flag}}`), `buyer_shortfalls.json`, `targets.json`, `reveal/all.rows`, `verify_pending.json` and `to_verify.csv`.
+
+#### 9b. Verification (the owner does it)
+
+- **Never** call `verify_emails` or any GetLeads validation tool, and never use Apollo validation.
+- GetLeads-sourced and owner-gap addresses with no owner result are `VERIFY_PENDING` holds. Apollo-revealed emails skip this step.
+- **Owner-gap guesses:** `owner_gap.py` writes at most two per person: guess 1 `first@`, guess 2 `first.last@`. Only guess 1 goes into `to_verify.csv`. Guess 2 goes in a later round, and only if guess 1 came back invalid. A guess on a catch-all domain is held: an accept-all domain proves nothing about a guessed address.
+- **End of run:** report the `to_verify.csv` count and path (`runs-private/<run>/to_verify.csv`) and send the file to the owner.
+- **When the owner hands back results:** the owner drops GetLeads' results CSV at `runs-private/<run>/verified_results.csv`. Then run:
+
+  ```bash
+  V4_RUN_DATE=<run date> V4_WAVE=<run> python3 -I docs/scalelab-sourcing/tools/ingest_verification.py runs-private/<run> --evidence-runs <other run dirs whose evidence is needed>
+  ```
+
+  | GetLeads status | Action |
+  |---|---|
+  | valid | Keep |
+  | catch-all / accept-all | Keep; flag; **queue last** (owner-gap guess: HOLD) |
+  | invalid | HOLD (owner-gap guess 1 → guess 2 goes into the next `to_verify.csv`) |
+  | unknown / risky / anything else | HOLD |
+
+  It backs up every file it changes, then re-runs `contact_qc`, `build_outputs`, `build_evidence` and the preview for the released contacts. Report its counts (no names or emails), and send any new `to_verify.csv`.
 
 ### 10. Outputs, evidence and preview
 
@@ -370,7 +399,7 @@ So agents only make calls; nothing is transcribed by hand.
 - **Tag pool exhausted (2026-11-24):** after five runs, the narrow industrial tags return about 93% already-researched companies (2,887 raw → 205 net-new). Apollo's lookup takes `organization_naics_codes` (2–5 digits, prefix match: use `56132`, not `561320`). NAICS-only companies pass the gate at about 3.4%, against 9% for tagged ones. Record the query group as a 6th field on each discovery line (`discover_merge.py` reports per group; `--defer NAICS_56132` keeps it behind the tags).
 - **Shadow pre-filter (2026-11-24):** Apollo's free lookup has no description or keywords. A Jev score from the name, tag group and off-ICP tags kept only 27% of PASS companies at its own cut-off, and 80% only by saving half the crawl. Do not skip crawls on it.
 - **Thin sites and qualify:** run `qualify.py --only @readable.json` before the headless retry and the rest after. A site between 800 and 1,500 characters judged early is cached and never re-judged.
-- **GetLeads verification:** jobs either start and finish in 5–15 minutes, or fail at a sweep about 23 minutes after submission (refunded). Space the three polls across about 20 minutes, not back to back. Use `contact_qc.py` for section-9 QC across the Apollo, GetLeads and owner-gap paths.
+- **GetLeads verification is the owner's job (2026-11-24).** In-session jobs sat queued past 50 minutes, retry included, and stalled a run. Never submit or poll them; use `to_verify.csv` and `ingest_verification.py` (section 9b).
 - **GetLeads job search throughput (2026-11-24):** the MCP serves one `search_jobs` request at a time across every agent, at about 8–11 calls a minute. Under load, grouped keyword pages over ~500 companies time out at 60 seconds, and `enrich_company_jobs` with titles for 50 companies times out too.
   - Run big discovery pages when nothing else is calling, and drop to 50 or 25 per page.
   - Use counts first and titles in batches of 10.

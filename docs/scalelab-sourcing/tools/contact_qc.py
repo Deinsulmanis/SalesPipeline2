@@ -6,14 +6,23 @@ Paths (one buyer per PASS company, in this order; a company only reaches a later
 one found no eligible buyer):
   apollo     reveal/apollo.rows (parse_reveal.py output) + reveal/targets_ordered.json   source apollo_free_search
   getleads   gl/D*.txt lookup lines (domain|first|last|title|seniority|work_email|email_status|employer|
-             employer_site|company_domain|role_start|credits) + gl/verify.json         source getleads_decision_makers
-  owner-gap  owner_gap/candidates.json + owner_gap/verify.json                         source getleads_owner_gap_pattern
-gl/verify.json and owner_gap/verify.json map email -> {validity, catch_all, gateway} from GetLeads verify_emails
-(validity "job_failed" when a batch failed twice). Apollo emails are not re-verified: Apollo's own
-"verified" status is required.
+             employer_site|company_domain|role_start|credits)                           source getleads_decision_makers
+  owner-gap  owner_gap/candidates.json (guess 1 first@, guess 2 first.last@)             source getleads_owner_gap_pattern
+
+Verification (owner decision 2026-11-24): the OWNER verifies GetLeads-sourced and owner-gap addresses by uploading
+<run>/to_verify.csv to GetLeads; Claude Code never submits or polls verification jobs and never uses Apollo
+validation. Results come back through tools/ingest_verification.py into <run>/verification.json
+(email -> {validity, catch_all, gateway}); the legacy gl/verify.json and owner_gap/verify.json are still read
+(verification.json wins). Without a result the contact is held as VERIFY_PENDING. Mapping:
+  valid -> keep;  catch-all / accept-all -> keep, flag, queue last;  invalid / unknown / risky -> HOLD.
+  Owner-gap: only guess 1 goes out first; guess 2 only after guess 1 is invalid; a catch-all domain is a HOLD
+  for a guessed address (accept-all proves nothing about a guess). Proofpoint + catch-all stays a HOLD.
+Apollo-revealed emails are not re-verified: Apollo's own "verified" status is required.
 
 Writes: reveal/all.rows (all paths, renumbered), targets.json (one per row, with source), contact_qc.json,
-buyer_shortfalls.json, contact_qc_summary.json (per-company path and result, no personal data in the counts).
+buyer_shortfalls.json, contact_qc_summary.json (per-company path and result, no personal data in the counts),
+to_verify.csv (one column "email", deduped: the addresses still waiting on the owner) and verify_pending.json
+([{domain, path, email}], for the next run's carry-over check).
 Personal emails and phones are never read or written. Network: DNS-over-HTTPS MX lookups only.
 """
 import collections
@@ -178,27 +187,44 @@ def domain_checks(d, e, company_name, exclude, master_emails, employer=None, emp
     return None, flags, g
 
 
+PENDING = 'VERIFY_PENDING: awaiting the owner\'s GetLeads verification (to_verify.csv)'
+
+
+def load_verification(run):
+    """email -> {validity, catch_all, gateway}: legacy per-path files, then the owner's ingested results (win)."""
+    v = {}
+    for f in (os.path.join(run, 'gl', 'verify.json'), os.path.join(run, 'owner_gap', 'verify.json'), os.path.join(run, 'verification.json')):
+        if os.path.exists(f):
+            v.update({k.strip().lower(): x for k, x in json.load(open(f)).items()})
+    return v
+
+
 def verdict(v, g):
-    """GetLeads verify_emails result -> (hold reason or None, flag, verification label)."""
-    catch, val = bool(v.get('catch_all')), v.get('validity')
-    pp = g == 'proofpoint' or v.get('gateway') == 'proofpoint'
+    """Verification result -> (hold reason or None, flag, verification label)."""
     if not v:
-        return 'VERIFY_UNKNOWN: not verified (no verification result)', None, 'unverified'
+        return PENDING, None, 'pending'
+    val = str(v.get('validity') or '').lower()
+    catch = bool(v.get('catch_all')) or val in ('catch_all', 'accept_all')
+    pp = g == 'proofpoint' or v.get('gateway') == 'proofpoint'
+    if val == 'risky':
+        return 'VERIFY_RISKY: GetLeads says risky', None, 'risky'
+    if val == 'unknown':
+        return 'VERIFY_UNKNOWN: GetLeads says unknown', None, 'unverified'
     if pp and catch:
         return 'PROOFPOINT_CATCHALL', None, 'catch_all'
     if val == 'valid' and not catch:
         return None, 'VERIFIED', 'verified'
-    if val == 'valid' or (val == 'ambiguous' and catch):
+    if val in ('valid', 'catch_all', 'accept_all') or (val == 'ambiguous' and catch):
         if pp:
             return 'VERIFY_UNKNOWN: catch-all behind Proofpoint', None, 'catch_all'
         return None, 'CATCH_ALL (queue last)', 'catch_all'
     if val == 'invalid':
-        return 'VERIFY_INVALID: verify_emails says invalid', None, 'invalid'
+        return 'VERIFY_INVALID: GetLeads says invalid', None, 'invalid'
     if val == 'job_failed':
         return 'VERIFY_UNKNOWN: verification batch failed twice at the provider (not charged)', None, 'unverified'
     if val == 'not_completed':
         return 'VERIFY_UNKNOWN: verification batch still queued at the provider after the final poll', None, 'unverified'
-    return f'VERIFY_UNKNOWN: verify_emails result {val}' + (' behind Proofpoint' if pp else ''), None, 'unverified'
+    return f'VERIFY_UNKNOWN: GetLeads result {val}' + (' behind Proofpoint' if pp else ''), None, 'unverified'
 
 
 def main():
@@ -233,23 +259,46 @@ def main():
                 continue
             rec['people'].append({'first': x[1], 'last': x[2], 'title': x[3], 'work_email': x[5].strip().lower(), 'gl_status': x[6],
                                   'employer': x[7], 'employer_site': root(x[8]), 'role_start': x[10]})
-    glv_p = os.path.join(RUN, 'gl', 'verify.json')
-    glv = json.load(open(glv_p)) if os.path.exists(glv_p) else {}
-    # ---- owner-gap path: one address per person, preference first.last@ > flast@ > first@, valid non-catch-all only
-    og = {}
-    oc_p, ov_p = os.path.join(RUN, 'owner_gap', 'candidates.json'), os.path.join(RUN, 'owner_gap', 'verify.json')
-    ogv = json.load(open(ov_p)) if os.path.exists(ov_p) else {}
+    ver = load_verification(RUN)
+    glv = ogv = ver
+    pending = []  # [{domain, path, email}] still waiting on the owner's verification
+    # ---- owner-gap path: one address per person. Guess 1 (first@) first; guess 2 (first.last@) only after guess 1 is
+    # invalid; never more than 2. Legacy third patterns (flast@) are used only if they already carry a result.
+    og, og_state = {}, {}
+    oc_p = os.path.join(RUN, 'owner_gap', 'candidates.json')
     og_tried = set()
     if os.path.exists(oc_p):
-        def pref(c):
-            local = c['email'].split('@')[0]
-            return (c['domain'], 0 if '.' in local else 2 if local == c['name'].split()[0].lower() else 1)
-        for c in sorted(json.load(open(oc_p)), key=pref):
-            og_tried.add(c['domain'])
-            v = ogv.get(c['email']) or {}
-            if c['domain'] in og or v.get('validity') != 'valid' or v.get('catch_all') or v.get('gateway') == 'proofpoint':
+        def guess_no(c):
+            if c.get('guess'):
+                return int(c['guess'])
+            local, first = c['email'].split('@')[0], c['name'].split()[0].lower()
+            return 1 if local == first else 2 if '.' in local else 3
+        bydom = collections.defaultdict(list)
+        for c in json.load(open(oc_p)):
+            bydom[c['domain']].append(dict(c, email=c['email'].strip().lower(), guess=guess_no(c)))
+        def clean(v):
+            return v and str(v.get('validity') or '').lower() == 'valid' and not v.get('catch_all') and v.get('gateway') != 'proofpoint'
+        for d, cs in bydom.items():
+            og_tried.add(d)
+            # an address already in the master first, so a re-run never swaps an approved contact's email
+            ok = [c for c in sorted(cs, key=lambda c: (c['email'] not in master_emails, c['guess'])) if clean(ogv.get(c['email']))]
+            if ok:  # a clean valid guess always wins (legacy runs verified several patterns at once)
+                og_state[d], og[d] = ('ok', ok[0]), ok[0]
                 continue
-            og[c['domain']] = c
+            for c in sorted(cs, key=lambda c: c['guess']):
+                v = ogv.get(c['email'])
+                if not v:
+                    if c['guess'] <= 2:
+                        og_state[d] = ('pending', c)
+                    break
+                val = str(v.get('validity') or '').lower()
+                if val == 'invalid':
+                    og_state[d] = ('invalid', c)
+                    continue
+                # catch-all (a guess on an accept-all domain proves nothing), unknown, risky: hold, no further guesses
+                og_state[d] = ('hold', c, 'VERIFY_CATCHALL_GUESS: guessed address on a catch-all domain proves nothing'
+                               if val in ('catch_all', 'accept_all') or v.get('catch_all') else f'VERIFY_{val.upper() or "UNKNOWN"}: owner-gap guess')
+                break
 
     rows, targets, holds, caution, short, summ = [], [], {}, {}, {}, []
     tmap = {t['domain']: t for t in tord}
@@ -300,18 +349,27 @@ def main():
                 why, fl, g = domain_checks(d, e, names.get(d), exclude, master_emails, p['employer'], p['employer_site'], p['first'], p['last'])
                 if not why:
                     why, f2, lab = verdict(v, g)
+                    rec['verification'] = lab
                     if f2:
                         fl.append(f2)
-                        rec['verification'] = lab
+                    if lab == 'pending':
+                        pending.append({'domain': d, 'path': 'getleads', 'email': e})
             est = ('verified ' + str(v.get('validity'))) if v else f"{p['gl_status'] or 'UNKNOWN'} (GetLeads flag), unverified"
             rows.append([0, d, name, '', name, p['title'], e, est, 'True' if v.get('catch_all') else 'False', '', p['role_start'], '', d, 'OK'])
             targets.append({'domain': d, 'first': p['first'], 'last': p['last'], 'title': p['title'], 'tier': tr[0], 'source': SRC['getleads']})
-        elif d in og:
+        elif d in og_state and og_state[d][0] in ('ok', 'pending', 'hold'):
             rec['path'] = 'owner_gap'
-            c = og[d]
+            state, c = og_state[d][0], og_state[d][1]
             nm = c['name'].split()
             why, fl, g = domain_checks(d, c['email'], names.get(d), exclude, master_emails)
-            if not why:
+            if not why and state == 'pending':
+                why = PENDING + f" (owner-gap guess {c['guess']} of 2)"
+                rec['verification'] = 'pending'
+                pending.append({'domain': d, 'path': 'owner_gap', 'email': c['email']})
+            elif not why and state == 'hold':
+                why = og_state[d][2]
+                rec['verification'] = 'unverified'
+            elif not why:
                 fl.append('VERIFIED (owner-gap pattern address; owner named on the company site)')
                 rec['verification'] = 'verified'
             rows.append([0, d, c['name'], '', c['name'], c['title'], c['email'], 'verified valid (pattern on site-confirmed owner)', 'False', '', '', '', d, 'OK'])
@@ -319,7 +377,7 @@ def main():
         else:
             rec['result'] = 'NO_BUYER'
             if d in og_tried:
-                short[d] = 'Owner-gap pattern guesses: none verified valid and not catch-all'
+                short[d] = 'Owner-gap pattern guesses: both guesses came back invalid'
             elif d in gl:
                 short[d] = ('GetLeads decision-maker lookup: no one returned' if not gl[d]['people'] else
                             'GetLeads decision-maker lookup: only non-buyer titles (recruiting, HR, finance, operations, technology)')
@@ -343,8 +401,15 @@ def main():
     os.makedirs(os.path.join(RUN, 'reveal'), exist_ok=True)
     open(os.path.join(RUN, 'reveal', 'all.rows'), 'w').write('\n'.join(out_rows) + ('\n' if out_rows else ''))
     for nm, obj in [('targets.json', targets), ('buyer_shortfalls.json', short), ('contact_qc.json', {'holds': holds, 'caution': caution}),
-                    ('contact_qc_summary.json', summ)]:
+                    ('contact_qc_summary.json', summ), ('verify_pending.json', pending)]:
         json.dump(obj, open(os.path.join(RUN, nm), 'w'), indent=1)
+    # The owner's upload file: ONE column, header "email", deduped, nothing else (no names, no companies).
+    to_verify = sorted({p['email'] for p in pending})
+    with open(os.path.join(RUN, 'to_verify.csv'), 'w', newline='') as f:
+        wr = csv.writer(f)
+        wr.writerow(['email'])
+        wr.writerows([e] for e in to_verify)
+    print(f'to_verify.csv: {len(to_verify)} addresses awaiting the owner -> {os.path.join(RUN, "to_verify.csv")}')
     by = collections.defaultdict(collections.Counter)
     for s in summ:
         by[s['path'] or 'none'][s['result']] += 1
