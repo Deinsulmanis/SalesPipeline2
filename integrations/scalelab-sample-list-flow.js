@@ -11,8 +11,9 @@
 const { randomUUID } = require('node:crypto');
 const {
   INTENT, buildSampleList, renderSampleListBody, renderSampleListHtml, summarizePostings, autoSendDecision, sampleListOutcome,
-  STATE_NAMES, AUTOSEND_DELAY_MS, MIN_OPEN_ROLES,
+  STATE_NAMES, AUTOSEND_DELAY_MS, MIN_OPEN_ROLES, MIN_IN_STATE,
 } = require('./scalelab-sample-list');
+const { MAIN_CITIES, directEmployerCandidates } = require('./scalelab-sample-employer-discovery');
 
 const TASK_EVENT = 'scalelab_sample_list_drafted';
 const CLAIM_STALE_MS = 15 * 60 * 1000;
@@ -237,19 +238,43 @@ async function recordSentAndOutcomes({ events, activities, store, now = new Date
 }
 
 /**
- * Weekly restock: re-check hiring rows older than 7 days, then top up each
- * state to `perState` still-hiring employers with 2+ open roles from unchecked (or long-ago
- * not-hiring) pool rows. One GetLeads call at a time; bounded by maxChecks.
+ * Weekly restock (owner order 2026-11-25):
+ *  1. States where Campaign 3 agencies (queued + in sequence) wait on fewer
+ *     than 5 listable employers come first, most agencies first. Other states
+ *     follow, fewest listable first.
+ *  2. Per state: re-check hiring rows older than 7 days, then unchecked (or
+ *     long-ago not-hiring) pool rows until the state has `perState` employers
+ *     with 2+ open hands-on roles.
+ *  3. A state with agency demand whose pool runs out below 5 gets NEW employers:
+ *     companies hiring hands-on roles in its main cities (one grouped search
+ *     per city), direct employers only, each verified by a posting check in
+ *     the state before it is saved.
+ * One GetLeads call at a time; every call counts toward `maxChecks`.
  */
-async function restockSampleEmployers({ store, recheck, now = new Date(), perState = 10, maxChecks = 300, log = () => {} }) {
+async function restockSampleEmployers({ store, recheck, discover = null, demand = null, agencyDomains = null,
+  now = new Date(), perState = 10, minState = MIN_IN_STATE, maxChecks = 300, log = () => {} }) {
+  if (!demand && typeof store.agencyDemand === 'function') {
+    try {
+      const loaded = await store.agencyDemand();
+      demand = loaded.demand;
+      agencyDomains = agencyDomains || loaded.agencyDomains;
+    } catch (error) {
+      log(`agency demand unavailable, falling back to fewest-listable order: ${error.message}`);
+    }
+  }
+  demand = demand || {};
+  agencyDomains = agencyDomains || new Set();
   const pool = await store.listPool();
   const age = row => (row.checkedAt ? (now.getTime() - Date.parse(row.checkedAt)) / DAY_MS : Infinity);
+  const listable = row => row?.status === 'hiring' && Number(row.openRoles) >= MIN_OPEN_ROLES;
   const byState = new Map();
   for (const row of pool) byState.set(row.state, [...(byState.get(row.state) || []), row]);
-  const summary = { checks: 0, nowHiring: 0, dropped: 0, failures: 0, states: {} };
+  const knownDomains = new Set(pool.map(row => row.domain));
+  const countListable = state => (byState.get(state) || []).filter(listable).length;
+  const summary = { checks: 0, nowHiring: 0, dropped: 0, failures: 0, discoveryCalls: 0, added: {}, states: {}, priority: [] };
+  const spend = () => { if (summary.checks >= maxChecks) return false; summary.checks += 1; return true; };
   const check = async row => {
-    if (summary.checks >= maxChecks) return null;
-    summary.checks += 1;
+    if (!spend()) return null;
     try {
       const result = await recheck(row);
       const saved = await store.recordCheck({ domain: row.domain, checkedAt: now.toISOString(), ...result });
@@ -262,24 +287,71 @@ async function restockSampleEmployers({ store, recheck, now = new Date(), perSta
       return null;
     }
   };
-  // Fewest still-hiring employers first, so a capped run fills the gaps.
-  const order = [...byState.keys()].sort((a, b) =>
-    byState.get(a).filter(r => r.status === 'hiring').length - byState.get(b).filter(r => r.status === 'hiring').length);
-  for (const state of order) {
-    const rows = byState.get(state);
+  const discoverIn = async (state, hiring) => {
+    let added = 0;
+    for (const city of MAIN_CITIES[state] || []) {
+      if (hiring >= minState || !spend()) break;
+      let rows;
+      try {
+        summary.discoveryCalls += 1;
+        rows = (await discover(city, state)).data || [];
+      } catch (error) {
+        summary.failures += 1;
+        log(`discovery failed for ${city}, ${state}: ${error.code || error.message}`);
+        if (error.code === 'getleads_unconfigured') throw error;
+        continue;
+      }
+      for (const candidate of directEmployerCandidates(rows, { knownDomains, agencyDomains })) {
+        if (hiring >= minState || !spend()) break;
+        knownDomains.add(candidate.domain);
+        let result;
+        try {
+          result = await recheck({ domain: candidate.domain, state });
+        } catch (error) {
+          summary.failures += 1;
+          log(`discovery check failed for ${candidate.domain}: ${error.code || error.message}`);
+          if (error.code === 'getleads_unconfigured') throw error;
+          continue;
+        }
+        if (!result.hiring) continue;   // not hiring in this state: not saved
+        const saved = await store.addEmployer({ ...result, domain: candidate.domain, company: candidate.company,
+          state, city: result.city || city, checkedAt: now.toISOString() });
+        if (!saved) continue;
+        added += 1;
+        summary.nowHiring += 1;
+        if (listable(saved)) hiring += 1;
+      }
+    }
+    return { hiring, added };
+  };
+
+  const priority = Object.entries(demand)
+    .filter(([state, agencies]) => STATE_NAMES[state] && agencies > 0 && countListable(state) < minState)
+    .sort((a, b) => b[1] - a[1] || countListable(a[0]) - countListable(b[0]))
+    .map(([state]) => state);
+  const rest = [...byState.keys()].filter(state => !priority.includes(state))
+    .sort((a, b) => countListable(a) - countListable(b));
+  summary.priority = priority.map(state => ({ state, agencies: demand[state], listableBefore: countListable(state) }));
+
+  for (const state of [...priority, ...rest]) {
+    const rows = byState.get(state) || [];
     const current = new Map(rows.map(row => [row.domain, row]));
     for (const row of rows.filter(r => r.status === 'hiring' && age(r) > 7)) {
       const saved = await check(row);
       if (saved) current.set(row.domain, saved);
     }
-    const listable = row => row?.status === 'hiring' && Number(row.openRoles) >= MIN_OPEN_ROLES;
-    let hiring = [...current.values()].filter(r => listable(r) && age(r) <= 7).length;
+    let hiring = [...current.values()].filter(listable).length;
     const candidates = rows.filter(r => r.status === 'unchecked' || (r.status === 'not_hiring' && age(r) > 30))
       .sort((a, b) => (a.status === 'unchecked' ? 0 : 1) - (b.status === 'unchecked' ? 0 : 1) || a.domain.localeCompare(b.domain));
     for (const row of candidates) {
       if (hiring >= perState || summary.checks >= maxChecks) break;
       const saved = await check(row);
       if (listable(saved)) hiring += 1;
+    }
+    if (hiring < minState && discover && demand[state] > 0 && summary.checks < maxChecks) {
+      const found = await discoverIn(state, hiring);
+      hiring = found.hiring;
+      if (found.added) summary.added[state] = found.added;
     }
     summary.states[state] = hiring;
     if (summary.checks >= maxChecks) break;

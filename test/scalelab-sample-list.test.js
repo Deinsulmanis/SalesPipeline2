@@ -169,8 +169,8 @@ test('postings count only fresh hands-on roles in the stored state', () => {
     { title: 'Production Supervisor', posted_at: '2026-11-21', geo_admin_district: 'TX' },
     { title: 'Welder', posted_at: '2026-10-01', geo_admin_district: 'TX' },
     { title: 'Assembler', posted_at: '2026-11-21', geo_admin_district: 'OK' },
-  ], { now: NOW, state: 'TX' });
-  assert.deepEqual(summary, { hiring: true, openRoles: 2, exampleRoles: ['Welder', 'Cnc Machinist'], newestPosting: '2026-11-20' });
+  ].map(post => ({ geo_locality: post.geo_admin_district === 'TX' ? 'Houston' : 'Tulsa', ...post })), { now: NOW, state: 'TX' });
+  assert.deepEqual(summary, { hiring: true, openRoles: 2, exampleRoles: ['Welder', 'Cnc Machinist'], newestPosting: '2026-11-20', city: 'Houston' });
 });
 
 // ── rendering ────────────────────────────────────────────────────────────────
@@ -257,7 +257,13 @@ function memoryStore(employers) {
     async listHiring() { return employers.filter(e => e.status === 'hiring'); },
     async listPool() { return employers; },
     async recordCheck(update) { checks.push(update); const row = employers.find(e => e.domain === update.domain);
-      Object.assign(row, { status: update.hiring ? 'hiring' : 'not_hiring', checkedAt: update.checkedAt }); return { ...row }; },
+      Object.assign(row, { status: update.hiring ? 'hiring' : 'not_hiring', checkedAt: update.checkedAt,
+        ...(update.openRoles === undefined ? {} : { openRoles: update.openRoles }) }); return { ...row }; },
+    added: [],
+    async addEmployer(row) { if (employers.some(e => e.domain === row.domain)) return null;
+      const saved = { domain: row.domain, company: row.company, city: row.city, state: row.state, openRoles: row.openRoles,
+        exampleRoles: row.exampleRoles, status: row.hiring ? 'hiring' : 'not_hiring', checkedAt: row.checkedAt, source: 'getleads_discovery' };
+      employers.push(saved); this.added.push(saved); return { ...saved }; },
     async getEvent(id) { return events.get(id) || null; },
     async logEvent(event) {
       if (!events.has(event.eventId)) events.set(event.eventId, { event_id: event.eventId, kind: event.kind, action_id: event.actionId,
@@ -519,4 +525,124 @@ test('the flow hands both versions to the Gmail draft, which builds multipart/al
   assert.match(draft.html, /FOOTER<\/p>$/);
   const agent = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'outreach-agent.js'), 'utf8');
   assert.match(agent, /async function createSampleListGmailDraft\(\{ sender, lead, inbound, subject, body, html \}\)[\s\S]{0,300}toRawMessage\(\{ to: String\(lead\.email \|\| ''\)\.trim\(\), subject, body, html,/);
+});
+
+// ── demand-first restock and thin-state discovery (owner order 2026-11-25) ──
+const disc = require('../integrations/scalelab-sample-employer-discovery');
+
+test('restock works states with waiting agencies and fewer than 5 listable first, most agencies first', async () => {
+  const pool = [
+    ...Array.from({ length: 6 }, (_, i) => employer(i, 'NC')),                                  // 6 listable: not a priority
+    ...Array.from({ length: 3 }, (_, i) => employer(10 + i, 'WI', { status: 'unchecked', checkedAt: null })),
+    ...Array.from({ length: 3 }, (_, i) => employer(20 + i, 'TX', { status: 'unchecked', checkedAt: null })),
+    ...Array.from({ length: 3 }, (_, i) => employer(30 + i, 'VT', { status: 'unchecked', checkedAt: null })),
+  ];
+  const order = [];
+  const summary = await flow.restockSampleEmployers({ store: memoryStore(pool), now: NOW, maxChecks: 50,
+    demand: { TX: 38, WI: 12, NC: 9 }, agencyDomains: new Set(),
+    recheck: async item => { order.push(item.state || pool.find(e => e.domain === item.domain).state);
+      return { hiring: true, openRoles: 3, exampleRoles: ['Welder'], newestPosting: '2026-11-20' }; } });
+  assert.deepEqual(summary.priority.map(p => p.state), ['TX', 'WI']);
+  assert.deepEqual([...new Set(order)], ['TX', 'WI', 'VT']);
+  assert.equal(summary.states.NC, 6);
+});
+
+test('a thin state with demand gets new direct employers from its main cities, verified in-state', async () => {
+  const pool = [employer(1, 'WI'), employer(2, 'WI', { status: 'unchecked', checkedAt: null })];
+  const store = memoryStore(pool);
+  const cities = [];
+  const grouped = {
+    Milwaukee: [{ company_name: 'Badger Metal Works', company_domain: 'badgermetal.example', open_role_count: 9 },
+      { company_name: 'Lakeside Staffing Group', company_domain: 'lakesidestaff.example', open_role_count: 30 },
+      { company_name: 'Walmart', company_domain: 'walmart.com', open_role_count: 50 },
+      { company_name: 'Known Agency', company_domain: 'agency.example', open_role_count: 12 },
+      { company_name: 'Employer 1', company_domain: 'employer1.example', open_role_count: 8 },
+      { company_name: 'Cream City Fab', company_domain: 'creamcityfab.example', open_role_count: 4 }],
+    Madison: [{ company_name: 'Capitol Machine', company_domain: 'capitolmachine.example', open_role_count: 5 },
+      { company_name: 'Isthmus Assembly', company_domain: 'isthmus.example', open_role_count: 3 }],
+  };
+  const verified = [];
+  const summary = await flow.restockSampleEmployers({ store, now: NOW, maxChecks: 50, demand: { WI: 12 },
+    agencyDomains: new Set(['agency.example']),
+    discover: async city => { cities.push(city); return { data: grouped[city] || [] }; },
+    recheck: async item => { verified.push(item.domain);
+      if (item.domain === 'employer2.example') return { hiring: false, openRoles: 0, exampleRoles: [], newestPosting: null };
+      if (item.domain === 'creamcityfab.example') return { hiring: false, openRoles: 0, exampleRoles: [], newestPosting: null };
+      return { hiring: true, openRoles: 3, exampleRoles: ['Welder'], newestPosting: '2026-11-20', city: 'Milwaukee' }; } });
+  // Still under 5 after Madison, so the remaining main cities are searched too.
+  assert.deepEqual(cities, ['Milwaukee', 'Madison', 'Green Bay', 'Appleton']);
+  assert.ok(!verified.includes('lakesidestaff.example') && !verified.includes('walmart.com') && !verified.includes('agency.example'));
+  assert.deepEqual(store.added.map(e => e.domain), ['badgermetal.example', 'capitolmachine.example', 'isthmus.example']);
+  assert.ok(store.added.every(e => e.state === 'WI' && e.status === 'hiring'));
+  assert.equal(summary.added.WI, 3);
+  assert.equal(summary.states.WI, 4);
+  assert.equal(summary.discoveryCalls, 4);
+});
+
+test('no discovery without demand, at 5 or more listable, or past the call cap', async () => {
+  const calls = [];
+  const discover = async city => { calls.push(city); return { data: [] }; };
+  const recheck = async () => ({ hiring: false, openRoles: 0, exampleRoles: [], newestPosting: null });
+  await flow.restockSampleEmployers({ store: memoryStore([employer(1, 'VT')]), now: NOW, demand: {}, discover, recheck });
+  await flow.restockSampleEmployers({ store: memoryStore(Array.from({ length: 5 }, (_, i) => employer(i, 'TX'))), now: NOW, demand: { TX: 9 }, discover, recheck });
+  assert.deepEqual(calls, []);
+  const capped = await flow.restockSampleEmployers({ store: memoryStore([employer(1, 'WI', { status: 'unchecked', checkedAt: null })]),
+    now: NOW, demand: { WI: 3 }, maxChecks: 2, discover, recheck });
+  assert.equal(capped.checks, 2);
+  assert.deepEqual(calls, ['Milwaukee']);
+});
+
+test('discovery keeps direct employers only', () => {
+  const opts = { knownDomains: new Set(['pool.example']), agencyDomains: new Set(['prospect.example']) };
+  assert.equal(disc.excludedReason({ company_name: 'Acme Workforce Solutions', company_domain: 'acmewf.example' }, opts), 'staffing_agency');
+  assert.equal(disc.excludedReason({ company_name: 'Peak Personnel', company_domain: 'peak.example' }, opts), 'staffing_agency');
+  assert.equal(disc.excludedReason({ company_name: 'The Home Depot', company_domain: 'homedepot.com' }, opts), 'national_retail');
+  assert.equal(disc.excludedReason({ company_name: 'Amazon', company_domain: 'amazon.com' }, opts), 'national_retail');
+  assert.equal(disc.excludedReason({ company_name: 'Pool Co', company_domain: 'pool.example' }, opts), 'already_in_pool');
+  assert.equal(disc.excludedReason({ company_name: 'Prospect', company_domain: 'prospect.example' }, opts), 'scalelab_prospect');
+  assert.equal(disc.excludedReason({ company_name: 'No Domain Fab' }, opts), 'no_domain');
+  assert.equal(disc.excludedReason({ company_name: 'Midwest Gear Works', company_domain: 'www.midwestgear.example' }, opts), null);
+  const ranked = disc.directEmployerCandidates([{ company_name: 'B', company_domain: 'b.example', role_count: 2 },
+    { company_name: 'A', company_domain: 'a.example', open_role_count: 7 }, { company_name: 'A again', company_domain: 'a.example', role_count: 1 }]);
+  assert.deepEqual(ranked.map(r => r.domain), ['a.example', 'b.example']);
+  for (const code of Object.keys(list.STATE_NAMES)) assert.ok(disc.MAIN_CITIES[code]?.length >= 1, code);
+});
+
+test('the city employer search uses group_by company and the city filter, never region', async () => {
+  const sent = [];
+  const fetchImpl = async (url, init) => {
+    const payload = JSON.parse(init.body); sent.push(payload);
+    const headers = { get: () => 'S1' };
+    const result = payload.method === 'tools/call' ? { content: [{ type: 'text', text: JSON.stringify({ data: [], count: 0 }) }] } : {};
+    return { ok: true, status: 200, headers, text: async () => (payload.id ? JSON.stringify({ jsonrpc: '2.0', id: payload.id, result }) : '') };
+  };
+  const client = createGetLeadsJobsClient({ env: { GETLEADS_API_KEY: 'test' }, fetchImpl, sleep: async () => {} });
+  await client.searchCityEmployers('Milwaukee', { now: NOW });
+  const call = sent.find(p => p.method === 'tools/call').params;
+  assert.equal(call.name, 'search_jobs');
+  assert.equal(call.arguments.group_by, 'company');
+  assert.equal(call.arguments.city, 'Milwaukee');
+  assert.equal(call.arguments.country, 'US');
+  assert.equal(call.arguments.posted_since, '2026-10-25');
+  assert.ok(!('region' in call.arguments));
+  assert.ok(call.arguments.job_functions.includes('Skilled Trades & Maintenance'));
+});
+
+test('agency demand counts Campaign 3 queued and in-sequence leads by agency state', async () => {
+  const { createSampleListStore } = require('../integrations/scalelab-sample-list-store');
+  const fetchImpl = async url => {
+    const u = new URL(url);
+    const body = u.pathname.endsWith('/scalelab_agency_states') ? [{ domain: 'a.example', state: 'TX' }, { domain: 'b.example', state: 'WI' }]
+      : [{ email: 'x@a.example' }, { email: 'y@a.example' }, { email: 'z@b.example' }, { email: 'q@unknown.example' }];
+    if (u.pathname.endsWith('/outreach_leads')) {
+      assert.equal(u.searchParams.get('campaign'), 'eq.Industrial Campaign 3');
+      assert.equal(u.searchParams.get('stage'), 'in.(Queued,Contacted)');
+      assert.equal(u.searchParams.get('select'), 'email');
+    }
+    return { ok: true, json: async () => body };
+  };
+  const store = createSampleListStore({ env: { SUPABASE_URL: 'https://project.supabase.co', SUPABASE_SECRET_KEY: 'k' }, fetchImpl });
+  const { demand, agencyDomains } = await store.agencyDemand();
+  assert.deepEqual(demand, { TX: 2, WI: 1 });
+  assert.ok(agencyDomains.has('a.example'));
 });

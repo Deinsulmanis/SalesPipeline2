@@ -95,11 +95,18 @@ function summarizePostings(postings = [], { now = new Date(), state = '' } = {})
     const title = cleanTitle(post.title);
     if (title && !titles.some(seen => seen.toLowerCase() === title.toLowerCase())) titles.push(title);
   }
+  const cities = new Map();
+  for (const post of use) {
+    const city = norm(post.geo_locality || post.city);
+    if (city) cities.set(city, (cities.get(city) || 0) + 1);
+  }
   return {
     hiring: use.length > 0,
     openRoles: use.length,
     exampleRoles: titles.slice(0, 3),
     newestPosting: use.length ? use.map(post => String(post.posted_at || post.posted).slice(0, 10)).sort().pop() : null,
+    // Most common posting city in the state (used when a new employer is added).
+    city: [...cities.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] || null,
   };
 }
 
