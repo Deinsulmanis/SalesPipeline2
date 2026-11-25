@@ -1,6 +1,6 @@
 """Illinois registry agencies with resolved domains -> net-new companies for the crawl (owner brief 2026-11-25). Free.
 
-Usage: python3 -I il_dedupe.py <run>
+Usage: python3 -I il_dedupe.py <run>        (works for any registry run: IL, MA, NYC)
 Inputs: <run>/agencies.json, <run>/domains_apollo.json, <run>/web_result*.json (optional), <run>/prod_domains.json
 Franchise brands / franchisor sites -> franchise flow (held) by brand + city; corporate chains excluded; the rest deduped
 against the full exclusion set (places_dedupe.exclusion_domains: production for all clients, every run, V4 master,
@@ -39,13 +39,16 @@ def main():
         seen.add(a['key'])
         c['unique_agencies'] += 1
         route = a.get('route')
+        if route in ('KNOWN_NAME', 'OFF_ICP_NAME'):
+            c[route.lower()] += 1   # pre-filtered before lookup: name already in production / clearly off-ICP
+            continue
         if route == 'CORPORATE_CHAIN':
             c['corporate_chain'] += 1
             continue
         if route == 'FRANCHISE_FLOW':
             kind, brand = fr.classify_company(a['name'])
             fran.append({'brand': brand, 'name': a['name'], 'city': a['city'], 'state': a['state'],
-                         'il_branches': sum(1 for b in a['branches'] if b['state'] == 'IL'), 'status': 'HELD_FRANCHISE_FLOW'})
+                         'branches': len(a.get('branches') or []), 'status': 'HELD_FRANCHISE_FLOW'})
             c['franchise_flow'] += 1
             continue
         d = dom.get(a['name'])
@@ -72,10 +75,10 @@ def main():
             continue
         c['net_new'] += 1
         net.append({'domain': d, 'company_name': a['name'], 'hq_city': a['city'], 'hq_state': a['state'],
-                    'hq_country': 'United States', 'employee_band': '', 'industry': 'Staffing (IL DTLSA registry)',
-                    'source_desc': 'Illinois DTLSA registered agencies as of 2026-11-02', 'source_id': 'il_dtlsa:' + src[a['name']],
-                    'batch': 'IL_REGISTRY', 'intent_ads': None, 'pre_gate': None, 'pre_reason': '', 'dedupe_status': 'NET_NEW',
-                    'groups': ['IL_REGISTRY'], 'il_branches': sum(1 for b in a['branches'] if b['state'] == 'IL')})
+                    'hq_country': 'United States', 'employee_band': '', 'industry': 'Staffing (state registry)',
+                    'source_desc': os.path.basename(os.path.abspath(run)), 'source_id': 'registry:' + src[a['name']],
+                    'batch': 'REGISTRY', 'intent_ads': None, 'pre_gate': None, 'pre_reason': '', 'dedupe_status': 'NET_NEW',
+                    'groups': ['REGISTRY'], 'branches': len(a.get('branches') or [])})
     json.dump(net, open(os.path.join(run, 'companies.json'), 'w'), indent=1)
     json.dump(fran, open(os.path.join(run, 'il_franchise.json'), 'w'), indent=1)
     json.dump(dict(c), open(os.path.join(run, 'il_counts.json'), 'w'), indent=1)
