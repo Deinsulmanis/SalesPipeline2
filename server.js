@@ -44,7 +44,7 @@ const { createReplyQueueStore } = require('./integrations/scalelab-reply-queue-s
 const { dispatchDueAlerts } = require('./integrations/scalelab-reply-alerts');
 const { sendFromReplyScreen, saveToGmailDrafts, dismissReply, saveDraftText } = require('./integrations/scalelab-reply-send');
 const { createReplyProbe } = require('./integrations/gmail-reply-probe');
-const { sendOwnerSms } = require('./integrations/telnyx-sms');
+const { sendOwnerSms, telnyxConfig } = require('./integrations/telnyx-sms');
 const { notifyOwner } = require('./integrations/owner-notify');
 const { actionOwnership: fastReplyActionOwnership } = require('./integrations/clients/ownership');
 const { withGmailProviderSend: fastReplyProviderSend } = require('./integrations/send-lock');
@@ -8538,6 +8538,14 @@ if (process.env.RAILWAY_ENVIRONMENT) {
       .finally(() => { fastReplyInFlight = false; });
   }, { timezone: 'America/Vancouver' });
   console.log('[cron] Fast reply probe every 2 minutes 06:00-21:00 Pacific (feature-gated)');
+  {
+    // Boot status only: flags and which SMS settings are missing. Never values.
+    const fr = fastReplyConfig();
+    const sms = telnyxConfig();
+    console.log(`[fast-reply] init enabled=${fr.enabled} smsEnabled=${fr.smsEnabled} smsConfigured=${sms.ok}`
+      + `${sms.ok ? '' : ` missing=${sms.missing.join(',')}`} profileId=${sms.profileId ? 'set' : 'unset'}`
+      + ` push=${process.env.OWNER_PUSH_URL ? 'set' : 'unset'} dashboardUrl=${fr.dashboardUrl}`);
+  }
 
   cron.schedule('15,45 * * * *', () => {
     console.log('[cron] Running check-only pass...');
