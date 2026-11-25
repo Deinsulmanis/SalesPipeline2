@@ -103,7 +103,21 @@ function createGetLeadsJobsClient({ env = process.env, fetchImpl = global.fetch,
     return run;
   }
 
-  return { searchCompanyJobs, configured: Boolean(apiKey) };
+  /**
+   * Companies with open hands-on postings in one city (group_by company).
+   * The city filter is a word match, so callers verify the state per company.
+   */
+  function searchCityEmployers(city, { now = new Date(), days = 30, limit = 50 } = {}) {
+    const since = new Date(new Date(now).getTime() - days * 86400000).toISOString().slice(0, 10);
+    const args = { city: String(city || '').trim(), country: 'US', status: 'open', posted_since: since,
+      job_functions: JOB_FUNCTIONS, group_by: 'company', limit };
+    if (!args.city) return Promise.reject(codedError('getleads_invalid_city', 'city is required'));
+    const run = queue.then(() => withBackoff(args));
+    queue = run.catch(() => {});
+    return run;
+  }
+
+  return { searchCompanyJobs, searchCityEmployers, configured: Boolean(apiKey) };
 }
 
 module.exports = { createGetLeadsJobsClient, JOB_FUNCTIONS, DEFAULT_URL };

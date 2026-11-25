@@ -14,7 +14,10 @@ When a prospect agency says yes to the Email 2 offer ("Want me to pull a short s
    - If GetLeads fails, it uses the stored list only if every unchecked employer is within 21 days. Otherwise the request goes to review and the owner is pushed.
    - It creates a Gmail draft in the thread with the standard staffing compliance footer, logs it, adds a dashboard task ("Review sample list draft in Gmail") and pushes the owner.
 4. **Log.** Events in `scalelab_sample_list_events` are `drafted` (claim, then ready with the draft id), `review`, `sent` (the owner's send is observed as `human_response_sent` in the thread), `autosend_refused`, and `outcome` (`call_booked`, `declined`, `no_reply` after 14 days, or `replied` after 30 days).
-5. **Restock.** A weekly job runs Sundays 03:17 Pacific when `SCALELAB_SAMPLE_LIST_RESTOCK_ENABLED=true`, or by hand with `node scripts/scalelab-sample-employers-restock.js`. It re-checks hiring rows older than 7 days and tops each state up to 10 still-hiring employers from the Jole employer pool. It makes one GetLeads call at a time, at most 300 checks per run.
+5. **Restock.** A weekly job runs Sundays 03:17 Pacific when `SCALELAB_SAMPLE_LIST_RESTOCK_ENABLED=true`, or by hand with `node scripts/scalelab-sample-employers-restock.js`. It makes one GetLeads call at a time, at most 300 calls per run, all from the free jobs quota.
+   - **Order (owner, 2026-11-25):** first the states where Campaign 3 agencies (queued + in sequence, by `scalelab_agency_states`) wait on fewer than 5 employers with 2+ roles, most agencies first; then the other states, fewest listable first.
+   - **Per state:** it re-checks hiring rows older than 7 days, then checks unchecked pool rows until the state has 10 employers with 2+ roles.
+   - **New employers:** a state with agency demand whose pool runs out below 5 is searched by its main cities (`search_jobs`, `group_by=company`, city filter, hands-on functions, last 30 days). Only direct employers are kept: no staffing agencies, no national retail, no ScaleLab prospects. Each is verified by a posting check in that state and saved with `source = getleads_discovery`.
 
 ## Auto-send (built, OFF)
 

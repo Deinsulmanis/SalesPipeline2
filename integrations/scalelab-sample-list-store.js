@@ -59,6 +59,30 @@ function createSampleListStore({ env = process.env, fetchImpl = global.fetch } =
       if (!row || row.domain !== domain) throw new Error('sample employer check not saved');
       return toEmployer(row);
     },
+    // Discovered employer (company level). Never overwrites an existing row.
+    async addEmployer(row) {
+      const body = { domain: row.domain, company: row.company, city: row.city || '', state: row.state,
+        industry: row.industry || '', trade_focus: row.tradeFocus || '', open_roles: row.openRoles || 0,
+        example_roles: row.exampleRoles || [], newest_posting: row.newestPosting || null, checked_at: row.checkedAt,
+        status: row.hiring ? 'hiring' : 'not_hiring', source: 'getleads_discovery', updated_at: new Date().toISOString() };
+      const [saved] = await request(EMPLOYERS, 'POST', { on_conflict: 'domain' }, body, 'resolution=ignore-duplicates,return=representation');
+      return saved ? toEmployer(saved) : null;
+    },
+    // Campaign 3 agencies (queued + in sequence) per agency state. Reads only
+    // emails from outreach_leads and the backfilled agency states.
+    async agencyDemand() {
+      const states = new Map((await pages(AGENCY_STATES, { select: 'domain,state', order: 'domain.asc' }))
+        .map(row => [row.domain, row.state]));
+      const leads = await pages('outreach_leads', { select: 'email', client_id: 'eq.scalelab',
+        campaign: 'eq.Industrial Campaign 3', stage: 'in.(Queued,Contacted)', order: 'email.asc' });
+      const demand = {};
+      for (const lead of leads) {
+        const domain = String(lead.email || '').trim().toLowerCase().split('@')[1] || '';
+        const state = states.get(domain);
+        if (state) demand[state] = (demand[state] || 0) + 1;
+      }
+      return { demand, agencyDomains: new Set(states.keys()) };
+    },
     async getAgencyStates(domain) {
       const key = String(domain || '').trim().toLowerCase();
       if (!key) return [];

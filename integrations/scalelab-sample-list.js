@@ -59,7 +59,7 @@ const NEIGHBORS = Object.freeze({
 // Hands-on industrial titles. Supervisory, office and engineering roles do
 // not count toward "open roles".
 const HANDS_ON = /\bweld|fabricat|fitter|boilermaker|brazer|solder|ironworker|sheet ?metal|pipefitter|machinist|\bcnc\b|lathe|grinder|tool ?(?:and|&) ?die|toolmaker|mainten|mechanic|electrician|electrical tech|electric tech|millwright|hvac|instrument tech|e&i|repair|carpenter|laborer|rigger|crane|equipment operator|painter|blaster|insulator|mason|concrete|plumber|lineman|scaffold|warehouse|forklift|material handler|shipping|receiving|picker|packer|loader|cdl|driver|production|assembl|machine operator|operator|manufactur|press|packag|molder|extrusion|furnace|general labor|helper|finisher|coater|cutter|technician|team member|utility tech/i;
-const NOT_HANDS_ON = /foreman|\blead\b|manager|director|supervisor|superintendent|engineer|planner|scheduler|analyst|buyer|coordinator|intern\b|accountant|sales|recruit|human resources|\bhr\b|estimator|president|\bvp\b|administrat|clerk|purchas|inspector|chemist|scientist|program|project|opportunit|service provider|trainer|specialist/i;
+const NOT_HANDS_ON = /rideshare|shuttle|valet|medical driver|medical transport|delivery driver|driver helper|courier|chauffeur|foreman|\blead\b|manager|director|supervisor|superintendent|engineer|planner|scheduler|analyst|buyer|coordinator|intern\b|accountant|sales|recruit|human resources|\bhr\b|estimator|president|\bvp\b|administrat|clerk|purchas|inspector|chemist|scientist|program|project|opportunit|service provider|trainer|specialist/i;
 
 const norm = value => String(value || '').trim();
 const noDashes = value => String(value || '').replace(/[‒–—―−]/g, '-');
@@ -95,11 +95,18 @@ function summarizePostings(postings = [], { now = new Date(), state = '' } = {})
     const title = cleanTitle(post.title);
     if (title && !titles.some(seen => seen.toLowerCase() === title.toLowerCase())) titles.push(title);
   }
+  const cities = new Map();
+  for (const post of use) {
+    const city = norm(post.geo_locality || post.city);
+    if (city) cities.set(city, (cities.get(city) || 0) + 1);
+  }
   return {
     hiring: use.length > 0,
     openRoles: use.length,
     exampleRoles: titles.slice(0, 3),
     newestPosting: use.length ? use.map(post => String(post.posted_at || post.posted).slice(0, 10)).sort().pop() : null,
+    // Most common posting city in the state (used when a new employer is added).
+    city: [...cities.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] || null,
   };
 }
 
@@ -206,34 +213,62 @@ function marketLabel(picked, primary) {
  * Up to 10 still-hiring employers. In-state first; if fewer than 5 qualify in
  * the agency's states, fill from neighboring states, then the national list.
  */
-function selectSampleList({ employers = [], states = [], exclude = new Set(), max = MAX_EMPLOYERS } = {}) {
+// FNV-1a: a stable per-agency ordering, no randomness.
+function seededKey(seed, domain) {
+  let h = 0x811c9dc5;
+  for (const ch of `${seed}|${domain}`) { h ^= ch.charCodeAt(0); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h;
+}
+
+// When more employers qualify than there are slots, each agency (seed) sees a
+// different, stable subset. Without a seed, the top-ranked ones.
+function rotatePick(list, slots, seed) {
+  if (slots <= 0) return [];
+  if (!seed || list.length <= slots) return list.slice(0, slots);
+  return [...list].sort((a, b) => seededKey(seed, a.domain) - seededKey(seed, b.domain)).slice(0, slots);
+}
+
+/** The agency's own domain: the stable seed for its list rotation. */
+function agencySeed(lead = {}) {
+  let notes = {};
+  try { notes = String(lead.campaign_notes || '').trim().startsWith('{') ? JSON.parse(lead.campaign_notes) : {}; } catch (_) { notes = {}; }
+  const fromNotes = String(notes.company_domain || '').trim().toLowerCase();
+  if (fromNotes) return fromNotes;
+  const email = String(lead.email || '').trim().toLowerCase();
+  return email.includes('@') ? email.split('@')[1] : String(lead.id || '');
+}
+
+function selectSampleList({ employers = [], states = [], exclude = new Set(), max = MAX_EMPLOYERS, seed = '' } = {}) {
   const hiring = employers.filter(item => item.status === 'hiring' && item.domain && !exclude.has(item.domain)
     && Number(item.openRoles) >= MIN_OPEN_ROLES);
   const home = states.filter(code => STATE_NAMES[code]);
   const primary = home[0] || null;
-  // The agency's primary state first, then its branch states.
-  const inState = hiring.filter(item => home.includes(item.state))
-    .sort((a, b) => (a.state === primary ? 0 : 1) - (b.state === primary ? 0 : 1) || rank(a, b));
-  if (primary && inState.length >= MIN_IN_STATE) {
-    const picked = inState.slice(0, max);
+  // The agency's primary state first, then its branch states; each group
+  // rotated per agency when it holds more than the free slots.
+  const inPrimary = hiring.filter(item => item.state === primary).sort(rank);
+  const inBranch = hiring.filter(item => item.state !== primary && home.includes(item.state)).sort(rank);
+  const fromPrimary = rotatePick(inPrimary, max, seed);
+  const inState = [...fromPrimary, ...rotatePick(inBranch, max - fromPrimary.length, seed)];
+  const display = list => [...list].sort((a, b) => (a.state === primary ? 0 : 1) - (b.state === primary ? 0 : 1) || rank(a, b));
+  if (primary && inPrimary.length + inBranch.length >= MIN_IN_STATE) {
+    const picked = display(inState);
     return { employers: picked, scope: 'state', state: primary, market: marketLabel(picked, primary) };
   }
-  const picked = [...inState];
-  const taken = () => new Set(picked.map(item => item.domain));
+  const picked = display(inState);
+  const taken = new Set(picked.map(item => item.domain));
   let usedNeighbors = false;
   if (primary) {
     const near = new Set(home.flatMap(code => NEIGHBORS[code] || []).filter(code => !home.includes(code)));
-    for (const item of hiring.filter(e => near.has(e.state)).sort(rank)) {
-      if (picked.length >= max) break;
-      if (!taken().has(item.domain)) { picked.push(item); usedNeighbors = true; }
+    const neighbours = hiring.filter(e => near.has(e.state) && !taken.has(e.domain)).sort(rank);
+    for (const item of rotatePick(neighbours, max - picked.length, seed).sort(rank)) {
+      picked.push(item); taken.add(item.domain); usedNeighbors = true;
     }
   }
   let usedNational = false;
-  const national = hiring.filter(item => Number.isFinite(item.nationalRank))
+  const national = hiring.filter(item => Number.isFinite(item.nationalRank) && !taken.has(item.domain))
     .sort((a, b) => a.nationalRank - b.nationalRank);
-  for (const item of national) {
-    if (picked.length >= max) break;
-    if (!taken().has(item.domain)) { picked.push(item); usedNational = true; }
+  for (const item of rotatePick(national, max - picked.length, seed).sort((a, b) => a.nationalRank - b.nationalRank)) {
+    picked.push(item); taken.add(item.domain); usedNational = true;
   }
   const scope = !primary ? 'national_state_unknown'
     : usedNational ? 'state_neighbors_national' : usedNeighbors ? 'state_neighbors' : 'state';
@@ -286,7 +321,7 @@ async function buildSampleList({ employers, lead, now = new Date(), recheck, rou
   let usedStoredFallback = false;
   let last = null;
   for (let round = 0; round < rounds; round += 1) {
-    const selection = selectSampleList({ employers: [...pool.values()], states, exclude });
+    const selection = selectSampleList({ employers: [...pool.values()], states, exclude, seed: agencySeed(lead) });
     const fresh = await freshenEmployers({ employers: selection.employers, now, recheck });
     allUpdates.push(...fresh.updates);
     if (fresh.status === 'review') return { status: 'review', reason: fresh.reason, detail: fresh.detail, updates: allUpdates, states };
@@ -420,6 +455,6 @@ module.exports = {
   INTENT, MAX_EMPLOYERS, MIN_IN_STATE, MIN_OPEN_ROLES, RECHECK_AFTER_DAYS, STORED_FALLBACK_DAYS, POSTING_WINDOW_DAYS,
   AUTOSEND_DELAY_MS, SAMPLE_OFFER, STATE_NAMES, NEIGHBORS,
   isHandsOnTitle, cleanTitle, summarizePostings, offeredSampleList, detectSampleListRequest,
-  stateCode, agencyStates, selectSampleList, freshenEmployers, buildSampleList,
+  stateCode, agencyStates, agencySeed, rotatePick, selectSampleList, freshenEmployers, buildSampleList,
   FULL_LIST_LINE, renderTable, renderSampleListBody, renderSampleListHtml, sampleListBodyProblem, sampleListHtmlProblem, autoSendDecision, sampleListOutcome, noDashes,
 };
