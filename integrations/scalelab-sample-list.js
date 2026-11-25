@@ -59,7 +59,7 @@ const NEIGHBORS = Object.freeze({
 // Hands-on industrial titles. Supervisory, office and engineering roles do
 // not count toward "open roles".
 const HANDS_ON = /\bweld|fabricat|fitter|boilermaker|brazer|solder|ironworker|sheet ?metal|pipefitter|machinist|\bcnc\b|lathe|grinder|tool ?(?:and|&) ?die|toolmaker|mainten|mechanic|electrician|electrical tech|electric tech|millwright|hvac|instrument tech|e&i|repair|carpenter|laborer|rigger|crane|equipment operator|painter|blaster|insulator|mason|concrete|plumber|lineman|scaffold|warehouse|forklift|material handler|shipping|receiving|picker|packer|loader|cdl|driver|production|assembl|machine operator|operator|manufactur|press|packag|molder|extrusion|furnace|general labor|helper|finisher|coater|cutter|technician|team member|utility tech/i;
-const NOT_HANDS_ON = /foreman|\blead\b|manager|director|supervisor|superintendent|engineer|planner|scheduler|analyst|buyer|coordinator|intern\b|accountant|sales|recruit|human resources|\bhr\b|estimator|president|\bvp\b|administrat|clerk|purchas|inspector|chemist|scientist|program|project|opportunit|service provider|trainer|specialist/i;
+const NOT_HANDS_ON = /rideshare|shuttle|valet|medical driver|medical transport|delivery driver|driver helper|courier|chauffeur|foreman|\blead\b|manager|director|supervisor|superintendent|engineer|planner|scheduler|analyst|buyer|coordinator|intern\b|accountant|sales|recruit|human resources|\bhr\b|estimator|president|\bvp\b|administrat|clerk|purchas|inspector|chemist|scientist|program|project|opportunit|service provider|trainer|specialist/i;
 
 const norm = value => String(value || '').trim();
 const noDashes = value => String(value || '').replace(/[‒–—―−]/g, '-');

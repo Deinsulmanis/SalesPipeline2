@@ -602,6 +602,17 @@ test('discovery keeps direct employers only', () => {
   assert.equal(disc.excludedReason({ company_name: 'Prospect', company_domain: 'prospect.example' }, opts), 'scalelab_prospect');
   assert.equal(disc.excludedReason({ company_name: 'No Domain Fab' }, opts), 'no_domain');
   assert.equal(disc.excludedReason({ company_name: 'Midwest Gear Works', company_domain: 'www.midwestgear.example' }, opts), null);
+  // Found in the first live chunk (2026-11-25): staffing brands, foreign domains, gig/passenger transport, training, car retail.
+  assert.equal(disc.excludedReason({ company_name: 'Aerotek', company_domain: 'aerotek.com' }, opts), 'staffing_agency');
+  assert.equal(disc.excludedReason({ company_name: 'TransForce', company_domain: 'transforce.com' }, opts), 'staffing_agency');
+  assert.equal(disc.excludedReason({ company_name: 'JRL Group Ltd', company_domain: 'jrlgroup.co.uk' }, opts), 'non_us_domain');
+  assert.equal(disc.excludedReason({ company_name: 'Veyo', company_domain: 'veyo.com' }, opts), 'not_an_industrial_employer');
+  assert.equal(disc.excludedReason({ company_name: 'Valet Park of America', company_domain: 'valetparkofamerica.com' }, opts), 'not_an_industrial_employer');
+  assert.equal(disc.excludedReason({ company_name: 'Hickory', company_domain: 'hickorytraining.com' }, opts), 'not_an_industrial_employer');
+  assert.equal(disc.excludedReason({ company_name: 'Carvana', company_domain: 'carvana.com' }, opts), 'national_retail');
+  assert.equal(list.isHandsOnTitle('Rideshare Driver'), false);
+  assert.equal(list.isHandsOnTitle('Shuttle Driver PT'), false);
+  assert.equal(list.isHandsOnTitle('CDL A Driver'), true);
   const ranked = disc.directEmployerCandidates([{ company_name: 'B', company_domain: 'b.example', role_count: 2 },
     { company_name: 'A', company_domain: 'a.example', open_role_count: 7 }, { company_name: 'A again', company_domain: 'a.example', role_count: 1 }]);
   assert.deepEqual(ranked.map(r => r.domain), ['a.example', 'b.example']);

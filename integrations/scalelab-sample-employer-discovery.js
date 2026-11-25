@@ -33,8 +33,12 @@ const MAIN_CITIES = Object.freeze({
   WI: ['Milwaukee', 'Madison', 'Green Bay', 'Appleton'], WY: ['Cheyenne', 'Casper'],
 });
 
-const STAFFING = /staffing|personnel|recruit|workforce|employment|temporar|\btemps?\b|manpower|talent|placement|labor (?:ready|finders|source|solutions|services)|\bhr\b|careers?\b|\bjobs?\b|outsourc|search group|people(?:ready| source)/i;
-const NATIONAL_RETAIL = /walmart|\btarget\b|home depot|lowe'?s|costco|kroger|amazon|best buy|dollar (?:general|tree)|family dollar|tractor supply|walgreens|\bcvs\b|publix|\baldi\b|meijer|sam'?s club|\bbj'?s\b|autozone|o'?reilly|advance auto|7-eleven|wawa|sheetz|menards|ace hardware|harbor freight|ikea|macy'?s|kohl'?s|\bheb\b|h-e-b|safeway|albertsons|wegmans|\bross\b|tj ?maxx|marshalls|petsmart|petco|staples|office depot/i;
+const STAFFING = /staffing|personnel|recruit|workforce|employment|temporar|\btemps?\b|manpower|talent|placement|labor (?:ready|finders|source|solutions|services)|\bhr\b|careers?\b|\bjobs?\b|outsourc|search group|people(?:ready| source)|aerotek|transforce|adecco|randstad|kelly services|robert half|express ?pros|spherion|\bvolt\b|insight global|teksystems|allegis|actalent|aston carter|trueblue|staffmark|surge staffing|kforce|nesco resource|pridestaff|employbridge|prolink|labor ?finders|peopleready|bluecrew|instawork|wonolo|veritone|jobot/i;
+// Training schools, gig and passenger transport are not employers of the trades agencies place.
+const NOT_EMPLOYER = /training|academy|school|college|university|institute|rideshare|valet|shuttle|non-emergency medical|veyo|uber|lyft|doordash|instacart/i;
+// Non-US country domains (GetLeads occasionally tags foreign postings with US cities).
+const FOREIGN_TLD = /\.(?:ca|uk|au|de|fr|in|mx|ie|nz|cn|jp|br|es|it|nl|se|no|dk|pl|ph|sg|za)$/i;
+const NATIONAL_RETAIL = /carvana|carmax|walmart|\btarget\b|home depot|lowe'?s|costco|kroger|amazon|best buy|dollar (?:general|tree)|family dollar|tractor supply|walgreens|\bcvs\b|publix|\baldi\b|meijer|sam'?s club|\bbj'?s\b|autozone|o'?reilly|advance auto|7-eleven|wawa|sheetz|menards|ace hardware|harbor freight|ikea|macy'?s|kohl'?s|\bheb\b|h-e-b|safeway|albertsons|wegmans|\bross\b|tj ?maxx|marshalls|petsmart|petco|staples|office depot/i;
 const DOMAIN = /^[a-z0-9.-]+\.[a-z]{2,}$/;
 
 function excludedReason(row, { knownDomains = new Set(), agencyDomains = new Set() } = {}) {
@@ -43,7 +47,9 @@ function excludedReason(row, { knownDomains = new Set(), agencyDomains = new Set
   if (!name || !DOMAIN.test(domain)) return 'no_domain';
   if (knownDomains.has(domain)) return 'already_in_pool';
   if (agencyDomains.has(domain)) return 'scalelab_prospect';
+  if (FOREIGN_TLD.test(domain)) return 'non_us_domain';
   if (STAFFING.test(name) || STAFFING.test(domain)) return 'staffing_agency';
+  if (NOT_EMPLOYER.test(name) || NOT_EMPLOYER.test(domain)) return 'not_an_industrial_employer';
   if (NATIONAL_RETAIL.test(name) || NATIONAL_RETAIL.test(domain)) return 'national_retail';
   return null;
 }
