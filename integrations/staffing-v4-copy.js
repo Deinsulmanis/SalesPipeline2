@@ -163,6 +163,16 @@ const COPY_C_V2_FALLBACK = Object.freeze({
   body: EMAIL_1_V2.COPY_C.body.replace('Saw you place {{specialty_line}}.', 'Saw {{company}} focuses on {{verified_specialization}} staffing.'),
   variables: Object.freeze(['first_name', 'company', 'verified_specialization']),
 });
+// Franchise location (owner decision 2026-11-25): the v2 primary line names the
+// owner's office city. Only the first line differs; it needs a sealed
+// franchise_city and a quote-backed specialty_line. A franchise lead never gets
+// the fallback form ("Saw <brand> focuses on ...") because the brand name alone
+// reads as the franchisor, not the owner's office.
+const COPY_C_V2_FRANCHISE = Object.freeze({
+  subject: EMAIL_1_V2.COPY_C.subject,
+  body: EMAIL_1_V2.COPY_C.body.replace('Saw you place {{specialty_line}}.', 'Saw your {{franchise_city}} office places {{specialty_line}}.'),
+  variables: Object.freeze(['first_name', 'company', 'franchise_city', 'specialty_line']),
+});
 
 const FOLLOW_UPS_V2 = Object.freeze([
   Object.freeze({
@@ -195,7 +205,10 @@ const FOLLOW_UPS_BY_VERSION = Object.freeze({ v1: FOLLOW_UPS, v2: FOLLOW_UPS_V2 
 const V1_VARIABLE_NAMES = Object.freeze(['first_name', 'company', 'verified_role', 'location',
   'verified_specialization', 'sales_position', 'market', 'verified_title']);
 const V2_VARIABLE_NAMES = Object.freeze(['specialty_line']);
-const VARIABLE_NAMES = Object.freeze([...V1_VARIABLE_NAMES, ...V2_VARIABLE_NAMES]);
+// Sealed only on a franchise-location profile (an optional profile field, so
+// every existing v2 profile keeps its exact fields and digest).
+const FRANCHISE_VARIABLE_NAMES = Object.freeze(['franchise_city']);
+const VARIABLE_NAMES = Object.freeze([...V1_VARIABLE_NAMES, ...V2_VARIABLE_NAMES, ...FRANCHISE_VARIABLE_NAMES]);
 
 // ── Variables ────────────────────────────────────────────────────────────────
 
@@ -204,7 +217,7 @@ const UNSAFE = /[\r\n\t{}<>|\\]/;
 const PLACEHOLDER_WORDS = /^(?:undefined|null|nan|n\/a|na|none|unknown|tbd|tba|todo|placeholder|test|-+|\.+|\?+)$/i;
 const MAX_VARIABLE = Object.freeze({
   first_name: 30, company: 60, verified_role: 50, location: 50, verified_specialization: 60,
-  sales_position: 60, market: 50, verified_title: 60, specialty_line: 90,
+  sales_position: 60, market: 50, verified_title: 60, specialty_line: 90, franchise_city: 40,
 });
 
 /** Why a variable value cannot be merged, or null when it is safe. Pure. */
@@ -226,6 +239,7 @@ function variableProblem(name, value) {
   // free-standing or trailing hyphen is an "unnecessary hyphen".
   if (/(?:^|\s)-|-(?:\s|$)/.test(text)) return `${name} has a free-standing hyphen`;
   if (name === 'specialty_line') return specialtyLineShapeProblem(text);
+  if (name === 'franchise_city' && !/^[A-Z][A-Za-z.']*(?: [A-Z][A-Za-z.']*){0,3}$/.test(text)) return 'franchise_city is not a plain city name';
   return null;
 }
 
@@ -315,6 +329,9 @@ function selectV4Variant(evidence = {}, { copyVersion = CURRENT_COPY_VERSION } =
   if (!COPY_VERSIONS.includes(copyVersion)) throw new Error(`unknown V4 copy version ${copyVersion || '(blank)'}`);
   const templates = EMAIL_1_BY_VERSION[copyVersion];
   const v2 = copyVersion === 'v2';
+  // A franchise location (owner decision 2026-11-25) is v2 only.
+  const franchise = Boolean(evidence.franchise && typeof evidence.franchise === 'object');
+  if (franchise && !v2) throw new Error('a franchise location needs copy v2');
   let form = '';
   const base = { first_name: evidence.firstName, company: evidence.company };
   const considered = [];
@@ -388,10 +405,14 @@ function selectV4Variant(evidence = {}, { copyVersion = CURRENT_COPY_VERSION } =
     }
   }
   // 6. COPY_C (v2 primary): a quote-backed specialty_line from the company's own site.
+  // A franchise location uses the city form ("Saw your <city> office places ...").
+  const franchiseCity = franchise ? String(evidence.franchise.city || '') : '';
   if (!chosen && v2) {
     const line = evidence.specialtyLine;
     const backed = line && isHttpUrl(line.url) && line.quote && typeof line.line === 'string' && quoteBacksLine(line.line, line.quote);
-    chosen = backed ? tryVariant('COPY_C', [line], item => ({ specialty_line: item.line })) : null;
+    chosen = backed ? (franchise
+      ? tryVariant('COPY_C', [line], item => ({ specialty_line: item.line, franchise_city: franchiseCity }), COPY_C_V2_FRANCHISE)
+      : tryVariant('COPY_C', [line], item => ({ specialty_line: item.line }))) : null;
     if (chosen) form = 'primary';
     else if (!backed) {
       considered.push({ variant: 'COPY_C', outcome: 'primary not eligible',
@@ -399,7 +420,10 @@ function selectV4Variant(evidence = {}, { copyVersion = CURRENT_COPY_VERSION } =
     }
   }
   // 6. COPY_C (v1; v2 fallback): a verified specialization, else HOLD.
-  if (!chosen) {
+  if (!chosen && franchise) {
+    considered.push({ variant: 'COPY_C', outcome: 'fallback not used', detail: 'a franchise location never gets the brand-name fallback line' });
+  }
+  if (!chosen && !franchise) {
     const spec = evidence.specialization;
     const ok = spec && isHttpUrl(spec.url) && spec.quote && spec.phrase;
     chosen = ok ? tryVariant('COPY_C', [spec], item => ({ verified_specialization: item.phrase }), v2 ? COPY_C_V2_FALLBACK : templates.COPY_C) : null;
@@ -446,6 +470,7 @@ function templateFor(variant, step, copyVersion = 'v1', vars = {}) {
     if (!email) throw new Error(`unknown V4 copy variant ${variant || '(blank)'}`);
     // v2 COPY_C renders its primary form only with a sealed specialty_line.
     if (v2 && variant === 'COPY_C' && !vars.specialty_line) email = COPY_C_V2_FALLBACK;
+    if (v2 && variant === 'COPY_C' && vars.specialty_line && vars.franchise_city) email = COPY_C_V2_FRANCHISE;
     return { subject: email.subject, body: email.body, variables: email.variables,
       bold: v2 ? null : PERFORMANCE_SENTENCE, lock: v2 ? V2_EMAIL_1_LOCK : PERFORMANCE_SENTENCE };
   }
@@ -533,7 +558,7 @@ function v4CopyProblem({ body, subject, copyVersion } = {}, step) {
 
 module.exports = {
   SIGNATURE, PERFORMANCE_SENTENCE, EMAIL_2_BOLD, EMAIL_3_BOLD, VARIANTS, EMAIL_1, FOLLOW_UPS, VARIABLE_NAMES,
-  COPY_VERSIONS, CURRENT_COPY_VERSION, EMAIL_1_V2, COPY_C_V2_FALLBACK, FOLLOW_UPS_V2, EMAIL_1_BY_VERSION, FOLLOW_UPS_BY_VERSION,
+  COPY_VERSIONS, CURRENT_COPY_VERSION, EMAIL_1_V2, COPY_C_V2_FALLBACK, COPY_C_V2_FRANCHISE, FRANCHISE_VARIABLE_NAMES, FOLLOW_UPS_V2, EMAIL_1_BY_VERSION, FOLLOW_UPS_BY_VERSION,
   V2_EMAIL_1_LOCK, V2_EMAIL_2_BOLD, V2_EMAIL_3_LOCK, V1_VARIABLE_NAMES, V2_VARIABLE_NAMES,
   WINDOWS, MIN_EMPLOYER_P, MIN_ATTRIBUTION_P,
   variableProblem, missingVariables, selectV4Variant, parseV4Tag, renderV4Copy, v4CopyProblem, inferV4CopyVersion,

@@ -57,10 +57,21 @@ const FIELD_TYPES = Object.freeze({
 const FIELDS = Object.freeze(Object.keys(FIELD_TYPES));
 const DIGESTED = Object.freeze(['schema', ...FIELDS].sort());
 const DIGESTED_V2 = Object.freeze(['schema', ...FIELDS, ...V2_FIELDS].sort());
+// Franchise location (owner decision 2026-11-25): optional v2 fields, present
+// only on a franchise profile. Every other profile keeps its exact fields and
+// digest; a franchise profile digests these too, so the identity is sealed.
+const FRANCHISE_FIELD_TYPES = Object.freeze({
+  franchise_brand: 'text', franchise_owner_key: 'text', franchise_territory: 'text', var_franchise_city: 'text',
+});
+const FRANCHISE_FIELDS = Object.freeze(Object.keys(FRANCHISE_FIELD_TYPES));
+const DIGESTED_V2_FRANCHISE = Object.freeze([...DIGESTED_V2, ...FRANCHISE_FIELDS].sort());
 const STORED = new Set([...DIGESTED, 'profile_digest']);
 const STORED_V2 = new Set([...DIGESTED_V2, 'profile_digest']);
+const STORED_V2_FRANCHISE = new Set([...DIGESTED_V2_FRANCHISE, 'profile_digest']);
 const isV2Shape = profile => Object.prototype.hasOwnProperty.call(profile || {}, 'copy_version');
-const typeOf = field => FIELD_TYPES[field] || V2_FIELD_TYPES[field];
+const isFranchiseShape = profile => Object.prototype.hasOwnProperty.call(profile || {}, 'franchise_brand');
+const digestedFor = profile => (isV2Shape(profile) ? (isFranchiseShape(profile) ? DIGESTED_V2_FRANCHISE : DIGESTED_V2) : DIGESTED);
+const typeOf = field => FIELD_TYPES[field] || V2_FIELD_TYPES[field] || FRANCHISE_FIELD_TYPES[field];
 
 const CHECKS = Object.freeze({
   text: value => typeof value === 'string',
@@ -69,7 +80,7 @@ const CHECKS = Object.freeze({
 });
 
 function profileDigest(profile) {
-  const pairs = (isV2Shape(profile) ? DIGESTED_V2 : DIGESTED).map(key => {
+  const pairs = digestedFor(profile).map(key => {
     if (!Object.prototype.hasOwnProperty.call(profile, key) || profile[key] === undefined) {
       throw new Error(`staffing V4 profile is missing ${key}`);
     }
@@ -111,6 +122,14 @@ function buildStaffingV4Profile({ row = {}, selection, selectedAt, sourcingRunId
     for (const name of V2_VARIABLE_NAMES) profile[`var_${name}`] = typeof vars[name] === 'string' ? vars[name] : '';
     profile.selector_version = SELECTOR_VERSION_V2;
   }
+  const franchise = row.franchise;
+  if (franchise) {
+    if (copyVersion === 'v1') throw new Error('a franchise profile needs copy v2');
+    profile.franchise_brand = String(franchise.brand || '');
+    profile.franchise_owner_key = String(franchise.owner_key || '');
+    profile.franchise_territory = String(franchise.territory || '');
+    profile.var_franchise_city = typeof vars.franchise_city === 'string' ? vars.franchise_city : '';
+  }
   return profile;
 }
 
@@ -118,6 +137,7 @@ function serializeStaffingV4Profile(profile) {
   const ordered = { schema: SCHEMA };
   for (const field of FIELDS) ordered[field] = profile[field];
   if (isV2Shape(profile)) for (const field of V2_FIELDS) ordered[field] = profile[field];
+  if (isV2Shape(profile) && isFranchiseShape(profile)) for (const field of FRANCHISE_FIELDS) ordered[field] = profile[field];
   ordered.profile_digest = profileDigest(ordered);
   const json = JSON.stringify(ordered);
   if (json.length > MAX_CHARS) throw new Error(`staffing V4 profile is ${json.length} characters; the limit is ${MAX_CHARS}`);
@@ -140,11 +160,13 @@ function readStaffingV4Profile(lead = {}) {
   try { parsed = JSON.parse(notes); } catch (_) { return failed('profile is not valid JSON'); }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || parsed.schema !== SCHEMA) return failed('profile has the wrong schema');
   const v2 = isV2Shape(parsed);
-  const unexpected = Object.keys(parsed).filter(key => !(v2 ? STORED_V2 : STORED).has(key));
+  const franchise = isFranchiseShape(parsed);
+  if (franchise && !v2) return failed('a franchise profile needs copy v2');
+  const unexpected = Object.keys(parsed).filter(key => !(v2 ? (franchise ? STORED_V2_FRANCHISE : STORED_V2) : STORED).has(key));
   if (unexpected.length) return failed(`unexpected field(s): ${unexpected.slice(0, 5).join(', ')}`);
-  const missing = (v2 ? DIGESTED_V2 : DIGESTED).filter(key => !Object.prototype.hasOwnProperty.call(parsed, key));
+  const missing = digestedFor(parsed).filter(key => !Object.prototype.hasOwnProperty.call(parsed, key));
   if (missing.length) return failed(`missing field(s): ${missing.slice(0, 5).join(', ')}`);
-  const mistyped = [...FIELDS, ...(v2 ? V2_FIELDS : [])].filter(field => !CHECKS[typeOf(field)](parsed[field]));
+  const mistyped = [...FIELDS, ...(v2 ? V2_FIELDS : []), ...(franchise ? FRANCHISE_FIELDS : [])].filter(field => !CHECKS[typeOf(field)](parsed[field]));
   if (mistyped.length) return failed(`wrongly typed field(s): ${mistyped.slice(0, 5).join(', ')}`);
   if (!/^[0-9a-f]{64}$/.test(String(parsed.profile_digest || '')) || profileDigest(parsed) !== parsed.profile_digest) {
     return failed('profile digest does not match its contents');
@@ -154,7 +176,8 @@ function readStaffingV4Profile(lead = {}) {
   if (parsed.copy_status === 'HOLD' && parsed.review_status === 'SEND_READY') return failed('a held profile cannot be send ready');
   // A stored copy_version names a later version; v1 is the absence of the field.
   if (v2 && (parsed.copy_version === 'v1' || !COPY_VERSIONS.includes(parsed.copy_version))) return failed('profile has an unknown copy version');
-  const names = [...V1_VARIABLE_NAMES, ...(v2 ? V2_VARIABLE_NAMES : [])];
+  if (franchise && (!parsed.franchise_brand || !parsed.franchise_owner_key || !parsed.franchise_territory)) return failed('franchise identity is incomplete');
+  const names = [...V1_VARIABLE_NAMES, ...(v2 ? V2_VARIABLE_NAMES : []), ...(franchise ? ['franchise_city'] : [])];
   const vars = Object.fromEntries(names.map(name => [name, parsed[`var_${name}`]]).filter(([, value]) => value));
   // sealedCopyVersion: what the import sealed ('' for every pre-v2 profile, whose
   // touches follow staffing-v4-copy-version.js resolveV4CopyVersion).
@@ -162,6 +185,6 @@ function readStaffingV4Profile(lead = {}) {
 }
 
 module.exports = {
-  SCHEMA, SCHEMA_MARKER, PROFILE_INTEGRITY_FAILED, SELECTOR_VERSION, SELECTOR_VERSION_V2, REVIEW_STATUSES, COPY_STATUSES, FIELDS, V2_FIELDS,
+  SCHEMA, SCHEMA_MARKER, PROFILE_INTEGRITY_FAILED, SELECTOR_VERSION, SELECTOR_VERSION_V2, REVIEW_STATUSES, COPY_STATUSES, FIELDS, V2_FIELDS, FRANCHISE_FIELDS,
   profileDigest, buildStaffingV4Profile, serializeStaffingV4Profile, hasStaffingV4ProfileMarker, readStaffingV4Profile,
 };

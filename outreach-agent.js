@@ -233,6 +233,9 @@ const { unrecoveredTouchBlock } = require('./integrations/same-touch-recovery');
 const { planOooResume, buildOooResumeEvent, oooResumeCopy } = require('./integrations/ooo-pause');
 const { fairShareQueuedOrder } = require('./integrations/scheduled-slot-allocator');
 const {
+  franchiseDomainOfEmail, franchiseDomainSendsToday, createFranchiseDomainThrottle, interleaveFranchiseLeads,
+} = require('./integrations/staffing-franchise');
+const {
   credentialsFor: gmailCredentialsFor, parseRegistry: parseGmailRegistry, withDefaultInboxes: withDefaultGmailInboxes,
 } = require('./integrations/gmail-inbox-registry');
 const {
@@ -1908,6 +1911,22 @@ async function markSent(lead, step, sendMeta = null) {
   }
 }
 
+// Franchise domain throttle (owner decision 2026-11-25; staffing-franchise.js).
+// A shared franchise domain (expresspros.com, ...) takes at most
+// FRANCHISE_DOMAIN_DAILY_CAP sends per Vancouver day across every inbox and
+// step. The run seeds the count from today's successful sends in the ledger;
+// each attempt then takes a slot synchronously, before any Gmail probe or
+// reservation, so parallel sender lanes cannot overshoot. An attempt that ends
+// without delivery keeps its slot for the rest of this run (conservative; the
+// next run re-counts from the ledger). With no throttle initialized a franchise
+// address is refused (fail closed). Every other address is unaffected.
+let activeFranchiseThrottle = null;
+function franchiseSendSlot(lead) {
+  if (!franchiseDomainOfEmail(lead?.email)) return { ok: true };
+  if (!activeFranchiseThrottle) return { ok: false, reason: 'franchise domain throttle unavailable' };
+  return activeFranchiseThrottle.reserve(lead.email);
+}
+
 async function deliverOrdinaryColdStep({
   lead, step, sender, subject, body, attribution, activitiesForCycle,
   personalizationMetadata = null, thread = null, onProviderSuccess = null,
@@ -1921,6 +1940,8 @@ async function deliverOrdinaryColdStep({
   if (clientBlocked) return { delivered: false, reason: `client send authority: ${clientBlocked.reason}` };
   const window = clientSendWindowVerdict(tenantOf(lead), { scheduledClientScope: SCHEDULED_CLIENT_SCOPE });
   if (!window.allowed) return { delivered: false, reason: window.reason };
+  const franchiseSlot = franchiseSendSlot(lead);
+  if (!franchiseSlot.ok) return { delivered: false, reason: franchiseSlot.reason };
   // A proven, unrecovered delivery failure of an earlier touch blocks every
   // later one at send time too, not only in selection (same-touch-recovery.js).
   const failedTouch = unrecoveredTouchBlock(lead, activitiesForCycle || [], step);
@@ -5535,6 +5556,10 @@ async function runInner() {
   const outbound = await withAuth(() => runHumanOutboundPass(all, ownershipActivities));
   const senderDayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
   const sendsBySender = senderCountsToday(ownershipActivities, senderDayKey);
+  const emailByLeadId = new Map(all.map(lead => [lead.id, lead.email]));
+  activeFranchiseThrottle = createFranchiseDomainThrottle({
+    sendsToday: franchiseDomainSendsToday(ownershipActivities, senderDayKey, id => emailByLeadId.get(id) || ''),
+  });
   todaySent = Math.max(todaySent, successfulSendCountToday(ownershipActivities, senderDayKey));
   dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
   const quotaState = { globalCount: todaySent };
@@ -6068,7 +6093,8 @@ async function runInner() {
   }
 
   const newBatchBySender = new Map(GMAIL_SENDERS.map(sender => [sender.id, []]));
-  for (const lead of newBatch) {
+  // Franchise leads are spread through each lane, not sent as one block (owner 2026-11-25).
+  for (const lead of interleaveFranchiseLeads(newBatch)) {
     let choice;
     try { choice = chooseSender({ lead, activities: ownershipActivities,
       senders: GMAIL_SENDERS, sendsToday: sendsBySender,

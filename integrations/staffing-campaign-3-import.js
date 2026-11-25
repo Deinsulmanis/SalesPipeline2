@@ -27,6 +27,14 @@
  * prior rows are never read for copy and never written. Anything else stays
  * `duplicate_company` or a specific second_buyer_* refusal.
  *
+ * Franchise location (owner decision 2026-11-25): an address or company domain
+ * on a shared franchise domain (expresspros.com, pridestaff.com, ...; see
+ * staffing-franchise.js) is never deduped by that domain. It needs
+ * `owner_approved_franchise: true` on the request and `row.franchise`
+ * {brand, owner_key, territory, city}; it is refused when the same owner or the
+ * same brand + territory already has a ScaleLab lead or repeats in the batch.
+ * The identity is sealed into the profile; `city` feeds the v2 city line.
+ *
  * `owner_approved_send_ready: true` records the owner's explicit approval and
  * seals review_status SEND_READY; without it the profile is REVIEW_READY and
  * the lead cannot be queued. The import never queues, routes or sends: that is
@@ -39,6 +47,7 @@ const { resolveLeadClient } = require('./clients/ownership');
 const { DEFAULT_CLIENT_ID } = require('./clients/registry');
 const { STAFFING_CAMPAIGN_V4 } = require('./staffing-campaign');
 const { selectV4Variant, CURRENT_COPY_VERSION } = require('./staffing-v4-copy');
+const { franchiseBrandOfDomain, franchiseIdentityProblem, franchiseKeys } = require('./staffing-franchise');
 const {
   buildStaffingV4Profile, serializeStaffingV4Profile, readStaffingV4Profile, hasStaffingV4ProfileMarker,
 } = require('./staffing-v4-profile');
@@ -79,21 +88,35 @@ function validatePayload(payload = {}) {
     records: payload.records, sourcingRunId: text(payload.sourcing_run_id),
     sendReady: payload.owner_approved_send_ready === true,
     secondBuyerApproved: payload.owner_approved_second_buyer === true,
+    franchiseApproved: payload.owner_approved_franchise === true,
   };
 }
 
 function indexCorpus(leads = []) {
   const byEmail = new Map();
   const scalelabDomains = new Map();
+  const franchiseKeySet = new Set();
   for (const lead of leads) {
     const email = normalizeEmail(lead.email);
     if (email) byEmail.set(email, [...(byEmail.get(email) || []), lead]);
     const owner = resolveLeadClient(lead);
     if (!owner.ok || owner.clientId === DEFAULT_CLIENT_ID) {
       for (const domain of companyDomainsOf(lead)) scalelabDomains.set(domain, [...(scalelabDomains.get(domain) || []), lead]);
+      // Franchise identity of an existing lead: its sealed profile, else (a
+      // lead from before the franchise rule) brand + its contact name.
+      const brand = companyDomainsOf(lead).map(franchiseBrandOfDomain).find(Boolean);
+      if (brand) {
+        const sealed = hasStaffingV4ProfileMarker(lead) ? readStaffingV4Profile(lead) : null;
+        if (sealed?.ok && sealed.profile.franchise_owner_key) {
+          for (const key of franchiseKeys({ owner_key: sealed.profile.franchise_owner_key, territory: sealed.profile.franchise_territory })) franchiseKeySet.add(key);
+        } else {
+          const [first = '', ...rest] = text(lead.contactName || lead.contact_name).toLowerCase().split(/\s+/);
+          if (first && rest.length) franchiseKeySet.add(franchiseKeys({ owner_key: `${brand}|${first}|${rest[rest.length - 1]}` })[0]);
+        }
+      }
     }
   }
-  return { byEmail, scalelabDomains };
+  return { byEmail, scalelabDomains, franchiseKeys: franchiseKeySet };
 }
 
 /**
@@ -142,10 +165,16 @@ function evaluateCampaign3Import(payload, { leads = [], suppressedEmails = new S
   const alreadyImported = [];
   const refusals = [];
   const seen = new Map();
-  request.records.forEach(record => {
+  const sharedFranchiseDomains = (domain, email) => workDomains([domain, emailDomain(email)]).filter(franchiseBrandOfDomain);
+  const batchKeys = record => {
     const email = normalizeEmail(record?.row?.email);
     const domain = text(record?.row?.company_domain).toLowerCase().replace(/^www\./, '');
-    for (const key of [`email:${email}`, `domain:${domain}`]) seen.set(key, (seen.get(key) || 0) + 1);
+    // A shared franchise domain is not a company: its records are keyed by owner and territory instead.
+    const franchise = sharedFranchiseDomains(domain, email).length;
+    return [`email:${email}`, ...(franchise ? franchiseKeys(record?.row?.franchise || {}) : [`domain:${domain}`])];
+  };
+  request.records.forEach(record => {
+    for (const key of batchKeys(record)) seen.set(key, (seen.get(key) || 0) + 1);
   });
   request.records.forEach((record, position) => {
     const row = record?.row || {};
@@ -158,7 +187,15 @@ function evaluateCampaign3Import(payload, { leads = [], suppressedEmails = new S
     if (PERSONAL_DOMAINS.has(emailDomain(email))) return refuse('personal_mailbox', 'a personal mailbox is not a company buyer');
     if (!domain) return refuse('missing_domain', 'company_domain is required');
     if (suppressedEmails.has(email)) return refuse('suppressed', 'address is on the global suppression list');
-    if (seen.get(`email:${email}`) > 1 || seen.get(`domain:${domain}`) > 1) return refuse('duplicate_in_batch', 'email or company domain repeats inside this request');
+    if (batchKeys(record).some(key => seen.get(key) > 1)) return refuse('duplicate_in_batch', 'email, company domain or franchise owner/territory repeats inside this request');
+    const sharedDomains = sharedFranchiseDomains(domain, email);
+    const franchise = sharedDomains.length ? row.franchise : null;
+    if (sharedDomains.length) {
+      if (!request.franchiseApproved) return refuse('franchise_not_approved', 'a shared franchise domain needs owner_approved_franchise');
+      const problem = franchiseIdentityProblem(franchise, sharedDomains);
+      if (problem) return refuse('franchise_identity_missing', problem);
+      if (franchiseKeys(franchise).some(key => index.franchiseKeys.has(key))) return refuse('duplicate_franchise', 'this franchise owner or territory already has a ScaleLab lead');
+    }
     const importKey = importKeyFor(email);
     const sameEmail = index.byEmail.get(email) || [];
     if (sameEmail.length) {
@@ -171,7 +208,8 @@ function evaluateCampaign3Import(payload, { leads = [], suppressedEmails = new S
       const otherClient = sameEmail.some(lead => { const owner = resolveLeadClient(lead); return owner.ok && owner.clientId !== DEFAULT_CLIENT_ID; });
       return refuse(otherClient ? 'cross_client_duplicate' : 'duplicate_email', 'this address already exists in the lead database');
     }
-    const companyDomains = workDomains([domain, emailDomain(email)]);
+    // Shared franchise domains are deduped by owner/territory above, never as one company.
+    const companyDomains = workDomains([domain, emailDomain(email)]).filter(d => !franchiseBrandOfDomain(d));
     let secondBuyer = null;
     if (companyDomains.some(d => index.scalelabDomains.has(d))) {
       const domainLeads = companyDomains.flatMap(d => index.scalelabDomains.get(d) || []);
@@ -180,12 +218,14 @@ function evaluateCampaign3Import(payload, { leads = [], suppressedEmails = new S
       secondBuyer = [...new Set(domainLeads.map(lead => text(lead.id)))];
     }
     let selection;
-    try { selection = selectV4Variant(evidence, { copyVersion: CURRENT_COPY_VERSION }); } catch (error) { return refuse('invalid_evidence', error.message); }
+    const selectionEvidence = franchise ? { ...evidence, franchise: { city: text(franchise.city) } } : evidence;
+    try { selection = selectV4Variant(selectionEvidence, { copyVersion: CURRENT_COPY_VERSION }); } catch (error) { return refuse('invalid_evidence', error.message); }
     if (selection.status !== 'SELECTED') return refuse('held', selection.holds.join('; ') || 'no verified variant');
     const profile = buildStaffingV4Profile({
       row: { company, company_domain: domain, contact_name: evidence.contactName, email,
         v4_tag: row.v4_tag, demand_score: row.demand_score, signal_priority: row.signal_priority, ad_class: row.ad_class,
-        contact_status: row.contact_status },
+        contact_status: row.contact_status,
+        ...(franchise ? { franchise: { brand: text(franchise.brand), owner_key: text(franchise.owner_key), territory: text(franchise.territory) } } : {}) },
       selection, selectedAt: now(), sourcingRunId: request.sourcingRunId,
     });
     if (request.sendReady) profile.review_status = 'SEND_READY';
@@ -193,9 +233,9 @@ function evaluateCampaign3Import(payload, { leads = [], suppressedEmails = new S
     const sealed = readStaffingV4Profile({ campaign_notes: campaignNotes });
     if (!sealed.ok) return refuse('profile_integrity_failed', sealed.detail || sealed.reason);
     accepted.push({
-      index: position, importKey, variant: selection.variant, secondBuyer: Boolean(secondBuyer),
+      index: position, importKey, variant: selection.variant, secondBuyer: Boolean(secondBuyer), franchise: Boolean(franchise),
       lead: {
-        id: newId ? newId() : '', company, contactName: text(evidence.contactName), email, city: '',
+        id: newId ? newId() : '', company, contactName: text(evidence.contactName), email, city: franchise ? text(franchise.city) : '',
         tradeType: '', website: `https://${domain}`,
         stage: 'Import', emailStatus: '', lastEmailedAt: '', emailStep: '',
         notes: secondBuyer ? `Second buyer; prior ScaleLab lead ids: ${secondBuyer.join(', ')}` : '',
@@ -236,6 +276,7 @@ async function importCampaign3Leads({ payload, dryRun = true, readCorpus, append
     received: result.request.records.length, accepted: leads.length, alreadyImported: result.alreadyImported.length,
     refused: result.refusals.length, written, mirror, byVariant,
     secondBuyers: result.accepted.filter(item => item.secondBuyer).length,
+    franchiseLeads: result.accepted.filter(item => item.franchise).length,
     leads: result.accepted.map(item => ({ index: item.index, id: item.lead.id, email: item.lead.email, company: item.lead.company, variant: item.variant, secondBuyer: item.secondBuyer })),
     alreadyImportedLeads: result.alreadyImported, refusals: result.refusals, refusalsByCode: result.refusalsByCode,
   };
