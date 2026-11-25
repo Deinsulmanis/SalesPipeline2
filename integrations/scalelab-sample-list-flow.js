@@ -237,22 +237,29 @@ async function recordSentAndOutcomes({ events, activities, store, now = new Date
   return written;
 }
 
+/** Owner rule 2026-11-25: 30+ waiting agencies -> 15 employers with 2+ roles; 10-29 -> 10; under 10 -> 5. */
+function restockTarget(agencies) {
+  if (agencies >= 30) return 15;
+  if (agencies >= 10) return 10;
+  return 5;
+}
+
 /**
  * Weekly restock (owner order 2026-11-25):
- *  1. States where Campaign 3 agencies (queued + in sequence) wait on fewer
- *     than 5 listable employers come first, most agencies first. Other states
- *     follow, fewest listable first.
+ *  1. Each state's target scales with its waiting Campaign 3 agencies (queued +
+ *     in sequence): 30+ -> 15, 10-29 -> 10, under 10 -> 5. States with demand
+ *     are worked biggest gap to target first; others follow, fewest listable first.
  *  2. Per state: re-check hiring rows older than 7 days, then unchecked (or
- *     long-ago not-hiring) pool rows until the state has `perState` employers
- *     with 2+ open hands-on roles.
- *  3. A state with agency demand whose pool runs out below 5 gets NEW employers:
+ *     long-ago not-hiring) pool rows until the state reaches its target of
+ *     employers with 2+ open hands-on roles.
+ *  3. A state with agency demand whose pool runs out below target gets NEW employers:
  *     companies hiring hands-on roles in its main cities (one grouped search
  *     per city), direct employers only, each verified by a posting check in
  *     the state before it is saved.
  * One GetLeads call at a time; every call counts toward `maxChecks`.
  */
 async function restockSampleEmployers({ store, recheck, discover = null, demand = null, agencyDomains = null,
-  now = new Date(), perState = 10, minState = MIN_IN_STATE, maxChecks = 300, log = () => {} }) {
+  now = new Date(), targetFor = restockTarget, maxChecks = 300, log = () => {} }) {
   if (!demand && typeof store.agencyDemand === 'function') {
     try {
       const loaded = await store.agencyDemand();
@@ -287,10 +294,11 @@ async function restockSampleEmployers({ store, recheck, discover = null, demand 
       return null;
     }
   };
+  const target = state => targetFor(demand[state] || 0);
   const discoverIn = async (state, hiring) => {
     let added = 0;
     for (const city of MAIN_CITIES[state] || []) {
-      if (hiring >= minState || !spend()) break;
+      if (hiring >= target(state) || !spend()) break;
       let rows;
       try {
         summary.discoveryCalls += 1;
@@ -302,7 +310,7 @@ async function restockSampleEmployers({ store, recheck, discover = null, demand 
         continue;
       }
       for (const candidate of directEmployerCandidates(rows, { knownDomains, agencyDomains })) {
-        if (hiring >= minState || !spend()) break;
+        if (hiring >= target(state) || !spend()) break;
         knownDomains.add(candidate.domain);
         let result;
         try {
@@ -325,13 +333,16 @@ async function restockSampleEmployers({ store, recheck, discover = null, demand 
     return { hiring, added };
   };
 
+  // Biggest gap between a state's listable employers and its demand-scaled
+  // target first; ties go to the state with more waiting agencies.
+  const gap = state => target(state) - countListable(state);
   const priority = Object.entries(demand)
-    .filter(([state, agencies]) => STATE_NAMES[state] && agencies > 0 && countListable(state) < minState)
-    .sort((a, b) => b[1] - a[1] || countListable(a[0]) - countListable(b[0]))
+    .filter(([state, agencies]) => STATE_NAMES[state] && agencies > 0 && gap(state) > 0)
+    .sort((a, b) => gap(b[0]) - gap(a[0]) || b[1] - a[1])
     .map(([state]) => state);
   const rest = [...byState.keys()].filter(state => !priority.includes(state))
     .sort((a, b) => countListable(a) - countListable(b));
-  summary.priority = priority.map(state => ({ state, agencies: demand[state], listableBefore: countListable(state) }));
+  summary.priority = priority.map(state => ({ state, agencies: demand[state], target: target(state), listableBefore: countListable(state) }));
 
   for (const state of [...priority, ...rest]) {
     const rows = byState.get(state) || [];
@@ -344,11 +355,11 @@ async function restockSampleEmployers({ store, recheck, discover = null, demand 
     const candidates = rows.filter(r => r.status === 'unchecked' || (r.status === 'not_hiring' && age(r) > 30))
       .sort((a, b) => (a.status === 'unchecked' ? 0 : 1) - (b.status === 'unchecked' ? 0 : 1) || a.domain.localeCompare(b.domain));
     for (const row of candidates) {
-      if (hiring >= perState || summary.checks >= maxChecks) break;
+      if (hiring >= target(state) || summary.checks >= maxChecks) break;
       const saved = await check(row);
       if (listable(saved)) hiring += 1;
     }
-    if (hiring < minState && discover && demand[state] > 0 && summary.checks < maxChecks) {
+    if (hiring < target(state) && discover && demand[state] > 0 && summary.checks < maxChecks) {
       const found = await discoverIn(state, hiring);
       hiring = found.hiring;
       if (found.added) summary.added[state] = found.added;
@@ -361,4 +372,4 @@ async function restockSampleEmployers({ store, recheck, discover = null, demand 
 
 module.exports = { TASK_EVENT, CLAIM_STALE_MS, AUTOSEND_DELAY_MS, sampleListConfig, eventIds, greetingFor,
   draftBlockReason, reSubject, makeRecheck, agencyDomain, withAgencyStates, draftSampleListForAction, autoSendReadyDrafts, recordSentAndOutcomes,
-  restockSampleEmployers };
+  restockSampleEmployers, restockTarget };

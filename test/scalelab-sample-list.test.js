@@ -394,7 +394,7 @@ test('weekly restock tops each state up to the target, one check at a time, with
     ...Array.from({ length: 3 }, (_, i) => employer(20 + i, 'OK', { status: 'unchecked', checkedAt: null }))];
   const store = memoryStore(pool);
   let active = 0; let peak = 0;
-  const summary = await flow.restockSampleEmployers({ store, now: NOW, perState: 4, maxChecks: 50,
+  const summary = await flow.restockSampleEmployers({ store, now: NOW, targetFor: () => 4, maxChecks: 50,
     recheck: async item => { active += 1; peak = Math.max(peak, active); await new Promise(r => setTimeout(r, 1)); active -= 1;
       return { hiring: item.domain !== 'employer10.example', openRoles: 2, exampleRoles: ['Welder'], newestPosting: '2026-11-20' }; } });
   assert.equal(peak, 1);
@@ -402,7 +402,7 @@ test('weekly restock tops each state up to the target, one check at a time, with
   assert.equal(summary.states.OK, 3);
   assert.ok(store.checks.some(c => c.domain === 'employer1.example'));
   const capped = await flow.restockSampleEmployers({ store: memoryStore(pool.map(e => ({ ...e, status: 'unchecked', checkedAt: null }))),
-    now: NOW, perState: 10, maxChecks: 2, recheck: async () => ({ hiring: true, openRoles: 1, exampleRoles: [], newestPosting: '2026-11-20' }) });
+    now: NOW, targetFor: () => 10, maxChecks: 2, recheck: async () => ({ hiring: true, openRoles: 1, exampleRoles: [], newestPosting: '2026-11-20' }) });
   assert.equal(capped.checks, 2);
 });
 
@@ -656,4 +656,64 @@ test('agency demand counts Campaign 3 queued and in-sequence leads by agency sta
   const { demand, agencyDomains } = await store.agencyDemand();
   assert.deepEqual(demand, { TX: 2, WI: 1 });
   assert.ok(agencyDomains.has('a.example'));
+});
+
+// ── demand-scaled targets and per-agency rotation (owner order 2026-11-25) ──
+test('targets scale with waiting agencies and states are worked biggest gap first', async () => {
+  assert.equal(flow.restockTarget(68), 15);
+  assert.equal(flow.restockTarget(30), 15);
+  assert.equal(flow.restockTarget(29), 10);
+  assert.equal(flow.restockTarget(10), 10);
+  assert.equal(flow.restockTarget(9), 5);
+  assert.equal(flow.restockTarget(0), 5);
+  const pool = [
+    ...Array.from({ length: 5 }, (_, i) => employer(i, 'TX')),            // 68 agencies: target 15, gap 10
+    ...Array.from({ length: 4 }, (_, i) => employer(10 + i, 'IL')),       // 35 agencies: target 15, gap 11
+    ...Array.from({ length: 3 }, (_, i) => employer(20 + i, 'KY', { status: 'unchecked', checkedAt: null })), // 11: target 10, gap 10
+    ...Array.from({ length: 4 }, (_, i) => employer(30 + i, 'UT')),       // 7 agencies: target 5, gap 1
+    ...Array.from({ length: 6 }, (_, i) => employer(40 + i, 'NV')),       // 3 agencies: at target
+  ];
+  const summary = await flow.restockSampleEmployers({ store: memoryStore(pool), now: NOW, maxChecks: 0,
+    demand: { TX: 68, IL: 35, KY: 11, UT: 7, NV: 3 }, recheck: async () => { throw new Error('no calls'); } });
+  assert.deepEqual(summary.priority.map(p => `${p.state}:${p.target}`), ['IL:15', 'TX:15', 'KY:10', 'UT:5']);
+});
+
+test('discovery fills a thin state up to its demand-scaled target', async () => {
+  const store = memoryStore([employer(1, 'WI')]);
+  const rows = Array.from({ length: 12 }, (_, i) => ({ company_name: `Fab ${i}`, company_domain: `fab${i}.example`, open_role_count: 20 - i }));
+  const summary = await flow.restockSampleEmployers({ store, now: NOW, maxChecks: 100, demand: { WI: 12 },
+    discover: async () => ({ data: rows }),
+    recheck: async () => ({ hiring: true, openRoles: 3, exampleRoles: ['Welder'], newestPosting: '2026-11-20', city: 'Milwaukee' }) });
+  assert.equal(summary.states.WI, 10);       // 12 agencies -> target 10
+  assert.equal(summary.added.WI, 9);
+  assert.equal(summary.discoveryCalls, 1);
+});
+
+test('agencies in a well-stocked state see different, stable lists', () => {
+  const pool = Array.from({ length: 15 }, (_, i) => employer(i, 'OH', { openRoles: 3 + (i % 5) }));
+  const listFor = seed => list.selectSampleList({ employers: pool, states: ['OH'], seed }).employers.map(e => e.domain);
+  const a = listFor('agency-a.example');
+  assert.equal(a.length, 10);
+  assert.deepEqual(listFor('agency-a.example'), a, 'deterministic for the same agency');
+  const lists = ['agency-a.example', 'agency-b.example', 'agency-c.example', 'agency-d.example', 'agency-e.example'].map(listFor);
+  assert.ok(new Set(lists.map(l => [...l].sort().join(','))).size > 1, 'agencies do not all get the identical list');
+  for (const l of lists) assert.ok(l.every(d => pool.some(e => e.domain === d && e.openRoles >= 2)));
+  // Display order stays by open roles within the picked set.
+  const picked = list.selectSampleList({ employers: pool, states: ['OH'], seed: 'agency-a.example' }).employers;
+  for (let i = 1; i < picked.length; i += 1) assert.ok(picked[i - 1].openRoles >= picked[i].openRoles);
+  // No seed, or no more than 10 qualifying: the top-ranked ones, same for everyone.
+  const top = list.selectSampleList({ employers: pool, states: ['OH'] }).employers.map(e => e.domain);
+  assert.deepEqual(top, [...pool].sort((x, y) => y.openRoles - x.openRoles || x.company.localeCompare(y.company)).slice(0, 10).map(e => e.domain));
+  const few = pool.slice(0, 8);
+  assert.deepEqual(list.selectSampleList({ employers: few, states: ['OH'], seed: 'x' }).employers.map(e => e.domain).sort(),
+    few.map(e => e.domain).sort());
+});
+
+test('the primary state still comes first when branch states are rotated in', () => {
+  const pool = [...Array.from({ length: 4 }, (_, i) => employer(i, 'NM')), ...Array.from({ length: 12 }, (_, i) => employer(20 + i, 'FL'))];
+  const picked = list.selectSampleList({ employers: pool, states: ['NM', 'FL'], seed: 'agency.example' }).employers;
+  assert.equal(picked.length, 10);
+  assert.deepEqual(picked.slice(0, 4).map(e => e.state), ['NM', 'NM', 'NM', 'NM']);
+  assert.equal(list.agencySeed({ campaign_notes: JSON.stringify({ company_domain: 'Agency.Example' }) }), 'agency.example');
+  assert.equal(list.agencySeed({ email: 'pat@agency.example' }), 'agency.example');
 });
