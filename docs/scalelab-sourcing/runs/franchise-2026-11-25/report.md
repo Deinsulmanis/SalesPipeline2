@@ -224,3 +224,46 @@ Preview of the 25, rendered by the production renderer on the branch: 25/25 acce
 - queue interleaved under the 10/day expresspros.com throttle.
 
 The other 95 ready Express owners and all other brands stay held until the owner reviews the wave in about 7 days.
+
+---
+
+# Round 3: deploy, import and queue (owner: "go ahead and deploy", 2026-11-25)
+
+## Deploy
+
+- `fix/send-throughput-20261020` was fast-forwarded `39b9b53` → **`39697c3`**.
+- Railway is pinned to `39697c3`; the deployment finished with SUCCESS at 06:26 UTC (22:26 Pacific, outside the send
+  window, with no outreach pass running).
+
+Checks before the deploy:
+
+- the live SHA equalled the production head, which equalled the branch base;
+- clean tree;
+- full suite 3,676 pass, 4 fail (the pre-existing date tests).
+
+Checks after the deploy:
+
+- Boot logs clean: all crons scheduled, send-lock enabled, staffing-shadow authority all false, no `[FATAL]`, cache
+  snapshot built.
+- `/api/send-lock/health` ok. Reservations: 0 sent-unconfirmed. 1 reconciliation_required row exists, but it is from
+  2026-10-16: it predates this deploy and is operator-only.
+- Capacity unchanged: ScaleLab 170/day, 25/run.
+- Production dry-run import of the wave: 25/25 accepted, `franchiseLeads: 25`, all COPY_B.
+
+## Import and queue
+
+- Import: **25 written**, all COPY_B, send-ready, franchise identity sealed, 0 refused. Supabase shows 25 rows at
+  expresspros.com in Campaign 3.
+- Queue: **25 queued**, 0 refused. Auto inbox assignment: primary 8, deniels 6, zoe 4, merrick 4, dave 3.
+- Campaign 3 now: **391 Queued**, 340 Contacted, 1 Done, 1 Unsub.
+- Sending: all 25 share expresspros.com, so at most 10 sends to that domain per Pacific day across all inboxes
+  (follow-ups count too). Step 1 for the wave spreads over at least 3 send days.
+- First live proof is the next send window (weekdays 07:00–11:30 Pacific). Watch for `franchise domain
+  expresspros.com reached 10 sends today` deferrals once the cap is hit.
+
+## Still held (owner review in about 7 days)
+
+- 95 ready Express owners;
+- all other brands (106 owners, location check pending);
+- the 19 copy holds and the 8 invalid addresses;
+- the 4 old-hold PASS companies (not sourced).
