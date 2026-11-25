@@ -31,6 +31,8 @@ async function queueRoutedReplies({ records, leads, threads, store, drafter = nu
     if (!isRecent(record.received_at, now)) continue;
     const thread = threads.get(record.action_id);
     if (!thread?.threadId) continue;
+    // Already answered (a human reply went out after this inbound): nothing to alert.
+    if (thread.answered) continue;
     try {
       const { firstName, company } = namesFor(byLead.get(record.lead_id));
       let row = await store.enqueue({ action_id: record.action_id, lead_id: record.lead_id, message_id: record.message_id,

@@ -3420,7 +3420,12 @@ async function runFastReplyPass({ records, activities, leads, now = new Date() }
   for (const record of records.values()) {
     const inbound = activities.find(row => row.eventId === record.source_event_id && row.sourceLeadId === record.lead_id);
     const meta = activityMetadata(inbound);
-    if (meta.gmailThreadId) threads.set(record.action_id, { threadId: meta.gmailThreadId, text: inbound.content || '' });
+    const receivedAt = Date.parse(record.received_at || inbound?.occurredAt || '') || 0;
+    // A reply already sent to this lead after the inbound (by the owner in Gmail or any reply path) means it is handled.
+    const answered = activities.some(row => row.sourceLeadId === record.lead_id
+      && ['human_response_sent', 'booking_link_sent'].includes(row.eventType)
+      && (Date.parse(row.occurredAt || '') || 0) > receivedAt);
+    if (meta.gmailThreadId) threads.set(record.action_id, { threadId: meta.gmailThreadId, text: inbound.content || '', answered });
   }
   const apiKey = process.env.ANTHROPIC_API_KEY;
   // Existing Claude setup and budgets: the tracked client, feature reply_question_answer.

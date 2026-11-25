@@ -95,6 +95,11 @@ test('routed alert-intent replies are queued once, with a draft; other intents, 
   await make(drafter.createReplyDrafter());
   assert.equal(store.rows.size, 1);
   assert.deepEqual(await queueRoutedReplies({ records: [record()], leads, threads, store: memoryQueue(), now: DAY, env: {} }), []);
+  // A reply the owner already answered (human response after the inbound) is not queued or alerted.
+  const answeredThreads = new Map([...threads].map(([key, value]) => [key, { ...value, answered: true }]));
+  const fresh = memoryQueue();
+  assert.deepEqual(await queueRoutedReplies({ records: [record()], leads, threads: answeredThreads, store: fresh, now: DAY, env: ENV }), []);
+  assert.equal(fresh.rows.size, 0);
 });
 
 test('exactly one SMS per reply, a retry once on failure, and quiet hours hold the alert to 06:00', async () => {
