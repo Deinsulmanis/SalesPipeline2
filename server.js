@@ -38,6 +38,16 @@ const { parseRegistry: parseGmailInboxRegistry,
   credentialsFor: gmailInboxCredentialsFor, withDefaultInboxes, parseRuntimeOverlay,
   verifyInbox: verifyGmailInbox, verifyMailboxAccess, isStaffingOnlySender } = require('./integrations/gmail-inbox-registry');
 const { configuredSenders, observableSenders, senderCountsToday, successfulSendCountToday } = require('./integrations/gmail-sender-routing');
+// ScaleLab fast reply mode (owner alerts + reply screen). Flags default OFF.
+const { fastReplyConfig, inActiveHours } = require('./integrations/scalelab-fast-reply');
+const { createReplyQueueStore } = require('./integrations/scalelab-reply-queue-store');
+const { dispatchDueAlerts } = require('./integrations/scalelab-reply-alerts');
+const { sendFromReplyScreen, saveToGmailDrafts, dismissReply, saveDraftText } = require('./integrations/scalelab-reply-send');
+const { createReplyProbe } = require('./integrations/gmail-reply-probe');
+const { sendOwnerSms } = require('./integrations/telnyx-sms');
+const { notifyOwner } = require('./integrations/owner-notify');
+const { actionOwnership: fastReplyActionOwnership } = require('./integrations/clients/ownership');
+const { withGmailProviderSend: fastReplyProviderSend } = require('./integrations/send-lock');
 const { mailboxLeadScope } = require('./integrations/mailbox-conversation-ownership');
 const { capacityFromEnv, DEFAULT_INBOX_PER_RUN_LIMIT, MAX_INBOX_PER_RUN_LIMIT } = require('./integrations/gmail-sender-capacity');
 const { appendLeadsRow } = require('./integrations/leads-sheet-append');
@@ -7817,6 +7827,97 @@ app.post('/api/integrations/gmail-inboxes/:id/verify', requireAuth, async (req, 
   }
 });
 
+// ── ScaleLab reply screen (fast reply mode) ─────────────────────────────────
+// Owner-only actions behind the dashboard auth. Nothing sends without the
+// Send button; Send goes through the human_reply final gate and a durable
+// reservation in the original inbox and Gmail thread.
+function fastReplyGuard(res) {
+  const config = fastReplyConfig();
+  if (!config.enabled) { res.status(404).json({ error: 'fast reply mode is off' }); return null; }
+  return config;
+}
+function gmailClientForInbox(inboxId) {
+  const sender = configuredSenders().find(item => item.id === inboxId);
+  if (!sender) throw new Error(`inbox ${inboxId} is not configured`);
+  let auth;
+  if (sender.id === 'primary') {
+    auth = new google.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET, process.env.GOOGLE_REDIRECT_URI);
+    auth.setCredentials(JSON.parse(process.env.GMAIL_TOKEN_JSON || '{}'));
+  } else {
+    const entry = withDefaultInboxes(parseGmailInboxRegistry()).find(item => item.id === sender.id);
+    if (!entry) throw new Error(`inbox ${inboxId} is not registered`);
+    auth = new google.auth.OAuth2(process.env.GMAIL_SECONDARY_GOOGLE_CLIENT_ID, process.env.GMAIL_SECONDARY_GOOGLE_CLIENT_SECRET,
+      process.env.GMAIL_SECONDARY_GOOGLE_REDIRECT_URI);
+    auth.setCredentials(gmailInboxCredentialsFor(entry));
+  }
+  return { sender: { ...sender, fromName: sender.fromName || process.env.FROM_NAME || 'Deins' }, gmail: google.gmail({ version: 'v1', auth }) };
+}
+// Fail-closed: a Send never proceeds on an unreadable Suppression list.
+async function readSuppressionStrict() {
+  const r = await sheets().spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${SUPPRESSION_SHEET}!A:A` });
+  return new Set((r.data.values || []).slice(1).map(row => String(row[0] || '').toLowerCase().trim()).filter(Boolean));
+}
+function replyActionDeps(row) {
+  const { sender, gmail } = gmailClientForInbox(row.mailbox_id);
+  return {
+    store: createReplyQueueStore(), sender, gmail, env: process.env,
+    readLead: async leadId => {
+      const canonical = await readCanonicalLead(leadId);
+      if (!canonical.ok) throw new Error(`lead read failed: ${canonical.reason}`);
+      return { lead: canonical.lead, current: canonical.lead, suppressedEmails: await readSuppressionStrict() };
+    },
+    withGmailProviderSend: fastReplyProviderSend, confirmReservation: confirmOutboundReservation,
+    ownership: (lead, inbox) => fastReplyActionOwnership(lead, inbox, { senders: configuredSenders() }),
+    recordActivity: event => appendColdCallActivities([event]),
+    ensureHold: lead => applyManualHold(`CE-${lead.id}`, lead.email),
+  };
+}
+const MESSAGE_TEXT_LIMIT = 6000;
+function plainTextOf(payload) {
+  if (!payload) return '';
+  if (payload.mimeType === 'text/plain' && payload.body?.data) return Buffer.from(payload.body.data, 'base64').toString('utf8');
+  for (const part of payload.parts || []) { const text = plainTextOf(part); if (text) return text; }
+  return '';
+}
+app.get('/api/scalelab/replies', requireAuth, async (_req, res) => {
+  if (!fastReplyGuard(res)) return;
+  try {
+    const rows = await createReplyQueueStore().listPending();
+    res.json({ replies: rows.map(row => ({ id: row.action_id, leadId: row.lead_id, firstName: row.first_name, company: row.company,
+      state: row.state, intent: row.intent, receivedAt: row.received_at, mailboxId: row.mailbox_id, hasDraft: Boolean(row.draft_text) })) });
+  } catch (error) { operatorFail(res, error, 'scalelab-replies'); }
+});
+app.get('/api/scalelab/replies/:id', requireAuth, async (req, res) => {
+  if (!fastReplyGuard(res)) return;
+  try {
+    const row = await createReplyQueueStore().get(req.params.id);
+    if (!row) return res.status(404).json({ error: 'reply not found' });
+    const { gmail } = gmailClientForInbox(row.mailbox_id);
+    const thread = (await gmail.users.threads.get({ userId: 'me', id: row.thread_id, format: 'full' })).data;
+    const header = (m, name) => (m.payload?.headers || []).find(h => h.name.toLowerCase() === name)?.value || '';
+    const messages = [...(thread.messages || [])].sort((a, b) => Number(a.internalDate || 0) - Number(b.internalDate || 0))
+      .map(m => ({ id: m.id, from: header(m, 'from'), date: header(m, 'date'), subject: header(m, 'subject'),
+        text: plainTextOf(m.payload).slice(0, MESSAGE_TEXT_LIMIT) || m.snippet || '', isInbound: m.id === row.message_id }));
+    res.json({ id: row.action_id, leadId: row.lead_id, firstName: row.first_name, company: row.company, state: row.state,
+      intent: row.intent, receivedAt: row.received_at, status: row.status, mailboxId: row.mailbox_id,
+      draft: row.draft_text || '', draftSource: row.draft_source || null, messages });
+  } catch (error) { operatorFail(res, error, 'scalelab-replies'); }
+});
+const replyAction = action => async (req, res) => {
+  if (!fastReplyGuard(res)) return;
+  try {
+    const row = await createReplyQueueStore().get(req.params.id);
+    if (!row) return res.status(404).json({ error: 'reply not found' });
+    const result = await action({ actionId: row.action_id, draftText: req.body?.draft, deps: replyActionDeps(row) });
+    if (!result.ok) return res.status(409).json({ error: result.reason, code: result.code });
+    res.json(result);
+  } catch (error) { operatorFail(res, error, 'scalelab-replies'); }
+};
+app.post('/api/scalelab/replies/:id/draft', requireAuth, replyAction(saveDraftText));
+app.post('/api/scalelab/replies/:id/send', requireAuth, replyAction(sendFromReplyScreen));
+app.post('/api/scalelab/replies/:id/gmail-draft', requireAuth, replyAction(saveToGmailDrafts));
+app.post('/api/scalelab/replies/:id/dismiss', requireAuth, replyAction(({ actionId, deps }) => dismissReply({ actionId, deps })));
+
 function senderById(id) {
   return configuredSenders().find(item => item.id === String(id || '').trim()) || null;
 }
@@ -8410,6 +8511,34 @@ if (process.env.RAILWAY_ENVIRONMENT) {
   // agentState.running guard (whichever lost a tick was silently skipped, and
   // a check-only win used to cost a whole send window). Offset schedules cannot
   // collide.
+  // Fast reply mode: every 2 minutes 06:00-21:00 Pacific, deliver due owner
+  // alerts, then a read-only Gmail probe; a new INBOX message starts the
+  // normal check-only pass (which classifies only new messages). Off unless
+  // SCALELAB_FAST_REPLY_ENABLED=true.
+  const fastReplyProbe = createReplyProbe({
+    listInboxes: () => observableSenders(configuredSenders())
+      .filter(item => (item.clientId === 'scalelab' || !item.clientId) && !isArchivedMailbox(item)),
+    gmailFor: inbox => gmailClientForInbox(inbox.id).gmail, log: line => console.warn(line),
+  });
+  let fastReplyInFlight = false;
+  cron.schedule('*/2 6-20 * * *', () => {
+    if (!fastReplyConfig().enabled || fastReplyInFlight || !inActiveHours()) return;
+    fastReplyInFlight = true;
+    (async () => {
+      try {
+        await dispatchDueAlerts({ store: createReplyQueueStore(), sendSms: text => sendOwnerSms(text), notify: notifyOwner,
+          log: line => console.warn('[fast-reply]', line) });
+      } catch (error) { console.warn('[fast-reply] alert dispatch failed:', error.message); }
+      const probe = await fastReplyProbe();
+      if (probe.newInbound > 0) {
+        console.log(`[fast-reply] ${probe.newInbound} new inbound message(s); starting check-only pass`);
+        spawnAgentCheckOnly({ FAST_REPLY_TRIGGER: 'true' });
+      }
+    })().catch(error => console.warn('[fast-reply] probe failed:', error.message))
+      .finally(() => { fastReplyInFlight = false; });
+  }, { timezone: 'America/Vancouver' });
+  console.log('[cron] Fast reply probe every 2 minutes 06:00-21:00 Pacific (feature-gated)');
+
   cron.schedule('15,45 * * * *', () => {
     console.log('[cron] Running check-only pass...');
     const lateReplyDue = isDailyLateReplyWindow();

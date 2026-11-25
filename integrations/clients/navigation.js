@@ -25,6 +25,7 @@ const WORKSPACE_CATALOG = Object.freeze([
   Object.freeze({ id: 'clients', label: 'Client Ops', section: 'clients', managedContext: 'Client overview: status, leads, sending, replies, meetings and billing' }),
   Object.freeze({ id: 'pipeline', label: 'Pipeline', section: 'sales', managedContext: 'Employer prospects by stage, from import to qualified meeting' }),
   Object.freeze({ id: 'inbox', label: 'Inbox', section: 'sales', managedContext: 'Replies, qualification and questions awaiting the client' }),
+  Object.freeze({ id: 'replies', label: 'Replies', section: 'sales', managedContext: 'Prospect replies waiting for an answer' }),
   Object.freeze({ id: 'bookings', label: 'Bookings', section: 'sales', managedContext: 'Meeting ledger: booked, held, qualified and billable' }),
   Object.freeze({ id: 'outreach', label: 'Outreach', section: 'growth', managedContext: 'Prospect directory' }),
   Object.freeze({ id: 'archive', label: 'Archive', section: 'growth', managedContext: 'Archived leads and their full history' }),

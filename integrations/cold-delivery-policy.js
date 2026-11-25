@@ -282,7 +282,8 @@ function createProviderClassifier({ resolveMx, now = () => Date.now(), ttlMs, lo
  * site cannot silently skip the recipient-provider gate.
  */
 function isProspectingSend(purpose) {
-  return norm(purpose) !== 'warm';
+  // Replies to a prospect's own message (automated warm or owner-sent) are not prospecting.
+  return !['warm', 'human_reply'].includes(norm(purpose));
 }
 
 const RECIPIENT_INVALID = 'recipient_invalid';
