@@ -164,3 +164,63 @@ Stopped before import. Next steps need the owner:
 2. Approve the production deploy of the franchise branch.
 3. Decide the subject/closing company name.
 4. Approve importing the 25-owner wave (send-ready, `owner_approved_franchise`) and queueing it interleaved.
+
+---
+
+# Round 2: owner decisions, 2026-11-25
+
+## 1. Verification ingest
+
+`verified_results.csv`, from the owner's GetLeads run:
+
+- 128 checked: **120 valid, 8 invalid, 0 catch-all**.
+- Rule: VALID → READY. Catch-all, unknown or invalid → HOLD.
+- **All 25 test-wave owners came back VALID**, so the wave is unchanged and has no catch-alls.
+- The 8 invalid were all among the held owners. Held after the test wave: **95** (was 103).
+
+## 2. Production branch
+
+- Pushed `claude/franchise-icp-20261125` at **`39697c3d676acf5336c5b928b8aafba435f8a2ca`**.
+- It was rebased onto the new production head `39b9b53`: a fast-forward with no overlapping files.
+- Not deployed from here. Handoff note: `deploy-handoff.md`. No dedicated deploy session was found, so the owner
+  passes it on.
+
+## 3. Franchise copy
+
+Owner decision:
+
+- Subject: "Employer accounts for your {city} office".
+- Closing: "Worth a look for your {city} office?".
+- The brand is never used as the company. A franchise lead gets only COPY_B or the COPY_C city line, and anything else
+  is refused at render.
+
+Role phrases are tidied while staying word-for-word parts of the posting title: no shift, level, temporary or senior
+words, singular, single-role postings preferred.
+
+Preview of the 25, rendered by the production renderer on the branch: 25/25 accepted in the dry evaluation,
+0 validation problems, 0 brand mentions. The preview is private (has first names).
+
+## 4. Website check on the old holds
+
+- The approved 14 were checked; the 15th re-check row is non-US and stays excluded. Jev spent $0.0015 of the $0.05 cap.
+
+| Outcome | Count |
+|---|---|
+| PASS | 4: 2 Express offices on their own domains, 1 earlier v4-3000 hold, 1 second-buyer company |
+| Brand corporate site (now a shared brand domain: owners only, via the franchise flow) | 1 |
+| REJECT (finance-only staffing) | 1 |
+| HOLD | 8: 4 sites unreadable or dead, 2 with no industrial line, 1 US not corroborated, 1 Jev chain signal on a name that is not a recognised brand |
+
+- The 2 Express own-domain PASS offices need owner sourcing through the franchise flow; owner-key dedupe applies.
+- The second-buyer PASS company becomes eligible for the second-buyer process. Nothing was sourced for these here.
+
+## 5. Import and queue
+
+**Not done.** It waits for the deploy to be confirmed live. The wave is ready:
+
+- 25 owners, VALID;
+- COPY_B with the office subject and closing;
+- `owner_approved_franchise` and send-ready on the import;
+- queue interleaved under the 10/day expresspros.com throttle.
+
+The other 95 ready Express owners and all other brands stay held until the owner reviews the wave in about 7 days.

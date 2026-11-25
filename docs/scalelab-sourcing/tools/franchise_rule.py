@@ -30,7 +30,7 @@ BRANDS = {
                    industrial=True),
     'link': dict(label='Link Staffing', rx=r'(?<!work)link staffing', domains=('linkstaffing.com',), hq=('houston', 'texas'),
                  industrial=True),
-    'remedy': dict(label='Remedy Intelligent Staffing', rx=r'remedy intelligent|remedystaff', domains=('remedystaff.com',),
+    'remedy': dict(label='Remedy Intelligent Staffing', rx=r'remedy intelligent|remedystaff', domains=('remedystaff.com', 'remedystaffing.com'),
                    hq=('aliso viejo', 'california'), industrial=True),
 }
 

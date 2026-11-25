@@ -1,8 +1,8 @@
-From cb9edb3bca88075e3bdad89823b0661ff8bbd3ef Mon Sep 17 00:00:00 2001
+From 71631ef2046445f1ebe2854d819c9a1487a5dd37 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 25 Nov 2026 03:14:30 +0000
-Subject: [PATCH] feat: franchise locations in Campaign 3 (identity key, city
- line, per-domain throttle)
+Subject: [PATCH 1/2] feat: franchise locations in Campaign 3 (identity key,
+ city line, per-domain throttle)
 
 Owner decision 2026-11-25: independently owned franchise offices are in the
 ScaleLab ICP; they share one mail domain per brand.
@@ -777,6 +777,193 @@ index 0000000..3af1591
 +  assert.match(src, /activeFranchiseThrottle = createFranchiseDomainThrottle\(\{\s*sendsToday: franchiseDomainSendsToday\(ownershipActivities, senderDayKey/);
 +  assert.match(src, /for \(const lead of interleaveFranchiseLeads\(newBatch\)\) \{/);
 +  assert.equal(franchise.FRANCHISE_DOMAIN_DAILY_CAP, 10);
++});
+-- 
+2.43.0
+
+
+From 39697c3d676acf5336c5b928b8aafba435f8a2ca Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 25 Nov 2026 06:14:50 +0000
+Subject: [PATCH 2/2] feat: franchise copy addresses the owner's office, never
+ the brand
+
+Owner decision 2026-11-25: a franchise lead's Email 1 subject is
+"Employer accounts for your {{franchise_city}} office" and its closing
+"Worth a look for your {{franchise_city}} office?". The franchise brand is
+never merged as {{company}} in a subject or closing.
+
+- COPY_B_V2_FRANCHISE (office posting) and COPY_C_V2_FRANCHISE (city line)
+  share that subject and closing; the module refuses to load if either
+  template merges {{company}}.
+- A franchise location gets only these two forms: COPY_A/D/E/F and the
+  brand-name fallback are skipped in selection and refused at render.
+- Same validators: franchise_city must be a plain city name (no dash), the
+  subject keeps the approved "Employer accounts for" prefix.
+
+Tests: staffing-franchise F12. Full suite: 3667 pass, 4 fail (the
+pre-existing DST/date-sensitive tests).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01CuSiKCAqHwVYLaxKfpYfXv
+---
+ integrations/staffing-v4-copy.js | 54 +++++++++++++++++++++++---------
+ test/staffing-franchise.test.js  | 30 ++++++++++++++++++
+ 2 files changed, 69 insertions(+), 15 deletions(-)
+
+diff --git a/integrations/staffing-v4-copy.js b/integrations/staffing-v4-copy.js
+index b6d8f1f..0977c1b 100644
+--- a/integrations/staffing-v4-copy.js
++++ b/integrations/staffing-v4-copy.js
+@@ -163,16 +163,29 @@ const COPY_C_V2_FALLBACK = Object.freeze({
+   body: EMAIL_1_V2.COPY_C.body.replace('Saw you place {{specialty_line}}.', 'Saw {{company}} focuses on {{verified_specialization}} staffing.'),
+   variables: Object.freeze(['first_name', 'company', 'verified_specialization']),
+ });
+-// Franchise location (owner decision 2026-11-25): the v2 primary line names the
+-// owner's office city. Only the first line differs; it needs a sealed
+-// franchise_city and a quote-backed specialty_line. A franchise lead never gets
+-// the fallback form ("Saw <brand> focuses on ...") because the brand name alone
+-// reads as the franchisor, not the owner's office.
++// Franchise location (owner decisions 2026-11-25). A franchise lead is
++// addressed as the owner's office, never by the franchise brand: the subject is
++// "Employer accounts for your <city> office" and the closing "Worth a look for
++// your <city> office?". Only COPY_B (the office's own posting) and the COPY_C
++// city line exist for a franchise; it never gets the brand-name fallback
++// ("Saw <brand> focuses on ...") or the A/D/E/F variants, which merge {{company}}.
++const FRANCHISE_SUBJECT = 'Employer accounts for your {{franchise_city}} office';
++const FRANCHISE_CLOSING = 'Worth a look for your {{franchise_city}} office?';
++const COPY_B_V2_FRANCHISE = Object.freeze({
++  subject: FRANCHISE_SUBJECT,
++  body: EMAIL_1_V2.COPY_B.body.replace('Worth a look for {{company}}?', FRANCHISE_CLOSING),
++  variables: Object.freeze(['first_name', 'verified_role', 'location', 'franchise_city']),
++});
+ const COPY_C_V2_FRANCHISE = Object.freeze({
+-  subject: EMAIL_1_V2.COPY_C.subject,
+-  body: EMAIL_1_V2.COPY_C.body.replace('Saw you place {{specialty_line}}.', 'Saw your {{franchise_city}} office places {{specialty_line}}.'),
+-  variables: Object.freeze(['first_name', 'company', 'franchise_city', 'specialty_line']),
++  subject: FRANCHISE_SUBJECT,
++  body: EMAIL_1_V2.COPY_C.body
++    .replace('Saw you place {{specialty_line}}.', 'Saw your {{franchise_city}} office places {{specialty_line}}.')
++    .replace("Worth seeing how we'd do this for {{company}}?", FRANCHISE_CLOSING),
++  variables: Object.freeze(['first_name', 'franchise_city', 'specialty_line']),
+ });
++if (COPY_B_V2_FRANCHISE.body.includes('{{company}}') || COPY_C_V2_FRANCHISE.body.includes('{{company}}')) {
++  throw new Error('franchise copy must never merge the brand as {{company}}');
++}
+ 
+ const FOLLOW_UPS_V2 = Object.freeze([
+   Object.freeze({
+@@ -357,8 +370,12 @@ function selectV4Variant(evidence = {}, { copyVersion = CURRENT_COPY_VERSION } =
+   const employerAds = (evidence.employerAds || []).filter(ad => isHttpUrl(ad.url)
+     && Number(ad.employerFacingP) >= MIN_EMPLOYER_P && ad.current === true
+     && ageDays(ad.lastSeen, asOf) <= WINDOWS.adCurrentDays);
+-  let chosen = attributed ? tryVariant('COPY_A', employerAds, () => ({})) : null;
+-  if (!chosen) {
++  let chosen = attributed && !franchise ? tryVariant('COPY_A', employerAds, () => ({})) : null;
++  if (franchise) {
++    for (const variant of ['COPY_A', 'COPY_D', 'COPY_E', 'COPY_F']) {
++      considered.push({ variant, outcome: 'not used', detail: 'a franchise location gets only the office copy (COPY_B or the COPY_C city line)' });
++    }
++  } else if (!chosen) {
+     const anyEmployer = (evidence.employerAds || []).some(ad => Number(ad.employerFacingP) >= MIN_EMPLOYER_P);
+     considered.push({ variant: 'COPY_A', outcome: 'not eligible',
+       detail: !attributed && (evidence.employerAds || []).length ? 'ads are not attributed to this company'
+@@ -366,7 +383,7 @@ function selectV4Variant(evidence = {}, { copyVersion = CURRENT_COPY_VERSION } =
+           : 'no current employer-facing ad (an ad class of MIXED alone is not evidence)' });
+   }
+   // 2. COPY_D: open sales/BD hiring for the agency's own commercial team.
+-  if (!chosen) {
++  if (!chosen && !franchise) {
+     const hiring = (evidence.salesHiring || []).filter(item => isHttpUrl(item.url) && item.quote
+       && item.ownCommercialTeam === true && item.current === true
+       && ageDays(item.observedAt, asOf) <= WINDOWS.salesHiringDays
+@@ -375,7 +392,7 @@ function selectV4Variant(evidence = {}, { copyVersion = CURRENT_COPY_VERSION } =
+     if (!chosen && !hiring.length) considered.push({ variant: 'COPY_D', outcome: 'not eligible', detail: 'no verified current internal sales or BD hiring' });
+   }
+   // 3. COPY_E: a verified market or branch expansion.
+-  if (!chosen) {
++  if (!chosen && !franchise) {
+     const expansion = (evidence.expansion || []).filter(item => isHttpUrl(item.url) && item.quote
+       && ageDays(item.announcedAt, asOf) <= WINDOWS.expansionDays && ageDays(item.announcedAt, asOf) >= 0
+       && norm(item.quote).includes(norm(item.market)));
+@@ -383,7 +400,7 @@ function selectV4Variant(evidence = {}, { copyVersion = CURRENT_COPY_VERSION } =
+     if (!chosen && !expansion.length) considered.push({ variant: 'COPY_E', outcome: 'not eligible', detail: 'no verified recent market or branch expansion' });
+   }
+   // 4. COPY_F: the recipient is a recently appointed senior commercial leader.
+-  if (!chosen) {
++  if (!chosen && !franchise) {
+     const leader = (evidence.leadership || []).filter(item => isHttpUrl(item.url) && item.quote
+       && item.current === true && norm(item.personName) && norm(item.personName) === norm(evidence.contactName)
+       && ageDays(item.appointedAt, asOf) <= WINDOWS.appointmentDays && ageDays(item.appointedAt, asOf) >= 0
+@@ -397,7 +414,9 @@ function selectV4Variant(evidence = {}, { copyVersion = CURRENT_COPY_VERSION } =
+       && ageDays(ad.lastSeen, asOf) <= WINDOWS.adCurrentDays
+       && norm(ad.quote).includes(norm(ad.role).replace(/s$/, ''))
+       && norm(ad.quote).includes(norm(String(ad.location || '').split(',')[0])));
+-    chosen = tryVariant('COPY_B', ads, ad => ({ verified_role: ad.role, location: ad.location }));
++    chosen = franchise
++      ? tryVariant('COPY_B', ads, ad => ({ verified_role: ad.role, location: ad.location, franchise_city: String(evidence.franchise.city || '') }), COPY_B_V2_FRANCHISE)
++      : tryVariant('COPY_B', ads, ad => ({ verified_role: ad.role, location: ad.location }));
+     if (!chosen && !ads.length) {
+       const any = (evidence.candidateAds || []).length;
+       considered.push({ variant: 'COPY_B', outcome: 'not eligible',
+@@ -471,6 +490,11 @@ function templateFor(variant, step, copyVersion = 'v1', vars = {}) {
+     // v2 COPY_C renders its primary form only with a sealed specialty_line.
+     if (v2 && variant === 'COPY_C' && !vars.specialty_line) email = COPY_C_V2_FALLBACK;
+     if (v2 && variant === 'COPY_C' && vars.specialty_line && vars.franchise_city) email = COPY_C_V2_FRANCHISE;
++    if (v2 && variant === 'COPY_B' && vars.franchise_city) email = COPY_B_V2_FRANCHISE;
++    // A franchise profile renders only its office copy; anything else is refused.
++    if (vars.franchise_city && email !== COPY_B_V2_FRANCHISE && email !== COPY_C_V2_FRANCHISE) {
++      throw new Error('a franchise location renders only its office copy (COPY_B or the COPY_C city line, v2)');
++    }
+     return { subject: email.subject, body: email.body, variables: email.variables,
+       bold: v2 ? null : PERFORMANCE_SENTENCE, lock: v2 ? V2_EMAIL_1_LOCK : PERFORMANCE_SENTENCE };
+   }
+@@ -558,7 +582,7 @@ function v4CopyProblem({ body, subject, copyVersion } = {}, step) {
+ 
+ module.exports = {
+   SIGNATURE, PERFORMANCE_SENTENCE, EMAIL_2_BOLD, EMAIL_3_BOLD, VARIANTS, EMAIL_1, FOLLOW_UPS, VARIABLE_NAMES,
+-  COPY_VERSIONS, CURRENT_COPY_VERSION, EMAIL_1_V2, COPY_C_V2_FALLBACK, COPY_C_V2_FRANCHISE, FRANCHISE_VARIABLE_NAMES, FOLLOW_UPS_V2, EMAIL_1_BY_VERSION, FOLLOW_UPS_BY_VERSION,
++  COPY_VERSIONS, CURRENT_COPY_VERSION, EMAIL_1_V2, COPY_C_V2_FALLBACK, COPY_C_V2_FRANCHISE, COPY_B_V2_FRANCHISE, FRANCHISE_VARIABLE_NAMES, FOLLOW_UPS_V2, EMAIL_1_BY_VERSION, FOLLOW_UPS_BY_VERSION,
+   V2_EMAIL_1_LOCK, V2_EMAIL_2_BOLD, V2_EMAIL_3_LOCK, V1_VARIABLE_NAMES, V2_VARIABLE_NAMES,
+   WINDOWS, MIN_EMPLOYER_P, MIN_ATTRIBUTION_P,
+   variableProblem, missingVariables, selectV4Variant, parseV4Tag, renderV4Copy, v4CopyProblem, inferV4CopyVersion,
+diff --git a/test/staffing-franchise.test.js b/test/staffing-franchise.test.js
+index 3af1591..48b76ca 100644
+--- a/test/staffing-franchise.test.js
++++ b/test/staffing-franchise.test.js
+@@ -172,3 +172,33 @@ test('F11. every ordinary cold step takes a franchise slot before any probe or r
+   assert.match(src, /for \(const lead of interleaveFranchiseLeads\(newBatch\)\) \{/);
+   assert.equal(franchise.FRANCHISE_DOMAIN_DAILY_CAP, 10);
+ });
++
++test('F12. franchise copy (owner 2026-11-25): "your <city> office" subject and closing, never the brand', () => {
++  const render = vars => copy.renderV4Copy({ variant: sel.variant, step: 1, vars, copyVersion: 'v2', appendFooter: text => `${text}\n\nfooter` });
++  // employer ads present: a franchise location still gets only the office copy (COPY_B here)
++  const employerAd = { url: 'https://ads.example/a1', text: 'Need staff?', current: true, employerFacingP: 0.95, lastSeen: '2026-11-16' };
++  const sel = copy.selectV4Variant(evidence({ candidateAds: [posting()], employerAds: [employerAd], franchise: { city: 'Canton' } }), { copyVersion: 'v2' });
++  assert.equal(sel.status, 'SELECTED');
++  assert.equal(sel.variant, 'COPY_B');
++  assert.ok(sel.considered.some(item => item.variant === 'COPY_A' && item.outcome === 'not used'));
++  const email = render(sel.vars);
++  const text = JSON.stringify(email);
++  assert.equal(email.subject, 'Employer accounts for your Canton office');
++  assert.match(text, /Worth a look for your Canton office\?/);
++  assert.doesNotMatch(text, /Express Employment Professionals/, 'the franchise brand never appears');
++  assert.equal(copy.v4CopyProblem({ body: email.text || email.body, subject: email.subject, copyVersion: 'v2' }, 1), null);
++  // the COPY_C city line uses the same subject and closing
++  const c = copy.selectV4Variant(evidence({ specialtyLine, franchise: { city: 'Canton' } }), { copyVersion: 'v2' });
++  const cEmail = copy.renderV4Copy({ variant: 'COPY_C', step: 1, vars: c.vars, copyVersion: 'v2', appendFooter: t => t });
++  assert.equal(cEmail.subject, 'Employer accounts for your Canton office');
++  assert.match(JSON.stringify(cEmail), /Worth a look for your Canton office\?/);
++  assert.doesNotMatch(JSON.stringify(cEmail), /Express Employment Professionals/);
++  // ordinary leads keep their company subject and closing
++  const plain = copy.selectV4Variant(evidence({ candidateAds: [posting()], company: 'Tradeco Staffing' }), { copyVersion: 'v2' });
++  const plainEmail = copy.renderV4Copy({ variant: 'COPY_B', step: 1, vars: plain.vars, copyVersion: 'v2', appendFooter: t => t });
++  assert.equal(plainEmail.subject, 'Employer accounts for Tradeco Staffing');
++  // a dash or a non-city value in franchise_city is refused by the validator
++  assert.throws(() => render({ ...sel.vars, franchise_city: 'Canton – East' }), /franchise_city/);
++  // a franchise profile cannot render a brand-merging variant
++  assert.throws(() => copy.renderV4Copy({ variant: 'COPY_A', step: 1, vars: { ...sel.vars, company: 'Express Employment Professionals' }, copyVersion: 'v2', appendFooter: t => t }), /only its office copy/);
 +});
 -- 
 2.43.0

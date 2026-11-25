@@ -35,6 +35,7 @@ class Companies(unittest.TestCase):
 
     def test_chain_block_for_domain_tools(self):
         self.assertEqual(fr.chain_block('Express Employment Professionals', 'expresspros.com'), 'franchise_shared_domain')
+        self.assertEqual(fr.chain_block('Remedy Intelligent Staffing', 'remedystaffing.com'), 'franchise_shared_domain', 'the brand site is not a location')
         self.assertIsNone(fr.chain_block('Spherion Mid Ohio', 'spherionohio.com', chain_p=0.9), 'own-domain franchise location is not blocked')
         self.assertEqual(fr.chain_block('PeopleReady', 'peopleready.com'), 'corporate_chain')
         self.assertEqual(fr.chain_block('Express Employment Professionals Franchising', 'expressfranchising.com'), 'franchisor_hq')
