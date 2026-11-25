@@ -133,7 +133,7 @@ test('B. deniels daily limit is 10: send 10 allowed, send 11 refused by routing 
 });
 
 test('C. existing sender caps are identical before and after deniels is added and activated', () => {
-  const shape = env => configuredSenders(env).filter(sender => sender.id !== 'deniels' && (sender.clientId || 'scalelab') === 'scalelab' && !sender.id.startsWith('outreachplateau_')).map(sender => ({
+  const shape = env => configuredSenders(env).filter(sender => sender.id !== 'deniels' && (sender.clientId || 'scalelab') === 'scalelab' && !/^(?:outreachplateau|scalelabaigroup)_/.test(sender.id)).map(sender => ({
     id: sender.id, email: sender.email, status: sender.status, dailyLimit: sender.dailyLimit,
     perRunLimit: sender.perRunLimit, sendEligible: sender.sendEligible,
   }));

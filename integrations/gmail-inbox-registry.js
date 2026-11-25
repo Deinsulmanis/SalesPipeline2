@@ -76,6 +76,24 @@ const DEFAULT_SECONDARY_INBOXES = Object.freeze([
     dailyLimit: 25, perRunLimit: 3, observerEnabled: true,
     fromName: 'Deins Ulmanis',
   })),
+  // ScaleLab's three scalelabaigroup.com inboxes (connected 2026-11-25), still
+  // in warm-up. `warming` sends nothing: when warm-up is done the owner marks
+  // each ready and activates it in Settings, which re-checks credential and
+  // observer health first. Their caps match the outreachplateau inboxes
+  // (25/day, 3 per window) so activation needs no code change. deins@ and
+  // ulmanis@ send as Deins Ulmanis; deniels@ keeps the same sender name as
+  // deniels@scalelabai.ca. The observer starts "from now onward", so warm-up
+  // mail is never read as prospect replies.
+  ...[
+    ['scalelabaigroup_deins', 'deins@scalelabaigroup.com', 'Deins Ulmanis'],
+    ['scalelabaigroup_deniels', 'deniels@scalelabaigroup.com', ''],
+    ['scalelabaigroup_ulmanis', 'ulmanis@scalelabaigroup.com', 'Deins Ulmanis'],
+  ].map(([id, email, fromName]) => Object.freeze({
+    id, email, clientId: 'scalelab', status: 'warming',
+    tokenEnv: `GMAIL_${id.toUpperCase()}_TOKEN_JSON`,
+    dailyLimit: 25, perRunLimit: 3, observerEnabled: true,
+    ...(fromName ? { fromName } : {}),
+  })),
   // Jole BTX LLC's six cold-sending mailboxes (client `jole`), scoped to
   // Jole's one campaign, at Jole's launch capacity: 20/day (the client's hard
   // per-inbox ceiling) and 2 per scheduled window. Readiness is the runtime

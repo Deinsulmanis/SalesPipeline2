@@ -215,7 +215,7 @@ test('a Jole sender on another Jole campaign is refused at the shared consistenc
 test('15. ScaleLab senders are byte-for-byte unchanged: same caps, statuses, eligibility, no new fields', () => {
   // The outreachplateau.co inboxes (added 2026-11-19) are new and covered by
   // test/outreachplateau-inboxes.test.js; every pre-existing ScaleLab sender is unchanged.
-  const senders = configuredSenders(PROD_ENV).filter(sender => (sender.clientId || 'scalelab') === 'scalelab' && !sender.id.startsWith('outreachplateau_'));
+  const senders = configuredSenders(PROD_ENV).filter(sender => (sender.clientId || 'scalelab') === 'scalelab' && !/^(?:outreachplateau|scalelabaigroup)_/.test(sender.id));
   assert.deepEqual(senders.map(sender => [sender.id, sender.email, sender.status, sender.dailyLimit, sender.perRunLimit, sender.sendEligible, sender.clientId || 'scalelab']), [
     ['primary', 'deins@scalelabai.ca', 'active', 60, 6, true, 'scalelab'],
     ['tryscalelabai', 'deins@tryscalelabai.ca', 'active', 60, 6, true, 'scalelab'],
