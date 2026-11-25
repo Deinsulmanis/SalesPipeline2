@@ -267,3 +267,29 @@ Checks after the deploy:
 - all other brands (106 owners, location check pending);
 - the 19 copy holds and the 8 invalid addresses;
 - the 4 old-hold PASS companies (not sourced).
+
+---
+
+# Labor Finders expansion (2026-11-25), held behind the Express test wave
+
+- **Crawl not done:** laborfinders.com's robots.txt disallows all crawling (`Disallow: /`). Its locations index lists only
+  states, and Google Maps listings show no owner names. Owner decision: use GetLeads search_contacts instead.
+- **Export:** company "Labor Finders", US, owner / franchise owner / co-owner / president / GM / branch, area or
+  operations manager. **288 rows, 288 GetLeads credits** (6,007 → 5,719; cap 500). Apollo 0.
+- **Filtered out:**
+  - 4 franchisor HQ;
+  - 7 already exported or in production;
+  - 20 duplicate records of the same person;
+  - 22 with no city;
+  - 56 a second person in an office already covered (one per brand + territory, best role first).
+- **Selected: 179**, all held behind the Express test wave:
+  - 4 owners or presidents (new, beyond the 8 already exported);
+  - 4 general managers;
+  - 171 branch or operations managers.
+- **Territory:** 97 of the 179 match a Labor Finders Google Maps location city, covering 97 of the 190 locations. The
+  rest use the person's own city.
+- **Output:**
+  - `owner_names_laborfinders.csv`: **109 rows** (no VALID email yet), for GetLeads Names + companies enrichment;
+  - `to_verify_laborfinders.csv`: 70 addresses already VALID in the export, for owner verification.
+- **Caveat:** branch managers are franchise employees, not owners. A franchisee with several offices can therefore
+  appear as several managers; the owner behind them is unknown. They rank below owners and GMs and stay held for review.
