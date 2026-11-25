@@ -366,6 +366,29 @@ So agents only make calls; nothing is transcribed by hand.
 - Overall 58 PASS from 251 readable (23%).
 - Re-gating old low-confidence HOLDs with job evidence promoted only 5 of 551: most leftovers have no postings of their own.
 
+### Franchise locations (owner decision 2026-11-25)
+
+Franchise offices (independently owned: Express, PrideStaff, Spherion, Snelling, Labor Finders, HireQuest Direct,
+Trojan Labor, Link, Remedy) are ICP-eligible when the location shows industrial roles. Corporate-owned chains stay
+excluded; franchisor HQ is never contacted. The rule lives ONLY in `tools/franchise_rule.py` (`chain_block`,
+`classify_contact`, keys); every tool imports it (`test_franchise_rule.py` checks for copies).
+
+1. **Owners:** GetLeads `count_contacts` per brand first (free; by brand email domain, else company name), US, VALID,
+   titles Owner / Franchise Owner / Co-Owner / President, excluding VP / assistant / former. Report counts, then export
+   within the owner's cap (`export_contacts` + `check_contact_export`; the CSV URL downloads with curl into
+   `runs-private/<run>/raw/<brand>.csv`).
+2. `franchise_owners.py <run>`: HQ / corporate / other-business / not-brand drops, owner + territory dedupe, production
+   dedupe (`prod_matches.json`: exact email, suppression, owner keys of brand leads already in outreach_leads).
+3. `express_offices.py <run>` (Express): office map from the state locator pages, each office's own job-openings page,
+   job-posting rule per office, one owner per office. Other brands stay HOLD_LOCATION_UNCHECKED until their locator is
+   built.
+4. `franchise_select.py <run> [--wave 25]`: COPY_B from the office's own postings, franchise identity
+   (`row.franchise {brand, owner_key, territory, city}`), `to_verify.csv` (VERIFY_PENDING: owner verifies), test wave
+   (one office match, round-robin by state). Dry-evaluate with the production import before any import.
+5. **Never key a franchise contact by email domain.** The import (production `staffing-franchise.js`) needs
+   `owner_approved_franchise: true`; shared franchise domains are throttled to 10 sends/day across all inboxes and
+   step-1 franchise leads are interleaved. Re-check old chain holds with `franchise_recheck.py`.
+
 ## Benchmarks (for estimates)
 
 | Stage | 2026-11-23 run (2,000 companies) | Wave 1 / Codex re-check |

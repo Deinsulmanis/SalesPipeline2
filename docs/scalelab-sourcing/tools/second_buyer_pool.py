@@ -41,6 +41,8 @@ import sys
 import importlib.util
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import franchise_rule as fr  # noqa: E402  (the one chain / franchise rule)
 REPO = os.path.abspath(os.path.join(TOOLS, '..', '..', '..'))
 OUT = sys.argv[1]
 AS_OF = datetime.date.fromisoformat(sys.argv[sys.argv.index('--as-of') + 1])
@@ -221,8 +223,11 @@ def main():
         if g and g['icp'] == 'REJECT':
             reasons.append(f"icp_reject:{g['code']}")
         names = ' '.join(c['names'])
-        if dm.FRANCHISE.search(dm.norm(names)) or (g and (g.get('chain_p') or 0) >= 0.5) or (g and 'chain' in g['reason'].lower() and g['icp'] != 'PASS'):
-            reasons.append('national_chain_or_franchise')
+        chain = fr.chain_block(names, d, g.get('chain_p') if g else None)
+        if not chain and g and 'chain' in g['reason'].lower() and g['icp'] != 'PASS' and fr.classify_company(names, d)[0] != 'FRANCHISE':
+            chain = 'chain_signal'
+        if chain:
+            reasons.append(chain)
         if FOREIGN_TLD.search(d) or any(CA_PROV.search(ct or '') for ct in c['cities']):
             reasons.append('non_us')
         held = any(x['manual_hold'] for x in cs) and not reasons

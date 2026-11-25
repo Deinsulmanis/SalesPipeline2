@@ -40,14 +40,9 @@ search partners associates international usa us america american national indust
 temporary professionals professional management consulting consultants enterprises holdings llp ltd pllc pc
 """.split())
 
-# National chains and franchise systems: held for owner review under the ICP chain/franchise rule.
-FRANCHISE = re.compile(r"\b(express employment|expresspros|manpower|snelling|hirequest|labor finders|labormax|"
-                       r"tradesmen international|aerotek|adecco|randstad|kelly services|robert half|spherion|"
-                       r"staffmark|peopleready|people ready|labor ready|trueblue|volt workforce|aston carter|"
-                       r"employbridge|prologistix|remedy intelligent|select staffing|elwood staffing|pridestaff|"
-                       r"link staffing|insight global|actalent|kforce|nesco resource|command center|westaff|"
-                       r"ultimate staffing|bluecrew|instawork|wonolo|traba|veryable|workrise|staffzone|"
-                       r"all team staffing|global recruiters network|integrity staffing solutions|labor smart)\b")
+# Chains and franchise brands: the one rule in franchise_rule.py (owner decision 2026-11-25).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import franchise_rule as fr  # noqa: E402
 
 # Clearly outside industrial / skilled-trades staffing (IT, healthcare, legal, executive search).
 OFF_ICP = re.compile(r"\b(software|infotech|info tech|technologies|technology|it solutions|it services|it staffing|"
@@ -107,8 +102,8 @@ def main():
             why = "NO_DOMAIN"
         elif r["domain"] in exclude:
             why = "DUPLICATE_DOMAIN: " + exclude[r["domain"]]
-        elif FRANCHISE.search(norm(r["company_name"])):
-            why = "FRANCHISE_OR_NATIONAL_CHAIN"
+        elif fr.chain_block(r["company_name"], r["domain"]):
+            why = fr.chain_block(r["company_name"], r["domain"]).upper()
         elif st in prod_stems:
             hits = prod_stems[st]
             sup = any(h["suppressed"] for h in hits)

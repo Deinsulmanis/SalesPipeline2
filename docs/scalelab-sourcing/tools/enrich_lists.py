@@ -31,6 +31,8 @@ import sys
 
 OUT = sys.argv[1]
 TOOLS = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import franchise_rule as fr  # noqa: E402  (the one chain / franchise rule)
 REPO = os.path.abspath(os.path.join(TOOLS, '..', '..', '..'))
 SP = '/tmp/claude-0/-home-user-SalesPipeline2/2ac8488f-fce7-5c12-b5fb-d98394461a32/scratchpad'
 RUNS = [('v4-pilot', f'{SP}/v4run'), ('v4-pilot-p2', f'{SP}/v4run_p2'), ('wave1', f'{SP}/w1'), ('codex48', f'{SP}/c48'),
@@ -160,8 +162,9 @@ def main():
             return 'company_excluded:' + str(excluded_co[d][0]).split(':')[0]
         if FOREIGN.search(d) or (g and g[3] is not None and g[3] < 0.3 and g[0] != 'PASS'):
             return 'non_us'
-        if dm.FRANCHISE.search(dm.norm(names.get(d, ''))) or (g and (g[2] or 0) >= 0.5):
-            return 'chain_or_franchise'
+        chain = fr.chain_block(names.get(d, ''), d, g[2] if g else None)
+        if chain:
+            return chain
         if prod_row:
             if g and g[0] == 'REJECT':
                 return 'icp_reject'

@@ -16,6 +16,8 @@ import json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import v4config  # noqa: E402
 import urllib.request, urllib.error, time
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import franchise_rule as fr  # noqa: E402  (franchise locations are eligible; corporate chains excluded)
 
 RUN = sys.argv[1]
 JOBS = json.load(open(sys.argv[sys.argv.index("--jobs") + 1])) if "--jobs" in sys.argv else {}
@@ -97,7 +99,8 @@ def main():
             if not (il == "substantive_industrial_line" and j["industrial_line_p"] >= T["industrial"]): reasons.append(f"industrial line not established ({il}, p={j['industrial_line_p']})")
             if not (j["service_model"] in ("temporary_or_contract", "direct_hire_only") and j["service_model_p"] >= T["model"]): reasons.append(f"placement model unclear ({j['service_model']}, p={j['service_model_p']})")
             if j["us_operations"] < T["us"]: reasons.append(f"US operations not corroborated on first-party pages (p={j['us_operations']})")
-            if j["large_national_chain"] >= T["chain"]: reasons.append(f"large national chain / franchise network (p={j['large_national_chain']}); central procurement/franchise complexity - owner decision")
+            if fr.is_excluded_chain(c["company_name"], d): reasons.append("corporate-owned national chain (excluded; franchise_rule.py)")
+            elif j["large_national_chain"] >= T["chain"] and fr.classify_company(c["company_name"], d)[0] != "FRANCHISE": reasons.append(f"large national chain / franchise network (p={j['large_national_chain']}); central procurement/franchise complexity - owner decision")
             if not ind_ex: reasons.append("no first-party industrial excerpt captured")
             if not reasons:
                 # supplemental check: hands-on workers vs management-only search
@@ -137,7 +140,8 @@ def main():
             if identity < T["identity"]: miss.append(f"identity match weak (p={identity})")
             if not (bt == "employer_facing_staffing" and j["business_type_p"] >= T["type"]): miss.append(f"employer-facing staffing not established ({bt}, p={j['business_type_p']})")
             if j["us_operations"] < T["us"] and not je.get("check5_by_postings"): miss.append(f"US operations not corroborated (p={j['us_operations']}) and fewer than 2 postings in US locations")
-            if j["large_national_chain"] >= T["chain"]: miss.append(f"large national chain / franchise network (p={j['large_national_chain']})")
+            if fr.is_excluded_chain(c["company_name"], d): miss.append("corporate-owned national chain (excluded; franchise_rule.py)")
+            elif j["large_national_chain"] >= T["chain"] and fr.classify_company(c["company_name"], d)[0] != "FRANCHISE": miss.append(f"large national chain / franchise network (p={j['large_national_chain']})")
             c4_site = j["service_model"] in ("temporary_or_contract", "direct_hire_only") and j["service_model_p"] >= T["model"]
             if not (c4_site or je.get("check4_by_postings")): miss.append("placement model not shown on the site; fewer than 2 hands-on postings say temporary/contract and hands-on share is under 2/3")
             if not miss:

@@ -1,0 +1,783 @@
+From cb9edb3bca88075e3bdad89823b0661ff8bbd3ef Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 25 Nov 2026 03:14:30 +0000
+Subject: [PATCH] feat: franchise locations in Campaign 3 (identity key, city
+ line, per-domain throttle)
+
+Owner decision 2026-11-25: independently owned franchise offices are in the
+ScaleLab ICP; they share one mail domain per brand.
+
+- staffing-franchise.js: shared franchise domains, identity keys
+  (brand+owner, brand+territory), the per-domain daily throttle and batch
+  interleaving.
+- Import: a shared franchise domain is never deduped as one company. It needs
+  owner_approved_franchise and row.franchise {brand, owner_key, territory,
+  city}; the same owner or office already in ScaleLab, or repeated in the
+  batch, is refused. The identity is sealed into the profile.
+- Profile: optional franchise fields, present and digested only on a
+  franchise profile; every existing profile keeps its fields and digest.
+- Copy v2: COPY_C city form "Saw your {{franchise_city}} office places
+  {{specialty_line}}."; a franchise lead never gets the brand-name fallback.
+- Send path: at most 10 sends per shared franchise domain per Vancouver day
+  across every inbox and step, slot taken inside deliverOrdinaryColdStep
+  before any Gmail probe or reservation; fails closed without a throttle.
+  Step-1 franchise leads are interleaved in the sender assignment.
+
+Tests: test/staffing-franchise.test.js (11). Full suite: 3666 pass, 4 fail
+(the pre-existing DST/date-sensitive tests).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01CuSiKCAqHwVYLaxKfpYfXv
+---
+ integrations/staffing-campaign-3-import.js |  59 +++++--
+ integrations/staffing-franchise.js         | 140 +++++++++++++++++
+ integrations/staffing-v4-copy.js           |  35 ++++-
+ integrations/staffing-v4-profile.js        |  37 ++++-
+ outreach-agent.js                          |  28 +++-
+ test/staffing-franchise.test.js            | 174 +++++++++++++++++++++
+ 6 files changed, 451 insertions(+), 22 deletions(-)
+ create mode 100644 integrations/staffing-franchise.js
+ create mode 100644 test/staffing-franchise.test.js
+
+diff --git a/integrations/staffing-campaign-3-import.js b/integrations/staffing-campaign-3-import.js
+index eabea7a..efb587a 100644
+--- a/integrations/staffing-campaign-3-import.js
++++ b/integrations/staffing-campaign-3-import.js
+@@ -27,6 +27,14 @@
+  * prior rows are never read for copy and never written. Anything else stays
+  * `duplicate_company` or a specific second_buyer_* refusal.
+  *
++ * Franchise location (owner decision 2026-11-25): an address or company domain
++ * on a shared franchise domain (expresspros.com, pridestaff.com, ...; see
++ * staffing-franchise.js) is never deduped by that domain. It needs
++ * `owner_approved_franchise: true` on the request and `row.franchise`
++ * {brand, owner_key, territory, city}; it is refused when the same owner or the
++ * same brand + territory already has a ScaleLab lead or repeats in the batch.
++ * The identity is sealed into the profile; `city` feeds the v2 city line.
++ *
+  * `owner_approved_send_ready: true` records the owner's explicit approval and
+  * seals review_status SEND_READY; without it the profile is REVIEW_READY and
+  * the lead cannot be queued. The import never queues, routes or sends: that is
+@@ -39,6 +47,7 @@ const { resolveLeadClient } = require('./clients/ownership');
+ const { DEFAULT_CLIENT_ID } = require('./clients/registry');
+ const { STAFFING_CAMPAIGN_V4 } = require('./staffing-campaign');
+ const { selectV4Variant, CURRENT_COPY_VERSION } = require('./staffing-v4-copy');
++const { franchiseBrandOfDomain, franchiseIdentityProblem, franchiseKeys } = require('./staffing-franchise');
+ const {
+   buildStaffingV4Profile, serializeStaffingV4Profile, readStaffingV4Profile, hasStaffingV4ProfileMarker,
+ } = require('./staffing-v4-profile');
+@@ -79,21 +88,35 @@ function validatePayload(payload = {}) {
+     records: payload.records, sourcingRunId: text(payload.sourcing_run_id),
+     sendReady: payload.owner_approved_send_ready === true,
+     secondBuyerApproved: payload.owner_approved_second_buyer === true,
++    franchiseApproved: payload.owner_approved_franchise === true,
+   };
+ }
+ 
+ function indexCorpus(leads = []) {
+   const byEmail = new Map();
+   const scalelabDomains = new Map();
++  const franchiseKeySet = new Set();
+   for (const lead of leads) {
+     const email = normalizeEmail(lead.email);
+     if (email) byEmail.set(email, [...(byEmail.get(email) || []), lead]);
+     const owner = resolveLeadClient(lead);
+     if (!owner.ok || owner.clientId === DEFAULT_CLIENT_ID) {
+       for (const domain of companyDomainsOf(lead)) scalelabDomains.set(domain, [...(scalelabDomains.get(domain) || []), lead]);
++      // Franchise identity of an existing lead: its sealed profile, else (a
++      // lead from before the franchise rule) brand + its contact name.
++      const brand = companyDomainsOf(lead).map(franchiseBrandOfDomain).find(Boolean);
++      if (brand) {
++        const sealed = hasStaffingV4ProfileMarker(lead) ? readStaffingV4Profile(lead) : null;
++        if (sealed?.ok && sealed.profile.franchise_owner_key) {
++          for (const key of franchiseKeys({ owner_key: sealed.profile.franchise_owner_key, territory: sealed.profile.franchise_territory })) franchiseKeySet.add(key);
++        } else {
++          const [first = '', ...rest] = text(lead.contactName || lead.contact_name).toLowerCase().split(/\s+/);
++          if (first && rest.length) franchiseKeySet.add(franchiseKeys({ owner_key: `${brand}|${first}|${rest[rest.length - 1]}` })[0]);
++        }
++      }
+     }
+   }
+-  return { byEmail, scalelabDomains };
++  return { byEmail, scalelabDomains, franchiseKeys: franchiseKeySet };
+ }
+ 
+ /**
+@@ -142,10 +165,16 @@ function evaluateCampaign3Import(payload, { leads = [], suppressedEmails = new S
+   const alreadyImported = [];
+   const refusals = [];
+   const seen = new Map();
+-  request.records.forEach(record => {
++  const sharedFranchiseDomains = (domain, email) => workDomains([domain, emailDomain(email)]).filter(franchiseBrandOfDomain);
++  const batchKeys = record => {
+     const email = normalizeEmail(record?.row?.email);
+     const domain = text(record?.row?.company_domain).toLowerCase().replace(/^www\./, '');
+-    for (const key of [`email:${email}`, `domain:${domain}`]) seen.set(key, (seen.get(key) || 0) + 1);
++    // A shared franchise domain is not a company: its records are keyed by owner and territory instead.
++    const franchise = sharedFranchiseDomains(domain, email).length;
++    return [`email:${email}`, ...(franchise ? franchiseKeys(record?.row?.franchise || {}) : [`domain:${domain}`])];
++  };
++  request.records.forEach(record => {
++    for (const key of batchKeys(record)) seen.set(key, (seen.get(key) || 0) + 1);
+   });
+   request.records.forEach((record, position) => {
+     const row = record?.row || {};
+@@ -158,7 +187,15 @@ function evaluateCampaign3Import(payload, { leads = [], suppressedEmails = new S
+     if (PERSONAL_DOMAINS.has(emailDomain(email))) return refuse('personal_mailbox', 'a personal mailbox is not a company buyer');
+     if (!domain) return refuse('missing_domain', 'company_domain is required');
+     if (suppressedEmails.has(email)) return refuse('suppressed', 'address is on the global suppression list');
+-    if (seen.get(`email:${email}`) > 1 || seen.get(`domain:${domain}`) > 1) return refuse('duplicate_in_batch', 'email or company domain repeats inside this request');
++    if (batchKeys(record).some(key => seen.get(key) > 1)) return refuse('duplicate_in_batch', 'email, company domain or franchise owner/territory repeats inside this request');
++    const sharedDomains = sharedFranchiseDomains(domain, email);
++    const franchise = sharedDomains.length ? row.franchise : null;
++    if (sharedDomains.length) {
++      if (!request.franchiseApproved) return refuse('franchise_not_approved', 'a shared franchise domain needs owner_approved_franchise');
++      const problem = franchiseIdentityProblem(franchise, sharedDomains);
++      if (problem) return refuse('franchise_identity_missing', problem);
++      if (franchiseKeys(franchise).some(key => index.franchiseKeys.has(key))) return refuse('duplicate_franchise', 'this franchise owner or territory already has a ScaleLab lead');
++    }
+     const importKey = importKeyFor(email);
+     const sameEmail = index.byEmail.get(email) || [];
+     if (sameEmail.length) {
+@@ -171,7 +208,8 @@ function evaluateCampaign3Import(payload, { leads = [], suppressedEmails = new S
+       const otherClient = sameEmail.some(lead => { const owner = resolveLeadClient(lead); return owner.ok && owner.clientId !== DEFAULT_CLIENT_ID; });
+       return refuse(otherClient ? 'cross_client_duplicate' : 'duplicate_email', 'this address already exists in the lead database');
+     }
+-    const companyDomains = workDomains([domain, emailDomain(email)]);
++    // Shared franchise domains are deduped by owner/territory above, never as one company.
++    const companyDomains = workDomains([domain, emailDomain(email)]).filter(d => !franchiseBrandOfDomain(d));
+     let secondBuyer = null;
+     if (companyDomains.some(d => index.scalelabDomains.has(d))) {
+       const domainLeads = companyDomains.flatMap(d => index.scalelabDomains.get(d) || []);
+@@ -180,12 +218,14 @@ function evaluateCampaign3Import(payload, { leads = [], suppressedEmails = new S
+       secondBuyer = [...new Set(domainLeads.map(lead => text(lead.id)))];
+     }
+     let selection;
+-    try { selection = selectV4Variant(evidence, { copyVersion: CURRENT_COPY_VERSION }); } catch (error) { return refuse('invalid_evidence', error.message); }
++    const selectionEvidence = franchise ? { ...evidence, franchise: { city: text(franchise.city) } } : evidence;
++    try { selection = selectV4Variant(selectionEvidence, { copyVersion: CURRENT_COPY_VERSION }); } catch (error) { return refuse('invalid_evidence', error.message); }
+     if (selection.status !== 'SELECTED') return refuse('held', selection.holds.join('; ') || 'no verified variant');
+     const profile = buildStaffingV4Profile({
+       row: { company, company_domain: domain, contact_name: evidence.contactName, email,
+         v4_tag: row.v4_tag, demand_score: row.demand_score, signal_priority: row.signal_priority, ad_class: row.ad_class,
+-        contact_status: row.contact_status },
++        contact_status: row.contact_status,
++        ...(franchise ? { franchise: { brand: text(franchise.brand), owner_key: text(franchise.owner_key), territory: text(franchise.territory) } } : {}) },
+       selection, selectedAt: now(), sourcingRunId: request.sourcingRunId,
+     });
+     if (request.sendReady) profile.review_status = 'SEND_READY';
+@@ -193,9 +233,9 @@ function evaluateCampaign3Import(payload, { leads = [], suppressedEmails = new S
+     const sealed = readStaffingV4Profile({ campaign_notes: campaignNotes });
+     if (!sealed.ok) return refuse('profile_integrity_failed', sealed.detail || sealed.reason);
+     accepted.push({
+-      index: position, importKey, variant: selection.variant, secondBuyer: Boolean(secondBuyer),
++      index: position, importKey, variant: selection.variant, secondBuyer: Boolean(secondBuyer), franchise: Boolean(franchise),
+       lead: {
+-        id: newId ? newId() : '', company, contactName: text(evidence.contactName), email, city: '',
++        id: newId ? newId() : '', company, contactName: text(evidence.contactName), email, city: franchise ? text(franchise.city) : '',
+         tradeType: '', website: `https://${domain}`,
+         stage: 'Import', emailStatus: '', lastEmailedAt: '', emailStep: '',
+         notes: secondBuyer ? `Second buyer; prior ScaleLab lead ids: ${secondBuyer.join(', ')}` : '',
+@@ -236,6 +276,7 @@ async function importCampaign3Leads({ payload, dryRun = true, readCorpus, append
+     received: result.request.records.length, accepted: leads.length, alreadyImported: result.alreadyImported.length,
+     refused: result.refusals.length, written, mirror, byVariant,
+     secondBuyers: result.accepted.filter(item => item.secondBuyer).length,
++    franchiseLeads: result.accepted.filter(item => item.franchise).length,
+     leads: result.accepted.map(item => ({ index: item.index, id: item.lead.id, email: item.lead.email, company: item.lead.company, variant: item.variant, secondBuyer: item.secondBuyer })),
+     alreadyImportedLeads: result.alreadyImported, refusals: result.refusals, refusalsByCode: result.refusalsByCode,
+   };
+diff --git a/integrations/staffing-franchise.js b/integrations/staffing-franchise.js
+new file mode 100644
+index 0000000..c01c03f
+--- /dev/null
++++ b/integrations/staffing-franchise.js
+@@ -0,0 +1,140 @@
++'use strict';
++
++/**
++ * Franchise locations in the ScaleLab ICP (owner decision 2026-11-25).
++ *
++ * Independently owned franchise offices (Express Employment Professionals,
++ * PrideStaff, Spherion, ...) share one mail domain per brand. Three things
++ * follow, and this module is their one source of truth:
++ *
++ *   1. Identity. A franchise lead is keyed by brand + owner (one contact per
++ *      owner) and brand + territory (one owner per office), never by its email
++ *      domain. The import uses these keys instead of the domain.
++ *   2. Send safety. At most FRANCHISE_DOMAIN_DAILY_CAP successful sends per
++ *      shared franchise domain per Vancouver day, across every inbox and step.
++ *      The cap is reserved before the provider attempt and released only when
++ *      the attempt ends without delivery, so parallel sender lanes cannot
++ *      overshoot it. A send whose outcome is uncertain keeps its slot.
++ *   3. Ordering. Franchise leads are spread through the step-1 batch instead of
++ *      sitting in one block (selection order only; every guard still runs).
++ */
++
++const FRANCHISE_SHARED_DOMAINS = Object.freeze({
++  'expresspros.com': 'express',
++  'pridestaff.com': 'pridestaff',
++  'spherion.com': 'spherion',
++  'snelling.com': 'snelling',
++  'laborfinders.com': 'labor_finders',
++  'hirequestdirect.com': 'hirequest',
++  'hirequestllc.com': 'hirequest',
++  'hirequest.com': 'hirequest',
++  'trojanlabor.com': 'trojan',
++  'linkstaffing.com': 'link',
++  'remedystaff.com': 'remedy',
++});
++const FRANCHISE_DOMAIN_DAILY_CAP = 10;
++const SUCCESSFUL_SEND_EVENTS = Object.freeze([
++  'initial_email_sent', 'follow_up_sent', 'sequence_step_sent', 'booking_link_sent', 'placement_test_sent',
++]);
++
++const text = value => String(value ?? '').trim();
++const domainOf = email => text(email).toLowerCase().split('@').pop() || '';
++const bare = domain => text(domain).toLowerCase().replace(/^www\./, '');
++
++/** The franchise brand of a shared mail/web domain, or ''. */
++function franchiseBrandOfDomain(domain) {
++  return FRANCHISE_SHARED_DOMAINS[bare(domain)] || '';
++}
++
++/** The shared franchise domain an address belongs to, or ''. */
++function franchiseDomainOfEmail(email) {
++  const domain = domainOf(email);
++  return FRANCHISE_SHARED_DOMAINS[domain] ? domain : '';
++}
++
++const keyPart = value => text(value).toLowerCase().replace(/[^a-z0-9|]+/g, '');
++
++/** Why a record's franchise identity is unusable for this domain, or null. */
++function franchiseIdentityProblem(franchise, domains = []) {
++  const brands = [...new Set(domains.map(franchiseBrandOfDomain).filter(Boolean))];
++  if (!franchise || typeof franchise !== 'object') return 'a shared franchise domain needs row.franchise {brand, owner_key, territory, city}';
++  if (brands.length !== 1 || text(franchise.brand) !== brands[0]) return `franchise brand must be ${brands.join(' or ') || '(none)'}`;
++  const owner = text(franchise.owner_key).split('|');
++  if (owner.length !== 3 || owner[0] !== brands[0] || !owner[1] || !owner[2]) return 'franchise owner_key must be brand|first|last';
++  const territory = text(franchise.territory).split('|');
++  if (territory.length !== 3 || territory[0] !== brands[0] || !territory[1] || !territory[2]) return 'franchise territory must be brand|city|state';
++  if (!text(franchise.city)) return 'franchise city is required';
++  return null;
++}
++
++/** The dedupe keys of a franchise identity. */
++function franchiseKeys(franchise = {}) {
++  return [`franchise-owner:${keyPart(franchise.owner_key)}`, `franchise-territory:${keyPart(franchise.territory)}`];
++}
++
++/**
++ * Successful sends today per shared franchise domain. `emailForLead(leadId)`
++ * resolves a ledger row to its recipient.
++ */
++function franchiseDomainSendsToday(activities = [], dayKey, emailForLead = () => '') {
++  const counts = new Map();
++  const seen = new Set();
++  for (const row of activities) {
++    if (!SUCCESSFUL_SEND_EVENTS.includes(String(row.eventType || ''))) continue;
++    const day = row.occurredAt ? new Date(row.occurredAt).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' }) : '';
++    if (dayKey && day !== dayKey) continue;
++    const eventKey = String(row.eventId || `${row.leadId}:${row.eventType}:${row.occurredAt}:${row.metadata || ''}`);
++    if (seen.has(eventKey)) continue;
++    seen.add(eventKey);
++    const domain = franchiseDomainOfEmail(emailForLead(row.leadId));
++    if (domain) counts.set(domain, (counts.get(domain) || 0) + 1);
++  }
++  return counts;
++}
++
++/**
++ * The per-run throttle. reserve(email) is synchronous, so lanes that run in
++ * parallel cannot both take the last slot. Non-franchise addresses always pass.
++ */
++function createFranchiseDomainThrottle({ sendsToday = new Map(), cap = FRANCHISE_DOMAIN_DAILY_CAP } = {}) {
++  const used = new Map(sendsToday);
++  return Object.freeze({
++    cap,
++    used: domain => used.get(domain) || 0,
++    reserve(email) {
++      const domain = franchiseDomainOfEmail(email);
++      if (!domain) return { ok: true, domain: '', release() {} };
++      const count = used.get(domain) || 0;
++      if (count >= cap) return { ok: false, domain, reason: `franchise domain ${domain} reached ${cap} sends today` };
++      used.set(domain, count + 1);
++      let released = false;
++      return { ok: true, domain, release() { if (!released) { released = true; used.set(domain, Math.max(0, (used.get(domain) || 1) - 1)); } } };
++    },
++  });
++}
++
++/**
++ * Spreads franchise-domain leads through a batch: the others keep their order,
++ * and franchise leads are placed at even intervals instead of in one block.
++ */
++function interleaveFranchiseLeads(leads = [], emailOf = lead => lead?.email) {
++  const franchise = leads.filter(lead => franchiseDomainOfEmail(emailOf(lead)));
++  if (!franchise.length || franchise.length === leads.length) return [...leads];
++  const others = leads.filter(lead => !franchiseDomainOfEmail(emailOf(lead)));
++  const out = [];
++  const gap = (others.length + 1) / franchise.length;
++  let next = 0;
++  let placed = 0;
++  others.forEach((lead, index) => {
++    while (placed < franchise.length && index >= Math.floor(next)) { out.push(franchise[placed++]); next += gap; }
++    out.push(lead);
++  });
++  while (placed < franchise.length) out.push(franchise[placed++]);
++  return out;
++}
++
++module.exports = {
++  FRANCHISE_SHARED_DOMAINS, FRANCHISE_DOMAIN_DAILY_CAP,
++  franchiseBrandOfDomain, franchiseDomainOfEmail, franchiseIdentityProblem, franchiseKeys,
++  franchiseDomainSendsToday, createFranchiseDomainThrottle, interleaveFranchiseLeads,
++};
+diff --git a/integrations/staffing-v4-copy.js b/integrations/staffing-v4-copy.js
+index ba09df1..b6d8f1f 100644
+--- a/integrations/staffing-v4-copy.js
++++ b/integrations/staffing-v4-copy.js
+@@ -163,6 +163,16 @@ const COPY_C_V2_FALLBACK = Object.freeze({
+   body: EMAIL_1_V2.COPY_C.body.replace('Saw you place {{specialty_line}}.', 'Saw {{company}} focuses on {{verified_specialization}} staffing.'),
+   variables: Object.freeze(['first_name', 'company', 'verified_specialization']),
+ });
++// Franchise location (owner decision 2026-11-25): the v2 primary line names the
++// owner's office city. Only the first line differs; it needs a sealed
++// franchise_city and a quote-backed specialty_line. A franchise lead never gets
++// the fallback form ("Saw <brand> focuses on ...") because the brand name alone
++// reads as the franchisor, not the owner's office.
++const COPY_C_V2_FRANCHISE = Object.freeze({
++  subject: EMAIL_1_V2.COPY_C.subject,
++  body: EMAIL_1_V2.COPY_C.body.replace('Saw you place {{specialty_line}}.', 'Saw your {{franchise_city}} office places {{specialty_line}}.'),
++  variables: Object.freeze(['first_name', 'company', 'franchise_city', 'specialty_line']),
++});
+ 
+ const FOLLOW_UPS_V2 = Object.freeze([
+   Object.freeze({
+@@ -195,7 +205,10 @@ const FOLLOW_UPS_BY_VERSION = Object.freeze({ v1: FOLLOW_UPS, v2: FOLLOW_UPS_V2
+ const V1_VARIABLE_NAMES = Object.freeze(['first_name', 'company', 'verified_role', 'location',
+   'verified_specialization', 'sales_position', 'market', 'verified_title']);
+ const V2_VARIABLE_NAMES = Object.freeze(['specialty_line']);
+-const VARIABLE_NAMES = Object.freeze([...V1_VARIABLE_NAMES, ...V2_VARIABLE_NAMES]);
++// Sealed only on a franchise-location profile (an optional profile field, so
++// every existing v2 profile keeps its exact fields and digest).
++const FRANCHISE_VARIABLE_NAMES = Object.freeze(['franchise_city']);
++const VARIABLE_NAMES = Object.freeze([...V1_VARIABLE_NAMES, ...V2_VARIABLE_NAMES, ...FRANCHISE_VARIABLE_NAMES]);
+ 
+ // ── Variables ────────────────────────────────────────────────────────────────
+ 
+@@ -204,7 +217,7 @@ const UNSAFE = /[\r\n\t{}<>|\\]/;
+ const PLACEHOLDER_WORDS = /^(?:undefined|null|nan|n\/a|na|none|unknown|tbd|tba|todo|placeholder|test|-+|\.+|\?+)$/i;
+ const MAX_VARIABLE = Object.freeze({
+   first_name: 30, company: 60, verified_role: 50, location: 50, verified_specialization: 60,
+-  sales_position: 60, market: 50, verified_title: 60, specialty_line: 90,
++  sales_position: 60, market: 50, verified_title: 60, specialty_line: 90, franchise_city: 40,
+ });
+ 
+ /** Why a variable value cannot be merged, or null when it is safe. Pure. */
+@@ -226,6 +239,7 @@ function variableProblem(name, value) {
+   // free-standing or trailing hyphen is an "unnecessary hyphen".
+   if (/(?:^|\s)-|-(?:\s|$)/.test(text)) return `${name} has a free-standing hyphen`;
+   if (name === 'specialty_line') return specialtyLineShapeProblem(text);
++  if (name === 'franchise_city' && !/^[A-Z][A-Za-z.']*(?: [A-Z][A-Za-z.']*){0,3}$/.test(text)) return 'franchise_city is not a plain city name';
+   return null;
+ }
+ 
+@@ -315,6 +329,9 @@ function selectV4Variant(evidence = {}, { copyVersion = CURRENT_COPY_VERSION } =
+   if (!COPY_VERSIONS.includes(copyVersion)) throw new Error(`unknown V4 copy version ${copyVersion || '(blank)'}`);
+   const templates = EMAIL_1_BY_VERSION[copyVersion];
+   const v2 = copyVersion === 'v2';
++  // A franchise location (owner decision 2026-11-25) is v2 only.
++  const franchise = Boolean(evidence.franchise && typeof evidence.franchise === 'object');
++  if (franchise && !v2) throw new Error('a franchise location needs copy v2');
+   let form = '';
+   const base = { first_name: evidence.firstName, company: evidence.company };
+   const considered = [];
+@@ -388,10 +405,14 @@ function selectV4Variant(evidence = {}, { copyVersion = CURRENT_COPY_VERSION } =
+     }
+   }
+   // 6. COPY_C (v2 primary): a quote-backed specialty_line from the company's own site.
++  // A franchise location uses the city form ("Saw your <city> office places ...").
++  const franchiseCity = franchise ? String(evidence.franchise.city || '') : '';
+   if (!chosen && v2) {
+     const line = evidence.specialtyLine;
+     const backed = line && isHttpUrl(line.url) && line.quote && typeof line.line === 'string' && quoteBacksLine(line.line, line.quote);
+-    chosen = backed ? tryVariant('COPY_C', [line], item => ({ specialty_line: item.line })) : null;
++    chosen = backed ? (franchise
++      ? tryVariant('COPY_C', [line], item => ({ specialty_line: item.line, franchise_city: franchiseCity }), COPY_C_V2_FRANCHISE)
++      : tryVariant('COPY_C', [line], item => ({ specialty_line: item.line }))) : null;
+     if (chosen) form = 'primary';
+     else if (!backed) {
+       considered.push({ variant: 'COPY_C', outcome: 'primary not eligible',
+@@ -399,7 +420,10 @@ function selectV4Variant(evidence = {}, { copyVersion = CURRENT_COPY_VERSION } =
+     }
+   }
+   // 6. COPY_C (v1; v2 fallback): a verified specialization, else HOLD.
+-  if (!chosen) {
++  if (!chosen && franchise) {
++    considered.push({ variant: 'COPY_C', outcome: 'fallback not used', detail: 'a franchise location never gets the brand-name fallback line' });
++  }
++  if (!chosen && !franchise) {
+     const spec = evidence.specialization;
+     const ok = spec && isHttpUrl(spec.url) && spec.quote && spec.phrase;
+     chosen = ok ? tryVariant('COPY_C', [spec], item => ({ verified_specialization: item.phrase }), v2 ? COPY_C_V2_FALLBACK : templates.COPY_C) : null;
+@@ -446,6 +470,7 @@ function templateFor(variant, step, copyVersion = 'v1', vars = {}) {
+     if (!email) throw new Error(`unknown V4 copy variant ${variant || '(blank)'}`);
+     // v2 COPY_C renders its primary form only with a sealed specialty_line.
+     if (v2 && variant === 'COPY_C' && !vars.specialty_line) email = COPY_C_V2_FALLBACK;
++    if (v2 && variant === 'COPY_C' && vars.specialty_line && vars.franchise_city) email = COPY_C_V2_FRANCHISE;
+     return { subject: email.subject, body: email.body, variables: email.variables,
+       bold: v2 ? null : PERFORMANCE_SENTENCE, lock: v2 ? V2_EMAIL_1_LOCK : PERFORMANCE_SENTENCE };
+   }
+@@ -533,7 +558,7 @@ function v4CopyProblem({ body, subject, copyVersion } = {}, step) {
+ 
+ module.exports = {
+   SIGNATURE, PERFORMANCE_SENTENCE, EMAIL_2_BOLD, EMAIL_3_BOLD, VARIANTS, EMAIL_1, FOLLOW_UPS, VARIABLE_NAMES,
+-  COPY_VERSIONS, CURRENT_COPY_VERSION, EMAIL_1_V2, COPY_C_V2_FALLBACK, FOLLOW_UPS_V2, EMAIL_1_BY_VERSION, FOLLOW_UPS_BY_VERSION,
++  COPY_VERSIONS, CURRENT_COPY_VERSION, EMAIL_1_V2, COPY_C_V2_FALLBACK, COPY_C_V2_FRANCHISE, FRANCHISE_VARIABLE_NAMES, FOLLOW_UPS_V2, EMAIL_1_BY_VERSION, FOLLOW_UPS_BY_VERSION,
+   V2_EMAIL_1_LOCK, V2_EMAIL_2_BOLD, V2_EMAIL_3_LOCK, V1_VARIABLE_NAMES, V2_VARIABLE_NAMES,
+   WINDOWS, MIN_EMPLOYER_P, MIN_ATTRIBUTION_P,
+   variableProblem, missingVariables, selectV4Variant, parseV4Tag, renderV4Copy, v4CopyProblem, inferV4CopyVersion,
+diff --git a/integrations/staffing-v4-profile.js b/integrations/staffing-v4-profile.js
+index 5acebaa..5be8e89 100644
+--- a/integrations/staffing-v4-profile.js
++++ b/integrations/staffing-v4-profile.js
+@@ -57,10 +57,21 @@ const FIELD_TYPES = Object.freeze({
+ const FIELDS = Object.freeze(Object.keys(FIELD_TYPES));
+ const DIGESTED = Object.freeze(['schema', ...FIELDS].sort());
+ const DIGESTED_V2 = Object.freeze(['schema', ...FIELDS, ...V2_FIELDS].sort());
++// Franchise location (owner decision 2026-11-25): optional v2 fields, present
++// only on a franchise profile. Every other profile keeps its exact fields and
++// digest; a franchise profile digests these too, so the identity is sealed.
++const FRANCHISE_FIELD_TYPES = Object.freeze({
++  franchise_brand: 'text', franchise_owner_key: 'text', franchise_territory: 'text', var_franchise_city: 'text',
++});
++const FRANCHISE_FIELDS = Object.freeze(Object.keys(FRANCHISE_FIELD_TYPES));
++const DIGESTED_V2_FRANCHISE = Object.freeze([...DIGESTED_V2, ...FRANCHISE_FIELDS].sort());
+ const STORED = new Set([...DIGESTED, 'profile_digest']);
+ const STORED_V2 = new Set([...DIGESTED_V2, 'profile_digest']);
++const STORED_V2_FRANCHISE = new Set([...DIGESTED_V2_FRANCHISE, 'profile_digest']);
+ const isV2Shape = profile => Object.prototype.hasOwnProperty.call(profile || {}, 'copy_version');
+-const typeOf = field => FIELD_TYPES[field] || V2_FIELD_TYPES[field];
++const isFranchiseShape = profile => Object.prototype.hasOwnProperty.call(profile || {}, 'franchise_brand');
++const digestedFor = profile => (isV2Shape(profile) ? (isFranchiseShape(profile) ? DIGESTED_V2_FRANCHISE : DIGESTED_V2) : DIGESTED);
++const typeOf = field => FIELD_TYPES[field] || V2_FIELD_TYPES[field] || FRANCHISE_FIELD_TYPES[field];
+ 
+ const CHECKS = Object.freeze({
+   text: value => typeof value === 'string',
+@@ -69,7 +80,7 @@ const CHECKS = Object.freeze({
+ });
+ 
+ function profileDigest(profile) {
+-  const pairs = (isV2Shape(profile) ? DIGESTED_V2 : DIGESTED).map(key => {
++  const pairs = digestedFor(profile).map(key => {
+     if (!Object.prototype.hasOwnProperty.call(profile, key) || profile[key] === undefined) {
+       throw new Error(`staffing V4 profile is missing ${key}`);
+     }
+@@ -111,6 +122,14 @@ function buildStaffingV4Profile({ row = {}, selection, selectedAt, sourcingRunId
+     for (const name of V2_VARIABLE_NAMES) profile[`var_${name}`] = typeof vars[name] === 'string' ? vars[name] : '';
+     profile.selector_version = SELECTOR_VERSION_V2;
+   }
++  const franchise = row.franchise;
++  if (franchise) {
++    if (copyVersion === 'v1') throw new Error('a franchise profile needs copy v2');
++    profile.franchise_brand = String(franchise.brand || '');
++    profile.franchise_owner_key = String(franchise.owner_key || '');
++    profile.franchise_territory = String(franchise.territory || '');
++    profile.var_franchise_city = typeof vars.franchise_city === 'string' ? vars.franchise_city : '';
++  }
+   return profile;
+ }
+ 
+@@ -118,6 +137,7 @@ function serializeStaffingV4Profile(profile) {
+   const ordered = { schema: SCHEMA };
+   for (const field of FIELDS) ordered[field] = profile[field];
+   if (isV2Shape(profile)) for (const field of V2_FIELDS) ordered[field] = profile[field];
++  if (isV2Shape(profile) && isFranchiseShape(profile)) for (const field of FRANCHISE_FIELDS) ordered[field] = profile[field];
+   ordered.profile_digest = profileDigest(ordered);
+   const json = JSON.stringify(ordered);
+   if (json.length > MAX_CHARS) throw new Error(`staffing V4 profile is ${json.length} characters; the limit is ${MAX_CHARS}`);
+@@ -140,11 +160,13 @@ function readStaffingV4Profile(lead = {}) {
+   try { parsed = JSON.parse(notes); } catch (_) { return failed('profile is not valid JSON'); }
+   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || parsed.schema !== SCHEMA) return failed('profile has the wrong schema');
+   const v2 = isV2Shape(parsed);
+-  const unexpected = Object.keys(parsed).filter(key => !(v2 ? STORED_V2 : STORED).has(key));
++  const franchise = isFranchiseShape(parsed);
++  if (franchise && !v2) return failed('a franchise profile needs copy v2');
++  const unexpected = Object.keys(parsed).filter(key => !(v2 ? (franchise ? STORED_V2_FRANCHISE : STORED_V2) : STORED).has(key));
+   if (unexpected.length) return failed(`unexpected field(s): ${unexpected.slice(0, 5).join(', ')}`);
+-  const missing = (v2 ? DIGESTED_V2 : DIGESTED).filter(key => !Object.prototype.hasOwnProperty.call(parsed, key));
++  const missing = digestedFor(parsed).filter(key => !Object.prototype.hasOwnProperty.call(parsed, key));
+   if (missing.length) return failed(`missing field(s): ${missing.slice(0, 5).join(', ')}`);
+-  const mistyped = [...FIELDS, ...(v2 ? V2_FIELDS : [])].filter(field => !CHECKS[typeOf(field)](parsed[field]));
++  const mistyped = [...FIELDS, ...(v2 ? V2_FIELDS : []), ...(franchise ? FRANCHISE_FIELDS : [])].filter(field => !CHECKS[typeOf(field)](parsed[field]));
+   if (mistyped.length) return failed(`wrongly typed field(s): ${mistyped.slice(0, 5).join(', ')}`);
+   if (!/^[0-9a-f]{64}$/.test(String(parsed.profile_digest || '')) || profileDigest(parsed) !== parsed.profile_digest) {
+     return failed('profile digest does not match its contents');
+@@ -154,7 +176,8 @@ function readStaffingV4Profile(lead = {}) {
+   if (parsed.copy_status === 'HOLD' && parsed.review_status === 'SEND_READY') return failed('a held profile cannot be send ready');
+   // A stored copy_version names a later version; v1 is the absence of the field.
+   if (v2 && (parsed.copy_version === 'v1' || !COPY_VERSIONS.includes(parsed.copy_version))) return failed('profile has an unknown copy version');
+-  const names = [...V1_VARIABLE_NAMES, ...(v2 ? V2_VARIABLE_NAMES : [])];
++  if (franchise && (!parsed.franchise_brand || !parsed.franchise_owner_key || !parsed.franchise_territory)) return failed('franchise identity is incomplete');
++  const names = [...V1_VARIABLE_NAMES, ...(v2 ? V2_VARIABLE_NAMES : []), ...(franchise ? ['franchise_city'] : [])];
+   const vars = Object.fromEntries(names.map(name => [name, parsed[`var_${name}`]]).filter(([, value]) => value));
+   // sealedCopyVersion: what the import sealed ('' for every pre-v2 profile, whose
+   // touches follow staffing-v4-copy-version.js resolveV4CopyVersion).
+@@ -162,6 +185,6 @@ function readStaffingV4Profile(lead = {}) {
+ }
+ 
+ module.exports = {
+-  SCHEMA, SCHEMA_MARKER, PROFILE_INTEGRITY_FAILED, SELECTOR_VERSION, SELECTOR_VERSION_V2, REVIEW_STATUSES, COPY_STATUSES, FIELDS, V2_FIELDS,
++  SCHEMA, SCHEMA_MARKER, PROFILE_INTEGRITY_FAILED, SELECTOR_VERSION, SELECTOR_VERSION_V2, REVIEW_STATUSES, COPY_STATUSES, FIELDS, V2_FIELDS, FRANCHISE_FIELDS,
+   profileDigest, buildStaffingV4Profile, serializeStaffingV4Profile, hasStaffingV4ProfileMarker, readStaffingV4Profile,
+ };
+diff --git a/outreach-agent.js b/outreach-agent.js
+index 175039d..993080e 100644
+--- a/outreach-agent.js
++++ b/outreach-agent.js
+@@ -232,6 +232,9 @@ const { isFollowUpDue, FOLLOW_UP_STEP_COUNT } = require('./integrations/sequence
+ const { unrecoveredTouchBlock } = require('./integrations/same-touch-recovery');
+ const { planOooResume, buildOooResumeEvent, oooResumeCopy } = require('./integrations/ooo-pause');
+ const { fairShareQueuedOrder } = require('./integrations/scheduled-slot-allocator');
++const {
++  franchiseDomainOfEmail, franchiseDomainSendsToday, createFranchiseDomainThrottle, interleaveFranchiseLeads,
++} = require('./integrations/staffing-franchise');
+ const {
+   credentialsFor: gmailCredentialsFor, parseRegistry: parseGmailRegistry, withDefaultInboxes: withDefaultGmailInboxes,
+ } = require('./integrations/gmail-inbox-registry');
+@@ -1908,6 +1911,22 @@ async function markSent(lead, step, sendMeta = null) {
+   }
+ }
+ 
++// Franchise domain throttle (owner decision 2026-11-25; staffing-franchise.js).
++// A shared franchise domain (expresspros.com, ...) takes at most
++// FRANCHISE_DOMAIN_DAILY_CAP sends per Vancouver day across every inbox and
++// step. The run seeds the count from today's successful sends in the ledger;
++// each attempt then takes a slot synchronously, before any Gmail probe or
++// reservation, so parallel sender lanes cannot overshoot. An attempt that ends
++// without delivery keeps its slot for the rest of this run (conservative; the
++// next run re-counts from the ledger). With no throttle initialized a franchise
++// address is refused (fail closed). Every other address is unaffected.
++let activeFranchiseThrottle = null;
++function franchiseSendSlot(lead) {
++  if (!franchiseDomainOfEmail(lead?.email)) return { ok: true };
++  if (!activeFranchiseThrottle) return { ok: false, reason: 'franchise domain throttle unavailable' };
++  return activeFranchiseThrottle.reserve(lead.email);
++}
++
+ async function deliverOrdinaryColdStep({
+   lead, step, sender, subject, body, attribution, activitiesForCycle,
+   personalizationMetadata = null, thread = null, onProviderSuccess = null,
+@@ -1921,6 +1940,8 @@ async function deliverOrdinaryColdStep({
+   if (clientBlocked) return { delivered: false, reason: `client send authority: ${clientBlocked.reason}` };
+   const window = clientSendWindowVerdict(tenantOf(lead), { scheduledClientScope: SCHEDULED_CLIENT_SCOPE });
+   if (!window.allowed) return { delivered: false, reason: window.reason };
++  const franchiseSlot = franchiseSendSlot(lead);
++  if (!franchiseSlot.ok) return { delivered: false, reason: franchiseSlot.reason };
+   // A proven, unrecovered delivery failure of an earlier touch blocks every
+   // later one at send time too, not only in selection (same-touch-recovery.js).
+   const failedTouch = unrecoveredTouchBlock(lead, activitiesForCycle || [], step);
+@@ -5535,6 +5556,10 @@ async function runInner() {
+   const outbound = await withAuth(() => runHumanOutboundPass(all, ownershipActivities));
+   const senderDayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+   const sendsBySender = senderCountsToday(ownershipActivities, senderDayKey);
++  const emailByLeadId = new Map(all.map(lead => [lead.id, lead.email]));
++  activeFranchiseThrottle = createFranchiseDomainThrottle({
++    sendsToday: franchiseDomainSendsToday(ownershipActivities, senderDayKey, id => emailByLeadId.get(id) || ''),
++  });
+   todaySent = Math.max(todaySent, successfulSendCountToday(ownershipActivities, senderDayKey));
+   dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
+   const quotaState = { globalCount: todaySent };
+@@ -6068,7 +6093,8 @@ async function runInner() {
+   }
+ 
+   const newBatchBySender = new Map(GMAIL_SENDERS.map(sender => [sender.id, []]));
+-  for (const lead of newBatch) {
++  // Franchise leads are spread through each lane, not sent as one block (owner 2026-11-25).
++  for (const lead of interleaveFranchiseLeads(newBatch)) {
+     let choice;
+     try { choice = chooseSender({ lead, activities: ownershipActivities,
+       senders: GMAIL_SENDERS, sendsToday: sendsBySender,
+diff --git a/test/staffing-franchise.test.js b/test/staffing-franchise.test.js
+new file mode 100644
+index 0000000..3af1591
+--- /dev/null
++++ b/test/staffing-franchise.test.js
+@@ -0,0 +1,174 @@
++'use strict';
++
++// Franchise locations in the ScaleLab ICP (owner decision 2026-11-25):
++// identity by brand + owner / territory, the v2 city line, the per-domain send
++// throttle and batch interleaving.
++
++const test = require('node:test');
++const assert = require('node:assert/strict');
++
++const franchise = require('../integrations/staffing-franchise');
++const copy = require('../integrations/staffing-v4-copy');
++const profileLib = require('../integrations/staffing-v4-profile');
++const { evaluateCampaign3Import, IMPORT_SCHEMA } = require('../integrations/staffing-campaign-3-import');
++
++const AS_OF = '2026-11-20';
++const evidence = (extra = {}) => ({
++  asOf: AS_OF, firstName: 'Dana', company: 'Express Employment Professionals', contactName: 'Dana Smith',
++  contactStatus: 'READY_FOR_REVIEW', emailResolved: true, attributionP: 0.99,
++  employerAds: [], salesHiring: [], expansion: [], leadership: [], candidateAds: [], specialization: null, ...extra,
++});
++const posting = (extra = {}) => ({ url: 'https://www.expresspros.com/us-ohio-canton/job-seekers/job-openings/job-detail?jobId=1',
++  quote: 'Welder | Canton, OH', role: 'Welder', location: 'Canton, OH', current: true, lastSeen: '2026-11-18', source: 'job_posting', ...extra });
++const specialtyLine = { url: 'https://www.expresspros.com/us-ohio-canton', quote: 'We place welders and machine operators for manufacturers.', line: 'welders and machine operators for manufacturers' };
++const identity = (extra = {}) => ({ brand: 'express', owner_key: 'express|dana|smith', territory: 'express|canton|oh', city: 'Canton', ...extra });
++const record = (rowExtra = {}, ev = {}) => ({
++  row: { company_name: 'Express Employment Professionals', company_domain: 'expresspros.com', email: 'dana.smith@expresspros.com',
++    v4_tag: 'V4|PASS|LOW_SIGNAL|NO_ADS_OBSERVED|COPY_TIER_PENDING', demand_score: '0', signal_priority: 'LOW_SIGNAL',
++    ad_class: 'NO_ADS_OBSERVED', contact_status: 'READY_FOR_REVIEW', franchise: identity(), ...rowExtra },
++  evidence: evidence({ candidateAds: [posting()], ...ev }),
++});
++const payload = (records, extra = {}) => ({ schema: IMPORT_SCHEMA, sourcing_run_id: 'franchise-test', records,
++  owner_approved_send_ready: true, owner_approved_franchise: true, ...extra });
++let n = 0;
++const ids = { newId: () => `f${++n}`, now: () => '2026-11-20T07:00:00.000Z' };
++const codes = result => result.refusals.map(r => r.code);
++
++test('F1. a franchise owner on a shared domain imports with the identity sealed in the profile', () => {
++  const result = evaluateCampaign3Import(payload([record()]), {}, ids);
++  assert.deepEqual(codes(result), []);
++  assert.equal(result.accepted.length, 1);
++  const lead = result.accepted[0].lead;
++  assert.equal(lead.city, 'Canton');
++  const sealed = profileLib.readStaffingV4Profile(lead);
++  assert.equal(sealed.ok, true, sealed.detail);
++  assert.equal(sealed.profile.franchise_brand, 'express');
++  assert.equal(sealed.profile.franchise_owner_key, 'express|dana|smith');
++  assert.equal(sealed.profile.franchise_territory, 'express|canton|oh');
++  assert.equal(result.accepted[0].variant, 'COPY_B');
++});
++
++test('F2. a shared franchise domain is never deduped as one company', () => {
++  const prior = { id: 'p1', email: 'other.owner@expresspros.com', website: 'https://expresspros.com', contactName: 'Pat Jones',
++    stage: 'Contacted', campaign: 'Industrial Campaign 3', clientId: 'scalelab' };
++  const result = evaluateCampaign3Import(payload([record()]), { leads: [prior] }, ids);
++  assert.deepEqual(codes(result), []);
++  // two different owners of different offices in one batch are both fine
++  const two = evaluateCampaign3Import(payload([record(), record({ email: 'lee.ray@expresspros.com',
++    franchise: identity({ owner_key: 'express|lee|ray', territory: 'express|akron|oh', city: 'Akron' }) })]), {}, ids);
++  assert.equal(two.accepted.length, 2);
++});
++
++test('F3. the same owner, or a second owner of the same office, is refused', () => {
++  const prior = { id: 'p1', email: 'dsmith@expresspros.com', website: 'https://expresspros.com', contactName: 'Dana Smith', stage: 'Done', clientId: 'scalelab' };
++  assert.deepEqual(codes(evaluateCampaign3Import(payload([record()]), { leads: [prior] }, ids)), ['duplicate_franchise']);
++  const sameOffice = record({ email: 'lee.ray@expresspros.com', franchise: identity({ owner_key: 'express|lee|ray' }) });
++  assert.deepEqual(codes(evaluateCampaign3Import(payload([record(), sameOffice]), {}, ids)), ['duplicate_in_batch', 'duplicate_in_batch']);
++  const sameOwnerTwoOffices = record({ email: 'dana@expresspros.com', franchise: identity({ territory: 'express|akron|oh', city: 'Akron' }) });
++  assert.deepEqual(codes(evaluateCampaign3Import(payload([record(), sameOwnerTwoOffices]), {}, ids)), ['duplicate_in_batch', 'duplicate_in_batch']);
++});
++
++test('F4. a franchise record needs the owner flag and a complete identity', () => {
++  assert.deepEqual(codes(evaluateCampaign3Import(payload([record()], { owner_approved_franchise: false }), {}, ids)), ['franchise_not_approved']);
++  assert.deepEqual(codes(evaluateCampaign3Import(payload([record({ franchise: undefined })]), {}, ids)), ['franchise_identity_missing']);
++  assert.deepEqual(codes(evaluateCampaign3Import(payload([record({ franchise: identity({ brand: 'pridestaff' }) })]), {}, ids)), ['franchise_identity_missing']);
++  assert.deepEqual(codes(evaluateCampaign3Import(payload([record({ franchise: identity({ owner_key: 'express|dana' }) })]), {}, ids)), ['franchise_identity_missing']);
++});
++
++test('F5. non-franchise imports are unchanged: domain dedupe still applies', () => {
++  const rec = record({ company_name: 'Tradeco Staffing', company_domain: 'tradecostaffing.com', email: 'dana@tradecostaffing.com', franchise: undefined },
++    { company: 'Tradeco Staffing' });
++  const prior = { id: 'p1', email: 'owner@tradecostaffing.com', website: 'https://tradecostaffing.com', stage: 'Done', clientId: 'scalelab' };
++  assert.deepEqual(codes(evaluateCampaign3Import(payload([rec]), { leads: [prior] }, ids)), ['duplicate_company']);
++  const ok = evaluateCampaign3Import(payload([rec]), {}, ids);
++  assert.equal(ok.accepted.length, 1);
++  const sealed = profileLib.readStaffingV4Profile(ok.accepted[0].lead);
++  assert.equal(sealed.ok, true);
++  assert.equal(Object.prototype.hasOwnProperty.call(sealed.profile, 'franchise_brand'), false, 'no franchise fields on an ordinary profile');
++});
++
++test('F6. the v2 city line: "Saw your <city> office places ..." and never the brand-name fallback', () => {
++  const sel = copy.selectV4Variant(evidence({ specialtyLine, franchise: { city: 'Canton' } }), { copyVersion: 'v2' });
++  assert.equal(sel.status, 'SELECTED');
++  assert.equal(sel.variant, 'COPY_C');
++  assert.equal(sel.vars.franchise_city, 'Canton');
++  const render = vars => copy.renderV4Copy({ variant: 'COPY_C', step: 1, vars, copyVersion: 'v2', appendFooter: text => text });
++  const body = JSON.stringify(render(sel.vars));
++  assert.match(body, /Saw your Canton office places welders and machine operators for manufacturers\./);
++  const fallbackOnly = copy.selectV4Variant(evidence({ specialization: { phrase: 'industrial', url: 'https://x.example', quote: 'industrial staffing' }, franchise: { city: 'Canton' } }), { copyVersion: 'v2' });
++  assert.equal(fallbackOnly.status, 'HOLD');
++  // the ordinary (non-franchise) primary line is unchanged
++  const plain = copy.selectV4Variant(evidence({ specialtyLine }), { copyVersion: 'v2' });
++  assert.match(JSON.stringify(render(plain.vars)), /Saw you place welders and machine operators for manufacturers\./);
++  assert.throws(() => copy.selectV4Variant(evidence({ franchise: { city: 'Canton' } }), { copyVersion: 'v1' }), /needs copy v2/);
++  assert.equal(copy.variableProblem('franchise_city', 'canton ohio'), 'franchise_city is not a plain city name');
++  assert.equal(copy.variableProblem('franchise_city', 'Fort Wayne'), null);
++});
++
++test('F7. a franchise profile round-trips; tampering with its identity breaks the digest', () => {
++  const result = evaluateCampaign3Import(payload([record({}, { candidateAds: [], specialtyLine })]), {}, ids);
++  assert.equal(result.accepted.length, 1, JSON.stringify(result.refusals));
++  const lead = result.accepted[0].lead;
++  const sealed = profileLib.readStaffingV4Profile(lead);
++  assert.equal(sealed.vars.franchise_city, 'Canton');
++  const tampered = JSON.parse(lead.campaign_notes);
++  tampered.franchise_owner_key = 'express|someone|else';
++  assert.equal(profileLib.readStaffingV4Profile({ campaign_notes: JSON.stringify(tampered) }).ok, false);
++});
++
++test('F8. throttle: at most 10 sends per shared franchise domain per day, reserved before the attempt', () => {
++  const throttle = franchise.createFranchiseDomainThrottle({ sendsToday: new Map([['expresspros.com', 8]]) });
++  const a = throttle.reserve('a@expresspros.com');
++  const b = throttle.reserve('b@expresspros.com');
++  assert.equal(a.ok && b.ok, true);
++  const c = throttle.reserve('c@expresspros.com');
++  assert.equal(c.ok, false);
++  assert.match(c.reason, /reached 10 sends today/);
++  b.release();
++  assert.equal(throttle.reserve('d@expresspros.com').ok, true, 'a released slot is reusable');
++  assert.equal(throttle.reserve('x@pridestaff.com').ok, true, 'domains are counted separately');
++  for (let i = 0; i < 50; i++) assert.equal(throttle.reserve(`o${i}@tradeco.com`).ok, true, 'ordinary domains are never throttled');
++});
++
++test('F9. throttle seed counts today\'s successful sends to franchise recipients only', () => {
++  const day = '2026-11-20';
++  const rows = [
++    { eventId: 'e1', leadId: 'l1', eventType: 'initial_email_sent', occurredAt: '2026-11-20T16:00:00Z' },
++    { eventId: 'e1', leadId: 'l1', eventType: 'initial_email_sent', occurredAt: '2026-11-20T16:00:00Z' },
++    { eventId: 'e2', leadId: 'l2', eventType: 'follow_up_sent', occurredAt: '2026-11-20T17:00:00Z' },
++    { eventId: 'e3', leadId: 'l3', eventType: 'initial_email_sent', occurredAt: '2026-11-20T17:00:00Z' },
++    { eventId: 'e4', leadId: 'l1', eventType: 'send_failed', occurredAt: '2026-11-20T17:00:00Z' },
++    { eventId: 'e5', leadId: 'l1', eventType: 'initial_email_sent', occurredAt: '2026-11-19T17:00:00Z' },
++  ];
++  const emails = { l1: 'a@expresspros.com', l2: 'b@expresspros.com', l3: 'c@tradeco.com' };
++  const counts = franchise.franchiseDomainSendsToday(rows, day, id => emails[id]);
++  assert.deepEqual([...counts], [['expresspros.com', 2]]);
++});
++
++test('F10. interleave spreads franchise leads through the batch and keeps everyone', () => {
++  const batch = [...Array(6)].map((_, i) => ({ email: `f${i}@expresspros.com` })).concat([...Array(12)].map((_, i) => ({ email: `o${i}@tradeco${i}.com` })));
++  const out = franchise.interleaveFranchiseLeads(batch);
++  assert.equal(out.length, batch.length);
++  assert.deepEqual(new Set(out), new Set(batch));
++  for (let i = 1; i < out.length; i++) {
++    assert.ok(!(franchise.franchiseDomainOfEmail(out[i].email) && franchise.franchiseDomainOfEmail(out[i - 1].email)), `no two franchise leads adjacent at ${i}`);
++  }
++  assert.deepEqual(out.filter(l => l.email.startsWith('o')).map(l => l.email), batch.filter(l => l.email.startsWith('o')).map(l => l.email));
++  const onlyOthers = [{ email: 'a@x.com' }, { email: 'b@y.com' }];
++  assert.deepEqual(franchise.interleaveFranchiseLeads(onlyOthers), onlyOthers);
++});
++
++test('F11. every ordinary cold step takes a franchise slot before any probe or reservation; step 1 is interleaved', () => {
++  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'outreach-agent.js'), 'utf8');
++  const start = src.indexOf('async function deliverOrdinaryColdStep(');
++  const deliver = src.slice(start, src.indexOf('\n}\n', start));
++  const at = needle => { const i = deliver.indexOf(needle); assert.ok(i > 0, needle); return i; };
++  assert.ok(at('clientSendWindowVerdict(') < at('franchiseSendSlot(lead)'));
++  for (const later of ['findSuccessfulSequenceSend(', 'stepOneAlreadySent(', 'guardProviderSend(', 'recordColdCallActivityStrict(reservation)', 'sendEmail({']) {
++    assert.ok(at('franchiseSendSlot(lead)') < at(later), later);
++  }
++  assert.match(src, /function franchiseSendSlot\(lead\) \{[\s\S]*?if \(!activeFranchiseThrottle\) return \{ ok: false/, 'fails closed without a throttle');
++  assert.match(src, /activeFranchiseThrottle = createFranchiseDomainThrottle\(\{\s*sendsToday: franchiseDomainSendsToday\(ownershipActivities, senderDayKey/);
++  assert.match(src, /for \(const lead of interleaveFranchiseLeads\(newBatch\)\) \{/);
++  assert.equal(franchise.FRANCHISE_DOMAIN_DAILY_CAP, 10);
++});
+-- 
+2.43.0
+

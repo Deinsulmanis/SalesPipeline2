@@ -30,6 +30,8 @@ import sys
 
 OUT = sys.argv[1]
 TOOLS = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import franchise_rule as fr  # noqa: E402  (the one chain / franchise rule)
 REPO = os.path.abspath(os.path.join(TOOLS, '..', '..', '..'))
 AS_OF = datetime.date(2026, 11, 24)
 TASKS = '/tmp/claude-0/-home-user-SalesPipeline2/2ac8488f-fce7-5c12-b5fb-d98394461a32/tasks'
@@ -122,8 +124,9 @@ def main():
             return 'company_excluded'
         if el.FOREIGN.search(d) or (g and g[2] is not None and g[2] < 0.3 and g[0] != 'PASS'):
             return 'non_us'
-        if dm.FRANCHISE.search(dm.norm(names.get(d, ''))) or (g and (g[1] or 0) >= 0.5):
-            return 'chain_or_franchise'
+        chain = fr.chain_block(names.get(d, ''), d, g[1] if g else None)
+        if chain:
+            return chain
         if g and g[0] == 'REJECT':
             return 'icp_reject'
         if need_pass and (not g or g[0] != 'PASS'):

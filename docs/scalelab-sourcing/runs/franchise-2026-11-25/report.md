@@ -1,0 +1,166 @@
+# Franchise locations in the ICP (owner decision 2026-11-25)
+
+Counts only. No names, emails or companies. Private data: `runs-private/franchise-2026-11-25/`.
+**Nothing was imported, queued, sent or deployed.** The production change sits on a local branch, unpushed (patch in this folder).
+
+## 1. Rule (one source of truth)
+
+`tools/franchise_rule.py`. Every tool imports it; none keeps a copy. Tests: `tools/test_franchise_rule.py` (11, pass).
+
+- **Franchise brands** (independently owned, industrial-capable): Express Employment Professionals, PrideStaff, Spherion,
+  Snelling, Labor Finders, HireQuest Direct, Trojan Labor, Link Staffing, Remedy Intelligent Staffing.
+  - A location is ICP-eligible when its own page or postings show industrial roles (the job-posting rule).
+  - Office-only locations are HOLD.
+- **Corporate chains stay excluded:** PeopleReady, Aerotek, Kelly, Adecco, Manpower-branded offices, Staffmark,
+  Robert Half, Randstad and the rest of the old list.
+  - "Manpower" now matches only the brand itself, not independent firms with the word in their name.
+- **Franchisor HQ is never contacted.** That covers HQ titles and headlines, franchise sales and development roles,
+  past/interim/VP roles, the franchisor's HQ city without owner evidence, and franchisor sites such as the franchising domain.
+- **Identity:**
+  - Contacts are keyed by brand + owner, with the territory (office city + state) recorded.
+  - They are never keyed by the shared email domain.
+  - One contact per owner, and one owner per office.
+- **Rewired to the rule:**
+  - discover_merge, enrich_lists, enrich_lists4 and second_buyer_pool use `fr.chain_block`.
+  - icp_decide no longer holds a recognised franchise brand on Jev's chain signal, and excludes corporate chains by name.
+
+## 2. Sourcing: GetLeads search_contacts
+
+Filters: US, VALID email, titles Owner / Franchise Owner / Co-Owner / President. Vice president, assistant, product owner
+and former titles were excluded in the query.
+
+**Cost: 735 plan credits** (balance 8,103 → 7,368; cap 900).
+
+Free counts first, then the export. By email domain where the brand has one, else by company name:
+
+| Brand | Exported rows | Unique people | Owners after HQ / role filter and dedupe |
+|---|---|---|---|
+| Express Employment Professionals | 594 | 544 | 517 |
+| PrideStaff | 66 | 64 | 48 (+11 co-owners of the same office held) |
+| Spherion | 52 | 50 | 42 (+6 same office held) |
+| Labor Finders | 9 | 9 | 8 |
+| Remedy Intelligent Staffing | 6 | 6 | 4 |
+| Snelling | 5 | 2 brand (3 look-alike companies dropped) | 2 |
+| HireQuest Direct | 2 | 2 | 2 |
+| Link Staffing | 1 | 0 (a look-alike company, dropped) | 0 |
+| Trojan Labor | 0 | 0 | 0 |
+
+What the filters dropped or held, all brands:
+
+- 6 franchisor HQ;
+- 7 corporate or non-owner roles;
+- 14 presidents with no owner or office evidence;
+- 10 whose headline shows another business;
+- 4 not the brand.
+
+Production check: none of the people match an existing lead or suppression. The 3 brand leads already in production
+are other people, and their owner keys are blocked.
+
+## 3. Location ICP check (Express)
+
+Each office's own job-openings page on the brand site was checked (free).
+
+- **Job-posting rule:** 2+ hands-on industrial or trades postings in the last 60 days, at least 1/3 of the office's postings.
+- **Offices checked:** 352. Of these, 202 are industrial, 102 office-only and 48 have no postings.
+
+Express owners (517):
+
+| Outcome | Owners |
+|---|---|
+| Office industrial, one owner kept per office | **148** |
+| Co-owner of an office already kept (HOLD_SAME_OFFICE) | 120 |
+| Office not found (owner's city has no office; likely lives in a suburb) | 112 |
+| Office-only postings (HOLD) | 77 |
+| No postings (HOLD) | 27 |
+| City has several offices with different results (HOLD) | 33 |
+
+Of the 148, **128 are ready pending verification**:
+
+- 19 are held for copy: 10 office cities with no plain city name, 7 first names not usable, 2 with no recent hands-on posting;
+- 1 shares a territory with another office.
+
+**Other brands (106 owners): HOLD_LOCATION_UNCHECKED.** Their office pages were not crawled in this pass. They stay held,
+as the brief holds everything beyond the Express test wave.
+
+## 4. Copy
+
+- **COPY_B (all 25 test-wave owners)** uses the office's own posting. The quote is built from the posting title and its
+  city only. 17 of the 25 postings are in the office's own city; the rest are in nearby towns the office recruits for.
+  Posting age is 1 to 20 days.
+- **City line:** v2 COPY_C now has the franchise form "Saw your {{franchise_city}} office places {{specialty_line}}."
+  - It is used when there is a quote-backed specialty line and no COPY_B posting.
+  - A franchise lead never gets the brand-name fallback ("Saw <brand> focuses on ...").
+- **Open copy decision for the owner.** The subject and closing still merge {{company}} = "Express Employment
+  Professionals", e.g. "Employer accounts for Express Employment Professionals". A per-office name is possible but would be
+  new copy, so it is left to the owner.
+- Dry run with the new import code (pure, no production call), treating the addresses as verified:
+  - wave: 25/25 accepted, all COPY_B;
+  - all ready: 128/128 accepted.
+
+## 5. Test wave and verification
+
+| | Count |
+|---|---|
+| Express test wave (TEST_WAVE_1) | **25 owners, 25 offices, 25 states (one per state), all COPY_B** |
+| Ready but held until the owner reviews the test wave's replies and bounces | 103 |
+| to_verify.csv (GetLeads-sourced: VERIFY_PENDING, owner verifies) | 128 (includes the 25) |
+
+## 6. Sending safety: per-domain throttle
+
+The production change, tested, not deployed.
+
+- **Cap:** `FRANCHISE_DOMAIN_DAILY_CAP = 10` successful sends per shared franchise domain per Vancouver day.
+  - It applies across all 5 inboxes and every step (initial, follow-ups, sequence, booking, placement events).
+- **Shared domains (11):**
+  - expresspros.com, pridestaff.com, spherion.com, snelling.com, laborfinders.com;
+  - hirequestdirect.com, hirequestllc.com, hirequest.com;
+  - trojanlabor.com, linkstaffing.com, remedystaff.com.
+- **Seed:** each run counts today's successful sends to those domains from the send ledger.
+- **Slot:** taken inside `deliverOrdinaryColdStep`, after the client checks and before any Gmail probe or reservation.
+  It is synchronous, so parallel sender lanes cannot overshoot. An attempt that defers keeps its slot for that run
+  (conservative); the next run re-counts.
+- **Fail closed:** with no throttle initialized, a franchise address is refused.
+- **Interleave:** step-1 franchise leads are spread evenly through the sender assignment, not sent in one block.
+- **Effect on the wave:** all 25 test-wave owners share expresspros.com, so step 1 takes at least 3 send days. Follow-ups
+  count against the same 10/day.
+
+## 7. Production change
+
+Local branch `claude/franchise-icp-20261125`, on top of production `792b055`. Patch:
+`production-franchise.patch`.
+
+- **Import:**
+  - A shared franchise domain is never deduped as one company.
+  - It needs `owner_approved_franchise: true` and `row.franchise {brand, owner_key, territory, city}`.
+  - The same owner or the same office (already in ScaleLab, or repeated in the batch) is refused.
+- **Profile:**
+  - Optional franchise fields, sealed into the digest only on franchise profiles.
+  - Every existing profile keeps its exact fields and digest.
+- **Copy, throttle and interleave** as above.
+- **Tests:**
+  - `test/staffing-franchise.test.js` (11, pass).
+  - Full suite: 3,666 pass, 4 fail. The 4 are the existing DST/date-sensitive tests, unrelated.
+- **Not deployed.** Deploying needs owner approval; follow the outreach-safety deploy runbook.
+
+## 8. Re-check of earlier chain / franchise holds
+
+35 holds (`tools/franchise_recheck.py`):
+
+| Earlier run | Held | Stays excluded (corporate) | Franchisor HQ | Franchise owner flow (shared domain) | Franchise on own domain: needs location gate | No longer a chain match: needs normal gate |
+|---|---|---|---|---|---|---|
+| v4-3000 | 21 | 10 | 1 | 0 | 6 | 4 |
+| jobs-discovery | 8 | 5 | 0 | 1 | 2 | 0 |
+| second-buyer | 6 | 1 | 0 | 2 | 0 | 3 (1 also non-US) |
+
+- **14 need a crawl + Jev gate** (8 franchise sites on their own domain, 6 no longer chain matches). That was not run here,
+  because the brief set no Jev cap.
+- Some own-domain Express sites may belong to owners already in this export. Owner-key dedupe applies when they are sourced.
+
+## STOP
+
+Stopped before import. Next steps need the owner:
+
+1. Verify `to_verify.csv` (128) in GetLeads, then run ingest_verification.
+2. Approve the production deploy of the franchise branch.
+3. Decide the subject/closing company name.
+4. Approve importing the 25-owner wave (send-ready, `owner_approved_franchise`) and queueing it interleaved.
