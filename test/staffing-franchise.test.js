@@ -172,3 +172,33 @@ test('F11. every ordinary cold step takes a franchise slot before any probe or r
   assert.match(src, /for \(const lead of interleaveFranchiseLeads\(newBatch\)\) \{/);
   assert.equal(franchise.FRANCHISE_DOMAIN_DAILY_CAP, 10);
 });
+
+test('F12. franchise copy (owner 2026-11-25): "your <city> office" subject and closing, never the brand', () => {
+  const render = vars => copy.renderV4Copy({ variant: sel.variant, step: 1, vars, copyVersion: 'v2', appendFooter: text => `${text}\n\nfooter` });
+  // employer ads present: a franchise location still gets only the office copy (COPY_B here)
+  const employerAd = { url: 'https://ads.example/a1', text: 'Need staff?', current: true, employerFacingP: 0.95, lastSeen: '2026-11-16' };
+  const sel = copy.selectV4Variant(evidence({ candidateAds: [posting()], employerAds: [employerAd], franchise: { city: 'Canton' } }), { copyVersion: 'v2' });
+  assert.equal(sel.status, 'SELECTED');
+  assert.equal(sel.variant, 'COPY_B');
+  assert.ok(sel.considered.some(item => item.variant === 'COPY_A' && item.outcome === 'not used'));
+  const email = render(sel.vars);
+  const text = JSON.stringify(email);
+  assert.equal(email.subject, 'Employer accounts for your Canton office');
+  assert.match(text, /Worth a look for your Canton office\?/);
+  assert.doesNotMatch(text, /Express Employment Professionals/, 'the franchise brand never appears');
+  assert.equal(copy.v4CopyProblem({ body: email.text || email.body, subject: email.subject, copyVersion: 'v2' }, 1), null);
+  // the COPY_C city line uses the same subject and closing
+  const c = copy.selectV4Variant(evidence({ specialtyLine, franchise: { city: 'Canton' } }), { copyVersion: 'v2' });
+  const cEmail = copy.renderV4Copy({ variant: 'COPY_C', step: 1, vars: c.vars, copyVersion: 'v2', appendFooter: t => t });
+  assert.equal(cEmail.subject, 'Employer accounts for your Canton office');
+  assert.match(JSON.stringify(cEmail), /Worth a look for your Canton office\?/);
+  assert.doesNotMatch(JSON.stringify(cEmail), /Express Employment Professionals/);
+  // ordinary leads keep their company subject and closing
+  const plain = copy.selectV4Variant(evidence({ candidateAds: [posting()], company: 'Tradeco Staffing' }), { copyVersion: 'v2' });
+  const plainEmail = copy.renderV4Copy({ variant: 'COPY_B', step: 1, vars: plain.vars, copyVersion: 'v2', appendFooter: t => t });
+  assert.equal(plainEmail.subject, 'Employer accounts for Tradeco Staffing');
+  // a dash or a non-city value in franchise_city is refused by the validator
+  assert.throws(() => render({ ...sel.vars, franchise_city: 'Canton – East' }), /franchise_city/);
+  // a franchise profile cannot render a brand-merging variant
+  assert.throws(() => copy.renderV4Copy({ variant: 'COPY_A', step: 1, vars: { ...sel.vars, company: 'Express Employment Professionals' }, copyVersion: 'v2', appendFooter: t => t }), /only its office copy/);
+});

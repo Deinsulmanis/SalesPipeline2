@@ -163,16 +163,29 @@ const COPY_C_V2_FALLBACK = Object.freeze({
   body: EMAIL_1_V2.COPY_C.body.replace('Saw you place {{specialty_line}}.', 'Saw {{company}} focuses on {{verified_specialization}} staffing.'),
   variables: Object.freeze(['first_name', 'company', 'verified_specialization']),
 });
-// Franchise location (owner decision 2026-11-25): the v2 primary line names the
-// owner's office city. Only the first line differs; it needs a sealed
-// franchise_city and a quote-backed specialty_line. A franchise lead never gets
-// the fallback form ("Saw <brand> focuses on ...") because the brand name alone
-// reads as the franchisor, not the owner's office.
-const COPY_C_V2_FRANCHISE = Object.freeze({
-  subject: EMAIL_1_V2.COPY_C.subject,
-  body: EMAIL_1_V2.COPY_C.body.replace('Saw you place {{specialty_line}}.', 'Saw your {{franchise_city}} office places {{specialty_line}}.'),
-  variables: Object.freeze(['first_name', 'company', 'franchise_city', 'specialty_line']),
+// Franchise location (owner decisions 2026-11-25). A franchise lead is
+// addressed as the owner's office, never by the franchise brand: the subject is
+// "Employer accounts for your <city> office" and the closing "Worth a look for
+// your <city> office?". Only COPY_B (the office's own posting) and the COPY_C
+// city line exist for a franchise; it never gets the brand-name fallback
+// ("Saw <brand> focuses on ...") or the A/D/E/F variants, which merge {{company}}.
+const FRANCHISE_SUBJECT = 'Employer accounts for your {{franchise_city}} office';
+const FRANCHISE_CLOSING = 'Worth a look for your {{franchise_city}} office?';
+const COPY_B_V2_FRANCHISE = Object.freeze({
+  subject: FRANCHISE_SUBJECT,
+  body: EMAIL_1_V2.COPY_B.body.replace('Worth a look for {{company}}?', FRANCHISE_CLOSING),
+  variables: Object.freeze(['first_name', 'verified_role', 'location', 'franchise_city']),
 });
+const COPY_C_V2_FRANCHISE = Object.freeze({
+  subject: FRANCHISE_SUBJECT,
+  body: EMAIL_1_V2.COPY_C.body
+    .replace('Saw you place {{specialty_line}}.', 'Saw your {{franchise_city}} office places {{specialty_line}}.')
+    .replace("Worth seeing how we'd do this for {{company}}?", FRANCHISE_CLOSING),
+  variables: Object.freeze(['first_name', 'franchise_city', 'specialty_line']),
+});
+if (COPY_B_V2_FRANCHISE.body.includes('{{company}}') || COPY_C_V2_FRANCHISE.body.includes('{{company}}')) {
+  throw new Error('franchise copy must never merge the brand as {{company}}');
+}
 
 const FOLLOW_UPS_V2 = Object.freeze([
   Object.freeze({
@@ -357,8 +370,12 @@ function selectV4Variant(evidence = {}, { copyVersion = CURRENT_COPY_VERSION } =
   const employerAds = (evidence.employerAds || []).filter(ad => isHttpUrl(ad.url)
     && Number(ad.employerFacingP) >= MIN_EMPLOYER_P && ad.current === true
     && ageDays(ad.lastSeen, asOf) <= WINDOWS.adCurrentDays);
-  let chosen = attributed ? tryVariant('COPY_A', employerAds, () => ({})) : null;
-  if (!chosen) {
+  let chosen = attributed && !franchise ? tryVariant('COPY_A', employerAds, () => ({})) : null;
+  if (franchise) {
+    for (const variant of ['COPY_A', 'COPY_D', 'COPY_E', 'COPY_F']) {
+      considered.push({ variant, outcome: 'not used', detail: 'a franchise location gets only the office copy (COPY_B or the COPY_C city line)' });
+    }
+  } else if (!chosen) {
     const anyEmployer = (evidence.employerAds || []).some(ad => Number(ad.employerFacingP) >= MIN_EMPLOYER_P);
     considered.push({ variant: 'COPY_A', outcome: 'not eligible',
       detail: !attributed && (evidence.employerAds || []).length ? 'ads are not attributed to this company'
@@ -366,7 +383,7 @@ function selectV4Variant(evidence = {}, { copyVersion = CURRENT_COPY_VERSION } =
           : 'no current employer-facing ad (an ad class of MIXED alone is not evidence)' });
   }
   // 2. COPY_D: open sales/BD hiring for the agency's own commercial team.
-  if (!chosen) {
+  if (!chosen && !franchise) {
     const hiring = (evidence.salesHiring || []).filter(item => isHttpUrl(item.url) && item.quote
       && item.ownCommercialTeam === true && item.current === true
       && ageDays(item.observedAt, asOf) <= WINDOWS.salesHiringDays
@@ -375,7 +392,7 @@ function selectV4Variant(evidence = {}, { copyVersion = CURRENT_COPY_VERSION } =
     if (!chosen && !hiring.length) considered.push({ variant: 'COPY_D', outcome: 'not eligible', detail: 'no verified current internal sales or BD hiring' });
   }
   // 3. COPY_E: a verified market or branch expansion.
-  if (!chosen) {
+  if (!chosen && !franchise) {
     const expansion = (evidence.expansion || []).filter(item => isHttpUrl(item.url) && item.quote
       && ageDays(item.announcedAt, asOf) <= WINDOWS.expansionDays && ageDays(item.announcedAt, asOf) >= 0
       && norm(item.quote).includes(norm(item.market)));
@@ -383,7 +400,7 @@ function selectV4Variant(evidence = {}, { copyVersion = CURRENT_COPY_VERSION } =
     if (!chosen && !expansion.length) considered.push({ variant: 'COPY_E', outcome: 'not eligible', detail: 'no verified recent market or branch expansion' });
   }
   // 4. COPY_F: the recipient is a recently appointed senior commercial leader.
-  if (!chosen) {
+  if (!chosen && !franchise) {
     const leader = (evidence.leadership || []).filter(item => isHttpUrl(item.url) && item.quote
       && item.current === true && norm(item.personName) && norm(item.personName) === norm(evidence.contactName)
       && ageDays(item.appointedAt, asOf) <= WINDOWS.appointmentDays && ageDays(item.appointedAt, asOf) >= 0
@@ -397,7 +414,9 @@ function selectV4Variant(evidence = {}, { copyVersion = CURRENT_COPY_VERSION } =
       && ageDays(ad.lastSeen, asOf) <= WINDOWS.adCurrentDays
       && norm(ad.quote).includes(norm(ad.role).replace(/s$/, ''))
       && norm(ad.quote).includes(norm(String(ad.location || '').split(',')[0])));
-    chosen = tryVariant('COPY_B', ads, ad => ({ verified_role: ad.role, location: ad.location }));
+    chosen = franchise
+      ? tryVariant('COPY_B', ads, ad => ({ verified_role: ad.role, location: ad.location, franchise_city: String(evidence.franchise.city || '') }), COPY_B_V2_FRANCHISE)
+      : tryVariant('COPY_B', ads, ad => ({ verified_role: ad.role, location: ad.location }));
     if (!chosen && !ads.length) {
       const any = (evidence.candidateAds || []).length;
       considered.push({ variant: 'COPY_B', outcome: 'not eligible',
@@ -471,6 +490,11 @@ function templateFor(variant, step, copyVersion = 'v1', vars = {}) {
     // v2 COPY_C renders its primary form only with a sealed specialty_line.
     if (v2 && variant === 'COPY_C' && !vars.specialty_line) email = COPY_C_V2_FALLBACK;
     if (v2 && variant === 'COPY_C' && vars.specialty_line && vars.franchise_city) email = COPY_C_V2_FRANCHISE;
+    if (v2 && variant === 'COPY_B' && vars.franchise_city) email = COPY_B_V2_FRANCHISE;
+    // A franchise profile renders only its office copy; anything else is refused.
+    if (vars.franchise_city && email !== COPY_B_V2_FRANCHISE && email !== COPY_C_V2_FRANCHISE) {
+      throw new Error('a franchise location renders only its office copy (COPY_B or the COPY_C city line, v2)');
+    }
     return { subject: email.subject, body: email.body, variables: email.variables,
       bold: v2 ? null : PERFORMANCE_SENTENCE, lock: v2 ? V2_EMAIL_1_LOCK : PERFORMANCE_SENTENCE };
   }
@@ -558,7 +582,7 @@ function v4CopyProblem({ body, subject, copyVersion } = {}, step) {
 
 module.exports = {
   SIGNATURE, PERFORMANCE_SENTENCE, EMAIL_2_BOLD, EMAIL_3_BOLD, VARIANTS, EMAIL_1, FOLLOW_UPS, VARIABLE_NAMES,
-  COPY_VERSIONS, CURRENT_COPY_VERSION, EMAIL_1_V2, COPY_C_V2_FALLBACK, COPY_C_V2_FRANCHISE, FRANCHISE_VARIABLE_NAMES, FOLLOW_UPS_V2, EMAIL_1_BY_VERSION, FOLLOW_UPS_BY_VERSION,
+  COPY_VERSIONS, CURRENT_COPY_VERSION, EMAIL_1_V2, COPY_C_V2_FALLBACK, COPY_C_V2_FRANCHISE, COPY_B_V2_FRANCHISE, FRANCHISE_VARIABLE_NAMES, FOLLOW_UPS_V2, EMAIL_1_BY_VERSION, FOLLOW_UPS_BY_VERSION,
   V2_EMAIL_1_LOCK, V2_EMAIL_2_BOLD, V2_EMAIL_3_LOCK, V1_VARIABLE_NAMES, V2_VARIABLE_NAMES,
   WINDOWS, MIN_EMPLOYER_P, MIN_ATTRIBUTION_P,
   variableProblem, missingVariables, selectV4Variant, parseV4Tag, renderV4Copy, v4CopyProblem, inferV4CopyVersion,
