@@ -610,6 +610,17 @@ test('discovery keeps direct employers only', () => {
   assert.equal(disc.excludedReason({ company_name: 'Valet Park of America', company_domain: 'valetparkofamerica.com' }, opts), 'not_an_industrial_employer');
   assert.equal(disc.excludedReason({ company_name: 'Hickory', company_domain: 'hickorytraining.com' }, opts), 'not_an_industrial_employer');
   assert.equal(disc.excludedReason({ company_name: 'Carvana', company_domain: 'carvana.com' }, opts), 'national_retail');
+  // Found in the second live chunk (2026-11-25).
+  assert.equal(disc.excludedReason({ company_name: 'ProDrivers', company_domain: 'prodrivers.com' }, opts), 'staffing_agency');
+  assert.equal(disc.excludedReason({ company_name: 'BioSpace', company_domain: 'biospace.com' }, opts), 'staffing_agency');
+  assert.equal(disc.excludedReason({ company_name: 'Bridgestone Americas', company_domain: 'bridgestone.co.cr' }, opts), 'non_us_domain');
+  assert.equal(disc.excludedReason({ company_name: 'ABB', company_domain: 'singledriveconfigurator.fi.abb.com' }, opts), 'no_domain');
+  assert.equal(disc.excludedReason({ company_name: 'Commonwealth of Massachusetts', company_domain: 'mass.gov' }, opts), 'government');
+  assert.equal(disc.excludedReason({ company_name: 'State of Arkansas', company_domain: 'arkansas.example' }, opts), 'government');
+  assert.equal(disc.excludedReason({ company_name: 'NJ TRANSIT', company_domain: 'njtransit.com' }, opts), 'not_an_industrial_employer');
+  assert.equal(disc.excludedReason({ company_name: 'Jefferson Lines', company_domain: 'jeffersonlines.com' }, opts), 'not_an_industrial_employer');
+  assert.equal(disc.excludedReason({ company_name: 'NAPA Auto Parts', company_domain: 'genpt.com' }, opts), 'national_retail');
+  assert.equal(disc.excludedReason({ company_name: 'Pratt & Whitney', company_domain: 'prattwhitney.com' }, opts), null);
   assert.equal(list.isHandsOnTitle('Rideshare Driver'), false);
   assert.equal(list.isHandsOnTitle('Shuttle Driver PT'), false);
   assert.equal(list.isHandsOnTitle('CDL A Driver'), true);
