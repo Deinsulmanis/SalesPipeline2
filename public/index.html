@@ -2068,6 +2068,7 @@
   body.workspace-ready>header{flex-wrap:nowrap;gap:12px}body.workspace-ready>header .workspace-heading{flex:1 1 auto;min-width:0}body.workspace-ready>header .workspace-heading h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}body.workspace-ready>header .header-right{flex:0 0 auto;flex-wrap:nowrap}
   body.workspace-ready>header .logo{display:none}.workspace-heading{min-width:0}.workspace-heading h1{font-size:18px;line-height:1.2;margin:0;color:var(--text);letter-spacing:-.02em}.workspace-heading p{font-size:11px;color:var(--text-muted);margin:3px 0 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .sidebar-toggle{display:none;width:44px;height:44px;border:0;background:transparent;color:var(--text);border-radius:8px;cursor:pointer}
+  .replies-layout{display:grid;grid-template-columns:minmax(220px,320px) minmax(0,1fr);gap:16px}.replies-list{display:flex;flex-direction:column;gap:6px}.replies-row{display:flex;flex-direction:column;gap:2px;text-align:left;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface,transparent);color:var(--text);cursor:pointer}.replies-row.active{border-color:var(--primary)}.replies-who{font-weight:650;font-size:13px}.replies-meta{font-size:11px;color:var(--text-muted)}.replies-detail h3{margin:0 0 4px;font-size:16px}.replies-detail p{margin:0 0 12px;font-size:12px;color:var(--text-muted)}.replies-thread{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}.replies-msg{border:1px solid var(--border);border-radius:10px;padding:8px 10px}.replies-msg.inbound{border-color:var(--primary)}.replies-msg header{display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--text-muted)}.replies-msg pre{white-space:pre-wrap;font:inherit;font-size:13px;margin:6px 0 0}#replies-draft{width:100%;font:inherit;font-size:13px;padding:10px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--text)}.replies-draft-label{font-size:12px;font-weight:650;display:block;margin-bottom:4px}.replies-warn{color:var(--danger,#c0392b);font-size:12px}.replies-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}@media(max-width:700px){.replies-layout{grid-template-columns:1fr}}
   #workspace-stage{grid-column:2;grid-row:2;position:relative;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--border-hover) transparent}.crm-workspace{display:none;min-height:100%;padding:22px 24px 40px}.crm-workspace.active{display:block}.workspace-intro{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:0 0 16px}.workspace-intro h2{font-size:20px;letter-spacing:-.025em;margin:0;color:var(--text)}.workspace-intro p{font-size:12px;color:var(--text-muted);margin:4px 0 0;max-width:720px}.workspace-eyebrow{font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--primary);font-weight:750}
   body.workspace-ready .motion-nav{display:none!important}body.workspace-ready .stats-bar,body.workspace-ready .filter-bar,body.workspace-ready .main,body.workspace-ready #ce-section{margin-left:0;margin-right:0}
   /* ScaleLab's board in the managed-client look: summary cards replace the stats strip. */
@@ -2232,6 +2233,7 @@
     <div class="crm-nav-group">Sales</div>
     <button class="crm-nav-btn active" data-workspace="pipeline" onclick="setWorkspace('pipeline')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 5h16M4 12h10M4 19h7"/><circle cx="18" cy="12" r="2"/><circle cx="15" cy="19" r="2"/></svg><span>Pipeline</span></button>
     <button class="crm-nav-btn" data-workspace="inbox" onclick="setWorkspace('inbox')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 4h16v14H4z"/><path d="M4 13h4l2 3h4l2-3h4"/></svg><span>Inbox</span></button>
+    <button class="crm-nav-btn" data-workspace="replies" onclick="setWorkspace('replies')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v3"/></svg><span>Replies</span></button>
     <button class="crm-nav-btn" data-workspace="bookings" onclick="setWorkspace('bookings')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg><span>Bookings</span></button>
     <div class="crm-nav-group">Growth</div>
     <button class="crm-nav-btn" data-workspace="outreach" onclick="setWorkspace('outreach')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m3 11 18-8-7 18-3-7-8-3Z"/><path d="m11 14 4-4"/></svg><span>Outreach</span></button>
@@ -7968,6 +7970,7 @@ const WORKSPACES = Object.freeze({
   outreach:  ['Outreach', 'The complete prospect directory and outreach state'],
   archive:   ['Archive', 'Archived leads with their complete history — nothing here can send'],
   inbox:     ['Inbox', 'Conversations by lead, the latest reply first, and what each needs next'],
+  replies:   ['Replies', 'Prospect replies waiting for an answer: thread, intent and an editable draft'],
   campaigns: ['Campaigns', 'Measured campaign versions and outbound context'],
   analytics: ['Analytics', 'Funnel performance, engagement, and sending activity'],
   sequences: ['Sequences', 'Stage follow-up enrollment and delivery state'],
@@ -8018,6 +8021,9 @@ function installWorkspaceShell() {
     <div id="archive-content" class="workspace-empty"><strong>Loading the archive…</strong>Reading archived leads and their history.</div>
     <div class="archive-more-wrap"><button type="button" class="inbox-filter" id="archive-more" hidden onclick="loadArchiveWorkspace({ append: true })">Show more</button></div>`);
   const inbox = make('inbox', workspaceIntro('Human attention', 'Inbox', 'What prospects said, what should happen next, and who owns the move.'));
+  const repliesWs = make('replies', workspaceIntro('Fast reply', 'Replies', 'Interested, pricing, information and meeting replies, newest first. Nothing is sent until you press Send.'));
+  repliesWs.insertAdjacentHTML('beforeend', `<div class="replies-layout"><div id="replies-list" class="workspace-empty"><strong>Loading replies…</strong>Reading the reply queue.</div>
+    <div id="replies-detail" class="replies-detail" aria-live="polite"></div></div>`);
   const campaigns = make('campaigns', workspaceIntro('Attribution', 'Campaigns', 'Measured campaign versions remain separate from legacy activity with unknown attribution.'));
   const analytics = make('analytics', workspaceIntro('Performance', 'Analytics', 'Campaign funnel, replies, engagement signals, and daily sending activity.'));
   analytics.insertAdjacentHTML('beforeend', '<div id="jole-report-launcher" class="jole-report-tools"><button type="button" onclick="showJoleDailyReport()">Open Jole Daily Report</button></div><div id="jole-report-view" aria-live="polite"></div>');
@@ -8125,6 +8131,86 @@ async function ensureOutreachReadModel() {
   }
 }
 
+// ── Replies (fast reply mode) ───────────────────────────────────────────────
+// Reads /api/scalelab/replies. Send is refused (here and on the server) while
+// any [FILL: ...] remains; nothing is sent without the button.
+const REPLY_INTENT_LABEL = { interest: 'Interested', information_request: 'Wants info', pricing_request: 'Pricing question',
+  meeting_request: 'Wants a meeting', reschedule_request: 'Reschedule' };
+const REPLY_PLACEHOLDER = /\[FILL:[^\]]*\]/i;
+let activeReplyId = '';
+
+async function loadRepliesWorkspace() {
+  const list = document.getElementById('replies-list');
+  const requested = new URLSearchParams(String(location.hash || '').split('?')[1] || '').get('id');
+  let data;
+  try {
+    const response = await fetch('/api/scalelab/replies');
+    if (response.status === 404) { list.innerHTML = '<strong>Fast reply mode is off.</strong>Set SCALELAB_FAST_REPLY_ENABLED=true to use this view.'; return; }
+    data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'replies unavailable');
+  } catch (error) { list.innerHTML = `<strong>Replies unavailable.</strong>${esc(error.message)}`; return; }
+  const rows = data.replies || [];
+  list.className = rows.length ? 'replies-list' : 'workspace-empty';
+  list.innerHTML = rows.length ? rows.map(row => `<button type="button" class="replies-row${row.id === activeReplyId ? ' active' : ''}" onclick="openReply('${escAttr(row.id)}')">
+      <span class="replies-who">${esc(row.firstName || 'Prospect')}${row.company ? ` · ${esc(row.company)}` : ''}${row.state ? ` · ${esc(row.state)}` : ''}</span>
+      <span class="replies-meta">${esc(REPLY_INTENT_LABEL[row.intent] || row.intent)} · ${esc(new Date(row.receivedAt).toLocaleString())}${row.hasDraft ? ' · draft ready' : ''}</span></button>`).join('')
+    : '<strong>No replies waiting.</strong>New interested, pricing, information and meeting replies appear here.';
+  const target = requested && rows.some(row => row.id === requested) ? requested : (activeReplyId || (rows[0] && rows[0].id));
+  if (target) openReply(target); else document.getElementById('replies-detail').innerHTML = '';
+}
+
+async function openReply(id) {
+  activeReplyId = id;
+  document.querySelectorAll('.replies-row').forEach(node => node.classList.toggle('active', node.getAttribute('onclick') === `openReply('${id}')`));
+  const detail = document.getElementById('replies-detail');
+  detail.innerHTML = '<div class="workspace-empty"><strong>Loading thread…</strong></div>';
+  let reply;
+  try {
+    const response = await fetch(`/api/scalelab/replies/${encodeURIComponent(id)}`);
+    reply = await response.json();
+    if (!response.ok) throw new Error(reply.error || 'reply unavailable');
+  } catch (error) { detail.innerHTML = `<div class="workspace-empty"><strong>Thread unavailable.</strong>${esc(error.message)}</div>`; return; }
+  const thread = reply.messages.map(m => `<article class="replies-msg${m.isInbound ? ' inbound' : ''}"><header><b>${esc(m.from)}</b><span>${esc(m.date)}</span></header><pre>${esc(m.text)}</pre></article>`).join('');
+  detail.innerHTML = `<div class="replies-head"><h3>${esc(reply.firstName || 'Prospect')}${reply.company ? ` at ${esc(reply.company)}` : ''}</h3>
+      <p>${esc(REPLY_INTENT_LABEL[reply.intent] || reply.intent)} · received ${esc(new Date(reply.receivedAt).toLocaleString())}${reply.state ? ` · ${esc(reply.state)}` : ''} · inbox ${esc(reply.mailboxId)}</p></div>
+    <div class="replies-thread">${thread}</div>
+    <label class="replies-draft-label" for="replies-draft">Draft${reply.draftSource ? ` (${esc(reply.draftSource)})` : ''}</label>
+    <textarea id="replies-draft" rows="10" oninput="onReplyDraftInput()">${esc(reply.draft || '')}</textarea>
+    <p class="replies-warn" id="replies-warn" hidden>Replace every [FILL: ...] before sending.</p>
+    <div class="replies-actions">
+      <button type="button" class="btn-save" id="replies-send" onclick="replyAction('send')">Send</button>
+      <button type="button" class="btn-cancel" onclick="replyAction('gmail-draft')">Save to Gmail drafts</button>
+      <button type="button" class="btn-cancel" onclick="replyAction('dismiss')">Dismiss</button>
+    </div>`;
+  onReplyDraftInput();
+}
+
+function onReplyDraftInput() {
+  const text = document.getElementById('replies-draft')?.value || '';
+  const blocked = REPLY_PLACEHOLDER.test(text) || !text.trim();
+  const send = document.getElementById('replies-send');
+  if (send) send.disabled = blocked;
+  const warn = document.getElementById('replies-warn');
+  if (warn) warn.hidden = !REPLY_PLACEHOLDER.test(text);
+}
+
+async function replyAction(action) {
+  const draft = document.getElementById('replies-draft')?.value || '';
+  if (action === 'send' && (REPLY_PLACEHOLDER.test(draft) || !draft.trim())) { showToast('Replace every [FILL: ...] before sending.', 'error'); return; }
+  if (action === 'send' && !confirm('Send this reply now, from the original inbox, in the same thread?')) return;
+  try {
+    if (action !== 'dismiss') await fetch(`/api/scalelab/replies/${encodeURIComponent(activeReplyId)}/draft`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ draft }) });
+    const response = await fetch(`/api/scalelab/replies/${encodeURIComponent(activeReplyId)}/${action}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ draft }) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'action failed');
+    showToast(action === 'send' ? 'Reply sent.' : action === 'gmail-draft' ? 'Saved to Gmail drafts.' : 'Dismissed.', 'success');
+    activeReplyId = '';
+    await loadRepliesWorkspace();
+  } catch (error) { showToast(error.message, 'error'); }
+}
+
 async function loadWorkspace(name) {
   // Shared Growth/System workspaces use the same ScaleLab surfaces for every
   // client. Sales views that have a managed read model stay client-specific.
@@ -8140,6 +8226,7 @@ async function loadWorkspace(name) {
   }
   if (['outreach','campaigns','analytics','inbox'].includes(name)) await ensureOutreachReadModel();
   if (name === 'inbox') return loadInboxWorkspace();
+  if (name === 'replies') return loadRepliesWorkspace();
   if (name === 'campaigns') { document.getElementById('ce-campaigns-panel').style.display = 'block'; return renderCampaignsPanel(); }
   if (name === 'analytics') {
     document.getElementById('ce-opens-panel').style.display = 'block';

@@ -25,7 +25,7 @@ function suppressionCode(reason) {
 }
 
 function terminalReason(current, { purpose = 'cold' } = {}) {
-  if (purpose === 'warm') return null;
+  if (purpose === 'warm' || purpose === 'human_reply') return null;
   const status = String(current.emailStatus || '').trim().toLowerCase();
   if (status === 'replied' || status === 'done') {
     return { code: 'terminal_state', reason: `emailStatus is ${status}` };
@@ -51,6 +51,8 @@ function terminalReason(current, { purpose = 'cold' } = {}) {
  *   cold     — ordinary Gmail / Smartlead enqueue
  *   sequence — stage-sequence follow-up (pipeline stages may be non-cold)
  *   warm     — identity + suppression + staffing only (caller keeps extra hold/booking checks)
+ *   human_reply — as warm, but a [MANUAL HOLD] alone does not refuse (owner-initiated
+ *              reply-screen Send only; opt-out, bounce, suppression and archive still refuse)
  */
 function evaluateFreshSendSafety(lead, current, suppressedEmails, {
   purpose = 'cold', env = process.env, senderInboxId = '', senders, clientSuppression,
@@ -85,13 +87,20 @@ function evaluateFreshSendSafety(lead, current, suppressedEmails, {
 
   // Global suppression first — the existing verdict, codes unchanged — then
   // the client's own exclusions.
-  const suppressed = sendSuppressionReason(current, {
+  // human_reply: the owner pressing Send on the reply screen. The routing hold
+  // ([MANUAL HOLD]) exists precisely so a human owns this conversation, so it
+  // is the ONE reason that does not refuse: suppression is evaluated on the
+  // row with only that tag removed, so opt-out, bounce, the Suppression list
+  // and archive still refuse. Nothing automated may use this purpose.
+  const gated = purpose === 'human_reply'
+    ? { ...current, notes: String(current.notes || '').split('[MANUAL HOLD]').join('') } : current;
+  const suppressed = sendSuppressionReason(gated, {
     suppressedEmails: suppressedEmails instanceof Set ? suppressedEmails : new Set(),
   });
   if (suppressed) {
     return { allowed: false, code: suppressionCode(suppressed), reason: suppressed };
   }
-  const scoped = evaluateScopedSuppression(current, { clientId: owner.clientId, suppressedEmails: new Set(), clientEntries: clientSuppression });
+  const scoped = evaluateScopedSuppression(gated, { clientId: owner.clientId, suppressedEmails: new Set(), clientEntries: clientSuppression });
   if (scoped) return { allowed: false, code: scoped.code, reason: scoped.reason, clientId: owner.clientId };
 
   const terminal = terminalReason(current, { purpose });

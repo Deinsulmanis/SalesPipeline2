@@ -176,6 +176,11 @@ const { sampleListConfig, makeRecheck, draftSampleListForAction, autoSendReadyDr
   recordSentAndOutcomes } = require('./integrations/scalelab-sample-list-flow');
 const { createSampleListStore } = require('./integrations/scalelab-sample-list-store');
 const { createGetLeadsJobsClient } = require('./integrations/getleads-jobs');
+const { fastReplyConfig } = require('./integrations/scalelab-fast-reply');
+const { queueRoutedReplies, dispatchDueAlerts } = require('./integrations/scalelab-reply-alerts');
+const { createReplyQueueStore } = require('./integrations/scalelab-reply-queue-store');
+const { createReplyDrafter, claudeEngine } = require('./integrations/scalelab-reply-drafter');
+const { sendOwnerSms } = require('./integrations/telnyx-sms');
 const { notifyOwner } = require('./integrations/owner-notify');
 const { appendStaffingComplianceFooter, staffingSenderIdentity } = require('./integrations/staffing-compliance');
 const gmailMailboxObserver = require('./integrations/gmail-mailbox-observer');
@@ -3271,6 +3276,15 @@ async function runReplyCheckPass(leads, todaySentOverride = null, outboundObserv
       for (const draft of scaleLabDrafts) {
         if (records.get(draft.id)?.step === 'complete') agentV2ShadowCandidates.push(draft.item);
       }
+      // Fast reply mode: queue the routed reply for the reply screen, attach a
+      // draft, alert the owner. Never sends email; off unless enabled.
+      if (scaleLab.mode === 'apply' && fastReplyConfig().enabled) {
+        try {
+          await withAuth(() => runFastReplyPass({ records, activities: activitiesForCycle, leads }));
+        } catch (error) {
+          console.warn('[fast-reply] pass failed closed:', error.message);
+        }
+      }
       // Sample employer list: a Gmail DRAFT for the owner after the routing
       // step committed the hold and the human task. Off unless enabled.
       if (scaleLab.mode === 'apply' && sampleListConfig().enabled) {
@@ -3396,6 +3410,28 @@ async function runScaleLabReplyCycle({ config, activities, leads, owns, failedSe
     owns: (lead, senderInboxId) => !failedSenderIds.has(senderInboxId) && owns(lead, senderInboxId),
     hold, appendCard, publishTask, onError: (id, error) =>
       console.warn('[scalelab-reply] action pending', id, error.message) });
+}
+
+// Fast reply pass: reply queue rows, a v0 draft, and the owner alert (SMS +
+// push). Nothing here sends email; the owner sends from the reply screen.
+async function runFastReplyPass({ records, activities, leads, now = new Date() }) {
+  const store = createReplyQueueStore();
+  const threads = new Map();
+  for (const record of records.values()) {
+    const inbound = activities.find(row => row.eventId === record.source_event_id && row.sourceLeadId === record.lead_id);
+    const meta = activityMetadata(inbound);
+    if (meta.gmailThreadId) threads.set(record.action_id, { threadId: meta.gmailThreadId, text: inbound.content || '' });
+  }
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  // Existing Claude setup and budgets: the tracked client, feature reply_question_answer.
+  const engine = apiKey ? claudeEngine({ createMessage: createTrackedAnthropic({ apiKey, timeout: 20000,
+    defaultContext: { feature: ANTHROPIC_FEATURES.reply_question_answer, operation: 'scalelab_reply_draft', maxAttempts: 1 } }).messages.create })
+    : undefined;
+  const drafter = createReplyDrafter({ ...(engine ? { engine } : {}), log: line => console.warn('[fast-reply]', line) });
+  await queueRoutedReplies({ records: [...records.values()], leads, threads, store, drafter, now,
+    log: line => console.warn('[fast-reply]', line) });
+  await dispatchDueAlerts({ store, sendSms: text => sendOwnerSms(text), notify: message => notifyOwner(message), now,
+    log: line => console.warn('[fast-reply]', line) });
 }
 
 // Sample employer list pass. Drafts only; nothing here sends. Auto-send (OFF

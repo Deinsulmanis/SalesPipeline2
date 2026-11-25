@@ -398,7 +398,15 @@ test('source: one Gmail send call in production code, behind sendEmail → withG
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
     return (source.match(/\.messages\.send\(|\.drafts\.send\(/g) || []).map(() => file);
   });
-  assert.deepEqual(sendSites, ['outreach-agent.js']);
+  // Two sanctioned Gmail send sites: sendEmail (automation) and the owner's
+  // reply-screen Send (integrations/scalelab-reply-send.js), which is gated by
+  // the human_reply final gate, the placeholder refusal and withGmailProviderSend.
+  assert.deepEqual(sendSites, ['outreach-agent.js', path.join('integrations', 'scalelab-reply-send.js')]);
+  const replySend = fs.readFileSync(path.join(ROOT, 'integrations', 'scalelab-reply-send.js'), 'utf8');
+  const screenSend = replySend.slice(replySend.indexOf('async function sendFromReplyScreen('), replySend.indexOf('async function saveToGmailDrafts('));
+  const order = ['hasPlaceholder(text)', "purpose: 'human_reply'", 'deps.withGmailProviderSend(', '.messages.send('].map(token => screenSend.indexOf(token));
+  assert.ok(order.every(index => index > 0), 'placeholder check, human_reply gate, reservation and send are all present');
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'in that order');
   const agent = fs.readFileSync(path.join(ROOT, 'outreach-agent.js'), 'utf8');
   const sendEmail = agent.slice(agent.indexOf('async function sendEmail('), agent.indexOf('async function loadOutreachProviderState('));
   assert.match(sendEmail, /if \(!senderMayStillSend\(sender\)\) throw preDeliveryRefusal/);

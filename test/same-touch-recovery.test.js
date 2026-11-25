@@ -213,6 +213,7 @@ test('crash/retry: the existing reservation store sends a recovery action at mos
 
 // ── Observer: a vanished message can never take a reply's state with it ────
 
+const REPLY_SCREEN_DRAFT_CALL = "const response = await gmail.users.drafts.create({ userId: 'me', requestBody: { message: { raw, threadId: row.thread_id } } });";
 const SAMPLE_LIST_DRAFT_CALL = "const response = await runWithGmailFeature('other', () => gmailForSender(sender).users.drafts.create({";
 test('production code has no Gmail call that can trash, delete or relabel mail', () => {
   const root = path.join(__dirname, '..');
@@ -227,8 +228,11 @@ test('production code has no Gmail call that can trash, delete or relabel mail',
       // messages.send is the one sanctioned outbound call (sendEmail).
       // drafts.create is sanctioned at exactly one site: the ScaleLab sample
       // employer list draft for owner review (createSampleListGmailDraft).
+      // drafts.create is also sanctioned at the reply screen's "Save to Gmail
+      // drafts" (owner button, integrations/scalelab-reply-send.js).
       if (mutation.test(line) && !/users\.messages\.send\s*\(/.test(line)
-          && !(file === 'outreach-agent.js' && line.trim() === SAMPLE_LIST_DRAFT_CALL)) offenders.push(`${file}: ${line.trim()}`);
+          && !(file === 'outreach-agent.js' && line.trim() === SAMPLE_LIST_DRAFT_CALL)
+          && !(file === 'integrations/scalelab-reply-send.js' && line.trim() === REPLY_SCREEN_DRAFT_CALL)) offenders.push(`${file}: ${line.trim()}`);
     }
   }
   assert.deepEqual(offenders, []);
