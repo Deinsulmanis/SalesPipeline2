@@ -17,8 +17,12 @@ GENERIC = set("inc llc ltd corp corporation co company the of and staffing servi
               "employment agency agencies resources workforce labor temporary temp".split())
 
 
+LEGAL = set("inc llc ltd corp corporation co company the dba".split())
+
+
 def toks(s):
-    return [t for t in re.sub(r"[^a-z0-9 ]", " ", (s or "").lower()).split() if t]
+    s = re.sub(r"[\u2019']", "", (s or "").lower())
+    return [t for t in re.sub(r"[^a-z0-9 ]", " ", s).split() if t]
 
 
 def core(s):
@@ -26,13 +30,21 @@ def core(s):
 
 
 def close(q, name):
+    """Same company name: equal after legal words go; or the distinctive words match; or a distinctive first word
+    (5+ letters, not generic) is the candidate's first word ('Synerfac' -> 'Synerfac Technical Staffing')."""
+    lq = [t for t in toks(q) if t not in LEGAL]
+    ln = [t for t in toks(name) if t not in LEGAL]
+    if lq and lq == ln[:len(lq)] and len(ln) - len(lq) <= 2:
+        return True
     a, b = core(q), core(name)
     if not a or not b:
-        return " ".join(toks(q)) == " ".join(toks(name))
+        return lq == ln
     sa, sb = set(a), set(b)
     overlap = len(sa & sb) / max(len(sa), len(sb))
-    contained = (sa <= sb or sb <= sa) and len(sa | sb) >= 1 and len(sa & sb) >= 1
-    return overlap >= 0.75 or (contained and len(toks(q)) >= 2 and len(toks(name)) >= 2)
+    contained = (sa <= sb or sb <= sa) and len(sa & sb) >= 1
+    if overlap >= 0.75 or (contained and len(toks(q)) >= 2 and len(toks(name)) >= 2):
+        return True
+    return len(a) == 1 and len(a[0]) >= 5 and b[0] == a[0] and lq[0] == ln[0]
 
 
 def _text(c):
