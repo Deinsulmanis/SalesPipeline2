@@ -1,7 +1,8 @@
 """Illinois registry agencies with resolved domains -> net-new companies for the crawl (owner brief 2026-11-25). Free.
 
 Usage: python3 -I il_dedupe.py <run>        (works for any registry run: IL, MA, NYC)
-Inputs: <run>/agencies.json, <run>/domains_apollo.json, <run>/web_result*.json (optional), <run>/prod_domains.json
+Inputs: <run>/agencies.json, <run>/domains_apollo.json, <run>/domains_getleads.json and <run>/web_result*.json
+        (optional), <run>/prod_domains.json
 Franchise brands / franchisor sites -> franchise flow (held) by brand + city; corporate chains excluded; the rest deduped
 against the full exclusion set (places_dedupe.exclusion_domains: production for all clients, every run, V4 master,
 enrichment lists, the places samples). Off-ICP names dropped.
@@ -23,6 +24,11 @@ def main():
     ag = json.load(open(os.path.join(run, 'agencies.json')))
     dom = {k: v['domain'] for k, v in json.load(open(os.path.join(run, 'domains_apollo.json'))).items()}
     src = {k: 'apollo_lookup' for k in dom}
+    glp = os.path.join(run, 'domains_getleads.json')
+    if os.path.exists(glp):
+        for k, v in json.load(open(glp)).items():
+            if k not in dom:
+                dom[k], src[k] = pd.root(v['domain']), 'getleads_lookup'
     for f in sorted(glob.glob(os.path.join(run, 'web_result*.json'))):
         for r in json.load(open(f)):
             if r.get('domain') and r.get('confidence') in ('high', 'medium') and r['name'] not in dom:
