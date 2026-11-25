@@ -3916,6 +3916,81 @@ app.post('/api/leads/:id/reply-override/reverse', requireAuth, async (req, res) 
   }
 });
 
+// ── REPLY TYPE CORRECTION (Analytics reply list) ────────────────────────────
+// A person fixes a reply the classifier read wrong, so analytics stop counting
+// it as the wrong type. Keyed to the OUTREACH lead, so a reply can be corrected
+// whether or not the lead is on the Pipeline board. It is the same append-only
+// reply_classification_override the lead panel writes (reply-overrides.js):
+// analytics, the Inbox and next-action labels follow it. It sends nothing,
+// suppresses or un-suppresses no one, and moves no stage; the provider
+// evidence stays exactly as it was, and a reversal retires the correction.
+function outreachLeadOverrideRow(row, leadId) {
+  return row.eventType === OVERRIDE_KIND.CLASSIFICATION
+    && (String(row.sourceLeadId || '') === leadId || String(row.leadId || '') === `CE-${leadId}`);
+}
+
+app.post('/api/coldemail/:id/reply-classification', requireAuth, async (req, res) => {
+  try {
+    const dataset = await withAuth(() => getOutreachDataset({ force: true }));
+    const scope = outreachClientView(dataset, req.query);
+    if (!scope.ok) return res.status(400).json({ error: scope.reason, code: scope.code });
+    const id = String(req.params.id || '').replace(/^CE-/, '').trim();
+    const lead = (scope.view.leads || []).find(row => String(row.id) === id);
+    if (!lead) return res.status(404).json({ error: 'lead not found in this workspace' });
+    const record = (scope.view.replyRecords || []).find(row => String(row.leadId) === id);
+    if (!record) return res.status(409).json({ error: 'this lead has no reply to classify' });
+    const built = buildClassificationOverride({
+      leadId: `CE-${id}`, by: String(req.body?.by || 'crm_user'), note: 'analytics reply list',
+      previousState: record.category, state: req.body?.state, reason: req.body?.reason,
+      subtype: req.body?.subtype || null,
+    });
+    if (!built.ok) return res.status(422).json({ error: built.error });
+    const next = built.record.next;
+    if (record.category === next.state && (record.unsubscribe === true) === (next.subtype === 'unsubscribe_request')) {
+      return res.json({ ok: true, unchanged: true, category: record.category });
+    }
+    const eventId = stableActivityId('reply-classification', [id, built.record.at, next.state, next.subtype || '']);
+    await withAuth(() => appendColdCallActivities([{ eventId, leadId: `CE-${id}`, sourceLeadId: id,
+      email: lead.email || '', company: lead.company || '', eventType: built.record.kind,
+      occurredAt: built.record.at, subject: 'Reply type corrected', content: next.reason,
+      metadata: JSON.stringify(built.record) }]));
+    res.json({ ok: true, eventId, override: built.record });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Reply type correction]', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/coldemail/:id/reply-classification/reverse', requireAuth, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').replace(/^CE-/, '').trim();
+    const eventId = String(req.body?.eventId || '');
+    const rows = await withAuth(() => readIntegrationRows(COLD_CALL_ACTIVITY_SHEET, COLD_CALL_ACTIVITY_HEADER));
+    const original = rows.find(row => row.eventId === eventId && outreachLeadOverrideRow(row, id));
+    if (!original) return res.status(404).json({ error: 'correction not found for this lead' });
+    let parsed;
+    try { parsed = JSON.parse(original.metadata || '{}'); } catch (_) {
+      return res.status(409).json({ error: 'correction metadata is invalid; nothing was changed' });
+    }
+    if (parsed.status !== 'active') return res.status(409).json({ error: 'that record is not an active correction' });
+    const reversed = reverseOverride({ ...parsed, overrideId: original.eventId },
+      { by: String(req.body?.by || 'crm_user'), reason: req.body?.reason || 'undone from the Analytics reply list' });
+    const at = reversed.record.reversedAt;
+    const reversalId = stableActivityId('reply-classification-reversed', [original.eventId, at]);
+    if (rows.some(row => row.eventId === reversalId)) return res.json({ ok: true, duplicate: true, eventId: reversalId });
+    await withAuth(() => appendColdCallActivities([{ eventId: reversalId, leadId: original.leadId || `CE-${id}`,
+      sourceLeadId: original.sourceLeadId || '', email: original.email, company: original.company,
+      eventType: original.eventType, occurredAt: at, subject: 'Reply type correction undone',
+      content: reversed.record.reversalReason, metadata: JSON.stringify(reversed.record) }]));
+    res.json({ ok: true, duplicate: false, eventId: reversalId });
+  } catch (error) {
+    if (error.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    console.error('[Reply type correction reversal]', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ── FALSE OPT-OUT CORRECTION ────────────────────────────────────────────────
 // The one supported way to lift an opt-out tag our own classifier invented. The
 // decision logic, every refusal and the audit record live in

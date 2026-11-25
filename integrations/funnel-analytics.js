@@ -199,6 +199,8 @@ function buildFunnelAnalytics(input = {}, query = {}) {
   const replyTouch = new Map();
   const replyMessages = [];
   const categoryByLead = new Map(replyRecords.map(row => [String(row.leadId || ''), row.category]));
+  // A person corrected these leads' reply type; their per-step reply follows it.
+  const correctedLeads = new Set(replyRecords.filter(row => row.override).map(row => String(row.leadId || '')));
   const acquisitionByLead = new Map();
   const boardByLead = new Map();
   for (const board of boardLeads) {
@@ -221,7 +223,7 @@ function buildFunnelAnalytics(input = {}, query = {}) {
       const explicitOtherVersion = Boolean(touch.campaignVersion) && !versionMatches(touchVersion, version);
       if (version !== 'lifetime' && explicitOtherVersion) continue;
       replyMessages.push(reply);
-      const category = categoryForReply(reply, categoryByLead.get(id));
+      const category = correctedLeads.has(id) ? categoryByLead.get(id) : categoryForReply(reply, categoryByLead.get(id));
       attributedReply = true; attributedFallbackCategory = category;
       const key = `${touch.sequenceId || 'unknown'}:${touch.sequenceStep || 'unknown'}`;
       const value = replyTouch.get(key) || { sequenceId: touch.sequenceId || 'unknown', step: touch.sequenceStep || null, replies: new Set(), positive: new Set() };

@@ -35,6 +35,10 @@ const CONTACT_DECISION = Object.freeze({
 });
 
 const VALID_STATES = new Set(Object.values(REPLY_STATE));
+// The one refinement a correction may carry: a negative that was an opt-out, so
+// analytics can count it as an unsubscribe. It never touches suppression.
+const OVERRIDE_SUBTYPE = Object.freeze({ UNSUBSCRIBE: 'unsubscribe_request' });
+const VALID_SUBTYPES = new Set(Object.values(OVERRIDE_SUBTYPE));
 const VALID_ACTIONS = new Set(Object.values(REPLY_ACTION));
 
 const nowIso = () => new Date().toISOString();
@@ -48,7 +52,7 @@ const nowIso = () => new Date().toISOString();
  */
 function buildClassificationOverride({
   leadId, providerMessageId = null, previousState, previousReason = null,
-  state, reason, by = null, at = nowIso(), note = '',
+  state, reason, subtype = null, by = null, at = nowIso(), note = '',
 } = {}) {
   if (!leadId) return { ok: false, error: 'a classification override needs a lead' };
   if (!VALID_STATES.has(state)) {
@@ -57,13 +61,16 @@ function buildClassificationOverride({
   if (!String(reason || '').trim()) {
     return { ok: false, error: 'a classification override must say why' };
   }
+  if (subtype && (!VALID_SUBTYPES.has(subtype) || state !== REPLY_STATE.NEGATIVE)) {
+    return { ok: false, error: 'only a negative correction can be marked as an opt-out' };
+  }
   return {
     ok: true,
     record: {
       kind: OVERRIDE_KIND.CLASSIFICATION, status: OVERRIDE_STATUS.ACTIVE,
       leadId, providerMessageId,
       previous: { state: previousState || null, reason: previousReason || null },
-      next: { state, reason: reason.trim() },
+      next: { state, reason: reason.trim(), ...(subtype ? { subtype } : {}) },
       by, at, note: String(note || '').slice(0, 500),
     },
   };
@@ -132,6 +139,8 @@ function activeOverrides(records = [], leadId) {
     // a manual override at the top of its precedence.
     classification: classification
       ? { state: classification.next.state, reason: classification.next.reason,
+        subtype: classification.next.subtype || null,
+        previousState: classification.previous?.state || null,
         by: classification.by, at: classification.at,
         overrideId: classification.overrideId || classification.eventId || null }
       : null,
@@ -241,7 +250,7 @@ function buildContactChangeDecision({
 }
 
 module.exports = {
-  OVERRIDE_KIND, OVERRIDE_STATUS, CONTACT_DECISION,
+  OVERRIDE_KIND, OVERRIDE_STATUS, CONTACT_DECISION, OVERRIDE_SUBTYPE,
   buildClassificationOverride, buildActionOverride, reverseOverride, activeOverrides,
   evaluateContactChange, buildContactChangeDecision,
 };

@@ -262,11 +262,25 @@ test('desktop and mobile layouts are both defined for the panel', () => {
 
 test('no card interaction can mutate: the drill-down issues only GETs', () => {
   const start = browser.indexOf('// ── REPLY DRILL-DOWN');
-  const block = browser.slice(start, browser.indexOf('function closeCeDetail'));
+  const end = browser.indexOf('function closeCeDetail');
+  // Since 2026-11-24 the list ends with the explicit reply-type correction
+  // (test/reply-type-correction.test.js). Opening, filtering and reading the
+  // list — everything before it — stays read-only.
+  const correctionAt = browser.indexOf('// ── Reply type correction', start);
+  assert.ok(correctionAt > start && correctionAt < end, 'the correction section sits at the end of the list code');
+  const block = browser.slice(start, correctionAt);
   assert.ok(!/method:\s*'(POST|PUT|PATCH|DELETE)'/i.test(block), 'no mutating fetch');
   assert.ok(!/sendEmail|suppress|setCeLeadStage|moveLeadToStage|reclassif/i.test(block),
     'no send, suppression, stage, or classification path');
   assert.equal((block.match(/fetch\(/g) || []).length, 1, 'exactly one read request');
+  // The correction writes only through its two endpoints and calls nothing that sends, suppresses or moves a stage.
+  const correction = browser.slice(correctionAt, end);
+  const writes = [...correction.matchAll(/fetch\(`([^`]+)`, \{\s*method: 'POST'/g)].map(match => match[1]);
+  assert.deepEqual(writes, [
+    '/api/coldemail/${encodeURIComponent(leadId)}/reply-classification?client=${encodeURIComponent(activeClientId)}',
+    '/api/coldemail/${encodeURIComponent(leadId)}/reply-classification/reverse?client=${encodeURIComponent(activeClientId)}',
+  ]);
+  assert.ok(!/sendEmail\(|addSuppression\(|setCeLeadStage\(|moveLeadToStage\(/.test(correction));
 });
 
 test('the analytics module stays free of sending and suppression paths', () => {

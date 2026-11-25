@@ -1546,6 +1546,16 @@
   .rd-badge[data-kind="stage"] { background:var(--surface); color:var(--text-muted); border:1px solid var(--border); }
   .rd-badge[data-kind="late"]  { background:var(--warn-bg); color:var(--warn); }
   .rd-meta { font-size:11px; color:var(--text-muted); margin-top:7px; display:flex; gap:8px; flex-wrap:wrap; }
+  .rd-badge[data-kind="corrected"] { background:var(--primary-bg); color:var(--primary); border:1px solid var(--primary); }
+  .rd-fix-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  .rd-fix-btn { min-height:36px; padding:6px 12px; border:1px solid var(--border); border-radius:7px; background:var(--surface); color:var(--text-secondary); font:inherit; font-size:12px; font-weight:600; cursor:pointer; }
+  .rd-fix-btn:hover { border-color:var(--primary); color:var(--primary); }
+  .rd-fix-btn[data-primary] { background:var(--primary); border-color:var(--primary); color:#04121f; }
+  .rd-fix-form { margin-top:10px; padding:12px; border:1px solid var(--border); border-radius:9px; background:var(--tint-faint); display:grid; gap:10px; }
+  .rd-fix-form label { display:grid; gap:4px; font-size:12px; font-weight:600; color:var(--text-secondary); }
+  .rd-fix-form select, .rd-fix-form input { min-height:40px; padding:8px 10px; border:1px solid var(--border); border-radius:7px; background:var(--surface); color:var(--text); font:inherit; font-size:13px; }
+  .rd-fix-note { font-size:11px; color:var(--text-muted); }
+  .rd-fix-error { font-size:12px; color:var(--danger); }
   .rd-reply { margin-top:8px; font-size:12px; color:var(--text); line-height:1.55; white-space:pre-wrap; word-break:break-word; }
   .rd-reply[data-clamped="true"] { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
   .rd-missing { margin-top:8px; font-size:12px; color:var(--text-muted); font-style:italic; }
@@ -7051,12 +7061,27 @@ let rdRecords  = [];   // every reply record, unfiltered
 let rdCategory = 'all';
 let rdExpanded = new Set();
 let rdLoading  = false;
+let rdFixing   = '';      // lead whose reply type is being corrected
+let rdFixError = '';
+let rdFixSaving = false;
+// What a person may say a reply really was. Each maps to a canonical reply
+// state (and, for an opt-out, its subtype); analytics count the correction.
+const RD_CORRECTION_OPTIONS = Object.freeze([
+  { value: 'positive', state: 'positive', label: 'Positive' },
+  { value: 'negative', state: 'negative', label: 'Negative (not interested)' },
+  { value: 'opt_out', state: 'negative', subtype: 'unsubscribe_request', label: 'Opt-out / unsubscribe' },
+  { value: 'needs_human', state: 'needs_human', label: 'Needs Human' },
+  { value: 'automated_reply', state: 'automated_reply', label: 'Automated (out of office, autoresponder)' },
+  { value: 'contact_change_review', state: 'contact_change_review', label: 'Contact change' },
+  { value: 'unknown', state: 'unknown', label: 'Not a real reply (Unknown)' },
+]);
 
 async function openReplyDrill(category = 'all') {
   const clientId = activeClientId;
   const token = clientViewToken;
   rdCategory = RD_CATEGORY_LABEL[category] ? category : 'all';
   rdExpanded = new Set();
+  rdFixing = ''; rdFixError = ''; rdFixSaving = false;
   document.getElementById('rd-search').value = '';
   document.getElementById('reply-drill-overlay').classList.add('open');
   renderRdTabs();
@@ -7182,7 +7207,8 @@ function renderReplyDrill() {
             ${sub ? `<div class="rd-sub">${esc(sub)}</div>` : ''}
           </div>
           <div class="rd-badges">
-            <span class="rd-badge" data-cat="${escAttr(r.category)}">${esc(RD_CATEGORY_LABEL[r.category] || r.category)}</span>
+            <span class="rd-badge" data-cat="${escAttr(r.category)}">${esc(r.unsubscribe ? 'Opt-out' : (RD_CATEGORY_LABEL[r.category] || r.category))}</span>
+            ${r.override ? `<span class="rd-badge" data-kind="corrected" title="${escAttr(rdCorrectionTitle(r))}">Corrected</span>` : ''}
             ${r.late ? '<span class="rd-badge" data-kind="late" title="Reply arrived after the sequence ended">Late reply</span>' : ''}
             <span class="rd-badge" data-kind="stage">${esc(rdStageLabel(r))}</span>
           </div>
@@ -7193,8 +7219,118 @@ function renderReplyDrill() {
           ${r.replyCount > 1 ? `<span>· ${r.replyCount} replies</span>` : ''}
           ${r.campaign ? `<span>· ${esc(r.campaign)}</span>` : ''}
         </div>
+        ${rdFixControls(r)}
       </div>`;
   }).join('');
+}
+
+// ── Reply type correction ──────────────────────────────────────────────────
+// The agent sometimes reads a reply wrong. A person can set the right type
+// here; it is recorded as an auditable correction (never an edit of the reply
+// itself), every analytics count follows it, and Undo restores the agent's
+// reading. Nothing here sends, suppresses, un-suppresses or moves a stage.
+function rdCorrectionTitle(r) {
+  const was = r.override && r.override.previousState;
+  const label = was ? (RD_CATEGORY_LABEL[was] || String(was).replace(/_/g, ' ')) : 'the agent\'s reading';
+  return `Corrected by a person (was ${label})${r.override && r.override.reason ? ` — ${r.override.reason}` : ''}`;
+}
+
+function rdCurrentCorrectionValue(r) {
+  if (r.category === 'negative' && r.unsubscribe) return 'opt_out';
+  const match = RD_CORRECTION_OPTIONS.find(option => option.state === r.category && !option.subtype);
+  return match ? match.value : '';
+}
+
+function rdFixControls(r) {
+  const id = escAttr(r.leadId);
+  if (rdFixing !== r.leadId) {
+    return `<div class="rd-fix-actions">
+        <button type="button" class="rd-fix-btn" data-lead="${id}" onclick="startReplyCorrection(this.dataset.lead)">Change type</button>
+        ${r.override && r.override.overrideId ? `<button type="button" class="rd-fix-btn" data-lead="${id}" data-override="${escAttr(r.override.overrideId)}" onclick="undoReplyCorrection(this.dataset.lead, this.dataset.override)">Undo correction</button>` : ''}
+      </div>`;
+  }
+  const current = rdCurrentCorrectionValue(r);
+  return `<form class="rd-fix-form" onsubmit="event.preventDefault(); saveReplyCorrection('${id}')">
+      <label for="rd-fix-type">What was this reply really?
+        <select id="rd-fix-type">
+          ${RD_CORRECTION_OPTIONS.map(option => `<option value="${option.value}"${option.value === current ? ' selected' : ''}>${esc(option.label)}</option>`).join('')}
+        </select>
+      </label>
+      <label for="rd-fix-reason">Why (kept in the audit trail)
+        <input id="rd-fix-reason" type="text" maxlength="300" autocomplete="off" required>
+      </label>
+      <div class="rd-fix-note">Changes how this reply is counted in Analytics and labelled in the Inbox. It never sends, suppresses or un-suppresses anyone.</div>
+      ${rdFixError ? `<div class="rd-fix-error" role="alert">${esc(rdFixError)}</div>` : ''}
+      <div class="rd-fix-actions">
+        <button type="submit" class="rd-fix-btn" data-primary${rdFixSaving ? ' disabled' : ''}>${rdFixSaving ? 'Saving…' : 'Save correction'}</button>
+        <button type="button" class="rd-fix-btn" onclick="cancelReplyCorrection()"${rdFixSaving ? ' disabled' : ''}>Cancel</button>
+      </div>
+    </form>`;
+}
+
+function startReplyCorrection(leadId) {
+  rdFixing = String(leadId || '');
+  rdFixError = '';
+  renderReplyDrill();
+  document.getElementById('rd-fix-type')?.focus();
+}
+
+function cancelReplyCorrection() {
+  rdFixing = ''; rdFixError = ''; rdFixSaving = false;
+  renderReplyDrill();
+}
+
+async function reloadReplyRecordsAfterCorrection() {
+  const clientId = activeClientId;
+  const token = clientViewToken;
+  const version = ceCampaignVersionFilter ? `&campaignVersion=${encodeURIComponent(ceCampaignVersionFilter)}` : '';
+  const resp = await fetch('/api/coldemail/replies?category=all&client=' + encodeURIComponent(clientId) + version);
+  const records = resp.ok ? ((await resp.json()).records || []) : null;
+  if (token !== clientViewToken || clientId !== activeClientId) return;
+  if (records) rdRecords = records;
+  renderReplyDrill();
+  // The cards above the list recount from the same records.
+  if (typeof loadCeLeads === 'function') loadCeLeads().catch(() => {});
+}
+
+async function saveReplyCorrection(leadId) {
+  const option = RD_CORRECTION_OPTIONS.find(item => item.value === document.getElementById('rd-fix-type')?.value);
+  const reason = String(document.getElementById('rd-fix-reason')?.value || '').trim();
+  if (!option) { rdFixError = 'Choose what the reply really was.'; renderReplyDrill(); return; }
+  if (!reason) { rdFixError = 'Add a short reason; it is kept with the correction.'; renderReplyDrill(); return; }
+  rdFixSaving = true; rdFixError = ''; renderReplyDrill();
+  try {
+    const response = await fetch(`/api/coldemail/${encodeURIComponent(leadId)}/reply-classification?client=${encodeURIComponent(activeClientId)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state: option.state, subtype: option.subtype || null, reason }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    rdFixing = ''; rdFixSaving = false;
+    showToast(data.unchanged ? 'That is already how this reply is counted.' : `Reply counted as ${option.label}. The original reply is unchanged.`, 'success');
+    await reloadReplyRecordsAfterCorrection();
+  } catch (error) {
+    rdFixSaving = false;
+    rdFixError = 'Not saved: ' + error.message;
+    renderReplyDrill();
+  }
+}
+
+async function undoReplyCorrection(leadId, overrideId) {
+  if (!overrideId) return;
+  if (!confirm('Undo this correction? The reply will be counted as the agent read it again.')) return;
+  try {
+    const response = await fetch(`/api/coldemail/${encodeURIComponent(leadId)}/reply-classification/reverse?client=${encodeURIComponent(activeClientId)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ eventId: overrideId, reason: 'undone from the Analytics reply list' }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    showToast('Correction undone. The reply is counted as the agent read it.', 'success');
+    await reloadReplyRecordsAfterCorrection();
+  } catch (error) {
+    showToast('Correction was not undone: ' + error.message, 'error');
+  }
 }
 
 function closeCeDetail(e) {

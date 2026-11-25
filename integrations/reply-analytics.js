@@ -99,6 +99,25 @@ function parseRowMetadata(row) {
  * still counted as whatever its next message said. Returns null when nothing
  * decisive exists; the caller then falls back to the latest-message reading.
  */
+/**
+ * The human classification override in force for a lead, or null. Overrides
+ * are append-only activity rows (reply-overrides.js); a reversal retires one.
+ * Made from the lead panel (board lead CE-<id>) or the Analytics reply list
+ * (outreach lead <id>), they resolve to the same lead.
+ */
+function activeClassificationOverride(leadId, activities = []) {
+  const { activeOverrides, OVERRIDE_KIND } = require('./reply-overrides');
+  const id = String(leadId || '').replace(/^CE-/, '').trim();
+  if (!id) return null;
+  const rows = (activities || []).flatMap(row => {
+    if (String(row.eventType || '') !== OVERRIDE_KIND.CLASSIFICATION) return [];
+    const meta = parseRowMetadata(row);
+    return [{ ...meta, kind: row.eventType, at: meta.at || row.occurredAt, overrideId: row.eventId,
+      leadId: String(meta.leadId || '').replace(/^CE-/, '') }];
+  });
+  return activeOverrides(rows, id).classification;
+}
+
 function conversationOutcome(lead = {}, decidedActivities = []) {
   const leadId = String(lead.id || '').replace(/^CE-/, '').trim();
   const statements = [];
@@ -114,16 +133,11 @@ function conversationOutcome(lead = {}, decidedActivities = []) {
     }
     if (DECISIVE_STATES.has(state)) statements.push({ state, reason, at: String(row.occurredAt || '') });
   }
-  const { activeOverrides, OVERRIDE_KIND } = require('./reply-overrides');
-  const overrideRows = (decidedActivities || []).flatMap(row => {
-    if (String(row.eventType || '') !== OVERRIDE_KIND.CLASSIFICATION) return [];
-    const meta = parseRowMetadata(row);
-    return [{ ...meta, kind: row.eventType, at: meta.at || row.occurredAt, overrideId: row.eventId,
-      leadId: String(meta.leadId || '').replace(/^CE-/, '') }];
-  });
-  const override = activeOverrides(overrideRows, leadId).classification;
+  const override = activeClassificationOverride(leadId, decidedActivities);
   if (override && override.state) {
-    statements.push({ state: override.state, reason: override.reason || '', at: String(override.at || ''), override: true });
+    // An opt-out correction carries its subtype so the unsubscribe count follows it.
+    statements.push({ state: override.state, reason: override.subtype || override.reason || '',
+      at: String(override.at || ''), override: true });
   }
   // A human override is a decision even when it says needs_human or automated.
   const decisive = statements.filter(item => item.override || DECISIVE_STATES.has(item.state));
@@ -262,9 +276,16 @@ function buildReplyRecords(leads = [], { classificationsByLeadId = new Map(), ev
     const latest = evidence[0] || null;
     const notes = String(lead.notes || '');
     const outcome = replyOutcomeFromEvidence(lead, inboundActivities, classificationsByLeadId.get(id) || []);
+    const correction = activeClassificationOverride(id, inboundActivities);
     records.push({
       leadId: id,
       category: outcome.category,
+      // A person corrected this reply's type; the category above already follows it.
+      override: correction ? {
+        overrideId: correction.overrideId || null, state: correction.state,
+        previousState: correction.previousState || null, subtype: correction.subtype || null,
+        reason: correction.reason || '', by: correction.by || null, at: correction.at || null,
+      } : null,
       // A negative whose decisive statement was an opt-out. Still counted as
       // negative (the canonical taxonomy); reported separately so a DNC is
       // never read as an ordinary "not interested".
@@ -436,6 +457,7 @@ module.exports = {
   leadHasCanonicalInbound,
   classificationFromLead, buildReplyMetrics, buildStoredClassificationMap,
   buildReplyEvidenceMap, buildReplyRecords, filterReplyRecords, categoryFromEvidence, replyOutcomeFromEvidence,
+  activeClassificationOverride,
   GENUINE_REPLY_CATEGORIES,
   CANONICAL_STATE_CATEGORY,
   planReplyBackfill, applyBackfillPlan,
