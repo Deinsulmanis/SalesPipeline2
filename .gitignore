@@ -8,3 +8,26 @@ public/*.json
 .vscode/
 enrich-output.txt
 leads-*.txt
+
+# ScaleLab sourcing runs: contact-level files hold prospect names/emails; never commit them (public repo)
+docs/scalelab-sourcing/runs/*/approved-contacts.csv
+docs/scalelab-sourcing/runs/*/review-holds.csv
+
+# V4 master contact list (prospect names/emails)
+docs/scalelab-sourcing/runs/V4_APPROVED_CONTACTS_MASTER.csv
+# V4 copy evidence and per-lead previews name buyers and emails (PII): never commit.
+docs/scalelab-sourcing/runs/v4-copy-2026-11-20/v4-copy-evidence.json
+docs/scalelab-sourcing/runs/v4-copy-2026-11-20/preview/
+
+# Python bytecode
+__pycache__/
+# Every run's copy evidence and per-lead previews name buyers and emails (PII): never commit.
+docs/scalelab-sourcing/runs/*/v4-copy-evidence.json
+docs/scalelab-sourcing/runs/*/v4-copy-evidence-*.json
+docs/scalelab-sourcing/runs/*/preview/
+docs/scalelab-sourcing/runs/*/preview-*/
+docs/scalelab-sourcing/runs/*/preview-summary.json
+
+# ScaleLab private run folders (buyer names, emails, verification files). Also in .git/info/exclude locally;
+# listed here so a fresh clone never commits them.
+runs-private/
