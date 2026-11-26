@@ -37,8 +37,21 @@ icp = {r["domain"]: r for r in J("icp_decisions.json", [])}
 branches = J("branches.json", {})
 
 
+ZIP_ST = re.compile(r"^\s*(\d{5})(?:-\d{4})?,\s*([A-Z]{2})\s*$")
+
+
+def location_key(loc):
+    """("city", "ST") from "City, ST[ zip]"; ("zip3 NNN", "ST") from "NNNNN, ST" (GetLeads often gives only ZIP + state).
+    A 3-digit ZIP prefix is roughly one metro area, so two ZIPs in the same city are not counted as two locations."""
+    cs = city_state(loc)
+    if cs:
+        return cs[0].lower(), cs[1]
+    m = ZIP_ST.match(str(loc or ""))
+    return ("zip3 " + m.group(1)[:3], m.group(2)) if m else None
+
+
 def posting_locations(e):
-    return sorted({cs for s in e.get("sample", []) if s.get("us") for cs in [city_state(s.get("location"))] if cs})
+    return sorted({k for s in e.get("sample", []) if s.get("us") for k in [location_key(s.get("location"))] if k})
 
 
 def hq(domain):
