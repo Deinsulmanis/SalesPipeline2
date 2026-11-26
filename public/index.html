@@ -2077,6 +2077,18 @@
   .pipeline-unboarded .unboarded-head small,.pipeline-unboarded .unboarded-row small{display:block;color:var(--text-secondary);font-size:11px}
   .pipeline-unboarded .unboarded-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 0;border-top:1px solid var(--border)}
   #ws-pipeline>.stats-bar{display:none!important}#ws-pipeline>.pipeline-metrics{width:100%}#ws-pipeline>.pipeline-unboarded{width:100%;box-sizing:border-box}#ws-pipeline>.main .col{width:240px}
+  .board-scroller{position:sticky;top:0;z-index:6;display:none;align-items:center;gap:10px;margin:0 0 12px;padding:6px 8px;border:1px solid var(--border);border-radius:10px;background:var(--bg)}
+  .board-scroller.visible{display:flex}
+  .board-scroll-btn{flex:0 0 auto;min-height:44px;min-width:44px;display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text-secondary);font:inherit;font-size:12px;font-weight:650;cursor:pointer;transition:border-color 200ms cubic-bezier(.4,0,.2,1),color 200ms cubic-bezier(.4,0,.2,1)}
+  .board-scroll-btn span{font-size:18px;line-height:1}
+  .board-scroll-btn:hover:not(:disabled){border-color:var(--border-hover);color:var(--text)}
+  .board-scroll-btn:disabled{opacity:.45;cursor:default}
+  .board-scroll-btn:focus-visible{outline:3px solid var(--primary);outline-offset:2px}
+  .board-scroll-track{flex:1 1 auto;min-width:0;position:relative;height:44px;cursor:pointer;touch-action:none}
+  .board-scroll-track::before{content:"";position:absolute;left:0;right:0;top:16px;height:12px;border-radius:999px;background:var(--tint-faint);border:1px solid var(--border);box-sizing:border-box}
+  .board-scroll-thumb{position:absolute;left:0;top:16px;height:12px;border-radius:999px;background:var(--border-hover);cursor:grab;transition:background 200ms cubic-bezier(.4,0,.2,1)}
+  .board-scroll-track:hover .board-scroll-thumb,.board-scroll-track.dragging .board-scroll-thumb{background:var(--primary)}
+  .board-scroll-track.dragging .board-scroll-thumb{cursor:grabbing}
   #ws-pipeline>.stats-bar,#ws-pipeline>.filter-bar,#ws-pipeline>.main{width:100%}#ws-pipeline>.stats-bar{border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden}#ws-pipeline>.filter-bar{padding-left:0;padding-right:0;background:transparent;border:0}#ws-pipeline>.main{padding:0}
   #ws-outreach #ce-section{display:block!important}#ws-outreach .ce-filter-bar{border:1px solid var(--border);border-radius:9px;background:var(--surface);margin-bottom:12px}#ws-outreach .stats-bar{margin:14px 0}#ws-outreach .ce-master-filters,#ws-outreach .ce-quick-views,#ws-outreach #ce-current-campaign,#ws-outreach #ce-result-info{padding-left:0!important;padding-right:0!important}
   .workspace-surface{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px}.workspace-empty{padding:42px 20px;text-align:center;color:var(--text-muted);border:1px dashed var(--border);border-radius:9px;background:var(--tint-faint)}.workspace-empty strong{display:block;color:var(--text);font-size:14px;margin-bottom:5px}
@@ -8085,12 +8097,98 @@ function installWorkspaceShell() {
   document.querySelectorAll('header .search-wrap, header .btn-add').forEach(node => { node.style.display = 'none'; });
   document.documentElement.classList.add('workspace-ready');
   document.body.classList.add('workspace-ready');
+  initBoardScroller();
   document.querySelectorAll('.ce-tab[data-ce="campaigns"],.ce-tab[data-ce="opens"],.ce-tab[data-ce="agent"]').forEach(button => button.remove());
   // Verified obsolete presentation only. Generic lead type data remains in the
   // backend and historical rows remain readable in the drawer.
 }
 
 function toggleSidebar() { document.getElementById('crm-sidebar')?.classList.toggle('open'); }
+
+// ── Board side-scroll ────────────────────────────────────────────────────────
+// The board is wider than the screen, but its own scrollbar sits under the
+// longest column and a mouse wheel only scrolls up and down. This bar stays
+// pinned above the board: Left/Right buttons, a draggable track, and the wheel
+// over it scrolls sideways. It shows only while the board is wider than its box
+// (on phones the stages stack, so it hides itself).
+function initBoardScroller() {
+  const board = document.getElementById('board');
+  const main = board && board.closest('.main');
+  if (!main || document.getElementById('board-scroller')) return;
+  main.insertAdjacentHTML('beforebegin', `<div class="board-scroller" id="board-scroller" role="group" aria-label="Scroll the pipeline sideways">
+    <button type="button" class="board-scroll-btn" data-dir="-1" aria-label="Scroll the pipeline left"><span aria-hidden="true">&#8249;</span> Left</button>
+    <div class="board-scroll-track" id="board-scroll-track" aria-hidden="true"><div class="board-scroll-thumb"></div></div>
+    <button type="button" class="board-scroll-btn" data-dir="1" aria-label="Scroll the pipeline right">Right <span aria-hidden="true">&#8250;</span></button>
+  </div>`);
+  const scroller = document.getElementById('board-scroller');
+  const track = document.getElementById('board-scroll-track');
+  const thumb = track.querySelector('.board-scroll-thumb');
+  const [leftBtn, rightBtn] = scroller.querySelectorAll('.board-scroll-btn');
+  const range = () => Math.max(0, main.scrollWidth - main.clientWidth);
+  // The handle is drawn, not a native scrollbar, so it shows on every system.
+  // Its width is the share of the board on screen.
+  const metrics = () => {
+    const trackWidth = track.clientWidth;
+    const handle = Math.min(trackWidth, Math.max(40, Math.round(trackWidth * main.clientWidth / Math.max(1, main.scrollWidth))));
+    return { handle, travel: Math.max(0, trackWidth - handle) };
+  };
+  const paint = () => {
+    const { handle, travel } = metrics();
+    const max = range();
+    thumb.style.width = `${handle}px`;
+    thumb.style.transform = `translateX(${max ? Math.round((main.scrollLeft / max) * travel) : 0}px)`;
+    leftBtn.disabled = main.scrollLeft <= 1;
+    rightBtn.disabled = main.scrollLeft >= max - 1;
+  };
+  const update = () => {
+    const overflowing = range() > 4;
+    scroller.classList.toggle('visible', overflowing);
+    if (overflowing) paint();
+  };
+  main.addEventListener('scroll', paint, { passive: true });
+  let drag = null;
+  thumb.addEventListener('pointerdown', event => {
+    drag = { x: event.clientX, start: main.scrollLeft };
+    thumb.setPointerCapture(event.pointerId);
+    track.classList.add('dragging');
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  thumb.addEventListener('pointermove', event => {
+    if (!drag) return;
+    const { travel } = metrics();
+    if (travel) main.scrollLeft = drag.start + (event.clientX - drag.x) * (range() / travel);
+  });
+  const endDrag = () => { drag = null; track.classList.remove('dragging'); };
+  thumb.addEventListener('pointerup', endDrag);
+  thumb.addEventListener('pointercancel', endDrag);
+  // A press on the track itself centres the handle there.
+  track.addEventListener('pointerdown', event => {
+    if (event.target === thumb) return;
+    const { handle, travel } = metrics();
+    const x = event.clientX - track.getBoundingClientRect().left - handle / 2;
+    main.scrollLeft = travel ? Math.min(1, Math.max(0, x / travel)) * range() : 0;
+  });
+  scroller.addEventListener('click', event => {
+    const button = event.target.closest('.board-scroll-btn');
+    if (!button) return;
+    const step = Math.max(260, Math.round(main.clientWidth * 0.6));
+    const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    main.scrollBy({ left: Number(button.dataset.dir) * step, behavior: smooth ? 'smooth' : 'auto' });
+  });
+  scroller.addEventListener('wheel', event => {
+    if (Math.abs(event.deltaY) <= Math.abs(event.deltaX) || !range()) return;
+    event.preventDefault();
+    main.scrollLeft += event.deltaY;
+  }, { passive: false });
+  if (typeof ResizeObserver === 'function') {
+    const observer = new ResizeObserver(update);
+    observer.observe(main);
+    observer.observe(board);
+  }
+  window.addEventListener('resize', update);
+  update();
+}
 
 async function setWorkspace(name, { replace = false } = {}) {
   document.body.classList.remove('daily-report-mode');
