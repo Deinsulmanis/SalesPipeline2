@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const { Pool } = require('pg');
 const { sendLockDatabaseUrl, URL_VAR } = require('../integrations/send-lock-config');
 const { MIGRATION_FILE } = require('../integrations/send-quota-store');
+const { releaseExpiredQuotaRuns } = require('../integrations/send-quota-release');
 
 async function main() {
   const url = sendLockDatabaseUrl();
@@ -42,7 +43,23 @@ async function main() {
       await client.query('ROLLBACK').catch(() => {});
       throw error;
     } finally { client.release(); }
+    await releaseExpiredRunsIfRequested(pool);
   } finally { await pool.end(); }
+}
+
+// Operator opt-in: SEND_QUOTA_RELEASE_EXPIRED_BEFORE=<ISO time> releases runs
+// that died before finishing and whose deadline passed before that time. A
+// failure here is logged and never blocks the deploy.
+async function releaseExpiredRunsIfRequested(pool) {
+  const cutoff = String(process.env.SEND_QUOTA_RELEASE_EXPIRED_BEFORE || '').trim();
+  if (!cutoff) return;
+  try {
+    const result = await releaseExpiredQuotaRuns(pool, { cutoff });
+    console.log(JSON.stringify({ event: 'send_quota_expired_runs_released', ...result }));
+  } catch (error) {
+    console.error(JSON.stringify({ event: 'send_quota_expired_runs_release_failed', code: error.code || 'database_error',
+      message: String(error.message || error).replace(/postgres(?:ql)?:\/\/[^\s]+/gi, '[redacted-db-url]') }));
+  }
 }
 
 main().catch(error => {
