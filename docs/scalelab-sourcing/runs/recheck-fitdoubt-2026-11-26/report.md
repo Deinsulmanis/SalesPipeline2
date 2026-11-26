@@ -15,7 +15,7 @@ from V1. None had ever been emailed.
 | HOLD (industrial line not established) | 21 |
 | REJECT (no industrial line) | 35 |
 
-None of the 57 can be converted, so they remain in Import, unchanged.
+None of the 57 could be converted. On the owner's instruction ("I need the import empty") they were archived too; see below.
 
 ## Archived: the other 64 (owner instruction)
 
@@ -41,4 +41,16 @@ None of the 57 can be converted, so they remain in Import, unchanged.
 - every row carries the archive marker;
 - none has a sender or a send.
 
-**ScaleLab leads in Import now:** 57 (the re-checked leads).
+## Archived: the 57 re-checked leads (owner instruction: empty Import)
+
+**Method:** the same endpoint and reason as the 64. The 57 were exactly the re-checked set: 55 from Campaign 2 and 2
+from V1. None had been emailed, and none had a sender.
+
+**Results:** 57 succeeded, 0 refused, 0 conflicts.
+
+**Post-check (Supabase):**
+- all 57 are Archived, with the archive marker;
+- each `revision` went up by exactly one (3 → 4 and 6 → 7);
+- none has a sender or a send.
+
+**Leads in Import now, all clients: 0.**
