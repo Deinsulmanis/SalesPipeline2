@@ -3,7 +3,7 @@
 **Recorded:** 2026-11-18
 **Reference:** [`ScaleLab_AI_Industrial_Staffing_ICP_and_Sourcing_Playbook.md`](ScaleLab_AI_Industrial_Staffing_ICP_and_Sourcing_Playbook.md) (v1.0). It is the default operating reference for every new ScaleLab lead-sourcing task. Read it first.
 
-**Status (2026-11-19):** Adyntel and Jev are connected (see the tool table). Docs only otherwise. No V4 code, campaign registration, import path, lead, credit spend, queue or send exists yet. Leads are first sourced on 2026-11-19 at the earliest.
+**Status (updated 2026-11-20):** V4 is live in production as **Industrial Campaign 3** (`industrial_staffing_campaign_3`, renamed and activated on the owner's instruction of 2026-11-20). Its import path, sealed profile, six-variant copy and queue route exist. 32 leads from the pilot and wave 1 were imported and queued. How it works, and how to add leads: [`INDUSTRIAL_CAMPAIGN_3_WORKFLOW.md`](INDUSTRIAL_CAMPAIGN_3_WORKFLOW.md). Sourcing scripts: [`tools/`](tools/README.md). The decisions below are the original 2026-11-18 brief; where they conflict with the status above (the intended id `..._v4`, "registered not live", "no import path"), the status above is current.
 
 ## Owner decisions (2026-11-18)
 
@@ -82,4 +82,4 @@
    - `review-holds.csv`
 
    Each lead carries the V4 tag and its full score breakdown.
-5. Build the V4 campaign, profile and import path only when authorized. Copy waits for the owner. Never import, queue or send without explicit authorization in the current task.
+5. Done (2026-11-20): campaign, profile, import path and copy exist (Industrial Campaign 3). Still: never import or queue without explicit authorization in the current task.
