@@ -1,7 +1,13 @@
 """Second-buyer pool, Phase 1 (read-only, free): every company ScaleLab's staffing campaigns ever emailed, one row per
 company, classified EXCLUDE / WAIT / ELIGIBLE / ICP_UNKNOWN, with the multi-site rule's inputs. ScaleLab data only.
 
-Usage: python3 -I second_buyer_pool.py <out_run_dir> --as-of YYYY-MM-DD
+Usage: python3 -I second_buyer_pool.py <out_run_dir> --as-of YYYY-MM-DD [--spacing DAYS] [--strict]
+
+--spacing DAYS (default 30): the prior contact's last email must be at least DAYS old (owner brief 2026-11-26: 14).
+--strict (owner brief 2026-11-26, Campaign 2 pass): a bounce or any suppression excludes the company; any Campaign 3
+  row at the company (emailed or not) excludes it; a Campaign 2 lead in stage Contacted below its last step is
+  mid-sequence, with eligible_on = estimated sequence end + DAYS (Touch 3 = Touch 1 + 7 days; a stalled sequence is
+  estimated as if its remaining touches resumed on --as-of, 3+ days apart).
 
 Inputs (all already saved in <out_run_dir>; nothing is fetched):
   prod_leads.json            Supabase outreach_leads (client_id = scalelab, staffing campaigns) with crm_events aggregates
@@ -46,12 +52,14 @@ import franchise_rule as fr  # noqa: E402  (the one chain / franchise rule)
 REPO = os.path.abspath(os.path.join(TOOLS, '..', '..', '..'))
 OUT = sys.argv[1]
 AS_OF = datetime.date.fromisoformat(sys.argv[sys.argv.index('--as-of') + 1])
+SPACING = int(sys.argv[sys.argv.index('--spacing') + 1]) if '--spacing' in sys.argv else 30
+STRICT = '--strict' in sys.argv
 SP = '/tmp/claude-0/-home-user-SalesPipeline2/2ac8488f-fce7-5c12-b5fb-d98394461a32/scratchpad'
 # V4 gate runs, oldest first (the latest decision for a domain wins)
 RUNS = [f'{SP}/v4run', f'{SP}/v4run_p2', f'{SP}/w1', f'{SP}/c48', f'{SP}/c1k', f'{REPO}/runs-private/w2k',
         f'{REPO}/runs-private/shortfall-2026-11-23', f'{REPO}/runs-private/v4-3000-2026-11-23',
         f'{REPO}/runs-private/recovery-c2-import-2026-11-24', f'{REPO}/runs-private/regate-551-2026-11-24',
-        f'{REPO}/runs-private/jobs-discovery-2026-11-24']
+        f'{REPO}/runs-private/jobs-discovery-2026-11-24', f'{REPO}/runs-private/second-buyer-2026-11-24']
 V1, C2, C3 = 'Industrial Staffing Agency', 'Staffing Outreach Campaign 2', 'Industrial Campaign 3'
 FREEMAIL = {'gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'aol.com', 'icloud.com', 'live.com', 'msn.com', 'comcast.net',
             'att.net', 'sbcglobal.net', 'verizon.net', 'me.com', 'ymail.com', 'protonmail.com', 'bellsouth.net', 'cox.net'}
@@ -180,12 +188,20 @@ def main():
         act = acts.get(l['lead_id'], '')
         neg = bool(l.get('unsub') or 'Unsubscribed' in mk or 'Not Interested' in mk or l['stage'] == 'Unsub' or act == 'opt_out'
                    or any(r in ('unsubscribe', 'not_interested') for r in supp.get(e, ())))
-        pos = bool(l.get('pos') or 'pipeline_promoted' in rt or 'Interested' in mk.replace('Not Interested', '') or e in pipe_emails or 'closed_lost' in rt)
+        pos = bool(act in ('pricing_request', 'interested', 'meeting_request') or l.get('pos') or 'pipeline_promoted' in rt or 'Interested' in mk.replace('Not Interested', '') or e in pipe_emails or 'closed_lost' in rt)
         human_types = {'needs_human_reply', 'human_response_sent', 'reply_classification_override'}
         neu = bool(not neg and not pos and (set(rt.split(',')) & human_types or 'Needs human' in mk or 'Question' in mk
                                             or 'Wrong Person' in mk or act == 'unclear' or l.get('email_status') == 'replied'))
         step, last_step = l.get('step') or 0, 3
-        mid = l['stage'] == 'Queued' or (l['campaign'] == C3 and l['stage'] == 'Contacted' and step < last_step)
+        mid = l['stage'] == 'Queued' or (l['campaign'] == C3 and l['stage'] == 'Contacted' and step < last_step) \
+            or (STRICT and l['campaign'] == C2 and l['stage'] == 'Contacted' and step < last_step)
+        seq_end = None
+        if mid and l.get('first_sent'):  # noqa: E501
+            t1 = datetime.date.fromisoformat(str(l['first_sent'])[:10])
+            ls = datetime.date.fromisoformat(str(l.get('last_sent') or l['first_sent'])[:10])
+            nominal = max(t1 + datetime.timedelta(days=7), ls + datetime.timedelta(days=3 * (last_step - step)))
+            resumed = AS_OF + datetime.timedelta(days=3 * max(0, last_step - step - 1))
+            seq_end = max(nominal, resumed)
         stalled = bool(sent and not mid and l['campaign'] in (V1, C2) and step < last_step and l.get('email_status') != 'done')
         c['contacts'].append({
             'lead_id': l['lead_id'], 'campaign': l['campaign'], 'stage': l['stage'], 'email': e, 'name': l.get('contact_name') or '',
@@ -194,7 +210,8 @@ def main():
             'negative': neg, 'positive': pos, 'neutral': neu, 'ooo': bool(l.get('ooo')),
             'bounced': bool((l.get('bounces') or 0) > 0 or '[BOUNCED' in mk or 'bounce' in supp.get(e, ())),
             'suppressed_non_bounce': bool(supp.get(e, set()) - {'bounce'}), 'suppressed_bounce': 'bounce' in supp.get(e, ()),
-            'manual_hold': '[MANUAL HOLD]' in mk})
+            'manual_hold': '[MANUAL HOLD]' in mk, 'seq_end_est': str(seq_end) if seq_end else None,
+            'reply_marker': ' '.join(sorted(set(__import__('re').findall(r'\[REPLY[^\]]*\]', mk))))[:80]})
         if sent:
             c['campaigns'].add(l['campaign'])
 
@@ -216,6 +233,10 @@ def main():
             reasons.append('unsubscribe_or_negative_reply')
         if any(x['suppressed_non_bounce'] for x in c['contacts']):
             reasons.append('suppressed')
+        if STRICT and any(x['bounced'] for x in c['contacts']):
+            reasons.append('bounced')
+        if STRICT and any(x['campaign'] == C3 for x in c['contacts']):
+            reasons.append('has_campaign3_contact')
         if any(x['positive'] for x in c['contacts']) or d in pipe_doms or any(x['email'].split('@')[-1] in pipe_doms for x in c['contacts']):
             reasons.append('positive_reply_or_pipeline')
         if any(x['neutral'] for x in c['contacts']):
@@ -239,9 +260,11 @@ def main():
         elif held:
             c['status'] = 'EXCLUDE'
             c['exclude_reasons'] = ['manual_hold_no_reply (human-owned; owner decides)']
-        elif mid or (last and (AS_OF - last).days < 30):
+        elif mid or (last and (AS_OF - last).days < SPACING):
             c['status'] = 'WAIT'
-            c['eligible_on'] = str((last or AS_OF) + datetime.timedelta(days=30)) if not mid else 'after sequence ends'
+            ends = [x['seq_end_est'] for x in c['contacts'] if x.get('seq_end_est')]
+            c['eligible_on'] = str((last or AS_OF) + datetime.timedelta(days=SPACING)) if not mid else \
+                (str(datetime.date.fromisoformat(max(ends)) + datetime.timedelta(days=SPACING)) if ends else 'after sequence ends')
         elif not g or g.get('code') == 'CAMPAIGN2_ICP_CONFIRMED':
             c['status'] = 'ICP_UNKNOWN'
         else:
