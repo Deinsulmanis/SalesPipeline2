@@ -21,7 +21,8 @@
  * true` on the request, a record carrying `second_buyer.prior_lead_ids` may add a
  * DIFFERENT person at a company ScaleLab already emailed, only when every
  * existing ScaleLab lead at that company is declared in prior_lead_ids and each
- * one finished or stopped its sequence at least 30 days ago with no reply (an
+ * one finished or stopped its sequence at least 14 days ago (owner decision
+ * 2026-11-26; was 30) with no reply (an
  * out-of-office is not a reply), no opt-out, no non-bounce suppression, is not
  * queued or in a pipeline stage, and the company has no Campaign 3 lead yet. The
  * prior rows are never read for copy and never written. Anything else stays
@@ -53,7 +54,7 @@ const {
 } = require('./staffing-v4-profile');
 
 const IMPORT_SCHEMA = 'industrial_campaign_3_import_v1';
-const SECOND_BUYER_MIN_DAYS = 30;
+const SECOND_BUYER_MIN_DAYS = 14; // owner decision 2026-11-26 (was 30)
 const SECOND_BUYER_PRIOR_STAGES = new Set(['Done', 'Contacted', 'Review', 'Archived']);
 const OPT_OUT_MARKER = /\[REPLY:\s*(?:Unsubscribed|Not Interested)/i;
 const REPLY_MARKER = /\[REPLY(?: PRIORITY)?:(?!\s*OOO)/i; // any reply marker except out-of-office

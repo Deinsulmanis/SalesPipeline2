@@ -454,7 +454,7 @@ test('20. an out-of-office resume adds the shared line to a follow-up only', () 
 
 // ── Campaign 3 import ───────────────────────────────────────────────────────
 
-const { evaluateCampaign3Import, IMPORT_SCHEMA } = require('../integrations/staffing-campaign-3-import');
+const { evaluateCampaign3Import, IMPORT_SCHEMA, SECOND_BUYER_MIN_DAYS } = require('../integrations/staffing-campaign-3-import');
 const record = (extra = {}, ev = {}) => ({
   row: { company_name: 'Tradeco Staffing, Inc.', company_domain: 'tradecostaffing.com', email: 'dana@tradecostaffing.com',
     v4_tag: 'V4|PASS|LOW_SIGNAL|NO_ADS_OBSERVED|COPY_TIER_PENDING', demand_score: '0', signal_priority: 'LOW_SIGNAL',
@@ -537,7 +537,12 @@ test('22c. second-buyer refusals carry their own codes; without owner approval i
   assert.equal(run(priorLead({ emailStatus: 'replied' })), 'second_buyer_prior_replied');
   assert.equal(run(priorLead(), secondBuyer(), {}, ['owner@tradecostaffing.com']), 'second_buyer_prior_suppressed');
   assert.equal(run(priorLead({ stage: 'Queued' })), 'second_buyer_prior_active');
-  assert.equal(run(priorLead({ lastEmailedAt: '2026-11-01T16:00:00.000Z' })), 'second_buyer_prior_recent');
+  // 14-day spacing (owner decision 2026-11-26): 13 days before "now" is refused, 14 days is allowed
+  assert.equal(SECOND_BUYER_MIN_DAYS, 14);
+  assert.equal(run(priorLead({ lastEmailedAt: '2026-11-10T16:00:00.000Z' })), 'second_buyer_prior_recent');
+  assert.equal(run(priorLead({ lastEmailedAt: '2026-11-07T08:00:00.000Z' })), 'second_buyer_prior_recent');
+  assert.equal(run(priorLead({ lastEmailedAt: '2026-11-06T07:00:00.000Z' })), undefined);
+  assert.equal(run(priorLead({ lastEmailedAt: '2026-11-01T16:00:00.000Z' })), undefined);
   assert.equal(run(priorLead({ lastEmailedAt: '' })), 'second_buyer_prior_recent');
   assert.equal(run(priorLead({ campaign: 'Industrial Campaign 3' })), 'second_buyer_company_in_campaign_3');
   assert.equal(run(priorLead(), secondBuyer({}, { prior_lead_ids: ['prior1', 'ghost'] })), 'second_buyer_prior_mismatch');
