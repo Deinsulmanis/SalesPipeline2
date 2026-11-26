@@ -169,3 +169,49 @@ it needs your go-ahead.
    - import in date batches from 2026-11-29.
 3. Upload `to_verify.csv` (18) to GetLeads, and drop the results at
    `runs-private/second-buyer-c2-2026-11-26/verified_results.csv`.
+
+## Deploy, import and queue (owner go-ahead 2026-11-26)
+
+### Production change
+
+- **The change:** `SECOND_BUYER_MIN_DAYS` 30 → 14 (`integrations/staffing-campaign-3-import.js`). Test 22c pins it:
+  13 days is refused, 14 accepted.
+- **Commit:** 7ae655e on `fix/send-throughput-20261020`, rebased onto 0b63ef4, which another session deployed at
+  17:19 UTC.
+- **Tests:** full suite 3,710 pass, 4 fail; the same 4 date-sensitive tests fail on the base.
+- **Deploy:** Railway pinned to the full SHA at 18:44 UTC, after the last send slot (11:30 Vancouver) and with no pass
+  running. The deployment reported SUCCESS.
+- **Boot:** crons scheduled, send-lock enabled, staffing-shadow authority unchanged, Gmail observers healthy.
+- **Side effect:** the 18:45 check-only pass, which sends nothing, was cut short by the container swap. The next pass
+  runs at 19:15.
+
+### Import
+
+- **Dry runs on the new code:** 40 + 16 accepted, 0 refused. Before the deploy, all 56 were refused only as
+  `second_buyer_prior_recent`.
+- **Live:** 40 non-catch-all imported first, then 16 catch-all, so the catch-alls sort last. 56 written, 0 refused,
+  all COPY_C on copy v2.
+- **Master:** 56 added to the V4 master (588 → 644, marked `IMPORTED_QUEUED_CAMPAIGN_3`).
+- **Company master:** these 56 companies are marked imported and queued, and are out of the re-engage pool.
+
+### Queue
+
+Queued explicitly, non-catch-alls first:
+
+| Inbox | Leads |
+|---|---|
+| primary | 16 |
+| deniels | 15 |
+| outreachplateau_zoe | 9 |
+| outreachplateau_merrick | 8 |
+| outreachplateau_dave | 8 |
+
+All 56 succeeded, with 0 refused and 0 conflicts.
+
+### Post-checks
+
+- **Launch readiness:** 56 of 56 Queued, `wouldSendIfSendingEnabled` true.
+- **Sender balance:** no moves planned, and none into held inboxes.
+- **Campaign 3 in Supabase:** Queued 269 (170 second buyers), Contacted 517, Unsub 2, Done 1.
+
+**Still waiting on you:** the verified results for `to_verify.csv` (18).
