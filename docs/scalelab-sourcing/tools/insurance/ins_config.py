@@ -173,3 +173,37 @@ NOT_RETAIL = re.compile(r"(?i)\b(wholesale|wholesaler|mga|managing general|progr
 # Trucking proper inside trucking_logistics (excludes marine, rail, aviation): NCCI trucking / freight-handling /
 # drivers codes. Used for the statewide trucking sample list.
 TRUCKING_CODES = {"7219", "7228", "7229", "7230", "7231", "7232", "7360", "7380"}
+
+# ---------------------------------------------------------------------------------------------------------------
+# Agency decision-maker rule (ScaleLab's buyer at the agency). Deep-dive section 3:
+# Tier 1: agency principal / owner / president / CEO / founder / managing partner / partner (producer-owners).
+# Tier 2: VP or director of commercial lines, commercial lines manager, sales manager / director of business
+#         development / VP sales.
+# Never picked (HOLD): producers or agents without ownership, account managers / executives, CSRs, marketing,
+#         assistants, former / board titles, and anyone at a different company.
+A_TOP = [(0, r"(?<!product )\b(owner|co-?owner|founder|co-?founder|proprietor|agency principal|principal agent)\b"),
+         (1, r"(?<!vice )(?<!vice-)\bpresident\b|\bceo\b|chief executive"),
+         (2, r"managing (partner|principal|member|director)|^principal\b|\bprincipal$|^(senior |founding |equity )?partner\b|\bpartner$")]
+A_GUARD = r"\b(former|retired|past|emeritus|board|assistant|secretary|associate|intern)\b|\bto (the )?(president|ceo|owner|founder|principal)"
+A_T2 = [(0, r"(vp|vice[- ]president|svp|evp|director|head|manager)\b.*\bcommercial (lines|insurance|p ?& ?c|accounts|division)\b|commercial lines (manager|director|leader)"),
+        (1, r"(vp|vice[- ]president|director|head)\b.*\b(sales|business development|growth|new business)\b|\bsales manager\b|\bcro\b|chief (revenue|sales|growth) officer"),
+        (2, r"\bcoo\b|chief operating|agency manager|general manager")]
+A_NEVER = r"assistant|\bcsr\b|customer service|service (rep|representative|specialist)|account (manager|executive|representative|specialist)|marketing|\bproducer\b|\bagent\b|underwriter|claims|accountant|bookkeeper|receptionist|intern|recruit|\bhr\b|human resources|compliance|it manager"
+
+
+def agency_tier(title):
+    """(tier, rank) for an agency-side title, or None (never picked). Top titles win even with a NEVER word
+    ("Owner / Agent", "President & Producer"); a bare producer / agent / account manager is never picked."""
+    t = (title or "").lower().strip()
+    if not t:
+        return None
+    if not re.search(A_GUARD, t):
+        for rank, pat in A_TOP:
+            if re.search(pat, t):
+                return (1, rank)
+    if re.search(A_NEVER, t) and not re.search(A_T2[0][1], t):
+        return None
+    for rank, pat in A_T2:
+        if re.search(pat, t):
+            return (2, rank)
+    return None

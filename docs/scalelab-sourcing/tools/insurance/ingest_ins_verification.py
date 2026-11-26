@@ -3,8 +3,9 @@
 Usage: python3 -I ingest_ins_verification.py <run_dir>
 The owner uploads <run>/to_verify.csv to GetLeads and drops the results at <run>/verified_results.csv. This reuses
 tools/ingest_verification.py's row mapping (map_row: valid / catch-all / invalid / unknown / risky) unchanged, writes
-<run>/verification.json, backs up the files it replaces, and re-runs ins_contact_qc.py (the staffing QC, outputs and
-master are NOT touched). Prints counts only. Claude Code never submits or polls verification jobs.
+<run>/verification.json, backs up the files it replaces, and re-runs the insurance QC: agency_contact_qc.py +
+agency_outputs.py for an agency run (with <run>/gl_batch_results.csv when present), else ins_contact_qc.py. The staffing
+QC, outputs and master are NOT touched. Prints counts only. Claude Code never submits or polls verification jobs.
 """
 import collections, csv, datetime, json, os, shutil, subprocess, sys
 
@@ -21,7 +22,8 @@ def main():
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     bk = os.path.join(run, f"ingest_{stamp}")
     os.makedirs(bk)
-    for f in ("verification.json", "verify_pending.json", "to_verify.csv", os.path.join("match", "contact_qc.json"), os.path.join("match", "contacts_private.csv")):
+    for f in ("verification.json", "verify_pending.json", "to_verify.csv", "contacts.json", "approved_contacts.csv",
+              os.path.join("match", "contact_qc.json"), os.path.join("match", "contacts_private.csv")):
         if os.path.exists(os.path.join(run, f)):
             shutil.copy2(os.path.join(run, f), bk)
     pend = {p["email"].lower() for p in json.load(open(os.path.join(run, "verify_pending.json")))} if os.path.exists(os.path.join(run, "verify_pending.json")) else set()
@@ -37,7 +39,14 @@ def main():
         mapped[v["validity"]] += 1
         matched += e in pend
     json.dump(store, open(vj, "w"), indent=1)
-    subprocess.run([sys.executable, "-I", os.path.join(HERE, "ins_contact_qc.py"), run], check=True)
+    if os.path.exists(os.path.join(run, "icp_decisions.json")):  # agency run: agency QC (+ the owner's GetLeads batch file)
+        cmd = [sys.executable, "-I", os.path.join(HERE, "agency_contact_qc.py"), run]
+        if os.path.exists(os.path.join(run, "gl_batch_results.csv")):
+            cmd += ["--gl-batch", os.path.join(run, "gl_batch_results.csv")]
+        subprocess.run(cmd, check=True)
+        subprocess.run([sys.executable, "-I", os.path.join(HERE, "agency_outputs.py"), run], check=True)
+    else:  # employer match-test run
+        subprocess.run([sys.executable, "-I", os.path.join(HERE, "ins_contact_qc.py"), run], check=True)
     print(json.dumps({"results_rows_mapped": dict(mapped), "matched_pending": matched, "pending_before": len(pend), "backup": os.path.basename(bk)}, indent=1))
 
 

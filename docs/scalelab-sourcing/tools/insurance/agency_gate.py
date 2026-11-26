@@ -3,7 +3,8 @@ deep-dive ICP (segments/insurance-deep-dive-2026-11-26.md, section 3). The staff
 is not touched; this reuses the crawl cache format and the shared Jev budget (jevlib.Budget, V4_JEV_BUDGET_USD).
 
 Usage: V4_JEV_BUDGET_USD=<cap> python3 -I agency_gate.py <agency_dir>
-Reads <dir>/companies.json + <dir>/sitecache/ (+ pwcache/ merged). One Jev request per readable site, cached in
+Reads <dir>/companies.json + <dir>/sitecache/ (+ pwcache/ merged). A company with pre_gate "DECISION/CODE: why" (set before
+the crawl by dedupe or name exclusions) is recorded as decided by code, without a Jev call. One Jev request per readable site, cached in
 <dir>/jev_icp/<domain>.json. Fail closed: a Jev error stops the run (exit 2); no substitute model.
 Writes <dir>/icp_decisions.json (PASS / HOLD / REJECT + reason code) and prints counts.
 """
@@ -28,6 +29,8 @@ INS = re.compile(r"(?i)\b(commercial (insurance|lines|auto|property|package)|bus
                  r"auto (and|&) home|home insurance|life insurance|health insurance|medicare|employee benefits|captive|exclusive agent|"
                  r"licensed in|serving (texas|the state)|texas|houston|dallas|fort worth|san antonio|austin|el paso|lubbock|midland|odessa|"
                  r"risk management|loss control|safety|experience mod|x-?mod|claims)\b")
+ADDR = re.compile(r"([A-Z][A-Za-z .'-]{2,25}),? (A[LKZR]|C[AOT]|D[EC]|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|PA|RI|S[CD]|T[NX]|UT|V[AT]|W[AIVY]) (\d{5})")
+COMMERCIAL = re.compile(r"(?i)commercial|business insurance|workers'? ?comp|general liability|contractor|trucking|surety")
 SKIP_TXT = re.compile(r"(?i)cookie|privacy policy|all rights reserved|javascript")
 
 
@@ -60,7 +63,15 @@ def evidence(c):
                 seen.add(ln.lower())
                 ex.append({"url": url, "text": ln})
     titles = [{"url": p.get("final_url") or p.get("url"), "title": (p.get("title") or "")[:140]} for p in pages][:9]
-    return {"chars": total, "accessible": total >= 800, "error": rec.get("error"), "pages": titles, "excerpts": ex[:45]}
+    offices = {}
+    for p in pages:
+        for m in ADDR.finditer(p["text"]):
+            offices.setdefault((m.group(1).strip().lower(), m.group(2)), (m.group(1).strip(), m.group(2), m.group(3)))
+    tx = [o for o in offices.values() if o[1] == "TX"]
+    best = next((z["url"] for z in ex if COMMERCIAL.search(z["text"])), ex[0]["url"] if ex else (titles[0]["url"] if titles else None))
+    return {"chars": total, "accessible": total >= 800, "error": rec.get("error"), "pages": titles, "excerpts": ex[:45],
+            "office_count": len(offices), "tx_office_count": len(tx), "tx_cities": sorted({o[0] for o in tx})[:6],
+            "states": sorted({o[1] for o in offices.values()}), "evidence_url": best}
 
 
 QUESTIONS = {
@@ -81,6 +92,7 @@ QUESTIONS = {
     "focus_construction": {"type": "noul", "instructions": "Does the agency show a focus on or programme for construction companies / contractors?"},
     "focus_manufacturing": {"type": "noul", "instructions": "Does the agency show a focus on or programme for manufacturers or industrial businesses?"},
     "focus_trucking": {"type": "noul", "instructions": "Does the agency show a focus on or programme for trucking, transportation, fleets or logistics businesses?"},
+    "focus_oil_gas": {"type": "noul", "instructions": "Does the agency show a focus on or programme for oil and gas / oilfield / energy businesses?"},
     "texas_presence": {"type": "noul", "instructions": "Do the excerpts show the agency has an office in Texas or serves Texas clients (Texas city or address, 'licensed in Texas', or similar)?"},
     "large_national_broker": {"type": "noul", "instructions": "Is this a very large national or international brokerage, or a local office of one (or of a private-equity agency platform with many acquired agencies), rather than an independent locally owned agency?"},
 }
@@ -105,7 +117,7 @@ def decide(c, ev, res):
     j = {"identity": round(p(a, "identity_match"), 3), "type": a["business_type"]["choice"], "type_p": round(max(a["business_type"]["probabilities"].values()), 3),
          "commercial": a["commercial_lines"]["choice"], "commercial_p": round(max(a["commercial_lines"]["probabilities"].values()), 3),
          "wc": round(p(a, "writes_workers_comp"), 3), "construction": round(p(a, "focus_construction"), 3),
-         "manufacturing": round(p(a, "focus_manufacturing"), 3), "trucking": round(p(a, "focus_trucking"), 3),
+         "manufacturing": round(p(a, "focus_manufacturing"), 3), "trucking": round(p(a, "focus_trucking"), 3), "oil_gas": round(p(a, "focus_oil_gas"), 3) if "focus_oil_gas" in a else None,
          "texas": round(p(a, "texas_presence"), 3), "big": round(p(a, "large_national_broker"), 3)}
     if j["identity"] < T["identity_conflict"]:
         return "HOLD", "UNVERIFIED", f"identity conflict (p={j['identity']})", j
@@ -130,10 +142,10 @@ def decide(c, ev, res):
     if j["big"] >= T["big"]:
         why.append(f"possible platform / large broker office (p={j['big']})")
     if not why:
-        focus = max(j["wc"], j["construction"], j["manufacturing"], j["trucking"])
+        focus = max(j["wc"], j["construction"], j["manufacturing"], j["trucking"], j.get("oil_gas") or 0)
         if focus >= T["focus"]:
             return "PASS", "VERIFIED_COMMERCIAL_AGENCY", "independent Texas agency with core commercial lines and WC / industry focus", j
-        return "HOLD", "NO_INDUSTRY_FOCUS", f"commercial agency but no WC or construction / manufacturing / trucking focus shown (max p={focus})", j
+        return "HOLD", "NO_INDUSTRY_FOCUS", f"commercial agency but no WC or construction / manufacturing / trucking / oil and gas focus shown (max p={focus})", j
     return "HOLD", "UNVERIFIED", "; ".join(why), j
 
 
@@ -144,6 +156,12 @@ def main():
     budget = jevlib.Budget(RUN)
     out, stats = [], collections.Counter()
     for c in comps:
+        if c.get("pre_gate"):
+            dec, code = c["pre_gate"].split(":", 1)[0].split("/")
+            stats[(dec, code)] += 1
+            out.append({"domain": c["domain"], "company_name": c["company_name"], "decision": dec, "reason_code": code,
+                        "reason": c.get("pre_reason") or code, "jev": {}, "jev_model": None, "site_chars": 0, "decided_by": "code (before crawl)"})
+            continue
         ev = evidence(c)
         res = None
         cache = os.path.join(RUN, "jev_icp", c["domain"] + ".json")
@@ -161,8 +179,12 @@ def main():
                 json.dump(res, open(cache, "w"), indent=1)
         dec, code, reason, j = decide(c, ev, res)
         stats[(dec, code)] += 1
+        spec = [k for k in ("wc", "construction", "manufacturing", "trucking", "oil_gas") if (j.get(k) or 0) >= T["focus"]]
         out.append({"domain": c["domain"], "company_name": c["company_name"], "decision": dec, "reason_code": code, "reason": reason,
-                    "jev": j, "jev_model": (res or {}).get("model"), "site_chars": ev["chars"]})
+                    "jev": j, "jev_model": (res or {}).get("model"), "site_chars": ev["chars"], "decided_by": "Jev answers + code thresholds",
+                    "specialties": spec, "wc_focus": (j.get("wc") or 0) >= T["focus"], "office_count": ev.get("office_count", 0),
+                    "tx_office_count": ev.get("tx_office_count", 0), "tx_cities": ev.get("tx_cities", []), "states": ev.get("states", []),
+                    "evidence_url": ev.get("evidence_url"), "sources": c.get("groups")})
     json.dump(out, open(os.path.join(RUN, "icp_decisions.json"), "w"), indent=1)
     print(json.dumps({f"{k[0]}:{k[1]}": v for k, v in stats.most_common()}, indent=1))
     print("jev_spent_usd", round(budget.ledger_usd(), 5), "cap", v4config.JEV_BUDGET_USD)
