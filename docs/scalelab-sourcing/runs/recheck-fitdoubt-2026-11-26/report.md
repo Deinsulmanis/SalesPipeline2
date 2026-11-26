@@ -54,3 +54,29 @@ from V1. None had been emailed, and none had a sender.
 - none has a sender or a send.
 
 **Leads in Import now, all clients: 0.**
+
+## Archived: 81 Review / held leads (owner instruction: "archive all in review/held")
+
+There were 83 ScaleLab leads in Review or carrying `[MANUAL HOLD]`, outside the Archived stage:
+
+| Group | Leads | Archived |
+|---|---|---|
+| scalelabaiteam sender-auth, presumed delivered | 42 | yes |
+| scalelabaiteam sender-auth, failed delivery | 19 | yes |
+| Replies waiting for the owner (the replies stay in Gmail) | 8 | 7, with 1 kept |
+| Out-of-office | 1 | yes |
+| Old QA / ICP holds, never emailed | 11 | yes |
+| Hand-held (1 Campaign 3 lead, 1 V1 lead) | 2 | yes |
+
+**Method:** the same endpoint and reason as the Import cleanup.
+
+**Results:** 81 succeeded, 0 refused. The 4 with closed_lost Pipeline cards had their cards archived with them.
+
+**Kept, waiting on the owner (2):** archiving would also archive their live Pipeline cards.
+- One lead whose Pipeline card is in closed_won.
+- One lead whose card is "hot" (a pricing request).
+
+**Post-check (Supabase):**
+- only those 2 leads remain in Review / held;
+- Import holds 0;
+- 202 leads were archived by this cleanup today (64 + 57 + 81).
