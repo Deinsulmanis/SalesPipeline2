@@ -2,13 +2,15 @@
 deep-dive ICP (segments/insurance-deep-dive-2026-11-26.md, section 3). The staffing gate (qualify.py / icp_decide.py)
 is not touched; this reuses the crawl cache format and the shared Jev budget (jevlib.Budget, V4_JEV_BUDGET_USD).
 
-Usage: V4_JEV_BUDGET_USD=<cap> python3 -I agency_gate.py <agency_dir>
+Usage: V4_JEV_BUDGET_USD=<cap> python3 -I agency_gate.py <agency_dir> [--only @domains.json]
 Reads <dir>/companies.json + <dir>/sitecache/ (+ pwcache/ merged). A company with pre_gate "DECISION/CODE: why" (set before
 the crawl by dedupe or name exclusions) is recorded as decided by code, without a Jev call. One Jev request per readable site, cached in
 <dir>/jev_icp/<domain>.json. Fail closed: a Jev error stops the run (exit 2); no substitute model.
 Writes <dir>/icp_decisions.json (PASS / HOLD / REJECT + reason code) and prints counts.
 """
 import collections
+import concurrent.futures as cf
+import threading
 import json
 import os
 import re
@@ -151,9 +153,48 @@ def decide(c, ev, res):
 
 def main():
     comps = json.load(open(os.path.join(RUN, "companies.json")))
+    only = None
+    if "--only" in sys.argv:  # --only @domains.json: judge readable sites first, thin ones after the headless retry
+        arg = sys.argv[sys.argv.index("--only") + 1]
+        only = set(json.load(open(arg[1:])) if arg.startswith("@") else arg.split(","))
     os.makedirs(os.path.join(RUN, "jev_icp"), exist_ok=True)
     merge_pw()
     budget = jevlib.Budget(RUN)
+    # Phase 1: Jev calls for readable, uncached sites, 6 at a time (shared, locked run budget; fail closed).
+    todo = []
+    for c in comps:
+        if c.get("pre_gate") or (only is not None and c["domain"] not in only):
+            continue
+        cache = os.path.join(RUN, "jev_icp", c["domain"] + ".json")
+        if not os.path.exists(cache):
+            ev = evidence(c)
+            if ev["accessible"]:
+                todo.append((c, ev, cache))
+    stop = threading.Event()
+    failures = []
+
+    def ask_one(item):
+        c, ev, cache = item
+        if stop.is_set():
+            return
+        if not budget.reserve(6000):
+            stop.set()
+            print("BUDGET STOP before", c["domain"], flush=True)
+            return
+        try:
+            res = jevlib.ask(state_for(c, ev), QUESTIONS)
+        except Exception as e:
+            failures.append((c["domain"], str(e)))
+            stop.set()
+            return
+        budget.settle(6000, res.get("usage"), "insurance_agency_gate", c["domain"], res.get("model"))
+        json.dump(res, open(cache, "w"), indent=1)
+
+    with cf.ThreadPoolExecutor(6) as ex:
+        list(ex.map(ask_one, todo))
+    if failures:
+        print("JEV FAILURE - fail closed:", failures[:3])
+        sys.exit(2)
     out, stats = [], collections.Counter()
     for c in comps:
         if c.get("pre_gate"):
@@ -162,22 +203,16 @@ def main():
             out.append({"domain": c["domain"], "company_name": c["company_name"], "decision": dec, "reason_code": code,
                         "reason": c.get("pre_reason") or code, "jev": {}, "jev_model": None, "site_chars": 0, "decided_by": "code (before crawl)"})
             continue
+        if only is not None and c["domain"] not in only:
+            continue
         ev = evidence(c)
         res = None
         cache = os.path.join(RUN, "jev_icp", c["domain"] + ".json")
-        if ev["accessible"]:
-            if os.path.exists(cache):
-                res = json.load(open(cache))
-            else:
-                if not budget.reserve(6000):
-                    print("BUDGET STOP before", c["domain"]); break
-                try:
-                    res = jevlib.ask(state_for(c, ev), QUESTIONS)
-                except Exception as e:
-                    print("JEV FAILURE - fail closed:", c["domain"], e); sys.exit(2)
-                budget.settle(6000, res.get("usage"), "insurance_agency_gate", c["domain"], res.get("model"))
-                json.dump(res, open(cache, "w"), indent=1)
+        if ev["accessible"] and os.path.exists(cache):
+            res = json.load(open(cache))
         dec, code, reason, j = decide(c, ev, res)
+        if ev["accessible"] and res is None:
+            dec, code, reason = "HOLD", "NOT_JUDGED", "readable site not judged (Jev budget stop)"
         stats[(dec, code)] += 1
         spec = [k for k in ("wc", "construction", "manufacturing", "trucking", "oil_gas") if (j.get(k) or 0) >= T["focus"]]
         out.append({"domain": c["domain"], "company_name": c["company_name"], "decision": dec, "reason_code": code, "reason": reason,
@@ -185,7 +220,10 @@ def main():
                     "specialties": spec, "wc_focus": (j.get("wc") or 0) >= T["focus"], "office_count": ev.get("office_count", 0),
                     "tx_office_count": ev.get("tx_office_count", 0), "tx_cities": ev.get("tx_cities", []), "states": ev.get("states", []),
                     "evidence_url": ev.get("evidence_url"), "sources": c.get("groups")})
-    json.dump(out, open(os.path.join(RUN, "icp_decisions.json"), "w"), indent=1)
+    if only is not None:  # a partial pass never overwrites the full decision file
+        json.dump(out, open(os.path.join(RUN, "icp_decisions_partial.json"), "w"), indent=1)
+    else:
+        json.dump(out, open(os.path.join(RUN, "icp_decisions.json"), "w"), indent=1)
     print(json.dumps({f"{k[0]}:{k[1]}": v for k, v in stats.most_common()}, indent=1))
     print("jev_spent_usd", round(budget.ledger_usd(), 5), "cap", v4config.JEV_BUDGET_USD)
 
