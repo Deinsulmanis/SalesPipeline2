@@ -41,6 +41,9 @@ function staffingSendBlockReason(lead, env = process.env, now = Date.now()) {
   // staffing-campaign loads modules that load this file.
   const v4Block = require('./staffing-campaign').staffingV4SendBlock(lead);
   if (v4Block) return v4Block;
+  // Campaign 4 (HOLD Company Test) is held here too: final gate and provider call.
+  const c4Block = require('./staffing-campaign').campaign4SendBlock(lead);
+  if (c4Block) return c4Block;
   const launch = staffingLaunchState(env, now).reason;
   if (launch) return launch;
   if (isStaffingCampaign2Lead(lead) && !staffingCampaign2Open(now)) {

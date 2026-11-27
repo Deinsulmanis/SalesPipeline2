@@ -12,7 +12,7 @@
  *   - an address already in the lead database (any client) is refused, except
  *     the identical Campaign 3 record, which is a safe no-op;
  *   - a company domain that already has a ScaleLab lead (V1, Campaign 2, V2,
- *     anything) is refused, so no previously contacted company is re-mailed;
+ *     Campaign 4, anything) is refused, so no previously contacted company is re-mailed;
  *     the one exception is an owner-approved SECOND BUYER (below);
  *   - a record whose selection is HOLD (no verified variant, unresolved email,
  *     contact QC not READY_FOR_REVIEW) is refused, never written.
@@ -46,7 +46,7 @@ const crypto = require('node:crypto');
 const { classify } = require('../check-leads');
 const { resolveLeadClient } = require('./clients/ownership');
 const { DEFAULT_CLIENT_ID } = require('./clients/registry');
-const { STAFFING_CAMPAIGN_V4 } = require('./staffing-campaign');
+const { STAFFING_CAMPAIGN_V4, isCampaign4Marked } = require('./staffing-campaign');
 const { selectV4Variant, CURRENT_COPY_VERSION } = require('./staffing-v4-copy');
 const { franchiseBrandOfDomain, franchiseIdentityProblem, franchiseKeys } = require('./staffing-franchise');
 const {
@@ -139,6 +139,10 @@ function secondBuyerRefusal(record, domainLeads, request, suppressedEmails, nowI
     const stage = text(prior.stage);
     if (hasStaffingV4ProfileMarker(prior) || text(prior.campaign) === STAFFING_CAMPAIGN_V4.name) {
       return { code: 'second_buyer_company_in_campaign_3', reason: 'the company already has a Campaign 3 lead' };
+    }
+    // Campaign 4 (HOLD Company Test) and Campaign 3 never share a company.
+    if (isCampaign4Marked(prior)) {
+      return { code: 'second_buyer_company_in_campaign_4', reason: 'the company already has a Campaign 4 (HOLD Company Test) lead' };
     }
     if (OPT_OUT_MARKER.test(notes) || stage === 'Unsub') return { code: 'second_buyer_prior_opted_out', reason: 'a prior contact opted out' };
     if (REPLY_MARKER.test(notes) || text(prior.emailStatus).toLowerCase() === 'replied') {

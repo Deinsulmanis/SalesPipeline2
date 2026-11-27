@@ -159,6 +159,7 @@ async function draftSampleListForAction({ action, inbound, lead, suppressedEmail
   await publishTask({ eventId: `scalelab-sample-list-task:${action.id}`, eventType: TASK_EVENT,
     leadId: `CE-${lead.id}`, sourceLeadId: lead.id, email: lead.email, company: lead.company, occurredAt: now.toISOString(),
     subject: 'Sample employer list drafted', content: '', metadata: JSON.stringify({ clientId: 'scalelab', owner: 'human',
+      campaign: String(lead.campaign || ''),
       autoSendAllowed: false, routingActionId: action.id, inboundMessageId: action.messageId, gmailThreadId: inbound.threadId,
       gmailDraftId: draft.id, senderInboxId: action.mailboxId, ...summary }) });
   const where = list.state ? STATE_NAMES[list.state] : 'state unknown, national list';

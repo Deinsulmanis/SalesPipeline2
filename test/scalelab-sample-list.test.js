@@ -657,7 +657,8 @@ test('agency demand counts Campaign 3 queued and in-sequence leads by agency sta
     const body = u.pathname.endsWith('/scalelab_agency_states') ? [{ domain: 'a.example', state: 'TX' }, { domain: 'b.example', state: 'WI' }]
       : [{ email: 'x@a.example' }, { email: 'y@a.example' }, { email: 'z@b.example' }, { email: 'q@unknown.example' }];
     if (u.pathname.endsWith('/outreach_leads')) {
-      assert.equal(u.searchParams.get('campaign'), 'eq.Industrial Campaign 3');
+      // Campaign 3 and Campaign 4 (HOLD Company Test) agencies both count.
+      assert.equal(u.searchParams.get('campaign'), 'in.("Industrial Campaign 3","HOLD Company Test")');
       assert.equal(u.searchParams.get('stage'), 'in.(Queued,Contacted)');
       assert.equal(u.searchParams.get('select'), 'email');
     }

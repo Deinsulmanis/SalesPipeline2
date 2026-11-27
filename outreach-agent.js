@@ -240,6 +240,11 @@ const { fairShareQueuedOrder } = require('./integrations/scheduled-slot-allocato
 const {
   franchiseDomainOfEmail, franchiseDomainSendsToday, createFranchiseDomainThrottle, interleaveFranchiseLeads,
 } = require('./integrations/staffing-franchise');
+// Campaign 4 (HOLD Company Test): its daily share of the same global cap.
+const {
+  campaign4ShareFromEnv, campaign4DailyBudget, campaign4SendsToday, createCampaign4Throttle, interleaveCampaign4Leads,
+} = require('./integrations/campaign-4-share');
+const { isCampaign4Marked } = require('./integrations/staffing-campaign');
 const {
   credentialsFor: gmailCredentialsFor, parseRegistry: parseGmailRegistry, withDefaultInboxes: withDefaultGmailInboxes,
 } = require('./integrations/gmail-inbox-registry');
@@ -1932,6 +1937,20 @@ function franchiseSendSlot(lead) {
   return activeFranchiseThrottle.reserve(lead.email);
 }
 
+// Campaign 4 (HOLD Company Test) takes at most its share of DAILY_SEND_LIMIT
+// (campaign-4-share.js; CAMPAIGN_4_DAILY_SHARE, default 0.35). The run seeds
+// the count from today's successful Campaign 4 sends in the ledger; each
+// attempt takes a slot synchronously, before any Gmail probe or reservation,
+// like the franchise throttle above. With no throttle initialized a Campaign 4
+// lead is refused (fail closed). The total cap and every other lead are unchanged.
+let activeCampaign4Throttle = null;
+const CAMPAIGN_4_SHARE = campaign4ShareFromEnv();
+function campaign4SendSlot(lead) {
+  if (!isCampaign4Marked(lead)) return { ok: true };
+  if (!activeCampaign4Throttle) return { ok: false, reason: 'Campaign 4 daily share throttle unavailable' };
+  return activeCampaign4Throttle.reserve(lead);
+}
+
 async function deliverOrdinaryColdStep({
   lead, step, sender, subject, body, attribution, activitiesForCycle,
   personalizationMetadata = null, thread = null, onProviderSuccess = null,
@@ -1947,6 +1966,8 @@ async function deliverOrdinaryColdStep({
   if (!window.allowed) return { delivered: false, reason: window.reason };
   const franchiseSlot = franchiseSendSlot(lead);
   if (!franchiseSlot.ok) return { delivered: false, reason: franchiseSlot.reason };
+  const campaign4Slot = campaign4SendSlot(lead);
+  if (!campaign4Slot.ok) return { delivered: false, reason: campaign4Slot.reason };
   // A proven, unrecovered delivery failure of an earlier touch blocks every
   // later one at send time too, not only in selection (same-touch-recovery.js).
   const failedTouch = unrecoveredTouchBlock(lead, activitiesForCycle || [], step);
@@ -5601,6 +5622,14 @@ async function runInner() {
   activeFranchiseThrottle = createFranchiseDomainThrottle({
     sendsToday: franchiseDomainSendsToday(ownershipActivities, senderDayKey, id => emailByLeadId.get(id) || ''),
   });
+  const campaign4LeadIds = new Set(all.filter(lead => isCampaign4Marked(lead)).map(lead => String(lead.id)));
+  activeCampaign4Throttle = createCampaign4Throttle({
+    budget: campaign4DailyBudget(DAILY_SEND_LIMIT, CAMPAIGN_4_SHARE.share),
+    sendsToday: campaign4SendsToday(ownershipActivities, senderDayKey, id => campaign4LeadIds.has(id)),
+    isCampaign4: lead => isCampaign4Marked(lead),
+  });
+  console.log(`[campaign-4-share] share=${CAMPAIGN_4_SHARE.share} (${CAMPAIGN_4_SHARE.source}) `
+    + `budget=${activeCampaign4Throttle.budget} usedToday=${activeCampaign4Throttle.used()}${CAMPAIGN_4_SHARE.reason ? ` (${CAMPAIGN_4_SHARE.reason})` : ''}`);
   todaySent = Math.max(todaySent, successfulSendCountToday(ownershipActivities, senderDayKey));
   dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
   const quotaState = { globalCount: todaySent };
@@ -6135,7 +6164,9 @@ async function runInner() {
 
   const newBatchBySender = new Map(GMAIL_SENDERS.map(sender => [sender.id, []]));
   // Franchise leads are spread through each lane, not sent as one block (owner 2026-11-25).
-  for (const lead of interleaveFranchiseLeads(newBatch)) {
+  // Campaign 4 leads are placed at their daily share ratio (ordering only), so
+  // Campaign 3's larger queue cannot take every slot before them.
+  for (const lead of interleaveFranchiseLeads(interleaveCampaign4Leads(newBatch, CAMPAIGN_4_SHARE.share, isCampaign4Marked))) {
     let choice;
     try { choice = chooseSender({ lead, activities: ownershipActivities,
       senders: GMAIL_SENDERS, sendsToday: sendsBySender,

@@ -11,8 +11,10 @@ const { staffingLaunchState, staffingCampaign2Open, STAFFING_CAMPAIGN_2_SEND_NOT
 const {
   STAFFING_CAMPAIGN, STAFFING_CAMPAIGN_2, STAFFING_CAMPAIGN_V2, staffingV2Live, isStaffingV2Marked,
   STAFFING_CAMPAIGN_V4, staffingV4Live, isStaffingV4Marked,
+  STAFFING_CAMPAIGN_C4, staffingC4Live, isCampaign4Marked,
 } = require('./staffing-campaign');
 const { readStaffingV4Profile } = require('./staffing-v4-profile');
+const { readC4Profile } = require('./campaign-4-profile');
 const { resolveV4CopyVersion } = require('./staffing-v4-copy-version');
 function staffingCampaign2Status() {
   const launch = staffingLaunchState().status;
@@ -70,6 +72,22 @@ const CAMPAIGN_VERSIONS = Object.freeze({
     // Owner approval 2026-11-20; first Email 1 sent 2026-11-20 07:01 America/Vancouver.
     get activatedAt() { return this.status === 'active' ? STAFFING_CAMPAIGN_V4_ACTIVATED_AT : null; },
     meaning: 'Industrial Campaign 3: one campaign whose Email 1 is chosen from six approved variants by verified evidence (employer ads, internal sales hiring, expansion, new commercial leader, candidate ads, specialization), with shared Emails 2 and 3.',
+  }),
+  // Campaign 4 "HOLD Company Test" (owner brief 2026-11-27): the HOLD reply-test
+  // cohort. One Email 1 (a conditional opener; nothing verified is claimed) and
+  // Campaign 3 copy v2's Emails 2 and 3. Every send records campaignVersion
+  // hold_company_test_campaign_4 and copy version c4_v1, so its replies are
+  // measured apart from Campaign 3. Live, it follows the shared staffing launch gate.
+  [STAFFING_CAMPAIGN_C4.id]: Object.freeze({
+    id: STAFFING_CAMPAIGN_C4.id, label: STAFFING_CAMPAIGN_C4.name, niche: STAFFING_CAMPAIGN_C4.niche,
+    emailTemplateId: STAFFING_CAMPAIGN_C4.emailTemplateId, family: 'industrial_staffing',
+    copyVersion: 'hold_company_test_c4_e1', followUpCopyVersion: 'hold_company_test_c4_follow_up',
+    personalizationStrategy: STAFFING_CAMPAIGN_C4.personalizationStrategy,
+    subjectStrategy: 'hold_company_test_c4_subject', offerVersion: 'employer_meetings_performance_v1',
+    get status() { return staffingC4Live() ? staffingLaunchState().status : 'draft'; },
+    // The measurement boundary is set by a reviewed change after the first send.
+    activatedAt: null,
+    meaning: 'Campaign 4 HOLD Company Test: the HOLD-gate reply test cohort, sent a conditional Email 1 ("If you place warehouse, production or skilled trades workers, ...") with Campaign 3 copy v2 Emails 2 and 3, including the sample-list offer.',
   }),
   dental_v1_measured: Object.freeze({
     id: 'dental_v1_measured',
@@ -260,6 +278,12 @@ function activeVersionForLead(lead = {}, { evidenceOnly = false } = {}) {
   if (family === CAMPAIGN_FAMILY.STAFFING && isStaffingV4Marked(lead) && version.id !== STAFFING_CAMPAIGN_V4.id) {
     throw new Error(`staffing V4 lead requires campaign version ${STAFFING_CAMPAIGN_V4.id}; it never falls back to V1 or V2`);
   }
+  if (family === CAMPAIGN_FAMILY.STAFFING && isCampaign4Marked(lead) && version.id !== STAFFING_CAMPAIGN_C4.id) {
+    throw new Error(`Campaign 4 lead requires campaign version ${STAFFING_CAMPAIGN_C4.id}; it never falls back to another campaign`);
+  }
+  if (version.id === STAFFING_CAMPAIGN_C4.id && !isCampaign4Marked(lead)) {
+    throw new Error(`campaign version ${STAFFING_CAMPAIGN_C4.id} needs a Campaign 4 lead`);
+  }
   return version;
 }
 
@@ -305,6 +329,22 @@ function coldSendAttribution(lead = {}, step = 1, sendMeta = {}, { evidenceOnly 
       subjectStrategy: initial ? version.subjectStrategy : 'thread_follow_up_v1',
       personalizationStrategy: version.personalizationStrategy,
       personalizationLevel: null, personalizationAngle: variant, copyVariant: variant,
+      offerVersion: version.offerVersion,
+    };
+  }
+  if (version.id === STAFFING_CAMPAIGN_C4.id) {
+    // The sealed profile's copy version; an unreadable profile cannot be attributed (or sent).
+    const read = readC4Profile(lead, { campaignId: STAFFING_CAMPAIGN_C4.id });
+    if (!read.ok) throw new Error('Campaign 4 send has no sealed profile');
+    const staffingCopyVersion = sendMeta.staffingCopyVersion || read.copyVersion;
+    if (staffingCopyVersion !== read.copyVersion) throw new Error('Campaign 4 send copy version differs from its sealed profile');
+    return {
+      campaignVersion: version.id, campaignFamily: version.family, sequenceId: `${version.family}_cold`,
+      sequenceStep: Number(step), staffingCopyVersion,
+      copyVersion: initial ? `${version.copyVersion}_${staffingCopyVersion}` : `${version.followUpCopyVersion}_${staffingCopyVersion}`,
+      subjectStrategy: initial ? version.subjectStrategy : 'thread_follow_up_v1',
+      personalizationStrategy: version.personalizationStrategy,
+      personalizationLevel: null, personalizationAngle: 'C4_CONDITIONAL_OPENER', copyVariant: 'C4_CONDITIONAL_OPENER',
       offerVersion: version.offerVersion,
     };
   }

@@ -151,8 +151,9 @@ async function stage2TimelineProbe({ leadId, sourceLeadId, email, authoritative,
   }
 }
 const { simulateRouting } = require('./integrations/gmail-routing-simulation');
-const { isStaffingV4Marked, STAFFING_CAMPAIGN_V4 } = require('./integrations/staffing-campaign');
+const { isStaffingV4Marked, STAFFING_CAMPAIGN_V4, isCampaign4Marked, STAFFING_CAMPAIGN_C4 } = require('./integrations/staffing-campaign');
 const { importCampaign3Leads } = require('./integrations/staffing-campaign-3-import');
+const { importCampaign4Leads } = require('./integrations/campaign-4-import');
 const { convertCampaign3Leads } = require('./integrations/staffing-campaign-3-convert');
 const { staffingReviewStatus, isStaffingV2Marked, STAFFING_CAMPAIGN_V2,
   staffingV2CampaignNotesRefusal, STAFFING_V2_PROFILE_READ_ONLY } = require('./integrations/staffing-campaign');
@@ -2774,6 +2775,40 @@ app.post('/api/staffing/campaign-3/leads/import', requireAuth, async (req, res) 
   }
 });
 
+// Campaign 4 "HOLD Company Test" (integrations/campaign-4-import.js): new
+// Import-stage leads with a sealed Campaign 4 profile. Refuses any address
+// already in the database and any company that already has a ScaleLab lead
+// (Campaign 3 or earlier). Dry run unless dry_run is false. Never queues.
+app.post('/api/staffing/campaign-4/leads/import', requireAuth, async (req, res) => {
+  const body = req.body || {};
+  const dryRun = body.dry_run !== false;
+  try {
+    const result = await withAuth(() => importCampaign4Leads({
+      payload: body, dryRun,
+      readCorpus: readClientImportCorpus,
+      appendLeads: async leads => {
+        await sheets().spreadsheets.values.append({
+          spreadsheetId: SPREADSHEET_ID, range: CE_COL_RANGE, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+          requestBody: { values: leads.map(lead => CE_COLUMNS.map(col => String(lead[col] ?? ''))) },
+        });
+        ceRowMap.clear();
+      },
+      mirrorLeads: async leads => {
+        if (outreachStateMode() !== 'off') mirrorOutreachLeadsInBackground(leads);
+        return { scheduled: outreachStateMode() !== 'off', leads: leads.length };
+      },
+      newId: () => Date.now().toString(36) + crypto.randomBytes(6).toString('hex'),
+    }));
+    res.json(result);
+  } catch (e) {
+    if (e.isAuthError) return res.status(401).json({ error: 'unauthenticated' });
+    if (e.code === 'invalid_payload') return res.status(422).json({ error: e.message, code: e.code });
+    if (e.code === 'corpus_unavailable') return res.status(503).json({ error: e.message, code: e.code });
+    console.error('[Campaign 4 Import]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Industrial Campaign 3 conversion (integrations/staffing-campaign-3-convert.js).
 // A never-contacted V1 / Campaign 2 Import-stage lead is refused by the import
 // because its own row already exists; conversion seals the V4 profile onto that
@@ -2874,6 +2909,11 @@ app.post('/api/coldemail/import', requireAuth, async (req, res) => {
   if (isStaffingV4Marked({ campaign: String(campaign).trim(), campaign_notes })
     || String(campaign).trim() === STAFFING_CAMPAIGN_V4.emailTemplateId) {
     return res.status(422).json({ error: 'Industrial Campaign 3 leads use POST /api/staffing/campaign-3/leads/import', code: 'use_campaign_3_import' });
+  }
+  // Campaign 4 (HOLD Company Test) enters only through its own import, with its sealed profile.
+  if (isCampaign4Marked({ campaign: String(campaign).trim(), campaign_notes })
+    || String(campaign).trim() === STAFFING_CAMPAIGN_C4.emailTemplateId) {
+    return res.status(422).json({ error: 'HOLD Company Test leads use POST /api/staffing/campaign-4/leads/import', code: 'use_campaign_4_import' });
   }
   const leadNiche = normalizeNiche(lead_niche);
   if (!leadNiche) return res.status(422).json({ error: 'Lead niche is required' });
@@ -6466,6 +6506,10 @@ app.post('/api/coldemail', requireAuth, async (req, res) => {
     || String(lead.campaign || '').trim() === STAFFING_CAMPAIGN_V4.emailTemplateId) {
     return res.status(422).json({ error: 'Industrial Campaign 3 leads use POST /api/staffing/campaign-3/leads/import', code: 'use_campaign_3_import' });
   }
+  if (isCampaign4Marked({ ...lead, campaign: String(lead.campaign || '').trim() })
+    || String(lead.campaign || '').trim() === STAFFING_CAMPAIGN_C4.emailTemplateId) {
+    return res.status(422).json({ error: 'HOLD Company Test leads use POST /api/staffing/campaign-4/leads/import', code: 'use_campaign_4_import' });
+  }
   // Same choke point as the CSV import: validate format and reject junk,
   // then dedupe against the sheet — this path previously had neither, so a
   // manual add could create a second sendable row for an existing address.
@@ -7879,11 +7923,29 @@ function plainTextOf(payload) {
   for (const part of payload.parts || []) { const text = plainTextOf(part); if (text) return text; }
   return '';
 }
+// Campaign labels for reply-screen rows: one canonical single-row read per
+// pending reply (the pending list is short; at most REPLY_CAMPAIGN_LOOKUPS are
+// read). Display only: a failed read leaves the label blank, never blocks.
+const REPLY_CAMPAIGN_LOOKUPS = 50;
+async function replyCampaignLabels(leadIds) {
+  const ids = [...new Set(leadIds.map(id => String(id || '').trim()).filter(Boolean))].slice(0, REPLY_CAMPAIGN_LOOKUPS);
+  const pairs = await Promise.all(ids.map(async id => {
+    try {
+      const canonical = await readCanonicalLead(id);
+      return [id, canonical.ok ? String(canonical.lead?.campaign || '').trim() : ''];
+    } catch (_) { return [id, '']; }
+  }));
+  return new Map(pairs);
+}
 app.get('/api/scalelab/replies', requireAuth, async (_req, res) => {
   if (!fastReplyGuard(res)) return;
   try {
     const rows = await createReplyQueueStore().listPending();
+    // The campaign label (e.g. HOLD Company Test vs Industrial Campaign 3) comes
+    // from the leads, in one batch read; if that read fails the list still loads.
+    const campaigns = await replyCampaignLabels(rows.map(row => row.lead_id));
     res.json({ replies: rows.map(row => ({ id: row.action_id, leadId: row.lead_id, firstName: row.first_name, company: row.company,
+      campaign: campaigns.get(String(row.lead_id)) || '',
       state: row.state, intent: row.intent, receivedAt: row.received_at, mailboxId: row.mailbox_id, hasDraft: Boolean(row.draft_text) })) });
   } catch (error) { operatorFail(res, error, 'scalelab-replies'); }
 });
@@ -7898,7 +7960,8 @@ app.get('/api/scalelab/replies/:id', requireAuth, async (req, res) => {
     const messages = [...(thread.messages || [])].sort((a, b) => Number(a.internalDate || 0) - Number(b.internalDate || 0))
       .map(m => ({ id: m.id, from: header(m, 'from'), date: header(m, 'date'), subject: header(m, 'subject'),
         text: plainTextOf(m.payload).slice(0, MESSAGE_TEXT_LIMIT) || m.snippet || '', isInbound: m.id === row.message_id }));
-    res.json({ id: row.action_id, leadId: row.lead_id, firstName: row.first_name, company: row.company, state: row.state,
+    const campaign = (await replyCampaignLabels([row.lead_id])).get(String(row.lead_id)) || '';
+    res.json({ id: row.action_id, leadId: row.lead_id, firstName: row.first_name, company: row.company, campaign, state: row.state,
       intent: row.intent, receivedAt: row.received_at, status: row.status, mailboxId: row.mailbox_id,
       draft: row.draft_text || '', draftSource: row.draft_source || null, messages });
   } catch (error) { operatorFail(res, error, 'scalelab-replies'); }

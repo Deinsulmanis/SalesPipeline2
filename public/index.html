@@ -8251,6 +8251,7 @@ async function loadRepliesWorkspace() {
   list.className = rows.length ? 'replies-list' : 'workspace-empty';
   list.innerHTML = rows.length ? rows.map(row => `<button type="button" class="replies-row${row.id === activeReplyId ? ' active' : ''}" onclick="openReply('${escAttr(row.id)}')">
       <span class="replies-who">${esc(row.firstName || 'Prospect')}${row.company ? ` · ${esc(row.company)}` : ''}${row.state ? ` · ${esc(row.state)}` : ''}</span>
+      ${row.campaign ? `<span class="replies-meta">${esc(campaignName(row.campaign))}</span>` : ''}
       <span class="replies-meta">${esc(REPLY_INTENT_LABEL[row.intent] || row.intent)} · ${esc(new Date(row.receivedAt).toLocaleString())}${row.hasDraft ? ' · draft ready' : ''}</span></button>`).join('')
     : '<strong>No replies waiting.</strong>New interested, pricing, information and meeting replies appear here.';
   const target = requested && rows.some(row => row.id === requested) ? requested : (activeReplyId || (rows[0] && rows[0].id));
@@ -8270,7 +8271,7 @@ async function openReply(id) {
   } catch (error) { detail.innerHTML = `<div class="workspace-empty"><strong>Thread unavailable.</strong>${esc(error.message)}</div>`; return; }
   const thread = reply.messages.map(m => `<article class="replies-msg${m.isInbound ? ' inbound' : ''}"><header><b>${esc(m.from)}</b><span>${esc(m.date)}</span></header><pre>${esc(m.text)}</pre></article>`).join('');
   detail.innerHTML = `<div class="replies-head"><h3>${esc(reply.firstName || 'Prospect')}${reply.company ? ` at ${esc(reply.company)}` : ''}</h3>
-      <p>${esc(REPLY_INTENT_LABEL[reply.intent] || reply.intent)} · received ${esc(new Date(reply.receivedAt).toLocaleString())}${reply.state ? ` · ${esc(reply.state)}` : ''} · inbox ${esc(reply.mailboxId)}</p></div>
+      <p>${reply.campaign ? `${esc(campaignName(reply.campaign))} · ` : ''}${esc(REPLY_INTENT_LABEL[reply.intent] || reply.intent)} · received ${esc(new Date(reply.receivedAt).toLocaleString())}${reply.state ? ` · ${esc(reply.state)}` : ''} · inbox ${esc(reply.mailboxId)}</p></div>
     <div class="replies-thread">${thread}</div>
     <label class="replies-draft-label" for="replies-draft">Draft${reply.draftSource ? ` (${esc(reply.draftSource)})` : ''}</label>
     <textarea id="replies-draft" rows="10" oninput="onReplyDraftInput()">${esc(reply.draft || '')}</textarea>

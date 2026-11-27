@@ -212,7 +212,9 @@ test('12. sender statistics total correctly and keep scalelabaiteam staffing-onl
 
 test('13. archived records never appear in active funnel stages; Current campaign is the live staffing campaign', () => {
   const { leads, activities } = world();
-  assert.deepEqual(liveCampaignVersions(), [STAFFING_VERSION, 'industrial_staffing_outreach_campaign_2', 'industrial_staffing_campaign_3']);
+  assert.deepEqual(liveCampaignVersions(), [STAFFING_VERSION, 'industrial_staffing_outreach_campaign_2', 'industrial_staffing_campaign_3',
+    // Campaign 4 (HOLD Company Test, 2026-11-27) is the one sanctioned addition.
+    'hold_company_test_campaign_4']);
   const active = buildFunnelAnalytics({ leads: scopeLeads(leads), activities, currentVersion: currentLiveCampaignVersion() }, {});
   assert.equal(active.filters.version, STAFFING_VERSION);
   const ids = Object.values(active.stageLeadIds).flat();

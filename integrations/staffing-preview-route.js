@@ -1,7 +1,7 @@
 'use strict';
 
 const { STAFFING_CAMPAIGN, isStaffingCampaign, staffingReviewStatus, replaceStaffingReviewTag,
-  renderStaffingEmail, validateStaffingEmail, isStaffingV2Marked, isStaffingCampaign2Marked, isStaffingV4Marked } = require('./staffing-campaign');
+  renderStaffingEmail, validateStaffingEmail, isStaffingV2Marked, isStaffingCampaign2Marked, isStaffingV4Marked, isCampaign4Marked } = require('./staffing-campaign');
 const { previewStaffingPersonalization, personalizeStaffingLead, buildStaffingPersonalizationLead,
   emailAdmission } = require('./staffing-personalization');
 const { createProviderClassifier, providerVerdict } = require('./cold-delivery-policy');
@@ -17,6 +17,7 @@ function unsentImportEligible(lead) {
   if (isStaffingV2Marked(lead)) return { ok: false, reason: 'Industrial Staffing V2 leads use their imported roles and market, not V1 personalization' };
   if (isStaffingCampaign2Marked(lead)) return { ok: false, reason: 'Staffing Outreach Campaign 2 leads use their adopted Tier A / Tier B profile, not V1 personalization' };
   if (isStaffingV4Marked(lead)) return { ok: false, reason: 'Industrial Campaign 3 leads use their sealed evidence-selected variant, not V1 personalization' };
+  if (isCampaign4Marked(lead)) return { ok: false, reason: 'HOLD Company Test leads use their sealed Campaign 4 copy, not V1 personalization' };
   if (!isStaffingCampaign(lead)) return { ok: false, reason: 'Exact staffing campaign assignment required' };
   if (String(lead.stage || '') !== 'Import') return { ok: false, reason: `stage ${lead.stage || '(blank)'} is not Import` };
   if (String(lead.emailStatus || '').trim() || Number(lead.emailStep) > 0 || String(lead.lastEmailedAt || '').trim()) {

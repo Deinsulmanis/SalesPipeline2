@@ -168,7 +168,8 @@ test('N/O. routing and the scheduler refuse staffing until explicit activation',
   const inboxes = [{ id: 'primary', email: 'd@x.ca', sendEligible: true, deliveryImplemented: true }];
   assert.equal(validateRoute({ niche: 'industrial_staffing', senderInboxId: 'primary',
     emailTemplateId: STAFFING_CAMPAIGN.emailTemplateId, inboxes }).ok, true);
-  assert.equal(campaignVersionsForRoute({ niche: 'industrial_staffing' }).length, 3);
+  // V1, Campaign 2, Campaign 3 and Campaign 4 (HOLD Company Test).
+  assert.equal(campaignVersionsForRoute({ niche: 'industrial_staffing' }).length, 4);
 });
 
 test('P. with a ready template the same route passes only through the normal gates', () => {

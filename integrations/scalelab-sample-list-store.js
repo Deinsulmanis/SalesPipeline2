@@ -68,13 +68,14 @@ function createSampleListStore({ env = process.env, fetchImpl = global.fetch } =
       const [saved] = await request(EMPLOYERS, 'POST', { on_conflict: 'domain' }, body, 'resolution=ignore-duplicates,return=representation');
       return saved ? toEmployer(saved) : null;
     },
-    // Campaign 3 agencies (queued + in sequence) per agency state. Reads only
-    // emails from outreach_leads and the backfilled agency states.
+    // Campaign 3 and Campaign 4 (HOLD Company Test) agencies (queued + in
+    // sequence) per agency state. Reads only emails from outreach_leads and the
+    // backfilled agency states.
     async agencyDemand() {
       const states = new Map((await pages(AGENCY_STATES, { select: 'domain,state', order: 'domain.asc' }))
         .map(row => [row.domain, row.state]));
       const leads = await pages('outreach_leads', { select: 'email', client_id: 'eq.scalelab',
-        campaign: 'eq.Industrial Campaign 3', stage: 'in.(Queued,Contacted)', order: 'email.asc' });
+        campaign: 'in.("Industrial Campaign 3","HOLD Company Test")', stage: 'in.(Queued,Contacted)', order: 'email.asc' });
       const demand = {};
       for (const lead of leads) {
         const domain = String(lead.email || '').trim().toLowerCase().split('@')[1] || '';

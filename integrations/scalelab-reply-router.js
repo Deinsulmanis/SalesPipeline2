@@ -124,7 +124,8 @@ async function executeScaleLabRoute(candidate, { store, readState, hold, appendC
     company: state.lead.company, occurredAt: candidate.at, subject: 'ScaleLab follow-up task',
     content: '', metadata: JSON.stringify({ clientId: 'scalelab', routingActionId: candidate.id,
       inboundMessageId: candidate.messageId, sourceEventId: candidate.eventId, intent: candidate.verdict.intent,
-      dueAt: initial.dueAt, owner: 'human', autoSendAllowed: false, policyVersion: POLICY_VERSION }) });
+      dueAt: initial.dueAt, owner: 'human', autoSendAllowed: false, policyVersion: POLICY_VERSION,
+      campaign: String(state.lead.campaign || '') }) });
   return store.advance(record, 'complete', { boardId: state.plan.boardId, stage: state.plan.targetStage });
 }
 

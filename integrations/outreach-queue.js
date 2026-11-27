@@ -6,7 +6,7 @@ const { leadHasReply } = require('./reply-analytics');
 const { deriveAutomationOwnership } = require('./automation-ownership');
 const { resolveLeadClient } = require('./clients/ownership');
 const {
-  isStaffingCampaign, staffingReviewStatus, renderStaffingEmail, validateStaffingEmail, staffingV2SendBlock, staffingV4SendBlock,
+  isStaffingCampaign, staffingReviewStatus, renderStaffingEmail, validateStaffingEmail, staffingV2SendBlock, staffingV4SendBlock, campaign4SendBlock,
 } = require('./staffing-campaign');
 const { hasStaffingHoldMarker } = require('./staffing-hold');
 const { isClientTemplateId, renderClientLeadEmail, validateClientLeadEmail } = require('./clients/client-email');
@@ -143,6 +143,9 @@ async function queueSelectedLeads({ ids, senderInboxId, emailTemplateId, campaig
     // are REVIEW READY, so none can be queued by this path today.
     const v4Block = staffingV4SendBlock({ ...lead, emailTemplateId, intendedCampaignVersion: campaignVersionId });
     if (v4Block) return { status: 422, error: `${lead.company || lead.id}: ${v4Block}` };
+    // A Campaign 4 lead is queued only as itself: Campaign 4 identity, sealed SEND_READY profile, Campaign 4 live.
+    const c4Block = campaign4SendBlock({ ...lead, emailTemplateId, intendedCampaignVersion: campaignVersionId });
+    if (c4Block) return { status: 422, error: `${lead.company || lead.id}: ${c4Block}` };
   }
   const patchFor = lead => ({ stage: 'Queued', senderInboxId: senderFor(lead), emailTemplateId, routingRequired: 'true', intendedCampaignVersion: campaignVersionId });
 
