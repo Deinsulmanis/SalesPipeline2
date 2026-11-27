@@ -6,7 +6,7 @@ results never depend on call order and nothing is retyped. Writes <run>/reveal/<
 and prints, per
 batch, the start index into <targets.json> and whether the match ids came back in request order.
 """
-import json, os, sys
+import json, os, re, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from transcripts import calls  # noqa: E402
@@ -33,7 +33,7 @@ def main():
     # the middle of a batch can never shift the rows after it.
     by_id = {}
     for f in sorted(os.listdir(os.path.join(run, "reveal"))):
-        if f.startswith(prefix + "_batch") and f.endswith(".json"):
+        if re.fullmatch(re.escape(prefix) + r"_batch\d+\.json", f):
             for m in json.load(open(os.path.join(run, "reveal", f))).get("matches") or []:
                 by_id[m.get("id")] = m
     lines = []
