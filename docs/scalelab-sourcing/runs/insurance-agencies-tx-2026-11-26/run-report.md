@@ -183,6 +183,23 @@ The V4 master CSV is not on this machine. Production holds every imported contac
 
 323 no-buyer agencies remain without a contact.
 
+## Extra reveal round (owner approved 126 more credits, 2026-11-27)
+
+| Stage | Count |
+|---|---|
+| Picked buyers not yet revealed | 125 targets (Tier 1 95, Tier 2 30). The 126th agency's buyer is the same person already revealed under the agency's other domain |
+| Revealed | 125, all Apollo "verified": 37 catch-all, 88 not |
+| Credits | **125** (each call's receipt; balance 2,166 → 2,291 consumed) |
+| QC KEEP / HOLD | 107 / 18 (email domain differs and unproven 17; email does not match name 3; no MX 1; overlapping) |
+
+**Totals after this round:**
+- 425 Apollo reveals (300 + 125).
+- **363 send-ready** contacts: 250 verified not catch-all, plus 113 catch-all queued last. Tier 1 338, Tier 2 25.
+- 65 contact HOLDs.
+- 5 GetLeads addresses pending the owner's verification, so **at most 368**.
+
+`approved_contacts.csv` now holds 363 rows, with no duplicate emails or domains and no free-mail addresses.
+
 ## Waiting on the owner
 
 - **Upload `batch_upload_domains.txt` (331 domains) at the GetLeads batch link.** It bills at most 331 credits.
