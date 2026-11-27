@@ -22,9 +22,20 @@ def load(name, default):
     return json.load(open(p)) if os.path.exists(p) else default
 
 
-def where(a):
+US = {"Texas": "TX", "California": "CA", "Florida": "FL", "Colorado": "CO", "Oklahoma": "OK", "Louisiana": "LA", "New Mexico": "NM",
+      "Arizona": "AZ", "Georgia": "GA", "Illinois": "IL", "New York": "NY", "Tennessee": "TN", "Arkansas": "AR"}
+
+
+def where(a, contact=None):
+    """Agency city / state: first Texas office address on its own site, else the contact's Apollo location."""
     cities = a.get("tx_cities") or []
-    return (cities[0].title() if cities else ""), ("TX" if a.get("tx_office_count") else ",".join(a.get("states") or []) or "TX")
+    if cities:
+        return cities[0].title(), "TX"
+    loc = (contact or {}).get("loc") or ""
+    if loc:
+        city, _, st = loc.rpartition(", ")
+        return city, US.get(st, st)
+    return "", ("TX" if a.get("tx_office_count") else ",".join(a.get("states") or []) or "TX")
 
 
 def main():
@@ -42,7 +53,7 @@ def main():
         w.writerow(cols)
         for c in keep:
             a = by_dom[c["domain"]]
-            city, state = where(a)
+            city, state = where(a, c)
             st = c["status"] + (" (catch-all, queue last)" if "catch_all_queue_last" in c["flags"] else "") + \
                 (" (email domain differs, proven)" if any(f.startswith("email_domain_proven") for f in c["flags"]) else "")
             w.writerow([c["email"], c["first"], c["last"], c["title"], c["tier"], a["company_name"], c["domain"], city, state,
@@ -56,8 +67,8 @@ def main():
         w.writerow(["agency", "domain", "city", "state", "office_count", "tx_offices", "specialties", "wc_focus", "icp_reason", "evidence_url",
                     "contact_status"])
         for a in sorted((x for x in dec if x["decision"] == "PASS"), key=lambda x: x["domain"]):
-            city, state = where(a)
             cs = [c for c in contact_by_dom.get(a["domain"], [])]
+            city, state = where(a, cs[0] if cs else None)
             if any(c["result"] == "KEEP" for c in cs):
                 status = "contact_ready"
             elif any(c["result"] == "VERIFY_PENDING" for c in cs):
