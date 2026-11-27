@@ -167,3 +167,55 @@ spent this time.
 **Verification files:**
 - `to_verify.csv`: all 90 addresses;
 - `to_verify_new.csv`: the 41 added in this round.
+
+## Top-up 3: GetLeads only, no Apollo (owner caps: GetLeads 500, Jev $0.10; 2026-11-27)
+
+**Pool:** 2,938 HOLD agencies, any HOLD reason, readable or not (1,602 readable), all not yet in hold_test.
+- **Excluded:** healthcare-, IT- and office-only (excluded-vertical HOLDs with no industrial wording, or sites
+  dominated by those words), chains and franchises, non-US domains, and anyone ever contacted.
+- **One domain dropped as malformed.**
+
+**Free count** (buyer titles owner / co-owner / founder / president / CEO / managing partner / VP sales or BD / COO,
+email required):
+- About 6,100 matching contacts across the pool, any email status. Title matching is broad ("president" also matches
+  vice presidents), so that total is high.
+- Per-domain counts were not run: they would have needed about 2,900 single-domain calls. The export below charges
+  nothing for domains with no match.
+
+**Export:**
+- Run on the strongest 750 domains (readable, most industrial wording first), with the same filters plus
+  `email_status = VALID`: **1,613 matching** contacts.
+- One export at `max_per_company` 2, capped at 300 rows: **300 rows at 220 agencies, all VALID, 300 credits**
+  (balance 4,752 → 4,452).
+
+**Buyer rule + contact QC, one contact per agency:**
+- **178 verified.** By the owner's rule, VALID export rows count as verified.
+- Rejected: 44 stale organisation (the person now works elsewhere), 11 person mismatch, 4 role mailbox.
+
+**Stop rule reached:** 229 Apollo + 178 GetLeads export = **407 VALID**, which is at least 400. The decision-makers
+batch link was therefore not created.
+
+| Source | Contacts | Status |
+|---|---|---|
+| Apollo reveals | 229 | VALID (Apollo verified, not catch-all) |
+| GetLeads export | 178 | VALID (owner rule) |
+| GetLeads decision makers (batch + lookups) | 90 | VERIFY_PENDING (owner verifies) |
+| **Cohort** | **497 agencies** | **407 VALID** + 90 pending |
+
+**By HOLD reason (cohort):**
+
+| HOLD reason | Contacts |
+|---|---|
+| Industrial line not established | 224 |
+| Placement model unclear | 87 |
+| Both of the above | 58 |
+| Employer-facing staffing not established | 47 |
+| Possibly executive search | 24 |
+| Hands-on placement not shown | 19 |
+| US operations not corroborated | 18 |
+| Other | 20 |
+
+**GetLeads spend for this top-up:** 300 of the 500 cap. After it, the balance moved a further 4,452 → 4,276; those 176
+credits were not used by this run.
+
+**GetLeads spend for the whole test:** 632 (132 batch + 200 lookups + 300 export). **Jev:** $0.
