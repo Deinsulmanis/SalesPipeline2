@@ -55,3 +55,20 @@ All under `runs-private/manual-enrich-428-2026-11-26/`:
 - `out/approved-contacts.csv`;
 - `out/preview/v4-preview.html`;
 - the key files.
+
+## Import and queue, and pool closed (owner go-ahead 2026-11-27)
+
+**Imported:** only the 4 READY contacts: Genesis10, Integrity Trade Services, Select Source International and South 6.
+Select Source's company name was cleaned of trailing characters copied from the site.
+- Dry run: 4 accepted. Live: 4 written, 0 refused. All COPY_C on copy v2, none catch-all.
+- Added to the V4 master (644 → 648) as `IMPORTED_QUEUED_CAMPAIGN_3`.
+
+**Queued:** one lead each to primary, outreachplateau_dave, outreachplateau_merrick and outreachplateau_zoe. Deniels,
+the most loaded inbox, got none.
+- Launch readiness: 4 of 4 Queued, `wouldSendIfSendingEnabled` true.
+- Sender balance: 0 moves, none into held inboxes.
+
+**Everything else from this pool is dropped,** including the 2 copy holds and every held contact.
+
+**The 428-agency pool is marked EXHAUSTED** (`runs-private/manual-enrich-428-2026-11-26/POOL_EXHAUSTED.json`): 4
+imported, 424 with no further work.
