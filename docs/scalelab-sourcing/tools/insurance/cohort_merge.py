@@ -106,6 +106,9 @@ def main():
             continue
         seen_p.add(p["email"].lower())
         pend_final.append(p)
+    for r in final:  # one state format: two-letter code; blank falls back to the cohort's state
+        st = {"texas": "TX", "oregon": "OR"}.get((r.get("state") or "").strip().lower(), (r.get("state") or "").strip())
+        r["state"] = st or r["cohort"].split("_")[-1]
     final.sort(key=lambda r: ("catch-all" in r["email_status"], str(r["tier"]), r["cohort"], r["domain"]))
     with open(os.path.join(out_dir, "approved_contacts_A.csv"), "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=COLS, extrasaction="ignore")

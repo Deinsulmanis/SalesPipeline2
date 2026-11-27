@@ -70,6 +70,9 @@ def main():
             rows.append([existing[d]["first_name"], existing[d]["last_name"], existing[d]["company_name"], d])
             stats["site_named"] += 1
             continue
+        if (t.get("cohort") or "A_TX") != "A_TX":  # TDI is Texas licence data: never name-match agencies in other states
+            stats["no_name_non_texas"] += 1
+            continue
         cands = (by_npn.get(t["tdi_npn"]) if t.get("tdi_npn") else None) or (by_name.get(norm(t.get("agency"))) if norm(t.get("agency")) else None)
         if cands:
             rank, (first, last) = sorted(cands)[0]
