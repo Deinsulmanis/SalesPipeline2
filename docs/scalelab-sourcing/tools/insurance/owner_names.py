@@ -36,7 +36,8 @@ STOP = {"meet", "not", "get", "call", "see", "why", "what", "our", "your", "ente
         "payment", "online", "request", "quote", "started", "site", "careers", "blog", "news", "events", "testimonials",
         "reviews", "faq", "resources", "partners", "carriers", "companies", "locations", "commercial", "lines", "account",
         "accounts", "manager", "producer", "owner", "president", "vice", "chief", "officer", "insured", "insurer", "policies",
-        "trucking", "transportation", "construction", "contractors", "manufacturing", "energy", "oil", "gas", "restaurant"}
+        "trucking", "transportation", "construction", "contractors", "manufacturing", "energy", "oil", "gas", "restaurant",
+        "agricultural", "agriculture", "expertise", "experience", "industry", "industries", "solutions", "consulting"}
 
 
 def clean_name(name):
@@ -79,8 +80,8 @@ def main():
                 best = (tr, name)
         if best:
             found += 1
-            first, _, last = best[1].partition(" ")
-            last = last.split(" ")[-1] if last else ""
+            toks = [t for t in best[1].split() if t.rstrip(".").lower() not in ("jr", "sr", "ii", "iii", "iv")]
+            first, last = toks[0], (toks[-1] if len(toks) > 1 else "")
             rows.append([first, last, t.get("agency") or "", d])
     with open(out_p, "w", newline="") as fh:
         w = csv.writer(fh)
