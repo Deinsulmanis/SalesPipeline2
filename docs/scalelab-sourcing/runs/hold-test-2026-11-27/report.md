@@ -136,3 +136,34 @@ spent this time.
 | No email | 1 |
 
 **Apollo reveal spend for the test:** 376 (250 + 126). 344 credits remain this cycle.
+
+## Top-up: GetLeads decision-maker lookups (owner approved, 250-credit cap, 2026-11-27)
+
+**Lookups:** 301 untried domains, by domain with up to 2 contacts each and a stop at 248 credits.
+- 22 had an Apollo buyer that failed; 279 had no Apollo buyer.
+- All 301 were looked up for **200 credits**. The balance moved 4,952 → 4,752, which matches.
+- 200 contacts returned; 168 domains returned none.
+
+**After QC:**
+- **41 new usable contacts**, VERIFY_PENDING for the owner to verify.
+- Rejected: 15 stale organisation, 5 person mismatch, 2 role mailbox.
+
+| Source | Contacts |
+|---|---|
+| Apollo (verified, not catch-all) | 229 |
+| GetLeads (VERIFY_PENDING; only VALID counts) | 90 |
+| **Cohort total** | **319** (56 states/regions) |
+
+**By HOLD reason:**
+
+| HOLD reason | Contacts |
+|---|---|
+| Industrial line not established | 179 |
+| Placement model unclear | 82 |
+| Both | 58 |
+
+**GetLeads spend for the test:** 332 (132 batch + 200 lookups).
+
+**Verification files:**
+- `to_verify.csv`: all 90 addresses;
+- `to_verify_new.csv`: the 41 added in this round.
