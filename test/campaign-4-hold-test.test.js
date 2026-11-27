@@ -269,34 +269,75 @@ test('C12. Campaign 4 enters only through its own import: the flat import and le
 
 // ── Daily share of the unchanged global cap ─────────────────────────────────
 
-test('C13. the share splits the same 170/day cap: Campaign 4 at most floor(170 x share), every step counted', () => {
-  assert.deepEqual(share.campaign4ShareFromEnv({}), { share: 0.35, source: 'default' });
-  assert.equal(share.campaign4ShareFromEnv({ CAMPAIGN_4_DAILY_SHARE: '0.25' }).share, 0.25);
-  for (const bad of ['abc', '-0.1', '0.9', '35%', '1']) assert.equal(share.campaign4ShareFromEnv({ CAMPAIGN_4_DAILY_SHARE: bad }).share, 0, `${bad} pauses Campaign 4`);
-  assert.equal(share.campaign4DailyBudget(170, 0.35), 59);
-  assert.equal(share.campaign4DailyBudget(170, 0), 0);
-  const day = '2026-11-27';
+test('C13. the split: Campaign 4 = 70, Campaign 3 = the rest of ScaleLab\'s 170; configurable; invalid pauses Campaign 4', () => {
+  assert.deepEqual(share.campaignSplitFromEnv({}, 170), { cap: 170, c3: 100, c4: 70, source: 'default' });
+  assert.deepEqual(share.campaignSplitFromEnv({ CAMPAIGN_4_DAILY_SENDS: '50' }, 170), { cap: 170, c3: 120, c4: 50, source: 'env' });
+  assert.equal(share.campaignSplitFromEnv({ CAMPAIGN_4_DAILY_SENDS: '0' }, 170).c3, 170);
+  for (const bad of ['abc', '-1', '7.5', '171', '35%']) {
+    const split = share.campaignSplitFromEnv({ CAMPAIGN_4_DAILY_SENDS: bad }, 170);
+    assert.equal(split.c4, 0, bad);
+    assert.equal(split.c3, 170, `${bad}: Campaign 3 keeps the whole cap`);
+    assert.equal(split.paused, true);
+  }
+  // Sends today per campaign, every step, Vancouver day, deduplicated; managed clients are outside.
   const activities = [
     { eventId: 'e1', eventType: 'initial_email_sent', leadId: 'CE-c4a', sourceLeadId: 'c4a', occurredAt: '2026-11-27T16:00:00.000Z', metadata: '{}' },
-    { eventId: 'e2', eventType: 'follow_up_sent', leadId: 'CE-x', occurredAt: '2026-11-27T16:05:00.000Z', metadata: JSON.stringify({ campaignVersion: 'hold_company_test_campaign_4' }) },
-    { eventId: 'e3', eventType: 'initial_email_sent', leadId: 'CE-c3', occurredAt: '2026-11-27T16:10:00.000Z', metadata: JSON.stringify({ campaignVersion: 'industrial_staffing_campaign_3' }) },
-    { eventId: 'e4', eventType: 'initial_email_sent', leadId: 'CE-c4b', occurredAt: '2026-11-26T16:10:00.000Z', metadata: '{}' },
+    { eventId: 'e2', eventType: 'follow_up_sent', leadId: 'CE-gone', occurredAt: '2026-11-27T16:05:00.000Z', metadata: JSON.stringify({ campaignVersion: 'hold_company_test_campaign_4' }) },
+    { eventId: 'e3', eventType: 'initial_email_sent', leadId: 'CE-c3a', occurredAt: '2026-11-27T16:10:00.000Z', metadata: '{}' },
+    { eventId: 'e4', eventType: 'initial_email_sent', leadId: 'CE-jole', occurredAt: '2026-11-27T16:10:00.000Z', metadata: '{}' },
+    { eventId: 'e5', eventType: 'initial_email_sent', leadId: 'CE-c4a', occurredAt: '2026-11-26T16:10:00.000Z', metadata: '{}' },
     { eventId: 'e1', eventType: 'initial_email_sent', leadId: 'CE-c4a', occurredAt: '2026-11-27T16:00:00.000Z', metadata: '{}' },
   ];
-  assert.equal(share.campaign4SendsToday(activities, day, id => ['c4a', 'c4b'].includes(id)), 2);
-  const throttle = share.createCampaign4Throttle({ sendsToday: 58, budget: 59, isCampaign4: lead => lead.c4 });
-  assert.equal(throttle.reserve({ c4: false }).ok, true, 'Campaign 3 is never limited by the share');
-  assert.equal(throttle.reserve({ c4: true }).ok, true);
-  const refused = throttle.reserve({ c4: true });
-  assert.equal(refused.ok, false);
-  assert.match(refused.reason, /Campaign 4 daily share reached \(59\/59\)/);
+  const known = { c4a: 'c4', c3a: 'c3', jole: null };
+  const bucket = id => (id in known ? known[id] : 'unknown');
+  assert.deepEqual(share.campaignSendsToday(activities, '2026-11-27', bucket), { c3: 1, c4: 2 });
 });
 
-test('C14. Campaign 4 leads are interleaved at the share ratio; the global cap and sender limits are untouched', () => {
+test('C14. unused share rolls over both ways; once Campaign 3 is done Campaign 4 gets all 170; the plan is logged', () => {
+  const split = share.campaignSplitFromEnv({}, 170);
+  const busy = share.planDailySplit(split, { c3: { sent: 0, followUpsDue: 40, queuedEmail1: 200 }, c4: { sent: 0, followUpsDue: 0, queuedEmail1: 383 } });
+  assert.deepEqual(busy.allowance, { c3: 100, c4: 70 });
+  // Campaign 3 has 30 sends due today in all: 70 of its 100 go to Campaign 4.
+  const thin = share.planDailySplit(split, { c3: { sent: 10, followUpsDue: 20, queuedEmail1: 0 }, c4: { sent: 0, followUpsDue: 5, queuedEmail1: 383 } });
+  assert.deepEqual(thin.rollover, { toC3: 0, toC4: 70 });
+  assert.deepEqual(thin.allowance, { c3: 100, c4: 140 });
+  // Campaign 3 finished: Campaign 4 gets the whole cap.
+  const done = share.planDailySplit(split, { c3: { sent: 0, followUpsDue: 0, queuedEmail1: 0 }, c4: { sent: 0, followUpsDue: 30, queuedEmail1: 383 } });
+  assert.equal(done.allowance.c4, 170);
+  // No Campaign 4 leads yet: Campaign 3 keeps all 170, as today.
+  const before = share.planDailySplit(split, { c3: { sent: 0, followUpsDue: 30, queuedEmail1: 269 }, c4: {} });
+  assert.equal(before.allowance.c3, 170);
+  // A paused Campaign 4 receives nothing.
+  const paused = share.planDailySplit(share.campaignSplitFromEnv({ CAMPAIGN_4_DAILY_SENDS: 'x' }, 170), { c3: {}, c4: { queuedEmail1: 383 } });
+  assert.deepEqual(paused.allowance, { c3: 170, c4: 0 });
+  const line = share.splitLogLine(thin, '2026-11-27');
+  assert.match(line, /^\[campaign-split\] day=2026-11-27 scalelabCap=170 base c3=100 c4=70 \(default\)/);
+  assert.match(line, /rollover toC4=70 toC3=0 \| allowance c3=100 c4=140$/);
+});
+
+test('C15a. follow-ups come first inside each campaign: Email 1s leave room for every follow-up still due today', () => {
+  const plan = share.planDailySplit(share.campaignSplitFromEnv({}, 170),
+    { c3: { sent: 95, followUpsDue: 3, queuedEmail1: 50 }, c4: { sent: 68, followUpsDue: 2, queuedEmail1: 50 } });
+  const throttle = share.createCampaignSplitThrottle({ plan, bucketOf: lead => lead.bucket });
+  // Campaign 4: 68 sent, 2 follow-ups due, allowance 70: no Email 1, both follow-ups go.
+  assert.match(throttle.reserve({ bucket: 'c4' }, 1).reason, /reserved for follow-ups due today/);
+  assert.equal(throttle.reserve({ bucket: 'c4' }, 2).ok, true);
+  assert.equal(throttle.reserve({ bucket: 'c4' }, 3).ok, true);
+  assert.match(throttle.reserve({ bucket: 'c4' }, 2).reason, /Campaign 4 daily split reached \(70\/70\)/);
+  // Campaign 3: 95 sent, 3 follow-ups due, allowance 100: two Email 1s fit, a third would eat a follow-up's slot.
+  assert.equal(throttle.reserve({ bucket: 'c3' }, 1).ok, true);
+  assert.equal(throttle.reserve({ bucket: 'c3' }, 1).ok, true);
+  assert.equal(throttle.reserve({ bucket: 'c3' }, 1).ok, false);
+  for (const step of [2, 2, 3]) assert.equal(throttle.reserve({ bucket: 'c3' }, step).ok, true);
+  assert.equal(throttle.reserve({ bucket: 'c3' }, 2).ok, false);
+  // Managed clients are outside the split.
+  assert.equal(throttle.reserve({ bucket: null }, 1).ok, true);
+});
+
+test('C15b. the agent plans once per run from the ledger, reserves before any probe, and the cap is untouched', () => {
   const leads = [...Array.from({ length: 13 }, (_, i) => ({ id: `c3-${i}` })), ...Array.from({ length: 7 }, (_, i) => ({ id: `c4-${i}`, c4: true }))];
   const out = share.interleaveCampaign4Leads(leads, 0.35, lead => lead.c4);
   assert.equal(out.length, 20);
-  assert.deepEqual(new Set(out.map(l => l.id)), new Set(leads.map(l => l.id)));
   const firstTen = out.slice(0, 10).filter(l => l.c4).length;
   assert.ok(firstTen >= 3 && firstTen <= 4, `first 10 hold ${firstTen} Campaign 4 leads`);
   assert.deepEqual(out.filter(l => !l.c4).map(l => l.id), leads.filter(l => !l.c4).map(l => l.id), 'Campaign 3 keeps its order');
@@ -304,9 +345,11 @@ test('C14. Campaign 4 leads are interleaved at the share ratio; the global cap a
   const start = src.indexOf('async function deliverOrdinaryColdStep(');
   const deliver = src.slice(start, src.indexOf('\n}\n', start));
   const at = needle => { const i = deliver.indexOf(needle); assert.ok(i > 0, needle); return i; };
-  for (const later of ['guardProviderSend(', 'recordColdCallActivityStrict(reservation)', 'sendEmail({']) assert.ok(at('campaign4SendSlot(lead)') < at(later), later);
-  assert.match(src, /function campaign4SendSlot\(lead\) \{[\s\S]*?if \(!activeCampaign4Throttle\) return \{ ok: false/, 'fails closed without a throttle');
-  assert.match(src, /budget: campaign4DailyBudget\(DAILY_SEND_LIMIT, CAMPAIGN_4_SHARE\.share\)/, 'the share is of the existing cap');
+  for (const later of ['guardProviderSend(', 'recordColdCallActivityStrict(reservation)', 'sendEmail({']) assert.ok(at('campaignSplitSlot(lead, step)') < at(later), later);
+  assert.match(src, /function campaignSplitSlot\(lead, step\) \{[\s\S]*?if \(!activeCampaignSplit\) return \{ ok: false/, 'fails closed without a plan');
+  assert.match(src, /const scalelabCap = Number\(SENDER_CAPACITY\.clientLimits\?\.\[DEFAULT_CLIENT_ID\]\?\.daily\) \|\| 0;/, 'the split is of ScaleLab\'s own allocation');
+  assert.match(src, /selectFollowUps\(all, ownershipActivities, \{ now: endOfDay, quiet: true \}\)/, 'follow-ups due by the end of today are reserved');
+  assert.match(src, /console\.log\(splitLogLine\(plan, senderDayKey\)\);/, 'the split used is logged');
   assert.match(src, /const DAILY_SEND_LIMIT = SENDER_CAPACITY\.globalDailyLimit;/, 'the global cap is still derived from sender capacity');
 });
 

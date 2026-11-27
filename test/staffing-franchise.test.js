@@ -169,8 +169,8 @@ test('F11. every ordinary cold step takes a franchise slot before any probe or r
   }
   assert.match(src, /function franchiseSendSlot\(lead\) \{[\s\S]*?if \(!activeFranchiseThrottle\) return \{ ok: false/, 'fails closed without a throttle');
   assert.match(src, /activeFranchiseThrottle = createFranchiseDomainThrottle\(\{\s*sendsToday: franchiseDomainSendsToday\(ownershipActivities, senderDayKey/);
-  // Campaign 4's share interleave (2026-11-27) runs first; the franchise interleave still covers every step-1 lead.
-  assert.match(src, /for \(const lead of interleaveFranchiseLeads\(interleaveCampaign4Leads\(newBatch, CAMPAIGN_4_SHARE\.share, isCampaign4Marked\)\)\) \{/);
+  // The Campaign 3 / Campaign 4 split interleave (2026-11-27) runs first; the franchise interleave still covers every step-1 lead.
+  assert.match(src, /for \(const lead of interleaveFranchiseLeads\(interleaveCampaign4Leads\(newBatch, campaign4Email1Fraction\(activeCampaignSplit\.plan\), isCampaign4Marked\)\)\) \{/);
   assert.equal(franchise.FRANCHISE_DOMAIN_DAILY_CAP, 10);
 });
 

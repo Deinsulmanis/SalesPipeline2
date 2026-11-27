@@ -56,25 +56,35 @@ existing lead.
 
 ## Daily split of the unchanged cap
 
-`integrations/campaign-4-share.js` controls the split. `DAILY_SEND_LIMIT` (170) is untouched.
+`integrations/campaign-4-share.js` controls the split (owner decision 2026-11-27). ScaleLab's daily allocation (170)
+and every sender, window and per-run limit are unchanged.
 
-- **Campaign 4:** at most `floor(170 × CAMPAIGN_4_DAILY_SHARE)` successful sends per Vancouver day, every step counted.
-- **The share:**
-  - default 0.35, which gives 59 per day;
-  - allowed range 0 to 0.5;
-  - an invalid value pauses Campaign 4 (fail closed).
-- **Campaign 3 and everything else:** take the rest of the same 170, including any part of Campaign 4's share it does
-  not use.
+- **Base split:** Campaign 4 = `CAMPAIGN_4_DAILY_SENDS` (default 70); Campaign 3 = the rest of the 170 (100).
+  - "Campaign 3" here means every ScaleLab lead that is not Campaign 4, including any earlier ScaleLab lead still in
+    sequence.
+  - Managed clients (Jole) are outside the split and keep their own caps.
+  - An invalid value pauses Campaign 4 and leaves Campaign 3 the whole 170 (fail closed).
+- **Demand:** a campaign's demand today = sends so far + follow-ups due by the end of the Vancouver day + eligible queued
+  Email 1s.
+- **Rollover, Campaign 3 to Campaign 4:** when Campaign 3's demand is under its 100, the difference goes to Campaign 4.
+  Once Campaign 3 is done, Campaign 4 gets all 170.
+- **Rollover, Campaign 4 to Campaign 3:** unused Campaign 4 share goes to Campaign 3. So before any Campaign 4 lead
+  exists, Campaign 3 keeps the 170 it has today.
+- **Follow-ups first:** inside each campaign, a new Email 1 is sent only if it leaves room for every follow-up of that
+  campaign still due today. Within each run, sender lanes already send follow-ups before new Email 1s.
 - **How it runs:**
-  - the throttle takes a slot before any Gmail probe or reservation, like the franchise throttle;
-  - new Email 1 candidates are interleaved at the share ratio.
-- **Log line:** each run prints `[campaign-4-share] share=… budget=… usedToday=…`.
+  - the plan is made once per run from the ledger;
+  - each attempt takes a slot before any Gmail probe or reservation;
+  - Email 1 candidates of the two campaigns are interleaved in proportion to each one's remaining Email 1 room.
+- **Log line:** every run prints the split used, for example
+  `[campaign-split] day=2026-12-01 scalelabCap=170 base c3=100 c4=70 (default) | sentToday c3=… c4=… | dueToday c3
+  followUps=… email1=… c4 followUps=… email1=… | rollover toC4=… toC3=… | allowance c3=… c4=…`.
 
 ## Tests
 
-- `test/campaign-4-hold-test.test.js`: 16 tests.
+- `test/campaign-4-hold-test.test.js`: 18 tests.
 - Registry pins in 9 existing tests were widened to name exactly the one new campaign.
-- Full suite: 3,740 tests, 3,729 pass, 4 fail. The 4 failures are the known date and timezone tests, and they fail
+- Full suite: 3,742 tests, 3,731 pass, 4 fail. The 4 failures are the known date and timezone tests, and they fail
   identically on the base `efe13ab`.
 - Campaign 3 renders are byte-identical on base and branch: 65 renders across every variant, copy version, step and
   out-of-office form, plus 3 V1 renders.
@@ -85,11 +95,12 @@ existing lead.
    - re-read the live SHA and the production branch head;
    - stay out of the 07:00–11:30 PT send window, and confirm no pass is running;
    - fast-forward or rebase as needed, and re-run the suite.
-2. No Railway variable is required. `CAMPAIGN_4_DAILY_SHARE` is optional: absent means 0.35. Set it only if the owner
-   picks another share.
+2. No Railway variable is required. `CAMPAIGN_4_DAILY_SENDS` is optional: absent means 70 (Campaign 3 gets 100). Set
+   it only if the owner picks another split.
 3. **After the deploy, check:**
    - boot logs;
-   - the `[campaign-4-share]` line (share 0.35 (default), budget 59);
+   - the `[campaign-split]` line (`scalelabCap=170 base c3=100 c4=70 (default)`; with no Campaign 4 leads yet,
+     `allowance c3=170`);
    - that Campaign 3 sends continue;
    - the send lock;
    - the Gmail observers.

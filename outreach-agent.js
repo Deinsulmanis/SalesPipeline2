@@ -233,16 +233,17 @@ const { findLiveBooking } = require('./integrations/live-booking-gate');
 // out of ordinary cold follow-ups; nothing creates or delivers new ones.
 const { hasUndeliveredDemoPair } = require('./integrations/demo-intent-state');
 const { oldestDueFirst, followUpSuccessTarget } = require('./integrations/scheduler-fairness');
-const { isFollowUpDue, FOLLOW_UP_STEP_COUNT } = require('./integrations/sequence-timing');
+const { isFollowUpDue, FOLLOW_UP_STEP_COUNT, addVancouverDays, vancouverDayStart } = require('./integrations/sequence-timing');
 const { unrecoveredTouchBlock } = require('./integrations/same-touch-recovery');
 const { planOooResume, buildOooResumeEvent, oooResumeCopy } = require('./integrations/ooo-pause');
 const { fairShareQueuedOrder } = require('./integrations/scheduled-slot-allocator');
 const {
   franchiseDomainOfEmail, franchiseDomainSendsToday, createFranchiseDomainThrottle, interleaveFranchiseLeads,
 } = require('./integrations/staffing-franchise');
-// Campaign 4 (HOLD Company Test): its daily share of the same global cap.
+// Campaign 3 / Campaign 4 (HOLD Company Test) daily split of ScaleLab's cap.
 const {
-  campaign4ShareFromEnv, campaign4DailyBudget, campaign4SendsToday, createCampaign4Throttle, interleaveCampaign4Leads,
+  campaignSplitFromEnv, campaignSendsToday, planDailySplit, splitLogLine, createCampaignSplitThrottle,
+  interleaveCampaign4Leads, campaign4Email1Fraction,
 } = require('./integrations/campaign-4-share');
 const { isCampaign4Marked } = require('./integrations/staffing-campaign');
 const {
@@ -1937,18 +1938,24 @@ function franchiseSendSlot(lead) {
   return activeFranchiseThrottle.reserve(lead.email);
 }
 
-// Campaign 4 (HOLD Company Test) takes at most its share of DAILY_SEND_LIMIT
-// (campaign-4-share.js; CAMPAIGN_4_DAILY_SHARE, default 0.35). The run seeds
-// the count from today's successful Campaign 4 sends in the ledger; each
-// attempt takes a slot synchronously, before any Gmail probe or reservation,
-// like the franchise throttle above. With no throttle initialized a Campaign 4
-// lead is refused (fail closed). The total cap and every other lead are unchanged.
-let activeCampaign4Throttle = null;
-const CAMPAIGN_4_SHARE = campaign4ShareFromEnv();
-function campaign4SendSlot(lead) {
-  if (!isCampaign4Marked(lead)) return { ok: true };
-  if (!activeCampaign4Throttle) return { ok: false, reason: 'Campaign 4 daily share throttle unavailable' };
-  return activeCampaign4Throttle.reserve(lead);
+// Campaign 3 / Campaign 4 daily split (campaign-4-share.js): ScaleLab's daily
+// allocation (170) is divided, Campaign 4 = CAMPAIGN_4_DAILY_SENDS (default 70)
+// and Campaign 3 (every other ScaleLab lead) = the rest, with unused share
+// rolling over and follow-ups due today reserved ahead of new Email 1s. The
+// plan is made once per run from the ledger, after follow-ups and the queue are
+// known; each attempt takes a slot synchronously, before any Gmail probe or
+// reservation, like the franchise throttle above. With no plan a ScaleLab
+// attempt is refused (fail closed). Managed clients are outside the split.
+let activeCampaignSplit = null;
+function campaignSplitBucket(lead) {
+  const owner = resolveLeadClient(lead);
+  if (owner.ok && owner.clientId !== DEFAULT_CLIENT_ID) return null;
+  return isCampaign4Marked(lead) ? 'c4' : 'c3';
+}
+function campaignSplitSlot(lead, step) {
+  if (!campaignSplitBucket(lead)) return { ok: true };
+  if (!activeCampaignSplit) return { ok: false, reason: 'Campaign 3 / Campaign 4 daily split unavailable' };
+  return activeCampaignSplit.reserve(lead, step);
 }
 
 async function deliverOrdinaryColdStep({
@@ -1966,8 +1973,8 @@ async function deliverOrdinaryColdStep({
   if (!window.allowed) return { delivered: false, reason: window.reason };
   const franchiseSlot = franchiseSendSlot(lead);
   if (!franchiseSlot.ok) return { delivered: false, reason: franchiseSlot.reason };
-  const campaign4Slot = campaign4SendSlot(lead);
-  if (!campaign4Slot.ok) return { delivered: false, reason: campaign4Slot.reason };
+  const splitSlot = campaignSplitSlot(lead, step);
+  if (!splitSlot.ok) return { delivered: false, reason: splitSlot.reason };
   // A proven, unrecovered delivery failure of an earlier touch blocks every
   // later one at send time too, not only in selection (same-touch-recovery.js).
   const failedTouch = unrecoveredTouchBlock(lead, activitiesForCycle || [], step);
@@ -4950,8 +4957,7 @@ function routedLeadCanUseCurrentSender(lead) {
 // currentStep 1 → send step 2, currentStep 2 → send step 3. WHEN is decided
 // only by isFollowUpDue (integrations/sequence-timing.js): Touch 2 at Touch 1
 // + 3 days, Touch 3 at MAX(Touch 1 + 7 days, Touch 2 + 3 days).
-function selectFollowUps(leads, activities = []) {
-  const now = Date.now();
+function selectFollowUps(leads, activities = [], { now = Date.now(), quiet = false } = {}) {
   const meetingHeld = new Map();
   const due = leads.filter(l => {
     if (l.emailStatus !== 'emailed') return false;
@@ -4983,7 +4989,7 @@ function selectFollowUps(leads, activities = []) {
     // a next step the ledger already shows delivered are all "not due".
     return isFollowUpDue(l, now, { activities });
   });
-  for (const [client, count] of meetingHeld) {
+  if (!quiet) for (const [client, count] of meetingHeld) {
     console.log(`[client-hold] ${count} ${client} follow-up(s) held: a meeting is booked, or the meeting ledger is unreadable`);
   }
   return oldestDueFirst(due, activities);
@@ -5622,14 +5628,6 @@ async function runInner() {
   activeFranchiseThrottle = createFranchiseDomainThrottle({
     sendsToday: franchiseDomainSendsToday(ownershipActivities, senderDayKey, id => emailByLeadId.get(id) || ''),
   });
-  const campaign4LeadIds = new Set(all.filter(lead => isCampaign4Marked(lead)).map(lead => String(lead.id)));
-  activeCampaign4Throttle = createCampaign4Throttle({
-    budget: campaign4DailyBudget(DAILY_SEND_LIMIT, CAMPAIGN_4_SHARE.share),
-    sendsToday: campaign4SendsToday(ownershipActivities, senderDayKey, id => campaign4LeadIds.has(id)),
-    isCampaign4: lead => isCampaign4Marked(lead),
-  });
-  console.log(`[campaign-4-share] share=${CAMPAIGN_4_SHARE.share} (${CAMPAIGN_4_SHARE.source}) `
-    + `budget=${activeCampaign4Throttle.budget} usedToday=${activeCampaign4Throttle.used()}${CAMPAIGN_4_SHARE.reason ? ` (${CAMPAIGN_4_SHARE.reason})` : ''}`);
   todaySent = Math.max(todaySent, successfulSendCountToday(ownershipActivities, senderDayKey));
   dailyRemaining = Math.max(0, DAILY_SEND_LIMIT - todaySent);
   const quotaState = { globalCount: todaySent };
@@ -5833,6 +5831,24 @@ async function runInner() {
     senderId => sendingWindowRemainingBySender(windowQuota).get(senderId) || 0);
   const followBatch = followUps;
   const totalCandidates = newBatch.length + followBatch.length;
+  // Campaign 3 / Campaign 4 split for today: sends so far, follow-ups due by the
+  // end of the Vancouver day, eligible queued Email 1s, per campaign.
+  {
+    const scalelabCap = Number(SENDER_CAPACITY.clientLimits?.[DEFAULT_CLIENT_ID]?.daily) || 0;
+    const split = campaignSplitFromEnv(process.env, scalelabCap);
+    const leadsById = new Map(all.map(lead => [String(lead.id), lead]));
+    const sent = campaignSendsToday(ownershipActivities, senderDayKey,
+      id => (leadsById.has(id) ? campaignSplitBucket(leadsById.get(id)) : 'unknown'));
+    const endOfDay = addVancouverDays(vancouverDayStart(senderDayKey), 1) - 1;
+    const dueToday = selectFollowUps(all, ownershipActivities, { now: endOfDay, quiet: true });
+    const count = (list, bucket) => list.filter(lead => campaignSplitBucket(lead) === bucket).length;
+    const plan = planDailySplit(split, {
+      c3: { sent: sent.c3, followUpsDue: count(dueToday, 'c3'), queuedEmail1: count(newBatch, 'c3') },
+      c4: { sent: sent.c4, followUpsDue: count(dueToday, 'c4'), queuedEmail1: count(newBatch, 'c4') },
+    });
+    activeCampaignSplit = createCampaignSplitThrottle({ plan, bucketOf: campaignSplitBucket });
+    console.log(splitLogLine(plan, senderDayKey));
+  }
 
   if (totalCandidates === 0) {
     console.log(`Nothing to send. Queue a lead (stage="${QUEUE_STAGE}") or wait for follow-up timers.`);
@@ -6164,9 +6180,10 @@ async function runInner() {
 
   const newBatchBySender = new Map(GMAIL_SENDERS.map(sender => [sender.id, []]));
   // Franchise leads are spread through each lane, not sent as one block (owner 2026-11-25).
-  // Campaign 4 leads are placed at their daily share ratio (ordering only), so
-  // Campaign 3's larger queue cannot take every slot before them.
-  for (const lead of interleaveFranchiseLeads(interleaveCampaign4Leads(newBatch, CAMPAIGN_4_SHARE.share, isCampaign4Marked))) {
+  // Campaign 4 Email 1s are placed in proportion to the Email 1 room each
+  // campaign has left today (ordering only), so Campaign 3's larger queue
+  // cannot take every slot before them.
+  for (const lead of interleaveFranchiseLeads(interleaveCampaign4Leads(newBatch, campaign4Email1Fraction(activeCampaignSplit.plan), isCampaign4Marked))) {
     let choice;
     try { choice = chooseSender({ lead, activities: ownershipActivities,
       senders: GMAIL_SENDERS, sendsToday: sendsBySender,
