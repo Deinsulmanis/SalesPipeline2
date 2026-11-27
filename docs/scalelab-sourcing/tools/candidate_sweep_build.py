@@ -72,7 +72,12 @@ def hq(domain):
     return "", ""
 
 
+FR_OVERRIDE = J("franchise_override.json", {})  # reviewer corrections of brand-rule false positives, {domain: flag}
+
+
 def franchise_flag(name, domain):
+    if domain in FR_OVERRIDE:
+        return FR_OVERRIDE[domain]
     cls, brand = fr.classify_company(name, domain)
     return f"{brand} ({cls.lower()})" if cls and brand else "no"
 
@@ -136,7 +141,7 @@ top = lambda stage: collections.Counter(re.sub(r"\d+", "N", h[4].split(":")[0])[
 stats = {"net_new": len(comps), "jobs_pass": len(jobs_pass), "pass": len(rows),
          "holds_by_stage": dict(collections.Counter((h[2], h[3]) for h in holds).most_common()),
          "top_reasons": {s: top(s) for s in ("discovery", "job_rule", "icp_gate", "crawl")},
-         "hq_found": sum(1 for x in rows if x["hq_state"]), "franchise_pass": sum(1 for x in rows if x["franchise_flag"] != "no")}
+         "hq_found": sum(1 for x in rows if x["hq_state"]), "franchise_pass": sum(1 for x in rows if not x["franchise_flag"].startswith("no"))}
 stats = {k: (v if not isinstance(v, dict) else {str(a): b for a, b in v.items()}) for k, v in stats.items()}
 json.dump(stats, open(os.path.join(RUN, "sweep_stats.json"), "w"), indent=1, default=str)
 print(json.dumps(stats, indent=1, default=str))
