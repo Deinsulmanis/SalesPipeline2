@@ -168,7 +168,7 @@ MEGA_BROKERS = ["marsh", "aon", "gallagher", "brown & brown", "brown and brown",
                 "edgewood partners", "bolton", "cbiz", "relation insurance", "newfront", "foundation risk partners",
                 "inszone", "hilb", "leavitt", "propel insurance", "ima financial", "holmes murphy", "cottingham"]
 NOT_RETAIL = re.compile(r"(?i)\b(wholesale|wholesaler|mga|managing general|program administrator|carrier|underwrit\w* company|"
-                        r"premium finance|claims adjust\w*|adjusters?|tpa|third party administrator|reinsurance)\b")
+                        r"premium finance|claims adjust\w*|adjusters?|tpa|third party administrator|reinsurance|peo|professional employer)\b")
 
 # Trucking proper inside trucking_logistics (excludes marine, rail, aviation): NCCI trucking / freight-handling /
 # drivers codes. Used for the statewide trucking sample list.

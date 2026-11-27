@@ -26,7 +26,21 @@ import ins_config as C  # noqa: E402
 RUN = sys.argv[1]
 # State whose presence the gate checks (key stays "texas_presence" for cache compatibility). INS_STATE=Oregon for Oregon.
 STATE = os.environ.get("INS_STATE") or "Texas"
-STATE_ABBR = {"Texas": "TX", "Oregon": "OR"}[STATE]  # office-address fields keep their tx_* names for compatibility
+ABBR = {"Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR", "California": "CA", "Colorado": "CO", "Connecticut": "CT",
+        "Delaware": "DE", "Florida": "FL", "Georgia": "GA", "Hawaii": "HI", "Idaho": "ID", "Illinois": "IL", "Indiana": "IN", "Iowa": "IA",
+        "Kansas": "KS", "Kentucky": "KY", "Louisiana": "LA", "Maine": "ME", "Maryland": "MD", "Massachusetts": "MA", "Michigan": "MI",
+        "Minnesota": "MN", "Mississippi": "MS", "Missouri": "MO", "Montana": "MT", "Nebraska": "NE", "Nevada": "NV", "New Hampshire": "NH",
+        "New Jersey": "NJ", "New Mexico": "NM", "New York": "NY", "North Carolina": "NC", "North Dakota": "ND", "Ohio": "OH", "Oklahoma": "OK",
+        "Oregon": "OR", "Pennsylvania": "PA", "Rhode Island": "RI", "South Carolina": "SC", "South Dakota": "SD", "Tennessee": "TN",
+        "Texas": "TX", "Utah": "UT", "Vermont": "VT", "Virginia": "VA", "Washington": "WA", "West Virginia": "WV", "Wisconsin": "WI", "Wyoming": "WY"}
+STATE_ABBR = ABBR[STATE]  # office-address fields keep their tx_* names for compatibility
+# Cohort B (INS_COHORT=B): each company carries its own "state"; industry focus ranks instead of filtering (owner brief
+# 2026-11-27), so a commercial agency with no named industry focus passes as COMMERCIAL_AGENCY; two extra questions.
+COHORT = os.environ.get("INS_COHORT") or "A"
+
+
+def state_of(c):
+    return c.get("state") or STATE
 T = {"identity": 0.7, "identity_conflict": 0.5, "type": 0.7, "commercial": 0.7, "texas": 0.7, "big": 0.5, "reject": 0.8, "focus": 0.6}
 INS = re.compile(r"(?i)\b(commercial (insurance|lines|auto|property|package)|business insurance|workers'? ?comp\w*|general liability|"
                  r"surety|bonds?|contractors?|construction|manufactur\w*|trucking|transportation|fleet|warehouse|oil (and|&) gas|energy|"
@@ -55,6 +69,7 @@ def merge_pw():
 
 
 def evidence(c):
+    abbr = ABBR[state_of(c)]
     path = os.path.join(RUN, "sitecache", c["domain"] + ".json")
     rec = json.load(open(path)) if os.path.exists(path) else {"pages": [], "error": "not fetched"}
     pages = [p for p in rec.get("pages", []) if p.get("text")]
@@ -72,7 +87,7 @@ def evidence(c):
     for p in pages:
         for m in ADDR.finditer(p["text"]):
             offices.setdefault((m.group(1).strip().lower(), m.group(2)), (m.group(1).strip(), m.group(2), m.group(3)))
-    tx = [o for o in offices.values() if o[1] == STATE_ABBR]
+    tx = [o for o in offices.values() if o[1] == abbr]
     best = next((z["url"] for z in ex if COMMERCIAL.search(z["text"])), ex[0]["url"] if ex else (titles[0]["url"] if titles else None))
     return {"chars": total, "accessible": total >= 800, "error": rec.get("error"), "pages": titles, "excerpts": ex[:45],
             "office_count": len(offices), "tx_office_count": len(tx), "tx_cities": sorted({o[0] for o in tx})[:6],
@@ -101,6 +116,19 @@ QUESTIONS = {
     "texas_presence": {"type": "noul", "instructions": f"Do the excerpts show the agency has an office in {STATE} or serves {STATE} clients ({STATE} city or address, 'licensed in {STATE}', or similar)?"},
     "large_national_broker": {"type": "noul", "instructions": "Is this a very large national or international brokerage, or a local office of one (or of a private-equity agency platform with many acquired agencies), rather than an independent locally owned agency?"},
 }
+B_QUESTIONS = {
+    "focus_warehousing": {"type": "noul", "instructions": "Does the agency show a focus on or programme for warehousing, distribution or logistics facilities?"},
+    "wc_expertise": {"type": "noul", "instructions": "Does the agency show workers' compensation expertise beyond simply offering it, such as experience mods, class codes, safety programs, loss control or return-to-work help?"},
+}
+
+
+def questions_for(c):
+    st = state_of(c)
+    q = dict(QUESTIONS)
+    q["texas_presence"] = {"type": "noul", "instructions": f"Do the excerpts show the agency has an office in {st} or serves {st} clients ({st} city or address, 'licensed in {st}', or similar)?"}
+    if COHORT == "B":
+        q.update(B_QUESTIONS)
+    return q
 
 
 def state_for(c, ev):
@@ -123,7 +151,10 @@ def decide(c, ev, res):
          "commercial": a["commercial_lines"]["choice"], "commercial_p": round(max(a["commercial_lines"]["probabilities"].values()), 3),
          "wc": round(p(a, "writes_workers_comp"), 3), "construction": round(p(a, "focus_construction"), 3),
          "manufacturing": round(p(a, "focus_manufacturing"), 3), "trucking": round(p(a, "focus_trucking"), 3), "oil_gas": round(p(a, "focus_oil_gas"), 3) if "focus_oil_gas" in a else None,
-         "texas": round(p(a, "texas_presence"), 3), "big": round(p(a, "large_national_broker"), 3)}
+         "texas": round(p(a, "texas_presence"), 3), "big": round(p(a, "large_national_broker"), 3),
+         "warehousing": round(p(a, "focus_warehousing"), 3) if "focus_warehousing" in a else None,
+         "wc_expertise": round(p(a, "wc_expertise"), 3) if "wc_expertise" in a else None}
+    STATE = state_of(c)
     if j["identity"] < T["identity_conflict"]:
         return "HOLD", "UNVERIFIED", f"identity conflict (p={j['identity']})", j
     if j["identity"] >= T["identity"] and j["type_p"] >= T["reject"]:
@@ -147,9 +178,11 @@ def decide(c, ev, res):
     if j["big"] >= T["big"]:
         why.append(f"possible platform / large broker office (p={j['big']})")
     if not why:
-        focus = max(j["wc"], j["construction"], j["manufacturing"], j["trucking"], j.get("oil_gas") or 0)
+        focus = max(j["wc"], j["construction"], j["manufacturing"], j["trucking"], j.get("oil_gas") or 0, j.get("warehousing") or 0)
         if focus >= T["focus"]:
             return "PASS", "VERIFIED_COMMERCIAL_AGENCY", f"independent {STATE} agency with core commercial lines and WC / industry focus", j
+        if COHORT == "B":
+            return "PASS", "COMMERCIAL_AGENCY", f"independent {STATE} agency with core commercial lines (no industry focus named; ranks lower)", j
         return "HOLD", "NO_INDUSTRY_FOCUS", f"commercial agency but no WC or construction / manufacturing / trucking / oil and gas focus shown (max p={focus})", j
     return "HOLD", "UNVERIFIED", "; ".join(why), j
 
@@ -185,7 +218,7 @@ def main():
             print("BUDGET STOP before", c["domain"], flush=True)
             return
         try:
-            res = jevlib.ask(state_for(c, ev), QUESTIONS)
+            res = jevlib.ask(state_for(c, ev), questions_for(c))
         except Exception as e:
             failures.append((c["domain"], str(e)))
             stop.set()
@@ -222,7 +255,12 @@ def main():
                     "jev": j, "jev_model": (res or {}).get("model"), "site_chars": ev["chars"], "decided_by": "Jev answers + code thresholds",
                     "specialties": spec, "wc_focus": (j.get("wc") or 0) >= T["focus"], "office_count": ev.get("office_count", 0),
                     "tx_office_count": ev.get("tx_office_count", 0), "tx_cities": ev.get("tx_cities", []), "states": ev.get("states", []),
-                    "evidence_url": ev.get("evidence_url"), "sources": c.get("groups")})
+                    "evidence_url": ev.get("evidence_url"), "sources": c.get("groups"), "state": state_of(c),
+                    "writes_trucking": "Y" if (j.get("trucking") or 0) >= T["focus"] else "N",
+                    "writes_contractors": "Y" if (j.get("construction") or 0) >= T["focus"] else "N",
+                    "writes_manufacturing": "Y" if (j.get("manufacturing") or 0) >= T["focus"] else "N",
+                    "writes_warehousing": "Y" if (j.get("warehousing") or 0) >= T["focus"] else "N",
+                    "wc_expertise": "Y" if (j.get("wc_expertise") or 0) >= T["focus"] else "N"})
     if only is not None:  # a partial pass never overwrites the full decision file
         json.dump(out, open(os.path.join(RUN, "icp_decisions_partial.json"), "w"), indent=1)
     else:

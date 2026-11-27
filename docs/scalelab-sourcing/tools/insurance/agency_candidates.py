@@ -31,6 +31,8 @@ def clean_domain(d):
 
 def name_exclusion(name, dom):
     n = (name or "").lower()
+    if any(b in n or b in dom for b in ("goosehead", "brightway")):
+        return "HOLD/FRANCHISE", "franchise agency network (owner rule: HOLD)"
     if any(b in n or b.replace(" ", "").replace("-", "") in dom for b in C.CAPTIVE_BRANDS):
         return "REJECT/CAPTIVE", "captive or single-carrier brand in the name or domain"
     if any(re.search(r"\b" + re.escape(b) + r"\b", n) or b.replace(" ", "").replace("&", "") == dom.split(".")[0] for b in C.MEGA_BROKERS):
@@ -60,8 +62,10 @@ def main():
             if not dom:
                 no_dom.add(p[2] or p[1])
                 continue
-            r = rows.setdefault(dom, {"domain": dom, "company_name": p[1], "source_id": p[2], "groups": set()})
+            r = rows.setdefault(dom, {"domain": dom, "company_name": p[1], "source_id": p[2], "groups": set(), "state": None})
             r["groups"].add(p[3])
+            if len(p) >= 6 and p[5] and not r["state"]:  # Cohort B lines carry the HQ state (6th field)
+                r["state"] = p[5]
     pilot_dec = {}
     if PILOT:
         for d in json.load(open(os.path.join(PILOT, "icp_decisions.json"))):
@@ -88,7 +92,7 @@ def main():
         comps.append({"domain": dom, "company_name": r["company_name"], "source_id": r["source_id"], "groups": sorted(r["groups"]),
                       "pre_gate": f"{pre}: {why}" if pre else None, "pre_reason": why, "hq_city": None, "hq_country": "United States",
                       "industry": "Insurance", "employee_band": "1-50", "source_desc": "",
-                      "pilot_decision": (pilot_dec.get(dom) or {}).get("decision")})
+                      "pilot_decision": (pilot_dec.get(dom) or {}).get("decision"), "state": r.get("state")})
     json.dump(comps, open(os.path.join(RUN, "companies.json"), "w"), indent=1)
     summ = {"raw_lines": raw, "raw_by_group": dict(by_group_raw), "unique_domains": len(rows), "no_domain_records": len(no_dom),
             "by_pre_gate": dict(stats), "unique_by_group": dict(collections.Counter(g for r in rows.values() for g in r["groups"])),
