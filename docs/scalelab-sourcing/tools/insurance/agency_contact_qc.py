@@ -65,6 +65,24 @@ def proven_same_org(edom, d):
     return None
 
 
+NICK = [("william", "bill", "billy", "bille", "will", "willy"), ("robert", "bob", "bobby", "rob", "robby", "bert"),
+        ("richard", "rick", "ricky", "rich", "dick"), ("james", "jim", "jimmy", "jamie"), ("joseph", "joe", "joey"),
+        ("michael", "mike", "mikey"), ("stephen", "steven", "steve"), ("thomas", "tom", "tommy"), ("charles", "chuck", "charlie"),
+        ("edward", "ed", "eddie", "ted"), ("rebecca", "becky", "beckie", "becca"), ("elizabeth", "liz", "beth", "betsy"),
+        ("katherine", "kathy", "kate", "katie"), ("margaret", "maggie", "peggy"), ("anthony", "tony"), ("daniel", "dan", "danny"),
+        ("david", "dave"), ("gregory", "greg"), ("jonathan", "jon"), ("john", "jack", "johnny"), ("kenneth", "ken", "kenny"),
+        ("lawrence", "larry"), ("patrick", "pat"), ("ronald", "ron", "ronnie"), ("samuel", "sam"), ("timothy", "tim"),
+        ("matthew", "matt"), ("andrew", "andy", "drew"), ("benjamin", "ben"), ("nicholas", "nick"), ("douglas", "doug"),
+        ("jennifer", "jenny", "jen"), ("susan", "sue", "suzy"), ("deborah", "debbie", "deb"), ("patricia", "patty", "trish")]
+
+
+def _first_names(f):
+    for group in NICK:
+        if f in group:
+            return set(group)
+    return {f}
+
+
 def name_matches(local, first, last):
     l = re.sub(r"[^a-z]", "", local.lower())
     f = re.sub(r"[^a-z]", "", (first or "").lower())
@@ -73,6 +91,10 @@ def name_matches(local, first, last):
         return False
     if (len(f) >= 3 and f in l) or (len(s) >= 3 and s in l):
         return True
+    if f and (l == f or (len(l) >= 3 and f.startswith(l))):  # short first name ("tj" for T.J.) or nickname prefix ("ron")
+        return True
+    if f and any(len(n) >= 3 and (l == n or l.startswith(n) and s and l[len(n):] in (s[0], s)) for n in _first_names(f)):
+        return True  # standard nickname: "steve" for Stephen, "jamesk" for Jim Killebrew
     if f and s and (l in (f[0] + s, f + s[0], s + f[0], f[0] + s[:6]) or l.startswith(f[0] + s[:4])):
         return True
     if f and len(l) <= 3 and l.startswith(f[0]):  # initials such as "jd"

@@ -54,10 +54,25 @@ def main():
         rows.append(r)
         stats["existing_363"] += 1
     txdec = {x["domain"]: x for x in json.load(open(os.path.join(tx, "icp_decisions.json")))}
-    # 2. held contacts approved by held_review.py
+    # 2. held contacts approved by held_review.py (same firm) or now passing the name rule
     platform = {a[0] for a in args("--platform-hold", 1)}
+    _argv, sys.argv = sys.argv, [sys.argv[0], "."]
+    import agency_contact_qc as Q  # name rule (nicknames / short first names, 2026-11-27)
+    sys.argv = _argv
+    txstat = {(c.get("email") or "").lower(): c for c in json.load(open(os.path.join(tx, "contacts.json")))}
     for (hp,) in args("--held", 1):
         for h in json.load(open(hp)):
+            if h["decision"] == "HOLD" and h["holds"] == ["email_does_not_match_name"] and \
+                    Q.name_matches(h["email"].split("@")[0], h["first"], h["last"]):
+                c = txstat.get(h["email"].lower(), {})
+                if h["domain"] in platform or c.get("status") not in ("verified", "VALID"):
+                    continue
+                st = "verified (catch-all, queue last)" if c.get("catchall") else "verified"
+                a = txdec.get(h["domain"], {})
+                rows.append(dict(email=h["email"], first_name=h["first"], last_name=h["last"], title=h["title"], tier=tier_of(h["title"], ""),
+                                 domain=h["domain"], email_status=st, cohort="A_TX", source="held_review_name_rule", **agency_fields(a)))
+                stats["held_approved_name_rule"] += 1
+                continue
             if h["decision"] != "APPROVE":
                 continue
             if h["domain"] in platform:

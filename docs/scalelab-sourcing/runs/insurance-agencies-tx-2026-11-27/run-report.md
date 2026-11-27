@@ -14,16 +14,30 @@ One contact per agency. Personal emails and phone numbers were never read.
 
 | | Count |
 |---|---|
-| **Cohort A send-ready (approved_contacts_A.csv)** | **538** |
-| of which A_TX | 499 |
-| of which A_OR | 39 |
-| Tier 1 / Tier 2 | 481 / 57 |
-| Catch-all addresses (sorted last, from the 2026-11-26 list) | 113 |
-| Pending verification (to_verify.csv, owner upload) | 36 |
-| Qualifying agencies with no contact yet | 360 (TX 325, OR 35) |
+| **Cohort A send-ready (approved_contacts_A.csv), after the owner's uploads** | **565** |
+| of which A_TX | 523 |
+| of which A_OR | 42 |
+| Tier 1 / Tier 2 | 507 / 58 |
+| Catch-all addresses (sorted last, Apollo-verified catch-alls) | 117 |
+| Pending verification (to_verify.csv, owner upload) | 38 |
+| Qualifying agencies with no contact yet | 330 (TX 298, OR 32) |
 
-No duplicate emails or agencies (538 rows = 538 emails = 538 domains). Production `outreach_leads` (all clients) was
+No duplicate emails or agencies (565 rows = 565 emails = 565 domains). Production `outreach_leads` (all clients) was
 re-checked read-only: the 60 leads added since 2026-11-26 are all staffing agencies, none overlap.
+
+## Update after the owner's uploads (same day)
+- Batch link (114 domains, max 2 per domain): 6 contacts returned, 6 credits billed. After QC: 1 new send-ready
+  (Founder); 1 duplicate of an agency already approved; 3 titles outside the decision-maker rule (agent, bare VP,
+  VP personal lines); 1 duplicate row.
+- owner_names.csv enrichment (202 names): 37 returned a work email (VALID 30, CATCH_ALL 3, UNKNOWN 4). After QC: 9 new
+  send-ready + 1 duplicate of an approved agency, 1 pending (catch-all), 1 held (email on another firm's domain); 25
+  returned titles outside the rule (agent / producer 15, other or junk 10).
+- Name rule corrected: the email-matches-name check now accepts a short first name ("tj" for T.J.), a first-name prefix
+  of 3+ letters ("ron" for Ronald) and standard nicknames ("steve" for Stephen, "jamesk" for Jim Killebrew). Re-run on
+  every pick: +13 held Apollo-verified contacts approved (source `held_review_name_rule`), +1 tx_gap, +3 Oregon.
+  Still held for name mismatch: 9 held contacts and 7 export picks whose emails do not relate to the person's name.
+
+Section numbers below are the pre-upload run; the totals above are current.
 
 ## New qualifying agencies and new send-ready, by source
 
@@ -102,12 +116,11 @@ Balances are shared with other sessions, so spend is taken from each call's own 
 
 | Tool | Cap | Used this task |
 |---|---|---|
-| GetLeads plan credits | 600 | 319 (exports 176 gap + 49 + 6 TDI / recheck + 77 + 11 Oregon); batch link bills on completion, at most 228 |
+| GetLeads plan credits | 600 | 325 (exports 176 gap + 49 + 6 TDI / recheck + 77 + 11 Oregon; batch link 6). The owner's names enrichment upload was billed in the owner's own upload and is not in these receipts |
 | Jev | $0.50 | about $0.06 (TDI gate $0.023, recheck $0.001, Oregon $0.034, earlier passes) |
 | Firecrawl | 10 | 0 |
 | Apollo | free search only | 0 credits (no reveals, no validation) |
 
-Even if the batch link returned the maximum (228), GetLeads would end at 547 of 600.
 
 ## Tooling (tools/insurance/)
 gl_export_pick.py, held_review.py, tdi_resolve.py, owner_names.py, tdi_owner_names.py, cohort_merge.py; agency_gate.py
