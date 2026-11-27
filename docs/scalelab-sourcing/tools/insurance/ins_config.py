@@ -178,16 +178,22 @@ TRUCKING_CODES = {"7219", "7228", "7229", "7230", "7231", "7232", "7360", "7380"
 # Agency decision-maker rule (ScaleLab's buyer at the agency). Deep-dive section 3:
 # Tier 1: agency principal / owner / president / CEO / founder / managing partner / partner (producer-owners).
 # Tier 2: VP or director of commercial lines, commercial lines manager, sales manager / director of business
-#         development / VP sales.
+#         development / VP sales, partner (owner decision 2026-11-27).
+# Tier 3: senior commercial producer, only with no Tier 1/2 and <= 50 staff.
 # Never picked (HOLD): producers or agents without ownership, account managers / executives, CSRs, marketing,
 #         assistants, former / board titles, and anyone at a different company.
 A_TOP = [(0, r"(?<!product )\b(owner|co-?owner|founder|co-?founder|proprietor|agency principal|principal agent)\b"),
          (1, r"(?<!vice )(?<!vice-)\bpresident\b|\bceo\b|chief executive"),
-         (2, r"managing (partner|principal|member|director)|^principal\b|\bprincipal$|^(senior |founding |equity )?partner\b|\bpartner$")]
+         (2, r"managing (partner|principal|member|director)|^principal\b|\bprincipal$")]
 A_GUARD = r"\b(former|retired|past|emeritus|board|assistant|secretary|associate|intern)\b|\bto (the )?(president|ceo|owner|founder|principal)"
 A_T2 = [(0, r"(vp|vice[- ]president|svp|evp|director|head|manager)\b.*\bcommercial (lines|insurance|p ?& ?c|accounts|division)\b|commercial lines (manager|director|leader)"),
         (1, r"(vp|vice[- ]president|director|head)\b.*\b(sales|business development|growth|new business)\b|\bsales manager\b|\bcro\b|chief (revenue|sales|growth) officer"),
-        (2, r"\bcoo\b|chief operating|agency manager|general manager")]
+        (2, r"\bcoo\b|chief operating|agency manager|general manager"),
+        (3, r"^(senior |founding |equity )?partner\b|\bpartner$")]
+# Tier 3 (owner decision 2026-11-27): a senior commercial producer, only when the agency has no Tier 1/2 candidate and
+# <= 50 staff (agency_can_pick).
+A_T3 = [(0, r"(senior|lead|principal|executive)\b.*\b(commercial|business)\b.*\b(producer|agent|account executive)|(senior|lead) (commercial )?(lines )?producer")]
+A_T3_MAX_EMPLOYEES = 50
 A_NEVER = r"assistant|\bcsr\b|customer service|service (rep|representative|specialist)|account (manager|executive|representative|specialist)|marketing|\bproducer\b|\bagent\b|underwriter|claims|accountant|bookkeeper|receptionist|intern|recruit|\bhr\b|human resources|compliance|it manager"
 
 
@@ -201,9 +207,22 @@ def agency_tier(title):
         for rank, pat in A_TOP:
             if re.search(pat, t):
                 return (1, rank)
+    for rank, pat in A_T3:  # senior commercial producer (checked before the NEVER list, which bans plain producers)
+        if re.search(pat, t) and not re.search(A_GUARD, t):
+            return (3, rank)
     if re.search(A_NEVER, t) and not re.search(A_T2[0][1], t):
         return None
     for rank, pat in A_T2:
         if re.search(pat, t):
             return (2, rank)
     return None
+
+
+def agency_can_pick(tier_value, has_tier12, employees):
+    """Tier 1/2 always; Tier 3 only with no Tier 1/2 candidate at the agency and <= 50 staff (unknown size: allowed only
+    when the agency passed the gate as a 2-50 staff discovery record, so callers pass employees=None -> allowed)."""
+    if tier_value in (1, 2):
+        return True
+    if tier_value == 3:
+        return not has_tier12 and (employees is None or employees <= A_T3_MAX_EMPLOYEES)
+    return False

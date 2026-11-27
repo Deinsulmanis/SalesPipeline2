@@ -55,7 +55,9 @@ def main():
     picks, targets, stats = {}, [], collections.Counter()
     for d in sorted(searched):
         ps = people.get(d, [])
-        cands = sorted([p for p in ps if p["tier"] and p["has_email"]], key=lambda p: (p["tier"], p["rank"]))
+        has12 = any(p["tier"] in (1, 2) and p["has_email"] for p in ps)
+        cands = sorted([p for p in ps if p["tier"] and p["has_email"] and C.agency_can_pick(p["tier"], has12, None)],
+                       key=lambda p: (p["tier"], p["rank"]))
         pick = cands[0] if cands else None
         picks[d] = dict(pick=pick, people=len(ps), eligible_without_email=sum(1 for p in ps if p["tier"] and not p["has_email"]))
         if pick:

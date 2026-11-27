@@ -24,6 +24,8 @@ import v4config  # noqa: E402
 import ins_config as C  # noqa: E402
 
 RUN = sys.argv[1]
+# State whose presence the gate checks (key stays "texas_presence" for cache compatibility). INS_STATE=Oregon for Oregon.
+STATE = os.environ.get("INS_STATE") or "Texas"
 T = {"identity": 0.7, "identity_conflict": 0.5, "type": 0.7, "commercial": 0.7, "texas": 0.7, "big": 0.5, "reject": 0.8, "focus": 0.6}
 INS = re.compile(r"(?i)\b(commercial (insurance|lines|auto|property|package)|business insurance|workers'? ?comp\w*|general liability|"
                  r"surety|bonds?|contractors?|construction|manufactur\w*|trucking|transportation|fleet|warehouse|oil (and|&) gas|energy|"
@@ -95,7 +97,7 @@ QUESTIONS = {
     "focus_manufacturing": {"type": "noul", "instructions": "Does the agency show a focus on or programme for manufacturers or industrial businesses?"},
     "focus_trucking": {"type": "noul", "instructions": "Does the agency show a focus on or programme for trucking, transportation, fleets or logistics businesses?"},
     "focus_oil_gas": {"type": "noul", "instructions": "Does the agency show a focus on or programme for oil and gas / oilfield / energy businesses?"},
-    "texas_presence": {"type": "noul", "instructions": "Do the excerpts show the agency has an office in Texas or serves Texas clients (Texas city or address, 'licensed in Texas', or similar)?"},
+    "texas_presence": {"type": "noul", "instructions": f"Do the excerpts show the agency has an office in {STATE} or serves {STATE} clients ({STATE} city or address, 'licensed in {STATE}', or similar)?"},
     "large_national_broker": {"type": "noul", "instructions": "Is this a very large national or international brokerage, or a local office of one (or of a private-equity agency platform with many acquired agencies), rather than an independent locally owned agency?"},
 }
 
@@ -140,7 +142,7 @@ def decide(c, ev, res):
     if not (j["commercial"] == "core" and j["commercial_p"] >= T["commercial"]):
         why.append(f"commercial lines not core ({j['commercial']}, p={j['commercial_p']})")
     if j["texas"] < T["texas"]:
-        why.append(f"Texas presence not shown (p={j['texas']})")
+        why.append(f"{STATE} presence not shown (p={j['texas']})")
     if j["big"] >= T["big"]:
         why.append(f"possible platform / large broker office (p={j['big']})")
     if not why:
