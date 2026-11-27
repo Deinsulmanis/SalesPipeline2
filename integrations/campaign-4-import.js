@@ -16,12 +16,12 @@
  *     Campaign 4, and no company ScaleLab already emailed is mailed again;
  *   - a shared franchise domain (expresspros.com, ...) is refused outright;
  *   - a record whose contact status is not VALID is refused, never written;
- *   - a record whose evidence supports no Campaign 3 copy v2 variant is refused
- *     (`held`), never written: Campaign 4 sends Campaign 3's copy exactly, so
- *     the Email 1 variant is selected HERE, server side, by the same selector
- *     (staffing-v4-copy.js selectV4Variant, copy v2) from the submitted
- *     evidence. The caller cannot name a variant, and nothing unverified is
- *     ever stated: without a verified specialization there is no COPY_C.
+ *   - the Email 1 variant is selected HERE, server side, by Campaign 3's
+ *     selector (staffing-v4-copy.js selectV4Variant, copy v2) from the
+ *     submitted evidence. When it finds no verified Campaign 3 variant, the
+ *     lead gets Campaign 4's non-claiming COPY_G (owner decision 2026-11-27);
+ *     any other selector hold refuses the record. The caller cannot name a
+ *     variant, and nothing unverified is ever stated.
  *
  * `owner_approved_send_ready: true` records the owner's explicit approval and
  * seals review_status SEND_READY; without it the profile is REVIEW_READY and
@@ -158,18 +158,26 @@ function evaluateCampaign4Import(payload, { leads = [], suppressedEmails = new S
       selection = selectV4Variant({ ...given, firstName, company, contactName: text(`${firstName} ${text(row.last_name)}`), emailResolved: true },
         { copyVersion: 'v2' });
     } catch (error) { return refuse('invalid_evidence', error.message); }
-    if (selection.status !== 'SELECTED') return refuse('held', selection.holds.join('; ') || 'no verified variant');
-    const vars = selection.vars || {};
-    const used = selection.evidence || {};
+    const NO_VARIANT = 'no variant has verified evidence and complete variables';
+    let variant = selection.variant;
+    let vars = selection.vars || {};
+    let used = selection.evidence || {};
+    if (selection.status !== 'SELECTED') {
+      // COPY_G only when the sole reason is "no verified variant"; never over another hold.
+      if (selection.holds.length !== 1 || selection.holds[0] !== NO_VARIANT) return refuse('held', selection.holds.join('; ') || 'no verified variant');
+      variant = 'COPY_G';
+      vars = { first_name: firstName, company };
+      used = {};
+    }
     const profile = {
       campaign_id: STAFFING_CAMPAIGN_C4.id, company, company_domain: domain,
       contact_name: text(`${firstName} ${text(row.last_name)}`), email,
       hq_state: state, hold_reason: text(row.hold_reason).slice(0, 300), source: text(row.source).slice(0, 80),
       gate_run: text(row.gate_run).slice(0, 80), contact_status: 'VALID',
       review_status: request.sendReady ? 'SEND_READY' : 'REVIEW_READY', copy_version: 'v2',
-      copy_status: 'SELECTED', copy_variant: selection.variant,
+      copy_status: 'SELECTED', copy_variant: variant,
       ...Object.fromEntries(C4_VARIABLE_NAMES.map(name => [`var_${name}`, typeof vars[name] === 'string' ? vars[name] : ''])),
-      evidence_kind: selection.form ? `${selection.variant}_${selection.form}` : selection.variant,
+      evidence_kind: variant === 'COPY_G' ? 'COPY_G_no_verified_variant' : selection.form ? `${variant}_${selection.form}` : variant,
       evidence_url: text(used.url), evidence_quote: text(used.quote || used.text).slice(0, 600),
       evidence_observed_at: text(used.lastSeen || used.observedAt || used.announcedAt || used.appointedAt),
       selection_considered: (selection.considered || []).map(item => `${item.variant}: ${item.outcome} (${item.detail})`),
@@ -181,7 +189,7 @@ function evaluateCampaign4Import(payload, { leads = [], suppressedEmails = new S
     const sealed = readC4Profile({ campaign_notes: campaignNotes }, { campaignId: STAFFING_CAMPAIGN_C4.id });
     if (!sealed.ok) return refuse('profile_integrity_failed', sealed.detail || sealed.reason);
     accepted.push({
-      index: position, importKey: c4ImportKeyFor(email), variant: selection.variant, form: selection.form || '',
+      index: position, importKey: c4ImportKeyFor(email), variant, form: variant === 'COPY_G' ? '' : (selection.form || ''),
       lead: {
         id: newId ? newId() : '', company, contactName: profile.contact_name, email, city: '',
         tradeType: '', website: `https://${domain}`,

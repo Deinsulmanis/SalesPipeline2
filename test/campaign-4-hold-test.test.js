@@ -68,7 +68,8 @@ const c3Render = (variant, vars, step) => v4copy.renderV4Copy({ variant, step, v
     require('../integrations/staffing-compliance').staffingSenderIdentity(OPTIONS.env, OPTIONS), { includeWebsite: false }) });
 
 test('C1. Campaign 4 renders Campaign 3 copy v2 byte for byte: the selected Email 1 variant and the shared Emails 2 and 3', () => {
-  assert.equal(fs.existsSync(path.join(__dirname, '..', 'integrations', 'campaign-4-copy.js')), false, 'no HOLD-specific copy');
+  // Campaign 4's own copy module holds only COPY_G; Campaign 3 variants render through Campaign 3's renderer.
+  assert.deepEqual(Object.keys(require('../integrations/campaign-4-copy')).sort(), ['C4_VARIANTS', 'COPY_G', 'renderC4Copy']);
   const fallback = c4Lead();
   const posting = c4Lead({ rowExtra: { email: 'lee@postco.com', company_domain: 'postco.com', company_name: 'Postco Staffing', first_name: 'Lee' },
     evidenceExtra: { candidateAds: [{ url: 'https://jobs.example.org/1', quote: 'Assembler (Glens Falls, NY, posted 2026-11-20); Assembler (Glens Falls, NY, posted 2026-11-18)',
@@ -116,17 +117,39 @@ test('C2. every touch carries the footer and Ref: SA-48271 once, no dashes, and 
   assert.match(check(good.body, 'v1'), /locked sentence|mixes|v2 only/);
 });
 
-test('C3. no unverified specialisation: a lead whose evidence supports no variant is refused (held), never sent a fallback', () => {
+test('C3. no verified Campaign 3 variant: Campaign 4\'s non-claiming COPY_G, exactly the owner\'s text; never a fallback claim', (t) => {
+  const prior = process.env.STAFFING_LAUNCH_ACTIVATED_AT;
+  process.env.STAFFING_LAUNCH_ACTIVATED_AT = ACTIVATED.STAFFING_LAUNCH_ACTIVATED_AT;
+  t.after(() => { if (prior === undefined) delete process.env.STAFFING_LAUNCH_ACTIVATED_AT; else process.env.STAFFING_LAUNCH_ACTIVATED_AT = prior; });
   const result = c4import.evaluateCampaign4Import(payload([
-    { row: row({ email: 'a@nospec.com', company_domain: 'nospec.com' }), evidence: evidence({ specialization: null }) },
+    { row: row({ email: 'a@nospec.com', company_domain: 'nospec.com', company_name: 'Nospec Staffing', first_name: 'Ana' }), evidence: evidence({ specialization: null }) },
     { row: row({ email: 'b@noev.com', company_domain: 'noev.com' }) },
     { row: row({ email: 'c@badquote.com', company_domain: 'badquote.com' }), evidence: evidence({ specialization: { phrase: 'light industrial', url: 'not a url', quote: 'x' } }) },
-  ]), {}, { now: NOW, newId });
-  assert.deepEqual(result.refusals.map(r => r.code), ['held', 'invalid_evidence', 'held']);
-  assert.equal(result.accepted.length, 0);
-  // The caller cannot name a variant or a contact status that bypasses selection.
-  const forced = c4import.evaluateCampaign4Import(payload([{ row: row(), evidence: evidence({ specialization: null, variant: 'COPY_C', contactStatus: 'READY_FOR_REVIEW' }) }]), {}, { now: NOW, newId });
-  assert.equal(forced.refusals[0].code, 'held');
+  ], { owner_approved_send_ready: true }), {}, { now: NOW, newId });
+  assert.deepEqual(result.refusals.map(r => r.code), ['invalid_evidence']);
+  assert.deepEqual(result.accepted.map(a => a.variant), ['COPY_G', 'COPY_G']);
+  const lead = queued(result.accepted[0].lead);
+  assert.equal(c4profile.readC4Profile(lead).profile.evidence_kind, 'COPY_G_no_verified_variant');
+  const e1 = renderStaffingEmail(lead, 1, OPTIONS);
+  assert.equal(e1.subject, 'Employer accounts for Nospec Staffing');
+  assert.equal(e1.body.split('\n\nDeins\n\n')[0] + '\n\nDeins', 'Hi Ana,\n\nIs bringing in more employer accounts a focus for Nospec Staffing right now?\n\n'
+    + 'We help staffing agencies win qualified meetings with employers who need workers, and we only get paid for the meetings we book.\n\n'
+    + "Worth seeing how we'd do this for you Ana?\n\nDeins");
+  assert.doesNotMatch(e1.body, /Saw |focuses on|you place|recruiting for/, 'COPY_G claims nothing');
+  assert.equal(e1.copyVariant, 'COPY_G');
+  for (const step of [1, 2, 3]) {
+    const email = renderStaffingEmail(lead, step, OPTIONS);
+    assert.equal(email.body.split('Ref: SA-48271').length, 2);
+    assert.doesNotMatch(email.body.split('\n\nDeins\n\n')[0], DASH);
+    assert.equal(validateStaffingEmail({ subject: email.subject, body: email.body, campaignId: email.campaignId, copyVersion: email.copyVersion }, step), null);
+    if (step > 1) assert.equal(email.body, c3Render('COPY_C', { first_name: 'Ana', company: 'Nospec Staffing', verified_specialization: 'x' }, step).body, `COPY_G Email ${step} is Campaign 3's`);
+  }
+  assert.equal(coldSendAttribution(lead, 1, {}).copyVersion, 'hold_company_test_c4_e1_v2_copy_g');
+  // COPY_G is Campaign 4's only: Campaign 3's variants and selector never include it.
+  assert.equal(v4copy.VARIANTS.includes('COPY_G'), false);
+  // The caller cannot name a variant; a forced variant is ignored and selection decides.
+  const forced = c4import.evaluateCampaign4Import(payload([{ row: row(), evidence: evidence({ specialization: null, variant: 'COPY_C' }) }]), {}, { now: NOW, newId });
+  assert.equal(forced.accepted[0].variant, 'COPY_G');
 });
 
 // ── Profile and identity ────────────────────────────────────────────────────

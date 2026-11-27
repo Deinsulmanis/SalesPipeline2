@@ -26,7 +26,9 @@ const crypto = require('node:crypto');
 // Campaign 4 sends Campaign 3's copy v2 exactly (owner decision 2026-11-27):
 // the same six Email 1 variants, chosen by the same selector, and the same
 // Emails 2 and 3. Only copy v2 exists for Campaign 4; there is no franchise form.
-const { VARIANTS, V1_VARIABLE_NAMES, V2_VARIABLE_NAMES } = require('./staffing-v4-copy');
+const { V1_VARIABLE_NAMES, V2_VARIABLE_NAMES } = require('./staffing-v4-copy');
+// Campaign 3's six variants plus Campaign 4's own non-claiming COPY_G (campaign-4-copy.js).
+const { C4_VARIANTS } = require('./campaign-4-copy');
 const C4_COPY_VERSIONS = Object.freeze(['v2']);
 const C4_VARIABLE_NAMES = Object.freeze([...V1_VARIABLE_NAMES, ...V2_VARIABLE_NAMES]);
 const COPY_STATUSES = Object.freeze(['SELECTED']);
@@ -101,7 +103,7 @@ function readC4Profile(lead = {}, { campaignId } = {}) {
   }
   if (!REVIEW_STATUSES.includes(parsed.review_status)) return failed('profile has an unknown review status');
   if (!C4_COPY_VERSIONS.includes(parsed.copy_version)) return failed('profile has an unknown copy version');
-  if (!COPY_STATUSES.includes(parsed.copy_status) || !VARIANTS.includes(parsed.copy_variant)) return failed('profile has no selected copy variant');
+  if (!COPY_STATUSES.includes(parsed.copy_status) || !C4_VARIANTS.includes(parsed.copy_variant)) return failed('profile has no selected copy variant');
   if (campaignId && parsed.campaign_id !== campaignId) return failed('profile names another campaign');
   const vars = Object.fromEntries(C4_VARIABLE_NAMES.map(name => [name, parsed[`var_${name}`]]).filter(([, value]) => value));
   return { ok: true, profile: parsed, vars, copyVersion: parsed.copy_version, variant: parsed.copy_variant };

@@ -13,15 +13,19 @@ The HOLD reply-test cohort, run as its own campaign, fully separate from Industr
 - **Sealed profile:** its own schema, `hold_company_test_profile_v1` (`integrations/campaign-4-profile.js`), stored in
   `campaign_notes` with a SHA-256 digest. Campaign 3 code never reads it, and Campaign 4 code never reads a Campaign 3
   profile.
-- **Copy:** Campaign 3 copy v2 exactly (owner decision 2026-11-27); there is no Campaign 4-specific copy.
-  - **Email 1:** the variant (COPY_A / D / E / F / B / C, in Campaign 3's precedence) is chosen at import, server side,
-    by Campaign 3's selector (`selectV4Variant`, copy v2) from each record's evidence. The caller cannot name one.
-  - **Emails 2 and 3, locks, sign-off, footer with `Ref: SA-48271`:** Campaign 3's, rendered by Campaign 3's renderer
-    and checked by Campaign 3's validator.
-  - **Copy version:** `v2`, sealed on each lead's profile.
-  - **No verified evidence means no lead:** a record whose evidence supports no variant is refused (`held`) and never
-    written. Without a verified specialization there is no COPY_C fallback ("Saw <company> focuses on <specialization>
-    staffing."), so nothing unverified is ever stated.
+- **Copy:** Campaign 3 copy v2 exactly, plus one Campaign 4-only Email 1 (owner decisions 2026-11-27).
+  - **Campaign 3 variants:** COPY_A / D / E / F / B / C, in Campaign 3's precedence, chosen at import, server side, by
+    Campaign 3's selector (`selectV4Variant`, copy v2) from each record's evidence, and rendered by Campaign 3's
+    renderer. The caller cannot name a variant.
+  - **COPY_G** (`integrations/campaign-4-copy.js`): a non-claiming Email 1, used only when the selector finds no
+    verified Campaign 3 variant:
+    "Is bringing in more employer accounts a focus for {{company}} right now? / We help staffing agencies win qualified
+    meetings with employers who need workers, and we only get paid for the meetings we book. / Worth seeing how we'd
+    do this for you {{first_name}}?"
+    It states nothing about the agency. Campaign 3's variants and selector never include it.
+  - **Shared with Campaign 3:** Emails 2 and 3, the locked phrases, the "Deins" sign-off, the footer with
+    `Ref: SA-48271`, no dashes, and Campaign 3's validator for every touch.
+  - **Copy version:** `v2`, sealed on each lead.
 - **Same as Campaign 3:** cadence (day 0 / +3 / +7, weekdays 07:00–11:30 PT), inboxes, global cap, launch gate, final
   gate, reservations and reply handling. Replies and tasks carry the lead's campaign label.
 
@@ -85,7 +89,7 @@ and every sender, window and per-run limit are unchanged.
 
 ## Tests
 
-- `test/campaign-4-hold-test.test.js`: 18 tests.
+- `test/campaign-4-hold-test.test.js`: 18 tests, including COPY_G's exact text and Campaign 3 byte-for-byte renders.
 - Registry pins in 9 existing tests were widened to name exactly the one new campaign.
 - Full suite: 3,742 tests, 3,731 pass, 4 fail. The 4 failures are the known date and timezone tests, and they fail
   identically on the base `efe13ab`.
@@ -108,9 +112,9 @@ and every sender, window and per-run limit are unchanged.
    - the send lock;
    - the Gmail observers.
 4. **Import:** a dry run first, with the payload `runs-private/hold-test-2026-11-27/campaign4_import_payload.json`
-   (git-ignored, 383 records with Campaign 3-rule evidence). As built today it gives 82 accepted (81 COPY_C fallback,
-   1 COPY_B) and 301 `held`. The evidence rule is still the owner's decision, so this count may change. Expect 0
-   company refusals. The 2026-11-27 read-only check found
+   (git-ignored, 334 records). Expect 334 accepted: COPY_G 323, COPY_C fallback 10, COPY_B 1. Expect 0 company
+   refusals. 49 rows were removed before the build because the gate did not rate the company a staffing agency
+   (`runs-private/hold-test-2026-11-27/campaign4_removed_rows.csv`). The 2026-11-27 read-only check found
    none of its 406 domains in the 5,496 production leads. The suppression list is checked by the endpoint.
 5. **Import, queue and send need explicit owner approval.** The payload has `owner_approved_send_ready: false`, so an
    import as built is REVIEW_READY and cannot be queued.

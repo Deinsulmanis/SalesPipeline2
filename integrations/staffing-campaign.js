@@ -12,10 +12,12 @@ const {
 } = require('./staffing-v4-profile');
 const { renderV4Copy, v4CopyProblem, inferV4CopyVersion, FOLLOW_UPS: V4_FOLLOW_UPS } = require('./staffing-v4-copy');
 const { resolveV4CopyVersion } = require('./staffing-v4-copy-version');
-// Campaign 4 "HOLD Company Test": its own sealed profile schema and copy.
+// Campaign 4 "HOLD Company Test": its own sealed profile schema; Campaign 3's
+// copy plus its own non-claiming COPY_G (campaign-4-copy.js).
 const {
   C4_SCHEMA_MARKER, C4_PROFILE_INTEGRITY_FAILED, hasC4ProfileMarker, readC4Profile,
 } = require('./campaign-4-profile');
+const { renderC4Copy } = require('./campaign-4-copy');
 
 // Approved locked copy. Readiness permits queueing; staffing-launch-gate separately controls delivery.
 const STAFFING_CAMPAIGN = Object.freeze({
@@ -123,8 +125,9 @@ const STAFFING_CAMPAIGN_V4 = Object.freeze({
 // cohort, fully separate from Campaign 3. Same cadence, inboxes, global cap,
 // compliance footer (Ref: SA-48271), reply handling and safety gates; its own
 // id, label, template and sealed profile schema (campaign-4-profile.js). Its
-// copy is Campaign 3's copy v2 exactly: the evidence-selected Email 1 variant
-// and the shared Emails 2 and 3. A lead sends only with a verified SEND_READY
+// copy is Campaign 3's copy v2 exactly (the evidence-selected Email 1 variant
+// and the shared Emails 2 and 3), plus one Campaign 4-only non-claiming Email 1,
+// COPY_G, for leads with no verified Campaign 3 variant. A lead sends only with a verified SEND_READY
 // profile (campaign4SendBlock) behind the shared staffing launch gate, within
 // its daily split of ScaleLab's cap (campaign-4-share.js).
 // STAFFING_C4_LIVE = false stops it.
@@ -627,8 +630,9 @@ function renderStaffingC4(lead, step, options = {}) {
   const read = readC4Profile(lead, { campaignId: STAFFING_CAMPAIGN_C4.id });
   if (!read.ok) throw new Error(`Campaign 4 Email ${step} refused: ${read.reason}${read.detail ? ` (${read.detail})` : ''}`);
   const identity = staffingSenderIdentity(options.env || process.env, options);
-  // Copy version pinned per lead: the one the import sealed (v2).
-  const rendered = renderV4Copy({
+  // Copy version pinned per lead: the one the import sealed (v2). A Campaign 3
+  // variant renders through Campaign 3's renderer; COPY_G through its own.
+  const rendered = renderC4Copy({
     variant: read.variant, step, vars: read.vars, copyVersion: read.copyVersion,
     resumeLine: options.oooResumeContext ? OOO_RESUME_CONTEXT_LINE : '',
     appendFooter: text => appendStaffingComplianceFooter(text, identity, { includeWebsite: false }),
