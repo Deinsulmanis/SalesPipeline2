@@ -26,6 +26,7 @@ import ins_config as C  # noqa: E402
 RUN = sys.argv[1]
 # State whose presence the gate checks (key stays "texas_presence" for cache compatibility). INS_STATE=Oregon for Oregon.
 STATE = os.environ.get("INS_STATE") or "Texas"
+STATE_ABBR = {"Texas": "TX", "Oregon": "OR"}[STATE]  # office-address fields keep their tx_* names for compatibility
 T = {"identity": 0.7, "identity_conflict": 0.5, "type": 0.7, "commercial": 0.7, "texas": 0.7, "big": 0.5, "reject": 0.8, "focus": 0.6}
 INS = re.compile(r"(?i)\b(commercial (insurance|lines|auto|property|package)|business insurance|workers'? ?comp\w*|general liability|"
                  r"surety|bonds?|contractors?|construction|manufactur\w*|trucking|transportation|fleet|warehouse|oil (and|&) gas|energy|"
@@ -71,7 +72,7 @@ def evidence(c):
     for p in pages:
         for m in ADDR.finditer(p["text"]):
             offices.setdefault((m.group(1).strip().lower(), m.group(2)), (m.group(1).strip(), m.group(2), m.group(3)))
-    tx = [o for o in offices.values() if o[1] == "TX"]
+    tx = [o for o in offices.values() if o[1] == STATE_ABBR]
     best = next((z["url"] for z in ex if COMMERCIAL.search(z["text"])), ex[0]["url"] if ex else (titles[0]["url"] if titles else None))
     return {"chars": total, "accessible": total >= 800, "error": rec.get("error"), "pages": titles, "excerpts": ex[:45],
             "office_count": len(offices), "tx_office_count": len(tx), "tx_cities": sorted({o[0] for o in tx})[:6],
@@ -148,7 +149,7 @@ def decide(c, ev, res):
     if not why:
         focus = max(j["wc"], j["construction"], j["manufacturing"], j["trucking"], j.get("oil_gas") or 0)
         if focus >= T["focus"]:
-            return "PASS", "VERIFIED_COMMERCIAL_AGENCY", "independent Texas agency with core commercial lines and WC / industry focus", j
+            return "PASS", "VERIFIED_COMMERCIAL_AGENCY", f"independent {STATE} agency with core commercial lines and WC / industry focus", j
         return "HOLD", "NO_INDUSTRY_FOCUS", f"commercial agency but no WC or construction / manufacturing / trucking / oil and gas focus shown (max p={focus})", j
     return "HOLD", "UNVERIFIED", "; ".join(why), j
 

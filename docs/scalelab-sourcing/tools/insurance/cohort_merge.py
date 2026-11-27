@@ -34,10 +34,10 @@ def tier_of(title, fallback):
     return t[0] if t else fallback
 
 
-def agency_fields(a, contact_city="", contact_state=""):
-    cities = a.get("tx_cities") or []
+def agency_fields(a, contact_city="", contact_state="", cohort="A_TX"):
+    cities = a.get("tx_cities") or []  # offices in the cohort's state (agency_gate keeps the tx_* field name)
     city = cities[0].title() if cities else contact_city
-    state = "TX" if cities else (contact_state or ",".join(a.get("states") or []))
+    state = cohort.split("_")[-1] if cities else (contact_state or ",".join(a.get("states") or []))
     return dict(agency=a.get("company_name"), city=city, state=state, office_count=a.get("office_count", 0),
                 specialties="; ".join(SPEC[s] for s in a.get("specialties", []) if s in SPEC), wc_focus="yes" if a.get("wc_focus") else "no",
                 icp_reason=a.get("reason"), evidence_url=a.get("evidence_url") or "")
@@ -86,7 +86,7 @@ def main():
                 continue
             r = dict(email=p["email"], first_name=p["first"], last_name=p["last"], title=p["title"], tier=p["tier"], domain=p["domain"],
                      email_status="VALID (GetLeads, owner rule: verified)", cohort=cohort, source=source,
-                     **agency_fields(a, p.get("city", ""), p.get("state", "")))
+                     **agency_fields(a, p.get("city", ""), p.get("state", ""), cohort))
             rows.append(r)
             stats[f"new_{source}"] += 1
     # dedupe: one row per email and per agency (first source wins; existing list first)
