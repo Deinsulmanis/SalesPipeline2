@@ -12,7 +12,7 @@ named industry focus ranks last but still passes.
 hook_segment: B_trucking (writes_trucking=Y), else B_CA_contractors (CA and writes_contractors=Y), else B_FL (Florida),
 else B_hiring.
 """
-import collections, csv, json, os, sys
+import collections, csv, json, os, re, sys
 
 PRIORITY = ["California", "Florida", "Georgia", "North Carolina", "Pennsylvania", "Illinois", "Tennessee", "Arizona", "Indiana",
             "Michigan", "Oklahoma", "Louisiana", "South Carolina", "Alabama", "Missouri", "Wisconsin", "Kentucky", "Arkansas",
@@ -27,6 +27,15 @@ SPEC = {"wc": "workers comp", "construction": "construction", "manufacturing": "
 A_COLS = ["email", "first_name", "last_name", "title", "tier", "agency", "domain", "city", "state", "office_count", "specialties", "wc_focus",
           "icp_reason", "evidence_url", "email_status", "cohort", "source"]
 B_EXTRA = ["writes_trucking", "writes_contractors", "writes_manufacturing", "hook_segment"]
+
+
+STREET = re.compile(r"(?i)^.*\b(rd|road|dr|drive|st|street|ave|avenue|blvd|boulevard|way|ln|lane|hwy|highway|pkwy|parkway|ct|court|pl|place)\.?\s+")
+
+
+def clean_city(c):
+    """Office city parsed from an address line: drop a street fragment or a 'Life - ' style prefix before the city."""
+    c = (c or "").split(" - ")[-1].strip()
+    return STREET.sub("", c).strip() or c
 
 
 def hook(x):
@@ -89,7 +98,7 @@ def merge(run, a_csv, picks_files):
             cities = x.get("tx_cities") or []  # offices in the agency's own state (agency_gate keeps the tx_* name)
             b_rows.append(dict(email=p["email"], first_name=p["first"], last_name=p["last"], title=p["title"], tier=p["tier"],
                                agency=x.get("company_name") or p.get("agency"), domain=p["domain"],
-                               city=cities[0].title() if cities else (p.get("city") or ""), state=ABBR.get(x.get("state"), x.get("state") or ""),
+                               city=clean_city(cities[0]).title() if cities else (p.get("city") or ""), state=ABBR.get(x.get("state"), x.get("state") or ""),
                                office_count=x.get("office_count", 0),
                                specialties="; ".join(SPEC[s] for s in x.get("specialties", []) if s in SPEC),
                                wc_focus="yes" if x.get("wc_focus") else "no", icp_reason=x.get("reason"), evidence_url=x.get("evidence_url") or "",
