@@ -96,3 +96,43 @@ not corroborated" or "employer-facing" exclusions.
 
 Verify the 49 GetLeads addresses (`runs-private/hold-test-2026-11-27/run/to_verify.csv`). After that, only VALID
 addresses stay in the cohort.
+
+## Top-up: extra Apollo reveals (owner approved 150 max, 2026-11-27)
+
+**Revealed:** 126 people, under the 150 cap.
+- 114 first picks that were never revealed.
+- 12 alternate buyers at agencies whose first reveal failed QC.
+- Catch-all domains were skipped.
+
+**Spend:** the balance moved 2,040 → 2,166, which is exactly 126. It matches the calls; nothing outside this run was
+spent this time.
+
+**After QC:** 73 more verified, non-catch-all Apollo contacts.
+
+| Source | Contacts |
+|---|---|
+| Apollo (verified, not catch-all) | 229 |
+| GetLeads (VERIFY_PENDING; only VALID counts) | 49 |
+| **Cohort total** | **278** (54 states/regions) |
+
+**By HOLD reason:**
+
+| HOLD reason | Contacts |
+|---|---|
+| Industrial line not established | 160 |
+| Placement model unclear | 68 |
+| Both | 50 |
+
+**Not in the cohort:**
+
+| Reason | Agencies |
+|---|---|
+| Apollo catch-all | 96 |
+| No usable buyer | 59 |
+| Email domain unproven | 19 |
+| Proofpoint gateway + catch-all | 10 |
+| Person mismatch | 7 |
+| Not a buyer | 3 |
+| No email | 1 |
+
+**Apollo reveal spend for the test:** 376 (250 + 126). 344 credits remain this cycle.
