@@ -134,15 +134,18 @@ def main():
         best = {}
         for r in csv.DictReader(open(GLB, newline="", encoding="utf-8-sig")):
             low = {k.strip().lower().replace(" ", "_"): (v or "").strip() for k, v in r.items()}
-            d = (low.get("domain") or low.get("company_domain") or low.get("input_domain") or "").lower().removeprefix("www.")
-            email = low.get("work_email") or low.get("email") or ""
-            title = low.get("title") or low.get("job_title") or ""
+            d = (low.get("source_domain") or low.get("domain") or low.get("company_domain") or low.get("input_domain") or "").lower().removeprefix("www.")
+            email = low.get("work_email") or low.get("email") or ""  # personal_emails is never read
+            title = low.get("current_title") or low.get("title") or low.get("job_title") or ""
+            org_dom = (low.get("org_domain") or low.get("current_company_website") or "").lower()
+            org_dom = org_dom.split("//")[-1].split("/")[0].removeprefix("www.") or None
             first, last = low.get("first_name") or "", low.get("last_name") or ""
             if not d or d not in dec:
                 continue
             t = C.agency_tier(title)
             cand = dict(path="getleads_batch", domain=d, person_id=None, first=first, last=last, title=title, email=email,
-                        status=low.get("email_status") or "", catchall=False, role_start="", loc="", org_domain=None, parser_flags="", tier=t)
+                        status=low.get("email_status") or "", catchall=False, role_start=low.get("role_start_date") or "",
+                        loc=", ".join(v for v in [low.get("contact_city"), low.get("contact_state")] if v), org_domain=org_dom, parser_flags="", tier=t)
             if t and (d not in best or best[d]["tier"] is None or t < best[d]["tier"]):
                 best[d] = cand
         rows += list(best.values())

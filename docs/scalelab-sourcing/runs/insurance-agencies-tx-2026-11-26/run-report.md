@@ -167,6 +167,22 @@ The V4 master CSV is not on this machine. Production holds every imported contac
 - `qualified_agencies.csv`: all 757 PASS agencies, with contact status.
 - `holds.csv`: 2,415 agency HOLDs and 44 contact HOLDs, with reasons. Not sent.
 
+## GetLeads batch result (owner uploaded, 2026-11-27)
+
+| Stage | Count |
+|---|---|
+| Domains processed | 331 |
+| Contacts found | **17** (one per domain), 17 credits (balance 4,969 → 4,952) |
+| No eligible title (producer / agent / account roles) | 9 |
+| Eligible title, QC HOLD | 3 (email does not match name 2; email domain differs 1) |
+| **Eligible title, QC passed → VERIFY_PENDING** (`to_verify.csv`) | **5** |
+
+**Send-ready now:** 256. That is the Apollo-verified contacts: 175 not catch-all, plus 81 catch-all queued last.
+
+**After the owner verifies the 5 GetLeads addresses:** at most 261. The QC re-run is `ingest_ins_verification.py runs-private/insurance-agencies-tx-2026-11-26` after the results are dropped at `verified_results.csv`.
+
+323 no-buyer agencies remain without a contact.
+
 ## Waiting on the owner
 
 - **Upload `batch_upload_domains.txt` (331 domains) at the GetLeads batch link.** It bills at most 331 credits.
