@@ -64,8 +64,8 @@ def main():
                 continue
             r = rows.setdefault(dom, {"domain": dom, "company_name": p[1], "source_id": p[2], "groups": set(), "state": None})
             r["groups"].add(p[3])
-            if len(p) >= 6 and p[5] and not r["state"]:  # Cohort B lines carry the HQ state (6th field)
-                r["state"] = p[5]
+            if len(p) >= 6 and p[-1] and not r["state"]:  # Cohort B lines carry the HQ state (last field)
+                r["state"] = p[-1]
     pilot_dec = {}
     if PILOT:
         for d in json.load(open(os.path.join(PILOT, "icp_decisions.json"))):
