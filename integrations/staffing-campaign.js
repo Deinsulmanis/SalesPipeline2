@@ -16,7 +16,6 @@ const { resolveV4CopyVersion } = require('./staffing-v4-copy-version');
 const {
   C4_SCHEMA_MARKER, C4_PROFILE_INTEGRITY_FAILED, hasC4ProfileMarker, readC4Profile,
 } = require('./campaign-4-profile');
-const { renderC4Copy, c4CopyProblem, C4_COPY_VERSION } = require('./campaign-4-copy');
 
 // Approved locked copy. Readiness permits queueing; staffing-launch-gate separately controls delivery.
 const STAFFING_CAMPAIGN = Object.freeze({
@@ -123,10 +122,11 @@ const STAFFING_CAMPAIGN_V4 = Object.freeze({
 // Campaign 4 "HOLD Company Test" (owner brief 2026-11-27): the HOLD reply-test
 // cohort, fully separate from Campaign 3. Same cadence, inboxes, global cap,
 // compliance footer (Ref: SA-48271), reply handling and safety gates; its own
-// id, label, template, sealed profile schema (campaign-4-profile.js) and copy
-// (campaign-4-copy.js). A lead sends only with a verified SEND_READY profile
-// (campaign4SendBlock) behind the shared staffing launch gate, and at most its
-// configured share of the daily cap (campaign-4-share.js).
+// id, label, template and sealed profile schema (campaign-4-profile.js). Its
+// copy is Campaign 3's copy v2 exactly: the evidence-selected Email 1 variant
+// and the shared Emails 2 and 3. A lead sends only with a verified SEND_READY
+// profile (campaign4SendBlock) behind the shared staffing launch gate, within
+// its daily split of ScaleLab's cap (campaign-4-share.js).
 // STAFFING_C4_LIVE = false stops it.
 const STAFFING_C4_LIVE = true;
 let staffingC4LiveOverride = null;
@@ -145,7 +145,7 @@ const STAFFING_CAMPAIGN_C4 = Object.freeze({
   niche: STAFFING_CAMPAIGN.niche,
   // Contains "staffing" so every staffing gate (isStaffingLead) recognises it.
   emailTemplateId: 'industrial-staffing-hold-company-test-4',
-  personalizationStrategy: 'hold_company_test_conditional_opener_v1',
+  personalizationStrategy: STAFFING_CAMPAIGN_V4.personalizationStrategy, // Campaign 3's evidence-selected variants
   model: null, // locked copy; rendering makes no model call
   owner: 'scalelab',
   get status() { return staffingC4Live() ? 'approved' : 'draft'; },
@@ -617,24 +617,25 @@ function renderStaffingV4(lead, step, options = {}) {
     copyVariant: read.profile.copy_variant, copyVersion: pinned.copyVersion, copyVersionReason: pinned.reason };
 }
 
-// Campaign 4: the sealed profile's first name and company merged into the
-// approved copy, with the same ScaleLab compliance footer as Campaign 3 (no
-// website line; Ref: SA-48271 kept so Gmail filtering and reply routing hold).
+// Campaign 4: Campaign 3's copy v2 exactly (owner decision 2026-11-27). The
+// sealed profile's selected variant and validated variables, merged by the same
+// renderer, with the same ScaleLab compliance footer as Campaign 3 (no website
+// line; Ref: SA-48271 kept so Gmail filtering and reply routing hold).
 function renderStaffingC4(lead, step, options = {}) {
   if (options.landingPageUrl) throw new Error('Campaign 4 copy carries no landing-page URL');
   if (options.oooResumeContext && step === 1) throw new Error('only a staffing follow-up can resume after an out-of-office reply');
   const read = readC4Profile(lead, { campaignId: STAFFING_CAMPAIGN_C4.id });
   if (!read.ok) throw new Error(`Campaign 4 Email ${step} refused: ${read.reason}${read.detail ? ` (${read.detail})` : ''}`);
   const identity = staffingSenderIdentity(options.env || process.env, options);
-  // Copy version pinned per lead: the one the import sealed (c4_v1).
-  const rendered = renderC4Copy({
-    step, vars: read.vars, copyVersion: read.copyVersion,
+  // Copy version pinned per lead: the one the import sealed (v2).
+  const rendered = renderV4Copy({
+    variant: read.variant, step, vars: read.vars, copyVersion: read.copyVersion,
     resumeLine: options.oooResumeContext ? OOO_RESUME_CONTEXT_LINE : '',
     appendFooter: text => appendStaffingComplianceFooter(text, identity, { includeWebsite: false }),
   });
   return { subject: step === 1 ? rendered.subject : null, approvedSubject: rendered.subject,
     body: rendered.body, html: rendered.html, step, campaignId: STAFFING_CAMPAIGN_C4.id,
-    copyVariant: 'C4_CONDITIONAL_OPENER', copyVersion: read.copyVersion, copyVersionReason: 'sealed_on_profile' };
+    copyVariant: read.variant, copyVersion: read.copyVersion, copyVersionReason: 'sealed_on_profile' };
 }
 
 function renderStaffingPreview(lead, result, step = 1, options = {}) {
@@ -770,7 +771,9 @@ function validateStaffingEmail({ subject, body, leadId, campaignId, copyVersion 
   }
   if (campaignId === STAFFING_CAMPAIGN_C4.id) {
     if (/receptionist|missed calls?|dental|patients?|clinic/i.test(text)) return 'staffing body contains non-staffing offer language';
-    return c4CopyProblem({ body: text, subject, copyVersion: copyVersion || C4_COPY_VERSION }, step)
+    // Campaign 3's own validator: Campaign 4 sends Campaign 3's copy v2 only.
+    return v4CopyProblem({ body: text, subject, copyVersion: copyVersion || 'v2' }, step)
+      || (copyVersion && copyVersion !== 'v2' ? 'Campaign 4 sends copy v2 only' : null)
       || staffingComplianceError(text, { leadId });
   }
   // Dental/receptionist language must never reach a staffing prospect.

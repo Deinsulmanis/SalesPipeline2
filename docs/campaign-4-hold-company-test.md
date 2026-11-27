@@ -13,12 +13,15 @@ The HOLD reply-test cohort, run as its own campaign, fully separate from Industr
 - **Sealed profile:** its own schema, `hold_company_test_profile_v1` (`integrations/campaign-4-profile.js`), stored in
   `campaign_notes` with a SHA-256 digest. Campaign 3 code never reads it, and Campaign 4 code never reads a Campaign 3
   profile.
-- **Copy** (`integrations/campaign-4-copy.js`, version `c4_v1`, sealed on each lead):
-  - **Email 1:** opens "If you place warehouse, production or skilled trades workers, ...". It never claims we verified
-    the agency's specialisation.
-  - **Emails 2 and 3:** Campaign 3 copy v2, word for word. Email 2 keeps the sample-list offer.
-  - **Shared with Campaign 3:** the same locked phrases, no dashes, the "Deins" sign-off, and the compliance footer with
-    `Ref: SA-48271`.
+- **Copy:** Campaign 3 copy v2 exactly (owner decision 2026-11-27); there is no Campaign 4-specific copy.
+  - **Email 1:** the variant (COPY_A / D / E / F / B / C, in Campaign 3's precedence) is chosen at import, server side,
+    by Campaign 3's selector (`selectV4Variant`, copy v2) from each record's evidence. The caller cannot name one.
+  - **Emails 2 and 3, locks, sign-off, footer with `Ref: SA-48271`:** Campaign 3's, rendered by Campaign 3's renderer
+    and checked by Campaign 3's validator.
+  - **Copy version:** `v2`, sealed on each lead's profile.
+  - **No verified evidence means no lead:** a record whose evidence supports no variant is refused (`held`) and never
+    written. Without a verified specialization there is no COPY_C fallback ("Saw <company> focuses on <specialization>
+    staffing."), so nothing unverified is ever stated.
 - **Same as Campaign 3:** cadence (day 0 / +3 / +7, weekdays 07:00–11:30 PT), inboxes, global cap, launch gate, final
   gate, reservations and reply handling. Replies and tasks carry the lead's campaign label.
 
@@ -105,7 +108,9 @@ and every sender, window and per-run limit are unchanged.
    - the send lock;
    - the Gmail observers.
 4. **Import:** a dry run first, with the payload `runs-private/hold-test-2026-11-27/campaign4_import_payload.json`
-   (git-ignored, 383 records). Expect about 383 accepted and 0 company refusals. The 2026-11-27 read-only check found
+   (git-ignored, 383 records with Campaign 3-rule evidence). As built today it gives 82 accepted (81 COPY_C fallback,
+   1 COPY_B) and 301 `held`. The evidence rule is still the owner's decision, so this count may change. Expect 0
+   company refusals. The 2026-11-27 read-only check found
    none of its 406 domains in the 5,496 production leads. The suppression list is checked by the endpoint.
 5. **Import, queue and send need explicit owner approval.** The payload has `owner_approved_send_ready: false`, so an
    import as built is REVIEW_READY and cannot be queued.

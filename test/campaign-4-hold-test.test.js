@@ -11,7 +11,6 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const c4copy = require('../integrations/campaign-4-copy');
 const c4profile = require('../integrations/campaign-4-profile');
 const c4import = require('../integrations/campaign-4-import');
 const share = require('../integrations/campaign-4-share');
@@ -40,14 +39,21 @@ const NOW = () => '2026-11-27T18:00:00.000Z';
 const row = (extra = {}) => ({
   email: 'dana@tradecostaff.com', company_domain: 'tradecostaff.com', company_name: 'Tradeco Staffing',
   first_name: 'Dana', last_name: 'Smith', state: 'TX', contact_status: 'VALID',
-  hold_reason: 'industrial line not established on site', source: 'apollo', gate_run: 'w2k', ...extra,
+  hold_reason: 'placement model unclear', source: 'apollo', gate_run: 'w2k', ...extra,
+});
+// Campaign 3 evidence shape (build_evidence.py): a verified specialization from a quoted first-party excerpt.
+const evidence = (extra = {}) => ({
+  asOf: '2026-11-27', employerAds: [], candidateAds: [], salesHiring: [], expansion: [], leadership: [],
+  specialization: { phrase: 'light industrial', url: 'https://tradecostaff.com/employers', quote: 'Light industrial staffing for warehouses and plants.' },
+  specialtyLine: null, ...extra,
 });
 const payload = (records, extra = {}) => ({ schema: c4import.C4_IMPORT_SCHEMA, sourcing_run_id: 'hold-test-2026-11-27', records, ...extra });
 let ids = 0;
 const newId = () => `c4lead${++ids}`;
 
-function c4Lead({ sendReady = true, extra = {}, rowExtra = {} } = {}) {
-  const result = c4import.evaluateCampaign4Import(payload([{ row: row(rowExtra) }], { owner_approved_send_ready: sendReady }), {}, { now: NOW, newId });
+function c4Lead({ sendReady = true, extra = {}, rowExtra = {}, evidenceExtra = {} } = {}) {
+  const result = c4import.evaluateCampaign4Import(payload([{ row: row(rowExtra), evidence: evidence(evidenceExtra) }],
+    { owner_approved_send_ready: sendReady }), {}, { now: NOW, newId });
   assert.equal(result.accepted.length, 1, JSON.stringify(result.refusals));
   return { ...result.accepted[0].lead, ...extra };
 }
@@ -55,50 +61,72 @@ const queued = lead => ({ ...lead, stage: 'Queued', senderInboxId: 'primary' });
 
 test.afterEach(() => setStaffingC4LiveForTests(null));
 
-// ── Copy ────────────────────────────────────────────────────────────────────
+// ── Copy: Campaign 3 copy v2, exactly ───────────────────────────────────────
 
-test('C1. Email 1 is the conditional opener; Emails 2 and 3 are Campaign 3 copy v2, word for word', () => {
-  const e1 = c4copy.C4_EMAIL_1;
-  assert.match(e1.body, /^Hi {{first_name}},\n\nIf you place warehouse, production or skilled trades workers, we can help you win more employer accounts in that market\.\n\n/);
-  assert.equal(e1.body.split(v4copy.V2_EMAIL_1_LOCK).length, 2, 'the v2 Email 1 lock exactly once');
-  assert.equal(e1.subject, 'Employer accounts for {{company}}');
-  assert.doesNotMatch(e1.body, /Saw you place|focuses on|verified|specialty/i, 'never claims a verified specialisation');
-  assert.strictEqual(c4copy.C4_FOLLOW_UPS, v4copy.FOLLOW_UPS_V2);
-  assert.match(c4copy.C4_FOLLOW_UPS[0].body, /Want me to pull a short sample list of employers hiring in your market/);
-  for (const text of [e1.body, e1.subject, ...c4copy.C4_FOLLOW_UPS.map(f => f.body)]) assert.doesNotMatch(text, DASH);
-  assert.equal(c4copy.C4_COPY_VERSION, 'c4_v1');
+const c3Render = (variant, vars, step) => v4copy.renderV4Copy({ variant, step, vars, copyVersion: 'v2',
+  appendFooter: text => require('../integrations/staffing-compliance').appendStaffingComplianceFooter(text,
+    require('../integrations/staffing-compliance').staffingSenderIdentity(OPTIONS.env, OPTIONS), { includeWebsite: false }) });
+
+test('C1. Campaign 4 renders Campaign 3 copy v2 byte for byte: the selected Email 1 variant and the shared Emails 2 and 3', () => {
+  assert.equal(fs.existsSync(path.join(__dirname, '..', 'integrations', 'campaign-4-copy.js')), false, 'no HOLD-specific copy');
+  const fallback = c4Lead();
+  const posting = c4Lead({ rowExtra: { email: 'lee@postco.com', company_domain: 'postco.com', company_name: 'Postco Staffing', first_name: 'Lee' },
+    evidenceExtra: { candidateAds: [{ url: 'https://jobs.example.org/1', quote: 'Assembler (Glens Falls, NY, posted 2026-11-20); Assembler (Glens Falls, NY, posted 2026-11-18)',
+      role: 'assembler', location: 'Glens Falls, NY', current: true, lastSeen: '2026-11-20' }] } });
+  const line = c4Lead({ rowExtra: { email: 'kim@lineco.com', company_domain: 'lineco.com', company_name: 'Lineco', first_name: 'Kim' },
+    evidenceExtra: { specialtyLine: { line: 'welders and electricians for manufacturers', url: 'https://lineco.com', quote: 'We place welders and electricians for manufacturers across Ohio.' } } });
+  const cases = [
+    [fallback, 'COPY_C', { first_name: 'Dana', company: 'Tradeco Staffing', verified_specialization: 'light industrial' }, /^Hi Dana,\n\nSaw Tradeco Staffing focuses on light industrial staffing\.\n\n/],
+    [posting, 'COPY_B', { first_name: 'Lee', company: 'Postco Staffing', verified_role: 'assembler', location: 'Glens Falls, NY' }, /^Hi Lee,\n\nSaw you're recruiting for assembler roles in Glens Falls, NY right now\.\n\n/],
+    [line, 'COPY_C', { first_name: 'Kim', company: 'Lineco', specialty_line: 'welders and electricians for manufacturers' }, /^Hi Kim,\n\nSaw you place welders and electricians for manufacturers\.\n\n/],
+  ];
+  for (const [lead, variant, vars, opener] of cases) {
+    for (const step of [1, 2, 3]) {
+      const email = renderStaffingEmail(lead, step, OPTIONS);
+      const c3 = c3Render(variant, vars, step);
+      assert.equal(email.body, c3.body, `${variant} step ${step} is Campaign 3's text`);
+      assert.equal(email.html, c3.html);
+      assert.equal(email.copyVariant, variant);
+      assert.equal(email.copyVersion, 'v2');
+      if (step === 1) { assert.match(email.body, opener); assert.equal(email.subject, c3.subject); }
+    }
+  }
+  assert.match(renderStaffingEmail(fallback, 2, OPTIONS).body, /Want me to pull a short sample list of employers hiring in your market, so you can see the fit\?/);
+  assert.match(renderStaffingEmail(fallback, 3, OPTIONS).body, /just reply "later"/);
 });
 
-test('C2. every touch renders with the ScaleLab footer and Ref: SA-48271 once, and passes the staffing validator', () => {
+test('C2. every touch carries the footer and Ref: SA-48271 once, no dashes, and passes Campaign 3\'s validator', () => {
   const lead = c4Lead();
   for (const step of [1, 2, 3]) {
     const email = renderStaffingEmail(lead, step, OPTIONS);
     assert.equal(email.campaignId, STAFFING_CAMPAIGN_C4.id);
-    assert.equal(email.copyVersion, 'c4_v1');
     assert.equal(email.body.split('Ref: SA-48271').length, 2, `step ${step} Ref once`);
-    assert.match(email.body, /\n\nDeins\n\n/);
     assert.doesNotMatch(email.body.split('\n\nDeins\n\n')[0], DASH);
     assert.doesNotMatch(email.body, /scalelabai\.ca/, 'no website line, as Campaign 3');
     assert.equal(validateStaffingEmail({ subject: email.subject, body: email.body, campaignId: email.campaignId, copyVersion: email.copyVersion }, step), null);
-    if (step === 1) assert.equal(email.subject, 'Employer accounts for Tradeco Staffing');
-    else assert.equal(email.subject, null, 'follow-ups keep the thread subject');
+    if (step !== 1) assert.equal(email.subject, null, 'follow-ups keep the thread subject');
   }
-  assert.match(renderStaffingEmail(lead, 1, OPTIONS).body, /^Hi Dana,\n\nIf you place warehouse/);
   assert.ok(renderStaffingPreview(lead, null, 2, OPTIONS).previewOnly);
-  // An out-of-office return adds the shared line to a follow-up only.
   assert.match(renderStaffingEmail(lead, 2, { ...OPTIONS, oooResumeContext: true }).body, /^Hi Dana,\n\nCircling back now that you're back in the office\.\n\n/);
   assert.throws(() => renderStaffingEmail(lead, 1, { ...OPTIONS, oooResumeContext: true }));
+  const good = renderStaffingEmail(lead, 1, OPTIONS);
+  const check = (body, copyVersion = 'v2') => validateStaffingEmail({ subject: good.subject, body, campaignId: STAFFING_CAMPAIGN_C4.id, copyVersion }, 1);
+  assert.match(check(good.body.replace('only get paid for the meetings we book', 'get paid')), /locked sentence/);
+  assert.match(check(good.body.replace('turn that exact market', 'turn that — exact market')), /dash/);
+  assert.match(check(good.body, 'v1'), /locked sentence|mixes|v2 only/);
 });
 
-test('C3. the validator refuses Campaign 3 Email 1 copy, claims of verification, dashes and a missing lock', () => {
-  const lead = c4Lead();
-  const good = renderStaffingEmail(lead, 1, OPTIONS);
-  const check = (body, subject = good.subject) => validateStaffingEmail({ subject, body, campaignId: STAFFING_CAMPAIGN_C4.id, copyVersion: 'c4_v1' }, 1);
-  assert.match(check(good.body.replace(c4copy.C4_OPENER, 'Saw you place welders and fitters for manufacturers.')), /opener|claims/);
-  assert.match(check(good.body.replace('win more', 'win more —')), /dash/);
-  assert.match(check(good.body.replace(v4copy.V2_EMAIL_1_LOCK, 'get paid')), /locked sentence/);
-  assert.match(check(good.body, 'employer accounts'), /subject/);
-  assert.match(validateStaffingEmail({ subject: good.subject, body: good.body, campaignId: STAFFING_CAMPAIGN_C4.id, copyVersion: 'v2' }, 1), /copy version/);
+test('C3. no unverified specialisation: a lead whose evidence supports no variant is refused (held), never sent a fallback', () => {
+  const result = c4import.evaluateCampaign4Import(payload([
+    { row: row({ email: 'a@nospec.com', company_domain: 'nospec.com' }), evidence: evidence({ specialization: null }) },
+    { row: row({ email: 'b@noev.com', company_domain: 'noev.com' }) },
+    { row: row({ email: 'c@badquote.com', company_domain: 'badquote.com' }), evidence: evidence({ specialization: { phrase: 'light industrial', url: 'not a url', quote: 'x' } }) },
+  ]), {}, { now: NOW, newId });
+  assert.deepEqual(result.refusals.map(r => r.code), ['held', 'invalid_evidence', 'held']);
+  assert.equal(result.accepted.length, 0);
+  // The caller cannot name a variant or a contact status that bypasses selection.
+  const forced = c4import.evaluateCampaign4Import(payload([{ row: row(), evidence: evidence({ specialization: null, variant: 'COPY_C', contactStatus: 'READY_FOR_REVIEW' }) }]), {}, { now: NOW, newId });
+  assert.equal(forced.refusals[0].code, 'held');
 });
 
 // ── Profile and identity ────────────────────────────────────────────────────
@@ -107,9 +135,11 @@ test('C4. the sealed profile verifies, carries hold_reason and hq_state, and is 
   const lead = c4Lead();
   const read = c4profile.readC4Profile(lead, { campaignId: STAFFING_CAMPAIGN_C4.id });
   assert.equal(read.ok, true);
-  assert.equal(read.profile.hold_reason, 'industrial line not established on site');
+  assert.equal(read.profile.hold_reason, 'placement model unclear');
+  assert.equal(read.profile.copy_variant, 'COPY_C');
+  assert.equal(read.profile.var_verified_specialization, 'light industrial');
   assert.equal(read.profile.hq_state, 'TX');
-  assert.equal(read.profile.copy_version, 'c4_v1');
+  assert.equal(read.profile.copy_version, 'v2');
   assert.equal(read.profile.review_status, 'SEND_READY');
   assert.equal(v4profile.hasStaffingV4ProfileMarker(lead), false);
   assert.equal(v4profile.readStaffingV4Profile(lead).ok, false);
@@ -181,7 +211,7 @@ test('C8. a reply, opt-out, hold, bounce or suppression stops every Campaign 4 t
   assert.equal(evaluateFreshSendSafety(ready, ready, new Set(['dana@tradecostaff.com']), { purpose: 'cold', env: ACTIVATED }).allowed, false);
 });
 
-test('C9. every send is attributed to Campaign 4 and copy version c4_v1, in the registry and on the ledger', (t) => {
+test('C9. every send is attributed to Campaign 4, copy v2 and its variant, in the registry and on the ledger', (t) => {
   const prior = process.env.STAFFING_LAUNCH_ACTIVATED_AT;
   process.env.STAFFING_LAUNCH_ACTIVATED_AT = ACTIVATED.STAFFING_LAUNCH_ACTIVATED_AT;
   t.after(() => { if (prior === undefined) delete process.env.STAFFING_LAUNCH_ACTIVATED_AT; else process.env.STAFFING_LAUNCH_ACTIVATED_AT = prior; });
@@ -192,10 +222,11 @@ test('C9. every send is attributed to Campaign 4 and copy version c4_v1, in the 
   assert.ok(campaignVersionsForRoute({ niche: 'industrial_staffing' }).some(v => v.id === STAFFING_CAMPAIGN_C4.id));
   const first = coldSendAttribution(lead, 1, {});
   assert.equal(first.campaignVersion, 'hold_company_test_campaign_4');
-  assert.equal(first.staffingCopyVersion, 'c4_v1');
-  assert.equal(first.copyVersion, 'hold_company_test_c4_e1_c4_v1');
-  assert.equal(coldSendAttribution(lead, 2, {}).copyVersion, 'hold_company_test_c4_follow_up_c4_v1');
-  assert.throws(() => coldSendAttribution(lead, 1, { staffingCopyVersion: 'v2' }), /differs/);
+  assert.equal(first.staffingCopyVersion, 'v2');
+  assert.equal(first.copyVersion, 'hold_company_test_c4_e1_v2_copy_c');
+  assert.equal(first.copyVariant, 'COPY_C');
+  assert.equal(coldSendAttribution(lead, 2, {}).copyVersion, 'hold_company_test_c4_follow_up_v2');
+  assert.throws(() => coldSendAttribution(lead, 1, { staffingCopyVersion: 'v1' }), /differs/);
   // A lead that only names Campaign 4, with no sealed profile, cannot be attributed (or sent).
   assert.throws(() => coldSendAttribution({ leadNiche: 'industrial_staffing', emailTemplateId: STAFFING_CAMPAIGN_C4.emailTemplateId,
     intendedCampaignVersion: STAFFING_CAMPAIGN_C4.id, campaign: STAFFING_CAMPAIGN_C4.name }, 1, {}), /no sealed profile/);
@@ -214,16 +245,16 @@ test('C10. the Campaign 4 import refuses any address or company already in Campa
     { id: 'v1a', email: 'old@legacystaff.com', website: 'https://legacystaff.com', campaign: 'Industrial Staffing Agency', clientId: 'scalelab', stage: 'Done' },
   ], suppressedEmails: new Set(['blocked@cleanstaff.com']) };
   const records = [
-    { row: row({ email: 'pat@acmestaff.com', company_domain: 'acmestaff.com' }) },
-    { row: row({ email: 'new@acme-twostaff.com', company_domain: 'acme-twostaff.com' }) },
-    { row: row({ email: 'kim@legacystaff.com', company_domain: 'legacystaff.com' }) },
-    { row: row({ email: 'blocked@cleanstaff.com', company_domain: 'cleanstaff.com' }) },
-    { row: row({ email: 'a@twicestaff.com', company_domain: 'twicestaff.com' }) },
-    { row: row({ email: 'b@twicestaff.com', company_domain: 'twicestaff.com' }) },
-    { row: row({ email: 'v@pendingstaff.com', company_domain: 'pendingstaff.com', contact_status: 'VERIFY_PENDING' }) },
-    { row: row({ email: 'owner@expresspros.com', company_domain: 'expresspros.com' }) },
-    { row: row({ email: 'me@gmail.com', company_domain: 'finestaff.com' }) },
-    { row: row({ email: 'ok@freshstaff.com', company_domain: 'freshstaff.com' }) },
+    { row: row({ email: 'pat@acmestaff.com', company_domain: 'acmestaff.com' }), evidence: evidence() },
+    { row: row({ email: 'new@acme-twostaff.com', company_domain: 'acme-twostaff.com' }), evidence: evidence() },
+    { row: row({ email: 'kim@legacystaff.com', company_domain: 'legacystaff.com' }), evidence: evidence() },
+    { row: row({ email: 'blocked@cleanstaff.com', company_domain: 'cleanstaff.com' }), evidence: evidence() },
+    { row: row({ email: 'a@twicestaff.com', company_domain: 'twicestaff.com' }), evidence: evidence() },
+    { row: row({ email: 'b@twicestaff.com', company_domain: 'twicestaff.com' }), evidence: evidence() },
+    { row: row({ email: 'v@pendingstaff.com', company_domain: 'pendingstaff.com', contact_status: 'VERIFY_PENDING' }), evidence: evidence() },
+    { row: row({ email: 'owner@expresspros.com', company_domain: 'expresspros.com' }), evidence: evidence() },
+    { row: row({ email: 'me@gmail.com', company_domain: 'finestaff.com' }), evidence: evidence() },
+    { row: row({ email: 'ok@freshstaff.com', company_domain: 'freshstaff.com' }), evidence: evidence() },
   ];
   const result = c4import.evaluateCampaign4Import(payload(records), corpus, { now: NOW, newId });
   const codes = Object.fromEntries(result.refusals.map(r => [r.index, r.code]));
@@ -238,10 +269,10 @@ test('C10. the Campaign 4 import refuses any address or company already in Campa
   assert.equal(accepted.senderInboxId, '', 'nothing routed or queued');
   assert.equal(c4profile.readC4Profile(accepted).profile.review_status, 'REVIEW_READY', 'not SEND_READY without owner approval');
   // A second import of the same record is a no-op; a second company contact is refused.
-  const again = c4import.evaluateCampaign4Import(payload([{ row: row({ email: 'ok@freshstaff.com', company_domain: 'freshstaff.com' }) },
-    { row: row({ email: 'two@freshstaff.com', company_domain: 'freshstaff.com' }) }].slice(0, 1)), { leads: [accepted] }, { now: NOW, newId });
+  const again = c4import.evaluateCampaign4Import(payload([{ row: row({ email: 'ok@freshstaff.com', company_domain: 'freshstaff.com' }), evidence: evidence() },
+    { row: row({ email: 'two@freshstaff.com', company_domain: 'freshstaff.com' }), evidence: evidence() }].slice(0, 1)), { leads: [accepted] }, { now: NOW, newId });
   assert.equal(again.alreadyImported.length, 1);
-  const second = c4import.evaluateCampaign4Import(payload([{ row: row({ email: 'two@freshstaff.com', company_domain: 'freshstaff.com' }) }]), { leads: [accepted] }, { now: NOW, newId });
+  const second = c4import.evaluateCampaign4Import(payload([{ row: row({ email: 'two@freshstaff.com', company_domain: 'freshstaff.com' }), evidence: evidence() }]), { leads: [accepted] }, { now: NOW, newId });
   assert.equal(second.refusals[0].code, 'company_in_campaign_4');
 });
 

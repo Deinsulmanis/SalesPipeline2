@@ -74,9 +74,9 @@ const CAMPAIGN_VERSIONS = Object.freeze({
     meaning: 'Industrial Campaign 3: one campaign whose Email 1 is chosen from six approved variants by verified evidence (employer ads, internal sales hiring, expansion, new commercial leader, candidate ads, specialization), with shared Emails 2 and 3.',
   }),
   // Campaign 4 "HOLD Company Test" (owner brief 2026-11-27): the HOLD reply-test
-  // cohort. One Email 1 (a conditional opener; nothing verified is claimed) and
-  // Campaign 3 copy v2's Emails 2 and 3. Every send records campaignVersion
-  // hold_company_test_campaign_4 and copy version c4_v1, so its replies are
+  // cohort, sent Campaign 3's copy v2 exactly (same variants, selector, Emails 2
+  // and 3). Every send records campaignVersion hold_company_test_campaign_4 and
+  // its variant (hold_company_test_c4_e1_v2_copy_c, ...), so its replies are
   // measured apart from Campaign 3. Live, it follows the shared staffing launch gate.
   [STAFFING_CAMPAIGN_C4.id]: Object.freeze({
     id: STAFFING_CAMPAIGN_C4.id, label: STAFFING_CAMPAIGN_C4.name, niche: STAFFING_CAMPAIGN_C4.niche,
@@ -87,7 +87,7 @@ const CAMPAIGN_VERSIONS = Object.freeze({
     get status() { return staffingC4Live() ? staffingLaunchState().status : 'draft'; },
     // The measurement boundary is set by a reviewed change after the first send.
     activatedAt: null,
-    meaning: 'Campaign 4 HOLD Company Test: the HOLD-gate reply test cohort, sent a conditional Email 1 ("If you place warehouse, production or skilled trades workers, ...") with Campaign 3 copy v2 Emails 2 and 3, including the sample-list offer.',
+    meaning: 'Campaign 4 HOLD Company Test: the HOLD-gate reply test cohort, sent Campaign 3 copy v2 exactly: the evidence-selected Email 1 variant and the shared Emails 2 and 3, including the sample-list offer.',
   }),
   dental_v1_measured: Object.freeze({
     id: 'dental_v1_measured',
@@ -338,13 +338,14 @@ function coldSendAttribution(lead = {}, step = 1, sendMeta = {}, { evidenceOnly 
     if (!read.ok) throw new Error('Campaign 4 send has no sealed profile');
     const staffingCopyVersion = sendMeta.staffingCopyVersion || read.copyVersion;
     if (staffingCopyVersion !== read.copyVersion) throw new Error('Campaign 4 send copy version differs from its sealed profile');
+    const variant = read.variant;
     return {
       campaignVersion: version.id, campaignFamily: version.family, sequenceId: `${version.family}_cold`,
       sequenceStep: Number(step), staffingCopyVersion,
-      copyVersion: initial ? `${version.copyVersion}_${staffingCopyVersion}` : `${version.followUpCopyVersion}_${staffingCopyVersion}`,
+      copyVersion: initial ? `${version.copyVersion}_${staffingCopyVersion}_${variant.toLowerCase()}` : `${version.followUpCopyVersion}_${staffingCopyVersion}`,
       subjectStrategy: initial ? version.subjectStrategy : 'thread_follow_up_v1',
       personalizationStrategy: version.personalizationStrategy,
-      personalizationLevel: null, personalizationAngle: 'C4_CONDITIONAL_OPENER', copyVariant: 'C4_CONDITIONAL_OPENER',
+      personalizationLevel: null, personalizationAngle: variant, copyVariant: variant,
       offerVersion: version.offerVersion,
     };
   }

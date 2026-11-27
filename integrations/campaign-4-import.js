@@ -15,7 +15,13 @@
  *     earlier Campaign 4 lead. So a company is never in Campaign 3 and
  *     Campaign 4, and no company ScaleLab already emailed is mailed again;
  *   - a shared franchise domain (expresspros.com, ...) is refused outright;
- *   - a record whose contact status is not VALID is refused, never written.
+ *   - a record whose contact status is not VALID is refused, never written;
+ *   - a record whose evidence supports no Campaign 3 copy v2 variant is refused
+ *     (`held`), never written: Campaign 4 sends Campaign 3's copy exactly, so
+ *     the Email 1 variant is selected HERE, server side, by the same selector
+ *     (staffing-v4-copy.js selectV4Variant, copy v2) from the submitted
+ *     evidence. The caller cannot name a variant, and nothing unverified is
+ *     ever stated: without a verified specialization there is no COPY_C.
  *
  * `owner_approved_send_ready: true` records the owner's explicit approval and
  * seals review_status SEND_READY; without it the profile is REVIEW_READY and
@@ -27,10 +33,10 @@ const { classify } = require('../check-leads');
 const { resolveLeadClient } = require('./clients/ownership');
 const { DEFAULT_CLIENT_ID } = require('./clients/registry');
 const { STAFFING_CAMPAIGN_C4, STAFFING_CAMPAIGN_V4, isCampaign4Marked, isStaffingV4Marked } = require('./staffing-campaign');
-const { C4_COPY_VERSION, C4_VARIABLE_NAMES } = require('./campaign-4-copy');
-const { variableProblem } = require('./staffing-v4-copy');
+const { variableProblem, selectV4Variant } = require('./staffing-v4-copy');
 const { franchiseBrandOfDomain } = require('./staffing-franchise');
-const { serializeC4Profile, readC4Profile, hasC4ProfileMarker } = require('./campaign-4-profile');
+const { serializeC4Profile, readC4Profile, hasC4ProfileMarker, C4_VARIABLE_NAMES } = require('./campaign-4-profile');
+const SELECTOR_VERSION = 'v4_variant_selector_2026_11_24_copy_v2'; // Campaign 3's v2 selector
 
 const C4_IMPORT_SCHEMA = 'hold_company_test_campaign_4_import_v1';
 const MAX_RECORDS = 500;
@@ -117,8 +123,7 @@ function evaluateCampaign4Import(payload, { leads = [], suppressedEmails = new S
     if (suppressedEmails.has(email)) return refuse('suppressed', 'address is on the global suppression list');
     if (workDomains([domain, emailDomain(email)]).some(franchiseBrandOfDomain)) return refuse('franchise_domain', 'a shared franchise domain is not part of the HOLD test');
     if ([...new Set(keysOf(record))].some(key => seen.get(key) > 1)) return refuse('duplicate_in_batch', 'email or company domain repeats inside this request');
-    const vars = { first_name: firstName, company };
-    const varProblem = C4_VARIABLE_NAMES.map(name => variableProblem(name, vars[name])).find(Boolean);
+    const varProblem = ['first_name', 'company'].map(name => variableProblem(name, { first_name: firstName, company }[name])).find(Boolean);
     if (varProblem) return refuse('invalid_variable', varProblem);
     if (state && !US_STATE.test(state)) return refuse('invalid_state', 'state must be a two-letter US state code');
     const sameEmail = index.byEmail.get(email) || [];
@@ -144,13 +149,31 @@ function evaluateCampaign4Import(payload, { leads = [], suppressedEmails = new S
         : where.includes('campaign_4') ? 'company_in_campaign_4' : 'company_in_earlier_campaign';
       return refuse(code, 'a ScaleLab lead already exists for this company domain');
     }
+    // Campaign 3's selector over the submitted evidence. Name, company and the
+    // contact come from the row; contact QC is the VALID check above.
+    const evidence = record?.evidence && typeof record.evidence === 'object' ? record.evidence : {};
+    const { contactStatus: _ignored, franchise: _noFranchise, ...given } = evidence;
+    let selection;
+    try {
+      selection = selectV4Variant({ ...given, firstName, company, contactName: text(`${firstName} ${text(row.last_name)}`), emailResolved: true },
+        { copyVersion: 'v2' });
+    } catch (error) { return refuse('invalid_evidence', error.message); }
+    if (selection.status !== 'SELECTED') return refuse('held', selection.holds.join('; ') || 'no verified variant');
+    const vars = selection.vars || {};
+    const used = selection.evidence || {};
     const profile = {
       campaign_id: STAFFING_CAMPAIGN_C4.id, company, company_domain: domain,
       contact_name: text(`${firstName} ${text(row.last_name)}`), email,
       hq_state: state, hold_reason: text(row.hold_reason).slice(0, 300), source: text(row.source).slice(0, 80),
       gate_run: text(row.gate_run).slice(0, 80), contact_status: 'VALID',
-      review_status: request.sendReady ? 'SEND_READY' : 'REVIEW_READY', copy_version: C4_COPY_VERSION,
-      var_first_name: firstName, var_company: company,
+      review_status: request.sendReady ? 'SEND_READY' : 'REVIEW_READY', copy_version: 'v2',
+      copy_status: 'SELECTED', copy_variant: selection.variant,
+      ...Object.fromEntries(C4_VARIABLE_NAMES.map(name => [`var_${name}`, typeof vars[name] === 'string' ? vars[name] : ''])),
+      evidence_kind: selection.form ? `${selection.variant}_${selection.form}` : selection.variant,
+      evidence_url: text(used.url), evidence_quote: text(used.quote || used.text).slice(0, 600),
+      evidence_observed_at: text(used.lastSeen || used.observedAt || used.announcedAt || used.appointedAt),
+      selection_considered: (selection.considered || []).map(item => `${item.variant}: ${item.outcome} (${item.detail})`),
+      selector_version: SELECTOR_VERSION,
       sourcing_run_id: request.sourcingRunId, imported_at: String(now()),
     };
     let campaignNotes;
@@ -158,7 +181,7 @@ function evaluateCampaign4Import(payload, { leads = [], suppressedEmails = new S
     const sealed = readC4Profile({ campaign_notes: campaignNotes }, { campaignId: STAFFING_CAMPAIGN_C4.id });
     if (!sealed.ok) return refuse('profile_integrity_failed', sealed.detail || sealed.reason);
     accepted.push({
-      index: position, importKey: c4ImportKeyFor(email),
+      index: position, importKey: c4ImportKeyFor(email), variant: selection.variant, form: selection.form || '',
       lead: {
         id: newId ? newId() : '', company, contactName: profile.contact_name, email, city: '',
         tradeType: '', website: `https://${domain}`,
@@ -197,7 +220,8 @@ async function importCampaign4Leads({ payload, dryRun = true, readCorpus, append
     templateId: STAFFING_CAMPAIGN_C4.emailTemplateId, sourcingRunId: result.request.sourcingRunId, sendReady: result.request.sendReady,
     received: result.request.records.length, accepted: leads.length, alreadyImported: result.alreadyImported.length,
     refused: result.refusals.length, written, mirror,
-    leads: result.accepted.map(item => ({ index: item.index, id: item.lead.id, email: item.lead.email, company: item.lead.company })),
+    byVariant: result.accepted.reduce((acc, item) => { const key = item.form ? `${item.variant}_${item.form}` : item.variant; acc[key] = (acc[key] || 0) + 1; return acc; }, {}),
+    leads: result.accepted.map(item => ({ index: item.index, id: item.lead.id, email: item.lead.email, company: item.lead.company, variant: item.variant })),
     alreadyImportedLeads: result.alreadyImported, refusals: result.refusals, refusalsByCode: result.refusalsByCode,
   };
 }
